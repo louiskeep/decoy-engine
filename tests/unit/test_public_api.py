@@ -37,6 +37,8 @@ def test_all_lists_every_public_name():
         "SchemaInspector", "LicenseVerifier",
         "validate_config",
         "run_storm", "StormProfile", "FieldStats", "DetectorMatch", "SentinelFlag",
+        "recommend", "ForecastReport", "DisguiseRecommendation",
+        "FieldRecommendation", "RiskFlag",
         "DecoyError", "ForgeError", "ConfigError", "PipelineValidationError",
         "ConnectorError", "ConnectorAuthError",
         "LicenseError", "LicenseExpiredError",

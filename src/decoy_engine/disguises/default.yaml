@@ -1,0 +1,46 @@
+# Default PII Disguise — generic starter pack.
+# Recommended by FORECAST whenever the profile contains any common-PII fields
+# but the data doesn't specifically smell like a regulated dataset.
+
+id: default
+name: "Default PII Disguise"
+summary: "Generic PII starter pack: email, phone, name, ZIP."
+primary_buyer: "Everyone"
+
+triggers:
+  any_detectors:
+    - email
+    - us_phone
+    - person_name
+  min_score: 0.3
+
+field_rules:
+  - detectors: [email]
+    mask: faker
+    params:
+      faker_type: email
+    why: "Replace email with a deterministic fake email."
+
+  - detectors: [person_name]
+    mask: faker
+    params:
+      faker_type: name
+    why: "Replace person name with a realistic fake name."
+
+  - detectors: [us_phone]
+    mask: faker
+    params:
+      faker_type: phone_number
+    why: "Replace phone number with a realistic fake."
+
+  - detectors: [us_zip]
+    mask: faker
+    params:
+      faker_type: postcode
+    why: "Replace ZIP with a fake postal code."
+
+  - detectors: [iso_date, us_date, eu_date]
+    mask: date_shift
+    params:
+      jitter_days: 30
+    why: "Shift dates by a random offset to break correlations."

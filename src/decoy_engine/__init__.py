@@ -30,6 +30,13 @@ from decoy_engine.schema import SchemaInspector
 from decoy_engine.license import LicenseVerifier
 from decoy_engine.validation import validate_config
 from decoy_engine.storm import run_storm, StormProfile, FieldStats, DetectorMatch, SentinelFlag
+from decoy_engine.forecast import (
+    recommend,
+    ForecastReport,
+    DisguiseRecommendation,
+    FieldRecommendation,
+    RiskFlag,
+)
 from decoy_engine.exceptions import (
     DecoyError,
     ForgeError,
@@ -57,6 +64,11 @@ __all__ = [
     'FieldStats',
     'DetectorMatch',
     'SentinelFlag',
+    'recommend',
+    'ForecastReport',
+    'DisguiseRecommendation',
+    'FieldRecommendation',
+    'RiskFlag',
     'DecoyError',
     'ForgeError',
     'ConfigError',
