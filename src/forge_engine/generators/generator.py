@@ -18,20 +18,27 @@ class DataGenerator:
     Handles the generation of synthetic data with referential integrity.
     """
     
-    def __init__(self, config_path: str, logger=None):
+    def __init__(self, config_path: str, logger=None, ctx=None):
         """
         Initialize the generator with a configuration file
-        
+
         Args:
             config_path: Path to the YAML configuration file
-            logger: Logger instance (optional)
+            logger: Direct logger instance (optional, kept for backwards
+                compatibility — prefer the ctx parameter for new code).
+            ctx: Optional forge_engine.ExecutionContext. If provided and
+                ctx.logger is set, it takes precedence over the `logger`
+                kwarg. When neither is provided, the engine creates a
+                default logger.
         """
         # Load configuration
         with open(config_path, 'r') as f:
             self.config = yaml.safe_load(f)
-        
-        # Use provided logger or create a default one
-        if logger:
+
+        # Pick a logger: ctx.logger > logger > engine default
+        if ctx is not None and getattr(ctx, "logger", None) is not None:
+            self.logger = ctx.logger
+        elif logger:
             self.logger = logger
         else:
             from forge_engine.internal.logging import get_logger

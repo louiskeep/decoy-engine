@@ -17,27 +17,35 @@ class Masker:
     Coordinates the masking process according to configuration.
     """
 
-    def __init__(self, config_path: str):
+    def __init__(self, config_path: str, ctx=None):
         """
         Initialize the masker with a configuration file
-        
+
         Args:
             config_path: Path to the YAML configuration file
+            ctx: Optional forge_engine.ExecutionContext. If provided and
+                ctx.logger is set, that logger is used (the CLI passes a
+                Rich-backed logger; the platform passes a DB-backed one).
+                When omitted, the engine builds its own logger from the
+                config's 'logging' section, preserving prior behavior.
         """
         # Load configuration
         with open(config_path, 'r') as f:
             self.config = yaml.safe_load(f)
-        
+
         # Add default global settings if not present
         if 'global_settings' not in self.config:
             self.config['global_settings'] = {}
-        
+
         if 'logging' not in self.config:
             self.config['logging'] = {}
 
-        # Initialize logger
-        from forge_engine.internal.logging import get_logger
-        self.logger = get_logger(self.config['logging'])
+        # Initialize logger: prefer caller-injected, fall back to internal default
+        if ctx is not None and getattr(ctx, "logger", None) is not None:
+            self.logger = ctx.logger
+        else:
+            from forge_engine.internal.logging import get_logger
+            self.logger = get_logger(self.config['logging'])
         
         # Memory monitoring
         from forge_engine.internal.memory import MemoryMonitor
