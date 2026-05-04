@@ -36,6 +36,7 @@ def test_all_lists_every_public_name():
         "ExecutionContext", "Logger", "TelemetryClient",
         "SchemaInspector", "LicenseVerifier",
         "validate_config",
+        "run_storm", "StormProfile", "FieldStats", "DetectorMatch", "SentinelFlag",
         "DecoyError", "ForgeError", "ConfigError", "PipelineValidationError",
         "ConnectorError", "ConnectorAuthError",
         "LicenseError", "LicenseExpiredError",
