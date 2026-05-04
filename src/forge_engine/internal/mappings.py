@@ -29,7 +29,7 @@ class MappingManager:
         if logger:
             self.logger = logger
         else:
-            from forge_engine.utils.logging import get_logger
+            from forge_engine.internal.logging import get_logger
             self.logger = get_logger()
             
         self.logger.debug(f"Initialized MappingManager with directory: {mappings_dir}")

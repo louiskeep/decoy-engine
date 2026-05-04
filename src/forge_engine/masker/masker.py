@@ -36,15 +36,15 @@ class Masker:
             self.config['logging'] = {}
 
         # Initialize logger
-        from forge_engine.utils.logging import get_logger
+        from forge_engine.internal.logging import get_logger
         self.logger = get_logger(self.config['logging'])
         
         # Memory monitoring
-        from forge_engine.utils.memory import MemoryMonitor
+        from forge_engine.internal.memory import MemoryMonitor
         MemoryMonitor.monitor_memory_usage(self.logger, "After initialization")
 
         # Validate configuration
-        from forge_engine.core.validator import MaskerConfigValidator
+        from forge_engine.internal.validator import MaskerConfigValidator
         self.validator = MaskerConfigValidator(self.logger)
         self.validator.validate(self.config)
         
@@ -65,7 +65,7 @@ class Masker:
         self.strategy_manager = StrategyManager(seed, self.logger)
         
         # Initialize referential integrity manager
-        from forge_engine.core.integrity import ReferentialIntegrityManager
+        from forge_engine.internal.integrity import ReferentialIntegrityManager
         self.ref_integrity = ReferentialIntegrityManager(self.config, self.logger)
         
         # Initialize processor
@@ -78,7 +78,7 @@ class Masker:
         )
         
         # Initialize large file processor
-        from forge_engine.utils.processor import LargeFileProcessor
+        from forge_engine.internal.large_file_processor import LargeFileProcessor
         self.large_file_processor = LargeFileProcessor(self.config, self.logger)
         
         # Initialize mappings directory
@@ -101,7 +101,7 @@ class Masker:
             self.logger.info(f"Input path: {input_path}")
             self.logger.info(f"Output path: {self.config['output'].get('path', '')}")
 
-            from forge_engine.utils.memory import MemoryMonitor
+            from forge_engine.internal.memory import MemoryMonitor
             MemoryMonitor.monitor_memory_usage(self.logger, "Before masking process")
             
             # Check if input file exists
@@ -187,7 +187,7 @@ class Masker:
         self.logger.info(f"Standard processing for file size: {file_size_gb:.2f} GB")
         start_time = time.time()  # Track execution time
         
-        from forge_engine.utils.memory import MemoryMonitor
+        from forge_engine.internal.memory import MemoryMonitor
         MemoryMonitor.monitor_memory_usage(self.logger, "Before loading data")
         
         self.logger.info(f"Loading data from {input_path}")

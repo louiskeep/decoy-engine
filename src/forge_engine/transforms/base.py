@@ -6,7 +6,7 @@ Base class for masking strategies in the forge_engine package.
 from abc import ABC, abstractmethod
 import pandas as pd
 from typing import Dict, Any, Optional
-from forge_engine.core.base import MaskingStrategy
+from forge_engine.internal.base import MaskingStrategy
 
 class BaseMaskingStrategy(MaskingStrategy):
     """

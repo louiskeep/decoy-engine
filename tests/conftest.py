@@ -187,7 +187,7 @@ def sample_generator_config():
 @pytest.fixture
 def mock_logger():
     """Create a mock logger for testing."""
-    from forge_engine.utils.logging import get_logger
+    from forge_engine.internal.logging import get_logger
     
     logger_config = {
         'level': 'debug',

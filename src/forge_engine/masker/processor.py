@@ -31,7 +31,7 @@ class MaskingProcessor:
         if logger:
             self.logger = logger
         else:
-            from forge_engine.utils.logging import get_logger
+            from forge_engine.internal.logging import get_logger
             self.logger = get_logger()
     
     def apply_masking_rules(self, df: pd.DataFrame, table_name: str) -> pd.DataFrame:
@@ -60,7 +60,7 @@ class MaskingProcessor:
         rule_count = len(self.config['masking_rules'])
         self.logger.info(f"Applying {rule_count} masking rules")
 
-        from forge_engine.utils.memory import MemoryMonitor
+        from forge_engine.internal.memory import MemoryMonitor
         MemoryMonitor.monitor_memory_usage(self.logger, "Before applying masking rules")
         
         for i, rule in enumerate(self.config['masking_rules'], 1):

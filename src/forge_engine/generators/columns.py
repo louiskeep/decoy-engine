@@ -11,7 +11,7 @@ import time
 from faker import Faker
 from typing import Dict, Any, Optional, List, Callable
 
-from forge_engine.utils.helpers import deterministic_hash, get_faker_providers
+from forge_engine.internal.helpers import deterministic_hash, get_faker_providers
 
 
 class ColumnGenerator:
@@ -42,7 +42,7 @@ class ColumnGenerator:
         if logger:
             self.logger = logger
         else:
-            from forge_engine.utils.logging import get_logger
+            from forge_engine.internal.logging import get_logger
             self.logger = get_logger()
         
         # Initialize generator functions

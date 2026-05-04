@@ -30,7 +30,7 @@ class IOHandler(ABC):
         if logger:
             self.logger = logger
         else:
-            from forge_engine.utils.logging import get_logger
+            from forge_engine.internal.logging import get_logger
             self.logger = get_logger()
     
     @abstractmethod
@@ -115,7 +115,7 @@ class IOHandler(ABC):
         Returns:
             Human-readable string with file size information
         """
-        from forge_engine.utils.helpers import get_file_size, convert_file_size
+        from forge_engine.internal.helpers import get_file_size, convert_file_size
         
         size_bytes = get_file_size(self.input_path)
         if size_bytes is None:

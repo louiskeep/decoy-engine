@@ -77,7 +77,7 @@ def test_map_strategy(sample_data, mock_logger):
     
     try:
         # Initialize strategy with mapping dir
-        from forge_engine.utils.mappings import MappingManager
+        from forge_engine.internal.mappings import MappingManager
         mapping_manager = MappingManager(mappings_dir=temp_dir, logger=mock_logger)
         
         strategy = MapStrategy(seed=42, logger=mock_logger)

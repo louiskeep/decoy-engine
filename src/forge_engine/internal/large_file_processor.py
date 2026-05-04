@@ -9,7 +9,7 @@ import pandas as pd
 import time
 from typing import Dict, Any, Optional, Callable
 
-from forge_engine.utils.memory import MemoryMonitor
+from forge_engine.internal.memory import MemoryMonitor
 
 
 class LargeFileProcessor:
@@ -31,7 +31,7 @@ class LargeFileProcessor:
         if logger:
             self.logger = logger
         else:
-            from forge_engine.utils.logging import get_logger
+            from forge_engine.internal.logging import get_logger
             self.logger = get_logger()
     
     def process_large_dataset(self, input_path: str, df_schema: pd.DataFrame, processor_func: Callable, 
@@ -60,7 +60,7 @@ class LargeFileProcessor:
         
         # Create output path and directory if output is needed
         if output_path:
-            from forge_engine.utils.helpers import create_directory_for_file
+            from forge_engine.internal.helpers import create_directory_for_file
             create_directory_for_file(output_path)
             self.logger.debug(f"Created output directory: {os.path.dirname(output_path)}")
             
@@ -70,7 +70,7 @@ class LargeFileProcessor:
             out_encoding = output_options.get('encoding', 'utf-8')
             quoting_mode = output_options.get('quoting', 'minimal')
             
-            from forge_engine.utils.helpers import convert_quoting_mode
+            from forge_engine.internal.helpers import convert_quoting_mode
             quoting = convert_quoting_mode(quoting_mode)
             
             self.logger.debug(f"Output options: delimiter='{out_delimiter}', encoding='{out_encoding}', quoting='{quoting_mode}'")
@@ -107,7 +107,7 @@ class LargeFileProcessor:
         chunk_count = 0
         
         # Create progress logger
-        from forge_engine.utils.logging import ProgressLogger
+        from forge_engine.internal.logging import ProgressLogger
         progress = ProgressLogger(self.logger, total_rows or 0, description)
         progress.start()
         
@@ -152,7 +152,7 @@ class LargeFileProcessor:
                 eta_seconds = (total_rows - total_rows_processed) / rows_per_second if rows_per_second > 0 else 0
                 
                 # Format ETA nicely
-                from forge_engine.utils.helpers import format_elapsed_time
+                from forge_engine.internal.helpers import format_elapsed_time
                 eta_str = format_elapsed_time(eta_seconds)
                     
                 self.logger.debug(f"Progress: {progress_percent:.1f}% complete - {rows_per_second:.0f} rows/sec - ETA: {eta_str}")

@@ -10,7 +10,7 @@ from typing import Dict, Any, Optional
 from faker import Faker
 
 from forge_engine.transforms.base import BaseMaskingStrategy
-from forge_engine.utils.helpers import get_faker_providers
+from forge_engine.internal.helpers import get_faker_providers
 
 
 class FakerStrategy(BaseMaskingStrategy):

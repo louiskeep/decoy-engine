@@ -34,11 +34,11 @@ class DataGenerator:
         if logger:
             self.logger = logger
         else:
-            from forge_engine.utils.logging import get_logger
+            from forge_engine.internal.logging import get_logger
             self.logger = get_logger()
         
         # Validate configuration
-        from forge_engine.core.validator import GeneratorConfigValidator
+        from forge_engine.internal.validator import GeneratorConfigValidator
         self.validator = GeneratorConfigValidator(self.logger)
         self.validator.validate(self.config)
         
@@ -55,7 +55,7 @@ class DataGenerator:
         self.relationship_handler = RelationshipHandler(self.seed, self.logger)
         
         # Initialize memory monitoring
-        from forge_engine.utils.memory import MemoryMonitor
+        from forge_engine.internal.memory import MemoryMonitor
         MemoryMonitor.monitor_memory_usage(self.logger, "After generator initialization")
         
         # Reference data storage
@@ -135,7 +135,7 @@ class DataGenerator:
         column_configs = table_config.get('columns', [])
         
         # Create progress logger
-        from forge_engine.utils.logging import ProgressLogger
+        from forge_engine.internal.logging import ProgressLogger
         progress = ProgressLogger(self.logger, len(column_configs), f"Generating columns for {table_name}")
         progress.start()
         
@@ -156,7 +156,7 @@ class DataGenerator:
         self.reference_data[table_name] = df
         
         # Create output directory if it doesn't exist
-        from forge_engine.utils.helpers import create_directory_for_file
+        from forge_engine.internal.helpers import create_directory_for_file
         create_directory_for_file(output_path)
         
         # Determine output format and save accordingly

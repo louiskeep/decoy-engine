@@ -10,7 +10,7 @@ import random
 from typing import Dict, Any, Optional
 
 from forge_engine.transforms.base import BaseMaskingStrategy
-from forge_engine.utils.helpers import deterministic_hash, get_faker_providers
+from forge_engine.internal.helpers import deterministic_hash, get_faker_providers
 
 
 class MapStrategy(BaseMaskingStrategy):
@@ -44,7 +44,7 @@ class MapStrategy(BaseMaskingStrategy):
         column_name = rule['column']
         
         # Get mapping manager
-        from forge_engine.utils.mappings import MappingManager
+        from forge_engine.internal.mappings import MappingManager
         mapping_manager = MappingManager(logger=self.logger)
         
         # Load existing mapping

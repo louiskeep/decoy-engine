@@ -9,7 +9,7 @@ from typing import Dict, Any, Optional, List
 from pathlib import Path
 
 from forge_engine.connectors.base import IOHandler
-from forge_engine.utils.helpers import convert_quoting_mode, create_directory_for_file
+from forge_engine.internal.helpers import convert_quoting_mode, create_directory_for_file
 
 
 class CSVHandler(IOHandler):

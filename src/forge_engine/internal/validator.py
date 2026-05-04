@@ -6,7 +6,7 @@ Configuration validation utilities for the forge_engine package.
 from typing import Dict, Any, List, Set, Optional, Union
 from pathlib import Path
 import os
-from forge_engine.core.base import ConfigValidator
+from forge_engine.internal.base import ConfigValidator
 
 
 class ValidationError(Exception):

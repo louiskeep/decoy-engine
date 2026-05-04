@@ -28,11 +28,11 @@ class ReferentialIntegrityManager:
         if logger:
             self.logger = logger
         else:
-            from forge_engine.utils.logging import get_logger
+            from forge_engine.internal.logging import get_logger
             self.logger = get_logger()
         
         # Initialize mapping storage
-        from forge_engine.utils.mappings import MappingManager
+        from forge_engine.internal.mappings import MappingManager
         mappings_dir = self.config.get('mappings', {}).get('store_directory', 'mappings/')
         self.mapping_manager = MappingManager(mappings_dir=mappings_dir, logger=self.logger)
         
