@@ -9,7 +9,7 @@ import random
 from typing import Dict, Any, Optional
 from faker import Faker
 
-from forge_engine.strategies.base import BaseMaskingStrategy
+from forge_engine.transforms.base import BaseMaskingStrategy
 from forge_engine.utils.helpers import get_faker_providers
 
 

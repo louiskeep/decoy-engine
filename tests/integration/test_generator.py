@@ -8,7 +8,7 @@ import pandas as pd
 import os
 import yaml
 
-from forge_engine.generator import DataGenerator
+from forge_engine.generators import DataGenerator
 
 def test_generator_integration(sample_generator_config, tmp_path, mock_logger):
     """Test the complete data generation process."""
@@ -383,7 +383,7 @@ def test_generator_fixed_width(tmp_path, mock_logger):
     assert os.path.exists(output_path)
     
     # Load generated data using FixedWidthHandler
-    from forge_engine.io.fixed_width import FixedWidthHandler
+    from forge_engine.connectors.fixed_width import FixedWidthHandler
     handler = FixedWidthHandler(
         {
             'type': 'fixed_width',

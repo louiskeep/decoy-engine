@@ -8,14 +8,14 @@ import pandas as pd
 import random
 import numpy as np
 
-from forge_engine.strategies.faker import FakerStrategy
-from forge_engine.strategies.hash import HashStrategy
-from forge_engine.strategies.redact import RedactStrategy
-from forge_engine.strategies.map import MapStrategy
-from forge_engine.strategies.shuffle import ShuffleStrategy
-from forge_engine.strategies.passthrough import PassthroughStrategy
-from forge_engine.strategies.factory import create_strategy
-from forge_engine.strategies.manager import StrategyManager
+from forge_engine.transforms.faker_based import FakerStrategy
+from forge_engine.transforms.hash import HashStrategy
+from forge_engine.transforms.redact import RedactStrategy
+from forge_engine.transforms.map import MapStrategy
+from forge_engine.transforms.shuffle import ShuffleStrategy
+from forge_engine.transforms.passthrough import PassthroughStrategy
+from forge_engine.transforms.factory import create_strategy
+from forge_engine.transforms.registry import StrategyManager
 
 @pytest.fixture
 def sample_data():

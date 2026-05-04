@@ -52,7 +52,7 @@ class Masker:
         seed = self.config.get('global_settings', {}).get('seed', 42)
         
         # Initialize I/O handler
-        from forge_engine.io.factory import create_io_handler
+        from forge_engine.connectors.factory import create_io_handler
         self.io_handler = create_io_handler(
             self.config['input'], 
             self.config['output'], 
@@ -61,7 +61,7 @@ class Masker:
         )
         
         # Initialize strategy manager
-        from forge_engine.strategies.manager import StrategyManager
+        from forge_engine.transforms.registry import StrategyManager
         self.strategy_manager = StrategyManager(seed, self.logger)
         
         # Initialize referential integrity manager

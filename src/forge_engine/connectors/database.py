@@ -8,7 +8,7 @@ from typing import Any, Dict
 import pandas as pd
 from sqlalchemy import create_engine, text
 
-from forge_engine.io.base import IOHandler
+from forge_engine.connectors.base import IOHandler
 
 
 class DBHandler(IOHandler):

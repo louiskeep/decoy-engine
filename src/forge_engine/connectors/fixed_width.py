@@ -8,7 +8,7 @@ import pandas as pd
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 
-from forge_engine.io.base import IOHandler
+from forge_engine.connectors.base import IOHandler
 from forge_engine.utils.helpers import create_directory_for_file
 
 
@@ -107,7 +107,7 @@ class FixedWidthHandler(IOHandler):
         if output_type == 'csv':
             # Reuse CSVHandler's save_data functionality
             self.logger.debug("Using CSVHandler to save as CSV")
-            from forge_engine.io.csv import CSVHandler
+            from forge_engine.connectors.csv_connector import CSVHandler
             csv_handler = CSVHandler(None, self.output_config, self.logger)
             csv_handler.save_data(df)
         elif output_type == 'fixed_width':

@@ -8,7 +8,7 @@ import pandas as pd
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 
-from forge_engine.io.base import IOHandler
+from forge_engine.connectors.base import IOHandler
 from forge_engine.utils.helpers import convert_quoting_mode, create_directory_for_file
 
 
@@ -76,7 +76,7 @@ class CSVHandler(IOHandler):
             df: The pandas DataFrame to save
         """
         if self.output_config.get('type') == 'fixed_width':
-            from forge_engine.io.fixed_width import FixedWidthHandler
+            from forge_engine.connectors.fixed_width import FixedWidthHandler
             fw = FixedWidthHandler(None, self.output_config, self.logger)
             fw._save_as_fixed_width(df)
             return

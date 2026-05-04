@@ -7,7 +7,7 @@ Replaces values with a fixed redaction string.
 import pandas as pd
 from typing import Dict, Any, Optional
 
-from forge_engine.strategies.base import BaseMaskingStrategy
+from forge_engine.transforms.base import BaseMaskingStrategy
 
 
 class RedactStrategy(BaseMaskingStrategy):

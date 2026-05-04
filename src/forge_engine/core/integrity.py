@@ -143,7 +143,7 @@ class ReferentialIntegrityManager:
             updated = True
             
             # Create appropriate strategy for this mask type
-            from forge_engine.strategies.factory import create_strategy
+            from forge_engine.transforms.factory import create_strategy
             strategy = create_strategy(mask_type, rule.get('seed', 0), self.logger)
             
             # Process each new value

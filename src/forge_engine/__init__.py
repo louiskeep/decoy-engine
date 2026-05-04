@@ -10,7 +10,7 @@ Anything not listed in __all__ is private and may change without a version bump.
 """
 
 from forge_engine.masker import Masker
-from forge_engine.generator import DataGenerator
+from forge_engine.generators import DataGenerator
 
 __version__ = '0.1.0'
 __all__ = ['Masker', 'DataGenerator']

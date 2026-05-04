@@ -5,7 +5,7 @@ from typing import Any, Dict
 
 import pandas as pd
 
-from forge_engine.strategies.base import BaseMaskingStrategy
+from forge_engine.transforms.base import BaseMaskingStrategy
 
 
 class FormulaStrategy(BaseMaskingStrategy):

@@ -114,7 +114,7 @@ def test_masker_fixed_width(sample_fixed_width_file, tmp_path, mock_logger):
     assert os.path.exists(output_def_path)
     
     # Load masked data using FixedWidthHandler
-    from forge_engine.io.fixed_width import FixedWidthHandler
+    from forge_engine.connectors.fixed_width import FixedWidthHandler
     handler = FixedWidthHandler(
         {
             'type': 'fixed_width',

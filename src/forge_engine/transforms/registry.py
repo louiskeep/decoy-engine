@@ -6,8 +6,8 @@ Strategy manager for coordinating masking strategies in the forge_engine package
 import pandas as pd
 from typing import Dict, Any, Optional, List
 
-from forge_engine.strategies.base import BaseMaskingStrategy
-from forge_engine.strategies.factory import create_strategy
+from forge_engine.transforms.base import BaseMaskingStrategy
+from forge_engine.transforms.factory import create_strategy
 
 
 class StrategyManager:
@@ -121,7 +121,7 @@ class StrategyManager:
         Returns:
             List of strategy type names
         """
-        from forge_engine.strategies import (
+        from forge_engine.transforms import (
             FakerStrategy, HashStrategy, RedactStrategy, 
             MapStrategy, ShuffleStrategy, PassthroughStrategy
         )

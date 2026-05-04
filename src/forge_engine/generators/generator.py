@@ -47,11 +47,11 @@ class DataGenerator:
         random.seed(self.seed)
         
         # Initialize column generator
-        from forge_engine.generator.columns import ColumnGenerator
+        from forge_engine.generators.columns import ColumnGenerator
         self.column_generator = ColumnGenerator(self.seed, self.logger)
         
         # Initialize relationship handler
-        from forge_engine.generator.relationships import RelationshipHandler
+        from forge_engine.generators.relationships import RelationshipHandler
         self.relationship_handler = RelationshipHandler(self.seed, self.logger)
         
         # Initialize memory monitoring
@@ -197,7 +197,7 @@ class DataGenerator:
             }
             
             # Create and use IO handler with column configurations
-            from forge_engine.io.factory import create_io_handler
+            from forge_engine.connectors.factory import create_io_handler
             io_handler = create_io_handler(input_config, output_config, self.config, self.logger)
             
             # Set column configurations on the handler for padding purposes
