@@ -25,6 +25,7 @@ from forge_engine.generators import DataGenerator
 from forge_engine.context import ExecutionContext, Logger, TelemetryClient
 from forge_engine.schema import SchemaInspector
 from forge_engine.license import LicenseVerifier
+from forge_engine.validation import validate_config
 from forge_engine.exceptions import (
     ForgeError,
     ConfigError,
@@ -45,6 +46,7 @@ __all__ = [
     'TelemetryClient',
     'SchemaInspector',
     'LicenseVerifier',
+    'validate_config',
     'ForgeError',
     'ConfigError',
     'PipelineValidationError',

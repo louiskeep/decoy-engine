@@ -34,6 +34,7 @@ def test_all_lists_every_public_name():
         "Masker", "DataGenerator",
         "ExecutionContext", "Logger", "TelemetryClient",
         "SchemaInspector", "LicenseVerifier",
+        "validate_config",
         "ForgeError", "ConfigError", "PipelineValidationError",
         "ConnectorError", "ConnectorAuthError",
         "LicenseError", "LicenseExpiredError",
