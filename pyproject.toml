@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "forge-engine"
+version = "0.1.0"
+description = "Shared data masking and synthetic generation engine for the Forge product family"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "louiskeep" }]
+dependencies = [
+    "pandas>=1.5.0",
+    "pyyaml>=6.0",
+    "faker>=13.0.0",
+    "psutil>=5.9.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/forge_engine"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
