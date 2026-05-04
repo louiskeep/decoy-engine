@@ -1,5 +1,5 @@
 """
-Tests for the public API surface declared in forge_engine.__init__.
+Tests for the public API surface declared in decoy_engine.__init__.
 
 These tests guard the contract that CLI and platform code depend on. If
 a name disappears from __all__ or its import path changes, that is a
@@ -10,8 +10,8 @@ import logging
 
 import pytest
 
-import forge_engine
-from forge_engine import (
+import decoy_engine
+from decoy_engine import (
     Masker,
     DataGenerator,
     ExecutionContext,
@@ -19,6 +19,7 @@ from forge_engine import (
     TelemetryClient,
     SchemaInspector,
     LicenseVerifier,
+    DecoyError,
     ForgeError,
     ConfigError,
     PipelineValidationError,
@@ -35,15 +36,19 @@ def test_all_lists_every_public_name():
         "ExecutionContext", "Logger", "TelemetryClient",
         "SchemaInspector", "LicenseVerifier",
         "validate_config",
-        "ForgeError", "ConfigError", "PipelineValidationError",
+        "DecoyError", "ForgeError", "ConfigError", "PipelineValidationError",
         "ConnectorError", "ConnectorAuthError",
         "LicenseError", "LicenseExpiredError",
     }
-    assert set(forge_engine.__all__) == expected
+    assert set(decoy_engine.__all__) == expected
+
+
+def test_forge_error_is_deprecated_alias_for_decoy_error():
+    assert ForgeError is DecoyError
 
 
 def test_version_attribute_exists():
-    assert isinstance(forge_engine.__version__, str)
+    assert isinstance(decoy_engine.__version__, str)
 
 
 class TestExceptions:
@@ -65,7 +70,7 @@ class TestExceptions:
 
 class TestLoggerProtocol:
     def test_stdlib_logger_satisfies_protocol(self):
-        log = logging.getLogger("forge_engine.test")
+        log = logging.getLogger("decoy_engine.test")
         assert isinstance(log, Logger)
 
     def test_object_missing_method_does_not_satisfy_protocol(self):
@@ -84,7 +89,7 @@ class TestExecutionContext:
         assert ctx.telemetry is None
 
     def test_logger_injection(self):
-        log = logging.getLogger("forge_engine.test")
+        log = logging.getLogger("decoy_engine.test")
         ctx = ExecutionContext(logger=log)
         assert ctx.logger is log
 

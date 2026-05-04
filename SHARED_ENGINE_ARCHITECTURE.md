@@ -1,4 +1,4 @@
-# Forge — Shared Engine Architecture Plan
+# Forge â€” Shared Engine Architecture Plan
 
 > **Companion to:** BUILD_PLAN.md, REPO_ARCHITECTURE_PLAN.md
 > **Purpose:** Solves the "doubling work between CLI and Platform" problem by introducing a shared engine library that both consume.
@@ -9,15 +9,15 @@
 
 ## TL;DR
 
-You don't have two codebases. You have **three** — a shared engine and two thin wrappers around it.
+You don't have two codebases. You have **three** â€” a shared engine and two thin wrappers around it.
 
 ```
-forge-engine   →  Python library. Does the actual data work. (Public, BUSL)
-forge          →  CLI wrapper. Imports forge-engine. (Public, BUSL)
-forge-platform →  Web app wrapper. Imports forge-engine. (Private)
+decoy-engine   â†’  Python library. Does the actual data work. (Public, BUSL)
+forge          â†’  CLI wrapper. Imports decoy-engine. (Public, BUSL)
+forge-platform â†’  Web app wrapper. Imports decoy-engine. (Private)
 ```
 
-When you add a new mask transform, connector, or YAML feature, you add it to **`forge-engine` once**. The CLI and Platform both pick it up automatically on the next engine version bump.
+When you add a new mask transform, connector, or YAML feature, you add it to **`decoy-engine` once**. The CLI and Platform both pick it up automatically on the next engine version bump.
 
 Result: **no doubling on data work**. The CLI and Platform only diverge on interface-specific code (terminal UX vs. web UX), which is naturally separate anyway.
 
@@ -29,11 +29,11 @@ This pattern is what dbt, Prefect, Dagster, Meltano, and Sentry all use. It's th
 
 Without a shared engine, you face this every time you ship a feature:
 
-1. Add a new mask transform → write it in the CLI codebase
-2. Realize the Platform needs it too → copy/paste it to the Platform codebase
-3. Fix a bug in the transform → fix it in two places
-4. CLI YAML format diverges slightly from Platform format → users get confused
-5. Six months later, the two implementations have drifted in subtle ways → support nightmare
+1. Add a new mask transform â†’ write it in the CLI codebase
+2. Realize the Platform needs it too â†’ copy/paste it to the Platform codebase
+3. Fix a bug in the transform â†’ fix it in two places
+4. CLI YAML format diverges slightly from Platform format â†’ users get confused
+5. Six months later, the two implementations have drifted in subtle ways â†’ support nightmare
 
 This is the classic "two implementations of the same logic" tax. The engine pattern eliminates it.
 
@@ -41,14 +41,14 @@ This is the classic "two implementations of the same logic" tax. The engine patt
 
 ## The Three-Layer Architecture
 
-### Layer 1: `forge-engine` — The Shared Brain
+### Layer 1: `decoy-engine` â€” The Shared Brain
 
 A Python library that does all the actual data work. Knows nothing about terminals, HTTP, web UIs, or users. Just data in, data out.
 
 **Public API surface** (what the CLI and Platform call):
 
 ```python
-from forge_engine import (
+from decoy_engine import (
     Pipeline,           # in-memory pipeline representation
     PipelineConfig,     # Pydantic schema for YAML
     MaskRegistry,       # all available masks
@@ -67,14 +67,14 @@ result = pipeline.run(context=ExecutionContext(...))
 
 Anything a user could conceivably want to do with their data lives behind this API.
 
-### Layer 2: `forge` — The CLI Wrapper
+### Layer 2: `forge` â€” The CLI Wrapper
 
-A thin Typer-based CLI that imports `forge-engine` and exposes it as terminal commands.
+A thin Typer-based CLI that imports `decoy-engine` and exposes it as terminal commands.
 
 ```python
 # src/forge/cli/run.py
 import typer
-from forge_engine import Pipeline, PipelineConfig, ExecutionContext
+from decoy_engine import Pipeline, PipelineConfig, ExecutionContext
 from forge.ui import RichLogger, TerminalProgressBar
 
 @app.command()
@@ -96,14 +96,14 @@ def run(yaml_path: Path, dry_run: bool = False):
 
 The CLI's job is **interface translation**: it takes terminal-flavored input (CLI args, env vars, local files) and gives terminal-flavored output (Rich tables, progress bars, exit codes). The actual masking happens in the engine.
 
-### Layer 3: `forge-platform` — The Web Wrapper
+### Layer 3: `forge-platform` â€” The Web Wrapper
 
-A FastAPI backend + Next.js frontend that imports the same `forge-engine` and exposes it via HTTP and a web UI.
+A FastAPI backend + Next.js frontend that imports the same `decoy-engine` and exposes it via HTTP and a web UI.
 
 ```python
 # api/runs.py
 from fastapi import APIRouter, Depends
-from forge_engine import Pipeline, PipelineConfig, ExecutionContext
+from decoy_engine import Pipeline, PipelineConfig, ExecutionContext
 from platform.persistence import save_run_record
 from platform.logging import StructuredLogger
 from platform.auth import get_current_user
@@ -137,43 +137,43 @@ Same engine, called differently. The Platform's job is **multi-user concerns**: 
 
 This is the most important section. When you're about to write a new piece of code, ask:
 
-### "Does this manipulate or describe data?" → Engine
+### "Does this manipulate or describe data?" â†’ Engine
 
-- New mask transform → engine
-- New synthetic data generator → engine
-- New connector (source or destination) → engine
-- YAML schema field → engine
-- Validation rule for a YAML field → engine
-- Schema introspection → engine
-- Referential integrity logic → engine
-- Pipeline execution → engine
-- License JWT verification → engine
+- New mask transform â†’ engine
+- New synthetic data generator â†’ engine
+- New connector (source or destination) â†’ engine
+- YAML schema field â†’ engine
+- Validation rule for a YAML field â†’ engine
+- Schema introspection â†’ engine
+- Referential integrity logic â†’ engine
+- Pipeline execution â†’ engine
+- License JWT verification â†’ engine
 
-### "Does this involve a terminal?" → CLI only
+### "Does this involve a terminal?" â†’ CLI only
 
-- Typer command definition → CLI
-- Rich-formatted terminal output → CLI
-- Progress bar in a TTY → CLI
-- Interactive prompts (`forge init`) → CLI
-- Local config file (`~/.forge/`) → CLI
-- Update check messages → CLI
-- ASCII art → CLI
-- Tab completion scripts → CLI
-- Exit code handling → CLI
+- Typer command definition â†’ CLI
+- Rich-formatted terminal output â†’ CLI
+- Progress bar in a TTY â†’ CLI
+- Interactive prompts (`forge init`) â†’ CLI
+- Local config file (`~/.forge/`) â†’ CLI
+- Update check messages â†’ CLI
+- ASCII art â†’ CLI
+- Tab completion scripts â†’ CLI
+- Exit code handling â†’ CLI
 
-### "Does this involve multiple users, persistence, or HTTP?" → Platform only
+### "Does this involve multiple users, persistence, or HTTP?" â†’ Platform only
 
-- FastAPI routes → Platform
-- Database models → Platform
-- Scheduler / cron jobs → Platform
-- Audit log → Platform
-- RBAC → Platform
-- Auth / sessions → Platform
-- Stripe integration → Platform
-- License *issuance* (signing) → Platform
-- Web UI → Platform
-- Email notifications → Platform
-- Multi-tenant logic → Platform
+- FastAPI routes â†’ Platform
+- Database models â†’ Platform
+- Scheduler / cron jobs â†’ Platform
+- Audit log â†’ Platform
+- RBAC â†’ Platform
+- Auth / sessions â†’ Platform
+- Stripe integration â†’ Platform
+- License *issuance* (signing) â†’ Platform
+- Web UI â†’ Platform
+- Email notifications â†’ Platform
+- Multi-tenant logic â†’ Platform
 
 ### Gray areas (and how to resolve them)
 
@@ -193,31 +193,31 @@ This is the most important section. When you're about to write a new piece of co
 
 ## The Engine API Contract
 
-The `forge-engine` public API is a **contract**. Both the CLI and Platform depend on it. Treating it casually is how you create maintenance pain. Treating it as an API is how you stay sane.
+The `decoy-engine` public API is a **contract**. Both the CLI and Platform depend on it. Treating it casually is how you create maintenance pain. Treating it as an API is how you stay sane.
 
 ### Versioning
 
 - **SemVer strict.** Breaking changes only on major versions.
 - **Deprecation policy.** New behavior introduced as a flag or alternate function. Old behavior deprecated for one major version, then removed.
-- **The `__init__.py` is the contract.** Anything exported from `forge_engine` is public. Anything imported from `forge_engine.internal.*` is private and can change at any time.
+- **The `__init__.py` is the contract.** Anything exported from `decoy_engine` is public. Anything imported from `decoy_engine.internal.*` is private and can change at any time.
 
 ### What "public API" means
 
 ```python
-# forge_engine/__init__.py — this IS the public API
-from forge_engine.pipeline import Pipeline
-from forge_engine.config import PipelineConfig
-from forge_engine.registry import MaskRegistry, ConnectorRegistry
-from forge_engine.context import ExecutionContext, Logger, TelemetryClient
-from forge_engine.exceptions import (
+# decoy_engine/__init__.py â€” this IS the public API
+from decoy_engine.pipeline import Pipeline
+from decoy_engine.config import PipelineConfig
+from decoy_engine.registry import MaskRegistry, ConnectorRegistry
+from decoy_engine.context import ExecutionContext, Logger, TelemetryClient
+from decoy_engine.exceptions import (
     ForgeError,
     PipelineValidationError,
     ConnectorAuthError,
     LicenseExpiredError,
     ...
 )
-from forge_engine.license import LicenseVerifier, License
-from forge_engine.schema import SchemaInspector
+from decoy_engine.license import LicenseVerifier, License
+from decoy_engine.schema import SchemaInspector
 
 __version__ = "1.0.0"
 __all__ = [...]  # explicit
@@ -240,124 +240,124 @@ Anything not in `__all__` is private. The CLI and Platform must only import from
 The full picture:
 
 ```
-github.com/forgeio/forge-engine    ← Shared library (PUBLIC, BUSL)
-github.com/forgeio/forge           ← CLI (PUBLIC, BUSL)
-github.com/forgeio/forge-platform  ← Platform (PRIVATE)
-github.com/forgeio/forge-web       ← Marketing site + docs (PUBLIC)
+github.com/forgeio/decoy-engine    â† Shared library (PUBLIC, BUSL)
+github.com/forgeio/forge           â† CLI (PUBLIC, BUSL)
+github.com/forgeio/forge-platform  â† Platform (PRIVATE)
+github.com/forgeio/forge-web       â† Marketing site + docs (PUBLIC)
 ```
 
-### `forge-engine` skeleton
+### `decoy-engine` skeleton
 
 ```
-forge-engine/
-├── .github/workflows/
-│   ├── test.yml                  # multi-OS, multi-Python matrix
-│   ├── release.yml               # PyPI publish on tag
-│   └── lint.yml
-├── src/
-│   └── forge_engine/
-│       ├── __init__.py           # public API, controlled exports
-│       ├── pipeline.py           # Pipeline class
-│       ├── config.py             # PipelineConfig (Pydantic)
-│       ├── context.py            # ExecutionContext, Logger interface, TelemetryClient interface
-│       ├── exceptions.py         # all public exception types
-│       ├── license/
-│       │   ├── __init__.py
-│       │   ├── verifier.py       # JWT verification
-│       │   └── public_key.py     # embedded public key constant
-│       ├── transforms/
-│       │   ├── __init__.py
-│       │   ├── registry.py       # MaskRegistry
-│       │   ├── faker_based.py    # email, name, phone, etc.
-│       │   ├── fpe.py            # format-preserving encryption
-│       │   ├── hashing.py
-│       │   ├── date_shift.py
-│       │   └── ...
-│       ├── generators/
-│       │   ├── __init__.py
-│       │   ├── registry.py
-│       │   └── ...
-│       ├── connectors/
-│       │   ├── __init__.py
-│       │   ├── registry.py
-│       │   ├── base.py           # ConnectorBase abstract class
-│       │   ├── postgres.py
-│       │   ├── mysql.py
-│       │   ├── s3.py
-│       │   ├── snowflake.py
-│       │   └── ...
-│       ├── schema/
-│       │   ├── __init__.py
-│       │   └── inspector.py      # SchemaInspector
-│       └── internal/             # private, not part of API contract
-│           ├── execution.py
-│           └── ...
-├── tests/
-├── pyproject.toml
-├── README.md
-├── LICENSE.md
-├── CHANGELOG.md
-└── CONTRIBUTING.md
+decoy-engine/
+â”œâ”€â”€ .github/workflows/
+â”‚   â”œâ”€â”€ test.yml                  # multi-OS, multi-Python matrix
+â”‚   â”œâ”€â”€ release.yml               # PyPI publish on tag
+â”‚   â””â”€â”€ lint.yml
+â”œâ”€â”€ src/
+â”‚   â””â”€â”€ decoy_engine/
+â”‚       â”œâ”€â”€ __init__.py           # public API, controlled exports
+â”‚       â”œâ”€â”€ pipeline.py           # Pipeline class
+â”‚       â”œâ”€â”€ config.py             # PipelineConfig (Pydantic)
+â”‚       â”œâ”€â”€ context.py            # ExecutionContext, Logger interface, TelemetryClient interface
+â”‚       â”œâ”€â”€ exceptions.py         # all public exception types
+â”‚       â”œâ”€â”€ license/
+â”‚       â”‚   â”œâ”€â”€ __init__.py
+â”‚       â”‚   â”œâ”€â”€ verifier.py       # JWT verification
+â”‚       â”‚   â””â”€â”€ public_key.py     # embedded public key constant
+â”‚       â”œâ”€â”€ transforms/
+â”‚       â”‚   â”œâ”€â”€ __init__.py
+â”‚       â”‚   â”œâ”€â”€ registry.py       # MaskRegistry
+â”‚       â”‚   â”œâ”€â”€ faker_based.py    # email, name, phone, etc.
+â”‚       â”‚   â”œâ”€â”€ fpe.py            # format-preserving encryption
+â”‚       â”‚   â”œâ”€â”€ hashing.py
+â”‚       â”‚   â”œâ”€â”€ date_shift.py
+â”‚       â”‚   â””â”€â”€ ...
+â”‚       â”œâ”€â”€ generators/
+â”‚       â”‚   â”œâ”€â”€ __init__.py
+â”‚       â”‚   â”œâ”€â”€ registry.py
+â”‚       â”‚   â””â”€â”€ ...
+â”‚       â”œâ”€â”€ connectors/
+â”‚       â”‚   â”œâ”€â”€ __init__.py
+â”‚       â”‚   â”œâ”€â”€ registry.py
+â”‚       â”‚   â”œâ”€â”€ base.py           # ConnectorBase abstract class
+â”‚       â”‚   â”œâ”€â”€ postgres.py
+â”‚       â”‚   â”œâ”€â”€ mysql.py
+â”‚       â”‚   â”œâ”€â”€ s3.py
+â”‚       â”‚   â”œâ”€â”€ snowflake.py
+â”‚       â”‚   â””â”€â”€ ...
+â”‚       â”œâ”€â”€ schema/
+â”‚       â”‚   â”œâ”€â”€ __init__.py
+â”‚       â”‚   â””â”€â”€ inspector.py      # SchemaInspector
+â”‚       â””â”€â”€ internal/             # private, not part of API contract
+â”‚           â”œâ”€â”€ execution.py
+â”‚           â””â”€â”€ ...
+â”œâ”€â”€ tests/
+â”œâ”€â”€ pyproject.toml
+â”œâ”€â”€ README.md
+â”œâ”€â”€ LICENSE.md
+â”œâ”€â”€ CHANGELOG.md
+â””â”€â”€ CONTRIBUTING.md
 ```
 
 ### `forge` (CLI) skeleton
 
 ```
 forge/
-├── pyproject.toml                # depends on forge-engine
-├── src/
-│   └── forge/
-│       ├── __init__.py
-│       ├── __main__.py
-│       ├── cli/                  # Typer commands
-│       │   ├── run.py
-│       │   ├── validate.py
-│       │   ├── init.py
-│       │   ├── demo.py
-│       │   ├── connectors.py
-│       │   ├── login.py
-│       │   ├── schedule.py       # @require_business
-│       │   └── ...
-│       ├── ui/                   # Rich-based output
-│       │   ├── logger.py         # implements forge_engine.context.Logger
-│       │   ├── progress.py
-│       │   ├── prompts.py        # interactive prompts
-│       │   ├── tables.py
-│       │   └── theme.py
-│       ├── config/               # local config (~/.forge/)
-│       │   ├── license.py        # license file storage
-│       │   └── settings.py
-│       ├── telemetry/            # implements forge_engine.context.TelemetryClient
-│       │   └── client.py
-│       ├── decorators/
-│       │   └── require_business.py
-│       └── version_check.py
-└── tests/
+â”œâ”€â”€ pyproject.toml                # depends on decoy-engine
+â”œâ”€â”€ src/
+â”‚   â””â”€â”€ forge/
+â”‚       â”œâ”€â”€ __init__.py
+â”‚       â”œâ”€â”€ __main__.py
+â”‚       â”œâ”€â”€ cli/                  # Typer commands
+â”‚       â”‚   â”œâ”€â”€ run.py
+â”‚       â”‚   â”œâ”€â”€ validate.py
+â”‚       â”‚   â”œâ”€â”€ init.py
+â”‚       â”‚   â”œâ”€â”€ demo.py
+â”‚       â”‚   â”œâ”€â”€ connectors.py
+â”‚       â”‚   â”œâ”€â”€ login.py
+â”‚       â”‚   â”œâ”€â”€ schedule.py       # @require_business
+â”‚       â”‚   â””â”€â”€ ...
+â”‚       â”œâ”€â”€ ui/                   # Rich-based output
+â”‚       â”‚   â”œâ”€â”€ logger.py         # implements decoy_engine.context.Logger
+â”‚       â”‚   â”œâ”€â”€ progress.py
+â”‚       â”‚   â”œâ”€â”€ prompts.py        # interactive prompts
+â”‚       â”‚   â”œâ”€â”€ tables.py
+â”‚       â”‚   â””â”€â”€ theme.py
+â”‚       â”œâ”€â”€ config/               # local config (~/.forge/)
+â”‚       â”‚   â”œâ”€â”€ license.py        # license file storage
+â”‚       â”‚   â””â”€â”€ settings.py
+â”‚       â”œâ”€â”€ telemetry/            # implements decoy_engine.context.TelemetryClient
+â”‚       â”‚   â””â”€â”€ client.py
+â”‚       â”œâ”€â”€ decorators/
+â”‚       â”‚   â””â”€â”€ require_business.py
+â”‚       â””â”€â”€ version_check.py
+â””â”€â”€ tests/
 ```
 
 ### `forge-platform` skeleton
 
 ```
 forge-platform/
-├── api/                          # FastAPI
-│   ├── main.py                   # depends on forge-engine
-│   ├── auth/
-│   ├── runs/
-│   │   └── handler.py            # imports forge_engine.Pipeline
-│   ├── pipelines/
-│   ├── billing/
-│   ├── licenses/
-│   │   └── issuer.py             # signs JWTs with private key
-│   ├── audit/
-│   ├── teams/
-│   ├── persistence/
-│   │   ├── logger.py             # implements forge_engine.context.Logger
-│   │   └── telemetry.py          # implements forge_engine.context.TelemetryClient
-│   └── scheduler/
-├── web/                          # Next.js
-│   └── ...
-├── deploy/
-└── tests/
+â”œâ”€â”€ api/                          # FastAPI
+â”‚   â”œâ”€â”€ main.py                   # depends on decoy-engine
+â”‚   â”œâ”€â”€ auth/
+â”‚   â”œâ”€â”€ runs/
+â”‚   â”‚   â””â”€â”€ handler.py            # imports decoy_engine.Pipeline
+â”‚   â”œâ”€â”€ pipelines/
+â”‚   â”œâ”€â”€ billing/
+â”‚   â”œâ”€â”€ licenses/
+â”‚   â”‚   â””â”€â”€ issuer.py             # signs JWTs with private key
+â”‚   â”œâ”€â”€ audit/
+â”‚   â”œâ”€â”€ teams/
+â”‚   â”œâ”€â”€ persistence/
+â”‚   â”‚   â”œâ”€â”€ logger.py             # implements decoy_engine.context.Logger
+â”‚   â”‚   â””â”€â”€ telemetry.py          # implements decoy_engine.context.TelemetryClient
+â”‚   â””â”€â”€ scheduler/
+â”œâ”€â”€ web/                          # Next.js
+â”‚   â””â”€â”€ ...
+â”œâ”€â”€ deploy/
+â””â”€â”€ tests/
 ```
 
 ---
@@ -370,37 +370,37 @@ When you're working on a CLI feature that needs an engine change:
 
 ```bash
 # Clone all three side by side
-git clone forgeio/forge-engine
+git clone forgeio/decoy-engine
 git clone forgeio/forge
 git clone forgeio/forge-platform
 
 # Install engine in editable mode in both wrappers
 cd forge
-pip install -e ../forge-engine -e .
+pip install -e ../decoy-engine -e .
 
 cd ../forge-platform
-pip install -e ../forge-engine -e .
+pip install -e ../decoy-engine -e .
 ```
 
-Now changes to `forge-engine` are picked up immediately by both wrappers. No publish/install dance during local dev.
+Now changes to `decoy-engine` are picked up immediately by both wrappers. No publish/install dance during local dev.
 
 ### Release workflow
 
-1. **Engine release.** Bump version in `forge-engine`, tag, push. CI publishes to PyPI.
-2. **Wrapper updates.** Renovate or Dependabot opens PRs in `forge` and `forge-platform` bumping the `forge-engine` dependency. You review the PR, run CI, merge.
+1. **Engine release.** Bump version in `decoy-engine`, tag, push. CI publishes to PyPI.
+2. **Wrapper updates.** Renovate or Dependabot opens PRs in `forge` and `forge-platform` bumping the `decoy-engine` dependency. You review the PR, run CI, merge.
 3. **Wrapper releases.** Bump CLI version, tag, push. CI publishes new CLI to PyPI. Bump platform version, deploy.
 
-This sounds like more steps than monolith. It's not — it's the *same* steps, just more visible. In a monolith you'd still test the integration before shipping; this just makes the integration explicit.
+This sounds like more steps than monolith. It's not â€” it's the *same* steps, just more visible. In a monolith you'd still test the integration before shipping; this just makes the integration explicit.
 
 ### When to release the engine
 
-- **Bug fix in a transform** → patch release of engine, both wrappers update on next sync
-- **New transform / connector / generator** → minor release of engine, both wrappers update
-- **Breaking YAML schema change** → major release of engine, coordinated update of both wrappers (rare)
-- **Pure CLI UX improvement** → no engine release; just patch the CLI
-- **Pure platform feature (web UI, scheduling)** → no engine release; just deploy platform
+- **Bug fix in a transform** â†’ patch release of engine, both wrappers update on next sync
+- **New transform / connector / generator** â†’ minor release of engine, both wrappers update
+- **Breaking YAML schema change** â†’ major release of engine, coordinated update of both wrappers (rare)
+- **Pure CLI UX improvement** â†’ no engine release; just patch the CLI
+- **Pure platform feature (web UI, scheduling)** â†’ no engine release; just deploy platform
 
-You'll find that **most of your releases are engine releases**. That's the intended outcome — it confirms the architecture is working.
+You'll find that **most of your releases are engine releases**. That's the intended outcome â€” it confirms the architecture is working.
 
 ---
 
@@ -408,12 +408,12 @@ You'll find that **most of your releases are engine releases**. That's the inten
 
 If you've already built some CLI code, don't panic. Refactoring into the engine pattern is straightforward:
 
-1. **Create the `forge-engine` repo.** Empty.
-2. **Move data-work modules.** Find every module in your CLI that doesn't import Typer or Rich. Those are engine candidates. Move them to `forge-engine`.
+1. **Create the `decoy-engine` repo.** Empty.
+2. **Move data-work modules.** Find every module in your CLI that doesn't import Typer or Rich. Those are engine candidates. Move them to `decoy-engine`.
 3. **Define the engine's public API.** What do the moved modules expose? That's your initial `__init__.py`.
-4. **Update CLI imports.** Replace `from forge.transforms import ...` with `from forge_engine.transforms import ...`.
-5. **Add `forge-engine` as a dependency** in the CLI's `pyproject.toml`.
-6. **Run the test suite.** It should pass without changes — the only thing that moved is where the code lives.
+4. **Update CLI imports.** Replace `from forge.transforms import ...` with `from decoy_engine.transforms import ...`.
+5. **Add `decoy-engine` as a dependency** in the CLI's `pyproject.toml`.
+6. **Run the test suite.** It should pass without changes â€” the only thing that moved is where the code lives.
 
 Doing this *now* (when your codebase is small) is hours of work. Doing it later (when it's big) is weeks. So if you've already started, do it before the codebase grows.
 
@@ -431,8 +431,8 @@ Doing this *now* (when your codebase is small) is hours of work. Doing it later 
 5. Keep them in sync forever
 
 **With engine:**
-1. Write transform in `forge-engine/transforms/`
-2. Tests in `forge-engine/tests/`
+1. Write transform in `decoy-engine/transforms/`
+2. Tests in `decoy-engine/tests/`
 3. Release engine v1.4.0
 4. Bump engine dependency in `forge` and `forge-platform`. Done.
 
@@ -443,9 +443,9 @@ Same as transform. Engine-only work.
 ### Changing the YAML schema (e.g., adding a new optional field)
 
 **With engine:**
-1. Update Pydantic model in `forge-engine/config.py`
+1. Update Pydantic model in `decoy-engine/config.py`
 2. Add validation logic in engine
-3. Bump engine version (minor — it's additive)
+3. Bump engine version (minor â€” it's additive)
 4. Update docs in `forge-web`
 5. Both wrappers pick up the new field automatically
 
@@ -471,7 +471,7 @@ Never. The CLI is public, the platform is private. Importing platform code into 
 
 ### Mistake 2: Putting CLI-specific code in the engine
 
-If `forge-engine` imports `typer` or `rich`, you've polluted the engine. The engine should depend only on data libraries (Pydantic, SQLAlchemy, pandas/polars if used, etc.) — never on UI libraries.
+If `decoy-engine` imports `typer` or `rich`, you've polluted the engine. The engine should depend only on data libraries (Pydantic, SQLAlchemy, pandas/polars if used, etc.) â€” never on UI libraries.
 
 A useful rule: **the engine should be importable from a Jupyter notebook with no surprises.** If someone wants to use Forge as a Python library inside their own data pipeline, they should be able to. That's a feature, not a side effect.
 
@@ -489,7 +489,7 @@ If you ship breaking changes as patch releases, your wrappers will break in prod
 
 ### Mistake 5: Building the engine after the wrappers
 
-The temptation: build the CLI fast, build the platform fast, *then* refactor into an engine "when we have time." You won't have time. Build the engine from day one — even if it's tiny. The first version of `forge-engine` can be 200 lines. It just has to exist as a separate package so the boundary is real.
+The temptation: build the CLI fast, build the platform fast, *then* refactor into an engine "when we have time." You won't have time. Build the engine from day one â€” even if it's tiny. The first version of `decoy-engine` can be 200 lines. It just has to exist as a separate package so the boundary is real.
 
 ### Mistake 6: Not testing the engine in isolation
 
@@ -503,9 +503,9 @@ The engine doesn't authenticate users. It just verifies licenses (which are pre-
 
 ## When You Add the Fourth Repo
 
-Eventually you'll want a public `forge-examples` or `forge-recipes` repo. That's also a wrapper of the engine — it imports `forge-engine` and provides example pipelines and helper code. Same pattern, different shape.
+Eventually you'll want a public `forge-examples` or `forge-recipes` repo. That's also a wrapper of the engine â€” it imports `decoy-engine` and provides example pipelines and helper code. Same pattern, different shape.
 
-You might also build a Python SDK someday — a package called `forge-sdk` that's just a thin user-facing API around the engine, distributed as a "use Forge in your own Python code" library. Same pattern again.
+You might also build a Python SDK someday â€” a package called `forge-sdk` that's just a thin user-facing API around the engine, distributed as a "use Forge in your own Python code" library. Same pattern again.
 
 The engine is the foundation. Everything else is a wrapper.
 
@@ -513,11 +513,11 @@ The engine is the foundation. Everything else is a wrapper.
 
 ## Critical Path Summary
 
-1. **Phase 0:** Decide on the engine pattern (this doc) — done if you read this
-2. **Day 1:** Create `forge-engine` repo (public, BUSL), even empty
-3. **Day 2:** Create `forge` repo (public, BUSL), with `forge-engine` as a dependency
-4. **Weeks 1–4:** Build CLI features by writing engine code first, CLI wrapper second
-5. **Months 3–4 (after CLI launch):** Create `forge-platform` (private), import the same engine
+1. **Phase 0:** Decide on the engine pattern (this doc) â€” done if you read this
+2. **Day 1:** Create `decoy-engine` repo (public, BUSL), even empty
+3. **Day 2:** Create `forge` repo (public, BUSL), with `decoy-engine` as a dependency
+4. **Weeks 1â€“4:** Build CLI features by writing engine code first, CLI wrapper second
+5. **Months 3â€“4 (after CLI launch):** Create `forge-platform` (private), import the same engine
 6. **Always:** New features go in the engine first; wrappers follow
 
 The single rule that makes this work: **before writing any new code, decide which of the three repos it belongs in.** If the answer is "both CLI and Platform," it's engine code. If the answer is "obviously just one," put it there. The 30-second decision saves hours of refactoring later.
@@ -526,7 +526,7 @@ The single rule that makes this work: **before writing any new code, decide whic
 
 ## How This Changes the Build Plan
 
-The original BUILD_PLAN.md treated the CLI as the unit of work for Phase 1. Update your mental model: **Phase 1 is "build the engine, with a CLI on top."** When you add a new mask transform in week 2, you're adding it to the engine. When you add YAML parsing in week 1, that's the engine. The CLI is the thinnest possible shell over the engine — Typer commands, Rich output, and almost nothing else.
+The original BUILD_PLAN.md treated the CLI as the unit of work for Phase 1. Update your mental model: **Phase 1 is "build the engine, with a CLI on top."** When you add a new mask transform in week 2, you're adding it to the engine. When you add YAML parsing in week 1, that's the engine. The CLI is the thinnest possible shell over the engine â€” Typer commands, Rich output, and almost nothing else.
 
 Likewise, when Phase 4 starts (Business platform), you're not "rebuilding masking for the web." You're "wrapping the engine in a web UI." That distinction is the difference between 6 weeks of work and 6 months.
 

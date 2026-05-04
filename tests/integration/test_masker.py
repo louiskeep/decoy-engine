@@ -8,7 +8,7 @@ import pandas as pd
 import os
 import yaml
 
-from forge_engine.masker import Masker
+from decoy_engine.masker import Masker
 
 def test_masker_integration(sample_masking_config, sample_csv_file, tmp_path, mock_logger):
     """Test the complete masking process."""
@@ -114,7 +114,7 @@ def test_masker_fixed_width(sample_fixed_width_file, tmp_path, mock_logger):
     assert os.path.exists(output_def_path)
     
     # Load masked data using FixedWidthHandler
-    from forge_engine.connectors.fixed_width import FixedWidthHandler
+    from decoy_engine.connectors.fixed_width import FixedWidthHandler
     handler = FixedWidthHandler(
         {
             'type': 'fixed_width',

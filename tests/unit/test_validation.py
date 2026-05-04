@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from forge_engine import validate_config, ConfigError, PipelineValidationError
+from decoy_engine import validate_config, ConfigError, PipelineValidationError
 
 
 def _valid_mask_config(input_path: str = "in.csv", output_path: str = "out.csv") -> dict:
