@@ -12,11 +12,11 @@ from pathlib import Path
 import pytest
 import yaml
 
-from forge_engine import DataGenerator, ExecutionContext, Masker
+from decoy_engine import DataGenerator, ExecutionContext, Masker
 
 
 class CapturingLogger:
-    """Implements forge_engine.context.Logger via duck typing."""
+    """Implements decoy_engine.context.Logger via duck typing."""
 
     def __init__(self):
         self.messages: list[tuple[str, str]] = []

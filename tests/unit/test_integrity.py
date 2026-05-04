@@ -9,7 +9,7 @@ import os
 import tempfile
 import shutil
 
-from forge_engine.internal.integrity import ReferentialIntegrityManager
+from decoy_engine.internal.integrity import ReferentialIntegrityManager
 
 @pytest.fixture
 def related_dataframes():

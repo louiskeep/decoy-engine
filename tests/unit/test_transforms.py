@@ -8,14 +8,14 @@ import pandas as pd
 import random
 import numpy as np
 
-from forge_engine.transforms.faker_based import FakerStrategy
-from forge_engine.transforms.hash import HashStrategy
-from forge_engine.transforms.redact import RedactStrategy
-from forge_engine.transforms.map import MapStrategy
-from forge_engine.transforms.shuffle import ShuffleStrategy
-from forge_engine.transforms.passthrough import PassthroughStrategy
-from forge_engine.transforms.factory import create_strategy
-from forge_engine.transforms.registry import StrategyManager
+from decoy_engine.transforms.faker_based import FakerStrategy
+from decoy_engine.transforms.hash import HashStrategy
+from decoy_engine.transforms.redact import RedactStrategy
+from decoy_engine.transforms.map import MapStrategy
+from decoy_engine.transforms.shuffle import ShuffleStrategy
+from decoy_engine.transforms.passthrough import PassthroughStrategy
+from decoy_engine.transforms.factory import create_strategy
+from decoy_engine.transforms.registry import StrategyManager
 
 @pytest.fixture
 def sample_data():
@@ -77,7 +77,7 @@ def test_map_strategy(sample_data, mock_logger):
     
     try:
         # Initialize strategy with mapping dir
-        from forge_engine.internal.mappings import MappingManager
+        from decoy_engine.internal.mappings import MappingManager
         mapping_manager = MappingManager(mappings_dir=temp_dir, logger=mock_logger)
         
         strategy = MapStrategy(seed=42, logger=mock_logger)

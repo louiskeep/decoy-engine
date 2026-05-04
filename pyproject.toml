@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "forge-engine"
+name = "decoy-engine"
 version = "0.1.0"
-description = "Shared data masking and synthetic generation engine for the Forge product family"
+description = "Shared data masking and synthetic generation engine for the Decoy product family"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "louiskeep" }]
@@ -22,7 +22,7 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/forge_engine"]
+packages = ["src/decoy_engine"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,12 +1,12 @@
-# forge-engine
+# decoy-engine
 
 The shared Python data engine used by both the CLI and the platform.
 
-`pip install forge-engine`
+`pip install decoy-engine`
 
 ## What lives here
 
-- Data masking pipeline (`Pipeline`, `PipelineConfig`)
+- Data masking pipeline (`Masker`)
 - Masking transforms — faker, hash, redact, map, shuffle, date-shift, formula, passthrough
 - Synthetic data generation (`DataGenerator`)
 - Connectors — CSV, fixed-width, database
@@ -15,22 +15,28 @@ The shared Python data engine used by both the CLI and the platform.
 
 ## What does NOT live here
 
-- CLI commands → `forge`
-- Web platform → `forge-platform`
-- Marketing site → `forge-web`
+- CLI commands → `decoy`
+- Web platform → `decoy-platform`
+- Marketing site → `decoy-web`
 
 ## Public API
 
 ```python
-from forge_engine import (
-    Pipeline, PipelineConfig,
+from decoy_engine import (
+    Masker,
     DataGenerator,
-    MaskRegistry, ConnectorRegistry,
-    ExecutionContext, Logger,
+    ExecutionContext, Logger, TelemetryClient,
+    SchemaInspector, LicenseVerifier,
+    validate_config,
+    DecoyError, ConfigError, PipelineValidationError,
+    ConnectorError, ConnectorAuthError,
+    LicenseError, LicenseExpiredError,
 )
 ```
 
-Everything in `forge_engine.internal` is private and may change between minor versions.
+`ForgeError` is a deprecated alias for `DecoyError`, kept for one minor version.
+
+Everything in `decoy_engine.internal` is private and may change between minor versions.
 
 ## Dev setup
 
