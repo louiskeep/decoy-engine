@@ -17,6 +17,8 @@ Orientation files (this `CLAUDE.md`, `dev-help.md`, `README.md`) are conventiona
 - [STORM_FORECAST_GUIDE.md](STORM_FORECAST_GUIDE.md) — STORM (analysis) + FORECAST (recommender) module spec. *(partial)*
 - [DISGUISES_GUIDE.md](DISGUISES_GUIDE.md) — Disguise YAML schema + the 8-bundle launch set spec. *(partial)*
 
+The `Logger` Protocol in `decoy_engine.context` is owned by the platform's [LOGGING_GUIDE.md](../forge-platform/LOGGING_GUIDE.md) (sections 4 + 5). Engine entry points emit through the Protocol; the platform's `JobLogger` adapts it to job-log persistence + companion structured tables.
+
 ## Repo structure
 
 ```
