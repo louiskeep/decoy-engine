@@ -2,6 +2,20 @@
 
 Scope: the 8 launch Disguises and the field-detector layer FORECAST consults to recommend them. Disguises are the primary differentiator in the brand reference: every regulated shop has a compliance officer asking "how do you ensure developers don't touch production PII?" — Disguises are the answer that gets Decoy through the door.
 
+## Bones-only scope for `feature/storm-forecast-mvp`
+
+This doc describes the full target. The current `feature/storm-forecast-mvp` PR ships **bones only**:
+
+- The Pydantic schema (`src/decoy_engine/disguises/schema.py`)
+- The YAML loader (`src/decoy_engine/disguises/loader.py`)
+- Two Disguise YAMLs to prove the loop end-to-end:
+  - `default.yaml` — generic PII starter pack
+  - `hipaa.yaml` — minimal HIPAA Disguise (enough to verify FORECAST's "apply Disguise" recommendation surfaces correctly; **not** full 18-identifier Safe Harbor coverage)
+
+The full launch set (PCI / GLBA / GDPR / CCPA / FERPA / SOX, plus the rest of HIPAA's identifiers and the per-Disguise field detectors) lands in **a follow-up PR after the loop is proven**. This is the user's explicit direction.
+
+When you read sections below describing the full schema or the full launch set, treat them as the *target* spec — not the surface area shipping in this PR.
+
 ## Cross-cutting rules
 
 - **HIPAA, never HIPPA.** A misspelling in a regulation name kills credibility instantly. CI grep gate.

@@ -1,0 +1,60 @@
+# HIPAA Disguise — minimal scaffolding for `feature/storm-forecast-mvp`.
+#
+# IMPORTANT: this is the "bones" version. It covers SSN, person name, dates,
+# email, phone, and ZIP — enough to prove the apply-Disguise loop end-to-end.
+# Full Safe Harbor 18-identifier coverage (medical record numbers, health-plan
+# beneficiary IDs, account numbers, certificate/license numbers, vehicle/serial
+# IDs, device IDs, URLs/IPs, biometric identifiers, photos, etc.) lands in a
+# follow-up PR. Detectors for ICD-10, NPI, MRN, etc. arrive at the same time.
+# See DISGUISES.md.
+
+id: hipaa
+name: "HIPAA Disguise"
+summary: "Minimal HIPAA Safe Harbor masking: SSN, names, dates, ZIP, email, phone."
+regulation: "HIPAA Privacy Rule — Safe Harbor (45 CFR 164.514(b)(2))"
+primary_buyer: "Healthcare data engineers"
+
+triggers:
+  any_detectors:
+    - ssn
+  co_occurrence:
+    - [iso_date, us_zip, person_name]
+    - [us_date, us_zip, person_name]
+  min_score: 0.4
+
+field_rules:
+  - detectors: [ssn]
+    mask: hash
+    params:
+      algorithm: sha256
+    why: "SSN → irreversible hash. Preserves uniqueness across joins; not reversible to source."
+
+  - detectors: [person_name]
+    mask: faker
+    params:
+      faker_type: name
+    why: "Names → realistic fake substitutes (Safe Harbor identifier #A)."
+
+  - detectors: [iso_date, us_date, eu_date]
+    mask: date_shift
+    params:
+      jitter_days: 30
+    why: "Dates → random ±30d shift. Preserves analytic distribution while breaking correlations (Safe Harbor identifier #C)."
+
+  - detectors: [us_zip]
+    mask: redact
+    params:
+      keep_chars: 3
+    why: "ZIP → keep first 3 digits per Safe Harbor identifier #B (full ZIPs only allowed for ZCTAs >20K population)."
+
+  - detectors: [email]
+    mask: faker
+    params:
+      faker_type: email
+    why: "Email addresses → realistic fake (Safe Harbor identifier #D)."
+
+  - detectors: [us_phone]
+    mask: faker
+    params:
+      faker_type: phone_number
+    why: "Phone numbers → realistic fake (Safe Harbor identifier #E)."
