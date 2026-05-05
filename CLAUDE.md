@@ -2,6 +2,21 @@
 
 Shared Python data engine. The only repo that contains data manipulation logic. Both `decoy` (CLI) and `decoy-platform` (API) import this as a library — neither contains masking or generation code.
 
+## Docs in this repo
+
+We use two doc types. Distinguishing them keeps long-term plans aligned and short-term plans from rotting.
+
+- **Guides** are durable specs describing target state. Filename: `*_GUIDE.md` (or `SHARED_ENGINE_ARCHITECTURE.md` — kept under that name because "architecture" reads well), repo root. Header carries `Status:` (`target` / `partial` / `superseded`) and `Last reviewed:`. When a feature ships, the implementer updates the relevant guide in the same PR.
+- **Plans** are transient, scoped to a PR or sprint. Live in `plans/`, dated. Header carries `Status:` (`planning` / `in-progress` / `shipped` / `abandoned`), `Branch:`, and `References:` (the guides being implemented). Once a plan ships, it can be deleted — git history is the archive.
+
+Orientation files (this `CLAUDE.md`, `dev-help.md`, `README.md`) are conventional contributor entry points and stay outside the guide/plan taxonomy.
+
+### Active guides
+
+- [SHARED_ENGINE_ARCHITECTURE.md](SHARED_ENGINE_ARCHITECTURE.md) — engine architecture + the shared-library rationale. *(partial)*
+- [STORM_FORECAST_GUIDE.md](STORM_FORECAST_GUIDE.md) — STORM (analysis) + FORECAST (recommender) module spec. *(partial)*
+- [DISGUISES_GUIDE.md](DISGUISES_GUIDE.md) — Disguise YAML schema + the 8-bundle launch set spec. *(partial)*
+
 ## Repo structure
 
 ```

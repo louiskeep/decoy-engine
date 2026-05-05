@@ -1,9 +1,9 @@
-# Forge â€” Shared Engine Architecture Plan
+# Decoy — Shared Engine Architecture
 
-> **Companion to:** BUILD_PLAN.md, REPO_ARCHITECTURE_PLAN.md
+> **Status:** partial — the engine ships and is consumed by `decoy` (CLI) and `decoy-platform`. Public API stable. STORM/FORECAST modules added 2026-05-04. Disguises framework partial (see `DISGUISES_GUIDE.md`).
+> **Last reviewed:** 2026-05-04
 > **Purpose:** Solves the "doubling work between CLI and Platform" problem by introducing a shared engine library that both consume.
 > **Read this before:** Writing any code that could plausibly live in either the CLI or the Platform.
-> **Last updated:** [date]
 
 ---
 
