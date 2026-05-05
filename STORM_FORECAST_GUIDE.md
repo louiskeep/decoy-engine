@@ -1,6 +1,9 @@
 # STORM → FORECAST → Report — engine side
 
-Scope: the compute layer. The platform's API/UI/PDF half is in `forge-platform/STORM_FORECAST_REPORT.md`. This doc covers everything that runs without the platform — i.e., what `decoy-engine` exposes so the CLI can run analysis offline and the platform can call it server-side.
+> **Status:** partial — STORM module + FORECAST recommender + Disguises bones (default + hipaa) shipped 2026-05-04. Full launch set (PCI/GLBA/GDPR/CCPA/FERPA/SOX), midrange detectors (icd10, npi, mrn, ipv4, pan), and the field semantic overrides feature remain pending.
+> **Last reviewed:** 2026-05-04
+
+Scope: the compute layer. The platform's API/UI/PDF half is in [`../decoy-platform/STORM_FORECAST_GUIDE.md`](../decoy-platform/STORM_FORECAST_GUIDE.md). This doc covers everything that runs without the platform — i.e., what `decoy-engine` exposes so the CLI can run analysis offline and the platform can call it server-side.
 
 ## Why this split
 
@@ -113,12 +116,27 @@ src/decoy_engine/
     rules.py           # ranking weights
 ```
 
-Disguise YAMLs live in `decoy_engine/disguises/` — see `DISGUISES.md`. FORECAST loads them at startup and consults their detector hints.
+Disguise YAMLs live in `decoy_engine/disguises/` — see [DISGUISES_GUIDE.md](DISGUISES_GUIDE.md). FORECAST loads them at startup and consults their detector hints.
+
+## Future: field semantic overrides (post-MVP)
+
+The current detector model fires on a combination of column-name hints and value-pattern matches. That's good enough for clean datasets but breaks down on legacy schemas with weird naming conventions — the canonical example is a column called `pin_id` that actually contains SSNs. The value regex usually still fires (SSN format is recognizable), but column-name hints don't help, and partial-/non-standard formats slip through entirely.
+
+**Planned model** (not in `feature/storm-forecast-mvp`):
+
+1. **Per-scan override**: `run_storm(df, source_label, *, field_overrides={"pin_id": ["ssn"]})` — force the SSN detector to fire on `pin_id` regardless of name/value match.
+2. **Per-connector + per-table persisted mapping**: a `field_mappings` table on the platform side. Once a user maps `customer_db.users.pin_id -> ssn` and saves, future scans of that table auto-apply.
+3. **Suggested mappings** in FORECAST: when a column has an ambiguous signal ("regex matched 60% of rows; column name unrelated"), surface as "looks like SSN — confirm?" with [Apply / Not SSN] buttons. User confirms → mapping persists.
+4. **UI surface**: a small "field mappings" tab on the STORM profile drill-down that lists overrides for the current dataset, lets users edit them, and copies them to similar tables.
+
+Effect on FORECAST: an overridden column flows through the rest of the pipeline as if the detector had fired naturally — same Disguise recommendations, same Mask suggestions, same risk flags. No special-case code paths.
+
+This belongs in midrange (after MVP). Captured here so it isn't lost.
 
 ## What this doc does NOT cover
 
-- HTTP routes, RBAC, SSE encoding, Report persistence, PDF export → `forge-platform/STORM_FORECAST_REPORT.md`.
-- Disguise YAML schema and the 8 launch bundles → `DISGUISES.md`.
+- HTTP routes, RBAC, SSE encoding, Report persistence, PDF export → [`../decoy-platform/STORM_FORECAST_GUIDE.md`](../decoy-platform/STORM_FORECAST_GUIDE.md).
+- Disguise YAML schema and the 8 launch bundles → [DISGUISES_GUIDE.md](DISGUISES_GUIDE.md).
 
 ## Verification
 

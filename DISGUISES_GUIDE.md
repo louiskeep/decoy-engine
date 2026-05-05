@@ -1,5 +1,8 @@
 # Disguises — engine
 
+> **Status:** partial — schema, loader, `default.yaml`, `hipaa.yaml` shipped 2026-05-04. Full 8-bundle launch set (PCI/GLBA/GDPR/CCPA/FERPA/SOX, plus the rest of HIPAA's 18 identifiers) and per-Disguise field detectors remain pending.
+> **Last reviewed:** 2026-05-04
+
 Scope: the 8 launch Disguises and the field-detector layer FORECAST consults to recommend them. Disguises are the primary differentiator in the brand reference: every regulated shop has a compliance officer asking "how do you ensure developers don't touch production PII?" — Disguises are the answer that gets Decoy through the door.
 
 ## Bones-only scope for `feature/storm-forecast-mvp`
