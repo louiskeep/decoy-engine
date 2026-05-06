@@ -55,6 +55,7 @@ class ExecutionContext:
         resolve_connector: Callable[[int], str] | None = None,
         derive_key: Callable[[str], bytes] | None = None,
         pipeline_derive_key: Callable[[str], bytes] | None = None,
+        captured_outputs: list[dict[str, Any]] | None = None,
     ) -> None:
         self.logger = logger
         self.telemetry = telemetry
@@ -62,6 +63,14 @@ class ExecutionContext:
         # connector_id into a DSN string. Platform passes a closure over its
         # connector store; CLI leaves it None and users supply inline `dsn:`.
         self.resolve_connector = resolve_connector
+        # Side channel for ops that produce out-of-band artifacts the runner
+        # can't reach via the dataframe stream (e.g. `run_storm` produces a
+        # StormProfile, not row data). Each entry is a dict shaped like
+        # {"kind": "<artifact-kind>", ...}; the platform reads it after the
+        # graph completes and persists each entry per its kind. List rather
+        # than dict because a single graph may run multiple instances of the
+        # same op, and node_id is not visible inside `op.apply`.
+        self.captured_outputs = captured_outputs if captured_outputs is not None else []
         # ── two key resolvers, by design ──
         #
         # `derive_key(info)` is the **mask** resolver. Caller pre-binds the
