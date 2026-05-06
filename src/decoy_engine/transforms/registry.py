@@ -16,27 +16,31 @@ class StrategyManager:
     Provides a centralized way to apply masking rules to columns.
     """
     
-    def __init__(self, seed: int = 42, logger=None):
+    def __init__(self, seed: int = 42, logger=None, derive_key=None):
         """
         Initialize the strategy manager
-        
+
         Args:
-            seed: Global random seed for deterministic masking
+            seed: Global random seed for deterministic masking (legacy fallback)
             logger: Logger instance (optional)
+            derive_key: Optional ``(info: str) -> bytes`` for keyed
+                determinism. Forwarded to every strategy this manager builds.
         """
         self.seed = seed
-        
+        self.derive_key = derive_key
+
         # Use provided logger or create a default one
         if logger:
             self.logger = logger
         else:
             from decoy_engine.internal.logging import get_logger
             self.logger = get_logger()
-        
+
         # Cache for strategy instances
         self._strategy_cache = {}
-        
-        self.logger.debug(f"Initialized StrategyManager with seed: {seed}")
+
+        keyed = "yes" if derive_key is not None else "no"
+        self.logger.debug(f"Initialized StrategyManager with seed: {seed} (keyed: {keyed})")
     
     def get_strategy(self, strategy_type: str) -> BaseMaskingStrategy:
         """
@@ -53,11 +57,13 @@ class StrategyManager:
             return self._strategy_cache[strategy_type]
         
         # Create new strategy
-        strategy = create_strategy(strategy_type, self.seed, self.logger)
-        
+        strategy = create_strategy(
+            strategy_type, self.seed, self.logger, derive_key=self.derive_key
+        )
+
         # Cache it
         self._strategy_cache[strategy_type] = strategy
-        
+
         return strategy
     
     def apply_masking_rule(self, column: pd.Series, rule: Dict[str, Any]) -> pd.Series:

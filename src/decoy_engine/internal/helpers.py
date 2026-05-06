@@ -4,30 +4,59 @@ General helper functions for the decoy_engine package.
 """
 
 import hashlib
+import hmac
 from typing import Dict, Any, List, Optional, Callable
 from faker import Faker
 
 
 def deterministic_hash(value, seed=0):
     """
-    Create a deterministic hash from a value and seed
-    
+    Legacy SHA256(value + seed) hash. Kept for backwards compatibility when
+    no master key is configured. Prefer ``hmac_hex`` (keyed) for any new
+    code path so output is per-tenant and not derivable from the value alone.
+
     Args:
         value: The value to hash
         seed: A seed to ensure consistent hashing across runs
-        
+
     Returns:
         A deterministic hash string
     """
     if value is None:
         return None
-    
+
     # Convert to string and add seed
     value_str = f"{value}{seed}"
-    
+
     # Create hash
     hash_obj = hashlib.sha256(value_str.encode())
     return hash_obj.hexdigest()
+
+
+def hmac_hex(key: bytes, value) -> str:
+    """HMAC-SHA256(key, value) as a 64-char hex string.
+
+    The "Path B" deterministic primitive: same key + same input always
+    yields the same output, with no per-tenant secret leakage (unlike
+    SHA256(value + seed) where the seed is recoverable by brute force on
+    a single known mapping).
+    """
+    if value is None:
+        return None
+    msg = str(value).encode("utf-8", errors="replace")
+    return hmac.new(key, msg, hashlib.sha256).hexdigest()
+
+
+def hmac_seed(key: bytes, value) -> int:
+    """Derive a 32-bit integer seed for Faker.seed_instance(...) from
+    HMAC-SHA256(key, value). Same input + same key → same seed → same
+    Faker output, with zero state stored anywhere.
+    """
+    if value is None:
+        return 0
+    msg = str(value).encode("utf-8", errors="replace")
+    digest = hmac.new(key, msg, hashlib.sha256).digest()
+    return int.from_bytes(digest[:4], "big")
 
 
 def get_faker_providers(faker_instance: Faker) -> Dict[str, Callable]:

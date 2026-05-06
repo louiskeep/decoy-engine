@@ -58,19 +58,25 @@ class Masker:
         
         # Get seed from config
         seed = self.config.get('global_settings', {}).get('seed', 42)
-        
+
+        # Optional caller-supplied keyed-determinism resolver. When set,
+        # transforms (hash, faker, date_shift) prefer it over the seeded
+        # path. CLI passes a closure over a master-key-loaded HKDF; platform
+        # passes a closure pre-bound with the pipeline key_label.
+        derive_key = getattr(ctx, "derive_key", None) if ctx is not None else None
+
         # Initialize I/O handler
         from decoy_engine.connectors.factory import create_io_handler
         self.io_handler = create_io_handler(
-            self.config['input'], 
-            self.config['output'], 
+            self.config['input'],
+            self.config['output'],
             self.config,
             self.logger
         )
-        
+
         # Initialize strategy manager
         from decoy_engine.transforms.registry import StrategyManager
-        self.strategy_manager = StrategyManager(seed, self.logger)
+        self.strategy_manager = StrategyManager(seed, self.logger, derive_key=derive_key)
         
         # Initialize referential integrity manager
         from decoy_engine.internal.integrity import ReferentialIntegrityManager

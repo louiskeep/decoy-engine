@@ -8,29 +8,35 @@ from typing import Dict, Any, Optional
 from decoy_engine.transforms.base import BaseMaskingStrategy
 
 
-def create_strategy(strategy_type: str, seed: int = 42, logger=None) -> BaseMaskingStrategy:
+def create_strategy(
+    strategy_type: str,
+    seed: int = 42,
+    logger=None,
+    derive_key=None,
+) -> BaseMaskingStrategy:
     """
     Factory function to create appropriate masking strategy
-    
+
     Args:
         strategy_type: Type of masking strategy to create
-        seed: Random seed for deterministic masking
+        seed: Random seed for deterministic masking (legacy fallback)
         logger: Logger instance (optional)
-        
+        derive_key: Optional ``(info: str) -> bytes`` for keyed determinism
+
     Returns:
         Appropriate masking strategy instance
-        
+
     Raises:
         ValueError: If strategy type is not supported
     """
     strategy_type = strategy_type.lower()
-    
+
     if strategy_type == 'faker':
         from decoy_engine.transforms.faker_based import FakerStrategy
-        return FakerStrategy(seed, logger)
+        return FakerStrategy(seed, logger, derive_key=derive_key)
     elif strategy_type == 'hash':
         from decoy_engine.transforms.hash import HashStrategy
-        return HashStrategy(seed, logger)
+        return HashStrategy(seed, logger, derive_key=derive_key)
     elif strategy_type == 'redact':
         from decoy_engine.transforms.redact import RedactStrategy
         return RedactStrategy(seed, logger)
@@ -45,7 +51,7 @@ def create_strategy(strategy_type: str, seed: int = 42, logger=None) -> BaseMask
         return PassthroughStrategy(seed, logger)
     elif strategy_type == 'date_shift':
         from decoy_engine.transforms.date_shift import DateShiftStrategy
-        return DateShiftStrategy(seed, logger)
+        return DateShiftStrategy(seed, logger, derive_key=derive_key)
     elif strategy_type == 'formula':
         from decoy_engine.transforms.formula import FormulaStrategy
         return FormulaStrategy(seed, logger)

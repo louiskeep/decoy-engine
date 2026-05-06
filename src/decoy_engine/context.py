@@ -13,7 +13,7 @@ they construct their own logger from the YAML config. Wiring the engine
 to consume ExecutionContext is a follow-up change.
 """
 
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Callable, Protocol, runtime_checkable
 
 
 @runtime_checkable
@@ -42,14 +42,26 @@ class ExecutionContext:
     """Caller-provided runtime context for engine execution.
 
     Construct one in the CLI or platform layer and pass it to engine
-    entry points. The engine treats both fields as optional and falls
-    back to its own logger when none is provided.
+    entry points. The engine treats every field as optional and falls
+    back to defaults when not supplied.
     """
 
     def __init__(
         self,
         logger: Logger | None = None,
         telemetry: TelemetryClient | None = None,
+        resolve_connector: Callable[[int], str] | None = None,
+        derive_key: Callable[[str], bytes] | None = None,
     ) -> None:
         self.logger = logger
         self.telemetry = telemetry
+        # Used by graph ops `source.db` / `target.db` to turn a platform
+        # connector_id into a DSN string. Platform passes a closure over its
+        # connector store; CLI leaves it None and users supply inline `dsn:`.
+        self.resolve_connector = resolve_connector
+        # `derive_key(info)` returns 32 bytes of HKDF-derived key material
+        # given a stable info label (e.g. "col:email"). Caller pre-binds the
+        # tenant master key + pipeline key_label; the engine just asks for
+        # column-scoped subkeys. When None, deterministic-by-input strategies
+        # fall back to the legacy `seed`-coupled path.
+        self.derive_key = derive_key

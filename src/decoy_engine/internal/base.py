@@ -117,17 +117,23 @@ class MaskingStrategy(ABC):
     Abstract base class for masking strategies.
     """
     
-    def __init__(self, seed: int = 42, logger=None):
+    def __init__(self, seed: int = 42, logger=None, derive_key=None):
         """
         Initialize with a seed for deterministic behavior
-        
+
         Args:
-            seed: Random seed for deterministic masking
+            seed: Random seed for deterministic masking (legacy fallback path)
             logger: Logger instance (optional)
+            derive_key: Optional callable ``(info: str) -> bytes`` returning
+                32 bytes of HKDF-derived key material. When supplied, keyed
+                strategies (hash, faker, date_shift) prefer this over the
+                ``seed``-coupled path so output is tenant-scoped and bitwise
+                stable across runs and instances.
         """
         self.seed = seed
+        self.derive_key = derive_key
         self.strategy_name = self.__class__.__name__.lower().replace('strategy', '')
-        
+
         # Use provided logger or create a default one
         if logger:
             self.logger = logger

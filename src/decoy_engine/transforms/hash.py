@@ -8,41 +8,62 @@ import pandas as pd
 from typing import Dict, Any, Optional
 
 from decoy_engine.transforms.base import BaseMaskingStrategy
-from decoy_engine.internal.helpers import deterministic_hash
+from decoy_engine.internal.helpers import deterministic_hash, hmac_hex
 
 
 class HashStrategy(BaseMaskingStrategy):
     """
     Masking strategy that replaces values with deterministic hash strings.
-    Ensures that the same input always produces the same hash.
+
+    Two paths:
+      * **Keyed (preferred).** When the engine is configured with a master
+        key (``ctx.derive_key``), this becomes HMAC-SHA256(column_key, value).
+        Output is bitwise stable across runs and instances given the same
+        master key + column name.
+      * **Legacy (fallback).** Without a master key, falls back to
+        SHA256(value + seed). Same input + same seed → same output, but
+        derivable from the value alone, so don't use across tenants.
     """
-    
+
     def apply(self, column: pd.Series, rule: Dict[str, Any]) -> pd.Series:
         """
         Replace values with deterministic hash strings that can't be reversed
-        
-        Args:
-            column: Pandas Series to mask
-            rule: Dictionary containing the masking rule configuration
-            
-        Returns:
-            Pandas Series with hashed values
         """
-        # Get seed from rule or use default
+        column_name = rule.get('column', 'unnamed')
+        column_key = self._column_key(column_name)
         seed = rule.get('seed', self.seed)
-        
-        self.logger.debug(f"Applying hash mask with seed {seed}")
-        
-        # Apply deterministic hashing to each value
-        def hash_value(val):
-            if val is None or pd.isna(val):
-                return val
-            return deterministic_hash(str(val), seed)
-        
-        # Apply the function to the column
+
+        if column_key is not None:
+            self.logger.debug(f"Applying keyed hash to column '{column_name}'")
+
+            def hash_value(val):
+                if val is None or pd.isna(val):
+                    return val
+                return hmac_hex(column_key, str(val))
+        else:
+            self.logger.debug(
+                f"Applying legacy hash with seed {seed} (no master key configured)"
+            )
+
+            def hash_value(val):
+                if val is None or pd.isna(val):
+                    return val
+                return deterministic_hash(str(val), seed)
+
         result = column.apply(hash_value)
-        
-        # Log statistics
         self._log_stats(column, result, rule)
-        
         return result
+
+    def _column_key(self, column_name: str) -> Optional[bytes]:
+        """Derive the column-scoped subkey via the caller-supplied resolver,
+        if one was injected. None means "no master key configured" — fall
+        back to the legacy seeded path."""
+        if self.derive_key is None:
+            return None
+        try:
+            return self.derive_key(f"col:{column_name}")
+        except Exception as exc:
+            self.logger.warning(
+                f"derive_key failed for col:{column_name} ({exc}); falling back to legacy hash"
+            )
+            return None
