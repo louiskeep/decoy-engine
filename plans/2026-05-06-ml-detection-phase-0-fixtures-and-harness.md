@@ -24,6 +24,12 @@ match it.
    and emits per-entity recall, precision, and (later) calibration metrics.
 3. A pytest entry point + a CLI entry point reusing the harness.
 4. CI wiring: harness runs on every PR that touches `storm/`.
+5. **License-allowlist CI gate** — fails the build if a new dependency in
+   `decoy-engine`'s lockfile declares a license outside the permissive tier
+   (Apache-2.0 / MIT / BSD). Captured as a ROADMAP backlog item ("License
+   CI gate — should be Phase 0 of ML detection"); promoted here to a
+   shipped deliverable so Phase 1 cannot accidentally pull in a
+   non-permissive transitive dependency.
 
 Out of scope: ML models, sampling changes, profiler changes, the customer
 opt-in flag (Phase 1 introduces it).
@@ -37,6 +43,8 @@ src/decoy_engine/storm/
     ├── harness.py                             ← run_harness(detectors, fixtures) → MetricsReport
     ├── metrics.py                             ← per-entity recall/precision; calibration stub
     └── cli.py                                 ← `python -m decoy_engine.storm.eval ...`
+ci/
+└── check_licenses.py                          ← NEW: license-allowlist gate over the lockfile
 tests/fixtures/ml_detection/
 ├── README.md                                  ← schema + how to regenerate
 ├── synth/                                     ← Faker-generated, regenerable

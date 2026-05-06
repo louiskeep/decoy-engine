@@ -11,6 +11,16 @@ Only runs on columns the Phase 1 classifier flagged as `free_text`.
 
 Depends on Phase 1.
 
+## Preconditions (must be decided before this phase starts)
+
+- **Air-gapped NER artifact distribution.** ROADMAP backlog calls this out:
+  "Air-gapped NER artifact distribution — concrete decision needed before
+  ML Phase 2." We need a documented answer for how an air-gapped customer
+  acquires `en_core_web_lg` + Presidio recognizers without outbound
+  network. Likely a signed offline-bundle download we publish alongside
+  engine releases, but the shape needs to land before NER lazy-pull goes
+  in. **Phase 2 does not start until this is decided.**
+
 ## Scope
 
 - Wire Presidio's `AnalyzerEngine` into `storm.ml` as a new stage.

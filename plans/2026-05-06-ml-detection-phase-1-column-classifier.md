@@ -126,6 +126,10 @@ Implemented in `pipeline.py`:
    skip; profiler still completes.
 4. CI threshold gate added: recall regression on any entity vs. Phase 0
    baseline fails the build.
+5. **Calibration regression test in CI** (ROADMAP backlog item, lands here
+   because Phase 1 is the first phase with probability outputs). Reliability
+   diagram per entity, expected calibration error < 0.05 per RFC §7.
+   Calibration regression fails the build.
 
 ## Open questions / risks
 
