@@ -2,6 +2,10 @@
 
 Shared Python data engine. The only repo that contains data manipulation logic. Both `decoy` (CLI) and `decoy-platform` (API) import this as a library — neither contains masking or generation code.
 
+## What's next?
+
+The cross-repo roadmap lives in **[forge-platform/ROADMAP.md](../forge-platform/ROADMAP.md)**. Start there for "where should we go?" questions, then come back here for engine-specific guides and plans.
+
 ## Docs in this repo
 
 We use two doc types. Distinguishing them keeps long-term plans aligned and short-term plans from rotting.
@@ -9,7 +13,7 @@ We use two doc types. Distinguishing them keeps long-term plans aligned and shor
 - **Guides** are durable specs describing target state. Filename: `*_GUIDE.md` (or `SHARED_ENGINE_ARCHITECTURE.md` — kept under that name because "architecture" reads well), repo root. Header carries `Status:` (`target` / `partial` / `superseded`) and `Last reviewed:`. When a feature ships, the implementer updates the relevant guide in the same PR.
 - **Plans** are transient, scoped to a PR or sprint. Live in `plans/`, dated. Header carries `Status:` (`planning` / `in-progress` / `shipped` / `abandoned`), `Branch:`, and `References:` (the guides being implemented). Once a plan ships, it can be deleted — git history is the archive.
 
-Orientation files (this `CLAUDE.md`, `dev-help.md`, `README.md`) are conventional contributor entry points and stay outside the guide/plan taxonomy.
+Orientation files (this `CLAUDE.md`, `dev-help.md`, `README.md`) are conventional contributor entry points and stay outside the guide/plan taxonomy. The cross-repo **ROADMAP.md** lives in `forge-platform/`.
 
 ## Comment style
 
