@@ -1,0 +1,54 @@
+"""TypedDicts for the graph pipeline format.
+
+Shape contract is defined in PIPELINE_GRAPH_GUIDE.md. These types are
+internal helpers; callers should not depend on them — they read/write
+the YAML directly.
+"""
+
+from typing import Any, Literal, TypedDict
+
+
+class NodeSpec(TypedDict, total=False):
+    id: str
+    kind: str
+    config: dict[str, Any]
+    position: dict[str, float]
+
+
+class EdgeSpec(TypedDict):
+    # YAML key is `from`; we map to `from_` in code because `from` is a keyword.
+    from_: str
+    to: str
+
+
+class GraphConfig(TypedDict, total=False):
+    mode: Literal["graph"]
+    schema_version: int
+    settings: dict[str, Any]
+    nodes: list[NodeSpec]
+    edges: list[Any]
+
+
+class NodeRunRecord(TypedDict, total=False):
+    node_id: str
+    kind: str
+    status: Literal["ok", "error"]
+    row_count: int | None
+    elapsed_ms: int
+    error: str | None
+
+
+class RunResult(TypedDict):
+    nodes: list[NodeRunRecord]
+    success: bool
+    elapsed_ms: int
+
+
+class PreviewResult(TypedDict, total=False):
+    node_id: str
+    columns: list[str]
+    rows: list[list[Any]]
+    applied_chain: list[str]
+    row_count: int
+    elapsed_ms: int
+    error: str | None

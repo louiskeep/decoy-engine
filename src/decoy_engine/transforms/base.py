@@ -14,15 +14,17 @@ class BaseMaskingStrategy(MaskingStrategy):
     Implements common functionality and defines the interface.
     """
     
-    def __init__(self, seed: int = 42, logger=None):
+    def __init__(self, seed: int = 42, logger=None, derive_key=None):
         """
         Initialize the strategy with a seed for deterministic behavior
-        
+
         Args:
-            seed: Random seed for deterministic masking
+            seed: Random seed for deterministic masking (legacy fallback)
             logger: Logger instance (optional)
+            derive_key: Optional ``(info: str) -> bytes`` for keyed
+                determinism. Keyed strategies prefer this when present.
         """
-        super().__init__(seed, logger)
+        super().__init__(seed, logger, derive_key=derive_key)
     
     @abstractmethod
     def apply(self, column: pd.Series, rule: Dict[str, Any]) -> pd.Series:

@@ -869,3 +869,166 @@ class GeneratorConfigValidator(ConfigValidator):
                 f"Junction table '{junction_table}' not defined",
                 f"{rel_path}.junction_table"
             )
+
+
+import re
+
+_GRAPH_NODE_ID_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]{0,63}$")
+
+
+class GraphConfigValidator(ConfigValidator):
+    """Validates `mode: graph` pipeline configs.
+
+    Mirrors MaskerConfigValidator's structure: a single public `validate`
+    that dispatches to private `_validate_*` helpers. Per-kind config is
+    delegated to the op module via the ops registry, so this validator
+    doesn't need to know each kind's config schema.
+    """
+
+    SUPPORTED_SCHEMA_VERSIONS = {1}
+
+    def validate(self, config: Dict[str, Any]) -> None:
+        try:
+            self._validate_top_level(config)
+            kinds = self._known_kinds()
+            self._validate_nodes(config["nodes"], kinds)
+            self._validate_edges(config.get("edges") or [], config["nodes"])
+            self._validate_cardinality(config["nodes"], config.get("edges") or [], kinds)
+            self._validate_acyclic(config["nodes"], config.get("edges") or [])
+        except ValidationError as e:
+            self.logger.error(str(e))
+            raise
+
+    def _known_kinds(self) -> Set[str]:
+        # Lazy import to avoid circular deps at module-import time
+        from decoy_engine.graph.ops import OPS
+
+        return set(OPS.keys())
+
+    def _validate_top_level(self, config: Dict[str, Any]) -> None:
+        mode = config.get("mode")
+        if mode != "graph":
+            raise ValidationError(
+                f"top-level 'mode' must be 'graph' (got {mode!r})", "mode"
+            )
+        if not isinstance(config.get("nodes"), list) or not config["nodes"]:
+            raise ValidationError("'nodes' must be a non-empty list", "nodes")
+        if "edges" in config and not isinstance(config["edges"], list):
+            raise ValidationError("'edges' must be a list", "edges")
+
+        sv = config.get("schema_version", 1)
+        if not isinstance(sv, int) or sv not in self.SUPPORTED_SCHEMA_VERSIONS:
+            raise ValidationError(
+                f"unsupported schema_version {sv!r} (supported: {sorted(self.SUPPORTED_SCHEMA_VERSIONS)})",
+                "schema_version",
+            )
+
+    def _validate_nodes(
+        self, nodes: List[Dict[str, Any]], kinds: Set[str]
+    ) -> None:
+        # Lazy import to avoid circular deps
+        from decoy_engine.graph.ops import OPS
+
+        seen_ids: Set[str] = set()
+        for i, node in enumerate(nodes):
+            path = f"nodes[{i}]"
+            if not isinstance(node, dict):
+                raise ValidationError("node must be a mapping", path)
+            nid = node.get("id")
+            if not isinstance(nid, str) or not _GRAPH_NODE_ID_RE.match(nid):
+                raise ValidationError(
+                    "id must match ^[a-zA-Z][a-zA-Z0-9_]{0,63}$",
+                    f"{path}.id",
+                )
+            if nid in seen_ids:
+                raise ValidationError(
+                    f"duplicate node id {nid!r}", f"{path}.id"
+                )
+            seen_ids.add(nid)
+
+            kind = node.get("kind")
+            if kind not in kinds:
+                raise ValidationError(
+                    f"unknown kind {kind!r} (supported: {sorted(kinds)})",
+                    f"{path}.kind",
+                )
+
+            cfg = node.get("config", {})
+            if not isinstance(cfg, dict):
+                raise ValidationError(
+                    "config must be a mapping", f"{path}.config"
+                )
+
+            try:
+                OPS[kind].validate_config(cfg)
+            except ValidationError as e:
+                # Re-raise with the node path prefixed
+                raise ValidationError(
+                    str(e).split(": ", 1)[-1] if ": " in str(e) else str(e),
+                    f"{path}.{getattr(e, 'path', None) or 'config'}",
+                ) from e
+
+    def _validate_edges(
+        self, edges: List[Dict[str, Any]], nodes: List[Dict[str, Any]]
+    ) -> None:
+        node_ids = {n["id"] for n in nodes}
+        for j, edge in enumerate(edges):
+            path = f"edges[{j}]"
+            if not isinstance(edge, dict):
+                raise ValidationError("edge must be a mapping", path)
+            src = edge.get("from")
+            dst = edge.get("to")
+            if src not in node_ids:
+                raise ValidationError(
+                    f"'from' references unknown node {src!r}", f"{path}.from"
+                )
+            if dst not in node_ids:
+                raise ValidationError(
+                    f"'to' references unknown node {dst!r}", f"{path}.to"
+                )
+
+    def _validate_cardinality(
+        self,
+        nodes: List[Dict[str, Any]],
+        edges: List[Dict[str, Any]],
+        kinds: Set[str],
+    ) -> None:
+        from decoy_engine.graph.ops import OPS
+
+        in_count: Dict[str, int] = {n["id"]: 0 for n in nodes}
+        out_count: Dict[str, int] = {n["id"]: 0 for n in nodes}
+        for e in edges:
+            in_count[e["to"]] += 1
+            out_count[e["from"]] += 1
+
+        for n in nodes:
+            kind = n["kind"]
+            op = OPS[kind]
+            arity = getattr(op, "INPUT_ARITY", (1, 1))
+            output_kind = getattr(op, "OUTPUT_KIND", "stream")
+            ic = in_count[n["id"]]
+            oc = out_count[n["id"]]
+
+            min_in, max_in = arity
+            if ic < min_in:
+                raise ValidationError(
+                    f"node {n['id']!r} ({kind}) needs at least {min_in} incoming edge(s), got {ic}",
+                    f"nodes.{n['id']}",
+                )
+            if max_in is not None and ic > max_in:
+                raise ValidationError(
+                    f"node {n['id']!r} ({kind}) accepts at most {max_in} incoming edge(s), got {ic}",
+                    f"nodes.{n['id']}",
+                )
+            if output_kind == "sink" and oc > 0:
+                raise ValidationError(
+                    f"target node {n['id']!r} must have no outgoing edges (got {oc})",
+                    f"nodes.{n['id']}",
+                )
+
+    def _validate_acyclic(
+        self, nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]]
+    ) -> None:
+        from decoy_engine.graph.topo import topo_order
+
+        topo_order(nodes, edges)  # raises ValidationError on cycle
