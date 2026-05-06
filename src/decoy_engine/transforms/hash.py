@@ -55,15 +55,19 @@ class HashStrategy(BaseMaskingStrategy):
         return result
 
     def _column_key(self, column_name: str) -> Optional[bytes]:
-        """Derive the column-scoped subkey via the caller-supplied resolver,
-        if one was injected. None means "no master key configured" — fall
-        back to the legacy seeded path."""
+        """Derive the mask subkey via the caller-supplied resolver, if one
+        was injected. The same input value hashes identically across every
+        column, table, and pipeline on the instance — preserves FK joins
+        through masking by default, no per-column or per-table tagging
+        needed. ``column_name`` is kept in the signature only for log
+        context. None means "no master key configured" — fall back to the
+        legacy seeded path."""
         if self.derive_key is None:
             return None
         try:
-            return self.derive_key(f"col:{column_name}")
+            return self.derive_key("mask")
         except Exception as exc:
             self.logger.warning(
-                f"derive_key failed for col:{column_name} ({exc}); falling back to legacy hash"
+                f"derive_key failed for 'mask' ({exc}); falling back to legacy hash"
             )
             return None

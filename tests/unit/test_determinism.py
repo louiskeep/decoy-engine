@@ -106,16 +106,19 @@ class TestKeyedHash:
         )
         assert out_a.iloc[0] != out_b.iloc[0]
 
-    def test_different_column_name_yields_different_output(self):
-        # Same value, different column → different keyed output (no
-        # cross-column collision).
+    def test_same_value_yields_same_output_across_column_names(self):
+        # Pre-2026-05 behavior was per-column-name keyed: two columns with
+        # different names produced different hashes for the same input
+        # value. We dropped that: mask key derivation is master-only, so
+        # FK joins survive masking even when the column names differ
+        # (e.g. customers.email_addr vs vendors.contact_email).
         out_email = self.strategy.apply(
             pd.Series(["alice@x.com"]), {"column": "email", "type": "hash"}
         )
         out_other = self.strategy.apply(
             pd.Series(["alice@x.com"]), {"column": "contact_email", "type": "hash"}
         )
-        assert out_email.iloc[0] != out_other.iloc[0]
+        assert out_email.iloc[0] == out_other.iloc[0]
 
     def test_legacy_path_still_works_when_no_derive_key(self):
         legacy = HashStrategy()  # no derive_key
@@ -214,10 +217,10 @@ class TestKeyedDateShift:
 # ── cross-strategy: foreign-key integrity ──────────────────────────────────
 
 class TestForeignKeyIntegrity:
-    """The end-state win the plan promises: alice@x.com in two different
-    columns of two different tables masks identically when the column name
-    is the same. With per-column keys we deliberately scope by column, so
-    same-column-different-table is what foreign-key joins need.
+    """The whole point of mask key derivation being master-only: any value
+    masks identically across every column, every table, every pipeline on
+    the instance. FK joins survive masking by default, no per-column tags
+    or namespaces required.
     """
 
     def test_same_column_name_across_tables_masks_identically(self):
@@ -228,6 +231,43 @@ class TestForeignKeyIntegrity:
         out_c = HashStrategy(derive_key=derive).apply(customers_email, rule)
         out_o = HashStrategy(derive_key=derive).apply(orders_email, rule)
         assert out_c.iloc[0] == out_o.iloc[0]
+
+    def test_different_column_names_still_mask_identically(self):
+        # The simplification this PR landed: column-name no longer enters
+        # the derivation. customers.email_addr and vendors.contact_email
+        # both hash "alice@x.com" to the same bytes.
+        derive = make_derive_key(MASTER_A)
+        out_a = HashStrategy(derive_key=derive).apply(
+            pd.Series(["alice@x.com"]), {"column": "email_addr", "type": "hash"}
+        )
+        out_b = HashStrategy(derive_key=derive).apply(
+            pd.Series(["alice@x.com"]), {"column": "contact_email", "type": "hash"}
+        )
+        assert out_a.iloc[0] == out_b.iloc[0]
+
+    def test_faker_and_date_shift_also_master_only(self):
+        # The other two keyed mask strategies follow the same rule. Same
+        # input across differently-named columns → same output.
+        derive = make_derive_key(MASTER_A)
+        out_f1 = FakerStrategy(derive_key=derive).apply(
+            pd.Series(["alice@x.com"]),
+            {"column": "email", "type": "faker", "faker_type": "email"},
+        )
+        out_f2 = FakerStrategy(derive_key=derive).apply(
+            pd.Series(["alice@x.com"]),
+            {"column": "contact", "type": "faker", "faker_type": "email"},
+        )
+        assert out_f1.iloc[0] == out_f2.iloc[0]
+
+        out_d1 = DateShiftStrategy(derive_key=derive).apply(
+            pd.Series(["1985-03-15"]),
+            {"column": "dob", "type": "date_shift", "min_days": -10, "max_days": 10},
+        )
+        out_d2 = DateShiftStrategy(derive_key=derive).apply(
+            pd.Series(["1985-03-15"]),
+            {"column": "birthday", "type": "date_shift", "min_days": -10, "max_days": 10},
+        )
+        assert out_d1.iloc[0] == out_d2.iloc[0]
 
 
 # ── make_key_resolver: the public helper CLI + platform both use ───────────

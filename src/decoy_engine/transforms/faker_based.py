@@ -135,13 +135,16 @@ class FakerStrategy(BaseMaskingStrategy):
     # ── helpers ────────────────────────────────────────────────────────────
 
     def _column_key(self, column_name: str) -> Optional[bytes]:
+        """Derive the mask subkey via the caller-supplied resolver. Same as
+        HashStrategy._column_key — instance-master-only, no per-column
+        tagging. ``column_name`` is kept for log context only."""
         if self.derive_key is None:
             return None
         try:
-            return self.derive_key(f"col:{column_name}")
+            return self.derive_key("mask")
         except Exception as exc:
             self.logger.warning(
-                f"derive_key failed for col:{column_name} ({exc}); falling back to legacy faker"
+                f"derive_key failed for 'mask' ({exc}); falling back to legacy faker"
             )
             return None
     
