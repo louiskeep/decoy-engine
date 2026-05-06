@@ -30,10 +30,15 @@ _VALID_TYPES = {"faker", "sequence", "categorical", "formula"}
 
 
 def validate_config(config: dict[str, Any]) -> None:
-    columns = config.get("columns")
-    if not isinstance(columns, dict) or not columns:
+    # Empty / missing `columns` is valid in column-replacer mode (1 input):
+    # it just means "leave every upstream column untouched", a no-op. In
+    # pure-source mode (0 inputs) the user can save with no columns and
+    # the run will produce a row_count-tall df with no generated columns,
+    # which is silly but not malformed. Validator stays structural.
+    columns = config.get("columns") or {}
+    if not isinstance(columns, dict):
         raise ValidationError(
-            "'columns' must be a non-empty mapping", "config.columns"
+            "'columns' must be a mapping", "config.columns"
         )
     if "row_count" in config:
         rc = config["row_count"]
@@ -56,7 +61,8 @@ def validate_config(config: dict[str, Any]) -> None:
 
 
 def apply(inputs, config, ctx) -> pd.DataFrame:
-    columns = config["columns"]
+    # Tolerate missing/empty columns — see validate_config.
+    columns = config.get("columns") or {}
     seed = int(config.get("seed", 42))
 
     if inputs:

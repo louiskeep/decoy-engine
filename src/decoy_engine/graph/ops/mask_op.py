@@ -28,10 +28,15 @@ _VALID_STRATEGIES = {
 
 
 def validate_config(config: dict[str, Any]) -> None:
-    columns = config.get("columns")
-    if not isinstance(columns, dict) or not columns:
+    # Empty / missing `columns` is valid: it means every input column
+    # passthroughs unchanged. The UI treats passthrough as the per-column
+    # default and the serializer only emits non-passthrough picks, so a
+    # mask node with no user-set strategies legitimately serializes to an
+    # empty `columns: {}` mapping. Reject only structural issues.
+    columns = config.get("columns") or {}
+    if not isinstance(columns, dict):
         raise ValidationError(
-            "'columns' must be a non-empty mapping", "config.columns"
+            "'columns' must be a mapping", "config.columns"
         )
     for col_name, spec in columns.items():
         if not isinstance(spec, dict):
@@ -50,7 +55,9 @@ def validate_config(config: dict[str, Any]) -> None:
 def apply(inputs, config, ctx) -> pd.DataFrame:
     df = inputs[0].copy()
     seed = int(config.get("seed", 42))
-    columns = config["columns"]
+    # Tolerate missing/empty columns — see validate_config. Empty rules list
+    # makes `apply_masking_rules` a no-op, so the df flows through unchanged.
+    columns = config.get("columns") or {}
 
     rules = _columns_to_rules(columns)
     logger = ctx.logger if ctx is not None else None
