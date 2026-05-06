@@ -235,6 +235,20 @@ Anything not in `__all__` is private. The CLI and Platform must only import from
 
 ---
 
+## ML Inference Boundary
+
+The STORM detector layer is being extended with an ML stage (column classifier + cell-level NER) on top of the existing regex/name-hint detectors in `src/decoy_engine/storm/detectors.py`. See `decoy-platform/plans/2026-05-06-ml-sensitive-data-detection.md` for the full RFC. The non-negotiables for this engine:
+
+1. **Inference is in-process, in this engine.** No third-party API calls. No data leaves the customer's deployment for classification. Hard constraint — clients run `decoy-platform` on their own servers, and we never touch their data; that contract must extend to ML detection.
+2. **Model artifacts are lazily loaded on first ML-enabled scan.** spaCy `en_core_web_lg`, Presidio assets, and the LightGBM column-classifier weights are pulled at first run, not bundled in the engine image. Keeps the base install small.
+3. **Regex-only fallback is mandatory.** The engine must start, load, and run the existing regex detector layer with zero ML artifacts present. If the lazy pull fails or the customer is air-gapped, STORM degrades to regex-only and surfaces that state in the detection trail rather than erroring out.
+4. **No new public match type.** ML detectors emit the existing `DetectorMatch` shape (`src/decoy_engine/storm/types.py`). The aggregator layer ranks regex and ML matches together; regex wins on the entity types it covers.
+5. **Air-gapped offline bundle is a follow-up.** Tracked separately. Until it lands, air-gapped deployments run regex-only and that is the documented behavior.
+
+Adding ML to the engine does not change the public API contract above. The classifier and NER stages live inside `decoy_engine.storm.*` and are not re-exported from `__init__.py`; callers see the same `StormProfile` they always have, with richer `DetectorMatch` provenance inside it.
+
+---
+
 ## Repo Structure (Updated)
 
 The full picture:
