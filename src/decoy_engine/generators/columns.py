@@ -20,17 +20,25 @@ class ColumnGenerator:
     Supports various column types and ensures consistent generation.
     """
     
-    def __init__(self, seed: int = 42, logger=None):
+    def __init__(self, seed: int = 42, logger=None, derive_key=None):
         """
         Initialize with a seed for deterministic behavior
-        
+
         Args:
-            seed: Random seed for deterministic generation
+            seed: Random seed for deterministic generation when no key is set
             logger: Logger instance (optional)
+            derive_key: Optional callable ``(info: str) -> bytes`` returning at
+                least 4 bytes of HKDF-derived material. When provided, per-
+                column seeds come from ``derive_key("col:<name>")`` instead of
+                ``seed + hash(name)`` — same key + same column always yields
+                the same bytes across runs and across instances. When None,
+                generation is reproducible by ``seed`` alone but ignores any
+                pipeline / instance master key (i.e. random-by-policy).
         """
         self.seed = seed
+        self.derive_key = derive_key
         random.seed(self.seed)
-        
+
         # Initialize faker
         self.faker = Faker()
         self.faker.seed_instance(self.seed)
@@ -54,7 +62,30 @@ class ColumnGenerator:
             'formula': self._generate_formula_column
         }
         
-        self.logger.debug(f"Initialized ColumnGenerator with seed: {seed}")
+        self.logger.debug(
+            f"Initialized ColumnGenerator with seed: {seed}, "
+            f"keyed: {self.derive_key is not None}"
+        )
+
+    def _column_seed(self, column_name: str) -> int:
+        """Per-column base seed used by every row-level seeding site.
+
+        When ``derive_key`` is set, take the first 4 bytes of
+        ``derive_key("col:<name>")`` and decode as a 32-bit int — same key +
+        same column always yields the same seed bytes, so faker / random
+        output is bitwise stable across runs. Otherwise fall back to the
+        legacy ``seed + hash(name)`` formula so behavior is unchanged for
+        callers that don't pass a key.
+        """
+        if self.derive_key is not None:
+            try:
+                key_bytes = self.derive_key(f"col:{column_name}")
+                return int.from_bytes(key_bytes[:4], "big", signed=False)
+            except Exception:
+                # Fall through to seed-based path on any resolver hiccup;
+                # better to produce *some* output than crash a generation run.
+                pass
+        return (self.seed + hash(column_name)) & 0x7FFFFFFF
     
     def generate_column(self, num_rows: int, column_config: Dict[str, Any], 
                     table_name: str, reference_data: Dict[str, pd.DataFrame]) -> pd.Series:
@@ -88,15 +119,13 @@ class ColumnGenerator:
         # Apply null probability if specified
         if null_probability > 0:
             self.logger.debug(f"Applying null probability {null_probability} to column '{column_name}'")
-            
-            # Create a mask for which values should be null
-            # Use the same seed-based approach for deterministic behavior
+
+            # Per-row seeding off the column-seed (HKDF-derived when keyed,
+            # `seed + hash(name)` otherwise). Same column + same row →
+            # same null/non-null decision across runs.
+            column_seed = self._column_seed(column_name)
             for i in range(num_rows):
-                # Set a row-specific seed for reproducibility
-                row_seed = self.seed + i + hash(column_name)
-                random.seed(row_seed)
-                
-                # Apply null probability
+                random.seed(column_seed + i)
                 if random.random() < null_probability:
                     result.iloc[i] = None
         
@@ -137,20 +166,21 @@ class ColumnGenerator:
             self.logger.warning(f"Unknown faker_type '{faker_type}', using 'word' instead")
             provider_func = self.faker_providers['word']
         
-        # Generate values for all rows
+        # Generate values for all rows. When `derive_key` is set, the
+        # column-seed is HKDF-derived from the pipeline key, so the same
+        # key + same column always yields the same bytes across runs.
+        column_name = column_config.get('name', 'unnamed_column')
+        column_seed = self._column_seed(column_name)
         values = []
         for i in range(num_rows):
-            # Set a row-specific seed for reproducibility
-            row_seed = self.seed + i
+            row_seed = column_seed + i
             random.seed(row_seed)
             self.faker.seed_instance(row_seed)
-            
-            # Generate the value
             values.append(provider_func())
-        
+
         return pd.Series(values)
-    
-    def _generate_sequence_column(self, num_rows: int, column_config: Dict[str, Any], 
+
+    def _generate_sequence_column(self, num_rows: int, column_config: Dict[str, Any],
                                  table_name: str, reference_data: Dict[str, pd.DataFrame]) -> pd.Series:
         """
         Generate sequential data (e.g., IDs)
@@ -206,8 +236,13 @@ class ColumnGenerator:
         weights = column_config.get('weights', None)  # Optional probability weights
         
         self.logger.debug(f"Generating categorical column with {len(categories)} categories")
-        
-        # Generate values with weighted random choices
+
+        # Reseed from the column-specific seed so the choices are stable
+        # across runs when a key is provided, and stable per-column even
+        # without one (otherwise output depends on the order of column
+        # generation calls — order-dependence is a footgun).
+        column_name = column_config.get('name', 'unnamed_column')
+        random.seed(self._column_seed(column_name))
         values = random.choices(categories, weights=weights, k=num_rows)
         return pd.Series(values)
     
@@ -294,22 +329,23 @@ class ColumnGenerator:
         """
         formula_type = column_config.get('formula_type', 'basic')
         formula = column_config.get('formula', '')
-        
+        column_name = column_config.get('name', 'unnamed_column')
+
         self.logger.debug(f"Generating formula column with type: {formula_type}")
-        
+
         # Check if formula is provided
         if not formula:
             self.logger.warning("No formula provided in configuration")
             return pd.Series([None] * num_rows)
-        
+
         try:
             if formula_type == 'basic':
                 # Basic arithmetic or string operations using eval
-                return self._generate_basic_formula(num_rows, formula)
-                
+                return self._generate_basic_formula(num_rows, formula, column_name)
+
             elif formula_type == 'template':
                 # String template with Faker placeholders
-                return self._generate_template_formula(num_rows, formula)
+                return self._generate_template_formula(num_rows, formula, column_name)
                 
             elif formula_type == 'composite':
                 # Composite formulas are processed after row generation because they
@@ -326,7 +362,7 @@ class ColumnGenerator:
             self.logger.error(f"Formula type: {formula_type}")
             return pd.Series([f"FORMULA_ERROR"] * num_rows)
     
-    def _generate_basic_formula(self, num_rows: int, formula: str) -> pd.Series:
+    def _generate_basic_formula(self, num_rows: int, formula: str, column_name: str = 'unnamed_column') -> pd.Series:
         """
         Generate data using a basic arithmetic or string formula
         
@@ -338,15 +374,17 @@ class ColumnGenerator:
             pandas.Series with generated data
         """
         # Basic arithmetic or string operations
+        column_seed = self._column_seed(column_name)
         values = []
         for i in range(num_rows):
             # Replace index placeholder if present
             formula_with_index = formula.replace('{i}', str(i))
             formula_with_index = formula_with_index.replace('{index}', str(i))
-            
-            # Add random seed if needed for reproducibility 
-            # but with variation per row
-            local_seed = self.seed + i
+
+            # Per-row seed bound to the column-seed (which is HKDF-derived
+            # when a key is set). Without keying, falls back to seed-based
+            # determinism per the legacy contract.
+            local_seed = column_seed + i
             random.seed(local_seed)
             self.faker.seed_instance(local_seed)
             
@@ -403,7 +441,7 @@ class ColumnGenerator:
                     
         return pd.Series(values)
     
-    def _generate_template_formula(self, num_rows: int, formula: str) -> pd.Series:
+    def _generate_template_formula(self, num_rows: int, formula: str, column_name: str = 'unnamed_column') -> pd.Series:
         """
         Generate data using a string template with Faker placeholders
         
@@ -416,11 +454,12 @@ class ColumnGenerator:
         """
         # String template with placeholders
         faker_providers = self.faker_providers
+        column_seed = self._column_seed(column_name)
         values = []
-        
+
         for i in range(num_rows):
-            # Set seed for this specific row for reproducibility
-            row_seed = self.seed + i
+            # Per-row seed bound to the column-seed (HKDF-derived when keyed).
+            row_seed = column_seed + i
             random.seed(row_seed)
             self.faker.seed_instance(row_seed)
             

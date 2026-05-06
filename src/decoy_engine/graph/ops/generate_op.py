@@ -78,11 +78,17 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
         upstream = upstream.head(num_rows)
 
     logger = ctx.logger if ctx is not None else None
+    # `pipeline_derive_key` is the generate-side key resolver. When the
+    # platform's admin policy says "no pipeline key", this is None and the
+    # ColumnGenerator falls back to seed-based RNG (random per run); when
+    # set, per-column seeds are HKDF-derived so the same key + same row
+    # context always yields the same bytes.
+    pipeline_derive_key = getattr(ctx, "pipeline_derive_key", None) if ctx is not None else None
 
     try:
         from decoy_engine.generators.columns import ColumnGenerator
 
-        gen = ColumnGenerator(seed=seed, logger=logger)
+        gen = ColumnGenerator(seed=seed, logger=logger, derive_key=pipeline_derive_key)
         out = upstream.copy()
         for col_name, spec in columns.items():
             col_config = dict(spec)

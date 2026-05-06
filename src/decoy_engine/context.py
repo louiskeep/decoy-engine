@@ -54,6 +54,7 @@ class ExecutionContext:
         telemetry: TelemetryClient | None = None,
         resolve_connector: Callable[[int], str] | None = None,
         derive_key: Callable[[str], bytes] | None = None,
+        pipeline_derive_key: Callable[[str], bytes] | None = None,
     ) -> None:
         self.logger = logger
         self.telemetry = telemetry
@@ -61,12 +62,25 @@ class ExecutionContext:
         # connector_id into a DSN string. Platform passes a closure over its
         # connector store; CLI leaves it None and users supply inline `dsn:`.
         self.resolve_connector = resolve_connector
-        # `derive_key(info)` returns 32 bytes of HKDF-derived key material
-        # given a stable info label (e.g. "col:email"). Caller pre-binds the
-        # tenant master key + pipeline key_label; the engine just asks for
-        # column-scoped subkeys. When None, deterministic-by-input strategies
-        # fall back to the legacy `seed`-coupled path.
+        # ── two key resolvers, by design ──
+        #
+        # `derive_key(info)` is the **mask** resolver. Caller pre-binds the
+        # tenant master instance key (and only the master). Same input row +
+        # same column always maps to the same masked bytes across pipelines,
+        # which is what gives mask its cross-pipeline FK-stability property.
+        # Mask is always deterministic at the instance level; pipeline keys
+        # do *not* affect mask output.
+        #
+        # `pipeline_derive_key(info)` is the **generate** resolver. Caller
+        # pre-binds master + pipeline-specific label. When None, generate
+        # falls back to seed-based RNG (random across runs) — the policy
+        # surface in front of this resolver decides whether a label exists
+        # for the current pipeline (admin modes A/B/C in the platform).
+        #
+        # Engine ops pick the right resolver for their semantics: mask uses
+        # `derive_key`, generate uses `pipeline_derive_key`.
         self.derive_key = derive_key
+        self.pipeline_derive_key = pipeline_derive_key
 
 
 # ── helpers callers (CLI, platform) can use to build a derive_key resolver ──
