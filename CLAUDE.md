@@ -11,11 +11,22 @@ We use two doc types. Distinguishing them keeps long-term plans aligned and shor
 
 Orientation files (this `CLAUDE.md`, `dev-help.md`, `README.md`) are conventional contributor entry points and stay outside the guide/plan taxonomy.
 
+## Comment style
+
+Comments explain what a section / code block does in good detail, in **1–2 sentences**. Reach for more only when the block is genuinely complex — a state machine, a non-obvious algorithm, security-sensitive math, a workaround for a specific bug. Default mode: terse and to the point.
+
+- **Yes:** `# Format inference is the whole point — pandas warns when it falls back to dateutil; suppress.`
+- **No:** silent code with no context.
+- **No:** restating what the next ten lines obviously do.
+
+Comments live next to the surprise, not at the top of the file. If the non-obvious thing is the *why*, write that, not the *what*.
+
 ### Active guides
 
 - [SHARED_ENGINE_ARCHITECTURE.md](SHARED_ENGINE_ARCHITECTURE.md) — engine architecture + the shared-library rationale. *(partial)*
 - [STORM_FORECAST_GUIDE.md](STORM_FORECAST_GUIDE.md) — STORM (analysis) + FORECAST (recommender) module spec. *(partial)*
 - [DISGUISES_GUIDE.md](DISGUISES_GUIDE.md) — Disguise YAML schema + the 8-bundle launch set spec. *(partial)*
+- [PIPELINE_GRAPH_GUIDE.md](PIPELINE_GRAPH_GUIDE.md) — engine-side mirror of the cross-repo graph pipeline contract; `decoy_engine.graph` package. *(partial)*
 
 The `Logger` Protocol in `decoy_engine.context` is owned by the platform's [LOGGING_GUIDE.md](../forge-platform/LOGGING_GUIDE.md) (sections 4 + 5). Engine entry points emit through the Protocol; the platform's `JobLogger` adapts it to job-log persistence + companion structured tables.
 

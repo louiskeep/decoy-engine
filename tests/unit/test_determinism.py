@@ -228,3 +228,44 @@ class TestForeignKeyIntegrity:
         out_c = HashStrategy(derive_key=derive).apply(customers_email, rule)
         out_o = HashStrategy(derive_key=derive).apply(orders_email, rule)
         assert out_c.iloc[0] == out_o.iloc[0]
+
+
+# ── make_key_resolver: the public helper CLI + platform both use ───────────
+
+class TestMakeKeyResolver:
+    """The bytes produced by ``make_key_resolver`` MUST be reproducible across
+    callers. CLI passes a master from ``--master-key``; platform pulls it
+    from env / file / KMS; both call this helper. Drift here means a CLI
+    run and a platform run with the same key produce different masked
+    output — silent breakage of the recovery property.
+    """
+
+    def test_resolver_returns_32_bytes(self):
+        from decoy_engine import make_key_resolver
+        resolver = make_key_resolver(MASTER_A, "customers_q4")
+        out = resolver("col:email")
+        assert len(out) == 32
+
+    def test_same_master_same_label_same_info_yields_same_bytes(self):
+        from decoy_engine import make_key_resolver
+        a = make_key_resolver(MASTER_A, "customers_q4")
+        b = make_key_resolver(MASTER_A, "customers_q4")
+        assert a("col:email") == b("col:email")
+        assert a("col:phone") == b("col:phone")
+
+    def test_different_label_yields_different_bytes(self):
+        from decoy_engine import make_key_resolver
+        a = make_key_resolver(MASTER_A, "customers_q4")
+        b = make_key_resolver(MASTER_A, "orders_q4")
+        assert a("col:email") != b("col:email")
+
+    def test_different_master_yields_different_bytes(self):
+        from decoy_engine import make_key_resolver
+        a = make_key_resolver(MASTER_A, "customers_q4")
+        b = make_key_resolver(MASTER_B, "customers_q4")
+        assert a("col:email") != b("col:email")
+
+    def test_rejects_wrong_master_length(self):
+        from decoy_engine import make_key_resolver
+        with pytest.raises(ValueError, match="32 bytes"):
+            make_key_resolver(b"short", "label")

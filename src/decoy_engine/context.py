@@ -13,6 +13,8 @@ they construct their own logger from the YAML config. Wiring the engine
 to consume ExecutionContext is a follow-up change.
 """
 
+import hashlib
+import hmac
 from typing import Any, Callable, Protocol, runtime_checkable
 
 
@@ -65,3 +67,46 @@ class ExecutionContext:
         # column-scoped subkeys. When None, deterministic-by-input strategies
         # fall back to the legacy `seed`-coupled path.
         self.derive_key = derive_key
+
+
+# ── helpers callers (CLI, platform) can use to build a derive_key resolver ──
+
+def _hkdf_sha256(master: bytes, info: str, length: int = 32) -> bytes:
+    """HKDF-SHA256(master, info) -> `length` bytes (max 32 in this impl).
+
+    Stdlib-only implementation so the engine doesn't pull `cryptography`
+    just for keyed determinism. Empty-salt HKDF: PRK = HMAC(zero, master);
+    OKM = HMAC(PRK, info || 0x01)[:length]. One expansion round is enough
+    while length <= hash output (32 for SHA-256).
+    """
+    if length > 32:
+        raise ValueError("length must be <= 32 (single HKDF-Expand round)")
+    salt = b"\x00" * 32
+    prk = hmac.new(salt, master, hashlib.sha256).digest()
+    okm = hmac.new(prk, info.encode("utf-8") + b"\x01", hashlib.sha256).digest()
+    return okm[:length]
+
+
+def make_key_resolver(
+    master: bytes,
+    pipeline_label: str,
+) -> Callable[[str], bytes]:
+    """Build the closure assigned to ``ExecutionContext.derive_key``.
+
+    Pre-binds master + pipeline_label so the engine just asks for
+    column-scoped subkeys via labels like ``"col:email"``. Same master +
+    same pipeline_label always yields the same column subkeys, anywhere —
+    that's the cross-instance recovery property.
+
+    CLI passes a master key from ``--master-key``; platform's
+    ``api/keys/make_resolver`` is structurally identical and produces the
+    same bytes given the same inputs.
+    """
+    if not isinstance(master, (bytes, bytearray)) or len(master) != 32:
+        raise ValueError("master key must be 32 bytes")
+    pipeline_key = _hkdf_sha256(master, f"pipeline:{pipeline_label}")
+
+    def resolver(info: str) -> bytes:
+        return _hkdf_sha256(pipeline_key, info)
+
+    return resolver

@@ -25,10 +25,22 @@ is private and may change without a version bump.
 
 from decoy_engine.masker import Masker
 from decoy_engine.generators import DataGenerator
-from decoy_engine.context import ExecutionContext, Logger, TelemetryClient
+from decoy_engine.context import (
+    ExecutionContext,
+    Logger,
+    TelemetryClient,
+    make_key_resolver,
+)
 from decoy_engine.schema import SchemaInspector
 from decoy_engine.license import LicenseVerifier
 from decoy_engine.validation import validate_config
+from decoy_engine.graph import (
+    validate_graph,
+    run_graph,
+    preview_graph,
+    RunResult,
+    PreviewResult,
+)
 from decoy_engine.storm import run_storm, StormProfile, FieldStats, DetectorMatch, SentinelFlag
 from decoy_engine.forecast import (
     recommend,
@@ -56,9 +68,15 @@ __all__ = [
     'ExecutionContext',
     'Logger',
     'TelemetryClient',
+    'make_key_resolver',
     'SchemaInspector',
     'LicenseVerifier',
     'validate_config',
+    'validate_graph',
+    'run_graph',
+    'preview_graph',
+    'RunResult',
+    'PreviewResult',
     'run_storm',
     'StormProfile',
     'FieldStats',

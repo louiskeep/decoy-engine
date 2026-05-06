@@ -12,6 +12,7 @@ analysis offline and from the CLI without depending on the platform.
 from __future__ import annotations
 
 import re
+import warnings
 from typing import Optional
 
 import pandas as pd
@@ -151,18 +152,28 @@ def _profile_column(series: pd.Series, total_rows: int) -> FieldStats:
         fs.avg_length = round(float(str_lens.mean()), 1)
 
         sample_size = min(200, non_null_count)
-        coerced_sample = pd.to_datetime(non_null.head(sample_size), errors="coerce")
-        parse_rate = coerced_sample.notna().sum() / sample_size if sample_size else 0
-        if parse_rate >= 0.7:
-            all_coerced = pd.to_datetime(non_null, errors="coerce")
-            valid = all_coerced.dropna()
-            invalid_mask = all_coerced.isna()
-            if len(valid) > 0:
-                fs.date_min = valid.min().isoformat()
-                fs.date_max = valid.max().isoformat()
-            fs.invalid_count = int(invalid_mask.sum())
-            if fs.invalid_count > 0:
-                fs.sample_invalid = non_null[invalid_mask].head(3).astype(str).tolist()
+        # Format inference is the whole point here — pandas 2.x emits a chatty
+        # UserWarning when it falls back to dateutil. Suppress it; we are
+        # deliberately probing for a date-shaped column without specifying
+        # a format up front.
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message=".*Could not infer format.*",
+                category=UserWarning,
+            )
+            coerced_sample = pd.to_datetime(non_null.head(sample_size), errors="coerce")
+            parse_rate = coerced_sample.notna().sum() / sample_size if sample_size else 0
+            if parse_rate >= 0.7:
+                all_coerced = pd.to_datetime(non_null, errors="coerce")
+                valid = all_coerced.dropna()
+                invalid_mask = all_coerced.isna()
+                if len(valid) > 0:
+                    fs.date_min = valid.min().isoformat()
+                    fs.date_max = valid.max().isoformat()
+                fs.invalid_count = int(invalid_mask.sum())
+                if fs.invalid_count > 0:
+                    fs.sample_invalid = non_null[invalid_mask].head(3).astype(str).tolist()
 
     # Detectors.
     fs.detector_matches = run_all_detectors(series, name)
