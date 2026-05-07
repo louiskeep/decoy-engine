@@ -86,6 +86,16 @@ def _hits_name_hint(detector_id: str, col_name: str) -> bool:
     return bool(pat and pat.fullmatch(col_name or ""))
 
 
+def hits_name_hint(detector_id: str, col_name: str) -> bool:
+    """Public accessor used by the profiler to build a column's detection trail.
+
+    Returns True when the column name structurally hints at the detector's
+    target type (e.g. column "ssn_id" hints at the SSN detector). The
+    threshold-relaxation logic itself stays internal to `_evaluate`.
+    """
+    return _hits_name_hint(detector_id, col_name)
+
+
 # ── value patterns ────────────────────────────────────────────────────────────
 
 # Email — RFC 5321ish but not strict; works for the 99% of fields users feed in.

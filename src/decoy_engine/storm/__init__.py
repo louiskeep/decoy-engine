@@ -14,6 +14,8 @@ from decoy_engine.storm.types import (
     StormProfile,
     FieldStats,
     DetectorMatch,
+    DetectionSignal,
+    Distribution,
     SentinelFlag,
     TopValue,
 )
@@ -23,6 +25,8 @@ __all__ = [
     "StormProfile",
     "FieldStats",
     "DetectorMatch",
+    "DetectionSignal",
+    "Distribution",
     "SentinelFlag",
     "TopValue",
 ]

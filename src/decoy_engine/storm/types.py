@@ -29,6 +29,49 @@ class DetectorMatch:
 
 
 @dataclass
+class Distribution:
+    """Per-column value distribution for the Profile/Drill UI.
+
+    Five shapes the renderer supports — driven by `kind`:
+      - "numeric"      : 10 quantile bins, data = bucket counts
+      - "date"         : decade bins, data = bucket counts, labels = decade ranges
+      - "categorical"  : top 10 + "other", data = pct of column, labels = values
+      - "pattern"      : 3 buckets (matches / no-match / null) for detector-fired columns
+      - "freetext"     : 4 length buckets (<20, 20-50, 50-100, >100)
+
+    `data` and `labels` are parallel arrays. min/max/mean only meaningful for
+    numeric or date kinds; left as None otherwise.
+    """
+    kind: str                                  # "numeric" | "date" | "categorical" | "pattern" | "freetext"
+    data: list[float] = field(default_factory=list)
+    labels: list[str] = field(default_factory=list)
+    min: Optional[str] = None                  # stringified for JSON parity (numeric or ISO date)
+    max: Optional[str] = None
+    mean: Optional[float] = None               # numeric only
+
+
+@dataclass
+class DetectionSignal:
+    """One row in a column's detection-reasoning trail.
+
+    Each signal records ONE piece of evidence for the winning detector:
+      - regex match score
+      - column-name hint match
+      - (future) ML column classifier score
+      - (future) ML cell-level NER score
+
+    `winner=True` marks the signal that drove the firing decision. `ml=False`
+    today; ML detection phases (Roadmap Item 8) will append `ml=True` rows
+    without disturbing the existing schema.
+    """
+    signal: str                                # "regex · ssn_pattern", "name-hint · col=\"ssn\"", ...
+    confidence: Optional[float] = None         # 0.0 – 100.0; None when skipped
+    winner: bool = False
+    ml: bool = False
+    skipped: bool = False                      # signal was considered but not run (e.g. ML disabled)
+
+
+@dataclass
 class SentinelFlag:
     """A value (or pattern) that parsed structurally but is suspicious."""
     kind: str                  # "date_outlier", "numeric_sentinel", "string_sentinel", "future_date"
@@ -78,6 +121,15 @@ class FieldStats:
 
     # Heuristic 0.0 – 1.0 likelihood this column contains PII
     pii_score: float = 0.0
+
+    # Value distribution for the Profile/Drill UI. Optional so old persisted
+    # profiles (pre-PR3) deserialize cleanly via dict-spreading at the
+    # platform edge.
+    distribution: Optional[Distribution] = None
+
+    # Per-column detection-reasoning trail. Empty when no detector fires.
+    # ML rows (column classifier, cell-level NER) append in Roadmap Item 8.
+    detection_trail: list[DetectionSignal] = field(default_factory=list)
 
 
 @dataclass
