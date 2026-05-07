@@ -17,9 +17,14 @@ from typing import Optional
 
 import pandas as pd
 
-from decoy_engine.storm.detectors import hits_name_hint, run_all_detectors
+from decoy_engine.storm.detectors import (
+    hits_custom_name_hint,
+    hits_name_hint,
+    run_all_detectors,
+)
 from decoy_engine.storm.sentinels import detect_sentinels
 from decoy_engine.storm.types import (
+    CustomDetectorSpec,
     DetectionSignal,
     DetectorMatch,
     Distribution,
@@ -246,12 +251,14 @@ def _build_distribution(
 def _build_detection_trail(
     detector_matches: list[DetectorMatch],
     col_name: str,
+    custom: Optional[list[CustomDetectorSpec]] = None,
 ) -> list[DetectionSignal]:
     """Emit reasoning rows for the winning detector.
 
     Today: the regex score (always) + name-hint row (when the column name
-    matched the detector's name pattern). ML rows append in Roadmap Item 8;
-    until then there's no ML signal to log.
+    matched the detector's name pattern). For custom detectors the trail
+    consults the provided spec list since name-hint resolution there is
+    spec-driven rather than module-global. ML rows append in Roadmap Item 8.
     """
     if not detector_matches:
         return []
@@ -264,10 +271,18 @@ def _build_detection_trail(
             ml=False,
         ),
     ]
-    if hits_name_hint(winner.detector_id, col_name):
-        # Binary signal — column name either matches the detector's name
-        # pattern or it doesn't. We surface 100% so the UI can rank it
-        # alongside the regex row without inventing a false gradient.
+    # Name-hint lookup: built-in detectors use the module dict; custom ones
+    # use the spec list the caller passed in. The id namespace prevents
+    # ambiguity when both have the same id (custom wins because we check
+    # specs first — but the registry layer already guarantees no collision).
+    name_hint_matched = False
+    if custom:
+        spec = next((s for s in custom if s.id == winner.detector_id), None)
+        if spec is not None:
+            name_hint_matched = hits_custom_name_hint(spec, col_name)
+    if not name_hint_matched and hits_name_hint(winner.detector_id, col_name):
+        name_hint_matched = True
+    if name_hint_matched:
         rows.append(DetectionSignal(
             signal=f'name-hint · col="{col_name}"',
             confidence=100.0,
@@ -277,7 +292,11 @@ def _build_detection_trail(
     return rows
 
 
-def _profile_column(series: pd.Series, total_rows: int) -> FieldStats:
+def _profile_column(
+    series: pd.Series,
+    total_rows: int,
+    custom_detectors: Optional[list[CustomDetectorSpec]] = None,
+) -> FieldStats:
     name = str(series.name)
     dtype_raw = str(series.dtype)
     null_count = int(series.isna().sum())
@@ -358,7 +377,7 @@ def _profile_column(series: pd.Series, total_rows: int) -> FieldStats:
                     fs.sample_invalid = non_null[invalid_mask].head(3).astype(str).tolist()
 
     # Detectors.
-    fs.detector_matches = run_all_detectors(series, name)
+    fs.detector_matches = run_all_detectors(series, name, custom=custom_detectors)
     fs.date_format = _date_format_signal(fs.detector_matches)
 
     # Sentinels.
@@ -374,7 +393,7 @@ def _profile_column(series: pd.Series, total_rows: int) -> FieldStats:
     fs.distribution = _build_distribution(
         series, inferred, fs.detector_matches, distinct_count, total_rows,
     )
-    fs.detection_trail = _build_detection_trail(fs.detector_matches, name)
+    fs.detection_trail = _build_detection_trail(fs.detector_matches, name, custom_detectors)
 
     return fs
 
@@ -387,14 +406,20 @@ def run_storm(
     *,
     sample_strategy: str = "full",
     sample_row_cap: Optional[int] = None,
+    custom_detectors: Optional[list[CustomDetectorSpec]] = None,
 ) -> StormProfile:
     """Scan a DataFrame and produce a StormProfile.
 
     The DataFrame is the only place raw data lives in this call. The returned
     StormProfile is JSON-serializable and the ONLY thing FORECAST sees.
+
+    `custom_detectors` (PR6) lets callers register organization-specific PII
+    patterns at scan time without touching the engine. Each spec runs against
+    every column alongside the built-ins; their hits show up in
+    DetectorMatch.detector_id with whatever id the caller supplied.
     """
     total = len(df)
-    fields = [_profile_column(df[col], total) for col in df.columns]
+    fields = [_profile_column(df[col], total, custom_detectors) for col in df.columns]
     reid_cols = [f.name for f in fields if f.is_likely_unique]
     reid_score = round(len(reid_cols) / max(len(fields), 1) * 100, 1)
     qi_groups = _quasi_identifier_groups(fields)

@@ -13,6 +13,7 @@ from decoy_engine.storm.profiler import run_storm
 from decoy_engine.storm.types import (
     StormProfile,
     FieldStats,
+    CustomDetectorSpec,
     DetectorMatch,
     DetectionSignal,
     Distribution,
@@ -24,6 +25,7 @@ __all__ = [
     "run_storm",
     "StormProfile",
     "FieldStats",
+    "CustomDetectorSpec",
     "DetectorMatch",
     "DetectionSignal",
     "Distribution",

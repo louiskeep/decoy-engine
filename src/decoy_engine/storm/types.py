@@ -14,6 +14,30 @@ from typing import Any, Optional
 
 
 @dataclass
+class CustomDetectorSpec:
+    """Caller-supplied detector definition that runs alongside the built-ins.
+
+    PR6 of the storm port plan. The platform persists detectors in
+    custom_detectors and hands a list of these specs to run_storm so users
+    can add organization-specific PII patterns (e.g. UK NHS numbers, SBR
+    routing numbers) without engine changes.
+
+    `id` is the detector_id that appears in DetectorMatch.detector_id —
+    callers should namespace it (e.g. "custom__uk_nhs_number") to avoid
+    colliding with built-in ids. `name_hints` is a list of substrings;
+    the engine compiles a case-insensitive regex matching any of them
+    against the column name to drop the match-rate threshold.
+    `threshold` is the default-fire match rate (0.0–1.0) when no name
+    hint matches; the name-hint floor is fixed at 0.4 mirroring the
+    built-in detectors.
+    """
+    id: str
+    pattern: str
+    name_hints: list[str] = field(default_factory=list)
+    threshold: float = 0.7
+
+
+@dataclass
 class TopValue:
     value: str
     count: int

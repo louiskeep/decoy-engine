@@ -26,7 +26,7 @@ from typing import Callable, Optional
 
 import pandas as pd
 
-from decoy_engine.storm.types import DetectorMatch
+from decoy_engine.storm.types import CustomDetectorSpec, DetectorMatch
 
 
 # ── thresholds ────────────────────────────────────────────────────────────────
@@ -199,13 +199,74 @@ REGISTERED_DETECTORS: list[DetectorFn] = [
 ]
 
 
-def run_all_detectors(series: pd.Series, col_name: str) -> list[DetectorMatch]:
-    """Run every registered detector against a column. Returns matches sorted
-    by descending match_rate so the highest-confidence detector is first."""
+def run_all_detectors(
+    series: pd.Series,
+    col_name: str,
+    *,
+    custom: Optional[list[CustomDetectorSpec]] = None,
+) -> list[DetectorMatch]:
+    """Run every registered detector against a column, plus any caller-supplied
+    custom detectors. Returns matches sorted by descending match_rate so the
+    highest-confidence detector is first.
+
+    Custom detectors run after the built-ins. A bad regex in one custom spec
+    (e.g. malformed pattern) is logged-and-skipped rather than raising — one
+    misconfigured admin entry shouldn't kill the whole scan.
+    """
     matches: list[DetectorMatch] = []
     for fn in REGISTERED_DETECTORS:
         m = fn(series, col_name)
         if m is not None:
             matches.append(m)
+    if custom:
+        for spec in custom:
+            try:
+                m = _run_custom_detector(series, col_name, spec)
+            except re.error:
+                # Bad regex — skip silently. The platform validates patterns
+                # at create-time so we should rarely hit this in practice.
+                continue
+            if m is not None:
+                matches.append(m)
     matches.sort(key=lambda m: m.match_rate, reverse=True)
     return matches
+
+
+# ── custom detectors ──────────────────────────────────────────────────────────
+
+def _custom_name_hint_pattern(name_hints: list[str]) -> Optional[re.Pattern[str]]:
+    """Compile a column-name-matching regex from a list of substrings.
+
+    Mirrors the built-in `_NAME_HINTS` shape: case-insensitive, matches when
+    any hint appears as a token in the column name (separated by `_-` or at
+    word boundaries). Empty/whitespace hints are skipped.
+    """
+    cleaned = [re.escape(h.strip()) for h in name_hints if h.strip()]
+    if not cleaned:
+        return None
+    body = "|".join(cleaned)
+    return re.compile(rf"(?i)(^|[._-])({body})($|[._-])")
+
+
+def _hits_custom_name_hint(spec: CustomDetectorSpec, col_name: str) -> bool:
+    pat = _custom_name_hint_pattern(spec.name_hints)
+    return bool(pat and pat.search(col_name or ""))
+
+
+def _run_custom_detector(
+    series: pd.Series, col_name: str, spec: CustomDetectorSpec,
+) -> Optional[DetectorMatch]:
+    """Compile + apply one custom regex spec to a column."""
+    pattern = re.compile(spec.pattern)
+    name_hint = _hits_custom_name_hint(spec, col_name)
+    return _evaluate(
+        spec.id, _series_str(series), pattern,
+        name_hint=name_hint,
+        min_rate=max(0.0, min(1.0, spec.threshold)),
+    )
+
+
+def hits_custom_name_hint(spec: CustomDetectorSpec, col_name: str) -> bool:
+    """Public accessor used by the profiler to log name-hint trail rows for
+    custom detectors. Mirrors `hits_name_hint` for built-ins."""
+    return _hits_custom_name_hint(spec, col_name)
