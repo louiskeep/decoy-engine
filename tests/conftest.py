@@ -147,8 +147,9 @@ def sample_generator_config():
                     {'name': 'customer_id', 'type': 'sequence', 'start': 1000, 'prefix': 'CUST', 'pad_length': 6},
                     {'name': 'first_name', 'type': 'faker', 'faker_type': 'first_name'},
                     {'name': 'last_name', 'type': 'faker', 'faker_type': 'last_name'},
-                    {'name': 'email', 'type': 'formula', 'formula_type': 'template', 
-                     'formula': '{first_name.lower()}.{last_name.lower()}@example.com'},
+                    {'name': 'email', 'type': 'formula',
+                     'references': ['first_name', 'last_name'],
+                     'formula': "f'{first_name.lower()}.{last_name.lower()}@example.com'"},
                     {'name': 'status', 'type': 'categorical', 'categories': ['Active', 'Inactive', 'Pending'],
                      'weights': [0.7, 0.2, 0.1]}
                 ]
@@ -162,7 +163,7 @@ def sample_generator_config():
                     {'name': 'customer_id', 'type': 'reference', 'reference_table': 'customers', 
                      'reference_column': 'customer_id'},
                     {'name': 'order_date', 'type': 'faker', 'faker_type': 'date'},
-                    {'name': 'amount', 'type': 'formula', 'formula_type': 'basic', 
+                    {'name': 'amount', 'type': 'formula',
                      'formula': 'round(randint(1000, 50000) / 100, 2)'}
                 ]
             }

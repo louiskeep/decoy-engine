@@ -99,8 +99,12 @@ class DataGenerator:
         # Process relationships between tables
         self.relationship_handler.process_relationships(self.config, self.reference_data)
         
-        # Process composite formulas after all tables are generated
-        self._process_composite_formulas()
+        # Process formulas with cross-column `references: [...]` after every
+        # other column in every table is generated. Same scope + per-row
+        # deterministic seeding as the inline formula path; the only thing
+        # that differs is when it runs (post-pass) and that the row context
+        # includes the referenced sibling columns.
+        self._process_referenced_formulas()
         
         # Calculate total time
         total_time = time.time() - start_time
@@ -221,38 +225,52 @@ class DataGenerator:
         self.logger.info(f"Generated table {table_name} in {table_time:.1f} seconds")
         self.logger.info(f"Generated data saved to {output_path}")
     
-    def _process_composite_formulas(self):
+    def _process_referenced_formulas(self):
         """
-        Process composite formulas that reference other columns
-        After all tables have been generated
+        Process formula columns that read sibling columns via
+        ``references: [col_a, col_b, ...]``. Runs AFTER every column in
+        every table has been generated and written, so the formula sees
+        finalized values. Same Python-expression evaluator + same per-row
+        deterministic seeding as the inline formula path.
+
+        Trigger condition: ``type == 'formula'`` AND ``references`` is a
+        non-empty list. The previous separate ``formula_type: composite``
+        flag is gone — having references is what flips the column into
+        post-pass mode.
         """
-        self.logger.info("Processing composite formulas")
-        
+        self.logger.info("Processing formula columns with cross-column references")
+
         # Iterate through all tables
         tables = self.config.get('tables', [])
         for table_config in tables:
             table_name = table_config.get('name')
             output_path = table_config.get('output_path')
-            
+
             # If output_path not specified, use default directory
             if not output_path:
                 output_dir = self.config.get('generator_settings', {}).get('output_directory', 'data/generated/')
                 output_path = os.path.join(output_dir, f"{table_name}.csv")
-            
-            # Check if table has composite formulas
-            has_composite = False
-            composite_configs = []
-            
+
+            # Pick out columns that defer to the post-pass: formula type +
+            # non-empty references. Empty/missing references means the
+            # formula was already evaluated inline.
+            has_referenced = False
+            referenced_configs = []
+
             for col_config in table_config.get('columns', []):
-                if (col_config.get('type') == 'formula' and 
-                    col_config.get('formula_type') == 'composite'):
-                    has_composite = True
-                    composite_configs.append(col_config)
-                    
-            if not has_composite or not os.path.exists(output_path):
+                if (col_config.get('type') == 'formula' and
+                    col_config.get('references')):
+                    has_referenced = True
+                    referenced_configs.append(col_config)
+
+            if not has_referenced or not os.path.exists(output_path):
                 continue
-                
-            self.logger.info(f"Processing composite formulas for table: {table_name}")
+
+            # Keep `composite_configs` alias for the rest of the function so
+            # the existing CSV / fixed-width branches don't need a sweep —
+            # the rename is local to this dispatcher.
+            composite_configs = referenced_configs
+            self.logger.info(f"Processing referenced formulas for table: {table_name}")
             
             try:
                 # Determine the file type
@@ -313,7 +331,7 @@ class DataGenerator:
                                 value = line[start:end].strip()
                                 row_context[ref] = value
                             try:
-                                result = self._evaluate_composite_formula(original_formula, row_context, i)
+                                result = self._evaluate_composite_formula(original_formula, row_context, i, column_name)
                             except Exception as e:
                                 self.logger.warning(f"Failed to evaluate composite formula for line {i}, column {column_name}: {e}")
                                 self.logger.debug(f"Formula: {original_formula}")
@@ -380,7 +398,7 @@ class DataGenerator:
                                     value = ""
                                 row_context[ref] = value
                             try:
-                                result = self._evaluate_composite_formula(original_formula, row_context, i)
+                                result = self._evaluate_composite_formula(original_formula, row_context, i, column_name)
                             except Exception as e:
                                 self.logger.warning(f"Failed to evaluate composite formula for row {i}, column {column_name}: {e}")
                                 self.logger.debug(f"Formula: {original_formula}")
@@ -396,34 +414,37 @@ class DataGenerator:
                 import traceback
                 self.logger.error(f"Traceback: {traceback.format_exc()}")
         
-    def _evaluate_composite_formula(self, formula: str, context: Dict[str, Any], row_index: int) -> str:
+    def _evaluate_composite_formula(
+        self, formula: str, context: Dict[str, Any], row_index: int,
+        column_name: str = 'unnamed_column',
+    ) -> str:
+        """Evaluate a referenced formula as a Python expression. Same scope
+        as the inline formula path (delegated to ColumnGenerator) PLUS the
+        sibling-column values from ``context``.
+
+        Per-row determinism: ``column_seed + row_index`` reseeds ``random``
+        and the Faker instance before each row's eval, so RNG calls inside
+        the formula are stable across runs given the same key. Pre-F0
+        ``_evaluate_composite_formula`` skipped this — composite formulas
+        with ``random()``/``randint()`` were silently non-deterministic.
+
+        F0 also drops the previous ``f'''...'''`` wrapping. Formulas are
+        Python expressions; users who want template-style ``"Hello {x}"``
+        substitution write ``f"Hello {x}"`` themselves.
         """
-        Evaluate a composite formula using the provided row context.
-        """
-        safe_locals = {
-            'str': str,
-            'int': int,
-            'float': float,
-            'round': round,
-            'min': min,
-            'max': max,
-            'len': len,
-            'hash': lambda x: hashlib.md5(str(x).encode()).hexdigest()[:8],
-            'random': random.random,
-            'randint': lambda a, b: random.randint(a, b),
-            'choice': lambda lst: random.choice(lst),
-            'i': row_index,
-            'index': row_index,
-            'now': lambda fmt='%Y-%m-%d': pd.Timestamp.now().strftime(fmt),
-            'today': lambda fmt='%Y-%m-%d': pd.Timestamp.today().strftime(fmt),
-            'days_from_now': lambda days: (pd.Timestamp.now() + pd.Timedelta(days=days)).strftime('%Y-%m-%d'),
-            'months_from_now': lambda months: (pd.Timestamp.now() + pd.DateOffset(months=months)).strftime('%Y-%m-%d'),
-            'years_from_now': lambda years: (pd.Timestamp.now() + pd.DateOffset(years=years)).strftime('%Y-%m-%d'),
-            'format_date': lambda date_obj, fmt='%Y-%m-%d': date_obj.strftime(fmt) if hasattr(date_obj, 'strftime') else str(date_obj)
-        }
-        safe_locals.update(context)
-        # Evaluate as an f-string to support expressions inside braces.
-        result = eval(f"f'''{formula}'''", {"__builtins__": None}, safe_locals)
+        # Reseed per row so RNG calls inside the formula are deterministic.
+        # Mirrors what `_eval_formula_inline` does for the inline path.
+        column_seed = self.column_generator._column_seed(column_name)
+        local_seed = column_seed + row_index
+        random.seed(local_seed)
+        self.column_generator.faker.seed_instance(local_seed)
+
+        scope = self.column_generator._formula_scope(local_seed)
+        scope['i'] = row_index
+        scope['index'] = row_index
+        scope.update(context)
+
+        result = eval(formula, {"__builtins__": {}}, scope)
         return "" if result is None else str(result)
 
     def _parse_fixed_width_definition(self, definition_path: str, fixed_width_options: Dict[str, Any]) -> List[Dict[str, Any]]:

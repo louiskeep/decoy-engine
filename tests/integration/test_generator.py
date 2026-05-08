@@ -138,17 +138,24 @@ def test_generator_composite_formula(tmp_path, mock_logger):
                     {'name': 'first_name', 'type': 'faker', 'faker_type': 'first_name'},
                     {'name': 'last_name', 'type': 'faker', 'faker_type': 'last_name'},
                     {
+                        # F0: every formula is a Python expression. To read
+                        # sibling columns, declare them in `references` and
+                        # write an f-string yourself. Pre-F0 this column
+                        # used `formula_type: template`, which silently
+                        # populated faker provider values into scope —
+                        # confusing because the f-string LOOKED like it
+                        # referenced the same row's columns when it
+                        # actually referenced fresh per-row faker calls.
                         'name': 'email',
                         'type': 'formula',
-                        'formula_type': 'template',
-                        'formula': '{first_name.lower()}.{last_name.lower()}@example.com'
+                        'references': ['first_name', 'last_name'],
+                        'formula': "f'{first_name.lower()}.{last_name.lower()}@example.com'",
                     },
                     {
                         'name': 'username',
                         'type': 'formula',
-                        'formula_type': 'composite',
                         'references': ['first_name', 'last_name'],
-                        'formula': '{first_name.lower()}_{last_name.lower()}'
+                        'formula': "f'{first_name.lower()}_{last_name.lower()}'",
                     }
                 ]
             }

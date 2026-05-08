@@ -313,198 +313,132 @@ class ColumnGenerator:
                 
         return pd.Series(values)
     
-    def _generate_formula_column(self, num_rows: int, column_config: Dict[str, Any], 
+    def _generate_formula_column(self, num_rows: int, column_config: Dict[str, Any],
                                table_name: str, reference_data: Dict[str, pd.DataFrame]) -> pd.Series:
         """
-        Generate data based on a formula
-        
+        Generate data based on a formula.
+
+        Single inline path: every formula is a Python expression (write
+        ``f"..."`` yourself if you want template-like substitution). Drops
+        the previous three-way dispatch (basic / template / composite).
+
+        When ``references: [...]`` is set on the column config, this method
+        emits a None-filled placeholder series — the column's actual values
+        are filled by ``DataGenerator._process_referenced_formulas`` AFTER
+        every other column has been generated, so the formula can read its
+        siblings. When ``references`` is empty/missing, the formula is
+        evaluated inline per row with deterministic seeding.
+
         Args:
             num_rows: Number of rows to generate
             column_config: Configuration for this column
             table_name: Name of the table this column belongs to
             reference_data: Dictionary of previously generated tables
-            
+
         Returns:
-            pandas.Series with generated data
+            pandas.Series with generated data (or None placeholders when
+            the column has cross-column references — filled in post-pass).
         """
-        formula_type = column_config.get('formula_type', 'basic')
         formula = column_config.get('formula', '')
         column_name = column_config.get('name', 'unnamed_column')
+        references = column_config.get('references', []) or []
 
-        self.logger.debug(f"Generating formula column with type: {formula_type}")
-
-        # Check if formula is provided
         if not formula:
             self.logger.warning("No formula provided in configuration")
             return pd.Series([None] * num_rows)
 
-        try:
-            if formula_type == 'basic':
-                # Basic arithmetic or string operations using eval
-                return self._generate_basic_formula(num_rows, formula, column_name)
+        if references:
+            # Defer to the post-pass: this column reads sibling columns,
+            # which haven't been generated yet during the per-column loop.
+            self.logger.debug(
+                f"Formula column '{column_name}' references {references} — "
+                f"deferring to post-pass."
+            )
+            return pd.Series([None] * num_rows, dtype=object)
 
-            elif formula_type == 'template':
-                # String template with Faker placeholders
-                return self._generate_template_formula(num_rows, formula, column_name)
-                
-            elif formula_type == 'composite':
-                # Composite formulas are processed after row generation because they
-                # may depend on other columns in the same row.
-                return pd.Series([None] * num_rows, dtype=object)
-                
-            else:
-                self.logger.warning(f"Unsupported formula type: {formula_type}")
-                return pd.Series([f"UNSUPPORTED_FORMULA_TYPE_{formula_type}"] * num_rows)
-                
-        except Exception as e:
-            self.logger.error(f"Error in formula column generation: {str(e)}")
-            self.logger.error(f"Formula: {formula}")
-            self.logger.error(f"Formula type: {formula_type}")
-            return pd.Series([f"FORMULA_ERROR"] * num_rows)
-    
-    def _generate_basic_formula(self, num_rows: int, formula: str, column_name: str = 'unnamed_column') -> pd.Series:
-        """
-        Generate data using a basic arithmetic or string formula
-        
-        Args:
-            num_rows: Number of rows to generate
-            formula: Formula to evaluate
-            
-        Returns:
-            pandas.Series with generated data
-        """
-        # Basic arithmetic or string operations
+        return self._eval_formula_inline(num_rows, formula, column_name)
+
+    def _eval_formula_inline(
+        self, num_rows: int, formula: str, column_name: str = 'unnamed_column',
+    ) -> pd.Series:
+        """Per-row eval of a Python expression. Same deterministic seeding
+        as the legacy ``basic`` path: ``column_seed + row_index`` reseeds
+        ``random`` and the Faker instance per row.
+
+        Scope per row:
+          - ``i`` / ``index`` — row number
+          - ``random`` / ``randint`` / ``choice`` — RNG (deterministic per row)
+          - ``hash`` — short deterministic hash
+          - ``str`` / ``int`` / ``float`` / ``round`` / ``min`` / ``max`` / ``len``
+          - Faker date helpers + arithmetic (``today``, ``days_from_now``, …)
+
+        Cross-column refs aren't reachable here — that's the post-pass."""
         column_seed = self._column_seed(column_name)
         values = []
         for i in range(num_rows):
-            # Replace index placeholder if present
-            formula_with_index = formula.replace('{i}', str(i))
-            formula_with_index = formula_with_index.replace('{index}', str(i))
-
-            # Per-row seed bound to the column-seed (which is HKDF-derived
-            # when a key is set). Without keying, falls back to seed-based
-            # determinism per the legacy contract.
             local_seed = column_seed + i
             random.seed(local_seed)
             self.faker.seed_instance(local_seed)
-            
-            # Define safe functions for formula evaluation
-            safe_globals = {
-                # Basic utility functions
-                'random': random.random,
-                'randint': lambda a, b: random.randint(a, b),
-                'choice': lambda lst: random.choice(lst),
-                'round': round,
-                'min': min,
-                'max': max,
-                'str': str,
-                'int': int,
-                'float': float,
-                'hash': lambda x: deterministic_hash(str(x), local_seed)[:8],  # Short hash
-                
-                # Date and time functions
-                'date_between': self.faker.date_between,
-                'date_this_decade': self.faker.date_this_decade,
-                'date_this_year': self.faker.date_this_year,
-                'date_this_month': self.faker.date_this_month,
-                'future_date': self.faker.future_date,
-                'past_date': self.faker.past_date,
-                'date_of_birth': self.faker.date_of_birth,
-                'time': lambda: self.faker.time(),
-                'now': lambda fmt='%Y-%m-%d': pd.Timestamp.now().strftime(fmt),
-                'today': lambda fmt='%Y-%m-%d': pd.Timestamp.today().strftime(fmt),
-                
-                # Date arithmetic helpers
-                'days_from_now': lambda days: (pd.Timestamp.now() + pd.Timedelta(days=days)).strftime('%Y-%m-%d'),
-                'months_from_now': lambda months: (pd.Timestamp.now() + pd.DateOffset(months=months)).strftime('%Y-%m-%d'),
-                'years_from_now': lambda years: (pd.Timestamp.now() + pd.DateOffset(years=years)).strftime('%Y-%m-%d'),
-                
-                # Format helpers
-                'format_date': lambda date_obj, fmt='%Y-%m-%d': date_obj.strftime(fmt) if hasattr(date_obj, 'strftime') else str(date_obj)
-            }
-            
+
+            scope = self._formula_scope(local_seed)
+            scope['i'] = i
+            scope['index'] = i
+
             try:
-                # Safely evaluate the formula
-                result = eval(formula_with_index, {"__builtins__": {}}, safe_globals)
+                result = eval(formula, {"__builtins__": {}}, scope)
                 values.append(result)
             except Exception as e:
                 error_msg = str(e)
                 if "not defined" in error_msg:
-                    # Provide more helpful error message for undefined functions
-                    self.logger.warning(f"Function not available in formula for row {i}: {error_msg}")
-                    self.logger.info(f"Available functions: {sorted(list(safe_globals.keys()))}")
+                    self.logger.warning(
+                        f"Name not available in formula for row {i}: {error_msg}"
+                    )
+                    self.logger.info(
+                        f"Available names: {sorted(list(scope.keys()))}"
+                    )
                 else:
-                    self.logger.warning(f"Error evaluating formula for row {i}: {error_msg}")
-                    
-                self.logger.debug(f"Formula: {formula_with_index}")
+                    self.logger.warning(
+                        f"Error evaluating formula for row {i}: {error_msg}"
+                    )
+                self.logger.debug(f"Formula: {formula}")
                 values.append(None)
-                    
-        return pd.Series(values)
-    
-    def _generate_template_formula(self, num_rows: int, formula: str, column_name: str = 'unnamed_column') -> pd.Series:
-        """
-        Generate data using a string template with Faker placeholders
-        
-        Args:
-            num_rows: Number of rows to generate
-            formula: Template formula with placeholders
-            
-        Returns:
-            pandas.Series with generated data
-        """
-        # String template with placeholders
-        faker_providers = self.faker_providers
-        column_seed = self._column_seed(column_name)
-        values = []
 
-        for i in range(num_rows):
-            # Per-row seed bound to the column-seed (HKDF-derived when keyed).
-            row_seed = column_seed + i
-            random.seed(row_seed)
-            self.faker.seed_instance(row_seed)
-            
-            # Create a context with base utility values
-            context = {
-                'i': i,
-                'index': i,
-                'random': random.random(),  # Call the function for a value
-                'randint': lambda a, b: random.randint(a, b),  # Keep as lambda
-                'hash': lambda x: deterministic_hash(str(x), row_seed)[:8],
-            }
-            
-            # Pre-populate the context with actual faker values
-            for key, provider_func in faker_providers.items():
-                try:
-                    context[key] = provider_func()
-                except Exception as e:
-                    self.logger.debug(f"Error generating faker value for {key}: {str(e)}")
-                    context[key] = f"ERROR_{key}"
-            
-            try:
-                # Use f-string evaluation to support expressions like {first_name.lower()}
-                safe_locals = {
-                    'str': str,
-                    'int': int,
-                    'float': float,
-                    'round': round,
-                    'min': min,
-                    'max': max,
-                    'len': len,
-                    'hash': lambda x: deterministic_hash(str(x), row_seed)[:8],
-                    'random': random.random,
-                    'randint': lambda a, b: random.randint(a, b),
-                }
-                safe_locals.update(context)
-                result = eval(f"f'''{formula}'''", {"__builtins__": None}, safe_locals)
-                values.append(result)
-            except NameError as e:
-                missing_key = str(e).split("'")[1] if "'" in str(e) else str(e)
-                self.logger.warning(f"Template key '{missing_key}' not found in row {i}")
-                self.logger.debug(f"Available keys: {list(context.keys())}")
-                values.append(f"Missing key: {missing_key}")
-            except Exception as e:
-                self.logger.warning(f"Error formatting template for row {i}: {str(e)}")
-                self.logger.debug(f"Template: {formula}")
-                values.append("TEMPLATE_ERROR")
-                
         return pd.Series(values)
+
+    def _formula_scope(self, local_seed: int) -> Dict[str, Any]:
+        """Build the names available inside a formula eval. Shared between
+        the inline path here and the post-pass in
+        ``DataGenerator._process_referenced_formulas`` so users get the
+        same vocabulary regardless of whether their formula reads other
+        columns. Per-row seed is captured into the closure so RNG calls
+        within the eval stay deterministic."""
+        return {
+            # RNG (already reseeded by the caller before each row)
+            'random': random.random,
+            'randint': lambda a, b: random.randint(a, b),
+            'choice': lambda lst: random.choice(lst),
+            # Numeric / string utilities
+            'round': round,
+            'min': min,
+            'max': max,
+            'len': len,
+            'str': str,
+            'int': int,
+            'float': float,
+            'hash': lambda x: deterministic_hash(str(x), local_seed)[:8],
+            # Faker date helpers
+            'date_between': self.faker.date_between,
+            'date_this_decade': self.faker.date_this_decade,
+            'date_this_year': self.faker.date_this_year,
+            'date_this_month': self.faker.date_this_month,
+            'future_date': self.faker.future_date,
+            'past_date': self.faker.past_date,
+            'date_of_birth': self.faker.date_of_birth,
+            'time': lambda: self.faker.time(),
+            'now': lambda fmt='%Y-%m-%d': pd.Timestamp.now().strftime(fmt),
+            'today': lambda fmt='%Y-%m-%d': pd.Timestamp.today().strftime(fmt),
+            'days_from_now': lambda days: (pd.Timestamp.now() + pd.Timedelta(days=days)).strftime('%Y-%m-%d'),
+            'months_from_now': lambda months: (pd.Timestamp.now() + pd.DateOffset(months=months)).strftime('%Y-%m-%d'),
+            'years_from_now': lambda years: (pd.Timestamp.now() + pd.DateOffset(years=years)).strftime('%Y-%m-%d'),
+            'format_date': lambda date_obj, fmt='%Y-%m-%d': date_obj.strftime(fmt) if hasattr(date_obj, 'strftime') else str(date_obj),
+        }

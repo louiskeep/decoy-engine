@@ -330,14 +330,11 @@ class MaskerConfigValidator(ConfigValidator):
                     rule['fixed_prefix'] = 'MASKED'
 
             elif strategy_type == 'formula':
+                # F0 consolidation: formula is always a Python expression.
+                # `formula_type` is gone (was 'basic' / 'template'); template
+                # syntax is just `f"..."` written inline by the user.
                 if 'formula' not in rule:
                     raise ValidationError("Missing required field 'formula'", rule_path)
-                formula_type = rule.get('formula_type', 'basic')
-                if formula_type not in ('basic', 'template'):
-                    raise ValidationError(
-                        f"'formula_type' must be 'basic' or 'template' in mask mode (got '{formula_type}')",
-                        f"{rule_path}.formula_type"
-                    )
 
             elif strategy_type == 'reference':
                 # `reference` is the dataset path/identifier — required. Path
@@ -432,10 +429,9 @@ class GeneratorConfigValidator(ConfigValidator):
         'faker', 'sequence', 'categorical', 'reference', 'formula'
     ]
     
-    SUPPORTED_FORMULA_TYPES = [
-        'basic', 'template', 'composite'
-    ]
-    
+    # F0 consolidation: `formula_type` is gone — every formula is a Python
+    # expression, with optional `references: [...]` for cross-column scope.
+
     SUPPORTED_RELATIONSHIP_TYPES = [
         'self_reference', 'foreign_key', 'many_to_many'
     ]
@@ -673,27 +669,24 @@ class GeneratorConfigValidator(ConfigValidator):
                 raise ValidationError(f"Missing required field 'reference_column'", f"{column_path}.reference_column")
                 
         elif column_type == 'formula':
-            # Validate formula fields
+            # F0 consolidation: every formula is a Python expression. Drop
+            # the previous `formula_type: basic | template | composite`
+            # taxonomy — those were two independent choices (syntax +
+            # cross-column scope) hidden behind three names.
+            #
+            #   - syntax:  always Python. Want template-style? Write `f"..."`.
+            #   - scope:   `references: [col_a, col_b]` (optional list of
+            #              sibling columns) flips the column into post-pass
+            #              evaluation so siblings are readable. Empty/missing
+            #              means inline per-row eval with no cross-column
+            #              access.
             if 'formula' not in column:
                 raise ValidationError(f"Missing required field 'formula'", f"{column_path}.formula")
-                
-            if 'formula_type' not in column:
-                column['formula_type'] = 'basic'  # Default formula type
-                self.logger.info(f"Set default formula_type: 'basic' for column '{column.get('name')}'")
-                
-            formula_type = column['formula_type']
-            if formula_type not in self.SUPPORTED_FORMULA_TYPES:
+            refs = column.get('references')
+            if refs is not None and not isinstance(refs, list):
                 raise ValidationError(
-                    f"Unsupported formula type: '{formula_type}'. " +
-                    f"Supported types: {', '.join(self.SUPPORTED_FORMULA_TYPES)}",
-                    f"{column_path}.formula_type"
-                )
-                
-            # Validate composite formula references
-            if formula_type == 'composite' and 'references' not in column:
-                raise ValidationError(
-                    f"Composite formula requires 'references' field",
-                    f"{column_path}.references"
+                    f"'references' must be a list of column names (got {type(refs).__name__})",
+                    f"{column_path}.references",
                 )
 
         # Validate fixed_width_options if present (existing code remains unchanged)
