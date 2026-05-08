@@ -55,5 +55,8 @@ def create_strategy(
     elif strategy_type == 'formula':
         from decoy_engine.transforms.formula import FormulaStrategy
         return FormulaStrategy(seed, logger)
+    elif strategy_type == 'reference':
+        from decoy_engine.transforms.reference import ReferenceStrategy
+        return ReferenceStrategy(seed, logger, derive_key=derive_key)
     else:
         raise ValueError(f"Unsupported strategy type: {strategy_type}")

@@ -12,6 +12,7 @@ from decoy_engine.transforms.faker_based import FakerStrategy
 from decoy_engine.transforms.hash import HashStrategy
 from decoy_engine.transforms.redact import RedactStrategy
 from decoy_engine.transforms.map import MapStrategy
+from decoy_engine.transforms.reference import ReferenceStrategy
 from decoy_engine.transforms.shuffle import ShuffleStrategy
 from decoy_engine.transforms.passthrough import PassthroughStrategy
 from decoy_engine.transforms.factory import create_strategy
@@ -136,6 +137,52 @@ def test_passthrough_strategy(sample_data, mock_logger):
     # Should be identical to input
     pd.testing.assert_series_equal(result, sample_data)
 
+def test_reference_strategy(sample_data, mock_logger, tmp_path):
+    """Reference strategy: each input maps deterministically to a value
+    drawn from the reference dataset; same input → same picked value."""
+    ref_csv = tmp_path / "fake_names.csv"
+    ref_csv.write_text("name\nAvery\nQuinn\nMorgan\nRiley\nJordan\n", encoding="utf-8")
+
+    strategy = ReferenceStrategy(seed=42, logger=mock_logger)
+    rule = {'column': 'name', 'type': 'reference', 'reference': str(ref_csv)}
+
+    result = strategy.apply(sample_data, rule)
+
+    assert len(result) == len(sample_data)
+    assert result.isna().sum() == 1                        # nulls preserved
+    ref_values = {'Avery', 'Quinn', 'Morgan', 'Riley', 'Jordan'}
+    assert set(result.dropna()) <= ref_values              # every pick comes from the ref
+    # Determinism: re-running yields the same picks.
+    result2 = strategy.apply(sample_data, rule)
+    pd.testing.assert_series_equal(result, result2)
+    # Determinism: same input → same output across rows.
+    duped = pd.Series(['John', 'John', 'Jane', None])
+    out = strategy.apply(duped, rule)
+    assert out[0] == out[1]                                # 'John' picks the same row both times
+    assert pd.isna(out[3])
+
+def test_reference_strategy_key_column(sample_data, mock_logger, tmp_path):
+    """Multi-column reference + explicit key_column picks from that column."""
+    ref_csv = tmp_path / "people.csv"
+    ref_csv.write_text(
+        "first,last\nAvery,Quinn\nMorgan,Riley\nJordan,Park\n",
+        encoding="utf-8",
+    )
+    strategy = ReferenceStrategy(seed=42, logger=mock_logger)
+    rule = {
+        'column': 'name', 'type': 'reference',
+        'reference': str(ref_csv), 'key_column': 'last',
+    }
+    result = strategy.apply(sample_data, rule)
+    assert set(result.dropna()) <= {'Quinn', 'Riley', 'Park'}
+
+def test_reference_strategy_missing_path(mock_logger):
+    """Validation: bad path raises at apply-time."""
+    strategy = ReferenceStrategy(seed=42, logger=mock_logger)
+    rule = {'column': 'name', 'type': 'reference', 'reference': '/nope/does-not-exist.csv'}
+    with pytest.raises(ValueError, match="Reference dataset not found"):
+        strategy.apply(pd.Series(['x']), rule)
+
 def test_strategy_factory(mock_logger):
     """Test strategy factory."""
     strategies = [
@@ -144,7 +191,8 @@ def test_strategy_factory(mock_logger):
         ('redact', RedactStrategy),
         ('map', MapStrategy),
         ('shuffle', ShuffleStrategy),
-        ('passthrough', PassthroughStrategy)
+        ('passthrough', PassthroughStrategy),
+        ('reference', ReferenceStrategy),
     ]
     
     for strategy_type, expected_class in strategies:

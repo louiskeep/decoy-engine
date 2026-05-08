@@ -94,7 +94,8 @@ class MaskerConfigValidator(ConfigValidator):
     SUPPORTED_FILE_TYPES = ['csv', 'fixed_width', 'database']
     
     SUPPORTED_MASKING_STRATEGIES = [
-        'faker', 'hash', 'redact', 'map', 'shuffle', 'passthrough', 'date_shift', 'formula'
+        'faker', 'hash', 'redact', 'map', 'shuffle', 'passthrough', 'date_shift', 'formula',
+        'reference',
     ]
     
     def validate(self, config: Dict[str, Any]) -> None:
@@ -336,6 +337,16 @@ class MaskerConfigValidator(ConfigValidator):
                     raise ValidationError(
                         f"'formula_type' must be 'basic' or 'template' in mask mode (got '{formula_type}')",
                         f"{rule_path}.formula_type"
+                    )
+
+            elif strategy_type == 'reference':
+                # `reference` is the dataset path/identifier — required. Path
+                # existence is validated lazily by the strategy at apply-time
+                # so config validation can run without filesystem access.
+                if 'reference' not in rule or not rule['reference']:
+                    raise ValidationError(
+                        "Missing required field 'reference' (dataset path) for reference strategy",
+                        f"{rule_path}.reference"
                     )
 
             # Validate optional conditions block
