@@ -133,6 +133,40 @@ Same engine, called differently. The Platform's job is **multi-user concerns**: 
 
 ---
 
+## Hybrid Engine Substrate
+
+The engine internally runs a three-engine hybrid: DuckDB at the I/O boundary, Polars for relational ops, pandas for per-row Python (mask transforms, generators, STORM). All three share Apache Arrow as the in-memory substrate so the runner cache holds `pyarrow.Table` and conversion at op boundaries is zero-copy where possible.
+
+```
+   ┌────────────────┐  Arrow   ┌────────────────┐  Arrow  ┌────────────────┐
+   │ source.file    ├──────────▶  filter / sort ├─────────▶  mask          │
+   │ source.db      │          │  dedupe / etc. │         │  generate      │
+   │  (DuckDB)      │          │   (Polars)     │         │   (Pandas)     │
+   └────────────────┘          └────────────────┘         └───────┬────────┘
+                                                                  │
+   ┌────────────────┐  Arrow   ┌────────────────┐  Arrow  ┌───────▼────────┐
+   │ target.file    ◀──────────┤  filter / sort ◀─────────┤ run_storm      │
+   │ target.db      │          │  dedupe / etc. │         │  (Pandas)      │
+   │  (DuckDB)      │          │   (Polars)     │         └────────────────┘
+   └────────────────┘          └────────────────┘
+```
+
+Each op declares `NATIVE_ENGINE` in its module. The runner reads the declaration, materializes the cached Arrow into the op's preferred type at apply-time, and converts the result back to Arrow before caching. Eviction is eager — cache entries are released as soon as their last downstream consumer reads them, so peak memory is bounded by the in-flight working set rather than the full run lifetime.
+
+**Engine boundary by op kind**:
+
+| Engine | Ops | Why |
+|---|---|---|
+| **DuckDB** | source.file / source.db / target.file / target.db | Best spill-to-disk, native streaming for CSV / parquet, attachable scanners for SQL sources |
+| **Polars** | filter / sort / dedupe / derive / drop_column / select_column / limit | Lazy planner, columnar SIMD, parallel by default |
+| **Pandas** | mask / generate / run_storm | Per-row Python: Faker, scipy, sklearn — moving these off pandas buys nothing |
+
+**Opt-in flag**: graphs declare `engine: pandas` (default) or `engine: hybrid` at the YAML top level. `engine: pandas` forces every op through its pandas fallback regardless of declaration — the safety hatch that survived through Phase 7. Phase 8 of the polars-duckdb hybrid plan flips the default to `hybrid` and removes the pandas fallback one release cycle later.
+
+For the why behind this and the migration path, see `plans/2026-05-10-polars-duckdb-hybrid-engine.md` and the companion implementation plan in the same directory. Cheat sheet for contributors switching mental models: `POLARS_FOR_PANDAS_USERS.md`.
+
+---
+
 ## What Goes Where: The Decision Rules
 
 This is the most important section. When you're about to write a new piece of code, ask:

@@ -29,7 +29,7 @@ This is the working journal for executing Phases 1–8 of the Polars+DuckDB hybr
 | 4. DuckDB source/sink + `engine: hybrid` flag | shipped | (this branch) |
 | 5. Preview path + error translation | shipped | (this branch) |
 | 6. Parity test suite + dogfood review | shipped | (this branch) |
-| 7. Docs + Polars cheat sheet | pending | — |
+| 7. Docs + Polars cheat sheet | shipped | (this branch) |
 | 8. Default flip + cleanup | pending | — |
 
 ## Notes
@@ -37,6 +37,14 @@ This is the working journal for executing Phases 1–8 of the Polars+DuckDB hybr
 - The implementation plan referenced `pandas-query` translation and a `_legacy/` directory of frozen pandas ops for parity tests. I'm taking a lighter approach: each ported op keeps a pandas fallback path inside the same module guarded by `NATIVE_ENGINE` resolution at the runner. This keeps the diff tighter and avoids duplicating op registration.
 - Phase 1's STORM benchmark is informational. Per the plan, if Arrow→pandas overhead is ≥ 10%, declare `NATIVE_ENGINE = "arrow"` for STORM. The benchmark records the number; the decision goes in the commit message.
 - Phase 4's `engine: hybrid` flag is the dogfood mechanism. Default stays `engine: pandas` until Phase 8 to keep the cutover safe.
+
+## Phase 7 result
+
+- `SHARED_ENGINE_ARCHITECTURE.md` gets a new "Hybrid Engine Substrate" section with the three-engine boundary diagram, the per-op engine table, and the `engine: hybrid` opt-in flag explanation.
+- New `POLARS_FOR_PANDAS_USERS.md` cheat sheet at engine root: top-20 idiom translations, the `.map_elements()` footgun with three patterns (rewrite / declare pandas / OK case), lazy vs eager mental model, our workload's specific engine assignments.
+- `CONNECTOR_SDK_CONTRACT.md` already shipped in Phase 2; the full SDK guide (external-author tutorial) is a follow-up since it depends on the customer SDK from Roadmap Item 24 which isn't in this branch's scope.
+- `forge-platform/plans/2026-05-07-etl-direction-and-connector-sdk.md` update is out of scope — different repo, would conflict with the parallel Sprint C work. Tracked as a Sprint C+1 follow-up.
+- 485 passing (no test churn — docs only).
 
 ## Phase 6 result
 
