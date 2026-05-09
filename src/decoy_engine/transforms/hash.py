@@ -32,6 +32,10 @@ class HashStrategy(BaseMaskingStrategy):
         column_name = rule.get('column', 'unnamed')
         column_key = self._column_key(column_name)
         seed = rule.get('seed', self.seed)
+        # Optional output-length cap. SHA-256 hex is 64 chars; legacy targets
+        # with `CHAR(N)` columns can ask for a shorter slice. Truncation is
+        # bitwise stable across runs because it slices a deterministic hash.
+        truncate = self._resolve_truncate(rule.get('truncate'), column_name)
 
         if column_key is not None:
             self.logger.debug(f"Applying keyed hash to column '{column_name}'")
@@ -39,7 +43,8 @@ class HashStrategy(BaseMaskingStrategy):
             def hash_value(val):
                 if val is None or pd.isna(val):
                     return val
-                return hmac_hex(column_key, str(val))
+                h = hmac_hex(column_key, str(val))
+                return h[:truncate] if truncate else h
         else:
             self.logger.debug(
                 f"Applying legacy hash with seed {seed} (no master key configured)"
@@ -48,11 +53,35 @@ class HashStrategy(BaseMaskingStrategy):
             def hash_value(val):
                 if val is None or pd.isna(val):
                     return val
-                return deterministic_hash(str(val), seed)
+                h = deterministic_hash(str(val), seed)
+                return h[:truncate] if truncate else h
 
         result = column.apply(hash_value)
         self._log_stats(column, result, rule)
         return result
+
+    def _resolve_truncate(self, raw, column_name: str) -> Optional[int]:
+        """Coerce + validate the `truncate` config. None / 0 / missing means
+        no truncation. Out-of-range or non-integer values are coerced to None
+        with a warning rather than raising — keeps the masking run going on
+        a single bad rule. SHA-256 hex is 64 chars, so the cap is 64. Booleans
+        are rejected explicitly because in Python `bool` is a subclass of
+        `int` and would otherwise pass the type check."""
+        if raw is None or raw == 0:
+            return None
+        if isinstance(raw, bool) or not isinstance(raw, int):
+            self.logger.warning(
+                f"hash.truncate must be an integer, got {raw!r} for column "
+                f"'{column_name}'; ignoring truncate"
+            )
+            return None
+        if raw < 1 or raw > 64:
+            self.logger.warning(
+                f"hash.truncate={raw} for column '{column_name}' is out of range "
+                f"[1, 64]; ignoring truncate"
+            )
+            return None
+        return raw
 
     def _column_key(self, column_name: str) -> Optional[bytes]:
         """Derive the mask subkey via the caller-supplied resolver, if one

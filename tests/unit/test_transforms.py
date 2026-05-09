@@ -50,13 +50,46 @@ def test_faker_strategy(sample_data, mock_logger):
 def test_hash_strategy(sample_data, mock_logger):
     """Test hash strategy."""
     strategy = HashStrategy(seed=42, logger=mock_logger)
-    
+
     rule = {'column': 'name', 'type': 'hash'}
     result = strategy.apply(sample_data, rule)
-    
+
     assert len(result) == len(sample_data)
     assert result.isna().sum() == 1  # Preserve NULL values
     assert all(isinstance(x, str) and len(x) == 64 for x in result.dropna())  # SHA-256 produces 64 char hex
+
+
+def test_hash_strategy_truncate(sample_data, mock_logger):
+    """`truncate: N` clips the 64-char hex output to N chars while keeping
+    the result deterministic — same input + same seed (or master key) gives
+    the same prefix every time. Lets users target legacy CHAR(N) columns."""
+    strategy = HashStrategy(seed=42, logger=mock_logger)
+
+    full = strategy.apply(sample_data, {'column': 'name', 'type': 'hash'})
+    sliced = strategy.apply(
+        sample_data, {'column': 'name', 'type': 'hash', 'truncate': 12}
+    )
+
+    assert all(len(x) == 12 for x in sliced.dropna())
+    # Slice is bitwise the prefix of the full hash — proves we're truncating
+    # rather than re-hashing.
+    for full_v, sliced_v in zip(full.dropna(), sliced.dropna()):
+        assert sliced_v == full_v[:12]
+
+
+def test_hash_strategy_truncate_invalid_falls_back(sample_data, mock_logger):
+    """Out-of-range or non-integer truncate values are warned about and
+    treated as "no truncate" instead of raising — keeps the run alive on a
+    single bad rule."""
+    strategy = HashStrategy(seed=42, logger=mock_logger)
+
+    for bad in (0, -1, 65, 'twelve', 12.5):
+        result = strategy.apply(
+            sample_data, {'column': 'name', 'type': 'hash', 'truncate': bad}
+        )
+        # 0 means "no truncate" by spec; everything else should also pass through.
+        assert all(len(x) == 64 for x in result.dropna()), \
+            f"expected fallback to full hash for truncate={bad!r}"
 
 def test_redact_strategy(sample_data, mock_logger):
     """Test redact strategy."""
