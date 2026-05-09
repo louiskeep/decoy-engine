@@ -156,6 +156,163 @@ def test_run_records_failure(tmp_csv):
     assert "does_not_exist" in failed["error"]
 
 
+@pytest.fixture
+def tmp_two_csvs():
+    """Two CSVs that share an `id` column so `unite` can keyed-join them."""
+    tmpdir = tempfile.mkdtemp()
+    src1 = os.path.join(tmpdir, "people.csv")
+    src2 = os.path.join(tmpdir, "scores.csv")
+    out = os.path.join(tmpdir, "out.csv")
+    pd.DataFrame({
+        "id": [1, 2, 3],
+        "name": ["ana", "bo", "cy"],
+    }).to_csv(src1, index=False)
+    pd.DataFrame({
+        "id": [1, 2, 3],
+        "score": [99, 87, 73],
+    }).to_csv(src2, index=False)
+    return src1, src2, out
+
+
+def test_run_unite_keyed_join(tmp_two_csvs):
+    """unite combines two upstream tables into one wider one before mask."""
+    src1, src2, out = tmp_two_csvs
+    cfg = _yaml({
+        "mode": "graph",
+        "nodes": [
+            {"id": "p", "kind": "source.file", "config": {"path": src1}},
+            {"id": "s", "kind": "source.file", "config": {"path": src2}},
+            {"id": "u", "kind": "unite", "config": {"on": ["id"]}},
+            {"id": "t", "kind": "target.file", "config": {"output_filename": out}},
+        ],
+        "edges": [
+            {"from": "p", "to": "u"},
+            {"from": "s", "to": "u"},
+            {"from": "u", "to": "t"},
+        ],
+    })
+    validate_graph(cfg)
+    result = run_graph(cfg)
+    assert result["success"] is True
+    written = pd.read_csv(out)
+    assert sorted(written.columns.tolist()) == ["id", "name", "score"]
+    assert len(written) == 3
+
+
+def test_run_unite_then_mask(tmp_two_csvs):
+    """End-to-end: two sources → unite → mask. The motivation for `unite`:
+    mask only accepts one input, so multi-source pipelines must merge first."""
+    src1, src2, out = tmp_two_csvs
+    cfg = _yaml({
+        "mode": "graph",
+        "nodes": [
+            {"id": "p", "kind": "source.file", "config": {"path": src1}},
+            {"id": "s", "kind": "source.file", "config": {"path": src2}},
+            {"id": "u", "kind": "unite", "config": {"on": ["id"]}},
+            {"id": "m", "kind": "mask", "config": {"columns": {
+                "name": {"strategy": "redact", "redact_with": "***"},
+            }}},
+            {"id": "t", "kind": "target.file", "config": {"output_filename": out}},
+        ],
+        "edges": [
+            {"from": "p", "to": "u"},
+            {"from": "s", "to": "u"},
+            {"from": "u", "to": "m"},
+            {"from": "m", "to": "t"},
+        ],
+    })
+    validate_graph(cfg)
+    result = run_graph(cfg)
+    assert result["success"] is True
+    written = pd.read_csv(out)
+    assert (written["name"] == "***").all()
+    assert sorted(written["score"].tolist()) == [73, 87, 99]
+
+
+def test_arity_error_hints_at_unite_for_mask():
+    cfg = _yaml({
+        "mode": "graph",
+        "nodes": [
+            {"id": "s1", "kind": "source.file", "config": {"path": "/tmp/a"}},
+            {"id": "s2", "kind": "source.file", "config": {"path": "/tmp/b"}},
+            {"id": "m", "kind": "mask", "config": {}},
+        ],
+        "edges": [{"from": "s1", "to": "m"}, {"from": "s2", "to": "m"}],
+    })
+    with pytest.raises(PipelineValidationError) as ei:
+        validate_graph(cfg)
+    assert "unite" in str(ei.value)
+
+
+def test_run_logs_include_node_name_when_set(tmp_csv):
+    """The optional `name` field surfaces in logs alongside the id+kind tail."""
+    from decoy_engine import ExecutionContext
+
+    class CapturingLogger:
+        def __init__(self):
+            self.lines: list[str] = []
+
+        def _emit(self, msg, args):
+            self.lines.append(msg % args if args else msg)
+
+        def debug(self, msg, *args, **kwargs): self._emit(msg, args)
+        def info(self, msg, *args, **kwargs): self._emit(msg, args)
+        def warning(self, msg, *args, **kwargs): self._emit(msg, args)
+        def error(self, msg, *args, **kwargs): self._emit(msg, args)
+
+    src, out = tmp_csv
+    cfg = _yaml({
+        "mode": "graph",
+        "nodes": [
+            {"id": "src1", "kind": "source.file", "name": "Customers PII", "config": {"path": src}},
+            {"id": "tgt1", "kind": "target.file", "name": "Cleaned export", "config": {"output_filename": out}},
+        ],
+        "edges": [{"from": "src1", "to": "tgt1"}],
+    })
+    logger = CapturingLogger()
+    result = run_graph(cfg, ctx=ExecutionContext(logger=logger))
+    assert result["success"] is True
+    joined = "\n".join(logger.lines)
+    # Each log line carries id, kind, and (when set) the human name.
+    assert "id=src1" in joined and "kind=source.file" in joined
+    assert "Customers PII" in joined
+    assert "id=tgt1" in joined and "kind=target.file" in joined
+    assert "Cleaned export" in joined
+
+
+def test_run_logs_fallback_without_name(tmp_csv):
+    """Nodes without `name` still log a clean id+kind descriptor."""
+    from decoy_engine import ExecutionContext
+
+    class CapturingLogger:
+        def __init__(self):
+            self.lines: list[str] = []
+
+        def _emit(self, msg, args):
+            self.lines.append(msg % args if args else msg)
+
+        def debug(self, msg, *args, **kwargs): self._emit(msg, args)
+        def info(self, msg, *args, **kwargs): self._emit(msg, args)
+        def warning(self, msg, *args, **kwargs): self._emit(msg, args)
+        def error(self, msg, *args, **kwargs): self._emit(msg, args)
+
+    src, out = tmp_csv
+    cfg = _yaml({
+        "mode": "graph",
+        "nodes": [
+            {"id": "s", "kind": "source.file", "config": {"path": src}},
+            {"id": "t", "kind": "target.file", "config": {"output_filename": out}},
+        ],
+        "edges": [{"from": "s", "to": "t"}],
+    })
+    logger = CapturingLogger()
+    result = run_graph(cfg, ctx=ExecutionContext(logger=logger))
+    assert result["success"] is True
+    joined = "\n".join(logger.lines)
+    assert "id=s" in joined and "id=t" in joined
+    assert "kind=source.file" in joined and "kind=target.file" in joined
+
+
 @pytest.mark.parametrize("bad_cfg, msg_substr", [
     # cycle
     ({

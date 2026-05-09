@@ -11,6 +11,10 @@ from typing import Any, Literal, TypedDict
 class NodeSpec(TypedDict, total=False):
     id: str
     kind: str
+    # Optional human label. Distinct from `id` (which is the stable ref
+    # used by edges and validators). Surfaces in run logs so users can
+    # tell two `mask` nodes apart by name without consulting the YAML.
+    name: str
     config: dict[str, Any]
     position: dict[str, float]
 

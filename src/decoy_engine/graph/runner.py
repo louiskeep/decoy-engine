@@ -67,9 +67,10 @@ def run_graph(
         op = OPS[kind]
         node_cfg = dict(node.get("config") or {})
         inputs = [cache[e["from"]] for e in edges if e["to"] == nid]
+        descriptor = _node_descriptor(node)
 
         if log is not None:
-            log.info("graph: running node %s (%s)", nid, kind)
+            log.info("graph: running node %s", descriptor)
 
         t0 = time.monotonic()
         try:
@@ -86,8 +87,8 @@ def run_graph(
             })
             if log is not None:
                 log.info(
-                    "graph: %s ok rows=%d elapsed=%dms",
-                    nid,
+                    "graph: node %s ok rows=%d elapsed=%dms",
+                    descriptor,
                     len(df) if df is not None else 0,
                     elapsed_ms,
                 )
@@ -102,7 +103,7 @@ def run_graph(
                 "error": str(exc),
             })
             if log is not None:
-                log.error("graph: %s failed: %s", nid, exc)
+                log.error("graph: node %s failed: %s", descriptor, exc)
                 log.error(traceback.format_exc())
             success = False
             break
@@ -167,7 +168,7 @@ def preview_graph(
                 df = df.head(row_limit)
             cache[nid] = df
         except Exception as exc:
-            error_msg = f"node {nid!r} ({kind}) failed: {exc}"
+            error_msg = f"node {_node_descriptor(node)} failed: {exc}"
             cache[nid] = None
             if nid == node_id:
                 break
@@ -220,6 +221,22 @@ def _validate_or_raise(config: dict) -> None:
         GraphConfigValidator(quiet).validate(config)
     except ValidationError as e:
         raise PipelineValidationError(str(e)) from e
+
+
+def _node_descriptor(node: dict) -> str:
+    """Format `<name> [id=<id>, kind=<kind>]` for logs.
+
+    `name` is optional in the YAML — drop the leading label when it's
+    missing so untagged nodes still log readably. The id+kind tail is
+    always present so users can grep logs back to the YAML even when
+    two nodes share a name.
+    """
+    nid = node.get("id", "?")
+    kind = node.get("kind", "?")
+    name = node.get("name")
+    if isinstance(name, str) and name.strip():
+        return f"{name!r} [id={nid}, kind={kind}]"
+    return f"[id={nid}, kind={kind}]"
 
 
 def _jsonable(v: Any) -> Any:

@@ -38,6 +38,7 @@ graph/
     ├── select_column.py
     ├── filter.py        ← pandas df.query(predicate, engine='python')
     ├── dedupe.py
+    ├── unite.py         ← combine 2+ tables side-by-side (positional or keyed); INPUT_ARITY=(2, None)
     ├── mask_op.py       ← reuses transforms/registry + masker/processor
     ├── generate_op.py   ← reuses generators/column_generator
     ├── target_file.py

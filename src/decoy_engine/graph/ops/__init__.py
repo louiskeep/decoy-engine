@@ -22,6 +22,7 @@ from decoy_engine.graph.ops import (
     target_db,
     mask_op,
     generate_op,
+    unite,
 )
 
 OPS: dict[str, object] = {
@@ -34,6 +35,7 @@ OPS: dict[str, object] = {
     "limit": limit,
     "dedupe": dedupe,
     "derive": derive,
+    "unite": unite,
     "run_storm": run_storm,
     "mask": mask_op,
     "generate": generate_op,
