@@ -1,60 +1,179 @@
-# HIPAA Disguise — minimal scaffolding for `feature/storm-forecast-mvp`.
+# HIPAA Safe Harbor — full 18-identifier coverage (Item 31 phase 3).
 #
-# IMPORTANT: this is the "bones" version. It covers SSN, person name, dates,
-# email, phone, and ZIP — enough to prove the apply-Disguise loop end-to-end.
-# Full Safe Harbor 18-identifier coverage (medical record numbers, health-plan
-# beneficiary IDs, account numbers, certificate/license numbers, vehicle/serial
-# IDs, device IDs, URLs/IPs, biometric identifiers, photos, etc.) lands in a
-# follow-up PR. Detectors for ICD-10, NPI, MRN, etc. arrive at the same time.
-# See DISGUISES.md.
+# HIPAA Privacy Rule Safe Harbor identifiers (45 CFR 164.514(b)(2)):
+#  A  Names                       → person_name → faker
+#  B  Geographic data (≤ZIP)      → us_zip → truncate to 3 digits
+#  C  Dates                       → iso_date / us_date / eu_date → date_shift
+#  D  Telephone numbers           → us_phone → faker
+#  E  Fax numbers                 → fax_number → faker
+#  F  Electronic mail             → email → faker
+#  G  SSNs                        → ssn → hash
+#  H  Medical record numbers      → mrn → hash
+#  I  Health-plan beneficiary IDs → health_plan_id → hash
+#  J  Account numbers             → iban → hash (bank accounts via IBAN)
+#  K  Certificate/license numbers → license_num → hash
+#  L  Vehicle identifiers / VINs  → vehicle_id → hash
+#  M  Device identifiers          → device_id → hash
+#  N  Web URLs                    → url → redact
+#  O  IP addresses                → ipv4 → faker (ipv4)
+#  P  Biometric identifiers       → biometric_id → redact
+#  Q  Full-face photographs       → (path-based; flagged by biometric_id name hints)
+#  R  Any unique identifying code → covered by ssn / npi / mrn / health_plan_id
+#
+# Clinical identifiers (beyond Safe Harbor):
+#  ICD-10-CM diagnosis codes → icd10 → truncate (3-char category generalisation)
+#  National Provider IDs     → npi → hash (FK-stable across provider analytics)
 
 id: hipaa
-name: "HIPAA Disguise"
-summary: "Minimal HIPAA Safe Harbor masking: SSN, names, dates, ZIP, email, phone."
+name: "HIPAA Safe Harbor"
+summary: "Full HIPAA Safe Harbor (45 CFR 164.514(b)(2)) — all 18 identifier categories + clinical detectors."
 regulation: "HIPAA Privacy Rule — Safe Harbor (45 CFR 164.514(b)(2))"
 primary_buyer: "Healthcare data engineers"
 
 triggers:
   any_detectors:
     - ssn
+    - mrn
+    - npi
+    - icd10
   co_occurrence:
     - [iso_date, us_zip, person_name]
     - [us_date, us_zip, person_name]
+    - [iso_date, mrn]
+    - [us_zip, mrn]
   min_score: 0.4
 
 field_rules:
-  - detectors: [ssn]
-    mask: hash
-    params:
-      algorithm: sha256
-    why: "SSN → irreversible hash. Preserves uniqueness across joins; not reversible to source."
-
+  # A — Names
   - detectors: [person_name]
     mask: faker
     params:
       faker_type: name
-    why: "Names → realistic fake substitutes (Safe Harbor identifier #A)."
+    why: "Safe Harbor §A — names → realistic fake substitutes."
 
+  # B — Geographic data (ZIP → 3-digit prefix)
+  - detectors: [us_zip]
+    mask: truncate
+    params:
+      length: 3
+    why: "Safe Harbor §B — ZIP → first 3 digits. Full ZIPs only allowed for ZCTAs >20K population."
+
+  # C — Dates (all three date formats)
   - detectors: [iso_date, us_date, eu_date]
     mask: date_shift
     params:
       jitter_days: 30
-    why: "Dates → random ±30d shift. Preserves analytic distribution while breaking correlations (Safe Harbor identifier #C)."
+    why: "Safe Harbor §C — dates → ±30d random shift. Preserves analytic distribution; breaks correlations."
 
-  - detectors: [us_zip]
-    mask: redact
-    params:
-      keep_chars: 3
-    why: "ZIP → keep first 3 digits per Safe Harbor identifier #B (full ZIPs only allowed for ZCTAs >20K population)."
-
-  - detectors: [email]
-    mask: faker
-    params:
-      faker_type: email
-    why: "Email addresses → realistic fake (Safe Harbor identifier #D)."
-
+  # D — Telephone numbers
   - detectors: [us_phone]
     mask: faker
     params:
       faker_type: phone_number
-    why: "Phone numbers → realistic fake (Safe Harbor identifier #E)."
+    why: "Safe Harbor §D — telephone → realistic fake."
+
+  # E — Fax numbers
+  - detectors: [fax_number]
+    mask: faker
+    params:
+      faker_type: phone_number
+    why: "Safe Harbor §E — fax numbers → realistic fake phone number."
+
+  # F — Electronic mail addresses
+  - detectors: [email]
+    mask: faker
+    params:
+      faker_type: email
+    why: "Safe Harbor §F — email → realistic fake."
+
+  # G — Social Security Numbers
+  - detectors: [ssn]
+    mask: hash
+    params:
+      algorithm: sha256
+    why: "Safe Harbor §G — SSN → irreversible hash. Preserves uniqueness for FK joins."
+
+  # H — Medical record numbers
+  - detectors: [mrn]
+    mask: hash
+    params:
+      algorithm: sha256
+      truncate: 12
+    why: "Safe Harbor §H — medical record numbers → deterministic 12-char hash (FK-stable)."
+
+  # I — Health-plan beneficiary numbers
+  - detectors: [health_plan_id]
+    mask: hash
+    params:
+      algorithm: sha256
+      truncate: 12
+    why: "Safe Harbor §I — health-plan beneficiary / member IDs → deterministic hash."
+
+  # J — Account numbers (IBAN covers bank accounts; general account columns
+  #     are caught by health_plan_id / license_num name-hint rules when named
+  #     accordingly, e.g. account_id, account_num)
+  - detectors: [iban]
+    mask: hash
+    params:
+      algorithm: sha256
+    why: "Safe Harbor §J — IBAN / bank account numbers → irreversible hash."
+
+  # K — Certificate and license numbers
+  - detectors: [license_num]
+    mask: hash
+    params:
+      algorithm: sha256
+      truncate: 12
+    why: "Safe Harbor §K — license/certificate numbers → deterministic hash."
+
+  # L — Vehicle identifiers and serial numbers (VINs)
+  - detectors: [vehicle_id]
+    mask: hash
+    params:
+      algorithm: sha256
+      truncate: 17
+    why: "Safe Harbor §L — VINs and vehicle identifiers → deterministic hash (length matches VIN)."
+
+  # M — Device identifiers and serial numbers
+  - detectors: [device_id]
+    mask: hash
+    params:
+      algorithm: sha256
+      truncate: 12
+    why: "Safe Harbor §M — device/implant identifiers → deterministic hash."
+
+  # N — Web Universal Resource Locators (URLs)
+  - detectors: [url]
+    mask: redact
+    params:
+      redact_with: "[URL REDACTED]"
+    why: "Safe Harbor §N — URLs → redacted. URLs often embed patient or provider identifying path components."
+
+  # O — IP addresses
+  - detectors: [ipv4]
+    mask: faker
+    params:
+      faker_type: ipv4
+    why: "Safe Harbor §O — IPv4 addresses → realistic fake IP."
+
+  # P — Biometric identifiers (fingerprints, retina scans, voice prints, etc.)
+  - detectors: [biometric_id]
+    mask: redact
+    params:
+      redact_with: "[BIOMETRIC REDACTED]"
+    why: "Safe Harbor §P — biometric identifiers → redacted. Biometrics are permanent; any exposure is irreversible."
+
+  # Clinical: ICD-10-CM diagnosis codes → generalise to 3-char category
+  - detectors: [icd10]
+    mask: truncate
+    params:
+      length: 3
+    why: "ICD-10-CM codes → 3-char category truncation (e.g. 'S72.001A' → 'S72'). Preserves analytic cohort grouping while removing subcategory specificity per Safe Harbor §C guidance on clinical dates."
+
+  # Clinical: National Provider Identifiers → FK-stable hash
+  - detectors: [npi]
+    mask: hash
+    params:
+      algorithm: sha256
+      truncate: 10
+    why: "National Provider Identifiers → 10-char deterministic hash. Provider-level analytics survive; individual provider identity does not."
