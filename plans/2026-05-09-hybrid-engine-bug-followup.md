@@ -13,17 +13,18 @@ References:
 
 Engine dev shipped the 8-phase Polars+DuckDB hybrid (Item 47) on `claude/sprint-c-auth-engine-plan-9pWL0`. Code review on **2026-05-09** confirmed the substrate is sound — runner cache + eviction match the plan; per-op `NATIVE_ENGINE` declaration is clean; SEMANTIC_DIFFERENCES.md is honest; Polars relational ports are tight; `source.file` is genuinely DuckDB-native.
 
-But review surfaced **5 issues** that need follow-up before the work is "done." Severity, in order:
+Review surfaced **5 issues** that needed follow-up before the work was "done." A 6th surfaced later when the benchmark CI workflow ran in a fresh environment for the first time. Severity, in order:
 
 | # | Issue | Severity | Status |
 |---|---|---|---|
-| 1 | Optional deps + flipped default — `pip install decoy-engine` would crash on first pipeline run | BLOCKER | **Fixed** — `fix/promote-hybrid-deps` 4887ef3, ready to merge |
+| 1 | Optional deps + flipped default — `pip install decoy-engine` would crash on first pipeline run | BLOCKER | **Fixed** — `fix/promote-hybrid-deps` 4887ef3 (held on branch; will land with the engine work to avoid bringing all 8 hybrid phases into `main` as a side effect of the deps fix) |
 | 2 | STORM benchmark not reproducible — dev's 2.4% vs reviewer's 56.2% | BLOCKER | This plan, §Bug 2 |
 | 3 | DB sources/sinks don't actually use DuckDB streaming despite declaring `NATIVE_ENGINE='duckdb'` | DEGRADATION | This plan, §Bug 3 |
 | 4 | `types_mapper=pd.ArrowDtype` skipped; default `.to_pandas()` always copies | IMPROVEMENT | This plan, §Bug 4 |
 | 5 | Phase 8 50M-row calibration benchmark never actually run | CONFIDENCE GAP | This plan, §Bug 5 |
+| 6 | `pydantic` imported by `disguises/schema.py` but undeclared in `pyproject.toml` — fresh-environment install crashes at import | BLOCKER | **Fixed** — landed on `main` as `af2ced0`, cherry-picked onto engine branch as `6a5da03` |
 
-Bug 1 is already resolved on its own branch and just needs the merge. Bugs 2 / 4 are scoped (~0.5–1 day each). Bugs 3 / 5 are bigger pieces of work and split into phases. The plan tracks all five so we don't lose them when we return to Sprint C.
+Bugs 1 + 6 are dep-declaration fixes — both caught by environments other than the dev's local venv (Bug 1 by code review, Bug 6 by fresh-environment CI). Bugs 2 / 4 are scoped (~0.5–1 day each). Bugs 3 / 5 are bigger pieces of work and split into phases.
 
 > **No production users today.** This product is in development; no users are affected by these gaps. We have time to do the cleanup right rather than ship under pressure.
 
@@ -304,18 +305,52 @@ The senior dev's fixture plan caps committed fixtures at 70k rows by design — 
 
 ---
 
+## Bug 6 — `pydantic` imported but undeclared *(fixed)*
+
+### What we found
+
+`src/decoy_engine/disguises/schema.py:12` does `from pydantic import BaseModel, Field`, but `pydantic` was never listed in `pyproject.toml`'s `dependencies`. Local installs worked because pydantic is a transitive of `forge-platform` and the engine has been co-developed in the same venv — the import resolved to the platform's pydantic without anyone noticing the engine never declared its own.
+
+The benchmark CI workflow's first real run on `claude/sprint-c-auth-engine-plan-9pWL0` surfaced it immediately: `ModuleNotFoundError: No module named 'pydantic'` at test-collection time, exit code 2.
+
+### Why it matters
+
+Same shape as Bug 1: a fresh `pip install decoy-engine` into a clean venv fails before any user code runs. Latent bug — could have been here since the disguises feature shipped — but only visible to anyone outside the dev's combined platform+engine environment.
+
+### What we did
+
+- `fix/missing-pydantic-dep` (4-line `pyproject.toml` edit; comment explains the discovery context).
+- Merged to `main` as `af2ced0`.
+- Cherry-picked onto the engine branch as `6a5da03` so the benchmark workflow there can collect tests successfully.
+- Branch `fix/missing-pydantic-dep` deleted local + remote.
+
+### Lesson
+
+Bugs 1 + 6 are the same shape: an undeclared runtime dependency masked by the dev's working environment. The pattern is general — anyone who develops two co-installed Python packages in the same venv risks this. Mitigation that catches the next one *before* CI: `pip install . --no-deps` in a fresh venv as part of the release checklist; if `import decoy_engine` fails, a dep is undeclared.
+
+### Verify
+
+```bash
+# In a fresh venv
+pip install decoy-engine
+python -c "import decoy_engine; print('ok')"
+```
+
+---
+
 ## Recommended order of operations *(final, after engine dev's response)*
 
 Ordered by ROI and dependency:
 
 | # | Task | Effort | Why this order |
 |---|---|---|---|
-| 1 | **Merge Bug 1** | 0 days | Already done; just needs the merge. |
+| ✓ | **Bug 6 — pydantic dep fix** | 0 days | Done; merged to `main` (`af2ced0`) + cherry-picked onto engine branch. |
+| ✓ | **GitHub Actions benchmark workflow** | 0 days | Done; merged to `main` (`ac6c8d9`). Caught Bug 6 on its first real run. |
+| 1 | **Bug 1 — promote polars/duckdb to required deps** | 0 days | Done on `fix/promote-hybrid-deps`; held until the engine work itself is ready to merge (same branch carries the whole engine implementation). |
 | 2 | **Bug 4 investigation** — does masker / faker code break under `types_mapper=pd.ArrowDtype`? | 0.5 day | Feeds Bug 2 + Bug 5. If Arrow-backed pandas works, the conversion cost drops and we don't need the STORM-to-arrow port. |
 | 3 | **Bug 5 engineering-correctness** — 8M-row HIPAA fixture, run pandas (expect OOM), run hybrid (expect success). Architectural claim validated cheaply. | 0.5 day | Cheap qualitative validation. Bug 4's outcome affects the OOM threshold, so do this after Bug 4. |
-| 4 | **Bug 2 decision** — based on Bug 4's data, either re-benchmark STORM with Arrow-backed pandas (if Bug 4 helped) or scope STORM-to-Arrow port (if it didn't). | 0.5 day decision + 0–5 days execution | Decision drops out of Bug 4's data. |
+| 4 | **Bug 2 decision** — based on Bug 4's data, either re-benchmark STORM with Arrow-backed pandas (if Bug 4 helped) or scope STORM-to-Arrow port (if it didn't). | 0.5 day decision + 0–5 days execution | Decision drops out of Bug 4's data. The benchmark workflow on `main` is now the canonical measurement environment. |
 | 5 | **Bug 3 — Postgres + SQLite scanners** (defer MySQL until customer signal). | 3.75 days | Delivers the actual architectural promise for the most common ICP databases. |
-| 6 | **GitHub Actions benchmark workflow** | 0.5 day | Removes "but I don't have hardware" friction permanently. |
 
 **Sequence total: ~6 dev-days** before STORM port (if needed); **+3–5 days** if Bug 4 doesn't help and we port STORM. Then back to Sprint C.
 
