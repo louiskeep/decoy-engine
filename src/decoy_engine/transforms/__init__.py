@@ -12,6 +12,7 @@ from decoy_engine.transforms.map import MapStrategy
 from decoy_engine.transforms.shuffle import ShuffleStrategy
 from decoy_engine.transforms.passthrough import PassthroughStrategy
 from decoy_engine.transforms.date_shift import DateShiftStrategy
+from decoy_engine.transforms.fpe import FPEStrategy
 from decoy_engine.transforms.factory import create_strategy
 from decoy_engine.transforms.registry import StrategyManager
 
@@ -24,6 +25,7 @@ __all__ = [
     'ShuffleStrategy',
     'PassthroughStrategy',
     'DateShiftStrategy',
+    'FPEStrategy',
     'create_strategy',
     'StrategyManager'
 ]

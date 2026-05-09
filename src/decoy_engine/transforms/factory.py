@@ -64,5 +64,8 @@ def create_strategy(
     elif strategy_type == 'bucketize':
         from decoy_engine.transforms.bucketize import BucketizeStrategy
         return BucketizeStrategy(seed, logger)
+    elif strategy_type == 'fpe':
+        from decoy_engine.transforms.fpe import FPEStrategy
+        return FPEStrategy(seed, logger, derive_key=derive_key)
     else:
         raise ValueError(f"Unsupported strategy type: {strategy_type}")
