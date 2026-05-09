@@ -14,6 +14,10 @@ dependencies = [
     "pyyaml>=6.0",
     "faker>=13.0.0",
     "psutil>=5.9.0",
+    # Used by decoy_engine.disguises.schema for the Disguise model.
+    # Was always required at runtime; was undeclared until benchmark CI
+    # caught the gap on a fresh-environment install.
+    "pydantic>=2.0",
 ]
 
 [project.optional-dependencies]
