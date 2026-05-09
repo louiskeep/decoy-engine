@@ -17,18 +17,26 @@ OUTPUT_KIND = "stream"
 
 
 def validate_config(config: dict[str, Any]) -> None:
+    # Empty / missing `columns` is valid: it means "drop nothing" — a
+    # no-op pass-through. Matches the canvas's drag-then-configure flow
+    # where a freshly-dropped drop_column node sits unconfigured until
+    # the user picks columns. Rejecting it before the user gets a
+    # chance to configure blocks unrelated samples / runs across the
+    # rest of the graph.
     cols = config.get("columns")
-    if not isinstance(cols, list) or not cols:
-        raise ValidationError(
-            "'columns' must be a non-empty list", "config.columns"
-        )
+    if cols is None:
+        return
+    if not isinstance(cols, list):
+        raise ValidationError("'columns' must be a list", "config.columns")
     if not all(isinstance(c, str) for c in cols):
         raise ValidationError("'columns' entries must be strings", "config.columns")
 
 
 def apply(inputs, config, ctx) -> pd.DataFrame:
     df = inputs[0]
-    columns = config["columns"]
+    columns = config.get("columns") or []
+    if not columns:
+        return df   # no-op: empty/missing columns means "drop nothing"
     missing = [c for c in columns if c not in df.columns]
     if missing:
         raise OpError(f"columns not in input: {missing}")

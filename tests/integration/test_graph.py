@@ -57,6 +57,32 @@ def test_run_drop_column_chain(tmp_csv):
     assert len(written) == 6
 
 
+def test_drop_column_empty_is_noop(tmp_csv):
+    """Empty / missing `columns` validates and runs as a no-op pass-through.
+
+    Matches the canvas's drag-then-configure flow: dropping a drop_column
+    node from the library shouldn't fail-validate the rest of the graph
+    just because the user hasn't picked which columns to drop yet."""
+    src, out = tmp_csv
+    cfg = _yaml({
+        "mode": "graph",
+        "nodes": [
+            {"id": "s", "kind": "source.file", "config": {"path": src}},
+            # No `columns` field at all — fresh-from-library state.
+            {"id": "d", "kind": "drop_column", "config": {}},
+            {"id": "t", "kind": "target.file", "config": {"output_filename": out}},
+        ],
+        "edges": [{"from": "s", "to": "d"}, {"from": "d", "to": "t"}],
+    })
+    validate_graph(cfg)   # must not raise
+    result = run_graph(cfg)
+    assert result["success"] is True
+    written = pd.read_csv(out)
+    # Source had `ssn` — drop_column was a no-op, so it survives.
+    assert "ssn" in written.columns
+    assert len(written) == 6
+
+
 def test_run_filter_dedupe_mask(tmp_csv):
     src, out = tmp_csv
     cfg = _yaml({
