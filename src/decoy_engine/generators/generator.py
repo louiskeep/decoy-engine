@@ -52,10 +52,25 @@ class DataGenerator:
         # Initialize seed for deterministic generation
         self.seed = self.config.get('generator_settings', {}).get('seed', 42)
         random.seed(self.seed)
-        
+
+        # Thread the pipeline-bound key resolver from the ExecutionContext
+        # into ColumnGenerator. When the platform / CLI built `ctx` with a
+        # `pipeline_derive_key` (master-key-derived, pipeline-label-scoped),
+        # this is what ties generation output to the tenant's master key —
+        # same master + same pipeline_label produces the same generated
+        # bytes across runs and across instances. Without this thread,
+        # generation falls back to the legacy `seed + hash(name)` per-column
+        # seed and the "lose the DB, restore the master key" recovery story
+        # only holds for mask. ROADMAP Item 6.
+        self.pipeline_derive_key = (
+            ctx.pipeline_derive_key if ctx is not None else None
+        )
+
         # Initialize column generator
         from decoy_engine.generators.columns import ColumnGenerator
-        self.column_generator = ColumnGenerator(self.seed, self.logger)
+        self.column_generator = ColumnGenerator(
+            self.seed, self.logger, derive_key=self.pipeline_derive_key,
+        )
         
         # Initialize relationship handler
         from decoy_engine.generators.relationships import RelationshipHandler
