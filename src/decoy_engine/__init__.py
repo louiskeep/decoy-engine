@@ -59,6 +59,10 @@ from decoy_engine.exceptions import (
     LicenseError,
     LicenseExpiredError,
 )
+from decoy_engine.internal.helpers import (
+    register_faker_provider,
+    unregister_faker_provider,
+)
 
 __version__ = '0.1.0'
 
@@ -95,4 +99,6 @@ __all__ = [
     'ConnectorAuthError',
     'LicenseError',
     'LicenseExpiredError',
+    'register_faker_provider',
+    'unregister_faker_provider',
 ]

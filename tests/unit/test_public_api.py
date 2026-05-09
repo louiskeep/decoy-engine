@@ -44,6 +44,7 @@ def test_all_lists_every_public_name():
         "DecoyError", "ForgeError", "ConfigError", "PipelineValidationError",
         "ConnectorError", "ConnectorAuthError",
         "LicenseError", "LicenseExpiredError",
+        "register_faker_provider", "unregister_faker_provider",
     }
     assert set(decoy_engine.__all__) == expected
 

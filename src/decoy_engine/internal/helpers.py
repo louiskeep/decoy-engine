@@ -59,18 +59,46 @@ def hmac_seed(key: bytes, value) -> int:
     return int.from_bytes(digest[:4], "big")
 
 
+_CUSTOM_FAKER_PROVIDERS: Dict[str, Callable[[Faker], Any]] = {}
+
+
+def register_faker_provider(name: str, fn: Callable[[Faker], Any]) -> None:
+    """Register a custom faker provider so `faker_type: <name>` resolves to
+    `fn(faker_instance)`. Lets enterprise users add domain-specific providers
+    (medical record numbers in a known shape, internal employee IDs, regional
+    bank routing numbers, etc.) without forking the engine. Names overwrite
+    on collision — last registration wins; pass a no-op or unique prefix if
+    the host process can re-import. Determinism: `fn` should derive its
+    output from the seeded `Faker` instance only — using `random.random()` /
+    `time.time()` will break cross-run reproducibility."""
+    if not isinstance(name, str) or not name:
+        raise ValueError("custom faker provider name must be a non-empty string")
+    if not callable(fn):
+        raise TypeError("custom faker provider fn must be callable")
+    _CUSTOM_FAKER_PROVIDERS[name] = fn
+
+
+def unregister_faker_provider(name: str) -> None:
+    """Remove a previously registered custom provider. No-op if the name was
+    never registered. Mostly useful in tests."""
+    _CUSTOM_FAKER_PROVIDERS.pop(name, None)
+
+
 def get_faker_providers(faker_instance: Faker) -> Dict[str, Callable]:
     """
     Get a comprehensive dictionary of Faker providers
-    
+
     Args:
         faker_instance: An initialized Faker instance
-        
+
     Returns:
-        Dictionary mapping provider names to faker functions
+        Dictionary mapping provider names to faker functions. Built-in
+        providers are merged with any names registered via
+        ``register_faker_provider``; custom registrations take precedence on
+        name collision so callers can override a built-in if they need to.
     """
     fake = faker_instance
-    
+
     # Create a comprehensive dictionary of faker providers
     faker_providers = {
         # Person providers
@@ -136,8 +164,35 @@ def get_faker_providers(faker_instance: Faker) -> Dict[str, Callable]:
         'mime_type': lambda: fake.mime_type(),
         'uuid4': lambda: str(fake.uuid4()),
     }
-    
+
+    # Custom providers wrap the seeded `fake` instance so user-supplied
+    # functions can call any Faker method (`fake.first_name()`, `fake.bban()`,
+    # etc.) and inherit the per-value seed for free. Override built-ins on
+    # name collision — last registration wins.
+    for name, fn in _CUSTOM_FAKER_PROVIDERS.items():
+        faker_providers[name] = lambda fn=fn, fake=fake: fn(fake)
+
     return faker_providers
+
+
+def make_faker(locale=None) -> Faker:
+    """Construct a `Faker` instance with optional locale override. Locale
+    can be a single string (`'en_GB'`) or a list of strings — Faker mixes
+    them in the order given. `None` or empty returns the default `en_US`
+    locale, preserving the pre-locale behavior. Invalid locales fall back
+    to `en_US` with a warning so a single bad pipeline rule doesn't
+    poison the run.
+
+    Caller is responsible for seeding the returned instance via
+    `seed_instance(...)` for deterministic output."""
+    if not locale:
+        return Faker()
+    try:
+        return Faker(locale)
+    except (AttributeError, ValueError, TypeError):
+        # Faker raises AttributeError for unknown locales like 'xx_YY'.
+        # Swallow + fall back so the pipeline still runs end-to-end.
+        return Faker()
 
 
 def convert_quoting_mode(quoting_mode: str) -> int:

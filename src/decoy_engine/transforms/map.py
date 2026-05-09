@@ -5,12 +5,15 @@ Uses persistent mapping dictionaries for consistent replacements.
 """
 
 import pandas as pd
-from faker import Faker
 import random
 from typing import Dict, Any, Optional
 
 from decoy_engine.transforms.base import BaseMaskingStrategy
-from decoy_engine.internal.helpers import deterministic_hash, get_faker_providers
+from decoy_engine.internal.helpers import (
+    deterministic_hash,
+    get_faker_providers,
+    make_faker,
+)
 
 
 class MapStrategy(BaseMaskingStrategy):
@@ -74,8 +77,8 @@ class MapStrategy(BaseMaskingStrategy):
             
             # Generate mapped values based on map_type
             if map_type == 'faker':
-                # Create faker with seed
-                fake = Faker()
+                # Create faker with seed; respect optional locale override.
+                fake = make_faker(rule.get('locale'))
                 fake.seed_instance(seed)
                 faker_providers = get_faker_providers(fake)
                 

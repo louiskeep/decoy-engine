@@ -11,7 +11,11 @@ import time
 from faker import Faker
 from typing import Dict, Any, Optional, List, Callable
 
-from decoy_engine.internal.helpers import deterministic_hash, get_faker_providers
+from decoy_engine.internal.helpers import (
+    deterministic_hash,
+    get_faker_providers,
+    make_faker,
+)
 
 
 class ColumnGenerator:
@@ -156,16 +160,32 @@ class ColumnGenerator:
             pandas.Series with generated data
         """
         faker_type = column_config.get('faker_type', 'word')
-        
-        self.logger.debug(f"Generating faker column with type: {faker_type}")
-        
-        # Create function to generate single value
-        if faker_type in self.faker_providers:
-            provider_func = self.faker_providers[faker_type]
+        locale = column_config.get('locale')
+
+        self.logger.debug(
+            f"Generating faker column with type: {faker_type}, locale: {locale!r}"
+        )
+
+        # Use the shared seeded Faker for the common (no-locale) path; build
+        # a fresh instance when the column overrides locale so en_GB / de_DE
+        # / etc. produce locale-correct addresses, names, phone numbers.
+        # Provider list is rebuilt off the active instance because some
+        # providers (e.g. `state_abbr`) raise on locales that don't define
+        # them — falling back to the default-locale provider would silently
+        # leak en_US output.
+        if locale:
+            faker_inst = make_faker(locale)
+            providers = get_faker_providers(faker_inst)
+        else:
+            faker_inst = self.faker
+            providers = self.faker_providers
+
+        if faker_type in providers:
+            provider_func = providers[faker_type]
         else:
             self.logger.warning(f"Unknown faker_type '{faker_type}', using 'word' instead")
-            provider_func = self.faker_providers['word']
-        
+            provider_func = providers['word']
+
         # Generate values for all rows. When `derive_key` is set, the
         # column-seed is HKDF-derived from the pipeline key, so the same
         # key + same column always yields the same bytes across runs.
@@ -175,7 +195,7 @@ class ColumnGenerator:
         for i in range(num_rows):
             row_seed = column_seed + i
             random.seed(row_seed)
-            self.faker.seed_instance(row_seed)
+            faker_inst.seed_instance(row_seed)
             values.append(provider_func())
 
         return pd.Series(values)

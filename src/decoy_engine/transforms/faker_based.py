@@ -7,10 +7,9 @@ Replaces values with realistic fake data using the Faker library.
 import pandas as pd
 import random
 from typing import Dict, Any, Optional
-from faker import Faker
 
 from decoy_engine.transforms.base import BaseMaskingStrategy
-from decoy_engine.internal.helpers import get_faker_providers, hmac_seed
+from decoy_engine.internal.helpers import get_faker_providers, hmac_seed, make_faker
 
 
 class FakerStrategy(BaseMaskingStrategy):
@@ -41,18 +40,25 @@ class FakerStrategy(BaseMaskingStrategy):
         column_name = rule.get('column', 'unnamed')
         column_key = self._column_key(column_name)
         preserve_domain = rule.get('preserve_domain', False) and faker_type == 'email'
+        locale = rule.get('locale')
 
         if column_key is not None:
             self.logger.debug(
-                f"Applying keyed faker (type={faker_type!r}) to column '{column_name}'"
+                f"Applying keyed faker (type={faker_type!r}, locale={locale!r}) "
+                f"to column '{column_name}'"
             )
-            return self._apply_keyed(column, column_key, faker_type, preserve_domain, rule)
+            return self._apply_keyed(
+                column, column_key, faker_type, preserve_domain, locale, rule
+            )
 
         rule_seed = rule.get('seed', self.seed)
         self.logger.debug(
-            f"Applying legacy faker (type={faker_type!r}, seed={rule_seed}) — row-order dependent"
+            f"Applying legacy faker (type={faker_type!r}, seed={rule_seed}, "
+            f"locale={locale!r}) — row-order dependent"
         )
-        return self._apply_legacy(column, rule_seed, faker_type, preserve_domain, rule)
+        return self._apply_legacy(
+            column, rule_seed, faker_type, preserve_domain, locale, rule
+        )
 
     # ── Path B: keyed, stateless, bitwise stable ───────────────────────────
 
@@ -62,6 +68,7 @@ class FakerStrategy(BaseMaskingStrategy):
         column_key: bytes,
         faker_type: str,
         preserve_domain: bool,
+        locale,
         rule: Dict[str, Any],
     ) -> pd.Series:
         # Cache per-input outputs so duplicate values in a column don't pay
@@ -75,7 +82,7 @@ class FakerStrategy(BaseMaskingStrategy):
             if val in cache:
                 return cache[val]
             seed_int = hmac_seed(column_key, val)
-            f = Faker()
+            f = make_faker(locale)
             f.seed_instance(seed_int)
             if preserve_domain and '@' in str(val):
                 _, domain = str(val).split('@', 1)
@@ -104,9 +111,10 @@ class FakerStrategy(BaseMaskingStrategy):
         rule_seed: int,
         faker_type: str,
         preserve_domain: bool,
+        locale,
         rule: Dict[str, Any],
     ) -> pd.Series:
-        deterministic_faker = Faker()
+        deterministic_faker = make_faker(locale)
         deterministic_faker.seed_instance(rule_seed)
         faker_providers = get_faker_providers(deterministic_faker)
 
