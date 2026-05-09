@@ -39,6 +39,11 @@ triggers:
   co_occurrence:
     - [iso_date, us_zip, person_name]
     - [us_date, us_zip, person_name]
+    # SSN + name + date is the canonical HIPAA dataset shape (patient roster
+    # with identifiers + visit/DOB dates). Including it explicitly so HIPAA
+    # outranks generic-PII bundles when the data is healthcare-shaped.
+    - [ssn, person_name, iso_date]
+    - [ssn, person_name, us_date]
     - [iso_date, mrn]
     - [us_zip, mrn]
   min_score: 0.4

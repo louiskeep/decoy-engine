@@ -31,9 +31,11 @@ triggers:
     # SOX fires on the insider-dataset pattern: executive names + corporate
     # emails + financial-period dates. The combination is a strong signal for
     # compensation tables, option-grant registers, and pre-release earnings data.
+    # The generic [ssn, person_name, email] triple was dropped so SOX doesn't
+    # outrank HIPAA on healthcare data — fiscal-date co-occurrence is the
+    # SOX-specific signal, not generic SSN+PII.
     - [person_name, email, iso_date]
     - [person_name, email, us_date]
-    - [ssn, person_name, email]
   min_score: 0.4
 
 field_rules:

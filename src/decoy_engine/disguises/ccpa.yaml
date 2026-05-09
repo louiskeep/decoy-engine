@@ -22,10 +22,12 @@ triggers:
     - ipv4
     - email
   co_occurrence:
-    # Strong US consumer-tech signature: email + IP + location.
+    # Strong US consumer-tech signature: email + IP + location. The SSN-bearing
+    # variant was dropped so it doesn't shadow HIPAA/GLBA on healthcare data —
+    # CCPA's signature is web/consumer-shape (IP, online identifiers), not the
+    # SSN+identity pattern that HIPAA owns.
     - [email, ipv4, us_zip]
     - [email, person_name, us_phone]
-    - [ssn, email, person_name]
   min_score: 0.4
 
 field_rules:

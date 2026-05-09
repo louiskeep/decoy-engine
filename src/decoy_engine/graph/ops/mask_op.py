@@ -3,7 +3,8 @@
 Config:
     columns:
       <column_name>:
-        strategy: 'faker' | 'hash' | 'redact' | 'map' | 'shuffle' | 'passthrough' | 'date_shift' | 'formula'
+        strategy: 'faker' | 'hash' | 'redact' | 'map' | 'shuffle' | 'passthrough'
+                | 'date_shift' | 'formula' | 'reference' | 'truncate' | 'bucketize' | 'fpe'
         # ...strategy-specific keys, mirroring the existing per-column shape
     seed: int  (optional, default 42)
 
@@ -21,9 +22,13 @@ KIND = "mask"
 INPUT_ARITY: tuple[int, int | None] = (1, 1)
 OUTPUT_KIND = "stream"
 
+# Mirror MaskerConfigValidator.SUPPORTED_MASKING_STRATEGIES — the graph-mode
+# allowlist has to track the legacy validator's whenever transforms ship.
+# Sprint A added truncate/bucketize/reference; Sprint B added fpe.
 _VALID_STRATEGIES = {
     "faker", "hash", "redact", "map", "shuffle",
     "passthrough", "date_shift", "formula",
+    "reference", "truncate", "bucketize", "fpe",
 }
 
 

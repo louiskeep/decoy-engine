@@ -22,10 +22,12 @@ triggers:
   any_detectors:
     - ssn
   co_occurrence:
-    # Student record signature: name + enrollment/DOB date + contact.
+    # Student record signature: name + enrollment/DOB date + contact. The
+    # generic [ssn, person_name, email] triple was dropped so FERPA doesn't
+    # outrank HIPAA on SSN-bearing healthcare data — FERPA fires on the
+    # student-context shape (name + date + ZIP/email), not generic SSN+PII.
     - [person_name, iso_date, us_zip]
     - [person_name, us_date, email]
-    - [ssn, person_name, email]
   min_score: 0.4
 
 field_rules:
