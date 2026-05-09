@@ -14,9 +14,13 @@ A detector returns:
 Conservative thresholds keep the ranked FORECAST output clean: a column with
 30% email-like values shouldn't get tagged "email" — that's noise.
 
-MVP detector set: email, ssn, us_phone, us_zip, person_name, plus three date
-formats (iso_date, us_date, eu_date). Midrange (ipv4, pan/Luhn, mrn, npi,
-icd10) is deferred to a follow-up PR.
+Built-in detector set:
+  Core PII:  email, ssn, us_phone, us_zip, person_name,
+             iso_date, us_date, eu_date
+  PCI/GDPR (Item 31 phase 1):  pan, cvv, iban, ipv4
+  HIPAA Safe Harbor + clinical (Item 31 phase 3):
+    icd10, npi, mrn, url, fax_number, health_plan_id, license_num,
+    vehicle_id, device_id, biometric_id
 """
 
 from __future__ import annotations
@@ -29,14 +33,14 @@ import pandas as pd
 from decoy_engine.storm.types import CustomDetectorSpec, DetectorMatch
 
 
-# ── thresholds ────────────────────────────────────────────────────────────────
+# ── thresholds ──────────────────────────────────────────────────────────────────────────────
 
 DEFAULT_MIN_MATCH_RATE = 0.7   # 70% of non-null values must match the pattern
 NAME_HINT_MIN_RATE     = 0.4   # 40% if the column name strongly hints
 SAMPLE_MISS_LIMIT      = 3
 
 
-# ── helpers ───────────────────────────────────────────────────────────────────
+# ── helpers ───────────────────────────────────────────────────────────────────────────────
 
 def _series_str(series: pd.Series) -> pd.Series:
     """Drop nulls and coerce to string — every detector needs this prelude."""
@@ -55,11 +59,11 @@ def _evaluate(
     """Apply a regex to non-null values and decide whether the detector fires.
 
     Optional `validator` runs per-value AFTER regex match — used for
-    structurally-valid PAN (Luhn checksum), IBAN (mod-97), or IPv4
-    (octet range 0-255). When set, a value counts as a match only if the
-    regex matches AND validator(value) returns True. Avoids the
-    false-positive case where any 13-digit string looks like a credit
-    card to the regex.
+    structurally-valid PAN (Luhn checksum), IBAN (mod-97), IPv4
+    (octet range 0-255), NPI (CMS check digit), and ICD-10 (structure check).
+    When set, a value counts as a match only if the regex matches AND
+    validator(value) returns True. Avoids the false-positive case where any
+    13-digit string looks like a credit card to the regex.
     """
     if len(values) == 0:
         return None
@@ -102,11 +106,22 @@ _NAME_HINTS: dict[str, re.Pattern[str]] = {
     "iso_date":    re.compile(r"(?i)^(.*[_-])?(date|created|updated|modified|dob|birth|start|end|due|effective|expir)([_-].*)?$"),
     "us_date":     re.compile(r"(?i)^(.*[_-])?(date|created|updated|modified|dob|birth|start|end|due|effective|expir)([_-].*)?$"),
     "eu_date":     re.compile(r"(?i)^(.*[_-])?(date|created|updated|modified|dob|birth|start|end|due|effective|expir)([_-].*)?$"),
-    # Sprint A · Item 31 phase 1 — PCI + GDPR additions.
+    # Item 31 phase 1 — PCI + GDPR additions.
     "pan":   re.compile(r"(?i)^(.*[_-])?(pan|card|cc|credit_?card|account_?number|payment_?card)([_-].*)?$"),
     "cvv":   re.compile(r"(?i)^(.*[_-])?(cvv|cvc|csc|security_?code|card_security|card_code)([_-].*)?$"),
     "iban":  re.compile(r"(?i)^(.*[_-])?(iban|bank_?account|account_?iban)([_-].*)?$"),
     "ipv4":  re.compile(r"(?i)^(.*[_-])?(ip|ipv4|ip_?addr(ess)?|client_?ip|remote_?ip)([_-].*)?$"),
+    # Item 31 phase 3 — HIPAA Safe Harbor completers + clinical identifiers.
+    "icd10":          re.compile(r"(?i)^(.*[_-])?(icd|icd10|icd_10|diagnosis|diag|dx|diag_code|diagnosis_code|icd_code)([_-].*)?$"),
+    "npi":            re.compile(r"(?i)^(.*[_-])?(npi|natl_provider|national_provider|provider_npi|physician_id)([_-].*)?$"),
+    "mrn":            re.compile(r"(?i)^(.*[_-])?(mrn|medical_record|chart|patient_id|chart_num|chart_number|medical_id|med_rec)([_-].*)?$"),
+    "url":            re.compile(r"(?i)^(.*[_-])?(url|uri|href|link|website|web_address|endpoint|site)([_-].*)?$"),
+    "fax_number":     re.compile(r"(?i)^(.*[_-])?(fax|fax_num|fax_number|facsimile)([_-].*)?$"),
+    "health_plan_id": re.compile(r"(?i)^(.*[_-])?(beneficiary|member_id|hplan|health_plan|plan_id|subscriber_id|enrollee_id|coverage_id|member_num)([_-].*)?$"),
+    "license_num":    re.compile(r"(?i)^(.*[_-])?(license|licence|cert|certificate|credential|license_num|license_number|cert_num|cert_id)([_-].*)?$"),
+    "vehicle_id":     re.compile(r"(?i)^(.*[_-])?(vin|vehicle_id|vehicle_num|vehicle_serial|license_plate|plate_num)([_-].*)?$"),
+    "device_id":      re.compile(r"(?i)^(.*[_-])?(device_id|device_serial|serial_num|serial_number|equipment_id|implant_id|device_code|asset_id)([_-].*)?$"),
+    "biometric_id":   re.compile(r"(?i)^(.*[_-])?(fingerprint|retina|iris|biometric|voice_print|hand_geometry|bio_id|biometric_id)([_-].*)?$"),
 }
 
 
@@ -125,7 +140,7 @@ def hits_name_hint(detector_id: str, col_name: str) -> bool:
     return _hits_name_hint(detector_id, col_name)
 
 
-# ── value patterns ────────────────────────────────────────────────────────────
+# ── value patterns ────────────────────────────────────────────────────────────────────────────
 
 # Email — RFC 5321ish but not strict; works for the 99% of fields users feed in.
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
@@ -149,7 +164,7 @@ _EU_DATE_RE  = re.compile(r"\d{1,2}\.\d{1,2}\.\d{2,4}|\d{1,2}-\d{1,2}-\d{4}")
 
 # Person name — 1-3 whitespace-separated tokens, each starts with a letter,
 # letters / hyphens / apostrophes / dots only. Length 2-50 total.
-_NAME_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z'’.\-]{0,29}")
+_NAME_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z''.\-]{0,29}")
 _PERSON_NAME_RE = re.compile(
     rf"{_NAME_TOKEN_RE.pattern}(?:\s+{_NAME_TOKEN_RE.pattern}){{0,2}}"
 )
@@ -171,6 +186,39 @@ _IBAN_RE = re.compile(r"[A-Z]{2}\d{2}[\sA-Z0-9]{11,34}")
 # 0-255) is the per-value validator.
 _IPV4_RE = re.compile(r"(?:\d{1,3}\.){3}\d{1,3}")
 
+# ICD-10-CM — chapter letter + 2-digit category + optional decimal subcategory.
+# Examples: A01.0, M79.3, S72.001A, Z23, F32.9, A010 (stored without dot).
+_ICD10_RE = re.compile(r"[A-Z]\d{2}(?:\.?[A-Z0-9]{1,4})?", re.IGNORECASE)
+
+# NPI — exactly 10 digits; check digit validated by CMS Luhn variant.
+_NPI_RE = re.compile(r"\d{10}")
+
+# MRN — no universal format; institution-defined alphanumeric + dash, 4-20 chars.
+# Name-hint is the primary signal; this pattern guards against non-identifier noise.
+_MRN_RE = re.compile(r"[A-Z0-9\-]{4,20}", re.IGNORECASE)
+
+# URL — http/https scheme with a host and optional path.
+_URL_RE = re.compile(r"https?://[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]{4,}")
+
+# Fax number — identical value pattern to US phone; name hint is the
+# disambiguation signal (phone vs fax).
+_FAX_NUMBER_RE = re.compile(
+    r"(?:\+?1[\s.-]?)?\(?[2-9]\d{2}\)?[\s.-]?[2-9]\d{2}[\s.-]?\d{4}"
+)
+
+# Name-hint-only detectors — patterns broad enough to match any plausible
+# identifier value; meaning lives in the column name, not the value shape.
+_HEALTH_PLAN_ID_RE = re.compile(r"[A-Z0-9\-]{4,30}", re.IGNORECASE)
+_LICENSE_NUM_RE    = re.compile(r"[A-Z0-9\-]{4,20}", re.IGNORECASE)
+
+# VIN — exactly 17 chars with restricted charset (no I, O, or Q per ISO 3779).
+_VEHICLE_ID_RE = re.compile(r"[A-HJ-NPR-Z0-9]{17}", re.IGNORECASE)
+
+_DEVICE_ID_RE    = re.compile(r"[A-Z0-9\-_.]{4,30}", re.IGNORECASE)
+_BIOMETRIC_ID_RE = re.compile(r".+")   # any non-empty value; name hint is definitive
+
+
+# ── validators ──────────────────────────────────────────────────────────────────────────────
 
 def _luhn_valid(value: str) -> bool:
     """Luhn / mod-10 checksum used by every major credit-card scheme.
@@ -228,7 +276,42 @@ def _ipv4_valid(value: str) -> bool:
     return True
 
 
-# ── detectors (callables) ─────────────────────────────────────────────────────
+def _npi_valid(value: str) -> bool:
+    """CMS NPI check digit: prepend '80840' to the 9-digit NPI body, apply
+    a modified Luhn (even 0-indexed positions from right are doubled), verify
+    the computed check digit matches NPI[9].
+
+    Verified: 1234567893 → prefix 80840123456789 → sum 67 → check 3 ✓
+              1679576722 → prefix 80840167957672 → sum 68 → check 2 ✓
+              1000000004 → prefix 80840100000000 → sum 26 → check 4 ✓
+    """
+    digits = re.sub(r"[\s-]", "", str(value))
+    if not digits.isdigit() or len(digits) != 10:
+        return False
+    prefixed = "80840" + digits[:9]
+    total = 0
+    for i, ch in enumerate(reversed(prefixed)):
+        d = int(ch)
+        if i % 2 == 0:
+            d *= 2
+            if d > 9:
+                d -= 9
+        total += d
+    return (10 - total % 10) % 10 == int(digits[9])
+
+
+def _icd10_valid(value: str) -> bool:
+    """Minimal ICD-10-CM structure check: letter at index 0, two digits at 1-2,
+    total 3-7 alphanumeric characters (dot stripped before checking)."""
+    v = re.sub(r"\.", "", str(value).strip().upper())
+    return (
+        3 <= len(v) <= 7
+        and v[0].isalpha()
+        and v[1:3].isdigit()
+    )
+
+
+# ── detectors (callables) ───────────────────────────────────────────────────────────────────
 
 def detect_email(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
     return _evaluate("email", _series_str(series), _EMAIL_RE,
@@ -324,7 +407,104 @@ def detect_ipv4(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
                      validator=_ipv4_valid)
 
 
-# ── registry ──────────────────────────────────────────────────────────────────
+def detect_icd10(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+    """ICD-10-CM diagnosis codes. Regex matches the chapter-letter + 2-digit
+    category structure; validator enforces minimal structural rules to reduce
+    false-positives on short arbitrary strings. Fires on value pattern alone;
+    name hint lowers the threshold."""
+    return _evaluate("icd10", _series_str(series), _ICD10_RE,
+                     name_hint=_hits_name_hint("icd10", col_name),
+                     min_rate=DEFAULT_MIN_MATCH_RATE,
+                     validator=_icd10_valid)
+
+
+def detect_npi(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+    """National Provider Identifier — 10-digit with CMS Luhn check digit."""
+    return _evaluate("npi", _series_str(series), _NPI_RE,
+                     name_hint=_hits_name_hint("npi", col_name),
+                     min_rate=DEFAULT_MIN_MATCH_RATE,
+                     validator=_npi_valid)
+
+
+def detect_mrn(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+    """Medical Record Number — no universal format; fires on name hint only.
+    The alphanumeric pattern guards against obviously non-identifier values
+    (plain prose, floats, very short strings)."""
+    if not _hits_name_hint("mrn", col_name):
+        return None
+    return _evaluate("mrn", _series_str(series), _MRN_RE,
+                     name_hint=True,
+                     min_rate=NAME_HINT_MIN_RATE)
+
+
+def detect_url(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+    """Web URLs — http/https scheme. Fires on value pattern alone (no
+    name hint required) since the URL format is distinctive enough."""
+    return _evaluate("url", _series_str(series), _URL_RE,
+                     name_hint=_hits_name_hint("url", col_name),
+                     min_rate=DEFAULT_MIN_MATCH_RATE)
+
+
+def detect_fax_number(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+    """Fax numbers — identical format to US phone; name hint is the only
+    way to distinguish a fax column from a phone column."""
+    if not _hits_name_hint("fax_number", col_name):
+        return None
+    return _evaluate("fax_number", _series_str(series), _FAX_NUMBER_RE,
+                     name_hint=True,
+                     min_rate=DEFAULT_MIN_MATCH_RATE)
+
+
+def detect_health_plan_id(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+    """Health-plan beneficiary / member / subscriber IDs — name hint only.
+    No standard value format; meaning lives in the column name."""
+    if not _hits_name_hint("health_plan_id", col_name):
+        return None
+    return _evaluate("health_plan_id", _series_str(series), _HEALTH_PLAN_ID_RE,
+                     name_hint=True,
+                     min_rate=NAME_HINT_MIN_RATE)
+
+
+def detect_license_num(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+    """Certificate and license numbers — name hint only. Formats vary by
+    state / regulatory body; the column name is the definitive signal."""
+    if not _hits_name_hint("license_num", col_name):
+        return None
+    return _evaluate("license_num", _series_str(series), _LICENSE_NUM_RE,
+                     name_hint=True,
+                     min_rate=NAME_HINT_MIN_RATE)
+
+
+def detect_vehicle_id(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+    """Vehicle identifiers. The VIN format (17 alphanum, no I/O/Q per ISO 3779)
+    fires without a name hint; name hint lowers the threshold for partial or
+    non-VIN vehicle identifiers."""
+    return _evaluate("vehicle_id", _series_str(series), _VEHICLE_ID_RE,
+                     name_hint=_hits_name_hint("vehicle_id", col_name),
+                     min_rate=DEFAULT_MIN_MATCH_RATE)
+
+
+def detect_device_id(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+    """Device identifiers and serial numbers — name hint only. Medical device
+    UDIs, implant serial numbers, and equipment IDs have no shared format."""
+    if not _hits_name_hint("device_id", col_name):
+        return None
+    return _evaluate("device_id", _series_str(series), _DEVICE_ID_RE,
+                     name_hint=True,
+                     min_rate=NAME_HINT_MIN_RATE)
+
+
+def detect_biometric_id(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+    """Biometric identifiers (fingerprints, retina scans, etc.) — name hint only.
+    Biometric data has no universal string format; the column name is definitive."""
+    if not _hits_name_hint("biometric_id", col_name):
+        return None
+    return _evaluate("biometric_id", _series_str(series), _BIOMETRIC_ID_RE,
+                     name_hint=True,
+                     min_rate=NAME_HINT_MIN_RATE)
+
+
+# ── registry ──────────────────────────────────────────────────────────────────────────────────
 
 DetectorFn = Callable[[pd.Series, str], Optional[DetectorMatch]]
 
@@ -341,6 +521,17 @@ REGISTERED_DETECTORS: list[DetectorFn] = [
     detect_cvv,
     detect_iban,
     detect_ipv4,
+    # Item 31 phase 3 — HIPAA Safe Harbor completers + clinical identifiers.
+    detect_icd10,
+    detect_npi,
+    detect_mrn,
+    detect_url,
+    detect_fax_number,
+    detect_health_plan_id,
+    detect_license_num,
+    detect_vehicle_id,
+    detect_device_id,
+    detect_biometric_id,
 ]
 
 
@@ -377,7 +568,7 @@ def run_all_detectors(
     return matches
 
 
-# ── custom detectors ──────────────────────────────────────────────────────────
+# ── custom detectors ──────────────────────────────────────────────────────────────────────────
 
 def _custom_name_hint_pattern(name_hints: list[str]) -> Optional[re.Pattern[str]]:
     """Compile a column-name-matching regex from a list of substrings.
