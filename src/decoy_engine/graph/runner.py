@@ -33,6 +33,7 @@ from decoy_engine.graph.conversion import (
     arrow_to_engine,
     engine_to_arrow,
 )
+from decoy_engine.graph.errors import translate as translate_engine_error
 from decoy_engine.graph.topo import topo_order, upstream_subgraph
 from decoy_engine.graph.types import (
     NodeRunRecord,
@@ -127,6 +128,7 @@ def run_graph(
             if remaining.get(nid, 0) == 0:
                 cache.pop(nid, None)
         except Exception as exc:
+            translated = translate_engine_error(exc, kind, nid)
             elapsed_ms = int((time.monotonic() - t0) * 1000)
             records.append({
                 "node_id": nid,
@@ -134,10 +136,10 @@ def run_graph(
                 "status": "error",
                 "row_count": None,
                 "elapsed_ms": elapsed_ms,
-                "error": str(exc),
+                "error": str(translated),
             })
             if log is not None:
-                log.error("graph: %s failed: %s", nid, exc)
+                log.error("graph: %s failed: %s", nid, translated)
                 log.error(traceback.format_exc())
             success = False
             break
@@ -220,7 +222,8 @@ def preview_graph(
                 table = table.slice(0, row_limit)
             cache[nid] = table
         except Exception as exc:
-            error_msg = f"node {nid!r} ({kind}) failed: {exc}"
+            translated = translate_engine_error(exc, kind, nid)
+            error_msg = str(translated)
             cache[nid] = None
             if nid == node_id:
                 break

@@ -27,7 +27,7 @@ This is the working journal for executing Phases 1–8 of the Polars+DuckDB hybr
 | 2. Op-type registry + connector SDK contract | shipped | (this branch) |
 | 3. Polars relational ops | shipped | (this branch) |
 | 4. DuckDB source/sink + `engine: hybrid` flag | shipped | (this branch) |
-| 5. Preview path + error translation | pending | — |
+| 5. Preview path + error translation | shipped | (this branch) |
 | 6. Parity test suite + dogfood review | pending | — |
 | 7. Docs + Polars cheat sheet | pending | — |
 | 8. Default flip + cleanup | pending | — |
@@ -37,6 +37,13 @@ This is the working journal for executing Phases 1–8 of the Polars+DuckDB hybr
 - The implementation plan referenced `pandas-query` translation and a `_legacy/` directory of frozen pandas ops for parity tests. I'm taking a lighter approach: each ported op keeps a pandas fallback path inside the same module guarded by `NATIVE_ENGINE` resolution at the runner. This keeps the diff tighter and avoids duplicating op registration.
 - Phase 1's STORM benchmark is informational. Per the plan, if Arrow→pandas overhead is ≥ 10%, declare `NATIVE_ENGINE = "arrow"` for STORM. The benchmark records the number; the decision goes in the commit message.
 - Phase 4's `engine: hybrid` flag is the dogfood mechanism. Default stays `engine: pandas` until Phase 8 to keep the cutover safe.
+
+## Phase 5 result
+
+- New `decoy_engine.graph.errors` module with `translate(exc, op_kind, node_id)` that maps polars / duckdb exception shapes to user-friendly `OpError` messages. Polars / duckdb imports are lazy — pandas-only installs don't pay the cost.
+- Runner wraps every op exception (in both `run_graph` and `preview_graph`) through `translate_engine_error`. NodeRunRecord and PreviewResult.error now carry the friendly message instead of the raw traceback class.
+- Preview-boundary serialization (Arrow → pandas → list-of-lists) was already in place from Phase 1's runner refactor; Phase 5 verifies it via tests asserting identical output for the same pipeline run on `engine: pandas` vs `engine: hybrid`.
+- 13 new tests: 7 translator unit tests (polars ColumnNotFoundError, ComputeError, duckdb CatalogException, OpError pass-through, unknown-exception fallback, end-to-end runner) + 6 preview-identity tests. 471 passing total.
 
 ## Phase 4 result
 
