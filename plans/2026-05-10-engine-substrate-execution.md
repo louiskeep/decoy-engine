@@ -28,7 +28,7 @@ This is the working journal for executing Phases 1–8 of the Polars+DuckDB hybr
 | 3. Polars relational ops | shipped | (this branch) |
 | 4. DuckDB source/sink + `engine: hybrid` flag | shipped | (this branch) |
 | 5. Preview path + error translation | shipped | (this branch) |
-| 6. Parity test suite + dogfood review | pending | — |
+| 6. Parity test suite + dogfood review | shipped | (this branch) |
 | 7. Docs + Polars cheat sheet | pending | — |
 | 8. Default flip + cleanup | pending | — |
 
@@ -37,6 +37,13 @@ This is the working journal for executing Phases 1–8 of the Polars+DuckDB hybr
 - The implementation plan referenced `pandas-query` translation and a `_legacy/` directory of frozen pandas ops for parity tests. I'm taking a lighter approach: each ported op keeps a pandas fallback path inside the same module guarded by `NATIVE_ENGINE` resolution at the runner. This keeps the diff tighter and avoids duplicating op registration.
 - Phase 1's STORM benchmark is informational. Per the plan, if Arrow→pandas overhead is ≥ 10%, declare `NATIVE_ENGINE = "arrow"` for STORM. The benchmark records the number; the decision goes in the commit message.
 - Phase 4's `engine: hybrid` flag is the dogfood mechanism. Default stays `engine: pandas` until Phase 8 to keep the cutover safe.
+
+## Phase 6 result
+
+- 14 new edge-case parity tests covering empty input / single-row / all-null / unicode / duplicate-laden fixtures + source.file edge cases (empty CSV, unicode data).
+- Total parity matrix: **56 tests** across 11 ops × 7 fixture shapes.
+- Dogfood review document committed at `plans/2026-05-10-hybrid-engine-dogfood-review.md`. Recommendation: PROCEED to Phase 8.
+- 485 passing; 8 pre-existing pandas-3.0 failures unchanged.
 
 ## Phase 5 result
 
