@@ -10,10 +10,20 @@ import yaml
 from decoy_engine.disguises import Disguise, load_disguises
 from decoy_engine.disguises.schema import FieldRule, TriggerSpec
 
+# Full 8-bundle launch set from DISGUISES_GUIDE.md.
+_EXPECTED_DISGUISE_IDS = {"default", "hipaa", "pci", "gdpr", "glba", "ccpa", "ferpa", "sox"}
+
 
 class TestLoaderShipsBundles:
+    def test_loads_full_launch_set(self):
+        # All 8 bundles must be present; adding a new one without updating
+        # this set is fine, but removing any existing id breaks CI.
+        loaded_ids = {d.id for d in load_disguises()}
+        missing = _EXPECTED_DISGUISE_IDS - loaded_ids
+        assert not missing, f"Missing Disguise bundles: {sorted(missing)}"
+
     def test_loads_at_least_default_and_hipaa(self):
-        # Bones-only PR: default + hipaa must both load.
+        # Kept for historical context — the bones-only PR guarantee.
         ds = {d.id for d in load_disguises()}
         assert "default" in ds
         assert "hipaa" in ds
@@ -28,6 +38,24 @@ class TestLoaderShipsBundles:
             # Either required, any, or co_occurrence — at least one nonempty.
             assert t.required_detectors or t.any_detectors or t.co_occurrence, \
                 f"{d.id} has no triggers"
+
+    def test_every_disguise_field_rule_references_known_detectors(self):
+        """Guard: all detector IDs in field_rules must be known to detectors.py."""
+        from decoy_engine.storm.detectors import REGISTERED_DETECTORS
+        # Extract the id from each detector function's closure.
+        known_ids: set[str] = set()
+        import re
+        for fn in REGISTERED_DETECTORS:
+            # Convention: every registered function calls _evaluate("<id>", ...)
+            # as its first arg; extract via the function's source name.
+            # Simpler: the detector id is fn.__name__ without the "detect_" prefix.
+            known_ids.add(fn.__name__.replace("detect_", "", 1))
+        for d in load_disguises():
+            for rule in d.field_rules:
+                for det_id in rule.detectors:
+                    assert det_id in known_ids, (
+                        f"Disguise '{d.id}' references unknown detector '{det_id}'"
+                    )
 
 
 class TestSchemaValidatesShape:
