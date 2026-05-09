@@ -305,18 +305,22 @@ def _resolve_engine_mode(config: dict) -> str:
     """Read the graph YAML's top-level `engine:` key.
 
     Values:
-      "pandas" (default) — every op runs on pandas regardless of declared
-                           NATIVE_ENGINE. Today's behavior.
-      "hybrid"           — respect each op's NATIVE_ENGINE declaration. The
-                           dogfood opt-in flag introduced in Phase 4 of the
-                           polars-duckdb hybrid plan.
+      "hybrid" (default, since Phase 8 of the polars-duckdb hybrid plan):
+                           respect each op's NATIVE_ENGINE declaration.
+                           Source / sink ops run on DuckDB; relational ops
+                           run on Polars; mask / generate / run_storm stay
+                           on pandas.
+      "pandas"           — opt-out: force every op through its pandas
+                           fallback regardless of declaration. The safety
+                           hatch for one release cycle. After that, Phase 9
+                           (cleanup) removes pandas fallbacks and this flag
+                           becomes a no-op.
 
-    Unknown values fall back to "pandas" with no error — the validator
-    could promote this to a hard reject in a follow-up.
+    Unknown values fall back to the default with no error.
     """
-    mode = config.get("engine") or "pandas"
+    mode = config.get("engine") or "hybrid"
     if mode not in ("pandas", "hybrid"):
-        return "pandas"
+        return "hybrid"
     return mode
 
 

@@ -30,13 +30,28 @@ This is the working journal for executing Phases 1–8 of the Polars+DuckDB hybr
 | 5. Preview path + error translation | shipped | (this branch) |
 | 6. Parity test suite + dogfood review | shipped | (this branch) |
 | 7. Docs + Polars cheat sheet | shipped | (this branch) |
-| 8. Default flip + cleanup | pending | — |
+| 8. Default flip + cleanup | shipped | (this branch) |
 
 ## Notes
 
 - The implementation plan referenced `pandas-query` translation and a `_legacy/` directory of frozen pandas ops for parity tests. I'm taking a lighter approach: each ported op keeps a pandas fallback path inside the same module guarded by `NATIVE_ENGINE` resolution at the runner. This keeps the diff tighter and avoids duplicating op registration.
 - Phase 1's STORM benchmark is informational. Per the plan, if Arrow→pandas overhead is ≥ 10%, declare `NATIVE_ENGINE = "arrow"` for STORM. The benchmark records the number; the decision goes in the commit message.
 - Phase 4's `engine: hybrid` flag is the dogfood mechanism. Default stays `engine: pandas` until Phase 8 to keep the cutover safe.
+
+## Phase 8 result
+
+- `_resolve_engine_mode` default flipped from `"pandas"` → `"hybrid"`. Graphs without an explicit `engine:` key now run through the polars / duckdb ops by default.
+- `engine: pandas` remains a valid opt-out for one release cycle (per the plan's "hard cutover safety net"). The pandas fallback paths inside each ported op stay alive through that window.
+- 2 new tests confirm the flip: `test_engine_default_is_hybrid_after_phase_8` (default resolves to "hybrid"), `test_engine_pandas_opt_out_still_works` (the safety hatch still works).
+- CLAUDE.md updated to reference the new guides (CONNECTOR_SDK_CONTRACT, POLARS_FOR_PANDAS_USERS) and mention the hybrid substrate in the SHARED_ENGINE_ARCHITECTURE bullet.
+- 487 passing total. Same 8 pre-existing failures unchanged.
+
+### Out of scope for this branch (post-Phase-8 follow-ups)
+
+- Delete `_apply_pandas` from each ported op once the safety-hatch window closes (Phase 9).
+- `chunked_iterator()` cleanup in `csv_connector.py:111-126` — depends on the platform-side wrapper code that still uses it.
+- README.md tier-number update — sales/marketing follow-up, not blocking.
+- Calibration benchmark on a 32 GB box with a 50M-row pipeline — deferred to a manual harness run when real-shape customer data is available.
 
 ## Phase 7 result
 

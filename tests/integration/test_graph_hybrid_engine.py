@@ -41,9 +41,41 @@ def _yaml(d: dict) -> str:
 
 
 def test_engine_pandas_default_unchanged(tmp_csv):
+    """Pre-Phase-8: no `engine:` key meant pandas mode. Post-Phase-8 the
+    default flipped to hybrid; this test confirms the no-key path still
+    runs cleanly (just routes through the polars / duckdb ops now)."""
     src, out, _ = tmp_csv
     cfg = _yaml({
         "mode": "graph",
+        "nodes": [
+            {"id": "s", "kind": "source.file", "config": {"path": src}},
+            {"id": "f", "kind": "filter", "config": {"predicate": "state == 'CA'"}},
+            {"id": "t", "kind": "target.file", "config": {"output_filename": out}},
+        ],
+        "edges": [{"from": "s", "to": "f"}, {"from": "f", "to": "t"}],
+    })
+    result = run_graph(cfg)
+    assert result["success"] is True
+    written = pd.read_csv(out)
+    assert (written["state"] == "CA").all()
+
+
+def test_engine_default_is_hybrid_after_phase_8(tmp_csv):
+    """Phase 8 flip: graphs without an `engine:` key get hybrid mode."""
+    from decoy_engine.graph.runner import _resolve_engine_mode
+
+    cfg = {"mode": "graph", "nodes": [{"id": "x", "kind": "drop_column", "config": {"columns": []}}]}
+    assert _resolve_engine_mode(cfg) == "hybrid"
+
+
+def test_engine_pandas_opt_out_still_works(tmp_csv):
+    """The one-release-cycle safety hatch: `engine: pandas` is the opt-out
+    that forces every op through its pandas fallback regardless of
+    declared NATIVE_ENGINE."""
+    src, out, _ = tmp_csv
+    cfg = _yaml({
+        "mode": "graph",
+        "engine": "pandas",
         "nodes": [
             {"id": "s", "kind": "source.file", "config": {"path": src}},
             {"id": "f", "kind": "filter", "config": {"predicate": "state == 'CA'"}},

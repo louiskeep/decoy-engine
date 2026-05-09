@@ -39,9 +39,10 @@ def test_every_declared_engine_is_valid():
 
 
 def test_pandas_mode_forces_pandas_for_all_ops():
-    """Until Phase 4 ships the `engine: hybrid` flag, the runner always
-    runs in pandas mode and every op must resolve to pandas regardless
-    of its declaration."""
+    """`engine: pandas` is the post-Phase-8 opt-out / safety hatch:
+    every op resolves to pandas regardless of its declaration. Lives for
+    one release cycle past the default flip; then the pandas fallbacks
+    get deleted and this flag becomes a no-op."""
     for kind in OPS:
         assert native_engine_for(kind, "pandas") == "pandas", (
             f"{kind} should resolve to pandas when graph engine mode is pandas"
