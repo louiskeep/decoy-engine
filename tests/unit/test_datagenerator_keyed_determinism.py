@@ -127,3 +127,107 @@ class TestPipelineDeriveKeyThreadedThrough:
         # Sequence column doesn't depend on the resolver — sanity check
         # that some output landed at all.
         assert list(df["customer_id"]) == ["C0001", "C0002", "C0003", "C0004", "C0005"]
+
+
+# ── ROADMAP Item 7 — `determinism: fresh` per-column opt-out ─────────────────
+
+
+def _write_fresh_mode_config(tmp_path) -> str:
+    """Config exercising every strategy that uses `_column_seed`:
+    faker (first_name), categorical (status), and formula (price). Each
+    column uses `determinism: fresh` so the test can prove the override
+    fires regardless of strategy."""
+    config = {
+        "generator_settings": {
+            "seed": 42,
+            "output_directory": str(tmp_path),
+            "chunk_size": 1000,
+        },
+        "tables": [
+            {
+                "name": "orders",
+                "rows": 10,
+                "output_path": str(tmp_path / "orders.csv"),
+                "columns": [
+                    # Stable across runs — no `determinism: fresh`.
+                    {
+                        "name": "order_id",
+                        "type": "sequence",
+                        "start": 1, "prefix": "O", "pad_length": 4,
+                    },
+                    {"name": "customer", "type": "faker", "faker_type": "first_name"},
+                    # Fresh mode — every run rolls.
+                    {
+                        "name": "price",
+                        "type": "formula",
+                        "formula": "round(randint(1000, 50000) / 100, 2)",
+                        "determinism": "fresh",
+                    },
+                    {
+                        "name": "status",
+                        "type": "categorical",
+                        "categories": ["new", "shipped", "delivered"],
+                        "determinism": "fresh",
+                    },
+                ],
+            },
+        ],
+    }
+    path = tmp_path / "gen_config.yaml"
+    with open(path, "w") as fh:
+        yaml.dump(config, fh)
+    return str(path)
+
+
+def _run_fresh_generator(tmp_path) -> pd.DataFrame:
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    config_path = _write_fresh_mode_config(tmp_path)
+    ctx = ExecutionContext(
+        pipeline_derive_key=make_key_resolver(MASTER_A, "orders_q4"),
+    )
+    DataGenerator(config_path, ctx=ctx).generate()
+    return pd.read_csv(tmp_path / "orders.csv")
+
+
+class TestFreshDeterminism:
+    def test_fresh_columns_roll_across_runs_under_same_key(self, tmp_path):
+        """Two runs under the same master + pipeline_label produce
+        DIFFERENT values for fresh-mode columns. Default (non-fresh)
+        columns stay identical."""
+        df_a = _run_fresh_generator(tmp_path / "a")
+        df_b = _run_fresh_generator(tmp_path / "b")
+
+        # Stable: same key + same column without `fresh` → identical.
+        assert df_a["order_id"].equals(df_b["order_id"])
+        assert df_a["customer"].equals(df_b["customer"]), (
+            "non-fresh faker column should be byte-identical across runs"
+        )
+
+        # Fresh: should differ between runs. We use approximate equality
+        # because price uses `randint(1000, 50000)` so the chance of a
+        # collision on the *full series* is vanishingly small but non-zero
+        # for any single row — assert the series differs as a whole.
+        assert not df_a["price"].equals(df_b["price"]), (
+            "fresh formula column should roll per run"
+        )
+        # Categorical with 3 categories has higher collision odds per
+        # row, but across 10 rows two random sequences are extremely
+        # unlikely to match exactly.
+        assert not df_a["status"].equals(df_b["status"]), (
+            "fresh categorical column should roll per run"
+        )
+
+    def test_fresh_column_is_internally_consistent_within_a_run(self, tmp_path):
+        """Within a single run, a fresh-mode column still produces a
+        value per row using `column_seed + row_index`. Re-generating
+        the same config in one process should give the same series for
+        non-fresh columns and the row-by-row consistency for fresh
+        columns is implicit (each row index always reads the same seed
+        offset off the run's column_seed)."""
+        df = _run_fresh_generator(tmp_path / "consistency")
+        # Sanity: 10 rows landed for every column.
+        assert len(df) == 10
+        # Fresh columns produced valid values, not Nones / errors.
+        assert df["price"].notna().all()
+        assert df["status"].notna().all()
+        assert set(df["status"].unique()) <= {"new", "shipped", "delivered"}

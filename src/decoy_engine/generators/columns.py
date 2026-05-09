@@ -4,6 +4,7 @@ Column data generators for the decoy_engine package.
 Provides various strategies for generating synthetic column data.
 """
 
+import os
 import pandas as pd
 import random
 import hashlib
@@ -71,16 +72,29 @@ class ColumnGenerator:
             f"keyed: {self.derive_key is not None}"
         )
 
-    def _column_seed(self, column_name: str) -> int:
+    def _column_seed(
+        self,
+        column_name: str,
+        column_config: Optional[Dict[str, Any]] = None,
+    ) -> int:
         """Per-column base seed used by every row-level seeding site.
 
-        When ``derive_key`` is set, take the first 4 bytes of
-        ``derive_key("col:<name>")`` and decode as a 32-bit int — same key +
-        same column always yields the same seed bytes, so faker / random
-        output is bitwise stable across runs. Otherwise fall back to the
-        legacy ``seed + hash(name)`` formula so behavior is unchanged for
-        callers that don't pass a key.
+        Resolution order:
+          1. ``column_config["determinism"] == "fresh"`` — draw a NEW seed
+             from ``os.urandom`` per run. Same seed for every row in the
+             column (so within-run consistency holds — a formula referencing
+             this column sees a stable value), but different seed each run
+             so the column's output rolls. ROADMAP Item 7.
+          2. ``derive_key`` set — take the first 4 bytes of
+             ``derive_key("col:<name>")`` and decode as a 32-bit int. Same
+             key + same column always yields the same seed bytes, so faker /
+             random output is bitwise stable across runs.
+          3. Fallback — ``seed + hash(column_name)``. Stable per-column,
+             reproducible given the same instance seed, but not tied to any
+             tenant master key. Pre-Item-6 behavior.
         """
+        if column_config is not None and column_config.get('determinism') == 'fresh':
+            return int.from_bytes(os.urandom(4), 'big', signed=False)
         if self.derive_key is not None:
             try:
                 key_bytes = self.derive_key(f"col:{column_name}")
@@ -189,8 +203,11 @@ class ColumnGenerator:
         # Generate values for all rows. When `derive_key` is set, the
         # column-seed is HKDF-derived from the pipeline key, so the same
         # key + same column always yields the same bytes across runs.
+        # When `column_config["determinism"] == "fresh"`, the column-seed
+        # comes from os.urandom instead — the column's output rolls per
+        # run while staying internally consistent within the run.
         column_name = column_config.get('name', 'unnamed_column')
-        column_seed = self._column_seed(column_name)
+        column_seed = self._column_seed(column_name, column_config)
         values = []
         for i in range(num_rows):
             row_seed = column_seed + i
@@ -260,9 +277,10 @@ class ColumnGenerator:
         # Reseed from the column-specific seed so the choices are stable
         # across runs when a key is provided, and stable per-column even
         # without one (otherwise output depends on the order of column
-        # generation calls — order-dependence is a footgun).
+        # generation calls — order-dependence is a footgun). Honors
+        # `determinism: fresh` for columns the user wants rolling per run.
         column_name = column_config.get('name', 'unnamed_column')
-        random.seed(self._column_seed(column_name))
+        random.seed(self._column_seed(column_name, column_config))
         values = random.choices(categories, weights=weights, k=num_rows)
         return pd.Series(values)
     
@@ -376,14 +394,23 @@ class ColumnGenerator:
             )
             return pd.Series([None] * num_rows, dtype=object)
 
-        return self._eval_formula_inline(num_rows, formula, column_name)
+        return self._eval_formula_inline(
+            num_rows, formula, column_name, column_config,
+        )
 
     def _eval_formula_inline(
-        self, num_rows: int, formula: str, column_name: str = 'unnamed_column',
+        self,
+        num_rows: int,
+        formula: str,
+        column_name: str = 'unnamed_column',
+        column_config: Optional[Dict[str, Any]] = None,
     ) -> pd.Series:
         """Per-row eval of a Python expression. Same deterministic seeding
         as the legacy ``basic`` path: ``column_seed + row_index`` reseeds
-        ``random`` and the Faker instance per row.
+        ``random`` and the Faker instance per row. When the column's
+        config has ``determinism: fresh``, the column-seed comes from
+        os.urandom — internal consistency holds within a run, but the
+        column rolls per run.
 
         Scope per row:
           - ``i`` / ``index`` — row number
@@ -393,7 +420,7 @@ class ColumnGenerator:
           - Faker date helpers + arithmetic (``today``, ``days_from_now``, …)
 
         Cross-column refs aren't reachable here — that's the post-pass."""
-        column_seed = self._column_seed(column_name)
+        column_seed = self._column_seed(column_name, column_config)
         values = []
         for i in range(num_rows):
             local_seed = column_seed + i
