@@ -66,25 +66,26 @@ def test_unknown_kind_falls_back_to_pandas():
 
 
 @pytest.mark.parametrize("kind,expected_engine", [
-    # All Phase 2 ops should be pandas. This list is the explicit baseline:
-    # if someone changes an op's NATIVE_ENGINE in Phase 3+, they update this
-    # test alongside, which makes the engine-flip auditable in PR diffs.
-    ("source.file", "pandas"),
-    ("source.db", "pandas"),
-    ("filter", "pandas"),
-    ("sort", "pandas"),
-    ("dedupe", "pandas"),
-    ("derive", "pandas"),
-    ("drop_column", "pandas"),
-    ("select_column", "pandas"),
-    ("limit", "pandas"),
-    ("run_storm", "pandas"),
-    ("mask", "pandas"),
-    ("generate", "pandas"),
-    ("target.file", "pandas"),
-    ("target.db", "pandas"),
+    # Frozen baseline of NATIVE_ENGINE per kind. The list moves explicitly
+    # as phases land: Phase 3 flipped the relational ops to polars; Phase 4
+    # will flip the source.* / target.* ops to duckdb. A surprise diff in
+    # this list = an undocumented engine flip — fail loud, don't shrug.
+    ("source.file", "pandas"),       # Phase 4 → "duckdb"
+    ("source.db", "pandas"),         # Phase 4 → "duckdb"
+    ("filter", "polars"),            # Phase 3
+    ("sort", "polars"),              # Phase 3
+    ("dedupe", "polars"),            # Phase 3
+    ("derive", "polars"),            # Phase 3
+    ("drop_column", "polars"),       # Phase 3
+    ("select_column", "polars"),     # Phase 3
+    ("limit", "polars"),             # Phase 3
+    ("run_storm", "pandas"),         # stays pandas (Phase 1 benchmark: 2.4% Arrow overhead)
+    ("mask", "pandas"),              # stays pandas (per-row Python)
+    ("generate", "pandas"),          # stays pandas (per-row Python)
+    ("target.file", "pandas"),       # Phase 4 → "duckdb"
+    ("target.db", "pandas"),         # Phase 4 → "duckdb"
 ])
-def test_phase_2_baseline_declarations(kind, expected_engine):
+def test_op_engine_baseline_declarations(kind, expected_engine):
     """Frozen baseline. Updates here are intentional; surprises are not."""
     op = OPS[kind]
     assert getattr(op, "NATIVE_ENGINE") == expected_engine

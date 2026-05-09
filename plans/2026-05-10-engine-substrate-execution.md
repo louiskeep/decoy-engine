@@ -25,7 +25,7 @@ This is the working journal for executing Phases 1–8 of the Polars+DuckDB hybr
 |---|---|---|
 | 1. Arrow runner cache + eviction + STORM benchmark | shipped | (this branch) |
 | 2. Op-type registry + connector SDK contract | shipped | (this branch) |
-| 3. Polars relational ops | pending | — |
+| 3. Polars relational ops | shipped | (this branch) |
 | 4. DuckDB source/sink + `engine: hybrid` flag | pending | — |
 | 5. Preview path + error translation | pending | — |
 | 6. Parity test suite + dogfood review | pending | — |
@@ -37,6 +37,13 @@ This is the working journal for executing Phases 1–8 of the Polars+DuckDB hybr
 - The implementation plan referenced `pandas-query` translation and a `_legacy/` directory of frozen pandas ops for parity tests. I'm taking a lighter approach: each ported op keeps a pandas fallback path inside the same module guarded by `NATIVE_ENGINE` resolution at the runner. This keeps the diff tighter and avoids duplicating op registration.
 - Phase 1's STORM benchmark is informational. Per the plan, if Arrow→pandas overhead is ≥ 10%, declare `NATIVE_ENGINE = "arrow"` for STORM. The benchmark records the number; the decision goes in the commit message.
 - Phase 4's `engine: hybrid` flag is the dogfood mechanism. Default stays `engine: pandas` until Phase 8 to keep the cutover safe.
+
+## Phase 3 result
+
+- Seven relational ops ported to Polars: `filter`, `sort`, `dedupe`, `derive`, `drop_column`, `select_column`, `limit`. Each op now declares `NATIVE_ENGINE = "polars"` and has both `_apply_pandas` (legacy) and `_apply_polars` (new) impls dispatched on input type. The pandas paths stay alive through Phase 7 to keep the safety hatch under `engine: pandas`.
+- Filter + derive use `pl.SQLContext` to evaluate predicate / expression strings — same shape pandas-query / pandas-eval supports for the cases we use. Documented divergences in `tests/parity/SEMANTIC_DIFFERENCES.md` (5 rows so far).
+- The `engine: hybrid` opt-in YAML key is wired earlier than the architecture plan called for (it shipped in Phase 4 originally) so the polars implementations are exercisable in tests without further plumbing. Validator rejects unknown engine values cleanly.
+- 26 new tests: 20 parity (across all 7 ops) + 6 integration (runner-level hybrid mode). 448 passing, same 8 pre-existing failures.
 
 ## Phase 2 result
 

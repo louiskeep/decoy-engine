@@ -73,6 +73,7 @@ def run_graph(
     nodes = config["nodes"]
     order = topo_order(nodes, edges)
     by_id = {n["id"]: n for n in nodes}
+    graph_engine_mode = _resolve_engine_mode(config)
 
     cache: dict[str, pa.Table] = {}
     remaining = _count_consumers(nodes, edges)
@@ -87,7 +88,7 @@ def run_graph(
         kind = node["kind"]
         op = OPS[kind]
         node_cfg = dict(node.get("config") or {})
-        engine = native_engine_for(kind)
+        engine = native_engine_for(kind, graph_engine_mode)
 
         # Pull upstream outputs out of cache and decrement their consumer
         # count; eviction happens inside _consume.
@@ -177,6 +178,8 @@ def preview_graph(
     from decoy_engine.graph.ops import OPS
     from decoy_engine.graph.registry import native_engine_for
 
+    graph_engine_mode = _resolve_engine_mode(config)
+
     # Preview mode does NOT evict the target node's cache (we still need to
     # serialize it after the run). Eviction for upstream-of-target nodes is
     # safe — they have downstream consumers that read them along the way.
@@ -194,7 +197,7 @@ def preview_graph(
         op = OPS[kind]
         node_cfg = dict(node.get("config") or {})
         node_cfg["__preview_row_limit"] = row_limit
-        engine = native_engine_for(kind)
+        engine = native_engine_for(kind, graph_engine_mode)
         in_edges = [e for e in sub_edges if e["to"] == nid]
         # In preview mode, do NOT evict the target node — its output is
         # what the caller will serialize. Eviction for non-target upstreams
@@ -289,6 +292,25 @@ def _consume(
         if remaining[node_id] <= 0 and node_id != hold:
             del cache[node_id]
     return arrow_to_engine(table, engine)  # type: ignore[arg-type]
+
+
+def _resolve_engine_mode(config: dict) -> str:
+    """Read the graph YAML's top-level `engine:` key.
+
+    Values:
+      "pandas" (default) — every op runs on pandas regardless of declared
+                           NATIVE_ENGINE. Today's behavior.
+      "hybrid"           — respect each op's NATIVE_ENGINE declaration. The
+                           dogfood opt-in flag introduced in Phase 4 of the
+                           polars-duckdb hybrid plan.
+
+    Unknown values fall back to "pandas" with no error — the validator
+    could promote this to a hard reject in a follow-up.
+    """
+    mode = config.get("engine") or "pandas"
+    if mode not in ("pandas", "hybrid"):
+        return "pandas"
+    return mode
 
 
 def _load_yaml(yaml_text: str) -> dict:

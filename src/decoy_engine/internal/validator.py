@@ -927,6 +927,15 @@ class GraphConfigValidator(ConfigValidator):
                 "schema_version",
             )
 
+        # Engine mode (Phase 3 of polars-duckdb hybrid plan): pipeline opt-in
+        # for the hybrid runner. Default 'pandas' = today's behavior.
+        engine = config.get("engine", "pandas")
+        if engine not in ("pandas", "hybrid"):
+            raise ValidationError(
+                f"'engine' must be 'pandas' or 'hybrid' (got {engine!r})",
+                "engine",
+            )
+
     def _validate_nodes(
         self, nodes: List[Dict[str, Any]], kinds: Set[str]
     ) -> None:

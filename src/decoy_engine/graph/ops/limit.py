@@ -8,10 +8,11 @@ from typing import Any
 
 import pandas as pd
 
+from decoy_engine.graph.ops._base import is_polars_frame
 from decoy_engine.internal.validator import ValidationError
 
 KIND = "limit"
-NATIVE_ENGINE = "pandas"
+NATIVE_ENGINE = "polars"
 INPUT_ARITY: tuple[int, int | None] = (1, 1)
 OUTPUT_KIND = "stream"
 
@@ -23,7 +24,9 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValidationError("'n' must be a non-negative integer", "config.n")
 
 
-def apply(inputs, config, ctx) -> pd.DataFrame:
+def apply(inputs, config, ctx):
     df = inputs[0]
     n = config["n"]
+    if is_polars_frame(df):
+        return df.head(n)
     return df.head(n).reset_index(drop=True)

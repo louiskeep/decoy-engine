@@ -44,3 +44,10 @@ class GraphOp(Protocol):
 class OpError(RuntimeError):
     """Raised by an op when its work fails. Caught by the runner and turned
     into a NodeRunRecord with status='error'."""
+
+
+def is_polars_frame(df: Any) -> bool:
+    """True if df is a polars.DataFrame / LazyFrame, without importing polars
+    when it isn't installed. Used by ops that ship both pandas and polars
+    implementations to dispatch on input type."""
+    return type(df).__module__.startswith("polars.")
