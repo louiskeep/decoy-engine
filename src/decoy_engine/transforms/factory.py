@@ -58,5 +58,11 @@ def create_strategy(
     elif strategy_type == 'reference':
         from decoy_engine.transforms.reference import ReferenceStrategy
         return ReferenceStrategy(seed, logger, derive_key=derive_key)
+    elif strategy_type == 'truncate':
+        from decoy_engine.transforms.truncate import TruncateStrategy
+        return TruncateStrategy(seed, logger)
+    elif strategy_type == 'bucketize':
+        from decoy_engine.transforms.bucketize import BucketizeStrategy
+        return BucketizeStrategy(seed, logger)
     else:
         raise ValueError(f"Unsupported strategy type: {strategy_type}")

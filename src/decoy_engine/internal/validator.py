@@ -95,7 +95,7 @@ class MaskerConfigValidator(ConfigValidator):
     
     SUPPORTED_MASKING_STRATEGIES = [
         'faker', 'hash', 'redact', 'map', 'shuffle', 'passthrough', 'date_shift', 'formula',
-        'reference',
+        'reference', 'truncate', 'bucketize',
     ]
     
     def validate(self, config: Dict[str, Any]) -> None:
