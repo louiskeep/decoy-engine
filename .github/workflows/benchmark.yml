@@ -1,0 +1,135 @@
+# Benchmark — runs the engine's performance benchmarks on a standardized
+# GitHub-hosted runner (ubuntu-latest: 4 vCPU / 16 GB / pinned image), so
+# numbers are comparable PR-to-PR without machine-variance noise.
+#
+# Triggered manually (workflow_dispatch button in the Actions UI) or by
+# adding the `run-bench` label to a PR. Not on every push — bench runs are
+# slow and we don't want to spam every commit.
+#
+# Catches the catastrophic-regression scenario: a refactor lands and the
+# STORM Arrow→pandas overhead jumps from 4% to 30%; the comment on the PR
+# makes that visible at review time.
+
+name: Benchmark
+
+on:
+  # Fires when someone adds a label to a PR. We gate inside the job to only
+  # run when the label is `run-bench`. Other labels are no-ops.
+  pull_request:
+    types: [labeled]
+  # Manual fire button in the Actions tab. Useful for "run on main"
+  # baseline captures or ad-hoc reruns. The branch picker lets you pick
+  # any branch (default: the workflow file's branch).
+  workflow_dispatch:
+
+# `actions/github-script` posts a comment on the PR; that needs write
+# perms on pull-requests. Default GITHUB_TOKEN has read by default — we
+# upgrade for this workflow only, scoped narrowly.
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  storm-arrow-boundary:
+    # Only fire on the `run-bench` label, or on manual workflow_dispatch.
+    # Skips the run if someone applies an unrelated label like `bug`.
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && github.event.label.name == 'run-bench')
+
+    runs-on: ubuntu-latest
+    # 30 minutes is generous for the STORM benchmark (~1 minute today);
+    # bumps up when Bug 5's calibration tier (8M-row HIPAA) lands here too.
+    timeout-minutes: 30
+
+    steps:
+      # Pull the PR's code into the runner. fetch-depth=1 is the default
+      # (no full history needed for a benchmark).
+      - name: Check out
+        uses: actions/checkout@v4
+
+      # Pin Python explicitly. The benchmark is sensitive to the Python
+      # version (string-handling path differs between 3.10 and 3.11+,
+      # which is part of why STORM overhead measured 2.4% on Linux/3.11
+      # vs 56% on Windows/3.10 — see plans/2026-05-09-hybrid-engine-bug-followup.md).
+      # Cache pip so subsequent runs skip the dependency download phase.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      # Install the package in editable mode + its dev extras (which
+      # includes pytest). The `[hybrid]` extras alias is empty post-Bug 1
+      # (polars + duckdb are required deps now), but kept for callers
+      # that already wrote it.
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      # Run the benchmark. The `-s` flag keeps print() output visible (the
+      # benchmarks emit decision messages to stdout). The `-m benchmark`
+      # filter only runs tests marked `@pytest.mark.benchmark` — keeps
+      # this from sweeping up unrelated tests if someone moves files.
+      #
+      # Defensive handling: until the hybrid engine work merges, the
+      # tests/benchmark/ directory may not exist or may be empty. Treat
+      # that as "no benchmarks yet" rather than failing the workflow.
+      - name: Run benchmarks
+        id: bench
+        run: |
+          mkdir -p bench-output
+          if [ -d tests/benchmark ] && find tests/benchmark -name 'test_*.py' | grep -q .; then
+            # `tee` mirrors stdout to a file we can read in the comment step.
+            # `|| true` so a benchmark assertion failure (catastrophic-regression
+            # guard) still produces output for the PR comment; we then re-fail
+            # the job below based on pytest's exit code so the PR is properly red.
+            set -o pipefail
+            pytest tests/benchmark/ -m benchmark -s --no-header --tb=short 2>&1 \
+              | tee bench-output/result.txt
+            echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+          else
+            echo "No benchmarks defined yet — workflow scaffolded ahead of the hybrid engine merge." \
+              | tee bench-output/result.txt
+            echo "exit_code=0" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Post the result back as a PR comment. `actions/github-script` runs
+      # arbitrary JavaScript with the GitHub API client pre-loaded.
+      # Truncating to 9 KB so we don't blow past the 65 KB comment limit
+      # if a benchmark prints a wall of stack traces.
+      - name: Comment on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const result = fs.readFileSync('bench-output/result.txt', 'utf8');
+            const truncated = result.length > 9000
+              ? result.slice(-9000) + '\n\n…(truncated, full output in workflow logs)'
+              : result;
+            const body = [
+              '### Benchmark results',
+              '_Runner: `ubuntu-latest` · 4 vCPU · 16 GB · Python 3.11_',
+              '',
+              '```',
+              truncated,
+              '```',
+            ].join('\n');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+
+      # Re-fail the job if pytest itself failed, even though we let the
+      # benchmark step continue past errors so the comment still posts.
+      # Two distinct exit codes worth noting: 1 = test failure (bad),
+      # 5 = no tests collected (we treat as success above).
+      - name: Surface pytest failure
+        if: steps.bench.outputs.exit_code != '0' && steps.bench.outputs.exit_code != '5'
+        run: |
+          echo "Benchmark step exited ${{ steps.bench.outputs.exit_code }} — failing the job."
+          exit 1
