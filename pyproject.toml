@@ -19,19 +19,22 @@ dependencies = [
     # Was always required at runtime; was undeclared until benchmark CI
     # caught the gap on a fresh-environment install.
     "pydantic>=2.0",
+    # Promoted from optional `[hybrid]` extras (Bug 1).
+    # Phase 8 flipped `engine: hybrid` to the default, so a pandas-only
+    # install would crash on first pipeline run with ModuleNotFoundError.
+    # Both libs are now required to match the runtime contract.
+    "polars>=1.0",
+    "duckdb>=0.10.0",
 ]
 
-# polars + duckdb stay optional through Phase 7 so a pandas-only install keeps
-# its current footprint while we migrate. They graduate to required deps when
-# Phase 8 flips `engine: hybrid` to default.
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0.0",
 ]
-hybrid = [
-    "polars>=1.0",
-    "duckdb>=0.10.0",
-]
+# `hybrid` retained as an empty alias so any caller that already wrote
+# `pip install decoy-engine[hybrid]` keeps working — the libs are required
+# either way now.
+hybrid = []
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/decoy_engine"]
