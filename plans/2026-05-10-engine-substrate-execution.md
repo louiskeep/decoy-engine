@@ -23,7 +23,7 @@ This is the working journal for executing Phases 1–8 of the Polars+DuckDB hybr
 
 | Phase | Status | Commit |
 |---|---|---|
-| 1. Arrow runner cache + eviction + STORM benchmark | pending | — |
+| 1. Arrow runner cache + eviction + STORM benchmark | shipped | (this branch) |
 | 2. Op-type registry + connector SDK contract | pending | — |
 | 3. Polars relational ops | pending | — |
 | 4. DuckDB source/sink + `engine: hybrid` flag | pending | — |
@@ -37,3 +37,10 @@ This is the working journal for executing Phases 1–8 of the Polars+DuckDB hybr
 - The implementation plan referenced `pandas-query` translation and a `_legacy/` directory of frozen pandas ops for parity tests. I'm taking a lighter approach: each ported op keeps a pandas fallback path inside the same module guarded by `NATIVE_ENGINE` resolution at the runner. This keeps the diff tighter and avoids duplicating op registration.
 - Phase 1's STORM benchmark is informational. Per the plan, if Arrow→pandas overhead is ≥ 10%, declare `NATIVE_ENGINE = "arrow"` for STORM. The benchmark records the number; the decision goes in the commit message.
 - Phase 4's `engine: hybrid` flag is the dogfood mechanism. Default stays `engine: pandas` until Phase 8 to keep the cutover safe.
+
+## Phase 1 result
+
+- **STORM benchmark on 50K-row HIPAA-shaped fixture: 2.4% overhead.** Well below the 10% threshold. Decision per the plan: STORM stays `NATIVE_ENGINE = "pandas"` in Phase 2.
+- Tests: 14 new (13 cache + 1 benchmark), all passing. Existing suite unchanged (389 → 389 passing of pre-existing tests; 8 pre-existing failures untouched).
+- Files added: `src/decoy_engine/graph/conversion.py`, `src/decoy_engine/graph/registry.py`, `tests/unit/test_graph_runner_cache.py`, `tests/benchmark/test_storm_arrow_boundary.py`.
+- Files touched: `src/decoy_engine/graph/runner.py` (cache → `dict[str, pyarrow.Table]`, eager eviction, preview pin), `pyproject.toml` (add `pyarrow`, `hybrid` extra).

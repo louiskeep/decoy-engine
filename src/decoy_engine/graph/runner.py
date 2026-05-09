@@ -2,6 +2,17 @@
 
 These are the only symbols `decoy_engine.graph` exposes to callers — see
 `graph/__init__.py`. The contract is documented in PIPELINE_GRAPH_GUIDE.md.
+
+Runtime cache: as of Phase 1 of the polars-duckdb hybrid plan, the runner
+caches `pyarrow.Table` between ops and materializes to each op's
+`NATIVE_ENGINE` at apply-time. With every op currently declaring
+`NATIVE_ENGINE = "pandas"`, behavior is unchanged from the pure-pandas
+runner; the substrate is just future-proof. Phases 3 + 4 flip individual ops
+to polars / duckdb.
+
+Eviction: cache entries are evicted as soon as their last downstream
+consumer reads them. Keeps peak memory bounded by the in-flight working set
+rather than the lifetime of the run.
 """
 
 import hashlib
@@ -11,10 +22,17 @@ import time
 import traceback
 from typing import Any
 
+import pyarrow as pa
 import yaml
 
 from decoy_engine.context import ExecutionContext
 from decoy_engine.exceptions import ConfigError, PipelineValidationError
+from decoy_engine.graph.conversion import (
+    arrow_columns,
+    arrow_row_count,
+    arrow_to_engine,
+    engine_to_arrow,
+)
 from decoy_engine.graph.topo import topo_order, upstream_subgraph
 from decoy_engine.graph.types import (
     NodeRunRecord,
@@ -49,12 +67,15 @@ def run_graph(
     _validate_or_raise(config)
 
     from decoy_engine.graph.ops import OPS
+    from decoy_engine.graph.registry import native_engine_for
 
     edges = config.get("edges") or []
-    order = topo_order(config["nodes"], edges)
-    by_id = {n["id"]: n for n in config["nodes"]}
+    nodes = config["nodes"]
+    order = topo_order(nodes, edges)
+    by_id = {n["id"]: n for n in nodes}
 
-    cache: dict[str, Any] = {}
+    cache: dict[str, pa.Table] = {}
+    remaining = _count_consumers(nodes, edges)
     records: list[NodeRunRecord] = []
     overall_start = time.monotonic()
     success = True
@@ -66,21 +87,27 @@ def run_graph(
         kind = node["kind"]
         op = OPS[kind]
         node_cfg = dict(node.get("config") or {})
-        inputs = [cache[e["from"]] for e in edges if e["to"] == nid]
+        engine = native_engine_for(kind)
+
+        # Pull upstream outputs out of cache and decrement their consumer
+        # count; eviction happens inside _consume.
+        in_edges = [e for e in edges if e["to"] == nid]
+        inputs = [_consume(cache, remaining, e["from"], engine) for e in in_edges]
 
         if log is not None:
-            log.info("graph: running node %s (%s)", nid, kind)
+            log.info("graph: running node %s (%s, engine=%s)", nid, kind, engine)
 
         t0 = time.monotonic()
         try:
-            df = op.apply(inputs, node_cfg, ctx)
-            cache[nid] = df
+            result = op.apply(inputs, node_cfg, ctx)
+            table = engine_to_arrow(result, engine) if result is not None else None
+            cache[nid] = table
             elapsed_ms = int((time.monotonic() - t0) * 1000)
             records.append({
                 "node_id": nid,
                 "kind": kind,
                 "status": "ok",
-                "row_count": int(len(df)) if df is not None else None,
+                "row_count": arrow_row_count(table),
                 "elapsed_ms": elapsed_ms,
                 "error": None,
             })
@@ -88,9 +115,13 @@ def run_graph(
                 log.info(
                     "graph: %s ok rows=%d elapsed=%dms",
                     nid,
-                    len(df) if df is not None else 0,
+                    arrow_row_count(table),
                     elapsed_ms,
                 )
+            # Sink with no downstream consumers: evict immediately so memory
+            # is reclaimed (its result is empty by convention anyway).
+            if remaining.get(nid, 0) == 0:
+                cache.pop(nid, None)
         except Exception as exc:
             elapsed_ms = int((time.monotonic() - t0) * 1000)
             records.append({
@@ -144,10 +175,17 @@ def preview_graph(
     by_id = {n["id"]: n for n in nodes}
 
     from decoy_engine.graph.ops import OPS
+    from decoy_engine.graph.registry import native_engine_for
 
-    cache: dict[str, Any] = {}
+    # Preview mode does NOT evict the target node's cache (we still need to
+    # serialize it after the run). Eviction for upstream-of-target nodes is
+    # safe — they have downstream consumers that read them along the way.
+    cache: dict[str, pa.Table] = {}
+    sub_node_set = set(sub_order)
+    sub_nodes = [n for n in nodes if n["id"] in sub_node_set]
+    remaining = _count_consumers(sub_nodes, sub_edges)
     overall_start = time.monotonic()
-    target_df = None
+    target_table: pa.Table | None = None
     error_msg: str | None = None
 
     for nid in sub_order:
@@ -155,27 +193,35 @@ def preview_graph(
         kind = node["kind"]
         op = OPS[kind]
         node_cfg = dict(node.get("config") or {})
-        # Hint sources/targets to operate in preview mode (capped reads, no writes).
         node_cfg["__preview_row_limit"] = row_limit
-        inputs = [cache[e["from"]] for e in sub_edges if e["to"] == nid]
+        engine = native_engine_for(kind)
+        in_edges = [e for e in sub_edges if e["to"] == nid]
+        # In preview mode, do NOT evict the target node — its output is
+        # what the caller will serialize. Eviction for non-target upstreams
+        # behaves as in run_graph.
+        inputs = [
+            _consume(cache, remaining, e["from"], engine, hold=node_id)
+            for e in in_edges
+        ]
 
         try:
-            df = op.apply(inputs, node_cfg, ctx)
-            # Cap downstream DataFrames so a small source doesn't blow up
-            # if a transform inflates row count (e.g. cross join).
-            if df is not None and len(df) > row_limit:
-                df = df.head(row_limit)
-            cache[nid] = df
+            result = op.apply(inputs, node_cfg, ctx)
+            table = engine_to_arrow(result, engine) if result is not None else None
+            # Cap downstream tables so a small source doesn't blow up if a
+            # transform inflates row count (e.g. cross join).
+            if table is not None and table.num_rows > row_limit:
+                table = table.slice(0, row_limit)
+            cache[nid] = table
         except Exception as exc:
             error_msg = f"node {nid!r} ({kind}) failed: {exc}"
             cache[nid] = None
             if nid == node_id:
                 break
 
-    target_df = cache.get(node_id)
+    target_table = cache.get(node_id)
     elapsed_ms = int((time.monotonic() - overall_start) * 1000)
 
-    if target_df is None:
+    if target_table is None:
         return {
             "node_id": node_id,
             "columns": [],
@@ -186,10 +232,14 @@ def preview_graph(
             "error": error_msg or "no data produced",
         }
 
-    columns = list(target_df.columns)
-    # Convert NaN/NaT to None for JSON-friendliness.
+    columns = arrow_columns(target_table)
+    # Materialize to pandas at the boundary — the UI consumes a JSON-shaped
+    # list-of-lists. This is the canonical preview boundary regardless of
+    # which engine produced the table (Phase 5 codifies this).
+    df_preview = target_table.slice(0, row_limit).to_pandas()
     rows = [
-        [_jsonable(v) for v in row] for row in target_df.head(row_limit).itertuples(index=False, name=None)
+        [_jsonable(v) for v in row]
+        for row in df_preview.itertuples(index=False, name=None)
     ]
     return {
         "node_id": node_id,
@@ -200,6 +250,45 @@ def preview_graph(
         "elapsed_ms": elapsed_ms,
         "error": error_msg,
     }
+
+
+def _count_consumers(nodes: list[dict], edges: list[dict]) -> dict[str, int]:
+    """Per node, count how many downstream edges consume its output.
+
+    Used by the cache for eager eviction: when a node's count hits zero,
+    its cache entry is released for GC.
+    """
+    counts: dict[str, int] = {n["id"]: 0 for n in nodes}
+    for e in edges:
+        # Self-loops are forbidden by the validator; defensive count anyway.
+        if e["from"] == e["to"]:
+            continue
+        if e["from"] in counts:
+            counts[e["from"]] += 1
+    return counts
+
+
+def _consume(
+    cache: dict[str, pa.Table],
+    remaining: dict[str, int],
+    node_id: str,
+    engine: str,
+    hold: str | None = None,
+) -> Any:
+    """Read upstream output, decrement consumer count, evict at zero.
+
+    `hold` is a node id whose cache entry must survive eviction (preview
+    mode pins the target node's entry so the caller can serialize it after
+    the run).
+    """
+    table = cache.get(node_id)
+    if table is None:
+        return None
+    if node_id in remaining:
+        remaining[node_id] -= 1
+        if remaining[node_id] <= 0 and node_id != hold:
+            del cache[node_id]
+    return arrow_to_engine(table, engine)  # type: ignore[arg-type]
 
 
 def _load_yaml(yaml_text: str) -> dict:
