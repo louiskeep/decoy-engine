@@ -1,0 +1,90 @@
+# GDPR Disguise — EU General Data Protection Regulation.
+#
+# Built for any EU/UK workload where personal data ("any information
+# relating to an identified or identifiable natural person" — Art. 4(1))
+# leaves the regulated environment. GDPR doesn't enumerate identifier
+# types the way HIPAA does; instead it broadly protects every direct or
+# indirect identifier. This Disguise defaults to faker on the obvious
+# direct identifiers (name, email, phone, IBAN) and generalizes the
+# common quasi-identifiers (ZIP, age via DOB, IP).
+#
+# Recital 26 — anonymisation criterion ("information which does not
+# relate to an identified or identifiable natural person") — is the
+# target outcome; recital 28 frames pseudonymisation (the bulk of what
+# this Disguise does) as a recommended GDPR-compliance technique under
+# Art. 32. Implements pseudonymisation, not anonymisation: re-id by
+# linkage to other datasets is still possible and the master key gives
+# the controller a path back, which is intentional under GDPR.
+#
+# Sprint A · Item 31 phase 1 from forge-platform/ROADMAP.md.
+
+id: gdpr
+name: "GDPR Disguise"
+summary: "EU GDPR pseudonymisation defaults: direct identifiers replaced, quasi-identifiers generalised."
+regulation: "EU GDPR — Article 4(5) pseudonymisation, Article 32 security of processing, Recital 26 anonymisation"
+primary_buyer: "EU/UK data engineers handling personal data"
+
+triggers:
+  # GDPR fires on a clear EU signal — IBAN (European bank account format)
+  # or EU-formatted dates. We deliberately don't include email / phone /
+  # person_name in `any_detectors` because those are universal PII; the
+  # default Disguise already covers them. A US dataset with email and
+  # name shouldn't be tagged "GDPR-relevant" just because the fields
+  # exist — if there's no EU-shaped field, this isn't an EU dataset.
+  any_detectors:
+    - iban
+    - eu_date
+  co_occurrence:
+    # Strong EU signature: bank account or EU date format alongside the
+    # usual identity+contact pair.
+    - [iban, person_name, email]
+    - [eu_date, person_name, us_zip]
+  min_score: 0.4
+
+field_rules:
+  - detectors: [person_name]
+    mask: faker
+    params:
+      faker_type: name
+      locale: en_GB
+    why: "Direct identifier (Art. 4(1)). Realistic fake names; locale defaults to en_GB so masked output looks at-home in the most common EU/UK dataset shape (override per-pipeline as needed)."
+
+  - detectors: [email]
+    mask: faker
+    params:
+      faker_type: email
+    why: "Direct identifier (Art. 4(1)). Email is the most common online identifier in EU consumer data."
+
+  - detectors: [us_phone]
+    mask: faker
+    params:
+      faker_type: phone_number
+    why: "Direct identifier — phone numbers per Art. 4(1)."
+
+  - detectors: [iban]
+    mask: hash
+    params:
+      truncate: 24
+    why: "Bank account number → keyed hash. Joins survive masking; no clear-text IBAN persists. Recital 26 anonymisation is unreachable while the controller holds the key, so this is pseudonymisation under Art. 4(5)."
+
+  - detectors: [ipv4]
+    mask: hash
+    params:
+      truncate: 16
+    why: "IP address → keyed hash. CJEU Breyer (C-582/14) confirms IPs are personal data under GDPR; hashing pseudonymises while preserving session-grouping joins."
+
+  - detectors: [us_zip]
+    mask: truncate
+    params:
+      length: 3
+    why: "Quasi-identifier — ZIP-3 generalisation. Mirrors HIPAA Safe Harbor's geographic rule; reduces re-identification risk by aggregating to ~thousands of records per bucket."
+
+  - detectors: [iso_date, us_date, eu_date]
+    mask: date_shift
+    params:
+      jitter_days: 30
+    why: "Quasi-identifier — date jitter breaks exact-time correlation across linked datasets. ±30d preserves seasonality and aging analytics."
+
+  - detectors: [ssn]
+    mask: hash
+    why: "Even in EU contexts, US SSN-shaped fields are direct identifiers — hash with the master key so any cross-Atlantic FK joins survive."

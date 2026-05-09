@@ -13,9 +13,13 @@ import pytest
 
 from decoy_engine.storm.detectors import (
     REGISTERED_DETECTORS,
+    detect_cvv,
     detect_email,
     detect_eu_date,
+    detect_iban,
+    detect_ipv4,
     detect_iso_date,
+    detect_pan,
     detect_person_name,
     detect_ssn,
     detect_us_date,
@@ -169,6 +173,118 @@ class TestRunAllDetectors:
         for fn in REGISTERED_DETECTORS:
             result = fn(s, "any_col")
             assert result is None or hasattr(result, "detector_id")
+
+
+# ── pan (credit card) ────────────────────────────────────────────────────────
+
+class TestPAN:
+    # Real test card numbers from the major-issuer test ranges (all Luhn-valid).
+    VALID = [
+        "4111111111111111",   # Visa
+        "5555555555554444",   # Mastercard
+        "378282246310005",    # Amex (15 digits)
+        "6011111111111117",   # Discover
+    ]
+
+    def test_clean_pan_column_fires(self):
+        s = pd.Series(self.VALID)
+        m = detect_pan(s, "card_number")
+        assert m is not None and m.detector_id == "pan"
+        assert m.match_rate == 1.0
+
+    def test_grouped_format_with_dashes_fires(self):
+        s = pd.Series(["4111-1111-1111-1111", "5555 5555 5555 4444"])
+        m = detect_pan(s, "card")
+        assert m is not None and m.match_rate == 1.0
+
+    def test_random_digits_dont_fire(self):
+        # 16 digits but Luhn-invalid — would false-positive if regex alone.
+        s = pd.Series(["1234567890123456", "9999888877776666", "1111222233334444"])
+        m = detect_pan(s, "transaction_id")
+        assert m is None, "regex-only path would have fired; Luhn must reject"
+
+    def test_short_digit_strings_dont_fire(self):
+        # 12 digits — below the PAN minimum.
+        s = pd.Series(["123456789012", "999999999999"])
+        m = detect_pan(s, "ref")
+        assert m is None
+
+
+# ── cvv ──────────────────────────────────────────────────────────────────────
+
+class TestCVV:
+    def test_only_fires_with_name_hint(self):
+        # Without the name hint CVV is uselessly broad — any 3-digit string.
+        s = pd.Series(["123", "456", "789"])
+        assert detect_cvv(s, "random_col") is None
+
+    def test_fires_with_cvv_column_name(self):
+        s = pd.Series(["123", "456", "789", "012"])
+        m = detect_cvv(s, "cvv")
+        assert m is not None and m.detector_id == "cvv"
+
+    def test_fires_with_cvc_column_name(self):
+        s = pd.Series(["123", "4567"])
+        m = detect_cvv(s, "card_cvc")
+        assert m is not None
+
+    def test_security_code_alias(self):
+        s = pd.Series(["123", "456"])
+        m = detect_cvv(s, "card_security_code")
+        assert m is not None
+
+
+# ── iban ─────────────────────────────────────────────────────────────────────
+
+class TestIBAN:
+    # Real test IBANs from Wikipedia / SWIFT — all mod-97 valid.
+    VALID = [
+        "GB82WEST12345698765432",   # UK
+        "DE89370400440532013000",   # Germany
+        "FR1420041010050500013M02606",   # France
+        "ES9121000418450200051332",   # Spain
+    ]
+
+    def test_clean_iban_column_fires(self):
+        s = pd.Series(self.VALID)
+        m = detect_iban(s, "iban")
+        assert m is not None and m.detector_id == "iban"
+        assert m.match_rate == 1.0
+
+    def test_invalid_checksum_doesnt_fire(self):
+        # Right shape, wrong checksum — mod-97 should reject.
+        s = pd.Series([
+            "GB00WEST12345698765432",
+            "DE00370400440532013000",
+        ])
+        m = detect_iban(s, "iban")
+        assert m is None, "regex-only path would have fired; mod-97 must reject"
+
+    def test_random_alphanumerics_dont_fire(self):
+        s = pd.Series(["ABCD1234567890XYZ", "XX99ABCDE12345678"])
+        m = detect_iban(s, "code")
+        assert m is None
+
+
+# ── ipv4 ─────────────────────────────────────────────────────────────────────
+
+class TestIPv4:
+    def test_clean_ip_column_fires(self):
+        s = pd.Series(["192.168.1.1", "10.0.0.5", "8.8.8.8", "203.0.113.7"])
+        m = detect_ipv4(s, "client_ip")
+        assert m is not None and m.detector_id == "ipv4"
+        assert m.match_rate == 1.0
+
+    def test_out_of_range_octet_doesnt_match(self):
+        # Regex matches but validator rejects octet > 255.
+        s = pd.Series(["999.1.1.1", "1.2.3.999", "256.256.256.256"])
+        m = detect_ipv4(s, "ip")
+        assert m is None
+
+    def test_partial_match_doesnt_fire(self):
+        s = pd.Series(["1.2.3", "1.2.3.4.5", "abc.def.ghi.jkl"])
+        m = detect_ipv4(s, "ip")
+        assert m is None
 
 
 # ── sample_misses behavior ───────────────────────────────────────────────────

@@ -1,0 +1,77 @@
+# PCI DSS Disguise — Payment Card Industry Data Security Standard.
+#
+# Built for retail, payments, and adjacent finance workloads where the
+# data set carries primary account numbers (PAN), card security codes
+# (CVV/CVC), and IBANs. PCI DSS §3.4 ("render PAN unreadable anywhere
+# stored") is the load-bearing requirement; this Disguise covers the
+# common storage paths — cardholder profile tables, transaction logs,
+# refund records — by defaulting all PAN columns to keyed FPE-shaped
+# masking and CVV columns to redact (PCI explicitly forbids storage of
+# CVV after authorization).
+#
+# Sprint A · Item 31 phase 1 from forge-platform/ROADMAP.md.
+
+id: pci
+name: "PCI DSS Disguise"
+summary: "PCI DSS §3.4 cardholder data protection: PAN, CVV, IBAN, plus the usual identity fields."
+regulation: "PCI DSS v4.0 — Requirement 3 (Protect stored account data)"
+primary_buyer: "Payments, retail, fintech engineers"
+
+triggers:
+  any_detectors:
+    - pan
+    - cvv
+  co_occurrence:
+    # The reliable retail signature: card + amount + customer identity.
+    - [pan, person_name, email]
+    - [pan, us_phone, us_zip]
+  min_score: 0.4
+
+field_rules:
+  - detectors: [pan]
+    mask: hash
+    params:
+      truncate: 16
+    why: "PAN → keyed HMAC-SHA256 truncated to 16 chars to fit legacy CHAR(16)/CHAR(20) PAN columns. PCI DSS §3.4 — 'render PAN unreadable.' Same input → same hash everywhere on the instance, so token-style joins on PAN survive masking."
+
+  - detectors: [cvv]
+    mask: redact
+    params:
+      redact_with: "***"
+    why: "CVV / CVC → fixed redaction. PCI DSS §3.2 explicitly forbids storage of card-verification codes after authorization; redaction kills the value."
+
+  - detectors: [iban]
+    mask: hash
+    params:
+      truncate: 24
+    why: "IBAN → keyed hash truncated to fit column width. Bank-account joins survive masking; no clear-text IBAN persists."
+
+  - detectors: [person_name]
+    mask: faker
+    params:
+      faker_type: name
+    why: "Cardholder names → realistic fake substitutes. Keeps datasets readable for QA without leaking identity."
+
+  - detectors: [email]
+    mask: faker
+    params:
+      faker_type: email
+    why: "Customer emails → realistic fake (preserves @-domain shape via `preserve_domain` if the user enables it on the field)."
+
+  - detectors: [us_phone]
+    mask: faker
+    params:
+      faker_type: phone_number
+    why: "Phone numbers → realistic fake."
+
+  - detectors: [us_zip]
+    mask: truncate
+    params:
+      length: 3
+    why: "ZIP → first 3 digits only. Coarse-grained geographic signal preserved for fraud analytics; full ZIP discarded."
+
+  - detectors: [iso_date, us_date, eu_date]
+    mask: date_shift
+    params:
+      jitter_days: 30
+    why: "Transaction dates → ±30d shift. Preserves the analytic distribution while breaking exact correlation with the unmasked source."

@@ -50,11 +50,35 @@ def _evaluate(
     *,
     name_hint: bool,
     min_rate: float,
+    validator: Optional[Callable[[str], bool]] = None,
 ) -> Optional[DetectorMatch]:
-    """Apply a regex to non-null values and decide whether the detector fires."""
+    """Apply a regex to non-null values and decide whether the detector fires.
+
+    Optional `validator` runs per-value AFTER regex match — used for
+    structurally-valid PAN (Luhn checksum), IBAN (mod-97), or IPv4
+    (octet range 0-255). When set, a value counts as a match only if the
+    regex matches AND validator(value) returns True. Avoids the
+    false-positive case where any 13-digit string looks like a credit
+    card to the regex.
+    """
     if len(values) == 0:
         return None
-    matches = values.str.fullmatch(pattern)
+    pattern_matches = values.str.fullmatch(pattern)
+    if validator is not None:
+        # Only run the validator on regex-passers — far cheaper than
+        # iterating every value, and a non-matching string can't pass a
+        # checksum either.
+        validator_results = pd.Series(False, index=values.index)
+        candidates = values[pattern_matches]
+        for idx, val in candidates.items():
+            try:
+                if validator(val):
+                    validator_results.at[idx] = True
+            except (TypeError, ValueError):
+                continue
+        matches = validator_results
+    else:
+        matches = pattern_matches
     rate = float(matches.mean())
     threshold = NAME_HINT_MIN_RATE if name_hint else min_rate
     if rate < threshold:
@@ -78,6 +102,11 @@ _NAME_HINTS: dict[str, re.Pattern[str]] = {
     "iso_date":    re.compile(r"(?i)^(.*[_-])?(date|created|updated|modified|dob|birth|start|end|due|effective|expir)([_-].*)?$"),
     "us_date":     re.compile(r"(?i)^(.*[_-])?(date|created|updated|modified|dob|birth|start|end|due|effective|expir)([_-].*)?$"),
     "eu_date":     re.compile(r"(?i)^(.*[_-])?(date|created|updated|modified|dob|birth|start|end|due|effective|expir)([_-].*)?$"),
+    # Sprint A · Item 31 phase 1 — PCI + GDPR additions.
+    "pan":   re.compile(r"(?i)^(.*[_-])?(pan|card|cc|credit_?card|account_?number|payment_?card)([_-].*)?$"),
+    "cvv":   re.compile(r"(?i)^(.*[_-])?(cvv|cvc|csc|security_?code|card_security|card_code)([_-].*)?$"),
+    "iban":  re.compile(r"(?i)^(.*[_-])?(iban|bank_?account|account_?iban)([_-].*)?$"),
+    "ipv4":  re.compile(r"(?i)^(.*[_-])?(ip|ipv4|ip_?addr(ess)?|client_?ip|remote_?ip)([_-].*)?$"),
 }
 
 
@@ -124,6 +153,79 @@ _NAME_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z'’.\-]{0,29}")
 _PERSON_NAME_RE = re.compile(
     rf"{_NAME_TOKEN_RE.pattern}(?:\s+{_NAME_TOKEN_RE.pattern}){{0,2}}"
 )
+
+# PAN (credit card) — 13-19 digits with optional spaces or dashes between
+# groups of 4. Final validity check is Luhn (mod-10) — the regex alone
+# false-positives on any 13+ digit number, which is far too noisy.
+_PAN_RE = re.compile(r"\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{1,7}")
+
+# CVV — 3 or 4 digits. Pure regex match is uselessly broad (any 3-digit
+# string), so this detector only fires on a strong column-name hint.
+_CVV_RE = re.compile(r"\d{3,4}")
+
+# IBAN — 2-letter country code + 2-digit checksum + 11-30 alphanumerics.
+# Spaces optional, often grouped in 4s. Final validity check is mod-97.
+_IBAN_RE = re.compile(r"[A-Z]{2}\d{2}[\sA-Z0-9]{11,34}")
+
+# IPv4 — four 1-3 digit octets separated by dots. Range check (each octet
+# 0-255) is the per-value validator.
+_IPV4_RE = re.compile(r"(?:\d{1,3}\.){3}\d{1,3}")
+
+
+def _luhn_valid(value: str) -> bool:
+    """Luhn / mod-10 checksum used by every major credit-card scheme.
+    Strips spaces and dashes; rejects anything that isn't pure digits
+    after stripping. Lower bound on length (13) keeps it from accepting
+    very short numbers that happen to satisfy the checksum."""
+    digits = re.sub(r"[\s-]", "", value)
+    if not digits.isdigit() or len(digits) < 13:
+        return False
+    total = 0
+    for i, ch in enumerate(reversed(digits)):
+        d = int(ch)
+        if i % 2 == 1:
+            d *= 2
+            if d > 9:
+                d -= 9
+        total += d
+    return total % 10 == 0
+
+
+def _iban_valid(value: str) -> bool:
+    """ISO 13616 mod-97 check. After stripping spaces and uppercasing,
+    move the first 4 chars to the end, replace letters with digits
+    (A=10, B=11, …, Z=35), and verify integer mod 97 == 1."""
+    iban = re.sub(r"\s", "", str(value).upper())
+    if len(iban) < 15 or len(iban) > 34:
+        return False
+    if not (iban[:2].isalpha() and iban[2:4].isdigit()):
+        return False
+    rearranged = iban[4:] + iban[:4]
+    digits = []
+    for c in rearranged:
+        if c.isdigit():
+            digits.append(c)
+        elif c.isalpha():
+            digits.append(str(ord(c) - 55))
+        else:
+            return False
+    try:
+        return int(''.join(digits)) % 97 == 1
+    except ValueError:
+        return False
+
+
+def _ipv4_valid(value: str) -> bool:
+    parts = str(value).split('.')
+    if len(parts) != 4:
+        return False
+    for p in parts:
+        if not p.isdigit() or len(p) > 3:
+            return False
+        n = int(p)
+        if n < 0 or n > 255:
+            return False
+    return True
 
 
 # ── detectors (callables) ─────────────────────────────────────────────────────
@@ -183,6 +285,45 @@ def detect_eu_date(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
                      min_rate=DEFAULT_MIN_MATCH_RATE)
 
 
+def detect_pan(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+    """Credit-card PAN. Regex picks up 13-19-digit groups; Luhn checksum
+    rejects random digit strings so a 16-digit phone stub or transaction
+    ID doesn't false-positive."""
+    return _evaluate("pan", _series_str(series), _PAN_RE,
+                     name_hint=_hits_name_hint("pan", col_name),
+                     min_rate=DEFAULT_MIN_MATCH_RATE,
+                     validator=_luhn_valid)
+
+
+def detect_cvv(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+    """CVV / CVC. Any 3-digit string matches the regex, so the detector
+    only fires on a strong column-name hint — false-positive rate
+    without the hint would be unmanageable."""
+    if not _hits_name_hint("cvv", col_name):
+        return None
+    return _evaluate("cvv", _series_str(series), _CVV_RE,
+                     name_hint=True,
+                     min_rate=DEFAULT_MIN_MATCH_RATE)
+
+
+def detect_iban(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+    """IBAN — country code + checksum + BBAN. Mod-97 validates the
+    checksum so random alphanumeric strings don't false-positive."""
+    return _evaluate("iban", _series_str(series), _IBAN_RE,
+                     name_hint=_hits_name_hint("iban", col_name),
+                     min_rate=DEFAULT_MIN_MATCH_RATE,
+                     validator=_iban_valid)
+
+
+def detect_ipv4(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+    """IPv4 dotted-quad. Validator clamps each octet to 0-255 so
+    "999.1.1.1" is rejected even though it matches the regex."""
+    return _evaluate("ipv4", _series_str(series), _IPV4_RE,
+                     name_hint=_hits_name_hint("ipv4", col_name),
+                     min_rate=DEFAULT_MIN_MATCH_RATE,
+                     validator=_ipv4_valid)
+
+
 # ── registry ──────────────────────────────────────────────────────────────────
 
 DetectorFn = Callable[[pd.Series, str], Optional[DetectorMatch]]
@@ -196,6 +337,10 @@ REGISTERED_DETECTORS: list[DetectorFn] = [
     detect_iso_date,
     detect_us_date,
     detect_eu_date,
+    detect_pan,
+    detect_cvv,
+    detect_iban,
+    detect_ipv4,
 ]
 
 
