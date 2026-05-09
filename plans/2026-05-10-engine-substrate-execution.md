@@ -24,7 +24,7 @@ This is the working journal for executing Phases 1–8 of the Polars+DuckDB hybr
 | Phase | Status | Commit |
 |---|---|---|
 | 1. Arrow runner cache + eviction + STORM benchmark | shipped | (this branch) |
-| 2. Op-type registry + connector SDK contract | pending | — |
+| 2. Op-type registry + connector SDK contract | shipped | (this branch) |
 | 3. Polars relational ops | pending | — |
 | 4. DuckDB source/sink + `engine: hybrid` flag | pending | — |
 | 5. Preview path + error translation | pending | — |
@@ -37,6 +37,13 @@ This is the working journal for executing Phases 1–8 of the Polars+DuckDB hybr
 - The implementation plan referenced `pandas-query` translation and a `_legacy/` directory of frozen pandas ops for parity tests. I'm taking a lighter approach: each ported op keeps a pandas fallback path inside the same module guarded by `NATIVE_ENGINE` resolution at the runner. This keeps the diff tighter and avoids duplicating op registration.
 - Phase 1's STORM benchmark is informational. Per the plan, if Arrow→pandas overhead is ≥ 10%, declare `NATIVE_ENGINE = "arrow"` for STORM. The benchmark records the number; the decision goes in the commit message.
 - Phase 4's `engine: hybrid` flag is the dogfood mechanism. Default stays `engine: pandas` until Phase 8 to keep the cutover safe.
+
+## Phase 2 result
+
+- Every existing op declares `NATIVE_ENGINE = "pandas"`. No behavior change — the runner still resolves to pandas mode by default.
+- `CONNECTOR_SDK_CONTRACT.md` committed at engine root: connectors return Arrow, accept Arrow; pandas-returning connectors keep working via runtime wrapper through Phase 7.
+- 5 new tests covering: declaration presence, valid-value check, mode resolution, frozen Phase-2 baseline, unknown-kind fallback.
+- Total: 422 passing (+19 from Phase 1; same 8 pre-existing failures).
 
 ## Phase 1 result
 

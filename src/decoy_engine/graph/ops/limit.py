@@ -11,6 +11,7 @@ import pandas as pd
 from decoy_engine.internal.validator import ValidationError
 
 KIND = "limit"
+NATIVE_ENGINE = "pandas"
 INPUT_ARITY: tuple[int, int | None] = (1, 1)
 OUTPUT_KIND = "stream"
 

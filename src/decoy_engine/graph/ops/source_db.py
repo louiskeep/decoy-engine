@@ -19,6 +19,7 @@ from decoy_engine.graph.ops._base import OpError
 from decoy_engine.internal.validator import ValidationError
 
 KIND = "source.db"
+NATIVE_ENGINE = "pandas"
 INPUT_ARITY: tuple[int, int | None] = (0, 0)
 OUTPUT_KIND = "stream"
 

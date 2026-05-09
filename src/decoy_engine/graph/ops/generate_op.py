@@ -23,6 +23,10 @@ from decoy_engine.graph.ops._base import OpError
 from decoy_engine.internal.validator import ValidationError
 
 KIND = "generate"
+# Generation uses per-row Faker / scipy callbacks; stays on pandas. FK-aware
+# generators (reference, foreign_key) may move to a polars-orchestrated
+# hybrid in the Phase 9 follow-up.
+NATIVE_ENGINE = "pandas"
 INPUT_ARITY: tuple[int, int | None] = (0, 1)
 OUTPUT_KIND = "stream"
 
