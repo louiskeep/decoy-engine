@@ -1,0 +1,78 @@
+# SOX Disguise — Sarbanes-Oxley Act
+#
+# Built for public-company workloads where the dataset carries material
+# non-public information (MNPI) — pre-release earnings figures, executive
+# compensation, audit findings, or insider-trading-adjacent data. SOX doesn't
+# enumerate a list of protected PII types the way HIPAA or GLBA do; instead,
+# Section 302 (management certification) and Section 404 (internal controls)
+# impose strict access controls and audit trails on any system that touches
+# financial reporting data. Section 802 adds criminal liability for altering
+# or destroying records relevant to an investigation.
+#
+# For STORM / FORECAST purposes, the SOX Disguise is not a substitute for
+# audit logging — it's a masking layer that prevents developers and testers
+# from accessing production financial data in non-production environments.
+# Insider names and contact details are protected as personal identifiers;
+# financial fields are anonymised so masked datasets can be used for
+# reporting-pipeline QA without exposing pre-release numbers.
+#
+# Sprint B · Item 31 phase 2 from forge-platform/ROADMAP.md.
+
+id: sox
+name: "SOX Disguise"
+summary: "SOX insider-data protection: executive names, compensation records, and fiscal dates."
+regulation: "Sarbanes-Oxley Act — 15 U.S.C. §7201 (Sections 302, 404, 802, 906)"
+primary_buyer: "Public-company finance, audit, and compliance engineers"
+
+triggers:
+  any_detectors:
+    - ssn
+  co_occurrence:
+    # SOX fires on the insider-dataset pattern: executive names + corporate
+    # emails + financial-period dates. The combination is a strong signal for
+    # compensation tables, option-grant registers, and pre-release earnings data.
+    - [person_name, email, iso_date]
+    - [person_name, email, us_date]
+    - [ssn, person_name, email]
+  min_score: 0.4
+
+field_rules:
+  - detectors: [person_name]
+    mask: faker
+    params:
+      faker_type: name
+    why: "Executive and insider names are the primary SOX-relevant identifiers — disclosed in proxy statements but sensitive in staging/dev databases where they appear alongside MNPI. Realistic fake preserves record shape."
+
+  - detectors: [email]
+    mask: faker
+    params:
+      faker_type: email
+    why: "Corporate email routes back to an individual and appears in compensation and option-grant tables. Fake but structurally valid so mail-routing tests pass."
+
+  - detectors: [ssn]
+    mask: hash
+    why: "Executive SSNs appear in payroll and tax tables that feed the audit pipeline. Keyed hash preserves FK joins across payroll ↔ benefit ↔ grant tables."
+
+  - detectors: [us_phone]
+    mask: faker
+    params:
+      faker_type: phone_number
+    why: "Direct contact identifier for executives in HR and payroll records — realistic fake."
+
+  - detectors: [pan]
+    mask: hash
+    params:
+      truncate: 16
+    why: "Corporate card PANs appear in expense-reimbursement tables that land in audit trails. Keyed hash — consistent across runs so the masked dataset can replay expense reconciliation tests."
+
+  - detectors: [iso_date, us_date, eu_date]
+    mask: date_shift
+    params:
+      jitter_days: 30
+    why: "Fiscal quarter boundaries, option vesting dates, and earnings-release dates are sensitive in pre-release contexts (Section 802). ±30d jitter preserves relative ordering for reporting-pipeline QA without pinning exact fiscal dates."
+
+  - detectors: [us_zip]
+    mask: truncate
+    params:
+      length: 3
+    why: "Executive home address ZIP in payroll and HR records — quasi-identifier when combined with name and title. ZIP-3 generalization breaks exact household-level location."

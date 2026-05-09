@@ -1,0 +1,76 @@
+# CCPA Disguise — California Consumer Privacy Act / CPRA
+#
+# Built for US consumer-tech workloads where the product serves California
+# residents and the dataset carries their Personal Information (PI) — broadly
+# defined by CCPA §1798.140(v) as information that "identifies, relates to,
+# describes, is reasonably capable of being associated with, or could
+# reasonably be linked, directly or indirectly, with a particular consumer or
+# household." The CPRA amendment (effective 2023) adds a "sensitive PI"
+# category (SSN, racial origin, biometrics, precise geolocation) that attracts
+# stricter opt-in requirements and elevated storage controls.
+#
+# Sprint B · Item 31 phase 2 from forge-platform/ROADMAP.md.
+
+id: ccpa
+name: "CCPA Disguise"
+summary: "CCPA/CPRA consumer PI defaults: direct identifiers replaced, online identifiers hashed."
+regulation: "California Consumer Privacy Act — Cal. Civ. Code §1798.100 et seq. (as amended by CPRA, effective 2023)"
+primary_buyer: "US consumer-tech and SaaS engineers serving California residents"
+
+triggers:
+  any_detectors:
+    - ipv4
+    - email
+  co_occurrence:
+    # Strong US consumer-tech signature: email + IP + location.
+    - [email, ipv4, us_zip]
+    - [email, person_name, us_phone]
+    - [ssn, email, person_name]
+  min_score: 0.4
+
+field_rules:
+  - detectors: [person_name]
+    mask: faker
+    params:
+      faker_type: name
+    why: "Direct identifier under CCPA §1798.140(v). Realistic substitution; masked output looks like real user data so QA stays valid."
+
+  - detectors: [email]
+    mask: faker
+    params:
+      faker_type: email
+    why: "Online identifier per CCPA — email is the canonical account handle in consumer products. Realistic fake preserves the @ format that downstream systems parse."
+
+  - detectors: [us_phone]
+    mask: faker
+    params:
+      faker_type: phone_number
+    why: "Direct contact identifier — CCPA §1798.140(v)(1)(A). Realistic fake preserves format and country-code structure."
+
+  - detectors: [ipv4]
+    mask: hash
+    params:
+      truncate: 15
+    why: "IP address is an 'online identifier' per CCPA §1798.140(v)(1)(A) and falls under CPRA's Sensitive PI tier. Keyed hash renders it unreadable; truncation fits standard IP-field widths."
+
+  - detectors: [ssn]
+    mask: hash
+    why: "SSN is Sensitive Personal Information under CPRA §1798.121 — requires opt-in consent for collection and elevated storage controls. Hash with master key."
+
+  - detectors: [us_zip]
+    mask: truncate
+    params:
+      length: 3
+    why: "ZIP is a geolocation quasi-identifier. CPRA adds 'precise geolocation' (≤500m radius) to the Sensitive PI tier; ZIP-3 generalization degrades precision well below that threshold."
+
+  - detectors: [iso_date, us_date, eu_date]
+    mask: date_shift
+    params:
+      jitter_days: 30
+    why: "Consumer event dates (signup, last_active, purchase_date) — ±30d jitter severs the timestamp fingerprint that can re-identify users across de-identified datasets."
+
+  - detectors: [pan]
+    mask: hash
+    params:
+      truncate: 16
+    why: "Payment card number stored in consumer records — Sensitive PI under CPRA. Keyed hash; consistent across runs so order/payment FK joins survive masking."

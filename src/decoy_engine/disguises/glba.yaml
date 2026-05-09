@@ -1,0 +1,75 @@
+# GLBA Disguise — Gramm-Leach-Bliley Act (Financial Modernization Act)
+#
+# Built for banking, insurance, and financial-services workloads where the
+# dataset carries Non-Public Personal Information (NPI) — defined by the GLBA
+# Safeguards Rule (16 CFR Part 314) as any non-public personally identifiable
+# financial information a consumer provides to obtain a financial product or
+# service. The 2023 Safeguards Rule update added specific technical controls
+# (encryption, access controls) that Decoy's masked outputs satisfy out of
+# the box.
+#
+# Sprint B · Item 31 phase 2 from forge-platform/ROADMAP.md.
+
+id: glba
+name: "GLBA Disguise"
+summary: "GLBA Safeguards Rule NPI protection: SSN, account numbers, PAN, and identity fields."
+regulation: "Gramm-Leach-Bliley Act — GLBA Safeguards Rule (16 CFR Part 314), updated 2023"
+primary_buyer: "Banking, insurance, and financial services engineers"
+
+triggers:
+  any_detectors:
+    - ssn
+    - iban
+    - pan
+  co_occurrence:
+    # Reliable financial-services signature: identity + account + date.
+    - [ssn, person_name, email]
+    - [iban, person_name, us_phone]
+  min_score: 0.4
+
+field_rules:
+  - detectors: [ssn]
+    mask: hash
+    why: "SSN is the primary NPI identifier under GLBA — HMAC-SHA256 hash preserves uniqueness across joins while rendering the value unreadable. Cross-run FK integrity survives."
+
+  - detectors: [pan]
+    mask: hash
+    params:
+      truncate: 16
+    why: "PAN → keyed hash truncated to 16 chars. GLBA-covered financial accounts include credit/debit card numbers; same strategy as the PCI Disguise for consistency."
+
+  - detectors: [iban]
+    mask: hash
+    params:
+      truncate: 24
+    why: "Bank account number → keyed hash. Account-level joins survive masking; no cleartext account number persists in any test or dev environment."
+
+  - detectors: [person_name]
+    mask: faker
+    params:
+      faker_type: name
+    why: "Consumer names are NPI per GLBA §6809(4)(A) — replaced with realistic fake values so QA datasets remain usable."
+
+  - detectors: [email]
+    mask: faker
+    params:
+      faker_type: email
+    why: "Consumer contact email — NPI. Realistic substitution preserves dataset density without leaking identity."
+
+  - detectors: [us_phone]
+    mask: faker
+    params:
+      faker_type: phone_number
+    why: "Consumer phone number — NPI per GLBA. Realistic fake preserves format for downstream validation."
+
+  - detectors: [us_zip]
+    mask: truncate
+    params:
+      length: 3
+    why: "Consumer ZIP — quasi-identifier when combined with DOB or name. Truncate to 3 digits reduces re-identification risk while preserving regional analytics."
+
+  - detectors: [iso_date, us_date, eu_date]
+    mask: date_shift
+    params:
+      jitter_days: 30
+    why: "Financial dates (origination, payment, maturity) — ±30d jitter preserves cohort and time-series analytics while breaking exact timestamp correlation."

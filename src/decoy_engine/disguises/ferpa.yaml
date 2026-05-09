@@ -1,0 +1,70 @@
+# FERPA Disguise — Family Educational Rights and Privacy Act
+#
+# Built for EdTech and university workloads where the dataset carries
+# "education records" — records directly related to a student that are
+# maintained by an educational agency or institution (20 U.S.C. §1232g,
+# 34 CFR Part 99). FERPA broadly protects any personally identifiable
+# information (PII) that, alone or in combination, would identify a student:
+# name, address, SSN, student ID, grades, enrollment dates, and disciplinary
+# records all qualify. Re-identification via indirect identifiers (DOB + ZIP +
+# graduation year) is an explicit FERPA concern — the Disguise addresses both
+# direct and quasi-identifier fields.
+#
+# Sprint B · Item 31 phase 2 from forge-platform/ROADMAP.md.
+
+id: ferpa
+name: "FERPA Disguise"
+summary: "FERPA student record protection: names, SSN, enrollment dates, grades, contact info."
+regulation: "Family Educational Rights and Privacy Act — 20 U.S.C. §1232g, 34 CFR Part 99"
+primary_buyer: "EdTech companies and university data engineers"
+
+triggers:
+  any_detectors:
+    - ssn
+  co_occurrence:
+    # Student record signature: name + enrollment/DOB date + contact.
+    - [person_name, iso_date, us_zip]
+    - [person_name, us_date, email]
+    - [ssn, person_name, email]
+  min_score: 0.4
+
+field_rules:
+  - detectors: [ssn]
+    mask: hash
+    why: "SSN is the most sensitive FERPA identifier — historically used as student ID in legacy systems. Hash with master key; unique across all runs on the instance."
+
+  - detectors: [person_name]
+    mask: faker
+    params:
+      faker_type: name
+    why: "Student name is the primary FERPA direct identifier per 34 CFR §99.3. Realistic substitution preserves dataset density for QA and analytics."
+
+  - detectors: [email]
+    mask: faker
+    params:
+      faker_type: email
+    why: "Student email — direct contact identifier under FERPA. Fake but structurally valid so downstream email-format validators pass."
+
+  - detectors: [us_phone]
+    mask: faker
+    params:
+      faker_type: phone_number
+    why: "Student or guardian phone — direct contact identifier. Realistic fake preserves format."
+
+  - detectors: [iso_date, us_date, eu_date]
+    mask: date_shift
+    params:
+      jitter_days: 14
+    why: "Enrollment dates, graduation dates, and DOB are quasi-identifiers under FERPA re-identification guidance. Tighter ±14d jitter (vs. the 30d default) because academic cohort sizes are small — a 30d shift could still pin a student to their enrollment quarter."
+
+  - detectors: [us_zip]
+    mask: truncate
+    params:
+      length: 3
+    why: "Student address ZIP — quasi-identifier. Combined with DOB and enrollment year it can be uniquely identifying in small rural populations; ZIP-3 generalisation reduces that risk."
+
+  - detectors: [pan]
+    mask: hash
+    params:
+      truncate: 16
+    why: "Payment cards appear in student-payment and financial-aid tables. Keyed hash — consistent FK joins, no cleartext PAN in dev or test environments."
