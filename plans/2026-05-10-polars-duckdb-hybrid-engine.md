@@ -1,10 +1,29 @@
 # Polars + DuckDB hybrid engine — architecture plan
 
+> **⚠ Pre-customer.** Decoy is in development. No production users are affected by code changes. Architecture migrations like this one carry zero rollout risk to outside parties. See `forge-platform/ROADMAP.md` banner.
+
 > **Status:** planning — strategic engineering plan, not yet committed scope. Lands on `forge-engine` because that's where the runner + ops + connectors live; platform impact is limited to the preview path (Phase 5).
 > **Branch:** `feature/polars-duckdb-hybrid-plan`
-> **References:** [SHARED_ENGINE_ARCHITECTURE.md](../SHARED_ENGINE_ARCHITECTURE.md), [PIPELINE_GRAPH_GUIDE.md](../PIPELINE_GRAPH_GUIDE.md), [forge-platform/plans/2026-05-07-etl-direction-and-connector-sdk.md](../../forge-platform/plans/2026-05-07-etl-direction-and-connector-sdk.md), pandas-ETL-ceiling memo (currently on `forge-platform` branch `claude/api-cli-orchestration-Dpi2t`, candidate for landing on main).
+> **References:** [SHARED_ENGINE_ARCHITECTURE.md](../SHARED_ENGINE_ARCHITECTURE.md), [PIPELINE_GRAPH_GUIDE.md](../PIPELINE_GRAPH_GUIDE.md), [forge-platform/plans/2026-05-07-etl-direction-and-connector-sdk.md](../../forge-platform/plans/2026-05-07-etl-direction-and-connector-sdk.md), pandas-ETL-ceiling memo (currently on `forge-platform` branch `claude/api-cli-orchestration-Dpi2t`, candidate for landing on main). **Companion: [2026-05-10-polars-duckdb-implementation.md](2026-05-10-polars-duckdb-implementation.md)** — code-level walk-through with file paths, function signatures, and test patterns.
 > **Audience:** the implementer of this work — most likely the next Claude session that takes ownership of the engine architecture.
 > **Supersedes:** the pandas cheap-wins prescription in the ceiling memo (chunked CSV reads, `chunksize` on `source.db` / `target.db`). The runner-cache eviction half of the cheap-wins is preserved here as Phase 1.
+
+---
+
+## The six refinements baked into this plan
+
+The original 8-phase sketch (call it "Scheme D") is sound. This plan folds in six refinements over that sketch — each one is reasoned in `## Why each refinement matters` further down, with code-level execution detail in the companion implementation plan.
+
+| # | Refinement | Where it lands |
+|---|---|---|
+| 1 | **Dogfood phase via `engine: hybrid` per-pipeline opt-in flag** | Phase 4 introduces the flag; Phase 6 reviews dogfood data; Phase 8 default-flips |
+| 2 | **Phase 1 budget bumped 1.5 → 2 weeks** | Eager runner-cache eviction is graph-traversal work, not a one-line patch |
+| 3 | **STORM Arrow-boundary benchmark + conditional `NATIVE_ENGINE = "arrow"`** | Phase 1 deliverable; STORM may consume Arrow directly if conversion cost > 10% |
+| 4 | **FK-aware generators flagged as Phase 9 follow-up** | Out of this plan's scope but explicitly tracked, not glossed |
+| 5 | **Connector SDK contract locked in Phase 2** | Was Phase 7 doc-only; promoted to Phase 2 decision so external authors aren't ambiguous for 4 phases |
+| 6 | **`POLARS_FOR_PANDAS_USERS.md` cheat sheet as Phase 7 deliverable** | Half-day doc; pays back forever for external contributors |
+
+These aren't optional polish. Each one prevents a specific failure mode that would surface mid-execution. The cost-of-skipping section spells out which.
 
 ---
 
@@ -284,3 +303,178 @@ Roughly 60% of the cheap-wins scope is throwaway. The cache-management half isn'
 Going straight to D saves ~2 weeks of work that would get deleted, and avoids shipping a transitional architecture that confuses future-us.
 
 The pandas-ETL-ceiling memo's sales-facing math is still valid through the plan execution window — keep it in customer conversations until Phase 8 ships, then update with new tier numbers.
+
+---
+
+## Why each refinement matters — depth explanation
+
+Each refinement was a my-pushback note in the original review. This section explains why each one prevents a specific failure mode and what shipping without it would cost.
+
+### Refinement 1 — Dogfood phase via `engine: hybrid` opt-in flag
+
+**The failure mode it prevents.** A 12-week project that runs entirely on the OLD pandas path until Phase 8's hard cutover. On day-one of `engine: hybrid` becoming the default, every customer pipeline switches engines simultaneously. Any edge case missed by parity tests surfaces in production, on real data, at the worst possible time.
+
+**Why parity tests aren't enough.** Parity tests can only cover what we think to test. They catch known semantic differences (NaN vs null, sort tie-breaking, empty-string vs null on read) and the obvious data-type matrix. They don't catch:
+
+- **Real customer pipelines** with combinations of ops we don't have fixtures for.
+- **Real customer data** with corner cases (mixed-type columns, unicode edge cases, locale-dependent date strings, tables with hundreds of columns where one weird column sneaks through).
+- **Performance regressions** that only show up on production-scale data — a 100K-row fixture won't reveal that a particular `join` is 5× slower on Polars for a specific data shape.
+- **Dependency interactions** with the platform's runner, scheduler, audit log, and preview path that don't exist in the engine test environment.
+
+**Cost of skipping.** Pre-customer (today), the cost is "we discover regressions during internal testing instead of with users" — survivable. **Post-customer**, the cost is a production incident on day-one of the cutover that hits every customer simultaneously. The opt-in flag lets us discover regressions on the dogfood pipeline (or a customer who explicitly opted in) where the blast radius is contained.
+
+**Why a flag specifically, not a separate codebase.** Two reasons:
+
+1. **The flag is a feature, not a transitional hack.** Customers may want to pin to a specific engine for reproducibility (audit trail, regulated workloads). The flag becomes part of the pipeline contract — `engine: pandas` or `engine: hybrid` declares intent.
+2. **Single-codebase invariant.** Maintaining two separate codepaths (one pandas-only, one hybrid) doubles the maintenance surface and guarantees they drift. The flag routes through the same op-type registry; only the runner's materialization decisions change.
+
+**Lifecycle.** The flag stays for one release cycle past Phase 8 default-flip. After that, `engine: pandas` is removed and the codebase is hybrid-only. Customers wanting reproducibility against a frozen engine version pin to a release tag, not the flag.
+
+### Refinement 2 — Phase 1 budget bumped 1.5 → 2 weeks
+
+**The failure mode it prevents.** Phase 1 (Arrow-canonical runner cache + eager eviction) is the foundation. Underbudget Phase 1 → either the eviction logic ships half-baked (cache stays bloated, defeating the point) or Phase 1 slips into Phase 2 and the whole timeline drifts.
+
+**Why eviction is graph-traversal work, not a one-liner.** The current runner cache (`graph/runner.py:72`) is a flat `dict[str, Any]` that holds every node's output for the entire run. Eager eviction needs:
+
+- **Per-node consumer count** computed at run start by walking the edge list. For each node, count edges where it's the source.
+- **Decrement on consume.** When an op finishes consuming an upstream node's output, decrement that node's consumer count.
+- **Evict at zero.** When the count hits zero, delete the cache entry. The Python GC reclaims memory deterministically only because Arrow tables hold a single reference to their underlying buffer.
+- **Edge cases.** Sink nodes (assert nodes, target ops) have zero downstream consumers but their *inputs* still need eviction. Branching graphs (one node feeds multiple downstreams) need the count to be > 1 from the start. Self-loops are forbidden by the validator but worth a defensive assertion.
+- **Preview semantics.** When the runner is invoked in preview mode (truncated execution), eviction must not run for the previewed node — its output is what the caller wants. This is a separate code path in `runner.py` already; eviction needs to respect it.
+
+**Cost of skipping the bump.** Phase 1 ships, eviction works for the trivial case (linear graph), breaks subtly on branching graphs (cache entry evicted before second consumer reads), and the bug surfaces during Phase 3 when Polars ops start exercising more graph shapes. Hours of debugging a "why is my output wrong" mystery that traces back to a runner-cache race.
+
+**What "2 weeks" buys.** Adequate time for: implementing the consumer-count graph walk, writing tests against forked / branched / diamond-shaped graphs, benchmarking the Arrow ↔ pandas conversion overhead (Refinement 3), and shipping a documented invariant ("the cache holds at most N nodes' outputs at once, where N = max in-flight upstream count") that future-us can reason about.
+
+### Refinement 3 — STORM Arrow-boundary benchmark + conditional `NATIVE_ENGINE = "arrow"`
+
+**The failure mode it prevents.** STORM scans every column of every input dataframe, computing distinct counts, regex matches, sentinels, distributions. If Phase 1 introduces an Arrow → pandas conversion cost at every STORM scan boundary, that cost compounds across:
+
+- Every interactive STORM scan from the UI.
+- Every `run_storm` graph op (which the platform already ships and customers use).
+- Every FORECAST recommendation (which calls STORM internally).
+
+A 5% conversion overhead per scan is invisible. A 30% overhead is a customer-visible latency regression that wipes out the wins from Phase 4's DuckDB streaming.
+
+**Why benchmarking in Phase 1 specifically.** Phase 1 is when the Arrow boundary first exists. Earlier, there's no Arrow; later, the rest of the system has compounded around the assumption that the boundary is cheap. Phase 1 is the only window to discover "the boundary isn't cheap" before that assumption is load-bearing.
+
+**The decision tree.** Run a representative STORM scan against a 1M-row, 30-column HIPAA-shaped fixture. Measure:
+
+- Pre-Phase-1 (pandas-only): baseline runtime.
+- Post-Phase-1 (Arrow cache, pandas consumption): runtime including conversion.
+
+If the Arrow → pandas conversion is < 10% of total runtime, ship STORM as `NATIVE_ENGINE = "pandas"` (the default) and accept the cost. If it's ≥ 10%, declare STORM ops as `NATIVE_ENGINE = "arrow"` — STORM consumes `pyarrow.Table` directly, computes via `pyarrow.compute` where possible, falls back to a per-column `to_pandas()` only for ops that need scipy or sklearn.
+
+**Cost of skipping the benchmark.** STORM ships on pandas-via-conversion. Customer notices interactive scan latency increased. Investigation traces it to the conversion. Now we have to retrofit STORM to consume Arrow, on a hot path, mid-Phase-3. Cheaper to discover this in Phase 1 with a 2-hour benchmark.
+
+**What `NATIVE_ENGINE = "arrow"` looks like in practice.** STORM's profile loop iterates columns and computes per-column statistics. A subset of those stats (count, distinct, null rate, min/max for numerics, length stats for strings) have native `pyarrow.compute` implementations and skip the pandas conversion entirely. The remainder (regex match rate, person-name detector heuristic, sentinels) need string operations that pyarrow.compute supports for many cases. The escape hatch — converting a single column to pandas for an operation pyarrow can't express — is a per-column cost, not a per-table cost. Net result: STORM is faster on Arrow than it was on pandas, even though pandas is its "native" library.
+
+### Refinement 4 — FK-aware generators flagged as Phase 9 follow-up
+
+**The failure mode it prevents.** The original sketch said "mask/generate stays in pandas" without distinguishing between *value* generation (one row at a time, faker calls, formula evaluation) and *FK-aware* generation (loading entire reference tables to maintain referential integrity).
+
+These two have completely different memory characteristics:
+
+- **Per-row generation** (Faker, sequence, categorical, formula) has bounded memory regardless of output size — the column accumulates row by row.
+- **FK-aware generation** (`reference`, `foreign_key`, `many_to_many`, `self_reference`) loads the *parent* reference table into memory, then materializes the child column by sampling. The reference table size is a hard ceiling axis completely separate from the source/sink data.
+
+Conflating these two means Phase 8's "mask/generate stays on pandas" decision implicitly accepts that FK-aware generation has the same ceiling as today's pandas (i.e., the reference table must fit in RAM with 4× headroom). For a customer with a 10M-row reference table, that ceiling is real and customer-facing.
+
+**Why Phase 9 instead of folding in.** Three reasons:
+
+1. **Scoping clarity.** This plan is about replacing the pandas substrate at I/O + relational. FK-aware generation is a generator-internal architecture decision (Polars for orchestration + pandas for per-cell value generation). Lumping it in expands the plan from 8 to 11 phases and dilutes execution focus.
+2. **Dependency shape.** FK-aware generation depends on a few things this plan ships (Arrow-canonical cache, op engine declaration). Doing it after this plan lands lets it leverage the foundation cleanly.
+3. **Customer signal.** No customer has reported the FK-generation ceiling yet. Building it before signal arrives risks misjudging the right shape (single-pass streaming? multi-pass with chunked reference reads? Bloom filters?). Wait, then build to the actual constraint.
+
+**Cost of skipping the flag (writing nothing).** A future Claude session sees the engine plan say "mask/generate stays pandas" and assumes the work is closed. The FK-aware generation ceiling becomes invisible technical debt. The Roadmap items 16 (Relationship handlers) and 35 (Smart subsetting) build on top of an unexamined assumption.
+
+**What Phase 9 looks like.** A separate plan, post-Phase-8, that audits the four FK-aware generators (`reference`, `foreign_key`, `many_to_many`, `self_reference`), identifies the orchestration layer that can move to Polars, and ships the hybrid as an opt-in flag. Roughly the same shape as this plan but bounded to one subsystem.
+
+### Refinement 5 — Lock the connector SDK contract in Phase 2 (not Phase 7)
+
+**The failure mode it prevents.** External connector authors (today, internal; soon, the customer SDK from Item 24) need to know "what shape do I return from a connector?" If the answer changes during the migration, every connector breaks twice.
+
+**Why the original plan put the doc in Phase 7.** Phase 7 is the docs-and-cleanup phase. Tempting to bundle "connector SDK doc update" with the rest of the documentation. But the *contract* isn't a doc — it's a runtime decision the connectors make at every read/write call.
+
+**The contract specifically.** Connectors return `pyarrow.Table` from read methods and accept `pyarrow.Table` in write methods. Period. The runner converts to/from pandas/polars at op boundaries; connectors stay engine-agnostic. This is a one-line contract but it's load-bearing for everything downstream.
+
+**Why Phase 2 specifically.** Phase 2 introduces the op-type registry (`NATIVE_ENGINE` declarations). Connector authors need the contract at the same moment ops start declaring engines, because connectors and ops live on opposite sides of the same boundary.
+
+**Cost of skipping (locking it in Phase 7).** During Phases 3–6, every internal connector author makes a guess about return type. Some return pandas (status quo), some return Polars (new world), some try to be clever and return both. Phase 7 doc lands and contradicts whatever they did. Now we're rewriting connectors instead of consuming them. Worse: customer connectors written via Item 24's SDK during this window all break differently.
+
+**What "locked in Phase 2" looks like.** A short doc — `decoy-engine/CONNECTOR_SDK_CONTRACT.md` — committed alongside the op-type registry. Two pages: connector return shape (`pyarrow.Table`), runner conversion semantics ("we convert at the op boundary, not the connector boundary"), capability flags (does the connector support pushdown filtering? streaming?). The full SDK doc in Phase 7 is the user-facing tutorial that points at this contract.
+
+### Refinement 6 — `POLARS_FOR_PANDAS_USERS.md` cheat sheet as Phase 7 deliverable
+
+**The failure mode it prevents.** Polars' API is "different, not just renamed." Every external contributor (and future-us) ramps up by hitting the same set of friction points: lazy vs eager, expressions vs methods, the `.map_elements()` footgun, the `.df()` → `.collect()` mental shift.
+
+**The cheat sheet specifically.** Half a day of writing. Three sections:
+
+1. **Cookbook for the top 20 pandas idioms.** `df[df.col == 'x']` → `df.filter(pl.col('col') == 'x')`. `df.groupby('col').agg({'val': 'sum'})` → `df.group_by('col').agg(pl.col('val').sum())`. `df.merge(other, on='key')` → `df.join(other, on='key')`. Side-by-side, no commentary.
+2. **The `.map_elements()` footgun.** When you find yourself reaching for it, stop. Either rewrite as a Polars expression (usually possible, ~5× faster) or move the op to pandas (declare `NATIVE_ENGINE = "pandas"` and accept the boundary). Document with three real examples of each pattern.
+3. **Lazy vs eager mental model.** Why `pl.scan_csv(...)` doesn't load the file. When `.collect()` is required vs optional. The query optimizer's pushdown semantics. One paragraph each, three diagrams.
+
+**Cost of skipping.** Every external contributor spends a half-day re-discovering the same friction points. Future-us, picking up the codebase 6 months later, spends an hour re-rediscovering. The cumulative cost across contributors and time is greater than the half-day of writing the cheat sheet.
+
+**Why Phase 7 specifically.** Earlier than Phase 7 and the cheat sheet would document a moving target — Phase 3 + 4 are still discovering the patterns it would document. Phase 7 is the right window: the patterns are stable, the doc reflects shipped reality, and it lands alongside the connector SDK doc as a coherent "external-author bundle."
+
+---
+
+## Refined plan recap — final shape
+
+After folding in the six refinements, here's the final shape stripped to a single page:
+
+**Architecture.** Three engines (DuckDB at I/O, Polars for relational, Pandas for per-row Python), one Arrow substrate (`pyarrow.Table` in runner cache), op-type boundaries (`NATIVE_ENGINE` declaration per op), zero-copy across engines via Arrow.
+
+**Phasing.** Eight phases, ~12–15 weeks total:
+
+| Phase | Scope | Weeks |
+|---|---|---|
+| 1 | Arrow runner cache + eager eviction + STORM benchmark | 2 |
+| 2 | Op-type registry + connector SDK contract | 1 |
+| 3 | Polars relational ops (filter / sort / dedupe / derive / etc.) | 3 |
+| 4 | DuckDB source/sink connectors + `engine: hybrid` opt-in flag | 2.5 |
+| 5 | Preview path compatibility + error message translation | 1 |
+| 6 | Parity test suite + dogfood validation | 2 |
+| 7 | Docs + connector SDK update + Polars cheat sheet | 1 |
+| 8 | Default flip + old-path removal | 1 |
+| 9 | (follow-up plan) FK-aware generation hybrid | TBD |
+
+**Hard cutover safety net.** `engine: pandas` flag stays available for one release cycle past Phase 8.
+
+**Sales / marketing.** "Millions, not billions" stays through the execution window. Post-Phase-8: "tens of millions out of the box, hundreds of millions on a good box." Update the pandas-ETL-ceiling memo with new tier numbers.
+
+**Out of scope (own plans).**
+
+- Mask transforms staying on pandas (deliberate; Faker / scipy / sklearn ecosystem).
+- SQL dialect compiler (per ETL-direction plan; we don't generate dialect SQL).
+- Streaming / sub-second SLAs (separate Roadmap item, deferred).
+- FK-aware generation hybrid (Phase 9 follow-up; tracked).
+
+---
+
+## Final plain-language recap
+
+If you've skimmed this far and want the elevator pitch:
+
+**The problem.** Decoy runs every pipeline op on pandas. Pandas loads tables fully into RAM. Once a customer's table exceeds ~5–20M rows on a 32 GB box, the engine OOMs or thrashes. The "fix this with chunking" patches we sketched would push that ceiling 5–10× but throw away half the work the moment we adopt a real columnar engine.
+
+**The move.** Replace pandas at I/O (DuckDB) and relational ops (Polars), keep pandas where it actually shines (mask transforms, Faker, the scipy / sklearn ecosystem). Use Apache Arrow as the in-memory substrate so all three engines share the same memory layout with zero copying.
+
+**Why now.** Decoy is pre-customer. Architecture migrations have zero rollout risk to outside parties. The 12-week cost is paid against future productivity (we don't ship the same migration mid-customer) and against competitor positioning (most competitors built pandas-first; we get a 12-month head start).
+
+**What changes user-visible.** Faster previews on big tables. Higher ceilings on what we say yes to in sales conversations. No new UI work — the canvas, CLI, and REST API all keep their current shape.
+
+**What's still pandas.** Mask transforms (hash, faker, fpe, redact, date_shift). Generation (faker, categorical, sequence, formula). STORM profiling (subject to a Phase 1 benchmark — STORM may consume Arrow directly if conversion cost is meaningful).
+
+**The risks.**
+
+- **Polars semantic differences** vs pandas (NaN vs null, sort tie-breaking) — mitigated by the parity test suite, but expect 30% of phases 3+4 time to be tests.
+- **Hard cutover at Phase 8** — mitigated by the `engine: hybrid` opt-in flag introduced in Phase 4 (2–4 weeks of dogfooding before default-flip).
+- **STORM Arrow boundary cost** — mitigated by Phase 1 benchmark.
+- **DuckDB extension cold-start on Windows** — mitigated by clean-VM testing in Phase 4.
+- **The `.map_elements()` footgun** — mitigated by code review checkpoints in Phase 3 and the Polars cheat sheet in Phase 7.
+
+**The deliverable.** End of Phase 8: pipelines run on the hybrid engine by default. `engine: pandas` is available as a one-release-cycle fallback. Connectors return Arrow. The runner cache evicts eagerly. Customers (when we have them) see faster previews and higher ceilings. Sales says "tens of millions, not millions." We've spent ~12–15 weeks of focused engine work. Future-us thanks us.
+
+**The companion document.** `2026-05-10-polars-duckdb-implementation.md` is the code-level walk-through — file paths, function signatures, test patterns, benchmark scripts. Read this plan for the why; read the companion for the how.
