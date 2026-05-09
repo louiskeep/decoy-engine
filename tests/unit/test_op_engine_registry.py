@@ -70,8 +70,8 @@ def test_unknown_kind_falls_back_to_pandas():
     # as phases land: Phase 3 flipped the relational ops to polars; Phase 4
     # will flip the source.* / target.* ops to duckdb. A surprise diff in
     # this list = an undocumented engine flip — fail loud, don't shrug.
-    ("source.file", "pandas"),       # Phase 4 → "duckdb"
-    ("source.db", "pandas"),         # Phase 4 → "duckdb"
+    ("source.file", "duckdb"),       # Phase 4
+    ("source.db", "duckdb"),         # Phase 4
     ("filter", "polars"),            # Phase 3
     ("sort", "polars"),              # Phase 3
     ("dedupe", "polars"),            # Phase 3
@@ -82,8 +82,8 @@ def test_unknown_kind_falls_back_to_pandas():
     ("run_storm", "pandas"),         # stays pandas (Phase 1 benchmark: 2.4% Arrow overhead)
     ("mask", "pandas"),              # stays pandas (per-row Python)
     ("generate", "pandas"),          # stays pandas (per-row Python)
-    ("target.file", "pandas"),       # Phase 4 → "duckdb"
-    ("target.db", "pandas"),         # Phase 4 → "duckdb"
+    ("target.file", "duckdb"),       # Phase 4
+    ("target.db", "duckdb"),         # Phase 4
 ])
 def test_op_engine_baseline_declarations(kind, expected_engine):
     """Frozen baseline. Updates here are intentional; surprises are not."""

@@ -26,7 +26,7 @@ This is the working journal for executing Phases 1–8 of the Polars+DuckDB hybr
 | 1. Arrow runner cache + eviction + STORM benchmark | shipped | (this branch) |
 | 2. Op-type registry + connector SDK contract | shipped | (this branch) |
 | 3. Polars relational ops | shipped | (this branch) |
-| 4. DuckDB source/sink + `engine: hybrid` flag | pending | — |
+| 4. DuckDB source/sink + `engine: hybrid` flag | shipped | (this branch) |
 | 5. Preview path + error translation | pending | — |
 | 6. Parity test suite + dogfood review | pending | — |
 | 7. Docs + Polars cheat sheet | pending | — |
@@ -37,6 +37,15 @@ This is the working journal for executing Phases 1–8 of the Polars+DuckDB hybr
 - The implementation plan referenced `pandas-query` translation and a `_legacy/` directory of frozen pandas ops for parity tests. I'm taking a lighter approach: each ported op keeps a pandas fallback path inside the same module guarded by `NATIVE_ENGINE` resolution at the runner. This keeps the diff tighter and avoids duplicating op registration.
 - Phase 1's STORM benchmark is informational. Per the plan, if Arrow→pandas overhead is ≥ 10%, declare `NATIVE_ENGINE = "arrow"` for STORM. The benchmark records the number; the decision goes in the commit message.
 - Phase 4's `engine: hybrid` flag is the dogfood mechanism. Default stays `engine: pandas` until Phase 8 to keep the cutover safe.
+
+## Phase 4 result
+
+- Four source/sink ops ported to DuckDB: `source.file`, `source.db`, `target.file`, `target.db`. All declare `NATIVE_ENGINE = "duckdb"`. Pandas fallback path retained.
+- `source.file` reads CSV / parquet via DuckDB (`read_csv_auto` / `read_parquet`); LIMIT pushdown for preview mode.
+- `target.file` writes via `COPY ... TO` with FORMAT CSV / PARQUET — streaming write, no pandas materialization for the common case.
+- `source.db` / `target.db` use SQLAlchemy + Arrow conversion: cleaner test path than postgres_scanner extension fetch, and the connector contract (return Arrow) is met. Native DuckDB scanners are a Phase 4.5 follow-up.
+- The runner stashes `__engine` in node config so source ops (no upstream input to dispatch on) know which path to take.
+- 9 new parity tests + 1 integration test ("three engines in one pipeline" — DuckDB at I/O, Polars in middle, pandas for mask). 458 passing total.
 
 ## Phase 3 result
 

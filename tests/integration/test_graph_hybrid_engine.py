@@ -167,3 +167,40 @@ def test_preview_works_in_hybrid_mode(tmp_csv):
     p = preview_graph(cfg, "f", row_limit=10)
     assert p["row_count"] == 4
     assert p["error"] is None
+
+
+def test_hybrid_end_to_end_three_engines_in_one_pipeline(tmp_csv):
+    """The architecture's main claim: DuckDB at I/O, Polars in the middle,
+    pandas at the mask boundary, all sharing Arrow. This test exercises
+    a pipeline that crosses every engine boundary."""
+    src, _, out = tmp_csv
+    cfg = _yaml({
+        "mode": "graph",
+        "engine": "hybrid",
+        "nodes": [
+            # source.file → duckdb
+            {"id": "s", "kind": "source.file", "config": {"path": src}},
+            # filter → polars
+            {"id": "f", "kind": "filter", "config": {"predicate": "state == 'CA'"}},
+            # mask → pandas (per-row Faker / redact)
+            {"id": "m", "kind": "mask", "config": {"columns": {
+                "state": {"strategy": "redact", "redact_with": "***"},
+            }}},
+            # sort → polars
+            {"id": "so", "kind": "sort", "config": {"by": ["id"]}},
+            # target.file → duckdb
+            {"id": "t", "kind": "target.file", "config": {"output_filename": out}},
+        ],
+        "edges": [
+            {"from": "s", "to": "f"},
+            {"from": "f", "to": "m"},
+            {"from": "m", "to": "so"},
+            {"from": "so", "to": "t"},
+        ],
+    })
+    result = run_graph(cfg)
+    assert result["success"] is True
+    written = pd.read_csv(out)
+    # Filter kept CA rows; mask redacted state; sort stabilized order.
+    assert (written["state"] == "***").all()
+    assert sorted(written["id"].tolist()) == [1, 3, 5, 5]

@@ -3,18 +3,25 @@
 Config:
     path: str            - filesystem path
     format: 'csv' | 'parquet'  (optional; inferred from extension)
+
+Phase 4 of the polars-duckdb hybrid plan: NATIVE_ENGINE='duckdb'. The
+DuckDB path streams CSVs natively (no need for the dead chunked-CSV
+iterator the cheap-wins memo planned to wire) and uses query optimizer
+pushdown for parquet column projection. Pandas fallback retained for
+graph engine mode = pandas.
 """
 
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import pyarrow as pa
 
 from decoy_engine.graph.ops._base import OpError
 from decoy_engine.internal.validator import ValidationError
 
 KIND = "source.file"
-NATIVE_ENGINE = "pandas"
+NATIVE_ENGINE = "duckdb"
 INPUT_ARITY: tuple[int, int | None] = (0, 0)
 OUTPUT_KIND = "stream"
 
@@ -29,7 +36,14 @@ def validate_config(config: dict[str, Any]) -> None:
         )
 
 
-def apply(inputs, config, ctx) -> pd.DataFrame:
+def apply(inputs, config, ctx):
+    engine = config.get("__engine", "pandas")
+    if engine == "duckdb":
+        return _apply_duckdb(config)
+    return _apply_pandas(config)
+
+
+def _apply_pandas(config: dict[str, Any]) -> pd.DataFrame:
     path = Path(config["path"])
     fmt = (config.get("format") or _infer_format(str(path))).lower()
     row_limit = config.get("__preview_row_limit")
@@ -42,6 +56,40 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
     except Exception as exc:
         raise OpError(f"failed to read {path}: {exc}") from exc
     raise OpError(f"unsupported format: {fmt}")
+
+
+def _apply_duckdb(config: dict[str, Any]) -> pa.Table:
+    import duckdb
+
+    path = Path(config["path"])
+    fmt = (config.get("format") or _infer_format(str(path))).lower()
+    row_limit = config.get("__preview_row_limit")
+
+    try:
+        # In-memory DuckDB connection per op: cheap, isolated, GC'd at the
+        # end of apply(). The relation is materialized to Arrow before the
+        # connection closes.
+        con = duckdb.connect(":memory:")
+        try:
+            if fmt == "csv":
+                # read_csv_auto handles header / dtype inference. LIMIT
+                # pushed into the query so DuckDB only reads what we need.
+                sql = f"SELECT * FROM read_csv_auto('{path}')"
+            elif fmt == "parquet":
+                sql = f"SELECT * FROM read_parquet('{path}')"
+            else:
+                raise OpError(f"unsupported format: {fmt}")
+            if row_limit:
+                sql += f" LIMIT {int(row_limit)}"
+            # to_arrow_table returns pa.Table; .arrow() returns a
+            # RecordBatchReader which isn't what the runner cache wants.
+            return con.execute(sql).to_arrow_table()
+        finally:
+            con.close()
+    except OpError:
+        raise
+    except Exception as exc:
+        raise OpError(f"failed to read {path}: {exc}") from exc
 
 
 def _infer_format(path: str) -> str:

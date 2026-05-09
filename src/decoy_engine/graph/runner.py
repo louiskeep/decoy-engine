@@ -89,6 +89,9 @@ def run_graph(
         op = OPS[kind]
         node_cfg = dict(node.get("config") or {})
         engine = native_engine_for(kind, graph_engine_mode)
+        # Stash the resolved engine so source ops (no upstream input to
+        # dispatch on) and any other engine-aware op can branch on it.
+        node_cfg["__engine"] = engine
 
         # Pull upstream outputs out of cache and decrement their consumer
         # count; eviction happens inside _consume.
@@ -198,6 +201,7 @@ def preview_graph(
         node_cfg = dict(node.get("config") or {})
         node_cfg["__preview_row_limit"] = row_limit
         engine = native_engine_for(kind, graph_engine_mode)
+        node_cfg["__engine"] = engine
         in_edges = [e for e in sub_edges if e["to"] == nid]
         # In preview mode, do NOT evict the target node — its output is
         # what the caller will serialize. Eviction for non-target upstreams
