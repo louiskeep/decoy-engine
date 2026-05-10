@@ -18,6 +18,8 @@ rather than the lifetime of the run.
 import hashlib
 import json
 import logging
+import os
+import threading
 import time
 import traceback
 from typing import Any
@@ -41,6 +43,105 @@ from decoy_engine.graph.types import (
     RunResult,
 )
 from decoy_engine.internal.validator import GraphConfigValidator, ValidationError
+
+
+# Memory-pressure warning threshold — fraction of system RAM that, if a
+# pipeline's peak RSS reaches it, triggers a "consider engine: pandas"
+# warning in the run logs. Customers on tight EC2 instances see the
+# advisory before they actually OOM. Override via env var if a customer
+# wants quieter or louder signals (e.g. 0.5 for noisier early warning,
+# 0.85 for "only when really tight"). The default of 0.7 lines up with
+# the calibration: at 50M rows on a 32 GB box, hybrid uses ~72%.
+_MEMORY_WARN_THRESHOLD = float(
+    os.environ.get("DECOY_MEMORY_WARN_THRESHOLD", "0.7")
+)
+
+
+class _PeakRSSMonitor:
+    """Background thread that polls this process's RSS and tracks peak.
+
+    Fixed 200 ms sample interval — fast enough to catch peaks during op
+    execution (where the cross-engine dual-representation cost lands),
+    slow enough that the polling overhead is negligible. Daemon thread
+    so a runner crash doesn't hang the process.
+    """
+
+    def __init__(self) -> None:
+        self.peak_rss = 0
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._psutil = None
+        try:
+            import psutil  # local import — psutil is a hard dep but keeps
+                           # the runner module importable in environments
+                           # where the lib is being upgraded.
+            self._psutil = psutil
+        except ImportError:
+            self._psutil = None
+
+    def __enter__(self) -> "_PeakRSSMonitor":
+        if self._psutil is None:
+            return self
+        self.peak_rss = self._psutil.Process().memory_info().rss
+        self._thread = threading.Thread(target=self._poll, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *args) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=1)
+
+    def _poll(self) -> None:
+        process = self._psutil.Process()
+        while not self._stop.wait(0.2):
+            try:
+                rss = process.memory_info().rss
+            except self._psutil.NoSuchProcess:
+                return
+            if rss > self.peak_rss:
+                self.peak_rss = rss
+
+
+def _check_memory_pressure(
+    peak_rss_bytes: int,
+    graph_engine_mode: str,
+    log: Any,
+) -> None:
+    """If a hybrid-mode run got close to system memory, log an advisory.
+
+    Pandas-mode pipelines under memory pressure get a generic warning;
+    hybrid-mode pipelines get the specific "switch to engine: pandas"
+    suggestion since that path uses ~2× less peak memory per the Bug 5
+    calibration (results.md).
+    """
+    if log is None or peak_rss_bytes == 0:
+        return
+    try:
+        import psutil
+        total_bytes = psutil.virtual_memory().total
+    except Exception:
+        return
+    fraction = peak_rss_bytes / total_bytes if total_bytes else 0
+    if fraction < _MEMORY_WARN_THRESHOLD:
+        return
+    peak_gb = peak_rss_bytes / 1024 / 1024 / 1024
+    total_gb = total_bytes / 1024 / 1024 / 1024
+    if graph_engine_mode == "hybrid":
+        log.warning(
+            "Pipeline peak memory: %.1f GB (%d%% of %.1f GB system RAM). "
+            "For larger jobs on memory-constrained hosts, set "
+            "`engine: pandas` in your pipeline YAML to reduce peak memory "
+            "by ~2× (trade-off: ~2-3× slower CPU). See "
+            "SHARED_ENGINE_ARCHITECTURE.md.",
+            peak_gb, int(fraction * 100), total_gb,
+        )
+    else:
+        log.warning(
+            "Pipeline peak memory: %.1f GB (%d%% of %.1f GB system RAM). "
+            "Job is memory-tight; consider running on a larger instance.",
+            peak_gb, int(fraction * 100), total_gb,
+        )
 
 
 def validate_graph(yaml_text: str) -> None:
@@ -83,6 +184,11 @@ def run_graph(
     success = True
 
     log = ctx.logger if ctx is not None and ctx.logger is not None else None
+
+    # Track peak RSS across the run; advise the customer if we hit
+    # memory pressure (see _check_memory_pressure docstring).
+    monitor = _PeakRSSMonitor()
+    monitor.__enter__()
 
     for nid in order:
         node = by_id[nid]
@@ -143,6 +249,9 @@ def run_graph(
                 log.error(traceback.format_exc())
             success = False
             break
+
+    monitor.__exit__(None, None, None)
+    _check_memory_pressure(monitor.peak_rss, graph_engine_mode, log)
 
     return {
         "nodes": records,

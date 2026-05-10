@@ -45,7 +45,13 @@ def arrow_to_engine(table: pa.Table, engine: EngineType) -> Any:
     if engine == "polars":
         import polars as pl
 
-        return pl.from_arrow(table)
+        # rechunk=False asks Polars to reference Arrow's chunks instead of
+        # copying every byte into a fresh contiguous buffer (its default).
+        # For numeric columns this is fully zero-copy. For strings it
+        # depends on Polars' internal layout vs Arrow's; if Polars can
+        # share the buffer we save the dual-representation cost the Bug 5
+        # calibration measured. If not, this is a no-op.
+        return pl.from_arrow(table, rechunk=False)
     raise ValueError(f"unknown engine: {engine!r}")
 
 
