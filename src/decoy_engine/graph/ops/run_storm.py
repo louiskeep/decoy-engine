@@ -32,6 +32,9 @@ from decoy_engine.graph.ops._base import OpError
 from decoy_engine.internal.validator import ValidationError
 
 KIND = "run_storm"
+# Phase 1 Arrow-boundary benchmark on a HIPAA-shaped fixture: ~2.4% overhead.
+# Stay on pandas — within the 10% threshold for declaring "arrow".
+NATIVE_ENGINE = "pandas"
 INPUT_ARITY: tuple[int, int | None] = (1, 1)
 OUTPUT_KIND = "stream"
 

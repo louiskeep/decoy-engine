@@ -19,6 +19,10 @@ from decoy_engine.graph.ops._base import OpError
 from decoy_engine.internal.validator import ValidationError
 
 KIND = "mask"
+# Mask transforms are per-row Python (Faker, scipy, custom callbacks) — kept
+# on pandas by design per the polars-duckdb hybrid plan. The runner converts
+# Arrow → pandas at this op's boundary.
+NATIVE_ENGINE = "pandas"
 INPUT_ARITY: tuple[int, int | None] = (1, 1)
 OUTPUT_KIND = "stream"
 
