@@ -167,7 +167,43 @@ def run_graph(
     """
     config = _load_yaml(yaml_text)
     _validate_or_raise(config)
+    result, _cache = _execute_graph(config, ctx)
+    return result
 
+
+def execute_graph_capture(
+    yaml_text: str,
+    ctx: ExecutionContext | None = None,
+    keep_nodes: list[str] | None = None,
+) -> tuple[RunResult, dict[str, pa.Table]]:
+    """Run a graph and return both the telemetry record AND the output
+    cache for nodes named in `keep_nodes`.
+
+    Used by `sub_pipeline` and the iterator ops to capture sub-graph
+    output and pipe it into the parent graph. Public-but-quiet: not in
+    `decoy_engine.__init__.__all__` because the caller has to know what
+    to do with `pa.Table` values, which is internal contract knowledge.
+
+    `keep_nodes=None` keeps nothing (equivalent to `run_graph`).
+    """
+    config = _load_yaml(yaml_text)
+    _validate_or_raise(config)
+    result, cache = _execute_graph(config, ctx, keep_nodes=keep_nodes)
+    return result, cache
+
+
+def _execute_graph(
+    config: dict,
+    ctx: ExecutionContext | None,
+    keep_nodes: list[str] | None = None,
+) -> tuple[RunResult, dict[str, pa.Table]]:
+    """Internal: the actual node-by-node execution loop.
+
+    Returns the telemetry result plus a dict of `{node_id: pa.Table}` for
+    nodes the caller wants kept past natural eviction. `run_graph` passes
+    `keep_nodes=None`; sub_pipeline / iterator pass the IDs of the nodes
+    whose output flows into the parent graph.
+    """
     from decoy_engine.graph.ops import OPS
     from decoy_engine.graph.registry import native_engine_for
 
@@ -179,6 +215,11 @@ def run_graph(
 
     cache: dict[str, pa.Table] = {}
     remaining = _count_consumers(nodes, edges)
+    keep_set = set(keep_nodes or [])
+    # Bump consumer counts for nodes the caller wants to keep so the
+    # eviction logic doesn't reclaim them before we return.
+    for k in keep_set:
+        remaining[k] = remaining.get(k, 0) + 1
     records: list[NodeRunRecord] = []
     overall_start = time.monotonic()
     success = True
@@ -253,11 +294,17 @@ def run_graph(
     monitor.__exit__(None, None, None)
     _check_memory_pressure(monitor.peak_rss, graph_engine_mode, log)
 
-    return {
+    result: RunResult = {
         "nodes": records,
         "success": success,
         "elapsed_ms": int((time.monotonic() - overall_start) * 1000),
     }
+    # Cache contains whatever survived eviction. For `run_graph` callers
+    # this is empty (every consumer has read). For `execute_graph_capture`
+    # callers the kept nodes are still present because we bumped their
+    # consumer counts above.
+    kept_cache = {k: cache[k] for k in keep_set if k in cache}
+    return result, kept_cache
 
 
 def preview_graph(

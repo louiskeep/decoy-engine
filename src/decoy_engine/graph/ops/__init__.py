@@ -22,6 +22,10 @@ from decoy_engine.graph.ops import (
     target_db,
     mask_op,
     generate_op,
+    sub_pipeline,
+    iterate_fixed,
+    iterate_loop,
+    iterate_files,
 )
 
 OPS: dict[str, object] = {
@@ -39,6 +43,11 @@ OPS: dict[str, object] = {
     "generate": generate_op,
     "target.file": target_file,
     "target.db": target_db,
+    # Sprint G Week 4: sub-pipelines + iterators (FILE, FIXED, LOOP).
+    "sub_pipeline": sub_pipeline,
+    "iterate_fixed": iterate_fixed,
+    "iterate_loop": iterate_loop,
+    "iterate_files": iterate_files,
 }
 
 
