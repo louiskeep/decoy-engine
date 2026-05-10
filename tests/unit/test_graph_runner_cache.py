@@ -54,11 +54,15 @@ def _yaml(d: dict) -> str:
 
 
 def test_arrow_pandas_roundtrip_preserves_data():
+    """The Arrow-canonical cache uses types_mapper=pd.ArrowDtype on the
+    pandas branch (Bug 4 fix), so a numpy-backed DataFrame round-trips
+    through Arrow as an arrow-backed DataFrame. Test the data contract,
+    not the dtype identity — the dtype shift is intentional."""
     df = pd.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
     table = engine_to_arrow(df, "pandas")
     assert isinstance(table, pa.Table)
     back = arrow_to_engine(table, "pandas")
-    pd.testing.assert_frame_equal(back, df)
+    pd.testing.assert_frame_equal(back, df, check_dtype=False)
 
 
 def test_arrow_pass_through_for_arrow_engine():
