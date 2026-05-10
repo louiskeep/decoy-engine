@@ -20,6 +20,7 @@ through unchanged.
 """
 
 import math
+import numpy as np
 import pandas as pd
 from typing import Dict, Any, Optional
 
@@ -72,36 +73,41 @@ class BucketizeStrategy(BaseMaskingStrategy):
             f"'{column_name}'"
         )
 
-        def bucket_value(val):
-            if val is None or pd.isna(val):
-                return val
-            try:
-                v = float(val)
-            except (TypeError, ValueError):
-                # Non-numeric input — leave unchanged. Logged at the call
-                # site is too noisy; the missing values surface as
-                # passthrough in downstream stats.
-                return val
-            lower = math.floor(v / width) * width
-            upper_excl = lower + width
-            if is_int_width:
-                lower = int(lower)
-                upper_excl = int(upper_excl)
-            if fmt == 'lower':
-                return str(lower)
-            if fmt == 'range':
-                # Inclusive upper for ints (so "20-29" not "20-30").
-                upper = upper_excl - 1 if is_int_width else upper_excl
-                return f"{lower}-{upper}"
-            # midpoint
-            mid = lower + width / 2
-            if is_int_width and width % 2 == 0:
-                # Even integer width gives a half-step midpoint; truncate
-                # to int so labels stay compact.
-                return str(int(mid))
-            return str(mid)
+        # Vectorized: numpy floor on the whole column + vectorized string
+        # formatting. Non-numeric / NA values fall through to the original
+        # value, matching the legacy per-row contract.
+        nums = pd.to_numeric(column, errors='coerce')
+        lower_f = np.floor(nums / width) * width
 
-        result = column.apply(bucket_value)
+        if is_int_width:
+            # Nullable Int64 so positions where `nums` is NaN survive the
+            # int cast (becoming pd.NA, which formats correctly later).
+            lower = lower_f.astype('Int64')
+            upper_excl = lower + int(width)
+        else:
+            lower = lower_f
+            upper_excl = lower + width
+
+        if fmt == 'lower':
+            formatted = lower.astype(str)
+        elif fmt == 'range':
+            # Inclusive upper for ints (so "20-29" not "20-30") — matches
+            # the legacy `upper_excl - 1` convention.
+            upper = upper_excl - 1 if is_int_width else upper_excl
+            formatted = lower.astype(str) + '-' + upper.astype(str)
+        else:  # midpoint
+            mid = lower_f + width / 2
+            if is_int_width and int(width) % 2 == 0:
+                # Even integer width: half-step midpoint truncates to
+                # int so labels stay compact ("25" not "25.0").
+                mid = mid.astype('Int64')
+            formatted = mid.astype(str)
+
+        # Where the original was non-numeric or NaN, fall through to the
+        # original value. Single Series.where call replaces the legacy
+        # try/except per-row.
+        result = formatted.where(nums.notna(), column)
+
         self._log_stats(column, result, rule)
         return result
 
