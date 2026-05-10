@@ -6,6 +6,10 @@ Shared Python data engine. The only repo that contains data manipulation logic. 
 
 The cross-repo roadmap lives in **[forge-platform/ROADMAP.md](../forge-platform/ROADMAP.md)**. Start there for "where should we go?" questions, then come back here for engine-specific guides and plans.
 
+## Vocabulary
+
+Cross-repo glossary lives at **[../forge-platform/GLOSSARY.md](../forge-platform/GLOSSARY.md)**. Source of truth for Decoy vocabulary — Disguise, STORM, Mask, MIRROR, hybrid engine, the `Strategy` vs `Transform` split, plus the in-flight `forge → decoy` rename status.
+
 ## Docs in this repo
 
 We use two doc types. Distinguishing them keeps long-term plans aligned and short-term plans from rotting.
