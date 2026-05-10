@@ -10,6 +10,10 @@ The cross-repo roadmap lives in **[forge-platform/ROADMAP.md](../forge-platform/
 
 Cross-repo glossary lives at **[../forge-platform/GLOSSARY.md](../forge-platform/GLOSSARY.md)**. Source of truth for Decoy vocabulary — Disguise, STORM, Mask, MIRROR, hybrid engine, the `Strategy` vs `Transform` split, plus the in-flight `forge → decoy` rename status.
 
+## Decisions
+
+Engine architecture decision records (ADRs) live in [`docs/adr/`](docs/adr/). The "why" behind non-obvious engine decisions — Polars + DuckDB hybrid substrate (ADR-0001), the two key resolvers in `ExecutionContext` (ADR-0002) — and the home for any new architectural decision worth recording. Format and threshold are pinned in [`docs/adr/template.md`](docs/adr/template.md); ADRs are immutable once landed (supersede with a new ADR rather than editing).
+
 ## Docs in this repo
 
 We use two doc types. Distinguishing them keeps long-term plans aligned and short-term plans from rotting.
@@ -38,7 +42,7 @@ Comments live next to the surprise, not at the top of the file. If the non-obvio
 - [CONNECTOR_SDK_CONTRACT.md](CONNECTOR_SDK_CONTRACT.md) — connectors return `pyarrow.Table`; runner converts at op boundaries. *(target)*
 - [POLARS_FOR_PANDAS_USERS.md](POLARS_FOR_PANDAS_USERS.md) — contributor cheat sheet for the Polars relational ops. *(target)*
 
-The `Logger` Protocol in `decoy_engine.context` is owned by the platform's [LOGGING_GUIDE.md](../forge-platform/LOGGING_GUIDE.md) (sections 4 + 5). Engine entry points emit through the Protocol; the platform's `JobLogger` adapts it to job-log persistence + companion structured tables.
+The `Logger` Protocol in `decoy_engine.context` is owned by the platform's [LOGGING_GUIDE.md](../forge-platform/LOGGING_GUIDE.md) (sections 4 + 5). Engine entry points emit through the Protocol; the platform's `JobLogger` adapts it to job-log persistence + companion structured tables. Rationale captured in [ADR-0002 (platform)](../forge-platform/docs/adr/0002-logger-protocol-owned-by-platform.md).
 
 ## Repo structure
 
