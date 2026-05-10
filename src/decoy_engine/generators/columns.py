@@ -89,9 +89,18 @@ class ColumnGenerator:
              ``derive_key("col:<name>")`` and decode as a 32-bit int. Same
              key + same column always yields the same seed bytes, so faker /
              random output is bitwise stable across runs.
-          3. Fallback — ``seed + hash(column_name)``. Stable per-column,
+          3. Fallback — ``seed + md5(column_name)[:4]``. Stable per-column,
              reproducible given the same instance seed, but not tied to any
              tenant master key. Pre-Item-6 behavior.
+
+        We use md5 over the column name rather than Python's built-in
+        ``hash()`` because the latter is randomized per process unless
+        ``PYTHONHASHSEED`` is fixed — without that env var pinned, fresh
+        ``python`` invocations produce different per-column seeds and
+        generated CSVs drift run-to-run. md5 is a non-cryptographic choice
+        here (we're just seeding an RNG, not hashing for security), but it
+        gives us bytewise-stable output across processes/machines/Python
+        versions, which is what the determinism contract requires.
         """
         if column_config is not None and column_config.get('determinism') == 'fresh':
             return int.from_bytes(os.urandom(4), 'big', signed=False)
@@ -103,7 +112,11 @@ class ColumnGenerator:
                 # Fall through to seed-based path on any resolver hiccup;
                 # better to produce *some* output than crash a generation run.
                 pass
-        return (self.seed + hash(column_name)) & 0x7FFFFFFF
+        name_hash = int.from_bytes(
+            hashlib.md5(column_name.encode('utf-8')).digest()[:4],
+            'big', signed=False,
+        )
+        return (self.seed + name_hash) & 0x7FFFFFFF
     
     def generate_column(self, num_rows: int, column_config: Dict[str, Any], 
                     table_name: str, reference_data: Dict[str, pd.DataFrame]) -> pd.Series:
