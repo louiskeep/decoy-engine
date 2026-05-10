@@ -161,7 +161,15 @@ Each op declares `NATIVE_ENGINE` in its module. The runner reads the declaration
 | **Polars** | filter / sort / dedupe / derive / drop_column / select_column / limit | Lazy planner, columnar SIMD, parallel by default |
 | **Pandas** | mask / generate / run_storm | Per-row Python: Faker, scipy, sklearn — moving these off pandas buys nothing |
 
-**Opt-in flag**: graphs declare `engine: pandas` (default) or `engine: hybrid` at the YAML top level. `engine: pandas` forces every op through its pandas fallback regardless of declaration — the safety hatch that survived through Phase 7. Phase 8 of the polars-duckdb hybrid plan flips the default to `hybrid` and removes the pandas fallback one release cycle later.
+**Engine selection**: graphs declare `engine: pandas` or `engine: hybrid` at the YAML top level. Default is `hybrid` (per Phase 8). `engine: pandas` is the manual override — forces every op through its pandas fallback regardless of NATIVE_ENGINE declaration.
+
+**When to use `engine: pandas` instead of the default**: per the Bug 5 calibration (`tests/benchmark/calibration/results.md`), hybrid uses ~1.3× more peak memory than pure pandas at typical scales due to per-op Polars intermediate materialization. For most workloads the difference is in the noise — same EC2 instance class either way — and hybrid runs ~2× faster. The exception is large jobs on memory-tight hosts:
+
+> **Rule of thumb:** if a single pipeline processes more than ~80M rows on a host with less than 64 GB RAM, set `engine: pandas` in that pipeline's YAML. Hybrid mode is faster but uses more peak memory; on tight instances that delta can push the job into OOM. The engine emits a runtime advisory when peak RSS approaches 70% of system memory pointing at this override.
+
+The advisory is RAM-relative (uses `psutil.virtual_memory().total`), so the threshold scales naturally to whatever EC2 instance the customer is running on. Override the threshold via `DECOY_MEMORY_WARN_THRESHOLD` (default 0.7).
+
+**Cross-engine boundary perf**: the Arrow → Polars conversion uses `rechunk=False` to avoid copying string columns into Polars' default chunked layout. Measured impact at 10M HIPAA-shape rows: ~32% memory reduction on hybrid pipelines. See `tests/benchmark/calibration/results.md` for the full data.
 
 For the why behind this and the migration path, see `plans/2026-05-10-polars-duckdb-hybrid-engine.md` and the companion implementation plan in the same directory. Cheat sheet for contributors switching mental models: `POLARS_FOR_PANDAS_USERS.md`.
 
