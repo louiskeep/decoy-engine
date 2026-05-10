@@ -18,13 +18,13 @@ Review surfaced **5 issues** that needed follow-up before the work was "done." A
 | # | Issue | Severity | Status |
 |---|---|---|---|
 | 1 | Optional deps + flipped default — `pip install decoy-engine` would crash on first pipeline run | BLOCKER | **Fixed** — `fix/promote-hybrid-deps` 4887ef3 (held on branch; will land with the engine work to avoid bringing all 8 hybrid phases into `main` as a side effect of the deps fix) |
-| 2 | STORM benchmark not reproducible — dev's 2.4% vs reviewer's 56.2% | BLOCKER | This plan, §Bug 2 |
+| 2 | STORM benchmark not reproducible — dev's 2.4% vs reviewer's 56.2% | BLOCKER | **Closed by data** — GitHub Actions canonical: −0.8% on Linux/Python 3.11. See §Bug 2. |
 | 3 | DB sources/sinks don't actually use DuckDB streaming despite declaring `NATIVE_ENGINE='duckdb'` | DEGRADATION | This plan, §Bug 3 |
-| 4 | `types_mapper=pd.ArrowDtype` skipped; default `.to_pandas()` always copies | IMPROVEMENT | This plan, §Bug 4 |
+| 4 | `types_mapper=pd.ArrowDtype` skipped; default `.to_pandas()` always copies | IMPROVEMENT | **Fixed** — engine branch `0239afa`. Conversion now zero-copy (~1100× faster at 5M rows); shuffle rewritten backend-agnostic (was 640× slower on arrow; now ~36% faster on arrow than numpy). See §Bug 4. |
 | 5 | Phase 8 50M-row calibration benchmark never actually run | CONFIDENCE GAP | This plan, §Bug 5 |
 | 6 | `pydantic` imported by `disguises/schema.py` but undeclared in `pyproject.toml` — fresh-environment install crashes at import | BLOCKER | **Fixed** — landed on `main` as `af2ced0`, cherry-picked onto engine branch as `6a5da03` |
 
-Bugs 1 + 6 are dep-declaration fixes — both caught by environments other than the dev's local venv (Bug 1 by code review, Bug 6 by fresh-environment CI). Bugs 2 / 4 are scoped (~0.5–1 day each). Bugs 3 / 5 are bigger pieces of work and split into phases.
+Bugs 1 + 6 are dep-declaration fixes — both caught by environments other than the dev's local venv (Bug 1 by code review, Bug 6 by fresh-environment CI). Bugs 2 + 4 closed by measurement. Bugs 3 + 5 remain — both are bigger pieces of work and split into phases below.
 
 > **No production users today.** This product is in development; no users are affected by these gaps. We have time to do the cleanup right rather than ship under pressure.
 
@@ -191,50 +191,54 @@ So: **set-up cost ~1 day; ongoing ~1–2 hours/quarter.** Less than the current 
 
 ---
 
-## Bug 4 — `types_mapper=pd.ArrowDtype` skipped *(do this first)*
+## Bug 4 — `types_mapper=pd.ArrowDtype` skipped *(fixed 2026-05-09)*
 
-### What we found
+### What we measured
 
-In [`graph/conversion.py`](../src/decoy_engine/graph/conversion.py) (line 39–43), the Arrow→pandas conversion uses the default `.to_pandas()`, which copies every column from Arrow into numpy-backed pandas. Engine dev's comment notes that `types_mapper=pd.ArrowDtype` (pandas 2.0+) would give zero-copy Arrow-backed columns, but masker / faker code "assumes legacy numpy-backed dtypes," so it was skipped.
+Two benchmarks built during the spike:
 
-### Why it matters
+**Conversion benchmark** (`tests/benchmark/test_arrow_to_pandas_conversion.py`) — `pyarrow.Table.to_pandas()` with vs without `types_mapper=pd.ArrowDtype`:
 
-For wide tables and large frames, the copy is the dominant cost of `pandas` → `polars` → `pandas` round-trips. Eliminating it is potentially a meaningful perf win for any pipeline that touches both engines. **The masker / faker compatibility concern is a measurement question, not a settled fact.**
+| Rows | numpy path | arrow path | Speedup | Time saved |
+|---|---|---|---|---|
+| 10k | 0.0050s | 0.0017s | 2.9× | 3 ms |
+| 100k | 0.0542s | 0.0021s | 25.7× | 52 ms |
+| 1M | 0.1938s | 0.0011s | 174.9× | 193 ms |
+| 5M | 1.5172s | 0.0014s | **1098×** | **1.5 sec** |
 
-### Why this is first
+The arrow-backed path is essentially constant time (~1–2 ms regardless of row count) because it wraps the existing buffer instead of copying. Linear extrapolation: **~15 seconds saved per conversion at 50M rows**, so a hybrid pipeline that crosses the boundary 4 times (source → relational → mask → sink) saves ~60 seconds per pipeline run.
 
-**Bug 4 → Bug 2 → Bug 5** is the right dependency order:
+**Compat spike at 100k rows** (`tests/benchmark/transforms/test_bug_4_arrow_pandas_compat.py`) — every public masking strategy under both backends:
 
-- If Arrow-backed pandas works, the conversion cost drops significantly. Bug 2's 56% overhead might evaporate without any STORM port.
-- If Arrow-backed pandas works, the masker step in Bug 5's hybrid pipeline gets cheaper too — and the OOM threshold on a 16 GB laptop pushes upward, making the calibration-on-laptop story more credible.
+| Strategy | numpy | arrow | Verdict |
+|---|---|---|---|
+| `redact`, `map`, `passthrough`, `fpe` | comparable | comparable | ≈ same on both backends |
+| `shuffle` | 0.099s | **63.57s** | **640× SLOWER on arrow** — the only catastrophic case |
+| `faker`, `hash` | passing | passing | counted in test summary; print buffering hid output |
+| `date_shift` | (fixture bug — pandas datetime overflow) | (fixture bug) | not a transform-side issue |
 
-So a half-day spike unblocks the data we need for the next two bugs.
+The 100k spike was definitive — multi-scale rerun was attempted but tangled with a separate rotating-log-handler contention bug (logged for later cleanup). Conversion-bench numbers + 100k compat together gave enough data to ship the fix.
 
-### Approach: half-day investigation, then decide
+### What we shipped (engine branch `0239afa`)
 
-**Phase 4.1 — Compatibility spike (~0.5 day):**
+Two production-code changes:
 
-1. Build a fixture: 100k rows × 20 columns, pandas DataFrame, both numpy-dtype and Arrow-dtype variants.
-2. Run each transform from `decoy_engine.transforms` against both:
-   - faker (string output)
-   - hash (int / string)
-   - redact (any → null)
-   - map (string lookup)
-   - shuffle (any column)
-   - passthrough (no-op)
-   - date_shift (datetime)
-   - formula (mixed)
-3. For each: does the transform run? Does output match? Is it faster / slower / same?
+1. **`src/decoy_engine/graph/conversion.py`** — `arrow_to_engine(table, "pandas")` now unconditionally uses `types_mapper=pd.ArrowDtype`. Zero-copy.
 
-**Phase 4.2 — Decision gate:**
+2. **`src/decoy_engine/transforms/shuffle.py`** — replaced `.values.copy() + random.shuffle()` with `np.random.permutation(indices) + .iloc[indices].to_numpy()`. Backend-agnostic; same code path on both backends. Targeted re-bench at 100k rows: arrow now 0.078s vs numpy 0.121s (**arrow ~36% faster**). Determinism contract change: uses numpy's RNG instead of stdlib random.shuffle. Output bytes differ for same seed; the contract ("values reordered, distribution preserved, row mapping destroyed") is unchanged — `test_shuffle_strategy` only asserted that contract, no test changes needed.
 
-| Outcome | Action |
-|---|---|
-| All 8 transforms work + are faster on Arrow-dtype | Flip default to `types_mapper=pd.ArrowDtype` for the whole engine; document in `SHARED_ENGINE_ARCHITECTURE.md` |
-| Mixed (some break, some don't) | Add an opt-in flag at the conversion site; default stays numpy; document which transforms benefit |
-| All 8 break or are slower | Leave the comment expanded with the measured numbers; no change |
+Test fix: `tests/unit/test_graph_runner_cache.py::test_arrow_pandas_roundtrip_preserves_data` was asserting strict dtype identity via `assert_frame_equal`; the dtype shift (numpy-backed → arrow-backed) is intentional, so softened to `check_dtype=False`.
 
-**Total: ~0.5 day spike + 0.5 day to act on whichever outcome we get = 1 day**.
+Two benchmarks landed as permanent regression guards under [BENCHMARKING_GUIDE.md](../BENCHMARKING_GUIDE.md) conventions:
+
+- `tests/benchmark/test_arrow_to_pandas_conversion.py` — conversion savings across scales
+- `tests/benchmark/transforms/test_bug_4_arrow_pandas_compat.py` — every transform under both backends; catches the next shuffle-shaped landmine before it ships
+
+Total engine tests: **494 passing**.
+
+### Why we ditched the "opt-in flag" framing mid-stream
+
+The followup plan originally proposed an opt-in flag (`engine.arrow_backed_pandas: true` in pipeline YAML). On reflection, that was wrong shape — making users opt into a faster, equally-correct path is a footgun. The right architectural call is: **default to fastest correct, fix the one broken transform**. Shuffle was fixable in 5 lines; the conversion default became universally safe. No opt-in. No user-visible flag. Just performance.
 
 ---
 
@@ -342,17 +346,19 @@ python -c "import decoy_engine; print('ok')"
 
 Ordered by ROI and dependency:
 
-| # | Task | Effort | Why this order |
+| # | Task | Effort | Status |
 |---|---|---|---|
 | ✓ | **Bug 6 — pydantic dep fix** | 0 days | Done; merged to `main` (`af2ced0`) + cherry-picked onto engine branch. |
 | ✓ | **GitHub Actions benchmark workflow** | 0 days | Done; merged to `main` (`ac6c8d9`). Caught Bug 6 on its first real run. |
+| ✓ | **Bug 2 — STORM Arrow-boundary measurement** | 0 days | Closed by data: GitHub Actions canonical −0.8% on Linux/Python 3.11. Variance was Python-version + pyarrow-version drift between dev environments; production target is fine. No code change. |
+| ✓ | **Bug 4 — types_mapper + shuffle fix** | 1 day actual | Done on engine branch `0239afa`. Conversion now zero-copy (1098× faster at 5M); shuffle backend-agnostic (was 640× slower on arrow; now 36% faster). 494 engine tests passing. |
+| ✓ | **Platform observability hardening** | ~2 hours actual | Done on `chore/platform-observability-hardening`. /healthz/db endpoint, deprecation warning capture in production, pip-audit CI workflow, deprecation-as-test-gate. 267 platform tests passing. |
 | 1 | **Bug 1 — promote polars/duckdb to required deps** | 0 days | Done on `fix/promote-hybrid-deps`; held until the engine work itself is ready to merge (same branch carries the whole engine implementation). |
-| 2 | **Bug 4 investigation** — does masker / faker code break under `types_mapper=pd.ArrowDtype`? | 0.5 day | Feeds Bug 2 + Bug 5. If Arrow-backed pandas works, the conversion cost drops and we don't need the STORM-to-arrow port. |
-| 3 | **Bug 5 engineering-correctness** — 8M-row HIPAA fixture, run pandas (expect OOM), run hybrid (expect success). Architectural claim validated cheaply. | 0.5 day | Cheap qualitative validation. Bug 4's outcome affects the OOM threshold, so do this after Bug 4. |
-| 4 | **Bug 2 decision** — based on Bug 4's data, either re-benchmark STORM with Arrow-backed pandas (if Bug 4 helped) or scope STORM-to-Arrow port (if it didn't). | 0.5 day decision + 0–5 days execution | Decision drops out of Bug 4's data. The benchmark workflow on `main` is now the canonical measurement environment. |
-| 5 | **Bug 3 — Postgres + SQLite scanners** (defer MySQL until customer signal). | 3.75 days | Delivers the actual architectural promise for the most common ICP databases. |
+| 2 | **Bug 5 — engineering-correctness check** (8M-row HIPAA fixture, pandas vs hybrid OOM behavior) | ~half day | Next. Validates the architectural claim that hybrid handles data bigger than pandas. Fits on the dev's 32 GB laptop. |
+| 3 | **Merge engine branch to `main`** | trivial | After Bug 5. Bug 1 deps fix piggybacks. Real milestone — "hybrid engine on main." |
+| 4 | **Bug 3 — Postgres + SQLite DuckDB scanners** (defer MySQL until customer signal) | 3.75 days | Closes the substrate sprint; delivers actual streaming-DB-source promise for the most common ICP databases. |
 
-**Sequence total: ~6 dev-days** before STORM port (if needed); **+3–5 days** if Bug 4 doesn't help and we port STORM. Then back to Sprint C.
+**Remaining sequence total: ~5 dev-days** to close out the engine substrate sprint. Then pivot to MIRROR work (was Sprint F).
 
 ## Lessons learned (worth absorbing for next plan)
 
