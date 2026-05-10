@@ -21,6 +21,20 @@ from decoy_engine.connectors.fixed_width import FixedWidthHandler
 from decoy_engine.connectors.factory import create_io_handler
 from decoy_engine.connectors.s3 import S3Config, S3FileSink, S3FileSource
 
+# GCS and SFTP connectors are optional installs (`decoy-engine[gcs]` and
+# `decoy-engine[sftp]`). Import lazily so a customer who only uses S3
+# doesn't see ImportError when google-cloud-storage / paramiko are not
+# present. Names still appear in `__all__` so static tools and editors
+# can find them when the extras ARE installed.
+try:
+    from decoy_engine.connectors.gcs import GCSConfig, GCSFileSink, GCSFileSource
+except ImportError:
+    GCSConfig = GCSFileSink = GCSFileSource = None  # type: ignore[assignment]
+try:
+    from decoy_engine.connectors.sftp import SFTPConfig, SFTPFileSink, SFTPFileSource
+except ImportError:
+    SFTPConfig = SFTPFileSink = SFTPFileSource = None  # type: ignore[assignment]
+
 __all__ = [
     # Legacy IOHandler family.
     "IOHandler",
@@ -31,4 +45,10 @@ __all__ = [
     "S3Config",
     "S3FileSource",
     "S3FileSink",
+    "GCSConfig",
+    "GCSFileSource",
+    "GCSFileSink",
+    "SFTPConfig",
+    "SFTPFileSource",
+    "SFTPFileSink",
 ]
