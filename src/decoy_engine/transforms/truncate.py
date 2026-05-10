@@ -41,13 +41,18 @@ class TruncateStrategy(BaseMaskingStrategy):
             f"column '{column_name}'"
         )
 
-        def truncate_value(val):
-            if val is None or pd.isna(val):
-                return val
-            s = str(val)
-            return s[-length:] if from_end else s[:length]
-
-        result = column.apply(truncate_value)
+        # Vectorized: pandas' StringMethods does C-level slicing for the
+        # whole column in one pass. We slice only the non-NA values so
+        # NaN positions stay NaN (the str-cast would turn them into the
+        # string "nan" otherwise).
+        na_mask = column.isna()
+        result = column.copy().astype(object)
+        non_na_str = column[~na_mask].astype(str)
+        if from_end:
+            sliced = non_na_str.str[-length:]
+        else:
+            sliced = non_na_str.str[:length]
+        result.loc[~na_mask] = sliced
         self._log_stats(column, result, rule)
         return result
 

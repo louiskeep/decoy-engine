@@ -147,17 +147,20 @@ class MapStrategy(BaseMaskingStrategy):
             self.logger.info(f"Updated mapping for column '{column_name}' with {len(mapping)} entries")
             mapping_manager.save_mapping(mapping, column_name)
         
-        # Apply mapping to column
-        def map_value(val):
-            if val is None or pd.isna(val):
-                return val
-            return mapping.get(str(val), val)
-        
-        result = column.apply(map_value)
-        
-        # Log statistics
+        # Vectorized: Series.map(dict) does dict lookup in one C-level
+        # pass. The legacy contract was "fall back to the original value
+        # when the dict has no match" — Series.map returns NaN on miss,
+        # so we patch hits onto a copy of the original column. NA
+        # positions stay NA without any extra handling.
+        na_mask = column.isna()
+        non_na = column[~na_mask]
+        mapped = non_na.astype(str).map(mapping)
+        result = column.copy().astype(object)
+        hit_mask = mapped.notna()
+        result.loc[hit_mask[hit_mask].index] = mapped[hit_mask]
+
         self._log_stats(column, result, rule)
-        
+
         return result
     
     def validate_rule(self, rule: Dict[str, Any]) -> None:
