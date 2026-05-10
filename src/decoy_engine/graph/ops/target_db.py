@@ -7,11 +7,19 @@ Config:
     dsn: str               - direct DSN (CLI)
     connector_id: int      - platform path; resolved via ctx.resolve_connector
 
-Phase 4 port: NATIVE_ENGINE='duckdb'. The DuckDB path materializes the
-input Arrow table to pandas at the SQLAlchemy boundary (to_sql is the
-universal sink across dialects). DuckDB's INSERT ... SELECT against an
-attached target is faster but requires both ends in DuckDB — that's a
-follow-up enhancement.
+NATIVE_ENGINE='duckdb'. Symmetric with `source.db`: dispatches on DSN
+dialect.
+
+- **SQLite** → DuckDB `sqlite_scanner` extension via `ATTACH (TYPE sqlite)`,
+  then INSERT / CREATE TABLE AS SELECT against the attached target.
+  The Arrow input is registered as a view so the write doesn't go
+  through pandas.
+- **Postgres** → DuckDB `postgres_scanner` via `ATTACH (TYPE postgres)`.
+  Same shape; needs a running Postgres for tests.
+- **Everything else** → SQLAlchemy + `df.to_sql()` fallback. Pays the
+  Arrow → pandas conversion cost.
+
+See `source_db.py` for the dispatch helpers; this op shares them.
 """
 
 from typing import Any
@@ -20,6 +28,7 @@ import pandas as pd
 import pyarrow as pa
 
 from decoy_engine.graph.ops._base import OpError
+from decoy_engine.graph.ops.source_db import _attach_target_for, _resolve_scanner
 from decoy_engine.internal.validator import ValidationError
 
 KIND = "target.db"
@@ -79,6 +88,88 @@ def _apply_pandas(df: pd.DataFrame, config: dict[str, Any], ctx) -> pd.DataFrame
 
 def _apply_duckdb(table: pa.Table, config: dict[str, Any], ctx) -> pa.Table:
     dsn = _resolve_dsn(config, ctx)
+    scanner = _resolve_scanner(dsn)
+    if scanner is not None:
+        _apply_duckdb_native_scanner(scanner, dsn, table, config)
+    else:
+        _apply_duckdb_sqlalchemy_fallback(dsn, table, config)
+    # Sinks return an empty slice by convention — the cache eviction
+    # logic uses output as a "did this complete" signal.
+    return table.slice(0, 0)
+
+
+def _apply_duckdb_native_scanner(
+    scanner: tuple[str, str],
+    dsn: str,
+    arrow_table: pa.Table,
+    config: dict[str, Any],
+) -> None:
+    """DuckDB writes directly to the attached database; the Arrow input
+    is registered as a view so the write skips the pandas materialization.
+    """
+    extension, attach_type = scanner
+    attach_target = _attach_target_for(dsn, attach_type)
+
+    target_table = config["table"]
+    schema = config.get("schema") or None
+    mode = config.get("write_mode", "append")
+
+    qualified = (
+        f'dst."{schema}"."{target_table}"'
+        if schema
+        else f'dst."{target_table}"'
+    )
+
+    try:
+        import duckdb
+
+        con = duckdb.connect()
+        try:
+            con.execute(f"INSTALL {extension}")
+            con.execute(f"LOAD {extension}")
+            # Writable attach (no READ_ONLY).
+            con.execute(
+                f"ATTACH '{attach_target}' AS dst (TYPE {attach_type})"
+            )
+            # Register the input Arrow table as a view DuckDB can SELECT
+            # from — zero-copy, no pandas materialization.
+            con.register("input_data", arrow_table)
+
+            if mode == "replace":
+                con.execute(f"DROP TABLE IF EXISTS {qualified}")
+                con.execute(
+                    f"CREATE TABLE {qualified} AS SELECT * FROM input_data"
+                )
+            elif mode == "fail":
+                # SQLite + Postgres both honor "table doesn't exist"
+                # via CREATE TABLE; if it exists, the CREATE raises.
+                con.execute(
+                    f"CREATE TABLE {qualified} AS SELECT * FROM input_data"
+                )
+            else:  # append
+                # Idempotent create: if the destination table doesn't
+                # exist yet, CREATE ... AS SELECT WHERE 0=1 stamps the
+                # schema without writing rows; the INSERT then writes.
+                # If it already exists, the IF NOT EXISTS skips and we
+                # go straight to INSERT.
+                con.execute(
+                    f"CREATE TABLE IF NOT EXISTS {qualified} AS "
+                    f"SELECT * FROM input_data WHERE 0=1"
+                )
+                con.execute(
+                    f"INSERT INTO {qualified} SELECT * FROM input_data"
+                )
+        finally:
+            con.close()
+    except Exception as exc:
+        raise OpError(f"target.db write failed: {exc}") from exc
+
+
+def _apply_duckdb_sqlalchemy_fallback(
+    dsn: str, arrow_table: pa.Table, config: dict[str, Any]
+) -> None:
+    """SQLAlchemy + pandas.to_sql fallback for DBs without a DuckDB
+    scanner extension."""
     target_table = config["table"]
     schema = config.get("schema") or None
     mode = config.get("write_mode", "append")
@@ -86,11 +177,7 @@ def _apply_duckdb(table: pa.Table, config: dict[str, Any], ctx) -> pa.Table:
     try:
         from sqlalchemy import create_engine
 
-        # to_sql universally works across SQLAlchemy dialects; the Arrow →
-        # pandas conversion here is the cost we pay for using SQLAlchemy.
-        # For DuckDB-on-DuckDB writes, INSERT ... SELECT is faster — gated
-        # behind dsn scheme as a follow-up.
-        df = table.to_pandas()
+        df = arrow_table.to_pandas()
         engine = create_engine(dsn)
         try:
             df.to_sql(
@@ -100,8 +187,6 @@ def _apply_duckdb(table: pa.Table, config: dict[str, Any], ctx) -> pa.Table:
             engine.dispose()
     except Exception as exc:
         raise OpError(f"target.db write failed: {exc}") from exc
-
-    return table.slice(0, 0)
 
 
 def _resolve_dsn(config: dict[str, Any], ctx) -> str:

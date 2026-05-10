@@ -214,3 +214,130 @@ def test_target_db_parity_pandas_vs_duckdb(tmp_sqlite):
         db_rows.reset_index(drop=True),
         check_dtype=False,
     )
+
+
+# -------- target.db write-mode coverage on the SQLite scanner path --------
+# These tests are not "parity" with pandas — they verify the new DuckDB
+# native scanner correctly implements the write_mode semantics. Bug 3.
+
+
+def test_target_db_replace_overwrites_existing_rows(tmp_sqlite):
+    db_path, _ = tmp_sqlite
+    dsn = f"sqlite:///{db_path}"
+
+    seed = pa.Table.from_pylist([
+        {"id": 1, "name": "first", "value": 1.0},
+        {"id": 2, "name": "second", "value": 2.0},
+    ])
+    target_db.apply(
+        [seed],
+        {"table": "rmode", "dsn": dsn, "__engine": "duckdb", "write_mode": "replace"},
+        ctx=None,
+    )
+    # Replace with a different shape — should fully replace, not merge.
+    fresh = pa.Table.from_pylist([
+        {"id": 99, "name": "only-row", "value": 9.0},
+    ])
+    target_db.apply(
+        [fresh],
+        {"table": "rmode", "dsn": dsn, "__engine": "duckdb", "write_mode": "replace"},
+        ctx=None,
+    )
+
+    conn = sqlite3.connect(db_path)
+    rows = pd.read_sql_query("SELECT * FROM rmode ORDER BY id", conn)
+    conn.close()
+    assert list(rows["id"]) == [99]
+    assert list(rows["name"]) == ["only-row"]
+
+
+def test_target_db_append_extends_existing_table(tmp_sqlite):
+    db_path, _ = tmp_sqlite
+    dsn = f"sqlite:///{db_path}"
+
+    seed = pa.Table.from_pylist([
+        {"id": 1, "name": "first", "value": 1.0},
+    ])
+    target_db.apply(
+        [seed],
+        {"table": "amode", "dsn": dsn, "__engine": "duckdb", "write_mode": "replace"},
+        ctx=None,
+    )
+    extra = pa.Table.from_pylist([
+        {"id": 2, "name": "second", "value": 2.0},
+        {"id": 3, "name": "third",  "value": 3.0},
+    ])
+    target_db.apply(
+        [extra],
+        {"table": "amode", "dsn": dsn, "__engine": "duckdb", "write_mode": "append"},
+        ctx=None,
+    )
+
+    conn = sqlite3.connect(db_path)
+    rows = pd.read_sql_query("SELECT * FROM amode ORDER BY id", conn)
+    conn.close()
+    assert list(rows["id"]) == [1, 2, 3]
+
+
+def test_target_db_fail_mode_raises_when_table_exists(tmp_sqlite):
+    """`write_mode: fail` is the safety hatch — if the destination
+    table already exists, the op refuses to write rather than silently
+    appending or replacing."""
+    db_path, _ = tmp_sqlite
+    dsn = f"sqlite:///{db_path}"
+
+    seed = pa.Table.from_pylist([{"id": 1, "name": "x", "value": 1.0}])
+    target_db.apply(
+        [seed],
+        {"table": "fmode", "dsn": dsn, "__engine": "duckdb", "write_mode": "replace"},
+        ctx=None,
+    )
+
+    from decoy_engine.graph.ops._base import OpError
+    with pytest.raises(OpError):
+        target_db.apply(
+            [seed],
+            {"table": "fmode", "dsn": dsn, "__engine": "duckdb", "write_mode": "fail"},
+            ctx=None,
+        )
+
+
+def test_source_db_with_where_clause_filters_via_duckdb_scanner(tmp_sqlite):
+    """The native scanner path should honor the optional `where` config
+    just like the SQLAlchemy fallback. Validates the SQL the dispatcher
+    builds gets routed correctly into DuckDB's executor."""
+    db_path, _ = tmp_sqlite
+    dsn = f"sqlite:///{db_path}"
+
+    out = source_db.apply(
+        [],
+        {
+            "table": "customers",
+            "dsn": dsn,
+            "__engine": "duckdb",
+            "where": "value > 15",
+        },
+        ctx=None,
+    )
+    df = _to_pd(out).reset_index(drop=True)
+    assert list(df["id"]) == [2, 3]  # Bob (20.5), Carol (30.5); Alice (10.5) filtered out
+
+
+def test_source_db_preview_row_limit_honored_by_duckdb_scanner(tmp_sqlite):
+    """Preview mode passes `__preview_row_limit` through; the scanner
+    SQL should LIMIT accordingly so we don't drag the whole source
+    when a node is just being previewed in the UI."""
+    db_path, _ = tmp_sqlite
+    dsn = f"sqlite:///{db_path}"
+
+    out = source_db.apply(
+        [],
+        {
+            "table": "customers",
+            "dsn": dsn,
+            "__engine": "duckdb",
+            "__preview_row_limit": 2,
+        },
+        ctx=None,
+    )
+    assert len(_to_pd(out)) == 2

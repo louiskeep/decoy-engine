@@ -171,6 +171,17 @@ The advisory is RAM-relative (uses `psutil.virtual_memory().total`), so the thre
 
 **Cross-engine boundary perf**: the Arrow → Polars conversion uses `rechunk=False` to avoid copying string columns into Polars' default chunked layout. Measured impact at 10M HIPAA-shape rows: ~32% memory reduction on hybrid pipelines. See `tests/benchmark/calibration/results.md` for the full data.
 
+**Per-database streaming guarantee** (per Bug 3 in `plans/2026-05-09-hybrid-engine-bug-followup.md`). `source.db` / `target.db` dispatch on the DSN dialect:
+
+| Dialect | Read / write path | Streaming? | Notes |
+|---|---|---|---|
+| **SQLite** (`sqlite://...`) | DuckDB `sqlite_scanner` + `ATTACH (TYPE sqlite)` | yes (DuckDB-native) | `READ_ONLY` on source; mutating SQL on target |
+| **PostgreSQL** (`postgresql://...` or `postgresql+psycopg://...`) | DuckDB `postgres_scanner` + `ATTACH (TYPE postgres)` | yes (DuckDB-native) | DSN converted to libpq key=value form by `_attach_target_for` |
+| **MySQL** (`mysql://...` or `mysql+pymysql://...`) | SQLAlchemy + Arrow (fallback) | no — pandas materialization | DuckDB has a `mysql_scanner` extension; native path engages on customer signal |
+| **MSSQL / Oracle / Snowflake / Redshift** | SQLAlchemy + Arrow (fallback) | no — pandas materialization | No DuckDB scanner extension; SQLAlchemy works but doesn't deliver streaming. Engages with the customer that has the workload. |
+
+Adding a new dialect to the native-scanner path is a one-row table edit in `source_db._NATIVE_SCANNERS` plus a connection-string converter if the DSN shape differs from DuckDB's `ATTACH` expectation.
+
 For the why behind this and the migration path, see `plans/2026-05-10-polars-duckdb-hybrid-engine.md` and the companion implementation plan in the same directory. Cheat sheet for contributors switching mental models: `POLARS_FOR_PANDAS_USERS.md`.
 
 ---
