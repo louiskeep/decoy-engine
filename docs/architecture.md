@@ -68,6 +68,7 @@ Inside `src/decoy_engine/`:
 
 ## Where to start reading
 
+0. **Run the onboarding tour: [`.tours/1-onboarding.tour`](../.tours/1-onboarding.tour)** — narrated 9-stop walkthrough through `__init__.py` → `context.py` → `Masker` → transforms → `run_graph`. Install the [CodeTour](https://marketplace.visualstudio.com/items?itemName=vsls-contrib.codetour) VS Code extension, then open the Tours panel and click "1 - Onboarding".
 1. `src/decoy_engine/__init__.py` — what callers can import; if it isn't here, it isn't public.
 2. `src/decoy_engine/context.py` — the `Logger` and `TelemetryClient` Protocols every caller implements.
 3. `src/decoy_engine/masker/masker.py` — the canonical end-to-end pipeline.

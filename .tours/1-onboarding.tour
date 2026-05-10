@@ -1,0 +1,61 @@
+{
+  "$schema": "https://aka.ms/codetour-schema",
+  "title": "1 - Onboarding: how the engine actually works",
+  "description": "Click-through introduction to decoy-engine for first-time contributors. ~15 minutes. Install the CodeTour VS Code extension (publisher: vsls-contrib) to play it.",
+  "steps": [
+    {
+      "file": "src/decoy_engine/__init__.py",
+      "line": 5,
+      "title": "Where you are",
+      "description": "**`decoy_engine`** is the only repo in the product that contains data manipulation logic. The CLI (`decoy`) and the web platform (`decoy-platform`) both import this as a library — neither contains masking or generation code itself.\n\nThe docstring at the top of `__init__.py` is the contract: anything listed here is what callers can rely on. Everything else, especially `decoy_engine.internal.*`, can change between minor versions without warning."
+    },
+    {
+      "file": "src/decoy_engine/__init__.py",
+      "line": 69,
+      "title": "The public API surface, made literal",
+      "description": "The `__all__` list **is** the public API. If a name isn't here, callers shouldn't reach for it. When a future PR adds a new top-level export, the rule is: add to `__all__` explicitly, or it isn't on the contract.\n\nNotice the two parallel families:\n\n- **High-level entry points** — `Masker`, `DataGenerator` — used directly by the CLI for single-pipeline runs.\n- **Graph entry points** — `validate_graph`, `run_graph`, `preview_graph` — used by the platform for multi-op DAGs.\n\nWe'll visit both paths in the next few stops."
+    },
+    {
+      "file": "src/decoy_engine/context.py",
+      "line": 22,
+      "title": "The Logger Protocol — the engine's only opinion about logging",
+      "description": "The engine doesn't know whether it's running inside a CLI (Rich terminal output) or a job runner (structured DB-backed logs). It just expects callers to give it *something* with `debug` / `info` / `warning` / `error`.\n\nAny stdlib `logging.Logger` already satisfies this. The CLI provides a Rich-backed implementation; the platform provides one that writes structured rows to its audit DB. The engine never knows which.\n\nThis Protocol is **owned by the platform's `LOGGING_GUIDE.md`** — when its shape changes, it changes there first, and this file follows."
+    },
+    {
+      "file": "src/decoy_engine/context.py",
+      "line": 43,
+      "title": "ExecutionContext — everything callers can hand the engine",
+      "description": "One bag of optional fields. The engine treats each as optional and falls back to defaults when not supplied.\n\nThe interesting part is the **two key resolvers** at the bottom: `derive_key` for masking, `pipeline_derive_key` for generation. They look almost identical but encode a real product distinction:\n\n- **Mask** is always deterministic at the *instance* level — same input → same masked output across pipelines. That's what makes referential integrity work across runs.\n- **Generate** is deterministic at the *pipeline* level — the same row in pipeline A and pipeline B can produce different synthetic values, depending on policy.\n\nIf you ever wonder why there are *two* resolvers instead of one, that's why.\n\n**Status note** (also in the module docstring): the engine doesn't fully consume `ExecutionContext` yet — `Masker` and `DataGenerator` still build their own logger if `ctx` isn't passed. Wiring is in flight."
+    },
+    {
+      "file": "src/decoy_engine/masker/masker.py",
+      "line": 20,
+      "title": "Masker — the canonical end-to-end pipeline",
+      "description": "`Masker(config_path, ctx=...)` is what the CLI invokes for a single-pipeline run. Read this constructor top to bottom — it shows every subsystem the engine wires up:\n\n1. Load YAML (line 33)\n2. Resolve a logger: caller's `ctx.logger` if given, otherwise build one from the YAML (lines 44–48)\n3. Validate the config (lines 55–57)\n4. Construct an I/O handler from the connector factory (lines 69–75)\n5. Build a `StrategyManager` for the masking transforms (lines 78–79)\n6. Build a `ReferentialIntegrityManager` for FK consistency (lines 82–83)\n7. Build a `MaskingProcessor` that orchestrates per-row masking (lines 86–92)\n\nThe key-passing pattern — `getattr(ctx, \"derive_key\", None)` on line 66 — lets keyed determinism flow into transforms without making `ctx` mandatory."
+    },
+    {
+      "file": "src/decoy_engine/transforms/factory.py",
+      "line": 11,
+      "title": "How a YAML rule becomes a transform",
+      "description": "Plain factory function. `create_strategy(\"hash\", ...)` returns a `HashStrategy` instance; the if/elif chain enumerates every transform the engine ships with.\n\nThere are **14 today**: `faker`, `hash`, `redact`, `map`, `shuffle`, `passthrough`, `date_shift`, `formula`, `reference`, `truncate`, `bucketize`, `fpe` — plus `base` + `factory` + `registry`.\n\n**Where you'll add your own.** A new transform is three things:\n\n1. A class in `transforms/<name>.py` extending `BaseMaskingStrategy`.\n2. An `elif` branch here.\n3. A unit test under `tests/unit/`.\n\nThe `StrategyManager` (in `transforms/registry.py`) caches instances by type, so each transform is constructed at most once per run."
+    },
+    {
+      "file": "src/decoy_engine/transforms/hash.py",
+      "line": 14,
+      "title": "A real transform — the keyed/legacy split",
+      "description": "Read the docstring (lines 14–26). Hash has two paths and the choice is determined by whether `ctx.derive_key` was provided:\n\n- **Keyed (preferred):** `HMAC-SHA256(column_key, value)`. Bitwise stable across runs and deployments given the same master key + column name. Used by tenants who load their master key into the CLI or platform.\n- **Legacy (fallback):** `SHA256(value + seed)`. Same input + same seed → same output, but derivable from the value alone. Fine for non-tenant scenarios; not safe across tenants.\n\nMost transforms have a similar shape: a clear keyed path and a fallback path. `faker_based.py`, `date_shift.py`, `reference.py`, and `fpe.py` all follow this pattern. If you're going to write a new transform, this file is the prototype.\n\nThe vectorization comment around line 49 is also worth reading — it explains why we prefer list-comp + whole-column null masks over `Series.apply` (~3–6× faster)."
+    },
+    {
+      "file": "src/decoy_engine/graph/runner.py",
+      "line": 159,
+      "title": "run_graph — the platform's entry point",
+      "description": "While the CLI calls `Masker(...).mask()` for a single pipeline, the platform calls `run_graph(yaml_text, ctx)` to execute a multi-op DAG. This is where masking, generation, STORM scans, and FORECAST recommendations all run as named ops in a topologically-sorted graph.\n\nThe runner caches `pyarrow.Table` between ops (line 180) and materializes to each op's preferred engine (pandas / polars / duckdb) at apply-time. Eviction is consumer-counted: a cache entry is dropped as soon as its last downstream consumer reads it, keeping peak memory bounded by the in-flight working set.\n\nThe **graph contract** itself — node types, edge semantics, op signatures — lives in `PIPELINE_GRAPH_GUIDE.md` at the repo root. Read that before touching this file."
+    },
+    {
+      "file": "tests/integration/test_masker.py",
+      "line": 1,
+      "title": "Where end-to-end behavior is pinned down",
+      "description": "When you change anything in `masker/`, `transforms/`, or `connectors/`, this is the file that should still pass. Integration tests here build a real `Masker` from a YAML config and assert the masked output. They're slow but they're the truth.\n\nFast unit tests live under `tests/unit/`. The graph runner has its own integration suite at `tests/integration/test_graph.py` — the equivalent for the platform-side path.\n\n**You're done with the tour.** From here:\n\n- *What's coming next* across all three repos → `../decoy-platform/ROADMAP.md`.\n- Deep-dives on specific subsystems → the repo-root `*_GUIDE.md` files (especially `SHARED_ENGINE_ARCHITECTURE.md` and `PIPELINE_GRAPH_GUIDE.md`).\n- Structural map → `docs/architecture.md`.\n\nIf a stop in this tour ever points at a line that no longer says what the description claims, fix the tour in the same PR as the code change. A wrong tour is worse than no tour."
+    }
+  ]
+}
