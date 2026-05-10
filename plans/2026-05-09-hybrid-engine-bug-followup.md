@@ -18,13 +18,13 @@ Review surfaced **5 issues** that needed follow-up before the work was "done." A
 | # | Issue | Severity | Status |
 |---|---|---|---|
 | 1 | Optional deps + flipped default — `pip install decoy-engine` would crash on first pipeline run | BLOCKER | **Fixed** — `fix/promote-hybrid-deps` 4887ef3 (held on branch; will land with the engine work to avoid bringing all 8 hybrid phases into `main` as a side effect of the deps fix) |
-| 2 | STORM benchmark not reproducible — dev's 2.4% vs reviewer's 56.2% | BLOCKER | **Closed by data** — GitHub Actions canonical: −0.8% on Linux/Python 3.11. See §Bug 2. |
-| 3 | DB sources/sinks don't actually use DuckDB streaming despite declaring `NATIVE_ENGINE='duckdb'` | DEGRADATION | This plan, §Bug 3 |
-| 4 | `types_mapper=pd.ArrowDtype` skipped; default `.to_pandas()` always copies | IMPROVEMENT | **Fixed** — engine branch `0239afa`. Conversion now zero-copy (~1100× faster at 5M rows); shuffle rewritten backend-agnostic (was 640× slower on arrow; now ~36% faster on arrow than numpy). See §Bug 4. |
-| 5 | Phase 8 50M-row calibration benchmark never actually run | CONFIDENCE GAP | This plan, §Bug 5 |
+| 2 | STORM benchmark not reproducible — dev's 2.4% vs reviewer's 56.2% | BLOCKER | **Closed by data** — GHA canonical run measured −0.8% on Linux/Python 3.11. Variance was Python-version + pyarrow-version drift between dev environments. Production target is fine. No code change. |
+| 3 | DB sources/sinks don't actually use DuckDB streaming despite declaring `NATIVE_ENGINE='duckdb'` | DEGRADATION | This plan, §Bug 3 — **last remaining engine bug**, 3.75 days, lands as follow-up after engine merge. |
+| 4 | `types_mapper=pd.ArrowDtype` skipped; default `.to_pandas()` always copies | IMPROVEMENT | **Fixed** — engine branch `0239afa`. Conversion zero-copy (1098× faster at 5M rows); shuffle rewritten backend-agnostic (was 640× slower on arrow; now 36% faster on arrow than numpy). 494 engine tests passing. |
+| 5 | Phase 8 50M-row calibration benchmark never actually run | CONFIDENCE GAP | **Fixed** — engine branch `44b95fd` + `6a0af58`. Calibration benchmark + D fix (`rechunk=False`) saves 32% memory at 10M; runtime memory-pressure warning advises customers approaching their hardware ceiling. See §Bug 5. |
 | 6 | `pydantic` imported by `disguises/schema.py` but undeclared in `pyproject.toml` — fresh-environment install crashes at import | BLOCKER | **Fixed** — landed on `main` as `af2ced0`, cherry-picked onto engine branch as `6a5da03` |
 
-Bugs 1 + 6 are dep-declaration fixes — both caught by environments other than the dev's local venv (Bug 1 by code review, Bug 6 by fresh-environment CI). Bugs 2 + 4 closed by measurement. Bugs 3 + 5 remain — both are bigger pieces of work and split into phases below.
+Bugs 1 + 6 are dep-declaration fixes (caught by environments other than the dev's local venv). Bugs 2 + 4 + 5 are now closed by data + code. **Only Bug 3 remains** — it's the substantive engine work that closes the substrate sprint.
 
 > **No production users today.** This product is in development; no users are affected by these gaps. We have time to do the cleanup right rather than ship under pressure.
 
@@ -242,11 +242,40 @@ The followup plan originally proposed an opt-in flag (`engine.arrow_backed_panda
 
 ---
 
-## Bug 5 — Phase 8 50M-row calibration benchmark never run
+## Bug 5 — Phase 8 50M-row calibration benchmark never run *(fixed 2026-05-09)*
 
-### What we found
+### What we shipped (engine branch `44b95fd`, plus arch doc on `6a0af58`)
 
-The hybrid plan said "calibrate engine ceilings on 50M-row HIPAA-shaped data" as part of Phase 8. The dogfood notes admit this wasn't done. Predicted ceilings (where pandas falls over, where polars OOMs, where DuckDB streams) are educated guesses, not measurements.
+Three pieces of work resolve Bug 5:
+
+1. **Calibration benchmark** in `tests/benchmark/calibration/test_engineering_correctness.py`. Tier-3 engineering-correctness per `BENCHMARKING_GUIDE.md`. Parameterized on (rows × engine), tracks peak RSS via psutil polling, records OOM as a valid outcome. Fixture sizes: 1M / 5M / 10M rows; runs in ~50s on the dev laptop. Permanent regression guard.
+
+2. **D fix — `pl.from_arrow(rechunk=False)`** in `graph/conversion.py`. Avoids Polars' default behavior of copying every Arrow chunk into a fresh Polars-format buffer. Measured impact at 10M rows: hybrid peak RSS dropped from 4697 MB → 3179 MB (-32%). Correctness preserved (499 engine + parity tests pass).
+
+3. **Memory-pressure warning** in `runner.py`. Background thread polls process RSS every 200ms during `run_graph`; after the run, compares peak vs system RAM (psutil-detected, not hardcoded). Above 70% threshold (configurable via `DECOY_MEMORY_WARN_THRESHOLD`), emits an actionable advisory through `ctx.logger`. Hybrid mode gets the "set `engine: pandas` in your YAML" suggestion; pandas mode just gets "consider a larger instance." Five new unit tests in `tests/unit/test_runner_memory_warning.py`.
+
+### Findings (full data in `tests/benchmark/calibration/results.md`)
+
+The architectural promise was nuanced by the data:
+
+- **CPU win is real and consistent.** Hybrid is 2-3× faster than pandas across all scales — DuckDB streaming + Polars filter genuinely beat pandas's single-thread numpy.
+- **Memory: hybrid uses slightly more, not less.** After D fix: hybrid is ~1.3× pandas peak RSS at 10M rows (was ~1.7× before D). The dual-representation cost of cross-engine boundaries doesn't fully vanish.
+- **Architectural "handles bigger data" claim partially holds.** For our pipeline shape (source → filter → mask → sink), pandas can hold slightly more rows in a fixed RAM budget. For aggregation/join-heavy pipelines (Item 19, queued), DuckDB's pushdown should reverse that — not yet measured.
+
+### Customer-impact framing
+
+For typical mid-market workloads (1M-50M rows on m5.xlarge / m5.2xlarge), the memory difference between pandas and hybrid is in the noise — same EC2 instance class either way. Hybrid runs faster.
+
+The "hybrid forces a bigger instance" threshold sits around **80-100M rows on hosts with <64 GB RAM** post-D — well outside the modal mid-market profile. For customers with bigger jobs, the memory-pressure warning surfaces the override at runtime.
+
+Updated rule of thumb in `SHARED_ENGINE_ARCHITECTURE.md`: "if a single pipeline processes more than ~80M rows on a host with less than 64 GB RAM, set `engine: pandas`."
+
+### What we deferred
+
+- **Marketing-correctness tier (50M+ rows on cloud VM).** Still useful for sales numbers but not on the critical path. Run it when we want to publish; current customer-impact reasoning extrapolates linearly from the 10M data.
+- **Option E — lazy-Polars chains across same-engine ops.** Addresses the per-op intermediate materialization that's still there. ~1-2 weeks of engine work. Tracked as Item 47.10 in ROADMAP.md, queued for ETL work (Item 24) since multi-Polars-op chains become common with `aggregate`/`join`. Don't pull forward without that signal.
+
+### Original phasing (preserved for history)
 
 ### Why it matters
 
@@ -350,15 +379,15 @@ Ordered by ROI and dependency:
 |---|---|---|---|
 | ✓ | **Bug 6 — pydantic dep fix** | 0 days | Done; merged to `main` (`af2ced0`) + cherry-picked onto engine branch. |
 | ✓ | **GitHub Actions benchmark workflow** | 0 days | Done; merged to `main` (`ac6c8d9`). Caught Bug 6 on its first real run. |
-| ✓ | **Bug 2 — STORM Arrow-boundary measurement** | 0 days | Closed by data: GitHub Actions canonical −0.8% on Linux/Python 3.11. Variance was Python-version + pyarrow-version drift between dev environments; production target is fine. No code change. |
-| ✓ | **Bug 4 — types_mapper + shuffle fix** | 1 day actual | Done on engine branch `0239afa`. Conversion now zero-copy (1098× faster at 5M); shuffle backend-agnostic (was 640× slower on arrow; now 36% faster). 494 engine tests passing. |
-| ✓ | **Platform observability hardening** | ~2 hours actual | Done on `chore/platform-observability-hardening`. /healthz/db endpoint, deprecation warning capture in production, pip-audit CI workflow, deprecation-as-test-gate. 267 platform tests passing. |
-| 1 | **Bug 1 — promote polars/duckdb to required deps** | 0 days | Done on `fix/promote-hybrid-deps`; held until the engine work itself is ready to merge (same branch carries the whole engine implementation). |
-| 2 | **Bug 5 — engineering-correctness check** (8M-row HIPAA fixture, pandas vs hybrid OOM behavior) | ~half day | Next. Validates the architectural claim that hybrid handles data bigger than pandas. Fits on the dev's 32 GB laptop. |
-| 3 | **Merge engine branch to `main`** | trivial | After Bug 5. Bug 1 deps fix piggybacks. Real milestone — "hybrid engine on main." |
-| 4 | **Bug 3 — Postgres + SQLite DuckDB scanners** (defer MySQL until customer signal) | 3.75 days | Closes the substrate sprint; delivers actual streaming-DB-source promise for the most common ICP databases. |
+| ✓ | **Bug 2 — STORM Arrow-boundary measurement** | 0 days | Closed by data: GHA canonical −0.8% on Linux/Python 3.11. No code change. |
+| ✓ | **Bug 4 — types_mapper + shuffle fix** | 1 day actual | Done on engine branch `0239afa`. 494 engine tests passing. |
+| ✓ | **Platform observability hardening** | ~2 hours actual | Done on `chore/platform-observability-hardening`. 267 platform tests passing. |
+| ✓ | **Bug 5 — calibration + D fix + memory warning** | 1 day actual | Done on engine branch `44b95fd` + `6a0af58`. 504 engine tests passing. |
+| 1 | **Bug 1 — promote polars/duckdb to required deps** | 0 days | Done on `fix/promote-hybrid-deps`; piggybacks on the engine merge. |
+| 2 | **Merge engine branch → `main`** | trivial | All blocking bugs closed. Real milestone — "hybrid engine on main." |
+| 3 | **Bug 3 — Postgres + SQLite DuckDB scanners** (defer MySQL until customer signal) | 3.75 days | Closes the substrate sprint; delivers actual streaming-DB-source promise. Lands as follow-up improvement on the new main, not a merge gate. |
 
-**Remaining sequence total: ~5 dev-days** to close out the engine substrate sprint. Then pivot to MIRROR work (was Sprint F).
+**Remaining sequence total: ~3.75 dev-days** of code work after the engine merge. Then pivot to MIRROR work (was Sprint F).
 
 ## Lessons learned (worth absorbing for next plan)
 
