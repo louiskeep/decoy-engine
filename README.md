@@ -19,6 +19,10 @@ The shared Python data engine used by both the CLI and the platform.
 - Web platform → `decoy-platform`
 - Marketing site → `decoy-web`
 
+## Architecture
+
+See [`docs/architecture.md`](docs/architecture.md) for the internal component map (transforms, pipeline graph, generators, execution context) and where to start reading.
+
 ## Public API
 
 ```python
