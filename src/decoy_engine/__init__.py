@@ -64,6 +64,27 @@ from decoy_engine.internal.helpers import (
     unregister_faker_provider,
 )
 
+# Connector SDK. The `sdk` submodule is the public surface third-party
+# connector authors build against; re-exporting the top-level names here
+# keeps the common `from decoy_engine import FileSource` import working.
+from decoy_engine.sdk import (
+    SDK_VERSION,
+    CAP_STREAMING,
+    CAP_RESUMABLE,
+    CAP_SIGNED_URL,
+    CAP_MULTIPART,
+    CAP_INTROSPECTION,
+    CAP_DRY_RUN,
+    ConnectorConfig,
+    FileMeta,
+    CheckResult,
+    WriteResult,
+    FileSource,
+    FileSink,
+    TransientError,
+    PermanentError,
+)
+
 __version__ = '0.1.0'
 
 __all__ = [
@@ -101,4 +122,20 @@ __all__ = [
     'LicenseExpiredError',
     'register_faker_provider',
     'unregister_faker_provider',
+    # Connector SDK.
+    'SDK_VERSION',
+    'CAP_STREAMING',
+    'CAP_RESUMABLE',
+    'CAP_SIGNED_URL',
+    'CAP_MULTIPART',
+    'CAP_INTROSPECTION',
+    'CAP_DRY_RUN',
+    'ConnectorConfig',
+    'FileMeta',
+    'CheckResult',
+    'WriteResult',
+    'FileSource',
+    'FileSink',
+    'TransientError',
+    'PermanentError',
 ]

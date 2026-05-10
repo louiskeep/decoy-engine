@@ -45,6 +45,13 @@ def test_all_lists_every_public_name():
         "ConnectorError", "ConnectorAuthError",
         "LicenseError", "LicenseExpiredError",
         "register_faker_provider", "unregister_faker_provider",
+        # Connector SDK (Sprint G Week 1).
+        "SDK_VERSION",
+        "CAP_STREAMING", "CAP_RESUMABLE", "CAP_SIGNED_URL",
+        "CAP_MULTIPART", "CAP_INTROSPECTION", "CAP_DRY_RUN",
+        "ConnectorConfig", "FileMeta", "CheckResult", "WriteResult",
+        "FileSource", "FileSink",
+        "TransientError", "PermanentError",
     }
     assert set(decoy_engine.__all__) == expected
 

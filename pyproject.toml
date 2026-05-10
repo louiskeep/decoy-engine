@@ -30,11 +30,23 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0.0",
+    # moto is used by S3 connector contract tests (Week 2 of Sprint G).
+    # Pinned here so a fresh `pip install -e .[dev]` brings it along
+    # rather than failing on the first import in test collection.
+    "moto[s3]>=5.0",
 ]
 # `hybrid` retained as an empty alias so any caller that already wrote
-# `pip install decoy-engine[hybrid]` keeps working — the libs are required
+# `pip install decoy-engine[hybrid]` keeps working: the libs are required
 # either way now.
 hybrid = []
+# First-party cloud-storage connectors as optional extras. S3 is covered
+# by `boto3`, which is already a transitive dep via `moto[s3]` in `[dev]`
+# and via the platform's runtime requirements. GCS and SFTP have heavier
+# dependency footprints (google-cloud-storage pulls grpcio; paramiko
+# pulls cryptography) so they stay opt-in for installs that don't need
+# them, e.g. an S3-only customer.
+gcs = ["google-cloud-storage>=2.0"]
+sftp = ["paramiko>=3.0"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/decoy_engine"]
