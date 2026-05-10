@@ -1,0 +1,8 @@
+# Sphinx build artifacts — never commit these.
+_build/
+
+# sphinx-autoapi writes generated .rst files into autoapi_root (configured
+# in conf.py to "api"). With autoapi_keep_files = False these get cleaned
+# at the end of each build, but the directory may persist briefly during
+# interrupted builds — keep it out of git regardless.
+api/
