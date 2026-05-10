@@ -105,8 +105,13 @@ class S3Config(ConnectorConfig):
     bucket: str = Field(..., min_length=1, max_length=255)
     prefix: str = ""
     region: str = "us-east-1"
-    access_key_id: SecretStr
-    secret_access_key: SecretStr
+    # Credentials are optional so the SDK supports the AWS default-chain
+    # auth modes that real shops use: EC2 instance profile, ECS task role,
+    # EKS IRSA, IAM Identity Center, env vars (AWS_ACCESS_KEY_ID etc.),
+    # `~/.aws/credentials`. When both are None, boto3 walks the chain.
+    # When provided, they take precedence over the chain.
+    access_key_id: Optional[SecretStr] = None
+    secret_access_key: Optional[SecretStr] = None
     endpoint_url: Optional[str] = Field(
         default=None,
         description=(
@@ -127,18 +132,23 @@ def _build_s3_client(config: S3Config):
     import boto3
     from botocore.config import Config as BotoConfig
 
-    return boto3.client(
-        "s3",
-        region_name=config.region,
-        aws_access_key_id=config.access_key_id.get_secret_value(),
-        aws_secret_access_key=config.secret_access_key.get_secret_value(),
-        endpoint_url=config.endpoint_url,
-        config=BotoConfig(
+    # Only pass static creds when explicitly configured. Passing None
+    # would override the default chain with "no credentials" and cause
+    # auth failures on hosts that rely on instance profiles or env vars.
+    kwargs: dict = {
+        "region_name": config.region,
+        "endpoint_url": config.endpoint_url,
+        "config": BotoConfig(
             connect_timeout=5,
             read_timeout=60,
             retries={"max_attempts": 1, "mode": "standard"},
         ),
-    )
+    }
+    if config.access_key_id is not None:
+        kwargs["aws_access_key_id"] = config.access_key_id.get_secret_value()
+    if config.secret_access_key is not None:
+        kwargs["aws_secret_access_key"] = config.secret_access_key.get_secret_value()
+    return boto3.client("s3", **kwargs)
 
 
 def _join_key(prefix: str, path: str) -> str:
