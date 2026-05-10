@@ -14,6 +14,22 @@ Cross-repo glossary lives at **[../forge-platform/GLOSSARY.md](../forge-platform
 
 Engine architecture decision records (ADRs) live in [`docs/adr/`](docs/adr/). The "why" behind non-obvious engine decisions — Polars + DuckDB hybrid substrate (ADR-0001), the two key resolvers in `ExecutionContext` (ADR-0002) — and the home for any new architectural decision worth recording. Format and threshold are pinned in [`docs/adr/template.md`](docs/adr/template.md); ADRs are immutable once landed (supersede with a new ADR rather than editing).
 
+## API reference
+
+Auto-generated reference for the public surface declared in `decoy_engine.__init__.__all__` is built by Sphinx + sphinx-autoapi from [`docs/`](docs/) and published to GitHub Pages by [`.github/workflows/docs.yml`](.github/workflows/docs.yml) on every push to `main`.
+
+To build locally:
+
+```bash
+pip install -e .[docs]
+make -C docs html            # or `make -C docs html-strict` to mirror CI
+open docs/_build/html/index.html
+```
+
+Sources: `docs/conf.py` (Sphinx config), `docs/index.md` (landing page). Auto-generated module pages are written to `docs/_build/html/api/` at build time and never committed — `docs/.gitignore` enforces this. The `internal/` subpackage is excluded from the public reference per the public-API rule below; if a name isn't in `__init__.py.__all__` and isn't a public-ish module symbol elsewhere, it doesn't appear on the docs site.
+
+The hand-curated guides below pair with the auto-generated reference; they describe target state, the auto-generated reference describes current shape.
+
 ## Docs in this repo
 
 We use two doc types. Distinguishing them keeps long-term plans aligned and short-term plans from rotting.
@@ -75,6 +91,8 @@ If a task involves terminal UX, HTTP, or databases — stop, it belongs in a dif
 ## Public API rule
 
 **Only names in `__init__.py.__all__` are public.** Everything under `internal/` is private and can change without a major version bump. When adding new public exports, add them to `__all__` explicitly.
+
+The Sphinx + autoapi build (see *API reference* above) honors this rule by ignoring `*/internal/*` in `docs/conf.py`. If you add a new public symbol, the next CI docs build picks it up automatically — no manual edit to a separate `.rst` file required.
 
 ## Setup
 
