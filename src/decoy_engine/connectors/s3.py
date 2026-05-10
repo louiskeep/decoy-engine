@@ -212,6 +212,26 @@ class S3FileSource(FileSource[S3Config]):
         except Exception as exc:
             raise _wrap_client_error(exc) from exc
 
+    def head(self, path: str) -> FileMeta:
+        """Native S3 HEAD: one RPC, returns size and content-type.
+
+        Overrides the default list-walking implementation. `path` is
+        interpreted as an absolute S3 key (no prefix joining), matching
+        the semantics of `open()`.
+        """
+        client = self._client_or_build()
+        try:
+            response = client.head_object(Bucket=self.config.bucket, Key=path)
+        except Exception as exc:
+            raise _wrap_client_error(exc) from exc
+        modified = response.get("LastModified")
+        return FileMeta(
+            path=path,
+            size=response.get("ContentLength"),
+            content_type=response.get("ContentType"),
+            modified=modified.isoformat() if modified else None,
+        )
+
     def open(self, path: str) -> Iterator[bytes]:
         """Stream object bytes in ~1 MB chunks.
 

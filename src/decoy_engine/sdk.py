@@ -232,6 +232,26 @@ class FileSource(_ConnectorBase[ConfigT]):
         callers can short-circuit on large prefixes.
         """
 
+    def head(self, path: str) -> FileMeta:
+        """Return metadata for a single `path`.
+
+        Useful for size + content-type checks before pulling a large
+        object. Default implementation walks `list()` until it finds an
+        exact path match, which is correct for any connector but wastes
+        round-trips. Connectors with a native HEAD operation (S3
+        `head_object`, GCS `Blob.reload`, SFTP `stat`) should override
+        for efficiency and to populate fields `list()` cannot return
+        (S3 list does not include content-type, for example).
+
+        Raises `PermanentError` if `path` does not exist.
+        """
+        for item in self.list():
+            if item.path == path:
+                return item
+        raise PermanentError(
+            f"{type(self).name}: head failed, path not found: {path!r}"
+        )
+
     @abstractmethod
     def open(self, path: str) -> Iterator[bytes]:
         """Yield streaming byte chunks for `path`.

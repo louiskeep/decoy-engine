@@ -122,6 +122,17 @@ class FileSourceContract:
             )
             assert item.path, "FileMeta.path must be non-empty"
 
+    def test_head_returns_file_meta_for_seeded_path(self, source, seeded_path):
+        if not seeded_path:
+            pytest.skip("Fixture did not seed a file path for head() test")
+        meta = source.head(seeded_path)
+        assert isinstance(meta, FileMeta)
+        assert meta.path == seeded_path
+
+    def test_head_missing_path_raises_connector_error(self, source):
+        with pytest.raises(ConnectorError):
+            source.head("does-not-exist-" + "y" * 20)
+
     def test_open_yields_bytes_when_path_exists(self, source, seeded_path):
         if not seeded_path:
             pytest.skip("Fixture did not seed a file path for open() test")

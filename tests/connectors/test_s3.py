@@ -118,6 +118,25 @@ class TestS3SourceBehavior:
         a_listing = sorted(m.path for m in source.list(prefix="a/"))
         assert a_listing == ["a/one.txt", "a/two.txt"]
 
+    def test_head_returns_content_type(self, s3_config, boto_client):
+        # S3FileSource overrides the default head() with a native head_object
+        # call that returns ContentType (which list() can't).
+        boto_client.put_object(
+            Bucket=BUCKET,
+            Key="typed.json",
+            Body=b'{"a":1}',
+            ContentType="application/json",
+        )
+        source = S3FileSource(s3_config)
+        meta = source.head("typed.json")
+        assert meta.size == len(b'{"a":1}')
+        assert meta.content_type == "application/json"
+
+    def test_head_missing_key_raises_permanent(self, s3_config, boto_client):
+        source = S3FileSource(s3_config)
+        with pytest.raises(PermanentError):
+            source.head("never-existed-xyz.bin")
+
     def test_open_streams_full_body(self, s3_config, boto_client):
         body = b"streaming-body " * 100  # 1500 bytes; small but multi-iter-friendly
         boto_client.put_object(Bucket=BUCKET, Key="streamed.bin", Body=body)
