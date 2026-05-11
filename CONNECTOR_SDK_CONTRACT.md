@@ -2,7 +2,7 @@
 
 > **Status:** locked 2026-05-10 (Phase 2 of the polars-duckdb hybrid plan).
 > **Last reviewed:** 2026-05-10.
-> **Companion doc (post-Phase-7):** `CONNECTOR_SDK_GUIDE.md` — the external-author tutorial. This file is the contract; the guide is the how-to.
+> **Companion doc:** [`CONNECTOR_SDK_GUIDE.md`](CONNECTOR_SDK_GUIDE.md) covers the Sprint G file-shaped SDK (`FileSource` / `FileSink` for S3 / GCS / SFTP / community connectors). This file is the legacy table-shaped contract (load/save returning `pyarrow.Table`).
 
 The contract here is what every read / write integration in `decoy_engine.connectors/` and (later) the customer SDK from Roadmap Item 24 must satisfy. The runner depends on it — drift = silent breakage at the op boundary.
 

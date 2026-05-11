@@ -31,7 +31,8 @@ Comments live next to the surprise, not at the top of the file. If the non-obvio
 - [STORM_FORECAST_GUIDE.md](STORM_FORECAST_GUIDE.md) — STORM (analysis) + FORECAST (recommender) module spec. *(partial)*
 - [DISGUISES_GUIDE.md](DISGUISES_GUIDE.md) — Disguise YAML schema + the 8-bundle launch set spec. *(partial)*
 - [PIPELINE_GRAPH_GUIDE.md](PIPELINE_GRAPH_GUIDE.md) — engine-side mirror of the cross-repo graph pipeline contract; `decoy_engine.graph` package. *(partial)*
-- [CONNECTOR_SDK_CONTRACT.md](CONNECTOR_SDK_CONTRACT.md) — connectors return `pyarrow.Table`; runner converts at op boundaries. *(target)*
+- [CONNECTOR_SDK_CONTRACT.md](CONNECTOR_SDK_CONTRACT.md) — legacy table-shaped contract: connectors return `pyarrow.Table`; runner converts at op boundaries. *(target)*
+- [CONNECTOR_SDK_GUIDE.md](CONNECTOR_SDK_GUIDE.md) — Sprint G file-shaped SDK (`FileSource` / `FileSink`); tutorial + worked Azure Blob example for community connector authors. *(shipped 2026-05-10)*
 - [POLARS_FOR_PANDAS_USERS.md](POLARS_FOR_PANDAS_USERS.md) — contributor cheat sheet for the Polars relational ops. *(target)*
 
 The `Logger` Protocol in `decoy_engine.context` is owned by the platform's [LOGGING_GUIDE.md](../forge-platform/LOGGING_GUIDE.md) (sections 4 + 5). Engine entry points emit through the Protocol; the platform's `JobLogger` adapts it to job-log persistence + companion structured tables.
