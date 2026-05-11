@@ -15,6 +15,16 @@ Config:
     sample_strategy: str       - "full" | "head" | "random" | "stratified"
                                  (default "full"; passed straight through)
     sample_row_cap: int        - cap for non-full strategies (optional)
+    parent_source_label: str   - optional; declares this scan as derived
+                                 from another scan. When set, the platform
+                                 runner links the persisted StormScan to
+                                 the most recent same-owner scan with this
+                                 label via `source_scan_id`. Enables the
+                                 source-vs-masked diff pattern: the masked
+                                 output is scanned with the source's label
+                                 as its parent, and the diff endpoint
+                                 compares the two without needing to know
+                                 about masking semantics.
 
 Why pass-through, not a sink:
     Downstream nodes still need the dataframe — typical use is
@@ -63,6 +73,13 @@ def validate_config(config: dict[str, Any]) -> None:
             "config.sample_row_cap",
         )
 
+    parent = config.get("parent_source_label")
+    if parent is not None and (not isinstance(parent, str) or not parent.strip()):
+        raise ValidationError(
+            "'parent_source_label' must be a non-empty string when set",
+            "config.parent_source_label",
+        )
+
 
 def apply(inputs, config, ctx) -> pd.DataFrame:
     df = inputs[0]
@@ -85,13 +102,18 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
         raise OpError(f"run_storm failed: {exc}") from exc
 
     if ctx is not None and getattr(ctx, "captured_outputs", None) is not None:
-        ctx.captured_outputs.append(
-            {
-                "kind": "storm_profile",
-                "source_label": source_label,
-                "profile": profile.to_dict(),
-            }
-        )
+        entry: dict[str, Any] = {
+            "kind": "storm_profile",
+            "source_label": source_label,
+            "profile": profile.to_dict(),
+        }
+        parent = config.get("parent_source_label")
+        if parent:
+            # Hint for the platform runner: link the persisted scan to the
+            # most recent same-owner scan with this label. Engine is
+            # platform-agnostic and never resolves the link itself.
+            entry["parent_source_label"] = parent
+        ctx.captured_outputs.append(entry)
         if ctx.logger is not None:
             ctx.logger.info(
                 "run_storm: captured profile for source_label=%r (rows=%d)",

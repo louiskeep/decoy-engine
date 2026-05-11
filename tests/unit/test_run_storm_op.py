@@ -87,12 +87,55 @@ class TestApply:
         entry = ctx.captured_outputs[0]
         assert entry["kind"] == "storm_profile"
         assert entry["source_label"] == "patients"
+        # No parent declared -> hint absent from the captured entry.
+        assert "parent_source_label" not in entry
         # profile.to_dict() round-trip — fields should be present
         profile = entry["profile"]
         assert profile["source_label"] == "patients"
         assert profile["row_count"] == 5
         assert isinstance(profile["fields"], list)
         assert len(profile["fields"]) == 4  # one per column
+
+    def test_parent_source_label_flows_into_captured_entry(self, df):
+        """Sprint G follow-on: declare a parent label and verify the
+        captured-output entry carries the hint for the platform runner
+        to resolve into a source_scan_id."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            ctx = ExecutionContext()
+            run_storm.apply(
+                [df],
+                {
+                    "source_label": "patients_masked",
+                    "parent_source_label": "patients",
+                },
+                ctx,
+            )
+
+        assert len(ctx.captured_outputs) == 1
+        entry = ctx.captured_outputs[0]
+        assert entry["source_label"] == "patients_masked"
+        assert entry["parent_source_label"] == "patients"
+
+    def test_parent_source_label_empty_or_whitespace_rejected(self):
+        from decoy_engine.internal.validator import ValidationError
+
+        for bad in ("", "  ", 42):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                try:
+                    run_storm.validate_config(
+                        {
+                            "source_label": "patients",
+                            "parent_source_label": bad,
+                        }
+                    )
+                except ValidationError as exc:
+                    assert "parent_source_label" in str(exc)
+                else:
+                    raise AssertionError(
+                        f"Expected ValidationError for parent_source_label={bad!r}"
+                    )
 
     def test_default_source_label_when_omitted(self, df):
         with warnings.catch_warnings():
