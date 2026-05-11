@@ -26,6 +26,7 @@ from decoy_engine.graph.ops import (
     iterate_fixed,
     iterate_loop,
     iterate_files,
+    sql_run,
 )
 
 OPS: dict[str, object] = {
@@ -48,6 +49,8 @@ OPS: dict[str, object] = {
     "iterate_fixed": iterate_fixed,
     "iterate_loop": iterate_loop,
     "iterate_files": iterate_files,
+    # Sprint G Week 5: DuckDB-on-DataFrame SQL escape hatch.
+    "sql_run": sql_run,
 }
 
 
