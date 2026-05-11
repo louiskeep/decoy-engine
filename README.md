@@ -48,3 +48,11 @@ Everything in `decoy_engine.internal` is private and may change between minor ve
 pip install -e .
 pytest tests/
 ```
+
+## License
+
+Apache License 2.0 — see [LICENSE](LICENSE). Third-party notices in [NOTICE](NOTICE). Use of the "Decoy" name and marks is governed by [TRADEMARKS.md](TRADEMARKS.md).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Contributions require a DCO sign-off (`git commit -s`). Security issues: see [SECURITY.md](SECURITY.md).
