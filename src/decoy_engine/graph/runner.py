@@ -245,9 +245,10 @@ def _execute_graph(
         # count; eviction happens inside _consume.
         in_edges = [e for e in edges if e["to"] == nid]
         inputs = [_consume(cache, remaining, e["from"], engine) for e in in_edges]
+        descriptor = _node_descriptor(node)
 
         if log is not None:
-            log.info("graph: running node %s (%s, engine=%s)", nid, kind, engine)
+            log.info("graph: running node %s (engine=%s)", descriptor, engine)
 
         t0 = time.monotonic()
         try:
@@ -265,8 +266,8 @@ def _execute_graph(
             })
             if log is not None:
                 log.info(
-                    "graph: %s ok rows=%d elapsed=%dms",
-                    nid,
+                    "graph: node %s ok rows=%d elapsed=%dms",
+                    descriptor,
                     arrow_row_count(table),
                     elapsed_ms,
                 )
@@ -286,7 +287,7 @@ def _execute_graph(
                 "error": str(translated),
             })
             if log is not None:
-                log.error("graph: %s failed: %s", nid, translated)
+                log.error("graph: node %s failed: %s", descriptor, translated)
                 log.error(traceback.format_exc())
             success = False
             break
@@ -379,7 +380,7 @@ def preview_graph(
             cache[nid] = table
         except Exception as exc:
             translated = translate_engine_error(exc, kind, nid)
-            error_msg = str(translated)
+            error_msg = f"node {_node_descriptor(node)} failed: {translated}"
             cache[nid] = None
             if nid == node_id:
                 break
@@ -498,6 +499,22 @@ def _validate_or_raise(config: dict) -> None:
         GraphConfigValidator(quiet).validate(config)
     except ValidationError as e:
         raise PipelineValidationError(str(e)) from e
+
+
+def _node_descriptor(node: dict) -> str:
+    """Format `<name> [id=<id>, kind=<kind>]` for logs.
+
+    `name` is optional in the YAML — drop the leading label when it's
+    missing so untagged nodes still log readably. The id+kind tail is
+    always present so users can grep logs back to the YAML even when
+    two nodes share a name.
+    """
+    nid = node.get("id", "?")
+    kind = node.get("kind", "?")
+    name = node.get("name")
+    if isinstance(name, str) and name.strip():
+        return f"{name!r} [id={nid}, kind={kind}]"
+    return f"[id={nid}, kind={kind}]"
 
 
 def _jsonable(v: Any) -> Any:

@@ -966,6 +966,14 @@ class GraphConfigValidator(ConfigValidator):
                     f"{path}.kind",
                 )
 
+            # Optional human label — surfaces in logs alongside id+kind.
+            name = node.get("name")
+            if name is not None and (not isinstance(name, str) or not name.strip()):
+                raise ValidationError(
+                    "name must be a non-empty string when set",
+                    f"{path}.name",
+                )
+
             cfg = node.get("config", {})
             if not isinstance(cfg, dict):
                 raise ValidationError(
@@ -1029,8 +1037,16 @@ class GraphConfigValidator(ConfigValidator):
                     f"nodes.{n['id']}",
                 )
             if max_in is not None and ic > max_in:
+                # Single-input ops (mask, generate, derive, ...) reject extra
+                # edges by design; nudge the user toward `unite` so they don't
+                # have to reverse-engineer the cardinality rule.
+                hint = (
+                    " — combine upstream tables with a 'unite' node first"
+                    if max_in == 1 and kind != "unite"
+                    else ""
+                )
                 raise ValidationError(
-                    f"node {n['id']!r} ({kind}) accepts at most {max_in} incoming edge(s), got {ic}",
+                    f"node {n['id']!r} ({kind}) accepts at most {max_in} incoming edge(s), got {ic}{hint}",
                     f"nodes.{n['id']}",
                 )
             if output_kind == "sink" and oc > 0:

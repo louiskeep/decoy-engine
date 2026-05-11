@@ -27,6 +27,7 @@ from decoy_engine.graph.ops import (
     iterate_loop,
     iterate_files,
     sql_run,
+    unite,
 )
 
 OPS: dict[str, object] = {
@@ -39,6 +40,7 @@ OPS: dict[str, object] = {
     "limit": limit,
     "dedupe": dedupe,
     "derive": derive,
+    "unite": unite,
     "run_storm": run_storm,
     "mask": mask_op,
     "generate": generate_op,
