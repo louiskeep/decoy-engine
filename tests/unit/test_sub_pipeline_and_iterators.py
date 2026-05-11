@@ -70,6 +70,40 @@ class TestSubPipelineValidation:
         )
 
 
+class TestSubPipelineDepthCap:
+    """The runner caps sub_pipeline recursion so A -> B -> A cycles can't
+    hang a worker."""
+
+    def test_depth_cap_default_is_32(self):
+        from decoy_engine.graph.ops.sub_pipeline import MAX_SUB_PIPELINE_DEPTH
+        assert MAX_SUB_PIPELINE_DEPTH == 32
+
+    def test_self_referential_sub_pipeline_raises_at_cap(self, tmp_path):
+        # A pipeline whose only node is a sub_pipeline pointing at itself.
+        # Will recurse forever without the depth guard.
+        cycle_yaml = tmp_path / "cycle.yaml"
+        cycle_yaml.write_text(
+            "mode: graph\n"
+            "nodes:\n"
+            "  - id: spin\n"
+            "    kind: sub_pipeline\n"
+            "    config:\n"
+            f"      pipeline_ref: {cycle_yaml}\n"
+            "      output_node: spin\n"
+            "edges: []\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(OpError, match="depth limit exceeded"):
+            sub_pipeline.apply(
+                inputs=[],
+                config={
+                    "pipeline_ref": str(cycle_yaml),
+                    "output_node": "spin",
+                },
+                ctx=None,
+            )
+
+
 class TestSubPipelineApply:
     def test_runs_sub_graph_and_returns_output_node(self, tmp_path):
         csv = _make_csv(
