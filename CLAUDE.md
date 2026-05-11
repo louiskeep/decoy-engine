@@ -6,6 +6,30 @@ Shared Python data engine. The only repo that contains data manipulation logic. 
 
 The cross-repo roadmap lives in **[forge-platform/ROADMAP.md](../forge-platform/ROADMAP.md)**. Start there for "where should we go?" questions, then come back here for engine-specific guides and plans.
 
+## Vocabulary
+
+Cross-repo glossary lives at **[../forge-platform/GLOSSARY.md](../forge-platform/GLOSSARY.md)**. Source of truth for Decoy vocabulary — Disguise, STORM, Mask, MIRROR, hybrid engine, the `Strategy` vs `Transform` split, plus the in-flight `forge → decoy` rename status.
+
+## Decisions
+
+Engine architecture decision records (ADRs) live in [`docs/adr/`](docs/adr/). The "why" behind non-obvious engine decisions — Polars + DuckDB hybrid substrate (ADR-0001), the two key resolvers in `ExecutionContext` (ADR-0002) — and the home for any new architectural decision worth recording. Format and threshold are pinned in [`docs/adr/template.md`](docs/adr/template.md); ADRs are immutable once landed (supersede with a new ADR rather than editing).
+
+## API reference
+
+Auto-generated reference for the public surface declared in `decoy_engine.__init__.__all__` is built by Sphinx + sphinx-autoapi from [`docs/`](docs/) and published to GitHub Pages by [`.github/workflows/docs.yml`](.github/workflows/docs.yml) on every push to `main`.
+
+To build locally:
+
+```bash
+pip install -e .[docs]
+make -C docs html            # or `make -C docs html-strict` to mirror CI
+open docs/_build/html/index.html
+```
+
+Sources: `docs/conf.py` (Sphinx config), `docs/index.md` (landing page). Auto-generated module pages are written to `docs/_build/html/api/` at build time and never committed — `docs/.gitignore` enforces this. The `internal/` subpackage is excluded from the public reference per the public-API rule below; if a name isn't in `__init__.py.__all__` and isn't a public-ish module symbol elsewhere, it doesn't appear on the docs site.
+
+The hand-curated guides below pair with the auto-generated reference; they describe target state, the auto-generated reference describes current shape.
+
 ## Docs in this repo
 
 We use two doc types. Distinguishing them keeps long-term plans aligned and short-term plans from rotting.
@@ -35,7 +59,7 @@ Comments live next to the surprise, not at the top of the file. If the non-obvio
 - [CONNECTOR_SDK_GUIDE.md](CONNECTOR_SDK_GUIDE.md) — Sprint G file-shaped SDK (`FileSource` / `FileSink`); tutorial + worked Azure Blob example for community connector authors. *(shipped 2026-05-10)*
 - [POLARS_FOR_PANDAS_USERS.md](POLARS_FOR_PANDAS_USERS.md) — contributor cheat sheet for the Polars relational ops. *(target)*
 
-The `Logger` Protocol in `decoy_engine.context` is owned by the platform's [LOGGING_GUIDE.md](../forge-platform/LOGGING_GUIDE.md) (sections 4 + 5). Engine entry points emit through the Protocol; the platform's `JobLogger` adapts it to job-log persistence + companion structured tables.
+The `Logger` Protocol in `decoy_engine.context` is owned by the platform's [LOGGING_GUIDE.md](../forge-platform/LOGGING_GUIDE.md) (sections 4 + 5). Engine entry points emit through the Protocol; the platform's `JobLogger` adapts it to job-log persistence + companion structured tables. Rationale captured in [ADR-0002 (platform)](../forge-platform/docs/adr/0002-logger-protocol-owned-by-platform.md).
 
 ## Repo structure
 
@@ -68,6 +92,8 @@ If a task involves terminal UX, HTTP, or databases — stop, it belongs in a dif
 ## Public API rule
 
 **Only names in `__init__.py.__all__` are public.** Everything under `internal/` is private and can change without a major version bump. When adding new public exports, add them to `__all__` explicitly.
+
+The Sphinx + autoapi build (see *API reference* above) honors this rule by ignoring `*/internal/*` in `docs/conf.py`. If you add a new public symbol, the next CI docs build picks it up automatically — no manual edit to a separate `.rst` file required.
 
 ## Setup
 
