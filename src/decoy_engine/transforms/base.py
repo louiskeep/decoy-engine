@@ -71,13 +71,26 @@ class BaseMaskingStrategy(MaskingStrategy):
         """
         column_name = rule.get('column', 'unnamed')
         strategy_name = self.strategy_name
-        
+
         # Count non-null values
         non_null_count = column.count()
-        
-        # Count values that changed
-        changed_mask = (column != result) & ~column.isna()
-        changed_count = changed_mask.sum()
+
+        # Count values that changed. Cast both sides to object first because
+        # masking can change the column's dtype (hash on int64 -> string in
+        # object dtype, faker on int -> string, etc.). Newer pandas dispatches
+        # mixed-dtype `!=` to pyarrow, which has no kernel for cross-dtype
+        # comparisons like (int64, string) and would raise. Object-on-object
+        # falls back to Python equality, which is what this stats line wants.
+        try:
+            changed_mask = (column.astype(object) != result.astype(object)) & ~column.isna()
+            changed_count = int(changed_mask.sum())
+        except Exception as exc:
+            # _log_stats is debug-only. Don't kill the mask run if the
+            # comparison can't be computed for any reason.
+            self.logger.debug(
+                f"Couldn't compute change stats for '{column_name}': {exc}"
+            )
+            changed_count = 0
         
         if non_null_count > 0:
             change_percentage = (changed_count / non_null_count) * 100
