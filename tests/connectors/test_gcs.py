@@ -23,14 +23,21 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import pytest
-from google.api_core import exceptions as gax_exc
 
-from decoy_engine.connectors.gcs import (
+# Skip the whole module when google-cloud-storage isn't installed. It's
+# an opt-in extra (`pip install -e .[gcs]`) because it pulls grpcio +
+# the rest of the GCP client stack; S3-only installs don't need it.
+# Submodule import: pytest.importorskip on the parent + attribute access
+# doesn't trigger submodule loading in all environments, so import the
+# submodule directly. Skips the file cleanly when the cloud SDK is absent.
+gax_exc = pytest.importorskip("google.api_core.exceptions")
+
+from decoy_engine.connectors.gcs import (  # noqa: E402
     GCSConfig,
     GCSFileSink,
     GCSFileSource,
 )
-from decoy_engine.sdk import PermanentError
+from decoy_engine.sdk import PermanentError  # noqa: E402
 
 from sdk_contract_tests import FileSinkContract, FileSourceContract  # noqa: E402
 

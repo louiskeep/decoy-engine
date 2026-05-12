@@ -7,12 +7,16 @@ classes (from sdk_contract_tests) need.
 """
 from __future__ import annotations
 
-import boto3
 import pytest
-from moto import mock_aws
 
-from decoy_engine.connectors.s3 import S3Config, S3FileSink, S3FileSource
-from decoy_engine.sdk import PermanentError
+# Skip the whole module when optional cloud-storage deps aren't installed.
+# `pip install -e .[dev]` brings boto3 + moto in transitively; bare pytest
+# runs on a slim install would otherwise fail at collection time.
+boto3 = pytest.importorskip("boto3")
+mock_aws = pytest.importorskip("moto").mock_aws
+
+from decoy_engine.connectors.s3 import S3Config, S3FileSink, S3FileSource  # noqa: E402
+from decoy_engine.sdk import PermanentError  # noqa: E402
 
 from sdk_contract_tests import FileSinkContract, FileSourceContract  # noqa: E402
 
