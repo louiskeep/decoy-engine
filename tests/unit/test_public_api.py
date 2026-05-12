@@ -47,6 +47,7 @@ def test_all_lists_every_public_name():
         "DecoyError", "ForgeError", "ConfigError", "PipelineValidationError",
         "ConnectorError", "ConnectorAuthError",
         "LicenseError", "LicenseExpiredError",
+        "FlagPauseSignal",
         "register_faker_provider", "unregister_faker_provider",
         # Connector SDK (Sprint G Week 1).
         "SDK_VERSION",

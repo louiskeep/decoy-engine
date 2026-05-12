@@ -1,6 +1,6 @@
 """Graph runtime: validate / run / preview entry points.
 
-These are the only symbols `decoy_engine.graph` exposes to callers — see
+These are the only symbols `decoy_engine.graph` exposes to callers -- see
 `graph/__init__.py`. The contract is documented in PIPELINE_GRAPH_GUIDE.md.
 
 Runtime cache: as of Phase 1 of the polars-duckdb hybrid plan, the runner
@@ -13,6 +13,11 @@ to polars / duckdb.
 Eviction: cache entries are evicted as soon as their last downstream
 consumer reads them. Keeps peak memory bounded by the in-flight working set
 rather than the lifetime of the run.
+
+Split ops: ops with OUTPUT_KIND="split" (e.g. `if`) return a dict of port
+name to DataFrame. The runner stores each port under `"node_id.port"` keys
+in the cache. Downstream edges use the `"node_id.port"` notation in their
+`from` field to consume a specific port.
 """
 
 import hashlib
@@ -28,7 +33,7 @@ import pyarrow as pa
 import yaml
 
 from decoy_engine.context import ExecutionContext, emit_lineage, emit_step
-from decoy_engine.exceptions import ConfigError, PipelineValidationError
+from decoy_engine.exceptions import ConfigError, FlagPauseSignal, PipelineValidationError
 from decoy_engine.graph.conversion import (
     arrow_columns,
     arrow_row_count,
@@ -45,13 +50,6 @@ from decoy_engine.graph.types import (
 from decoy_engine.internal.validator import GraphConfigValidator, ValidationError
 
 
-# Memory-pressure warning threshold — fraction of system RAM that, if a
-# pipeline's peak RSS reaches it, triggers a "consider engine: pandas"
-# warning in the run logs. Customers on tight EC2 instances see the
-# advisory before they actually OOM. Override via env var if a customer
-# wants quieter or louder signals (e.g. 0.5 for noisier early warning,
-# 0.85 for "only when really tight"). The default of 0.7 lines up with
-# the calibration: at 50M rows on a 32 GB box, hybrid uses ~72%.
 _MEMORY_WARN_THRESHOLD = float(
     os.environ.get("DECOY_MEMORY_WARN_THRESHOLD", "0.7")
 )
@@ -60,7 +58,7 @@ _MEMORY_WARN_THRESHOLD = float(
 class _PeakRSSMonitor:
     """Background thread that polls this process's RSS and tracks peak.
 
-    Fixed 200 ms sample interval — fast enough to catch peaks during op
+    Fixed 200 ms sample interval -- fast enough to catch peaks during op
     execution (where the cross-engine dual-representation cost lands),
     slow enough that the polling overhead is negligible. Daemon thread
     so a runner crash doesn't hang the process.
@@ -72,9 +70,7 @@ class _PeakRSSMonitor:
         self._thread: threading.Thread | None = None
         self._psutil = None
         try:
-            import psutil  # local import — psutil is a hard dep but keeps
-                           # the runner module importable in environments
-                           # where the lib is being upgraded.
+            import psutil
             self._psutil = psutil
         except ImportError:
             self._psutil = None
@@ -108,13 +104,6 @@ def _check_memory_pressure(
     graph_engine_mode: str,
     log: Any,
 ) -> None:
-    """If a hybrid-mode run got close to system memory, log an advisory.
-
-    Pandas-mode pipelines under memory pressure get a generic warning;
-    hybrid-mode pipelines get the specific "switch to engine: pandas"
-    suggestion since that path uses ~2× less peak memory per the Bug 5
-    calibration (results.md).
-    """
     if log is None or peak_rss_bytes == 0:
         return
     try:
@@ -132,7 +121,7 @@ def _check_memory_pressure(
             "Pipeline peak memory: %.1f GB (%d%% of %.1f GB system RAM). "
             "For larger jobs on memory-constrained hosts, set "
             "`engine: pandas` in your pipeline YAML to reduce peak memory "
-            "by ~2× (trade-off: ~2-3× slower CPU). See "
+            "by ~2x (trade-off: ~2-3x slower CPU). See "
             "SHARED_ENGINE_ARCHITECTURE.md.",
             peak_gb, int(fraction * 100), total_gb,
         )
@@ -164,6 +153,9 @@ def run_graph(
     Returns a RunResult with per-node telemetry. On the first node that
     raises, the runner stops, records the failure, and returns
     success=False. Remaining nodes are not executed.
+
+    FlagPauseSignal is re-raised without wrapping -- the platform runner
+    catches it to transition the job to review_pending.
     """
     config = _load_yaml(yaml_text)
     _validate_or_raise(config)
@@ -180,11 +172,7 @@ def execute_graph_capture(
     cache for nodes named in `keep_nodes`.
 
     Used by `sub_pipeline` and the iterator ops to capture sub-graph
-    output and pipe it into the parent graph. Public-but-quiet: not in
-    `decoy_engine.__init__.__all__` because the caller has to know what
-    to do with `pa.Table` values, which is internal contract knowledge.
-
-    `keep_nodes=None` keeps nothing (equivalent to `run_graph`).
+    output and pipe it into the parent graph.
     """
     config = _load_yaml(yaml_text)
     _validate_or_raise(config)
@@ -197,13 +185,6 @@ def _execute_graph(
     ctx: ExecutionContext | None,
     keep_nodes: list[str] | None = None,
 ) -> tuple[RunResult, dict[str, pa.Table]]:
-    """Internal: the actual node-by-node execution loop.
-
-    Returns the telemetry result plus a dict of `{node_id: pa.Table}` for
-    nodes the caller wants kept past natural eviction. `run_graph` passes
-    `keep_nodes=None`; sub_pipeline / iterator pass the IDs of the nodes
-    whose output flows into the parent graph.
-    """
     from decoy_engine.graph.ops import OPS
     from decoy_engine.graph.registry import native_engine_for
 
@@ -216,8 +197,6 @@ def _execute_graph(
     cache: dict[str, pa.Table] = {}
     remaining = _count_consumers(nodes, edges)
     keep_set = set(keep_nodes or [])
-    # Bump consumer counts for nodes the caller wants to keep so the
-    # eviction logic doesn't reclaim them before we return.
     for k in keep_set:
         remaining[k] = remaining.get(k, 0) + 1
     records: list[NodeRunRecord] = []
@@ -226,8 +205,6 @@ def _execute_graph(
 
     log = ctx.logger if ctx is not None and ctx.logger is not None else None
 
-    # Track peak RSS across the run; advise the customer if we hit
-    # memory pressure (see _check_memory_pressure docstring).
     monitor = _PeakRSSMonitor()
     monitor.__enter__()
 
@@ -252,12 +229,8 @@ def _execute_graph(
         op = OPS[kind]
         node_cfg = dict(node.get("config") or {})
         engine = native_engine_for(kind, graph_engine_mode)
-        # Stash the resolved engine so source ops (no upstream input to
-        # dispatch on) and any other engine-aware op can branch on it.
         node_cfg["__engine"] = engine
 
-        # Pull upstream outputs out of cache and decrement their consumer
-        # count; eviction happens inside _consume.
         in_edges = [e for e in edges if e["to"] == nid]
         # ``step_name`` is what the platform's JobLogger writes into the
         # STEP column of every narrative line emitted while this node is
@@ -284,33 +257,77 @@ def _execute_graph(
         t0 = time.monotonic()
         try:
             result = op.apply(inputs, node_cfg, ctx)
-            table = engine_to_arrow(result, engine) if result is not None else None
-            cache[nid] = table
-            elapsed_ms = int((time.monotonic() - t0) * 1000)
-            rows_out = arrow_row_count(table)
-            records.append({
-                "node_id": nid,
-                "kind": kind,
-                "status": "ok",
-                "row_count": rows_out,
-                "elapsed_ms": elapsed_ms,
-                "error": None,
-            })
-            if log is not None:
-                log.info(
-                    "graph: node %s ok rows=%d elapsed=%dms",
-                    descriptor,
-                    rows_out,
-                    elapsed_ms,
+            # Split-output ops (Item 21 IF / FLAG routers): each declared
+            # OUTPUT_PORT lands in its own cache slot keyed `<nid>.<port>`
+            # so downstream consumers can read a single port. Single-output
+            # ops take the regular `cache[nid]` path. ``emit_step(finish)``
+            # fires after either branch so the reporting timeline sees the
+            # node close regardless of split/non-split.
+            if isinstance(result, dict) and getattr(op, "OUTPUT_KIND", None) == "split":
+                ports = getattr(op, "OUTPUT_PORTS", ())
+                total_rows = 0
+                for port in ports:
+                    tbl = result.get(port)
+                    key = f"{nid}.{port}"
+                    arrow_tbl = engine_to_arrow(tbl, engine) if tbl is not None else None
+                    cache[key] = arrow_tbl
+                    total_rows += arrow_row_count(arrow_tbl)
+                    if remaining.get(key, 0) == 0 and key not in keep_set:
+                        cache.pop(key, None)
+                elapsed_ms = int((time.monotonic() - t0) * 1000)
+                records.append({
+                    "node_id": nid,
+                    "kind": kind,
+                    "status": "ok",
+                    "row_count": total_rows,
+                    "elapsed_ms": elapsed_ms,
+                    "error": None,
+                })
+                if log is not None:
+                    log.info(
+                        "graph: node %s ok rows=%d elapsed=%dms (split)",
+                        descriptor, total_rows, elapsed_ms,
+                    )
+                emit_step(
+                    log, step_name, status="finish",
+                    rows_in=rows_in_total or None, rows_out=total_rows,
                 )
-            emit_step(
-                log, step_name, status="finish",
-                rows_in=rows_in_total or None, rows_out=rows_out,
-            )
-            # Sink with no downstream consumers: evict immediately so memory
-            # is reclaimed (its result is empty by convention anyway).
-            if remaining.get(nid, 0) == 0:
-                cache.pop(nid, None)
+            else:
+                table = engine_to_arrow(result, engine) if result is not None else None
+                cache[nid] = table
+                elapsed_ms = int((time.monotonic() - t0) * 1000)
+                rows_out = arrow_row_count(table)
+                records.append({
+                    "node_id": nid,
+                    "kind": kind,
+                    "status": "ok",
+                    "row_count": rows_out,
+                    "elapsed_ms": elapsed_ms,
+                    "error": None,
+                })
+                if log is not None:
+                    log.info(
+                        "graph: node %s ok rows=%d elapsed=%dms",
+                        descriptor,
+                        rows_out,
+                        elapsed_ms,
+                    )
+                emit_step(
+                    log, step_name, status="finish",
+                    rows_in=rows_in_total or None, rows_out=rows_out,
+                )
+                # Sink with no downstream consumers: evict immediately so
+                # memory is reclaimed (its result is empty by convention
+                # anyway).
+                if remaining.get(nid, 0) == 0:
+                    cache.pop(nid, None)
+        except FlagPauseSignal:
+            # Item 21 controlled pause — not a failure. Let the platform
+            # runner handle it (creates a JobReview row, transitions the
+            # job to review_pending). No emit_step(error) because the
+            # phase isn't done yet; the resumed run will continue from
+            # the gate.
+            raise
         except Exception as exc:
             translated = translate_engine_error(exc, kind, nid)
             elapsed_ms = int((time.monotonic() - t0) * 1000)
@@ -337,10 +354,6 @@ def _execute_graph(
         "success": success,
         "elapsed_ms": int((time.monotonic() - overall_start) * 1000),
     }
-    # Cache contains whatever survived eviction. For `run_graph` callers
-    # this is empty (every consumer has read). For `execute_graph_capture`
-    # callers the kept nodes are still present because we bumped their
-    # consumer counts above.
     kept_cache = {k: cache[k] for k in keep_set if k in cache}
     return result, kept_cache
 
@@ -355,7 +368,7 @@ def preview_graph(
 
     Walks only the ancestors of `node_id`, applies the row_limit hint to
     sources, and returns the DataFrame at `node_id` capped to `row_limit`.
-    Targets do NOT execute their side effect — the dataframe that would
+    Targets do NOT execute their side effect -- the dataframe that would
     have been written is returned instead.
 
     Per the PIPELINE_GRAPH_GUIDE: errors return PreviewResult with
@@ -379,9 +392,6 @@ def preview_graph(
 
     graph_engine_mode = _resolve_engine_mode(config)
 
-    # Preview mode does NOT evict the target node's cache (we still need to
-    # serialize it after the run). Eviction for upstream-of-target nodes is
-    # safe — they have downstream consumers that read them along the way.
     cache: dict[str, pa.Table] = {}
     sub_node_set = set(sub_order)
     sub_nodes = [n for n in nodes if n["id"] in sub_node_set]
@@ -399,9 +409,6 @@ def preview_graph(
         engine = native_engine_for(kind, graph_engine_mode)
         node_cfg["__engine"] = engine
         in_edges = [e for e in sub_edges if e["to"] == nid]
-        # In preview mode, do NOT evict the target node — its output is
-        # what the caller will serialize. Eviction for non-target upstreams
-        # behaves as in run_graph.
         inputs = [
             _consume(cache, remaining, e["from"], engine, hold=node_id)
             for e in in_edges
@@ -409,12 +416,27 @@ def preview_graph(
 
         try:
             result = op.apply(inputs, node_cfg, ctx)
-            table = engine_to_arrow(result, engine) if result is not None else None
-            # Cap downstream tables so a small source doesn't blow up if a
-            # transform inflates row count (e.g. cross join).
-            if table is not None and table.num_rows > row_limit:
-                table = table.slice(0, row_limit)
-            cache[nid] = table
+            if isinstance(result, dict) and getattr(op, "OUTPUT_KIND", None) == "split":
+                ports = getattr(op, "OUTPUT_PORTS", ())
+                for port in ports:
+                    tbl = result.get(port)
+                    key = f"{nid}.{port}"
+                    arrow_tbl = engine_to_arrow(tbl, engine) if tbl is not None else None
+                    if arrow_tbl is not None and arrow_tbl.num_rows > row_limit:
+                        arrow_tbl = arrow_tbl.slice(0, row_limit)
+                    cache[key] = arrow_tbl
+                # Expose the "pass" port as the direct node output for preview.
+                cache[nid] = cache.get(f"{nid}.pass")
+            else:
+                table = engine_to_arrow(result, engine) if result is not None else None
+                if table is not None and table.num_rows > row_limit:
+                    table = table.slice(0, row_limit)
+                cache[nid] = table
+        except FlagPauseSignal as fps:
+            error_msg = f"node {_node_descriptor(node)} gate blocked: {fps}"
+            cache[nid] = None
+            if nid == node_id:
+                break
         except Exception as exc:
             translated = translate_engine_error(exc, kind, nid)
             error_msg = f"node {_node_descriptor(node)} failed: {translated}"
@@ -437,9 +459,6 @@ def preview_graph(
         }
 
     columns = arrow_columns(target_table)
-    # Materialize to pandas at the boundary — the UI consumes a JSON-shaped
-    # list-of-lists. This is the canonical preview boundary regardless of
-    # which engine produced the table (Phase 5 codifies this).
     df_preview = target_table.slice(0, row_limit).to_pandas()
     rows = [
         [_jsonable(v) for v in row]
@@ -457,18 +476,32 @@ def preview_graph(
 
 
 def _count_consumers(nodes: list[dict], edges: list[dict]) -> dict[str, int]:
-    """Per node, count how many downstream edges consume its output.
+    """Per node (or per port for split ops), count downstream edge consumers.
 
-    Used by the cache for eager eviction: when a node's count hits zero,
-    its cache entry is released for GC.
+    Split ops (OUTPUT_KIND="split") get per-port entries keyed as
+    "node_id.port" rather than a single "node_id" entry.
     """
-    counts: dict[str, int] = {n["id"]: 0 for n in nodes}
+    from decoy_engine.graph.ops import OPS
+
+    counts: dict[str, int] = {}
+    for n in nodes:
+        # Look up the op for split-port discovery. Unknown / missing kinds
+        # fall through to the regular non-split path so the helper stays
+        # usable from validators and unit tests that pass minimal node
+        # dicts. Real run_graph() callers always populate `kind` — the
+        # registry KeyError there would be a config-validation failure,
+        # caught higher up.
+        op = OPS.get(n.get("kind", "")) if hasattr(OPS, "get") else None
+        if op is not None and getattr(op, "OUTPUT_KIND", "stream") == "split":
+            for port in getattr(op, "OUTPUT_PORTS", ()):
+                counts[f"{n['id']}.{port}"] = 0
+        else:
+            counts[n["id"]] = 0
+
     for e in edges:
-        # Self-loops are forbidden by the validator; defensive count anyway.
-        if e["from"] == e["to"]:
-            continue
-        if e["from"] in counts:
-            counts[e["from"]] += 1
+        src = e["from"]
+        if src != e["to"] and src in counts:
+            counts[src] += 1
     return counts
 
 
@@ -481,9 +514,9 @@ def _consume(
 ) -> Any:
     """Read upstream output, decrement consumer count, evict at zero.
 
-    `hold` is a node id whose cache entry must survive eviction (preview
-    mode pins the target node's entry so the caller can serialize it after
-    the run).
+    `node_id` may be "nid" or "nid.port" for split op outputs.
+    `hold` pins the target node's cache entry so the preview caller can
+    serialize it after the run.
     """
     table = cache.get(node_id)
     if table is None:
@@ -496,22 +529,6 @@ def _consume(
 
 
 def _resolve_engine_mode(config: dict) -> str:
-    """Read the graph YAML's top-level `engine:` key.
-
-    Values:
-      "hybrid" (default, since Phase 8 of the polars-duckdb hybrid plan):
-                           respect each op's NATIVE_ENGINE declaration.
-                           Source / sink ops run on DuckDB; relational ops
-                           run on Polars; mask / generate / run_storm stay
-                           on pandas.
-      "pandas"           — opt-out: force every op through its pandas
-                           fallback regardless of declaration. The safety
-                           hatch for one release cycle. After that, Phase 9
-                           (cleanup) removes pandas fallbacks and this flag
-                           becomes a no-op.
-
-    Unknown values fall back to the default with no error.
-    """
     mode = config.get("engine") or "hybrid"
     if mode not in ("pandas", "hybrid"):
         return "hybrid"
@@ -539,13 +556,6 @@ def _validate_or_raise(config: dict) -> None:
 
 
 def _node_descriptor(node: dict) -> str:
-    """Format `<name> [id=<id>, kind=<kind>]` for logs.
-
-    `name` is optional in the YAML — drop the leading label when it's
-    missing so untagged nodes still log readably. The id+kind tail is
-    always present so users can grep logs back to the YAML even when
-    two nodes share a name.
-    """
     nid = node.get("id", "?")
     kind = node.get("kind", "?")
     name = node.get("name")
@@ -557,9 +567,7 @@ def _node_descriptor(node: dict) -> str:
 def _jsonable(v: Any) -> Any:
     """Replace NaN/NaT/etc. with None so the row tuples serialize cleanly."""
     try:
-        # pandas NA / numpy nan
         import pandas as pd
-
         if pd.isna(v):
             return None
     except Exception:
@@ -568,10 +576,6 @@ def _jsonable(v: Any) -> Any:
 
 
 def _node_hash(node: dict, upstream_hashes: list[str], row_limit: int) -> str:
-    """Composite hash for cache keys (per Q5).
-
-    Process-scoped, used only inside a single preview call right now.
-    """
     payload = {
         "kind": node.get("kind"),
         "config": node.get("config") or {},

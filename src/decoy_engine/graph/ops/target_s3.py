@@ -1,0 +1,63 @@
+"""target.s3 — write a DataFrame to S3 (or S3-compatible storage).
+
+Config:
+    bucket: str            - S3 bucket name (required)
+    path: str              - S3 object key to write (required)
+    format: str            - 'csv' | 'parquet' (optional; inferred from path)
+    region: str            - AWS region (optional; default 'us-east-1')
+    access_key_id: str     - AWS access key (optional; falls back to boto3 chain)
+    secret_access_key: str - AWS secret key (optional)
+    endpoint_url: str      - S3-compatible endpoint override (optional)
+    prefix: str            - key prefix scoping the connector (optional)
+
+Writes the DataFrame to a local temp file via DuckDB / pandas, then streams
+the bytes to S3 via S3FileSink.write(). Preview mode skips the upload and
+returns the DataFrame unchanged.
+"""
+from typing import Any
+
+from decoy_engine.graph.ops._base import OpError
+from decoy_engine.graph.ops._cloud_io import infer_format, validate_format, write_and_upload
+from decoy_engine.internal.validator import ValidationError
+
+KIND = "target.s3"
+NATIVE_ENGINE = "duckdb"
+INPUT_ARITY: tuple[int, int | None] = (1, 1)
+OUTPUT_KIND = "sink"
+
+
+def validate_config(config: dict[str, Any]) -> None:
+    if "bucket" not in config:
+        raise ValidationError("missing required field 'bucket'", "config.bucket")
+    if "path" not in config:
+        raise ValidationError("missing required field 'path'", "config.path")
+    fmt = (config.get("format") or infer_format(config["path"])).lower()
+    validate_format(fmt)
+
+
+def apply(inputs, config, ctx):
+    df = inputs[0]
+    if config.get("__preview_row_limit") is not None:
+        return df
+
+    from decoy_engine.connectors.s3 import S3Config, S3FileSink
+
+    try:
+        s3_config = S3Config(
+            bucket=config["bucket"],
+            prefix=config.get("prefix", ""),
+            region=config.get("region", "us-east-1"),
+            access_key_id=config.get("access_key_id"),
+            secret_access_key=config.get("secret_access_key"),
+            endpoint_url=config.get("endpoint_url"),
+        )
+    except Exception as exc:
+        raise OpError(f"target.s3 config error: {exc}") from exc
+
+    sink = S3FileSink(s3_config)
+    try:
+        return write_and_upload(df, sink, config["path"], config)
+    except OpError:
+        raise
+    except Exception as exc:
+        raise OpError(f"target.s3 write failed: {exc}") from exc

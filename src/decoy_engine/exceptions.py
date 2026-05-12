@@ -39,4 +39,20 @@ class LicenseExpiredError(LicenseError):
     """Raised when a license has expired."""
 
 
+class FlagPauseSignal(DecoyError):
+    """Raised by flag_gate op when review conditions fail.
+
+    Not a crash — the platform runner catches this and transitions the
+    job to `review_pending` rather than `failed`. The conditions_failed
+    list is stored in the `job_reviews` table for the approver.
+    """
+
+    def __init__(self, conditions_failed: list[dict], gate_id: str = "") -> None:
+        self.conditions_failed = conditions_failed
+        self.gate_id = gate_id
+        detail = "; ".join(c.get("message", str(c)) for c in conditions_failed)
+        prefix = f"flag gate {gate_id!r}: " if gate_id else "flag gate: "
+        super().__init__(f"{prefix}conditions failed: {detail}")
+
+
 ForgeError = DecoyError

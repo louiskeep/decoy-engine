@@ -2,6 +2,11 @@
 
 Kahn's algorithm. Raises ValidationError on cycles. Edges are dicts with
 `from`/`to` keys (the YAML format), not the in-code `from_` form.
+
+Edge `from` values may use "node_id.port" notation for split ops (e.g.
+"if1.pass"). Both functions strip the port suffix before building the
+dependency graph so that topo ordering and ancestor traversal work on
+plain node IDs.
 """
 
 from collections import deque
@@ -19,9 +24,12 @@ def topo_order(nodes: Iterable[dict], edges: Iterable[dict]) -> list[str]:
     indegree = {nid: 0 for nid in node_ids}
     out_edges: dict[str, list[str]] = {nid: [] for nid in node_ids}
     for e in edges:
-        src, dst = e["from"], e["to"]
-        out_edges[src].append(dst)
-        indegree[dst] += 1
+        src = e["from"].split(".", 1)[0]  # strip port suffix if any
+        dst = e["to"]
+        if src in out_edges:
+            out_edges[src].append(dst)
+        if dst in indegree:
+            indegree[dst] += 1
 
     ready = deque(nid for nid, d in indegree.items() if d == 0)
     order: list[str] = []
@@ -52,8 +60,9 @@ def upstream_subgraph(
         out_edges.setdefault(n["id"], [])
         in_edges.setdefault(n["id"], [])
     for e in edges:
-        out_edges.setdefault(e["from"], []).append(e["to"])
-        in_edges.setdefault(e["to"], []).append(e["from"])
+        src_nid = e["from"].split(".", 1)[0]  # strip port suffix if any
+        out_edges.setdefault(src_nid, []).append(e["to"])
+        in_edges.setdefault(e["to"], []).append(src_nid)
 
     needed: set[str] = set()
     stack = [target]
@@ -65,5 +74,9 @@ def upstream_subgraph(
         stack.extend(in_edges.get(nid, []))
 
     sub_nodes = [n for n in nodes if n["id"] in needed]
-    sub_edges = [e for e in edges if e["from"] in needed and e["to"] in needed]
+    # Keep original edges (with port notation) so runner can use port keys.
+    sub_edges = [
+        e for e in edges
+        if e["from"].split(".", 1)[0] in needed and e["to"] in needed
+    ]
     return topo_order(sub_nodes, sub_edges), sub_edges

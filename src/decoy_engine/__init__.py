@@ -1,6 +1,6 @@
 # decoy_engine/__init__.py
 """
-decoy_engine — data masking and synthetic generation library.
+decoy_engine -- data masking and synthetic generation library.
 
 Public API (the contract CLI and platform code depend on):
     Masker            orchestrate a masking pipeline from a YAML config
@@ -14,12 +14,13 @@ Public API (the contract CLI and platform code depend on):
 Public exceptions (also in decoy_engine.exceptions):
     DecoyError, ConfigError, PipelineValidationError,
     ConnectorError, ConnectorAuthError,
-    LicenseError, LicenseExpiredError
+    LicenseError, LicenseExpiredError,
+    FlagPauseSignal
 
 `ForgeError` is a deprecated alias for `DecoyError` kept for one minor
 version while the rebrand rolls through downstream consumers.
 
-Anything not listed in __all__ — and anything under decoy_engine.internal —
+Anything not listed in __all__ -- and anything under decoy_engine.internal --
 is private and may change without a version bump.
 """
 
@@ -64,15 +65,14 @@ from decoy_engine.exceptions import (
     ConnectorAuthError,
     LicenseError,
     LicenseExpiredError,
+    FlagPauseSignal,
 )
 from decoy_engine.internal.helpers import (
     register_faker_provider,
     unregister_faker_provider,
 )
 
-# Connector SDK. The `sdk` submodule is the public surface third-party
-# connector authors build against; re-exporting the top-level names here
-# keeps the common `from decoy_engine import FileSource` import working.
+# Connector SDK.
 from decoy_engine.sdk import (
     SDK_VERSION,
     CAP_STREAMING,
@@ -132,6 +132,7 @@ __all__ = [
     'ConnectorAuthError',
     'LicenseError',
     'LicenseExpiredError',
+    'FlagPauseSignal',
     'register_faker_provider',
     'unregister_faker_provider',
     # Connector SDK.
