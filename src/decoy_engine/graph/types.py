@@ -40,6 +40,11 @@ class NodeRunRecord(TypedDict, total=False):
     row_count: int | None
     elapsed_ms: int
     error: str | None
+    # Per-node exports captured via `ctx.export(key, value)` inside the op.
+    # Flat dict of JSON-serializable scalars; downstream nodes reference
+    # values via `${nodes.<id>.<key>}` substitution at run time. Keys per
+    # op kind documented in PIPELINE_GRAPH_GUIDE.md "Node exports".
+    exports: dict[str, Any] | None
 
 
 class RunResult(TypedDict):

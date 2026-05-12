@@ -38,9 +38,27 @@ def validate_config(config: dict[str, Any]) -> None:
 
 def apply(inputs, config, ctx):
     engine = config.get("__engine", "pandas")
+    path = Path(config["path"])
+    fmt = (config.get("format") or _infer_format(str(path))).lower()
     if engine == "duckdb":
-        return _apply_duckdb(config)
-    return _apply_pandas(config)
+        result = _apply_duckdb(config)
+        row_count = result.num_rows
+        column_count = len(result.column_names)
+    else:
+        result = _apply_pandas(config)
+        row_count = len(result)
+        column_count = len(result.columns)
+    if ctx is not None and hasattr(ctx, "export"):
+        ctx.export("row_count", int(row_count))
+        ctx.export("column_count", int(column_count))
+        ctx.export("inferred_format", fmt)
+        try:
+            ctx.export("file_size_bytes", int(path.stat().st_size))
+        except OSError:
+            # File might be a stream / FUSE mount that doesn't stat cleanly.
+            # Skip rather than fail the op for a metric.
+            pass
+    return result
 
 
 def _apply_pandas(config: dict[str, Any]) -> pd.DataFrame:

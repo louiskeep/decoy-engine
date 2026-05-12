@@ -43,9 +43,24 @@ def apply(inputs, config, ctx):
         return df
 
     engine = config.get("__engine", "pandas")
+    # Row count is known from the input shape regardless of engine path —
+    # capture before delegating so both pandas and duckdb branches share
+    # the same export semantics.
     if engine == "duckdb":
-        return _apply_duckdb(df, config)
-    return _apply_pandas(df, config)
+        rows_written = int(df.num_rows)
+        result = _apply_duckdb(df, config)
+    else:
+        rows_written = int(len(df))
+        result = _apply_pandas(df, config)
+    if ctx is not None and hasattr(ctx, "export"):
+        path = Path(config["output_filename"])
+        ctx.export("rows_written", rows_written)
+        ctx.export("output_path", str(path.resolve()))
+        try:
+            ctx.export("output_file_size_bytes", int(path.stat().st_size))
+        except OSError:
+            pass
+    return result
 
 
 def _apply_pandas(df: pd.DataFrame, config: dict[str, Any]) -> pd.DataFrame:

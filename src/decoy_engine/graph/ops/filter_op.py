@@ -37,9 +37,22 @@ def validate_config(config: dict[str, Any]) -> None:
 def apply(inputs, config, ctx):
     df = inputs[0]
     predicate = config["predicate"]
+    rows_in = _frame_len(df)
     if is_polars_frame(df):
-        return _apply_polars(df, predicate)
-    return _apply_pandas(df, predicate)
+        result = _apply_polars(df, predicate)
+    else:
+        result = _apply_pandas(df, predicate)
+    if ctx is not None and hasattr(ctx, "export"):
+        rows_out = _frame_len(result)
+        ctx.export("rows_in", rows_in)
+        ctx.export("rows_out", rows_out)
+        ctx.export("selectivity", (rows_out / rows_in) if rows_in else 0.0)
+    return result
+
+
+def _frame_len(frame: Any) -> int:
+    """Length helper that works for both pandas and polars frames."""
+    return int(len(frame))
 
 
 def _apply_pandas(df: pd.DataFrame, predicate: str) -> pd.DataFrame:

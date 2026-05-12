@@ -104,6 +104,12 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
                 table_name="__graph_generate__",
                 reference_data={},
             )
-        return out
     except Exception as exc:
         raise OpError(f"generate op failed: {exc}") from exc
+
+    if ctx is not None and hasattr(ctx, "export"):
+        ctx.export("rows_generated", int(len(out)))
+        ctx.export("columns_generated", int(len(columns)))
+        ctx.export("seed_used", seed)
+
+    return out

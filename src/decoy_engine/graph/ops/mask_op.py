@@ -76,9 +76,31 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
         from decoy_engine.transforms.registry import StrategyManager
 
         manager = StrategyManager(seed=seed, logger=logger, derive_key=derive_key)
-        return manager.apply_masking_rules(df, rules)
+        result = manager.apply_masking_rules(df, rules)
     except Exception as exc:
         raise OpError(f"mask op failed: {exc}") from exc
+
+    if ctx is not None and hasattr(ctx, "export"):
+        ctx.export("rows_processed", int(len(result)))
+        # Strategies that touched the data — distinct values, sorted for
+        # stable downstream comparisons.
+        strategies_applied = sorted({
+            (spec.get("strategy") or "")
+            for spec in columns.values()
+            if spec.get("strategy") and spec.get("strategy") != "passthrough"
+        })
+        ctx.export("strategies_applied", strategies_applied)
+        # Total null cells across the columns the user actually masked.
+        # Passes through unchanged when the source value was None — useful
+        # signal for "PII not masked because it was null" audit trails.
+        masked_col_names = [c for c in columns if c in result.columns]
+        if masked_col_names:
+            null_count = int(result[masked_col_names].isna().sum().sum())
+        else:
+            null_count = 0
+        ctx.export("null_passthrough_count", null_count)
+
+    return result
 
 
 def _columns_to_rules(columns: dict[str, dict]) -> list[dict]:

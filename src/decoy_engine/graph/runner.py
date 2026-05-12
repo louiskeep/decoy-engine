@@ -24,6 +24,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import threading
 import time
 import traceback
@@ -203,7 +204,13 @@ def _execute_graph(
     overall_start = time.monotonic()
     success = True
 
-    log = ctx.logger if ctx is not None and ctx.logger is not None else None
+    # The runner always works with a real ExecutionContext so ops can call
+    # `ctx.export()` regardless of caller. External callers that pass None
+    # still get the same behavior; the exports just don't escape this scope.
+    if ctx is None:
+        ctx = ExecutionContext()
+
+    log = ctx.logger
 
     monitor = _PeakRSSMonitor()
     monitor.__enter__()
@@ -231,6 +238,30 @@ def _execute_graph(
         engine = native_engine_for(kind, graph_engine_mode)
         node_cfg["__engine"] = engine
 
+        # Resolve `${nodes.<id>.<key>}` tokens against exports captured by
+        # already-completed nodes. Other scopes (var/env/trigger/storm) are
+        # resolved by the platform before the YAML reaches the engine; this
+        # one is engine-only because the values don't exist until upstream
+        # ops have run.
+        try:
+            node_cfg = _resolve_node_exports(node_cfg, ctx._exports, nid)
+        except _NodeExportResolutionError as exc:
+            records.append({
+                "node_id": nid,
+                "kind": kind,
+                "status": "error",
+                "row_count": None,
+                "elapsed_ms": 0,
+                "error": str(exc),
+                "exports": None,
+            })
+            if log is not None:
+                log.error("graph: node %s failed: %s", _node_descriptor(node), exc)
+            success = False
+            break
+
+        # Pull upstream outputs out of cache and decrement their consumer
+        # count; eviction happens inside _consume.
         in_edges = [e for e in edges if e["to"] == nid]
         # ``step_name`` is what the platform's JobLogger writes into the
         # STEP column of every narrative line emitted while this node is
@@ -255,6 +286,7 @@ def _execute_graph(
         emit_step(log, step_name, status="start", rows_in=rows_in_total or None)
 
         t0 = time.monotonic()
+        ctx._current_node_id = nid
         try:
             result = op.apply(inputs, node_cfg, ctx)
             # Split-output ops (Item 21 IF / FLAG routers): each declared
@@ -262,7 +294,10 @@ def _execute_graph(
             # so downstream consumers can read a single port. Single-output
             # ops take the regular `cache[nid]` path. ``emit_step(finish)``
             # fires after either branch so the reporting timeline sees the
-            # node close regardless of split/non-split.
+            # node close regardless of split/non-split. The ``exports``
+            # field carries any values the op recorded via ``ctx.export()``
+            # — used by ``${nodes.<id>.<key>}`` resolution and surfaced
+            # to the platform via JobNodeRun.exports.
             if isinstance(result, dict) and getattr(op, "OUTPUT_KIND", None) == "split":
                 ports = getattr(op, "OUTPUT_PORTS", ())
                 total_rows = 0
@@ -282,6 +317,7 @@ def _execute_graph(
                     "row_count": total_rows,
                     "elapsed_ms": elapsed_ms,
                     "error": None,
+                    "exports": ctx._exports.get(nid),
                 })
                 if log is not None:
                     log.info(
@@ -304,6 +340,7 @@ def _execute_graph(
                     "row_count": rows_out,
                     "elapsed_ms": elapsed_ms,
                     "error": None,
+                    "exports": ctx._exports.get(nid),
                 })
                 if log is not None:
                     log.info(
@@ -338,6 +375,7 @@ def _execute_graph(
                 "row_count": None,
                 "elapsed_ms": elapsed_ms,
                 "error": str(translated),
+                "exports": ctx._exports.get(nid),
             })
             if log is not None:
                 log.error("graph: node %s failed: %s", descriptor, translated)
@@ -345,6 +383,8 @@ def _execute_graph(
             emit_step(log, step_name, status="error", rows_in=rows_in_total or None)
             success = False
             break
+        finally:
+            ctx._current_node_id = None
 
     monitor.__exit__(None, None, None)
     _check_memory_pressure(monitor.peak_rss, graph_engine_mode, log)
@@ -573,6 +613,107 @@ def _jsonable(v: Any) -> Any:
     except Exception:
         pass
     return v
+
+
+# Engine-side resolver for `${nodes.<id>.<key>[.<sub>...]}` tokens. Other
+# scopes (var/env/trigger/storm/iteration) are resolved platform-side before
+# the YAML reaches the engine. This scope must be resolved live because the
+# values come from already-completed upstream ops.
+_NODE_TOKEN_RE = re.compile(r"\$\{nodes\.([a-zA-Z0-9_-]+)\.([a-zA-Z_][\w.]*)\}")
+
+
+class _NodeExportResolutionError(Exception):
+    """Raised when a `${nodes.X.Y}` token can't be resolved.
+
+    The runner catches this, records the failing node with an actionable
+    error message, and stops the pipeline."""
+
+
+def _resolve_node_exports(
+    cfg: Any,
+    exports: dict[str, dict[str, Any]],
+    current_node_id: str,
+) -> Any:
+    """Walk cfg and substitute `${nodes.X.Y}` tokens against `exports`.
+
+    Returns a new structure; cfg is not mutated. Raises
+    `_NodeExportResolutionError` for unknown ids / keys (which usually means
+    a forward reference or a typo)."""
+    return _walk_for_exports(cfg, exports, current_node_id)
+
+
+def _walk_for_exports(
+    node: Any,
+    exports: dict[str, dict[str, Any]],
+    current_node_id: str,
+) -> Any:
+    if isinstance(node, dict):
+        return {k: _walk_for_exports(v, exports, current_node_id) for k, v in node.items()}
+    if isinstance(node, list):
+        return [_walk_for_exports(v, exports, current_node_id) for v in node]
+    if isinstance(node, str):
+        return _replace_node_exports_in_string(node, exports, current_node_id)
+    return node
+
+
+def _replace_node_exports_in_string(
+    s: str,
+    exports: dict[str, dict[str, Any]],
+    current_node_id: str,
+) -> Any:
+    # Whole-string token preserves type (int / float / list / dict stay
+    # their native shape). Partial substitution coerces to str.
+    full = _NODE_TOKEN_RE.fullmatch(s)
+    if full is not None:
+        return _resolve_one_node_export(
+            full.group(1), full.group(2), exports, current_node_id
+        )
+
+    def replace(match: re.Match[str]) -> str:
+        return str(_resolve_one_node_export(
+            match.group(1), match.group(2), exports, current_node_id
+        ))
+
+    return _NODE_TOKEN_RE.sub(replace, s)
+
+
+def _resolve_one_node_export(
+    node_id: str,
+    key: str,
+    exports: dict[str, dict[str, Any]],
+    current_node_id: str,
+) -> Any:
+    if node_id == current_node_id:
+        raise _NodeExportResolutionError(
+            f"node {current_node_id!r} references its own exports via "
+            f"${{nodes.{node_id}.{key}}} — exports are only readable from "
+            f"downstream nodes"
+        )
+    if node_id not in exports:
+        raise _NodeExportResolutionError(
+            f"unresolved variable: ${{nodes.{node_id}.{key}}} — node "
+            f"{node_id!r} has not run yet (forward reference or upstream "
+            f"failure)"
+        )
+    cur: Any = exports[node_id]
+    for part in key.split("."):
+        if isinstance(cur, dict) and part in cur:
+            cur = cur[part]
+        elif isinstance(cur, list) and part.isdigit():
+            idx = int(part)
+            if 0 <= idx < len(cur):
+                cur = cur[idx]
+            else:
+                raise _NodeExportResolutionError(
+                    f"unresolved variable: ${{nodes.{node_id}.{key}}} — "
+                    f"index {idx} out of range"
+                )
+        else:
+            raise _NodeExportResolutionError(
+                f"unresolved variable: ${{nodes.{node_id}.{key}}} — "
+                f"key {part!r} not in {node_id!r}'s exports"
+            )
+    return cur
 
 
 def _node_hash(node: dict, upstream_hashes: list[str], row_limit: int) -> str:

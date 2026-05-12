@@ -41,6 +41,16 @@ import pandas as pd
 from decoy_engine.graph.ops._base import OpError
 from decoy_engine.internal.validator import ValidationError
 
+def _attr_or_key(obj: Any, name: str) -> Any:
+    """Lookup `name` on `obj` whether it's a dataclass-style object or a dict.
+
+    StormProfile fields normalize to dataclass shape, but tests sometimes
+    construct profile dicts directly; handle both."""
+    if isinstance(obj, dict):
+        return obj.get(name)
+    return getattr(obj, name, None)
+
+
 KIND = "run_storm"
 # Phase 1 Arrow-boundary benchmark on a HIPAA-shaped fixture: ~2.4% overhead.
 # Stay on pandas — within the 10% threshold for declaring "arrow".
@@ -120,5 +130,28 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
                 source_label,
                 profile.row_count,
             )
+
+    if ctx is not None and hasattr(ctx, "export"):
+        ctx.export("rows_scanned", int(profile.row_count))
+        entities: dict[str, int] = {}
+        k_anon_violations = 0
+        for field in getattr(profile, "fields", []) or []:
+            for match in getattr(field, "detector_matches", []) or []:
+                kind = _attr_or_key(match, "kind")
+                if kind:
+                    entities[kind] = entities.get(kind, 0) + 1
+            for sentinel in getattr(field, "sentinels", []) or []:
+                if _attr_or_key(sentinel, "kind") == "k_anonymity":
+                    k_anon_violations += 1
+        ctx.export("entities_detected", entities)
+        ctx.export("reid_risk_score", float(getattr(profile, "reid_risk_score", 0.0) or 0.0))
+        ctx.export("k_anonymity_violations", k_anon_violations)
+        # Stable hash of the serialized profile body; downstream audit nodes
+        # can pin to a specific scan output.
+        import hashlib as _hashlib
+        import json as _json
+        profile_dict = profile.to_dict()
+        body = _json.dumps(profile_dict, sort_keys=True, default=str).encode("utf-8")
+        ctx.export("profile_hash", _hashlib.sha256(body).hexdigest())
 
     return df

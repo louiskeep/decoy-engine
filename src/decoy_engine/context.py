@@ -212,6 +212,14 @@ class ExecutionContext:
         # than dict because a single graph may run multiple instances of the
         # same op, and node_id is not visible inside `op.apply`.
         self.captured_outputs = captured_outputs if captured_outputs is not None else []
+        # Per-node exports the runner reads after each op completes and folds
+        # into the node's NodeRunRecord. Keyed by node id; values are flat
+        # dicts of JSON-serializable scalars. Runner sets `_current_node_id`
+        # before each `op.apply()` so ops can call `ctx.export(key, value)`
+        # without needing to know their own node id. The keys are documented
+        # per op kind in PIPELINE_GRAPH_GUIDE.md "Node exports".
+        self._exports: dict[str, dict[str, Any]] = {}
+        self._current_node_id: str | None = None
         # ── two key resolvers, by design ──
         #
         # `derive_key(info)` is the **mask** resolver. Caller pre-binds the
@@ -231,6 +239,22 @@ class ExecutionContext:
         # `derive_key`, generate uses `pipeline_derive_key`.
         self.derive_key = derive_key
         self.pipeline_derive_key = pipeline_derive_key
+
+    def export(self, key: str, value: Any) -> None:
+        """Emit a node-level export the runner folds into NodeRunRecord.
+
+        Op authors call this from inside `apply()`; the runner sets
+        `_current_node_id` before each call so the op doesn't need to know
+        its own id. Downstream nodes consume the value via
+        `${nodes.<id>.<key>}` substitution which the runner resolves
+        live before each op runs.
+
+        Silently no-ops when called outside a node-execution scope so the
+        preview path (which doesn't record exports) and external callers
+        don't trip on op code that always calls export()."""
+        if self._current_node_id is None:
+            return
+        self._exports.setdefault(self._current_node_id, {})[key] = value
 
 
 # ── helpers callers (CLI, platform) can use to build a derive_key resolver ──
