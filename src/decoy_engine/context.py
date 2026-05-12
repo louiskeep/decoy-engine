@@ -15,7 +15,7 @@ to consume ExecutionContext is a follow-up change.
 
 import hashlib
 import hmac
-from typing import Any, Callable, Protocol, runtime_checkable
+from typing import Any, Callable, Literal, Protocol, runtime_checkable
 
 
 @runtime_checkable
@@ -25,12 +25,153 @@ class Logger(Protocol):
     A stdlib logging.Logger satisfies this protocol directly. The CLI
     provides a Rich-backed implementation; the platform provides a
     structured DB-backed one.
+
+    Structured events (step boundaries, lineage, fidelity, quarantines,
+    throughput samples) are an *optional* surface — see ``StructuredEvents``
+    below. The engine reaches them via the ``emit_step`` / ``emit_lineage``
+    / etc. helpers in this module, which no-op gracefully when the active
+    logger doesn't implement them. Keeping that surface off of the
+    runtime_checkable ``Logger`` Protocol means a bare stdlib logger
+    (without the structured methods) still satisfies ``isinstance(.,
+    Logger)`` — engine fallback paths don't need to be wrapped.
     """
 
     def debug(self, msg: str, *args: Any, **kwargs: Any) -> None: ...
     def info(self, msg: str, *args: Any, **kwargs: Any) -> None: ...
     def warning(self, msg: str, *args: Any, **kwargs: Any) -> None: ...
     def error(self, msg: str, *args: Any, **kwargs: Any) -> None: ...
+
+
+class StructuredEvents(Protocol):
+    """Optional structured-event surface on top of ``Logger``.
+
+    Implementations that want the platform's reporting UI to render a
+    step timeline, throughput chart, lineage view, quarantine summary,
+    or fidelity rollup expose these methods. The platform's ``JobLogger``
+    implements all of them and persists into the companion job_* tables
+    (see LOGGING_GUIDE.md §4f). Implementations that only need
+    narrative output (stdlib, RichLogger in --quiet mode, tests) can
+    skip them entirely — the ``emit_*`` helpers below are no-ops in
+    that case.
+
+    Not ``@runtime_checkable``: an ``isinstance(..., StructuredEvents)``
+    test would conflict with stdlib loggers (which don't have any of
+    these methods) and force engine code to wrap every fallback logger.
+    Use the module-level ``emit_*`` helpers for safe dispatch instead.
+    """
+
+    def step(
+        self,
+        name: str,
+        *,
+        status: str = "running",
+        rows_in: int | None = None,
+        rows_out: int | None = None,
+    ) -> None: ...
+    def lineage(
+        self,
+        kind: Literal["source", "transform", "output"],
+        label: str,
+        type_: str,
+    ) -> None: ...
+    def fidelity(self, metric: str, value: float) -> None: ...
+    def quarantine(self, step: str, reason: str, count: int) -> None: ...
+    def throughput_sample(self, rows_per_sec: float) -> None: ...
+
+
+# ── safe emit helpers ──────────────────────────────────────────────
+# Each helper looks up the named method on the logger and calls it if
+# present. The engine uses these instead of direct method calls so a
+# bare stdlib logger (the common ctx-omitted fallback) doesn't raise
+# AttributeError when the engine emits step / lineage / etc. A logger
+# implementing ``StructuredEvents`` receives the call; everything else
+# silently no-ops. Exceptions inside the structured method itself are
+# swallowed — a JobLogger DB hiccup mid-run mustn't take the engine
+# down. Narrative logging (info/warning/error) is the source of truth.
+
+def emit_step(
+    logger: Logger | None,
+    name: str,
+    *,
+    status: str = "running",
+    rows_in: int | None = None,
+    rows_out: int | None = None,
+) -> None:
+    """Mark a step boundary: ``start`` / ``finish`` / ``error``.
+
+    ``rows_in`` and ``rows_out`` are populated at ``finish`` when known.
+    """
+    if logger is None:
+        return
+    fn = getattr(logger, "step", None)
+    if fn is None:
+        return
+    try:
+        fn(name, status=status, rows_in=rows_in, rows_out=rows_out)
+    except Exception:
+        pass
+
+
+def emit_lineage(
+    logger: Logger | None,
+    kind: Literal["source", "transform", "output"],
+    label: str,
+    type_: str,
+) -> None:
+    """Record a node in the source → transform → output graph."""
+    if logger is None:
+        return
+    fn = getattr(logger, "lineage", None)
+    if fn is None:
+        return
+    try:
+        fn(kind, label, type_)
+    except Exception:
+        pass
+
+
+def emit_fidelity(logger: Logger | None, metric: str, value: float) -> None:
+    """Record a data-quality measurement (ks_test, cardinality, etc.)."""
+    if logger is None:
+        return
+    fn = getattr(logger, "fidelity", None)
+    if fn is None:
+        return
+    try:
+        fn(metric, value)
+    except Exception:
+        pass
+
+
+def emit_quarantine(
+    logger: Logger | None,
+    step: str,
+    reason: str,
+    count: int,
+) -> None:
+    """Record rows that failed validation and were diverted from output."""
+    if logger is None:
+        return
+    fn = getattr(logger, "quarantine", None)
+    if fn is None:
+        return
+    try:
+        fn(step, reason, count)
+    except Exception:
+        pass
+
+
+def emit_throughput_sample(logger: Logger | None, rows_per_sec: float) -> None:
+    """Tick a rows/sec sample for the throughput chart (~1 Hz)."""
+    if logger is None:
+        return
+    fn = getattr(logger, "throughput_sample", None)
+    if fn is None:
+        return
+    try:
+        fn(rows_per_sec)
+    except Exception:
+        pass
 
 
 @runtime_checkable

@@ -33,7 +33,10 @@ from decoy_engine import (
 def test_all_lists_every_public_name():
     expected = {
         "Masker", "DataGenerator",
-        "ExecutionContext", "Logger", "TelemetryClient", "make_key_resolver",
+        "ExecutionContext", "Logger", "StructuredEvents", "TelemetryClient",
+        "emit_step", "emit_lineage", "emit_fidelity",
+        "emit_quarantine", "emit_throughput_sample",
+        "make_key_resolver",
         "SchemaInspector", "LicenseVerifier",
         "validate_config",
         "validate_graph", "run_graph", "preview_graph",

@@ -11,6 +11,8 @@ import time
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 
+from decoy_engine.context import emit_lineage, emit_step
+
 class Masker:
     """
     Main entry point for data masking operations.
@@ -109,11 +111,23 @@ class Masker:
         try:
             # Get input path and table name
             input_path = self.config['input'].get('path', '')
+            output_path = self.config['output'].get('path', '')
             table_name = os.path.splitext(os.path.basename(input_path))[0]
-            
+
             self.logger.info(f"=== Starting masking process for table: {table_name} ===")
             self.logger.info(f"Input path: {input_path}")
-            self.logger.info(f"Output path: {self.config['output'].get('path', '')}")
+            self.logger.info(f"Output path: {output_path}")
+
+            # Structured lineage so the reporting UI can render a
+            # source -> transform -> output graph. Type defaults to the
+            # configured input/output ``type`` (csv, parquet, db, ...)
+            # so the renderer can dispatch the right icon.
+            in_type = (self.config.get('input', {}) or {}).get('type', 'unknown')
+            out_type = (self.config.get('output', {}) or {}).get('type', 'unknown')
+            emit_lineage(self.logger, 'source', table_name, in_type)
+            emit_lineage(self.logger, 'transform', 'mask_pii', 'mask')
+            emit_lineage(self.logger, 'output',
+                         os.path.basename(output_path) or 'output', out_type)
 
             from decoy_engine.internal.memory import MemoryMonitor
             MemoryMonitor.monitor_memory_usage(self.logger, "Before masking process")
@@ -170,16 +184,23 @@ class Masker:
             file_size_gb: Size of the file in GB
         """
         self.logger.info(f"Large file detected ({file_size_gb:.2f} GB). Using chunked processing.")
-        
+
         # Get CSV file schema without loading entire file
         self.logger.debug("Loading sample rows to determine schema")
         df_sample = self.io_handler.load_sample(5)
         self.logger.debug(f"Sample columns: {', '.join(df_sample.columns.tolist())}")
-        
+
         # Define processing function
         def process_chunk(chunk):
             return self.processor.apply_masking_rules_to_chunk(chunk, table_name)
-        
+
+        # Large-file path streams through one chunked pipeline that fuses
+        # read + mask + write — no clean per-phase boundary inside it.
+        # Emit one composite 'mask_pii' step around the whole sweep so the
+        # timeline still shows a beginning and end. rows_in/out aren't
+        # tracked here yet (the chunked iterator doesn't surface a total);
+        # Slice F will add a wrapper that accumulates.
+        emit_step(self.logger, 'mask_pii', status='start')
         # Process large dataset in chunks
         self.large_file_processor.process_large_dataset(
             input_path=input_path,
@@ -188,6 +209,7 @@ class Masker:
             output_path=self.config['output'].get('path', ''),
             description="Masking data"
         )
+        emit_step(self.logger, 'mask_pii', status='finish')
     
     def _process_standard_file(self, input_path: str, table_name: str, file_size_gb: float):
         """
@@ -200,33 +222,42 @@ class Masker:
         """
         self.logger.info(f"Standard processing for file size: {file_size_gb:.2f} GB")
         start_time = time.time()  # Track execution time
-        
+
         from decoy_engine.internal.memory import MemoryMonitor
         MemoryMonitor.monitor_memory_usage(self.logger, "Before loading data")
-        
+
+        # ── read step ────────────────────────────────────────────
+        emit_step(self.logger, 'read', status='start')
         self.logger.info(f"Loading data from {input_path}")
         df = self.io_handler.load_data()
 
         MemoryMonitor.monitor_memory_usage(self.logger, "After loading data")
-        
+
         load_time = time.time() - start_time
         self.logger.info(f"Data loaded in {load_time:.2f} seconds. Rows: {len(df)}, Columns: {len(df.columns)}")
-        
-        # Apply masking rules
+        emit_step(self.logger, 'read', status='finish', rows_out=len(df))
+
+        # ── mask step ────────────────────────────────────────────
+        emit_step(self.logger, 'mask_pii', status='start')
+        rows_in = len(df)
         df = self.processor.apply_masking_rules(df, table_name)
-        
+        emit_step(self.logger, 'mask_pii', status='finish',
+                  rows_in=rows_in, rows_out=len(df))
+
         MemoryMonitor.monitor_memory_usage(self.logger, "After applying masking rules")
 
-        # Save output
+        # ── write step ───────────────────────────────────────────
         output_path = self.config['output'].get('path', '')
         self.logger.info(f"Saving masked data to {output_path}")
-        
+
         MemoryMonitor.monitor_memory_usage(self.logger, "Before saving data")
 
+        emit_step(self.logger, 'write', status='start')
         save_start_time = time.time()
         self.io_handler.save_data(df)
         save_time = time.time() - save_start_time
-        
+        emit_step(self.logger, 'write', status='finish', rows_in=len(df))
+
         MemoryMonitor.monitor_memory_usage(self.logger, "After saving data")
 
         self.logger.info(f"Data saved in {save_time:.2f} seconds")

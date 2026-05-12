@@ -13,6 +13,8 @@ import hashlib
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 
+from decoy_engine.context import emit_lineage, emit_step
+
 class DataGenerator:
     """
     Handles the generation of synthetic data with referential integrity.
@@ -90,30 +92,50 @@ class DataGenerator:
         Generate synthetic data according to the configuration
         """
         self.logger.info(f"=== Starting data generation process ===")
-        
+
         # Pre-process configuration to ensure definition files exist
         self._preprocess_configuration()
-        
+
         # Use tables in the exact order specified in the configuration file
         # Note: Users must ensure tables with dependencies appear after their referenced tables
         tables = self.config.get('tables', [])
-        
+
         self.logger.info(f"Generating {len(tables)} tables in the order specified in the configuration")
-        
+
+        # Lineage: one output entry per generated table. There's no
+        # external "source" for a generate run — the source is the
+        # config itself — so emit a single virtual source labeled by
+        # the config and one output per produced table.
+        emit_lineage(self.logger, 'transform', 'synth', 'generate')
+        for table_config in tables:
+            tname = table_config.get('name', 'unnamed_table')
+            out_type = table_config.get('output_type', 'csv').lower()
+            emit_lineage(self.logger, 'output', tname, out_type)
+
         start_time = time.time()
-        
-        # Generate tables in the order they appear in the config
+
+        # Generate tables in the order they appear in the config —
+        # emit one step per table so the timeline shows per-table
+        # boundaries. ``synth:<table>`` lets the UI group all
+        # generation work under a single 'synth' phase while still
+        # rendering per-table durations.
         for table_config in tables:
             table_name = table_config.get('name', 'unnamed_table')
             self.logger.info(f"Generating table: {table_name}")
+            step_name = f"synth:{table_name}"
+            emit_step(self.logger, step_name, status='start')
             self._generate_table(table_config)
-            
+            emit_step(
+                self.logger, step_name, status='finish',
+                rows_out=table_config.get('rows', 1000),
+            )
+
             # Process self-references if any
             self.relationship_handler.process_self_references(table_config, self.config)
-        
+
         # Process relationships between tables
         self.relationship_handler.process_relationships(self.config, self.reference_data)
-        
+
         # Process formulas with cross-column `references: [...]` after every
         # other column in every table is generated. Same scope + per-row
         # deterministic seeding as the inline formula path; the only thing

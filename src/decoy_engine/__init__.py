@@ -28,7 +28,13 @@ from decoy_engine.generators import DataGenerator
 from decoy_engine.context import (
     ExecutionContext,
     Logger,
+    StructuredEvents,
     TelemetryClient,
+    emit_fidelity,
+    emit_lineage,
+    emit_quarantine,
+    emit_step,
+    emit_throughput_sample,
     make_key_resolver,
 )
 from decoy_engine.schema import SchemaInspector
@@ -92,7 +98,13 @@ __all__ = [
     'DataGenerator',
     'ExecutionContext',
     'Logger',
+    'StructuredEvents',
     'TelemetryClient',
+    'emit_step',
+    'emit_lineage',
+    'emit_fidelity',
+    'emit_quarantine',
+    'emit_throughput_sample',
     'make_key_resolver',
     'SchemaInspector',
     'LicenseVerifier',
