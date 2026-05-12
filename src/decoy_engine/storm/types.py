@@ -50,6 +50,12 @@ class DetectorMatch:
     detector_id: str           # "ssn", "email", "us_phone", "us_zip", "iso_date", ...
     match_rate: float          # fraction of non-null values that matched (0.0 – 1.0)
     sample_misses: list[str] = field(default_factory=list)  # up to 3 values that didn't match
+    # Item 65 — surface which sub-pattern variant actually fired so the
+    # mask post-pass can splice separators back at the right positions.
+    # Detectors with no variants (email, name, etc.) leave this None.
+    # Detectors with variants (SSN dash/no-dash, phone separator styles,
+    # date strptime, ZIP 5/9) write the winning variant's label here.
+    format_pattern: Optional[str] = None
 
 
 @dataclass
@@ -133,6 +139,16 @@ class FieldStats:
     date_format: Optional[str] = None      # "iso_date", "us_date", "eu_date", "datetime", or None
     invalid_count: Optional[int] = None
     sample_invalid: list[str] = field(default_factory=list)
+
+    # Item 65 — surface-format hints consumed by the masking-strategy
+    # post-pass so masked output preserves the source's shape.
+    #   casing_pattern : 'upper' | 'lower' | 'title' | 'mixed' | 'digits_only' | None
+    #   format_pattern : the dominant variant detected by a detector
+    #                    (e.g. r'\\d{3}-\\d{2}-\\d{4}' for dashed SSN,
+    #                    '%Y-%m-%d' strptime for ISO dates). None when
+    #                    no detector with a variant fired.
+    casing_pattern: Optional[str] = None
+    format_pattern: Optional[str] = None
 
     # Top values for distribution awareness
     top_values: list[TopValue] = field(default_factory=list)

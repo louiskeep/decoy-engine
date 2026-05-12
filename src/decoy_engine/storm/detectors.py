@@ -55,6 +55,7 @@ def _evaluate(
     name_hint: bool,
     min_rate: float,
     validator: Optional[Callable[[str], bool]] = None,
+    format_variants: Optional[list[tuple[str, re.Pattern[str]]]] = None,
 ) -> Optional[DetectorMatch]:
     """Apply a regex to non-null values and decide whether the detector fires.
 
@@ -64,6 +65,13 @@ def _evaluate(
     When set, a value counts as a match only if the regex matches AND
     validator(value) returns True. Avoids the false-positive case where any
     13-digit string looks like a credit card to the regex.
+
+    ``format_variants`` (Item 65) is an ordered list of
+    ``(label, sub_pattern)`` pairs that the detector knows about.
+    When supplied, the dominant matching variant's label is written to
+    ``DetectorMatch.format_pattern`` so the mask post-pass can splice
+    separators back at the right positions. Detectors with no variants
+    (email, person_name, etc.) pass ``None`` and the field stays ``None``.
     """
     if len(values) == 0:
         return None
@@ -88,11 +96,44 @@ def _evaluate(
     if rate < threshold:
         return None
     misses = values[~matches].head(SAMPLE_MISS_LIMIT).tolist()
+    # Variant bucketing — count which sub-pattern won among the matches.
+    format_pattern: Optional[str] = None
+    if format_variants:
+        matched_values = values[matches]
+        format_pattern = _dominant_variant(matched_values, format_variants)
     return DetectorMatch(
         detector_id=detector_id,
         match_rate=round(rate, 4),
         sample_misses=[str(m) for m in misses],
+        format_pattern=format_pattern,
     )
+
+
+def _dominant_variant(
+    values: pd.Series,
+    variants: list[tuple[str, re.Pattern[str]]],
+) -> Optional[str]:
+    """Return the label of the variant that matches the most values.
+
+    Variants are tested in order; each value is counted under the first
+    variant that fullmatches it. Returns the highest-count label, or
+    None when no variant matched any value.
+    """
+    if len(values) == 0:
+        return None
+    remaining = values
+    counts: dict[str, int] = {}
+    for label, pat in variants:
+        if len(remaining) == 0:
+            break
+        hit = remaining.str.fullmatch(pat)
+        n = int(hit.sum())
+        if n > 0:
+            counts[label] = counts.get(label, 0) + n
+            remaining = remaining[~hit]
+    if not counts:
+        return None
+    return max(counts.items(), key=lambda kv: kv[1])[0]
 
 
 # ── name-hint patterns (case-insensitive, matched against the column name) ──
@@ -158,7 +199,14 @@ _US_ZIP_RE = re.compile(r"\d{5}(?:-\d{4})?")
 
 # Date formats — strict patterns; the profiler also has pandas' to_datetime
 # fuzzy parser as a backstop. These are for *format signal* only.
-_ISO_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?)?Z?")
+#
+# ISO date accepts both the dashed shape (YYYY-MM-DD with optional time
+# component) AND the compact 8-digit shape (YYYYMMDD). The compact
+# branch is gated by `_iso_compact_date_valid` so a random 8-digit
+# ID column doesn't false-positive as a date.
+_ISO_DATE_RE = re.compile(
+    r"\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?)?Z?|\d{8}"
+)
 _US_DATE_RE  = re.compile(r"\d{1,2}/\d{1,2}/\d{2,4}")
 _EU_DATE_RE  = re.compile(r"\d{1,2}\.\d{1,2}\.\d{2,4}|\d{1,2}-\d{1,2}-\d{4}")
 
@@ -216,6 +264,73 @@ _VEHICLE_ID_RE = re.compile(r"[A-HJ-NPR-Z0-9]{17}", re.IGNORECASE)
 
 _DEVICE_ID_RE    = re.compile(r"[A-Z0-9\-_.]{4,30}", re.IGNORECASE)
 _BIOMETRIC_ID_RE = re.compile(r".+")   # any non-empty value; name hint is definitive
+
+
+# ── format variants (Item 65) ───────────────────────────────────────────────────────────────
+#
+# Per-detector ordered (label, regex) pairs that classify which sub-shape
+# of the detector's parent pattern actually fired. The label is what the
+# mask post-pass reads — for regex-style detectors (SSN, phone, ZIP) it's
+# the regex shape; for date detectors it's a strptime format string the
+# date_shift strategy can pass directly to dt.strftime().
+
+_SSN_VARIANTS = [
+    (r"\d{3}-\d{2}-\d{4}", re.compile(r"\d{3}-\d{2}-\d{4}")),
+    (r"\d{9}",             re.compile(r"\d{9}")),
+]
+
+_US_PHONE_VARIANTS = [
+    # NB: most distinctive shapes first so e.g. "(NNN) NNN-NNNN" doesn't
+    # leak into the bare-dash bucket.
+    (r"\(\d{3}\) \d{3}-\d{4}", re.compile(r"\(\d{3}\) \d{3}-\d{4}")),
+    (r"\(\d{3}\)\d{3}-\d{4}",  re.compile(r"\(\d{3}\)\d{3}-\d{4}")),
+    (r"\d{3}-\d{3}-\d{4}",     re.compile(r"\d{3}-\d{3}-\d{4}")),
+    (r"\d{3}\.\d{3}\.\d{4}",   re.compile(r"\d{3}\.\d{3}\.\d{4}")),
+    (r"\d{3} \d{3} \d{4}",     re.compile(r"\d{3} \d{3} \d{4}")),
+    (r"\+1 \d{3} \d{3} \d{4}", re.compile(r"\+1 \d{3} \d{3} \d{4}")),
+    (r"\+1-\d{3}-\d{3}-\d{4}", re.compile(r"\+1-\d{3}-\d{3}-\d{4}")),
+    (r"\d{10}",                re.compile(r"\d{10}")),
+]
+
+_US_ZIP_VARIANTS = [
+    (r"\d{5}-\d{4}", re.compile(r"\d{5}-\d{4}")),
+    (r"\d{5}",       re.compile(r"\d{5}")),
+]
+
+# Date detectors map directly to strptime — the format_pattern label is
+# what date_shift's dt.strftime() will consume on the masked output.
+_ISO_DATE_VARIANTS = [
+    ("%Y-%m-%dT%H:%M:%SZ", re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")),
+    ("%Y-%m-%dT%H:%M:%S",  re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")),
+    ("%Y-%m-%d %H:%M:%S",  re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}")),
+    ("%Y-%m-%dT%H:%M",     re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}")),
+    ("%Y-%m-%d %H:%M",     re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}")),
+    ("%Y-%m-%d",           re.compile(r"\d{4}-\d{2}-\d{2}")),
+    ("%Y%m%d",             re.compile(r"\d{8}")),
+]
+_US_DATE_VARIANTS = [
+    ("%m/%d/%Y", re.compile(r"\d{1,2}/\d{1,2}/\d{4}")),
+    ("%m/%d/%y", re.compile(r"\d{1,2}/\d{1,2}/\d{2}")),
+]
+_EU_DATE_VARIANTS = [
+    ("%d.%m.%Y", re.compile(r"\d{1,2}\.\d{1,2}\.\d{4}")),
+    ("%d.%m.%y", re.compile(r"\d{1,2}\.\d{1,2}\.\d{2}")),
+    ("%d-%m-%Y", re.compile(r"\d{1,2}-\d{1,2}-\d{4}")),
+]
+
+_PAN_VARIANTS = [
+    (r"\d{4} \d{4} \d{4} \d{4}", re.compile(r"\d{4} \d{4} \d{4} \d{4}")),
+    (r"\d{4}-\d{4}-\d{4}-\d{4}", re.compile(r"\d{4}-\d{4}-\d{4}-\d{4}")),
+    (r"\d{16}",                  re.compile(r"\d{16}")),
+    (r"\d{15}",                  re.compile(r"\d{15}")),   # Amex
+    (r"\d{14}",                  re.compile(r"\d{14}")),   # Diners
+]
+
+_ICD10_VARIANTS = [
+    (r"[A-Z]\d{2}\.[A-Z0-9]{1,4}", re.compile(r"[A-Z]\d{2}\.[A-Z0-9]{1,4}")),
+    (r"[A-Z]\d{2}",                re.compile(r"[A-Z]\d{2}")),
+    (r"[A-Z]\d{2}[A-Z0-9]{1,4}",   re.compile(r"[A-Z]\d{2}[A-Z0-9]{1,4}")),
+]
 
 
 # ── validators ──────────────────────────────────────────────────────────────────────────────
@@ -300,6 +415,21 @@ def _npi_valid(value: str) -> bool:
     return (10 - total % 10) % 10 == int(digits[9])
 
 
+def _iso_date_valid(value: str) -> bool:
+    """Reject random 8-digit strings that pass the compact-date branch
+    but aren't plausible dates. Year 1900-2100, month 1-12, day 1-31.
+    Dashed dates always pass — only the compact branch needs the guard."""
+    v = value.strip()
+    if "-" in v or "T" in v or " " in v:
+        return True
+    if len(v) != 8 or not v.isdigit():
+        return False
+    year = int(v[:4])
+    month = int(v[4:6])
+    day = int(v[6:8])
+    return 1900 <= year <= 2100 and 1 <= month <= 12 and 1 <= day <= 31
+
+
 def _icd10_valid(value: str) -> bool:
     """Minimal ICD-10-CM structure check: letter at index 0, two digits at 1-2,
     total 3-7 alphanumeric characters (dot stripped before checking)."""
@@ -322,19 +452,22 @@ def detect_email(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
 def detect_ssn(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
     return _evaluate("ssn", _series_str(series), _SSN_RE,
                      name_hint=_hits_name_hint("ssn", col_name),
-                     min_rate=DEFAULT_MIN_MATCH_RATE)
+                     min_rate=DEFAULT_MIN_MATCH_RATE,
+                     format_variants=_SSN_VARIANTS)
 
 
 def detect_us_phone(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
     return _evaluate("us_phone", _series_str(series), _US_PHONE_RE,
                      name_hint=_hits_name_hint("us_phone", col_name),
-                     min_rate=DEFAULT_MIN_MATCH_RATE)
+                     min_rate=DEFAULT_MIN_MATCH_RATE,
+                     format_variants=_US_PHONE_VARIANTS)
 
 
 def detect_us_zip(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
     return _evaluate("us_zip", _series_str(series), _US_ZIP_RE,
                      name_hint=_hits_name_hint("us_zip", col_name),
-                     min_rate=DEFAULT_MIN_MATCH_RATE)
+                     min_rate=DEFAULT_MIN_MATCH_RATE,
+                     format_variants=_US_ZIP_VARIANTS)
 
 
 def detect_person_name(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
@@ -353,19 +486,23 @@ def detect_person_name(series: pd.Series, col_name: str) -> Optional[DetectorMat
 def detect_iso_date(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
     return _evaluate("iso_date", _series_str(series), _ISO_DATE_RE,
                      name_hint=_hits_name_hint("iso_date", col_name),
-                     min_rate=DEFAULT_MIN_MATCH_RATE)
+                     min_rate=DEFAULT_MIN_MATCH_RATE,
+                     validator=_iso_date_valid,
+                     format_variants=_ISO_DATE_VARIANTS)
 
 
 def detect_us_date(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
     return _evaluate("us_date", _series_str(series), _US_DATE_RE,
                      name_hint=_hits_name_hint("us_date", col_name),
-                     min_rate=DEFAULT_MIN_MATCH_RATE)
+                     min_rate=DEFAULT_MIN_MATCH_RATE,
+                     format_variants=_US_DATE_VARIANTS)
 
 
 def detect_eu_date(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
     return _evaluate("eu_date", _series_str(series), _EU_DATE_RE,
                      name_hint=_hits_name_hint("eu_date", col_name),
-                     min_rate=DEFAULT_MIN_MATCH_RATE)
+                     min_rate=DEFAULT_MIN_MATCH_RATE,
+                     format_variants=_EU_DATE_VARIANTS)
 
 
 def detect_pan(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
@@ -375,7 +512,8 @@ def detect_pan(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
     return _evaluate("pan", _series_str(series), _PAN_RE,
                      name_hint=_hits_name_hint("pan", col_name),
                      min_rate=DEFAULT_MIN_MATCH_RATE,
-                     validator=_luhn_valid)
+                     validator=_luhn_valid,
+                     format_variants=_PAN_VARIANTS)
 
 
 def detect_cvv(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
@@ -415,7 +553,8 @@ def detect_icd10(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
     return _evaluate("icd10", _series_str(series), _ICD10_RE,
                      name_hint=_hits_name_hint("icd10", col_name),
                      min_rate=DEFAULT_MIN_MATCH_RATE,
-                     validator=_icd10_valid)
+                     validator=_icd10_valid,
+                     format_variants=_ICD10_VARIANTS)
 
 
 def detect_npi(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:

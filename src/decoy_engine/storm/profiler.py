@@ -103,6 +103,72 @@ def _date_format_signal(detector_matches: list[DetectorMatch]) -> Optional[str]:
     return None
 
 
+def _format_pattern_from_detectors(
+    detector_matches: list[DetectorMatch],
+) -> Optional[str]:
+    """Pick the winning detector's ``format_pattern`` to surface on FieldStats.
+
+    `run_all_detectors` returns matches sorted by descending match_rate, so
+    the first match with a non-None format_pattern is the dominant variant
+    for the column. Detectors without a format-variant table (email, name,
+    etc.) emit format_pattern=None and are silently skipped.
+    """
+    for m in detector_matches:
+        if m.format_pattern is not None:
+            return m.format_pattern
+    return None
+
+
+def _detect_casing(series: pd.Series) -> Optional[str]:
+    """Classify the dominant casing of a string column.
+
+    Samples up to ~200 non-null values, classifies each as one of:
+      'upper'        — every alphabetic char is uppercase
+      'lower'        — every alphabetic char is lowercase
+      'title'        — every alphabetic token starts uppercase + rest lowercase
+                       (Title Case + middle-initial-style 'Mary M Smith' both qualify)
+      'digits_only'  — no alphabetic characters at all
+      'mixed'        — anything else (e.g. 'iPhone' or random caps)
+
+    Returns the dominant class label (>50% of sampled non-empty values),
+    or 'mixed' as a low-confidence fallback, or None when the column has
+    no string-shaped values worth classifying.
+    """
+    if len(series) == 0:
+        return None
+    non_null = series.dropna()
+    if len(non_null) == 0:
+        return None
+    if len(non_null) > 200:
+        non_null = non_null.head(200)
+    counts: dict[str, int] = {}
+    total = 0
+    for v in non_null.astype(str):
+        s = v.strip()
+        if not s:
+            continue
+        total += 1
+        # digits_only first — most columns of pure-numeric strings are
+        # IDs, ZIPs, phones, etc. where preserving "no casing" matters.
+        if not any(c.isalpha() for c in s):
+            label = "digits_only"
+        elif s.isupper():
+            label = "upper"
+        elif s.islower():
+            label = "lower"
+        elif s.istitle():
+            label = "title"
+        else:
+            label = "mixed"
+        counts[label] = counts.get(label, 0) + 1
+    if total == 0:
+        return None
+    winner = max(counts.items(), key=lambda kv: kv[1])
+    if winner[1] / total < 0.5:
+        return "mixed"
+    return winner[0]
+
+
 # ── distribution + detection trail ────────────────────────────────────────────
 
 # Cardinality threshold for "categorical" object columns. Below this we group
@@ -380,6 +446,10 @@ def _profile_column(
     # Detectors.
     fs.detector_matches = run_all_detectors(series, name, custom=custom_detectors)
     fs.date_format = _date_format_signal(fs.detector_matches)
+    # Item 65 — format-preservation hints. Both fields are optional; the
+    # masking-strategy post-pass reads them when `preserve_format=true`.
+    fs.format_pattern = _format_pattern_from_detectors(fs.detector_matches)
+    fs.casing_pattern = _detect_casing(series)
 
     # Sentinels.
     fs.sentinels = detect_sentinels(series, name)
