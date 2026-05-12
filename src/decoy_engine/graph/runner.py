@@ -33,7 +33,12 @@ from typing import Any
 import pyarrow as pa
 import yaml
 
-from decoy_engine.context import ExecutionContext, emit_lineage, emit_step
+from decoy_engine.context import (
+    ExecutionContext,
+    emit_lineage,
+    emit_step,
+    emit_throughput_sample,
+)
 from decoy_engine.exceptions import ConfigError, FlagPauseSignal, PipelineValidationError
 from decoy_engine.graph.conversion import (
     arrow_columns,
@@ -328,6 +333,13 @@ def _execute_graph(
                     log, step_name, status="finish",
                     rows_in=rows_in_total or None, rows_out=total_rows,
                 )
+                # Phase 3 throughput sample — point-in-time rows/sec for
+                # this node. Skipped on zero-duration / zero-rows nodes
+                # so the chart doesn't see Infinity / NaN. The chart
+                # endpoint orders samples by ts, so this lands as the
+                # node's terminal datapoint regardless of order.
+                if elapsed_ms > 0 and total_rows > 0:
+                    emit_throughput_sample(log, total_rows * 1000 / elapsed_ms)
             else:
                 table = engine_to_arrow(result, engine) if result is not None else None
                 cache[nid] = table
@@ -353,6 +365,11 @@ def _execute_graph(
                     log, step_name, status="finish",
                     rows_in=rows_in_total or None, rows_out=rows_out,
                 )
+                # Phase 3 throughput sample — same shape as split branch
+                # above. Skip zero-duration / zero-rows to keep the
+                # chart clean.
+                if elapsed_ms > 0 and rows_out > 0:
+                    emit_throughput_sample(log, rows_out * 1000 / elapsed_ms)
                 # Sink with no downstream consumers: evict immediately so
                 # memory is reclaimed (its result is empty by convention
                 # anyway).
@@ -380,7 +397,19 @@ def _execute_graph(
             if log is not None:
                 log.error("graph: node %s failed: %s", descriptor, translated)
                 log.error(traceback.format_exc())
-            emit_step(log, step_name, status="error", rows_in=rows_in_total or None)
+            # Phase 2 LOGGING_GUIDE §4c: emit_step carries the exception
+            # class + the translated message + the canvas node id so the
+            # JobLogger can format the spec ERROR line tail (and the
+            # frontend can deep-link the error pill to the producing
+            # node). ``type(exc).__name__`` is the underlying class —
+            # ``translated`` is what we surface to the user.
+            emit_step(
+                log, step_name, status="error",
+                rows_in=rows_in_total or None,
+                error_class=type(exc).__name__,
+                error_msg=str(translated),
+                node_id=nid,
+            )
             success = False
             break
         finally:

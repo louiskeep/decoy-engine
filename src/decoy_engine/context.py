@@ -67,6 +67,9 @@ class StructuredEvents(Protocol):
         status: str = "running",
         rows_in: int | None = None,
         rows_out: int | None = None,
+        error_class: str | None = None,
+        error_msg: str | None = None,
+        node_id: str | None = None,
     ) -> None: ...
     def lineage(
         self,
@@ -96,10 +99,26 @@ def emit_step(
     status: str = "running",
     rows_in: int | None = None,
     rows_out: int | None = None,
+    error_class: str | None = None,
+    error_msg: str | None = None,
+    node_id: str | None = None,
 ) -> None:
     """Mark a step boundary: ``start`` / ``finish`` / ``error``.
 
     ``rows_in`` and ``rows_out`` are populated at ``finish`` when known.
+
+    On ``status='error'`` callers can pass ``error_class`` (the Python
+    exception type name) and ``error_msg`` (the str(exc)) so the
+    JobLogger can format the spec ERROR line tail per LOGGING_GUIDE
+    §4c (``request_id=`` + ``error_class=`` + ``node_id=``). The
+    JobLogger also persists ``error_class`` to the JobStep companion
+    row so the reporting UI can group errors by exception type without
+    re-parsing the log tail.
+
+    ``node_id`` defaults to ``name`` when unset — most engine ops emit
+    one step per node so the step name *is* the node id, but callers
+    that emit a coarser step (e.g. a "mask" step covering multiple
+    nodes) can pass a finer ``node_id`` for the canvas deep-link.
     """
     if logger is None:
         return
@@ -107,7 +126,21 @@ def emit_step(
     if fn is None:
         return
     try:
-        fn(name, status=status, rows_in=rows_in, rows_out=rows_out)
+        fn(
+            name, status=status,
+            rows_in=rows_in, rows_out=rows_out,
+            error_class=error_class, error_msg=error_msg,
+            node_id=node_id,
+        )
+    except TypeError:
+        # Older JobLogger implementations don't accept the new error
+        # / node_id kwargs. Fall back to the original signature so a
+        # forward-compatible call site still works against older
+        # platform versions.
+        try:
+            fn(name, status=status, rows_in=rows_in, rows_out=rows_out)
+        except Exception:
+            pass
     except Exception:
         pass
 
