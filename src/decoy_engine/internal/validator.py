@@ -16,13 +16,6 @@ class ValidationError(Exception):
     """
     
     def __init__(self, message: str, path: Optional[str] = None):
-        """
-        Initialize with error message and optional path to the error location
-        
-        Args:
-            message: Error message
-            path: Optional dot-notation path to error location in config
-        """
         self.path = path
         if path:
             full_message = f"Validation error at '{path}': {message}"
@@ -37,7 +30,6 @@ class MaskerConfigValidator(ConfigValidator):
     Ensures all required fields are present and constraints are met.
     """
     
-    # Default configurations
     DEFAULT_GLOBAL_SETTINGS = {
         'seed': 42,
         'chunk_size': 100000,
@@ -63,26 +55,16 @@ class MaskerConfigValidator(ConfigValidator):
         'encoding': 'utf-8',
         'definition_delimiter': ',',
         'padding_char': ' ',
-        'padding_alignment': 'auto'  # Valid values: 'auto', 'left', 'right'
+        'padding_alignment': 'auto'
     }
 
-    # Validation for padding options in _validate_input_config and _validate_output_config
     def _validate_fixed_width_options(self, options, path):
-        """
-        Validate fixed width options including padding settings
-        
-        Args:
-            options: Fixed width options dictionary
-            path: Configuration path for error reporting
-        """
-        # Validate padding_char (must be a single character)
         if 'padding_char' in options:
             padding_char = options['padding_char']
             if not isinstance(padding_char, str) or len(padding_char) != 1:
                 self.logger.warning(f"padding_char must be a single character. Got '{padding_char}', using default ' '")
                 options['padding_char'] = ' '
         
-        # Validate padding_alignment
         if 'padding_alignment' in options:
             alignment = options['padding_alignment']
             valid_alignments = ['auto', 'left', 'right']
@@ -90,7 +72,6 @@ class MaskerConfigValidator(ConfigValidator):
                 self.logger.warning(f"Invalid padding_alignment: '{alignment}'. Must be one of {valid_alignments}. Using 'auto'.")
                 options['padding_alignment'] = 'auto'
     
-    # Supported types and strategies
     SUPPORTED_FILE_TYPES = ['csv', 'fixed_width', 'database']
     
     SUPPORTED_MASKING_STRATEGIES = [
@@ -99,77 +80,32 @@ class MaskerConfigValidator(ConfigValidator):
     ]
     
     def validate(self, config: Dict[str, Any]) -> None:
-        """
-        Validates the configuration to ensure all required fields are present and properly formatted.
-        
-        Args:
-            config: Configuration dictionary to validate
-            
-        Raises:
-            ValidationError: If any configuration validation errors occur
-        """
         try:
-            # Check for required top-level sections
             self._validate_required_sections(config)
-            
-            # Validate input configuration
             self._validate_input_config(config['input'])
-            
-            # Validate output configuration
             self._validate_output_config(config['output'])
-            
-            # Validate masking rules
             if 'masking_rules' in config:
                 self._validate_masking_rules(config['masking_rules'])
-            
-            # Validate referential integrity if present
             if 'referential_integrity' in config:
                 self._validate_referential_integrity(config['referential_integrity'])
-            
-            # Set default global settings if not provided
             if 'global_settings' not in config:
                 config['global_settings'] = self.DEFAULT_GLOBAL_SETTINGS.copy()
-                self.logger.info("Set default global settings")
-            
-            # Set default logging configuration if not provided
             if 'logging' not in config:
                 config['logging'] = self.DEFAULT_LOGGING.copy()
-                self.logger.info("Set default logging configuration")
-                
         except ValidationError as e:
             self.logger.error(str(e))
             raise
     
     def _validate_required_sections(self, config: Dict[str, Any]) -> None:
-        """
-        Check for required top-level sections in the configuration
-        
-        Args:
-            config: Configuration dictionary
-            
-        Raises:
-            ValidationError: If required sections are missing
-        """
         required_sections = ['input', 'output', 'masking_rules']
         for section in required_sections:
             if section not in config:
                 raise ValidationError(f"Missing required section '{section}' in configuration")
     
     def _validate_input_config(self, input_config: Dict[str, Any]) -> None:
-        """
-        Validate the input configuration section
-        
-        Args:
-            input_config: Input configuration dictionary
-            
-        Raises:
-            ValidationError: If validation fails
-        """
-        # Check required fields
         if 'type' not in input_config:
             raise ValidationError("Missing required field 'type'", "input")
         
-        # Validate input type
         input_type = input_config['type']
         if input_type not in self.SUPPORTED_FILE_TYPES:
             raise ValidationError(
@@ -177,7 +113,6 @@ class MaskerConfigValidator(ConfigValidator):
                 "input.type"
             )
 
-        # Database type requires connector_dsn + table instead of path
         if input_type == 'database':
             if 'connector_dsn' not in input_config:
                 raise ValidationError("Missing required field 'connector_dsn'", "input")
@@ -185,54 +120,32 @@ class MaskerConfigValidator(ConfigValidator):
                 raise ValidationError("Missing required field 'table'", "input")
             return
 
-        # Validate path exists
         if 'path' not in input_config:
             raise ValidationError("Missing required field 'path'", "input")
 
-        # Validate type-specific fields
         if input_type == 'csv':
-            # Set default CSV options if not provided
             if 'csv_options' not in input_config:
                 input_config['csv_options'] = self.DEFAULT_CSV_OPTIONS.copy()
-                self.logger.info("Set default CSV options")
-            # Enforce header requirement
             if input_config['csv_options'].get('header') is False:
                 raise ValidationError(
                     "Input files must have headers. Headerless files are not supported.",
                     "input.csv_options.header"
                 )
-            # Ensure header is set to True
             input_config['csv_options']['header'] = True
                 
         elif input_type == 'fixed_width':
             if 'definition_path' not in input_config:
                 raise ValidationError("Missing required field 'definition_path'", "input")
-                
-            # Check if definition path exists
             def_path = input_config['definition_path']
             if not os.path.exists(def_path):
                 self.logger.warning(f"Definition file at '{def_path}' not found. Ensure it exists before processing.")
-                
-            # Set default fixed-width options if not provided
             if 'fixed_width_options' not in input_config:
                 input_config['fixed_width_options'] = self.DEFAULT_FIXED_WIDTH_OPTIONS.copy()
-                self.logger.info("Set default fixed-width options")
     
     def _validate_output_config(self, output_config: Dict[str, Any]) -> None:
-        """
-        Validate the output configuration section
-        
-        Args:
-            output_config: Output configuration dictionary
-            
-        Raises:
-            ValidationError: If validation fails
-        """
-        # Check required fields
         if 'type' not in output_config:
             raise ValidationError("Missing required field 'type'", "output")
             
-        # Validate output type
         output_type = output_config['type']
         if output_type not in self.SUPPORTED_FILE_TYPES:
             raise ValidationError(
@@ -240,7 +153,6 @@ class MaskerConfigValidator(ConfigValidator):
                 "output.type"
             )
 
-        # Database type requires connector_dsn + table instead of path
         if output_type == 'database':
             if 'connector_dsn' not in output_config:
                 raise ValidationError("Missing required field 'connector_dsn'", "output")
@@ -248,54 +160,35 @@ class MaskerConfigValidator(ConfigValidator):
                 raise ValidationError("Missing required field 'table'", "output")
             return
 
-        # Validate path exists
         if 'path' not in output_config:
             raise ValidationError("Missing required field 'path'", "output")
         
-        # Create output directory if not exists
         output_path = output_config['path']
         output_dir = os.path.dirname(output_path)
         if output_dir and not os.path.exists(output_dir):
             self.logger.info(f"Output directory '{output_dir}' doesn't exist. It will be created during processing.")
             
-        # Validate type-specific fields
         if output_type == 'csv':
-            # Set default CSV options if not provided
             if 'csv_options' not in output_config:
                 output_config['csv_options'] = self.DEFAULT_CSV_OPTIONS.copy()
-                self.logger.info("Set default CSV options")
                 
         elif output_type == 'fixed_width':
-            # Set default fixed-width options if not provided
             if 'fixed_width_options' not in output_config:
                 output_config['fixed_width_options'] = self.DEFAULT_FIXED_WIDTH_OPTIONS.copy()
-                self.logger.info("Set default fixed-width options")
     
     def _validate_masking_rules(self, masking_rules: List[Dict[str, Any]]) -> None:
-        """
-        Validate masking rules configuration
-        
-        Args:
-            masking_rules: List of masking rule dictionaries
-            
-        Raises:
-            ValidationError: If validation fails
-        """
         if not masking_rules:
             raise ValidationError("No masking rules defined", "masking_rules")
             
-        # Check each rule
         for i, rule in enumerate(masking_rules):
             rule_path = f"masking_rules[{i}]"
             
-            # Check required fields
             if 'column' not in rule:
                 raise ValidationError("Missing required field 'column'", rule_path)
                 
             if 'type' not in rule:
                 raise ValidationError("Missing required field 'type'", rule_path)
                 
-            # Validate strategy type
             strategy_type = rule['type']
             if strategy_type not in self.SUPPORTED_MASKING_STRATEGIES:
                 raise ValidationError(
@@ -304,49 +197,34 @@ class MaskerConfigValidator(ConfigValidator):
                     f"{rule_path}.type"
                 )
                 
-            # Validate strategy-specific fields
             if strategy_type == 'faker':
                 if 'faker_type' not in rule:
-                    self.logger.info(f"No faker_type specified for {rule['column']}. Using default: 'word'")
                     rule['faker_type'] = 'word'
                     
             elif strategy_type == 'redact':
                 if 'redact_with' not in rule:
-                    self.logger.info(f"No redact_with specified for {rule['column']}. Using default: 'REDACTED'")
                     rule['redact_with'] = 'REDACTED'
                     
             elif strategy_type == 'map':
                 if 'map_type' not in rule:
-                    self.logger.info(f"No map_type specified for {rule['column']}. Using default: 'faker'")
                     rule['map_type'] = 'faker'
-                    
                 map_type = rule.get('map_type')
                 if map_type == 'faker' and 'faker_type' not in rule:
-                    self.logger.info(f"No faker_type specified for map rule on {rule['column']}. Using default: 'word'")
                     rule['faker_type'] = 'word'
-                    
                 if map_type == 'fixed' and 'fixed_prefix' not in rule:
-                    self.logger.info(f"No fixed_prefix specified for map rule on {rule['column']}. Using default: 'MASKED'")
                     rule['fixed_prefix'] = 'MASKED'
 
             elif strategy_type == 'formula':
-                # F0 consolidation: formula is always a Python expression.
-                # `formula_type` is gone (was 'basic' / 'template'); template
-                # syntax is just `f"..."` written inline by the user.
                 if 'formula' not in rule:
                     raise ValidationError("Missing required field 'formula'", rule_path)
 
             elif strategy_type == 'reference':
-                # `reference` is the dataset path/identifier — required. Path
-                # existence is validated lazily by the strategy at apply-time
-                # so config validation can run without filesystem access.
                 if 'reference' not in rule or not rule['reference']:
                     raise ValidationError(
                         "Missing required field 'reference' (dataset path) for reference strategy",
                         f"{rule_path}.reference"
                     )
 
-            # Validate optional conditions block
             if 'conditions' in rule:
                 _VALID_COND_OPS = {
                     'eq', 'ne', 'gt', 'gte', 'lt', 'lte',
@@ -374,35 +252,22 @@ class MaskerConfigValidator(ConfigValidator):
                         raise ValidationError("Missing required field 'value'", cpath)
 
     def _validate_referential_integrity(self, relationships: List[Dict[str, Any]]) -> None:
-        """
-        Validate referential integrity configuration
-        
-        Args:
-            relationships: List of relationship dictionaries
-            
-        Raises:
-            ValidationError: If validation fails
-        """
         if not relationships:
             return
             
-        # Check each relationship
         for i, relationship in enumerate(relationships):
             rel_path = f"referential_integrity[{i}]"
             
-            # Check required fields
             if 'name' not in relationship:
                 raise ValidationError("Missing required field 'name'", rel_path)
                 
             if 'columns' not in relationship:
                 raise ValidationError("Missing required field 'columns'", rel_path)
                 
-            # Validate columns format
             columns = relationship['columns']
             if not isinstance(columns, list) or not columns:
                 raise ValidationError("'columns' must be a non-empty list", f"{rel_path}.columns")
                 
-            # Check column format (should be "table.column")
             for j, column in enumerate(columns):
                 if not isinstance(column, str) or '.' not in column:
                     raise ValidationError(
@@ -414,201 +279,103 @@ class MaskerConfigValidator(ConfigValidator):
 class GeneratorConfigValidator(ConfigValidator):
     """
     Validates the configuration for data generation operations.
-    Ensures all required fields are present and constraints are met.
     """
     
-    # Default configurations
     DEFAULT_GENERATOR_SETTINGS = {
         'seed': 42,
         'output_directory': 'data/generated/',
         'chunk_size': 10000
     }
     
-    # Supported data types
     SUPPORTED_COLUMN_TYPES = [
         'faker', 'sequence', 'categorical', 'reference', 'formula'
     ]
-    
-    # F0 consolidation: `formula_type` is gone — every formula is a Python
-    # expression, with optional `references: [...]` for cross-column scope.
 
     SUPPORTED_RELATIONSHIP_TYPES = [
         'self_reference', 'foreign_key', 'many_to_many'
     ]
     
     def validate(self, config: Dict[str, Any]) -> None:
-        """
-        Validates the configuration for data generation
-        
-        Args:
-            config: Configuration dictionary to validate
-            
-        Raises:
-            ValueError: If any configuration validation errors occur
-        """
-        # Check for required top-level sections
         if 'tables' not in config:
             raise ValueError("Missing required section 'tables' in generator configuration")
         
-        # Validate each table configuration
         for i, table in enumerate(config['tables']):
             if 'name' not in table:
                 raise ValueError(f"Table at index {i} is missing a 'name'")
-                
             if 'columns' not in table:
                 raise ValueError(f"Table '{table.get('name', f'at index {i}')}' is missing 'columns' definition")
-                
             if 'rows' not in table:
-                # Set a default if missing
                 table['rows'] = 1000
-                self.logger.info(f"Set default rows: 1000 for table '{table.get('name')}'")
             
-            # Validate output type and options if specified
             if 'output_type' in table:
                 output_type = table['output_type'].lower()
-                
                 if output_type not in ['csv', 'fixed_width']:
-                    raise ValueError(f"Unsupported output_type: {output_type} for table '{table.get('name')}'. " 
+                    raise ValueError(f"Unsupported output_type: {output_type} for table '{table.get('name')}'. "
                                     "Supported types: 'csv', 'fixed_width'")
-                    
-                # Validate fixed-width specific configuration
                 if output_type == 'fixed_width':
                     if 'fixed_width_options' not in table:
                         table['fixed_width_options'] = {'encoding': 'utf-8'}
-                        self.logger.info(f"Set default fixed_width_options for table '{table.get('name')}'")
-                    
                     if 'definition_path' not in table['fixed_width_options']:
                         raise ValueError(f"Missing required 'definition_path' in fixed_width_options for table '{table.get('name')}'")
-                        
-                    # Ensure definition file exists
                     definition_path = table['fixed_width_options']['definition_path']
                     if not os.path.exists(definition_path):
-                        self.logger.warning(f"Definition file not found: {definition_path}. It will need to exist before generation.")
+                        self.logger.warning(f"Definition file not found: {definition_path}.")
             
-            # Validate each column
             for j, column in enumerate(table['columns']):
                 if 'name' not in column:
                     raise ValueError(f"Column at index {j} in table '{table.get('name')}' is missing a 'name'")
-                    
                 if 'type' not in column:
                     raise ValueError(f"Column '{column.get('name', f'at index {j}')}' in table '{table.get('name')}' is missing a 'type'")
-                    
-                # Validate column type-specific requirements
                 col_type = column['type']
                 if col_type == 'faker' and 'faker_type' not in column:
-                    # Set default faker_type
                     column['faker_type'] = 'word'
-                    self.logger.info(f"Set default faker_type: 'word' for column '{column.get('name')}'")
     
     def _validate_tables(self, tables: List[Dict[str, Any]]) -> None:
-        """
-        Validate table configurations
-        
-        Args:
-            tables: List of table configuration dictionaries
-            
-        Raises:
-            ValidationError: If validation fails
-        """
-        # Track table names to ensure uniqueness
         table_names = set()
-        
         for i, table in enumerate(tables):
             table_path = f"tables[{i}]"
-            
-            # Check required fields
             if 'name' not in table:
-                raise ValidationError(f"Missing required field 'name'", table_path)
-                
+                raise ValidationError("Missing required field 'name'", table_path)
             table_name = table['name']
-            
-            # Ensure table name is unique
             if table_name in table_names:
                 raise ValidationError(f"Duplicate table name: '{table_name}'", f"{table_path}.name")
             table_names.add(table_name)
-                
             if 'columns' not in table:
-                raise ValidationError(f"Missing required field 'columns'", table_path)
-                
+                raise ValidationError("Missing required field 'columns'", table_path)
             if 'rows' not in table:
-                # Set a default if missing
                 table['rows'] = 1000
-                self.logger.info(f"Set default rows: 1000 for table '{table_name}'")
-            
-            # Validate rows is positive
             rows = table['rows']
             if not isinstance(rows, int) or rows <= 0:
                 raise ValidationError(f"'rows' must be a positive integer, got '{rows}'", f"{table_path}.rows")
-            
-            # Validate output path if specified
             if 'output_path' in table:
                 output_dir = os.path.dirname(table['output_path'])
                 if output_dir and not os.path.exists(output_dir):
-                    self.logger.info(f"Output directory '{output_dir}' for table '{table_name}' doesn't exist. It will be created during processing.")
-            
-            # Validate each column
+                    self.logger.info(f"Output directory '{output_dir}' doesn't exist.")
             self._validate_columns(table['columns'], table_path, table_name)
     
     def _validate_columns(self, columns: List[Dict[str, Any]], table_path: str, table_name: str) -> None:
-        """
-        Validate column configurations within a table
-        
-        Args:
-            columns: List of column configuration dictionaries
-            table_path: Path to the parent table for error reporting
-            table_name: Name of the parent table
-            
-        Raises:
-            ValidationError: If validation fails
-        """
         if not columns:
             raise ValidationError("No columns defined", f"{table_path}.columns")
-            
-        # Track column names to ensure uniqueness
         column_names = set()
-        
         for j, column in enumerate(columns):
             column_path = f"{table_path}.columns[{j}]"
-            
-            # Check required fields
             if 'name' not in column:
-                raise ValidationError(f"Missing required field 'name'", column_path)
-                
+                raise ValidationError("Missing required field 'name'", column_path)
             column_name = column['name']
-            
-            # Ensure column name is unique
             if column_name in column_names:
                 raise ValidationError(f"Duplicate column name: '{column_name}'", f"{column_path}.name")
             column_names.add(column_name)
-                
             if 'type' not in column:
-                raise ValidationError(f"Missing required field 'type'", column_path)
-                
-            # Validate column type
+                raise ValidationError("Missing required field 'type'", column_path)
             column_type = column['type']
             if column_type not in self.SUPPORTED_COLUMN_TYPES:
                 raise ValidationError(
-                    f"Unsupported column type: '{column_type}'. " +
-                    f"Supported types: {', '.join(self.SUPPORTED_COLUMN_TYPES)}",
+                    f"Unsupported column type: '{column_type}'. Supported types: {', '.join(self.SUPPORTED_COLUMN_TYPES)}",
                     f"{column_path}.type"
                 )
-                
-            # Validate type-specific fields
             self._validate_column_type_specific(column, column_path, column_type)
     
     def _validate_column_type_specific(self, column: Dict[str, Any], column_path: str, column_type: str) -> None:
-        """
-        Validate type-specific fields within a column configuration
-        
-        Args:
-            column: Column configuration dictionary
-            column_path: Path to the column for error reporting
-            column_type: Type of the column
-            
-        Raises:
-            ValidationError: If validation fails
-        """
-        # Validate null_probability for all column types
         if 'null_probability' in column:
             null_prob = column['null_probability']
             if not isinstance(null_prob, (int, float)) or not (0 <= null_prob <= 1):
@@ -618,70 +385,37 @@ class GeneratorConfigValidator(ConfigValidator):
                 )
         
         if column_type == 'faker':
-            # Validate faker fields
             if 'faker_type' not in column:
-                # Set default faker_type
                 column['faker_type'] = 'word'
-                self.logger.info(f"Set default faker_type: 'word' for column '{column.get('name')}'")
-                
         elif column_type == 'sequence':
-            # Validate sequence fields
             if 'start' not in column:
                 column['start'] = 1
-                self.logger.info(f"Set default start: 1 for sequence column '{column.get('name')}'")
-                
             if 'step' not in column:
                 column['step'] = 1
-                self.logger.info(f"Set default step: 1 for sequence column '{column.get('name')}'")
-                
         elif column_type == 'categorical':
-            # Validate categorical fields
             if 'categories' not in column:
-                raise ValidationError(f"Missing required field 'categories'", f"{column_path}.categories")
-                
+                raise ValidationError("Missing required field 'categories'", f"{column_path}.categories")
             categories = column['categories']
             if not isinstance(categories, list) or not categories:
-                raise ValidationError(f"'categories' must be a non-empty list", f"{column_path}.categories")
-                
-            # Validate weights if present
+                raise ValidationError("'categories' must be a non-empty list", f"{column_path}.categories")
             if 'weights' in column:
                 weights = column['weights']
                 if not isinstance(weights, list) or len(weights) != len(categories):
                     raise ValidationError(
-                        f"'weights' must be a list with the same length as 'categories'",
+                        "'weights' must be a list with the same length as 'categories'",
                         f"{column_path}.weights"
                     )
-                    
-                # Check weights sum to approximately 1
                 weight_sum = sum(weights)
-                if not (0.99 <= weight_sum <= 1.01):  # Allow small floating point differences
-                    self.logger.warning(
-                        f"Weights for column '{column.get('name')}' sum to {weight_sum}, " +
-                        "which is not close to 1.0. This may produce unexpected distributions."
-                    )
-                    
+                if not (0.99 <= weight_sum <= 1.01):
+                    self.logger.warning(f"Weights for column '{column.get('name')}' sum to {weight_sum}.")
         elif column_type == 'reference':
-            # Validate reference fields
             if 'reference_table' not in column:
-                raise ValidationError(f"Missing required field 'reference_table'", f"{column_path}.reference_table")
-                
+                raise ValidationError("Missing required field 'reference_table'", f"{column_path}.reference_table")
             if 'reference_column' not in column:
-                raise ValidationError(f"Missing required field 'reference_column'", f"{column_path}.reference_column")
-                
+                raise ValidationError("Missing required field 'reference_column'", f"{column_path}.reference_column")
         elif column_type == 'formula':
-            # F0 consolidation: every formula is a Python expression. Drop
-            # the previous `formula_type: basic | template | composite`
-            # taxonomy — those were two independent choices (syntax +
-            # cross-column scope) hidden behind three names.
-            #
-            #   - syntax:  always Python. Want template-style? Write `f"..."`.
-            #   - scope:   `references: [col_a, col_b]` (optional list of
-            #              sibling columns) flips the column into post-pass
-            #              evaluation so siblings are readable. Empty/missing
-            #              means inline per-row eval with no cross-column
-            #              access.
             if 'formula' not in column:
-                raise ValidationError(f"Missing required field 'formula'", f"{column_path}.formula")
+                raise ValidationError("Missing required field 'formula'", f"{column_path}.formula")
             refs = column.get('references')
             if refs is not None and not isinstance(refs, list):
                 raise ValidationError(
@@ -689,68 +423,41 @@ class GeneratorConfigValidator(ConfigValidator):
                     f"{column_path}.references",
                 )
 
-        # Validate fixed_width_options if present (existing code remains unchanged)
         if 'fixed_width_options' in column:
             fixed_width_opts = column['fixed_width_options']
-            
-            # Validate padding_char (must be a single character)
             if 'padding_char' in fixed_width_opts:
                 padding_char = fixed_width_opts['padding_char']
                 if not isinstance(padding_char, str) or len(padding_char) != 1:
-                    self.logger.warning(f"Column '{column.get('name')}': padding_char must be a single character. Got '{padding_char}', using default ' '")
+                    self.logger.warning(f"Column '{column.get('name')}': padding_char must be a single character.")
                     fixed_width_opts['padding_char'] = ' '
-            
-            # Validate padding_alignment
             if 'padding_alignment' in fixed_width_opts:
                 alignment = fixed_width_opts['padding_alignment']
                 valid_alignments = ['auto', 'left', 'right']
                 if alignment not in valid_alignments:
-                    self.logger.warning(f"Column '{column.get('name')}': Invalid padding_alignment: '{alignment}'. Must be one of {valid_alignments}. Using 'left'.")
+                    self.logger.warning(f"Column '{column.get('name')}': Invalid padding_alignment: '{alignment}'.")
                     fixed_width_opts['padding_alignment'] = 'left'
     
     def _validate_relationships(self, relationships: List[Dict[str, Any]], tables: List[Dict[str, Any]]) -> None:
-        """
-        Validate relationship configurations
-        
-        Args:
-            relationships: List of relationship configuration dictionaries
-            tables: List of table configuration dictionaries for reference
-            
-        Raises:
-            ValidationError: If validation fails
-        """
         if not relationships:
             return
-            
-        # Create a map of table names and their column names
         table_map = {}
         for table in tables:
             table_name = table.get('name')
             if table_name:
                 column_names = [col.get('name') for col in table.get('columns', []) if col.get('name')]
                 table_map[table_name] = set(column_names)
-        
-        # Check each relationship
         for i, relationship in enumerate(relationships):
             rel_path = f"relationships[{i}]"
-            
-            # Check required fields
             if 'name' not in relationship:
-                raise ValidationError(f"Missing required field 'name'", rel_path)
-                
+                raise ValidationError("Missing required field 'name'", rel_path)
             if 'type' not in relationship:
-                raise ValidationError(f"Missing required field 'type'", rel_path)
-                
-            # Validate relationship type
+                raise ValidationError("Missing required field 'type'", rel_path)
             rel_type = relationship['type']
             if rel_type not in self.SUPPORTED_RELATIONSHIP_TYPES:
                 raise ValidationError(
-                    f"Unsupported relationship type: '{rel_type}'. " +
-                    f"Supported types: {', '.join(self.SUPPORTED_RELATIONSHIP_TYPES)}",
+                    f"Unsupported relationship type: '{rel_type}'. Supported types: {', '.join(self.SUPPORTED_RELATIONSHIP_TYPES)}",
                     f"{rel_path}.type"
                 )
-                
-            # Validate type-specific fields
             if rel_type == 'self_reference':
                 self._validate_self_reference(relationship, rel_path, table_map)
             elif rel_type == 'foreign_key':
@@ -758,121 +465,40 @@ class GeneratorConfigValidator(ConfigValidator):
             elif rel_type == 'many_to_many':
                 self._validate_many_to_many(relationship, rel_path, table_map)
     
-    def _validate_self_reference(self, relationship: Dict[str, Any], rel_path: str, table_map: Dict[str, Set[str]]) -> None:
-        """
-        Validate self-reference relationship configuration
-        
-        Args:
-            relationship: Relationship configuration dictionary
-            rel_path: Path to the relationship for error reporting
-            table_map: Map of table names to column names
-            
-        Raises:
-            ValidationError: If validation fails
-        """
-        required_fields = ['table', 'column', 'reference_column']
-        for field in required_fields:
+    def _validate_self_reference(self, relationship, rel_path, table_map):
+        for field in ['table', 'column', 'reference_column']:
             if field not in relationship:
                 raise ValidationError(f"Missing required field '{field}'", f"{rel_path}.{field}")
-                
         table_name = relationship['table']
-        column_name = relationship['column']
-        ref_column_name = relationship['reference_column']
-        
-        # Validate table exists
         if table_name not in table_map:
-            raise ValidationError(
-                f"Table '{table_name}' not defined",
-                f"{rel_path}.table"
-            )
-            
-        # Validate columns exist in table
+            raise ValidationError(f"Table '{table_name}' not defined", f"{rel_path}.table")
         column_set = table_map[table_name]
-        if column_name not in column_set:
-            raise ValidationError(
-                f"Column '{column_name}' not defined in table '{table_name}'",
-                f"{rel_path}.column"
-            )
-            
-        if ref_column_name not in column_set:
-            raise ValidationError(
-                f"Column '{ref_column_name}' not defined in table '{table_name}'",
-                f"{rel_path}.reference_column"
-            )
+        if relationship['column'] not in column_set:
+            raise ValidationError(f"Column '{relationship['column']}' not defined in table '{table_name}'", f"{rel_path}.column")
+        if relationship['reference_column'] not in column_set:
+            raise ValidationError(f"Column '{relationship['reference_column']}' not defined in table '{table_name}'", f"{rel_path}.reference_column")
     
-    def _validate_foreign_key(self, relationship: Dict[str, Any], rel_path: str, table_map: Dict[str, Set[str]]) -> None:
-        """
-        Validate foreign key relationship configuration
-        
-        Args:
-            relationship: Relationship configuration dictionary
-            rel_path: Path to the relationship for error reporting
-            table_map: Map of table names to column names
-            
-        Raises:
-            ValidationError: If validation fails
-        """
-        required_fields = ['source_table', 'source_column', 'target_table', 'target_column']
-        for field in required_fields:
+    def _validate_foreign_key(self, relationship, rel_path, table_map):
+        for field in ['source_table', 'source_column', 'target_table', 'target_column']:
             if field not in relationship:
                 raise ValidationError(f"Missing required field '{field}'", f"{rel_path}.{field}")
-                
         source_table = relationship['source_table']
-        source_column = relationship['source_column']
         target_table = relationship['target_table']
-        target_column = relationship['target_column']
-        
-        # Validate tables exist
         if source_table not in table_map:
-            raise ValidationError(
-                f"Source table '{source_table}' not defined",
-                f"{rel_path}.source_table"
-            )
-            
+            raise ValidationError(f"Source table '{source_table}' not defined", f"{rel_path}.source_table")
         if target_table not in table_map:
-            raise ValidationError(
-                f"Target table '{target_table}' not defined",
-                f"{rel_path}.target_table"
-            )
-            
-        # Validate columns exist in tables
-        source_columns = table_map[source_table]
-        if source_column not in source_columns:
-            raise ValidationError(
-                f"Column '{source_column}' not defined in table '{source_table}'",
-                f"{rel_path}.source_column"
-            )
-            
-        target_columns = table_map[target_table]
-        if target_column not in target_columns:
-            raise ValidationError(
-                f"Column '{target_column}' not defined in table '{target_table}'",
-                f"{rel_path}.target_column"
-            )
+            raise ValidationError(f"Target table '{target_table}' not defined", f"{rel_path}.target_table")
+        if relationship['source_column'] not in table_map[source_table]:
+            raise ValidationError(f"Column '{relationship['source_column']}' not defined in table '{source_table}'", f"{rel_path}.source_column")
+        if relationship['target_column'] not in table_map[target_table]:
+            raise ValidationError(f"Column '{relationship['target_column']}' not defined in table '{target_table}'", f"{rel_path}.target_column")
     
-    def _validate_many_to_many(self, relationship: Dict[str, Any], rel_path: str, table_map: Dict[str, Set[str]]) -> None:
-        """
-        Validate many-to-many relationship configuration
-        
-        Args:
-            relationship: Relationship configuration dictionary
-            rel_path: Path to the relationship for error reporting
-            table_map: Map of table names to column names
-            
-        Raises:
-            ValidationError: If validation fails
-        """
+    def _validate_many_to_many(self, relationship, rel_path, table_map):
         if 'junction_table' not in relationship:
-            raise ValidationError(f"Missing required field 'junction_table'", f"{rel_path}.junction_table")
-            
+            raise ValidationError("Missing required field 'junction_table'", f"{rel_path}.junction_table")
         junction_table = relationship['junction_table']
-        
-        # Validate junction table exists
         if junction_table not in table_map:
-            raise ValidationError(
-                f"Junction table '{junction_table}' not defined",
-                f"{rel_path}.junction_table"
-            )
+            raise ValidationError(f"Junction table '{junction_table}' not defined", f"{rel_path}.junction_table")
 
 
 import re
@@ -881,13 +507,7 @@ _GRAPH_NODE_ID_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]{0,63}$")
 
 
 class GraphConfigValidator(ConfigValidator):
-    """Validates `mode: graph` pipeline configs.
-
-    Mirrors MaskerConfigValidator's structure: a single public `validate`
-    that dispatches to private `_validate_*` helpers. Per-kind config is
-    delegated to the op module via the ops registry, so this validator
-    doesn't need to know each kind's config schema.
-    """
+    """Validates `mode: graph` pipeline configs."""
 
     SUPPORTED_SCHEMA_VERSIONS = {1}
 
@@ -904,9 +524,7 @@ class GraphConfigValidator(ConfigValidator):
             raise
 
     def _known_kinds(self) -> Set[str]:
-        # Lazy import to avoid circular deps at module-import time
         from decoy_engine.graph.ops import OPS
-
         return set(OPS.keys())
 
     def _validate_top_level(self, config: Dict[str, Any]) -> None:
@@ -927,8 +545,6 @@ class GraphConfigValidator(ConfigValidator):
                 "schema_version",
             )
 
-        # Engine mode (Phase 3 of polars-duckdb hybrid plan): pipeline opt-in
-        # for the hybrid runner. Default 'pandas' = today's behavior.
         engine = config.get("engine", "pandas")
         if engine not in ("pandas", "hybrid"):
             raise ValidationError(
@@ -939,7 +555,6 @@ class GraphConfigValidator(ConfigValidator):
     def _validate_nodes(
         self, nodes: List[Dict[str, Any]], kinds: Set[str]
     ) -> None:
-        # Lazy import to avoid circular deps
         from decoy_engine.graph.ops import OPS
 
         seen_ids: Set[str] = set()
@@ -954,9 +569,7 @@ class GraphConfigValidator(ConfigValidator):
                     f"{path}.id",
                 )
             if nid in seen_ids:
-                raise ValidationError(
-                    f"duplicate node id {nid!r}", f"{path}.id"
-                )
+                raise ValidationError(f"duplicate node id {nid!r}", f"{path}.id")
             seen_ids.add(nid)
 
             kind = node.get("kind")
@@ -966,7 +579,6 @@ class GraphConfigValidator(ConfigValidator):
                     f"{path}.kind",
                 )
 
-            # Optional human label — surfaces in logs alongside id+kind.
             name = node.get("name")
             if name is not None and (not isinstance(name, str) or not name.strip()):
                 raise ValidationError(
@@ -976,14 +588,11 @@ class GraphConfigValidator(ConfigValidator):
 
             cfg = node.get("config", {})
             if not isinstance(cfg, dict):
-                raise ValidationError(
-                    "config must be a mapping", f"{path}.config"
-                )
+                raise ValidationError("config must be a mapping", f"{path}.config")
 
             try:
                 OPS[kind].validate_config(cfg)
             except ValidationError as e:
-                # Re-raise with the node path prefixed
                 raise ValidationError(
                     str(e).split(": ", 1)[-1] if ": " in str(e) else str(e),
                     f"{path}.{getattr(e, 'path', None) or 'config'}",
@@ -992,17 +601,43 @@ class GraphConfigValidator(ConfigValidator):
     def _validate_edges(
         self, edges: List[Dict[str, Any]], nodes: List[Dict[str, Any]]
     ) -> None:
+        from decoy_engine.graph.ops import OPS
+
         node_ids = {n["id"] for n in nodes}
+        node_by_id = {n["id"]: n for n in nodes}
         for j, edge in enumerate(edges):
             path = f"edges[{j}]"
             if not isinstance(edge, dict):
                 raise ValidationError("edge must be a mapping", path)
             src = edge.get("from")
             dst = edge.get("to")
-            if src not in node_ids:
-                raise ValidationError(
-                    f"'from' references unknown node {src!r}", f"{path}.from"
-                )
+
+            # Handle "node_id.port" notation for split ops.
+            if isinstance(src, str) and "." in src:
+                base_nid, port = src.split(".", 1)
+                if base_nid not in node_ids:
+                    raise ValidationError(
+                        f"'from' references unknown node {base_nid!r}", f"{path}.from"
+                    )
+                op = OPS[node_by_id[base_nid]["kind"]]
+                if getattr(op, "OUTPUT_KIND", "stream") != "split":
+                    raise ValidationError(
+                        f"node {base_nid!r} is not a split op; port notation not allowed",
+                        f"{path}.from",
+                    )
+                valid_ports = getattr(op, "OUTPUT_PORTS", ())
+                if port not in valid_ports:
+                    raise ValidationError(
+                        f"unknown port {port!r} on split node {base_nid!r} "
+                        f"(valid: {valid_ports})",
+                        f"{path}.from",
+                    )
+            else:
+                if src not in node_ids:
+                    raise ValidationError(
+                        f"'from' references unknown node {src!r}", f"{path}.from"
+                    )
+
             if dst not in node_ids:
                 raise ValidationError(
                     f"'to' references unknown node {dst!r}", f"{path}.to"
@@ -1020,7 +655,8 @@ class GraphConfigValidator(ConfigValidator):
         out_count: Dict[str, int] = {n["id"]: 0 for n in nodes}
         for e in edges:
             in_count[e["to"]] += 1
-            out_count[e["from"]] += 1
+            base_src = e["from"].split(".", 1)[0]  # strip port suffix for split ops
+            out_count[base_src] += 1
 
         for n in nodes:
             kind = n["kind"]
@@ -1037,11 +673,8 @@ class GraphConfigValidator(ConfigValidator):
                     f"nodes.{n['id']}",
                 )
             if max_in is not None and ic > max_in:
-                # Single-input ops (mask, generate, derive, ...) reject extra
-                # edges by design; nudge the user toward `unite` so they don't
-                # have to reverse-engineer the cardinality rule.
                 hint = (
-                    " — combine upstream tables with a 'unite' node first"
+                    " -- combine upstream tables with a 'unite' node first"
                     if max_in == 1 and kind != "unite"
                     else ""
                 )
@@ -1059,5 +692,4 @@ class GraphConfigValidator(ConfigValidator):
         self, nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]]
     ) -> None:
         from decoy_engine.graph.topo import topo_order
-
         topo_order(nodes, edges)  # raises ValidationError on cycle
