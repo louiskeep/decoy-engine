@@ -7,6 +7,8 @@ Handles the application of masking rules to dataframes and chunks.
 import pandas as pd
 from typing import Dict, Any, List
 
+from decoy_engine.transforms.format_preservation import apply_format_preservation
+
 class MaskingProcessor:
     """
     Handles the application of masking rules to data.
@@ -82,6 +84,12 @@ class MaskingProcessor:
             # Check if column is part of referential integrity relationship
             rel_name = self.ref_integrity.get_referential_relationship(table_name, column)
             
+            # Capture the source column up front so the format-preservation
+            # post-pass (Item 65) can re-shape the masked output to match
+            # the source's surface format. Cheap shallow copy; we don't
+            # mutate `source` after this point.
+            source = df[column].copy()
+
             if rel_name:
                 # Apply masking with referential integrity
                 self.logger.info(f"Column '{column}' is part of relationship '{rel_name}'. Applying global mapping.")
@@ -96,6 +104,13 @@ class MaskingProcessor:
                     df[column] = original.where(~row_mask, masked)
                 else:
                     df[column] = self.strategy_manager.apply_masking_rule(df[column], rule)
+
+            # Item 65 — format-preservation post-pass. No-op unless the
+            # rule sets preserve_format=true; opt-out by strategy is
+            # handled inside apply_format_preservation (hash, redact,
+            # passthrough, date_shift all skip).
+            if rule.get('preserve_format'):
+                df[column] = apply_format_preservation(source, df[column], rule)
 
         MemoryMonitor.monitor_memory_usage(self.logger, "After applying masking rules")
 
