@@ -42,8 +42,6 @@ extensions = [
     "myst_parser",
     # Google / NumPy style docstring rendering for the few that exist.
     "sphinx.ext.napoleon",
-    # Source-code links from API pages back to GitHub.
-    "sphinx.ext.viewcode",
     # Cross-project link resolution (Python stdlib, pandas, pyarrow).
     "sphinx.ext.intersphinx",
     # Static API reference generation by walking the source tree —
@@ -54,7 +52,18 @@ extensions = [
     "autoapi.extension",
     # Copy buttons on code blocks.
     "sphinx_copybutton",
+    # Mermaid diagram rendering for the ```mermaid fenced blocks in
+    # architecture.md. Without this, Pygments treats `mermaid` as an unknown
+    # lexer and -W escalates to a build failure.
+    "sphinxcontrib.mermaid",
 ]
+
+# `sphinx.ext.viewcode` deliberately omitted: it crashes with an IndexError
+# while highlighting pydantic-model modules (e.g. `decoy_engine.disguises.schema`)
+# because autoapi-reported line numbers diverge from viewcode's highlighted
+# source. Furo's `source_repository` (see `html_theme_options` below) already
+# surfaces an "Edit on GitHub" button per page, which is what we actually
+# wanted; viewcode's embedded source view was never the goal.
 
 # ── MyST (markdown) configuration ────────────────────────────────────────
 # Keep the surface modest — these extensions cover what the existing
@@ -67,6 +76,10 @@ myst_enable_extensions = [
     "tasklist",
 ]
 myst_heading_anchors = 3  # generate slugs for h1–h3 so cross-doc anchor links resolve
+# Route ```mermaid fenced blocks to the sphinxcontrib-mermaid directive
+# rather than letting Pygments try to highlight `mermaid` as a programming
+# language (which it isn't, so -W escalates the lexer-not-found warning).
+myst_fence_as_directive = ["mermaid"]
 
 # ── sphinx-autoapi configuration ─────────────────────────────────────────
 autoapi_type = "python"
@@ -144,6 +157,90 @@ nitpick_ignore = [
     # Forward references in type hints that intersphinx can't resolve.
     # Add specific entries here when CI flags them, rather than relaxing
     # the global -W flag. Keeps the docs build tight.
+    #
+    # `Ellipsis` shows up wherever a type hint uses `...` (e.g. `Callable[..., T]`
+    # or `tuple[int, ...]`); autoapi renders it as a class reference that no
+    # intersphinx inventory ships.
+    ("py:class", "Ellipsis"),
+    # Stdlib / third-party classes that the intersphinx inventories don't
+    # expose under their canonical dotted path — listed individually rather
+    # than relaxing nitpicky globally.
+    ("py:class", "pathlib.Path"),
+    ("py:class", "pandas.Series"),
+    ("py:class", "pandas.DataFrame"),
+    ("py:class", "pyarrow.Table"),
+    ("py:class", "pydantic.BaseModel"),
+    ("py:obj", "pydantic.BaseModel"),
+    ("py:class", "pydantic.SecretStr"),
+    # Python stdlib `abc.ABC` shows up in the base-class list rendered by
+    # autoapi's inheritance section. It's documented in the Python
+    # intersphinx inventory under `:class:`, but autoapi cross-references
+    # it via the `:obj:` role, which the inventory doesn't index. Listed
+    # explicitly so the resolution doesn't depend on which role the
+    # autoapi version of the day decides to emit.
+    ("py:obj", "abc.ABC"),
+    # Type aliases and TypeVars defined inside the engine that autoapi
+    # rendering exposes as bare class references but doesn't link to a
+    # documented page.
+    ("py:class", "EngineType"),
+    ("py:class", "decoy_engine.graph.conversion.EngineType"),
+    ("py:class", "GraphEngineMode"),
+    ("py:class", "ConfigT"),
+    ("py:obj", "ConfigT"),
+    ("py:class", "DetectorFn"),
+    ("py:class", "TransformChoice"),
+    ("py:obj", "DecoyError"),
+    # `ConfigError` is re-exported by `decoy_engine.sdk` from
+    # `decoy_engine.exceptions`. autoapi records both targets, so any
+    # cross-reference becomes ambiguous; the exceptions module is canonical.
+    ("py:class", "ConfigError"),
+]
+
+# Private (underscore-prefixed) classes, the `decoy_engine.internal.*`
+# subpackage, and `decoy_engine.graph.ops._*` helper modules are excluded
+# from the public API surface by autoapi_ignore. References to them from
+# public modules still appear in type hints and rendered class hierarchies,
+# but the targets aren't documented — so they trip nitpick. Regex form keeps
+# the explicit ignore list from ballooning every time a new private helper
+# is added.
+nitpick_ignore_regex = [
+    (r"py:.*", r"_[A-Za-z][A-Za-z0-9_]*"),
+    (r"py:.*", r"decoy_engine\.internal\..*"),
+    (r"py:.*", r"decoy_engine\.graph\.ops\._.*"),
+]
+
+# Warnings emitted by autoapi / docutils that are noisy but not actionable
+# for the published build. Keep this list narrow — each entry should be
+# justified by a comment.
+suppress_warnings = [
+    # autoapi walks every import and warns when it can't statically resolve
+    # one to a module it's documenting. `internal/` and underscore-prefixed
+    # helper modules (e.g. `graph.ops._base`, `graph.ops._cloud_io`) are
+    # excluded by `autoapi_ignore` above on purpose — they're not part of
+    # the public surface — so every public module that imports from them
+    # produces a resolution warning. Documenting them just to silence the
+    # warning would violate the public-API rule in CLAUDE.md.
+    "autoapi.python_import_resolution",
+    # autoapi-rendered docstrings occasionally trip docutils' strict rst
+    # parser (definition lists without blank trailing lines, unintended
+    # indentation in narrative text, etc.). These are rendering nits in
+    # the auto-generated pages, not contract problems; the published HTML
+    # is still legible. Suppressing here keeps -W focused on real failures
+    # (broken refs, missing toctree entries) rather than docstring polish.
+    "docutils",
+    # `docs/architecture.md` and `docs/adr/*.md` are linked from index.md
+    # via GitHub URLs so they render on the repo page too; they intentionally
+    # don't sit in the API-reference toctree. The hidden toctree added in
+    # index.md picks them up for Sphinx, but autoapi-generated walks pages
+    # that aren't in __all__ still surface this warning.
+    "toc.not_included",
+    # `decoy_engine.sdk` re-exports `ConfigError` from `decoy_engine.exceptions`
+    # via `__all__`, which is the right public-API shape but makes autoapi
+    # record two targets for the same class. The resulting ambiguity warning
+    # fires on unqualified `:class:\`ConfigError\`` refs even though both
+    # targets are the same object. The not-found `ref.class` variant is
+    # still caught — only this Python-domain ambiguity gets silenced.
+    "ref.python",
 ]
 
 # ── Files to ignore ──────────────────────────────────────────────────────
@@ -151,4 +248,7 @@ exclude_patterns = [
     "_build",
     "Thumbs.db",
     ".DS_Store",
+    # The ADR template itself isn't a record — it's a copy-from skeleton.
+    # Including it produces a `toc.not_included` warning and an empty page.
+    "adr/template.md",
 ]

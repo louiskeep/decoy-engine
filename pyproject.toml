@@ -48,6 +48,9 @@ docs = [
     "myst-parser>=2,<5",
     "sphinx-copybutton>=0.5",
     "linkify-it-py>=2",
+    # Renders ```mermaid fenced blocks in docs/architecture.md. Without this
+    # Pygments treats `mermaid` as an unknown lexer and -W fails the build.
+    "sphinxcontrib-mermaid>=0.9",
 ]
 # `hybrid` retained as an empty alias so any caller that already wrote
 # `pip install decoy-engine[hybrid]` keeps working: the libs are required

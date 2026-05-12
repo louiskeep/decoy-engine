@@ -23,6 +23,15 @@ This site hosts the **auto-generated API reference**, regenerated on every push 
 api/index
 ```
 
+```{toctree}
+:caption: Architecture
+:hidden:
+
+architecture
+adr/0001-polars-duckdb-hybrid-engine-substrate
+adr/0002-two-key-resolvers-in-execution-context
+```
+
 ## Hand-curated companion docs
 
 The auto-generated reference is the *what*; these are the *why* and the *how*. Read in roughly this order if you're new to the engine:
