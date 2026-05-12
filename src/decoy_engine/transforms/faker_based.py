@@ -41,6 +41,19 @@ class FakerStrategy(BaseMaskingStrategy):
         column_key = self._column_key(column_name)
         preserve_domain = rule.get('preserve_domain', False) and faker_type == 'email'
         locale = rule.get('locale')
+        # Per-provider keyword args from YAML's ``faker_kwargs:`` map.
+        # These are passed straight through to the underlying Faker method
+        # (e.g. ``representation='alpha-3'`` for ``country_code``, or
+        # ``minimum_age=18, maximum_age=25`` for ``date_of_birth``). The
+        # provider lambda silently drops kwargs the method doesn't accept,
+        # so a stale YAML doesn't crash the run.
+        faker_kwargs = rule.get('faker_kwargs') or {}
+        if not isinstance(faker_kwargs, dict):
+            self.logger.warning(
+                f"faker_kwargs for column {column_name!r} must be a mapping, "
+                f"got {type(faker_kwargs).__name__}; ignoring"
+            )
+            faker_kwargs = {}
 
         if column_key is not None:
             self.logger.debug(
@@ -48,7 +61,8 @@ class FakerStrategy(BaseMaskingStrategy):
                 f"to column '{column_name}'"
             )
             return self._apply_keyed(
-                column, column_key, faker_type, preserve_domain, locale, rule
+                column, column_key, faker_type, preserve_domain, locale,
+                rule, faker_kwargs,
             )
 
         rule_seed = rule.get('seed', self.seed)
@@ -57,7 +71,8 @@ class FakerStrategy(BaseMaskingStrategy):
             f"locale={locale!r}) — row-order dependent"
         )
         return self._apply_legacy(
-            column, rule_seed, faker_type, preserve_domain, locale, rule
+            column, rule_seed, faker_type, preserve_domain, locale,
+            rule, faker_kwargs,
         )
 
     # ── Path B: keyed, stateless, bitwise stable ───────────────────────────
@@ -70,6 +85,7 @@ class FakerStrategy(BaseMaskingStrategy):
         preserve_domain: bool,
         locale,
         rule: Dict[str, Any],
+        faker_kwargs: Dict[str, Any],
     ) -> pd.Series:
         # Cache per-input outputs so duplicate values in a column don't pay
         # the Faker construction cost twice. Cache is process-local (reset
@@ -90,7 +106,7 @@ class FakerStrategy(BaseMaskingStrategy):
             else:
                 providers = get_faker_providers(f)
                 if faker_type in providers:
-                    out = providers[faker_type]()
+                    out = providers[faker_type](**faker_kwargs)
                 else:
                     self.logger.warning(
                         f"Unknown faker_type {faker_type!r}, using 'word' instead"
@@ -113,6 +129,7 @@ class FakerStrategy(BaseMaskingStrategy):
         preserve_domain: bool,
         locale,
         rule: Dict[str, Any],
+        faker_kwargs: Dict[str, Any],
     ) -> pd.Series:
         deterministic_faker = make_faker(locale)
         deterministic_faker.seed_instance(rule_seed)
@@ -129,7 +146,7 @@ class FakerStrategy(BaseMaskingStrategy):
                 faker_map[value] = f"{deterministic_faker.user_name()}@{domain}"
                 continue
             if faker_type in faker_providers:
-                faker_map[value] = faker_providers[faker_type]()
+                faker_map[value] = faker_providers[faker_type](**faker_kwargs)
             else:
                 self.logger.warning(
                     f"Unknown faker_type {faker_type!r}, using 'word' instead"

@@ -27,7 +27,7 @@ from typing import Any
 import pyarrow as pa
 import yaml
 
-from decoy_engine.context import ExecutionContext
+from decoy_engine.context import ExecutionContext, emit_lineage, emit_step
 from decoy_engine.exceptions import ConfigError, PipelineValidationError
 from decoy_engine.graph.conversion import (
     arrow_columns,
@@ -231,6 +231,21 @@ def _execute_graph(
     monitor = _PeakRSSMonitor()
     monitor.__enter__()
 
+    # One-shot lineage emission: classify every node by its kind family
+    # (source.* → source, target.* → output, everything else → transform)
+    # and tag with the engine-resolved kind so the UI can route an icon.
+    # Done before the run loop so a node failure mid-run still leaves a
+    # complete lineage record for the timeline.
+    for nid in order:
+        node = by_id[nid]
+        kind = node["kind"]
+        if kind.startswith("source."):
+            emit_lineage(log, "source", nid, kind)
+        elif kind.startswith("target."):
+            emit_lineage(log, "output", nid, kind)
+        else:
+            emit_lineage(log, "transform", nid, kind)
+
     for nid in order:
         node = by_id[nid]
         kind = node["kind"]
@@ -244,11 +259,27 @@ def _execute_graph(
         # Pull upstream outputs out of cache and decrement their consumer
         # count; eviction happens inside _consume.
         in_edges = [e for e in edges if e["to"] == nid]
+        # ``step_name`` is what the platform's JobLogger writes into the
+        # STEP column of every narrative line emitted while this node is
+        # the open step, AND what the reporting UI's pill timeline keys
+        # on. Using the node id (not the kind) means every node is its
+        # own pill, not one pill per kind — which matters for graphs
+        # with multiple mask / target nodes.
+        step_name = nid
+        # rows_in: sum of upstream row counts (pulled BEFORE _consume so
+        # we see pa.Tables — _consume materializes to the engine's
+        # native format and arrow_row_count is pa-only). Source ops with
+        # no upstream input naturally land at 0.
+        rows_in_total = sum(
+            arrow_row_count(cache.get(e["from"])) for e in in_edges
+            if cache.get(e["from"]) is not None
+        )
         inputs = [_consume(cache, remaining, e["from"], engine) for e in in_edges]
         descriptor = _node_descriptor(node)
 
         if log is not None:
             log.info("graph: running node %s (engine=%s)", descriptor, engine)
+        emit_step(log, step_name, status="start", rows_in=rows_in_total or None)
 
         t0 = time.monotonic()
         try:
@@ -256,11 +287,12 @@ def _execute_graph(
             table = engine_to_arrow(result, engine) if result is not None else None
             cache[nid] = table
             elapsed_ms = int((time.monotonic() - t0) * 1000)
+            rows_out = arrow_row_count(table)
             records.append({
                 "node_id": nid,
                 "kind": kind,
                 "status": "ok",
-                "row_count": arrow_row_count(table),
+                "row_count": rows_out,
                 "elapsed_ms": elapsed_ms,
                 "error": None,
             })
@@ -268,9 +300,13 @@ def _execute_graph(
                 log.info(
                     "graph: node %s ok rows=%d elapsed=%dms",
                     descriptor,
-                    arrow_row_count(table),
+                    rows_out,
                     elapsed_ms,
                 )
+            emit_step(
+                log, step_name, status="finish",
+                rows_in=rows_in_total or None, rows_out=rows_out,
+            )
             # Sink with no downstream consumers: evict immediately so memory
             # is reclaimed (its result is empty by convention anyway).
             if remaining.get(nid, 0) == 0:
@@ -289,6 +325,7 @@ def _execute_graph(
             if log is not None:
                 log.error("graph: node %s failed: %s", descriptor, translated)
                 log.error(traceback.format_exc())
+            emit_step(log, step_name, status="error", rows_in=rows_in_total or None)
             success = False
             break
 

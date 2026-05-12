@@ -81,6 +81,16 @@ class MapStrategy(BaseMaskingStrategy):
                 fake = make_faker(rule.get('locale'))
                 fake.seed_instance(seed)
                 faker_providers = get_faker_providers(fake)
+                # Per-provider kwargs (e.g. ``representation='alpha-3'``
+                # on ``country_code``) flow through unchanged. Unknown
+                # kwargs are dropped by the provider lambda.
+                faker_kwargs = rule.get('faker_kwargs') or {}
+                if not isinstance(faker_kwargs, dict):
+                    self.logger.warning(
+                        f"map: faker_kwargs must be a mapping, got "
+                        f"{type(faker_kwargs).__name__}; ignoring"
+                    )
+                    faker_kwargs = {}
                 
                 for value in unique_values:
                     # Skip if already mapped
@@ -97,7 +107,7 @@ class MapStrategy(BaseMaskingStrategy):
                     
                     # Use faker provider from our dictionary if available
                     if faker_type in faker_providers:
-                        mapping[str_value] = faker_providers[faker_type]()
+                        mapping[str_value] = faker_providers[faker_type](**faker_kwargs)
                     else:
                         # Default to a word if faker_type is not recognized
                         self.logger.warning(f"Unknown faker_type '{faker_type}', using 'word' instead")

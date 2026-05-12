@@ -39,7 +39,11 @@ DETECTOR_TO_TRANSFORMS: dict[str, list[TransformChoice]] = {
     ],
     "us_zip": [
         ("redact", {"keep_chars": 3},             "Keep first 3 digits (HIPAA Safe Harbor for ZCTAs >20K population)."),
-        ("faker",  {"faker_type": "postcode"},    "Replace with a fake ZIP."),
+        # ``zipcode`` is what the engine's provider whitelist exposes
+        # for US-style ZIPs (helpers.py). ``postcode`` is a real Faker
+        # method but isn't registered, so the engine would warn and
+        # fall back to ``word`` once per row.
+        ("faker",  {"faker_type": "zipcode"},     "Replace with a fake ZIP."),
     ],
     "person_name": [
         ("faker", {"faker_type": "name"}, "Replace with a realistic fake name."),

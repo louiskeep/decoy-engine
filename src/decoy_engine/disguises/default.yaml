@@ -36,7 +36,11 @@ field_rules:
   - detectors: [us_zip]
     mask: faker
     params:
-      faker_type: postcode
+      # The engine's whitelist registers this US provider as ``zipcode``
+      # (see decoy_engine/internal/helpers.py). ``postcode`` is a real
+      # Faker method but is not exposed, so the substitution fell back
+      # to ``word`` with a per-row warning. Stick to ``zipcode`` here.
+      faker_type: zipcode
     why: "Replace ZIP with a fake postal code."
 
   - detectors: [iso_date, us_date, eu_date]

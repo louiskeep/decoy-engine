@@ -213,6 +213,18 @@ class ColumnGenerator:
             self.logger.warning(f"Unknown faker_type '{faker_type}', using 'word' instead")
             provider_func = providers['word']
 
+        # Per-provider kwargs (representation, minimum_age, nb_sentences,
+        # etc.) flow through from YAML's ``faker_kwargs:`` block. Invalid
+        # entries are dropped silently by the provider lambda so a stale
+        # config doesn't crash generation.
+        faker_kwargs = column_config.get('faker_kwargs') or {}
+        if not isinstance(faker_kwargs, dict):
+            self.logger.warning(
+                f"generate: faker_kwargs for {column_config.get('name')!r} must "
+                f"be a mapping, got {type(faker_kwargs).__name__}; ignoring"
+            )
+            faker_kwargs = {}
+
         # Generate values for all rows. When `derive_key` is set, the
         # column-seed is HKDF-derived from the pipeline key, so the same
         # key + same column always yields the same bytes across runs.
@@ -226,7 +238,7 @@ class ColumnGenerator:
             row_seed = column_seed + i
             random.seed(row_seed)
             faker_inst.seed_instance(row_seed)
-            values.append(provider_func())
+            values.append(provider_func(**faker_kwargs))
 
         return pd.Series(values)
 

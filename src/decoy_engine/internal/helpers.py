@@ -84,95 +84,159 @@ def unregister_faker_provider(name: str) -> None:
     _CUSTOM_FAKER_PROVIDERS.pop(name, None)
 
 
+# ── Faker reflection denylist ────────────────────────────────────
+#
+# Methods on a Faker instance that the engine never wants to surface as a
+# masking provider, even though they're public. Two categories:
+#
+#   1. Wrong return type for a cell value: bytes (binary/image/tar/zip/
+#      json_bytes), tuples (currency, latlng, cryptocurrency,
+#      passport_owner), dicts (profile, simple_profile), generators
+#      (time_series), and other non-stringy returns (pytimezone,
+#      time_delta, time_object, pyiterable, pylist, pyset, pytuple,
+#      pyobject, pystruct, pydict).
+#
+#   2. Configuration / introspection helpers that aren't providers
+#      (random, factories, parse, format, set_arguments, etc.).
+#
+# Anything not in this set + that is callable + that isn't a dunder is
+# eligible. Reflection plus the curated overrides below gives the UI ~200
+# safe providers without a hand-maintained whitelist.
+_FAKER_DENYLIST: set[str] = {
+    # Bytes / binary outputs.
+    'binary', 'image', 'image_url', 'tar', 'zip', 'json_bytes',
+    # Non-scalar returns (tuples / dicts / generators / typed objects).
+    'profile', 'simple_profile', 'time_series',
+    'cryptocurrency', 'currency',
+    'latlng', 'local_latlng', 'location_on_land', 'passport_owner',
+    'pytimezone', 'time_delta', 'time_object',
+    'pylist', 'pyset', 'pytuple', 'pydict', 'pyiterable',
+    'pyobject', 'pystruct',
+    'enum',  # requires an enum class arg
+    # Faker internals / configuration helpers (not masking providers).
+    'add_provider', 'add_arguments', 'optional', 'unique', 'random',
+    'get_arguments', 'get_providers', 'factories', 'factory',
+    'seed', 'seed_instance', 'seed_locale', 'cache', 'parse', 'format',
+    'pystr_format', 'set_arguments', 'set_formatter', 'generator_attrs',
+    'locales', 'weights', 'generator_method', 'items',
+}
+
+
+def _coerce_to_str(value: Any) -> Any:
+    """Best-effort: pandas cells take strings cleanly; everything else
+    (Decimal, datetime, date) gets str()'d. Returning None for None
+    preserves the engine's existing null-handling expectations."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (bytes, bytearray)):
+        # Hex string is safer than trying to UTF-8 decode arbitrary bytes.
+        return value.hex()
+    return str(value)
+
+
+def _make_reflected_provider(method: Callable) -> Callable:
+    """Wrap a bound Faker method so the engine can call it with arbitrary
+    keyword args from a YAML ``faker_kwargs:`` block. Invalid kwargs are
+    silently dropped rather than raised so a stale YAML doesn't kill a
+    job — the masker emits a warning at the call site."""
+    import inspect as _inspect
+    try:
+        sig = _inspect.signature(method)
+        # Includes **kwargs methods (faker is sometimes flexible).
+        has_var_keyword = any(
+            p.kind == _inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+        )
+        param_names = {
+            p.name for p in sig.parameters.values()
+            if p.kind in (
+                _inspect.Parameter.KEYWORD_ONLY,
+                _inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            )
+        } - {'self'}
+    except (TypeError, ValueError):
+        has_var_keyword = True
+        param_names = set()
+
+    def call(**kwargs: Any) -> Any:
+        if not kwargs:
+            return _coerce_to_str(method())
+        if has_var_keyword:
+            accepted = kwargs
+        else:
+            # Drop unknown args. Anything the method doesn't accept can't
+            # land in a TypeError here.
+            accepted = {k: v for k, v in kwargs.items() if k in param_names}
+        return _coerce_to_str(method(**accepted))
+
+    return call
+
+
 def get_faker_providers(faker_instance: Faker) -> Dict[str, Callable]:
-    """
-    Get a comprehensive dictionary of Faker providers
+    """Return a dict of every safe Faker provider on ``faker_instance``.
 
-    Args:
-        faker_instance: An initialized Faker instance
+    Built by reflection: each public method that isn't in
+    ``_FAKER_DENYLIST`` becomes an entry. Each value is a callable
+    that accepts ``**kwargs`` so per-provider arguments (e.g.
+    ``representation='alpha-3'`` on ``country_code``) flow through from
+    YAML's ``faker_kwargs:`` block. Returns are str-coerced so a
+    Decimal/datetime/date method works inline.
 
-    Returns:
-        Dictionary mapping provider names to faker functions. Built-in
-        providers are merged with any names registered via
-        ``register_faker_provider``; custom registrations take precedence on
-        name collision so callers can override a built-in if they need to.
+    The engine's masking transforms call ``providers[faker_type](**kw)``.
+    For legacy call sites that pass no kwargs, the entry behaves exactly
+    like the old curated lambda.
+
+    Two intentional overrides on top of reflection:
+      * ``address`` joins multiline output with ``, `` — masking a CSV
+        cell with an embedded newline breaks downstream consumers.
+      * ``postcode`` aliases ``zipcode`` so older YAMLs (emitted by
+        pre-2026-05-12 forecast/transform_metadata.py and the legacy
+        default.yaml disguise mapping) don't generate "Unknown
+        faker_type" warnings.
+
+    Custom providers registered via ``register_faker_provider`` are
+    added last and override reflection on name collision.
     """
     fake = faker_instance
+    providers: Dict[str, Callable] = {}
 
-    # Create a comprehensive dictionary of faker providers
-    faker_providers = {
-        # Person providers
-        'first_name': lambda: fake.first_name(),
-        'last_name': lambda: fake.last_name(),
-        'name': lambda: fake.name(),
-        'prefix': lambda: fake.prefix(),
-        'suffix': lambda: fake.suffix(),
-        
-        # Contact providers
-        'email': lambda: fake.email(),
-        'phone_number': lambda: fake.phone_number(),
-        'username': lambda: fake.user_name(),
-        
-        # Address providers
-        'address': lambda: fake.address().replace('\n', ', '),
-        'street_address': lambda: fake.street_address(),
-        'city': lambda: fake.city(),
-        'state': lambda: fake.state(),
-        'state_abbr': lambda: fake.state_abbr(),
-        'zipcode': lambda: fake.zipcode(),
-        'country': lambda: fake.country(),
-        
-        # Company/job providers
-        'company': lambda: fake.company(),
-        'company_suffix': lambda: fake.company_suffix(),
-        'job': lambda: fake.job(),
-        
-        # Finance providers
-        'credit_card_number': lambda: fake.credit_card_number(),
-        'credit_card_provider': lambda: fake.credit_card_provider(),
-        'currency_code': lambda: fake.currency_code(),
-        'ssn': lambda: fake.ssn(),
-        
-        # Date/time providers
-        'date': lambda: fake.date_this_decade().strftime('%Y-%m-%d'),
-        'date_of_birth': lambda: fake.date_of_birth().strftime('%Y-%m-%d'),
-        'future_date': lambda: fake.future_date().strftime('%Y-%m-%d'),
-        'past_date': lambda: fake.past_date().strftime('%Y-%m-%d'),
-        'time': lambda: fake.time(),
-        'day_of_week': lambda: fake.day_of_week(),
-        'month': lambda: fake.month_name(),
-        
-        # Internet providers
-        'domain': lambda: fake.domain_name(),
-        'url': lambda: fake.url(),
-        'ipv4': lambda: fake.ipv4(),
-        'ipv6': lambda: fake.ipv6(),
-        'user_agent': lambda: fake.user_agent(),
-        
-        # Text providers
-        'word': lambda: fake.word(),
-        'words': lambda n=3: ' '.join(fake.words(n)),
-        'sentence': lambda: fake.sentence(),
-        'paragraph': lambda: fake.paragraph(),
-        'text': lambda: fake.text(max_nb_chars=100),
-        
-        # Misc providers
-        'color': lambda: fake.color_name(),
-        'color_hex': lambda: fake.hex_color(),
-        'file_path': lambda: fake.file_path(),
-        'file_name': lambda: fake.file_name(),
-        'mime_type': lambda: fake.mime_type(),
-        'uuid4': lambda: str(fake.uuid4()),
-    }
+    for name in dir(fake):
+        if name.startswith('_'):
+            continue
+        if name in _FAKER_DENYLIST:
+            continue
+        attr = getattr(fake, name, None)
+        if not callable(attr):
+            continue
+        providers[name] = _make_reflected_provider(attr)
 
-    # Custom providers wrap the seeded `fake` instance so user-supplied
-    # functions can call any Faker method (`fake.first_name()`, `fake.bban()`,
-    # etc.) and inherit the per-value seed for free. Override built-ins on
-    # name collision — last registration wins.
+    # ── overrides ────────────────────────────────────────────────
+    # ``address`` joins multiline output to a single line so CSV /
+    # parquet cells stay one-row. The reflected version would leave the
+    # newline in place, which breaks downstream tools that aren't
+    # quoted-CSV-aware.
+    def _addr(**kwargs: Any) -> str:
+        out = fake.address(**kwargs) if kwargs else fake.address()
+        return out.replace('\n', ', ') if isinstance(out, str) else _coerce_to_str(out)
+
+    providers['address'] = _addr
+
+    # ``postcode`` -> ``zipcode`` alias. Faker's en_US locale doesn't
+    # expose ``postcode`` directly (some other locales do), so legacy
+    # YAML used to trip the unknown-faker-type warning. Aliasing keeps
+    # old pipelines warning-free; new ones should emit ``zipcode``.
+    if 'zipcode' in providers and 'postcode' not in providers:
+        providers['postcode'] = providers['zipcode']
+
+    # Custom providers wrap the seeded ``fake`` instance so user-supplied
+    # functions can call any Faker method (``fake.first_name()``,
+    # ``fake.bban()``, etc.) and inherit the per-value seed for free.
+    # Override built-ins on name collision — last registration wins.
     for name, fn in _CUSTOM_FAKER_PROVIDERS.items():
-        faker_providers[name] = lambda fn=fn, fake=fake: fn(fake)
+        providers[name] = lambda fn=fn, fake=fake: fn(fake)
 
-    return faker_providers
+    return providers
 
 
 def make_faker(locale=None) -> Faker:
