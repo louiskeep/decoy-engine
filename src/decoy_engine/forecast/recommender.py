@@ -12,10 +12,11 @@ What it produces:
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 import yaml
 
+from decoy_engine.context import ExecutionContext, emit_lineage, emit_step
 from decoy_engine.disguises import Disguise, load_disguises
 from decoy_engine.disguises.schema import FieldRule
 from decoy_engine.forecast.transform_metadata import best_transform_for
@@ -33,24 +34,48 @@ _DISGUISES: list[Disguise] = load_disguises()
 
 # ── public API ────────────────────────────────────────────────────────────────
 
-def recommend(profile: StormProfile) -> ForecastReport:
+def recommend(
+    profile: StormProfile,
+    ctx: Optional[ExecutionContext] = None,
+) -> ForecastReport:
     """Generate a ForecastReport for the given StormProfile.
 
-    The signature deliberately accepts only the profile — see
-    docstring on the module for the security boundary rationale.
-    """
-    field_recs = _per_field_recommendations(profile.fields)
-    disguise_recs = _rank_disguises(profile, field_recs)
-    risk_flags = _surface_risk_flags(profile.fields)
-    yaml_text = _draft_pipeline_yaml(profile, disguise_recs, field_recs)
+    The signature deliberately accepts only the profile + an optional
+    side-channel context — see the module docstring + the matching
+    security-boundary test for the FORECAST-never-sees-raw-data rationale.
 
-    return ForecastReport(
-        profile_source=profile.source_label,
-        disguise_recommendations=disguise_recs,
-        field_recommendations=field_recs,
-        risk_flags=risk_flags,
-        proposed_pipeline_yaml=yaml_text,
+    ``ctx`` (Item 71) routes structured events through the caller's
+    JobLogger so a standalone FORECAST run shows up in the bottom-pane
+    SSE stream + step timeline alongside masking jobs. None preserves
+    the pure-function behavior for CLI / test callers.
+    """
+    logger = ctx.logger if ctx is not None else None
+    emit_lineage(logger, "source", profile.source_label, "storm_profile")
+    emit_step(logger, "forecast.recommend", status="start")
+    try:
+        field_recs = _per_field_recommendations(profile.fields)
+        disguise_recs = _rank_disguises(profile, field_recs)
+        risk_flags = _surface_risk_flags(profile.fields)
+        yaml_text = _draft_pipeline_yaml(profile, disguise_recs, field_recs)
+
+        report = ForecastReport(
+            profile_source=profile.source_label,
+            disguise_recommendations=disguise_recs,
+            field_recommendations=field_recs,
+            risk_flags=risk_flags,
+            proposed_pipeline_yaml=yaml_text,
+        )
+    except Exception as exc:  # noqa: BLE001 — re-raised below
+        emit_step(
+            logger, "forecast.recommend", status="error",
+            error_class=type(exc).__name__, error_msg=str(exc),
+        )
+        raise
+    emit_step(
+        logger, "forecast.recommend", status="finish",
+        rows_in=len(profile.fields), rows_out=len(disguise_recs),
     )
+    return report
 
 
 # ── per-field recommendations ─────────────────────────────────────────────────

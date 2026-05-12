@@ -17,6 +17,7 @@ from typing import Optional
 
 import pandas as pd
 
+from decoy_engine.context import ExecutionContext, emit_lineage, emit_step
 from decoy_engine.storm.detectors import (
     hits_custom_name_hint,
     hits_name_hint,
@@ -407,6 +408,7 @@ def run_storm(
     sample_strategy: str = "full",
     sample_row_cap: Optional[int] = None,
     custom_detectors: Optional[list[CustomDetectorSpec]] = None,
+    ctx: ExecutionContext | None = None,
 ) -> StormProfile:
     """Scan a DataFrame and produce a StormProfile.
 
@@ -417,20 +419,41 @@ def run_storm(
     patterns at scan time without touching the engine. Each spec runs against
     every column alongside the built-ins; their hits show up in
     DetectorMatch.detector_id with whatever id the caller supplied.
-    """
-    total = len(df)
-    fields = [_profile_column(df[col], total, custom_detectors) for col in df.columns]
-    reid_cols = [f.name for f in fields if f.is_likely_unique]
-    reid_score = round(len(reid_cols) / max(len(fields), 1) * 100, 1)
-    qi_groups = _quasi_identifier_groups(fields)
 
-    return StormProfile(
-        source_label=source_label,
-        row_count=total,
-        sample_strategy=sample_strategy,
-        sample_row_cap=sample_row_cap,
-        fields=fields,
-        reid_risk_columns=reid_cols,
-        reid_risk_score=reid_score,
-        quasi_identifier_groups=qi_groups,
+    ``ctx`` (Item 71) routes structured events through the caller's
+    JobLogger so a standalone STORM scan shows up in the bottom-pane
+    SSE stream + step timeline + lineage strip the same way a masking
+    job does. None preserves the pure-function behavior for CLI / test
+    callers that don't have a Job bound.
+    """
+    logger = ctx.logger if ctx is not None else None
+    emit_lineage(logger, "source", source_label, "dataset")
+    emit_step(logger, "storm.scan", status="start")
+    try:
+        total = len(df)
+        fields = [_profile_column(df[col], total, custom_detectors) for col in df.columns]
+        reid_cols = [f.name for f in fields if f.is_likely_unique]
+        reid_score = round(len(reid_cols) / max(len(fields), 1) * 100, 1)
+        qi_groups = _quasi_identifier_groups(fields)
+
+        profile = StormProfile(
+            source_label=source_label,
+            row_count=total,
+            sample_strategy=sample_strategy,
+            sample_row_cap=sample_row_cap,
+            fields=fields,
+            reid_risk_columns=reid_cols,
+            reid_risk_score=reid_score,
+            quasi_identifier_groups=qi_groups,
+        )
+    except Exception as exc:  # noqa: BLE001 — re-raised below
+        emit_step(
+            logger, "storm.scan", status="error",
+            error_class=type(exc).__name__, error_msg=str(exc),
+        )
+        raise
+    emit_step(
+        logger, "storm.scan", status="finish",
+        rows_in=total, rows_out=len(fields),
     )
+    return profile

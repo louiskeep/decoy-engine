@@ -8,43 +8,71 @@ a parameter accepting raw data (DataFrame, file path, connector handle, etc.).
 If you have a legitimate reason to expand the signature, change this test
 together with the change and document the reason here. Bypassing the test
 silently would erase the promise the platform's marketing copy makes.
+
+Allowed-list (additions that DON'T break the boundary):
+
+  - ``ctx: ExecutionContext | None`` (Item 71, 2026-05-12). The
+    ExecutionContext carries only side-channel observation hooks
+    (logger + key resolvers + connector resolver). None of those carry
+    raw data; the logger forwards engine-emitted events to the
+    platform's JobLogger so a standalone FORECAST run shows up in the
+    bottom-pane SSE stream the same way a masking job does. The
+    profile is still the sole carrier of dataset information.
+
+If you need to add another non-data parameter, append to the
+ALLOWED_EXTRA_PARAMS set with a comment justifying it.
 """
 
 import inspect
 import typing
 
+from decoy_engine.context import ExecutionContext
 from decoy_engine.forecast import recommend
 from decoy_engine.storm.types import StormProfile
+
+
+# Map of allowed extra parameter name -> expected type. A param is OK
+# only when both match. Add entries here together with the signature
+# change + a reason in the module docstring above.
+ALLOWED_EXTRA_PARAMS: dict[str, object] = {
+    "ctx": typing.Optional[ExecutionContext],
+}
 
 
 def test_recommend_accepts_only_a_storm_profile():
     sig = inspect.signature(recommend)
     params = list(sig.parameters.values())
-
-    # Exactly one parameter.
-    assert len(params) == 1, (
-        f"FORECAST signature changed: expected exactly 1 parameter, "
-        f"got {len(params)}: {[p.name for p in params]}. "
-        f"This may erase the FORECAST-never-sees-raw-data promise."
-    )
-
-    p = params[0]
-
-    # Resolve annotations through typing.get_type_hints — recommender uses
-    # `from __future__ import annotations` so raw .annotation values are strings.
     hints = typing.get_type_hints(recommend)
-    assert hints.get(p.name) is StormProfile, (
-        f"FORECAST parameter type changed: expected StormProfile, "
-        f"got {hints.get(p.name)}. Adding a raw-data type (DataFrame, str, Path, "
-        f"Connector, etc.) here breaks the security contract."
-    )
 
-    # The parameter is positional (so it can't be quietly default-supplied to
-    # something raw-data-shaped from a config).
-    assert p.kind in (
+    # First parameter must be the StormProfile, positional. This is
+    # the security contract.
+    assert params, "FORECAST signature lost its profile parameter"
+    first = params[0]
+    assert hints.get(first.name) is StormProfile, (
+        f"FORECAST first parameter type changed: expected StormProfile, "
+        f"got {hints.get(first.name)}. Adding a raw-data type (DataFrame, "
+        f"str, Path, Connector, etc.) here breaks the security contract."
+    )
+    assert first.kind in (
         inspect.Parameter.POSITIONAL_ONLY,
         inspect.Parameter.POSITIONAL_OR_KEYWORD,
     )
+
+    # Any additional parameter must appear in ALLOWED_EXTRA_PARAMS
+    # with the expected type — keeps the door shut on silent raw-data
+    # additions without blocking documented logger-style hooks.
+    for extra in params[1:]:
+        assert extra.name in ALLOWED_EXTRA_PARAMS, (
+            f"FORECAST gained unknown parameter {extra.name!r}. "
+            f"If this is intentional, add it to ALLOWED_EXTRA_PARAMS "
+            f"in this test with a justification in the module docstring."
+        )
+        expected = ALLOWED_EXTRA_PARAMS[extra.name]
+        actual = hints.get(extra.name)
+        assert actual == expected, (
+            f"FORECAST parameter {extra.name!r} type changed: expected "
+            f"{expected}, got {actual}."
+        )
 
 
 # Defense in depth: also assert that `decoy_engine.forecast` doesn't import
