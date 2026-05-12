@@ -8,6 +8,7 @@ The validator's "unknown kind" rejection is driven directly off OPS.
 """
 
 from decoy_engine.graph.ops import (
+    convert_file_type,
     drop_column,
     select_column,
     filter_op,
@@ -72,6 +73,10 @@ OPS: dict[str, object] = {
     # Item 21: IF/FLAG/Reviews.
     "if": if_router,
     "flag_gate": flag_gate,
+    # Items 57 + 66(b): explicit in-pipeline format re-encode (CSV / TSV /
+    # Parquet / JSON Lines). Sits between source.file and target.file as
+    # the "intentional conversion" tile under Transforms.
+    "convert.file_type": convert_file_type,
 }
 
 

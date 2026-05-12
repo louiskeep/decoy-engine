@@ -85,6 +85,7 @@ def test_unknown_kind_falls_back_to_pandas():
     ("generate", "pandas"),          # stays pandas (per-row Python)
     ("target.file", "duckdb"),       # Phase 4
     ("target.db", "duckdb"),         # Phase 4
+    ("convert.file_type", "duckdb"), # Item 57 + 66(b): wraps DuckDB COPY ... TO
 ])
 def test_op_engine_baseline_declarations(kind, expected_engine):
     """Frozen baseline. Updates here are intentional; surprises are not."""
