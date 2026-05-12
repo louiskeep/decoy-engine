@@ -3,6 +3,9 @@
 Config:
     path: str            - filesystem path
     format: 'csv' | 'parquet'  (optional; inferred from extension)
+    has_header: bool     - CSV only; defaults to true. When false, column
+                           names are auto-generated (col_0, col_1, ...) and
+                           the first row is treated as data.
 
 Phase 4 of the polars-duckdb hybrid plan: NATIVE_ENGINE='duckdb'. The
 DuckDB path streams CSVs natively (no need for the dead chunked-CSV
@@ -33,6 +36,10 @@ def validate_config(config: dict[str, Any]) -> None:
     if fmt not in {"csv", "parquet"}:
         raise ValidationError(
             f"unsupported format {fmt!r} (csv|parquet)", "config.format"
+        )
+    if "has_header" in config and not isinstance(config["has_header"], bool):
+        raise ValidationError(
+            "'has_header' must be a boolean when set", "config.has_header"
         )
 
 
@@ -65,9 +72,19 @@ def _apply_pandas(config: dict[str, Any]) -> pd.DataFrame:
     path = Path(config["path"])
     fmt = (config.get("format") or _infer_format(str(path))).lower()
     row_limit = config.get("__preview_row_limit")
+    has_header = config.get("has_header", True)
     try:
         if fmt == "csv":
-            return pd.read_csv(path, nrows=row_limit)
+            if has_header:
+                return pd.read_csv(path, nrows=row_limit)
+            # header=None tells pandas there's no header row; column labels
+            # default to RangeIndex which serializes as 0,1,2,... We rename
+            # to col_0, col_1, ... so downstream node configs that reference
+            # column names by string survive (numeric labels stringify in
+            # surprising ways when serialized to YAML / CSV).
+            df = pd.read_csv(path, nrows=row_limit, header=None)
+            df.columns = [f"col_{i}" for i in range(len(df.columns))]
+            return df
         if fmt == "parquet":
             df = pd.read_parquet(path)
             return df.head(row_limit) if row_limit else df
@@ -83,6 +100,7 @@ def _apply_duckdb(config: dict[str, Any]) -> pa.Table:
     fmt = (config.get("format") or _infer_format(str(path))).lower()
     row_limit = config.get("__preview_row_limit")
 
+    has_header = config.get("has_header", True)
     try:
         # In-memory DuckDB connection per op: cheap, isolated, GC'd at the
         # end of apply(). The relation is materialized to Arrow before the
@@ -92,7 +110,11 @@ def _apply_duckdb(config: dict[str, Any]) -> pa.Table:
             if fmt == "csv":
                 # read_csv_auto handles header / dtype inference. LIMIT
                 # pushed into the query so DuckDB only reads what we need.
-                sql = f"SELECT * FROM read_csv_auto('{path}')"
+                # When has_header=false, DuckDB auto-generates column0..N
+                # which we rename to col_0..N for parity with the pandas
+                # path (string column names downstream).
+                header_arg = "true" if has_header else "false"
+                sql = f"SELECT * FROM read_csv_auto('{path}', header={header_arg})"
             elif fmt == "parquet":
                 sql = f"SELECT * FROM read_parquet('{path}')"
             else:
@@ -101,7 +123,15 @@ def _apply_duckdb(config: dict[str, Any]) -> pa.Table:
                 sql += f" LIMIT {int(row_limit)}"
             # to_arrow_table returns pa.Table; .arrow() returns a
             # RecordBatchReader which isn't what the runner cache wants.
-            return con.execute(sql).to_arrow_table()
+            table = con.execute(sql).to_arrow_table()
+            if fmt == "csv" and not has_header:
+                # Normalize DuckDB's `column0`/`column1` to `col_0`/`col_1`
+                # so downstream configs reference the same names regardless
+                # of which substrate read the file.
+                table = table.rename_columns(
+                    [f"col_{i}" for i in range(table.num_columns)]
+                )
+            return table
         finally:
             con.close()
     except OpError:
