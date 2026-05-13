@@ -27,6 +27,9 @@ from decoy_engine import (
     ConnectorAuthError,
     LicenseError,
     LicenseExpiredError,
+    run_discovery_sql,
+    DiscoveryResult,
+    DiscoverySqlError,
 )
 
 
@@ -42,6 +45,7 @@ def test_all_lists_every_public_name():
         "validate_graph", "run_graph", "preview_graph",
         "RunResult", "PreviewResult",
         "run_storm", "StormProfile", "FieldStats", "DetectorMatch", "SentinelFlag",
+        "run_discovery_sql", "DiscoveryResult", "DiscoverySqlError",
         "recommend", "ForecastReport", "DisguiseRecommendation",
         "FieldRecommendation", "RiskFlag",
         "DecoyError", "ForgeError", "ConfigError", "PipelineValidationError",
