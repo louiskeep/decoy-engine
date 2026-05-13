@@ -290,6 +290,15 @@ def _execute_graph(
             log.info("graph: running node %s (engine=%s)", descriptor, engine)
         emit_step(log, step_name, status="start", rows_in=rows_in_total or None)
 
+        # Per-node config snapshot in the narrative log so the Task History
+        # Nodes tab shows what each node was configured with at run time
+        # (predicate, columns, output path, etc.) — the boundary emit alone
+        # leaves the bucket nearly empty for ops that don't log internally.
+        # Emitted AFTER step start so JobLogger tags the line with this
+        # node's step name.
+        if log is not None and node_cfg:
+            log.info(_summarize_node_config(kind, node_cfg))
+
         t0 = time.monotonic()
         ctx._current_node_id = nid
         try:
@@ -631,6 +640,48 @@ def _node_descriptor(node: dict) -> str:
     if isinstance(name, str) and name.strip():
         return f"{name!r} [id={nid}, kind={kind}]"
     return f"[id={nid}, kind={kind}]"
+
+
+# Keys to redact in the per-node config summary line. Anything name-matching
+# (case-insensitive) gets `***` in the emitted log. Keeps the Task History
+# Nodes-tab read-out useful without leaking credentials into Job.log.
+_REDACT_KEYS = {"password", "secret", "token", "api_key", "apikey", "auth"}
+
+
+def _summarize_node_config(kind: str, cfg: dict) -> str:
+    """Return a short per-node config summary for the narrative log.
+
+    Emitted right after each step starts so the Task History Nodes tab
+    always has at least one informative line per node — `▶ <id>` and the
+    `step <id> (finish)` boundary alone aren't enough for users to see
+    what the node actually did.
+
+    Keep this terse: the resolved config dict already lives on
+    JobNodeRun.config for the full picture. This line is a glance value.
+    Secrets are redacted by key name."""
+    if not isinstance(cfg, dict) or not cfg:
+        return f"config: (no config)"
+    parts: list[str] = []
+    for k, v in cfg.items():
+        if k.startswith("_"):
+            continue
+        key_l = str(k).lower()
+        if any(rk in key_l for rk in _REDACT_KEYS):
+            parts.append(f"{k}=***")
+            continue
+        if isinstance(v, (dict, list)):
+            # Lists / dicts: show the length so a "mask: 12 columns" still
+            # reads at a glance without flooding the line with structure.
+            kind_word = "keys" if isinstance(v, dict) else "items"
+            parts.append(f"{k}=<{len(v)} {kind_word}>")
+        elif isinstance(v, str) and len(v) > 80:
+            parts.append(f"{k}={v[:77]!r}...")
+        else:
+            parts.append(f"{k}={v!r}")
+        if len(parts) >= 6:
+            parts.append("...")
+            break
+    return f"config: " + ", ".join(parts)
 
 
 def _jsonable(v: Any) -> Any:
