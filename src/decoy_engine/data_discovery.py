@@ -154,16 +154,14 @@ def run_discovery_sql(
     con = duckdb.connect(":memory:")
     try:
         for name, path in tables.items():
-            # Quote the view name with double quotes; DuckDB treats
-            # double-quoted identifiers as case-sensitive but accepts
-            # any printable string. We use parameter binding for the
-            # path so a malicious path can't break out of the
-            # read_parquet call.
-            safe = name.replace('"', '""')
-            con.execute(
-                f'CREATE OR REPLACE VIEW "{safe}" AS SELECT * FROM read_parquet(?)',
-                [path],
-            )
+            # DuckDB rejects `?` parameter binding inside CREATE VIEW
+            # at the binder layer ("Unexpected prepared parameter").
+            # Use the Python relational API instead: read_parquet()
+            # takes the path as a typed Python argument (no SQL string
+            # concatenation, no injection surface), and create_view()
+            # registers the resulting relation under a name that DuckDB
+            # quotes internally.
+            con.read_parquet(path).create_view(name, replace=True)
 
         try:
             rel = con.execute(sql)
