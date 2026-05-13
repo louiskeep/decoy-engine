@@ -49,6 +49,11 @@ from decoy_engine.graph import (
     PreviewResult,
 )
 from decoy_engine.storm import run_storm, StormProfile, FieldStats, DetectorMatch, SentinelFlag
+from decoy_engine.data_discovery import (
+    DiscoveryResult,
+    DiscoverySqlError,
+    run_discovery_sql,
+)
 from decoy_engine.forecast import (
     recommend,
     ForecastReport,
@@ -119,6 +124,9 @@ __all__ = [
     'FieldStats',
     'DetectorMatch',
     'SentinelFlag',
+    'run_discovery_sql',
+    'DiscoveryResult',
+    'DiscoverySqlError',
     'recommend',
     'ForecastReport',
     'DisguiseRecommendation',
