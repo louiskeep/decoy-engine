@@ -9,8 +9,8 @@
 
 - **Project:** decoy-engine (Pandas / Polars / DuckDB hybrid masking + generation engine)
 - **Stage:** building (pre-customer)
-- **Current focus:** Per-node narrative emissions (just shipped: runner-level config-summary line).
-- **Last updated:** 2026-05-12
+- **Current focus:** SQL discovery helper (`data_discovery.py`) shipped to `claude/sql-data-discovery-6dFrL-rebased` with the CREATE VIEW binder bug fix. Awaiting full-suite verification + platform-side evaluation before merging to main.
+- **Last updated:** 2026-05-12 (end of day)
 
 ---
 
@@ -79,9 +79,15 @@ Milestones live in `../forge-platform/ROADMAP.md`'s "Sprints" section.
 
 ## 5. Current Task
 
-**Task:** _(none active — last shipped: per-node config-summary in `graph/runner.py`, commit e87aa30)_
-**Context:** see `../forge-platform/ROADMAP.md` + recent commits (`git log --oneline -10`).
-**Acceptance:** N/A.
+**Task:** _(none active at session end 2026-05-12)_
+
+**Tomorrow's pickup:**
+- **`claude/sql-data-discovery-6dFrL-rebased`** carries the engine fix on top of the rebased branch. Commit `d83c8e1`. Net change: new `src/decoy_engine/data_discovery.py` (190 lines), 8 added lines in `__init__.py`, 14 tests under `tests/unit/test_data_discovery.py`. Targeted tests pass; full engine suite (`pytest tests/` ~1 hour) was not yet confirmed when we wrapped. Re-run before merging into main.
+- If the full suite is green, this engine work can merge to main alongside the platform-side evaluation.
+
+**Context to re-load:**
+- `data_discovery.py:163` was the bug site — DuckDB rejects `?` parameter binding inside `CREATE VIEW` at the binder layer. Fix uses `con.read_parquet(path).create_view(name, replace=True)` instead.
+- Public surface adds `run_discovery_sql`, `DiscoveryResult`, `DiscoverySqlError` to `__init__.__all__`.
 
 ---
 
@@ -89,6 +95,8 @@ Milestones live in `../forge-platform/ROADMAP.md`'s "Sprints" section.
 
 Append-only. Most-recent first.
 
+- 2026-05-12 (PM) — `data_discovery.py` CREATE VIEW bug fixed by switching to DuckDB's Python relational API (`con.read_parquet(path).create_view(name, replace=True)`). DuckDB's binder rejects `?` parameter binding inside DDL statements; the relational API takes the path as a typed Python arg, no SQL string concatenation, no injection surface, and DuckDB internally quotes the view name. Shipped to `claude/sql-data-discovery-6dFrL-rebased` (commit `d83c8e1`).
+- 2026-05-12 (PM) — Branch pushed to a new remote name (`-rebased` suffix) rather than force-pushing the original. Keeps history of the original PR intact for review.
 - 2026-05-12 — Runner-level config-summary emit instead of per-op `ctx.logger.info` everywhere — one-file change vs. mutating 15 op files; secrets redacted by key name in the summary line.
 - 2026-05-12 — if_router engine already supported `pass`/`fail` ports; the canvas surface caught up. Engine signature unchanged.
 - 2026-05-12 — Item 65 V1 ships with five preservation modes: upper / lower / title / mixed / digits-only casing + a digit-template format. Date strftime preservation included. SKIP_STRATEGIES set covers hash/redact/passthrough/date_shift.
