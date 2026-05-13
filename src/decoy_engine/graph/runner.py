@@ -452,14 +452,40 @@ def preview_graph(
     Per the PIPELINE_GRAPH_GUIDE: errors return PreviewResult with
     status-shaped `error` field rather than raising; only validation /
     missing-node errors raise.
+
+    Validation is scoped to the target node + its ancestors. If the
+    pipeline is broken downstream of `node_id` (or in some other branch),
+    sampling here still works -- the user can grab data out of any node
+    whose upstream is well-formed.
     """
     config = _load_yaml(yaml_text)
-    _validate_or_raise(config)
+
+    # Light top-level check so we can safely walk the graph below; full
+    # validation only runs against the upstream subgraph.
+    _validate_top_level_or_raise(config)
 
     nodes = config["nodes"]
     edges = config.get("edges") or []
-    if not any(n["id"] == node_id for n in nodes):
+    if not any(isinstance(n, dict) and n.get("id") == node_id for n in nodes):
         raise PipelineValidationError(f"node {node_id!r} not in graph")
+
+    needed = _ancestor_node_ids_safe(nodes, edges, node_id)
+    sub_config = {
+        **config,
+        "nodes": [n for n in nodes if isinstance(n, dict) and n.get("id") in needed],
+        "edges": [
+            e for e in edges
+            if isinstance(e, dict)
+            and isinstance(e.get("from"), str)
+            and isinstance(e.get("to"), str)
+            and e["from"].split(".", 1)[0] in needed
+            and e["to"] in needed
+        ],
+    }
+    _validate_or_raise(sub_config)
+
+    nodes = sub_config["nodes"]
+    edges = sub_config["edges"]
 
     row_limit = max(1, min(int(row_limit), 1000))
     sub_order, sub_edges = upstream_subgraph(nodes, edges, node_id)
@@ -631,6 +657,59 @@ def _validate_or_raise(config: dict) -> None:
         GraphConfigValidator(quiet).validate(config)
     except ValidationError as e:
         raise PipelineValidationError(str(e)) from e
+
+
+def _validate_top_level_or_raise(config: dict) -> None:
+    """Cheap structural check used before extracting a preview subgraph.
+
+    Only checks the shape needed to walk edges/nodes safely. Per-node and
+    cardinality checks happen later against the subgraph so that broken
+    downstream nodes do not block sampling at an upstream node.
+    """
+    if config.get("mode") != "graph":
+        raise PipelineValidationError(
+            f"top-level 'mode' must be 'graph' (got {config.get('mode')!r})"
+        )
+    nodes = config.get("nodes")
+    if not isinstance(nodes, list) or not nodes:
+        raise PipelineValidationError("'nodes' must be a non-empty list")
+    edges = config.get("edges")
+    if edges is not None and not isinstance(edges, list):
+        raise PipelineValidationError("'edges' must be a list")
+
+
+def _ancestor_node_ids_safe(
+    nodes: list, edges: list, target: str
+) -> set[str]:
+    """Walk upward from `target` collecting ancestors, tolerant of
+    malformed nodes/edges in unrelated parts of the graph.
+
+    Returns the set of node IDs comprising `target` plus every ancestor
+    reachable through well-formed edges.
+    """
+    valid_ids = {
+        n.get("id") for n in nodes
+        if isinstance(n, dict) and isinstance(n.get("id"), str)
+    }
+    in_edges: dict[str, list[str]] = {}
+    for e in edges or []:
+        if not isinstance(e, dict):
+            continue
+        src = e.get("from")
+        dst = e.get("to")
+        if not isinstance(src, str) or not isinstance(dst, str):
+            continue
+        in_edges.setdefault(dst, []).append(src.split(".", 1)[0])
+
+    needed: set[str] = set()
+    stack = [target]
+    while stack:
+        nid = stack.pop()
+        if nid in needed or nid not in valid_ids:
+            continue
+        needed.add(nid)
+        stack.extend(in_edges.get(nid, []))
+    return needed
 
 
 def _node_descriptor(node: dict) -> str:
