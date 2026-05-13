@@ -282,7 +282,7 @@ class TestSubPipeline:
             f"  - id: src\n"
             f"    kind: source.file\n"
             f"    config:\n"
-            f"      path: {input_csv}\n"
+            f"      path: '{input_csv}'\n"
             f"  - id: filt\n"
             f"    kind: filter\n"
             f"    config:\n"
@@ -296,7 +296,7 @@ class TestSubPipeline:
             "nodes": [
                 {
                     "id": "sub",
-            "kind": "sub_pipeline",
+                    "kind": "sub_pipeline",
                     "config": {
                         "pipeline_ref": sub_path,
                         "output_node": "filt",
