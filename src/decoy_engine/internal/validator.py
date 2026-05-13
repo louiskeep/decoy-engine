@@ -511,6 +511,22 @@ class GraphConfigValidator(ConfigValidator):
 
     SUPPORTED_SCHEMA_VERSIONS = {1}
 
+    # Op kinds treated as file-producing sources for format-consistency checks.
+    _FILE_SOURCE_KINDS: frozenset = frozenset({
+        "source.file",
+        "source.s3",
+        "source.gcs",
+        "source.sftp",
+    })
+
+    # Op kinds treated as file-consuming sinks for format-consistency checks.
+    _FILE_TARGET_KINDS: frozenset = frozenset({
+        "target.file",
+        "target.s3",
+        "target.gcs",
+        "target.sftp",
+    })
+
     def validate(self, config: Dict[str, Any]) -> None:
         try:
             self._validate_top_level(config)
@@ -519,6 +535,7 @@ class GraphConfigValidator(ConfigValidator):
             self._validate_edges(config.get("edges") or [], config["nodes"])
             self._validate_cardinality(config["nodes"], config.get("edges") or [], kinds)
             self._validate_acyclic(config["nodes"], config.get("edges") or [])
+            self._validate_file_format_consistency(config["nodes"], config.get("edges") or [])
         except ValidationError as e:
             self.logger.error(str(e))
             raise
@@ -693,3 +710,104 @@ class GraphConfigValidator(ConfigValidator):
     ) -> None:
         from decoy_engine.graph.topo import topo_order
         topo_order(nodes, edges)  # raises ValidationError on cycle
+
+    def _validate_file_format_consistency(
+        self, nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]]
+    ) -> None:
+        """Warn when file-source and file-target formats differ without a convert.file_type.
+
+        Covers all file-source kinds (source.file, source.s3, source.gcs,
+        source.sftp) and all file-target kinds (target.file, target.s3,
+        target.gcs, target.sftp) so cloud-storage pipelines get the same
+        mismatch guard as local-file pipelines.
+
+        Also back-fills target.file config.format from the source format when
+        the field is absent (cloud targets resolve format via their own
+        validate_config / extension inference).
+        """
+        from decoy_engine.graph.ops._cloud_io import infer_format as _infer_fmt
+
+        node_by_id: Dict[str, Dict[str, Any]] = {n["id"]: n for n in nodes}
+
+        # Adjacency list: node_id -> list of direct downstream node_ids.
+        # Strip the ".port" suffix that split ops use so the BFS stays simple.
+        adj: Dict[str, List[str]] = {n["id"]: [] for n in nodes}
+        for e in edges:
+            src = e["from"].split(".", 1)[0]
+            adj[src].append(e["to"])
+
+        for node in nodes:
+            if node.get("kind") not in self._FILE_SOURCE_KINDS:
+                continue
+
+            src_id = node["id"]
+            src_kind = node["kind"]
+            src_cfg = node.get("config", {})
+            src_fmt = src_cfg.get("format") or _infer_fmt(src_cfg.get("path", ""))
+            if not src_fmt:
+                continue
+
+            # BFS where state = (node_id, has_converter_on_path_from_source).
+            # This lets us distinguish paths that pass through convert.file_type
+            # from those that reach a target directly.  Using state-pairs in
+            # visited avoids revisiting the same (node, converter-seen)
+            # combination while still exploring both branches after a fork.
+            visited_states: Set[tuple] = set()
+            queue: List[tuple] = [(src_id, False)]
+            # For each reachable file-target, collect the set of has_convert
+            # values seen when reaching it.  If False is in the set it means
+            # there is at least one direct (unconverted) path.
+            target_reach: Dict[str, Set[bool]] = {}
+
+            while queue:
+                cur_id, has_convert = queue.pop(0)
+                state = (cur_id, has_convert)
+                if state in visited_states:
+                    continue
+                visited_states.add(state)
+
+                cur_kind = node_by_id[cur_id].get("kind")
+                if cur_id != src_id and cur_kind in self._FILE_TARGET_KINDS:
+                    target_reach.setdefault(cur_id, set()).add(has_convert)
+                    # Don't traverse past sinks.
+                    continue
+
+                next_has_convert = has_convert or (cur_kind == "convert.file_type")
+                for nxt_id in adj.get(cur_id, []):
+                    queue.append((nxt_id, next_has_convert))
+
+            for tgt_id, reach_states in target_reach.items():
+                # If any path from source to this target passed through a
+                # convert.file_type node, the user explicitly asked for
+                # conversion -- no warning needed.
+                if True in reach_states:
+                    continue
+
+                tgt_node = node_by_id[tgt_id]
+                tgt_kind = tgt_node.get("kind")
+                tgt_cfg = tgt_node.get("config", {})
+
+                # Back-fill omitted format for target.file only.  Cloud targets
+                # derive their output format from their path/key via their own
+                # validate_config; back-filling here would override that.
+                if tgt_kind == "target.file" and not tgt_cfg.get("format"):
+                    tgt_cfg["format"] = src_fmt
+
+                # Infer target format: explicit config field first, then
+                # extension on output_filename (target.file) or path (cloud).
+                tgt_fmt = (
+                    tgt_cfg.get("format")
+                    or _infer_fmt(tgt_cfg.get("output_filename", ""))
+                    or _infer_fmt(tgt_cfg.get("path", ""))
+                )
+                if tgt_fmt and tgt_fmt != src_fmt:
+                    self.logger.warning(
+                        "%s %r produces %s but %s %r expects %s; "
+                        "add a convert.file_type node to make the conversion explicit",
+                        src_kind,
+                        src_id,
+                        src_fmt,
+                        tgt_kind,
+                        tgt_id,
+                        tgt_fmt,
+                    )
