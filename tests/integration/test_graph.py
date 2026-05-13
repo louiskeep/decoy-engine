@@ -138,6 +138,83 @@ def test_preview_at_each_node(tmp_csv):
     assert p_drop["applied_chain"] == ["s", "f", "d"]
 
 
+def test_preview_ignores_broken_downstream_nodes(tmp_csv):
+    """Sampling at an upstream node must work even when a downstream node
+    has a validation error. If the pipeline works up to `f`, the user
+    should be able to grab data out of `f` for a sample regardless of
+    what's wrong further down the graph."""
+    src, _ = tmp_csv
+    cfg = _yaml({
+        "mode": "graph",
+        "nodes": [
+            {"id": "s", "kind": "source.file", "config": {"path": src}},
+            {"id": "f", "kind": "filter", "config": {"predicate": "state == 'CA'"}},
+            # Broken downstream: unknown kind. Full-pipeline validation
+            # would reject this whole config.
+            {"id": "bad", "kind": "no_such_op", "config": {}},
+        ],
+        "edges": [
+            {"from": "s", "to": "f"},
+            {"from": "f", "to": "bad"},
+        ],
+    })
+    # validate_graph still rejects the full config.
+    with pytest.raises(PipelineValidationError):
+        validate_graph(cfg)
+
+    # But sampling an upstream node succeeds.
+    p_filter = preview_graph(cfg, "f", row_limit=10)
+    assert p_filter["row_count"] == 4
+    assert p_filter["applied_chain"] == ["s", "f"]
+    assert p_filter["error"] is None
+
+    # And sampling the source node also succeeds.
+    p_src = preview_graph(cfg, "s", row_limit=10)
+    assert p_src["row_count"] == 6
+    assert p_src["error"] is None
+
+
+def test_preview_ignores_unrelated_broken_branch(tmp_csv):
+    """A broken node on a parallel branch must not block sampling on the
+    healthy branch."""
+    src, _ = tmp_csv
+    cfg = _yaml({
+        "mode": "graph",
+        "nodes": [
+            {"id": "s", "kind": "source.file", "config": {"path": src}},
+            {"id": "f", "kind": "filter", "config": {"predicate": "state == 'CA'"}},
+            # Sibling branch off `s` with a broken kind.
+            {"id": "junk", "kind": "no_such_op", "config": {}},
+        ],
+        "edges": [
+            {"from": "s", "to": "f"},
+            {"from": "s", "to": "junk"},
+        ],
+    })
+    p_filter = preview_graph(cfg, "f", row_limit=10)
+    assert p_filter["row_count"] == 4
+    assert p_filter["error"] is None
+
+
+def test_preview_still_rejects_broken_upstream(tmp_csv):
+    """If the path *to* the target is broken, sampling must still raise."""
+    src, _ = tmp_csv
+    cfg = _yaml({
+        "mode": "graph",
+        "nodes": [
+            {"id": "s", "kind": "source.file", "config": {"path": src}},
+            {"id": "bad", "kind": "no_such_op", "config": {}},
+            {"id": "f", "kind": "filter", "config": {"predicate": "state == 'CA'"}},
+        ],
+        "edges": [
+            {"from": "s", "to": "bad"},
+            {"from": "bad", "to": "f"},
+        ],
+    })
+    with pytest.raises(PipelineValidationError):
+        preview_graph(cfg, "f", row_limit=10)
+
+
 def test_run_records_failure(tmp_csv):
     src, out = tmp_csv
     cfg = _yaml({
