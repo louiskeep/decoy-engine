@@ -86,7 +86,11 @@ def test_convert_file_type_on_path_suppresses_warning(caplog):
         "mode": "graph",
         "nodes": [
             {"id": "src", "kind": "source.file", "config": {"path": "in.csv"}},
-            {"id": "cvt", "kind": "convert.file_type", "config": {"format": "parquet"}},
+            {
+                "id": "cvt",
+                "kind": "convert.file_type",
+                "config": {"format": "parquet", "output_filename": "converted.parquet"},
+            },
             {"id": "tgt", "kind": "target.file", "config": {"output_filename": "out.parquet"}},
         ],
         "edges": [
@@ -201,7 +205,11 @@ def test_forked_graph_warns_only_for_direct_branch(caplog):
         "mode": "graph",
         "nodes": [
             {"id": "src", "kind": "source.file", "config": {"path": "in.csv"}},
-            {"id": "cvt", "kind": "convert.file_type", "config": {"format": "parquet"}},
+            {
+                "id": "cvt",
+                "kind": "convert.file_type",
+                "config": {"format": "parquet", "output_filename": "converted.parquet"},
+            },
             # Reaches tgt_ok via converter — no warning.
             {"id": "tgt_ok", "kind": "target.file", "config": {"output_filename": "ok.parquet"}},
             # Reaches tgt_bad directly — format mismatch → warning.

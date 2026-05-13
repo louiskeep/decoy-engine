@@ -787,12 +787,6 @@ class GraphConfigValidator(ConfigValidator):
                 tgt_kind = tgt_node.get("kind")
                 tgt_cfg = tgt_node.get("config", {})
 
-                # Back-fill omitted format for target.file only.  Cloud targets
-                # derive their output format from their path/key via their own
-                # validate_config; back-filling here would override that.
-                if tgt_kind == "target.file" and not tgt_cfg.get("format"):
-                    tgt_cfg["format"] = src_fmt
-
                 # Infer target format: explicit config field first, then
                 # extension on output_filename (target.file) or path (cloud).
                 tgt_fmt = (
@@ -800,6 +794,16 @@ class GraphConfigValidator(ConfigValidator):
                     or _infer_fmt(tgt_cfg.get("output_filename", ""))
                     or _infer_fmt(tgt_cfg.get("path", ""))
                 )
+
+                # Back-fill omitted format for target.file only, after
+                # extension inference. Doing this before inference would hide
+                # real mismatches such as source CSV -> output.parquet.
+                # Cloud targets derive their output format from their path/key
+                # via their own validate_config; back-filling here would
+                # override that.
+                if tgt_kind == "target.file" and not tgt_cfg.get("format"):
+                    tgt_cfg["format"] = tgt_fmt
+
                 if tgt_fmt and tgt_fmt != src_fmt:
                     self.logger.warning(
                         "%s %r produces %s but %s %r expects %s; "

@@ -37,7 +37,7 @@ from decoy_engine.graph.ops._base import OpError
 from decoy_engine.internal.validator import ValidationError
 
 KIND = "sub_pipeline"
-NATIVE_ENGINE = "pandas"  # sub-graph output coerced via the runner's Arrow boundary
+NATIVE_ENGINE = "arrow"  # sub-graph output already crosses the Arrow boundary
 INPUT_ARITY: tuple[int, int | None] = (0, 0)
 OUTPUT_KIND = "stream"
 
@@ -133,6 +133,18 @@ def apply(inputs, config, ctx):
             f"{output_node!r} (node missing, never ran, or wrote a sink "
             f"with empty result)"
         )
+    return _coerce_parent_engine(table, config)
+
+
+def _coerce_parent_engine(table, config):
+    """Return pandas only when the parent graph explicitly forced pandas.
+
+    Direct calls and hybrid graphs keep the Arrow table produced by
+    execute_graph_capture. The runner's pandas safety hatch still works
+    because it injects ``__engine='pandas'`` before apply().
+    """
+    if config.get("__engine") == "pandas":
+        return table.to_pandas()
     return table
 
 

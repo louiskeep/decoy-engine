@@ -41,7 +41,7 @@ from decoy_engine.graph.ops._iterator_core import (
 from decoy_engine.internal.validator import ValidationError
 
 KIND = "iterate_files"
-NATIVE_ENGINE = "pandas"
+NATIVE_ENGINE = "arrow"
 INPUT_ARITY: tuple[int, int | None] = (0, 0)
 OUTPUT_KIND = "stream"
 
@@ -90,7 +90,7 @@ def apply(inputs, config, ctx):
     # and not portable). Same-key + same-source -> same iteration order.
     metas.sort(key=lambda m: m.path)
 
-    return run_iterations(
+    table = run_iterations(
         values=[m.path for m in metas],
         pipeline_ref=config["pipeline_ref"],
         output_node=config["output_node"],
@@ -99,6 +99,9 @@ def apply(inputs, config, ctx):
         log_prefix="iterate_files",
         extra_template_vars=_make_size_extra_vars(metas),
     )
+    if config.get("__engine") == "pandas":
+        return table.to_pandas()
+    return table
 
 
 def _build_source(class_path: str, source_config: dict):

@@ -29,7 +29,7 @@ from decoy_engine.graph.ops._iterator_core import (
 from decoy_engine.internal.validator import ValidationError
 
 KIND = "iterate_loop"
-NATIVE_ENGINE = "pandas"
+NATIVE_ENGINE = "arrow"
 INPUT_ARITY: tuple[int, int | None] = (0, 0)
 OUTPUT_KIND = "stream"
 
@@ -65,7 +65,7 @@ def validate_config(config: dict[str, Any]) -> None:
 
 
 def apply(inputs, config, ctx):
-    return run_iterations(
+    table = run_iterations(
         values=range(config["start"], config["end"], config.get("step", 1)),
         pipeline_ref=config["pipeline_ref"],
         output_node=config["output_node"],
@@ -73,3 +73,6 @@ def apply(inputs, config, ctx):
         ctx=ctx,
         log_prefix="iterate_loop",
     )
+    if config.get("__engine") == "pandas":
+        return table.to_pandas()
+    return table
