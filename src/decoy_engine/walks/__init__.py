@@ -25,6 +25,12 @@ from decoy_engine.walks.types import (
     Table,
     WalkResult,
 )
+from decoy_engine.walks.cross_file import (
+    CrossFileWalkResult,
+    infer_cross_file_edges,
+    run_cross_file_walk,
+    storm_profiles_to_snapshot,
+)
 from decoy_engine.walks.diff import compare
 from decoy_engine.walks.graph import ERGraph, build_er_graph
 from decoy_engine.walks.hazards import detect_hazards
@@ -32,6 +38,7 @@ from decoy_engine.walks.inference import infer_edges
 
 __all__ = [
     "Column",
+    "CrossFileWalkResult",
     "DriftResult",
     "Edge",
     "ERGraph",
@@ -42,5 +49,8 @@ __all__ = [
     "build_er_graph",
     "compare",
     "detect_hazards",
+    "infer_cross_file_edges",
     "infer_edges",
+    "run_cross_file_walk",
+    "storm_profiles_to_snapshot",
 ]
