@@ -5,8 +5,14 @@ General helper functions for the decoy_engine package.
 
 import hashlib
 import hmac
+import json
+import logging
+import os
+from pathlib import Path
 from typing import Dict, Any, List, Optional, Callable
 from faker import Faker
+
+_log = logging.getLogger(__name__)
 
 
 def deterministic_hash(value, seed=0):
@@ -84,10 +90,158 @@ def unregister_faker_provider(name: str) -> None:
     _CUSTOM_FAKER_PROVIDERS.pop(name, None)
 
 
-# ── Faker reflection denylist ────────────────────────────────────
+def load_custom_providers(
+    custom_dir: Path | None = None,
+) -> Dict[str, List[str]]:
+    """Scan *custom_dir* for user-supplied word lists and register them as
+    custom Faker providers under the ``custom.<stem>`` namespace.
+
+    Supported file formats
+    ~~~~~~~~~~~~~~~~~~~~~~
+    * ``.txt`` — one value per line; blank lines and lines starting with
+      ``#`` are ignored.
+    * ``.json`` — must be a JSON array of strings.
+
+    The filename stem (without extension) becomes the provider name:
+
+    .. code-block:: text
+
+        custom_providers/
+            dog_breeds.txt        →  custom.dog_breeds
+            internal_codes.json   →  custom.internal_codes
+
+    After calling this function, pipelines can reference the lists via::
+
+        # masking YAML
+        type: faker
+        faker_type: "custom.dog_breeds"
+
+        # generation column config
+        type: faker
+        faker_type: "custom.dog_breeds"
+
+    The default directory is resolved from the ``CUSTOM_PROVIDERS_DIR``
+    environment variable, falling back to ``custom_providers`` relative to
+    the current working directory.
+
+    Parameters
+    ----------
+    custom_dir:
+        ``pathlib.Path`` to the directory to scan. When ``None``, the
+        directory is read from the ``CUSTOM_PROVIDERS_DIR`` env-var or
+        defaults to ``Path("custom_providers")``.
+
+    Returns
+    -------
+    Dict[str, List[str]]
+        Mapping of provider name (``custom.<stem>``) to the loaded value
+        list.  Useful for callers that want to inspect or log what was
+        registered without re-reading the files.
+    """
+    if custom_dir is None:
+        custom_dir = Path(os.getenv("CUSTOM_PROVIDERS_DIR", "custom_providers"))
+
+    custom_dir = Path(custom_dir)
+
+    if not custom_dir.exists():
+        _log.debug(
+            "custom_providers: directory %s does not exist; skipping", custom_dir
+        )
+        return {}
+
+    if not custom_dir.is_dir():
+        _log.warning(
+            "custom_providers: %s exists but is not a directory; skipping", custom_dir
+        )
+        return {}
+
+    loaded: Dict[str, List[str]] = {}
+
+    for path in sorted(custom_dir.iterdir()):
+        if path.suffix.lower() == ".txt":
+            values = _load_txt(path)
+        elif path.suffix.lower() == ".json":
+            values = _load_json(path)
+        else:
+            continue
+
+        if not values:
+            _log.warning(
+                "custom_providers: %s produced no values; skipping", path.name
+            )
+            continue
+
+        provider_name = f"custom.{path.stem}"
+        # Capture values in a closure. Faker instance is passed so the
+        # provider behaves like every other entry returned by
+        # get_faker_providers(): it honours the seeded state but can
+        # choose at random from the list via the seeded Faker instance.
+        _register_list_provider(provider_name, values)
+        loaded[provider_name] = values
+        _log.info(
+            "custom_providers: registered '%s' with %d values from %s",
+            provider_name, len(values), path.name,
+        )
+
+    return loaded
+
+
+def _load_txt(path: Path) -> List[str]:
+    """Read a .txt file; one value per line. Ignores blank lines and comments."""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+        return [
+            line.strip()
+            for line in lines
+            if line.strip() and not line.strip().startswith("#")
+        ]
+    except Exception as exc:
+        _log.warning("custom_providers: failed to read %s: %s", path.name, exc)
+        return []
+
+
+def _load_json(path: Path) -> List[str]:
+    """Read a .json file containing a JSON array of strings."""
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, list):
+            _log.warning(
+                "custom_providers: %s must contain a JSON array; got %s",
+                path.name, type(raw).__name__,
+            )
+            return []
+        return [str(v) for v in raw if v is not None]
+    except Exception as exc:
+        _log.warning("custom_providers: failed to parse %s: %s", path.name, exc)
+        return []
+
+
+def _register_list_provider(provider_name: str, values: List[str]) -> None:
+    """Register a random-choice provider for *values* under *provider_name*.
+
+    The provider function receives the seeded Faker instance so it can use
+    ``fake.random.choice`` for deterministic selection — same seed → same
+    pick, consistent with every other Faker-backed provider in the engine.
+    """
+    import random as _random
+
+    # Snapshot the list at registration time so later mutations to the
+    # caller’s list don’t affect generation behaviour.
+    frozen = list(values)
+
+    def _provider(fake: Faker) -> str:
+        # Faker’s random attribute is the seeded Random instance — use it
+        # so the selection inherits the per-value or per-row seed set by
+        # the strategy / column generator before calling this provider.
+        return fake.random.choice(frozen)
+
+    register_faker_provider(provider_name, _provider)
+
+
+# ── Faker reflection denylist ─────────────────────────────────
 #
 # Methods on a Faker instance that the engine never wants to surface as a
-# masking provider, even though they're public. Two categories:
+# masking provider, even though they’re public. Two categories:
 #
 #   1. Wrong return type for a cell value: bytes (binary/image/tar/zip/
 #      json_bytes), tuples (currency, latlng, cryptocurrency,
@@ -96,10 +250,10 @@ def unregister_faker_provider(name: str) -> None:
 #      time_delta, time_object, pyiterable, pylist, pyset, pytuple,
 #      pyobject, pystruct, pydict).
 #
-#   2. Configuration / introspection helpers that aren't providers
+#   2. Configuration / introspection helpers that aren’t providers
 #      (random, factories, parse, format, set_arguments, etc.).
 #
-# Anything not in this set + that is callable + that isn't a dunder is
+# Anything not in this set + that is callable + that isn’t a dunder is
 # eligible. Reflection plus the curated overrides below gives the UI ~200
 # safe providers without a hand-maintained whitelist.
 _FAKER_DENYLIST: set[str] = {
@@ -124,8 +278,8 @@ _FAKER_DENYLIST: set[str] = {
 
 def _coerce_to_str(value: Any) -> Any:
     """Best-effort: pandas cells take strings cleanly; everything else
-    (Decimal, datetime, date) gets str()'d. Returning None for None
-    preserves the engine's existing null-handling expectations."""
+    (Decimal, datetime, date) gets str()\'d. Returning None for None
+    preserves the engine\'s existing null-handling expectations."""
     if value is None:
         return None
     if isinstance(value, str):
@@ -139,7 +293,7 @@ def _coerce_to_str(value: Any) -> Any:
 def _make_reflected_provider(method: Callable) -> Callable:
     """Wrap a bound Faker method so the engine can call it with arbitrary
     keyword args from a YAML ``faker_kwargs:`` block. Invalid kwargs are
-    silently dropped rather than raised so a stale YAML doesn't kill a
+    silently dropped rather than raised so a stale YAML doesn\'t kill a
     job — the masker emits a warning at the call site."""
     import inspect as _inspect
     try:
@@ -165,7 +319,7 @@ def _make_reflected_provider(method: Callable) -> Callable:
         if has_var_keyword:
             accepted = kwargs
         else:
-            # Drop unknown args. Anything the method doesn't accept can't
+            # Drop unknown args. Anything the method doesn\'t accept can\'t
             # land in a TypeError here.
             accepted = {k: v for k, v in kwargs.items() if k in param_names}
         return _coerce_to_str(method(**accepted))
@@ -176,14 +330,14 @@ def _make_reflected_provider(method: Callable) -> Callable:
 def get_faker_providers(faker_instance: Faker) -> Dict[str, Callable]:
     """Return a dict of every safe Faker provider on ``faker_instance``.
 
-    Built by reflection: each public method that isn't in
+    Built by reflection: each public method that isn\'t in
     ``_FAKER_DENYLIST`` becomes an entry. Each value is a callable
     that accepts ``**kwargs`` so per-provider arguments (e.g.
-    ``representation='alpha-3'`` on ``country_code``) flow through from
-    YAML's ``faker_kwargs:`` block. Returns are str-coerced so a
+    ``representation=\'alpha-3\'`` on ``country_code``) flow through from
+    YAML\'s ``faker_kwargs:`` block. Returns are str-coerced so a
     Decimal/datetime/date method works inline.
 
-    The engine's masking transforms call ``providers[faker_type](**kw)``.
+    The engine\'s masking transforms call ``providers[faker_type](**kw)``.
     For legacy call sites that pass no kwargs, the entry behaves exactly
     like the old curated lambda.
 
@@ -192,7 +346,7 @@ def get_faker_providers(faker_instance: Faker) -> Dict[str, Callable]:
         cell with an embedded newline breaks downstream consumers.
       * ``postcode`` aliases ``zipcode`` so older YAMLs (emitted by
         pre-2026-05-12 forecast/transform_metadata.py and the legacy
-        default.yaml disguise mapping) don't generate "Unknown
+        default.yaml disguise mapping) don\'t generate "Unknown
         faker_type" warnings.
 
     Custom providers registered via ``register_faker_provider`` are
@@ -211,10 +365,10 @@ def get_faker_providers(faker_instance: Faker) -> Dict[str, Callable]:
             continue
         providers[name] = _make_reflected_provider(attr)
 
-    # ── overrides ────────────────────────────────────────────────
+    # ── overrides ────────────────────────────────────────────
     # ``address`` joins multiline output to a single line so CSV /
     # parquet cells stay one-row. The reflected version would leave the
-    # newline in place, which breaks downstream tools that aren't
+    # newline in place, which breaks downstream tools that aren\'t
     # quoted-CSV-aware.
     def _addr(**kwargs: Any) -> str:
         out = fake.address(**kwargs) if kwargs else fake.address()
@@ -222,7 +376,7 @@ def get_faker_providers(faker_instance: Faker) -> Dict[str, Callable]:
 
     providers['address'] = _addr
 
-    # ``postcode`` -> ``zipcode`` alias. Faker's en_US locale doesn't
+    # ``postcode`` -> ``zipcode`` alias. Faker\'s en_US locale doesn\'t
     # expose ``postcode`` directly (some other locales do), so legacy
     # YAML used to trip the unknown-faker-type warning. Aliasing keeps
     # old pipelines warning-free; new ones should emit ``zipcode``.
@@ -241,10 +395,10 @@ def get_faker_providers(faker_instance: Faker) -> Dict[str, Callable]:
 
 def make_faker(locale=None) -> Faker:
     """Construct a `Faker` instance with optional locale override. Locale
-    can be a single string (`'en_GB'`) or a list of strings — Faker mixes
+    can be a single string (`\'en_GB\'`) or a list of strings — Faker mixes
     them in the order given. `None` or empty returns the default `en_US`
     locale, preserving the pre-locale behavior. Invalid locales fall back
-    to `en_US` with a warning so a single bad pipeline rule doesn't
+    to `en_US` with a warning so a single bad pipeline rule doesn\'t
     poison the run.
 
     Caller is responsible for seeding the returned instance via
@@ -254,7 +408,7 @@ def make_faker(locale=None) -> Faker:
     try:
         return Faker(locale)
     except (AttributeError, ValueError, TypeError):
-        # Faker raises AttributeError for unknown locales like 'xx_YY'.
+        # Faker raises AttributeError for unknown locales like \'xx_YY\'.
         # Swallow + fall back so the pipeline still runs end-to-end.
         return Faker()
 
@@ -280,7 +434,7 @@ def convert_quoting_mode(quoting_mode: str) -> int:
 
 def create_directory_for_file(file_path: str) -> None:
     """
-    Create the directory for a file path if it doesn't exist
+    Create the directory for a file path if it doesn\'t exist
     
     Args:
         file_path: Path to a file
@@ -360,7 +514,7 @@ def get_file_size(file_path: str) -> Optional[int]:
         file_path: Path to the file
         
     Returns:
-        File size in bytes or None if file doesn't exist
+        File size in bytes or None if file doesn\'t exist
     """
     import os
     if os.path.exists(file_path) and os.path.isfile(file_path):
