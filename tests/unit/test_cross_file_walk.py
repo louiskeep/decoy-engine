@@ -158,6 +158,58 @@ def test_emits_multiple_edges_for_a_three_file_chain():
     }
 
 
+def test_tie_break_when_fk_column_is_also_100_percent_unique():
+    # 1:1:1 referential integrity: every customer has exactly one order,
+    # every order exactly one orderline. STORM flags both customer_id
+    # columns (in customers and in orders) as is_likely_unique because
+    # both have unique_rate == 1.0. The tie-break should pick the table
+    # whose name matches the column's `<stem>_id` stem ("customer" /
+    # "customers"), demoting the other to FK so the edge still fires.
+    snap = storm_profiles_to_snapshot([
+        _profile("customers.csv", [
+            _fs("customer_id", is_likely_unique=True, unique_rate=1.0),
+        ]),
+        _profile("orders.csv", [
+            _fs("order_id", is_likely_unique=True, unique_rate=1.0),
+            _fs("customer_id", is_likely_unique=True, unique_rate=1.0),
+        ]),
+    ])
+    edges = infer_cross_file_edges(snap)
+    assert edges == (
+        Edge("orders", "customer_id", "customers", "customer_id", False),
+    )
+
+
+def test_tie_break_matches_table_name_suffix_pattern():
+    # File-named tables often have a prefix that doesn't strip into the
+    # column stem (e.g. "acme_csv_customers"). The suffix-match path
+    # should still resolve customer_id to that table.
+    snap = storm_profiles_to_snapshot([
+        _profile("acme_csv_customers.csv", [
+            _fs("customer_id", is_likely_unique=True, unique_rate=1.0),
+        ]),
+        _profile("acme_csv_orders.csv", [
+            _fs("order_id", is_likely_unique=True, unique_rate=1.0),
+            _fs("customer_id", is_likely_unique=True, unique_rate=1.0),
+        ]),
+    ])
+    edges = infer_cross_file_edges(snap)
+    assert edges == (
+        Edge("acme_csv_orders", "customer_id", "acme_csv_customers", "customer_id", False),
+    )
+
+
+def test_no_edge_when_pk_ambiguity_cannot_be_resolved():
+    # Two tables both flag `id` as PK and neither table name matches a
+    # ``<stem>_id`` pattern (the column name is bare "id", no stem).
+    # The tie-break can't pick a winner so no edge is emitted.
+    snap = storm_profiles_to_snapshot([
+        _profile("a.csv", [_fs("id", is_likely_unique=True)]),
+        _profile("b.csv", [_fs("id", is_likely_unique=True)]),
+    ])
+    assert infer_cross_file_edges(snap) == ()
+
+
 # ── run_cross_file_walk ────────────────────────────────────────────────
 
 

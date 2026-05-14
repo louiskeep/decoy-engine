@@ -132,10 +132,19 @@ def infer_cross_file_edges(snapshot: SchemaSnapshot) -> tuple[Edge, ...]:
     PK in the target table — that rule is for the SQL convention where
     the PK is always named ``id``.
 
-    Self-loops (a PK column referencing itself in the same table) are
-    skipped. Edges between two non-PK occurrences of the same column
-    name are skipped — without a PK anchor we don't know which table
-    is the "parent".
+    **PK ambiguity tie-break.** STORM flags any column with
+    ``is_likely_unique=True`` as a PK candidate, but with 1:1:1
+    referential integrity (every customer has exactly one order, every
+    order exactly one orderline) the FK column lands at 100% unique
+    too, so the same column name is flagged PK in multiple tables.
+    Resolve the tie by name affinity: a column named ``<stem>_id``
+    "really belongs to" the table whose name shares ``<stem>``
+    (singular or plural). All other tables' instances of the column
+    get demoted to FK candidates for the purpose of edge inference.
+
+    Self-loops are skipped. Edges between two non-PK occurrences of
+    the same column name are skipped — without a PK anchor we don't
+    know which table is the "parent".
     """
     # Map column name -> tables where that column is flagged PK.
     pk_tables_by_col: dict[str, list[str]] = {}
@@ -144,26 +153,74 @@ def infer_cross_file_edges(snapshot: SchemaSnapshot) -> tuple[Edge, ...]:
             if col.is_primary_key:
                 pk_tables_by_col.setdefault(col.name, []).append(table.name)
 
+    # Tie-break: when a column is PK in multiple tables, prefer the
+    # table whose name stems match the column's *_id stem.
+    table_names = {t.name for t in snapshot.tables}
+    canonical_pk_table: dict[str, str | None] = {}
+    for col_name, tables in pk_tables_by_col.items():
+        if len(tables) == 1:
+            canonical_pk_table[col_name] = tables[0]
+            continue
+        match = _pk_table_for_id_column(col_name, table_names)
+        # If exactly one of the PK-flagged tables matches the stem,
+        # promote it as canonical. Otherwise leave the column ambiguous
+        # — emit no edges rather than guess wrong.
+        if match in tables:
+            canonical_pk_table[col_name] = match
+        else:
+            canonical_pk_table[col_name] = None
+
     edges: list[Edge] = []
     for table in snapshot.tables:
         for col in table.columns:
-            if col.is_primary_key:
+            pk_owner = canonical_pk_table.get(col.name)
+            if pk_owner is None:
                 continue
-            for pk_table in pk_tables_by_col.get(col.name, []):
-                if pk_table == table.name:
-                    continue
-                edges.append(
-                    Edge(
-                        source_table=table.name,
-                        source_column=col.name,
-                        target_table=pk_table,
-                        target_column=col.name,
-                        declared=False,
-                    )
+            if table.name == pk_owner:
+                continue  # this table is the PK; don't emit edge from PK to itself
+            edges.append(
+                Edge(
+                    source_table=table.name,
+                    source_column=col.name,
+                    target_table=pk_owner,
+                    target_column=col.name,
+                    declared=False,
                 )
+            )
 
     edges.sort(key=lambda e: (e.source_table, e.source_column, e.target_table))
     return tuple(edges)
+
+
+def _pk_table_for_id_column(column_name: str, table_names: set[str]) -> str | None:
+    """For a column named ``<stem>_id``, return the table whose name
+    matches ``<stem>`` (singular or plural) — that table is the
+    canonical owner of this PK. Falls back to suffix-match for table
+    names that prefix or suffix the stem (e.g. ``acme_csv_customers``
+    matches the ``customer_id`` stem).
+
+    Returns ``None`` when the column name doesn't follow the
+    ``<stem>_id`` convention or no table name matches.
+    """
+    name = column_name.lower()
+    if not name.endswith("_id"):
+        return None
+    stem = name[:-3]
+    if not stem:
+        return None
+    candidates = {stem, stem + "s"}
+
+    # Exact match first.
+    for t in table_names:
+        if t.lower() in candidates:
+            return t
+    # Suffix match: a table named like ``acme_csv_customers`` carries the
+    # ``customers`` (or ``customer``) stem on its trailing segment.
+    for t in table_names:
+        lower = t.lower()
+        if any(lower.endswith(c) or lower.endswith("_" + c) for c in candidates):
+            return t
+    return None
 
 
 def _table_name_from_source_label(label: str) -> str:
