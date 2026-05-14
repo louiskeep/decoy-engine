@@ -87,7 +87,10 @@ def _per_field_recommendations(fields: list[FieldStats]) -> list[FieldRecommenda
         if not f.detector_matches:
             continue
         top = f.detector_matches[0]
-        choice = best_transform_for(top.detector_id)
+        # Plan B-2: pass the FieldStats so the per-detector chooser can
+        # tune mask params (truncate length, jitter range, locale) to
+        # the column's actual shape instead of using hardcoded defaults.
+        choice = best_transform_for(top.detector_id, f)
         if choice is None:
             continue
         mask, params, why = choice

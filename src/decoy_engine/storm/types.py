@@ -150,6 +150,33 @@ class FieldStats:
     casing_pattern: Optional[str] = None
     format_pattern: Optional[str] = None
 
+    # Plan B-2 — column-shape signals FORECAST's per-detector choosers
+    # consume to pick mask params instead of using hardcoded defaults.
+    # All four are Optional / sensibly-defaulted so persisted profiles
+    # from before Plan B-2 deserialize cleanly via dict-spreading at the
+    # platform edge.
+    #
+    #   alphabet            : 'digits' | 'alpha' | 'alphanum' | 'mixed' | None
+    #                          Drives hash.truncate length + FPE radix.
+    #                          None for non-string / empty columns.
+    #   value_set_size_class: 'unique' | 'high' | 'medium' | 'low' |
+    #                          'binary' | 'constant' | None.
+    #                          Coarse cardinality bucket the chooser can
+    #                          branch on without re-deriving from
+    #                          unique_rate.
+    #   numeric_range_class : 'small_int' | 'big_int' | 'decimal_money' |
+    #                          'decimal_other' | None. Drives FPE vs
+    #                          hash for numeric IDs; None for non-numeric.
+    #   mode_value          : most common non-null value as a string.
+    #                          Detects "default value pollution" alongside
+    #                          mode_freq.
+    #   mode_freq           : frequency of mode_value in 0.0..1.0.
+    alphabet: Optional[str] = None
+    value_set_size_class: Optional[str] = None
+    numeric_range_class: Optional[str] = None
+    mode_value: Optional[str] = None
+    mode_freq: float = 0.0
+
     # Top values for distribution awareness
     top_values: list[TopValue] = field(default_factory=list)
 

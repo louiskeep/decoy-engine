@@ -22,7 +22,24 @@ def _field(
     detectors: list[tuple[str, float]] | None = None,
     sentinels: list[SentinelFlag] | None = None,
     inferred: str = "string",
+    unique: bool = True,
 ) -> FieldStats:
+    # Plan B-2: FORECAST choosers branch on cardinality, so tests get an
+    # explicit knob. ``unique=True`` (default) makes the field look like
+    # an identifier (unique_rate=1.0, is_likely_unique=True) — matches
+    # the pre-B-2 behavior of all helpers. ``unique=False`` makes it
+    # look like a low-cardinality derived field so faker-style branches
+    # are exercised.
+    if unique:
+        unique_rate = 1.0
+        is_likely_unique = True
+        distinct_count = 100
+        value_set_size_class = "unique"
+    else:
+        unique_rate = 0.1
+        is_likely_unique = False
+        distinct_count = 10
+        value_set_size_class = "low"
     return FieldStats(
         name=name,
         inferred_type=inferred,
@@ -30,9 +47,10 @@ def _field(
         row_count=100,
         null_count=0,
         null_rate=0.0,
-        distinct_count=100,
-        unique_rate=1.0,
-        is_likely_unique=True,
+        distinct_count=distinct_count,
+        unique_rate=unique_rate,
+        is_likely_unique=is_likely_unique,
+        value_set_size_class=value_set_size_class,
         detector_matches=[DetectorMatch(detector_id=did, match_rate=rate) for did, rate in (detectors or [])],
         sentinels=sentinels or [],
     )
@@ -51,15 +69,27 @@ def _profile(*fields: FieldStats, qi_groups: list[list[str]] | None = None) -> S
 # ── per-field recommendations ────────────────────────────────────────────────
 
 class TestPerFieldRecommendations:
-    def test_email_column_recommends_faker_email(self):
-        profile = _profile(_field("contact", detectors=[("email", 1.0)]))
+    def test_low_card_email_column_recommends_faker_email(self):
+        # Low-cardinality email (e.g. a "customer_segment_email" lookup
+        # column) → faker so the recommendation matches the column's
+        # actual role rather than treating every email column as a PK.
+        profile = _profile(_field("contact_segment", detectors=[("email", 1.0)], unique=False))
         report = recommend(profile)
         assert len(report.field_recommendations) == 1
         rec = report.field_recommendations[0]
-        assert rec.field_name == "contact"
+        assert rec.field_name == "contact_segment"
         assert rec.recommended_mask == "faker"
         assert rec.mask_params == {"faker_type": "email"}
         assert rec.matched_detector == "email"
+
+    def test_high_card_email_column_recommends_hash(self):
+        # Plan B-2: unique-valued email column behaves like a join key.
+        # Hash so joins survive.
+        profile = _profile(_field("email", detectors=[("email", 1.0)], unique=True))
+        report = recommend(profile)
+        rec = report.field_recommendations[0]
+        assert rec.recommended_mask == "hash"
+        assert rec.mask_params.get("algorithm") == "sha256"
 
     def test_ssn_column_recommends_hash(self):
         profile = _profile(_field("ssn", detectors=[("ssn", 1.0)]))

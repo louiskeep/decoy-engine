@@ -232,6 +232,193 @@ def _format_pattern_from_detectors(
     return None
 
 
+# Plan B-2 — column-shape signals.
+#
+# All four classify a column into a small enum the FORECAST chooser
+# can branch on. They run on the same non-null sample _detect_casing
+# already pulls, so the profiler stays O(rows) per column.
+
+_B2_ALPHABET_SAMPLE = 200
+
+
+def _classify_alphabet(series: pd.Series) -> Optional[str]:
+    """Classify the dominant character class of a string column.
+
+    Returns one of:
+      'digits'    — every non-null sample is digits only
+      'alpha'     — every non-null sample is letters only
+      'alphanum'  — every sample is digits + letters (no other chars)
+      'mixed'     — at least one sample contains punctuation / separators
+                    / whitespace, or class membership is inconsistent
+                    (e.g. some rows digits-only, others alphanum)
+      None        — column has no non-null string-shaped values
+
+    The chooser uses this to size hash.truncate (digits → 8, alphanum →
+    12, mixed → leave at default) and pick FPE radix (10 for digits,
+    36 for alphanum). Sampling is capped at 200 values; the dominant
+    class wins when >=80% of samples land in the same bucket.
+    """
+    non_null = series.dropna()
+    if len(non_null) == 0:
+        return None
+    if len(non_null) > _B2_ALPHABET_SAMPLE:
+        non_null = non_null.head(_B2_ALPHABET_SAMPLE)
+    counts = {"digits": 0, "alpha": 0, "alphanum": 0, "mixed": 0}
+    total = 0
+    for v in non_null.astype(str):
+        s = v.strip()
+        if not s:
+            continue
+        total += 1
+        has_digit = False
+        has_alpha = False
+        has_other = False
+        for c in s:
+            if c.isdigit():
+                has_digit = True
+            elif c.isalpha():
+                has_alpha = True
+            else:
+                has_other = True
+                break
+        if has_other:
+            counts["mixed"] += 1
+        elif has_digit and has_alpha:
+            counts["alphanum"] += 1
+        elif has_digit:
+            counts["digits"] += 1
+        elif has_alpha:
+            counts["alpha"] += 1
+        else:
+            counts["mixed"] += 1
+    if total == 0:
+        return None
+    winner = max(counts.items(), key=lambda kv: kv[1])
+    if winner[1] / total < 0.8:
+        return "mixed"
+    return winner[0]
+
+
+# Cardinality buckets — coarser than unique_rate so the chooser
+# doesn't need to re-derive these thresholds.
+_B2_VALUE_SET_BANDS: tuple[tuple[float, str], ...] = (
+    (0.95, "unique"),     # near-PK
+    (0.50, "high"),
+    (0.10, "medium"),
+    (0.0, "low"),
+)
+
+
+def _classify_value_set_size(
+    distinct_count: int,
+    unique_rate: float,
+) -> Optional[str]:
+    """Bucket a column's cardinality into one of:
+
+      'constant' — exactly one distinct value (incl. all-NULL columns)
+      'binary'   — two distinct values (yes/no, 0/1, true/false)
+      'low'      — <=10 distinct values OR <10% unique_rate
+      'medium'   — <50% unique_rate
+      'high'     — <95% unique_rate
+      'unique'   — >=95% unique_rate (PK-shaped)
+      None       — empty column (no non-null values)
+    """
+    if distinct_count == 0:
+        return None
+    if distinct_count == 1:
+        return "constant"
+    if distinct_count == 2:
+        return "binary"
+    if distinct_count <= 10:
+        return "low"
+    for threshold, label in _B2_VALUE_SET_BANDS:
+        if unique_rate >= threshold:
+            return label
+    return "low"
+
+
+def _classify_numeric_range(
+    series: pd.Series,
+    inferred_type: str,
+) -> Optional[str]:
+    """Bucket a numeric column's range into one of:
+
+      'small_int'      — int column with magnitude under ~10k (lookup IDs,
+                         counts, status codes, age in years)
+      'big_int'        — int column with magnitude >=10k (account numbers,
+                         large surrogate keys, timestamps in seconds)
+      'decimal_money'  — float column whose values look like currency:
+                         dominant scale of exactly 2 decimal places
+      'decimal_other'  — float column with non-money decimals (measurements,
+                         ratios, scientific values)
+      None             — non-numeric column
+
+    Money detection samples up to 200 non-null values and checks the
+    fractional-part length of each. >=70% with exactly 2 decimal places
+    wins the 'decimal_money' label.
+    """
+    if inferred_type not in ("integer", "float"):
+        return None
+    non_null = series.dropna()
+    if len(non_null) == 0:
+        return None
+    try:
+        numeric = pd.to_numeric(non_null, errors="coerce").dropna()
+    except Exception:
+        return None
+    if len(numeric) == 0:
+        return None
+    abs_max = float(numeric.abs().max())
+    if inferred_type == "integer":
+        return "small_int" if abs_max < 10_000 else "big_int"
+    # Float — sniff for 2-decimal money shape. Money values are
+    # representable in at most 2 decimal places (1.50 == round(1.50, 2)
+    # within float epsilon) but at least some values have a non-zero
+    # fractional part (otherwise it's an int-valued float column).
+    sample = numeric.head(_B2_ALPHABET_SAMPLE)
+    two_dp_hits = 0
+    has_fractional = False
+    total = 0
+    for v in sample:
+        total += 1
+        fv = float(v)
+        if abs(fv - round(fv, 2)) < 1e-9:
+            two_dp_hits += 1
+        if abs(fv - round(fv)) >= 1e-9:
+            has_fractional = True
+    if total > 0 and has_fractional and two_dp_hits / total >= 0.7:
+        return "decimal_money"
+    return "decimal_other"
+
+
+def _compute_mode(
+    series: pd.Series,
+    total_rows: int,
+) -> tuple[Optional[str], float]:
+    """Return (mode_value, mode_freq).
+
+    ``mode_value`` is the most common non-null value as a string;
+    ``mode_freq`` is its count divided by ``total_rows`` (NOT by
+    non-null count — we want "this single value is 60% of the column"
+    to reflect coverage, not just non-null density). Returns
+    (None, 0.0) when the column has no non-null values.
+    """
+    if total_rows == 0:
+        return None, 0.0
+    non_null = series.dropna()
+    if len(non_null) == 0:
+        return None, 0.0
+    try:
+        vc = non_null.value_counts(dropna=True)
+    except Exception:
+        return None, 0.0
+    if len(vc) == 0:
+        return None, 0.0
+    top_value = vc.index[0]
+    top_count = int(vc.iloc[0])
+    return str(top_value), round(top_count / total_rows, 4)
+
+
 def _detect_casing(series: pd.Series) -> Optional[str]:
     """Classify the dominant casing of a string column.
 
@@ -563,6 +750,13 @@ def _profile_column(
     # masking-strategy post-pass reads them when `preserve_format=true`.
     fs.format_pattern = _format_pattern_from_detectors(fs.detector_matches)
     fs.casing_pattern = _detect_casing(series)
+
+    # Plan B-2 — column-shape signals FORECAST choosers read.
+    if dtype_raw == "object" and non_null_count > 0:
+        fs.alphabet = _classify_alphabet(series)
+    fs.value_set_size_class = _classify_value_set_size(distinct_count, unique_rate)
+    fs.numeric_range_class = _classify_numeric_range(series, inferred)
+    fs.mode_value, fs.mode_freq = _compute_mode(series, total_rows)
 
     # Sentinels.
     fs.sentinels = detect_sentinels(series, name)
