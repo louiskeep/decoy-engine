@@ -9,8 +9,8 @@
 
 - **Project:** decoy-engine (Pandas / Polars / DuckDB hybrid masking + generation engine)
 - **Stage:** building (pre-customer)
-- **Current focus:** SQL discovery helper (`data_discovery.py`) shipped to `claude/sql-data-discovery-6dFrL-rebased` with the CREATE VIEW binder bug fix. Awaiting full-suite verification + platform-side evaluation before merging to main.
-- **Last updated:** 2026-05-12 (end of day)
+- **Current focus:** Sprint F.5 engine slice merged to main 2026-05-13. Item 90 (`load_custom_providers` for user-defined Faker content folders) landed in `internal/helpers.py`, exported from the top-level package, with `custom_providers/` folder convention documented. Public API contract test extended in lockstep.
+- **Last updated:** 2026-05-13
 
 ---
 
