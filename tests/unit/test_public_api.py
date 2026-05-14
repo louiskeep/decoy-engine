@@ -53,6 +53,7 @@ def test_all_lists_every_public_name():
         "LicenseError", "LicenseExpiredError",
         "FlagPauseSignal",
         "register_faker_provider", "unregister_faker_provider",
+        "load_custom_providers",
         # Connector SDK (Sprint G Week 1).
         "SDK_VERSION",
         "CAP_STREAMING", "CAP_RESUMABLE", "CAP_SIGNED_URL",
