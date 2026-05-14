@@ -24,7 +24,9 @@ The shared Python data engine used by both the CLI and the platform.
 
 ## Architecture
 
-See [`docs/architecture.md`](docs/architecture.md) for the internal component map (transforms, pipeline graph, generators, execution context) and where to start reading.
+Start with [`docs/product-flow.md`](docs/product-flow.md) for the developer-oriented product flow: STORM, FORECAST, graph execution, masking, generation, runtime context, examples, and diagrams.
+
+Then see [`docs/architecture.md`](docs/architecture.md) for the internal component map (transforms, pipeline graph, generators, execution context) and where to keep reading.
 
 ## Public API
 

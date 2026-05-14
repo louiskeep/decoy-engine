@@ -6,6 +6,7 @@ This site hosts the **auto-generated API reference**, regenerated on every push 
 
 ## What's documented here
 
+- **Product flow** - a developer-first introduction to Decoy's core engine flows: STORM, FORECAST, Disguises, graph execution, masking, generation, runtime context, and extension points.
 - **Public API surface** — everything in `decoy_engine.__init__.__all__`, plus public-ish module symbols elsewhere under `src/decoy_engine/`. Browse via the API reference toctree below.
 - **Module structure** — auto-generated module pages with class hierarchies, function signatures, and links back to source on GitHub.
 
@@ -27,6 +28,7 @@ api/index
 :caption: Architecture
 :hidden:
 
+product-flow
 architecture
 adr/0001-polars-duckdb-hybrid-engine-substrate
 adr/0002-two-key-resolvers-in-execution-context
@@ -38,6 +40,7 @@ The auto-generated reference is the *what*; these are the *why* and the *how*. R
 
 | Doc | What it covers |
 |---|---|
+| [`docs/product-flow.md`](https://github.com/louiskeep/decoy-engine/blob/main/docs/product-flow.md) | First-read product and engine flow guide: STORM, FORECAST, graph execution, masking, generation, runtime context, examples, and diagrams. |
 | [`SHARED_ENGINE_ARCHITECTURE.md`](https://github.com/louiskeep/decoy-engine/blob/main/SHARED_ENGINE_ARCHITECTURE.md) | The substrate split (DuckDB / Polars / pandas over Arrow), the engine ↔ CLI ↔ platform boundary, the shared-library rationale. |
 | [`docs/architecture.md`](https://github.com/louiskeep/decoy-engine/blob/main/docs/architecture.md) | Domain-component map. C4 layer this repo owns: pipeline graph, transforms, generators, `ExecutionContext`. |
 | [`PIPELINE_GRAPH_GUIDE.md`](https://github.com/louiskeep/decoy-engine/blob/main/PIPELINE_GRAPH_GUIDE.md) | Graph YAML format, `NATIVE_ENGINE` declaration, op-type registry, how to write a new op. |
