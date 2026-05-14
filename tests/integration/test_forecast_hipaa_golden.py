@@ -21,22 +21,46 @@ from decoy_engine.storm import run_storm
 
 @pytest.fixture
 def hipaa_dataframe() -> pd.DataFrame:
-    """A small synthetic dataset with all the PHI shapes HIPAA cares about."""
+    """A synthetic dataset with all the PHI shapes HIPAA cares about.
+
+    Sized to exercise Plan B-1's data-driven k-anonymity: dob / zip /
+    gender repeat across rows so they qualify as quasi-id candidates
+    (unique_rate < 0.95) and form low-k combos. ssn / email / phone
+    remain unique to keep direct-identifier detection working.
+    """
     return pd.DataFrame({
-        "patient_id":  [1, 2, 3, 4, 5, 6],
-        "first_name":  ["Alice", "Bob", "Carol", "Dave", "Eve", "Frank"],
-        "last_name":   ["Smith", "Jones", "Davis", "Martin", "Wilson", "Brown"],
+        "patient_id":  [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+        "first_name":  ["Alice", "Bob", "Carol", "Dave", "Eve", "Frank",
+                        "Grace", "Henry", "Iris", "Jack", "Kate", "Leo"],
+        "last_name":   ["Smith", "Jones", "Davis", "Martin", "Wilson", "Brown",
+                        "Taylor", "Anderson", "Thomas", "Jackson", "White", "Harris"],
         "ssn":         ["123-45-6789", "555-12-3456", "111-22-3333",
-                        "444-55-6677", "222-99-1212", "333-44-5566"],
-        "dob":         ["1985-03-15", "1990-07-22", "0001-01-01",
-                        "1972-11-08", "9999-12-31", "1965-06-30"],
-        "zip":         ["90210", "10001", "60601", "94102", "02134", "33101"],
-        "gender":      ["F", "M", "F", "M", "F", "M"],
-        "email":       ["a@b.com", "c@d.org", "e@f.io",
-                        "g@h.co", "i@j.net", "k@l.com"],
+                        "444-55-6677", "222-99-1212", "333-44-5566",
+                        "777-88-9999", "888-11-2222", "999-33-4444",
+                        "121-21-2121", "343-43-4343", "565-65-6565"],
+        # 5 distinct DOBs across 12 rows (unique_rate 0.42 < 0.95)
+        # so dob qualifies as a quasi-id candidate. Includes the
+        # 0001-01-01 / 9999-12-31 sentinel values so the
+        # RiskFlags coverage assertion still has data to find.
+        "dob":         ["1985-03-15", "1990-07-22", "1972-11-08",
+                        "1985-03-15", "1990-07-22", "1972-11-08",
+                        "1985-03-15", "0001-01-01", "1972-11-08",
+                        "1985-03-15", "9999-12-31", "1972-11-08"],
+        # Four distinct ZIPs, varied frequencies.
+        "zip":         ["90210", "10001", "60601", "94102",
+                        "90210", "10001", "60601", "94102",
+                        "90210", "10001", "60601", "94102"],
+        "gender":      ["F", "M", "F", "M", "F", "M",
+                        "F", "M", "F", "M", "F", "M"],
+        "email":       ["a@b.com", "c@d.org", "e@f.io", "g@h.co",
+                        "i@j.net", "k@l.com", "m@n.io", "o@p.co",
+                        "q@r.net", "s@t.com", "u@v.io", "w@x.co"],
         "phone":       ["555-234-5678", "555-345-6789", "555-456-7890",
-                        "555-567-8901", "555-678-9012", "555-789-0123"],
-        "notes":       ["clean", "fine", "N/A", "ok", "TBD", ""],
+                        "555-567-8901", "555-678-9012", "555-789-0123",
+                        "555-890-1234", "555-901-2345", "555-012-3456",
+                        "555-123-4567", "555-234-0987", "555-345-1098"],
+        "notes":       ["clean", "fine", "N/A", "ok", "TBD", "",
+                        "clean", "fine", "N/A", "ok", "TBD", ""],
     })
 
 

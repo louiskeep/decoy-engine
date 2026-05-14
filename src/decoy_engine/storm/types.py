@@ -185,8 +185,19 @@ class StormProfile:
     reid_risk_columns: list[str] = field(default_factory=list)
     reid_risk_score: float = 0.0
     quasi_identifier_groups: list[list[str]] = field(default_factory=list)
-    # ^^ e.g. [["dob", "zip", "gender"]] when those co-occur — FORECAST flags these
-    # as HIPAA-style quasi-identifiers.
+    # ^^ data-driven (Plan B-1): the column combos that achieve
+    # the minimum k-anonymity value k below. Multiple combos can
+    # tie at the same k; all winning combos are listed. Empty
+    # when the dataset has no low-cardinality categoricals
+    # (re-id risk via quasi-id linkage isn't a concern).
+
+    # k-anonymity (Plan B-1). Minimum group size across 2- and
+    # 3-column combos of low-cardinality categorical candidates.
+    # k=1 means at least one combo uniquely identifies a row
+    # (re-id risk via linkage is high). k=None means no
+    # candidates were eligible (either dataset is too small or
+    # every column is either unique or constant).
+    k_anonymity: Optional[int] = None
 
     # Run metadata
     engine_version: str = "0.1.0"

@@ -60,24 +60,137 @@ def _score_pii(detector_matches: list[DetectorMatch], unique_rate: float) -> flo
     return round(min(1.0, base + boost), 3)
 
 
-# ── quasi-identifier co-occurrence ────────────────────────────────────────────
+# ── quasi-identifier co-occurrence + k-anonymity ──────────────────────────────
+#
+# Plan B-1: the HIPAA trio (DOB + 5-digit ZIP + gender) is the canonical
+# example of a quasi-identifier combo, but treating it as the only
+# possibility misses every dataset where the high-risk combo is
+# something else (e.g. medication + admission_year + diagnosis_code).
+# Instead, we sweep all 2- and 3-column combos of low-cardinality
+# categorical candidates and report k-anonymity from the actual data.
+# The HIPAA trio still emerges naturally when those columns happen to
+# have the right cardinality + joint uniqueness.
 
-# Classic HIPAA-style trio. Re-identification literature shows ~87% of US
-# residents are unique on (DOB, 5-digit ZIP, gender). FORECAST flags this.
-_DOB_HINTS    = re.compile(r"(?i)^(.*[_-])?(dob|birth.?date|date.?of.?birth)([_-].*)?$")
-_ZIP_HINTS    = re.compile(r"(?i)^(.*[_-])?(zip|postal|post)([_-]?code)?([_-].*)?$")
-_GENDER_HINTS = re.compile(r"(?i)^(.*[_-])?(gender|sex)([_-].*)?$")
+
+# Upper bound on candidate columns to consider. C(10,2) + C(10,3) = 165
+# groupbys per scan, which is well under a second on a 100k-row sample.
+# Past 10 candidates the combinatorics start to bite and the lowest-k
+# combo is overwhelmingly likely to be among the top-10 by distinct_count
+# anyway (a column that contributes meaningful identifiability needs
+# enough cardinality to discriminate, which is what the ranking proxies).
+_K_ANON_MAX_CANDIDATES = 10
+
+# Cardinality band for quasi-id candidates. Exclude high-cardinality
+# columns (likely PKs / direct identifiers — those don't need a combo
+# to identify rows) and near-constant ones (don't discriminate at all).
+_K_ANON_MIN_UNIQUE_RATE = 0.005
+_K_ANON_MAX_UNIQUE_RATE = 0.95
+_K_ANON_MAX_DISTINCT_FRACTION = 0.25   # < 25% of rows distinct = categorical-like
+# Absolute floor so the fraction doesn't over-filter on tiny datasets.
+# A column with <=20 distinct values is categorical-like in practice
+# regardless of row count.
+_K_ANON_MAX_DISTINCT_ABSOLUTE = 20
+
+# Types we'll consider for k-anonymity. Float columns with measurement
+# noise rarely participate in linkage attacks because the values are
+# already too granular to share across rows; the cardinality filter
+# above also catches them, but being explicit keeps the groupby fast.
+_K_ANON_TYPES = {"integer", "string", "boolean", "date"}
 
 
-def _quasi_identifier_groups(fields: list[FieldStats]) -> list[list[str]]:
-    """Detect known re-identification quasi-identifier groups by column name."""
-    groups: list[list[str]] = []
-    dob    = next((f.name for f in fields if _DOB_HINTS.fullmatch(f.name or "")), None)
-    zip_   = next((f.name for f in fields if _ZIP_HINTS.fullmatch(f.name or "")), None)
-    gender = next((f.name for f in fields if _GENDER_HINTS.fullmatch(f.name or "")), None)
-    if dob and zip_ and gender:
-        groups.append([dob, zip_, gender])
-    return groups
+def _compute_k_anonymity(
+    df: pd.DataFrame,
+    fields: list[FieldStats],
+) -> tuple[Optional[int], list[list[str]]]:
+    """Compute k-anonymity from low-cardinality categorical combos.
+
+    Returns ``(k, groups)`` where:
+
+      - ``k`` is the minimum group size produced by any 2- or 3-column
+        combo of quasi-identifier candidates. ``k == 1`` means at least
+        one combo uniquely identifies at least one row (high linkage
+        risk). ``k == None`` means no candidates were eligible (the
+        dataset is either too small, or every column is unique /
+        constant — direct-identifier territory is captured separately
+        by per-field ``pii_score`` and detector hits, not here).
+
+      - ``groups`` is every combo that ties at that minimum ``k``.
+        Multiple combos can produce the same k; listing all of them
+        keeps the result honest and lets FORECAST see which fields
+        contribute to the risk.
+
+    Candidate selection: columns whose ``unique_rate`` lies in
+    (0.005, 0.95) and ``distinct_count`` is under 25% of ``row_count``.
+    Capped at ``_K_ANON_MAX_CANDIDATES`` by descending ``distinct_count``
+    so the most discriminating candidates are kept when the cap binds.
+    """
+    row_count = len(df)
+    if row_count < 2:
+        return None, []
+
+    candidates: list[FieldStats] = []
+    for f in fields:
+        if f.inferred_type not in _K_ANON_TYPES:
+            continue
+        if f.distinct_count <= 1:
+            continue
+        if f.unique_rate <= _K_ANON_MIN_UNIQUE_RATE:
+            continue
+        if f.unique_rate >= _K_ANON_MAX_UNIQUE_RATE:
+            continue
+        # Column qualifies if EITHER its distinct_count is small in
+        # absolute terms OR a small fraction of total rows. The
+        # absolute cap keeps small fixtures + small natural
+        # categoricals (gender, state, status) from being over-
+        # filtered when row_count * fraction lands below 1.
+        max_distinct = max(
+            _K_ANON_MAX_DISTINCT_ABSOLUTE,
+            int(row_count * _K_ANON_MAX_DISTINCT_FRACTION),
+        )
+        if f.distinct_count > max_distinct:
+            continue
+        candidates.append(f)
+
+    if not candidates:
+        return None, []
+
+    # Rank by distinct_count descending — high-cardinality candidates
+    # are the most identifying. Tie-break alphabetically for determinism.
+    candidates.sort(key=lambda f: (-f.distinct_count, f.name))
+    candidate_names = [f.name for f in candidates[:_K_ANON_MAX_CANDIDATES]]
+
+    # Defensive: drop names not actually present in the dataframe
+    # (shouldn't happen given fields come from df.columns, but the
+    # groupby would raise rather than skip).
+    candidate_names = [n for n in candidate_names if n in df.columns]
+    if len(candidate_names) < 2:
+        return None, []
+
+    from itertools import combinations
+
+    best_k: Optional[int] = None
+    best_groups: list[list[str]] = []
+    for size in (2, 3):
+        if size > len(candidate_names):
+            break
+        for combo in combinations(candidate_names, size):
+            try:
+                sub = df.loc[:, list(combo)].dropna()
+                if len(sub) == 0:
+                    continue
+                k = int(sub.groupby(list(combo), dropna=False).size().min())
+            except Exception:
+                # Defensive: an unhashable column value (rare — dict /
+                # list cells from JSON-typed sources) would blow up the
+                # groupby. Skip silently rather than 500 the scan.
+                continue
+            if best_k is None or k < best_k:
+                best_k = k
+                best_groups = [list(combo)]
+            elif k == best_k:
+                best_groups.append(list(combo))
+
+    return best_k, best_groups
 
 
 # ── per-column profiler ───────────────────────────────────────────────────────
@@ -502,9 +615,24 @@ def run_storm(
     try:
         total = len(df)
         fields = [_profile_column(df[col], total, custom_detectors) for col in df.columns]
-        reid_cols = [f.name for f in fields if f.is_likely_unique]
-        reid_score = round(len(reid_cols) / max(len(fields), 1) * 100, 1)
-        qi_groups = _quasi_identifier_groups(fields)
+
+        # Plan B-1: data-driven k-anonymity replaces the old
+        # "% of unique columns" heuristic. k_anonymity is the
+        # minimum joint group size across 2- and 3-column combos
+        # of quasi-id candidates; reid_risk_score is now 100/k
+        # capped at 100, with 0 meaning "no quasi-id linkage
+        # risk" (direct identifiers are surfaced via per-field
+        # pii_score, not duplicated here).
+        k_anonymity, qi_groups = _compute_k_anonymity(df, fields)
+        if k_anonymity is not None and k_anonymity > 0:
+            reid_score = round(min(100.0, 100.0 / k_anonymity), 1)
+        else:
+            reid_score = 0.0
+        # The flat union of column names from the winning combos —
+        # what UI consumers want to highlight as the contributing
+        # columns. Falls back to an empty list when no QI combos
+        # exist.
+        reid_cols = sorted({col for group in qi_groups for col in group})
 
         profile = StormProfile(
             source_label=source_label,
@@ -515,6 +643,7 @@ def run_storm(
             reid_risk_columns=reid_cols,
             reid_risk_score=reid_score,
             quasi_identifier_groups=qi_groups,
+            k_anonymity=k_anonymity,
         )
     except Exception as exc:  # noqa: BLE001 — re-raised below
         emit_step(
