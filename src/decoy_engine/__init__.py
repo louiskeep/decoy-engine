@@ -75,6 +75,7 @@ from decoy_engine.exceptions import (
 from decoy_engine.internal.helpers import (
     register_faker_provider,
     unregister_faker_provider,
+    load_custom_providers,
 )
 
 # Connector SDK.
@@ -143,6 +144,7 @@ __all__ = [
     'FlagPauseSignal',
     'register_faker_provider',
     'unregister_faker_provider',
+    'load_custom_providers',
     # Connector SDK.
     'SDK_VERSION',
     'CAP_STREAMING',
