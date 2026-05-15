@@ -189,7 +189,9 @@ def _attach_target_for(dsn: str, attach_type: str) -> str:
     if attach_type == "sqlite":
         # Strip dialect prefix; SQLAlchemy uses 3 slashes for absolute
         # paths on Unix and varies on Windows.
-        for prefix in ("sqlite:////", "sqlite:///", "sqlite://"):
+        # sqlite:////abs/path falls through to sqlite:/// so the leading
+        # slash of the absolute path is preserved.
+        for prefix in ("sqlite:///", "sqlite://"):
             if dsn.startswith(prefix):
                 return dsn[len(prefix):]
         return dsn  # fallback: pass through
