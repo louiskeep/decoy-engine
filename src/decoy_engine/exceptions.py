@@ -20,7 +20,18 @@ class ConfigError(DecoyError):
 
 
 class PipelineValidationError(ConfigError):
-    """Raised when a pipeline configuration fails validation."""
+    """Raised when a pipeline configuration fails validation.
+
+    Carries the optional `path` attribute (dotted location of the
+    bad config, e.g. ``nodes[2].config.path``) so callers can map
+    the failure back to a specific node / inspector field instead
+    of parsing the message string. None when validation failed at
+    a level above any single node (e.g. invalid top-level mode).
+    """
+
+    def __init__(self, message: str, path: str | None = None) -> None:
+        self.path = path
+        super().__init__(message)
 
 
 class ConnectorError(DecoyError):

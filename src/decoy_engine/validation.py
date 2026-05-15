@@ -81,4 +81,4 @@ def _run_validator(validator_cls: Any, data: dict) -> None:
     try:
         validator_cls(quiet_logger).validate(data)
     except ValidationError as e:
-        raise PipelineValidationError(str(e)) from e
+        raise PipelineValidationError(str(e), path=e.path) from e

@@ -140,7 +140,13 @@ def _check_memory_pressure(
 
 
 def validate_graph(yaml_text: str) -> None:
-    """Validate graph YAML. Raises PipelineValidationError on bad config."""
+    """Validate graph YAML. Raises PipelineValidationError on bad config.
+
+    The raised exception carries the optional ``path`` attribute
+    (e.g. ``nodes[2].config.path``) so a platform caller can map the
+    failure back to a specific node / inspector field instead of
+    string-parsing the message.
+    """
     config = _load_yaml(yaml_text)
     _quiet_logger = logging.getLogger("decoy_engine.graph.validate")
     if not _quiet_logger.handlers:
@@ -148,7 +154,7 @@ def validate_graph(yaml_text: str) -> None:
     try:
         GraphConfigValidator(_quiet_logger).validate(config)
     except ValidationError as e:
-        raise PipelineValidationError(str(e)) from e
+        raise PipelineValidationError(str(e), path=e.path) from e
 
 
 def run_graph(
@@ -656,7 +662,7 @@ def _validate_or_raise(config: dict) -> None:
     try:
         GraphConfigValidator(quiet).validate(config)
     except ValidationError as e:
-        raise PipelineValidationError(str(e)) from e
+        raise PipelineValidationError(str(e), path=e.path) from e
 
 
 def _validate_top_level_or_raise(config: dict) -> None:
