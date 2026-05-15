@@ -106,12 +106,17 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
 def _columns_to_rules(columns: dict[str, dict]) -> list[dict]:
     """Convert graph column-mapping form to legacy rules list.
 
-    Graph form:    {name: {strategy: ..., ...}}
+    Graph form:    {name: {strategy: ..., ..., _why?: str}}
     Rules form:    [{column: name, type: ..., ...}, ...]
+
+    Underscored keys (e.g. `_why`, the FORECAST chooser's per-column
+    rationale string preserved by build_from_forecast) are stripped
+    before the rule reaches the legacy strategies registry. They live
+    on the YAML for evidence / report rendering, not for the masker.
     """
     rules = []
     for col_name, spec in columns.items():
-        rule = dict(spec)
+        rule = {k: v for k, v in spec.items() if not k.startswith("_")}
         rule["column"] = col_name
         rule["type"] = rule.pop("strategy")
         rules.append(rule)
