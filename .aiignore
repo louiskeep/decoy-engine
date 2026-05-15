@@ -1,0 +1,14 @@
+.git/
+.github/
+.pytest_cache/
+__pycache__/
+.mypy_cache/
+.ruff_cache/
+docs/_build/
+logs/
+mappings/
+coverage/
+htmlcov/
+
+# Read only for task-specific work
+tests/benchmark/calibration/results.md
