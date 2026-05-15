@@ -253,7 +253,17 @@ def _read_fwf_pandas(
     # 0-based half-open (start_inclusive, end_exclusive). Convert here.
     colspecs = [(c["start"] - 1, c["start"] - 1 + c["length"]) for c in fw_columns]
     names = [c["name"] for c in fw_columns]
-    kwargs: dict[str, Any] = {"colspecs": colspecs, "names": names, "header": None}
+    # dtype=str keeps the raw substring per column boundary so leading
+    # zeros, sentinel codes, and padding survive intact. This matches
+    # STORM's fixed-width loader (api/analytics/router.py:_load_fw_from_bytes),
+    # which slices the line bytes verbatim without type inference.
+    # Without dtype=str pandas would silently coerce `"001"` -> 1 and a
+    # pipeline reading the same file would see different values than
+    # the scan that profiled it. Downstream nodes can cast explicitly
+    # if they want numeric typing.
+    kwargs: dict[str, Any] = {
+        "colspecs": colspecs, "names": names, "header": None, "dtype": str,
+    }
     if row_limit:
         kwargs["nrows"] = row_limit
     return pd.read_fwf(path, **kwargs)

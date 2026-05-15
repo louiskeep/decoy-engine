@@ -427,9 +427,13 @@ class TestFixedWidth:
         )
         assert list(df.columns) == ["id", "name", "amount"]
         assert len(df) == 3
-        assert df["id"].tolist() == [1, 2, 3]
+        # Fixed-width preserves the raw column substring as a string
+        # (dtype=str on read_fwf) so leading zeros and padding survive
+        # the read. Downstream nodes cast explicitly when numeric
+        # typing is wanted.
+        assert df["id"].tolist() == ["001", "002", "003"]
         assert [n.strip() for n in df["name"].tolist()] == ["Alice", "Bob", "Carol"]
-        assert df["amount"].tolist() == [100, 200, 300]
+        assert df["amount"].tolist() == ["000100", "000200", "000300"]
 
     def test_row_limit_honored(self, fixed_width_file):
         df = source_file.apply(
@@ -448,7 +452,7 @@ class TestFixedWidth:
             None,
         )
         assert len(df) == 2
-        assert df["id"].tolist() == [1, 2]
+        assert df["id"].tolist() == ["001", "002"]
 
 
 # ── apply: format inference ─────────────────────────────────────────────────
