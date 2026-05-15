@@ -520,6 +520,108 @@ class TestExports:
 
 # ── housekeeping: bool subtype guard ────────────────────────────────────────
 
+@pytest.fixture
+def headerless_csv():
+    path = _write_tmp("1,Alice,10\n2,Bob,20\n3,Carol,30\n")
+    yield path
+    os.unlink(path)
+
+
+class TestValidateColumnNames:
+    def test_accepts_non_empty_list_of_strings(self, headerless_csv):
+        source_file.validate_config({
+            "path": headerless_csv,
+            "has_header": False,
+            "column_names": ["id", "name", "amount"],
+        })
+
+    def test_requires_has_header_false(self, headerless_csv):
+        # column_names overrides the auto-generated col_0..N names, which
+        # only happen when there is no header. Setting both is a config
+        # contradiction; validator rejects rather than silently letting
+        # one path or the other win.
+        with pytest.raises(ValidationError, match="column_names"):
+            source_file.validate_config({
+                "path": headerless_csv,
+                "has_header": True,
+                "column_names": ["a", "b"],
+            })
+        # Default has_header=True also rejects.
+        with pytest.raises(ValidationError, match="column_names"):
+            source_file.validate_config({
+                "path": headerless_csv,
+                "column_names": ["a", "b"],
+            })
+
+    def test_rejects_empty_list(self, headerless_csv):
+        with pytest.raises(ValidationError):
+            source_file.validate_config({
+                "path": headerless_csv, "has_header": False, "column_names": [],
+            })
+
+    def test_rejects_non_string_entries(self, headerless_csv):
+        with pytest.raises(ValidationError, match=r"column_names\[1\]"):
+            source_file.validate_config({
+                "path": headerless_csv, "has_header": False,
+                "column_names": ["id", 99, "amount"],
+            })
+
+    def test_rejects_empty_string_entries(self, headerless_csv):
+        with pytest.raises(ValidationError, match=r"column_names\[0\]"):
+            source_file.validate_config({
+                "path": headerless_csv, "has_header": False,
+                "column_names": ["", "name"],
+            })
+
+    def test_rejected_on_parquet(self, tmp_path):
+        pq = tmp_path / "x.parquet"
+        pd.DataFrame({"a": [1]}).to_parquet(pq)
+        with pytest.raises(ValidationError, match="column_names"):
+            source_file.validate_config({
+                "path": str(pq), "column_names": ["a", "b"],
+            })
+
+
+@pytest.mark.parametrize("engine", ["pandas", "duckdb"])
+class TestApplyColumnNames:
+    def test_overrides_auto_generated_names(self, headerless_csv, engine):
+        result = source_file.apply(
+            [],
+            {
+                "path": headerless_csv,
+                "has_header": False,
+                "column_names": ["id", "name", "amount"],
+                "__engine": engine,
+            },
+            None,
+        )
+        cols = result.column_names if engine == "duckdb" else list(result.columns)
+        assert cols == ["id", "name", "amount"]
+
+    def test_length_mismatch_raises_operror(self, headerless_csv, engine):
+        from decoy_engine.graph.ops._base import OpError
+        with pytest.raises(OpError, match="column_names has"):
+            source_file.apply(
+                [],
+                {
+                    "path": headerless_csv,
+                    "has_header": False,
+                    "column_names": ["id", "name"],  # file has 3 columns
+                    "__engine": engine,
+                },
+                None,
+            )
+
+    def test_falls_back_to_col_N_when_names_omitted(self, headerless_csv, engine):
+        result = source_file.apply(
+            [],
+            {"path": headerless_csv, "has_header": False, "__engine": engine},
+            None,
+        )
+        cols = result.column_names if engine == "duckdb" else list(result.columns)
+        assert cols == ["col_0", "col_1", "col_2"]
+
+
 class TestBoolSubtypeGuard:
     """Python's bool is a subclass of int. The validator must reject bool
     where it expects a strict int (row_limit, fw_columns start/length) so

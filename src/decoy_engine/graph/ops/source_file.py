@@ -7,7 +7,15 @@ Config:
                             fixed_width must be set explicitly.)
     has_header: bool     - CSV only; defaults to true. When false, column
                            names are auto-generated (col_0, col_1, ...) and
-                           the first row is treated as data.
+                           the first row is treated as data, unless
+                           `column_names` is also set.
+    column_names: list[str]
+                           CSV only; optional; requires has_header=false.
+                           Replaces the auto-generated col_0..col_N names
+                           with the user-supplied list. Length must
+                           match the file's actual column count or pandas
+                           raises a parse error the caller surfaces as
+                           an OpError.
     delimiter: str       - CSV only; the field separator. When omitted,
                            pandas/DuckDB auto-detect.
     delimiter_is_regex: bool
@@ -49,7 +57,9 @@ NATIVE_ENGINE = "duckdb"
 INPUT_ARITY: tuple[int, int | None] = (0, 0)
 OUTPUT_KIND = "stream"
 
-_CSV_PARAM_KEYS = ("delimiter", "delimiter_is_regex", "strip_quotes", "encoding")
+_CSV_PARAM_KEYS = (
+    "delimiter", "delimiter_is_regex", "strip_quotes", "encoding", "column_names",
+)
 
 
 def validate_config(config: dict[str, Any]) -> None:
@@ -101,6 +111,26 @@ def validate_config(config: dict[str, Any]) -> None:
                 raise ValidationError(
                     "'encoding' must be a non-empty string when set",
                     "config.encoding",
+                )
+        if "column_names" in config:
+            names = config["column_names"]
+            if not isinstance(names, list) or not names:
+                raise ValidationError(
+                    "'column_names' must be a non-empty list of strings when set",
+                    "config.column_names",
+                )
+            for i, name in enumerate(names):
+                if not isinstance(name, str) or name == "":
+                    raise ValidationError(
+                        f"column_names[{i}] must be a non-empty string",
+                        f"config.column_names[{i}]",
+                    )
+            # column_names overrides auto-generated col_0..col_N; only
+            # meaningful when there's no header row to read names from.
+            if config.get("has_header", True):
+                raise ValidationError(
+                    "'column_names' requires has_header=false",
+                    "config.column_names",
                 )
     else:
         # csv-only params don't belong on parquet/fixed_width sources.
@@ -221,6 +251,7 @@ def _read_csv_pandas(
     delimiter_is_regex = bool(config.get("delimiter_is_regex"))
     strip_quotes = bool(config.get("strip_quotes", True))
     encoding = config.get("encoding", "utf-8")
+    column_names = config.get("column_names")
 
     kwargs: dict[str, Any] = {"nrows": row_limit, "encoding": encoding}
     if not has_header:
@@ -236,12 +267,23 @@ def _read_csv_pandas(
 
     df = pd.read_csv(path, **kwargs)
     if not has_header:
-        # header=None tells pandas there's no header row; column labels
-        # default to RangeIndex which serializes as 0,1,2,... Rename to
-        # col_0, col_1, ... so downstream node configs that reference
-        # column names by string survive (numeric labels stringify in
-        # surprising ways when serialized to YAML / CSV).
-        df.columns = [f"col_{i}" for i in range(len(df.columns))]
+        if isinstance(column_names, list) and column_names:
+            # User-supplied names override the col_0..col_N default.
+            # Length mismatch is a real config error; surface it as an
+            # OpError via the caller's try/except.
+            if len(column_names) != len(df.columns):
+                raise OpError(
+                    f"column_names has {len(column_names)} entries but the "
+                    f"file has {len(df.columns)} columns"
+                )
+            df.columns = list(column_names)
+        else:
+            # header=None tells pandas there's no header row; column labels
+            # default to RangeIndex which serializes as 0,1,2,... Rename to
+            # col_0, col_1, ... so downstream node configs that reference
+            # column names by string survive (numeric labels stringify in
+            # surprising ways when serialized to YAML / CSV).
+            df.columns = [f"col_{i}" for i in range(len(df.columns))]
     return df
 
 
@@ -321,12 +363,21 @@ def _apply_duckdb(config: dict[str, Any]) -> pa.Table:
             # RecordBatchReader which isn't what the runner cache wants.
             table = con.execute(sql).to_arrow_table()
             if fmt == "csv" and not has_header:
-                # Normalize DuckDB's `column0`/`column1` to `col_0`/`col_1`
-                # so downstream configs reference the same names regardless
-                # of which substrate read the file.
-                table = table.rename_columns(
-                    [f"col_{i}" for i in range(table.num_columns)]
-                )
+                column_names = config.get("column_names")
+                if isinstance(column_names, list) and column_names:
+                    if len(column_names) != table.num_columns:
+                        raise OpError(
+                            f"column_names has {len(column_names)} entries but the "
+                            f"file has {table.num_columns} columns"
+                        )
+                    table = table.rename_columns(list(column_names))
+                else:
+                    # Normalize DuckDB's `column0`/`column1` to `col_0`/`col_1`
+                    # so downstream configs reference the same names regardless
+                    # of which substrate read the file.
+                    table = table.rename_columns(
+                        [f"col_{i}" for i in range(table.num_columns)]
+                    )
             return table
         finally:
             con.close()
