@@ -26,14 +26,43 @@ def _wrap_graph(nodes, edges):
 
 def _mask_pipeline(source_cfg, mask_cols):
     """Helper: build a src -> mask -> tgt pipeline with the given
-    source.file config and mask columns dict."""
+    source.file config and mask columns dict.
+
+    When the source is fixed_width, splice a convert.file_type node
+    in front of the target so the R2.4 cross-node format-mismatch
+    check doesn't trip. target.file only writes csv/parquet, so a
+    fixed_width source must convert before sinking anyway.
+    """
+    src_fmt = source_cfg.get("format")
+    if src_fmt == "fixed_width":
+        return _wrap_graph(
+            nodes=[
+                {"id": "src_1", "kind": "source.file", "config": source_cfg},
+                {"id": "mask_1", "kind": "mask",
+                 "config": {"columns": mask_cols}},
+                {"id": "cvt_1", "kind": "convert.file_type",
+                 "config": {"format": "csv", "output_filename": "stage.csv"}},
+                {"id": "tgt_1", "kind": "target.file",
+                 "config": {"output_filename": "out.csv", "format": "csv"}},
+            ],
+            edges=[
+                {"from": "src_1", "to": "mask_1"},
+                {"from": "mask_1", "to": "cvt_1"},
+                {"from": "cvt_1", "to": "tgt_1"},
+            ],
+        )
+    # Target format matches the source so the R2.4 format-mismatch
+    # check doesn't trip. Tests in this module are about mask-column
+    # reachability, not format compatibility.
+    tgt_fmt = src_fmt if src_fmt in {"csv", "parquet"} else "csv"
+    tgt_filename = f"out.{tgt_fmt}"
     return _wrap_graph(
         nodes=[
             {"id": "src_1", "kind": "source.file", "config": source_cfg},
             {"id": "mask_1", "kind": "mask",
              "config": {"columns": mask_cols}},
             {"id": "tgt_1", "kind": "target.file",
-             "config": {"output_filename": "out.csv", "format": "csv"}},
+             "config": {"output_filename": tgt_filename, "format": tgt_fmt}},
         ],
         edges=[
             {"from": "src_1", "to": "mask_1"},

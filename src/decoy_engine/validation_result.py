@@ -159,6 +159,11 @@ class CODES:
     GRAPH_NODE_INSUFFICIENT_INPUTS = "graph.node_insufficient_inputs"
     GRAPH_NODE_TOO_MANY_INPUTS = "graph.node_too_many_inputs"
     GRAPH_SINK_HAS_OUTPUTS = "graph.sink_has_outputs"
+    # R2.4 cross-node: source format and target format disagree with no
+    # convert.file_type node in between. Used to be a logger.warning;
+    # promoted to a hard error in R2.4 because the runner would either
+    # crash or silently write a wrong-format file.
+    GRAPH_FORMAT_MISMATCH = "graph.format_mismatch"
 
     # Cross-node schema checks (R2.3).
     MASK_UNKNOWN_COLUMN = "mask.unknown_column"

@@ -855,15 +855,14 @@ class GraphConfigValidator(ConfigValidator):
                     tgt_cfg["format"] = tgt_fmt
 
                 if tgt_fmt and tgt_fmt != src_fmt:
-                    self.logger.warning(
-                        "%s %r produces %s but %s %r expects %s; "
-                        "add a convert.file_type node to make the conversion explicit",
-                        src_kind,
-                        src_id,
-                        src_fmt,
-                        tgt_kind,
-                        tgt_id,
-                        tgt_fmt,
+                    from decoy_engine.validation_result import CODES
+                    raise ValidationError(
+                        f"{src_kind} {src_id!r} produces {src_fmt} but "
+                        f"{tgt_kind} {tgt_id!r} expects {tgt_fmt}; add a "
+                        f"convert.file_type node between them to make the "
+                        f"conversion explicit, or align the formats.",
+                        f"nodes.{tgt_id}.config",
+                        code=CODES.GRAPH_FORMAT_MISMATCH,
                     )
 
     def _validate_mask_column_reachability(
