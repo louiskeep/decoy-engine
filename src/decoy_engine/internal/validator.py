@@ -555,6 +555,7 @@ class GraphConfigValidator(ConfigValidator):
             self._validate_acyclic(config["nodes"], config.get("edges") or [])
             self._validate_file_format_consistency(config["nodes"], config.get("edges") or [])
             self._validate_mask_column_reachability(config["nodes"], config.get("edges") or [])
+            self._validate_nodes_ref_reachability(config["nodes"], config.get("edges") or [])
         except ValidationError as e:
             self.logger.error(str(e))
             raise
@@ -969,4 +970,92 @@ class GraphConfigValidator(ConfigValidator):
                         f"not produce. Available columns: {available}.",
                         f"nodes.{mask_id}.config.columns.{col_name}",
                         code=CODES.MASK_UNKNOWN_COLUMN,
+                    )
+
+    def _validate_nodes_ref_reachability(
+        self, nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]]
+    ) -> None:
+        """R2.3: every ``${nodes.<id>.<key>}`` reference must point at
+        a node that exists and is UPSTREAM of the referrer.
+
+        At engine run time the runner resolves these against in-memory
+        exports captured from already-completed nodes. If the
+        referenced node id doesn't exist, the resolver returns the
+        token literal and the engine consumes a bogus string. If the
+        referenced node is downstream / unrelated, the export will
+        never be set, same outcome. Both cases run the pipeline to
+        completion with subtly wrong values.
+
+        This validator walks every node's config block, regexes out
+        every ``${nodes.<id>.<key>}`` token, and rejects:
+          - unknown id            -> nodes_ref.unknown_id
+          - id exists but isn't upstream of the referrer
+            -> nodes_ref.not_upstream
+
+        ``<key>`` itself isn't validated yet - the engine doesn't
+        publish typed export metadata per op. R2.3 extension territory.
+        """
+        import re as _re
+        from decoy_engine.graph.topo import upstream_subgraph
+        from decoy_engine.validation_result import CODES
+
+        ref_re = _re.compile(r"\$\{nodes\.([a-zA-Z][\w]*)\.([a-zA-Z_][\w.]*)\}")
+        node_ids = {n["id"] for n in nodes if isinstance(n, dict) and "id" in n}
+
+        def walk(value: Any) -> List[tuple[str, str]]:
+            """Yield (target_id, key) for every nodes-ref token under value."""
+            found: List[tuple[str, str]] = []
+            if isinstance(value, str):
+                for m in ref_re.finditer(value):
+                    found.append((m.group(1), m.group(2)))
+            elif isinstance(value, dict):
+                for v in value.values():
+                    found.extend(walk(v))
+            elif isinstance(value, list):
+                for v in value:
+                    found.extend(walk(v))
+            return found
+
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+            referrer_id = node.get("id")
+            if not isinstance(referrer_id, str):
+                continue
+            cfg = node.get("config") or {}
+            refs = walk(cfg)
+            if not refs:
+                continue
+            # Compute the referrer's upstream set ONCE per node that
+            # actually has references. Empty set when the referrer
+            # has no incoming edges (a source node referencing
+            # ${nodes...} is always wrong; this naturally fails the
+            # not_upstream check below).
+            try:
+                ordered_ids, _ = upstream_subgraph(nodes, edges, referrer_id)
+                upstream_ids = set(ordered_ids)
+                upstream_ids.discard(referrer_id)  # self isn't upstream
+            except Exception:
+                # If topo can't run (e.g. cycle), other validators will
+                # have raised first. Skip the reachability check.
+                continue
+            for target_id, key in refs:
+                if target_id not in node_ids:
+                    raise ValidationError(
+                        f"node {referrer_id!r} references "
+                        f"${{nodes.{target_id}.{key}}}, but no node "
+                        f"with id {target_id!r} exists in this graph.",
+                        f"nodes.{referrer_id}.config",
+                        code=CODES.NODES_REF_UNKNOWN_ID,
+                    )
+                if target_id not in upstream_ids:
+                    raise ValidationError(
+                        f"node {referrer_id!r} references "
+                        f"${{nodes.{target_id}.{key}}}, but {target_id!r} "
+                        f"is not upstream of this node - the export will "
+                        f"never be set at run time. Add an edge from "
+                        f"{target_id!r} (directly or transitively) to "
+                        f"{referrer_id!r}, or fix the reference.",
+                        f"nodes.{referrer_id}.config",
+                        code=CODES.NODES_REF_NOT_UPSTREAM,
                     )

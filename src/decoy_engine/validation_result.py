@@ -170,6 +170,11 @@ class CODES:
     VARIABLE_UNRESOLVED = "variable.unresolved"
     VARIABLE_UNKNOWN_SCOPE = "variable.unknown_scope"
 
+    # ${nodes.<id>.<key>} export-reference checks (R2.3). Engine-side
+    # because they're pure graph-topology lints.
+    NODES_REF_UNKNOWN_ID = "nodes_ref.unknown_id"
+    NODES_REF_NOT_UPSTREAM = "nodes_ref.not_upstream"
+
     # mask op-level (R2.2).
     MASK_BAD_COLUMNS_TYPE = "mask.bad_columns_type"
     MASK_BAD_COLUMN_SPEC_TYPE = "mask.bad_column_spec_type"
