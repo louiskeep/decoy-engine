@@ -70,24 +70,26 @@ class TestValidateGraphFullStableCodes:
         assert msg.severity == "error"
         assert msg.path is not None and "kind" in msg.path
 
-    def test_source_file_no_header_columns_round_trips_through_node_path(self):
-        # The op-level gate raises with code SOURCE_FILE_NO_HEADER_COLUMNS;
+    def test_source_file_bad_delimiter_round_trips_through_node_path(self):
+        # The op-level gate raises with code SOURCE_FILE_BAD_DELIMITER;
         # the graph validator re-anchors the path to nodes[N].config.* but
         # MUST preserve the code so a UI consumer can route the failure
-        # without parsing the message.
+        # without parsing the message. Note: the has_header=false gate
+        # used here previously was demoted to a UI-only nudge - mid-
+        # drafting users shouldn't be blocked by it.
         yaml_text = _wrap_graph(
             nodes=[{
                 "id": "src_1", "kind": "source.file",
-                "config": {"path": "uploads/x.csv", "format": "csv", "has_header": False},
+                "config": {"path": "uploads/x.csv", "format": "csv", "delimiter": ""},
             }],
         )
         result = validate_graph_full(yaml_text)
         assert result.ok is False
         msg = result.errors[0]
-        assert msg.code == VALIDATION_CODES.SOURCE_FILE_NO_HEADER_COLUMNS
+        assert msg.code == VALIDATION_CODES.SOURCE_FILE_BAD_DELIMITER
         # The path is re-anchored to the node index so the platform layer
         # can resolve node_id from the YAML by index.
-        assert msg.path == "nodes[0].config.has_header"
+        assert msg.path == "nodes[0].config.delimiter"
 
     def test_missing_path_yields_source_file_missing_path(self):
         yaml_text = _wrap_graph(

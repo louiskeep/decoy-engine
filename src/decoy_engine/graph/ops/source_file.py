@@ -142,19 +142,15 @@ def validate_config(config: dict[str, Any]) -> None:
                     "config.column_names",
                     code=CODES.SOURCE_FILE_COLUMN_NAMES_WITH_HEADER,
                 )
-        elif config.get("has_header") is False:
-            # has_header=false without column_names produces DuckDB auto-
-            # generated 'column0', 'column1', ... which downstream masks
-            # configured by name silently no-op against. Block at validate
-            # time so the user fixes the source rather than discovering it
-            # via "Column 'x' not found in DataFrame" warnings on a run
-            # that produced an unmasked output file.
-            raise ValidationError(
-                "no header columns defined: set has_header=true (read names "
-                "from the file's first row) or provide column_names explicitly",
-                "config.has_header",
-                code=CODES.SOURCE_FILE_NO_HEADER_COLUMNS,
-            )
+        # Note: has_header=false without column_names produces DuckDB auto-
+        # generated 'column0', 'column1', ... which downstream name-keyed
+        # masks silently no-op against. We used to block this at validate
+        # time, but doing so was too aggressive for drafting workflows
+        # (users uncheck has_header before they've filled in names or
+        # picked a layout). The web SourceFileCard now surfaces an inline
+        # nudge in this state instead. The real protection should live in
+        # the cross-node check (R2.3): if mask references named columns
+        # the source can't produce, THAT's the blocking error.
     else:
         # csv-only params don't belong on parquet/fixed_width sources.
         for key in _CSV_PARAM_KEYS:

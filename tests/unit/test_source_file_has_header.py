@@ -41,16 +41,14 @@ class TestValidate:
     def test_has_header_true_accepts_no_column_names(self, headerless_csv):
         source_file.validate_config({"path": headerless_csv, "has_header": True})
 
-    def test_has_header_false_requires_column_names(self, headerless_csv):
-        # Gate added because mask nodes referencing column names by their
-        # human-readable name silently no-op when the source produces auto-
-        # generated 'column0', 'column1', ... (every mask rule logs
-        # "Column 'x' not found in DataFrame. Skipping." and the output
-        # file ships unmasked).
-        with pytest.raises(ValidationError) as exc:
-            source_file.validate_config({"path": headerless_csv, "has_header": False})
-        assert "has_header" in (exc.value.path or "")
-        assert "no header columns defined" in str(exc.value)
+    def test_has_header_false_without_column_names_passes(self, headerless_csv):
+        # Drafting workflow: the user just unchecked the "has headers"
+        # checkbox and hasn't filled in column_names yet. validate_config
+        # used to block this combo to prevent silent mask no-ops, but
+        # that was too aggressive for mid-edit state. The web inspector
+        # now nudges inline instead; the real cross-node protection is
+        # R2.3's "mask references column the source can't produce".
+        source_file.validate_config({"path": headerless_csv, "has_header": False})
 
     def test_has_header_false_passes_when_column_names_set(self, headerless_csv):
         source_file.validate_config({
