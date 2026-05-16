@@ -160,6 +160,9 @@ class CODES:
     GRAPH_NODE_TOO_MANY_INPUTS = "graph.node_too_many_inputs"
     GRAPH_SINK_HAS_OUTPUTS = "graph.sink_has_outputs"
 
+    # Cross-node schema checks (R2.3).
+    MASK_UNKNOWN_COLUMN = "mask.unknown_column"
+
     # source.file specific.
     SOURCE_FILE_MISSING_PATH = "source_file.missing_path"
     SOURCE_FILE_UNSUPPORTED_FORMAT = "source_file.unsupported_format"

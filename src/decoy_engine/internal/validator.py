@@ -554,6 +554,7 @@ class GraphConfigValidator(ConfigValidator):
             self._validate_cardinality(config["nodes"], config.get("edges") or [], kinds)
             self._validate_acyclic(config["nodes"], config.get("edges") or [])
             self._validate_file_format_consistency(config["nodes"], config.get("edges") or [])
+            self._validate_mask_column_reachability(config["nodes"], config.get("edges") or [])
         except ValidationError as e:
             self.logger.error(str(e))
             raise
@@ -862,4 +863,110 @@ class GraphConfigValidator(ConfigValidator):
                         tgt_kind,
                         tgt_id,
                         tgt_fmt,
+                    )
+
+    def _validate_mask_column_reachability(
+        self, nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]]
+    ) -> None:
+        """R2.3: a mask node references column names; those names must
+        exist in the schema the upstream source produces.
+
+        When the upstream's output schema is statically known
+        (column_names set, fw_columns set, or has_header=false with no
+        column_names which auto-numbers), check that every key in
+        mask.config.columns is reachable. Surface the failure with a
+        single ``mask.unknown_column`` code so the canvas can route it
+        to the mask card's column list.
+
+        When the upstream's schema cannot be predicted (CSV with
+        has_header=true, parquet without preview metadata, anything
+        else), skip the check rather than block - the alternative is
+        a false positive on common headered-CSV pipelines, which is
+        worse than the silent-no-op we're trying to catch.
+        """
+        from decoy_engine.graph.output_schema import (
+            is_auto_name,
+            predicted_output_columns,
+        )
+        from decoy_engine.validation_result import CODES
+
+        node_by_id = {n["id"]: n for n in nodes if isinstance(n, dict) and "id" in n}
+
+        # Reverse adjacency: node_id -> list of direct upstream node_ids
+        # (strip the ".port" suffix that split ops use).
+        upstream: Dict[str, List[str]] = {nid: [] for nid in node_by_id}
+        for e in edges:
+            if not isinstance(e, dict):
+                continue
+            src = e.get("from")
+            dst = e.get("to")
+            if isinstance(src, str) and isinstance(dst, str):
+                base = src.split(".", 1)[0]
+                if dst in upstream:
+                    upstream[dst].append(base)
+
+        for node in nodes:
+            if not isinstance(node, dict) or node.get("kind") != "mask":
+                continue
+            mask_id = node.get("id", "")
+            cols_cfg = (node.get("config") or {}).get("columns")
+            if not isinstance(cols_cfg, dict) or not cols_cfg:
+                continue
+
+            # Collect the union of statically-predicted columns from
+            # every direct upstream node. A multi-input mask isn't a
+            # valid release shape (mask is arity 1) so this is usually
+            # one entry; we tolerate more anyway so the check stays
+            # robust against future arity changes.
+            predicted_union: set[str] = set()
+            had_auto = False
+            had_unknown = False
+            for up_id in upstream.get(mask_id, []):
+                up_node = node_by_id.get(up_id)
+                if up_node is None:
+                    continue
+                pred = predicted_output_columns(up_node)
+                if pred is None:
+                    had_unknown = True
+                    continue
+                if pred == "$auto":
+                    had_auto = True
+                    continue
+                if isinstance(pred, list):
+                    predicted_union.update(pred)
+
+            # If any upstream's schema is unknown, fall back to permissive
+            # mode - we'd rather miss a typo than block a legitimate
+            # headered-CSV pipeline whose columns we can't see from YAML.
+            if had_unknown:
+                continue
+
+            for col_name in cols_cfg.keys():
+                if had_auto:
+                    # Source auto-numbers; only column<int> names are
+                    # reachable. Real names from the user are the
+                    # silent-no-op case the demoted has_header gate
+                    # used to catch.
+                    if not is_auto_name(col_name):
+                        raise ValidationError(
+                            f"mask node {mask_id!r} references column "
+                            f"{col_name!r}, but the upstream source has "
+                            f"has_header=false with no column_names set "
+                            f"- the engine will produce auto-named "
+                            f"'column0', 'column1', ... and this rule "
+                            f"will silently no-op. Fix: set has_header="
+                            f"true on the source, fill in column_names, "
+                            f"or load a saved header layout.",
+                            f"nodes.{mask_id}.config.columns.{col_name}",
+                            code=CODES.MASK_UNKNOWN_COLUMN,
+                        )
+                    continue
+                if predicted_union and col_name not in predicted_union:
+                    available = ", ".join(sorted(predicted_union)) or "(none)"
+                    raise ValidationError(
+                        f"mask node {mask_id!r} references column "
+                        f"{col_name!r}, which the upstream source does "
+                        f"not produce. Available columns: {available}.",
+                        f"nodes.{mask_id}.config.columns.{col_name}",
+                        code=CODES.MASK_UNKNOWN_COLUMN,
                     )
