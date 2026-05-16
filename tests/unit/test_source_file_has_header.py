@@ -38,9 +38,25 @@ def headered_csv():
 
 
 class TestValidate:
-    def test_has_header_accepts_bool(self, headerless_csv):
-        source_file.validate_config({"path": headerless_csv, "has_header": False})
+    def test_has_header_true_accepts_no_column_names(self, headerless_csv):
         source_file.validate_config({"path": headerless_csv, "has_header": True})
+
+    def test_has_header_false_requires_column_names(self, headerless_csv):
+        # Gate added because mask nodes referencing column names by their
+        # human-readable name silently no-op when the source produces auto-
+        # generated 'column0', 'column1', ... (every mask rule logs
+        # "Column 'x' not found in DataFrame. Skipping." and the output
+        # file ships unmasked).
+        with pytest.raises(ValidationError) as exc:
+            source_file.validate_config({"path": headerless_csv, "has_header": False})
+        assert "has_header" in (exc.value.path or "")
+        assert "no header columns defined" in str(exc.value)
+
+    def test_has_header_false_passes_when_column_names_set(self, headerless_csv):
+        source_file.validate_config({
+            "path": headerless_csv, "has_header": False,
+            "column_names": ["id", "name", "age"],
+        })
 
     def test_has_header_rejects_non_bool(self, headerless_csv):
         with pytest.raises(ValidationError) as exc:

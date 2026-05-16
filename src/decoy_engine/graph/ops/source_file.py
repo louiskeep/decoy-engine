@@ -132,6 +132,18 @@ def validate_config(config: dict[str, Any]) -> None:
                     "'column_names' requires has_header=false",
                     "config.column_names",
                 )
+        elif config.get("has_header") is False:
+            # has_header=false without column_names produces DuckDB auto-
+            # generated 'column0', 'column1', ... which downstream masks
+            # configured by name silently no-op against. Block at validate
+            # time so the user fixes the source rather than discovering it
+            # via "Column 'x' not found in DataFrame" warnings on a run
+            # that produced an unmasked output file.
+            raise ValidationError(
+                "no header columns defined: set has_header=true (read names "
+                "from the file's first row) or provide column_names explicitly",
+                "config.has_header",
+            )
     else:
         # csv-only params don't belong on parquet/fixed_width sources.
         for key in _CSV_PARAM_KEYS:
