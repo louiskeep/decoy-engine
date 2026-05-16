@@ -201,12 +201,25 @@ class CODES:
     SOURCE_S3_MISSING_PATH = "source_s3.missing_path"
     TARGET_S3_MISSING_BUCKET = "target_s3.missing_bucket"
     TARGET_S3_MISSING_PATH = "target_s3.missing_path"
+    # R2.4 preflight (platform-only): require explicit credentials. The
+    # engine's op would otherwise fall back to the boto3 chain, which
+    # in a multi-tenant deployment silently uses the platform's own
+    # AWS identity. Variable references like ${var.X} / ${env.X} count
+    # as explicit here; R2.3 handles the resolution check separately.
+    SOURCE_S3_MISSING_CREDENTIALS = "source_s3.missing_credentials"
+    TARGET_S3_MISSING_CREDENTIALS = "target_s3.missing_credentials"
 
     # source.gcs / target.gcs
     SOURCE_GCS_MISSING_BUCKET = "source_gcs.missing_bucket"
     SOURCE_GCS_MISSING_PATH = "source_gcs.missing_path"
     TARGET_GCS_MISSING_BUCKET = "target_gcs.missing_bucket"
     TARGET_GCS_MISSING_PATH = "target_gcs.missing_path"
+    # R2.4 preflight (platform-only): require service_account_json. The
+    # engine's op would otherwise fall back to GCP Application Default
+    # Credentials, which in a multi-tenant deployment silently uses the
+    # platform's own workload identity.
+    SOURCE_GCS_MISSING_CREDENTIALS = "source_gcs.missing_credentials"
+    TARGET_GCS_MISSING_CREDENTIALS = "target_gcs.missing_credentials"
 
     # source.sftp / target.sftp
     SOURCE_SFTP_MISSING_HOST = "source_sftp.missing_host"
