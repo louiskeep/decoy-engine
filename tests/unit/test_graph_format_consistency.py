@@ -1,18 +1,30 @@
-"""Cross-node file format consistency check (R2.4).
+"""Cross-node file format consistency check (R2.4 + R3.6).
 
-GraphConfigValidator._validate_file_format_consistency raises when a
-file source and a reachable file target have mismatched formats and
-no convert.file_type node sits between them. Used to be a
-logger.warning under Item 66(a); promoted to a hard ValidationError
-under R2.4 because the runner would otherwise crash mid-pipeline or
-write a wrong-format file.
+GraphConfigValidator._validate_file_format_consistency originally
+raised when a file source produced one format and a reachable file
+target expected another with no convert.file_type node in between.
+Item 66(a) had this as a logger.warning; R2.4 promoted it to a hard
+ValidationError to defeat the silent-rewrite footgun.
+
+R3.6 demoted it back to a warning (logger.warning at the engine
+layer; platform preflight emits a structured advisory with
+severity="warning"). Reason: the target writes whatever format the
+user picked anyway, so the "conversion" is implicit and is the right
+behavior. The R3.5 severity-policy makes warnings non-blocking, and
+the target node UI banner discloses the conversion. The explicit
+convert.file_type node stays as an advanced-tier affordance.
+
+These tests confirm:
+  - validate() never raises on a format mismatch (R3.6 behavior)
+  - logger.warning fires with the source/target ids in the message
+  - the back-fill logic (target.file format inferred from source when
+    absent and the extension matches) is unchanged
 """
 from __future__ import annotations
 
-import pytest
+import logging
 
-from decoy_engine.internal.validator import GraphConfigValidator, ValidationError
-from decoy_engine.validation_result import CODES
+from decoy_engine.internal.validator import GraphConfigValidator
 
 
 def _v() -> GraphConfigValidator:
@@ -39,7 +51,6 @@ def _tgt(filename: str, fmt: str | None = None) -> dict:
 
 
 def _direct_graph(src_node, tgt_node) -> dict:
-    """Single edge source -> target."""
     return {
         "mode": "graph",
         "nodes": [src_node, tgt_node],
@@ -48,57 +59,58 @@ def _direct_graph(src_node, tgt_node) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Happy paths -- no error expected
+# Happy paths -- no warning expected
 # ---------------------------------------------------------------------------
 
 
-def test_csv_to_csv_no_error():
-    cfg = _direct_graph(
-        _src("data/in.csv"),
-        _tgt("data/out.csv"),
-    )
-    _v().validate(cfg)  # no raise
+def test_csv_to_csv_no_warning(caplog):
+    cfg = _direct_graph(_src("data/in.csv"), _tgt("data/out.csv"))
+    with caplog.at_level(logging.WARNING):
+        _v().validate(cfg)
+    assert "auto-convert" not in caplog.text
 
 
-def test_parquet_to_parquet_no_error():
-    cfg = _direct_graph(
-        _src("data/in.parquet"),
-        _tgt("data/out.parquet"),
-    )
-    _v().validate(cfg)
+def test_parquet_to_parquet_no_warning(caplog):
+    cfg = _direct_graph(_src("data/in.parquet"), _tgt("data/out.parquet"))
+    with caplog.at_level(logging.WARNING):
+        _v().validate(cfg)
+    assert "auto-convert" not in caplog.text
 
 
-def test_explicit_matching_formats_no_error():
+def test_explicit_matching_formats_no_warning(caplog):
     cfg = _direct_graph(
         _src("data/in.csv", fmt="csv"),
         _tgt("data/out.csv", fmt="csv"),
     )
-    _v().validate(cfg)
+    with caplog.at_level(logging.WARNING):
+        _v().validate(cfg)
+    assert "auto-convert" not in caplog.text
 
 
-def test_convert_file_type_on_path_suppresses_error():
-    """source.file -> convert.file_type -> target.file: user asked for conversion."""
+def test_convert_file_type_on_path_suppresses_warning(caplog):
+    """source.file -> convert.file_type -> target.file: the explicit
+    converter is the user's "make the conversion auditable" affordance.
+    No warning needed."""
     cfg = {
         "mode": "graph",
         "nodes": [
             {"id": "src", "kind": "source.file", "config": {"path": "in.csv"}},
-            {
-                "id": "cvt",
-                "kind": "convert.file_type",
-                "config": {"format": "parquet", "output_filename": "converted.parquet"},
-            },
-            {"id": "tgt", "kind": "target.file", "config": {"output_filename": "out.parquet"}},
+            {"id": "cvt", "kind": "convert.file_type",
+             "config": {"format": "parquet", "output_filename": "converted.parquet"}},
+            {"id": "tgt", "kind": "target.file",
+             "config": {"output_filename": "out.parquet"}},
         ],
         "edges": [
             {"from": "src", "to": "cvt"},
             {"from": "cvt", "to": "tgt"},
         ],
     }
-    _v().validate(cfg)
+    with caplog.at_level(logging.WARNING):
+        _v().validate(cfg)
+    assert "auto-convert" not in caplog.text
 
 
-def test_no_target_file_node_no_error():
-    """Graph with no file target should not trip the cross-node check."""
+def test_no_target_file_node_no_warning(caplog):
     cfg = {
         "mode": "graph",
         "nodes": [
@@ -107,47 +119,44 @@ def test_no_target_file_node_no_error():
         ],
         "edges": [{"from": "src", "to": "lim"}],
     }
-    _v().validate(cfg)
+    with caplog.at_level(logging.WARNING):
+        _v().validate(cfg)
+    assert "auto-convert" not in caplog.text
 
 
 # ---------------------------------------------------------------------------
-# Mismatch -- ValidationError must fire (R2.4)
+# Mismatch -- R3.6 logs a warning, does NOT raise
 # ---------------------------------------------------------------------------
 
 
-def test_csv_to_parquet_raises():
-    cfg = _direct_graph(
-        _src("data/in.csv"),
-        _tgt("data/out.parquet"),
-    )
-    with pytest.raises(ValidationError) as exc_info:
+def test_csv_to_parquet_logs_warning(caplog):
+    cfg = _direct_graph(_src("data/in.csv"), _tgt("data/out.parquet"))
+    with caplog.at_level(logging.WARNING):
+        _v().validate(cfg)  # no raise
+    assert "auto-convert" in caplog.text
+    assert "src" in caplog.text
+    assert "tgt" in caplog.text
+    assert "csv" in caplog.text
+    assert "parquet" in caplog.text
+
+
+def test_parquet_to_csv_logs_warning(caplog):
+    cfg = _direct_graph(_src("data/in.parquet"), _tgt("data/out.csv"))
+    with caplog.at_level(logging.WARNING):
         _v().validate(cfg)
-    assert exc_info.value.code == CODES.GRAPH_FORMAT_MISMATCH
-    assert exc_info.value.path == "nodes.tgt.config"
-    assert "csv" in str(exc_info.value)
-    assert "parquet" in str(exc_info.value)
-    assert "convert.file_type" in str(exc_info.value)
+    assert "auto-convert" in caplog.text
 
 
-def test_parquet_to_csv_raises():
-    cfg = _direct_graph(
-        _src("data/in.parquet"),
-        _tgt("data/out.csv"),
-    )
-    with pytest.raises(ValidationError) as exc_info:
-        _v().validate(cfg)
-    assert exc_info.value.code == CODES.GRAPH_FORMAT_MISMATCH
-
-
-def test_explicit_format_mismatch_raises():
-    """Extension says csv but explicit format says parquet on source."""
+def test_explicit_format_mismatch_logs_warning(caplog):
+    """Extension says csv but explicit format on source says parquet
+    -- still a mismatch, still a warning, still non-blocking."""
     cfg = _direct_graph(
         _src("data/in.csv", fmt="parquet"),
         _tgt("data/out.csv", fmt="csv"),
     )
-    with pytest.raises(ValidationError) as exc_info:
+    with caplog.at_level(logging.WARNING):
         _v().validate(cfg)
-    assert exc_info.value.code == CODES.GRAPH_FORMAT_MISMATCH
+    assert "auto-convert" in caplog.text
 
 
 # ---------------------------------------------------------------------------
@@ -156,8 +165,6 @@ def test_explicit_format_mismatch_raises():
 
 
 def test_target_format_backfilled_from_parquet_source():
-    """When target has no explicit format and extension matches source, the
-    config dict is mutated to include the resolved format string."""
     tgt_cfg: dict = {"output_filename": "out.parquet"}
     cfg = {
         "mode": "graph",
@@ -190,25 +197,22 @@ def test_target_format_backfilled_from_csv_source():
 # ---------------------------------------------------------------------------
 
 
-def test_forked_graph_raises_only_for_direct_branch():
+def test_forked_graph_warns_only_for_direct_branch(caplog):
     """source.file forks to two targets:
-      - one branch goes through convert.file_type -> ok
-      - the other goes direct with a format mismatch -> raise
-
-    The validator stops at the first error, so the message must
-    identify the bad branch (tgt_bad), not the converted one.
+      - one branch goes through convert.file_type (no warning)
+      - the other goes direct with a format mismatch (warning logs,
+        validate does NOT raise)
     """
     cfg = {
         "mode": "graph",
         "nodes": [
             {"id": "src", "kind": "source.file", "config": {"path": "in.csv"}},
-            {
-                "id": "cvt",
-                "kind": "convert.file_type",
-                "config": {"format": "parquet", "output_filename": "converted.parquet"},
-            },
-            {"id": "tgt_ok", "kind": "target.file", "config": {"output_filename": "ok.parquet"}},
-            {"id": "tgt_bad", "kind": "target.file", "config": {"output_filename": "bad.parquet"}},
+            {"id": "cvt", "kind": "convert.file_type",
+             "config": {"format": "parquet", "output_filename": "converted.parquet"}},
+            {"id": "tgt_ok", "kind": "target.file",
+             "config": {"output_filename": "ok.parquet"}},
+            {"id": "tgt_bad", "kind": "target.file",
+             "config": {"output_filename": "bad.parquet"}},
         ],
         "edges": [
             {"from": "src", "to": "cvt"},
@@ -216,7 +220,8 @@ def test_forked_graph_raises_only_for_direct_branch():
             {"from": "src", "to": "tgt_bad"},
         ],
     }
-    with pytest.raises(ValidationError) as exc_info:
+    with caplog.at_level(logging.WARNING):
         _v().validate(cfg)
-    assert exc_info.value.code == CODES.GRAPH_FORMAT_MISMATCH
-    assert "tgt_bad" in str(exc_info.value)
+    # The bad branch generates the warning; the converter branch is silent.
+    assert "tgt_bad" in caplog.text
+    assert "tgt_ok" not in caplog.text
