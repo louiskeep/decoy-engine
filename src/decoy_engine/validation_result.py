@@ -204,6 +204,12 @@ class CODES:
 
     # source.file specific.
     SOURCE_FILE_MISSING_PATH = "source_file.missing_path"
+    # Preflight: the source.file path doesn't exist on disk relative
+    # to the platform's upload_dir at job-create time. The engine
+    # itself never raises this - it's a platform-only check (the
+    # engine doesn't know the upload_dir). Lives on the same code
+    # namespace so the UI can route it next to the path field.
+    SOURCE_FILE_FILE_NOT_FOUND = "source_file.file_not_found"
     SOURCE_FILE_UNSUPPORTED_FORMAT = "source_file.unsupported_format"
     SOURCE_FILE_BAD_HAS_HEADER_TYPE = "source_file.bad_has_header_type"
     SOURCE_FILE_NO_HEADER_COLUMNS = "source_file.no_header_columns"
