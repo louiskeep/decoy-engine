@@ -113,3 +113,47 @@ def test_runner_surfaces_translated_message_for_polars_failure(tmp_csv):
     assert "does_not_exist" in failed["error"]
     # The error must include the node id in the friendly format.
     assert "'so'" in failed["error"]
+
+
+def test_translate_forwards_validation_error_code_and_path():
+    """R3.4 typed errors: translate() should promote ValidationError.code
+    and .path onto the returned OpError so the runner can persist them
+    on the records dict."""
+    from decoy_engine.graph.errors import translate
+    from decoy_engine.internal.validator import ValidationError
+
+    src = ValidationError(
+        "missing required field 'path'", "config.path",
+        code="source_file.missing_path",
+    )
+    out = translate(src, "source.file", "src_1")
+    assert getattr(out, "code", None) == "source_file.missing_path"
+    assert getattr(out, "path", None) == "config.path"
+    # The user-facing message still names the node.
+    assert "'src_1'" in str(out)
+
+
+def test_translate_passes_through_op_error_with_metadata():
+    """OpError already user-friendly. If we attach .code / .path to one,
+    translate() should preserve them through the node-prefix path."""
+    from decoy_engine.graph.errors import translate
+    from decoy_engine.graph.ops._base import OpError
+
+    src = OpError("something went wrong")
+    src.code = "custom.code"  # type: ignore[attr-defined]
+    src.path = "config.x"  # type: ignore[attr-defined]
+    out = translate(src, "mask", "m1")
+    assert getattr(out, "code", None) == "custom.code"
+    assert getattr(out, "path", None) == "config.x"
+
+
+def test_translate_bare_exception_has_no_metadata():
+    """A plain Python exception with no code/path attribute should not
+    cause translate() to crash; the returned OpError carries no metadata."""
+    from decoy_engine.graph.errors import translate
+
+    src = RuntimeError("kaboom")
+    out = translate(src, "mask", "m1")
+    assert getattr(out, "code", None) is None
+    assert getattr(out, "path", None) is None
+    assert "'m1'" in str(out)

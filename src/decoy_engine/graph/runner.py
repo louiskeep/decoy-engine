@@ -443,6 +443,13 @@ def _execute_graph(
         except Exception as exc:
             translated = translate_engine_error(exc, kind, nid)
             elapsed_ms = int((time.monotonic() - t0) * 1000)
+            # R3.4 typed errors: surface the translated error's code +
+            # path on the records dict when present so downstream
+            # (platform runner -> JobNodeRun -> manifest) can render a
+            # structured ``{code, message, where}`` payload instead of
+            # bare free-text. Bare OpError without forwarded metadata
+            # leaves the fields None and the manifest falls back to the
+            # legacy ``node.runtime_error`` wrapping.
             records.append({
                 "node_id": nid,
                 "kind": kind,
@@ -450,6 +457,8 @@ def _execute_graph(
                 "row_count": None,
                 "elapsed_ms": elapsed_ms,
                 "error": str(translated),
+                "error_code": getattr(translated, "code", None),
+                "error_path": getattr(translated, "path", None),
                 "exports": ctx._exports.get(nid),
             })
             if log is not None:

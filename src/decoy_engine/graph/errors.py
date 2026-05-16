@@ -24,13 +24,41 @@ def translate(exc: Exception, op_kind: str, node_id: str) -> OpError:
     The translator is best-effort: anything not specifically handled gets
     wrapped with the node + kind context so canvas error messages always
     name *which* node failed, not just "something failed."
+
+    R3.4 typed errors: when the input exception carries stable structured
+    metadata (``ValidationError.code`` / ``.path``) we forward it onto
+    the returned OpError so the runner can persist it on JobNodeRun and
+    the manifest can route by code rather than parsing the free-text
+    message. The forwarding is purely additive: bare ``OpError`` carries
+    no code today, and ad-hoc Python exceptions stay unmapped.
     """
     if isinstance(exc, OpError):
         # Already user-friendly; just prefix with node context if missing.
         msg = str(exc)
         if not msg.startswith("Node "):
-            return OpError(f"Node {node_id!r} ({op_kind}): {msg}")
-        return exc
+            new = OpError(f"Node {node_id!r} ({op_kind}): {msg}")
+        else:
+            new = exc
+        _forward_structured_metadata(new, exc)
+        return new
+
+    # R3.4: ValidationError carries .code (stable per the R2.1 contract)
+    # and .path; surface them on the returned OpError so the manifest's
+    # nodes[].error gets a structured payload.
+    try:
+        from decoy_engine.internal.validator import ValidationError
+    except ImportError:
+        ValidationError = ()  # type: ignore[assignment]
+    if ValidationError and isinstance(exc, ValidationError):
+        out = OpError(f"Node {node_id!r} ({op_kind}): {exc}")
+        # Promote the validator's code + path attributes onto the OpError
+        # so downstream callers can read them via the same attribute
+        # surface they would on any structured failure.
+        if hasattr(exc, "code") and getattr(exc, "code", None):
+            out.code = exc.code  # type: ignore[attr-defined]
+        if hasattr(exc, "path") and getattr(exc, "path", None):
+            out.path = exc.path  # type: ignore[attr-defined]
+        return out
 
     polars_msg = _maybe_translate_polars(exc)
     if polars_msg is not None:
@@ -114,3 +142,20 @@ def _extract_first_quoted(msg: str) -> str | None:
     if len(parts) < 3:
         return None
     return parts[1] or None
+
+
+def _forward_structured_metadata(target: OpError, src: Exception) -> None:
+    """Copy ``code`` / ``path`` attributes from src onto target if set.
+
+    Used when translate() returns a NEW OpError instance (vs passing the
+    incoming OpError through unchanged) so the structured metadata
+    doesn't get dropped. Idempotent + tolerant of missing attrs.
+    """
+    if hasattr(src, "code"):
+        code = getattr(src, "code", None)
+        if code:
+            target.code = code  # type: ignore[attr-defined]
+    if hasattr(src, "path"):
+        path = getattr(src, "path", None)
+        if path:
+            target.path = path  # type: ignore[attr-defined]
