@@ -173,6 +173,10 @@ class CODES:
     # target.file specific.
     TARGET_FILE_MISSING_OUTPUT_FILENAME = "target_file.missing_output_filename"
     TARGET_FILE_UNSUPPORTED_FORMAT = "target_file.unsupported_format"
+    # Preflight only - the engine doesn't know the platform's
+    # settings.output_dir. Platform raises this when a target.file
+    # would write outside the configured output sandbox.
+    TARGET_FILE_PATH_OUTSIDE_OUTPUT_DIR = "target_file.path_outside_output_dir"
 
     # Shared across cloud source/target ops (source.s3/gcs/sftp,
     # target.s3/gcs/sftp). They all route through
