@@ -163,6 +163,13 @@ class CODES:
     # Cross-node schema checks (R2.3).
     MASK_UNKNOWN_COLUMN = "mask.unknown_column"
 
+    # Variable scope checks (R2.3). Platform-only - the engine doesn't
+    # own the variable resolution registry. Surfaced through the same
+    # preflight wire format so the UI can route the failure to the
+    # pipeline + show the missing scope.key clearly.
+    VARIABLE_UNRESOLVED = "variable.unresolved"
+    VARIABLE_UNKNOWN_SCOPE = "variable.unknown_scope"
+
     # mask op-level (R2.2).
     MASK_BAD_COLUMNS_TYPE = "mask.bad_columns_type"
     MASK_BAD_COLUMN_SPEC_TYPE = "mask.bad_column_spec_type"
