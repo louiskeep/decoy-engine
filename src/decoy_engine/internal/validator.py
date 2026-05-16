@@ -855,14 +855,24 @@ class GraphConfigValidator(ConfigValidator):
                     tgt_cfg["format"] = tgt_fmt
 
                 if tgt_fmt and tgt_fmt != src_fmt:
-                    from decoy_engine.validation_result import CODES
-                    raise ValidationError(
-                        f"{src_kind} {src_id!r} produces {src_fmt} but "
-                        f"{tgt_kind} {tgt_id!r} expects {tgt_fmt}; add a "
-                        f"convert.file_type node between them to make the "
-                        f"conversion explicit, or align the formats.",
-                        f"nodes.{tgt_id}.config",
-                        code=CODES.GRAPH_FORMAT_MISMATCH,
+                    # R3.6 demotion: a format mismatch used to be a hard
+                    # error (forcing the user to insert a convert.file_type
+                    # node). UX feedback: the target writes whatever
+                    # extension the user picked, so the conversion is
+                    # implicit and should "just work" with a visible
+                    # disclosure. Engine logs a warning here; platform
+                    # preflight (api/pipelines/preflight.py) emits the
+                    # structured graph.format_mismatch advisory with
+                    # severity=warning so the R2.5 policy treats it as
+                    # non-blocking and the target node UI banner picks
+                    # up the conversion message. The explicit
+                    # convert.file_type node remains as an advanced-tier
+                    # affordance for users who want the conversion to
+                    # show up as its own graph node.
+                    self.logger.warning(
+                        "%s %r produces %s but %s %r expects %s; "
+                        "target will auto-convert file type at write time",
+                        src_kind, src_id, src_fmt, tgt_kind, tgt_id, tgt_fmt,
                     )
 
     def _validate_mask_column_reachability(
