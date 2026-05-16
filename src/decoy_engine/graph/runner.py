@@ -142,10 +142,12 @@ def _check_memory_pressure(
 def validate_graph(yaml_text: str) -> None:
     """Validate graph YAML. Raises PipelineValidationError on bad config.
 
-    The raised exception carries the optional ``path`` attribute
-    (e.g. ``nodes[2].config.path``) so a platform caller can map the
-    failure back to a specific node / inspector field instead of
-    string-parsing the message.
+    The raised exception carries the optional ``path`` and ``code``
+    attributes so a platform caller can map the failure back to a
+    specific node / inspector field instead of string-parsing the
+    message. New callers should prefer :func:`validate_graph_full`
+    which returns a multi-message ``ValidationResult`` instead of
+    raising; this raise-style entry stays for backward compatibility.
     """
     config = _load_yaml(yaml_text)
     _quiet_logger = logging.getLogger("decoy_engine.graph.validate")
@@ -154,7 +156,48 @@ def validate_graph(yaml_text: str) -> None:
     try:
         GraphConfigValidator(_quiet_logger).validate(config)
     except ValidationError as e:
-        raise PipelineValidationError(str(e), path=e.path) from e
+        raise PipelineValidationError(
+            str(e), path=e.path, code=getattr(e, "code", None),
+        ) from e
+
+
+def validate_graph_full(yaml_text: str):
+    """Validate graph YAML and return a non-raising :class:`ValidationResult`.
+
+    Unlike :func:`validate_graph`, this never raises on validation
+    failure. Instead it returns a ``ValidationResult`` with structured
+    ``errors`` and ``warnings`` lists; callers can render every problem
+    at once and map each to a UI field via the stable ``code`` string.
+
+    YAML parse errors (the input isn't valid YAML at all) still raise
+    as ``decoy_engine.exceptions.ConfigError`` -- they're an upstream
+    problem, not a validation outcome. Use a try/except at the call
+    site if needed.
+
+    The validator currently stops at the first error (legacy behavior
+    of the underlying ``GraphConfigValidator``). Multi-error reporting
+    will be enabled per-subject in follow-up R2.2 work as each
+    validator is migrated to non-raising form.
+    """
+    from decoy_engine.validation_result import CODES, ValidationResult
+
+    result = ValidationResult()
+    config = _load_yaml(yaml_text)
+    _quiet_logger = logging.getLogger("decoy_engine.graph.validate")
+    if not _quiet_logger.handlers:
+        _quiet_logger.addHandler(logging.NullHandler())
+    try:
+        GraphConfigValidator(_quiet_logger).validate(config)
+    except ValidationError as e:
+        raw = getattr(e, "raw_message", None) or str(e)
+        result.add_error(
+            code=getattr(e, "code", None) or CODES.UNTAGGED,
+            message=raw,
+            path=getattr(e, "path", None),
+        )
+        return result
+    result.normalized_config = config
+    return result
 
 
 def run_graph(

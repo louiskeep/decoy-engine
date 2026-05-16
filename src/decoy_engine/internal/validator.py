@@ -13,15 +13,33 @@ class ValidationError(Exception):
     """
     Custom exception for configuration validation errors.
     Provides more context for troubleshooting configuration issues.
+
+    R2.1: carries an optional stable `code` so callers can map the
+    failure to UI inspector fields without parsing the message string.
+    Codes live in `decoy_engine.validation_result.CODES`. Older
+    raises with no code are tolerated -- they surface as
+    `CODES.UNTAGGED` when converted to a `ValidationResult`.
     """
-    
-    def __init__(self, message: str, path: Optional[str] = None):
+
+    def __init__(
+        self,
+        message: str,
+        path: Optional[str] = None,
+        code: Optional[str] = None,
+    ):
         self.path = path
+        self.code = code
         if path:
             full_message = f"Validation error at '{path}': {message}"
         else:
             full_message = f"Validation error: {message}"
         super().__init__(full_message)
+        self._raw_message = message
+
+    @property
+    def raw_message(self) -> str:
+        """The original message without the `Validation error at '<path>':` wrapper."""
+        return self._raw_message
 
 
 class MaskerConfigValidator(ConfigValidator):
@@ -545,21 +563,31 @@ class GraphConfigValidator(ConfigValidator):
         return set(OPS.keys())
 
     def _validate_top_level(self, config: Dict[str, Any]) -> None:
+        from decoy_engine.validation_result import CODES
+
         mode = config.get("mode")
         if mode != "graph":
             raise ValidationError(
-                f"top-level 'mode' must be 'graph' (got {mode!r})", "mode"
+                f"top-level 'mode' must be 'graph' (got {mode!r})", "mode",
+                code=CODES.TOP_LEVEL_BAD_MODE,
             )
         if not isinstance(config.get("nodes"), list) or not config["nodes"]:
-            raise ValidationError("'nodes' must be a non-empty list", "nodes")
+            raise ValidationError(
+                "'nodes' must be a non-empty list", "nodes",
+                code=CODES.NODES_EMPTY_LIST,
+            )
         if "edges" in config and not isinstance(config["edges"], list):
-            raise ValidationError("'edges' must be a list", "edges")
+            raise ValidationError(
+                "'edges' must be a list", "edges",
+                code=CODES.EDGES_BAD_TYPE,
+            )
 
         sv = config.get("schema_version", 1)
         if not isinstance(sv, int) or sv not in self.SUPPORTED_SCHEMA_VERSIONS:
             raise ValidationError(
                 f"unsupported schema_version {sv!r} (supported: {sorted(self.SUPPORTED_SCHEMA_VERSIONS)})",
                 "schema_version",
+                code=CODES.TOP_LEVEL_BAD_SCHEMA_VERSION,
             )
 
         engine = config.get("engine", "pandas")
@@ -567,26 +595,35 @@ class GraphConfigValidator(ConfigValidator):
             raise ValidationError(
                 f"'engine' must be 'pandas' or 'hybrid' (got {engine!r})",
                 "engine",
+                code=CODES.TOP_LEVEL_BAD_ENGINE,
             )
 
     def _validate_nodes(
         self, nodes: List[Dict[str, Any]], kinds: Set[str]
     ) -> None:
         from decoy_engine.graph.ops import OPS
+        from decoy_engine.validation_result import CODES
 
         seen_ids: Set[str] = set()
         for i, node in enumerate(nodes):
             path = f"nodes[{i}]"
             if not isinstance(node, dict):
-                raise ValidationError("node must be a mapping", path)
+                raise ValidationError(
+                    "node must be a mapping", path,
+                    code=CODES.NODE_BAD_TYPE,
+                )
             nid = node.get("id")
             if not isinstance(nid, str) or not _GRAPH_NODE_ID_RE.match(nid):
                 raise ValidationError(
                     "id must match ^[a-zA-Z][a-zA-Z0-9_]{0,63}$",
                     f"{path}.id",
+                    code=CODES.NODE_BAD_ID,
                 )
             if nid in seen_ids:
-                raise ValidationError(f"duplicate node id {nid!r}", f"{path}.id")
+                raise ValidationError(
+                    f"duplicate node id {nid!r}", f"{path}.id",
+                    code=CODES.NODE_DUPLICATE_ID,
+                )
             seen_ids.add(nid)
 
             kind = node.get("kind")
@@ -594,6 +631,7 @@ class GraphConfigValidator(ConfigValidator):
                 raise ValidationError(
                     f"unknown kind {kind!r} (supported: {sorted(kinds)})",
                     f"{path}.kind",
+                    code=CODES.NODE_UNKNOWN_KIND,
                 )
 
             name = node.get("name")
@@ -601,18 +639,28 @@ class GraphConfigValidator(ConfigValidator):
                 raise ValidationError(
                     "name must be a non-empty string when set",
                     f"{path}.name",
+                    code=CODES.NODE_BAD_NAME,
                 )
 
             cfg = node.get("config", {})
             if not isinstance(cfg, dict):
-                raise ValidationError("config must be a mapping", f"{path}.config")
+                raise ValidationError(
+                    "config must be a mapping", f"{path}.config",
+                    code=CODES.NODE_BAD_CONFIG_TYPE,
+                )
 
             try:
                 OPS[kind].validate_config(cfg)
             except ValidationError as e:
+                # Preserve the op-specific code; re-anchor the path so the
+                # platform layer can index back into the YAML by node. Use
+                # raw_message instead of str(e).split(": ") since the latter
+                # is fragile against messages that legitimately contain ": ".
+                raw_msg = getattr(e, "raw_message", None) or str(e)
                 raise ValidationError(
-                    str(e).split(": ", 1)[-1] if ": " in str(e) else str(e),
+                    raw_msg,
                     f"{path}.{getattr(e, 'path', None) or 'config'}",
+                    code=getattr(e, "code", None),
                 ) from e
 
     def _validate_edges(

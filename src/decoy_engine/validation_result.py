@@ -1,0 +1,176 @@
+"""Validation result contract (R2.1).
+
+A typed, multi-message validation outcome shared by engine, API, web,
+and CLI callers. Replaces the older single-`ValidationError`-raises
+pattern at the public boundary so callers can:
+
+  - render every problem at once (not "fix one, re-run, find the next"),
+  - distinguish errors from warnings,
+  - map failures to inspector fields via stable `code` strings (no
+    string-matching the human-readable message), and
+  - diff the validator's `normalized_config` against the original
+    caller-owned input.
+
+The legacy ``validate_graph(yaml) -> None`` raise-style entry point
+stays in place for backward compatibility; new code should call
+``validate_graph_full(yaml) -> ValidationResult``.
+
+Message codes
+-------------
+Codes follow ``<subject>.<failure>`` form, kebab/underscore. They are
+intentionally stable: once shipped, a renamed code is a breaking change
+for any UI mapping to inspector fields. Add a new code rather than
+renaming.
+
+The :data:`CODES` namespace below acts as the registry; importing from
+it (rather than literal strings) keeps typos out of validators and
+makes "find usages" useful for downstream consumers.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Literal
+
+
+Severity = Literal["error", "warning", "info"]
+
+
+@dataclass(frozen=True)
+class ValidationMessage:
+    """One issue surfaced by a validator.
+
+    Attributes:
+        severity: "error" (blocks run), "warning" (advisory), "info"
+            (annotation, never blocks).
+        code: Stable identifier for the failure mode. See :data:`CODES`.
+        message: Human-readable text safe to surface in a UI toast.
+        path: Dotted location of the bad config when known, e.g.
+            ``nodes[2].config.path``. ``None`` for top-level failures.
+        node_id: Resolved graph node id when the failure is node-scoped
+            (e.g. ``"src_1"``). The platform layer typically populates
+            this from the YAML using the path index; engine validators
+            can leave it ``None`` and let the platform resolve it.
+        hint: Optional one-line actionable suggestion ("set has_header
+            to true, or provide column_names").
+    """
+
+    severity: Severity
+    code: str
+    message: str
+    path: str | None = None
+    node_id: str | None = None
+    hint: str | None = None
+
+
+@dataclass
+class ValidationResult:
+    """Outcome of a non-raising validation pass.
+
+    Errors and warnings are kept in separate lists rather than mixed +
+    filtered so callers don't have to worry about ordering. The
+    :pyattr:`ok` property is the canonical "can this run?" signal.
+
+    ``normalized_config`` is the validator's view of the input after
+    defaults were filled in. It is ``None`` when validation produced
+    one or more errors (the validator may not have run to completion).
+    On success it is always populated, even when no defaults were
+    applied -- callers can diff against the original input for
+    audit/explainability.
+    """
+
+    errors: list[ValidationMessage] = field(default_factory=list)
+    warnings: list[ValidationMessage] = field(default_factory=list)
+    normalized_config: dict[str, Any] | None = None
+
+    @property
+    def ok(self) -> bool:
+        """True iff there are no errors. Warnings are not blocking."""
+        return not self.errors
+
+    def add_error(
+        self,
+        code: str,
+        message: str,
+        *,
+        path: str | None = None,
+        node_id: str | None = None,
+        hint: str | None = None,
+    ) -> None:
+        self.errors.append(ValidationMessage(
+            severity="error", code=code, message=message,
+            path=path, node_id=node_id, hint=hint,
+        ))
+
+    def add_warning(
+        self,
+        code: str,
+        message: str,
+        *,
+        path: str | None = None,
+        node_id: str | None = None,
+        hint: str | None = None,
+    ) -> None:
+        self.warnings.append(ValidationMessage(
+            severity="warning", code=code, message=message,
+            path=path, node_id=node_id, hint=hint,
+        ))
+
+
+# ── Code registry ───────────────────────────────────────────────────────────
+#
+# Stable code strings exposed via a namespace so callers can import them
+# rather than literal-stringing. Adding a new code is non-breaking;
+# renaming is breaking. Codes are grouped by subject prefix.
+
+
+class CODES:
+    """Stable validation code constants.
+
+    Imported as ``from decoy_engine.validation_result import CODES``
+    and referenced like ``CODES.NODE_UNKNOWN_KIND``. Each constant is
+    the wire-format string a UI or CLI consumer should match against.
+    """
+
+    # Top-level pipeline config.
+    TOP_LEVEL_BAD_MODE = "top_level.bad_mode"
+    TOP_LEVEL_BAD_SCHEMA_VERSION = "top_level.bad_schema_version"
+    TOP_LEVEL_BAD_ENGINE = "top_level.bad_engine"
+    NODES_EMPTY_LIST = "nodes.empty_list"
+    EDGES_BAD_TYPE = "edges.bad_type"
+
+    # Per-node structural checks.
+    NODE_BAD_TYPE = "node.bad_type"
+    NODE_BAD_ID = "node.bad_id"
+    NODE_DUPLICATE_ID = "node.duplicate_id"
+    NODE_UNKNOWN_KIND = "node.unknown_kind"
+    NODE_BAD_NAME = "node.bad_name"
+    NODE_BAD_CONFIG_TYPE = "node.bad_config_type"
+
+    # Per-edge.
+    EDGE_BAD_TYPE = "edge.bad_type"
+    EDGE_UNKNOWN_FROM_NODE = "edge.unknown_from_node"
+    EDGE_UNKNOWN_TO_NODE = "edge.unknown_to_node"
+    EDGE_UNKNOWN_PORT = "edge.unknown_port"
+    EDGE_PORT_ON_NON_SPLIT = "edge.port_on_non_split"
+
+    # Graph topology.
+    GRAPH_CYCLE = "graph.cycle"
+    GRAPH_NODE_INSUFFICIENT_INPUTS = "graph.node_insufficient_inputs"
+    GRAPH_NODE_TOO_MANY_INPUTS = "graph.node_too_many_inputs"
+    GRAPH_SINK_HAS_OUTPUTS = "graph.sink_has_outputs"
+
+    # source.file specific.
+    SOURCE_FILE_MISSING_PATH = "source_file.missing_path"
+    SOURCE_FILE_UNSUPPORTED_FORMAT = "source_file.unsupported_format"
+    SOURCE_FILE_BAD_HAS_HEADER_TYPE = "source_file.bad_has_header_type"
+    SOURCE_FILE_NO_HEADER_COLUMNS = "source_file.no_header_columns"
+    SOURCE_FILE_COLUMN_NAMES_WITH_HEADER = "source_file.column_names_with_header"
+    SOURCE_FILE_BAD_DELIMITER = "source_file.bad_delimiter"
+    SOURCE_FILE_BAD_ROW_LIMIT = "source_file.bad_row_limit"
+    SOURCE_FILE_MISSING_FW_COLUMNS = "source_file.missing_fw_columns"
+    SOURCE_FILE_CSV_PARAM_ON_NON_CSV = "source_file.csv_param_on_non_csv"
+
+    # Generic catch-all for validators that haven't been migrated yet.
+    # New gates should add a specific code rather than reusing this.
+    UNTAGGED = "untagged"

@@ -63,18 +63,25 @@ _CSV_PARAM_KEYS = (
 
 
 def validate_config(config: dict[str, Any]) -> None:
+    from decoy_engine.validation_result import CODES
+
     if "path" not in config:
-        raise ValidationError("missing required field 'path'", "config.path")
+        raise ValidationError(
+            "missing required field 'path'", "config.path",
+            code=CODES.SOURCE_FILE_MISSING_PATH,
+        )
     fmt = (config.get("format") or _infer_format(config["path"])).lower()
     if fmt not in {"csv", "parquet", "fixed_width"}:
         raise ValidationError(
             f"unsupported format {fmt!r} (csv|parquet|fixed_width)",
             "config.format",
+            code=CODES.SOURCE_FILE_UNSUPPORTED_FORMAT,
         )
 
     if "has_header" in config and not isinstance(config["has_header"], bool):
         raise ValidationError(
-            "'has_header' must be a boolean when set", "config.has_header"
+            "'has_header' must be a boolean when set", "config.has_header",
+            code=CODES.SOURCE_FILE_BAD_HAS_HEADER_TYPE,
         )
 
     if "row_limit" in config:
@@ -83,6 +90,7 @@ def validate_config(config: dict[str, Any]) -> None:
             raise ValidationError(
                 "'row_limit' must be a positive integer when set",
                 "config.row_limit",
+                code=CODES.SOURCE_FILE_BAD_ROW_LIMIT,
             )
 
     if fmt == "csv":
@@ -92,6 +100,7 @@ def validate_config(config: dict[str, Any]) -> None:
                 raise ValidationError(
                     "'delimiter' must be a non-empty string when set",
                     "config.delimiter",
+                    code=CODES.SOURCE_FILE_BAD_DELIMITER,
                 )
         if "delimiter_is_regex" in config and not isinstance(
             config["delimiter_is_regex"], bool
@@ -131,6 +140,7 @@ def validate_config(config: dict[str, Any]) -> None:
                 raise ValidationError(
                     "'column_names' requires has_header=false",
                     "config.column_names",
+                    code=CODES.SOURCE_FILE_COLUMN_NAMES_WITH_HEADER,
                 )
         elif config.get("has_header") is False:
             # has_header=false without column_names produces DuckDB auto-
@@ -143,6 +153,7 @@ def validate_config(config: dict[str, Any]) -> None:
                 "no header columns defined: set has_header=true (read names "
                 "from the file's first row) or provide column_names explicitly",
                 "config.has_header",
+                code=CODES.SOURCE_FILE_NO_HEADER_COLUMNS,
             )
     else:
         # csv-only params don't belong on parquet/fixed_width sources.
@@ -151,11 +162,13 @@ def validate_config(config: dict[str, Any]) -> None:
                 raise ValidationError(
                     f"'{key}' applies to format='csv' only, not {fmt!r}",
                     f"config.{key}",
+                    code=CODES.SOURCE_FILE_CSV_PARAM_ON_NON_CSV,
                 )
         if "has_header" in config and fmt != "csv":
             raise ValidationError(
                 f"'has_header' applies to format='csv' only, not {fmt!r}",
                 "config.has_header",
+                code=CODES.SOURCE_FILE_CSV_PARAM_ON_NON_CSV,
             )
 
     if fmt == "fixed_width":
@@ -164,6 +177,7 @@ def validate_config(config: dict[str, Any]) -> None:
             raise ValidationError(
                 "fixed_width requires 'fw_columns' (non-empty list)",
                 "config.fw_columns",
+                code=CODES.SOURCE_FILE_MISSING_FW_COLUMNS,
             )
         for i, col in enumerate(cols):
             if not isinstance(col, dict):

@@ -42,7 +42,8 @@ def topo_order(nodes: Iterable[dict], edges: Iterable[dict]) -> list[str]:
                 ready.append(dst)
 
     if len(order) != len(node_ids):
-        raise ValidationError("graph has a cycle", "edges")
+        from decoy_engine.validation_result import CODES
+        raise ValidationError("graph has a cycle", "edges", code=CODES.GRAPH_CYCLE)
     return order
 
 

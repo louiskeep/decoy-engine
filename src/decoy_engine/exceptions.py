@@ -27,10 +27,20 @@ class PipelineValidationError(ConfigError):
     the failure back to a specific node / inspector field instead
     of parsing the message string. None when validation failed at
     a level above any single node (e.g. invalid top-level mode).
+
+    R2.1: also carries an optional stable ``code`` from
+    :mod:`decoy_engine.validation_result.CODES` so UI consumers can
+    route the failure without string-matching the message text.
     """
 
-    def __init__(self, message: str, path: str | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        path: str | None = None,
+        code: str | None = None,
+    ) -> None:
         self.path = path
+        self.code = code
         super().__init__(message)
 
 

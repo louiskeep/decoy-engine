@@ -43,10 +43,16 @@ from decoy_engine.license import LicenseVerifier
 from decoy_engine.validation import validate_config
 from decoy_engine.graph import (
     validate_graph,
+    validate_graph_full,
     run_graph,
     preview_graph,
     RunResult,
     PreviewResult,
+)
+from decoy_engine.validation_result import (
+    CODES as VALIDATION_CODES,
+    ValidationMessage,
+    ValidationResult,
 )
 from decoy_engine.storm import run_storm, StormProfile, FieldStats, DetectorMatch, SentinelFlag
 from decoy_engine.data_discovery import (
