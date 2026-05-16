@@ -163,6 +163,13 @@ class CODES:
     # Cross-node schema checks (R2.3).
     MASK_UNKNOWN_COLUMN = "mask.unknown_column"
 
+    # mask op-level (R2.2).
+    MASK_BAD_COLUMNS_TYPE = "mask.bad_columns_type"
+    MASK_BAD_COLUMN_SPEC_TYPE = "mask.bad_column_spec_type"
+    MASK_UNKNOWN_STRATEGY = "mask.unknown_strategy"
+    MASK_FORMULA_MISSING = "mask.formula_missing"
+    MASK_REFERENCE_MISSING = "mask.reference_missing"
+
     # source.file specific.
     SOURCE_FILE_MISSING_PATH = "source_file.missing_path"
     SOURCE_FILE_UNSUPPORTED_FORMAT = "source_file.unsupported_format"

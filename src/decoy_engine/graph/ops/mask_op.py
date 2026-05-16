@@ -37,6 +37,8 @@ _VALID_STRATEGIES = {
 
 
 def validate_config(config: dict[str, Any]) -> None:
+    from decoy_engine.validation_result import CODES
+
     # Empty / missing `columns` is valid: it means every input column
     # passthroughs unchanged. The UI treats passthrough as the per-column
     # default and the serializer only emits non-passthrough picks, so a
@@ -45,19 +47,40 @@ def validate_config(config: dict[str, Any]) -> None:
     columns = config.get("columns") or {}
     if not isinstance(columns, dict):
         raise ValidationError(
-            "'columns' must be a mapping", "config.columns"
+            "'columns' must be a mapping", "config.columns",
+            code=CODES.MASK_BAD_COLUMNS_TYPE,
         )
     for col_name, spec in columns.items():
         if not isinstance(spec, dict):
             raise ValidationError(
                 f"column {col_name!r} spec must be a mapping",
                 f"config.columns.{col_name}",
+                code=CODES.MASK_BAD_COLUMN_SPEC_TYPE,
             )
         strategy = spec.get("strategy")
         if strategy not in _VALID_STRATEGIES:
             raise ValidationError(
                 f"unsupported strategy {strategy!r} (one of {sorted(_VALID_STRATEGIES)})",
                 f"config.columns.{col_name}.strategy",
+                code=CODES.MASK_UNKNOWN_STRATEGY,
+            )
+        # R2.2: strategy-specific required-field gates. The legacy
+        # MaskerConfigValidator already raises on these at runtime;
+        # move the check to validate-time so the UI sees the failure
+        # at the right column key rather than as a runtime exception.
+        if strategy == "formula" and not (spec.get("formula") or "").strip():
+            raise ValidationError(
+                f"column {col_name!r} uses strategy 'formula' but no "
+                f"'formula' expression is set",
+                f"config.columns.{col_name}.formula",
+                code=CODES.MASK_FORMULA_MISSING,
+            )
+        if strategy == "reference" and not (spec.get("reference") or "").strip():
+            raise ValidationError(
+                f"column {col_name!r} uses strategy 'reference' but no "
+                f"'reference' dataset path is set",
+                f"config.columns.{col_name}.reference",
+                code=CODES.MASK_REFERENCE_MISSING,
             )
 
 
