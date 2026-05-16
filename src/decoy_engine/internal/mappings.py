@@ -1,6 +1,6 @@
 # decoy_engine/utils/mappings.py
 """
-Mapping utilities for storing and retrieving masking mappings.
+Mapping utilities for categorical remap persistence.
 """
 
 import json
@@ -12,6 +12,9 @@ from typing import Dict, Any, Optional
 class MappingManager:
     """
     Handles operations related to mapping storage and retrieval.
+
+    Construction is side-effect free. The directory is created only when a
+    caller explicitly saves a categorical mapping.
     """
     
     def __init__(self, mappings_dir: str = "mappings/", logger=None):
@@ -19,11 +22,10 @@ class MappingManager:
         Initialize with a mappings directory
         
         Args:
-            mappings_dir: Directory to store mapping files
+            mappings_dir: Directory to store categorical mapping files
             logger: Logger instance
         """
         self.mappings_dir = mappings_dir
-        Path(self.mappings_dir).mkdir(parents=True, exist_ok=True)
         
         # Use provided logger or create a default one
         if logger:
@@ -36,16 +38,19 @@ class MappingManager:
         
         # Internal cache for performance
         self._mapping_cache = {}
+
+    def _is_categorical_method(self, method: Optional[str]) -> bool:
+        return str(method or "").lower() == "categorical"
     
     def get_mapping_path(self, column: str) -> str:
         """
-        Generates a standardized file path for storing column-specific mapping dictionaries.
+        Generates a standardized file path for storing categorical mappings.
         
         Args:
             column: Column name to create mapping for
             
         Returns:
-            Path to the mapping JSON file
+            Path to the categorical mapping JSON file
         """
         # Create a sanitized filename
         safe_name = column.replace(' ', '_').lower()
@@ -61,7 +66,7 @@ class MappingManager:
             relationship_name: Name of the referential integrity relationship
             
         Returns:
-            Path to the global mapping JSON file
+            Path to the categorical global mapping JSON file
         """
         # Create a sanitized filename
         safe_name = relationship_name.replace(' ', '_').lower()
@@ -69,9 +74,9 @@ class MappingManager:
         self.logger.debug(f"Global mapping path for relationship '{relationship_name}': {mapping_path}")
         return mapping_path
     
-    def load_mapping(self, column: str) -> Dict[str, Any]:
+    def load_mapping(self, column: str, method: Optional[str] = None) -> Dict[str, Any]:
         """
-        Load a mapping dictionary for a specific column
+        Load a categorical mapping dictionary for a specific column.
         
         Args:
             column: Column name
@@ -79,6 +84,12 @@ class MappingManager:
         Returns:
             Dictionary with original values as keys and masked values as values
         """
+        if not self._is_categorical_method(method):
+            self.logger.debug(
+                f"Skipping mapping load for column '{column}'; method is not categorical"
+            )
+            return {}
+
         # Check cache first
         if column in self._mapping_cache:
             return self._mapping_cache[column]
@@ -102,14 +113,25 @@ class MappingManager:
             self._mapping_cache[column] = {}
             return {}
     
-    def save_mapping(self, mapping: Dict[str, Any], column: str) -> None:
+    def save_mapping(
+        self,
+        mapping: Dict[str, Any],
+        column: str,
+        method: Optional[str] = None,
+    ) -> None:
         """
-        Save a mapping dictionary for a specific column
+        Save a categorical mapping dictionary for a specific column.
         
         Args:
             mapping: Dictionary with original values as keys and masked values as values
             column: Column name
         """
+        if not self._is_categorical_method(method):
+            self.logger.debug(
+                f"Skipping mapping save for column '{column}'; method is not categorical"
+            )
+            return
+
         # Update cache
         self._mapping_cache[column] = mapping
         
@@ -127,9 +149,13 @@ class MappingManager:
         except Exception as e:
             self.logger.error(f"Error saving mapping for column '{column}': {str(e)}")
     
-    def load_global_mapping(self, relationship_name: str) -> Dict[str, Any]:
+    def load_global_mapping(
+        self,
+        relationship_name: str,
+        method: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
-        Load a global mapping dictionary for referential integrity
+        Load a categorical global mapping dictionary for referential integrity.
         
         Args:
             relationship_name: Name of the referential integrity relationship
@@ -137,6 +163,13 @@ class MappingManager:
         Returns:
             Dictionary with original values as keys and masked values as values
         """
+        if not self._is_categorical_method(method):
+            self.logger.debug(
+                f"Skipping global mapping load for relationship '{relationship_name}'; "
+                "method is not categorical"
+            )
+            return {}
+
         mapping_path = self.get_global_mapping_path(relationship_name)
         
         if not os.path.exists(mapping_path):
@@ -152,14 +185,26 @@ class MappingManager:
             self.logger.warning(f"Error loading global mapping for relationship '{relationship_name}': {str(e)}")
             return {}
     
-    def save_global_mapping(self, mapping: Dict[str, Any], relationship_name: str) -> None:
+    def save_global_mapping(
+        self,
+        mapping: Dict[str, Any],
+        relationship_name: str,
+        method: Optional[str] = None,
+    ) -> None:
         """
-        Save a global mapping dictionary for referential integrity
+        Save a categorical global mapping dictionary for referential integrity.
         
         Args:
             mapping: Dictionary with original values as keys and masked values as values
             relationship_name: Name of the referential integrity relationship
         """
+        if not self._is_categorical_method(method):
+            self.logger.debug(
+                f"Skipping global mapping save for relationship '{relationship_name}'; "
+                "method is not categorical"
+            )
+            return
+
         mapping_path = self.get_global_mapping_path(relationship_name)
         
         # Ensure directory exists

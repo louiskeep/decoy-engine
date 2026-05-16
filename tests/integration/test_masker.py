@@ -186,6 +186,7 @@ def test_masker_referential_integrity(tmp_path, mock_logger):
     # Create config for masking customers
     customers_config_path = os.path.join(tmp_path, "customers_mask_config.yaml")
     customers_output_path = os.path.join(tmp_path, "masked_customers.csv")
+    mappings_path = os.path.join(tmp_path, "mappings")
     
     customers_config = {
         'input': {
@@ -202,7 +203,7 @@ def test_masker_referential_integrity(tmp_path, mock_logger):
             'seed': 42
         },
         'masking_rules': [
-            {'column': 'customer_id', 'type': 'map', 'map_type': 'fixed', 'fixed_prefix': 'CUST'},
+            {'column': 'customer_id', 'type': 'hash'},
             {'column': 'name', 'type': 'faker', 'faker_type': 'name'},
             {'column': 'email', 'type': 'faker', 'faker_type': 'email'}
         ],
@@ -213,7 +214,7 @@ def test_masker_referential_integrity(tmp_path, mock_logger):
             }
         ],
         'mappings': {
-            'store_directory': os.path.join(tmp_path, "mappings")
+            'store_directory': mappings_path
         }
     }
     
@@ -239,8 +240,8 @@ def test_masker_referential_integrity(tmp_path, mock_logger):
             'seed': 42
         },
         'masking_rules': [
-            {'column': 'order_id', 'type': 'map', 'map_type': 'fixed', 'fixed_prefix': 'ORD'},
-            {'column': 'customer_id', 'type': 'map', 'map_type': 'fixed', 'fixed_prefix': 'CUST'},
+            {'column': 'order_id', 'type': 'hash'},
+            {'column': 'customer_id', 'type': 'hash'},
             {'column': 'amount', 'type': 'passthrough'}
         ],
         'referential_integrity': [
@@ -250,15 +251,12 @@ def test_masker_referential_integrity(tmp_path, mock_logger):
             }
         ],
         'mappings': {
-            'store_directory': os.path.join(tmp_path, "mappings")
+            'store_directory': mappings_path
         }
     }
     
     with open(orders_config_path, 'w') as f:
         yaml.dump(orders_config, f)
-    
-    # Create mappings directory
-    os.makedirs(os.path.join(tmp_path, "mappings"), exist_ok=True)
     
     # Mask customers first
     customers_masker = Masker(customers_config_path)
@@ -271,6 +269,7 @@ def test_masker_referential_integrity(tmp_path, mock_logger):
     # Verify outputs exist
     assert os.path.exists(customers_output_path)
     assert os.path.exists(orders_output_path)
+    assert not os.path.exists(mappings_path)
     
     # Load masked data
     masked_customers = pd.read_csv(customers_output_path)

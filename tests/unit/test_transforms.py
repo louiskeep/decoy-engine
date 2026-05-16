@@ -102,48 +102,62 @@ def test_redact_strategy(sample_data, mock_logger):
     assert result.isna().sum() == 1  # Preserve NULL values
     assert all(x == 'REDACTED' for x in result.dropna())
 
-def test_map_strategy(sample_data, mock_logger):
+def test_map_strategy(sample_data, mock_logger, tmp_path, monkeypatch):
     """Test map strategy."""
-    # Create temporary mapping directory
-    import tempfile
-    import os
-    temp_dir = tempfile.mkdtemp()
-    
-    try:
-        # Initialize strategy with mapping dir
-        from decoy_engine.internal.mappings import MappingManager
-        mapping_manager = MappingManager(mappings_dir=temp_dir, logger=mock_logger)
-        
-        strategy = MapStrategy(seed=42, logger=mock_logger)
-        
-        # Test with faker map type
-        rule = {'column': 'name', 'type': 'map', 'map_type': 'faker', 'faker_type': 'first_name'}
-        result = strategy.apply(sample_data, rule)
-        
-        assert len(result) == len(sample_data)
-        assert result.isna().sum() == 1  # Preserve NULL values
-        
-        # Test with fixed map type
-        rule = {'column': 'name2', 'type': 'map', 'map_type': 'fixed', 'fixed_prefix': 'NAME'}
-        result = strategy.apply(sample_data, rule)
-        
-        assert len(result) == len(sample_data)
-        assert result.isna().sum() == 1  # Preserve NULL values
-        assert all(str(x).startswith('NAME_') for x in result.dropna())
-        
-        # Test mapping persistence
-        # First application should create mappings
-        rule = {'column': 'test_persist', 'type': 'map', 'map_type': 'fixed', 'fixed_prefix': 'PERSIST'}
-        result1 = strategy.apply(sample_data, rule)
-        
-        # Second application should use the same mappings
-        result2 = strategy.apply(sample_data, rule)
-        pd.testing.assert_series_equal(result1, result2)
-    
-    finally:
-        # Clean up temp directory
-        import shutil
-        shutil.rmtree(temp_dir)
+    monkeypatch.chdir(tmp_path)
+    mappings_dir = tmp_path / "mappings"
+
+    strategy = MapStrategy(seed=42, logger=mock_logger)
+
+    # Test with faker map type
+    rule = {'column': 'name', 'type': 'map', 'map_type': 'faker', 'faker_type': 'first_name'}
+    result = strategy.apply(sample_data, rule)
+
+    assert len(result) == len(sample_data)
+    assert result.isna().sum() == 1  # Preserve NULL values
+
+    # Test with fixed map type
+    rule = {'column': 'name2', 'type': 'map', 'map_type': 'fixed', 'fixed_prefix': 'NAME'}
+    result = strategy.apply(sample_data, rule)
+
+    assert len(result) == len(sample_data)
+    assert result.isna().sum() == 1  # Preserve NULL values
+    assert all(str(x).startswith('NAME_') for x in result.dropna())
+
+    # Deterministic replacement should not create mappings/.
+    rule = {'column': 'test_persist', 'type': 'map', 'map_type': 'fixed', 'fixed_prefix': 'PERSIST'}
+    result1 = strategy.apply(sample_data, rule)
+    result2 = strategy.apply(sample_data, rule)
+    pd.testing.assert_series_equal(result1, result2)
+    assert not mappings_dir.exists()
+
+
+def test_mapping_manager_only_writes_categorical_mappings(tmp_path, mock_logger):
+    """Mapping folders are created only for explicitly categorical saves."""
+    from decoy_engine.internal.mappings import MappingManager
+
+    mappings_dir = tmp_path / "mappings"
+    manager = MappingManager(mappings_dir=str(mappings_dir), logger=mock_logger)
+
+    assert not mappings_dir.exists()
+
+    manager.save_mapping({"a": "b"}, "status")
+    assert not mappings_dir.exists()
+
+    manager.save_mapping({"a": "b"}, "status", method="hash")
+    assert not mappings_dir.exists()
+
+    manager.save_mapping({"a": "b"}, "status", method="categorical")
+
+    assert mappings_dir.exists()
+    assert (mappings_dir / "status_map.json").exists()
+
+    global_dir = tmp_path / "global_mappings"
+    global_manager = MappingManager(mappings_dir=str(global_dir), logger=mock_logger)
+    global_manager.save_global_mapping({"a": "b"}, "rel", method="map")
+    assert not global_dir.exists()
+    global_manager.save_global_mapping({"a": "b"}, "rel", method="categorical")
+    assert (global_dir / "global_rel_map.json").exists()
 
 def test_shuffle_strategy(mock_logger):
     """Test shuffle strategy."""

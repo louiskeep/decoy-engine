@@ -5,8 +5,8 @@ Ensures consistent masking across related columns and tables.
 """
 
 import pandas as pd
-import hashlib
-from typing import Dict, Any, List, Optional, Set, Tuple
+from typing import Dict, Any, Optional
+
 
 class ReferentialIntegrityManager:
     """
@@ -31,15 +31,10 @@ class ReferentialIntegrityManager:
             from decoy_engine.internal.logging import get_logger
             self.logger = get_logger()
         
-        # Initialize mapping storage
-        from decoy_engine.internal.mappings import MappingManager
-        mappings_dir = self.config.get('mappings', {}).get('store_directory', 'mappings/')
-        self.mapping_manager = MappingManager(mappings_dir=mappings_dir, logger=self.logger)
-        
-        # Initialize internal cache
+        # V1 policy: no local mapping store. Referential integrity is enforced
+        # by deterministic transforms, not by persisted mapping files.
         self.global_mapping_cache = {}
         
-        # Load existing global mappings
         if 'referential_integrity' in self.config:
             self._load_global_mappings()
             
@@ -57,20 +52,20 @@ class ReferentialIntegrityManager:
     
     def _load_global_mappings(self) -> None:
         """
-        Load global mappings for referential integrity from storage
+        Initialize relationship names without loading local mapping files.
         """
         for relationship in self.config.get('referential_integrity', []):
             rel_name = relationship['name']
-            self.global_mapping_cache[rel_name] = self.mapping_manager.load_global_mapping(rel_name)
-            self.logger.info(f"Loaded mapping for relationship '{rel_name}' with {len(self.global_mapping_cache[rel_name])} entries")
+            self.global_mapping_cache[rel_name] = {}
+            self.logger.debug(
+                f"Initialized deterministic relationship '{rel_name}' without mapping storage"
+            )
     
     def save_global_mappings(self) -> None:
         """
-        Save global mappings to persistent storage
+        No-op retained for older callers. V1 does not persist mapping files.
         """
-        for rel_name, mapping in self.global_mapping_cache.items():
-            self.mapping_manager.save_global_mapping(mapping, rel_name)
-            self.logger.info(f"Saved mapping for relationship '{rel_name}' with {len(mapping)} entries")
+        self.logger.debug("Skipping global mapping persistence; local mapping stores are disabled")
     
     def get_referential_relationship(self, table_name: str, column_name: str) -> Optional[str]:
         """
@@ -121,63 +116,20 @@ class ReferentialIntegrityManager:
         Returns:
             Pandas Series with masked values
         """
-        # Ensure we have a mapping dictionary for this relationship
-        if rel_name not in self.global_mapping_cache:
-            self.global_mapping_cache[rel_name] = {}
-        
-        mapping = self.global_mapping_cache[rel_name]
-        updated = False
-        
         # Get mask type and column name
         mask_type = rule['type']
         column_name = rule['column']
-        
-        # Process each unique value
-        unique_values = column.dropna().unique()
-        self.logger.info(f"Applying global mapping for relationship '{rel_name}', column '{column_name}' with mask type '{mask_type}'")
-        
-        # Process new values
-        new_values = [str(value) for value in unique_values if str(value) not in mapping]
-        if new_values:
-            self.logger.info(f"Adding {len(new_values)} new values to global mapping '{rel_name}'")
-            updated = True
-            
-            # Create appropriate strategy for this mask type
-            from decoy_engine.transforms.factory import create_strategy
-            strategy = create_strategy(mask_type, rule.get('seed', 0), self.logger)
-            
-            # Process each new value
-            for value in new_values:
-                if value is None:
-                    continue
-                    
-                str_value = str(value)
-                if str_value in mapping:
-                    continue
-                
-                # Generate a deterministic seed for this value
-                value_seed = int(hashlib.md5(f"{str_value}{rel_name}".encode()).hexdigest(), 16) % (2**32)
-                
-                # Create a single-value Series for the strategy to process
-                single_value_series = pd.Series([value])
-                
-                # Apply the strategy with a custom seed
-                modified_rule = rule.copy()
-                modified_rule['seed'] = value_seed
-                
-                # Apply the strategy and get the first (only) value
-                masked_value = strategy.apply(single_value_series, modified_rule).iloc[0]
-                
-                # Store in mapping
-                mapping[str_value] = masked_value
-        
-        # Apply mapping to column
-        def map_value(val):
-            if val is None or pd.isna(val):
-                return val
-            return mapping.get(str(val), val)
-        
-        result = column.apply(map_value)
-        self.logger.debug(f"Applied mapping to {len(column)} values")
+
+        self.logger.info(
+            f"Applying deterministic relationship '{rel_name}', column "
+            f"'{column_name}' with mask type '{mask_type}'"
+        )
+
+        from decoy_engine.transforms.factory import create_strategy
+        strategy = create_strategy(mask_type, rule.get('seed', 0), self.logger)
+        relationship_rule = rule.copy()
+        relationship_rule['column'] = rel_name
+        result = strategy.apply(column, relationship_rule)
+        self.logger.debug(f"Applied deterministic relationship transform to {len(column)} values")
         
         return result

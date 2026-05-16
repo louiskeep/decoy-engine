@@ -98,6 +98,7 @@ class TestMaskerContextInjection:
         Masker(str(mask_config), ctx=ExecutionContext(logger=custom)).mask()
         # The engine should have sent at least one info message to our logger
         assert any(level == "info" for level, _ in custom.messages)
+        assert not (mask_config.parent / "mappings").exists()
 
 
 class TestDataGeneratorContextInjection:

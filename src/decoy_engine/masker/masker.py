@@ -8,7 +8,6 @@ import os
 import yaml
 import pandas as pd
 import time
-from pathlib import Path
 from typing import Dict, Any, Optional, List
 
 from decoy_engine.context import emit_lineage, emit_step
@@ -97,10 +96,6 @@ class Masker:
         from decoy_engine.internal.large_file_processor import LargeFileProcessor
         self.large_file_processor = LargeFileProcessor(self.config, self.logger)
         
-        # Initialize mappings directory
-        mappings_dir = self.config.get('mappings', {}).get('store_directory', 'mappings/')
-        Path(mappings_dir).mkdir(parents=True, exist_ok=True)
-        
         self.logger.info(f"Masker initialized with configuration: {config_path}")
 
     def mask(self):
@@ -150,8 +145,8 @@ class Masker:
             else:
                 self._process_standard_file(input_path, table_name, file_size_gb)
             
-            # Save global mappings
-            self.logger.info("Saving global mappings")
+            # Retained for older callers; current V1 relationship handling is
+            # deterministic and does not write local mapping files.
             self.ref_integrity.save_global_mappings()
             
             MemoryMonitor.monitor_memory_usage(self.logger, "After masking completion")
