@@ -170,6 +170,38 @@ class CODES:
     MASK_FORMULA_MISSING = "mask.formula_missing"
     MASK_REFERENCE_MISSING = "mask.reference_missing"
 
+    # target.file specific.
+    TARGET_FILE_MISSING_OUTPUT_FILENAME = "target_file.missing_output_filename"
+    TARGET_FILE_UNSUPPORTED_FORMAT = "target_file.unsupported_format"
+
+    # Shared across cloud source/target ops (source.s3/gcs/sftp,
+    # target.s3/gcs/sftp). They all route through
+    # `_cloud_io.validate_format` so one code identifies the failure
+    # across kinds; per-kind missing_field codes are below.
+    CLOUD_IO_UNSUPPORTED_FORMAT = "cloud_io.unsupported_format"
+
+    # source.s3 / target.s3
+    SOURCE_S3_MISSING_BUCKET = "source_s3.missing_bucket"
+    SOURCE_S3_MISSING_PATH = "source_s3.missing_path"
+    TARGET_S3_MISSING_BUCKET = "target_s3.missing_bucket"
+    TARGET_S3_MISSING_PATH = "target_s3.missing_path"
+
+    # source.gcs / target.gcs
+    SOURCE_GCS_MISSING_BUCKET = "source_gcs.missing_bucket"
+    SOURCE_GCS_MISSING_PATH = "source_gcs.missing_path"
+    TARGET_GCS_MISSING_BUCKET = "target_gcs.missing_bucket"
+    TARGET_GCS_MISSING_PATH = "target_gcs.missing_path"
+
+    # source.sftp / target.sftp
+    SOURCE_SFTP_MISSING_HOST = "source_sftp.missing_host"
+    SOURCE_SFTP_MISSING_USERNAME = "source_sftp.missing_username"
+    SOURCE_SFTP_MISSING_PATH = "source_sftp.missing_path"
+    SOURCE_SFTP_MISSING_AUTH = "source_sftp.missing_auth"
+    TARGET_SFTP_MISSING_HOST = "target_sftp.missing_host"
+    TARGET_SFTP_MISSING_USERNAME = "target_sftp.missing_username"
+    TARGET_SFTP_MISSING_PATH = "target_sftp.missing_path"
+    TARGET_SFTP_MISSING_AUTH = "target_sftp.missing_auth"
+
     # source.file specific.
     SOURCE_FILE_MISSING_PATH = "source_file.missing_path"
     SOURCE_FILE_UNSUPPORTED_FORMAT = "source_file.unsupported_format"

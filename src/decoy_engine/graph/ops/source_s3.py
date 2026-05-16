@@ -27,10 +27,18 @@ OUTPUT_KIND = "stream"
 
 
 def validate_config(config: dict[str, Any]) -> None:
+    from decoy_engine.validation_result import CODES
+
     if "bucket" not in config:
-        raise ValidationError("missing required field 'bucket'", "config.bucket")
+        raise ValidationError(
+            "missing required field 'bucket'", "config.bucket",
+            code=CODES.SOURCE_S3_MISSING_BUCKET,
+        )
     if "path" not in config:
-        raise ValidationError("missing required field 'path'", "config.path")
+        raise ValidationError(
+            "missing required field 'path'", "config.path",
+            code=CODES.SOURCE_S3_MISSING_PATH,
+        )
     fmt = (config.get("format") or infer_format(config["path"])).lower()
     validate_format(fmt)
 

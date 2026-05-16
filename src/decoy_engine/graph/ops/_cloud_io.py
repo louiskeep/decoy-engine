@@ -39,8 +39,10 @@ def infer_format(path: str) -> str:
 
 def validate_format(fmt: str) -> None:
     if fmt not in {"csv", "parquet"}:
+        from decoy_engine.validation_result import CODES
         raise ValidationError(
-            f"unsupported format {fmt!r} (csv|parquet)", "config.format"
+            f"unsupported format {fmt!r} (csv|parquet)", "config.format",
+            code=CODES.CLOUD_IO_UNSUPPORTED_FORMAT,
         )
 
 

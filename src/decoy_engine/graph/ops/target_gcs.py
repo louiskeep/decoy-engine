@@ -25,10 +25,18 @@ OUTPUT_KIND = "sink"
 
 
 def validate_config(config: dict[str, Any]) -> None:
+    from decoy_engine.validation_result import CODES
+
     if "bucket" not in config:
-        raise ValidationError("missing required field 'bucket'", "config.bucket")
+        raise ValidationError(
+            "missing required field 'bucket'", "config.bucket",
+            code=CODES.TARGET_GCS_MISSING_BUCKET,
+        )
     if "path" not in config:
-        raise ValidationError("missing required field 'path'", "config.path")
+        raise ValidationError(
+            "missing required field 'path'", "config.path",
+            code=CODES.TARGET_GCS_MISSING_PATH,
+        )
     fmt = (config.get("format") or infer_format(config["path"])).lower()
     validate_format(fmt)
 

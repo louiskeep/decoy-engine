@@ -29,15 +29,27 @@ OUTPUT_KIND = "sink"
 
 
 def validate_config(config: dict[str, Any]) -> None:
+    from decoy_engine.validation_result import CODES
+
     if "host" not in config:
-        raise ValidationError("missing required field 'host'", "config.host")
+        raise ValidationError(
+            "missing required field 'host'", "config.host",
+            code=CODES.TARGET_SFTP_MISSING_HOST,
+        )
     if "username" not in config:
-        raise ValidationError("missing required field 'username'", "config.username")
+        raise ValidationError(
+            "missing required field 'username'", "config.username",
+            code=CODES.TARGET_SFTP_MISSING_USERNAME,
+        )
     if "path" not in config:
-        raise ValidationError("missing required field 'path'", "config.path")
+        raise ValidationError(
+            "missing required field 'path'", "config.path",
+            code=CODES.TARGET_SFTP_MISSING_PATH,
+        )
     if not config.get("password") and not config.get("private_key"):
         raise ValidationError(
-            "must provide either 'password' or 'private_key'", "config"
+            "must provide either 'password' or 'private_key'", "config",
+            code=CODES.TARGET_SFTP_MISSING_AUTH,
         )
     fmt = (config.get("format") or infer_format(config["path"])).lower()
     validate_format(fmt)

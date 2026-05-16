@@ -25,14 +25,18 @@ OUTPUT_KIND = "sink"
 
 
 def validate_config(config: dict[str, Any]) -> None:
+    from decoy_engine.validation_result import CODES
+
     if "output_filename" not in config:
         raise ValidationError(
-            "missing required field 'output_filename'", "config.output_filename"
+            "missing required field 'output_filename'", "config.output_filename",
+            code=CODES.TARGET_FILE_MISSING_OUTPUT_FILENAME,
         )
     fmt = (config.get("format") or _infer_format(config["output_filename"])).lower()
     if fmt not in {"csv", "parquet"}:
         raise ValidationError(
-            f"unsupported format {fmt!r} (csv|parquet)", "config.format"
+            f"unsupported format {fmt!r} (csv|parquet)", "config.format",
+            code=CODES.TARGET_FILE_UNSUPPORTED_FORMAT,
         )
 
 
