@@ -3,11 +3,13 @@ and the registry resolves it correctly.
 
 Phase 2 leaves every op on `pandas` so behavior is unchanged from Phase 1.
 Phases 3 + 4 flip individual ops to polars / duckdb; this test prevents
-silent regression — if someone adds a new op that forgets to declare,
+silent regression -- if someone adds a new op that forgets to declare,
 the test fails.
 """
 
 from __future__ import annotations
+
+import types
 
 import pytest
 
@@ -61,7 +63,7 @@ def test_hybrid_mode_respects_op_declaration():
 
 def test_unknown_kind_falls_back_to_pandas():
     """If a kind isn't in the registry (would normally fail validation),
-    the registry must not raise — defensive fallback."""
+    the registry must not raise -- defensive fallback."""
     assert native_engine_for("does_not_exist", "hybrid") == "pandas"
     assert native_engine_for("does_not_exist", "pandas") == "pandas"
 
@@ -70,7 +72,7 @@ def test_unknown_kind_falls_back_to_pandas():
     # Frozen baseline of NATIVE_ENGINE per kind. The list moves explicitly
     # as phases land: Phase 3 flipped the relational ops to polars; Phase 4
     # will flip the source.* / target.* ops to duckdb. A surprise diff in
-    # this list = an undocumented engine flip — fail loud, don't shrug.
+    # this list = an undocumented engine flip -- fail loud, don't shrug.
     ("source.file", "duckdb"),       # Phase 4
     ("source.db", "duckdb"),         # Phase 4
     ("filter", "polars"),            # Phase 3
@@ -91,3 +93,41 @@ def test_op_engine_baseline_declarations(kind, expected_engine):
     """Frozen baseline. Updates here are intentional; surprises are not."""
     op = OPS[kind]
     assert getattr(op, "NATIVE_ENGINE") == expected_engine
+
+
+def test_validator_rejects_bad_native_engine_declaration(monkeypatch):
+    """GraphConfigValidator must catch invalid NATIVE_ENGINE at graph-validation
+    time, not silently fall back to pandas at execution time.
+
+    Simulates the failure mode where a developer adds an op with a typo or
+    wrong value in its NATIVE_ENGINE constant. Previously the registry fell
+    back silently; now the validator raises NODE_BAD_NATIVE_ENGINE before
+    any op executes.
+    """
+    from decoy_engine.internal.validator import GraphConfigValidator, ValidationError
+    from decoy_engine.validation_result import CODES
+
+    # A minimal fake op with an invalid engine string.
+    bad_op = types.SimpleNamespace(
+        KIND="test_bad_engine_kind",
+        NATIVE_ENGINE="not_a_real_engine",
+        INPUT_ARITY=(0, None),
+        OUTPUT_KIND="stream",
+        validate_config=lambda cfg: None,
+    )
+    monkeypatch.setitem(OPS, "test_bad_engine_kind", bad_op)
+
+    config = {
+        "mode": "graph",
+        "nodes": [{"id": "n1", "kind": "test_bad_engine_kind", "config": {}}],
+        "edges": [],
+    }
+
+    validator = GraphConfigValidator()
+    with pytest.raises(ValidationError) as exc_info:
+        validator.validate(config)
+
+    err = exc_info.value
+    assert err.code == CODES.NODE_BAD_NATIVE_ENGINE
+    assert "not_a_real_engine" in str(err)
+    assert "test_bad_engine_kind" in str(err)

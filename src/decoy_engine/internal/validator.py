@@ -604,6 +604,7 @@ class GraphConfigValidator(ConfigValidator):
         self, nodes: List[Dict[str, Any]], kinds: Set[str]
     ) -> None:
         from decoy_engine.graph.ops import OPS
+        from decoy_engine.graph.conversion import VALID_ENGINES
         from decoy_engine.validation_result import CODES
 
         seen_ids: Set[str] = set()
@@ -634,6 +635,15 @@ class GraphConfigValidator(ConfigValidator):
                     f"unknown kind {kind!r} (supported: {sorted(kinds)})",
                     f"{path}.kind",
                     code=CODES.NODE_UNKNOWN_KIND,
+                )
+
+            declared_engine = getattr(OPS[kind], "NATIVE_ENGINE", None)
+            if declared_engine is not None and declared_engine not in VALID_ENGINES:
+                raise ValidationError(
+                    f"op {kind!r} declares invalid NATIVE_ENGINE {declared_engine!r}; "
+                    f"supported: {sorted(VALID_ENGINES)}",
+                    f"{path}.kind",
+                    code=CODES.NODE_BAD_NATIVE_ENGINE,
                 )
 
             name = node.get("name")
@@ -1008,7 +1018,7 @@ class GraphConfigValidator(ConfigValidator):
         from decoy_engine.graph.topo import upstream_subgraph
         from decoy_engine.validation_result import CODES
 
-        ref_re = _re.compile(r"\$\{nodes\.([a-zA-Z][\w]*)\.([a-zA-Z_][\w.]*)\}")
+        ref_re = _re.compile(r"\$\{nodes\.([a-zA-Z][\w]*)\.([a-zA-Z_][\w.]*)}")
         node_ids = {n["id"] for n in nodes if isinstance(n, dict) and "id" in n}
 
         def walk(value: Any) -> List[tuple[str, str]]:
