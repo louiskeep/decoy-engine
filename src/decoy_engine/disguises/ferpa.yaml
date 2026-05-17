@@ -30,6 +30,21 @@ triggers:
     - [person_name, us_date, email]
   min_score: 0.4
 
+# Strict-mode fail-safe contract (detection sprint, V1). 34 CFR §99.3
+# defines education-record PII as name, address, parent / family info,
+# personal identifiers, indirect identifiers (DOB, place of birth), and
+# any other information that alone or in combination is linked to a
+# specific student. The expected_fields below match the typical EdTech
+# student-record table.
+expected_fields:
+  - ssn
+  - [first_name, last_name, person_name]
+  - email
+  - us_phone
+  - [iso_date, us_date, eu_date]
+  - us_zip
+  - pan
+
 field_rules:
   - detectors: [ssn]
     mask: hash

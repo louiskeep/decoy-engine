@@ -38,6 +38,20 @@ triggers:
     - [person_name, email, us_date]
   min_score: 0.4
 
+# Strict-mode fail-safe contract (detection sprint, V1). SOX doesn't
+# enumerate PII categories; the expected_fields below cover the typical
+# insider-data table (executive identity + corporate contact + payroll
+# attributes). Fiscal dates are required because SOX Section 802's
+# document-retention rules attach to time-stamped financial records.
+expected_fields:
+  - [first_name, last_name, person_name]
+  - email
+  - ssn
+  - us_phone
+  - pan
+  - [iso_date, us_date, eu_date]
+  - us_zip
+
 field_rules:
   - detectors: [person_name]
     mask: faker

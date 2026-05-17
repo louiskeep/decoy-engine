@@ -27,6 +27,21 @@ triggers:
     - [iban, person_name, us_phone]
   min_score: 0.4
 
+# Strict-mode fail-safe contract (detection sprint, V1). The GLBA
+# Safeguards Rule (16 CFR Part 314) defines NPI as non-public financial
+# information a consumer provides to obtain a financial product or
+# service: SSN, account numbers, card numbers, plus the standard
+# identity + contact attributes the institution holds.
+expected_fields:
+  - ssn
+  - pan
+  - iban
+  - [first_name, last_name, person_name]
+  - email
+  - us_phone
+  - us_zip
+  - [iso_date, us_date, eu_date]
+
 field_rules:
   - detectors: [ssn]
     mask: hash

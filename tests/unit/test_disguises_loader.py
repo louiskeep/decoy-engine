@@ -57,6 +57,44 @@ class TestLoaderShipsBundles:
                         f"Disguise '{d.id}' references unknown detector '{det_id}'"
                     )
 
+    def test_every_disguise_has_expected_fields(self):
+        """Detection sprint (V1): the strict-mode fail-safe needs each
+        shipped Disguise to declare what it expects to see. An empty
+        expected_fields list means strict mode is a no-op for that
+        Disguise — fine for ad-hoc / custom bundles, never for the
+        built-ins.
+        """
+        for d in load_disguises():
+            assert d.expected_fields, (
+                f"Disguise '{d.id}' missing expected_fields; strict-mode "
+                f"preflight has nothing to check against"
+            )
+
+    def test_every_expected_field_references_known_detectors(self):
+        """Detection sprint (V1): same guard as field_rules, applied to
+        expected_fields (which can be nested any-of groups)."""
+        from decoy_engine.storm.detectors import REGISTERED_DETECTORS
+        known_ids = {fn.__name__.replace("detect_", "", 1) for fn in REGISTERED_DETECTORS}
+        for d in load_disguises():
+            for group in d.expected_field_groups():
+                for det_id in group:
+                    assert det_id in known_ids, (
+                        f"Disguise '{d.id}' expected_fields references "
+                        f"unknown detector '{det_id}'"
+                    )
+
+    def test_expected_field_groups_normalises_singletons(self):
+        """expected_field_groups() should turn 'email' into ['email']
+        and pass through ['first_name', 'last_name', 'person_name']."""
+        d = Disguise(
+            id="t", name="T", summary="t",
+            triggers=TriggerSpec(any_detectors=["email"]),
+            expected_fields=["email", ["first_name", "last_name", "person_name"]],
+            field_rules=[FieldRule(detectors=["email"], mask="faker", params={})],
+        )
+        groups = d.expected_field_groups()
+        assert groups == [["email"], ["first_name", "last_name", "person_name"]]
+
 
 class TestSchemaValidatesShape:
     def test_minimum_valid_disguise(self):

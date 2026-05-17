@@ -41,6 +41,22 @@ triggers:
     - [eu_date, person_name, us_zip]
   min_score: 0.4
 
+# Strict-mode fail-safe contract (detection sprint, V1). The Disguise apply
+# step refuses to run if any expected_field is unmatched in the scan's
+# detection + override set. GDPR Article 4(1) treats any direct or
+# indirect identifier of a natural person as personal data; the
+# expected_fields below cover the obvious direct identifiers a typical
+# EU dataset carries.
+expected_fields:
+  - [first_name, last_name, person_name]
+  - email
+  - us_phone
+  - iban
+  - ipv4
+  - us_zip
+  - [iso_date, us_date, eu_date]
+  - ssn
+
 field_rules:
   - detectors: [person_name]
     mask: faker

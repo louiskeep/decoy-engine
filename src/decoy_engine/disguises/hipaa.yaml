@@ -48,6 +48,34 @@ triggers:
     - [us_zip, mrn]
   min_score: 0.4
 
+# Strict-mode fail-safe contract (detection sprint, V1). The Disguise apply
+# step refuses to run if any expected_field is unmatched in the scan's
+# detection + override set. HIPAA Safe Harbor enumerates 18 identifier
+# categories; each row below corresponds to one (A–R per 45 CFR
+# 164.514(b)(2)). Strings are single detectors; nested lists are any-of
+# groups. Permissive mode bypasses with an audit trail.
+expected_fields:
+  - [first_name, last_name, person_name]   # A — Names
+  - us_zip                                  # B — Geographic
+  - [iso_date, us_date, eu_date]            # C — Dates (DOB + visit dates)
+  - us_phone                                # D — Telephone
+  - fax_number                              # E — Fax
+  - email                                   # F — Email
+  - ssn                                     # G — SSN
+  - mrn                                     # H — Medical Record Numbers
+  - health_plan_id                          # I — Health-plan beneficiary
+  - iban                                    # J — Account numbers (bank)
+  - license_num                             # K — Certificate / license
+  - vehicle_id                              # L — VIN / vehicle
+  - device_id                               # M — Device identifiers
+  - url                                     # N — URLs
+  - ipv4                                    # O — IP addresses
+  - biometric_id                            # P — Biometric
+  - address                                 # B (street; ZIP handled above)
+  # Clinical (beyond SH):
+  - icd10                                   # ICD-10-CM diagnosis codes
+  - npi                                     # National Provider Identifier
+
 field_rules:
   # A — Names
   - detectors: [person_name]

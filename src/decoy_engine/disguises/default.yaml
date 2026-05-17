@@ -14,6 +14,19 @@ triggers:
     - person_name
   min_score: 0.3
 
+# Strict-mode fail-safe contract (detection sprint, V1). The Disguise apply
+# step refuses to run if any expected_field is unmatched in the scan's
+# detection + override set. Strings are single detectors; nested lists are
+# any-of groups (e.g. any of the three date detectors satisfies the date
+# expectation). The user can switch to permissive mode to bypass with an
+# audit trail; the default is strict.
+expected_fields:
+  - email
+  - [first_name, last_name, person_name]
+  - us_phone
+  - us_zip
+  - [iso_date, us_date, eu_date]
+
 field_rules:
   - detectors: [email]
     mask: faker

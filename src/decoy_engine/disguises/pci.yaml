@@ -27,6 +27,22 @@ triggers:
     - [pan, us_phone, us_zip]
   min_score: 0.4
 
+# Strict-mode fail-safe contract (detection sprint, V1). The Disguise apply
+# step refuses to run if any expected_field is unmatched in the scan's
+# detection + override set. PCI DSS §3.4 is load-bearing: PAN must be
+# rendered unreadable, and CVV must be redacted entirely. Cardholder
+# identity fields ride along since masked PCI datasets are useless
+# without realistic cardholder shape.
+expected_fields:
+  - pan
+  - cvv
+  - iban
+  - [first_name, last_name, person_name]
+  - email
+  - us_phone
+  - us_zip
+  - [iso_date, us_date, eu_date]
+
 field_rules:
   - detectors: [pan]
     mask: hash

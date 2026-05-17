@@ -30,6 +30,21 @@ triggers:
     - [email, person_name, us_phone]
   min_score: 0.4
 
+# Strict-mode fail-safe contract (detection sprint, V1). CCPA §1798.140(v)
+# defines PI broadly; CPRA §1798.121 adds Sensitive PI (SSN, biometrics,
+# precise geolocation, payment cards). The expected_fields below cover
+# the obvious online + offline identifiers a US consumer-tech dataset
+# carries.
+expected_fields:
+  - [first_name, last_name, person_name]
+  - email
+  - us_phone
+  - ipv4
+  - ssn
+  - us_zip
+  - [iso_date, us_date, eu_date]
+  - pan
+
 field_rules:
   - detectors: [person_name]
     mask: faker
