@@ -253,6 +253,12 @@ class CODES:
     SOURCE_FILE_MISSING_FW_COLUMNS = "source_file.missing_fw_columns"
     SOURCE_FILE_CSV_PARAM_ON_NON_CSV = "source_file.csv_param_on_non_csv"
 
+    # R3.10 generation key policy. Platform-only preflight codes -- the
+    # engine doesn't know about admin settings, but the codes live in
+    # the shared registry so the wire format stays uniform.
+    GENERATION_KEY_REQUIRED = "generation.key_required"
+    GENERATION_RANDOM_NOT_ALLOWED = "generation.random_not_allowed"
+
     # Generic catch-all for validators that haven't been migrated yet.
     # New gates should add a specific code rather than reusing this.
     UNTAGGED = "untagged"

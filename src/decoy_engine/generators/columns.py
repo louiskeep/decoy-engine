@@ -17,6 +17,10 @@ from decoy_engine.internal.helpers import (
     get_faker_providers,
     make_faker,
 )
+from decoy_engine.generators.derivation import (
+    strategy_config_fingerprint,
+    synthetic_column_seed,
+)
 
 
 class ColumnGenerator:
@@ -79,44 +83,34 @@ class ColumnGenerator:
     ) -> int:
         """Per-column base seed used by every row-level seeding site.
 
-        Resolution order:
-          1. ``column_config["determinism"] == "fresh"`` — draw a NEW seed
-             from ``os.urandom`` per run. Same seed for every row in the
-             column (so within-run consistency holds — a formula referencing
-             this column sees a stable value), but different seed each run
-             so the column's output rolls. ROADMAP Item 7.
-          2. ``derive_key`` set — take the first 4 bytes of
-             ``derive_key("col:<name>")`` and decode as a 32-bit int. Same
-             key + same column always yields the same seed bytes, so faker /
-             random output is bitwise stable across runs.
-          3. Fallback — ``seed + md5(column_name)[:4]``. Stable per-column,
-             reproducible given the same instance seed, but not tied to any
-             tenant master key. Pre-Item-6 behavior.
+        R3.10 contract: the seed is derived from the resolved generation
+        key plus a canonical fingerprint of strategy/config, NOT the
+        display column name. Same key + same strategy/config produces
+        the same seed regardless of what the column is called or which
+        column it lives in.
 
-        We use md5 over the column name rather than Python's built-in
-        ``hash()`` because the latter is randomized per process unless
-        ``PYTHONHASHSEED`` is fixed — without that env var pinned, fresh
-        ``python`` invocations produce different per-column seeds and
-        generated CSVs drift run-to-run. md5 is a non-cryptographic choice
-        here (we're just seeding an RNG, not hashing for security), but it
-        gives us bytewise-stable output across processes/machines/Python
-        versions, which is what the determinism contract requires.
+        Direct-YAML pipelines that need the pre-R3.10 column-name path
+        can opt in by setting ``_legacy_column_name_seed: true`` on the
+        column config. The Web UI never sets this; it is compat-only
+        surface.
+
+        Honors ``determinism: fresh`` for the admin-allowed roll-per-run
+        path. Fresh is gated upstream by
+        ``allow_per_pipeline_random_generation``; the engine accepts
+        whatever the caller passed.
+
+        Falls through to a seed-based (key-less) path when no resolver
+        is configured. The fallback uses the fingerprint, not the
+        column name, so renames are stable in unkeyed runs too.
         """
-        if column_config is not None and column_config.get('determinism') == 'fresh':
-            return int.from_bytes(os.urandom(4), 'big', signed=False)
-        if self.derive_key is not None:
-            try:
-                key_bytes = self.derive_key(f"col:{column_name}")
-                return int.from_bytes(key_bytes[:4], "big", signed=False)
-            except Exception:
-                # Fall through to seed-based path on any resolver hiccup;
-                # better to produce *some* output than crash a generation run.
-                pass
-        name_hash = int.from_bytes(
-            hashlib.md5(column_name.encode('utf-8')).digest()[:4],
-            'big', signed=False,
+        cfg = column_config or {}
+        if column_name and 'name' not in cfg:
+            cfg = {**cfg, 'name': column_name}
+        return synthetic_column_seed(
+            derive_key=self.derive_key,
+            column_config=cfg,
+            fallback_seed=self.seed,
         )
-        return (self.seed + name_hash) & 0x7FFFFFFF
     
     def generate_column(self, num_rows: int, column_config: Dict[str, Any], 
                     table_name: str, reference_data: Dict[str, pd.DataFrame]) -> pd.Series:
