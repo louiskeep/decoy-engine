@@ -92,16 +92,16 @@ field_rules:
     why: "Direct identifier — phone numbers per Art. 4(1)."
 
   - detectors: [iban]
-    mask: hash
+    mask: fpe
     params:
-      truncate: 24
-    why: "Bank account number → keyed hash. Joins survive masking; no clear-text IBAN persists. Recital 26 anonymisation is unreachable while the controller holds the key, so this is pseudonymisation under Art. 4(5)."
+      charset: ALPHANUM
+    why: "Bank account number → format-preserving alphanumeric. Joins survive via instance-key determinism. Pseudonymisation under Art. 4(5); the controller can still link via the key."
 
   - detectors: [ipv4]
-    mask: hash
+    mask: faker
     params:
-      truncate: 16
-    why: "IP address → keyed hash. CJEU Breyer (C-582/14) confirms IPs are personal data under GDPR; hashing pseudonymises while preserving session-grouping joins."
+      faker_type: ipv4
+    why: "IP address → realistic fake IPv4. CJEU Breyer (C-582/14) confirms IPs are personal data under GDPR; deterministic faker pseudonymises while preserving session-grouping joins."
 
   - detectors: [us_zip]
     mask: truncate
@@ -116,5 +116,7 @@ field_rules:
     why: "Quasi-identifier — date jitter breaks exact-time correlation across linked datasets. ±30d preserves seasonality and aging analytics."
 
   - detectors: [ssn]
-    mask: hash
-    why: "Even in EU contexts, US SSN-shaped fields are direct identifiers — hash with the master key so any cross-Atlantic FK joins survive."
+    mask: fpe
+    params:
+      charset: digits
+    why: "Even in EU contexts, US SSN-shaped fields are direct identifiers — format-preserving so cross-Atlantic FK joins survive without losing the 9-digit shape."

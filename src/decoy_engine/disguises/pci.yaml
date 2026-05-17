@@ -45,10 +45,11 @@ expected_fields:
 
 field_rules:
   - detectors: [pan]
-    mask: hash
+    mask: fpe
     params:
-      truncate: 16
-    why: "PAN → keyed HMAC-SHA256 truncated to 16 chars to fit legacy CHAR(16)/CHAR(20) PAN columns. PCI DSS §3.4 — 'render PAN unreadable.' Same input → same hash everywhere on the instance, so token-style joins on PAN survive masking."
+      charset: digits
+      validate_luhn: true
+    why: "PAN → format-preserving digits with valid Luhn check digit. PCI DSS §3.4 'render PAN unreadable' — same length, still passes card validation, joins survive via instance-key determinism."
 
   - detectors: [cvv]
     mask: redact
@@ -57,10 +58,10 @@ field_rules:
     why: "CVV / CVC → fixed redaction. PCI DSS §3.2 explicitly forbids storage of card-verification codes after authorization; redaction kills the value."
 
   - detectors: [iban]
-    mask: hash
+    mask: fpe
     params:
-      truncate: 24
-    why: "IBAN → keyed hash truncated to fit column width. Bank-account joins survive masking; no clear-text IBAN persists."
+      charset: ALPHANUM
+    why: "IBAN → format-preserving alphanumeric. Bank-account joins survive via instance-key determinism; no clear-text IBAN persists."
 
   - detectors: [first_name]
     mask: faker

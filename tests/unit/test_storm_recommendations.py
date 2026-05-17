@@ -69,7 +69,9 @@ class TestStrategyLookup:
         assert result is not None
         strategy, params = result
         assert strategy == "fpe"
-        assert params == {"alphabet": "digits", "length": 9}
+        # FPE in the engine takes `charset` (not "alphabet") and
+        # preserves length naturally — there's no "length" param.
+        assert params == {"charset": "digits"}
 
     def test_unknown_detector_returns_none(self):
         # Custom detectors and typos should both return None.
@@ -95,11 +97,14 @@ class TestRedactDefaults:
         assert strategy == "redact", (
             f"{detector_id} should redact in V1 (semantic FPE is V2)"
         )
-        # The CVV entry uses "XXX"; the rest use "REDACTED". Both are valid
-        # "obviously redacted" strings — assert it's at least one of those.
-        assert params.get("value") in {"REDACTED", "XXX"}, (
-            f"{detector_id} redact value should be 'REDACTED' or 'XXX', "
-            f"got {params.get('value')!r}"
+        # The CVV entry uses "XXX"; the rest use "REDACTED". Both are
+        # valid "obviously redacted" strings — assert it's at least one
+        # of those. The engine's redact strategy keys this as
+        # `redact_with` (not `value`), so the param assertion matches
+        # what the strategy class actually reads.
+        assert params.get("redact_with") in {"REDACTED", "XXX"}, (
+            f"{detector_id} redact_with should be 'REDACTED' or 'XXX', "
+            f"got {params.get('redact_with')!r}"
         )
 
 

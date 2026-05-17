@@ -12,6 +12,15 @@ fallback ranked list is folded into the chooser as ``alternatives()``
 so the UI can still show "what else could you pick" without a second
 dict to maintain. No imports of the actual strategy classes — FORECAST
 is a pure function over names.
+
+Detection sprint (V1): when a detector_id has no shape-aware chooser
+defined here, ``best_transform_for`` falls back to
+``DEFAULT_STRATEGY_BY_DETECTOR`` from ``decoy_engine.storm.recommendations``
+so newer detectors (first_name, last_name, address, pan, iban, npi,
+mrn, etc.) get sensible defaults without forcing every contributor to
+add a chooser. Shape-aware choosers stay only where column shape
+actually changes the right answer (date jitter scales with span,
+phone locale flips with format_pattern, etc.).
 """
 
 from __future__ import annotations
@@ -19,6 +28,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from decoy_engine.storm.types import FieldStats
+from decoy_engine.storm.recommendations import get_default_strategy
 
 
 # (mask_id, params, one-line why)
@@ -86,30 +96,29 @@ def _faker_locale_for_format(f: FieldStats | None) -> dict[str, Any]:
 # ── per-detector choosers ────────────────────────────────────────────
 
 def _email_chooser(f: FieldStats | None) -> TransformChoice:
-    if _is_high_cardinality(f):
-        return (
-            "hash",
-            {"algorithm": "sha256", "truncate": _hash_truncate_for_alphabet(f, 16)},
-            "Email looks like a unique identifier; hash so joins survive.",
-        )
+    # Detection sprint (V1): faker.email is deterministic when seeded by
+    # row, so high-cardinality (unique) email columns no longer need to
+    # fall back to hash to preserve joins. Hashing destroys the @ shape
+    # and downstream email-format validators reject the output; faker
+    # preserves the local@domain.tld pattern and is enough for V1.
+    _ = f  # kept for signature symmetry with shape-aware choosers
     return (
         "faker",
         {"faker_type": "email"},
-        "Replace with a deterministic fake email.",
+        "Replace with a realistic fake email; deterministic so joins survive.",
     )
 
 
 def _ssn_chooser(f: FieldStats | None) -> TransformChoice:
-    if _is_high_cardinality(f):
-        return (
-            "hash",
-            {"algorithm": "sha256", "truncate": _hash_truncate_for_alphabet(f, 12)},
-            "SSN-shaped identifier; hash preserves uniqueness for joins, not reversible.",
-        )
+    # Detection sprint (V1): FPE preserves the 9-digit shape AND is
+    # deterministic by instance key, so high-cardinality SSN columns
+    # join cleanly without sacrificing format. Hash was the pre-FPE
+    # answer to "joins survive"; FPE solves both problems at once.
+    _ = f
     return (
-        "faker",
-        {"faker_type": "ssn"},
-        "Replace with a fake SSN-formatted value.",
+        "fpe",
+        {"charset": "digits"},
+        "Replace with a format-preserving SSN; deterministic so joins survive, shape stays 9 digits.",
     )
 
 
@@ -136,16 +145,33 @@ def _zip_chooser(f: FieldStats | None) -> TransformChoice:
 
 
 def _person_name_chooser(f: FieldStats | None) -> TransformChoice:
-    if _is_high_cardinality(f):
-        return (
-            "hash",
-            {"algorithm": "sha256", "truncate": _hash_truncate_for_alphabet(f, 12)},
-            "Name column behaves like a join key; hash to preserve uniqueness.",
-        )
+    # Detection sprint (V1): faker.name with row-based seeding is
+    # deterministic AND gives effectively unique output at any
+    # practical row count. Hash on a name column drops the spaces +
+    # capitalization signal users expect to see, which hurts QA.
+    _ = f
     return (
         "faker",
         {"faker_type": "name"},
-        "Replace with a realistic fake name.",
+        "Replace with a realistic fake name; deterministic so joins survive.",
+    )
+
+
+def _first_name_chooser(f: FieldStats | None) -> TransformChoice:
+    _ = f
+    return (
+        "faker",
+        {"faker_type": "first_name"},
+        "Replace with a realistic fake first name.",
+    )
+
+
+def _last_name_chooser(f: FieldStats | None) -> TransformChoice:
+    _ = f
+    return (
+        "faker",
+        {"faker_type": "last_name"},
+        "Replace with a realistic fake last name.",
     )
 
 
@@ -182,9 +208,34 @@ DETECTOR_TO_CHOOSER: dict[str, Chooser] = {
     "us_phone": _phone_chooser,
     "us_zip": _zip_chooser,
     "person_name": _person_name_chooser,
+    "first_name": _first_name_chooser,
+    "last_name": _last_name_chooser,
     "iso_date": _date_chooser,
     "us_date": _date_chooser,
     "eu_date": _date_chooser,
+}
+
+
+# Detection sprint (V1) — short "why" strings keyed by detector_id, used
+# when the recommendation comes from the smart-default fallback instead
+# of a shape-aware chooser. Keeps the per-field plan's Why column
+# helpful without duplicating the table from the override surface.
+_FALLBACK_WHY: dict[str, str] = {
+    "fax_number":     "Fax number — replace with a realistic fake.",
+    "address":        "Street address — replace with a realistic fake address.",
+    "ipv4":           "IP address — replace with a realistic fake IPv4.",
+    "mrn":            "Medical record number — format-preserving so joins survive.",
+    "npi":            "National Provider Identifier — 10-digit format-preserving.",
+    "pan":            "Credit card PAN — format-preserving with Luhn-valid output.",
+    "cvv":            "CVV — redacted (PCI DSS §3.2 forbids storage post-auth).",
+    "iban":           "IBAN — format-preserving, country prefix kept.",
+    "vehicle_id":     "VIN / vehicle identifier — 17-char format-preserving.",
+    "icd10":          "ICD-10 code — redacted in V1 (semantic FPE is V2).",
+    "url":            "URL — redacted in V1 (structural FPE is V2).",
+    "license_num":    "License / certificate — redacted (format varies too widely).",
+    "health_plan_id": "Health-plan beneficiary ID — redacted (format varies).",
+    "device_id":      "Device identifier — redacted (format varies).",
+    "biometric_id":   "Biometric identifier — redacted (always sensitive).",
 }
 
 
@@ -194,9 +245,21 @@ def best_transform_for(
 ) -> TransformChoice | None:
     """Return the top-ranked transform for a detector + field.
 
+    Resolution order:
+      1. Shape-aware chooser in ``DETECTOR_TO_CHOOSER``, when present.
+      2. ``DEFAULT_STRATEGY_BY_DETECTOR`` from the V1 recommendations
+         table, for detectors that have no shape-aware chooser yet.
+      3. ``None`` when the detector_id is unknown to both layers.
+
     ``field`` is optional — callers without a FieldStats get the
-    chooser's no-field default. Returns ``None`` for unknown detector
-    ids so the recommender skips quietly.
+    chooser's no-field default.
     """
     chooser = DETECTOR_TO_CHOOSER.get(detector_id)
-    return chooser(field) if chooser is not None else None
+    if chooser is not None:
+        return chooser(field)
+    default = get_default_strategy(detector_id)
+    if default is None:
+        return None
+    strategy, params = default
+    why = _FALLBACK_WHY.get(detector_id, f"V1 default mask for {detector_id}.")
+    return strategy, dict(params), why

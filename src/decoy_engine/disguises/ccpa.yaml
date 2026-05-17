@@ -77,14 +77,16 @@ field_rules:
     why: "Direct contact identifier — CCPA §1798.140(v)(1)(A). Realistic fake preserves format and country-code structure."
 
   - detectors: [ipv4]
-    mask: hash
+    mask: faker
     params:
-      truncate: 15
-    why: "IP address is an 'online identifier' per CCPA §1798.140(v)(1)(A) and falls under CPRA's Sensitive PI tier. Keyed hash renders it unreadable; truncation fits standard IP-field widths."
+      faker_type: ipv4
+    why: "IP address is an 'online identifier' per CCPA §1798.140(v)(1)(A) and falls under CPRA's Sensitive PI tier. Realistic fake IPv4; deterministic session joins survive."
 
   - detectors: [ssn]
-    mask: hash
-    why: "SSN is Sensitive Personal Information under CPRA §1798.121 — requires opt-in consent for collection and elevated storage controls. Hash with master key."
+    mask: fpe
+    params:
+      charset: digits
+    why: "SSN is Sensitive Personal Information under CPRA §1798.121. Format-preserving digits keep the 9-digit shape; deterministic so identity joins survive."
 
   - detectors: [us_zip]
     mask: truncate
@@ -99,7 +101,8 @@ field_rules:
     why: "Consumer event dates (signup, last_active, purchase_date) — ±30d jitter severs the timestamp fingerprint that can re-identify users across de-identified datasets."
 
   - detectors: [pan]
-    mask: hash
+    mask: fpe
     params:
-      truncate: 16
-    why: "Payment card number stored in consumer records — Sensitive PI under CPRA. Keyed hash; consistent across runs so order/payment FK joins survive masking."
+      charset: digits
+      validate_luhn: true
+    why: "Payment card number stored in consumer records — Sensitive PI under CPRA. Format-preserving 16-digit + valid Luhn; FK joins survive via determinism."

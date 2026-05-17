@@ -44,20 +44,23 @@ expected_fields:
 
 field_rules:
   - detectors: [ssn]
-    mask: hash
-    why: "SSN is the primary NPI identifier under GLBA — HMAC-SHA256 hash preserves uniqueness across joins while rendering the value unreadable. Cross-run FK integrity survives."
+    mask: fpe
+    params:
+      charset: digits
+    why: "SSN is the primary NPI identifier under GLBA. Format-preserving digits keep the 9-digit shape; deterministic so FK joins survive."
 
   - detectors: [pan]
-    mask: hash
+    mask: fpe
     params:
-      truncate: 16
-    why: "PAN → keyed hash truncated to 16 chars. GLBA-covered financial accounts include credit/debit card numbers; same strategy as the PCI Disguise for consistency."
+      charset: digits
+      validate_luhn: true
+    why: "PAN → format-preserving 16-digit + valid Luhn. Same strategy as the PCI Disguise; FK joins survive via determinism."
 
   - detectors: [iban]
-    mask: hash
+    mask: fpe
     params:
-      truncate: 24
-    why: "Bank account number → keyed hash. Account-level joins survive masking; no cleartext account number persists in any test or dev environment."
+      charset: ALPHANUM
+    why: "Bank account number → format-preserving alphanumeric. Account-level joins survive; no cleartext account number persists."
 
   - detectors: [first_name]
     mask: faker

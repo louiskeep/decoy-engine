@@ -78,8 +78,10 @@ field_rules:
     why: "Corporate email routes back to an individual and appears in compensation and option-grant tables. Fake but structurally valid so mail-routing tests pass."
 
   - detectors: [ssn]
-    mask: hash
-    why: "Executive SSNs appear in payroll and tax tables that feed the audit pipeline. Keyed hash preserves FK joins across payroll ↔ benefit ↔ grant tables."
+    mask: fpe
+    params:
+      charset: digits
+    why: "Executive SSNs appear in payroll and tax tables that feed the audit pipeline. Format-preserving digits keep the 9-digit shape; FK joins across payroll ↔ benefit ↔ grant tables survive."
 
   - detectors: [us_phone]
     mask: faker
@@ -88,10 +90,11 @@ field_rules:
     why: "Direct contact identifier for executives in HR and payroll records — realistic fake."
 
   - detectors: [pan]
-    mask: hash
+    mask: fpe
     params:
-      truncate: 16
-    why: "Corporate card PANs appear in expense-reimbursement tables that land in audit trails. Keyed hash — consistent across runs so the masked dataset can replay expense reconciliation tests."
+      charset: digits
+      validate_luhn: true
+    why: "Corporate card PANs appear in expense-reimbursement tables. Format-preserving 16-digit + valid Luhn so masked data can replay expense reconciliation tests."
 
   - detectors: [iso_date, us_date, eu_date]
     mask: date_shift

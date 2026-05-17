@@ -132,61 +132,59 @@ field_rules:
       faker_type: email
     why: "Safe Harbor §F — email → realistic fake."
 
-  # G — Social Security Numbers
+  # G — Social Security Numbers — FPE keeps the 9-digit + dash shape;
+  # determinism is provided by the instance master key so FK joins
+  # survive masking. (Pre-V1 hashed; FPE strictly upgrades both shape
+  # and join behavior.)
   - detectors: [ssn]
-    mask: hash
+    mask: fpe
     params:
-      algorithm: sha256
-    why: "Safe Harbor §G — SSN → irreversible hash. Preserves uniqueness for FK joins."
+      charset: digits
+    why: "Safe Harbor §G — SSN → format-preserving digits; deterministic so FK joins survive."
 
   # H — Medical record numbers
   - detectors: [mrn]
-    mask: hash
+    mask: fpe
     params:
-      algorithm: sha256
-      truncate: 12
-    why: "Safe Harbor §H — medical record numbers → deterministic 12-char hash (FK-stable)."
+      charset: alphanum
+    why: "Safe Harbor §H — medical record numbers → format-preserving alphanumeric; joins survive."
 
-  # I — Health-plan beneficiary numbers
+  # I — Health-plan beneficiary numbers (no universal format — redact)
   - detectors: [health_plan_id]
-    mask: hash
+    mask: redact
     params:
-      algorithm: sha256
-      truncate: 12
-    why: "Safe Harbor §I — health-plan beneficiary / member IDs → deterministic hash."
+      redact_with: "[REDACTED]"
+    why: "Safe Harbor §I — health-plan IDs vary too widely for FPE in V1; redacted."
 
   # J — Account numbers (IBAN covers bank accounts; general account columns
   #     are caught by health_plan_id / license_num name-hint rules when named
   #     accordingly, e.g. account_id, account_num)
   - detectors: [iban]
-    mask: hash
+    mask: fpe
     params:
-      algorithm: sha256
-    why: "Safe Harbor §J — IBAN / bank account numbers → irreversible hash."
+      charset: ALPHANUM
+    why: "Safe Harbor §J — IBAN → format-preserving alphanumeric; joins survive."
 
-  # K — Certificate and license numbers
+  # K — Certificate and license numbers (no universal format — redact)
   - detectors: [license_num]
-    mask: hash
+    mask: redact
     params:
-      algorithm: sha256
-      truncate: 12
-    why: "Safe Harbor §K — license/certificate numbers → deterministic hash."
+      redact_with: "[REDACTED]"
+    why: "Safe Harbor §K — license/certificate formats vary too widely for FPE in V1."
 
   # L — Vehicle identifiers and serial numbers (VINs)
   - detectors: [vehicle_id]
-    mask: hash
+    mask: fpe
     params:
-      algorithm: sha256
-      truncate: 17
-    why: "Safe Harbor §L — VINs and vehicle identifiers → deterministic hash (length matches VIN)."
+      charset: ALPHANUM
+    why: "Safe Harbor §L — VINs → format-preserving 17-char alphanumeric; joins survive."
 
-  # M — Device identifiers and serial numbers
+  # M — Device identifiers and serial numbers (no universal format — redact)
   - detectors: [device_id]
-    mask: hash
+    mask: redact
     params:
-      algorithm: sha256
-      truncate: 12
-    why: "Safe Harbor §M — device/implant identifiers → deterministic hash."
+      redact_with: "[REDACTED]"
+    why: "Safe Harbor §M — device identifier formats vary too widely for FPE in V1."
 
   # N — Web Universal Resource Locators (URLs)
   - detectors: [url]
@@ -216,10 +214,9 @@ field_rules:
       length: 3
     why: "ICD-10-CM codes → 3-char category truncation (e.g. 'S72.001A' → 'S72'). Preserves analytic cohort grouping while removing subcategory specificity per Safe Harbor §C guidance on clinical dates."
 
-  # Clinical: National Provider Identifiers → FK-stable hash
+  # Clinical: National Provider Identifiers → format-preserving 10-digit
   - detectors: [npi]
-    mask: hash
+    mask: fpe
     params:
-      algorithm: sha256
-      truncate: 10
-    why: "National Provider Identifiers → 10-char deterministic hash. Provider-level analytics survive; individual provider identity does not."
+      charset: digits
+    why: "National Provider Identifiers → format-preserving 10-digit; deterministic so provider-level joins survive."

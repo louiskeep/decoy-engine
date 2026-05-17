@@ -47,8 +47,10 @@ expected_fields:
 
 field_rules:
   - detectors: [ssn]
-    mask: hash
-    why: "SSN is the most sensitive FERPA identifier — historically used as student ID in legacy systems. Hash with master key; unique across all runs on the instance."
+    mask: fpe
+    params:
+      charset: digits
+    why: "SSN is the most sensitive FERPA identifier — historically used as student ID in legacy systems. Format-preserving so legacy-PK joins survive while the original SSN is unreadable."
 
   - detectors: [first_name]
     mask: faker
@@ -93,7 +95,8 @@ field_rules:
     why: "Student address ZIP — quasi-identifier. Combined with DOB and enrollment year it can be uniquely identifying in small rural populations; ZIP-3 generalisation reduces that risk."
 
   - detectors: [pan]
-    mask: hash
+    mask: fpe
     params:
-      truncate: 16
-    why: "Payment cards appear in student-payment and financial-aid tables. Keyed hash — consistent FK joins, no cleartext PAN in dev or test environments."
+      charset: digits
+      validate_luhn: true
+    why: "Payment cards appear in student-payment and financial-aid tables. Format-preserving 16-digit + valid Luhn; FK joins survive via determinism."
