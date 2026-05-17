@@ -46,7 +46,7 @@ jobs:
       # Pull the PR's code into the runner. fetch-depth=1 is the default
       # (no full history needed for a benchmark).
       - name: Check out
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # Pin Python explicitly. The benchmark is sensitive to the Python
       # version (string-handling path differs between 3.10 and 3.11+,
