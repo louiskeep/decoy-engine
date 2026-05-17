@@ -62,11 +62,23 @@ field_rules:
       truncate: 24
     why: "IBAN → keyed hash truncated to fit column width. Bank-account joins survive masking; no clear-text IBAN persists."
 
+  - detectors: [first_name]
+    mask: faker
+    params:
+      faker_type: first_name
+    why: "Cardholder first names → realistic fake first name. Keeps datasets readable for QA without leaking identity."
+
+  - detectors: [last_name]
+    mask: faker
+    params:
+      faker_type: last_name
+    why: "Cardholder last names → realistic fake last name."
+
   - detectors: [person_name]
     mask: faker
     params:
       faker_type: name
-    why: "Cardholder names → realistic fake substitutes. Keeps datasets readable for QA without leaking identity."
+    why: "Cardholder full names → realistic fake substitutes."
 
   - detectors: [email]
     mask: faker

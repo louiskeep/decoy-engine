@@ -46,11 +46,23 @@ expected_fields:
   - pan
 
 field_rules:
+  - detectors: [first_name]
+    mask: faker
+    params:
+      faker_type: first_name
+    why: "Direct identifier under CCPA §1798.140(v). Realistic fake first name."
+
+  - detectors: [last_name]
+    mask: faker
+    params:
+      faker_type: last_name
+    why: "Direct identifier under CCPA §1798.140(v). Realistic fake last name."
+
   - detectors: [person_name]
     mask: faker
     params:
       faker_type: name
-    why: "Direct identifier under CCPA §1798.140(v). Realistic substitution; masked output looks like real user data so QA stays valid."
+    why: "Direct identifier under CCPA §1798.140(v). Realistic full-name substitution; masked output looks like real user data so QA stays valid."
 
   - detectors: [email]
     mask: faker

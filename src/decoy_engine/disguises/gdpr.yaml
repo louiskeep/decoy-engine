@@ -58,12 +58,26 @@ expected_fields:
   - ssn
 
 field_rules:
+  - detectors: [first_name]
+    mask: faker
+    params:
+      faker_type: first_name
+      locale: en_GB
+    why: "Direct identifier (Art. 4(1)). Realistic fake first names; locale defaults to en_GB so masked output looks at-home in the most common EU/UK dataset shape (override per-pipeline as needed)."
+
+  - detectors: [last_name]
+    mask: faker
+    params:
+      faker_type: last_name
+      locale: en_GB
+    why: "Direct identifier (Art. 4(1)). Realistic fake last names; en_GB locale."
+
   - detectors: [person_name]
     mask: faker
     params:
       faker_type: name
       locale: en_GB
-    why: "Direct identifier (Art. 4(1)). Realistic fake names; locale defaults to en_GB so masked output looks at-home in the most common EU/UK dataset shape (override per-pipeline as needed)."
+    why: "Direct identifier (Art. 4(1)). Realistic fake full names; en_GB locale."
 
   - detectors: [email]
     mask: faker

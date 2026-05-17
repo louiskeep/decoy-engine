@@ -77,12 +77,25 @@ expected_fields:
   - npi                                     # National Provider Identifier
 
 field_rules:
-  # A — Names
+  # A — Names (split per-detector so first_name and last_name columns
+  # get the matching Faker provider instead of the catch-all faker.name).
+  - detectors: [first_name]
+    mask: faker
+    params:
+      faker_type: first_name
+    why: "Safe Harbor §A — first names → realistic fake first name."
+
+  - detectors: [last_name]
+    mask: faker
+    params:
+      faker_type: last_name
+    why: "Safe Harbor §A — last names → realistic fake last name."
+
   - detectors: [person_name]
     mask: faker
     params:
       faker_type: name
-    why: "Safe Harbor §A — names → realistic fake substitutes."
+    why: "Safe Harbor §A — full names → realistic fake name."
 
   # B — Geographic data (ZIP → 3-digit prefix)
   - detectors: [us_zip]

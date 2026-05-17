@@ -59,11 +59,23 @@ field_rules:
       truncate: 24
     why: "Bank account number → keyed hash. Account-level joins survive masking; no cleartext account number persists in any test or dev environment."
 
+  - detectors: [first_name]
+    mask: faker
+    params:
+      faker_type: first_name
+    why: "Consumer first names — NPI per GLBA §6809(4)(A)."
+
+  - detectors: [last_name]
+    mask: faker
+    params:
+      faker_type: last_name
+    why: "Consumer last names — NPI per GLBA §6809(4)(A)."
+
   - detectors: [person_name]
     mask: faker
     params:
       faker_type: name
-    why: "Consumer names are NPI per GLBA §6809(4)(A) — replaced with realistic fake values so QA datasets remain usable."
+    why: "Consumer full names — NPI per GLBA §6809(4)(A). Replaced with realistic fake values so QA datasets remain usable."
 
   - detectors: [email]
     mask: faker

@@ -53,11 +53,23 @@ expected_fields:
   - us_zip
 
 field_rules:
+  - detectors: [first_name]
+    mask: faker
+    params:
+      faker_type: first_name
+    why: "Executive first names — SOX-relevant identifier."
+
+  - detectors: [last_name]
+    mask: faker
+    params:
+      faker_type: last_name
+    why: "Executive last names — SOX-relevant identifier."
+
   - detectors: [person_name]
     mask: faker
     params:
       faker_type: name
-    why: "Executive and insider names are the primary SOX-relevant identifiers — disclosed in proxy statements but sensitive in staging/dev databases where they appear alongside MNPI. Realistic fake preserves record shape."
+    why: "Executive and insider full names are the primary SOX-relevant identifiers — disclosed in proxy statements but sensitive in staging/dev databases where they appear alongside MNPI. Realistic fake preserves record shape."
 
   - detectors: [email]
     mask: faker

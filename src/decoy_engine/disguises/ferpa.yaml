@@ -50,11 +50,23 @@ field_rules:
     mask: hash
     why: "SSN is the most sensitive FERPA identifier — historically used as student ID in legacy systems. Hash with master key; unique across all runs on the instance."
 
+  - detectors: [first_name]
+    mask: faker
+    params:
+      faker_type: first_name
+    why: "Student first names — FERPA direct identifier per 34 CFR §99.3."
+
+  - detectors: [last_name]
+    mask: faker
+    params:
+      faker_type: last_name
+    why: "Student last names — FERPA direct identifier per 34 CFR §99.3."
+
   - detectors: [person_name]
     mask: faker
     params:
       faker_type: name
-    why: "Student name is the primary FERPA direct identifier per 34 CFR §99.3. Realistic substitution preserves dataset density for QA and analytics."
+    why: "Student full names — FERPA direct identifier per 34 CFR §99.3. Realistic substitution preserves dataset density for QA and analytics."
 
   - detectors: [email]
     mask: faker
