@@ -3,12 +3,13 @@
 These are the only symbols `decoy_engine.graph` exposes to callers -- see
 `graph/__init__.py`. The contract is documented in PIPELINE_GRAPH_GUIDE.md.
 
-Runtime cache: as of Phase 1 of the polars-duckdb hybrid plan, the runner
-caches `pyarrow.Table` between ops and materializes to each op's
-`NATIVE_ENGINE` at apply-time. With every op currently declaring
-`NATIVE_ENGINE = "pandas"`, behavior is unchanged from the pure-pandas
-runner; the substrate is just future-proof. Phases 3 + 4 flip individual ops
-to polars / duckdb.
+Runtime cache: the runner caches `pyarrow.Table` between ops and materializes
+to each op's declared `NATIVE_ENGINE` at apply-time. File and cloud source/
+target ops declare `NATIVE_ENGINE = "duckdb"`. Transform ops such as `mask`
+and `generate` declare `NATIVE_ENGINE = "pandas"` because their strategies
+use per-row Python callbacks. When the graph-level `engine:` key is set to
+`"pandas"`, all ops are forced to pandas regardless of their declaration.
+The default `engine: "hybrid"` respects each op's own declaration.
 
 Eviction: cache entries are evicted as soon as their last downstream
 consumer reads them. Keeps peak memory bounded by the in-flight working set
@@ -836,7 +837,7 @@ def _jsonable(v: Any) -> Any:
 # scopes (var/env/trigger/storm/iteration) are resolved platform-side before
 # the YAML reaches the engine. This scope must be resolved live because the
 # values come from already-completed upstream ops.
-_NODE_TOKEN_RE = re.compile(r"\$\{nodes\.([a-zA-Z0-9_-]+)\.([a-zA-Z_][\w.]*)\}")
+_NODE_TOKEN_RE = re.compile(r"\$\{nodes\.([a-zA-Z0-9_-]+)\.([a-zA-Z_][\w.]*)}")
 
 
 class _NodeExportResolutionError(Exception):
