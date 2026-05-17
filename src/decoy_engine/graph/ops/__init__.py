@@ -42,7 +42,6 @@ from decoy_engine.graph.ops import (
 OPS: dict[str, object] = {
     "source.db": source_db,
     "source.file": source_file,
-    # Item 63: cloud-storage source ops (Sprint G).
     "source.s3": source_s3,
     "source.gcs": source_gcs,
     "source.sftp": source_sftp,
@@ -59,23 +58,16 @@ OPS: dict[str, object] = {
     "generate": generate_op,
     "target.file": target_file,
     "target.db": target_db,
-    # Item 63: cloud-storage target ops (Sprint G).
     "target.s3": target_s3,
     "target.gcs": target_gcs,
     "target.sftp": target_sftp,
-    # Sprint G Week 4: sub-pipelines + iterators (FILE, FIXED, LOOP).
     "sub_pipeline": sub_pipeline,
     "iterate_fixed": iterate_fixed,
     "iterate_loop": iterate_loop,
     "iterate_files": iterate_files,
-    # Sprint G Week 5: DuckDB-on-DataFrame SQL escape hatch.
     "sql_run": sql_run,
-    # Item 21: IF/FLAG/Reviews.
     "if": if_router,
     "flag_gate": flag_gate,
-    # Items 57 + 66(b): explicit in-pipeline format re-encode (CSV / TSV /
-    # Parquet / JSON Lines). Sits between source.file and target.file as
-    # the "intentional conversion" tile under Transforms.
     "convert.file_type": convert_file_type,
 }
 

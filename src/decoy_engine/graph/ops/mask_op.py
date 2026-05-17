@@ -20,15 +20,13 @@ from decoy_engine.internal.validator import ValidationError
 
 KIND = "mask"
 # Mask transforms are per-row Python (Faker, scipy, custom callbacks) — kept
-# on pandas by design per the polars-duckdb hybrid plan. The runner converts
-# Arrow → pandas at this op's boundary.
+# on pandas by design. The runner converts Arrow → pandas at this op's boundary.
 NATIVE_ENGINE = "pandas"
 INPUT_ARITY: tuple[int, int | None] = (1, 1)
 OUTPUT_KIND = "stream"
 
-# Mirror MaskerConfigValidator.SUPPORTED_MASKING_STRATEGIES — the graph-mode
-# allowlist has to track the legacy validator's whenever transforms ship.
-# Sprint A added truncate/bucketize/reference; Sprint B added fpe.
+# Mirror MaskerConfigValidator.SUPPORTED_MASKING_STRATEGIES -- the graph-mode
+# allowlist must track the legacy validator's list when new transforms ship.
 _VALID_STRATEGIES = {
     "faker", "hash", "redact", "map", "shuffle",
     "passthrough", "date_shift", "formula",
@@ -64,10 +62,9 @@ def validate_config(config: dict[str, Any]) -> None:
                 f"config.columns.{col_name}.strategy",
                 code=CODES.MASK_UNKNOWN_STRATEGY,
             )
-        # R2.2: strategy-specific required-field gates. The legacy
-        # MaskerConfigValidator already raises on these at runtime;
-        # move the check to validate-time so the UI sees the failure
-        # at the right column key rather than as a runtime exception.
+        # Strategy-specific required-field gates: move the check to
+        # validate-time so the UI sees the failure at the right column key
+        # rather than as a runtime exception.
         if strategy == "formula" and not (spec.get("formula") or "").strip():
             raise ValidationError(
                 f"column {col_name!r} uses strategy 'formula' but no "

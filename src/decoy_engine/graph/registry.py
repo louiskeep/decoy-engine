@@ -4,15 +4,16 @@ Maps an op `kind` to the engine it wants to run on. The runner reads this
 to materialize the cached `pyarrow.Table` into the right type before
 calling `apply()`.
 
-Defaults to "pandas" for any op that hasn't declared `NATIVE_ENGINE`,
-preserving today's behavior. Phases 3 + 4 of the polars-duckdb hybrid plan
-flip individual ops to "polars" / "duckdb" by adding the declaration to
-the op module.
+Ops declare their preferred substrate via a module-level `NATIVE_ENGINE`
+constant. File and cloud source/target ops use "duckdb"; transform ops
+(mask, generate, sort, dedupe, derive, filter, unite) use "pandas" because
+their strategies rely on per-row Python callbacks. Ops without a declaration
+fall back to "pandas".
 
 Engine-mode override: when a graph's top-level `engine:` key is `"pandas"`
-(the safety-hatch / opt-out value), every op is forced to pandas regardless
-of its declared NATIVE_ENGINE. `engine: "hybrid"` (and the future default)
-respects each op's declaration. The override is applied in the runner via
+(the opt-out safety hatch), every op is forced to pandas regardless of its
+declared NATIVE_ENGINE. `engine: "hybrid"` (the runtime default) respects
+each op's own declaration. The override is applied in the runner via
 `native_engine_for` accepting a graph_engine_mode argument.
 """
 
@@ -27,11 +28,15 @@ def native_engine_for(kind: str, graph_engine_mode: GraphEngineMode = "pandas") 
     """Return the engine the op of this kind wants to run on.
 
     `graph_engine_mode` mirrors the graph YAML's top-level `engine:` key.
-    - "pandas" (today's default): every op runs on pandas, ignoring
-      NATIVE_ENGINE declarations. Existing pipelines are unaffected by
-      future op ports.
-    - "hybrid": respect each op's NATIVE_ENGINE declaration; ops without
-      a declaration still default to pandas.
+    - "hybrid" (runtime default via _resolve_engine_mode): respect each
+      op's NATIVE_ENGINE declaration; ops without a declaration default
+      to pandas.
+    - "pandas" (opt-out safety hatch): every op runs on pandas, ignoring
+      NATIVE_ENGINE declarations.
+
+    The parameter default is "pandas" for backwards compatibility with
+    direct callers. The runner always passes the resolved mode, which
+    defaults to "hybrid".
     """
     if graph_engine_mode == "pandas":
         return "pandas"
