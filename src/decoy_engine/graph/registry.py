@@ -44,7 +44,8 @@ def native_engine_for(kind: str, graph_engine_mode: GraphEngineMode = "pandas") 
         return "pandas"
     declared = getattr(op, "NATIVE_ENGINE", "pandas")
     if declared not in VALID_ENGINES:
-        # Misdeclared op falls back to pandas rather than raising; the
-        # validator could check this in a follow-up.
+        # GraphConfigValidator._validate_nodes catches invalid NATIVE_ENGINE
+        # as a validation error before execution reaches this point.
+        # This branch is a defensive fallback for callers that skip validation.
         return "pandas"
     return declared  # type: ignore[return-value]

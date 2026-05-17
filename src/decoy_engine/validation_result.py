@@ -117,7 +117,7 @@ class ValidationResult:
         ))
 
 
-# ── Code registry ───────────────────────────────────────────────────────────
+# -- Code registry -----------------------------------------------------------------------
 #
 # Stable code strings exposed via a namespace so callers can import them
 # rather than literal-stringing. Adding a new code is non-breaking;
@@ -146,6 +146,9 @@ class CODES:
     NODE_UNKNOWN_KIND = "node.unknown_kind"
     NODE_BAD_NAME = "node.bad_name"
     NODE_BAD_CONFIG_TYPE = "node.bad_config_type"
+    # Audit Sprint 1.5: catch misdeclared NATIVE_ENGINE at validation time
+    # instead of silently falling back to pandas in the registry.
+    NODE_BAD_NATIVE_ENGINE = "node.bad_native_engine"
 
     # Per-edge.
     EDGE_BAD_TYPE = "edge.bad_type"
