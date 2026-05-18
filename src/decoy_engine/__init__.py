@@ -122,6 +122,7 @@ __all__ = [
     'LicenseVerifier',
     'validate_config',
     'validate_graph',
+    'validate_graph_full',
     'run_graph',
     'preview_graph',
     'RunResult',
@@ -151,6 +152,10 @@ __all__ = [
     'register_faker_provider',
     'unregister_faker_provider',
     'load_custom_providers',
+    # Validation result types for platform/CLI callers.
+    'VALIDATION_CODES',
+    'ValidationMessage',
+    'ValidationResult',
     # Connector SDK.
     'SDK_VERSION',
     'CAP_STREAMING',
