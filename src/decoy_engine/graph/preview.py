@@ -104,6 +104,13 @@ def run_preview(
     by_id = {n["id"]: n for n in sub_config["nodes"]}
     node_id = policy.target_node_id
 
+    # Pre-truncation row count per node. cache.write_stream truncates
+    # at storage time, so by the time we inspect target_table.num_rows
+    # we have already lost the original count. Track it here for the
+    # ``truncated`` flag below. Computed engine-agnostically from the
+    # op result before it lands in the cache.
+    pre_trunc_row_counts: dict[str, int] = {}
+
     # Keep the target (and its split ports) so cache does not evict them
     # at zero consumers before the caller can read the result.
     target_op = OPS.get(by_id[node_id]["kind"]) if node_id in by_id else None
@@ -151,11 +158,17 @@ def run_preview(
             result = op.apply(inputs, node_cfg, ctx)
             if isinstance(result, dict) and getattr(op, "OUTPUT_KIND", None) == "split":
                 ports = getattr(op, "OUTPUT_PORTS", ())
+                # Capture the largest port's input row count for truncated
+                # detection (target_node, if its OUTPUT_KIND is split, is
+                # exposed via the "pass" port -- see set_raw below).
+                pass_port_input = result.get("pass") if isinstance(result, dict) else None
+                pre_trunc_row_counts[nid] = _result_row_count(pass_port_input)
                 cache.write_split(nid, result, ports, engine, row_limit=policy.row_limit)
                 # Expose the "pass" port as the direct node output so the
                 # target key is always readable regardless of split behavior.
                 cache.set_raw(nid, cache.get(f"{nid}.pass"))
             else:
+                pre_trunc_row_counts[nid] = _result_row_count(result)
                 cache.write_stream(nid, result, engine, row_limit=policy.row_limit)
         except FlagPauseSignal as fps:
             error_msg = f"node {descriptor} gate blocked: {fps}"
@@ -188,7 +201,11 @@ def run_preview(
             "skip_reason": skip_reason,
         }
 
-    total_rows = target_table.num_rows
+    # truncated reflects "did the op emit more rows than row_limit?" --
+    # cache stored at most row_limit, so the post-cache count alone
+    # cannot answer that question. pre_trunc_row_counts carries the
+    # op's actual output size before any cache-time truncation.
+    pre_trunc_rows = pre_trunc_row_counts.get(node_id, target_table.num_rows)
     capped = target_table.slice(0, policy.row_limit)
     columns = arrow_columns(target_table)
     try:
@@ -208,9 +225,36 @@ def run_preview(
         "row_count": len(rows),
         "elapsed_ms": elapsed_ms,
         "error": error_msg,
-        "truncated": total_rows > policy.row_limit,
+        "truncated": pre_trunc_rows > policy.row_limit,
         "skip_reason": skip_reason,
     }
+
+
+def _result_row_count(result: Any) -> int:
+    """Engine-agnostic row count for an op result.
+
+    Used to capture the pre-truncation row count before the cache stores
+    a row-limited slice, so run_preview can later report the truncated
+    flag accurately. Handles pandas (``len``), polars (``height``), pyarrow
+    (``num_rows``), and ``None``. Returns 0 on unknown shapes rather than
+    raising, since the truncated signal is informational only.
+    """
+    if result is None:
+        return 0
+    if hasattr(result, "height"):           # polars LazyFrame / DataFrame
+        try:
+            return int(result.height)
+        except Exception:
+            return 0
+    if hasattr(result, "num_rows"):         # pyarrow Table / RecordBatch
+        try:
+            return int(result.num_rows)
+        except Exception:
+            return 0
+    try:
+        return len(result)                  # pandas DataFrame, list, etc.
+    except Exception:
+        return 0
 
 
 def _node_descriptor(node: dict) -> str:

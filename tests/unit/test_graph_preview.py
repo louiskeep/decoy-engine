@@ -67,8 +67,12 @@ class _FakeGateOp:
 
     @staticmethod
     def apply(inputs, cfg, ctx):
+        # FlagPauseSignal expects ``conditions_failed: list[dict]`` per
+        # api/keys/exceptions.py; passing a bare string crashes the
+        # constructor (str.get on iteration) and the resulting
+        # AttributeError escapes the test instead of FlagPauseSignal.
         from decoy_engine.exceptions import FlagPauseSignal
-        raise FlagPauseSignal("test gate")
+        raise FlagPauseSignal([{"message": "test gate"}], gate_id="test")
 
 
 class _FakeErrorOp:

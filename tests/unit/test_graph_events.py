@@ -97,7 +97,16 @@ class TestEmitNodeStart:
     def test_emits_step_start(self):
         log = SpyLogger()
         emit_node_start(log, "n1", "[id=n1, kind=mask]", "pandas", 50)
-        assert log.steps == [{"name": "n1", "status": "start", "rows_in": 50}]
+        # emit_step forwards every kwarg (rows_out / error_class /
+        # error_msg / node_id) to the logger so the JobLogger persists
+        # them on JobStep companion rows when set later. The SpyLogger
+        # captures them all; assert the meaningful start-phase fields
+        # without locking the assertion to the exact full kwarg shape.
+        assert len(log.steps) == 1
+        step = log.steps[0]
+        assert step["name"] == "n1"
+        assert step["status"] == "start"
+        assert step["rows_in"] == 50
 
     def test_none_rows_in_passed_as_none_to_step(self):
         log = SpyLogger()
