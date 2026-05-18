@@ -216,9 +216,9 @@ def validate_graph_full(yaml_text: str, *, strict: bool = False):
     validator = GraphConfigValidator(_quiet_logger)
 
     def _collect(stage_fn) -> bool:
-        """Run one validation stage. Add its first error to result. Return True iff passed."""
+        """Call stage_fn(). Add its first error to result. Return True iff it passed."""
         try:
-            stage_fn(working)
+            stage_fn()
             return True
         except ValidationError as e:
             result.add_error(
@@ -228,25 +228,38 @@ def validate_graph_full(yaml_text: str, *, strict: bool = False):
             )
             return False
 
-    # Stage 1: top-level shape. Required before safely walking nodes/edges.
-    if not _collect(validator._validate_top_level):
+    # Stage 1: top-level shape. Required before safely extracting nodes/edges.
+    if not _collect(lambda: validator._validate_top_level(working)):
         return result
 
+    # Post-stage-1: nodes is a non-empty list, edges is a list or absent.
+    # Each _validate_* stage takes (nodes, edges, ...) not the full config dict.
+    # Lambda closures capture the local variables; _collect stays zero-argument.
+    nodes = working["nodes"]
+    edges = working.get("edges") or []
+    kinds = validator._known_kinds()
+
     # Stage 2: per-node metadata. Required before edge from/to id lookups.
-    nodes_ok = _collect(validator._validate_nodes)
+    nodes_ok = _collect(lambda: validator._validate_nodes(nodes, kinds))
 
     # Stages 3-5: graph structure. Each requires the prior stage to pass.
-    edges_ok = nodes_ok and _collect(validator._validate_edges)
-    cardinality_ok = edges_ok and _collect(validator._validate_cardinality)
-    topology_ok = cardinality_ok and _collect(validator._validate_acyclic)
+    edges_ok = nodes_ok and _collect(lambda: validator._validate_edges(edges, nodes))
+    cardinality_ok = edges_ok and _collect(
+        lambda: validator._validate_cardinality(nodes, edges, kinds)
+    )
+    topology_ok = cardinality_ok and _collect(
+        lambda: validator._validate_acyclic(nodes, edges)
+    )
 
     # Stages 6-8: cross-node semantic checks. Each runs independently so
     # all three can surface errors in one pass. All require a sound acyclic
-    # graph to walk safely.
+    # graph to walk. _validate_file_format_consistency may mutate nodes
+    # dicts in-place (format back-fill); since nodes is a reference into
+    # the working deep copy, the mutation is captured in normalized_config.
     if topology_ok:
-        _collect(validator._validate_file_format_consistency)
-        _collect(validator._validate_mask_column_reachability)
-        _collect(validator._validate_nodes_ref_reachability)
+        _collect(lambda: validator._validate_file_format_consistency(nodes, edges))
+        _collect(lambda: validator._validate_mask_column_reachability(nodes, edges))
+        _collect(lambda: validator._validate_nodes_ref_reachability(nodes, edges))
 
     if not result.errors:
         result.normalized_config = working
