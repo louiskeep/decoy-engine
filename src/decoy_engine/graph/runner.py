@@ -3,6 +3,11 @@
 These are the only symbols `decoy_engine.graph` exposes to callers -- see
 `graph/__init__.py`. The contract is documented in PIPELINE_GRAPH_GUIDE.md.
 
+Execution planning: the runner delegates pre-execution graph structure
+computation to `graph.planner.build_plan`. The planner computes topo
+ordering, in-edge indexing, consumer counts, and engine mode resolution
+once before the node-execution loop; see graph/planner.py for details.
+
 Runtime cache: the runner caches `pyarrow.Table` between ops and materializes
 to each op's declared `NATIVE_ENGINE` at apply-time. File and cloud source/
 target ops declare `NATIVE_ENGINE = "duckdb"`. Transform ops such as `mask`
@@ -28,7 +33,6 @@ import os
 import re
 import threading
 import time
-import traceback
 from typing import Any
 
 import pyarrow as pa
@@ -48,7 +52,7 @@ from decoy_engine.graph.conversion import (
     engine_to_arrow,
 )
 from decoy_engine.graph.errors import translate as translate_engine_error
-from decoy_engine.graph.topo import topo_order, upstream_subgraph
+from decoy_engine.graph.topo import upstream_subgraph
 from decoy_engine.graph.types import (
     NodeRunRecord,
     PreviewResult,
@@ -242,16 +246,16 @@ def _execute_graph(
     keep_nodes: list[str] | None = None,
 ) -> tuple[RunResult, dict[str, pa.Table]]:
     from decoy_engine.graph.ops import OPS
+    from decoy_engine.graph.planner import build_plan
     from decoy_engine.graph.registry import native_engine_for
 
-    edges = config.get("edges") or []
     nodes = config["nodes"]
-    order = topo_order(nodes, edges)
     by_id = {n["id"]: n for n in nodes}
-    graph_engine_mode = _resolve_engine_mode(config)
+    plan = build_plan(config)
+    graph_engine_mode = plan.graph_engine_mode
 
     cache: dict[str, pa.Table] = {}
-    remaining = _count_consumers(nodes, edges)
+    remaining = dict(plan.consumer_counts)
     keep_set = set(keep_nodes or [])
     for k in keep_set:
         remaining[k] = remaining.get(k, 0) + 1
@@ -271,11 +275,11 @@ def _execute_graph(
     monitor.__enter__()
 
     # One-shot lineage emission: classify every node by its kind family
-    # (source.* → source, target.* → output, everything else → transform)
+    # (source.* -> source, target.* -> output, everything else -> transform)
     # and tag with the engine-resolved kind so the UI can route an icon.
     # Done before the run loop so a node failure mid-run still leaves a
     # complete lineage record for the timeline.
-    for nid in order:
+    for nid in plan.order:
         node = by_id[nid]
         kind = node["kind"]
         if kind.startswith("source."):
@@ -285,7 +289,7 @@ def _execute_graph(
         else:
             emit_lineage(log, "transform", nid, kind)
 
-    for nid in order:
+    for nid in plan.order:
         node = by_id[nid]
         kind = node["kind"]
         op = OPS[kind]
@@ -315,25 +319,25 @@ def _execute_graph(
             success = False
             break
 
-        # Pull upstream outputs out of cache and decrement their consumer
-        # count; eviction happens inside _consume.
-        in_edges = [e for e in edges if e["to"] == nid]
+        # Pre-indexed incoming edge "from" keys from the plan; avoids an
+        # O(nodes*edges) scan per node. The plan is built once before the loop.
+        in_edge_keys = plan.in_edges.get(nid, [])
         # ``step_name`` is what the platform's JobLogger writes into the
         # STEP column of every narrative line emitted while this node is
         # the open step, AND what the reporting UI's pill timeline keys
         # on. Using the node id (not the kind) means every node is its
-        # own pill, not one pill per kind — which matters for graphs
+        # own pill, not one pill per kind -- which matters for graphs
         # with multiple mask / target nodes.
         step_name = nid
         # rows_in: sum of upstream row counts (pulled BEFORE _consume so
-        # we see pa.Tables — _consume materializes to the engine's
+        # we see pa.Tables -- _consume materializes to the engine's
         # native format and arrow_row_count is pa-only). Source ops with
         # no upstream input naturally land at 0.
         rows_in_total = sum(
-            arrow_row_count(cache.get(e["from"])) for e in in_edges
-            if cache.get(e["from"]) is not None
+            arrow_row_count(cache.get(k)) for k in in_edge_keys
+            if cache.get(k) is not None
         )
-        inputs = [_consume(cache, remaining, e["from"], engine) for e in in_edges]
+        inputs = [_consume(cache, remaining, k, engine) for k in in_edge_keys]
         descriptor = _node_descriptor(node)
 
         if log is not None:
@@ -342,7 +346,7 @@ def _execute_graph(
 
         # Per-node config snapshot in the narrative log so the Task History
         # Nodes tab shows what each node was configured with at run time
-        # (predicate, columns, output path, etc.) — the boundary emit alone
+        # (predicate, columns, output path, etc.) -- the boundary emit alone
         # leaves the bucket nearly empty for ops that don't log internally.
         # Emitted AFTER step start so JobLogger tags the line with this
         # node's step name.
@@ -360,7 +364,7 @@ def _execute_graph(
             # fires after either branch so the reporting timeline sees the
             # node close regardless of split/non-split. The ``exports``
             # field carries any values the op recorded via ``ctx.export()``
-            # — used by ``${nodes.<id>.<key>}`` resolution and surfaced
+            # -- used by ``${nodes.<id>.<key>}`` resolution and surfaced
             # to the platform via JobNodeRun.exports.
             if isinstance(result, dict) and getattr(op, "OUTPUT_KIND", None) == "split":
                 ports = getattr(op, "OUTPUT_PORTS", ())
@@ -392,7 +396,7 @@ def _execute_graph(
                     log, step_name, status="finish",
                     rows_in=rows_in_total or None, rows_out=total_rows,
                 )
-                # Phase 3 throughput sample — point-in-time rows/sec for
+                # Phase 3 throughput sample -- point-in-time rows/sec for
                 # this node. Skipped on zero-duration / zero-rows nodes
                 # so the chart doesn't see Infinity / NaN. The chart
                 # endpoint orders samples by ts, so this lands as the
@@ -424,7 +428,7 @@ def _execute_graph(
                     log, step_name, status="finish",
                     rows_in=rows_in_total or None, rows_out=rows_out,
                 )
-                # Phase 3 throughput sample — same shape as split branch
+                # Phase 3 throughput sample -- same shape as split branch
                 # above. Skip zero-duration / zero-rows to keep the
                 # chart clean.
                 if elapsed_ms > 0 and rows_out > 0:
@@ -435,7 +439,7 @@ def _execute_graph(
                 if remaining.get(nid, 0) == 0:
                     cache.pop(nid, None)
         except FlagPauseSignal:
-            # Item 21 controlled pause — not a failure. Let the platform
+            # Item 21 controlled pause -- not a failure. Let the platform
             # runner handle it (creates a JobReview row, transitions the
             # job to review_pending). No emit_step(error) because the
             # phase isn't done yet; the resumed run will continue from
@@ -464,12 +468,13 @@ def _execute_graph(
             })
             if log is not None:
                 log.error("graph: node %s failed: %s", descriptor, translated)
+                import traceback
                 log.error(traceback.format_exc())
             # Phase 2 LOGGING_GUIDE §4c: emit_step carries the exception
             # class + the translated message + the canvas node id so the
             # JobLogger can format the spec ERROR line tail (and the
             # frontend can deep-link the error pill to the producing
-            # node). ``type(exc).__name__`` is the underlying class —
+            # node). ``type(exc).__name__`` is the underlying class --
             # ``translated`` is what we surface to the user.
             emit_step(
                 log, step_name, status="error",
@@ -643,6 +648,9 @@ def _count_consumers(nodes: list[dict], edges: list[dict]) -> dict[str, int]:
 
     Split ops (OUTPUT_KIND="split") get per-port entries keyed as
     "node_id.port" rather than a single "node_id" entry.
+
+    Still used by preview_graph which builds its own sub-config edge list.
+    _execute_graph delegates this to build_plan (Sprint 1.1).
     """
     from decoy_engine.graph.ops import OPS
 
@@ -651,7 +659,7 @@ def _count_consumers(nodes: list[dict], edges: list[dict]) -> dict[str, int]:
         # Look up the op for split-port discovery. Unknown / missing kinds
         # fall through to the regular non-split path so the helper stays
         # usable from validators and unit tests that pass minimal node
-        # dicts. Real run_graph() callers always populate `kind` — the
+        # dicts. Real run_graph() callers always populate `kind` -- the
         # registry KeyError there would be a config-validation failure,
         # caught higher up.
         op = OPS.get(n.get("kind", "")) if hasattr(OPS, "get") else None
@@ -692,6 +700,13 @@ def _consume(
 
 
 def _resolve_engine_mode(config: dict) -> str:
+    """Resolve the graph-level engine mode for preview_graph.
+
+    _execute_graph reads this from the plan (build_plan delegates here
+    via planner._resolve_engine_mode). preview_graph still calls this
+    directly because it builds its own sub-config; Sprint 1.4 will
+    unify both paths.
+    """
     mode = config.get("engine") or "hybrid"
     if mode not in ("pandas", "hybrid"):
         return "hybrid"
@@ -790,9 +805,8 @@ def _summarize_node_config(kind: str, cfg: dict) -> str:
     """Return a short per-node config summary for the narrative log.
 
     Emitted right after each step starts so the Task History Nodes tab
-    always has at least one informative line per node — `▶ <id>` and the
-    `step <id> (finish)` boundary alone aren't enough for users to see
-    what the node actually did.
+    always has at least one informative line per node -- the step boundary
+    emit alone isn't enough for users to see what the node actually did.
 
     Keep this terse: the resolved config dict already lives on
     JobNodeRun.config for the full picture. This line is a glance value.
@@ -904,12 +918,12 @@ def _resolve_one_node_export(
     if node_id == current_node_id:
         raise _NodeExportResolutionError(
             f"node {current_node_id!r} references its own exports via "
-            f"${{nodes.{node_id}.{key}}} — exports are only readable from "
+            f"${{nodes.{node_id}.{key}}} -- exports are only readable from "
             f"downstream nodes"
         )
     if node_id not in exports:
         raise _NodeExportResolutionError(
-            f"unresolved variable: ${{nodes.{node_id}.{key}}} — node "
+            f"unresolved variable: ${{nodes.{node_id}.{key}}} -- node "
             f"{node_id!r} has not run yet (forward reference or upstream "
             f"failure)"
         )
@@ -923,12 +937,12 @@ def _resolve_one_node_export(
                 cur = cur[idx]
             else:
                 raise _NodeExportResolutionError(
-                    f"unresolved variable: ${{nodes.{node_id}.{key}}} — "
+                    f"unresolved variable: ${{nodes.{node_id}.{key}}} -- "
                     f"index {idx} out of range"
                 )
         else:
             raise _NodeExportResolutionError(
-                f"unresolved variable: ${{nodes.{node_id}.{key}}} — "
+                f"unresolved variable: ${{nodes.{node_id}.{key}}} -- "
                 f"key {part!r} not in {node_id!r}'s exports"
             )
     return cur
