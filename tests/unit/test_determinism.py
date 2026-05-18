@@ -423,3 +423,13 @@ class TestMakeKeyResolver:
         from decoy_engine import make_key_resolver
         with pytest.raises(ValueError, match="32 bytes"):
             make_key_resolver(b"short", "label")
+
+    def test_rejects_none_master(self):
+        from decoy_engine import make_key_resolver
+        with pytest.raises(ValueError, match="32 bytes"):
+            make_key_resolver(None, "label")
+
+    def test_rejects_empty_bytes_master(self):
+        from decoy_engine import make_key_resolver
+        with pytest.raises(ValueError, match="32 bytes"):
+            make_key_resolver(b"", "label")
