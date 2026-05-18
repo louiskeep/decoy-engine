@@ -268,6 +268,26 @@ class CODES:
     GENERATION_KEY_REQUIRED = "generation.key_required"
     GENERATION_RANDOM_NOT_ALLOWED = "generation.random_not_allowed"
 
+    # ── Sprint 4: FK preservation (item 4) ──
+    #
+    # Pattern: SDV HMA1 (sdv-dev/SDV, MIT). Parent-first DAG;
+    # materialize parent pool; child samples with replacement.
+    #
+    # Codes split into validation-time (caught by the validator stage
+    # added in Commit 3) and runtime (raised by the pool resolver +
+    # generate op consumption in Commits 2 + 4). Strict mode promotes
+    # the advisory codes (parallel_branches, strategy_coerced) from
+    # warning to error.
+    FK_UNKNOWN_NODE = "fk.unknown_node"                  # validation, error
+    FK_UNKNOWN_COLUMN = "fk.unknown_column"              # validation + runtime, error
+    FK_PARENT_AFTER_CHILD = "fk.parent_after_child"      # validation, error
+    FK_PARENT_UNRESOLVED = "fk.parent_unresolved"        # runtime, error in strict / warning otherwise
+    FK_EMPTY_PARENT_POOL = "fk.empty_parent_pool"        # runtime, error in strict / warning otherwise
+    FK_PARALLEL_BRANCHES = "fk.parallel_branches"        # validation, warning (advisory)
+    FK_STRATEGY_COERCED = "fk.strategy_coerced"          # validation, warning (advisory)
+    FK_NONDETERMINISTIC_MASK = "fk.nondeterministic_mask"  # validation, error
+    FK_SELF_REFERENCE = "fk.self_reference"              # validation, error (V2 will lift)
+
     # Generic catch-all for validators that haven't been migrated yet.
     # New gates should add a specific code rather than reusing this.
     UNTAGGED = "untagged"

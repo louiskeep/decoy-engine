@@ -266,9 +266,272 @@ def validate_graph_full(yaml_text: str, *, strict: bool = False):
         _collect(lambda: validator._validate_mask_column_reachability(nodes, edges))
         _collect(lambda: validator._validate_nodes_ref_reachability(nodes, edges))
 
+    # ── Stage 9: column_relationships (Sprint 4, item 4) ──
+    #
+    # Pattern: SDV HMA1 (sdv-dev/SDV, MIT). Parent-first DAG;
+    # materialize parent pool; child samples with replacement.
+    #
+    # Validates the top-level column_relationships: block emitted by
+    # the platform's FORECAST pipeline build. Independent of stages
+    # 6-8 (those check the graph mechanics; this one checks the FK
+    # declaration shape). Topology-aware: requires plan order from
+    # build_plan, so it runs only when topology_ok is True.
+    if topology_ok:
+        _collect(lambda: _validate_column_relationships(working, strict=strict, result=result))
+
     if not result.errors:
         result.normalized_config = working
     return result
+
+
+def _validate_column_relationships(
+    config: dict,
+    *,
+    strict: bool,
+    result,
+) -> None:
+    """Validate the top-level ``column_relationships:`` block.
+
+    Pattern: SDV HMA1 (sdv-dev/SDV, MIT). Parent-first DAG;
+    materialize parent pool; child samples with replacement.
+
+    Per-entry checks (all error-level unless noted):
+
+      - fk.unknown_node        : parent.node or child.node not in graph
+      - fk.unknown_column      : node exists but the referenced column
+                                 doesn't appear in the node's config or
+                                 (for source nodes) the source's
+                                 declared schema. Source nodes without
+                                 a `columns` config get a carve-out
+                                 because their schema is the file's
+                                 actual columns, which the engine only
+                                 knows at runtime.
+      - fk.parent_after_child  : parent appears AFTER child in
+                                 plan.order; refuses to run.
+      - fk.self_reference      : parent.node == child.node; out of V1
+                                 scope (V2 will lift via SDV self-loop
+                                 handling).
+      - fk.parallel_branches   : no topological path from parent to
+                                 child. Advisory in lenient mode
+                                 (cache pinning handles parallel-branch
+                                 survival); error in strict mode.
+      - fk.nondeterministic_mask : a mask op participates in an FK and
+                                 uses a non-deterministic strategy
+                                 (redact, shuffle, truncate). Strategy
+                                 is required to be one of
+                                 {hash, fpe, faker, date_shift,
+                                 reference} for mask-on-FK columns to
+                                 preserve referential integrity.
+
+    Skips silently when no column_relationships block exists.
+    """
+    from decoy_engine.graph.planner import build_plan
+    from decoy_engine.validation_result import CODES
+
+    rels = config.get("column_relationships")
+    if not rels:
+        return
+    if not isinstance(rels, list):
+        result.add_error(
+            code=CODES.FK_UNKNOWN_NODE,
+            message="column_relationships must be a list",
+            path="column_relationships",
+        )
+        return
+
+    # plan.order gives topo position; needed for parent-after-child check.
+    try:
+        plan = build_plan(config)
+    except Exception:
+        # If the graph won't plan, we can't reason about FK ordering.
+        # The topology stage already flagged the structural failure.
+        return
+    pos_in_order = {nid: idx for idx, nid in enumerate(plan.order)}
+
+    nodes_by_id = {n["id"]: n for n in config.get("nodes") or []}
+
+    # Build the reachability cache lazily; only consulted when emitting
+    # fk.parallel_branches.
+    _reach_cache: dict[tuple[str, str], bool] = {}
+    edges_list = config.get("edges") or []
+
+    def _reachable(from_id: str, to_id: str) -> bool:
+        key = (from_id, to_id)
+        if key in _reach_cache:
+            return _reach_cache[key]
+        # BFS over edges. Small graphs in practice; no need for fancier
+        # structures.
+        visited = {from_id}
+        stack = [from_id]
+        while stack:
+            curr = stack.pop()
+            if curr == to_id:
+                _reach_cache[key] = True
+                return True
+            for e in edges_list:
+                if isinstance(e, dict) and e.get("from") == curr and e.get("to") not in visited:
+                    visited.add(e["to"])
+                    stack.append(e["to"])
+        _reach_cache[key] = False
+        return False
+
+    # Set of deterministic mask strategies. Anything outside breaks FK.
+    DETERMINISTIC_MASK_STRATEGIES = frozenset(
+        {"hash", "fpe", "faker", "date_shift", "reference"}
+    )
+
+    def _column_in_node(node: dict, column: str) -> bool:
+        """True if `column` appears in `node`'s config columns mapping.
+        For source nodes the schema is the file's actual columns,
+        unknowable at validation time, so we treat them as opaque and
+        return True. The runtime resolver will catch a true miss at
+        execution time and emit fk.unknown_column then."""
+        kind = node.get("kind", "")
+        if kind.startswith("source."):
+            return True
+        cfg = node.get("config") or {}
+        cols = cfg.get("columns")
+        if not isinstance(cols, dict):
+            # Unknown shape; be lenient at validation time.
+            return True
+        return column in cols
+
+    def _mask_strategy_for_column(node: dict, column: str) -> str | None:
+        """If `node` is a mask op and `column` is configured, return its
+        strategy. Otherwise None (caller skips the determinism check)."""
+        if node.get("kind") != "mask":
+            return None
+        cfg = node.get("config") or {}
+        col_spec = (cfg.get("columns") or {}).get(column)
+        if not isinstance(col_spec, dict):
+            return None
+        return col_spec.get("strategy")
+
+    for i, rel in enumerate(rels):
+        path = f"column_relationships[{i}]"
+        if not isinstance(rel, dict):
+            result.add_error(
+                code=CODES.FK_UNKNOWN_NODE,
+                message="entry must be a mapping",
+                path=path,
+            )
+            continue
+        parent = rel.get("parent") or {}
+        child = rel.get("child") or {}
+        p_node = parent.get("node") if isinstance(parent, dict) else None
+        p_col = parent.get("column") if isinstance(parent, dict) else None
+        c_node = child.get("node") if isinstance(child, dict) else None
+        c_col = child.get("column") if isinstance(child, dict) else None
+
+        if not p_node or not c_node or not p_col or not c_col:
+            result.add_error(
+                code=CODES.FK_UNKNOWN_NODE,
+                message=f"entry missing parent.node / parent.column / child.node / child.column",
+                path=path,
+            )
+            continue
+
+        # Self-reference: V2.
+        if p_node == c_node:
+            result.add_error(
+                code=CODES.FK_SELF_REFERENCE,
+                message=f"self-references not supported in V1 (parent and child are both {p_node!r})",
+                path=path,
+            )
+            continue
+
+        # Unknown nodes.
+        if p_node not in nodes_by_id:
+            result.add_error(
+                code=CODES.FK_UNKNOWN_NODE,
+                message=f"parent node {p_node!r} not present in graph",
+                path=f"{path}.parent.node",
+            )
+            continue
+        if c_node not in nodes_by_id:
+            result.add_error(
+                code=CODES.FK_UNKNOWN_NODE,
+                message=f"child node {c_node!r} not present in graph",
+                path=f"{path}.child.node",
+            )
+            continue
+
+        # Topology: parent must precede child in plan.order.
+        if pos_in_order.get(p_node, 0) >= pos_in_order.get(c_node, 0):
+            result.add_error(
+                code=CODES.FK_PARENT_AFTER_CHILD,
+                message=(
+                    f"parent {p_node!r} does not precede child {c_node!r} "
+                    "in topological order (parent must produce its column "
+                    "before child consumes it)"
+                ),
+                path=path,
+            )
+            continue
+
+        # Parallel-branch advisory: parent + child both run, but no
+        # topological path connects them. Cache pinning keeps both
+        # alive so this is fine in practice; surface as a warning in
+        # lenient mode + an error in strict mode.
+        if not _reachable(p_node, c_node):
+            if strict:
+                result.add_error(
+                    code=CODES.FK_PARALLEL_BRANCHES,
+                    message=(
+                        f"no topological path from parent {p_node!r} to child {c_node!r}; "
+                        "they run on parallel branches (strict mode rejects this)"
+                    ),
+                    path=path,
+                )
+            else:
+                result.add_warning(
+                    code=CODES.FK_PARALLEL_BRANCHES,
+                    message=(
+                        f"parent {p_node!r} and child {c_node!r} are on parallel branches; "
+                        "cache pinning keeps both alive but the relationship is implicit"
+                    ),
+                    path=path,
+                )
+
+        # Column presence (best-effort; source nodes get a carve-out).
+        p_node_obj = nodes_by_id[p_node]
+        c_node_obj = nodes_by_id[c_node]
+        if not _column_in_node(p_node_obj, p_col):
+            result.add_error(
+                code=CODES.FK_UNKNOWN_COLUMN,
+                message=(
+                    f"parent column {p_col!r} not declared in parent {p_node!r} config "
+                    f"(kind={p_node_obj.get('kind')})"
+                ),
+                path=f"{path}.parent.column",
+            )
+        if not _column_in_node(c_node_obj, c_col):
+            result.add_error(
+                code=CODES.FK_UNKNOWN_COLUMN,
+                message=(
+                    f"child column {c_col!r} not declared in child {c_node!r} config "
+                    f"(kind={c_node_obj.get('kind')})"
+                ),
+                path=f"{path}.child.column",
+            )
+
+        # Mask determinism: both ends, if they're mask ops, must use a
+        # deterministic strategy to preserve the FK.
+        for side, node_obj, col_name in (
+            ("parent", p_node_obj, p_col),
+            ("child",  c_node_obj, c_col),
+        ):
+            strategy = _mask_strategy_for_column(node_obj, col_name)
+            if strategy is not None and strategy not in DETERMINISTIC_MASK_STRATEGIES:
+                result.add_error(
+                    code=CODES.FK_NONDETERMINISTIC_MASK,
+                    message=(
+                        f"{side} mask column {col_name!r} uses strategy {strategy!r} which is "
+                        "not deterministic; declared FK requires one of "
+                        f"{sorted(DETERMINISTIC_MASK_STRATEGIES)}"
+                    ),
+                    path=f"{path}.{side}.column",
+                )
 
 
 def run_graph(
