@@ -184,16 +184,27 @@ def validate_graph_full(yaml_text: str):
     of the underlying ``GraphConfigValidator``). Multi-error reporting
     will be enabled per-subject in follow-up R2.2 work as each
     validator is migrated to non-raising form.
+
+    ``normalized_config`` is always a deep copy of the parsed input;
+    any in-place normalizations applied by the validator (e.g. the
+    target.file format back-fill from source extension) appear in the
+    copy without touching any live config reference.
     """
+    import copy
     from decoy_engine.validation_result import CODES, ValidationResult
 
     result = ValidationResult()
     config = _load_yaml(yaml_text)
+    # Deep-copy before passing to the validator. The validator normalizes
+    # certain fields in-place (e.g. target.file format back-fill from the
+    # source extension). Using a copy means those normalizations land in
+    # result.normalized_config without touching the locally parsed config.
+    config_to_validate = copy.deepcopy(config)
     _quiet_logger = logging.getLogger("decoy_engine.graph.validate")
     if not _quiet_logger.handlers:
         _quiet_logger.addHandler(logging.NullHandler())
     try:
-        GraphConfigValidator(_quiet_logger).validate(config)
+        GraphConfigValidator(_quiet_logger).validate(config_to_validate)
     except ValidationError as e:
         raw = getattr(e, "raw_message", None) or str(e)
         result.add_error(
@@ -202,7 +213,7 @@ def validate_graph_full(yaml_text: str):
             path=getattr(e, "path", None),
         )
         return result
-    result.normalized_config = config
+    result.normalized_config = config_to_validate
     return result
 
 
