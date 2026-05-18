@@ -25,6 +25,11 @@ from decoy_engine.exceptions import FlagPauseSignal
 from decoy_engine.graph.ops._base import OpError  # noqa: F401 (re-exported for tests)
 
 KIND = "flag_gate"
+# Gate evaluation uses substrate-neutral helpers (len() and .columns) but
+# stays on pandas so the runner pre-converts any upstream Arrow/polars frame
+# to a consistent type before the checks run. The conversion is cheap
+# relative to job I/O, and it keeps gate logic independent of
+# substrate-specific column-iteration differences.
 NATIVE_ENGINE = "pandas"
 INPUT_ARITY = (0, 1)  # 0 = pre-run check before any source; 1 = mid-run
 OUTPUT_KIND = "stream"

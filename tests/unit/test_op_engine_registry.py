@@ -71,28 +71,92 @@ def test_unknown_kind_falls_back_to_pandas():
 @pytest.mark.parametrize("kind,expected_engine", [
     # Frozen baseline of NATIVE_ENGINE per kind. The list moves explicitly
     # as phases land: Phase 3 flipped the relational ops to polars; Phase 4
-    # will flip the source.* / target.* ops to duckdb. A surprise diff in
-    # this list = an undocumented engine flip -- fail loud, don't shrug.
-    ("source.file", "duckdb"),       # Phase 4
-    ("source.db", "duckdb"),         # Phase 4
-    ("filter", "polars"),            # Phase 3
-    ("sort", "polars"),              # Phase 3
-    ("dedupe", "polars"),            # Phase 3
-    ("derive", "polars"),            # Phase 3
-    ("drop_column", "polars"),       # Phase 3
-    ("select_column", "polars"),     # Phase 3
-    ("limit", "polars"),             # Phase 3
-    ("run_storm", "pandas"),         # stays pandas (Phase 1 benchmark: 2.4% Arrow overhead)
-    ("mask", "pandas"),              # stays pandas (per-row Python)
-    ("generate", "pandas"),          # stays pandas (per-row Python)
-    ("target.file", "duckdb"),       # Phase 4
-    ("target.db", "duckdb"),         # Phase 4
-    ("convert.file_type", "duckdb"), # Item 57 + 66(b): wraps DuckDB COPY ... TO
+    # flipped the source.* / target.* file ops to duckdb. A surprise diff
+    # in this list = an undocumented engine flip -- fail loud, don't shrug.
+    #
+    # File source / target ops (Phase 4: DuckDB COPY ... TO / read_csv)
+    ("source.file", "duckdb"),
+    ("source.db", "duckdb"),
+    ("target.file", "duckdb"),
+    ("target.db", "duckdb"),
+    # Cloud source / target ops (same DuckDB path as file ops via _cloud_io)
+    ("source.s3", "duckdb"),
+    ("source.gcs", "duckdb"),
+    ("source.sftp", "duckdb"),
+    ("target.s3", "duckdb"),
+    ("target.gcs", "duckdb"),
+    ("target.sftp", "duckdb"),
+    # SQL escape hatch (DuckDB in-memory connection per invocation)
+    ("sql_run", "duckdb"),
+    # File-type converter (DuckDB COPY ... TO)
+    ("convert.file_type", "duckdb"),
+    # Relational transform ops (Phase 3: polars SQLContext / sort)
+    ("filter", "polars"),
+    ("sort", "polars"),
+    ("dedupe", "polars"),
+    ("derive", "polars"),
+    ("drop_column", "polars"),
+    ("select_column", "polars"),
+    ("limit", "polars"),
+    # Two-port router (polars SQLContext, same dialect as filter)
+    ("if", "polars"),
+    # Masking / generation -- stay on pandas (per-row Python callbacks)
+    ("run_storm", "pandas"),   # Phase 1 benchmark: 2.4% Arrow overhead; stays pandas
+    ("mask", "pandas"),        # per-row Faker / scipy strategies
+    ("generate", "pandas"),    # per-row Faker / sequence / categorical
+    # Multi-table join -- stays on pandas (df.merge / pd.concat)
+    ("unite", "pandas"),
+    # Gate / review -- stays on pandas for substrate-neutral pre-conversion
+    ("flag_gate", "pandas"),
+    # Orchestration ops -- emit / receive Arrow across sub-pipeline boundary
+    ("sub_pipeline", "arrow"),
+    ("iterate_fixed", "arrow"),
+    ("iterate_loop", "arrow"),
+    ("iterate_files", "arrow"),
 ])
 def test_op_engine_baseline_declarations(kind, expected_engine):
     """Frozen baseline. Updates here are intentional; surprises are not."""
     op = OPS[kind]
     assert getattr(op, "NATIVE_ENGINE") == expected_engine
+
+
+def test_baseline_covers_all_registered_ops():
+    """The parametrized baseline above should cover every op in OPS.
+
+    This test fails if a new op is added to OPS without also being added
+    to test_op_engine_baseline_declarations. Keeps the frozen list
+    self-maintaining: you can't register a new op without explicitly
+    documenting its engine choice.
+    """
+    baseline_kinds = {
+        # File source / target
+        "source.file", "source.db", "target.file", "target.db",
+        # Cloud source / target
+        "source.s3", "source.gcs", "source.sftp",
+        "target.s3", "target.gcs", "target.sftp",
+        # SQL / convert
+        "sql_run", "convert.file_type",
+        # Relational transforms
+        "filter", "sort", "dedupe", "derive",
+        "drop_column", "select_column", "limit",
+        # Router
+        "if",
+        # Masking / generation
+        "run_storm", "mask", "generate",
+        # Multi-table
+        "unite",
+        # Gate
+        "flag_gate",
+        # Orchestration
+        "sub_pipeline", "iterate_fixed", "iterate_loop", "iterate_files",
+    }
+    registered = set(OPS.keys())
+    uncovered = registered - baseline_kinds
+    assert not uncovered, (
+        f"ops not in NATIVE_ENGINE baseline: {sorted(uncovered)}. "
+        "Add each new op to test_op_engine_baseline_declarations with its "
+        "expected NATIVE_ENGINE before merging."
+    )
 
 
 def test_validator_rejects_bad_native_engine_declaration(monkeypatch):
