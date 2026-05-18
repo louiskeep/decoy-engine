@@ -7,9 +7,9 @@ in result.normalized_config without affecting any live config reference.
 
 Two test groups:
   - TestValidateGraphFullNormalizedConfig: public API contract
-  - TestGraphConfigValidatorDirectMutation: documents that direct
-    GraphConfigValidator.validate(cfg) still mutates the caller's dict
-    (backward compat; will change in Sprint 2.2).
+  - TestGraphConfigValidatorDirectMutation: verifies that direct
+    GraphConfigValidator.validate(cfg) is now pure — Sprint 2.2 removed
+    the in-place back-fill. The normalizations live in validate_graph_full.
 """
 import logging
 
@@ -119,13 +119,13 @@ class TestValidateGraphFullNormalizedConfig:
 # --- Direct validator: back-fill mutation is a known behavior -------------
 
 class TestGraphConfigValidatorDirectMutation:
-    """Documents that GraphConfigValidator.validate(cfg) mutates the
-    caller's config dict via the target.file format back-fill. This
-    is the pre-Sprint-2.1 behavior for direct validator use. Sprint 2.2
-    will migrate to returning a normalized config instead of mutating.
+    """Sprint 2.2: GraphConfigValidator.validate() is now pure — it no longer
+    back-fills target.file config.format in-place. Normalizations are applied
+    explicitly by validate_graph_full via _backfill_target_file_formats so only
+    result.normalized_config carries them.
     """
 
-    def test_back_fills_format_in_place_on_parquet(self):
+    def test_does_not_back_fill_format_on_parquet(self):
         tgt_cfg = {"output_filename": "out.parquet"}
         cfg = {
             "mode": "graph",
@@ -136,9 +136,9 @@ class TestGraphConfigValidatorDirectMutation:
             "edges": [{"from": "src", "to": "tgt"}],
         }
         GraphConfigValidator(logging.getLogger("test")).validate(cfg)
-        assert tgt_cfg["format"] == "parquet"
+        assert "format" not in tgt_cfg
 
-    def test_back_fills_format_in_place_on_csv(self):
+    def test_does_not_back_fill_format_on_csv(self):
         tgt_cfg = {"output_filename": "out.csv"}
         cfg = {
             "mode": "graph",
@@ -149,4 +149,4 @@ class TestGraphConfigValidatorDirectMutation:
             "edges": [{"from": "src", "to": "tgt"}],
         }
         GraphConfigValidator(logging.getLogger("test")).validate(cfg)
-        assert tgt_cfg["format"] == "csv"
+        assert "format" not in tgt_cfg

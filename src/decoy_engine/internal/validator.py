@@ -780,10 +780,6 @@ class GraphConfigValidator(ConfigValidator):
         source.sftp) and all file-target kinds (target.file, target.s3,
         target.gcs, target.sftp) so cloud-storage pipelines get the same
         mismatch guard as local-file pipelines.
-
-        Also back-fills target.file config.format from the source format when
-        the field is absent (cloud targets resolve format via their own
-        validate_config / extension inference).
         """
         from decoy_engine.graph.ops._cloud_io import infer_format as _infer_fmt
 
@@ -854,15 +850,6 @@ class GraphConfigValidator(ConfigValidator):
                     or _infer_fmt(tgt_cfg.get("output_filename", ""))
                     or _infer_fmt(tgt_cfg.get("path", ""))
                 )
-
-                # Back-fill omitted format for target.file only, after
-                # extension inference. Doing this before inference would hide
-                # real mismatches such as source CSV -> output.parquet.
-                # Cloud targets derive their output format from their path/key
-                # via their own validate_config; back-filling here would
-                # override that.
-                if tgt_kind == "target.file" and not tgt_cfg.get("format"):
-                    tgt_cfg["format"] = tgt_fmt
 
                 if tgt_fmt and tgt_fmt != src_fmt:
                     # R3.6 demotion: a format mismatch used to be a hard

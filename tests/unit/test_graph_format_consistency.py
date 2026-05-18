@@ -17,8 +17,9 @@ convert.file_type node stays as an advanced-tier affordance.
 These tests confirm:
   - validate() never raises on a format mismatch (R3.6 behavior)
   - logger.warning fires with the source/target ids in the message
-  - the back-fill logic (target.file format inferred from source when
-    absent and the extension matches) is unchanged
+  - the back-fill no longer happens inside the validator (Sprint 2.2);
+    validate_graph_full applies it to normalized_config via
+    _backfill_target_file_formats after successful validation
 """
 from __future__ import annotations
 
@@ -160,11 +161,13 @@ def test_explicit_format_mismatch_logs_warning(caplog):
 
 
 # ---------------------------------------------------------------------------
-# Back-fill: target format is set to source format when absent
+# Back-fill: Sprint 2.2 -- validator is now pure, no in-place mutation
 # ---------------------------------------------------------------------------
 
 
-def test_target_format_backfilled_from_parquet_source():
+def test_target_format_not_mutated_by_validator_parquet():
+    """Sprint 2.2: validator is now pure — format is no longer back-filled
+    in-place. validate_graph_full applies it to normalized_config instead."""
     tgt_cfg: dict = {"output_filename": "out.parquet"}
     cfg = {
         "mode": "graph",
@@ -175,10 +178,12 @@ def test_target_format_backfilled_from_parquet_source():
         "edges": [{"from": "src", "to": "tgt"}],
     }
     _v().validate(cfg)
-    assert tgt_cfg.get("format") == "parquet"
+    assert "format" not in tgt_cfg
 
 
-def test_target_format_backfilled_from_csv_source():
+def test_target_format_not_mutated_by_validator_csv():
+    """Sprint 2.2: validator is now pure — format is no longer back-filled
+    in-place."""
     tgt_cfg: dict = {"output_filename": "out.csv"}
     cfg = {
         "mode": "graph",
@@ -189,7 +194,7 @@ def test_target_format_backfilled_from_csv_source():
         "edges": [{"from": "src", "to": "tgt"}],
     }
     _v().validate(cfg)
-    assert tgt_cfg.get("format") == "csv"
+    assert "format" not in tgt_cfg
 
 
 # ---------------------------------------------------------------------------

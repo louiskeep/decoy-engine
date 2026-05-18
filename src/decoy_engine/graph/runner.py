@@ -185,20 +185,20 @@ def validate_graph_full(yaml_text: str):
     will be enabled per-subject in follow-up R2.2 work as each
     validator is migrated to non-raising form.
 
-    ``normalized_config`` is always a deep copy of the parsed input;
-    any in-place normalizations applied by the validator (e.g. the
-    target.file format back-fill from source extension) appear in the
-    copy without touching any live config reference.
+    ``normalized_config`` is a deep copy of the parsed input with
+    explicit normalizations applied after successful validation (e.g.
+    target.file format back-fill from the output filename extension).
+    The validator is now pure and does not mutate the config.
     """
     import copy
     from decoy_engine.validation_result import CODES, ValidationResult
 
     result = ValidationResult()
     config = _load_yaml(yaml_text)
-    # Deep-copy before passing to the validator. The validator normalizes
-    # certain fields in-place (e.g. target.file format back-fill from the
-    # source extension). Using a copy means those normalizations land in
-    # result.normalized_config without touching the locally parsed config.
+    # Deep-copy before passing to the (now pure) validator. Back-fills and
+    # other normalizations are applied explicitly to this copy after
+    # successful validation so result.normalized_config carries them without
+    # touching the locally parsed config.
     config_to_validate = copy.deepcopy(config)
     _quiet_logger = logging.getLogger("decoy_engine.graph.validate")
     if not _quiet_logger.handlers:
@@ -213,6 +213,7 @@ def validate_graph_full(yaml_text: str):
             path=getattr(e, "path", None),
         )
         return result
+    _backfill_target_file_formats(config_to_validate)
     result.normalized_config = config_to_validate
     return result
 
@@ -489,7 +490,7 @@ def _validate_top_level_or_raise(config: dict) -> None:
 # scopes (var/env/trigger/storm/iteration) are resolved platform-side before
 # the YAML reaches the engine. This scope must be resolved live because the
 # values come from already-completed upstream ops.
-_NODE_TOKEN_RE = re.compile(r"\$\{nodes\.([a-zA-Z0-9_-]+)\.([a-zA-Z_][\w.]*)}") 
+_NODE_TOKEN_RE = re.compile(r"\$\{nodes\.([a-zA-Z0-9_-]+)\.([a-zA-Z_][\w.]*)}")
 
 
 class _NodeExportResolutionError(Exception):
@@ -584,6 +585,23 @@ def _resolve_one_node_export(
                 f"key {part!r} not in {node_id!r}'s exports"
             )
     return cur
+
+
+def _backfill_target_file_formats(config: dict) -> None:
+    """Back-fill target.file nodes that omit 'format' with the format inferred
+    from their output filename. Applied to normalized_config only; the validator
+    itself is now pure and does not mutate the caller's config.
+    """
+    from decoy_engine.graph.ops._cloud_io import infer_format as _infer_fmt
+    for node in config.get("nodes", []):
+        if not isinstance(node, dict) or node.get("kind") != "target.file":
+            continue
+        cfg = node.get("config")
+        if not isinstance(cfg, dict) or cfg.get("format"):
+            continue
+        fmt = _infer_fmt(cfg.get("output_filename", "")) or _infer_fmt(cfg.get("path", ""))
+        if fmt:
+            cfg["format"] = fmt
 
 
 def _node_hash(node: dict, upstream_hashes: list[str], row_limit: int) -> str:
