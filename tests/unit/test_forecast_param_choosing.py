@@ -50,44 +50,121 @@ def _f(
     )
 
 
-# ── ssn: identifier-shaped → hash; derived → faker ────────────────────
+# ── ssn: always FPE (format-preserving + deterministic) ──────────────
+#
+# Detection sprint (V1) flipped the SSN chooser from "hash for unique,
+# faker for duplicated" to "FPE always". Reasoning: FPE is deterministic
+# by instance key (joins survive) AND preserves the 9-digit shape, so
+# downstream format validators pass the masked column unchanged. The
+# pre-V1 hash branch was a workaround for "joins survive" before FPE
+# existed in the engine.
 
 class TestSsnChooser:
-    def test_unique_ssn_hashes(self):
+    def test_unique_ssn_gets_fpe(self):
         f = _f("ssn", detector="ssn", unique_rate=1.0, is_likely_unique=True,
                alphabet="digits", max_length=9, value_set_size_class="unique")
         mask, params, _ = best_transform_for("ssn", f)
-        assert mask == "hash"
-        # B-2: truncate sized to the column's max_length when alphabet
-        # is digits, so masked output keeps the same visual length.
-        assert params["truncate"] == 9
-        assert params["algorithm"] == "sha256"
+        assert mask == "fpe"
+        # FPE in the engine reads `charset` (not "alphabet") and preserves
+        # length naturally — there's no "length" param to set.
+        assert params == {"charset": "digits"}
 
-    def test_low_card_ssn_fakes(self):
-        # Same detector_id, but a low-card SSN column (e.g. a small
-        # demographic dimension table with repeated values) → faker.
+    def test_low_card_ssn_also_gets_fpe(self):
+        # Cardinality is no longer load-bearing for the SSN chooser;
+        # format preservation is always the right answer for an
+        # SSN-shaped column.
         f = _f("ssn", detector="ssn", unique_rate=0.05, is_likely_unique=False,
                value_set_size_class="low")
         mask, params, _ = best_transform_for("ssn", f)
-        assert mask == "faker"
-        assert params == {"faker_type": "ssn"}
+        assert mask == "fpe"
+        assert params == {"charset": "digits"}
 
 
-# ── email: same branching ─────────────────────────────────────────────
+# ── email: always faker.email (deterministic + preserves @-shape) ────
 
 class TestEmailChooser:
-    def test_unique_email_hashes(self):
+    def test_unique_email_gets_faker(self):
         f = _f("email", detector="email", unique_rate=1.0, is_likely_unique=True,
                alphabet="mixed", value_set_size_class="unique")
-        mask, _params, _ = best_transform_for("email", f)
-        assert mask == "hash"
+        mask, params, _ = best_transform_for("email", f)
+        assert mask == "faker"
+        assert params == {"faker_type": "email"}
 
-    def test_low_card_email_fakes(self):
+    def test_low_card_email_also_gets_faker(self):
         f = _f("email_template", detector="email", unique_rate=0.05,
                is_likely_unique=False, value_set_size_class="low")
         mask, params, _ = best_transform_for("email", f)
         assert mask == "faker"
         assert params == {"faker_type": "email"}
+
+
+# ── new V1 choosers: first_name / last_name ──────────────────────────
+
+
+class TestNameChoosers:
+    def test_first_name_chooser(self):
+        mask, params, _ = best_transform_for("first_name", None)
+        assert mask == "faker"
+        assert params == {"faker_type": "first_name"}
+
+    def test_last_name_chooser(self):
+        mask, params, _ = best_transform_for("last_name", None)
+        assert mask == "faker"
+        assert params == {"faker_type": "last_name"}
+
+    def test_person_name_chooser_unique_no_longer_hashes(self):
+        # The pre-V1 person_name chooser flipped to hash on
+        # high-cardinality columns. Detection sprint dropped that branch.
+        f = _f("full_name", detector="person_name", unique_rate=1.0,
+               is_likely_unique=True, value_set_size_class="unique")
+        mask, params, _ = best_transform_for("person_name", f)
+        assert mask == "faker"
+        assert params == {"faker_type": "name"}
+
+
+# ── fallback: detectors with no shape-aware chooser ──────────────────
+#
+# Detection sprint (V1): best_transform_for falls back to
+# DEFAULT_STRATEGY_BY_DETECTOR so newer detectors (first_name etc. have
+# their own chooser; pan / iban / mrn / npi etc. don't but should still
+# return a recommendation). The fallback strategies live in
+# decoy_engine.storm.recommendations and are tested independently.
+
+
+class TestFallbackToDefaultStrategy:
+    def test_pan_falls_back_to_fpe(self):
+        mask, params, why = best_transform_for("pan", None)
+        assert mask == "fpe"
+        assert params["charset"] == "digits"
+        assert params["validate_luhn"] is True
+        assert why  # non-empty
+
+    def test_iban_falls_back_to_fpe(self):
+        mask, params, _ = best_transform_for("iban", None)
+        assert mask == "fpe"
+        assert params["charset"] == "ALPHANUM"
+
+    def test_mrn_falls_back_to_fpe_alphanum(self):
+        mask, params, _ = best_transform_for("mrn", None)
+        assert mask == "fpe"
+        assert params["charset"] == "alphanum"
+
+    def test_icd10_falls_back_to_redact(self):
+        # Semantic FPE for ICD-10 is V2; V1 redacts.
+        mask, params, _ = best_transform_for("icd10", None)
+        assert mask == "redact"
+        assert params["redact_with"] == "REDACTED"
+
+    def test_cvv_falls_back_to_redact_with_xxx(self):
+        mask, params, _ = best_transform_for("cvv", None)
+        assert mask == "redact"
+        assert params["redact_with"] == "XXX"
+
+    def test_address_falls_back_to_faker_address(self):
+        mask, params, _ = best_transform_for("address", None)
+        assert mask == "faker"
+        assert params["faker_type"] == "address"
+        assert params["locale"] == "en_US"
 
 
 # ── phone: locale from format_pattern ─────────────────────────────────

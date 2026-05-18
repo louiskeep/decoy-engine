@@ -14,6 +14,19 @@ triggers:
     - person_name
   min_score: 0.3
 
+# Strict-mode fail-safe contract (detection sprint, V1). The Disguise apply
+# step refuses to run if any expected_field is unmatched in the scan's
+# detection + override set. Strings are single detectors; nested lists are
+# any-of groups (e.g. any of the three date detectors satisfies the date
+# expectation). The user can switch to permissive mode to bypass with an
+# audit trail; the default is strict.
+expected_fields:
+  - email
+  - [first_name, last_name, person_name]
+  - us_phone
+  - us_zip
+  - [iso_date, us_date, eu_date]
+
 field_rules:
   - detectors: [email]
     mask: faker
@@ -21,11 +34,23 @@ field_rules:
       faker_type: email
     why: "Replace email with a deterministic fake email."
 
+  - detectors: [first_name]
+    mask: faker
+    params:
+      faker_type: first_name
+    why: "Replace first name with a realistic fake first name."
+
+  - detectors: [last_name]
+    mask: faker
+    params:
+      faker_type: last_name
+    why: "Replace last name with a realistic fake last name."
+
   - detectors: [person_name]
     mask: faker
     params:
       faker_type: name
-    why: "Replace person name with a realistic fake name."
+    why: "Replace full name with a realistic fake name."
 
   - detectors: [us_phone]
     mask: faker

@@ -7,9 +7,16 @@ all bundles in `disguises/` as a smoke test so a broken YAML breaks the build.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 from pydantic import BaseModel, Field
+
+
+# Detection sprint (V1): each entry in expected_fields is either a single
+# detector_id (str) or a group of detector_ids (list[str]) meaning "any
+# of these satisfies the expectation". The platform's preflight code
+# expands the groups when evaluating strict-mode coverage.
+ExpectedField = Union[str, list[str]]
 
 
 class TriggerSpec(BaseModel):
@@ -55,4 +62,26 @@ class Disguise(BaseModel):
     regulation: Optional[str] = None
     primary_buyer: Optional[str] = None
     triggers: TriggerSpec
+    # Detection sprint (V1) strict-mode contract. Defaults to empty so
+    # pre-V1 bundles parse cleanly; in V1 every shipped Disguise has a
+    # populated list. The platform preflight cross-references this
+    # against the scan's detection + override set to decide whether the
+    # Disguise can run in strict mode.
+    expected_fields: list[ExpectedField] = Field(default_factory=list)
     field_rules: list[FieldRule]
+
+    def expected_field_groups(self) -> list[list[str]]:
+        """Normalize expected_fields into a list of any-of groups.
+
+        Each top-level entry becomes a list[str]: single-detector entries
+        become singletons, group entries pass through. Used by the
+        platform's preflight code so it doesn't have to special-case the
+        Union-typed YAML shape.
+        """
+        out: list[list[str]] = []
+        for entry in self.expected_fields:
+            if isinstance(entry, str):
+                out.append([entry])
+            else:
+                out.append(list(entry))
+        return out

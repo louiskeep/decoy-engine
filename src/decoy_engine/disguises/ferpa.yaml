@@ -30,16 +30,45 @@ triggers:
     - [person_name, us_date, email]
   min_score: 0.4
 
+# Strict-mode fail-safe contract (detection sprint, V1). 34 CFR §99.3
+# defines education-record PII as name, address, parent / family info,
+# personal identifiers, indirect identifiers (DOB, place of birth), and
+# any other information that alone or in combination is linked to a
+# specific student. The expected_fields below match the typical EdTech
+# student-record table.
+expected_fields:
+  - ssn
+  - [first_name, last_name, person_name]
+  - email
+  - us_phone
+  - [iso_date, us_date, eu_date]
+  - us_zip
+  - pan
+
 field_rules:
   - detectors: [ssn]
-    mask: hash
-    why: "SSN is the most sensitive FERPA identifier — historically used as student ID in legacy systems. Hash with master key; unique across all runs on the instance."
+    mask: fpe
+    params:
+      charset: digits
+    why: "SSN is the most sensitive FERPA identifier — historically used as student ID in legacy systems. Format-preserving so legacy-PK joins survive while the original SSN is unreadable."
+
+  - detectors: [first_name]
+    mask: faker
+    params:
+      faker_type: first_name
+    why: "Student first names — FERPA direct identifier per 34 CFR §99.3."
+
+  - detectors: [last_name]
+    mask: faker
+    params:
+      faker_type: last_name
+    why: "Student last names — FERPA direct identifier per 34 CFR §99.3."
 
   - detectors: [person_name]
     mask: faker
     params:
       faker_type: name
-    why: "Student name is the primary FERPA direct identifier per 34 CFR §99.3. Realistic substitution preserves dataset density for QA and analytics."
+    why: "Student full names — FERPA direct identifier per 34 CFR §99.3. Realistic substitution preserves dataset density for QA and analytics."
 
   - detectors: [email]
     mask: faker
@@ -66,7 +95,8 @@ field_rules:
     why: "Student address ZIP — quasi-identifier. Combined with DOB and enrollment year it can be uniquely identifying in small rural populations; ZIP-3 generalisation reduces that risk."
 
   - detectors: [pan]
-    mask: hash
+    mask: fpe
     params:
-      truncate: 16
-    why: "Payment cards appear in student-payment and financial-aid tables. Keyed hash — consistent FK joins, no cleartext PAN in dev or test environments."
+      charset: digits
+      validate_luhn: true
+    why: "Payment cards appear in student-payment and financial-aid tables. Format-preserving 16-digit + valid Luhn; FK joins survive via determinism."

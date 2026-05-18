@@ -56,6 +56,20 @@ class DetectorMatch:
     # Detectors with variants (SSN dash/no-dash, phone separator styles,
     # date strptime, ZIP 5/9) write the winning variant's label here.
     format_pattern: Optional[str] = None
+    # Detection sprint (V1): three-bucket confidence so the UI can render
+    # "detected" / "needs review" / "low signal" without re-deriving from
+    # match_rate. 'high' is the safe-to-auto-apply bucket; 'medium' asks
+    # the user to confirm; 'low' surfaces only when the user explicitly
+    # asks to see weak signals.
+    #
+    # Thresholds (set by _evaluate in detectors.py):
+    #   high:   name hint + content >= 45%, OR content alone >= 75%
+    #   medium: content alone >= 50% with no hint
+    #   low:    content alone >= 30% with no hint
+    #
+    # Defaults to 'high' so every existing firing site that didn't set
+    # the field gets the old behavior.
+    confidence: str = "high"
 
 
 @dataclass

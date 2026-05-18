@@ -48,13 +48,54 @@ triggers:
     - [us_zip, mrn]
   min_score: 0.4
 
+# Strict-mode fail-safe contract (detection sprint, V1). The Disguise apply
+# step refuses to run if any expected_field is unmatched in the scan's
+# detection + override set. HIPAA Safe Harbor enumerates 18 identifier
+# categories; each row below corresponds to one (A–R per 45 CFR
+# 164.514(b)(2)). Strings are single detectors; nested lists are any-of
+# groups. Permissive mode bypasses with an audit trail.
+expected_fields:
+  - [first_name, last_name, person_name]   # A — Names
+  - us_zip                                  # B — Geographic
+  - [iso_date, us_date, eu_date]            # C — Dates (DOB + visit dates)
+  - us_phone                                # D — Telephone
+  - fax_number                              # E — Fax
+  - email                                   # F — Email
+  - ssn                                     # G — SSN
+  - mrn                                     # H — Medical Record Numbers
+  - health_plan_id                          # I — Health-plan beneficiary
+  - iban                                    # J — Account numbers (bank)
+  - license_num                             # K — Certificate / license
+  - vehicle_id                              # L — VIN / vehicle
+  - device_id                               # M — Device identifiers
+  - url                                     # N — URLs
+  - ipv4                                    # O — IP addresses
+  - biometric_id                            # P — Biometric
+  - address                                 # B (street; ZIP handled above)
+  # Clinical (beyond SH):
+  - icd10                                   # ICD-10-CM diagnosis codes
+  - npi                                     # National Provider Identifier
+
 field_rules:
-  # A — Names
+  # A — Names (split per-detector so first_name and last_name columns
+  # get the matching Faker provider instead of the catch-all faker.name).
+  - detectors: [first_name]
+    mask: faker
+    params:
+      faker_type: first_name
+    why: "Safe Harbor §A — first names → realistic fake first name."
+
+  - detectors: [last_name]
+    mask: faker
+    params:
+      faker_type: last_name
+    why: "Safe Harbor §A — last names → realistic fake last name."
+
   - detectors: [person_name]
     mask: faker
     params:
       faker_type: name
-    why: "Safe Harbor §A — names → realistic fake substitutes."
+    why: "Safe Harbor §A — full names → realistic fake name."
 
   # B — Geographic data (ZIP → 3-digit prefix)
   - detectors: [us_zip]
@@ -91,61 +132,59 @@ field_rules:
       faker_type: email
     why: "Safe Harbor §F — email → realistic fake."
 
-  # G — Social Security Numbers
+  # G — Social Security Numbers — FPE keeps the 9-digit + dash shape;
+  # determinism is provided by the instance master key so FK joins
+  # survive masking. (Pre-V1 hashed; FPE strictly upgrades both shape
+  # and join behavior.)
   - detectors: [ssn]
-    mask: hash
+    mask: fpe
     params:
-      algorithm: sha256
-    why: "Safe Harbor §G — SSN → irreversible hash. Preserves uniqueness for FK joins."
+      charset: digits
+    why: "Safe Harbor §G — SSN → format-preserving digits; deterministic so FK joins survive."
 
   # H — Medical record numbers
   - detectors: [mrn]
-    mask: hash
+    mask: fpe
     params:
-      algorithm: sha256
-      truncate: 12
-    why: "Safe Harbor §H — medical record numbers → deterministic 12-char hash (FK-stable)."
+      charset: alphanum
+    why: "Safe Harbor §H — medical record numbers → format-preserving alphanumeric; joins survive."
 
-  # I — Health-plan beneficiary numbers
+  # I — Health-plan beneficiary numbers (no universal format — redact)
   - detectors: [health_plan_id]
-    mask: hash
+    mask: redact
     params:
-      algorithm: sha256
-      truncate: 12
-    why: "Safe Harbor §I — health-plan beneficiary / member IDs → deterministic hash."
+      redact_with: "[REDACTED]"
+    why: "Safe Harbor §I — health-plan IDs vary too widely for FPE in V1; redacted."
 
   # J — Account numbers (IBAN covers bank accounts; general account columns
   #     are caught by health_plan_id / license_num name-hint rules when named
   #     accordingly, e.g. account_id, account_num)
   - detectors: [iban]
-    mask: hash
+    mask: fpe
     params:
-      algorithm: sha256
-    why: "Safe Harbor §J — IBAN / bank account numbers → irreversible hash."
+      charset: ALPHANUM
+    why: "Safe Harbor §J — IBAN → format-preserving alphanumeric; joins survive."
 
-  # K — Certificate and license numbers
+  # K — Certificate and license numbers (no universal format — redact)
   - detectors: [license_num]
-    mask: hash
+    mask: redact
     params:
-      algorithm: sha256
-      truncate: 12
-    why: "Safe Harbor §K — license/certificate numbers → deterministic hash."
+      redact_with: "[REDACTED]"
+    why: "Safe Harbor §K — license/certificate formats vary too widely for FPE in V1."
 
   # L — Vehicle identifiers and serial numbers (VINs)
   - detectors: [vehicle_id]
-    mask: hash
+    mask: fpe
     params:
-      algorithm: sha256
-      truncate: 17
-    why: "Safe Harbor §L — VINs and vehicle identifiers → deterministic hash (length matches VIN)."
+      charset: ALPHANUM
+    why: "Safe Harbor §L — VINs → format-preserving 17-char alphanumeric; joins survive."
 
-  # M — Device identifiers and serial numbers
+  # M — Device identifiers and serial numbers (no universal format — redact)
   - detectors: [device_id]
-    mask: hash
+    mask: redact
     params:
-      algorithm: sha256
-      truncate: 12
-    why: "Safe Harbor §M — device/implant identifiers → deterministic hash."
+      redact_with: "[REDACTED]"
+    why: "Safe Harbor §M — device identifier formats vary too widely for FPE in V1."
 
   # N — Web Universal Resource Locators (URLs)
   - detectors: [url]
@@ -175,10 +214,9 @@ field_rules:
       length: 3
     why: "ICD-10-CM codes → 3-char category truncation (e.g. 'S72.001A' → 'S72'). Preserves analytic cohort grouping while removing subcategory specificity per Safe Harbor §C guidance on clinical dates."
 
-  # Clinical: National Provider Identifiers → FK-stable hash
+  # Clinical: National Provider Identifiers → format-preserving 10-digit
   - detectors: [npi]
-    mask: hash
+    mask: fpe
     params:
-      algorithm: sha256
-      truncate: 10
-    why: "National Provider Identifiers → 10-char deterministic hash. Provider-level analytics survive; individual provider identity does not."
+      charset: digits
+    why: "National Provider Identifiers → format-preserving 10-digit; deterministic so provider-level joins survive."

@@ -38,12 +38,38 @@ triggers:
     - [person_name, email, us_date]
   min_score: 0.4
 
+# Strict-mode fail-safe contract (detection sprint, V1). SOX doesn't
+# enumerate PII categories; the expected_fields below cover the typical
+# insider-data table (executive identity + corporate contact + payroll
+# attributes). Fiscal dates are required because SOX Section 802's
+# document-retention rules attach to time-stamped financial records.
+expected_fields:
+  - [first_name, last_name, person_name]
+  - email
+  - ssn
+  - us_phone
+  - pan
+  - [iso_date, us_date, eu_date]
+  - us_zip
+
 field_rules:
+  - detectors: [first_name]
+    mask: faker
+    params:
+      faker_type: first_name
+    why: "Executive first names — SOX-relevant identifier."
+
+  - detectors: [last_name]
+    mask: faker
+    params:
+      faker_type: last_name
+    why: "Executive last names — SOX-relevant identifier."
+
   - detectors: [person_name]
     mask: faker
     params:
       faker_type: name
-    why: "Executive and insider names are the primary SOX-relevant identifiers — disclosed in proxy statements but sensitive in staging/dev databases where they appear alongside MNPI. Realistic fake preserves record shape."
+    why: "Executive and insider full names are the primary SOX-relevant identifiers — disclosed in proxy statements but sensitive in staging/dev databases where they appear alongside MNPI. Realistic fake preserves record shape."
 
   - detectors: [email]
     mask: faker
@@ -52,8 +78,10 @@ field_rules:
     why: "Corporate email routes back to an individual and appears in compensation and option-grant tables. Fake but structurally valid so mail-routing tests pass."
 
   - detectors: [ssn]
-    mask: hash
-    why: "Executive SSNs appear in payroll and tax tables that feed the audit pipeline. Keyed hash preserves FK joins across payroll ↔ benefit ↔ grant tables."
+    mask: fpe
+    params:
+      charset: digits
+    why: "Executive SSNs appear in payroll and tax tables that feed the audit pipeline. Format-preserving digits keep the 9-digit shape; FK joins across payroll ↔ benefit ↔ grant tables survive."
 
   - detectors: [us_phone]
     mask: faker
@@ -62,10 +90,11 @@ field_rules:
     why: "Direct contact identifier for executives in HR and payroll records — realistic fake."
 
   - detectors: [pan]
-    mask: hash
+    mask: fpe
     params:
-      truncate: 16
-    why: "Corporate card PANs appear in expense-reimbursement tables that land in audit trails. Keyed hash — consistent across runs so the masked dataset can replay expense reconciliation tests."
+      charset: digits
+      validate_luhn: true
+    why: "Corporate card PANs appear in expense-reimbursement tables. Format-preserving 16-digit + valid Luhn so masked data can replay expense reconciliation tests."
 
   - detectors: [iso_date, us_date, eu_date]
     mask: date_shift
