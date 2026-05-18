@@ -5,6 +5,10 @@ Phase 2 leaves every op on `pandas` so behavior is unchanged from Phase 1.
 Phases 3 + 4 flip individual ops to polars / duckdb; this test prevents
 silent regression -- if someone adds a new op that forgets to declare,
 the test fails.
+
+Sprint 1.5 additions: baseline extended to all 29 registered ops; also
+guards INPUT_ARITY and OUTPUT_KIND declarations so a new op cannot omit
+those fields and only surface a runtime AttributeError.
 """
 
 from __future__ import annotations
@@ -17,6 +21,10 @@ from decoy_engine.graph.conversion import VALID_ENGINES
 from decoy_engine.graph.ops import OPS
 from decoy_engine.graph.registry import native_engine_for
 
+
+# ---------------------------------------------------------------------------
+# Declaration coverage: every op must declare its contract fields
+# ---------------------------------------------------------------------------
 
 def test_every_op_declares_native_engine():
     missing = [
@@ -39,6 +47,53 @@ def test_every_declared_engine_is_valid():
         f"Must be one of {VALID_ENGINES}."
     )
 
+
+def test_every_op_declares_input_arity():
+    """Every op must declare INPUT_ARITY as a (min, max) tuple.
+
+    The runner's cardinality validator reads INPUT_ARITY to check that the
+    graph wiring matches op expectations. An op that omits INPUT_ARITY
+    will raise AttributeError at the first cardinality check rather than
+    at validation time.
+    """
+    bad = []
+    for kind, op in OPS.items():
+        arity = getattr(op, "INPUT_ARITY", None)
+        if arity is None:
+            bad.append((kind, "missing INPUT_ARITY"))
+            continue
+        if not isinstance(arity, tuple) or len(arity) != 2:
+            bad.append((kind, f"INPUT_ARITY must be a 2-tuple, got {arity!r}"))
+    assert not bad, (
+        f"op INPUT_ARITY problems: {bad}. "
+        "Each op module must declare INPUT_ARITY as a (min: int, max: int | None) tuple."
+    )
+
+
+def test_every_op_declares_output_kind():
+    """Every op must declare OUTPUT_KIND as 'stream', 'sink', or 'split'.
+
+    The runner's sink check and split-output routing read OUTPUT_KIND to
+    decide how to handle op results. An op that omits OUTPUT_KIND produces
+    undefined runner behavior.
+    """
+    valid_kinds = {"stream", "sink", "split"}
+    bad = []
+    for kind, op in OPS.items():
+        ok = getattr(op, "OUTPUT_KIND", None)
+        if ok is None:
+            bad.append((kind, "missing OUTPUT_KIND"))
+        elif ok not in valid_kinds:
+            bad.append((kind, f"OUTPUT_KIND must be one of {valid_kinds}, got {ok!r}"))
+    assert not bad, (
+        f"op OUTPUT_KIND problems: {bad}. "
+        "Each op module must declare OUTPUT_KIND = 'stream' | 'sink' | 'split'."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Registry resolution
+# ---------------------------------------------------------------------------
 
 def test_pandas_mode_forces_pandas_for_all_ops():
     """`engine: pandas` is the post-Phase-8 opt-out / safety hatch:
@@ -67,6 +122,10 @@ def test_unknown_kind_falls_back_to_pandas():
     assert native_engine_for("does_not_exist", "hybrid") == "pandas"
     assert native_engine_for("does_not_exist", "pandas") == "pandas"
 
+
+# ---------------------------------------------------------------------------
+# Frozen baseline: explicit per-op engine declarations
+# ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("kind,expected_engine", [
     # Frozen baseline of NATIVE_ENGINE per kind. The list moves explicitly
@@ -158,6 +217,10 @@ def test_baseline_covers_all_registered_ops():
         "expected NATIVE_ENGINE before merging."
     )
 
+
+# ---------------------------------------------------------------------------
+# Validation-layer check for bad NATIVE_ENGINE declarations
+# ---------------------------------------------------------------------------
 
 def test_validator_rejects_bad_native_engine_declaration(monkeypatch):
     """GraphConfigValidator must catch invalid NATIVE_ENGINE at graph-validation
