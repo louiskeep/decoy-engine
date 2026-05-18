@@ -27,13 +27,12 @@ import yaml
 from decoy_engine.context import (
     ExecutionContext,
     emit_lineage,
-    emit_step,
-    emit_throughput_sample,
 )
 from decoy_engine.exceptions import ConfigError, FlagPauseSignal, PipelineValidationError
 from decoy_engine.graph.cache import GraphCache
 from decoy_engine.graph.conversion import arrow_columns
 from decoy_engine.graph.errors import translate as translate_engine_error
+from decoy_engine.graph.events import node_error, node_export_error, node_ok, node_start
 from decoy_engine.graph.planner import build_plan
 from decoy_engine.graph.topo import upstream_subgraph
 from decoy_engine.graph.types import (
@@ -283,6 +282,7 @@ def _execute_graph(
             node_cfg = dict(node.get("config") or {})
             engine = native_engine_for(kind, graph_engine_mode)
             node_cfg["__engine"] = engine
+            descriptor = _node_descriptor(node)
 
             # Resolve `${nodes.<id>.<key>}` tokens against exports captured by
             # already-completed nodes. Other scopes (var/env/trigger/storm) are
@@ -292,17 +292,7 @@ def _execute_graph(
             try:
                 node_cfg = _resolve_node_exports(node_cfg, ctx._exports, nid)
             except _NodeExportResolutionError as exc:
-                records.append({
-                    "node_id": nid,
-                    "kind": kind,
-                    "status": "error",
-                    "row_count": None,
-                    "elapsed_ms": 0,
-                    "error": str(exc),
-                    "exports": None,
-                })
-                if log is not None:
-                    log.error("graph: node %s failed: %s", _node_descriptor(node), exc)
+                records.append(node_export_error(log, descriptor, nid, kind, exc))
                 success = False
                 break
 
@@ -322,91 +312,35 @@ def _execute_graph(
             # naturally land at 0.
             rows_in_total = sum(gc.peek_rows(e["from"]) for e in in_edges)
             inputs = [gc.read(e["from"], engine) for e in in_edges]
-            descriptor = _node_descriptor(node)
 
-            if log is not None:
-                log.info("graph: running node %s (engine=%s)", descriptor, engine)
-            emit_step(log, step_name, status="start", rows_in=rows_in_total or None)
-
-            # Per-node config snapshot in the narrative log so the Task History
-            # Nodes tab shows what each node was configured with at run time
-            # (predicate, columns, output path, etc.) -- the boundary emit alone
-            # leaves the bucket nearly empty for ops that don't log internally.
-            # Emitted AFTER step start so JobLogger tags the line with this
-            # node's step name.
-            if log is not None and node_cfg:
-                log.info(_summarize_node_config(kind, node_cfg))
+            node_start(log, step_name, descriptor, engine, rows_in_total, kind, node_cfg)
 
             t0 = time.monotonic()
             ctx._current_node_id = nid
             try:
                 result = op.apply(inputs, node_cfg, ctx)
-                # Split-output ops (Item 21 IF / FLAG routers): each declared
-                # OUTPUT_PORT lands in its own cache slot keyed `<nid>.<port>`
-                # so downstream consumers can read a single port. Single-output
-                # ops take the regular `cache[nid]` path. ``emit_step(finish)``
-                # fires after either branch so the reporting timeline sees the
-                # node close regardless of split/non-split. The ``exports``
-                # field carries any values the op recorded via ``ctx.export()``
-                # -- used by ``${nodes.<id>.<key>}`` resolution and surfaced
-                # to the platform via JobNodeRun.exports.
+                # Split-output ops (IF / FLAG routers): each declared OUTPUT_PORT
+                # lands in its own cache slot keyed `<nid>.<port>` so downstream
+                # consumers can read a single port. Single-output ops take the
+                # regular `cache[nid]` path. The ``exports`` field carries any
+                # values the op recorded via ``ctx.export()`` -- used by
+                # ``${nodes.<id>.<key>}`` resolution and surfaced to the platform
+                # via JobNodeRun.exports.
                 if isinstance(result, dict) and getattr(op, "OUTPUT_KIND", None) == "split":
                     ports = getattr(op, "OUTPUT_PORTS", ())
                     total_rows = gc.write_split(nid, ports, result, engine)
                     elapsed_ms = int((time.monotonic() - t0) * 1000)
-                    records.append({
-                        "node_id": nid,
-                        "kind": kind,
-                        "status": "ok",
-                        "row_count": total_rows,
-                        "elapsed_ms": elapsed_ms,
-                        "error": None,
-                        "exports": ctx._exports.get(nid),
-                    })
-                    if log is not None:
-                        log.info(
-                            "graph: node %s ok rows=%d elapsed=%dms (split)",
-                            descriptor, total_rows, elapsed_ms,
-                        )
-                    emit_step(
-                        log, step_name, status="finish",
-                        rows_in=rows_in_total or None, rows_out=total_rows,
-                    )
-                    # Phase 3 throughput sample -- point-in-time rows/sec for
-                    # this node. Skipped on zero-duration / zero-rows nodes
-                    # so the chart doesn't see Infinity / NaN. The chart
-                    # endpoint orders samples by ts, so this lands as the
-                    # node's terminal datapoint regardless of order.
-                    if elapsed_ms > 0 and total_rows > 0:
-                        emit_throughput_sample(log, total_rows * 1000 / elapsed_ms)
+                    records.append(node_ok(
+                        log, step_name, descriptor, nid, kind,
+                        ctx._exports.get(nid), elapsed_ms, rows_in_total, total_rows, split=True,
+                    ))
                 else:
                     rows_out = gc.write(nid, result, engine)
                     elapsed_ms = int((time.monotonic() - t0) * 1000)
-                    records.append({
-                        "node_id": nid,
-                        "kind": kind,
-                        "status": "ok",
-                        "row_count": rows_out,
-                        "elapsed_ms": elapsed_ms,
-                        "error": None,
-                        "exports": ctx._exports.get(nid),
-                    })
-                    if log is not None:
-                        log.info(
-                            "graph: node %s ok rows=%d elapsed=%dms",
-                            descriptor,
-                            rows_out,
-                            elapsed_ms,
-                        )
-                    emit_step(
-                        log, step_name, status="finish",
-                        rows_in=rows_in_total or None, rows_out=rows_out,
-                    )
-                    # Phase 3 throughput sample -- same shape as split branch
-                    # above. Skip zero-duration / zero-rows to keep the
-                    # chart clean.
-                    if elapsed_ms > 0 and rows_out > 0:
-                        emit_throughput_sample(log, rows_out * 1000 / elapsed_ms)
+                    records.append(node_ok(
+                        log, step_name, descriptor, nid, kind,
+                        ctx._exports.get(nid), elapsed_ms, rows_in_total, rows_out,
+                    ))
             except FlagPauseSignal:
                 # Item 21 controlled pause -- not a failure. Let the platform
                 # runner handle it (creates a JobReview row, transitions the
@@ -417,40 +351,11 @@ def _execute_graph(
             except Exception as exc:
                 translated = translate_engine_error(exc, kind, nid)
                 elapsed_ms = int((time.monotonic() - t0) * 1000)
-                # R3.4 typed errors: surface the translated error's code +
-                # path on the records dict when present so downstream
-                # (platform runner -> JobNodeRun -> manifest) can render a
-                # structured ``{code, message, where}`` payload instead of
-                # bare free-text. Bare OpError without forwarded metadata
-                # leaves the fields None and the manifest falls back to the
-                # legacy ``node.runtime_error`` wrapping.
-                records.append({
-                    "node_id": nid,
-                    "kind": kind,
-                    "status": "error",
-                    "row_count": None,
-                    "elapsed_ms": elapsed_ms,
-                    "error": str(translated),
-                    "error_code": getattr(translated, "code", None),
-                    "error_path": getattr(translated, "path", None),
-                    "exports": ctx._exports.get(nid),
-                })
-                if log is not None:
-                    log.error("graph: node %s failed: %s", descriptor, translated)
-                    log.error(traceback.format_exc())
-                # Phase 2 LOGGING_GUIDE sec4c: emit_step carries the exception
-                # class + the translated message + the canvas node id so the
-                # JobLogger can format the spec ERROR line tail (and the
-                # frontend can deep-link the error pill to the producing
-                # node). ``type(exc).__name__`` is the underlying class --
-                # ``translated`` is what we surface to the user.
-                emit_step(
-                    log, step_name, status="error",
-                    rows_in=rows_in_total or None,
-                    error_class=type(exc).__name__,
-                    error_msg=str(translated),
-                    node_id=nid,
-                )
+                records.append(node_error(
+                    log, step_name, descriptor, nid, kind,
+                    ctx._exports.get(nid), elapsed_ms, rows_in_total, exc, translated,
+                    traceback_str=traceback.format_exc(),
+                ))
                 success = False
                 break
             finally:
@@ -690,48 +595,6 @@ def _node_descriptor(node: dict) -> str:
     return f"[id={nid}, kind={kind}]"
 
 
-# Keys to redact in the per-node config summary line. Anything name-matching
-# (case-insensitive) gets `***` in the emitted log. Keeps the Task History
-# Nodes-tab read-out useful without leaking credentials into Job.log.
-_REDACT_KEYS = {"password", "secret", "token", "api_key", "apikey", "auth"}
-
-
-def _summarize_node_config(kind: str, cfg: dict) -> str:
-    """Return a short per-node config summary for the narrative log.
-
-    Emitted right after each step starts so the Task History Nodes tab
-    always has at least one informative line per node -- `> <id>` and the
-    `step <id> (finish)` boundary alone aren't enough for users to see
-    what the node actually did.
-
-    Keep this terse: the resolved config dict already lives on
-    JobNodeRun.config for the full picture. This line is a glance value.
-    Secrets are redacted by key name."""
-    if not isinstance(cfg, dict) or not cfg:
-        return f"config: (no config)"
-    parts: list[str] = []
-    for k, v in cfg.items():
-        if k.startswith("_"):
-            continue
-        key_l = str(k).lower()
-        if any(rk in key_l for rk in _REDACT_KEYS):
-            parts.append(f"{k}=***")
-            continue
-        if isinstance(v, (dict, list)):
-            # Lists / dicts: show the length so a "mask: 12 columns" still
-            # reads at a glance without flooding the line with structure.
-            kind_word = "keys" if isinstance(v, dict) else "items"
-            parts.append(f"{k}=<{len(v)} {kind_word}>")
-        elif isinstance(v, str) and len(v) > 80:
-            parts.append(f"{k}={v[:77]!r}...")
-        else:
-            parts.append(f"{k}={v!r}")
-        if len(parts) >= 6:
-            parts.append("...")
-            break
-    return f"config: " + ", ".join(parts)
-
-
 def _jsonable(v: Any) -> Any:
     """Replace NaN/NaT/etc. with None so the row tuples serialize cleanly."""
     try:
@@ -747,7 +610,7 @@ def _jsonable(v: Any) -> Any:
 # scopes (var/env/trigger/storm/iteration) are resolved platform-side before
 # the YAML reaches the engine. This scope must be resolved live because the
 # values come from already-completed upstream ops.
-_NODE_TOKEN_RE = re.compile(r"\$\{nodes\.([a-zA-Z0-9_-]+)\.([a-zA-Z_][\w.]*)})")
+_NODE_TOKEN_RE = re.compile(r"\$\{nodes\.([a-zA-Z0-9_-]+)\.([a-zA-Z_][\w.]*)\}")
 
 
 class _NodeExportResolutionError(Exception):
