@@ -38,8 +38,6 @@ call and `GraphCache`; preview behavior cannot silently drift from
 full-run behavior because both paths use the same plan builder.
 """
 
-import hashlib
-import json
 import logging
 import os
 import re
@@ -703,14 +701,3 @@ def _resolve_one_node_export(
                 f"key {part!r} not in {node_id!r}'s exports"
             )
     return cur
-
-
-def _node_hash(node: dict, upstream_hashes: list[str], row_limit: int) -> str:
-    payload = {
-        "kind": node.get("kind"),
-        "config": node.get("config") or {},
-        "upstream": upstream_hashes,
-        "row_limit": row_limit,
-    }
-    blob = json.dumps(payload, sort_keys=True, default=str).encode()
-    return hashlib.sha256(blob).hexdigest()
