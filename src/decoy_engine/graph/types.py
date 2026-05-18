@@ -1,7 +1,7 @@
 """TypedDicts for the graph pipeline format.
 
 Shape contract is defined in PIPELINE_GRAPH_GUIDE.md. These types are
-internal helpers; callers should not depend on them — they read/write
+internal helpers; callers should not depend on them -- they read/write
 the YAML directly.
 """
 
@@ -61,3 +61,5 @@ class PreviewResult(TypedDict, total=False):
     row_count: int
     elapsed_ms: int
     error: str | None
+    # Node ids bypassed due to side_effect_policy="skip". Empty when all ops ran.
+    skipped_nodes: list[str]
