@@ -25,6 +25,9 @@ from decoy_engine.exceptions import FlagPauseSignal
 from decoy_engine.graph.ops._base import OpError  # noqa: F401 (re-exported for tests)
 
 KIND = "flag_gate"
+# Operates on row counts and column names only — no cell-value transforms.
+# Kept on pandas because the conversion cost exceeds the value at this level,
+# especially for pre-run checks (INPUT_ARITY 0) where df may be None.
 NATIVE_ENGINE = "pandas"
 INPUT_ARITY = (0, 1)  # 0 = pre-run check before any source; 1 = mid-run
 OUTPUT_KIND = "stream"

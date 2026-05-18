@@ -32,6 +32,9 @@ from decoy_engine.graph.ops._iterator_core import (
 from decoy_engine.internal.validator import ValidationError
 
 KIND = "iterate_fixed"
+# Orchestration-only; delegates sub-pipeline execution to execute_graph_capture,
+# which returns an Arrow table. Declaring "arrow" avoids a redundant pandas
+# conversion at the boundary — the parent runner's pandas mode coerces if needed.
 NATIVE_ENGINE = "arrow"
 INPUT_ARITY: tuple[int, int | None] = (0, 0)
 OUTPUT_KIND = "stream"

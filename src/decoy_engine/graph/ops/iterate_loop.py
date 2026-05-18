@@ -29,6 +29,8 @@ from decoy_engine.graph.ops._iterator_core import (
 from decoy_engine.internal.validator import ValidationError
 
 KIND = "iterate_loop"
+# Orchestration-only; delegates sub-pipeline execution to execute_graph_capture.
+# Same Arrow-output rationale as iterate_fixed.
 NATIVE_ENGINE = "arrow"
 INPUT_ARITY: tuple[int, int | None] = (0, 0)
 OUTPUT_KIND = "stream"

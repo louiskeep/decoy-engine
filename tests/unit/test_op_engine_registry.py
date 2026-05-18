@@ -45,7 +45,7 @@ def test_every_declared_engine_is_valid():
 
 
 def test_pandas_mode_forces_pandas_for_all_ops():
-    """`engine: pandas` is the post-Phase-8 opt-out / safety hatch:
+    ""`engine: pandas` is the post-Phase-8 opt-out / safety hatch:
     every op resolves to pandas regardless of its declaration. Lives for
     one release cycle past the default flip; then the pandas fallbacks
     get deleted and this flag becomes a no-op."""
@@ -157,18 +157,16 @@ VALID_OUTPUT_KINDS = frozenset({"stream", "sink", "split"})
 # as the default rather than as a deliberate choice.
 #
 # If you add an op to this set, add a comment in the op module explaining
-# why pandas (e.g. "per-row Faker callbacks", "orchestration-only",
-# "scan mode only; Arrow overhead > polars gain at V1 scale").
+# why pandas (e.g. "per-row Faker callbacks", "no cell-value transforms").
 _INTENTIONALLY_PANDAS: frozenset[str] = frozenset({
     "mask",         # per-row Faker/scipy/custom masking callbacks
     "generate",     # per-row Faker reference lookups and relationship handlers
     "run_storm",    # scan mode only; phase-1 benchmark: Arrow overhead > polars gain
-    "flag_gate",    # operates on row counts and column names, not cell values
-    "sub_pipeline", # orchestration-only; delegates to a child runner
-    "iterate_fixed",  # orchestration; injects iteration.value as template vars
-    "iterate_loop",   # orchestration; same pattern as iterate_fixed
-    "iterate_files",  # orchestration; iterates over file paths
+    "flag_gate",    # no cell-value transforms; conversion cost > benefit at gate level
 })
+# Note: sub_pipeline, iterate_fixed, iterate_loop, iterate_files declare
+# NATIVE_ENGINE = "arrow" (not pandas) — they are orchestration ops that
+# delegate to execute_graph_capture and return its Arrow output directly.
 
 
 def test_every_op_declares_kind():
