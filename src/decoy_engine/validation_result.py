@@ -149,6 +149,13 @@ class CODES:
     # Audit Sprint 1.5: catch misdeclared NATIVE_ENGINE at validation time
     # instead of silently falling back to pandas in the registry.
     NODE_BAD_NATIVE_ENGINE = "node.bad_native_engine"
+    # Sprint 1.5: validate remaining op metadata contract fields.
+    # KIND must match the registry key; INPUT_ARITY and OUTPUT_KIND must
+    # be structurally valid; split ops must declare OUTPUT_PORTS.
+    NODE_KIND_MISMATCH = "node.kind_mismatch"
+    NODE_BAD_INPUT_ARITY = "node.bad_input_arity"
+    NODE_BAD_OUTPUT_KIND = "node.bad_output_kind"
+    NODE_SPLIT_MISSING_PORTS = "node.split_missing_ports"
 
     # Per-edge.
     EDGE_BAD_TYPE = "edge.bad_type"

@@ -522,6 +522,7 @@ class GeneratorConfigValidator(ConfigValidator):
 import re
 
 _GRAPH_NODE_ID_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]{0,63}$")
+_VALID_OUTPUT_KINDS: frozenset[str] = frozenset({"stream", "split"})
 
 
 class GraphConfigValidator(ConfigValidator):
@@ -645,6 +646,59 @@ class GraphConfigValidator(ConfigValidator):
                     f"{path}.kind",
                     code=CODES.NODE_BAD_NATIVE_ENGINE,
                 )
+
+            # Sprint 1.5: validate remaining op metadata contract fields.
+            op_module = OPS[kind]
+
+            declared_kind = getattr(op_module, "KIND", None)
+            if declared_kind is not None and declared_kind != kind:
+                raise ValidationError(
+                    f"op registered as {kind!r} but declares KIND={declared_kind!r}; "
+                    f"registry key and KIND must match",
+                    f"{path}.kind",
+                    code=CODES.NODE_KIND_MISMATCH,
+                )
+
+            declared_arity = getattr(op_module, "INPUT_ARITY", None)
+            if declared_arity is not None:
+                _arity_ok = (
+                    isinstance(declared_arity, tuple)
+                    and len(declared_arity) == 2
+                    and isinstance(declared_arity[0], int)
+                    and declared_arity[0] >= 0
+                    and (
+                        declared_arity[1] is None
+                        or (isinstance(declared_arity[1], int) and declared_arity[1] >= declared_arity[0])
+                    )
+                )
+                if not _arity_ok:
+                    raise ValidationError(
+                        f"op {kind!r} declares malformed INPUT_ARITY {declared_arity!r}; "
+                        f"must be (min: int>=0, max: int>=min or None)",
+                        f"{path}.kind",
+                        code=CODES.NODE_BAD_INPUT_ARITY,
+                    )
+
+            declared_output_kind = getattr(op_module, "OUTPUT_KIND", None)
+            if declared_output_kind is not None and declared_output_kind not in _VALID_OUTPUT_KINDS:
+                raise ValidationError(
+                    f"op {kind!r} declares invalid OUTPUT_KIND {declared_output_kind!r}; "
+                    f"supported: {sorted(_VALID_OUTPUT_KINDS)}",
+                    f"{path}.kind",
+                    code=CODES.NODE_BAD_OUTPUT_KIND,
+                )
+
+            if declared_output_kind == "split":
+                declared_ports = getattr(op_module, "OUTPUT_PORTS", None)
+                if not declared_ports or not isinstance(declared_ports, (tuple, list)) or not all(
+                    isinstance(p, str) for p in declared_ports
+                ):
+                    raise ValidationError(
+                        f"op {kind!r} declares OUTPUT_KIND='split' but OUTPUT_PORTS "
+                        f"is missing or malformed; must be a non-empty tuple of strings",
+                        f"{path}.kind",
+                        code=CODES.NODE_SPLIT_MISSING_PORTS,
+                    )
 
             name = node.get("name")
             if name is not None and (not isinstance(name, str) or not name.strip()):

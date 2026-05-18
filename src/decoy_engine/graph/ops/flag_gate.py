@@ -25,6 +25,10 @@ from decoy_engine.exceptions import FlagPauseSignal
 from decoy_engine.graph.ops._base import OpError  # noqa: F401 (re-exported for tests)
 
 KIND = "flag_gate"
+# Intentionally on pandas: condition evaluation (len/df.columns membership,
+# comparison arithmetic) uses pure Python paths with no vectorized ops.
+# Migrating to polars would add complexity with zero throughput gain since
+# this op never processes bulk row data -- it only inspects metadata.
 NATIVE_ENGINE = "pandas"
 INPUT_ARITY = (0, 1)  # 0 = pre-run check before any source; 1 = mid-run
 OUTPUT_KIND = "stream"
