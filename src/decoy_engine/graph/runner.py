@@ -269,7 +269,7 @@ def _execute_graph(
     monitor.__enter__()
     try:
         # One-shot lineage emission: classify every node by its kind family
-        # (source.* → source, target.* → output, everything else → transform)
+        # (source.* -> source, target.* -> output, everything else -> transform)
         # and tag with the engine-resolved kind so the UI can route an icon.
         # Done before the run loop so a node failure mid-run still leaves a
         # complete lineage record for the timeline.
@@ -310,7 +310,7 @@ def _execute_graph(
             # STEP column of every narrative line emitted while this node is
             # the open step, AND what the reporting UI's pill timeline keys
             # on. Using the node id (not the kind) means every node is its
-            # own pill, not one pill per kind — which matters for graphs
+            # own pill, not one pill per kind -- which matters for graphs
             # with multiple mask / target nodes.
             step_name = nid
             # rows_in: sum of upstream row counts read before consume so
@@ -346,7 +346,7 @@ def _execute_graph(
                     records.append(make_ok_record(nid, kind, elapsed_ms, rows_out, ctx._exports.get(nid)))
                     emit_node_ok(log, step_name, descriptor, elapsed_ms, rows_in_total, rows_out)
             except FlagPauseSignal:
-                # Item 21 controlled pause — not a failure. Let the platform
+                # Item 21 controlled pause -- not a failure. Let the platform
                 # runner handle it (creates a JobReview row, transitions the
                 # job to review_pending). No emit_step(error) because the
                 # phase isn't done yet; the resumed run will continue from
@@ -391,8 +391,8 @@ def preview_graph(
 
     Walks only the ancestors of `node_id`, applies the row_limit hint to
     sources, and returns the DataFrame at `node_id` capped to `row_limit`.
-    Targets do NOT execute their side effect -- the dataframe that would
-    have been written is returned instead.
+    Side-effecting ops (HAS_SIDE_EFFECTS=True) are skipped by default; the
+    returned error field names the skip reason when the target is a sink.
 
     Per the PIPELINE_GRAPH_GUIDE: errors return PreviewResult with
     status-shaped `error` field rather than raising; only validation /
@@ -403,6 +403,8 @@ def preview_graph(
     sampling here still works -- the user can grab data out of any node
     whose upstream is well-formed.
     """
+    from decoy_engine.graph.preview import PreviewPolicy, execute_preview
+
     config = _load_yaml(yaml_text)
 
     # Light top-level check so we can safely walk the graph below; full
@@ -429,82 +431,8 @@ def preview_graph(
     }
     _validate_or_raise(sub_config)
 
-    row_limit = max(1, min(int(row_limit), 1000))
-    plan = build_preview_plan(sub_config, node_id)
-
-    from decoy_engine.graph.ops import OPS
-    from decoy_engine.graph.registry import native_engine_for
-
-    graph_cache = GraphCache(plan.consumer_counts)
-    overall_start = time.monotonic()
-    error_msg: str | None = None
-
-    for nid in plan.order:
-        node = plan.by_id[nid]
-        kind = node["kind"]
-        op = OPS[kind]
-        node_cfg = dict(node.get("config") or {})
-        node_cfg["__preview_row_limit"] = row_limit
-        engine = native_engine_for(kind, plan.engine_mode)
-        node_cfg["__engine"] = engine
-        in_edges = plan.in_edges[nid]
-        inputs = [
-            graph_cache.consume(e["from"], engine, hold=node_id)
-            for e in in_edges
-        ]
-
-        try:
-            result = op.apply(inputs, node_cfg, ctx)
-            if isinstance(result, dict) and getattr(op, "OUTPUT_KIND", None) == "split":
-                ports = getattr(op, "OUTPUT_PORTS", ())
-                for port in ports:
-                    key = f"{nid}.{port}"
-                    graph_cache.store_from_op(key, result.get(port), engine, row_limit=row_limit)
-                # Expose the "pass" port as the direct node output for preview.
-                graph_cache._tables[nid] = graph_cache.get_arrow(f"{nid}.pass")
-            else:
-                graph_cache.store_from_op(nid, result, engine, row_limit=row_limit)
-        except FlagPauseSignal as fps:
-            error_msg = f"node {node_descriptor(node)} gate blocked: {fps}"
-            graph_cache._tables[nid] = None
-            if nid == node_id:
-                break
-        except Exception as exc:
-            translated = translate_engine_error(exc, kind, nid)
-            error_msg = f"node {node_descriptor(node)} failed: {translated}"
-            graph_cache._tables[nid] = None
-            if nid == node_id:
-                break
-
-    target_table = graph_cache.get_arrow(node_id)
-    elapsed_ms = int((time.monotonic() - overall_start) * 1000)
-
-    if target_table is None:
-        return {
-            "node_id": node_id,
-            "columns": [],
-            "rows": [],
-            "applied_chain": plan.order,
-            "row_count": 0,
-            "elapsed_ms": elapsed_ms,
-            "error": error_msg or "no data produced",
-        }
-
-    columns = arrow_columns(target_table)
-    df_preview = target_table.slice(0, row_limit).to_pandas()
-    rows = [
-        [_jsonable(v) for v in row]
-        for row in df_preview.itertuples(index=False, name=None)
-    ]
-    return {
-        "node_id": node_id,
-        "columns": columns,
-        "rows": rows,
-        "applied_chain": plan.order,
-        "row_count": len(rows),
-        "elapsed_ms": elapsed_ms,
-        "error": error_msg,
-    }
+    policy = PreviewPolicy(node_id=node_id, row_limit=row_limit)
+    return execute_preview(sub_config, policy, ctx)
 
 
 def _load_yaml(yaml_text: str) -> dict:
@@ -546,22 +474,11 @@ def _validate_top_level_or_raise(config: dict) -> None:
         raise PipelineValidationError("'edges' must be a list")
 
 
-def _jsonable(v: Any) -> Any:
-    """Replace NaN/NaT/etc. with None so the row tuples serialize cleanly."""
-    try:
-        import pandas as pd
-        if pd.isna(v):
-            return None
-    except Exception:
-        pass
-    return v
-
-
 # Engine-side resolver for `${nodes.<id>.<key>[.<sub>...]}` tokens. Other
 # scopes (var/env/trigger/storm/iteration) are resolved platform-side before
 # the YAML reaches the engine. This scope must be resolved live because the
 # values come from already-completed upstream ops.
-_NODE_TOKEN_RE = re.compile(r"\$\{nodes\.([a-zA-Z0-9_-]+)\.([a-zA-Z_][\w.]*)}")
+_NODE_TOKEN_RE = re.compile(r"\$\{nodes\.([a-zA-Z0-9_-]+)\.([a-zA-Z_][\w.]*)}") 
 
 
 class _NodeExportResolutionError(Exception):
@@ -628,12 +545,12 @@ def _resolve_one_node_export(
     if node_id == current_node_id:
         raise _NodeExportResolutionError(
             f"node {current_node_id!r} references its own exports via "
-            f"${{nodes.{node_id}.{key}}} — exports are only readable from "
+            f"${{nodes.{node_id}.{key}}} -- exports are only readable from "
             f"downstream nodes"
         )
     if node_id not in exports:
         raise _NodeExportResolutionError(
-            f"unresolved variable: ${{nodes.{node_id}.{key}}} — node "
+            f"unresolved variable: ${{nodes.{node_id}.{key}}} -- node "
             f"{node_id!r} has not run yet (forward reference or upstream "
             f"failure)"
         )
@@ -647,12 +564,12 @@ def _resolve_one_node_export(
                 cur = cur[idx]
             else:
                 raise _NodeExportResolutionError(
-                    f"unresolved variable: ${{nodes.{node_id}.{key}}} — "
+                    f"unresolved variable: ${{nodes.{node_id}.{key}}} -- "
                     f"index {idx} out of range"
                 )
         else:
             raise _NodeExportResolutionError(
-                f"unresolved variable: ${{nodes.{node_id}.{key}}} — "
+                f"unresolved variable: ${{nodes.{node_id}.{key}}} -- "
                 f"key {part!r} not in {node_id!r}'s exports"
             )
     return cur
