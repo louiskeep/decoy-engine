@@ -31,6 +31,11 @@ Node lifecycle events: node start, finish, and failure events are built by
 `graph.events` helpers. The runner loop calls `emit_node_start`,
 `make_node_ok_record` / `emit_node_ok`, and `make_node_error_record` /
 `emit_node_error` instead of constructing records and log calls inline.
+
+Preview: `preview_graph` delegates to `graph.preview.run_preview` with a
+`PreviewPolicy`. Both preview and full run share the same `build_plan`
+call and `GraphCache`; preview behavior cannot silently drift from
+full-run behavior because both paths use the same plan builder.
 """
 
 import hashlib
@@ -50,9 +55,7 @@ from decoy_engine.context import (
     emit_lineage,
 )
 from decoy_engine.exceptions import ConfigError, FlagPauseSignal, PipelineValidationError
-from decoy_engine.graph.conversion import arrow_columns
 from decoy_engine.graph.errors import translate as translate_engine_error
-from decoy_engine.graph.topo import upstream_subgraph
 from decoy_engine.graph.types import (
     NodeRunRecord,
     PreviewResult,
@@ -416,8 +419,10 @@ def preview_graph(
 
     Walks only the ancestors of `node_id`, applies the row_limit hint to
     sources, and returns the DataFrame at `node_id` capped to `row_limit`.
-    Targets do NOT execute their side effect -- the dataframe that would
-    have been written is returned instead.
+    Targets do NOT execute their side effect -- the data that would have
+    been written is returned instead. `result["skip_reason"]` is set to
+    "side-effect-suppressed" so the platform can explain why no write
+    occurred.
 
     Per the PIPELINE_GRAPH_GUIDE: errors return PreviewResult with
     status-shaped `error` field rather than raising; only validation /
@@ -427,11 +432,15 @@ def preview_graph(
     pipeline is broken downstream of `node_id` (or in some other branch),
     sampling here still works -- the user can grab data out of any node
     whose upstream is well-formed.
-    """
-    config = _load_yaml(yaml_text)
 
-    # Light top-level check so we can safely walk the graph below; full
-    # validation only runs against the upstream subgraph.
+    Uses build_plan() for planning and GraphCache for inter-node data,
+    sharing the same planner/cache path as run_graph. Preview behavior
+    cannot silently drift from full-run behavior because both paths use
+    the same plan builder (Sprint 1.4).
+    """
+    from decoy_engine.graph.preview import PreviewPolicy, run_preview
+
+    config = _load_yaml(yaml_text)
     _validate_top_level_or_raise(config)
 
     nodes = config["nodes"]
@@ -454,147 +463,11 @@ def preview_graph(
     }
     _validate_or_raise(sub_config)
 
-    nodes = sub_config["nodes"]
-    edges = sub_config["edges"]
-
-    row_limit = max(1, min(int(row_limit), 1000))
-    sub_order, sub_edges = upstream_subgraph(nodes, edges, node_id)
-    by_id = {n["id"]: n for n in nodes}
-
-    from decoy_engine.graph.cache import GraphCache
-    from decoy_engine.graph.ops import OPS
-    from decoy_engine.graph.registry import native_engine_for
-
-    graph_engine_mode = _resolve_engine_mode(config)
-
-    sub_node_set = set(sub_order)
-    sub_nodes = [n for n in nodes if n["id"] in sub_node_set]
-    consumer_counts = _count_consumers(sub_nodes, sub_edges)
-
-    # Keep the target node so write_stream does not evict it at zero consumers.
-    # For split target nodes, also keep each port key so write_split does not
-    # evict them before the caller aliases the "pass" port onto the node key.
-    target_op = OPS.get(by_id[node_id]["kind"]) if node_id in by_id else None
-    if target_op is not None and getattr(target_op, "OUTPUT_KIND", "") == "split":
-        target_ports: set[str] = {
-            f"{node_id}.{port}"
-            for port in getattr(target_op, "OUTPUT_PORTS", ())
-        }
-    else:
-        target_ports = set()
-    cache = GraphCache(consumer_counts, keep={node_id} | target_ports)
-
-    overall_start = time.monotonic()
-    error_msg: str | None = None
-
-    for nid in sub_order:
-        node = by_id[nid]
-        kind = node["kind"]
-        op = OPS[kind]
-        node_cfg = dict(node.get("config") or {})
-        node_cfg["__preview_row_limit"] = row_limit
-        engine = native_engine_for(kind, graph_engine_mode)
-        node_cfg["__engine"] = engine
-        in_edge_keys = [e["from"] for e in sub_edges if e["to"] == nid]
-        inputs = [cache.consume(k, engine) for k in in_edge_keys]
-
-        try:
-            result = op.apply(inputs, node_cfg, ctx)
-            if isinstance(result, dict) and getattr(op, "OUTPUT_KIND", None) == "split":
-                ports = getattr(op, "OUTPUT_PORTS", ())
-                cache.write_split(nid, result, ports, engine, row_limit=row_limit)
-                # Expose the "pass" port as the direct node output for preview.
-                cache.set_raw(nid, cache.get(f"{nid}.pass"))
-            else:
-                cache.write_stream(nid, result, engine, row_limit=row_limit)
-        except FlagPauseSignal as fps:
-            error_msg = f"node {_node_descriptor(node)} gate blocked: {fps}"
-            cache.set_raw(nid, None)
-            if nid == node_id:
-                break
-        except Exception as exc:
-            translated = translate_engine_error(exc, kind, nid)
-            error_msg = f"node {_node_descriptor(node)} failed: {translated}"
-            cache.set_raw(nid, None)
-            if nid == node_id:
-                break
-
-    target_table = cache.get(node_id)
-    elapsed_ms = int((time.monotonic() - overall_start) * 1000)
-
-    if target_table is None:
-        return {
-            "node_id": node_id,
-            "columns": [],
-            "rows": [],
-            "applied_chain": sub_order,
-            "row_count": 0,
-            "elapsed_ms": elapsed_ms,
-            "error": error_msg or "no data produced",
-        }
-
-    columns = arrow_columns(target_table)
-    df_preview = target_table.slice(0, row_limit).to_pandas()
-    rows = [
-        [_jsonable(v) for v in row]
-        for row in df_preview.itertuples(index=False, name=None)
-    ]
-    return {
-        "node_id": node_id,
-        "columns": columns,
-        "rows": rows,
-        "applied_chain": sub_order,
-        "row_count": len(rows),
-        "elapsed_ms": elapsed_ms,
-        "error": error_msg,
-    }
-
-
-def _count_consumers(nodes: list[dict], edges: list[dict]) -> dict[str, int]:
-    """Per node (or per port for split ops), count downstream edge consumers.
-
-    Split ops (OUTPUT_KIND="split") get per-port entries keyed as
-    "node_id.port" rather than a single "node_id" entry.
-
-    Still used by preview_graph which builds its own sub-config edge list.
-    _execute_graph delegates this to build_plan (Sprint 1.1).
-    """
-    from decoy_engine.graph.ops import OPS
-
-    counts: dict[str, int] = {}
-    for n in nodes:
-        # Look up the op for split-port discovery. Unknown / missing kinds
-        # fall through to the regular non-split path so the helper stays
-        # usable from validators and unit tests that pass minimal node
-        # dicts. Real run_graph() callers always populate `kind` -- the
-        # registry KeyError there would be a config-validation failure,
-        # caught higher up.
-        op = OPS.get(n.get("kind", "")) if hasattr(OPS, "get") else None
-        if op is not None and getattr(op, "OUTPUT_KIND", "stream") == "split":
-            for port in getattr(op, "OUTPUT_PORTS", ()):
-                counts[f"{n['id']}.{port}"] = 0
-        else:
-            counts[n["id"]] = 0
-
-    for e in edges:
-        src = e["from"]
-        if src != e["to"] and src in counts:
-            counts[src] += 1
-    return counts
-
-
-def _resolve_engine_mode(config: dict) -> str:
-    """Resolve the graph-level engine mode for preview_graph.
-
-    _execute_graph reads this from the plan (build_plan delegates here
-    via planner._resolve_engine_mode). preview_graph still calls this
-    directly because it builds its own sub-config; Sprint 1.4 will
-    unify both paths.
-    """
-    mode = config.get("engine") or "hybrid"
-    if mode not in ("pandas", "hybrid"):
-        return "hybrid"
-    return mode
+    policy = PreviewPolicy(
+        target_node_id=node_id,
+        row_limit=max(1, min(int(row_limit), 1000)),
+    )
+    return run_preview(sub_config, policy, ctx)
 
 
 def _load_yaml(yaml_text: str) -> dict:
@@ -735,7 +608,7 @@ def _jsonable(v: Any) -> Any:
 # scopes (var/env/trigger/storm/iteration) are resolved platform-side before
 # the YAML reaches the engine. This scope must be resolved live because the
 # values come from already-completed upstream ops.
-_NODE_TOKEN_RE = re.compile(r"\$\{nodes\.([a-zA-Z0-9_-]+)\.([a-zA-Z_][\w.]*)}")
+_NODE_TOKEN_RE = re.compile(r"\$\{nodes\.([a-zA-Z0-9_-]+)\.([a-zA-Z_][\w.]*)\}")
 
 
 class _NodeExportResolutionError(Exception):

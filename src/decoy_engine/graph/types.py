@@ -1,7 +1,7 @@
 """TypedDicts for the graph pipeline format.
 
 Shape contract is defined in PIPELINE_GRAPH_GUIDE.md. These types are
-internal helpers; callers should not depend on them — they read/write
+internal helpers; callers should not depend on them -- they read/write
 the YAML directly.
 """
 
@@ -61,3 +61,12 @@ class PreviewResult(TypedDict, total=False):
     row_count: int
     elapsed_ms: int
     error: str | None
+    # True when the target node produced more rows than row_limit; the
+    # platform can surface this as "showing first N of M rows".
+    truncated: bool
+    # Reason a node was skipped or its side effect suppressed:
+    #   "side-effect-suppressed": target kind started with "target." and
+    #       __preview_row_limit caused the op to skip its write.
+    #   "gate-blocked": FlagPauseSignal raised on the target node.
+    #   None: preview completed normally (possibly truncated but not skipped).
+    skip_reason: str | None
