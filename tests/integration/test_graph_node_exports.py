@@ -15,6 +15,7 @@ import pandas as pd
 import pytest
 import yaml
 
+from decoy_engine.exceptions import PipelineValidationError
 from decoy_engine import run_graph
 
 
@@ -198,11 +199,11 @@ def test_forward_reference_raises_clear_error(csv_path, tmpdir):
         ],
         "edges": [{"from": "src1", "to": "tgt1"}],
     })
-    result = run_graph(yaml_text)
-    assert not result["success"]
-    rec = _records_by_id(result)
-    assert "future" in rec["tgt1"]["error"]
-    assert "has not run yet" in rec["tgt1"]["error"]
+    with pytest.raises(PipelineValidationError) as exc:
+        run_graph(yaml_text)
+    assert exc.value.path == "nodes.tgt1.config"
+    assert "future" in str(exc.value)
+    assert "no node with id" in str(exc.value)
 
 
 def test_self_reference_raises_clear_error(csv_path, tmpdir):
@@ -221,8 +222,8 @@ def test_self_reference_raises_clear_error(csv_path, tmpdir):
         ],
         "edges": [{"from": "src1", "to": "tgt1"}],
     })
-    result = run_graph(yaml_text)
-    assert not result["success"]
-    rec = _records_by_id(result)
-    assert "tgt1" in rec["tgt1"]["error"]
-    assert "own exports" in rec["tgt1"]["error"]
+    with pytest.raises(PipelineValidationError) as exc:
+        run_graph(yaml_text)
+    assert exc.value.path == "nodes.tgt1.config"
+    assert "tgt1" in str(exc.value)
+    assert "not upstream" in str(exc.value)

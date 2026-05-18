@@ -1,14 +1,11 @@
-"""Phase 1 of polars-duckdb hybrid plan: Arrow-canonical runner cache +
-eager eviction.
+"""Phase 1 of polars-duckdb hybrid plan: Arrow-canonical runner cache.
 
-These tests are about the runner's *internal* state, not just end-to-end
+These tests are about the runner's internal state, not just end-to-end
 correctness. We exercise:
   - cache holds pyarrow.Table between ops
   - per-node consumer count drops to zero exactly once per upstream
   - cache entry is evicted at zero-consumer
-  - branching graphs (one upstream feeds multiple downstreams) keep the
-    upstream entry alive until the LAST consumer reads it
-  - sink with no downstream consumer is evicted immediately after run
+  - branching graphs keep an upstream entry alive until the last consumer
   - preview mode pins the target node's entry against eviction
 """
 
@@ -16,7 +13,6 @@ from __future__ import annotations
 
 import os
 import tempfile
-from typing import Any
 
 import pandas as pd
 import pyarrow as pa
@@ -24,11 +20,13 @@ import pytest
 import yaml
 
 from decoy_engine import preview_graph, run_graph, validate_graph
+from decoy_engine.graph.cache import GraphCache
 from decoy_engine.graph.conversion import (
     arrow_to_engine,
     engine_to_arrow,
 )
-from decoy_engine.graph.runner import _consume, _count_consumers
+from decoy_engine.graph.ops import OPS
+from decoy_engine.graph.planner import _count_consumers
 
 
 @pytest.fixture
@@ -54,10 +52,7 @@ def _yaml(d: dict) -> str:
 
 
 def test_arrow_pandas_roundtrip_preserves_data():
-    """The Arrow-canonical cache uses types_mapper=pd.ArrowDtype on the
-    pandas branch (Bug 4 fix), so a numpy-backed DataFrame round-trips
-    through Arrow as an arrow-backed DataFrame. Test the data contract,
-    not the dtype identity — the dtype shift is intentional."""
+    """The pandas branch intentionally round-trips through Arrow-backed dtypes."""
     df = pd.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
     table = engine_to_arrow(df, "pandas")
     assert isinstance(table, pa.Table)
@@ -69,7 +64,7 @@ def test_arrow_pass_through_for_arrow_engine():
     df = pd.DataFrame({"a": [1, 2, 3]})
     table = engine_to_arrow(df, "pandas")
     out = arrow_to_engine(table, "arrow")
-    assert out is table  # pass-through
+    assert out is table
 
 
 def test_engine_to_arrow_rejects_wrong_type_for_pandas():
@@ -84,13 +79,13 @@ def test_arrow_to_engine_rejects_unknown_engine():
         arrow_to_engine(table, "klingon")  # type: ignore[arg-type]
 
 
-# -------- consumer count ---------------------------------------------------
+# -------- consumer count ----------------------------------------------------
 
 
 def test_count_consumers_linear():
     nodes = [{"id": "a"}, {"id": "b"}, {"id": "c"}]
     edges = [{"from": "a", "to": "b"}, {"from": "b", "to": "c"}]
-    counts = _count_consumers(nodes, edges)
+    counts = _count_consumers(nodes, edges, OPS)
     assert counts == {"a": 1, "b": 1, "c": 0}
 
 
@@ -103,60 +98,57 @@ def test_count_consumers_branching():
         {"from": "b", "to": "d"},
         {"from": "c", "to": "d"},
     ]
-    counts = _count_consumers(nodes, edges)
+    counts = _count_consumers(nodes, edges, OPS)
     assert counts == {"a": 2, "b": 1, "c": 1, "d": 0}
 
 
 def test_count_consumers_self_loop_ignored():
-    """Self-loops are forbidden by the validator but the counter must
-    still produce sane numbers if one slips through."""
+    """Self-loops are forbidden, but the counter should stay sane."""
     nodes = [{"id": "a"}, {"id": "b"}]
     edges = [
-        {"from": "a", "to": "a"},   # self-loop
+        {"from": "a", "to": "a"},
         {"from": "a", "to": "b"},
     ]
-    counts = _count_consumers(nodes, edges)
+    counts = _count_consumers(nodes, edges, OPS)
     assert counts == {"a": 1, "b": 0}
 
 
-# -------- _consume eviction ------------------------------------------------
+# -------- GraphCache eviction ----------------------------------------------
 
 
 def test_consume_evicts_at_zero_consumers():
     table = pa.table({"x": [1, 2]})
-    cache = {"a": table}
-    remaining = {"a": 1}
+    cache = GraphCache({"a": 1})
+    cache.set_raw("a", table)
 
-    out = _consume(cache, remaining, "a", "pandas")
+    out = cache.consume("a", "pandas")
     assert isinstance(out, pd.DataFrame)
-    assert "a" not in cache  # evicted; this was the last consumer
-    assert remaining["a"] == 0
+    assert "a" not in cache._data
+    assert cache._remaining["a"] == 0
 
 
 def test_consume_keeps_entry_with_remaining_consumers():
     table = pa.table({"x": [1, 2]})
-    cache = {"a": table}
-    remaining = {"a": 2}  # two downstream nodes will consume
+    cache = GraphCache({"a": 2})
+    cache.set_raw("a", table)
 
-    _ = _consume(cache, remaining, "a", "pandas")
-    assert "a" in cache  # still alive — second consumer hasn't read yet
-    assert remaining["a"] == 1
+    _ = cache.consume("a", "pandas")
+    assert "a" in cache._data
+    assert cache._remaining["a"] == 1
 
-    _ = _consume(cache, remaining, "a", "pandas")
-    assert "a" not in cache  # now both consumed → evicted
-    assert remaining["a"] == 0
+    _ = cache.consume("a", "pandas")
+    assert "a" not in cache._data
+    assert cache._remaining["a"] == 0
 
 
 def test_consume_respects_hold_for_preview_target():
-    """In preview mode, the target node's cache entry must not be evicted
-    even when its consumer count hits zero — the caller will serialize it
-    after the run."""
+    """A held preview target must survive after its consumer count hits zero."""
     table = pa.table({"x": [1, 2]})
-    cache = {"target": table}
-    remaining = {"target": 1}
+    cache = GraphCache({"target": 1})
+    cache.set_raw("target", table)
 
-    _ = _consume(cache, remaining, "target", "pandas", hold="target")
-    assert "target" in cache  # held against eviction
+    _ = cache.consume("target", "pandas", hold="target")
+    assert "target" in cache._data
 
 
 # -------- end-to-end runner behavior ---------------------------------------
@@ -221,4 +213,4 @@ def test_run_graph_records_arrow_row_count(tmp_csv):
     result = run_graph(cfg)
     assert result["success"] is True
     s_record = next(n for n in result["nodes"] if n["node_id"] == "s")
-    assert s_record["row_count"] == 6  # 6 rows in fixture
+    assert s_record["row_count"] == 6

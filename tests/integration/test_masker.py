@@ -186,7 +186,7 @@ def test_masker_referential_integrity(tmp_path, mock_logger):
     # Create config for masking customers
     customers_config_path = os.path.join(tmp_path, "customers_mask_config.yaml")
     customers_output_path = os.path.join(tmp_path, "masked_customers.csv")
-    mappings_path = os.path.join(tmp_path, "mappings")
+    legacy_state_path = os.path.join(tmp_path, "mappings")
     
     customers_config = {
         'input': {
@@ -213,9 +213,6 @@ def test_masker_referential_integrity(tmp_path, mock_logger):
                 'columns': ['customers.customer_id', 'orders.customer_id']
             }
         ],
-        'mappings': {
-            'store_directory': mappings_path
-        }
     }
     
     with open(customers_config_path, 'w') as f:
@@ -250,9 +247,6 @@ def test_masker_referential_integrity(tmp_path, mock_logger):
                 'columns': ['customers.customer_id', 'orders.customer_id']
             }
         ],
-        'mappings': {
-            'store_directory': mappings_path
-        }
     }
     
     with open(orders_config_path, 'w') as f:
@@ -269,14 +263,14 @@ def test_masker_referential_integrity(tmp_path, mock_logger):
     # Verify outputs exist
     assert os.path.exists(customers_output_path)
     assert os.path.exists(orders_output_path)
-    assert not os.path.exists(mappings_path)
+    assert not os.path.exists(legacy_state_path)
     
     # Load masked data
     masked_customers = pd.read_csv(customers_output_path)
     masked_orders = pd.read_csv(orders_output_path)
     
     # Verify referential integrity is maintained
-    # Create a mapping of original customer ID to masked customer ID
+    # Create a lookup of original customer ID to masked customer ID.
     original_to_masked = {}
     for i, row in customers.iterrows():
         original_id = row['customer_id']

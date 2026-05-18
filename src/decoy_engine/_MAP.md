@@ -20,7 +20,7 @@ Core data library used by the CLI and platform for masking, generation, graph ex
 | `forecast/` | Recommendation types and recommender |
 | `walks/` | Schema walk/diff/hazard logic |
 | `disguises/` | Disguise YAML and loader |
-| `internal/` | Private validators, helpers, memory, integrity, mappings |
+| `internal/` | Private validators, helpers, memory, and integrity support |
 | `schema/`, `license/` | Public-ish stubs; verify capability before using |
 
 ## Hot Paths

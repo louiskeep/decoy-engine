@@ -92,8 +92,8 @@ class MaskingProcessor:
 
             if rel_name:
                 # Apply masking with referential integrity
-                self.logger.info(f"Column '{column}' is part of relationship '{rel_name}'. Applying global mapping.")
-                df[column] = self.ref_integrity.apply_global_mapping(df[column], rel_name, rule)
+                self.logger.info(f"Column '{column}' is part of relationship '{rel_name}'. Applying relationship transform.")
+                df[column] = self.ref_integrity.apply_relationship_transform(df[column], rel_name, rule)
             else:
                 # Apply regular masking, with optional row-level conditions
                 conds = rule.get('conditions')

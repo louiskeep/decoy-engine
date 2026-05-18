@@ -16,7 +16,7 @@ class ReferentialIntegrityManager:
     
     def __init__(self, config: Dict[str, Any], logger=None):
         """
-        Initialize with configuration and mapping utilities
+        Initialize with relationship configuration
         
         Args:
             config: Dictionary with configuration
@@ -31,13 +31,7 @@ class ReferentialIntegrityManager:
             from decoy_engine.internal.logging import get_logger
             self.logger = get_logger()
         
-        # V1 policy: no local mapping store. Referential integrity is enforced
-        # by deterministic transforms, not by persisted mapping files.
-        self.global_mapping_cache = {}
-        
         if 'referential_integrity' in self.config:
-            self._load_global_mappings()
-            
             # Log relationships if defined
             rel_count = len(self.config['referential_integrity'])
             self.logger.info(f"Initialized with {rel_count} referential integrity relationships")
@@ -49,23 +43,6 @@ class ReferentialIntegrityManager:
                     self.logger.debug(f"  - {col}")
         else:
             self.logger.info("No referential integrity relationships defined")
-    
-    def _load_global_mappings(self) -> None:
-        """
-        Initialize relationship names without loading local mapping files.
-        """
-        for relationship in self.config.get('referential_integrity', []):
-            rel_name = relationship['name']
-            self.global_mapping_cache[rel_name] = {}
-            self.logger.debug(
-                f"Initialized deterministic relationship '{rel_name}' without mapping storage"
-            )
-    
-    def save_global_mappings(self) -> None:
-        """
-        No-op retained for older callers. V1 does not persist mapping files.
-        """
-        self.logger.debug("Skipping global mapping persistence; local mapping stores are disabled")
     
     def get_referential_relationship(self, table_name: str, column_name: str) -> Optional[str]:
         """
@@ -104,9 +81,9 @@ class ReferentialIntegrityManager:
         self.logger.debug(f"No relationship found for column '{column_ref}'")
         return None
     
-    def apply_global_mapping(self, column: pd.Series, rel_name: str, rule: Dict[str, Any]) -> pd.Series:
+    def apply_relationship_transform(self, column: pd.Series, rel_name: str, rule: Dict[str, Any]) -> pd.Series:
         """
-        Apply masking using a global mapping to maintain referential integrity
+        Apply a deterministic transform under a shared relationship name.
         
         Args:
             column: Pandas Series to mask
