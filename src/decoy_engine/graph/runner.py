@@ -11,6 +11,7 @@ The default ``engine: "hybrid"`` mode respects each op's own
 pipeline YAML forces all ops to pandas regardless of declaration.
 """
 
+import copy
 import hashlib
 import json
 import logging
@@ -165,29 +166,80 @@ def validate_graph_full(yaml_text: str):
     problem, not a validation outcome. Use a try/except at the call
     site if needed.
 
-    The validator currently stops at the first error (legacy behavior
-    of the underlying ``GraphConfigValidator``). Multi-error reporting
-    will be enabled per-subject in follow-up R2.2 work as each
-    validator is migrated to non-raising form.
+    Caller-owned dict guarantee: the config dict returned in
+    ``normalized_config`` is a deep copy of the parsed input --
+    ``validate_graph_full`` never mutates the caller-supplied
+    ``yaml_text`` parse result. This matters for the format back-fill
+    in ``_validate_file_format_consistency`` which sets
+    ``config["format"]`` on target nodes when the field is absent;
+    callers can diff the original YAML parse against
+    ``normalized_config`` to see which defaults were applied.
+
+    Multi-phase collection: each of the eight validator phases runs
+    independently and contributes at most one error to ``result.errors``
+    before the next phase runs. Phases with structural dependencies
+    (edges, cardinality, topology, cross-node) are skipped when an
+    earlier prerequisite phase failed.
     """
     from decoy_engine.validation_result import CODES, ValidationResult
 
     result = ValidationResult()
     config = _load_yaml(yaml_text)
-    _quiet_logger = logging.getLogger("decoy_engine.graph.validate")
-    if not _quiet_logger.handlers:
-        _quiet_logger.addHandler(logging.NullHandler())
-    try:
-        GraphConfigValidator(_quiet_logger).validate(config)
-    except ValidationError as e:
-        raw = getattr(e, "raw_message", None) or str(e)
-        result.add_error(
-            code=getattr(e, "code", None) or CODES.UNTAGGED,
-            message=raw,
-            path=getattr(e, "path", None),
-        )
+    # Work on a deep copy so _validate_file_format_consistency's format
+    # back-fill (and any future default-filling mutations) never touch
+    # the caller's dict.  On success, normalized_config IS this copy --
+    # callers can compare it against their original parse to see what
+    # defaults were applied.
+    work = copy.deepcopy(config)
+
+    quiet = logging.getLogger("decoy_engine.graph.validate")
+    if not quiet.handlers:
+        quiet.addHandler(logging.NullHandler())
+
+    validator = GraphConfigValidator(quiet)
+
+    def _try_phase(phase_fn, *args) -> bool:
+        try:
+            phase_fn(*args)
+            return True
+        except ValidationError as e:
+            result.add_error(
+                code=getattr(e, "code", None) or CODES.UNTAGGED,
+                message=getattr(e, "_raw_message", None) or str(e),
+                path=getattr(e, "path", None),
+            )
+            return False
+
+    # Phase 1: top-level shape. Nothing else can safely run without a
+    # valid `mode`, `nodes` list, and optional `edges` list.
+    if not _try_phase(validator._validate_top_level, work):
         return result
-    result.normalized_config = config
+
+    kinds = validator._known_kinds()
+    nodes = work["nodes"]
+    edges = work.get("edges") or []
+
+    # Phases 2 and 3: structural checks -- run independently so we can
+    # collect both a bad-node error and a bad-edge error in one call.
+    nodes_ok = _try_phase(validator._validate_nodes, nodes, kinds)
+    edges_ok = _try_phase(validator._validate_edges, edges, nodes)
+
+    # Phases 4 and 5: depend on both nodes and edges being structurally
+    # clean (cardinality and cycle checks index into node/edge maps).
+    if nodes_ok and edges_ok:
+        _try_phase(validator._validate_cardinality, nodes, edges, kinds)
+        _try_phase(validator._validate_acyclic, nodes, edges)
+
+    # Phases 6-8: cross-node semantic checks.  These call output_schema /
+    # upstream_subgraph helpers that assume valid structure; skip when any
+    # structural phase failed.
+    if nodes_ok and edges_ok:
+        _try_phase(validator._validate_file_format_consistency, nodes, edges)
+        _try_phase(validator._validate_mask_column_reachability, nodes, edges)
+        _try_phase(validator._validate_nodes_ref_reachability, nodes, edges)
+
+    if result.ok:
+        result.normalized_config = work
     return result
 
 
