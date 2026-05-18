@@ -9,6 +9,9 @@ Covers what the existing test_validation_result.py does NOT:
   - Format inference normalization: target.file format is back-filled from
     source into normalized_config without mutating any caller-held dict
   - strict=True parameter is accepted without errors on a valid graph
+
+Sprint 2.2 additions:
+  - nodes stage collects ALL per-node errors in one pass
 """
 from __future__ import annotations
 
@@ -231,3 +234,106 @@ class TestErrorShape:
         assert not res.ok
         err = next(e for e in res.errors if e.code == VALIDATION_CODES.NODE_UNKNOWN_KIND)
         assert err.path is not None
+
+
+# ---------------------------------------------------------------------------
+# Sprint 2.2: nodes stage collects ALL per-node errors in one pass
+# ---------------------------------------------------------------------------
+
+class TestNodeStageMultiError:
+    """R2.2: _validate_nodes_collecting gathers all per-node errors before
+    returning, so a graph with N bad nodes shows N errors in one pass rather
+    than stopping at the first."""
+
+    def test_two_bad_kind_nodes_both_reported(self):
+        import yaml as _yaml
+        yaml_text = _yaml.safe_dump({
+            "mode": "graph",
+            "nodes": [
+                {"id": "a", "kind": "source.bogus_a", "config": {}},
+                {"id": "b", "kind": "source.bogus_b", "config": {}},
+            ],
+            "edges": [],
+        })
+        res = validate_graph_full(yaml_text)
+        assert not res.ok
+        unknown_kind_errors = [e for e in res.errors if e.code == VALIDATION_CODES.NODE_UNKNOWN_KIND]
+        assert len(unknown_kind_errors) == 2, (
+            f"Expected 2 NODE_UNKNOWN_KIND errors, got {len(unknown_kind_errors)}: {res.errors}"
+        )
+
+    def test_three_bad_kind_nodes_all_reported(self):
+        import yaml as _yaml
+        yaml_text = _yaml.safe_dump({
+            "mode": "graph",
+            "nodes": [
+                {"id": "a", "kind": "bogus.x", "config": {}},
+                {"id": "b", "kind": "bogus.y", "config": {}},
+                {"id": "c", "kind": "bogus.z", "config": {}},
+            ],
+            "edges": [],
+        })
+        res = validate_graph_full(yaml_text)
+        assert not res.ok
+        unknown_kind_errors = [e for e in res.errors if e.code == VALIDATION_CODES.NODE_UNKNOWN_KIND]
+        assert len(unknown_kind_errors) == 3, (
+            f"Expected 3 NODE_UNKNOWN_KIND errors, got {len(unknown_kind_errors)}: {res.errors}"
+        )
+
+    def test_bad_id_and_bad_kind_on_separate_nodes_both_reported(self):
+        """Node 0 has an invalid ID (starts with digit); node 1 has an unknown kind.
+        Both errors must appear in the result."""
+        import yaml as _yaml
+        yaml_text = _yaml.safe_dump({
+            "mode": "graph",
+            "nodes": [
+                {"id": "1badid", "kind": "source.file", "config": {"path": "f.csv", "format": "csv"}},
+                {"id": "node_b", "kind": "source.bogus", "config": {}},
+            ],
+            "edges": [],
+        })
+        res = validate_graph_full(yaml_text)
+        assert not res.ok
+        codes = {e.code for e in res.errors}
+        assert VALIDATION_CODES.NODE_BAD_ID in codes, (
+            f"Expected NODE_BAD_ID in {codes}"
+        )
+        assert VALIDATION_CODES.NODE_UNKNOWN_KIND in codes, (
+            f"Expected NODE_UNKNOWN_KIND in {codes}"
+        )
+
+    def test_error_paths_identify_individual_nodes(self):
+        """Each error must carry a path that points to its specific node."""
+        import yaml as _yaml
+        yaml_text = _yaml.safe_dump({
+            "mode": "graph",
+            "nodes": [
+                {"id": "a", "kind": "bogus.one", "config": {}},
+                {"id": "b", "kind": "bogus.two", "config": {}},
+            ],
+            "edges": [],
+        })
+        res = validate_graph_full(yaml_text)
+        paths = [e.path for e in res.errors if e.code == VALIDATION_CODES.NODE_UNKNOWN_KIND]
+        assert len(paths) == 2
+        # Each path must reference a distinct node index.
+        assert paths[0] != paths[1], f"Both errors share the same path: {paths}"
+
+    def test_first_bad_node_does_not_suppress_second_valid_node_check(self):
+        """Node 0 is bad; node 1 is also bad. Node 1's error must appear
+        even though node 0 already failed."""
+        import yaml as _yaml
+        yaml_text = _yaml.safe_dump({
+            "mode": "graph",
+            "nodes": [
+                {"id": "first", "kind": "not.a.kind", "config": {}},
+                {"id": "second", "kind": "also.not.a.kind", "config": {}},
+            ],
+            "edges": [],
+        })
+        res = validate_graph_full(yaml_text)
+        assert not res.ok
+        kind_errors = [e for e in res.errors if e.code == VALIDATION_CODES.NODE_UNKNOWN_KIND]
+        assert len(kind_errors) >= 2, (
+            f"Expected errors for both nodes, got {len(kind_errors)}: {res.errors}"
+        )

@@ -181,13 +181,14 @@ def validate_graph_full(yaml_text: str, *, strict: bool = False):
     site if needed.
 
     Each validation stage is tried independently. A top-level structural
-    error stops further validation (no safe graph to walk), but node,
-    edge, cardinality, topology, and cross-node stages each capture
-    their first failure before moving on. The cross-node semantic checks
-    (format consistency, mask column reachability, nodes-ref reachability)
-    run independently of each other so all three can surface errors in
-    one pass. Within a single stage the first failure still stops that
-    stage; per-subject within-stage multi-error is follow-up R2.2 work.
+    error stops further validation (no safe graph to walk). The nodes
+    stage (stage 2, R2.2) collects all per-node errors so a graph with
+    multiple bad nodes surfaces every failure in one pass. Edge,
+    cardinality, topology, and cross-node stages each capture their first
+    failure before moving on. The cross-node semantic checks (format
+    consistency, mask column reachability, nodes-ref reachability) run
+    independently of each other so all three can surface errors in one
+    pass. Within stages 3-8 the first failure still stops that stage.
 
     ``normalized_config`` is a deep copy of the parsed input with defaults
     applied (e.g. target.file format inferred from the source format). It
@@ -239,8 +240,16 @@ def validate_graph_full(yaml_text: str, *, strict: bool = False):
     edges = working.get("edges") or []
     kinds = validator._known_kinds()
 
-    # Stage 2: per-node metadata. Required before edge from/to id lookups.
-    nodes_ok = _collect(lambda: validator._validate_nodes(nodes, kinds))
+    # Stage 2: per-node metadata -- collects ALL per-node errors so a graph
+    # with multiple bad nodes surfaces all of them in one pass (R2.2).
+    node_errors = validator._validate_nodes_collecting(nodes, kinds)
+    for _e in node_errors:
+        result.add_error(
+            code=getattr(_e, "code", None) or CODES.UNTAGGED,
+            message=getattr(_e, "raw_message", None) or str(_e),
+            path=getattr(_e, "path", None),
+        )
+    nodes_ok = not node_errors
 
     # Stages 3-5: graph structure. Each requires the prior stage to pass.
     edges_ok = nodes_ok and _collect(lambda: validator._validate_edges(edges, nodes))
