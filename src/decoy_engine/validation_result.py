@@ -262,6 +262,32 @@ class CODES:
     GENERATION_KEY_REQUIRED = "generation.key_required"
     GENERATION_RANDOM_NOT_ALLOWED = "generation.random_not_allowed"
 
+    # filter op.
+    FILTER_MISSING_PREDICATE = "filter.missing_predicate"
+
+    # derive op.
+    DERIVE_MISSING_COLUMN = "derive.missing_column"
+    DERIVE_MISSING_EXPRESSION = "derive.missing_expression"
+
+    # limit op.
+    LIMIT_BAD_N = "limit.bad_n"
+
+    # sort op.
+    SORT_MISSING_BY = "sort.missing_by"
+    SORT_BAD_ORDER = "sort.bad_order"
+    SORT_ORDER_LENGTH_MISMATCH = "sort.order_length_mismatch"
+
+    # unite op.
+    UNITE_BAD_ON = "unite.bad_on"
+    UNITE_BAD_JOIN_TYPE = "unite.bad_join_type"
+    UNITE_BAD_SUFFIXES = "unite.bad_suffixes"
+
+    # generate op.
+    GENERATE_BAD_COLUMNS_TYPE = "generate.bad_columns_type"
+    GENERATE_BAD_ROW_COUNT = "generate.bad_row_count"
+    GENERATE_BAD_COLUMN_SPEC_TYPE = "generate.bad_column_spec_type"
+    GENERATE_UNKNOWN_STRATEGY = "generate.unknown_strategy"
+
     # Generic catch-all for validators that haven't been migrated yet.
     # New gates should add a specific code rather than reusing this.
     UNTAGGED = "untagged"

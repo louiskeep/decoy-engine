@@ -28,31 +28,41 @@ _DIRECTIONS = ("asc", "desc")
 
 
 def validate_config(config: dict[str, Any]) -> None:
+    from decoy_engine.validation_result import CODES
     by = config.get("by")
     if not isinstance(by, list) or not by or not all(isinstance(c, str) and c for c in by):
         raise ValidationError(
-            "'by' must be a non-empty list of column names", "config.by"
+            "'by' must be a non-empty list of column names",
+            "config.by",
+            code=CODES.SORT_MISSING_BY,
         )
 
     order = config.get("order", "asc")
     if isinstance(order, str):
         if order not in _DIRECTIONS:
             raise ValidationError(
-                f"'order' must be 'asc' or 'desc' (got {order!r})", "config.order"
+                f"'order' must be 'asc' or 'desc' (got {order!r})",
+                "config.order",
+                code=CODES.SORT_BAD_ORDER,
             )
     elif isinstance(order, list):
         if len(order) != len(by):
             raise ValidationError(
                 f"'order' list length ({len(order)}) must match 'by' length ({len(by)})",
                 "config.order",
+                code=CODES.SORT_ORDER_LENGTH_MISMATCH,
             )
         if not all(o in _DIRECTIONS for o in order):
             raise ValidationError(
-                "every entry in 'order' must be 'asc' or 'desc'", "config.order"
+                "every entry in 'order' must be 'asc' or 'desc'",
+                "config.order",
+                code=CODES.SORT_BAD_ORDER,
             )
     else:
         raise ValidationError(
-            "'order' must be a string or list of strings", "config.order"
+            "'order' must be a string or list of strings",
+            "config.order",
+            code=CODES.SORT_BAD_ORDER,
         )
 
 

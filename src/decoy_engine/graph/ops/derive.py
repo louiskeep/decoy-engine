@@ -29,14 +29,21 @@ OUTPUT_KIND = "stream"
 
 
 def validate_config(config: dict[str, Any]) -> None:
+    from decoy_engine.validation_result import CODES
     column = config.get("column")
     if not isinstance(column, str) or not column.strip():
-        raise ValidationError("'column' must be a non-empty string", "config.column")
+        raise ValidationError(
+            "'column' must be a non-empty string",
+            "config.column",
+            code=CODES.DERIVE_MISSING_COLUMN,
+        )
 
     expression = config.get("expression")
     if not isinstance(expression, str) or not expression.strip():
         raise ValidationError(
-            "'expression' must be a non-empty string", "config.expression"
+            "'expression' must be a non-empty string",
+            "config.expression",
+            code=CODES.DERIVE_MISSING_EXPRESSION,
         )
 
 

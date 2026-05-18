@@ -47,6 +47,7 @@ _VALID_JOIN_TYPES = {"inner", "left", "right", "outer"}
 
 
 def validate_config(config: dict[str, Any]) -> None:
+    from decoy_engine.validation_result import CODES
     on = config.get("on")
     if on is not None:
         if not isinstance(on, list) or not on or not all(
@@ -55,6 +56,7 @@ def validate_config(config: dict[str, Any]) -> None:
             raise ValidationError(
                 "'on' must be a non-empty list of column-name strings (or omitted for positional unite)",
                 "config.on",
+                code=CODES.UNITE_BAD_ON,
             )
 
     join_type = config.get("join_type", "inner")
@@ -62,6 +64,7 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValidationError(
             f"'join_type' must be one of {sorted(_VALID_JOIN_TYPES)} (got {join_type!r})",
             "config.join_type",
+            code=CODES.UNITE_BAD_JOIN_TYPE,
         )
 
     suffixes = config.get("suffixes")
@@ -74,6 +77,7 @@ def validate_config(config: dict[str, Any]) -> None:
             raise ValidationError(
                 "'suffixes' must be a 2-element list of strings",
                 "config.suffixes",
+                code=CODES.UNITE_BAD_SUFFIXES,
             )
 
 

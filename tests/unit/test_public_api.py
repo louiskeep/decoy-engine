@@ -42,8 +42,10 @@ def test_all_lists_every_public_name():
         "make_key_resolver",
         "SchemaInspector", "LicenseVerifier",
         "validate_config",
-        "validate_graph", "run_graph", "preview_graph",
+        "validate_graph", "validate_graph_full", "run_graph", "preview_graph",
         "RunResult", "PreviewResult",
+        # Validation result types (Sprint 2.1).
+        "ValidationResult", "ValidationMessage", "VALIDATION_CODES",
         "run_storm", "StormProfile", "FieldStats", "DetectorMatch", "SentinelFlag",
         "run_discovery_sql", "DiscoveryResult", "DiscoverySqlError",
         "recommend", "ForecastReport", "DisguiseRecommendation",

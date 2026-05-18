@@ -18,10 +18,15 @@ OUTPUT_KIND = "stream"
 
 
 def validate_config(config: dict[str, Any]) -> None:
+    from decoy_engine.validation_result import CODES
     n = config.get("n")
     # bool is an int subclass in Python; reject it explicitly so True/False don't pass.
     if not isinstance(n, int) or isinstance(n, bool) or n < 0:
-        raise ValidationError("'n' must be a non-negative integer", "config.n")
+        raise ValidationError(
+            "'n' must be a non-negative integer",
+            "config.n",
+            code=CODES.LIMIT_BAD_N,
+        )
 
 
 def apply(inputs, config, ctx):

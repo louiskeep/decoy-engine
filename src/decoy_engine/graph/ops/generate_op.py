@@ -34,6 +34,7 @@ _VALID_TYPES = {"faker", "sequence", "categorical", "formula"}
 
 
 def validate_config(config: dict[str, Any]) -> None:
+    from decoy_engine.validation_result import CODES
     # Empty / missing `columns` is valid in column-replacer mode (1 input):
     # it just means "leave every upstream column untouched", a no-op. In
     # pure-source mode (0 inputs) the user can save with no columns and
@@ -42,25 +43,31 @@ def validate_config(config: dict[str, Any]) -> None:
     columns = config.get("columns") or {}
     if not isinstance(columns, dict):
         raise ValidationError(
-            "'columns' must be a mapping", "config.columns"
+            "'columns' must be a mapping",
+            "config.columns",
+            code=CODES.GENERATE_BAD_COLUMNS_TYPE,
         )
     if "row_count" in config:
         rc = config["row_count"]
         if not isinstance(rc, int) or rc <= 0:
             raise ValidationError(
-                "'row_count' must be a positive integer", "config.row_count"
+                "'row_count' must be a positive integer",
+                "config.row_count",
+                code=CODES.GENERATE_BAD_ROW_COUNT,
             )
     for col_name, spec in columns.items():
         if not isinstance(spec, dict):
             raise ValidationError(
                 f"column {col_name!r} spec must be a mapping",
                 f"config.columns.{col_name}",
+                code=CODES.GENERATE_BAD_COLUMN_SPEC_TYPE,
             )
         ctype = spec.get("strategy") or spec.get("type")
         if ctype not in _VALID_TYPES:
             raise ValidationError(
                 f"unsupported type {ctype!r} (one of {sorted(_VALID_TYPES)})",
                 f"config.columns.{col_name}.strategy",
+                code=CODES.GENERATE_UNKNOWN_STRATEGY,
             )
 
 
