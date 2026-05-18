@@ -110,18 +110,18 @@ class TestPreviewPolicy:
         p = PreviewPolicy(target_node_id="n")
         assert p.row_limit == 50
         assert p.skip_side_effects is True
-        assert p.on_upstream_error == "stop"
+        assert p.on_upstream_error == "continue"
 
     def test_custom_values(self):
         p = PreviewPolicy(
             target_node_id="n",
             row_limit=10,
             skip_side_effects=False,
-            on_upstream_error="continue",
+            on_upstream_error="stop",
         )
         assert p.row_limit == 10
         assert p.skip_side_effects is False
-        assert p.on_upstream_error == "continue"
+        assert p.on_upstream_error == "stop"
 
     def test_row_limit_zero_raises(self):
         with pytest.raises(ValueError, match="row_limit"):
@@ -231,8 +231,24 @@ class TestRunPreview:
         assert result["error"] is not None
         assert result["row_count"] == 0
 
+    def test_upstream_error_continue_records_error_and_proceeds(self, fake_ops):
+        """Default on_upstream_error='continue' captures upstream errors and
+        continues execution; error_msg is set but the run does not halt early."""
+        sub_cfg = _sub_cfg(
+            nodes=[
+                {"id": "err", "kind": "test.error", "config": {}},
+                {"id": "pass", "kind": "test.pass", "config": {}},
+            ],
+            edges=[{"from": "err", "to": "pass"}],
+        )
+        # Default policy uses on_upstream_error="continue".
+        result = run_preview(sub_cfg, PreviewPolicy(target_node_id="pass"), ctx=None)
+        # Error from upstream is captured in the result.
+        assert result["error"] is not None
+        assert "err" in result["error"] or "failed" in result["error"]
+
     def test_upstream_error_stop_halts_run(self, fake_ops):
-        """on_upstream_error='stop' stops at first error; target has no data."""
+        """on_upstream_error='stop' halts at the first upstream failure."""
         sub_cfg = _sub_cfg(
             nodes=[
                 {"id": "err", "kind": "test.error", "config": {}},

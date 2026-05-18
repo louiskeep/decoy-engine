@@ -42,16 +42,18 @@ class PreviewPolicy:
         by the __preview_row_limit convention; this field lets the
         platform surface the reason when the target kind starts with
         "target.".
-    on_upstream_error: "stop" (default) halts execution at the first
-        failing node. "continue" passes None inputs past upstream
-        failures so the downstream chain can still attempt to run.
-        Execution always stops when the target node itself fails.
+    on_upstream_error: "continue" (default) records the upstream
+        failure in error_msg and continues to the next node, passing
+        None inputs downstream. This matches the original preview_graph
+        best-effort behavior. "stop" halts execution at the first
+        failing upstream node. Execution always stops when the target
+        node itself fails, regardless of this setting.
     """
 
     target_node_id: str
     row_limit: int = 50
     skip_side_effects: bool = True
-    on_upstream_error: str = "stop"
+    on_upstream_error: str = "continue"
 
     def __post_init__(self) -> None:
         if self.on_upstream_error not in ("stop", "continue"):
@@ -161,7 +163,6 @@ def run_preview(
             if nid == node_id:
                 skip_reason = "gate-blocked"
                 break
-            # Upstream gate block: continue or stop based on policy.
             if policy.on_upstream_error == "stop":
                 break
         except Exception as exc:
