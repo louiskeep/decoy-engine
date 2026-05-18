@@ -18,6 +18,25 @@ import pytest
 from decoy_engine.graph.ops import source_db, source_file, target_db, target_file
 
 
+def _duckdb_sqlite_available() -> bool:
+    """Return True if DuckDB can load the sqlite_scanner extension."""
+    try:
+        import duckdb
+        con = duckdb.connect()
+        con.execute("INSTALL sqlite_scanner; LOAD sqlite_scanner;")
+        con.close()
+        return True
+    except Exception:
+        return False
+
+
+_DUCKDB_SQLITE_AVAILABLE = _duckdb_sqlite_available()
+_skip_no_duckdb_sqlite = pytest.mark.skipif(
+    not _DUCKDB_SQLITE_AVAILABLE,
+    reason="DuckDB sqlite_scanner extension not available in this environment",
+)
+
+
 @pytest.fixture
 def tmp_csv():
     tmpdir = tempfile.mkdtemp()
@@ -166,6 +185,7 @@ def tmp_sqlite():
     return db_path, tmpdir
 
 
+@_skip_no_duckdb_sqlite
 def test_source_db_parity_pandas_vs_duckdb(tmp_sqlite):
     db_path, _ = tmp_sqlite
     dsn = f"sqlite:///{db_path}"
@@ -186,6 +206,7 @@ def test_source_db_parity_pandas_vs_duckdb(tmp_sqlite):
     )
 
 
+@_skip_no_duckdb_sqlite
 def test_target_db_parity_pandas_vs_duckdb(tmp_sqlite):
     db_path, tmpdir = tmp_sqlite
     dsn = f"sqlite:///{db_path}"
@@ -221,6 +242,7 @@ def test_target_db_parity_pandas_vs_duckdb(tmp_sqlite):
 # native scanner correctly implements the write_mode semantics. Bug 3.
 
 
+@_skip_no_duckdb_sqlite
 def test_target_db_replace_overwrites_existing_rows(tmp_sqlite):
     db_path, _ = tmp_sqlite
     dsn = f"sqlite:///{db_path}"
@@ -251,6 +273,7 @@ def test_target_db_replace_overwrites_existing_rows(tmp_sqlite):
     assert list(rows["name"]) == ["only-row"]
 
 
+@_skip_no_duckdb_sqlite
 def test_target_db_append_extends_existing_table(tmp_sqlite):
     db_path, _ = tmp_sqlite
     dsn = f"sqlite:///{db_path}"
@@ -279,6 +302,7 @@ def test_target_db_append_extends_existing_table(tmp_sqlite):
     assert list(rows["id"]) == [1, 2, 3]
 
 
+@_skip_no_duckdb_sqlite
 def test_target_db_fail_mode_raises_when_table_exists(tmp_sqlite):
     """`write_mode: fail` is the safety hatch — if the destination
     table already exists, the op refuses to write rather than silently
@@ -302,6 +326,7 @@ def test_target_db_fail_mode_raises_when_table_exists(tmp_sqlite):
         )
 
 
+@_skip_no_duckdb_sqlite
 def test_source_db_with_where_clause_filters_via_duckdb_scanner(tmp_sqlite):
     """The native scanner path should honor the optional `where` config
     just like the SQLAlchemy fallback. Validates the SQL the dispatcher
@@ -323,6 +348,7 @@ def test_source_db_with_where_clause_filters_via_duckdb_scanner(tmp_sqlite):
     assert list(df["id"]) == [2, 3]  # Bob (20.5), Carol (30.5); Alice (10.5) filtered out
 
 
+@_skip_no_duckdb_sqlite
 def test_source_db_preview_row_limit_honored_by_duckdb_scanner(tmp_sqlite):
     """Preview mode passes `__preview_row_limit` through; the scanner
     SQL should LIMIT accordingly so we don't drag the whole source

@@ -39,7 +39,7 @@ from decoy_engine.storm.types import (
 # ── PII scoring ───────────────────────────────────────────────────────────────
 
 # Detectors that strongly imply PII when they fire, regardless of column name.
-_PII_DETECTORS = {"email", "ssn", "us_phone", "person_name"}
+_PII_DETECTORS = {"email", "ssn", "us_phone", "person_name", "first_name", "last_name"}
 
 # Detectors that imply quasi-identifier territory (helpful but not PII alone).
 _QUASI_ID_DETECTORS = {"us_zip", "iso_date", "us_date", "eu_date"}

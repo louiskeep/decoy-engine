@@ -183,8 +183,11 @@ def test_whole_string_token_preserves_int_type(csv_path):
 
 
 def test_forward_reference_raises_clear_error(csv_path, tmpdir):
-    """target.file references a downstream-yet-to-run node — runner
-    fails fast with a clear error rather than running with a placeholder."""
+    """target.file references a non-existent node — the validator catches
+    this at config-check time and raises PipelineValidationError before
+    execution starts."""
+    from decoy_engine.exceptions import PipelineValidationError
+
     yaml_text = yaml.safe_dump({
         "mode": "graph",
         "engine": "pandas",
@@ -198,16 +201,16 @@ def test_forward_reference_raises_clear_error(csv_path, tmpdir):
         ],
         "edges": [{"from": "src1", "to": "tgt1"}],
     })
-    result = run_graph(yaml_text)
-    assert not result["success"]
-    rec = _records_by_id(result)
-    assert "future" in rec["tgt1"]["error"]
-    assert "has not run yet" in rec["tgt1"]["error"]
+    with pytest.raises(PipelineValidationError) as exc_info:
+        run_graph(yaml_text)
+    assert "future" in str(exc_info.value)
 
 
 def test_self_reference_raises_clear_error(csv_path, tmpdir):
-    """A node referencing its own exports is a configuration error —
-    exports are only readable from strictly-downstream nodes."""
+    """A node referencing its own exports is caught by the validator as a
+    config error — PipelineValidationError is raised before execution."""
+    from decoy_engine.exceptions import PipelineValidationError
+
     yaml_text = yaml.safe_dump({
         "mode": "graph",
         "engine": "pandas",
@@ -221,8 +224,6 @@ def test_self_reference_raises_clear_error(csv_path, tmpdir):
         ],
         "edges": [{"from": "src1", "to": "tgt1"}],
     })
-    result = run_graph(yaml_text)
-    assert not result["success"]
-    rec = _records_by_id(result)
-    assert "tgt1" in rec["tgt1"]["error"]
-    assert "own exports" in rec["tgt1"]["error"]
+    with pytest.raises(PipelineValidationError) as exc_info:
+        run_graph(yaml_text)
+    assert "tgt1" in str(exc_info.value)
