@@ -163,10 +163,16 @@ class CODES:
     GRAPH_NODE_TOO_MANY_INPUTS = "graph.node_too_many_inputs"
     GRAPH_SINK_HAS_OUTPUTS = "graph.sink_has_outputs"
     # R2.4 cross-node: source format and target format disagree with no
-    # convert.file_type node in between. Used to be a logger.warning;
-    # promoted to a hard error in R2.4 because the runner would either
-    # crash or silently write a wrong-format file.
+    # convert.file_type node in between. Engine logs a logger.warning;
+    # platform preflight (api/pipelines/preflight.py) emits a structured
+    # advisory with severity=warning so the pipeline builder can show a
+    # conversion disclosure on the target node without blocking the run.
     GRAPH_FORMAT_MISMATCH = "graph.format_mismatch"
+    # R2.3 strict mode: target.file had no explicit 'format' and would
+    # have been back-filled from the source format. Non-blocking in lenient
+    # mode (back-fill applies silently); emitted as an error when strict=True
+    # so production pipelines can require explicit format declarations.
+    TARGET_FILE_FORMAT_INFERRED = "target_file.format_inferred"
 
     # Cross-node schema checks (R2.3).
     MASK_UNKNOWN_COLUMN = "mask.unknown_column"

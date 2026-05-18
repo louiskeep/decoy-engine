@@ -3,32 +3,46 @@
 These are the only symbols `decoy_engine.graph` exposes to callers -- see
 `graph/__init__.py`. The contract is documented in PIPELINE_GRAPH_GUIDE.md.
 
-Runtime cache: the runner caches `pyarrow.Table` between ops and materializes
-to each op's declared `NATIVE_ENGINE` at apply-time. File and cloud source/
-target ops declare `NATIVE_ENGINE = "duckdb"`. Transform ops such as `mask`
-and `generate` declare `NATIVE_ENGINE = "pandas"` because their strategies
-use per-row Python callbacks. When the graph-level `engine:` key is set to
-`"pandas"`, all ops are forced to pandas regardless of their declaration.
-The default `engine: "hybrid"` respects each op's own declaration.
+Execution planning: the runner delegates pre-execution graph structure
+computation to `graph.planner.build_plan`. The planner computes topo
+ordering, in-edge indexing, consumer counts, and engine mode resolution
+once before the node-execution loop; see graph/planner.py for details.
+
+Runtime cache: inter-node data is stored as `pyarrow.Table` instances in a
+`graph.cache.GraphCache`. The cache converts to each op's declared
+`NATIVE_ENGINE` at apply-time and converts the result back to Arrow before
+caching. File and cloud source/target ops declare `NATIVE_ENGINE = "duckdb"`.
+Transform ops such as `mask` and `generate` declare `NATIVE_ENGINE = "pandas"`
+because their strategies use per-row Python callbacks. When the graph-level
+`engine:` key is set to `"pandas"`, all ops are forced to pandas regardless
+of their declaration. The default `engine: "hybrid"` respects each op's own
+declaration.
 
 Eviction: cache entries are evicted as soon as their last downstream
-consumer reads them. Keeps peak memory bounded by the in-flight working set
-rather than the lifetime of the run.
+consumer reads them. GraphCache tracks consumer counts and evicts
+automatically on the last `consume()` call for each key.
 
 Split ops: ops with OUTPUT_KIND="split" (e.g. `if`) return a dict of port
 name to DataFrame. The runner stores each port under `"node_id.port"` keys
-in the cache. Downstream edges use the `"node_id.port"` notation in their
-`from` field to consume a specific port.
+in the cache via `GraphCache.write_split`. Downstream edges use the
+`"node_id.port"` notation in their `from` field to consume a specific port.
+
+Node lifecycle events: node start, finish, and failure events are built by
+`graph.events` helpers. The runner loop calls `emit_node_start`,
+`make_node_ok_record` / `emit_node_ok`, and `make_node_error_record` /
+`emit_node_error` instead of constructing records and log calls inline.
+
+Preview: `preview_graph` delegates to `graph.preview.run_preview` with a
+`PreviewPolicy`. Both preview and full run share the same `build_plan`
+call and `GraphCache`; preview behavior cannot silently drift from
+full-run behavior because both paths use the same plan builder.
 """
 
-import hashlib
-import json
 import logging
 import os
 import re
 import threading
 import time
-import traceback
 from typing import Any
 
 import pyarrow as pa
@@ -37,18 +51,9 @@ import yaml
 from decoy_engine.context import (
     ExecutionContext,
     emit_lineage,
-    emit_step,
-    emit_throughput_sample,
 )
 from decoy_engine.exceptions import ConfigError, FlagPauseSignal, PipelineValidationError
-from decoy_engine.graph.conversion import (
-    arrow_columns,
-    arrow_row_count,
-    arrow_to_engine,
-    engine_to_arrow,
-)
 from decoy_engine.graph.errors import translate as translate_engine_error
-from decoy_engine.graph.topo import topo_order, upstream_subgraph
 from decoy_engine.graph.types import (
     NodeRunRecord,
     PreviewResult,
@@ -162,7 +167,7 @@ def validate_graph(yaml_text: str) -> None:
         ) from e
 
 
-def validate_graph_full(yaml_text: str):
+def validate_graph_full(yaml_text: str, *, strict: bool = False):
     """Validate graph YAML and return a non-raising :class:`ValidationResult`.
 
     Unlike :func:`validate_graph`, this never raises on validation
@@ -175,11 +180,28 @@ def validate_graph_full(yaml_text: str):
     problem, not a validation outcome. Use a try/except at the call
     site if needed.
 
-    The validator currently stops at the first error (legacy behavior
-    of the underlying ``GraphConfigValidator``). Multi-error reporting
-    will be enabled per-subject in follow-up R2.2 work as each
-    validator is migrated to non-raising form.
+    Each validation stage is tried independently. A top-level structural
+    error stops further validation (no safe graph to walk). The nodes
+    stage (stage 2, R2.2) collects all per-node errors so a graph with
+    multiple bad nodes surfaces every failure in one pass. Edge,
+    cardinality, topology, and cross-node stages each capture their first
+    failure before moving on. The cross-node semantic checks (format
+    consistency, mask column reachability, nodes-ref reachability) run
+    independently of each other so all three can surface errors in one
+    pass. Within stages 3-8 the first failure still stops that stage.
+
+    ``normalized_config`` is a deep copy of the parsed input with defaults
+    applied (e.g. target.file format inferred from the source format). It
+    is set only when there are no errors. The original parsed config is
+    never mutated.
+
+    ``strict=True`` enables production-mode gating: checks that are
+    advisory in lenient mode become blocking errors. Full strict-mode
+    coverage (credentials, variable resolution, side-effect policy) is
+    Sprint 2 follow-up work; the parameter is accepted now so callers
+    can adopt it forward.
     """
+    import copy
     from decoy_engine.validation_result import CODES, ValidationResult
 
     result = ValidationResult()
@@ -187,17 +209,65 @@ def validate_graph_full(yaml_text: str):
     _quiet_logger = logging.getLogger("decoy_engine.graph.validate")
     if not _quiet_logger.handlers:
         _quiet_logger.addHandler(logging.NullHandler())
-    try:
-        GraphConfigValidator(_quiet_logger).validate(config)
-    except ValidationError as e:
-        raw = getattr(e, "raw_message", None) or str(e)
-        result.add_error(
-            code=getattr(e, "code", None) or CODES.UNTAGGED,
-            message=raw,
-            path=getattr(e, "path", None),
-        )
+
+    # Deep copy so _validate_file_format_consistency's format back-fill
+    # never mutates the locally-parsed config dict. The normalized_config
+    # returned to the caller is the deep copy with defaults applied.
+    working = copy.deepcopy(config)
+    validator = GraphConfigValidator(_quiet_logger)
+
+    def _collect(stage_fn) -> bool:
+        """Call stage_fn(). Add its first error to result. Return True iff it passed."""
+        try:
+            stage_fn()
+            return True
+        except ValidationError as e:
+            result.add_error(
+                code=getattr(e, "code", None) or CODES.UNTAGGED,
+                message=getattr(e, "raw_message", None) or str(e),
+                path=getattr(e, "path", None),
+            )
+            return False
+
+    # Stage 1: top-level shape. Required before safely extracting nodes/edges.
+    if not _collect(lambda: validator._validate_top_level(working)):
         return result
-    result.normalized_config = config
+
+    # Post-stage-1: nodes is a non-empty list, edges is a list or absent.
+    nodes = working["nodes"]
+    edges = working.get("edges") or []
+    kinds = validator._known_kinds()
+
+    # Stage 2: per-node metadata -- collects ALL per-node errors so a graph
+    # with multiple bad nodes surfaces all of them in one pass (R2.2).
+    node_errors = validator._validate_nodes_collecting(nodes, kinds)
+    for _e in node_errors:
+        result.add_error(
+            code=getattr(_e, "code", None) or CODES.UNTAGGED,
+            message=getattr(_e, "raw_message", None) or str(_e),
+            path=getattr(_e, "path", None),
+        )
+    nodes_ok = not node_errors
+
+    # Stages 3-5: graph structure. Each requires the prior stage to pass.
+    edges_ok = nodes_ok and _collect(lambda: validator._validate_edges(edges, nodes))
+    cardinality_ok = edges_ok and _collect(
+        lambda: validator._validate_cardinality(nodes, edges, kinds)
+    )
+    topology_ok = cardinality_ok and _collect(
+        lambda: validator._validate_acyclic(nodes, edges)
+    )
+
+    # Stages 6-8: cross-node semantic checks. Each runs independently so
+    # all three can surface errors in one pass. All require a sound acyclic
+    # graph to walk.
+    if topology_ok:
+        _collect(lambda: validator._validate_file_format_consistency(nodes, edges, strict=strict))
+        _collect(lambda: validator._validate_mask_column_reachability(nodes, edges))
+        _collect(lambda: validator._validate_nodes_ref_reachability(nodes, edges))
+
+    if not result.errors:
+        result.normalized_config = working
     return result
 
 
@@ -226,9 +296,6 @@ def execute_graph_capture(
 ) -> tuple[RunResult, dict[str, pa.Table]]:
     """Run a graph and return both the telemetry record AND the output
     cache for nodes named in `keep_nodes`.
-
-    Used by `sub_pipeline` and the iterator ops to capture sub-graph
-    output and pipe it into the parent graph.
     """
     config = _load_yaml(yaml_text)
     _validate_or_raise(config)
@@ -241,249 +308,118 @@ def _execute_graph(
     ctx: ExecutionContext | None,
     keep_nodes: list[str] | None = None,
 ) -> tuple[RunResult, dict[str, pa.Table]]:
+    from decoy_engine.graph.cache import GraphCache
+    from decoy_engine.graph.events import (
+        emit_node_error,
+        emit_node_ok,
+        emit_node_start,
+        make_node_error_record,
+        make_node_ok_record,
+    )
     from decoy_engine.graph.ops import OPS
+    from decoy_engine.graph.planner import build_plan
     from decoy_engine.graph.registry import native_engine_for
 
-    edges = config.get("edges") or []
     nodes = config["nodes"]
-    order = topo_order(nodes, edges)
     by_id = {n["id"]: n for n in nodes}
-    graph_engine_mode = _resolve_engine_mode(config)
+    plan = build_plan(config)
+    graph_engine_mode = plan.graph_engine_mode
 
-    cache: dict[str, pa.Table] = {}
-    remaining = _count_consumers(nodes, edges)
     keep_set = set(keep_nodes or [])
-    for k in keep_set:
-        remaining[k] = remaining.get(k, 0) + 1
+    cache = GraphCache(plan.consumer_counts, keep=keep_set)
     records: list[NodeRunRecord] = []
     overall_start = time.monotonic()
     success = True
 
-    # The runner always works with a real ExecutionContext so ops can call
-    # `ctx.export()` regardless of caller. External callers that pass None
-    # still get the same behavior; the exports just don't escape this scope.
     if ctx is None:
         ctx = ExecutionContext()
 
     log = ctx.logger
 
-    monitor = _PeakRSSMonitor()
-    monitor.__enter__()
-
-    # One-shot lineage emission: classify every node by its kind family
-    # (source.* → source, target.* → output, everything else → transform)
-    # and tag with the engine-resolved kind so the UI can route an icon.
-    # Done before the run loop so a node failure mid-run still leaves a
-    # complete lineage record for the timeline.
-    for nid in order:
-        node = by_id[nid]
-        kind = node["kind"]
-        if kind.startswith("source."):
-            emit_lineage(log, "source", nid, kind)
-        elif kind.startswith("target."):
-            emit_lineage(log, "output", nid, kind)
-        else:
-            emit_lineage(log, "transform", nid, kind)
-
-    for nid in order:
-        node = by_id[nid]
-        kind = node["kind"]
-        op = OPS[kind]
-        node_cfg = dict(node.get("config") or {})
-        engine = native_engine_for(kind, graph_engine_mode)
-        node_cfg["__engine"] = engine
-
-        # Resolve `${nodes.<id>.<key>}` tokens against exports captured by
-        # already-completed nodes. Other scopes (var/env/trigger/storm) are
-        # resolved by the platform before the YAML reaches the engine; this
-        # one is engine-only because the values don't exist until upstream
-        # ops have run.
-        try:
-            node_cfg = _resolve_node_exports(node_cfg, ctx._exports, nid)
-        except _NodeExportResolutionError as exc:
-            records.append({
-                "node_id": nid,
-                "kind": kind,
-                "status": "error",
-                "row_count": None,
-                "elapsed_ms": 0,
-                "error": str(exc),
-                "exports": None,
-            })
-            if log is not None:
-                log.error("graph: node %s failed: %s", _node_descriptor(node), exc)
-            success = False
-            break
-
-        # Pull upstream outputs out of cache and decrement their consumer
-        # count; eviction happens inside _consume.
-        in_edges = [e for e in edges if e["to"] == nid]
-        # ``step_name`` is what the platform's JobLogger writes into the
-        # STEP column of every narrative line emitted while this node is
-        # the open step, AND what the reporting UI's pill timeline keys
-        # on. Using the node id (not the kind) means every node is its
-        # own pill, not one pill per kind — which matters for graphs
-        # with multiple mask / target nodes.
-        step_name = nid
-        # rows_in: sum of upstream row counts (pulled BEFORE _consume so
-        # we see pa.Tables — _consume materializes to the engine's
-        # native format and arrow_row_count is pa-only). Source ops with
-        # no upstream input naturally land at 0.
-        rows_in_total = sum(
-            arrow_row_count(cache.get(e["from"])) for e in in_edges
-            if cache.get(e["from"]) is not None
-        )
-        inputs = [_consume(cache, remaining, e["from"], engine) for e in in_edges]
-        descriptor = _node_descriptor(node)
-
-        if log is not None:
-            log.info("graph: running node %s (engine=%s)", descriptor, engine)
-        emit_step(log, step_name, status="start", rows_in=rows_in_total or None)
-
-        # Per-node config snapshot in the narrative log so the Task History
-        # Nodes tab shows what each node was configured with at run time
-        # (predicate, columns, output path, etc.) — the boundary emit alone
-        # leaves the bucket nearly empty for ops that don't log internally.
-        # Emitted AFTER step start so JobLogger tags the line with this
-        # node's step name.
-        if log is not None and node_cfg:
-            log.info(_summarize_node_config(kind, node_cfg))
-
-        t0 = time.monotonic()
-        ctx._current_node_id = nid
-        try:
-            result = op.apply(inputs, node_cfg, ctx)
-            # Split-output ops (Item 21 IF / FLAG routers): each declared
-            # OUTPUT_PORT lands in its own cache slot keyed `<nid>.<port>`
-            # so downstream consumers can read a single port. Single-output
-            # ops take the regular `cache[nid]` path. ``emit_step(finish)``
-            # fires after either branch so the reporting timeline sees the
-            # node close regardless of split/non-split. The ``exports``
-            # field carries any values the op recorded via ``ctx.export()``
-            # — used by ``${nodes.<id>.<key>}`` resolution and surfaced
-            # to the platform via JobNodeRun.exports.
-            if isinstance(result, dict) and getattr(op, "OUTPUT_KIND", None) == "split":
-                ports = getattr(op, "OUTPUT_PORTS", ())
-                total_rows = 0
-                for port in ports:
-                    tbl = result.get(port)
-                    key = f"{nid}.{port}"
-                    arrow_tbl = engine_to_arrow(tbl, engine) if tbl is not None else None
-                    cache[key] = arrow_tbl
-                    total_rows += arrow_row_count(arrow_tbl)
-                    if remaining.get(key, 0) == 0 and key not in keep_set:
-                        cache.pop(key, None)
-                elapsed_ms = int((time.monotonic() - t0) * 1000)
-                records.append({
-                    "node_id": nid,
-                    "kind": kind,
-                    "status": "ok",
-                    "row_count": total_rows,
-                    "elapsed_ms": elapsed_ms,
-                    "error": None,
-                    "exports": ctx._exports.get(nid),
-                })
-                if log is not None:
-                    log.info(
-                        "graph: node %s ok rows=%d elapsed=%dms (split)",
-                        descriptor, total_rows, elapsed_ms,
-                    )
-                emit_step(
-                    log, step_name, status="finish",
-                    rows_in=rows_in_total or None, rows_out=total_rows,
-                )
-                # Phase 3 throughput sample — point-in-time rows/sec for
-                # this node. Skipped on zero-duration / zero-rows nodes
-                # so the chart doesn't see Infinity / NaN. The chart
-                # endpoint orders samples by ts, so this lands as the
-                # node's terminal datapoint regardless of order.
-                if elapsed_ms > 0 and total_rows > 0:
-                    emit_throughput_sample(log, total_rows * 1000 / elapsed_ms)
+    with _PeakRSSMonitor() as monitor:
+        for nid in plan.order:
+            node = by_id[nid]
+            kind = node["kind"]
+            if kind.startswith("source."):
+                emit_lineage(log, "source", nid, kind)
+            elif kind.startswith("target."):
+                emit_lineage(log, "output", nid, kind)
             else:
-                table = engine_to_arrow(result, engine) if result is not None else None
-                cache[nid] = table
-                elapsed_ms = int((time.monotonic() - t0) * 1000)
-                rows_out = arrow_row_count(table)
-                records.append({
-                    "node_id": nid,
-                    "kind": kind,
-                    "status": "ok",
-                    "row_count": rows_out,
-                    "elapsed_ms": elapsed_ms,
-                    "error": None,
-                    "exports": ctx._exports.get(nid),
-                })
-                if log is not None:
-                    log.info(
-                        "graph: node %s ok rows=%d elapsed=%dms",
-                        descriptor,
-                        rows_out,
-                        elapsed_ms,
-                    )
-                emit_step(
-                    log, step_name, status="finish",
-                    rows_in=rows_in_total or None, rows_out=rows_out,
-                )
-                # Phase 3 throughput sample — same shape as split branch
-                # above. Skip zero-duration / zero-rows to keep the
-                # chart clean.
-                if elapsed_ms > 0 and rows_out > 0:
-                    emit_throughput_sample(log, rows_out * 1000 / elapsed_ms)
-                # Sink with no downstream consumers: evict immediately so
-                # memory is reclaimed (its result is empty by convention
-                # anyway).
-                if remaining.get(nid, 0) == 0:
-                    cache.pop(nid, None)
-        except FlagPauseSignal:
-            # Item 21 controlled pause — not a failure. Let the platform
-            # runner handle it (creates a JobReview row, transitions the
-            # job to review_pending). No emit_step(error) because the
-            # phase isn't done yet; the resumed run will continue from
-            # the gate.
-            raise
-        except Exception as exc:
-            translated = translate_engine_error(exc, kind, nid)
-            elapsed_ms = int((time.monotonic() - t0) * 1000)
-            # R3.4 typed errors: surface the translated error's code +
-            # path on the records dict when present so downstream
-            # (platform runner -> JobNodeRun -> manifest) can render a
-            # structured ``{code, message, where}`` payload instead of
-            # bare free-text. Bare OpError without forwarded metadata
-            # leaves the fields None and the manifest falls back to the
-            # legacy ``node.runtime_error`` wrapping.
-            records.append({
-                "node_id": nid,
-                "kind": kind,
-                "status": "error",
-                "row_count": None,
-                "elapsed_ms": elapsed_ms,
-                "error": str(translated),
-                "error_code": getattr(translated, "code", None),
-                "error_path": getattr(translated, "path", None),
-                "exports": ctx._exports.get(nid),
-            })
-            if log is not None:
-                log.error("graph: node %s failed: %s", descriptor, translated)
-                log.error(traceback.format_exc())
-            # Phase 2 LOGGING_GUIDE §4c: emit_step carries the exception
-            # class + the translated message + the canvas node id so the
-            # JobLogger can format the spec ERROR line tail (and the
-            # frontend can deep-link the error pill to the producing
-            # node). ``type(exc).__name__`` is the underlying class —
-            # ``translated`` is what we surface to the user.
-            emit_step(
-                log, step_name, status="error",
-                rows_in=rows_in_total or None,
-                error_class=type(exc).__name__,
-                error_msg=str(translated),
-                node_id=nid,
-            )
-            success = False
-            break
-        finally:
-            ctx._current_node_id = None
+                emit_lineage(log, "transform", nid, kind)
 
-    monitor.__exit__(None, None, None)
+        for nid in plan.order:
+            node = by_id[nid]
+            kind = node["kind"]
+            op = OPS[kind]
+            node_cfg = dict(node.get("config") or {})
+            engine = native_engine_for(kind, graph_engine_mode)
+            node_cfg["__engine"] = engine
+
+            try:
+                node_cfg = _resolve_node_exports(node_cfg, ctx._exports, nid)
+            except _NodeExportResolutionError as exc:
+                records.append(make_node_error_record(nid, kind, 0, str(exc)))
+                if log is not None:
+                    log.error("graph: node %s failed: %s", _node_descriptor(node), exc)
+                success = False
+                break
+
+            in_edge_keys = plan.in_edges.get(nid, [])
+            step_name = nid
+            rows_in_total = cache.row_sum(in_edge_keys)
+            inputs = [cache.consume(k, engine) for k in in_edge_keys]
+            descriptor = _node_descriptor(node)
+
+            emit_node_start(log, step_name, descriptor, engine, rows_in_total)
+
+            if log is not None and node_cfg:
+                log.info(_summarize_node_config(kind, node_cfg))
+
+            t0 = time.monotonic()
+            ctx._current_node_id = nid
+            try:
+                result = op.apply(inputs, node_cfg, ctx)
+                if isinstance(result, dict) and getattr(op, "OUTPUT_KIND", None) == "split":
+                    ports = getattr(op, "OUTPUT_PORTS", ())
+                    total_rows = cache.write_split(nid, result, ports, engine)
+                    elapsed_ms = int((time.monotonic() - t0) * 1000)
+                    records.append(make_node_ok_record(
+                        nid, kind, total_rows, elapsed_ms, ctx._exports.get(nid),
+                    ))
+                    emit_node_ok(
+                        log, step_name, descriptor, rows_in_total,
+                        total_rows, elapsed_ms, is_split=True,
+                    )
+                else:
+                    rows_out = cache.write_stream(nid, result, engine)
+                    elapsed_ms = int((time.monotonic() - t0) * 1000)
+                    records.append(make_node_ok_record(
+                        nid, kind, rows_out, elapsed_ms, ctx._exports.get(nid),
+                    ))
+                    emit_node_ok(
+                        log, step_name, descriptor, rows_in_total,
+                        rows_out, elapsed_ms,
+                    )
+            except FlagPauseSignal:
+                raise
+            except Exception as exc:
+                translated = translate_engine_error(exc, kind, nid)
+                elapsed_ms = int((time.monotonic() - t0) * 1000)
+                records.append(make_node_error_record(
+                    nid, kind, elapsed_ms, str(translated),
+                    exports=ctx._exports.get(nid),
+                    error_code=getattr(translated, "code", None),
+                    error_path=getattr(translated, "path", None),
+                ))
+                emit_node_error(
+                    log, step_name, descriptor, rows_in_total,
+                    exc, translated, nid, elapsed_ms,
+                )
+                success = False
+                break
+            finally:
+                ctx._current_node_id = None
+
     _check_memory_pressure(monitor.peak_rss, graph_engine_mode, log)
 
     result: RunResult = {
@@ -491,8 +427,7 @@ def _execute_graph(
         "success": success,
         "elapsed_ms": int((time.monotonic() - overall_start) * 1000),
     }
-    kept_cache = {k: cache[k] for k in keep_set if k in cache}
-    return result, kept_cache
+    return result, cache.kept()
 
 
 def preview_graph(
@@ -501,26 +436,10 @@ def preview_graph(
     row_limit: int = 50,
     ctx: ExecutionContext | None = None,
 ) -> PreviewResult:
-    """Best-effort sample of `node_id`'s output.
+    """Best-effort sample of `node_id`'s output."""
+    from decoy_engine.graph.preview import PreviewPolicy, run_preview
 
-    Walks only the ancestors of `node_id`, applies the row_limit hint to
-    sources, and returns the DataFrame at `node_id` capped to `row_limit`.
-    Targets do NOT execute their side effect -- the dataframe that would
-    have been written is returned instead.
-
-    Per the PIPELINE_GRAPH_GUIDE: errors return PreviewResult with
-    status-shaped `error` field rather than raising; only validation /
-    missing-node errors raise.
-
-    Validation is scoped to the target node + its ancestors. If the
-    pipeline is broken downstream of `node_id` (or in some other branch),
-    sampling here still works -- the user can grab data out of any node
-    whose upstream is well-formed.
-    """
     config = _load_yaml(yaml_text)
-
-    # Light top-level check so we can safely walk the graph below; full
-    # validation only runs against the upstream subgraph.
     _validate_top_level_or_raise(config)
 
     nodes = config["nodes"]
@@ -543,159 +462,11 @@ def preview_graph(
     }
     _validate_or_raise(sub_config)
 
-    nodes = sub_config["nodes"]
-    edges = sub_config["edges"]
-
-    row_limit = max(1, min(int(row_limit), 1000))
-    sub_order, sub_edges = upstream_subgraph(nodes, edges, node_id)
-    by_id = {n["id"]: n for n in nodes}
-
-    from decoy_engine.graph.ops import OPS
-    from decoy_engine.graph.registry import native_engine_for
-
-    graph_engine_mode = _resolve_engine_mode(config)
-
-    cache: dict[str, pa.Table] = {}
-    sub_node_set = set(sub_order)
-    sub_nodes = [n for n in nodes if n["id"] in sub_node_set]
-    remaining = _count_consumers(sub_nodes, sub_edges)
-    overall_start = time.monotonic()
-    target_table: pa.Table | None = None
-    error_msg: str | None = None
-
-    for nid in sub_order:
-        node = by_id[nid]
-        kind = node["kind"]
-        op = OPS[kind]
-        node_cfg = dict(node.get("config") or {})
-        node_cfg["__preview_row_limit"] = row_limit
-        engine = native_engine_for(kind, graph_engine_mode)
-        node_cfg["__engine"] = engine
-        in_edges = [e for e in sub_edges if e["to"] == nid]
-        inputs = [
-            _consume(cache, remaining, e["from"], engine, hold=node_id)
-            for e in in_edges
-        ]
-
-        try:
-            result = op.apply(inputs, node_cfg, ctx)
-            if isinstance(result, dict) and getattr(op, "OUTPUT_KIND", None) == "split":
-                ports = getattr(op, "OUTPUT_PORTS", ())
-                for port in ports:
-                    tbl = result.get(port)
-                    key = f"{nid}.{port}"
-                    arrow_tbl = engine_to_arrow(tbl, engine) if tbl is not None else None
-                    if arrow_tbl is not None and arrow_tbl.num_rows > row_limit:
-                        arrow_tbl = arrow_tbl.slice(0, row_limit)
-                    cache[key] = arrow_tbl
-                # Expose the "pass" port as the direct node output for preview.
-                cache[nid] = cache.get(f"{nid}.pass")
-            else:
-                table = engine_to_arrow(result, engine) if result is not None else None
-                if table is not None and table.num_rows > row_limit:
-                    table = table.slice(0, row_limit)
-                cache[nid] = table
-        except FlagPauseSignal as fps:
-            error_msg = f"node {_node_descriptor(node)} gate blocked: {fps}"
-            cache[nid] = None
-            if nid == node_id:
-                break
-        except Exception as exc:
-            translated = translate_engine_error(exc, kind, nid)
-            error_msg = f"node {_node_descriptor(node)} failed: {translated}"
-            cache[nid] = None
-            if nid == node_id:
-                break
-
-    target_table = cache.get(node_id)
-    elapsed_ms = int((time.monotonic() - overall_start) * 1000)
-
-    if target_table is None:
-        return {
-            "node_id": node_id,
-            "columns": [],
-            "rows": [],
-            "applied_chain": sub_order,
-            "row_count": 0,
-            "elapsed_ms": elapsed_ms,
-            "error": error_msg or "no data produced",
-        }
-
-    columns = arrow_columns(target_table)
-    df_preview = target_table.slice(0, row_limit).to_pandas()
-    rows = [
-        [_jsonable(v) for v in row]
-        for row in df_preview.itertuples(index=False, name=None)
-    ]
-    return {
-        "node_id": node_id,
-        "columns": columns,
-        "rows": rows,
-        "applied_chain": sub_order,
-        "row_count": len(rows),
-        "elapsed_ms": elapsed_ms,
-        "error": error_msg,
-    }
-
-
-def _count_consumers(nodes: list[dict], edges: list[dict]) -> dict[str, int]:
-    """Per node (or per port for split ops), count downstream edge consumers.
-
-    Split ops (OUTPUT_KIND="split") get per-port entries keyed as
-    "node_id.port" rather than a single "node_id" entry.
-    """
-    from decoy_engine.graph.ops import OPS
-
-    counts: dict[str, int] = {}
-    for n in nodes:
-        # Look up the op for split-port discovery. Unknown / missing kinds
-        # fall through to the regular non-split path so the helper stays
-        # usable from validators and unit tests that pass minimal node
-        # dicts. Real run_graph() callers always populate `kind` — the
-        # registry KeyError there would be a config-validation failure,
-        # caught higher up.
-        op = OPS.get(n.get("kind", "")) if hasattr(OPS, "get") else None
-        if op is not None and getattr(op, "OUTPUT_KIND", "stream") == "split":
-            for port in getattr(op, "OUTPUT_PORTS", ()):
-                counts[f"{n['id']}.{port}"] = 0
-        else:
-            counts[n["id"]] = 0
-
-    for e in edges:
-        src = e["from"]
-        if src != e["to"] and src in counts:
-            counts[src] += 1
-    return counts
-
-
-def _consume(
-    cache: dict[str, pa.Table],
-    remaining: dict[str, int],
-    node_id: str,
-    engine: str,
-    hold: str | None = None,
-) -> Any:
-    """Read upstream output, decrement consumer count, evict at zero.
-
-    `node_id` may be "nid" or "nid.port" for split op outputs.
-    `hold` pins the target node's cache entry so the preview caller can
-    serialize it after the run.
-    """
-    table = cache.get(node_id)
-    if table is None:
-        return None
-    if node_id in remaining:
-        remaining[node_id] -= 1
-        if remaining[node_id] <= 0 and node_id != hold:
-            del cache[node_id]
-    return arrow_to_engine(table, engine)  # type: ignore[arg-type]
-
-
-def _resolve_engine_mode(config: dict) -> str:
-    mode = config.get("engine") or "hybrid"
-    if mode not in ("pandas", "hybrid"):
-        return "hybrid"
-    return mode
+    policy = PreviewPolicy(
+        target_node_id=node_id,
+        row_limit=max(1, min(int(row_limit), 1000)),
+    )
+    return run_preview(sub_config, policy, ctx)
 
 
 def _load_yaml(yaml_text: str) -> dict:
@@ -719,12 +490,6 @@ def _validate_or_raise(config: dict) -> None:
 
 
 def _validate_top_level_or_raise(config: dict) -> None:
-    """Cheap structural check used before extracting a preview subgraph.
-
-    Only checks the shape needed to walk edges/nodes safely. Per-node and
-    cardinality checks happen later against the subgraph so that broken
-    downstream nodes do not block sampling at an upstream node.
-    """
     if config.get("mode") != "graph":
         raise PipelineValidationError(
             f"top-level 'mode' must be 'graph' (got {config.get('mode')!r})"
@@ -740,12 +505,6 @@ def _validate_top_level_or_raise(config: dict) -> None:
 def _ancestor_node_ids_safe(
     nodes: list, edges: list, target: str
 ) -> set[str]:
-    """Walk upward from `target` collecting ancestors, tolerant of
-    malformed nodes/edges in unrelated parts of the graph.
-
-    Returns the set of node IDs comprising `target` plus every ancestor
-    reachable through well-formed edges.
-    """
     valid_ids = {
         n.get("id") for n in nodes
         if isinstance(n, dict) and isinstance(n.get("id"), str)
@@ -780,23 +539,10 @@ def _node_descriptor(node: dict) -> str:
     return f"[id={nid}, kind={kind}]"
 
 
-# Keys to redact in the per-node config summary line. Anything name-matching
-# (case-insensitive) gets `***` in the emitted log. Keeps the Task History
-# Nodes-tab read-out useful without leaking credentials into Job.log.
 _REDACT_KEYS = {"password", "secret", "token", "api_key", "apikey", "auth"}
 
 
 def _summarize_node_config(kind: str, cfg: dict) -> str:
-    """Return a short per-node config summary for the narrative log.
-
-    Emitted right after each step starts so the Task History Nodes tab
-    always has at least one informative line per node — `▶ <id>` and the
-    `step <id> (finish)` boundary alone aren't enough for users to see
-    what the node actually did.
-
-    Keep this terse: the resolved config dict already lives on
-    JobNodeRun.config for the full picture. This line is a glance value.
-    Secrets are redacted by key name."""
     if not isinstance(cfg, dict) or not cfg:
         return f"config: (no config)"
     parts: list[str] = []
@@ -808,8 +554,6 @@ def _summarize_node_config(kind: str, cfg: dict) -> str:
             parts.append(f"{k}=***")
             continue
         if isinstance(v, (dict, list)):
-            # Lists / dicts: show the length so a "mask: 12 columns" still
-            # reads at a glance without flooding the line with structure.
             kind_word = "keys" if isinstance(v, dict) else "items"
             parts.append(f"{k}=<{len(v)} {kind_word}>")
         elif isinstance(v, str) and len(v) > 80:
@@ -833,18 +577,11 @@ def _jsonable(v: Any) -> Any:
     return v
 
 
-# Engine-side resolver for `${nodes.<id>.<key>[.<sub>...]}` tokens. Other
-# scopes (var/env/trigger/storm/iteration) are resolved platform-side before
-# the YAML reaches the engine. This scope must be resolved live because the
-# values come from already-completed upstream ops.
 _NODE_TOKEN_RE = re.compile(r"\$\{nodes\.([a-zA-Z0-9_-]+)\.([a-zA-Z_][\w.]*)}")
 
 
 class _NodeExportResolutionError(Exception):
-    """Raised when a `${nodes.X.Y}` token can't be resolved.
-
-    The runner catches this, records the failing node with an actionable
-    error message, and stops the pipeline."""
+    """Raised when a `${nodes.X.Y}` token can't be resolved."""
 
 
 def _resolve_node_exports(
@@ -852,11 +589,6 @@ def _resolve_node_exports(
     exports: dict[str, dict[str, Any]],
     current_node_id: str,
 ) -> Any:
-    """Walk cfg and substitute `${nodes.X.Y}` tokens against `exports`.
-
-    Returns a new structure; cfg is not mutated. Raises
-    `_NodeExportResolutionError` for unknown ids / keys (which usually means
-    a forward reference or a typo)."""
     return _walk_for_exports(cfg, exports, current_node_id)
 
 
@@ -879,8 +611,6 @@ def _replace_node_exports_in_string(
     exports: dict[str, dict[str, Any]],
     current_node_id: str,
 ) -> Any:
-    # Whole-string token preserves type (int / float / list / dict stay
-    # their native shape). Partial substitution coerces to str.
     full = _NODE_TOKEN_RE.fullmatch(s)
     if full is not None:
         return _resolve_one_node_export(
@@ -904,12 +634,12 @@ def _resolve_one_node_export(
     if node_id == current_node_id:
         raise _NodeExportResolutionError(
             f"node {current_node_id!r} references its own exports via "
-            f"${{nodes.{node_id}.{key}}} — exports are only readable from "
+            f"${{nodes.{node_id}.{key}}} -- exports are only readable from "
             f"downstream nodes"
         )
     if node_id not in exports:
         raise _NodeExportResolutionError(
-            f"unresolved variable: ${{nodes.{node_id}.{key}}} — node "
+            f"unresolved variable: ${{nodes.{node_id}.{key}}} -- node "
             f"{node_id!r} has not run yet (forward reference or upstream "
             f"failure)"
         )
@@ -923,23 +653,12 @@ def _resolve_one_node_export(
                 cur = cur[idx]
             else:
                 raise _NodeExportResolutionError(
-                    f"unresolved variable: ${{nodes.{node_id}.{key}}} — "
+                    f"unresolved variable: ${{nodes.{node_id}.{key}}} -- "
                     f"index {idx} out of range"
                 )
         else:
             raise _NodeExportResolutionError(
-                f"unresolved variable: ${{nodes.{node_id}.{key}}} — "
+                f"unresolved variable: ${{nodes.{node_id}.{key}}} -- "
                 f"key {part!r} not in {node_id!r}'s exports"
             )
     return cur
-
-
-def _node_hash(node: dict, upstream_hashes: list[str], row_limit: int) -> str:
-    payload = {
-        "kind": node.get("kind"),
-        "config": node.get("config") or {},
-        "upstream": upstream_hashes,
-        "row_limit": row_limit,
-    }
-    blob = json.dumps(payload, sort_keys=True, default=str).encode()
-    return hashlib.sha256(blob).hexdigest()

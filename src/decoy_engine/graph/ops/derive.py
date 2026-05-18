@@ -1,4 +1,4 @@
-"""derive — add a computed column from an arithmetic expression.
+"""derive -- add a computed column from an arithmetic expression.
 
 Config:
     column: str       - name of the new column (required)
@@ -10,9 +10,13 @@ at once and lives outside Mask/Generate, so a YAML can compute a column
 without configuring a Mask node just for that one job.
 
 Phase 3 of the polars-duckdb hybrid plan: NATIVE_ENGINE='polars'. The polars
-implementation uses `pl.SQLContext` to evaluate the expression — pandas-eval
+implementation uses `pl.SQLContext` to evaluate the expression -- pandas-eval
 syntax for arithmetic / boolean is a subset of SQL expressions for the cases
 we actually use (`a + b`, `price * 1.1`, `discount > 0`).
+
+SECURITY: 'expression' is user YAML config concatenated into a Polars
+SQLContext SQL string (in-memory only, no external DB). Medium risk --
+see docs/security/sql-surfaces.md. Fix planned for Sprint 6.
 """
 
 from typing import Any
@@ -64,10 +68,13 @@ def _apply_polars(df, column: str, expression: str):
     import polars as pl
 
     try:
-        # SELECT * lets us preserve all original columns; the computed column
-        # is appended via a SELECT alias. SQLContext quotes the alias for us
-        # so column names with spaces work.
-        sql = f'SELECT *, ({expression}) AS "{column}" FROM df'
+        # S608: expression is user YAML config concatenated into SQL.
+        # In-memory Polars SQLContext -- no external DB. Medium risk.
+        # See docs/security/sql-surfaces.md. Fix planned for Sprint 6.
+        # SELECT * preserves all original columns; the computed column is
+        # appended via a SELECT alias. SQLContext quotes the alias so
+        # column names with spaces work.
+        sql = f'SELECT *, ({expression}) AS "{column}" FROM df'  # noqa: S608
         with pl.SQLContext(df=df, eager=True) as ctx:
             return ctx.execute(sql)
     except Exception as exc:

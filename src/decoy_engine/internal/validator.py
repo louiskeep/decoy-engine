@@ -664,16 +664,98 @@ class GraphConfigValidator(ConfigValidator):
             try:
                 OPS[kind].validate_config(cfg)
             except ValidationError as e:
-                # Preserve the op-specific code; re-anchor the path so the
-                # platform layer can index back into the YAML by node. Use
-                # raw_message instead of str(e).split(": ") since the latter
-                # is fragile against messages that legitimately contain ": ".
                 raw_msg = getattr(e, "raw_message", None) or str(e)
                 raise ValidationError(
                     raw_msg,
                     f"{path}.{getattr(e, 'path', None) or 'config'}",
                     code=getattr(e, "code", None),
                 ) from e
+
+    def _validate_nodes_collecting(
+        self, nodes: List[Dict[str, Any]], kinds: Set[str]
+    ) -> List[ValidationError]:
+        """Like _validate_nodes but collects ALL per-node errors instead of
+        raising on the first. Called by validate_graph_full (R2.2) so that
+        a graph with multiple bad nodes surfaces all of them in one pass.
+
+        _validate_nodes is unchanged for backward compatibility -- validate()
+        and _validate_or_raise still use it via the raise-on-first path.
+        """
+        from decoy_engine.graph.ops import OPS
+        from decoy_engine.graph.conversion import VALID_ENGINES
+        from decoy_engine.validation_result import CODES
+
+        errors: List[ValidationError] = []
+        seen_ids: Set[str] = set()
+
+        for i, node in enumerate(nodes):
+            path = f"nodes[{i}]"
+
+            if not isinstance(node, dict):
+                errors.append(ValidationError(
+                    "node must be a mapping", path, code=CODES.NODE_BAD_TYPE,
+                ))
+                continue  # can't inspect sub-fields of a non-dict
+
+            nid = node.get("id")
+            if not isinstance(nid, str) or not _GRAPH_NODE_ID_RE.match(nid):
+                errors.append(ValidationError(
+                    "id must match ^[a-zA-Z][a-zA-Z0-9_]{0,63}$",
+                    f"{path}.id",
+                    code=CODES.NODE_BAD_ID,
+                ))
+            else:
+                if nid in seen_ids:
+                    errors.append(ValidationError(
+                        f"duplicate node id {nid!r}", f"{path}.id",
+                        code=CODES.NODE_DUPLICATE_ID,
+                    ))
+                seen_ids.add(nid)
+
+            kind = node.get("kind")
+            kind_valid = kind in kinds
+            if not kind_valid:
+                errors.append(ValidationError(
+                    f"unknown kind {kind!r} (supported: {sorted(kinds)})",
+                    f"{path}.kind",
+                    code=CODES.NODE_UNKNOWN_KIND,
+                ))
+            else:
+                declared_engine = getattr(OPS[kind], "NATIVE_ENGINE", None)
+                if declared_engine is not None and declared_engine not in VALID_ENGINES:
+                    errors.append(ValidationError(
+                        f"op {kind!r} declares invalid NATIVE_ENGINE {declared_engine!r}; "
+                        f"supported: {sorted(VALID_ENGINES)}",
+                        f"{path}.kind",
+                        code=CODES.NODE_BAD_NATIVE_ENGINE,
+                    ))
+
+            name = node.get("name")
+            if name is not None and (not isinstance(name, str) or not name.strip()):
+                errors.append(ValidationError(
+                    "name must be a non-empty string when set",
+                    f"{path}.name",
+                    code=CODES.NODE_BAD_NAME,
+                ))
+
+            cfg = node.get("config", {})
+            if not isinstance(cfg, dict):
+                errors.append(ValidationError(
+                    "config must be a mapping", f"{path}.config",
+                    code=CODES.NODE_BAD_CONFIG_TYPE,
+                ))
+            elif kind_valid:
+                try:
+                    OPS[kind].validate_config(cfg)
+                except ValidationError as e:
+                    raw_msg = getattr(e, "raw_message", None) or str(e)
+                    errors.append(ValidationError(
+                        raw_msg,
+                        f"{path}.{getattr(e, 'path', None) or 'config'}",
+                        code=getattr(e, "code", None),
+                    ))
+
+        return errors
 
     def _validate_edges(
         self, edges: List[Dict[str, Any]], nodes: List[Dict[str, Any]]
@@ -772,7 +854,8 @@ class GraphConfigValidator(ConfigValidator):
         topo_order(nodes, edges)  # raises ValidationError on cycle
 
     def _validate_file_format_consistency(
-        self, nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]]
+        self, nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]],
+        strict: bool = False,
     ) -> None:
         """Warn when file-source and file-target formats differ without a convert.file_type.
 
@@ -788,6 +871,9 @@ class GraphConfigValidator(ConfigValidator):
         from decoy_engine.graph.ops._cloud_io import infer_format as _infer_fmt
 
         node_by_id: Dict[str, Dict[str, Any]] = {n["id"]: n for n in nodes}
+        node_idx: Dict[str, int] = {
+            n["id"]: i for i, n in enumerate(nodes) if isinstance(n, dict)
+        }
 
         # Adjacency list: node_id -> list of direct downstream node_ids.
         # Strip the ".port" suffix that split ops use so the BFS stays simple.
@@ -807,16 +893,8 @@ class GraphConfigValidator(ConfigValidator):
             if not src_fmt:
                 continue
 
-            # BFS where state = (node_id, has_converter_on_path_from_source).
-            # This lets us distinguish paths that pass through convert.file_type
-            # from those that reach a target directly.  Using state-pairs in
-            # visited avoids revisiting the same (node, converter-seen)
-            # combination while still exploring both branches after a fork.
             visited_states: Set[tuple] = set()
             queue: List[tuple] = [(src_id, False)]
-            # For each reachable file-target, collect the set of has_convert
-            # values seen when reaching it.  If False is in the set it means
-            # there is at least one direct (unconverted) path.
             target_reach: Dict[str, Set[bool]] = {}
 
             while queue:
@@ -829,7 +907,6 @@ class GraphConfigValidator(ConfigValidator):
                 cur_kind = node_by_id[cur_id].get("kind")
                 if cur_id != src_id and cur_kind in self._FILE_TARGET_KINDS:
                     target_reach.setdefault(cur_id, set()).add(has_convert)
-                    # Don't traverse past sinks.
                     continue
 
                 next_has_convert = has_convert or (cur_kind == "convert.file_type")
@@ -837,9 +914,6 @@ class GraphConfigValidator(ConfigValidator):
                     queue.append((nxt_id, next_has_convert))
 
             for tgt_id, reach_states in target_reach.items():
-                # If any path from source to this target passed through a
-                # convert.file_type node, the user explicitly asked for
-                # conversion -- no warning needed.
                 if True in reach_states:
                     continue
 
@@ -847,21 +921,22 @@ class GraphConfigValidator(ConfigValidator):
                 tgt_kind = tgt_node.get("kind")
                 tgt_cfg = tgt_node.get("config", {})
 
-                # Infer target format: explicit config field first, then
-                # extension on output_filename (target.file) or path (cloud).
                 tgt_fmt = (
                     tgt_cfg.get("format")
                     or _infer_fmt(tgt_cfg.get("output_filename", ""))
                     or _infer_fmt(tgt_cfg.get("path", ""))
                 )
 
-                # Back-fill omitted format for target.file only, after
-                # extension inference. Doing this before inference would hide
-                # real mismatches such as source CSV -> output.parquet.
-                # Cloud targets derive their output format from their path/key
-                # via their own validate_config; back-filling here would
-                # override that.
                 if tgt_kind == "target.file" and not tgt_cfg.get("format"):
+                    if strict:
+                        from decoy_engine.validation_result import CODES as _CODES
+                        raise ValidationError(
+                            f"target.file node {tgt_id!r} has no explicit 'format' field; "
+                            f"strict mode requires every target to declare its format "
+                            f"explicitly (source {src_id!r} uses {src_fmt!r})",
+                            f"nodes[{node_idx.get(tgt_id, '?')}].config.format",
+                            code=_CODES.TARGET_FILE_FORMAT_INFERRED,
+                        )
                     tgt_cfg["format"] = tgt_fmt
 
                 if tgt_fmt and tgt_fmt != src_fmt:
@@ -890,19 +965,6 @@ class GraphConfigValidator(ConfigValidator):
     ) -> None:
         """R2.3: a mask node references column names; those names must
         exist in the schema the upstream source produces.
-
-        When the upstream's output schema is statically known
-        (column_names set, fw_columns set, or has_header=false with no
-        column_names which auto-numbers), check that every key in
-        mask.config.columns is reachable. Surface the failure with a
-        single ``mask.unknown_column`` code so the canvas can route it
-        to the mask card's column list.
-
-        When the upstream's schema cannot be predicted (CSV with
-        has_header=true, parquet without preview metadata, anything
-        else), skip the check rather than block - the alternative is
-        a false positive on common headered-CSV pipelines, which is
-        worse than the silent-no-op we're trying to catch.
         """
         from decoy_engine.graph.output_schema import (
             is_auto_name,
@@ -912,8 +974,6 @@ class GraphConfigValidator(ConfigValidator):
 
         node_by_id = {n["id"]: n for n in nodes if isinstance(n, dict) and "id" in n}
 
-        # Reverse adjacency: node_id -> list of direct upstream node_ids
-        # (strip the ".port" suffix that split ops use).
         upstream: Dict[str, List[str]] = {nid: [] for nid in node_by_id}
         for e in edges:
             if not isinstance(e, dict):
@@ -933,11 +993,6 @@ class GraphConfigValidator(ConfigValidator):
             if not isinstance(cols_cfg, dict) or not cols_cfg:
                 continue
 
-            # Collect the union of statically-predicted columns from
-            # every direct upstream node. A multi-input mask isn't a
-            # valid release shape (mask is arity 1) so this is usually
-            # one entry; we tolerate more anyway so the check stays
-            # robust against future arity changes.
             predicted_union: set[str] = set()
             had_auto = False
             had_unknown = False
@@ -955,18 +1010,11 @@ class GraphConfigValidator(ConfigValidator):
                 if isinstance(pred, list):
                     predicted_union.update(pred)
 
-            # If any upstream's schema is unknown, fall back to permissive
-            # mode - we'd rather miss a typo than block a legitimate
-            # headered-CSV pipeline whose columns we can't see from YAML.
             if had_unknown:
                 continue
 
             for col_name in cols_cfg.keys():
                 if had_auto:
-                    # Source auto-numbers; only column<int> names are
-                    # reachable. Real names from the user are the
-                    # silent-no-op case the demoted has_header gate
-                    # used to catch.
                     if not is_auto_name(col_name):
                         raise ValidationError(
                             f"mask node {mask_id!r} references column "
@@ -996,23 +1044,6 @@ class GraphConfigValidator(ConfigValidator):
     ) -> None:
         """R2.3: every ``${nodes.<id>.<key>}`` reference must point at
         a node that exists and is UPSTREAM of the referrer.
-
-        At engine run time the runner resolves these against in-memory
-        exports captured from already-completed nodes. If the
-        referenced node id doesn't exist, the resolver returns the
-        token literal and the engine consumes a bogus string. If the
-        referenced node is downstream / unrelated, the export will
-        never be set, same outcome. Both cases run the pipeline to
-        completion with subtly wrong values.
-
-        This validator walks every node's config block, regexes out
-        every ``${nodes.<id>.<key>}`` token, and rejects:
-          - unknown id            -> nodes_ref.unknown_id
-          - id exists but isn't upstream of the referrer
-            -> nodes_ref.not_upstream
-
-        ``<key>`` itself isn't validated yet - the engine doesn't
-        publish typed export metadata per op. R2.3 extension territory.
         """
         import re as _re
         from decoy_engine.graph.topo import upstream_subgraph
@@ -1045,18 +1076,11 @@ class GraphConfigValidator(ConfigValidator):
             refs = walk(cfg)
             if not refs:
                 continue
-            # Compute the referrer's upstream set ONCE per node that
-            # actually has references. Empty set when the referrer
-            # has no incoming edges (a source node referencing
-            # ${nodes...} is always wrong; this naturally fails the
-            # not_upstream check below).
             try:
                 ordered_ids, _ = upstream_subgraph(nodes, edges, referrer_id)
                 upstream_ids = set(ordered_ids)
-                upstream_ids.discard(referrer_id)  # self isn't upstream
+                upstream_ids.discard(referrer_id)
             except Exception:
-                # If topo can't run (e.g. cycle), other validators will
-                # have raised first. Skip the reachability check.
                 continue
             for target_id, key in refs:
                 if target_id not in node_ids:

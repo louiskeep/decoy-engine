@@ -12,6 +12,7 @@ import time
 from faker import Faker
 from typing import Dict, Any, Optional, List, Callable
 
+from decoy_engine.expressions import BASE_GLOBALS, safe_eval
 from decoy_engine.internal.helpers import (
     deterministic_hash,
     get_faker_providers,
@@ -39,7 +40,7 @@ class ColumnGenerator:
             derive_key: Optional callable ``(info: str) -> bytes`` returning at
                 least 4 bytes of HKDF-derived material. When provided, per-
                 column seeds come from ``derive_key("col:<name>")`` instead of
-                ``seed + hash(name)`` — same key + same column always yields
+                ``seed + hash(name)`` -- same key + same column always yields
                 the same bytes across runs and across instances. When None,
                 generation is reproducible by ``seed`` alone but ignores any
                 pipeline / instance master key (i.e. random-by-policy).
@@ -146,7 +147,7 @@ class ColumnGenerator:
             self.logger.debug(f"Applying null probability {null_probability} to column '{column_name}'")
 
             # Per-row seeding off the column-seed (HKDF-derived when keyed,
-            # `seed + hash(name)` otherwise). Same column + same row →
+            # `seed + hash(name)` otherwise). Same column + same row ->
             # same null/non-null decision across runs.
             column_seed = self._column_seed(column_name)
             for i in range(num_rows):
@@ -192,7 +193,7 @@ class ColumnGenerator:
         # / etc. produce locale-correct addresses, names, phone numbers.
         # Provider list is rebuilt off the active instance because some
         # providers (e.g. `state_abbr`) raise on locales that don't define
-        # them — falling back to the default-locale provider would silently
+        # them -- falling back to the default-locale provider would silently
         # leak en_US output.
         if locale:
             faker_inst = make_faker(locale)
@@ -223,7 +224,7 @@ class ColumnGenerator:
         # column-seed is HKDF-derived from the pipeline key, so the same
         # key + same column always yields the same bytes across runs.
         # When `column_config["determinism"] == "fresh"`, the column-seed
-        # comes from os.urandom instead — the column's output rolls per
+        # comes from os.urandom instead -- the column's output rolls per
         # run while staying internally consistent within the run.
         column_name = column_config.get('name', 'unnamed_column')
         column_seed = self._column_seed(column_name, column_config)
@@ -296,7 +297,7 @@ class ColumnGenerator:
         # Reseed from the column-specific seed so the choices are stable
         # across runs when a key is provided, and stable per-column even
         # without one (otherwise output depends on the order of column
-        # generation calls — order-dependence is a footgun). Honors
+        # generation calls -- order-dependence is a footgun). Honors
         # `determinism: fresh` for columns the user wants rolling per run.
         column_name = column_config.get('name', 'unnamed_column')
         random.seed(self._column_seed(column_name, column_config))
@@ -380,7 +381,7 @@ class ColumnGenerator:
         the previous three-way dispatch (basic / template / composite).
 
         When ``references: [...]`` is set on the column config, this method
-        emits a None-filled placeholder series — the column's actual values
+        emits a None-filled placeholder series -- the column's actual values
         are filled by ``DataGenerator._process_referenced_formulas`` AFTER
         every other column has been generated, so the formula can read its
         siblings. When ``references`` is empty/missing, the formula is
@@ -394,7 +395,7 @@ class ColumnGenerator:
 
         Returns:
             pandas.Series with generated data (or None placeholders when
-            the column has cross-column references — filled in post-pass).
+            the column has cross-column references -- filled in post-pass).
         """
         formula = column_config.get('formula', '')
         column_name = column_config.get('name', 'unnamed_column')
@@ -408,7 +409,7 @@ class ColumnGenerator:
             # Defer to the post-pass: this column reads sibling columns,
             # which haven't been generated yet during the per-column loop.
             self.logger.debug(
-                f"Formula column '{column_name}' references {references} — "
+                f"Formula column '{column_name}' references {references} -- "
                 f"deferring to post-pass."
             )
             return pd.Series([None] * num_rows, dtype=object)
@@ -428,17 +429,18 @@ class ColumnGenerator:
         as the legacy ``basic`` path: ``column_seed + row_index`` reseeds
         ``random`` and the Faker instance per row. When the column's
         config has ``determinism: fresh``, the column-seed comes from
-        os.urandom — internal consistency holds within a run, but the
+        os.urandom -- internal consistency holds within a run, but the
         column rolls per run.
 
-        Scope per row:
-          - ``i`` / ``index`` — row number
-          - ``random`` / ``randint`` / ``choice`` — RNG (deterministic per row)
-          - ``hash`` — short deterministic hash
+        Scope per row (via :func:`decoy_engine.expressions.safe_eval` +
+        :data:`decoy_engine.expressions.BASE_GLOBALS`):
+          - ``i`` / ``index`` -- row number
+          - ``random`` / ``randint`` / ``choice`` -- RNG (deterministic per row)
+          - ``hash`` -- short deterministic hash
           - ``str`` / ``int`` / ``float`` / ``round`` / ``min`` / ``max`` / ``len``
-          - Faker date helpers + arithmetic (``today``, ``days_from_now``, …)
+          - Faker date helpers + arithmetic (``today``, ``days_from_now``, ...)
 
-        Cross-column refs aren't reachable here — that's the post-pass."""
+        Cross-column refs aren't reachable here -- that's the post-pass."""
         column_seed = self._column_seed(column_name, column_config)
         values = []
         for i in range(num_rows):
@@ -451,7 +453,7 @@ class ColumnGenerator:
             scope['index'] = i
 
             try:
-                result = eval(formula, {"__builtins__": {}}, scope)
+                result = safe_eval(formula, BASE_GLOBALS, scope)
                 values.append(result)
             except Exception as e:
                 error_msg = str(e)
