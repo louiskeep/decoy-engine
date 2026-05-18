@@ -131,3 +131,107 @@ def test_validator_rejects_bad_native_engine_declaration(monkeypatch):
     assert err.code == CODES.NODE_BAD_NATIVE_ENGINE
     assert "not_a_real_engine" in str(err)
     assert "test_bad_engine_kind" in str(err)
+
+
+# ---------------------------------------------------------------------------
+# Sprint 1.5 remaining: op-contract metadata completeness
+# ---------------------------------------------------------------------------
+# The four tests below catch new ops that omit required module-level
+# constants. The runner and validator use getattr() defaults for these, so
+# a missing declaration silently produces wrong behavior rather than an
+# error. These tests make the contract explicit and enforce it in CI.
+
+
+def test_every_op_declares_kind():
+    """Every op module must declare KIND matching its OPS registry key.
+
+    KIND is the canonical wire string. It must match the OPS key exactly
+    so event logs, platform node records, and YAML configs all refer to the
+    same op by the same identifier.
+    """
+    wrong = []
+    for registry_key, op in OPS.items():
+        declared = getattr(op, "KIND", None)
+        if declared != registry_key:
+            wrong.append((registry_key, declared))
+    assert not wrong, (
+        f"ops with missing or mismatched KIND: {wrong}. "
+        "Each op module must declare KIND = '<registry_key>' where "
+        "<registry_key> is the exact string used as the key in OPS."
+    )
+
+
+def test_every_op_declares_input_arity():
+    """Every op must explicitly declare INPUT_ARITY as a (min, max) tuple.
+
+    The validator and runner fall back to (1, 1) when INPUT_ARITY is absent,
+    which silently mis-validates ops that accept zero inputs (generate) or
+    many inputs (unite). Explicit declaration is required so the contract is
+    auditable without reading op source.
+    """
+    bad = []
+    for kind, op in OPS.items():
+        arity = getattr(op, "INPUT_ARITY", None)
+        if arity is None:
+            bad.append((kind, "missing"))
+            continue
+        if (
+            not isinstance(arity, tuple)
+            or len(arity) != 2
+            or not isinstance(arity[0], int)
+            or isinstance(arity[0], bool)
+            or (
+                arity[1] is not None
+                and (not isinstance(arity[1], int) or isinstance(arity[1], bool))
+            )
+        ):
+            bad.append((kind, arity))
+    assert not bad, (
+        f"ops with missing or malformed INPUT_ARITY: {bad}. "
+        "Must be a (int, int|None) tuple, e.g. (1, 1), (0, None), (0, 1)."
+    )
+
+
+def test_every_op_declares_output_kind():
+    """Every op must declare OUTPUT_KIND as one of 'stream', 'sink', or 'split'.
+
+    'stream' passes data to downstream nodes; 'sink' consumes it with no
+    downstream output; 'split' routes to named ports declared in OUTPUT_PORTS.
+    The validator uses OUTPUT_KIND to enforce that sink nodes have no outgoing
+    edges and that split nodes use port notation.
+    """
+    valid = {"stream", "sink", "split"}
+    bad = []
+    for kind, op in OPS.items():
+        output_kind = getattr(op, "OUTPUT_KIND", None)
+        if output_kind not in valid:
+            bad.append((kind, output_kind))
+    assert not bad, (
+        f"ops with missing or invalid OUTPUT_KIND: {bad}. "
+        f"Must be one of {sorted(valid)}."
+    )
+
+
+def test_split_ops_declare_output_ports():
+    """Ops with OUTPUT_KIND='split' must declare OUTPUT_PORTS as a non-empty tuple.
+
+    The edge validator uses OUTPUT_PORTS to accept or reject port references
+    like 'node_id.pass'. A split op without OUTPUT_PORTS silently treats all
+    named-port edge references as invalid, producing confusing validation
+    errors at the edge level rather than a clear op-contract error.
+    """
+    bad = []
+    for kind, op in OPS.items():
+        if getattr(op, "OUTPUT_KIND", None) == "split":
+            ports = getattr(op, "OUTPUT_PORTS", None)
+            if (
+                ports is None
+                or not isinstance(ports, tuple)
+                or len(ports) == 0
+            ):
+                bad.append((kind, ports))
+    assert not bad, (
+        f"split ops missing valid OUTPUT_PORTS: {bad}. "
+        "Ops with OUTPUT_KIND='split' must declare "
+        "OUTPUT_PORTS = ('port_a', 'port_b', ...) as a non-empty tuple."
+    )
