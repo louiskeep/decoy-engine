@@ -5,6 +5,11 @@ Phase 2 leaves every op on `pandas` so behavior is unchanged from Phase 1.
 Phases 3 + 4 flip individual ops to polars / duckdb; this test prevents
 silent regression -- if someone adds a new op that forgets to declare,
 the test fails.
+
+Sprint 1.5 additions: op contract metadata tests (KIND, INPUT_ARITY,
+OUTPUT_KIND, OUTPUT_PORTS). The validator and runner rely on getattr()
+fallbacks for these constants; tests here catch a missing declaration
+before it reaches execution.
 """
 
 from __future__ import annotations
@@ -131,3 +136,98 @@ def test_validator_rejects_bad_native_engine_declaration(monkeypatch):
     assert err.code == CODES.NODE_BAD_NATIVE_ENGINE
     assert "not_a_real_engine" in str(err)
     assert "test_bad_engine_kind" in str(err)
+
+
+# ---------------------------------------------------------------------------
+# Sprint 1.5: op contract metadata declaration tests
+# ---------------------------------------------------------------------------
+
+
+def test_every_op_declares_kind():
+    """Every op module must declare KIND matching the OPS registry key."""
+    missing = [kind for kind, op in OPS.items() if not hasattr(op, "KIND")]
+    assert not missing, (
+        f"ops missing KIND declaration: {missing}. "
+        "Each op module must declare KIND = '<kind-string>'."
+    )
+
+
+def test_op_kind_matches_registry_key():
+    """op.KIND must equal the key used to register it in OPS.
+
+    This catches copy-paste errors where an op module's KIND constant
+    drifts from the registry key, causing confusing validation messages.
+    """
+    mismatched = [
+        (key, getattr(op, "KIND"))
+        for key, op in OPS.items()
+        if getattr(op, "KIND", None) != key
+    ]
+    assert not mismatched, (
+        f"ops whose KIND does not match their registry key: {mismatched}. "
+        "op.KIND must equal the OPS dict key."
+    )
+
+
+def test_every_op_declares_input_arity():
+    """Every op must declare INPUT_ARITY as (min: int, max: int | None).
+
+    The validator and runner use INPUT_ARITY for cardinality checks.
+    A missing or malformed declaration silently falls back to (1, 1),
+    which is wrong for sources (0, 0), gates (0, 1), and fan-in ops.
+    """
+    bad = []
+    for kind, op in OPS.items():
+        arity = getattr(op, "INPUT_ARITY", None)
+        if arity is None:
+            bad.append((kind, "missing"))
+        elif not (
+            isinstance(arity, tuple)
+            and len(arity) == 2
+            and isinstance(arity[0], int)
+            and (arity[1] is None or isinstance(arity[1], int))
+        ):
+            bad.append((kind, repr(arity)))
+    assert not bad, (
+        f"ops with missing or malformed INPUT_ARITY: {bad}. "
+        "Must be a 2-tuple (min: int, max: int | None)."
+    )
+
+
+_VALID_OUTPUT_KINDS = frozenset({"stream", "sink", "split"})
+
+
+def test_every_op_declares_output_kind():
+    """Every op must declare OUTPUT_KIND as 'stream', 'sink', or 'split'.
+
+    The validator uses OUTPUT_KIND to reject outgoing edges from sinks
+    and to allow port notation on split ops.
+    """
+    bad = [
+        (kind, getattr(op, "OUTPUT_KIND", None))
+        for kind, op in OPS.items()
+        if getattr(op, "OUTPUT_KIND", None) not in _VALID_OUTPUT_KINDS
+    ]
+    assert not bad, (
+        f"ops with missing or invalid OUTPUT_KIND: {bad}. "
+        f"Must be one of {sorted(_VALID_OUTPUT_KINDS)}."
+    )
+
+
+def test_split_ops_declare_output_ports():
+    """Ops with OUTPUT_KIND='split' must declare OUTPUT_PORTS as a non-empty tuple.
+
+    The runner uses OUTPUT_PORTS to key split outputs in the Arrow cache.
+    A split op that omits OUTPUT_PORTS would silently produce no cached
+    output and leave downstream consumers reading None.
+    """
+    bad = []
+    for kind, op in OPS.items():
+        if getattr(op, "OUTPUT_KIND", None) == "split":
+            ports = getattr(op, "OUTPUT_PORTS", None)
+            if not (isinstance(ports, tuple) and len(ports) > 0):
+                bad.append((kind, repr(ports)))
+    assert not bad, (
+        f"split ops with missing or empty OUTPUT_PORTS: {bad}. "
+        "Split ops must declare OUTPUT_PORTS as a non-empty tuple of port name strings."
+    )

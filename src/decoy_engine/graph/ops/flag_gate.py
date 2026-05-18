@@ -25,6 +25,10 @@ from decoy_engine.exceptions import FlagPauseSignal
 from decoy_engine.graph.ops._base import OpError  # noqa: F401 (re-exported for tests)
 
 KIND = "flag_gate"
+# Condition evaluation uses Python len() and set() against DataFrames.
+# Stays on pandas: gate checks are structural (row count, schema), not
+# data-volume bottlenecks, and the gate can receive zero inputs (pre-run
+# mode before any source op has executed).
 NATIVE_ENGINE = "pandas"
 INPUT_ARITY = (0, 1)  # 0 = pre-run check before any source; 1 = mid-run
 OUTPUT_KIND = "stream"
