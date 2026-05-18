@@ -5,6 +5,9 @@ Phase 2 leaves every op on `pandas` so behavior is unchanged from Phase 1.
 Phases 3 + 4 flip individual ops to polars / duckdb; this test prevents
 silent regression -- if someone adds a new op that forgets to declare,
 the test fails.
+
+Sprint 1.5 additions: op contract metadata tests for KIND, INPUT_ARITY,
+OUTPUT_KIND, OUTPUT_PORTS, and HAS_SIDE_EFFECTS.
 """
 
 from __future__ import annotations
@@ -131,3 +134,158 @@ def test_validator_rejects_bad_native_engine_declaration(monkeypatch):
     assert err.code == CODES.NODE_BAD_NATIVE_ENGINE
     assert "not_a_real_engine" in str(err)
     assert "test_bad_engine_kind" in str(err)
+
+
+# ---------------------------------------------------------------------------
+# Sprint 1.5: op contract metadata tests
+# These run at test time to catch missing or malformed op metadata before it
+# reaches production. Because op metadata is declared in source code rather
+# than user-supplied config, these are test-layer assertions rather than
+# runtime validations.
+# ---------------------------------------------------------------------------
+
+_VALID_OUTPUT_KINDS = frozenset({"stream", "sink", "split"})
+
+
+def test_every_op_declares_kind():
+    """Every registered op module must declare a KIND string."""
+    missing = [
+        key for key, op in OPS.items()
+        if not isinstance(getattr(op, "KIND", None), str)
+    ]
+    assert not missing, (
+        f"ops missing KIND declaration: {missing}. "
+        "Each op module must declare KIND = '<yaml-kind-string>'."
+    )
+
+
+def test_every_op_kind_matches_registry_key():
+    """Each op's KIND must equal the key it is registered under in OPS.
+
+    Prevents typos where the op says KIND='source.s3' but is registered
+    under 'source.gcs'. A diff here is a bug, not a design choice.
+    """
+    mismatches = [
+        (key, getattr(op, "KIND", None))
+        for key, op in OPS.items()
+        if getattr(op, "KIND", None) != key
+    ]
+    assert not mismatches, (
+        f"ops whose KIND does not match their registry key: {mismatches}."
+    )
+
+
+def test_every_op_declares_input_arity():
+    """Every registered op must declare INPUT_ARITY as a (min, max) 2-tuple.
+
+    min is a non-negative int; max is a non-negative int or None
+    (unbounded). A missing or malformed INPUT_ARITY leaves the graph
+    validator unable to enforce node connection counts at validation time.
+    """
+    bad = []
+    for key, op in OPS.items():
+        arity = getattr(op, "INPUT_ARITY", None)
+        if (
+            not isinstance(arity, tuple)
+            or len(arity) != 2
+            or not isinstance(arity[0], int)
+            or (arity[1] is not None and not isinstance(arity[1], int))
+        ):
+            bad.append((key, arity))
+    assert not bad, (
+        f"ops with missing or malformed INPUT_ARITY: {bad}. "
+        "Declare INPUT_ARITY: tuple[int, int | None] = (min, max)."
+    )
+
+
+def test_every_op_declares_output_kind():
+    """Every registered op must declare OUTPUT_KIND as 'stream', 'sink', or 'split'."""
+    bad = [
+        (key, getattr(op, "OUTPUT_KIND", None))
+        for key, op in OPS.items()
+        if getattr(op, "OUTPUT_KIND", None) not in _VALID_OUTPUT_KINDS
+    ]
+    assert not bad, (
+        f"ops with missing or invalid OUTPUT_KIND: {bad}. "
+        f"Must be one of {sorted(_VALID_OUTPUT_KINDS)}."
+    )
+
+
+def test_every_split_op_declares_output_ports():
+    """Ops with OUTPUT_KIND='split' must declare OUTPUT_PORTS as a non-empty tuple.
+
+    OUTPUT_PORTS names the downstream graph edges the runner creates for the
+    op. Without it the runner cannot route branch outputs and the graph
+    validator cannot check edge port references.
+    """
+    bad = []
+    for key, op in OPS.items():
+        if getattr(op, "OUTPUT_KIND", None) == "split":
+            ports = getattr(op, "OUTPUT_PORTS", None)
+            if not isinstance(ports, tuple) or not ports:
+                bad.append((key, ports))
+    assert not bad, (
+        f"split ops missing OUTPUT_PORTS declaration: {bad}. "
+        "Declare OUTPUT_PORTS = ('port_a', 'port_b', ...) on every split op."
+    )
+
+
+def test_sink_ops_declare_has_side_effects_true():
+    """Ops with OUTPUT_KIND='sink' must declare HAS_SIDE_EFFECTS = True.
+
+    The preview policy uses this flag to skip ops that write to external
+    storage during a canvas preview. A sink that omits this flag may
+    accidentally write to a production target while the user previews the
+    pipeline.
+    """
+    bad = []
+    for key, op in OPS.items():
+        if getattr(op, "OUTPUT_KIND", None) == "sink":
+            flag = getattr(op, "HAS_SIDE_EFFECTS", None)
+            if flag is not True:
+                bad.append((key, flag))
+    assert not bad, (
+        f"sink ops missing HAS_SIDE_EFFECTS = True: {bad}. "
+        "Declare HAS_SIDE_EFFECTS = True on every sink op."
+    )
+
+
+@pytest.mark.parametrize("kind,expected_output_kind", [
+    # Frozen OUTPUT_KIND baseline. A surprise diff = accidental contract change.
+    ("source.file", "stream"),
+    ("source.db", "stream"),
+    ("source.s3", "stream"),
+    ("source.gcs", "stream"),
+    ("source.sftp", "stream"),
+    ("filter", "stream"),
+    ("sort", "stream"),
+    ("dedupe", "stream"),
+    ("derive", "stream"),
+    ("drop_column", "stream"),
+    ("select_column", "stream"),
+    ("limit", "stream"),
+    ("unite", "stream"),
+    ("run_storm", "stream"),
+    ("mask", "stream"),
+    ("generate", "stream"),
+    ("sql_run", "stream"),
+    ("sub_pipeline", "stream"),
+    ("iterate_fixed", "stream"),
+    ("iterate_loop", "stream"),
+    ("iterate_files", "stream"),
+    ("flag_gate", "stream"),
+    ("convert.file_type", "stream"),
+    ("if", "split"),
+    ("target.file", "sink"),
+    ("target.db", "sink"),
+    ("target.s3", "sink"),
+    ("target.gcs", "sink"),
+    ("target.sftp", "sink"),
+])
+def test_op_output_kind_baseline(kind, expected_output_kind):
+    """Frozen OUTPUT_KIND baseline. Updates here are intentional; surprises are not."""
+    op = OPS[kind]
+    assert getattr(op, "OUTPUT_KIND") == expected_output_kind, (
+        f"{kind!r}: expected OUTPUT_KIND={expected_output_kind!r}, "
+        f"got {getattr(op, 'OUTPUT_KIND', None)!r}"
+    )

@@ -24,6 +24,7 @@ KIND = "target.s3"
 NATIVE_ENGINE = "duckdb"
 INPUT_ARITY: tuple[int, int | None] = (1, 1)
 OUTPUT_KIND = "sink"
+HAS_SIDE_EFFECTS = True
 
 
 def validate_config(config: dict[str, Any]) -> None:

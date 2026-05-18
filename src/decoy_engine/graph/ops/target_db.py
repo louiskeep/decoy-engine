@@ -35,6 +35,7 @@ KIND = "target.db"
 NATIVE_ENGINE = "duckdb"
 INPUT_ARITY: tuple[int, int | None] = (1, 1)
 OUTPUT_KIND = "sink"
+HAS_SIDE_EFFECTS = True
 
 _VALID_WRITE_MODES = {"append", "replace", "fail"}
 

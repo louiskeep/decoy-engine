@@ -7,8 +7,24 @@ Each op module exposes:
                                    runner converts the cached pyarrow.Table
                                    to this type before calling apply().
                                    Default: 'pandas'.
-    INPUT_ARITY: tuple[int, int] - (min, max). max=None means unbounded.
-    OUTPUT_KIND: 'stream' | 'sink'
+    INPUT_ARITY: tuple[int, int | None]
+                                 - (min, max). max=None means unbounded.
+    OUTPUT_KIND: 'stream' | 'sink' | 'split'
+                                 - 'stream': op returns a table downstream.
+                                   'sink': op writes to external storage and
+                                   returns an empty stub. 'split': op routes
+                                   rows to named output ports (requires
+                                   OUTPUT_PORTS).
+    OUTPUT_PORTS: tuple[str, ...]
+                                 - Required when OUTPUT_KIND='split'. Names
+                                   the downstream port labels (e.g.
+                                   ('pass', 'fail')). Omit on stream/sink ops.
+    HAS_SIDE_EFFECTS: bool       - True if the op writes to external storage
+                                   (files, databases, cloud buckets, SFTP).
+                                   The preview policy uses this to skip ops
+                                   that must not run during a canvas preview.
+                                   Required True on all ops with
+                                   OUTPUT_KIND='sink'. Default: False.
     validate_config(config)      - raise ValidationError on bad config
     apply(inputs, config, ctx)   - return data (DataFrame / pa.Table) in the
                                    declared NATIVE_ENGINE's type. Sources /
@@ -30,7 +46,8 @@ class GraphOp(Protocol):
     KIND: str
     NATIVE_ENGINE: NativeEngine
     INPUT_ARITY: tuple[int, int | None]
-    OUTPUT_KIND: str  # 'stream' or 'sink'
+    OUTPUT_KIND: str  # 'stream', 'sink', or 'split'
+    HAS_SIDE_EFFECTS: bool  # True = writes external storage; required True on all sinks
 
     def validate_config(self, config: dict[str, Any]) -> None: ...
     def apply(
