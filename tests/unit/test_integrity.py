@@ -35,7 +35,6 @@ def related_dataframes():
 
 def test_referential_integrity(related_dataframes, mock_logger, tmp_path):
     """Test referential integrity manager."""
-    mapping_dir = tmp_path / "mappings"
     config = {
         'referential_integrity': [
             {
@@ -47,9 +46,6 @@ def test_referential_integrity(related_dataframes, mock_logger, tmp_path):
                 'columns': ['orders.order_id', 'payments.order_id']
             }
         ],
-        'mappings': {
-            'store_directory': str(mapping_dir)
-        }
     }
 
     # Initialize manager
@@ -62,18 +58,17 @@ def test_referential_integrity(related_dataframes, mock_logger, tmp_path):
     assert manager.get_referential_relationship('payments', 'order_id') == 'order_relation'
     assert manager.get_referential_relationship('customers', 'name') is None
 
-    # Test applying global mapping
-    # First to the customers table
+    # Test applying the shared relationship transform to the customers table.
     rule = {'column': 'customer_id', 'type': 'hash'}
     customers_column = related_dataframes['customers']['customer_id']
-    masked_customers = manager.apply_global_mapping(customers_column, 'customer_relation', rule)
+    masked_customers = manager.apply_relationship_transform(customers_column, 'customer_relation', rule)
 
     # Ensure all values changed
     assert not customers_column.equals(masked_customers)
 
-    # Apply to orders table - should use the same in-memory mapping
+    # Apply to orders table using the same deterministic relationship name.
     orders_column = related_dataframes['orders']['customer_id']
-    masked_orders = manager.apply_global_mapping(orders_column, 'customer_relation', rule)
+    masked_orders = manager.apply_relationship_transform(orders_column, 'customer_relation', rule)
 
     # Verify referential integrity is maintained
     # For each order, get the original customer_id
@@ -84,20 +79,16 @@ def test_referential_integrity(related_dataframes, mock_logger, tmp_path):
         # The masked order customer_id should match the masked customer's customer_id
         assert masked_orders[i] == masked_customers[customer_idx]
 
-    # Non-categorical mappings are not persisted to disk.
-    manager.save_global_mappings()
-    assert not mapping_dir.exists()
-
     # A fresh manager still produces the same hash output because hash is a
-    # deterministic function, not because a mapping file was reused.
+    # deterministic function.
     new_manager = ReferentialIntegrityManager(config, mock_logger)
-    new_masked_customers = new_manager.apply_global_mapping(customers_column, 'customer_relation', rule)
+    new_masked_customers = new_manager.apply_relationship_transform(customers_column, 'customer_relation', rule)
     pd.testing.assert_series_equal(masked_customers, new_masked_customers)
 
 
-def test_referential_integrity_map_fixed_is_deterministic_without_store(mock_logger, tmp_path):
-    """Relationship masking should not need JSON maps, even for map/fixed."""
-    mapping_dir = tmp_path / "mappings"
+def test_referential_integrity_categorical_is_deterministic_without_store(mock_logger, tmp_path):
+    """Relationship masking should not need local state for categorical masks."""
+    legacy_state_dir = tmp_path / "mappings"
     config = {
         'referential_integrity': [
             {
@@ -105,7 +96,6 @@ def test_referential_integrity_map_fixed_is_deterministic_without_store(mock_log
                 'columns': ['left.external_id', 'right.member_id'],
             }
         ],
-        'mappings': {'store_directory': str(mapping_dir)},
     }
     manager = ReferentialIntegrityManager(config, mock_logger)
 
@@ -113,22 +103,19 @@ def test_referential_integrity_map_fixed_is_deterministic_without_store(mock_log
     right = pd.Series(['A2', 'A1'])
     left_rule = {
         'column': 'external_id',
-        'type': 'map',
-        'map_type': 'fixed',
-        'fixed_prefix': 'ID',
+        'type': 'categorical',
+        'categories': ['tier_a', 'tier_b', 'tier_c'],
     }
     right_rule = {
         'column': 'member_id',
-        'type': 'map',
-        'map_type': 'fixed',
-        'fixed_prefix': 'ID',
+        'type': 'categorical',
+        'categories': ['tier_a', 'tier_b', 'tier_c'],
     }
 
-    masked_left = manager.apply_global_mapping(left, 'shared_identity', left_rule)
-    masked_right = manager.apply_global_mapping(right, 'shared_identity', right_rule)
+    masked_left = manager.apply_relationship_transform(left, 'shared_identity', left_rule)
+    masked_right = manager.apply_relationship_transform(right, 'shared_identity', right_rule)
 
     assert masked_left.iloc[0] == masked_left.iloc[2]
     assert masked_left.iloc[0] == masked_right.iloc[1]
     assert masked_left.iloc[1] == masked_right.iloc[0]
-    manager.save_global_mappings()
-    assert not mapping_dir.exists()
+    assert not legacy_state_dir.exists()

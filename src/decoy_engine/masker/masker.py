@@ -145,10 +145,6 @@ class Masker:
             else:
                 self._process_standard_file(input_path, table_name, file_size_gb)
             
-            # Retained for older callers; current V1 relationship handling is
-            # deterministic and does not write local mapping files.
-            self.ref_integrity.save_global_mappings()
-            
             MemoryMonitor.monitor_memory_usage(self.logger, "After masking completion")
             
             self.logger.info("=== Masking process completed successfully ===")

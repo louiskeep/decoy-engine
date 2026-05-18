@@ -87,7 +87,7 @@ class TestPIIDetection:
         profile = run_storm(_hipaa_like_dataframe(), "x")
         fn = next(f for f in profile.fields if f.name == "first_name")
         assert fn.pii_score >= 0.9
-        assert any(m.detector_id == "person_name" for m in fn.detector_matches)
+        assert any(m.detector_id == "first_name" for m in fn.detector_matches)
 
     def test_gender_not_flagged_high_pii(self):
         # Gender alone is not high-PII (binary categorical) — should be low.

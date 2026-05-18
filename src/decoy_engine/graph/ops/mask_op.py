@@ -3,7 +3,7 @@
 Config:
     columns:
       <column_name>:
-        strategy: 'faker' | 'hash' | 'redact' | 'map' | 'shuffle' | 'passthrough'
+        strategy: 'faker' | 'hash' | 'redact' | 'categorical' | 'shuffle' | 'passthrough'
                 | 'date_shift' | 'formula' | 'reference' | 'truncate' | 'bucketize' | 'fpe'
         # ...strategy-specific keys, mirroring the existing per-column shape
     seed: int  (optional, default 42)
@@ -28,7 +28,7 @@ OUTPUT_KIND = "stream"
 # Mirror MaskerConfigValidator.SUPPORTED_MASKING_STRATEGIES -- the graph-mode
 # allowlist must track the legacy validator's list when new transforms ship.
 _VALID_STRATEGIES = {
-    "faker", "hash", "redact", "map", "shuffle",
+    "faker", "hash", "redact", "categorical", "shuffle",
     "passthrough", "date_shift", "formula",
     "reference", "truncate", "bucketize", "fpe",
 }
@@ -79,6 +79,59 @@ def validate_config(config: dict[str, Any]) -> None:
                 f"config.columns.{col_name}.reference",
                 code=CODES.MASK_REFERENCE_MISSING,
             )
+        if strategy == "categorical":
+            categories = spec.get("categories")
+            if not isinstance(categories, list) or not categories:
+                raise ValidationError(
+                    f"column {col_name!r} uses strategy 'categorical' but no "
+                    f"non-empty 'categories' list is set",
+                    f"config.columns.{col_name}.categories",
+                    code=CODES.MASK_BAD_COLUMN_SPEC_TYPE,
+                )
+            weights = spec.get("weights")
+            if weights is not None:
+                if not isinstance(weights, list) or len(weights) != len(categories):
+                    raise ValidationError(
+                        f"column {col_name!r} categorical weights must match categories",
+                        f"config.columns.{col_name}.weights",
+                        code=CODES.MASK_BAD_COLUMN_SPEC_TYPE,
+                    )
+                try:
+                    numeric_weights = [float(w) for w in weights if not isinstance(w, bool)]
+                except (TypeError, ValueError):
+                    raise ValidationError(
+                        f"column {col_name!r} categorical weights must be numeric",
+                        f"config.columns.{col_name}.weights",
+                        code=CODES.MASK_BAD_COLUMN_SPEC_TYPE,
+                    )
+                if len(numeric_weights) != len(weights) or any(w < 0 for w in numeric_weights) or sum(numeric_weights) <= 0:
+                    raise ValidationError(
+                        f"column {col_name!r} categorical weights must be non-negative with at least one positive value",
+                        f"config.columns.{col_name}.weights",
+                        code=CODES.MASK_BAD_COLUMN_SPEC_TYPE,
+                    )
+            null_probability = spec.get("null_probability")
+            if null_probability is not None:
+                if isinstance(null_probability, bool):
+                    raise ValidationError(
+                        f"column {col_name!r} categorical null_probability must be a number between 0 and 1",
+                        f"config.columns.{col_name}.null_probability",
+                        code=CODES.MASK_BAD_COLUMN_SPEC_TYPE,
+                    )
+                try:
+                    p = float(null_probability)
+                except (TypeError, ValueError):
+                    raise ValidationError(
+                        f"column {col_name!r} categorical null_probability must be a number between 0 and 1",
+                        f"config.columns.{col_name}.null_probability",
+                        code=CODES.MASK_BAD_COLUMN_SPEC_TYPE,
+                    )
+                if p < 0 or p > 1:
+                    raise ValidationError(
+                        f"column {col_name!r} categorical null_probability must be between 0 and 1",
+                        f"config.columns.{col_name}.null_probability",
+                        code=CODES.MASK_BAD_COLUMN_SPEC_TYPE,
+                    )
 
 
 def apply(inputs, config, ctx) -> pd.DataFrame:

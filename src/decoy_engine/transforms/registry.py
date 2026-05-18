@@ -128,14 +128,14 @@ class StrategyManager:
             List of strategy type names
         """
         from decoy_engine.transforms import (
-            FakerStrategy, HashStrategy, RedactStrategy, 
-            MapStrategy, ShuffleStrategy, PassthroughStrategy
+            CategoricalStrategy, FakerStrategy, HashStrategy, RedactStrategy,
+            ShuffleStrategy, PassthroughStrategy
         )
         
         # Get all strategy classes from the strategies module
         strategies = [
-            FakerStrategy, HashStrategy, RedactStrategy, 
-            MapStrategy, ShuffleStrategy, PassthroughStrategy
+            CategoricalStrategy, FakerStrategy, HashStrategy, RedactStrategy,
+            ShuffleStrategy, PassthroughStrategy
         ]
         
         # Extract strategy names
@@ -185,13 +185,14 @@ class StrategyManager:
                 'type': 'redact',
                 'redact_with': 'REDACTED'
             }
-        elif strategy_type == 'map':
-            info['optional_parameters'].extend(['map_type', 'faker_type', 'fixed_prefix'])
+        elif strategy_type == 'categorical':
+            info['required_parameters'].append('categories')
+            info['optional_parameters'].extend(['weights', 'null_probability'])
             info['example'] = {
                 'column': 'example_column',
-                'type': 'map',
-                'map_type': 'faker',
-                'faker_type': 'name'
+                'type': 'categorical',
+                'categories': ['active', 'inactive', 'pending'],
+                'weights': [7, 2, 1],
             }
         elif strategy_type == 'shuffle':
             info['example'] = {

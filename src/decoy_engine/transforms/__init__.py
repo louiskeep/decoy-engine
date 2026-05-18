@@ -8,7 +8,7 @@ from decoy_engine.transforms.base import BaseMaskingStrategy
 from decoy_engine.transforms.faker_based import FakerStrategy
 from decoy_engine.transforms.hash import HashStrategy
 from decoy_engine.transforms.redact import RedactStrategy
-from decoy_engine.transforms.map import MapStrategy
+from decoy_engine.transforms.categorical import CategoricalStrategy
 from decoy_engine.transforms.shuffle import ShuffleStrategy
 from decoy_engine.transforms.passthrough import PassthroughStrategy
 from decoy_engine.transforms.date_shift import DateShiftStrategy
@@ -21,7 +21,7 @@ __all__ = [
     'FakerStrategy',
     'HashStrategy',
     'RedactStrategy',
-    'MapStrategy',
+    'CategoricalStrategy',
     'ShuffleStrategy',
     'PassthroughStrategy',
     'DateShiftStrategy',

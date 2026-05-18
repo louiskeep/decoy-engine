@@ -64,6 +64,11 @@ class TestMaskValidateConfig:
             validate_config({"columns": {"a": {"strategy": "bogus"}}})
         assert exc.value.code == VALIDATION_CODES.MASK_UNKNOWN_STRATEGY
 
+    def test_map_strategy_raises(self):
+        with pytest.raises(ValidationError) as exc:
+            validate_config({"columns": {"a": {"strategy": "map"}}})
+        assert exc.value.code == VALIDATION_CODES.MASK_UNKNOWN_STRATEGY
+
     def test_formula_requires_formula_field(self):
         with pytest.raises(ValidationError) as exc:
             validate_config({"columns": {"a": {"strategy": "formula"}}})
@@ -97,6 +102,12 @@ class TestMaskCodesRoundTripThroughGraph:
 
     def test_unknown_strategy_code_survives(self):
         yaml_text = _wrap_graph({"a": {"strategy": "bogus"}})
+        result = validate_graph_full(yaml_text)
+        assert not result.ok
+        assert result.errors[0].code == VALIDATION_CODES.MASK_UNKNOWN_STRATEGY
+
+    def test_map_strategy_code_survives(self):
+        yaml_text = _wrap_graph({"a": {"strategy": "map"}})
         result = validate_graph_full(yaml_text)
         assert not result.ok
         assert result.errors[0].code == VALIDATION_CODES.MASK_UNKNOWN_STRATEGY

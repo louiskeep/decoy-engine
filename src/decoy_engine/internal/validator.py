@@ -93,7 +93,7 @@ class MaskerConfigValidator(ConfigValidator):
     SUPPORTED_FILE_TYPES = ['csv', 'fixed_width', 'database']
     
     SUPPORTED_MASKING_STRATEGIES = [
-        'faker', 'hash', 'redact', 'map', 'shuffle', 'passthrough', 'date_shift', 'formula',
+        'faker', 'hash', 'redact', 'categorical', 'shuffle', 'passthrough', 'date_shift', 'formula',
         'reference', 'truncate', 'bucketize', 'fpe',
     ]
     
@@ -223,14 +223,56 @@ class MaskerConfigValidator(ConfigValidator):
                 if 'redact_with' not in rule:
                     rule['redact_with'] = 'REDACTED'
                     
-            elif strategy_type == 'map':
-                if 'map_type' not in rule:
-                    rule['map_type'] = 'faker'
-                map_type = rule.get('map_type')
-                if map_type == 'faker' and 'faker_type' not in rule:
-                    rule['faker_type'] = 'word'
-                if map_type == 'fixed' and 'fixed_prefix' not in rule:
-                    rule['fixed_prefix'] = 'MASKED'
+            elif strategy_type == 'categorical':
+                categories = rule.get('categories')
+                if not isinstance(categories, list) or not categories:
+                    raise ValidationError(
+                        "Missing required non-empty field 'categories' for categorical strategy",
+                        f"{rule_path}.categories",
+                    )
+                weights = rule.get('weights')
+                if weights is not None:
+                    if not isinstance(weights, list) or len(weights) != len(categories):
+                        raise ValidationError(
+                            "'weights' must be a list with the same length as 'categories'",
+                            f"{rule_path}.weights",
+                        )
+                    if any(isinstance(w, bool) for w in weights):
+                        raise ValidationError(
+                            "'weights' must contain only numeric values",
+                            f"{rule_path}.weights",
+                        )
+                    try:
+                        numeric_weights = [float(w) for w in weights]
+                    except (TypeError, ValueError):
+                        raise ValidationError(
+                            "'weights' must contain only numeric values",
+                            f"{rule_path}.weights",
+                        )
+                    if any(w < 0 for w in numeric_weights) or sum(numeric_weights) <= 0:
+                        raise ValidationError(
+                            "'weights' must be non-negative with at least one positive value",
+                            f"{rule_path}.weights",
+                        )
+                null_probability = rule.get('null_probability')
+                if null_probability is not None:
+                    if isinstance(null_probability, bool):
+                        raise ValidationError(
+                            "'null_probability' must be a number between 0 and 1",
+                            f"{rule_path}.null_probability",
+                        )
+                    try:
+                        p = float(null_probability)
+                    except (TypeError, ValueError):
+                        raise ValidationError(
+                            "'null_probability' must be a number between 0 and 1",
+                            f"{rule_path}.null_probability",
+                        )
+                    if p < 0 or p > 1:
+                        raise ValidationError(
+                            "'null_probability' must be between 0 and 1",
+                            f"{rule_path}.null_probability",
+                        )
 
             elif strategy_type == 'formula':
                 if 'formula' not in rule:

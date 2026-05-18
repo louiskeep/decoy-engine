@@ -40,9 +40,9 @@ def create_strategy(
     elif strategy_type == 'redact':
         from decoy_engine.transforms.redact import RedactStrategy
         return RedactStrategy(seed, logger)
-    elif strategy_type == 'map':
-        from decoy_engine.transforms.map import MapStrategy
-        return MapStrategy(seed, logger)
+    elif strategy_type == 'categorical':
+        from decoy_engine.transforms.categorical import CategoricalStrategy
+        return CategoricalStrategy(seed, logger, derive_key=derive_key)
     elif strategy_type == 'shuffle':
         from decoy_engine.transforms.shuffle import ShuffleStrategy
         return ShuffleStrategy(seed, logger)

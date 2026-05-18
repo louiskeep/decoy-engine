@@ -112,18 +112,18 @@ class TestApplyPayload:
             assert "column" in m, f"missing column key in {m}"
             assert "type" in m, f"missing type key in {m}"
 
-    def test_ssn_column_gets_hash(self, storm_then_forecast):
+    def test_ssn_column_gets_fpe(self, storm_then_forecast):
         _, report = storm_then_forecast
         top = next(r for r in report.disguise_recommendations if r.disguise_id == "hipaa")
         ssn_mask = next(m for m in top.apply_payload["field_masks"] if m["column"] == "ssn")
-        assert ssn_mask["type"] == "hash"
+        assert ssn_mask["type"] == "fpe"
 
-    def test_first_name_gets_faker_name(self, storm_then_forecast):
+    def test_first_name_gets_faker_first_name(self, storm_then_forecast):
         _, report = storm_then_forecast
         top = next(r for r in report.disguise_recommendations if r.disguise_id == "hipaa")
         fn_mask = next(m for m in top.apply_payload["field_masks"] if m["column"] == "first_name")
         assert fn_mask["type"] == "faker"
-        assert fn_mask["faker_type"] == "name"
+        assert fn_mask["faker_type"] == "first_name"
 
     def test_dob_gets_date_shift(self, storm_then_forecast):
         _, report = storm_then_forecast

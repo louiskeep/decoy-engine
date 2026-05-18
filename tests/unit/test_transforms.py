@@ -11,7 +11,7 @@ import numpy as np
 from decoy_engine.transforms.faker_based import FakerStrategy
 from decoy_engine.transforms.hash import HashStrategy
 from decoy_engine.transforms.redact import RedactStrategy
-from decoy_engine.transforms.map import MapStrategy
+from decoy_engine.transforms.categorical import CategoricalStrategy
 from decoy_engine.transforms.reference import ReferenceStrategy
 from decoy_engine.transforms.shuffle import ShuffleStrategy
 from decoy_engine.transforms.passthrough import PassthroughStrategy
@@ -102,62 +102,38 @@ def test_redact_strategy(sample_data, mock_logger):
     assert result.isna().sum() == 1  # Preserve NULL values
     assert all(x == 'REDACTED' for x in result.dropna())
 
-def test_map_strategy(sample_data, mock_logger, tmp_path, monkeypatch):
-    """Test map strategy."""
+def test_categorical_strategy(sample_data, mock_logger, tmp_path, monkeypatch):
+    """Categorical masking draws from configured values without local state."""
     monkeypatch.chdir(tmp_path)
-    mappings_dir = tmp_path / "mappings"
+    legacy_state_dir = tmp_path / "mappings"
+    strategy = CategoricalStrategy(seed=42, logger=mock_logger)
+    rule = {
+        'column': 'name',
+        'type': 'categorical',
+        'categories': ['Alpha', 'Beta', 'Gamma'],
+        'weights': [7, 2, 1],
+    }
 
-    strategy = MapStrategy(seed=42, logger=mock_logger)
-
-    # Test with faker map type
-    rule = {'column': 'name', 'type': 'map', 'map_type': 'faker', 'faker_type': 'first_name'}
     result = strategy.apply(sample_data, rule)
-
-    assert len(result) == len(sample_data)
-    assert result.isna().sum() == 1  # Preserve NULL values
-
-    # Test with fixed map type
-    rule = {'column': 'name2', 'type': 'map', 'map_type': 'fixed', 'fixed_prefix': 'NAME'}
-    result = strategy.apply(sample_data, rule)
-
-    assert len(result) == len(sample_data)
-    assert result.isna().sum() == 1  # Preserve NULL values
-    assert all(str(x).startswith('NAME_') for x in result.dropna())
-
-    # Deterministic replacement should not create mappings/.
-    rule = {'column': 'test_persist', 'type': 'map', 'map_type': 'fixed', 'fixed_prefix': 'PERSIST'}
-    result1 = strategy.apply(sample_data, rule)
     result2 = strategy.apply(sample_data, rule)
-    pd.testing.assert_series_equal(result1, result2)
-    assert not mappings_dir.exists()
+
+    assert len(result) == len(sample_data)
+    assert result.isna().sum() == 1
+    assert set(result.dropna()) <= {'Alpha', 'Beta', 'Gamma'}
+    pd.testing.assert_series_equal(result, result2)
+    assert result.iloc[0] == strategy.apply(pd.Series(['John']), rule).iloc[0]
+    assert not legacy_state_dir.exists()
 
 
-def test_mapping_manager_only_writes_categorical_mappings(tmp_path, mock_logger):
-    """Mapping folders are created only for explicitly categorical saves."""
-    from decoy_engine.internal.mappings import MappingManager
-
-    mappings_dir = tmp_path / "mappings"
-    manager = MappingManager(mappings_dir=str(mappings_dir), logger=mock_logger)
-
-    assert not mappings_dir.exists()
-
-    manager.save_mapping({"a": "b"}, "status")
-    assert not mappings_dir.exists()
-
-    manager.save_mapping({"a": "b"}, "status", method="hash")
-    assert not mappings_dir.exists()
-
-    manager.save_mapping({"a": "b"}, "status", method="categorical")
-
-    assert mappings_dir.exists()
-    assert (mappings_dir / "status_map.json").exists()
-
-    global_dir = tmp_path / "global_mappings"
-    global_manager = MappingManager(mappings_dir=str(global_dir), logger=mock_logger)
-    global_manager.save_global_mapping({"a": "b"}, "rel", method="map")
-    assert not global_dir.exists()
-    global_manager.save_global_mapping({"a": "b"}, "rel", method="categorical")
-    assert (global_dir / "global_rel_map.json").exists()
+def test_categorical_strategy_rejects_bad_policy(sample_data, mock_logger):
+    strategy = CategoricalStrategy(seed=42, logger=mock_logger)
+    with pytest.raises(ValueError, match="categories"):
+        strategy.apply(sample_data, {'column': 'name', 'type': 'categorical'})
+    with pytest.raises(ValueError, match="weights"):
+        strategy.apply(
+            sample_data,
+            {'column': 'name', 'type': 'categorical', 'categories': ['A'], 'weights': [1, 2]},
+        )
 
 def test_shuffle_strategy(mock_logger):
     """Test shuffle strategy."""
@@ -236,7 +212,7 @@ def test_strategy_factory(mock_logger):
         ('faker', FakerStrategy),
         ('hash', HashStrategy),
         ('redact', RedactStrategy),
-        ('map', MapStrategy),
+        ('categorical', CategoricalStrategy),
         ('shuffle', ShuffleStrategy),
         ('passthrough', PassthroughStrategy),
         ('reference', ReferenceStrategy),
@@ -249,6 +225,8 @@ def test_strategy_factory(mock_logger):
     # Test invalid strategy type
     with pytest.raises(ValueError):
         create_strategy('invalid_type', seed=42, logger=mock_logger)
+    with pytest.raises(ValueError):
+        create_strategy('map', seed=42, logger=mock_logger)
 
 def test_strategy_manager(sample_data, mock_logger):
     """Test the strategy manager."""

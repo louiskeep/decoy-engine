@@ -31,11 +31,11 @@ import pandas as pd
 import pytest
 
 from decoy_engine.transforms import (
+    CategoricalStrategy,
     DateShiftStrategy,
     FakerStrategy,
     FPEStrategy,
     HashStrategy,
-    MapStrategy,
     PassthroughStrategy,
     RedactStrategy,
     ShuffleStrategy,
@@ -74,7 +74,7 @@ def build_string_column(rows: int, backend: str) -> pd.Series:
 
 
 def build_low_cardinality_string(rows: int, backend: str) -> pd.Series:
-    """For map strategy -- needs a small set of distinct values."""
+    """For categorical strategy -- needs a small set of distinct values."""
     pool = ["alice", "bob", "carol", "dave", "eve"]
     values = [pool[i % len(pool)] for i in range(rows)]
     if backend == "arrow":
@@ -124,11 +124,13 @@ SCENARIOS: list[tuple[str, type, dict, Callable[[int, str], pd.Series]]] = [
         build_string_column,
     ),
     (
-        "map",
-        MapStrategy,
-        {"type": "map", "column": "label", "mapping": {
-            "alice": "A", "bob": "B", "carol": "C", "dave": "D", "eve": "E",
-        }},
+        "categorical",
+        CategoricalStrategy,
+        {
+            "type": "categorical",
+            "column": "label",
+            "categories": ["A", "B", "C", "D", "E"],
+        },
         build_low_cardinality_string,
     ),
     (

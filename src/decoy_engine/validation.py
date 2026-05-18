@@ -3,7 +3,7 @@
 `validate_config` lets callers (the CLI, the platform) check whether a
 config is well-formed without instantiating a full Masker or
 DataGenerator (which has heavy side effects: opening connectors,
-creating mappings dirs, etc.).
+touching output paths, etc.).
 """
 
 import logging

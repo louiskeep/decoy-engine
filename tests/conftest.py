@@ -16,12 +16,11 @@ INPUT_DIR = os.path.join(TEST_DATA_DIR, "input")
 OUTPUT_DIR = os.path.join(TEST_DATA_DIR, "output")
 EXPECTED_DIR = os.path.join(TEST_DATA_DIR, "expected")
 CONFIG_DIR = os.path.join(TEST_DATA_DIR, "config")
-MAPPING_DIR = os.path.join(TEST_DATA_DIR, "mappings")
 
 @pytest.fixture(scope="session", autouse=True)
 def setup_test_directories():
     """Create necessary directories for tests."""
-    for directory in [INPUT_DIR, OUTPUT_DIR, EXPECTED_DIR, CONFIG_DIR, MAPPING_DIR]:
+    for directory in [INPUT_DIR, OUTPUT_DIR, EXPECTED_DIR, CONFIG_DIR]:
         os.makedirs(directory, exist_ok=True)
     
     yield

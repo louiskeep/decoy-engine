@@ -82,19 +82,18 @@ class TestPerFieldRecommendations:
         assert rec.mask_params == {"faker_type": "email"}
         assert rec.matched_detector == "email"
 
-    def test_high_card_email_column_recommends_hash(self):
-        # Plan B-2: unique-valued email column behaves like a join key.
-        # Hash so joins survive.
+    def test_high_card_email_column_recommends_faker_email(self):
+        # Email-shaped values should stay email-shaped in generated output.
         profile = _profile(_field("email", detectors=[("email", 1.0)], unique=True))
         report = recommend(profile)
         rec = report.field_recommendations[0]
-        assert rec.recommended_mask == "hash"
-        assert rec.mask_params.get("algorithm") == "sha256"
+        assert rec.recommended_mask == "faker"
+        assert rec.mask_params == {"faker_type": "email"}
 
-    def test_ssn_column_recommends_hash(self):
+    def test_ssn_column_recommends_fpe(self):
         profile = _profile(_field("ssn", detectors=[("ssn", 1.0)]))
         report = recommend(profile)
-        assert report.field_recommendations[0].recommended_mask == "hash"
+        assert report.field_recommendations[0].recommended_mask == "fpe"
 
     def test_zip_column_recommends_redact_keep_3(self):
         profile = _profile(_field("zip", detectors=[("us_zip", 1.0)]))
