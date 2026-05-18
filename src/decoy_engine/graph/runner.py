@@ -153,7 +153,7 @@ def validate_graph(yaml_text: str) -> None:
         ) from e
 
 
-def validate_graph_full(yaml_text: str):
+def validate_graph_full(yaml_text: str, *, strict: bool = False):
     """Validate graph YAML and return a non-raising :class:`ValidationResult`.
 
     Unlike :func:`validate_graph`, this never raises on validation
@@ -180,6 +180,13 @@ def validate_graph_full(yaml_text: str):
     before the next phase runs. Phases with structural dependencies
     (edges, cardinality, topology, cross-node) are skipped when an
     earlier prerequisite phase failed.
+
+    Format mismatch advisory: ``_validate_file_format_consistency``
+    emits a ``logger.warning`` when source and target file formats differ
+    without a convert.file_type node. In default mode (``strict=False``)
+    those advisories appear in ``result.warnings`` (``ok`` stays True;
+    callers can display them in the canvas). With ``strict=True`` they
+    are promoted to errors (``ok=False``, run blocked).
     """
     from decoy_engine.validation_result import CODES, ValidationResult
 
@@ -192,10 +199,25 @@ def validate_graph_full(yaml_text: str):
     # defaults were applied.
     work = copy.deepcopy(config)
 
-    quiet = logging.getLogger("decoy_engine.graph.validate")
-    if not quiet.handlers:
-        quiet.addHandler(logging.NullHandler())
+    # Per-call logger so concurrent validate_graph_full calls don't share
+    # handler state. _WarnCapture collects WARNING-level emissions from the
+    # validator -- currently only format-mismatch advisories from
+    # _validate_file_format_consistency. All other validator phases raise
+    # ValidationError directly and don't rely on the logger for control flow.
+    quiet = logging.getLogger(f"decoy_engine.graph.validate._c{id(result)}")
+    quiet.propagate = False
+    quiet.handlers = []
 
+    class _WarnCapture(logging.Handler):
+        def __init__(self):
+            super().__init__(logging.WARNING)
+            self.records: list = []
+
+        def emit(self, record: logging.LogRecord) -> None:
+            self.records.append(record)
+
+    _wcap = _WarnCapture()
+    quiet.addHandler(_wcap)
     validator = GraphConfigValidator(quiet)
 
     def _try_phase(phase_fn, *args) -> bool:
@@ -210,37 +232,56 @@ def validate_graph_full(yaml_text: str):
             )
             return False
 
-    # Phase 1: top-level shape. Nothing else can safely run without a
-    # valid `mode`, `nodes` list, and optional `edges` list.
-    if not _try_phase(validator._validate_top_level, work):
+    try:
+        # Phase 1: top-level shape. Nothing else can safely run without a
+        # valid `mode`, `nodes` list, and optional `edges` list.
+        if not _try_phase(validator._validate_top_level, work):
+            return result
+
+        kinds = validator._known_kinds()
+        nodes = work["nodes"]
+        edges = work.get("edges") or []
+
+        # Phases 2 and 3: structural checks -- run independently so we can
+        # collect both a bad-node error and a bad-edge error in one call.
+        nodes_ok = _try_phase(validator._validate_nodes, nodes, kinds)
+        edges_ok = _try_phase(validator._validate_edges, edges, nodes)
+
+        # Phases 4 and 5: depend on both nodes and edges being structurally
+        # clean (cardinality and cycle checks index into node/edge maps).
+        if nodes_ok and edges_ok:
+            _try_phase(validator._validate_cardinality, nodes, edges, kinds)
+            _try_phase(validator._validate_acyclic, nodes, edges)
+
+        # Phases 6-8: cross-node semantic checks.  These call output_schema /
+        # upstream_subgraph helpers that assume valid structure; skip when any
+        # structural phase failed.
+        if nodes_ok and edges_ok:
+            _try_phase(validator._validate_file_format_consistency, nodes, edges)
+            # _validate_file_format_consistency emits logger.warning for
+            # mismatched source/target formats. Convert captured records to
+            # ValidationResult entries: warnings by default, errors in strict.
+            for rec in _wcap.records:
+                if strict:
+                    result.add_error(
+                        code=CODES.GRAPH_FORMAT_MISMATCH,
+                        message=rec.getMessage(),
+                    )
+                else:
+                    result.add_warning(
+                        code=CODES.GRAPH_FORMAT_MISMATCH,
+                        message=rec.getMessage(),
+                    )
+            _try_phase(validator._validate_mask_column_reachability, nodes, edges)
+            _try_phase(validator._validate_nodes_ref_reachability, nodes, edges)
+
+        if result.ok:
+            result.normalized_config = work
         return result
-
-    kinds = validator._known_kinds()
-    nodes = work["nodes"]
-    edges = work.get("edges") or []
-
-    # Phases 2 and 3: structural checks -- run independently so we can
-    # collect both a bad-node error and a bad-edge error in one call.
-    nodes_ok = _try_phase(validator._validate_nodes, nodes, kinds)
-    edges_ok = _try_phase(validator._validate_edges, edges, nodes)
-
-    # Phases 4 and 5: depend on both nodes and edges being structurally
-    # clean (cardinality and cycle checks index into node/edge maps).
-    if nodes_ok and edges_ok:
-        _try_phase(validator._validate_cardinality, nodes, edges, kinds)
-        _try_phase(validator._validate_acyclic, nodes, edges)
-
-    # Phases 6-8: cross-node semantic checks.  These call output_schema /
-    # upstream_subgraph helpers that assume valid structure; skip when any
-    # structural phase failed.
-    if nodes_ok and edges_ok:
-        _try_phase(validator._validate_file_format_consistency, nodes, edges)
-        _try_phase(validator._validate_mask_column_reachability, nodes, edges)
-        _try_phase(validator._validate_nodes_ref_reachability, nodes, edges)
-
-    if result.ok:
-        result.normalized_config = work
-    return result
+    finally:
+        # Remove the per-call handler so the logger entry doesn't accumulate
+        # handlers if the same id is reused in a future call.
+        quiet.handlers = []
 
 
 def run_graph(
@@ -581,7 +622,7 @@ def _node_descriptor(node: dict) -> str:
 # scopes (var/env/trigger/storm/iteration) are resolved platform-side before
 # the YAML reaches the engine. This scope must be resolved live because the
 # values come from already-completed upstream ops.
-_NODE_TOKEN_RE = re.compile(r"\$\{nodes\.([a-zA-Z0-9_-]+)\.([a-zA-Z_][\w.]*)\}")
+_NODE_TOKEN_RE = re.compile(r"\$\{nodes\.([a-zA-Z0-9_-]+)\.([a-zA-Z_][\w.]*)}")
 
 
 class _NodeExportResolutionError(Exception):

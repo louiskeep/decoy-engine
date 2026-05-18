@@ -10,6 +10,7 @@ Covers:
 - YAML parse error raises ConfigError (not returned in ValidationResult)
 - Valid minimal graph produces ok=True with normalized_config
 - result.warnings is always a list (never None)
+- Format mismatch advisory: warning in default mode, error in strict mode
 """
 from __future__ import annotations
 
@@ -329,6 +330,72 @@ class TestTopologyErrors:
         result = validate_graph_full(yaml_text)
         assert not result.ok
         assert any(e.code == CODES.GRAPH_CYCLE for e in result.errors)
+
+
+# ---------------------------------------------------------------------------
+# Phase 6 — format mismatch advisory (Sprint 2.4)
+# ---------------------------------------------------------------------------
+
+class TestFormatMismatch:
+    """Format-mismatch advisories from _validate_file_format_consistency
+    are now surfaced in ValidationResult rather than silently dropped.
+
+    Default mode: warning (ok=True, non-blocking).
+    Strict mode: error (ok=False, run blocked).
+    """
+
+    # source.file with csv, target.file with explicit parquet -- mismatch
+    # detected without any convert.file_type node in between.
+    _CSV_TO_PARQUET = _yaml("""
+        mode: graph
+        nodes:
+          - id: src
+            kind: source.file
+            config:
+              path: /data/input.csv
+              format: csv
+          - id: tgt
+            kind: target.file
+            config:
+              output_filename: output.parquet
+              format: parquet
+        edges:
+          - from: src
+            to: tgt
+    """)
+
+    def test_format_mismatch_produces_warning_by_default(self):
+        result = validate_graph_full(self._CSV_TO_PARQUET)
+        assert result.ok is True
+        assert len(result.warnings) >= 1
+        assert any(w.code == CODES.GRAPH_FORMAT_MISMATCH for w in result.warnings)
+
+    def test_format_mismatch_produces_error_in_strict_mode(self):
+        result = validate_graph_full(self._CSV_TO_PARQUET, strict=True)
+        assert result.ok is False
+        assert any(e.code == CODES.GRAPH_FORMAT_MISMATCH for e in result.errors)
+
+    def test_matching_formats_produce_no_warning(self):
+        yaml_text = _yaml("""
+            mode: graph
+            nodes:
+              - id: src
+                kind: source.file
+                config:
+                  path: /data/input.csv
+                  format: csv
+              - id: tgt
+                kind: target.file
+                config:
+                  output_filename: output.csv
+                  format: csv
+            edges:
+              - from: src
+                to: tgt
+        """)
+        result = validate_graph_full(yaml_text)
+        assert result.ok is True
+        assert not any(w.code == CODES.GRAPH_FORMAT_MISMATCH for w in result.warnings)
 
 
 # ---------------------------------------------------------------------------
