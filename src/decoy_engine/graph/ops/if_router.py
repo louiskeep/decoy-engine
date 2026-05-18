@@ -9,6 +9,10 @@ YAML config:
   predicate: "age >= 18 AND status = 'active'"
 
 Returns {"pass": df_matching, "fail": df_not_matching}.
+
+SECURITY: 'predicate' is user YAML config concatenated into a Polars
+SQLContext SQL string (in-memory only, no external DB). Medium risk --
+see docs/security/sql-surfaces.md. Fix planned for Sprint 6.
 """
 
 import polars as pl
@@ -42,11 +46,14 @@ def apply(inputs: list, config: dict, ctx=None) -> dict:
     if is_polars_frame(df):
         try:
             sql_ctx = pl.SQLContext(frame=df)
+            # S608: predicate is user YAML config concatenated into SQL.
+            # In-memory Polars SQLContext -- no external DB. Medium risk.
+            # See docs/security/sql-surfaces.md. Fix planned for Sprint 6.
             df_pass = sql_ctx.execute(
-                f"SELECT * FROM frame WHERE {predicate}"
+                f"SELECT * FROM frame WHERE {predicate}"  # noqa: S608
             ).collect()
             df_fail = sql_ctx.execute(
-                f"SELECT * FROM frame WHERE NOT ({predicate})"
+                f"SELECT * FROM frame WHERE NOT ({predicate})"  # noqa: S608
             ).collect()
         except Exception as exc:
             raise OpError(f"if_router predicate failed: {exc}") from exc

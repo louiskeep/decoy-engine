@@ -1,4 +1,4 @@
-"""source.db — read a table from a SQL database into a DataFrame.
+"""source.db -- read a table from a SQL database into a DataFrame.
 
 Config:
     table: str             - table name (required)
@@ -12,18 +12,23 @@ provided, `dsn` wins.
 
 NATIVE_ENGINE='duckdb'. The DuckDB path dispatches on DSN dialect:
 
-- **SQLite** → DuckDB `sqlite_scanner` extension via `ATTACH (TYPE sqlite)`.
+- **SQLite** -> DuckDB `sqlite_scanner` extension via `ATTACH (TYPE sqlite)`.
   Native streaming, no pandas materialization at the read boundary.
-- **Postgres** → DuckDB `postgres_scanner` via `ATTACH (TYPE postgres)`.
+- **Postgres** -> DuckDB `postgres_scanner` via `ATTACH (TYPE postgres)`.
   Same shape; needs a running Postgres for tests.
 - **Everything else** (MySQL until customer signal, MSSQL, Oracle, etc.)
-  → SQLAlchemy + Arrow fallback. Materializes through pandas; works
+  -> SQLAlchemy + Arrow fallback. Materializes through pandas; works
   but doesn't deliver the streaming benefit.
 
 The dispatch is per Bug 3 in `plans/2026-05-09-hybrid-engine-bug-followup.md`.
 Adding a new dialect to the native-scanner path is a one-row table edit
 in `_NATIVE_SCANNERS` plus a connection-string converter if the DSN
 shape differs from DuckDB's `ATTACH` expectation.
+
+SECURITY: the 'where' config value is concatenated into raw SQL against an
+external database. This is a known S608 surface documented in
+docs/security/sql-surfaces.md. Planned fix: Sprint 6 (DuckDB relational API
+or parsed boolean-expression allowlist).
 """
 
 from typing import Any
@@ -117,7 +122,10 @@ def _apply_duckdb_native_scanner(
     )
     sql = f"SELECT * FROM {qualified}"
     if where:
-        sql += f" WHERE {where}"
+        # S608: 'where' is user-supplied YAML config concatenated into SQL
+        # executed against an external database. HIGH risk surface.
+        # See docs/security/sql-surfaces.md. Fix planned for Sprint 6.
+        sql += f" WHERE {where}"  # noqa: S608
     if row_limit:
         sql += f" LIMIT {int(row_limit)}"
 
@@ -148,7 +156,7 @@ def _apply_duckdb_sqlalchemy_fallback(
     """For DBs without a DuckDB native scanner (MSSQL, Oracle, etc.):
     SQLAlchemy executes the SELECT and we convert the resulting
     DataFrame to Arrow at the boundary. Pays the materialization cost
-    that the native-scanner path avoids — but works on every dialect
+    that the native-scanner path avoids -- but works on every dialect
     SQLAlchemy supports.
     """
     sql = _build_select(config)
@@ -177,11 +185,11 @@ def _attach_target_for(dsn: str, attach_type: str) -> str:
     """Convert a SQLAlchemy DSN to the connection string DuckDB's
     `ATTACH` expects.
 
-    SQLite: `sqlite:///path/to.db` → `path/to.db`. The triple slash
+    SQLite: `sqlite:///path/to.db` -> `path/to.db`. The triple slash
     introduces an absolute path on Unix; on Windows the drive letter
     follows the third slash. DuckDB just wants the plain path.
 
-    Postgres: `postgresql://user:pass@host:5432/dbname` →
+    Postgres: `postgresql://user:pass@host:5432/dbname` ->
     `dbname=dbname host=host port=5432 user=user password=pass`. DuckDB's
     postgres_scanner uses libpq-style key=value pairs. We rebuild the
     connection string from the parsed URL components.
@@ -225,7 +233,9 @@ def _build_select(config: dict[str, Any]) -> str:
     qualified = f'"{schema}"."{table}"' if schema else f'"{table}"'
     sql = f"SELECT * FROM {qualified}"
     if where:
-        sql += f" WHERE {where}"
+        # S608: 'where' is user-supplied YAML config concatenated into SQL.
+        # See docs/security/sql-surfaces.md. Fix planned for Sprint 6.
+        sql += f" WHERE {where}"  # noqa: S608
     if row_limit:
         sql += f" LIMIT {int(row_limit)}"
     return sql

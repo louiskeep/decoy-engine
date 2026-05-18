@@ -1,4 +1,4 @@
-"""filter — keep rows that match a predicate.
+"""filter -- keep rows that match a predicate.
 
 Config:
     predicate: str   - e.g. "state == 'CA' and age >= 18"
@@ -11,6 +11,10 @@ shape pandas-query supports for our usage (==, !=, <, >, <=, >=, and, or,
 not, parentheses, single-quoted string literals). Documented divergences are
 captured in tests/parity/SEMANTIC_DIFFERENCES.md when a parity test surfaces
 one.
+
+SECURITY: 'predicate' is user YAML config concatenated into a Polars
+SQLContext SQL string (in-memory only, no external DB). Medium risk --
+see docs/security/sql-surfaces.md. Fix planned for Sprint 6.
 """
 
 from typing import Any
@@ -66,14 +70,17 @@ def _apply_polars(df, predicate: str):
     """Evaluate the predicate via Polars' SQLContext.
 
     Polars SQL accepts the boolean-expression dialect pandas-query users
-    write — `state == 'CA' and age >= 18` works as-is. Polars is strict
+    write -- `state == 'CA' and age >= 18` works as-is. Polars is strict
     about quoting (single quotes for strings only); the validator already
     rejected empty / non-string predicates, so the user-facing failure
     surface here is "the predicate is not valid SQL"."""
     import polars as pl
 
     try:
-        sql = f"SELECT * FROM df WHERE {predicate}"
+        # S608: predicate is user YAML config concatenated into SQL.
+        # In-memory Polars SQLContext -- no external DB. Medium risk.
+        # See docs/security/sql-surfaces.md. Fix planned for Sprint 6.
+        sql = f"SELECT * FROM df WHERE {predicate}"  # noqa: S608
         with pl.SQLContext(df=df, eager=True) as ctx:
             return ctx.execute(sql)
     except Exception as exc:
