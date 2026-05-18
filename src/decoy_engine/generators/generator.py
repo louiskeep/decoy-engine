@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List
 
 from decoy_engine.context import emit_lineage, emit_step
+from decoy_engine.expressions import BASE_GLOBALS, safe_eval
 
 class DataGenerator:
     """
@@ -27,7 +28,7 @@ class DataGenerator:
         Args:
             config_path: Path to the YAML configuration file
             logger: Direct logger instance (optional, kept for backwards
-                compatibility â€” prefer the ctx parameter for new code).
+                compatibility -- prefer the ctx parameter for new code).
             ctx: Optional decoy_engine.ExecutionContext. If provided and
                 ctx.logger is set, it takes precedence over the `logger`
                 kwarg. When neither is provided, the engine creates a
@@ -58,7 +59,7 @@ class DataGenerator:
         # Thread the pipeline-bound key resolver from the ExecutionContext
         # into ColumnGenerator. When the platform / CLI built `ctx` with a
         # `pipeline_derive_key` (master-key-derived, pipeline-label-scoped),
-        # this is what ties generation output to the tenant's master key —
+        # this is what ties generation output to the tenant's master key --
         # same master + same pipeline_label produces the same generated
         # bytes across runs and across instances. Without this thread,
         # generation falls back to the legacy `seed + hash(name)` per-column
@@ -103,8 +104,8 @@ class DataGenerator:
         self.logger.info(f"Generating {len(tables)} tables in the order specified in the configuration")
 
         # Lineage: one output entry per generated table. There's no
-        # external "source" for a generate run — the source is the
-        # config itself — so emit a single virtual source labeled by
+        # external "source" for a generate run -- the source is the
+        # config itself -- so emit a single virtual source labeled by
         # the config and one output per produced table.
         emit_lineage(self.logger, 'transform', 'synth', 'generate')
         for table_config in tables:
@@ -114,7 +115,7 @@ class DataGenerator:
 
         start_time = time.time()
 
-        # Generate tables in the order they appear in the config —
+        # Generate tables in the order they appear in the config --
         # emit one step per table so the timeline shows per-table
         # boundaries. ``synth:<table>`` lets the UI group all
         # generation work under a single 'synth' phase while still
@@ -272,7 +273,7 @@ class DataGenerator:
 
         Trigger condition: ``type == 'formula'`` AND ``references`` is a
         non-empty list. The previous separate ``formula_type: composite``
-        flag is gone — having references is what flips the column into
+        flag is gone -- having references is what flips the column into
         post-pass mode.
         """
         self.logger.info("Processing formula columns with cross-column references")
@@ -304,7 +305,7 @@ class DataGenerator:
                 continue
 
             # Keep `composite_configs` alias for the rest of the function so
-            # the existing CSV / fixed-width branches don't need a sweep —
+            # the existing CSV / fixed-width branches don't need a sweep --
             # the rename is local to this dispatcher.
             composite_configs = referenced_configs
             self.logger.info(f"Processing referenced formulas for table: {table_name}")
@@ -361,7 +362,7 @@ class DataGenerator:
                                 self.logger.debug(f"Available columns: {list(field_map.keys())}")
                                 break  # Skip this composite formula
                                 
-# Build row context for composite formula evaluation
+                            # Build row context for composite formula evaluation
                             row_context = {}
                             for ref in references:
                                 start, end = field_map[ref]
@@ -462,12 +463,15 @@ class DataGenerator:
         Per-row determinism: ``column_seed + row_index`` reseeds ``random``
         and the Faker instance before each row's eval, so RNG calls inside
         the formula are stable across runs given the same key. Pre-F0
-        ``_evaluate_composite_formula`` skipped this — composite formulas
+        ``_evaluate_composite_formula`` skipped this -- composite formulas
         with ``random()``/``randint()`` were silently non-deterministic.
 
         F0 also drops the previous ``f'''...'''`` wrapping. Formulas are
-        Python expressions; users who want template-style ``"Hello {x}"``
+        Python expressions; users who want template-style ``"Hello {x}""
         substitution write ``f"Hello {x}"`` themselves.
+
+        All eval() calls route through
+        :func:`decoy_engine.expressions.safe_eval`.
         """
         # Reseed per row so RNG calls inside the formula are deterministic.
         # Mirrors what `_eval_formula_inline` does for the inline path.
@@ -481,7 +485,7 @@ class DataGenerator:
         scope['index'] = row_index
         scope.update(context)
 
-        result = eval(formula, {"__builtins__": {}}, scope)
+        result = safe_eval(formula, BASE_GLOBALS, scope)
         return "" if result is None else str(result)
 
     def _parse_fixed_width_definition(self, definition_path: str, fixed_width_options: Dict[str, Any]) -> List[Dict[str, Any]]:
