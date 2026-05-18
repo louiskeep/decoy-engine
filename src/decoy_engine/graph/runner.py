@@ -30,10 +30,10 @@ from decoy_engine.context import (
 )
 from decoy_engine.exceptions import ConfigError, FlagPauseSignal, PipelineValidationError
 from decoy_engine.graph.cache import GraphCache
-from decoy_engine.graph.conversion import arrow_columns
 from decoy_engine.graph.errors import translate as translate_engine_error
 from decoy_engine.graph.events import node_error, node_export_error, node_ok, node_start
 from decoy_engine.graph.planner import build_plan
+from decoy_engine.graph.preview import PreviewPolicy, execute_preview
 from decoy_engine.graph.topo import upstream_subgraph
 from decoy_engine.graph.types import (
     NodeRunRecord,
@@ -430,80 +430,10 @@ def preview_graph(
     sub_order, sub_edges = upstream_subgraph(nodes, edges, node_id)
     sub_node_set = set(sub_order)
     sub_nodes = [n for n in nodes if n["id"] in sub_node_set]
-    sub_plan = build_plan(sub_nodes, sub_edges)
-    by_id = sub_plan.by_id
-
-    from decoy_engine.graph.ops import OPS
-    from decoy_engine.graph.registry import native_engine_for
 
     graph_engine_mode = _resolve_engine_mode(config)
-
-    # node_id is pinned so its output survives the run loop for serialization.
-    gc = GraphCache(sub_plan.consumer_counts, keep_keys={node_id})
-    overall_start = time.monotonic()
-    error_msg: str | None = None
-
-    for nid in sub_order:
-        node = by_id[nid]
-        kind = node["kind"]
-        op = OPS[kind]
-        node_cfg = dict(node.get("config") or {})
-        node_cfg["__preview_row_limit"] = row_limit
-        engine = native_engine_for(kind, graph_engine_mode)
-        node_cfg["__engine"] = engine
-        in_edges = sub_plan.in_edges_by_node.get(nid, [])
-        inputs = [gc.read(e["from"], engine) for e in in_edges]
-
-        try:
-            result = op.apply(inputs, node_cfg, ctx)
-            if isinstance(result, dict) and getattr(op, "OUTPUT_KIND", None) == "split":
-                ports = getattr(op, "OUTPUT_PORTS", ())
-                gc.write_split(nid, ports, result, engine, row_limit=row_limit)
-                # Expose the "pass" port as the direct node output for preview.
-                gc.store_arrow(nid, gc.get_arrow(f"{nid}.pass"))
-            else:
-                gc.write(nid, result, engine, row_limit=row_limit)
-        except FlagPauseSignal as fps:
-            error_msg = f"node {_node_descriptor(node)} gate blocked: {fps}"
-            gc.store_arrow(nid, None)
-            if nid == node_id:
-                break
-        except Exception as exc:
-            translated = translate_engine_error(exc, kind, nid)
-            error_msg = f"node {_node_descriptor(node)} failed: {translated}"
-            gc.store_arrow(nid, None)
-            if nid == node_id:
-                break
-
-    target_table = gc.get_arrow(node_id)
-    elapsed_ms = int((time.monotonic() - overall_start) * 1000)
-
-    if target_table is None:
-        return {
-            "node_id": node_id,
-            "columns": [],
-            "rows": [],
-            "applied_chain": sub_order,
-            "row_count": 0,
-            "elapsed_ms": elapsed_ms,
-            "error": error_msg or "no data produced",
-        }
-
-    columns = arrow_columns(target_table)
-    df_preview = target_table.slice(0, row_limit).to_pandas()
-    rows = [
-        [_jsonable(v) for v in row]
-        for row in df_preview.itertuples(index=False, name=None)
-    ]
-    return {
-        "node_id": node_id,
-        "columns": columns,
-        "rows": rows,
-        "applied_chain": sub_order,
-        "row_count": len(rows),
-        "elapsed_ms": elapsed_ms,
-        "error": error_msg,
-    }
+    policy = PreviewPolicy(node_id=node_id, row_limit=row_limit)
+    return execute_preview(sub_nodes, sub_edges, policy, ctx, graph_engine_mode)
 
 
 def _resolve_engine_mode(config: dict) -> str:
@@ -593,17 +523,6 @@ def _node_descriptor(node: dict) -> str:
     if isinstance(name, str) and name.strip():
         return f"{name!r} [id={nid}, kind={kind}]"
     return f"[id={nid}, kind={kind}]"
-
-
-def _jsonable(v: Any) -> Any:
-    """Replace NaN/NaT/etc. with None so the row tuples serialize cleanly."""
-    try:
-        import pandas as pd
-        if pd.isna(v):
-            return None
-    except Exception:
-        pass
-    return v
 
 
 # Engine-side resolver for `${nodes.<id>.<key>[.<sub>...]}` tokens. Other
