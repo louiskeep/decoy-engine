@@ -325,7 +325,26 @@ def _execute_graph(
     plan = build_plan(config)
     graph_engine_mode = plan.graph_engine_mode
 
-    keep_set = set(keep_nodes or [])
+    # ── FK preservation (Sprint 4, item 4) ──
+    #
+    # Pattern: SDV HMA1 (sdv-dev/SDV, MIT). Parent-first DAG;
+    # materialize parent pool; child samples with replacement.
+    #
+    # Read `column_relationships` from the parsed config. Each entry's
+    # parent.node must stay live in the cache past its normal consumer
+    # count so a downstream op can still query the pool. We extend
+    # `keep_set` with every parent node referenced by an FK entry --
+    # the cache's existing keep-set mechanism (cache.py) already
+    # implements "do not evict at zero consumers."
+    column_relationships = config.get("column_relationships") or []
+    fk_parent_nodes: set[str] = {
+        rel["parent"]["node"]
+        for rel in column_relationships
+        if isinstance(rel, dict) and isinstance(rel.get("parent"), dict)
+        and "node" in rel["parent"]
+    }
+
+    keep_set = set(keep_nodes or []) | fk_parent_nodes
     cache = GraphCache(plan.consumer_counts, keep=keep_set)
     records: list[NodeRunRecord] = []
     overall_start = time.monotonic()
@@ -333,6 +352,14 @@ def _execute_graph(
 
     if ctx is None:
         ctx = ExecutionContext()
+
+    # Bind `column_relationships` + `pool_resolver` onto the context.
+    # `pool_resolver` closes over `cache` so it always sees live state
+    # at the moment a child op asks; matches the existing derive_key
+    # closure pattern (see ExecutionContext docstring).
+    ctx.column_relationships = column_relationships if column_relationships else None
+    if column_relationships:
+        ctx.pool_resolver = _build_pool_resolver(cache, by_id)
 
     log = ctx.logger
 
@@ -467,6 +494,81 @@ def preview_graph(
         row_limit=max(1, min(int(row_limit), 1000)),
     )
     return run_preview(sub_config, policy, ctx)
+
+
+def _build_pool_resolver(cache, by_id: dict[str, dict]):
+    """Build the FK pool resolver closure for an ExecutionContext.
+
+    Pattern: SDV HMA1 (sdv-dev/SDV, MIT). Parent-first DAG;
+    materialize parent pool; child samples with replacement.
+
+    The closure is what generate_op.apply calls when it sees an FK
+    declaration in `ctx.column_relationships`. The closed-over cache
+    instance keeps the resolver live against cache state changes
+    (further ops adding their output, parents getting pinned via the
+    keep set built in _execute_graph). by_id is only used today for
+    error messages; future versions may walk it to validate column
+    presence at resolution time.
+
+    Returns Callable[[parent_node_id, column], list[Any]]. Raises
+    UnknownFKColumnError when the column is missing from the parent
+    output. Raises EmptyParentPoolError when the parent output has
+    zero distinct non-null values for the column. The graph errors
+    translator (graph/errors.py::translate) maps both to stable
+    validation_result.CODES values (fk.unknown_column /
+    fk.empty_parent_pool).
+    """
+    from decoy_engine.exceptions import EmptyParentPoolError, UnknownFKColumnError
+
+    def resolver(parent_node_id: str, column: str) -> list[Any]:
+        table = cache.get(parent_node_id)
+        if table is None:
+            # Parent not yet materialized in the cache. Normally
+            # unreachable because the topology validator (Commit 3)
+            # rejects parent-after-child orderings; but if a graph
+            # ran in lenient validation, fail clearly here.
+            raise UnknownFKColumnError(
+                f"parent node {parent_node_id!r} has no cached output yet "
+                "(parent must run before child; check DAG topology)",
+                parent_node=parent_node_id,
+                parent_column=column,
+            )
+        try:
+            column_array = table.column(column)
+        except KeyError:
+            raise UnknownFKColumnError(
+                f"column {column!r} not present in parent {parent_node_id!r} "
+                f"output (available columns: {table.schema.names})",
+                parent_node=parent_node_id,
+                parent_column=column,
+            )
+        # Drop nulls, then de-duplicate to a list in row order.
+        # PyArrow's `drop_null` + `unique` is the canonical path; the
+        # result is a ChunkedArray we convert to Python list once.
+        try:
+            import pyarrow.compute as pc
+            distinct = pc.unique(pc.drop_null(column_array))
+        except Exception:
+            # If pyarrow.compute is unavailable, fall back to Python.
+            raw = column_array.to_pylist()
+            distinct = [v for v in dict.fromkeys(raw) if v is not None]
+            if not distinct:
+                raise EmptyParentPoolError(
+                    f"parent {parent_node_id!r}.{column!r} has zero non-null values",
+                    parent_node=parent_node_id,
+                    parent_column=column,
+                )
+            return distinct
+        values = distinct.to_pylist() if hasattr(distinct, "to_pylist") else list(distinct)
+        if not values:
+            raise EmptyParentPoolError(
+                f"parent {parent_node_id!r}.{column!r} has zero non-null values",
+                parent_node=parent_node_id,
+                parent_column=column,
+            )
+        return values
+
+    return resolver
 
 
 def _load_yaml(yaml_text: str) -> dict:

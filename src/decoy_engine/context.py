@@ -230,6 +230,8 @@ class ExecutionContext:
         derive_key: Callable[[str], bytes] | None = None,
         pipeline_derive_key: Callable[[str], bytes] | None = None,
         captured_outputs: list[dict[str, Any]] | None = None,
+        pool_resolver: Callable[[str, str], list[Any]] | None = None,
+        column_relationships: list[dict[str, Any]] | None = None,
     ) -> None:
         self.logger = logger
         self.telemetry = telemetry
@@ -272,6 +274,30 @@ class ExecutionContext:
         # `derive_key`, generate uses `pipeline_derive_key`.
         self.derive_key = derive_key
         self.pipeline_derive_key = pipeline_derive_key
+
+        # ── FK preservation (Sprint 4, item 4) ──
+        #
+        # Pattern: SDV HMA1 (sdv-dev/SDV, MIT). Parent-first DAG;
+        # materialize parent pool; child samples with replacement.
+        #
+        # `pool_resolver(parent_node_id, column)` returns the distinct
+        # non-null parent values for a column produced by `parent_node_id`.
+        # The runner builds this closure over the live GraphCache before
+        # the topological execution loop; ops that need to enforce FK
+        # stability (notably the `generate` op consuming a parent's PK
+        # pool for an FK column) call it on demand. None when the YAML
+        # carries no `column_relationships:` block, which keeps the
+        # generate op's existing fast path intact.
+        #
+        # `column_relationships` is the parsed block from the pipeline
+        # YAML (engine-native shape: each entry is
+        # {"kind": "fk", "parent": {"node": ..., "column": ...},
+        #  "child":  {"node": ..., "column": ...}}). Ops read this to
+        # discover which of their columns is an FK; the runner reads it
+        # to extend the cache keep-set so parent nodes survive past
+        # their normal consumer count.
+        self.pool_resolver = pool_resolver
+        self.column_relationships = column_relationships
 
     def export(self, key: str, value: Any) -> None:
         """Emit a node-level export the runner folds into NodeRunRecord.

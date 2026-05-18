@@ -76,4 +76,51 @@ class FlagPauseSignal(DecoyError):
         super().__init__(f"{prefix}conditions failed: {detail}")
 
 
+# ── FK preservation (Sprint 4, item 4) ────────────────────────────────
+#
+# Pattern: SDV HMA1 (sdv-dev/SDV, MIT). Parent-first DAG;
+# materialize parent pool; child samples with replacement.
+#
+# Raised by the pool_resolver closure built in graph/runner.py when a
+# declared FK in `column_relationships` cannot be resolved at runtime.
+# The graph errors translator (graph/errors.py::translate) maps these
+# to the corresponding fk.* stable codes from validation_result.CODES.
+# Strict mode aborts the run; lenient mode drops the offending child
+# rows + writes a manifest warning.
+
+
+class FKPreservationError(DecoyError):
+    """Base class for FK preservation runtime errors. Carries the
+    parent/child identity so the manifest can record which FK failed."""
+
+    def __init__(
+        self,
+        message: str,
+        parent_node: str,
+        parent_column: str,
+    ) -> None:
+        self.parent_node = parent_node
+        self.parent_column = parent_column
+        super().__init__(message)
+
+
+class EmptyParentPoolError(FKPreservationError):
+    """Parent node + column resolved, but the column has zero distinct
+    non-null values. The child has nothing to sample from.
+
+    Maps to code fk.empty_parent_pool. Common when a filter upstream
+    removed every row from the parent table, or every value in the
+    parent column was null."""
+
+
+class UnknownFKColumnError(FKPreservationError):
+    """Parent node resolved, but the named column is missing from its
+    output schema. Indicates a stale relationship declaration -- the
+    parent's column set changed since the operator confirmed the FK.
+
+    Maps to code fk.unknown_column. Validation-time catches the
+    common case (the column exists in the node config); the runtime
+    raise covers schema drift inside the op."""
+
+
 ForgeError = DecoyError
