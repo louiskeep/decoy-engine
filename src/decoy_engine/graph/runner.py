@@ -48,7 +48,7 @@ from decoy_engine.graph.conversion import (
     engine_to_arrow,
 )
 from decoy_engine.graph.errors import translate as translate_engine_error
-from decoy_engine.graph.topo import topo_order, upstream_subgraph
+from decoy_engine.graph.planner import build_plan, build_preview_plan, ancestor_node_ids
 from decoy_engine.graph.types import (
     NodeRunRecord,
     PreviewResult,
@@ -244,17 +244,11 @@ def _execute_graph(
     from decoy_engine.graph.ops import OPS
     from decoy_engine.graph.registry import native_engine_for
 
-    edges = config.get("edges") or []
-    nodes = config["nodes"]
-    order = topo_order(nodes, edges)
-    by_id = {n["id"]: n for n in nodes}
-    graph_engine_mode = _resolve_engine_mode(config)
+    plan = build_plan(config, keep_nodes)
 
     cache: dict[str, pa.Table] = {}
-    remaining = _count_consumers(nodes, edges)
+    remaining = dict(plan.consumer_counts)
     keep_set = set(keep_nodes or [])
-    for k in keep_set:
-        remaining[k] = remaining.get(k, 0) + 1
     records: list[NodeRunRecord] = []
     overall_start = time.monotonic()
     success = True
@@ -275,8 +269,8 @@ def _execute_graph(
     # and tag with the engine-resolved kind so the UI can route an icon.
     # Done before the run loop so a node failure mid-run still leaves a
     # complete lineage record for the timeline.
-    for nid in order:
-        node = by_id[nid]
+    for nid in plan.order:
+        node = plan.by_id[nid]
         kind = node["kind"]
         if kind.startswith("source."):
             emit_lineage(log, "source", nid, kind)
@@ -285,12 +279,12 @@ def _execute_graph(
         else:
             emit_lineage(log, "transform", nid, kind)
 
-    for nid in order:
-        node = by_id[nid]
+    for nid in plan.order:
+        node = plan.by_id[nid]
         kind = node["kind"]
         op = OPS[kind]
         node_cfg = dict(node.get("config") or {})
-        engine = native_engine_for(kind, graph_engine_mode)
+        engine = native_engine_for(kind, plan.engine_mode)
         node_cfg["__engine"] = engine
 
         # Resolve `${nodes.<id>.<key>}` tokens against exports captured by
@@ -317,7 +311,7 @@ def _execute_graph(
 
         # Pull upstream outputs out of cache and decrement their consumer
         # count; eviction happens inside _consume.
-        in_edges = [e for e in edges if e["to"] == nid]
+        in_edges = plan.in_edges[nid]
         # ``step_name`` is what the platform's JobLogger writes into the
         # STEP column of every narrative line emitted while this node is
         # the open step, AND what the reporting UI's pill timeline keys
@@ -484,7 +478,7 @@ def _execute_graph(
             ctx._current_node_id = None
 
     monitor.__exit__(None, None, None)
-    _check_memory_pressure(monitor.peak_rss, graph_engine_mode, log)
+    _check_memory_pressure(monitor.peak_rss, plan.engine_mode, log)
 
     result: RunResult = {
         "nodes": records,
@@ -528,7 +522,7 @@ def preview_graph(
     if not any(isinstance(n, dict) and n.get("id") == node_id for n in nodes):
         raise PipelineValidationError(f"node {node_id!r} not in graph")
 
-    needed = _ancestor_node_ids_safe(nodes, edges, node_id)
+    needed = ancestor_node_ids(nodes, edges, node_id)
     sub_config = {
         **config,
         "nodes": [n for n in nodes if isinstance(n, dict) and n.get("id") in needed],
@@ -543,35 +537,27 @@ def preview_graph(
     }
     _validate_or_raise(sub_config)
 
-    nodes = sub_config["nodes"]
-    edges = sub_config["edges"]
-
     row_limit = max(1, min(int(row_limit), 1000))
-    sub_order, sub_edges = upstream_subgraph(nodes, edges, node_id)
-    by_id = {n["id"]: n for n in nodes}
+    plan = build_preview_plan(sub_config, node_id)
 
     from decoy_engine.graph.ops import OPS
     from decoy_engine.graph.registry import native_engine_for
 
-    graph_engine_mode = _resolve_engine_mode(config)
-
     cache: dict[str, pa.Table] = {}
-    sub_node_set = set(sub_order)
-    sub_nodes = [n for n in nodes if n["id"] in sub_node_set]
-    remaining = _count_consumers(sub_nodes, sub_edges)
+    remaining = dict(plan.consumer_counts)
     overall_start = time.monotonic()
     target_table: pa.Table | None = None
     error_msg: str | None = None
 
-    for nid in sub_order:
-        node = by_id[nid]
+    for nid in plan.order:
+        node = plan.by_id[nid]
         kind = node["kind"]
         op = OPS[kind]
         node_cfg = dict(node.get("config") or {})
         node_cfg["__preview_row_limit"] = row_limit
-        engine = native_engine_for(kind, graph_engine_mode)
+        engine = native_engine_for(kind, plan.engine_mode)
         node_cfg["__engine"] = engine
-        in_edges = [e for e in sub_edges if e["to"] == nid]
+        in_edges = plan.in_edges[nid]
         inputs = [
             _consume(cache, remaining, e["from"], engine, hold=node_id)
             for e in in_edges
@@ -615,7 +601,7 @@ def preview_graph(
             "node_id": node_id,
             "columns": [],
             "rows": [],
-            "applied_chain": sub_order,
+            "applied_chain": plan.order,
             "row_count": 0,
             "elapsed_ms": elapsed_ms,
             "error": error_msg or "no data produced",
@@ -631,41 +617,11 @@ def preview_graph(
         "node_id": node_id,
         "columns": columns,
         "rows": rows,
-        "applied_chain": sub_order,
+        "applied_chain": plan.order,
         "row_count": len(rows),
         "elapsed_ms": elapsed_ms,
         "error": error_msg,
     }
-
-
-def _count_consumers(nodes: list[dict], edges: list[dict]) -> dict[str, int]:
-    """Per node (or per port for split ops), count downstream edge consumers.
-
-    Split ops (OUTPUT_KIND="split") get per-port entries keyed as
-    "node_id.port" rather than a single "node_id" entry.
-    """
-    from decoy_engine.graph.ops import OPS
-
-    counts: dict[str, int] = {}
-    for n in nodes:
-        # Look up the op for split-port discovery. Unknown / missing kinds
-        # fall through to the regular non-split path so the helper stays
-        # usable from validators and unit tests that pass minimal node
-        # dicts. Real run_graph() callers always populate `kind` — the
-        # registry KeyError there would be a config-validation failure,
-        # caught higher up.
-        op = OPS.get(n.get("kind", "")) if hasattr(OPS, "get") else None
-        if op is not None and getattr(op, "OUTPUT_KIND", "stream") == "split":
-            for port in getattr(op, "OUTPUT_PORTS", ()):
-                counts[f"{n['id']}.{port}"] = 0
-        else:
-            counts[n["id"]] = 0
-
-    for e in edges:
-        src = e["from"]
-        if src != e["to"] and src in counts:
-            counts[src] += 1
-    return counts
 
 
 def _consume(
@@ -689,13 +645,6 @@ def _consume(
         if remaining[node_id] <= 0 and node_id != hold:
             del cache[node_id]
     return arrow_to_engine(table, engine)  # type: ignore[arg-type]
-
-
-def _resolve_engine_mode(config: dict) -> str:
-    mode = config.get("engine") or "hybrid"
-    if mode not in ("pandas", "hybrid"):
-        return "hybrid"
-    return mode
 
 
 def _load_yaml(yaml_text: str) -> dict:
@@ -737,38 +686,10 @@ def _validate_top_level_or_raise(config: dict) -> None:
         raise PipelineValidationError("'edges' must be a list")
 
 
-def _ancestor_node_ids_safe(
-    nodes: list, edges: list, target: str
-) -> set[str]:
-    """Walk upward from `target` collecting ancestors, tolerant of
-    malformed nodes/edges in unrelated parts of the graph.
-
-    Returns the set of node IDs comprising `target` plus every ancestor
-    reachable through well-formed edges.
-    """
-    valid_ids = {
-        n.get("id") for n in nodes
-        if isinstance(n, dict) and isinstance(n.get("id"), str)
-    }
-    in_edges: dict[str, list[str]] = {}
-    for e in edges or []:
-        if not isinstance(e, dict):
-            continue
-        src = e.get("from")
-        dst = e.get("to")
-        if not isinstance(src, str) or not isinstance(dst, str):
-            continue
-        in_edges.setdefault(dst, []).append(src.split(".", 1)[0])
-
-    needed: set[str] = set()
-    stack = [target]
-    while stack:
-        nid = stack.pop()
-        if nid in needed or nid not in valid_ids:
-            continue
-        needed.add(nid)
-        stack.extend(in_edges.get(nid, []))
-    return needed
+# Keys to redact in the per-node config summary line. Anything name-matching
+# (case-insensitive) gets `***` in the emitted log. Keeps the Task History
+# Nodes-tab read-out useful without leaking credentials into Job.log.
+_REDACT_KEYS = {"password", "secret", "token", "api_key", "apikey", "auth"}
 
 
 def _node_descriptor(node: dict) -> str:
@@ -778,12 +699,6 @@ def _node_descriptor(node: dict) -> str:
     if isinstance(name, str) and name.strip():
         return f"{name!r} [id={nid}, kind={kind}]"
     return f"[id={nid}, kind={kind}]"
-
-
-# Keys to redact in the per-node config summary line. Anything name-matching
-# (case-insensitive) gets `***` in the emitted log. Keeps the Task History
-# Nodes-tab read-out useful without leaking credentials into Job.log.
-_REDACT_KEYS = {"password", "secret", "token", "api_key", "apikey", "auth"}
 
 
 def _summarize_node_config(kind: str, cfg: dict) -> str:
