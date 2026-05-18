@@ -167,7 +167,7 @@ def validate_graph(yaml_text: str) -> None:
         ) from e
 
 
-def validate_graph_full(yaml_text: str):
+def validate_graph_full(yaml_text: str, *, strict: bool = False):
     """Validate graph YAML and return a non-raising :class:`ValidationResult`.
 
     Unlike :func:`validate_graph`, this never raises on validation
@@ -180,11 +180,27 @@ def validate_graph_full(yaml_text: str):
     problem, not a validation outcome. Use a try/except at the call
     site if needed.
 
-    The validator currently stops at the first error (legacy behavior
-    of the underlying ``GraphConfigValidator``). Multi-error reporting
-    will be enabled per-subject in follow-up R2.2 work as each
-    validator is migrated to non-raising form.
+    Each validation stage is tried independently. A top-level structural
+    error stops further validation (no safe graph to walk), but node,
+    edge, cardinality, topology, and cross-node stages each capture
+    their first failure before moving on. The cross-node semantic checks
+    (format consistency, mask column reachability, nodes-ref reachability)
+    run independently of each other so all three can surface errors in
+    one pass. Within a single stage the first failure still stops that
+    stage; per-subject within-stage multi-error is follow-up R2.2 work.
+
+    ``normalized_config`` is a deep copy of the parsed input with defaults
+    applied (e.g. target.file format inferred from the source format). It
+    is set only when there are no errors. The original parsed config is
+    never mutated.
+
+    ``strict=True`` enables production-mode gating: checks that are
+    advisory in lenient mode become blocking errors. Full strict-mode
+    coverage (credentials, variable resolution, side-effect policy) is
+    Sprint 2 follow-up work; the parameter is accepted now so callers
+    can adopt it forward.
     """
+    import copy
     from decoy_engine.validation_result import CODES, ValidationResult
 
     result = ValidationResult()
@@ -192,17 +208,48 @@ def validate_graph_full(yaml_text: str):
     _quiet_logger = logging.getLogger("decoy_engine.graph.validate")
     if not _quiet_logger.handlers:
         _quiet_logger.addHandler(logging.NullHandler())
-    try:
-        GraphConfigValidator(_quiet_logger).validate(config)
-    except ValidationError as e:
-        raw = getattr(e, "raw_message", None) or str(e)
-        result.add_error(
-            code=getattr(e, "code", None) or CODES.UNTAGGED,
-            message=raw,
-            path=getattr(e, "path", None),
-        )
+
+    # Deep copy so _validate_file_format_consistency's format back-fill
+    # never mutates the locally-parsed config dict. The normalized_config
+    # returned to the caller is the deep copy with defaults applied.
+    working = copy.deepcopy(config)
+    validator = GraphConfigValidator(_quiet_logger)
+
+    def _collect(stage_fn) -> bool:
+        """Run one validation stage. Add its first error to result. Return True iff passed."""
+        try:
+            stage_fn(working)
+            return True
+        except ValidationError as e:
+            result.add_error(
+                code=getattr(e, "code", None) or CODES.UNTAGGED,
+                message=getattr(e, "raw_message", None) or str(e),
+                path=getattr(e, "path", None),
+            )
+            return False
+
+    # Stage 1: top-level shape. Required before safely walking nodes/edges.
+    if not _collect(validator._validate_top_level):
         return result
-    result.normalized_config = config
+
+    # Stage 2: per-node metadata. Required before edge from/to id lookups.
+    nodes_ok = _collect(validator._validate_nodes)
+
+    # Stages 3-5: graph structure. Each requires the prior stage to pass.
+    edges_ok = nodes_ok and _collect(validator._validate_edges)
+    cardinality_ok = edges_ok and _collect(validator._validate_cardinality)
+    topology_ok = cardinality_ok and _collect(validator._validate_acyclic)
+
+    # Stages 6-8: cross-node semantic checks. Each runs independently so
+    # all three can surface errors in one pass. All require a sound acyclic
+    # graph to walk safely.
+    if topology_ok:
+        _collect(validator._validate_file_format_consistency)
+        _collect(validator._validate_mask_column_reachability)
+        _collect(validator._validate_nodes_ref_reachability)
+
+    if not result.errors:
+        result.normalized_config = working
     return result
 
 
