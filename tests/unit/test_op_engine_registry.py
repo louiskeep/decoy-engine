@@ -5,6 +5,10 @@ Phase 2 leaves every op on `pandas` so behavior is unchanged from Phase 1.
 Phases 3 + 4 flip individual ops to polars / duckdb; this test prevents
 silent regression -- if someone adds a new op that forgets to declare,
 the test fails.
+
+Sprint 1.5 extension: also validates KIND, INPUT_ARITY, OUTPUT_KIND, and
+OUTPUT_PORTS declarations are present and well-formed. These are developer
+contract checks -- they catch op module mistakes before execution.
 """
 
 from __future__ import annotations
@@ -41,7 +45,7 @@ def test_every_declared_engine_is_valid():
 
 
 def test_pandas_mode_forces_pandas_for_all_ops():
-    """`engine: pandas` is the post-Phase-8 opt-out / safety hatch:
+    ""`engine: pandas` is the post-Phase-8 opt-out / safety hatch:
     every op resolves to pandas regardless of its declaration. Lives for
     one release cycle past the default flip; then the pandas fallbacks
     get deleted and this flag becomes a no-op."""
@@ -131,3 +135,230 @@ def test_validator_rejects_bad_native_engine_declaration(monkeypatch):
     assert err.code == CODES.NODE_BAD_NATIVE_ENGINE
     assert "not_a_real_engine" in str(err)
     assert "test_bad_engine_kind" in str(err)
+
+
+# -- Sprint 1.5 op metadata contract tests -------------------------------------------
+#
+# These tests verify that all registered ops declare valid KIND, INPUT_ARITY,
+# OUTPUT_KIND, and OUTPUT_PORTS metadata. Validator tests below confirm that
+# a misdeclared op is caught at graph-validation time.
+
+
+def test_every_op_declares_kind():
+    """Every op module must declare KIND matching its registry key."""
+    missing = [kind for kind, op in OPS.items() if not hasattr(op, "KIND")]
+    assert not missing, (
+        f"ops missing KIND declaration: {missing}. "
+        "Each op module must declare KIND = '<registry-key>'."
+    )
+
+
+def test_every_op_kind_matches_registry_key():
+    """An op's KIND constant must match the key it was registered under.
+
+    A mismatch (e.g. KIND='mask_op' registered as 'mask') is a developer
+    error that causes confusing runtime failures. Catch it here before any
+    graph uses the op.
+    """
+    mismatches = [
+        (key, getattr(op, "KIND"))
+        for key, op in OPS.items()
+        if getattr(op, "KIND", key) != key
+    ]
+    assert not mismatches, (
+        f"ops whose KIND constant does not match their registry key: {mismatches}. "
+        "The KIND constant and the OPS dict key must be identical."
+    )
+
+
+def test_every_op_declares_output_kind():
+    """Every op module must declare OUTPUT_KIND."""
+    missing = [kind for kind, op in OPS.items() if not hasattr(op, "OUTPUT_KIND")]
+    assert not missing, (
+        f"ops missing OUTPUT_KIND declaration: {missing}. "
+        "Each op module must declare OUTPUT_KIND = 'stream' | 'sink' | 'split'."
+    )
+
+
+def test_every_declared_output_kind_is_valid():
+    """OUTPUT_KIND must be one of the three recognized values."""
+    _valid = {"stream", "sink", "split"}
+    invalid = [
+        (kind, getattr(op, "OUTPUT_KIND"))
+        for kind, op in OPS.items()
+        if getattr(op, "OUTPUT_KIND", None) not in _valid
+    ]
+    assert not invalid, (
+        f"ops with invalid OUTPUT_KIND: {invalid}. "
+        f"Must be one of {_valid}."
+    )
+
+
+def test_split_ops_declare_output_ports():
+    """Ops with OUTPUT_KIND='split' must declare a non-empty OUTPUT_PORTS tuple."""
+    missing_ports = [
+        kind
+        for kind, op in OPS.items()
+        if getattr(op, "OUTPUT_KIND", None) == "split"
+        and not getattr(op, "OUTPUT_PORTS", None)
+    ]
+    assert not missing_ports, (
+        f"split ops missing OUTPUT_PORTS: {missing_ports}. "
+        "Split ops must declare OUTPUT_PORTS as a non-empty tuple of port names."
+    )
+
+
+def test_every_op_declares_input_arity():
+    """Every op module must declare INPUT_ARITY."""
+    missing = [kind for kind, op in OPS.items() if not hasattr(op, "INPUT_ARITY")]
+    assert not missing, (
+        f"ops missing INPUT_ARITY declaration: {missing}. "
+        "Each op module must declare INPUT_ARITY = (min, max) where max may be None."
+    )
+
+
+def test_every_declared_input_arity_is_valid():
+    """INPUT_ARITY must be a 2-tuple (int, int|None) with min <= max."""
+    bad_arity = []
+    for kind, op in OPS.items():
+        arity = getattr(op, "INPUT_ARITY", None)
+        if arity is None:
+            continue
+        valid = (
+            isinstance(arity, tuple)
+            and len(arity) == 2
+            and isinstance(arity[0], int)
+            and not isinstance(arity[0], bool)
+            and arity[0] >= 0
+            and (
+                arity[1] is None
+                or (
+                    isinstance(arity[1], int)
+                    and not isinstance(arity[1], bool)
+                    and arity[1] >= arity[0]
+                )
+            )
+        )
+        if not valid:
+            bad_arity.append((kind, arity))
+    assert not bad_arity, (
+        f"ops with invalid INPUT_ARITY: {bad_arity}. "
+        "Must be (non_neg_int, non_neg_int | None) with min <= max."
+    )
+
+
+def test_validator_rejects_kind_mismatch(monkeypatch):
+    """GraphConfigValidator must reject an op whose KIND constant disagrees
+    with its registry key."""
+    from decoy_engine.internal.validator import GraphConfigValidator, ValidationError
+    from decoy_engine.validation_result import CODES
+
+    bad_op = types.SimpleNamespace(
+        KIND="wrong_kind_name",  # registered as "test_kind_mismatch_op"
+        NATIVE_ENGINE="pandas",
+        INPUT_ARITY=(0, None),
+        OUTPUT_KIND="stream",
+        validate_config=lambda cfg: None,
+    )
+    monkeypatch.setitem(OPS, "test_kind_mismatch_op", bad_op)
+
+    config = {
+        "mode": "graph",
+        "nodes": [{"id": "n1", "kind": "test_kind_mismatch_op", "config": {}}],
+        "edges": [],
+    }
+
+    with pytest.raises(ValidationError) as exc_info:
+        GraphConfigValidator().validate(config)
+
+    err = exc_info.value
+    assert err.code == CODES.NODE_KIND_MISMATCH
+    assert "wrong_kind_name" in str(err)
+    assert "test_kind_mismatch_op" in str(err)
+
+
+def test_validator_rejects_bad_output_kind(monkeypatch):
+    """GraphConfigValidator must reject an op that declares an invalid OUTPUT_KIND."""
+    from decoy_engine.internal.validator import GraphConfigValidator, ValidationError
+    from decoy_engine.validation_result import CODES
+
+    bad_op = types.SimpleNamespace(
+        KIND="test_bad_output_kind_op",
+        NATIVE_ENGINE="pandas",
+        INPUT_ARITY=(1, 1),
+        OUTPUT_KIND="broadcast",  # not a valid value
+        validate_config=lambda cfg: None,
+    )
+    monkeypatch.setitem(OPS, "test_bad_output_kind_op", bad_op)
+
+    config = {
+        "mode": "graph",
+        "nodes": [{"id": "n1", "kind": "test_bad_output_kind_op", "config": {}}],
+        "edges": [],
+    }
+
+    with pytest.raises(ValidationError) as exc_info:
+        GraphConfigValidator().validate(config)
+
+    err = exc_info.value
+    assert err.code == CODES.NODE_BAD_OUTPUT_KIND
+    assert "broadcast" in str(err)
+    assert "test_bad_output_kind_op" in str(err)
+
+
+def test_validator_rejects_split_op_missing_ports(monkeypatch):
+    """GraphConfigValidator must reject a split op that does not declare OUTPUT_PORTS."""
+    from decoy_engine.internal.validator import GraphConfigValidator, ValidationError
+    from decoy_engine.validation_result import CODES
+
+    bad_op = types.SimpleNamespace(
+        KIND="test_split_no_ports_op",
+        NATIVE_ENGINE="pandas",
+        INPUT_ARITY=(1, 1),
+        OUTPUT_KIND="split",
+        # OUTPUT_PORTS deliberately absent
+        validate_config=lambda cfg: None,
+    )
+    monkeypatch.setitem(OPS, "test_split_no_ports_op", bad_op)
+
+    config = {
+        "mode": "graph",
+        "nodes": [{"id": "n1", "kind": "test_split_no_ports_op", "config": {}}],
+        "edges": [],
+    }
+
+    with pytest.raises(ValidationError) as exc_info:
+        GraphConfigValidator().validate(config)
+
+    err = exc_info.value
+    assert err.code == CODES.NODE_SPLIT_MISSING_PORTS
+    assert "test_split_no_ports_op" in str(err)
+
+
+def test_validator_rejects_bad_input_arity(monkeypatch):
+    """GraphConfigValidator must reject an op that declares a malformed INPUT_ARITY."""
+    from decoy_engine.internal.validator import GraphConfigValidator, ValidationError
+    from decoy_engine.validation_result import CODES
+
+    bad_op = types.SimpleNamespace(
+        KIND="test_bad_arity_op",
+        NATIVE_ENGINE="pandas",
+        INPUT_ARITY=(2, 1),  # min > max is invalid
+        OUTPUT_KIND="stream",
+        validate_config=lambda cfg: None,
+    )
+    monkeypatch.setitem(OPS, "test_bad_arity_op", bad_op)
+
+    config = {
+        "mode": "graph",
+        "nodes": [{"id": "n1", "kind": "test_bad_arity_op", "config": {}}],
+        "edges": [],
+    }
+
+    with pytest.raises(ValidationError) as exc_info:
+        GraphConfigValidator().validate(config)
+
+    err = exc_info.value
+    assert err.code == CODES.NODE_BAD_INPUT_ARITY
+    assert "test_bad_arity_op" in str(err)
+    assert "(2, 1)" in str(err)

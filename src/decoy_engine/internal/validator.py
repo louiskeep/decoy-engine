@@ -646,6 +646,65 @@ class GraphConfigValidator(ConfigValidator):
                     code=CODES.NODE_BAD_NATIVE_ENGINE,
                 )
 
+            # Validate KIND constant on the op module matches its registry key.
+            kind_declared = getattr(OPS[kind], "KIND", None)
+            if kind_declared is not None and kind_declared != kind:
+                raise ValidationError(
+                    f"op registered as {kind!r} but declares KIND={kind_declared!r}; "
+                    f"update the op module or its registration in graph/ops/__init__.py",
+                    f"{path}.kind",
+                    code=CODES.NODE_KIND_MISMATCH,
+                )
+
+            # Validate OUTPUT_KIND is a recognized value.
+            output_kind_declared = getattr(OPS[kind], "OUTPUT_KIND", None)
+            if output_kind_declared is not None and output_kind_declared not in (
+                "stream", "sink", "split"
+            ):
+                raise ValidationError(
+                    f"op {kind!r} declares invalid OUTPUT_KIND {output_kind_declared!r}; "
+                    f"must be 'stream', 'sink', or 'split'",
+                    f"{path}.kind",
+                    code=CODES.NODE_BAD_OUTPUT_KIND,
+                )
+
+            # Split ops must declare all output port names.
+            if output_kind_declared == "split":
+                ports = getattr(OPS[kind], "OUTPUT_PORTS", None)
+                if not ports:
+                    raise ValidationError(
+                        f"op {kind!r} declares OUTPUT_KIND='split' but OUTPUT_PORTS "
+                        f"is missing or empty; list all output port names",
+                        f"{path}.kind",
+                        code=CODES.NODE_SPLIT_MISSING_PORTS,
+                    )
+
+            # Validate INPUT_ARITY is a well-formed (min, max) 2-tuple.
+            input_arity = getattr(OPS[kind], "INPUT_ARITY", None)
+            if input_arity is not None:
+                arity_ok = (
+                    isinstance(input_arity, tuple)
+                    and len(input_arity) == 2
+                    and isinstance(input_arity[0], int)
+                    and not isinstance(input_arity[0], bool)
+                    and input_arity[0] >= 0
+                    and (
+                        input_arity[1] is None
+                        or (
+                            isinstance(input_arity[1], int)
+                            and not isinstance(input_arity[1], bool)
+                            and input_arity[1] >= input_arity[0]
+                        )
+                    )
+                )
+                if not arity_ok:
+                    raise ValidationError(
+                        f"op {kind!r} declares invalid INPUT_ARITY {input_arity!r}; "
+                        f"must be (non_neg_int, non_neg_int | None) with min <= max",
+                        f"{path}.kind",
+                        code=CODES.NODE_BAD_INPUT_ARITY,
+                    )
+
             name = node.get("name")
             if name is not None and (not isinstance(name, str) or not name.strip()):
                 raise ValidationError(
@@ -1018,7 +1077,7 @@ class GraphConfigValidator(ConfigValidator):
         from decoy_engine.graph.topo import upstream_subgraph
         from decoy_engine.validation_result import CODES
 
-        ref_re = _re.compile(r"\$\{nodes\.([a-zA-Z][\w]*)\.([a-zA-Z_][\w.]*)}")
+        ref_re = _re.compile(r"\$\{nodes\.([a-zA-Z][\w]*)\.([a-zA-Z_][\w.]*)}") 
         node_ids = {n["id"] for n in nodes if isinstance(n, dict) and "id" in n}
 
         def walk(value: Any) -> List[tuple[str, str]]:

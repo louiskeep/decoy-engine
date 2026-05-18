@@ -25,6 +25,9 @@ from decoy_engine.exceptions import FlagPauseSignal
 from decoy_engine.graph.ops._base import OpError  # noqa: F401 (re-exported for tests)
 
 KIND = "flag_gate"
+# Intentionally pandas: the gate only inspects row count and column names;
+# no data transformation benefit from polars. Stays pandas to avoid a
+# conversion bounce on hybrid graphs where the upstream op is also pandas.
 NATIVE_ENGINE = "pandas"
 INPUT_ARITY = (0, 1)  # 0 = pre-run check before any source; 1 = mid-run
 OUTPUT_KIND = "stream"
