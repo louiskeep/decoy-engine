@@ -5,6 +5,10 @@ Phase 2 leaves every op on `pandas` so behavior is unchanged from Phase 1.
 Phases 3 + 4 flip individual ops to polars / duckdb; this test prevents
 silent regression -- if someone adds a new op that forgets to declare,
 the test fails.
+
+Sprint 1.5 adds metadata validation tests for KIND, INPUT_ARITY, OUTPUT_KIND,
+and OUTPUT_PORTS, completing the op contract checklist from the audit
+remediation roadmap.
 """
 
 from __future__ import annotations
@@ -131,3 +135,185 @@ def test_validator_rejects_bad_native_engine_declaration(monkeypatch):
     assert err.code == CODES.NODE_BAD_NATIVE_ENGINE
     assert "not_a_real_engine" in str(err)
     assert "test_bad_engine_kind" in str(err)
+
+
+# ---------------------------------------------------------------------------
+# Sprint 1.5 remaining: op metadata contract tests
+# ---------------------------------------------------------------------------
+#
+# These tests complete the audit remediation roadmap Sprint 1.5 task:
+# "Validate op metadata for release ops: KIND, INPUT_ARITY, OUTPUT_KIND,
+# OUTPUT_PORTS, and side-effect behavior."
+#
+# The NATIVE_ENGINE tests above covered the first attribute. The tests below
+# cover the rest, making them explicit contracts rather than silent runtime
+# assumptions with fallback defaults in the validator.
+
+VALID_OUTPUT_KINDS = frozenset({"stream", "sink", "split"})
+
+# Ops that intentionally stay on pandas because their strategies rely on
+# per-row Python callbacks that do not vectorize to polars or duckdb.
+# Listing them explicitly here catches a new op accidentally using pandas
+# as the default rather than as a deliberate choice.
+#
+# If you add an op to this set, add a comment in the op module explaining
+# why pandas (e.g. "per-row Faker callbacks", "orchestration-only",
+# "scan mode only; Arrow overhead > polars gain at V1 scale").
+_INTENTIONALLY_PANDAS: frozenset[str] = frozenset({
+    "mask",         # per-row Faker/scipy/custom masking callbacks
+    "generate",     # per-row Faker reference lookups and relationship handlers
+    "run_storm",    # scan mode only; phase-1 benchmark: Arrow overhead > polars gain
+    "flag_gate",    # operates on row counts and column names, not cell values
+    "sub_pipeline", # orchestration-only; delegates to a child runner
+    "iterate_fixed",  # orchestration; injects iteration.value as template vars
+    "iterate_loop",   # orchestration; same pattern as iterate_fixed
+    "iterate_files",  # orchestration; iterates over file paths
+})
+
+
+def test_every_op_declares_kind():
+    """Every op module must declare KIND matching its registry key."""
+    missing = [kind for kind, op in OPS.items() if not hasattr(op, "KIND")]
+    assert not missing, (
+        f"ops missing KIND declaration: {missing}. "
+        "Add KIND = '<registry_key>' to the op module."
+    )
+
+
+def test_kind_matches_registry_key():
+    """KIND declared on the op module must match the key it's registered under.
+
+    Catches copy-paste where a new op forgets to update KIND after copying
+    from another op module.
+    """
+    mismatches = [
+        (key, getattr(op, "KIND"))
+        for key, op in OPS.items()
+        if hasattr(op, "KIND") and getattr(op, "KIND") != key
+    ]
+    assert not mismatches, (
+        f"op KIND doesn't match registry key: {mismatches}. "
+        "The KIND constant in the module and the OPS dict key must be identical."
+    )
+
+
+def test_every_op_declares_input_arity():
+    """Every op must declare INPUT_ARITY so cardinality validation has a contract.
+
+    Without an explicit declaration the validator falls back to (1, 1), which
+    is wrong for source ops (0, 0) and multi-input ops like unite.
+    """
+    missing = [kind for kind, op in OPS.items() if not hasattr(op, "INPUT_ARITY")]
+    assert not missing, (
+        f"ops missing INPUT_ARITY declaration: {missing}. "
+        "Declare INPUT_ARITY = (min_inputs, max_inputs) where max_inputs "
+        "is int or None (None means unlimited)."
+    )
+
+
+def test_input_arity_is_well_formed():
+    """INPUT_ARITY must be a 2-tuple of (int, int|None)."""
+    bad = []
+    for kind, op in OPS.items():
+        arity = getattr(op, "INPUT_ARITY", None)
+        if arity is None:
+            continue
+        if not isinstance(arity, tuple) or len(arity) != 2:
+            bad.append((kind, arity, "not a 2-tuple"))
+            continue
+        min_in, max_in = arity
+        if not isinstance(min_in, int) or isinstance(min_in, bool):
+            bad.append((kind, arity, "min_inputs must be int"))
+        if max_in is not None and (not isinstance(max_in, int) or isinstance(max_in, bool)):
+            bad.append((kind, arity, "max_inputs must be int or None"))
+    assert not bad, (
+        f"ops with malformed INPUT_ARITY (expected (int, int|None)): {bad}"
+    )
+
+
+def test_every_op_declares_output_kind():
+    """Every op must declare OUTPUT_KIND so edge and sink validation have a contract.
+
+    Without an explicit declaration the validator falls back to 'stream', which
+    is wrong for sink ops (target.*) and split ops (if_router).
+    """
+    missing = [kind for kind, op in OPS.items() if not hasattr(op, "OUTPUT_KIND")]
+    assert not missing, (
+        f"ops missing OUTPUT_KIND declaration: {missing}. "
+        f"Declare OUTPUT_KIND = one of {sorted(VALID_OUTPUT_KINDS)}."
+    )
+
+
+def test_output_kind_is_valid():
+    """OUTPUT_KIND must be one of the known valid values."""
+    invalid = [
+        (kind, getattr(op, "OUTPUT_KIND"))
+        for kind, op in OPS.items()
+        if hasattr(op, "OUTPUT_KIND") and getattr(op, "OUTPUT_KIND") not in VALID_OUTPUT_KINDS
+    ]
+    assert not invalid, (
+        f"ops with invalid OUTPUT_KIND: {invalid}. "
+        f"Must be one of {sorted(VALID_OUTPUT_KINDS)}."
+    )
+
+
+def test_split_ops_declare_output_ports():
+    """Ops with OUTPUT_KIND='split' must declare OUTPUT_PORTS as a non-empty tuple.
+
+    The edge validator uses OUTPUT_PORTS to check port names in 'from': 'node.port'
+    notation. A split op without OUTPUT_PORTS makes port errors opaque.
+    """
+    bad = []
+    for kind, op in OPS.items():
+        if getattr(op, "OUTPUT_KIND", None) == "split":
+            ports = getattr(op, "OUTPUT_PORTS", None)
+            if not ports or not isinstance(ports, (tuple, list)) or len(ports) == 0:
+                bad.append(kind)
+    assert not bad, (
+        f"split ops missing OUTPUT_PORTS: {bad}. "
+        "Declare OUTPUT_PORTS = ('port_name_1', 'port_name_2') on the op module."
+    )
+
+
+@pytest.mark.parametrize("kind,expected_arity,expected_output_kind", [
+    # Frozen baseline for release-path ops. Updates here are intentional.
+    # Source ops produce output; they take no inputs.
+    ("source.file",     (0, 0), "stream"),
+    ("source.s3",       (0, 0), "stream"),
+    ("source.gcs",      (0, 0), "stream"),
+    ("source.sftp",     (0, 0), "stream"),
+    # Transform ops: single-input, single-output.
+    ("mask",            (1, 1), "stream"),
+    ("filter",          (1, 1), "stream"),
+    ("sort",            (1, 1), "stream"),
+    ("dedupe",          (1, 1), "stream"),
+    ("derive",          (1, 1), "stream"),
+    ("drop_column",     (1, 1), "stream"),
+    ("select_column",   (1, 1), "stream"),
+    ("limit",           (1, 1), "stream"),
+    ("convert.file_type", (1, 1), "stream"),
+    # Multi-input transform.
+    ("unite",           (2, None), "stream"),
+    # Routing split op.
+    ("if",              (1, 1), "split"),
+    # Sink ops: consume input, produce no downstream.
+    ("target.file",     (1, 1), "sink"),
+    ("target.s3",       (1, 1), "sink"),
+    ("target.gcs",      (1, 1), "sink"),
+    ("target.sftp",     (1, 1), "sink"),
+])
+def test_release_op_arity_and_output_kind_baseline(kind, expected_arity, expected_output_kind):
+    """Frozen baseline for release-path op INPUT_ARITY and OUTPUT_KIND.
+
+    A surprise change in this table = an undocumented contract change.
+    Update intentionally, not by suppressing the failure.
+    """
+    op = OPS[kind]
+    assert getattr(op, "INPUT_ARITY") == expected_arity, (
+        f"{kind} INPUT_ARITY: expected {expected_arity}, "
+        f"got {getattr(op, 'INPUT_ARITY', 'MISSING')}"
+    )
+    assert getattr(op, "OUTPUT_KIND") == expected_output_kind, (
+        f"{kind} OUTPUT_KIND: expected {expected_output_kind!r}, "
+        f"got {getattr(op, 'OUTPUT_KIND', 'MISSING')!r}"
+    )
