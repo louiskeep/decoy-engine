@@ -48,7 +48,8 @@ from decoy_engine.graph.conversion import (
     engine_to_arrow,
 )
 from decoy_engine.graph.errors import translate as translate_engine_error
-from decoy_engine.graph.topo import topo_order, upstream_subgraph
+from decoy_engine.graph.planner import build_plan
+from decoy_engine.graph.topo import upstream_subgraph
 from decoy_engine.graph.types import (
     NodeRunRecord,
     PreviewResult,
@@ -246,12 +247,13 @@ def _execute_graph(
 
     edges = config.get("edges") or []
     nodes = config["nodes"]
-    order = topo_order(nodes, edges)
-    by_id = {n["id"]: n for n in nodes}
+    plan = build_plan(nodes, edges)
+    order = plan.ordered_ids
+    by_id = plan.by_id
     graph_engine_mode = _resolve_engine_mode(config)
 
     cache: dict[str, pa.Table] = {}
-    remaining = _count_consumers(nodes, edges)
+    remaining = dict(plan.consumer_counts)
     keep_set = set(keep_nodes or [])
     for k in keep_set:
         remaining[k] = remaining.get(k, 0) + 1
@@ -317,7 +319,7 @@ def _execute_graph(
 
         # Pull upstream outputs out of cache and decrement their consumer
         # count; eviction happens inside _consume.
-        in_edges = [e for e in edges if e["to"] == nid]
+        in_edges = plan.in_edges_by_node.get(nid, [])
         # ``step_name`` is what the platform's JobLogger writes into the
         # STEP column of every narrative line emitted while this node is
         # the open step, AND what the reporting UI's pill timeline keys
@@ -548,7 +550,10 @@ def preview_graph(
 
     row_limit = max(1, min(int(row_limit), 1000))
     sub_order, sub_edges = upstream_subgraph(nodes, edges, node_id)
-    by_id = {n["id"]: n for n in nodes}
+    sub_node_set = set(sub_order)
+    sub_nodes = [n for n in nodes if n["id"] in sub_node_set]
+    sub_plan = build_plan(sub_nodes, sub_edges)
+    by_id = sub_plan.by_id
 
     from decoy_engine.graph.ops import OPS
     from decoy_engine.graph.registry import native_engine_for
@@ -556,9 +561,7 @@ def preview_graph(
     graph_engine_mode = _resolve_engine_mode(config)
 
     cache: dict[str, pa.Table] = {}
-    sub_node_set = set(sub_order)
-    sub_nodes = [n for n in nodes if n["id"] in sub_node_set]
-    remaining = _count_consumers(sub_nodes, sub_edges)
+    remaining = dict(sub_plan.consumer_counts)
     overall_start = time.monotonic()
     target_table: pa.Table | None = None
     error_msg: str | None = None
@@ -571,7 +574,7 @@ def preview_graph(
         node_cfg["__preview_row_limit"] = row_limit
         engine = native_engine_for(kind, graph_engine_mode)
         node_cfg["__engine"] = engine
-        in_edges = [e for e in sub_edges if e["to"] == nid]
+        in_edges = sub_plan.in_edges_by_node.get(nid, [])
         inputs = [
             _consume(cache, remaining, e["from"], engine, hold=node_id)
             for e in in_edges
@@ -636,36 +639,6 @@ def preview_graph(
         "elapsed_ms": elapsed_ms,
         "error": error_msg,
     }
-
-
-def _count_consumers(nodes: list[dict], edges: list[dict]) -> dict[str, int]:
-    """Per node (or per port for split ops), count downstream edge consumers.
-
-    Split ops (OUTPUT_KIND="split") get per-port entries keyed as
-    "node_id.port" rather than a single "node_id" entry.
-    """
-    from decoy_engine.graph.ops import OPS
-
-    counts: dict[str, int] = {}
-    for n in nodes:
-        # Look up the op for split-port discovery. Unknown / missing kinds
-        # fall through to the regular non-split path so the helper stays
-        # usable from validators and unit tests that pass minimal node
-        # dicts. Real run_graph() callers always populate `kind` — the
-        # registry KeyError there would be a config-validation failure,
-        # caught higher up.
-        op = OPS.get(n.get("kind", "")) if hasattr(OPS, "get") else None
-        if op is not None and getattr(op, "OUTPUT_KIND", "stream") == "split":
-            for port in getattr(op, "OUTPUT_PORTS", ()):
-                counts[f"{n['id']}.{port}"] = 0
-        else:
-            counts[n["id"]] = 0
-
-    for e in edges:
-        src = e["from"]
-        if src != e["to"] and src in counts:
-            counts[src] += 1
-    return counts
 
 
 def _consume(
@@ -837,7 +810,7 @@ def _jsonable(v: Any) -> Any:
 # scopes (var/env/trigger/storm/iteration) are resolved platform-side before
 # the YAML reaches the engine. This scope must be resolved live because the
 # values come from already-completed upstream ops.
-_NODE_TOKEN_RE = re.compile(r"\$\{nodes\.([a-zA-Z0-9_-]+)\.([a-zA-Z_][\w.]*)}")
+_NODE_TOKEN_RE = re.compile(r"\$\{nodes\.([a-zA-Z0-9_-]+)\.([a-zA-Z_][\w.]*)}") 
 
 
 class _NodeExportResolutionError(Exception):
