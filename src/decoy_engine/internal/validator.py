@@ -675,6 +675,94 @@ class GraphConfigValidator(ConfigValidator):
                     code=getattr(e, "code", None),
                 ) from e
 
+    def _validate_nodes_collecting(
+        self, nodes: List[Dict[str, Any]], kinds: Set[str]
+    ) -> List[ValidationError]:
+        """Like _validate_nodes but collects ALL per-node errors instead of
+        raising on the first. Called by validate_graph_full (R2.2) so that
+        a graph with multiple bad nodes surfaces all of them in one pass.
+
+        _validate_nodes is unchanged for backward compatibility -- validate()
+        and _validate_or_raise still use it via the raise-on-first path.
+        """
+        from decoy_engine.graph.ops import OPS
+        from decoy_engine.graph.conversion import VALID_ENGINES
+        from decoy_engine.validation_result import CODES
+
+        errors: List[ValidationError] = []
+        seen_ids: Set[str] = set()
+
+        for i, node in enumerate(nodes):
+            path = f"nodes[{i}]"
+
+            if not isinstance(node, dict):
+                errors.append(ValidationError(
+                    "node must be a mapping", path, code=CODES.NODE_BAD_TYPE,
+                ))
+                continue  # can't inspect sub-fields of a non-dict
+
+            nid = node.get("id")
+            if not isinstance(nid, str) or not _GRAPH_NODE_ID_RE.match(nid):
+                errors.append(ValidationError(
+                    "id must match ^[a-zA-Z][a-zA-Z0-9_]{0,63}$",
+                    f"{path}.id",
+                    code=CODES.NODE_BAD_ID,
+                ))
+                # Don't add to seen_ids -- an invalid id can't participate in
+                # duplicate detection without producing spurious duplicates.
+            else:
+                if nid in seen_ids:
+                    errors.append(ValidationError(
+                        f"duplicate node id {nid!r}", f"{path}.id",
+                        code=CODES.NODE_DUPLICATE_ID,
+                    ))
+                seen_ids.add(nid)
+
+            kind = node.get("kind")
+            kind_valid = kind in kinds
+            if not kind_valid:
+                errors.append(ValidationError(
+                    f"unknown kind {kind!r} (supported: {sorted(kinds)})",
+                    f"{path}.kind",
+                    code=CODES.NODE_UNKNOWN_KIND,
+                ))
+            else:
+                declared_engine = getattr(OPS[kind], "NATIVE_ENGINE", None)
+                if declared_engine is not None and declared_engine not in VALID_ENGINES:
+                    errors.append(ValidationError(
+                        f"op {kind!r} declares invalid NATIVE_ENGINE {declared_engine!r}; "
+                        f"supported: {sorted(VALID_ENGINES)}",
+                        f"{path}.kind",
+                        code=CODES.NODE_BAD_NATIVE_ENGINE,
+                    ))
+
+            name = node.get("name")
+            if name is not None and (not isinstance(name, str) or not name.strip()):
+                errors.append(ValidationError(
+                    "name must be a non-empty string when set",
+                    f"{path}.name",
+                    code=CODES.NODE_BAD_NAME,
+                ))
+
+            cfg = node.get("config", {})
+            if not isinstance(cfg, dict):
+                errors.append(ValidationError(
+                    "config must be a mapping", f"{path}.config",
+                    code=CODES.NODE_BAD_CONFIG_TYPE,
+                ))
+            elif kind_valid:
+                try:
+                    OPS[kind].validate_config(cfg)
+                except ValidationError as e:
+                    raw_msg = getattr(e, "raw_message", None) or str(e)
+                    errors.append(ValidationError(
+                        raw_msg,
+                        f"{path}.{getattr(e, 'path', None) or 'config'}",
+                        code=getattr(e, "code", None),
+                    ))
+
+        return errors
+
     def _validate_edges(
         self, edges: List[Dict[str, Any]], nodes: List[Dict[str, Any]]
     ) -> None:
