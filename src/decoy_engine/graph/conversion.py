@@ -82,6 +82,19 @@ def engine_to_arrow(result: Any, engine: EngineType) -> pa.Table:
             raise TypeError(
                 f"engine='pandas' op must return pandas.DataFrame; got {type(result).__name__}"
             )
+        # pyarrow's Table.from_pandas raises ValueError with the *full*
+        # column list when names collide ("Duplicate column names found:
+        # [<every column>]"), which is misleading on a wide frame. Pre-
+        # check and raise a clearer error listing only the names that
+        # actually appear more than once.
+        cols = list(result.columns)
+        if len(set(cols)) != len(cols):
+            from collections import Counter
+            dupes = sorted({name for name, n in Counter(cols).items() if n > 1})
+            raise ValueError(
+                f"Duplicate column names: {dupes}. Use drop_column upstream to remove the "
+                "collision, or unite's keyed mode with suffixes to disambiguate."
+            )
         return pa.Table.from_pandas(result, preserve_index=False)
     if engine == "polars":
         # polars.DataFrame.to_arrow() returns pa.Table; LazyFrame must be
