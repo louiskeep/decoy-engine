@@ -224,3 +224,78 @@ class TestNodeNameField:
         with pytest.raises(ValidationError) as exc:
             self._validate(cfg)
         assert "name" in (exc.value.path or "")
+
+
+class TestUnitePerPairJoins:
+    """Per-pair joins (config.joins): each entry pins one merge in the
+    chain to its own left_on / right_on / join_type. Lets a multi-way
+    join use different keys for different pairs."""
+
+    def test_two_way_per_pair_join(self):
+        customers = pd.DataFrame({"id": [1, 2, 3], "name": ["a", "b", "c"]})
+        orders = pd.DataFrame({"customer_id": [1, 2, 3], "amount": [10, 20, 30]})
+        cfg = {
+            "joins": [
+                {
+                    "left_on": ["id"],
+                    "right_on": ["customer_id"],
+                    "join_type": "inner",
+                },
+            ],
+        }
+        unite.validate_config(cfg)
+        out = unite.apply([customers, orders], cfg, None)
+        assert list(out["amount"]) == [10, 20, 30]
+        assert "id" in out.columns and "customer_id" in out.columns
+
+    def test_three_way_per_pair_different_keys(self):
+        customers = pd.DataFrame({"id": [1, 2], "name": ["a", "b"]})
+        orders = pd.DataFrame({"customer_id": [1, 2], "amount": [10, 20]})
+        products = pd.DataFrame({"buyer_id": [1, 2], "sku": ["x", "y"]})
+        cfg = {
+            "joins": [
+                {"left_on": ["id"], "right_on": ["customer_id"], "join_type": "inner"},
+                {"left_on": ["id"], "right_on": ["buyer_id"], "join_type": "left"},
+            ],
+        }
+        unite.validate_config(cfg)
+        out = unite.apply([customers, orders, products], cfg, None)
+        assert list(out["amount"]) == [10, 20]
+        assert list(out["sku"]) == ["x", "y"]
+
+    def test_joins_length_mismatch_raises(self):
+        df1 = pd.DataFrame({"id": [1]})
+        df2 = pd.DataFrame({"id": [1]})
+        df3 = pd.DataFrame({"id": [1]})
+        # Only one join spec but three inputs (needs 2 pairings).
+        cfg = {
+            "joins": [
+                {"left_on": ["id"], "right_on": ["id"], "join_type": "inner"},
+            ],
+        }
+        with pytest.raises(OpError) as exc:
+            unite.apply([df1, df2, df3], cfg, None)
+        assert "length" in str(exc.value).lower()
+
+    def test_joins_and_on_are_mutually_exclusive(self):
+        cfg = {
+            "joins": [
+                {"left_on": ["id"], "right_on": ["id"], "join_type": "inner"},
+            ],
+            "on": ["id"],
+        }
+        with pytest.raises(ValidationError) as exc:
+            unite.validate_config(cfg)
+        assert "mutually exclusive" in str(exc.value).lower()
+
+    def test_missing_left_on_column_raises(self):
+        df1 = pd.DataFrame({"a": [1]})
+        df2 = pd.DataFrame({"id": [1]})
+        cfg = {
+            "joins": [
+                {"left_on": ["id"], "right_on": ["id"], "join_type": "inner"},
+            ],
+        }
+        with pytest.raises(OpError) as exc:
+            unite.apply([df1, df2], cfg, None)
+        assert "left_on" in str(exc.value) and "missing" in str(exc.value)
