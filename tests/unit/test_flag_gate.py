@@ -197,3 +197,73 @@ class TestFlagPauseSignalStr:
     def test_message_no_gate_id(self):
         sig = FlagPauseSignal([{"message": "missing cols"}])
         assert str(sig).startswith("flag gate: ")
+
+
+class _RecordingCtx:
+    """Minimal ctx stub with .export so flag_gate can record warnings."""
+
+    def __init__(self):
+        self.exports: dict = {}
+
+    def export(self, key, value):
+        self.exports[key] = value
+
+
+class TestOnFail:
+    def test_default_is_pause(self):
+        df = _pd([])
+        with pytest.raises(FlagPauseSignal) as exc_info:
+            flag_gate.apply([df], {
+                "conditions": [{"type": "row_count", "op": "gte", "value": 1}],
+            })
+        # Default on_fail = pause; failure record carries the explicit mode.
+        assert exc_info.value.conditions_failed[0]["on_fail"] == "pause"
+
+    def test_warn_does_not_raise(self):
+        df = _pd([])
+        ctx = _RecordingCtx()
+        result = flag_gate.apply(
+            [df],
+            {
+                "conditions": [
+                    {"type": "row_count", "op": "gte", "value": 1, "on_fail": "warn"},
+                ],
+            },
+            ctx=ctx,
+        )
+        # Returns the df unchanged + exports the warning.
+        assert result is df
+        warnings = ctx.exports.get("flag_gate_warnings")
+        assert warnings and warnings["warnings"][0]["type"] == "row_count"
+        assert warnings["warnings"][0]["on_fail"] == "warn"
+
+    def test_pause_and_warn_mix_pauses(self):
+        df = _pd([])
+        ctx = _RecordingCtx()
+        # First condition warns, second pauses. Pause wins.
+        with pytest.raises(FlagPauseSignal) as exc_info:
+            flag_gate.apply(
+                [df],
+                {
+                    "conditions": [
+                        {"type": "row_count", "op": "gte", "value": 1, "on_fail": "warn"},
+                        {"type": "schema_match", "columns": ["id"], "on_fail": "pause"},
+                    ],
+                },
+                ctx=ctx,
+            )
+        # Warning still got recorded even though pause raised.
+        assert ctx.exports.get("flag_gate_warnings") is not None
+        # Pause signal only carries the pause-mode failure, not the warn.
+        types = [c["type"] for c in exc_info.value.conditions_failed]
+        assert types == ["schema_match"]
+
+    def test_invalid_on_fail_rejected(self):
+        from decoy_engine.internal.validator import ValidationError
+        with pytest.raises(ValidationError) as exc:
+            flag_gate.validate_config({
+                "conditions": [
+                    {"type": "row_count", "op": "gte", "value": 1, "on_fail": "bogus"},
+                ],
+            })
+        assert "on_fail" in (exc.value.path or "")

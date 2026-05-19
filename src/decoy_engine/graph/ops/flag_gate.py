@@ -1,8 +1,18 @@
 """FLAG gate op: pre/mid-run data quality gate.
 
-Evaluates one or more conditions against the current DataFrame. If any
-condition fails, raises FlagPauseSignal so the platform runner can
-transition the job to `review_pending`.
+Evaluates one or more conditions against the current DataFrame.
+
+Per-condition ``on_fail`` controls how a failed condition is handled:
+
+  pause (default) -- raise FlagPauseSignal so the platform runner
+                     transitions the job to ``review_pending``. Any
+                     other ``pause`` failures in the same gate are
+                     batched into the single signal.
+  warn            -- record the failure as a warning via
+                     ctx.export("flag_gate_warnings", ...) and continue
+                     execution. The downstream graph runs normally;
+                     the operator sees the warning in the job detail
+                     view but the job does not pause.
 
 Supported condition types:
   row_count    -- assert (rows op value); op in {lt, lte, gt, gte, eq, ne}
@@ -14,11 +24,14 @@ YAML config:
     - type: row_count
       op: gte
       value: 1
+      on_fail: pause          # optional; default 'pause'
     - type: schema_match
       columns: [id, email, created_at]
+      on_fail: warn
 
-Returns input table unchanged when all conditions pass.
-Raises FlagPauseSignal when any condition fails.
+Returns input table unchanged when all conditions pass (or only warn-mode
+conditions failed). Raises FlagPauseSignal when any pause-mode condition
+fails; warn-mode failures from the same run are recorded as warnings.
 """
 
 from decoy_engine.exceptions import FlagPauseSignal
@@ -34,6 +47,7 @@ INPUT_ARITY = (0, 1)  # 0 = pre-run check before any source; 1 = mid-run
 OUTPUT_KIND = "stream"
 
 _VALID_OPS = frozenset({"lt", "lte", "gt", "gte", "eq", "ne"})
+_VALID_ON_FAIL = frozenset({"pause", "warn"})
 
 
 def validate_config(config: dict) -> None:
@@ -70,6 +84,12 @@ def validate_config(config: dict) -> None:
                 f"unsupported condition type {ctype!r} (supported: row_count, schema_match)",
                 f"config.conditions[{i}].type",
             )
+        on_fail = cond.get("on_fail", "pause")
+        if on_fail not in _VALID_ON_FAIL:
+            raise ValidationError(
+                f"on_fail must be one of {sorted(_VALID_ON_FAIL)}, got {on_fail!r}",
+                f"config.conditions[{i}].on_fail",
+            )
 
 
 def apply(inputs: list, config: dict, ctx=None):
@@ -80,32 +100,54 @@ def apply(inputs: list, config: dict, ctx=None):
     row_count = _row_count(df)
     col_names = _column_names(df)
 
-    failed: list[dict] = []
+    # Failures get bucketed by on_fail mode. pause-mode failures fold
+    # into the FlagPauseSignal; warn-mode failures get exported as a
+    # job warning and execution continues.
+    paused: list[dict] = []
+    warned: list[dict] = []
     for cond in conditions:
         ctype = cond["type"]
+        on_fail = cond.get("on_fail", "pause")
+        record: dict | None = None
         if ctype == "row_count":
             op = cond["op"]
             threshold = cond["value"]
             if not _compare(row_count, op, threshold):
-                failed.append({
+                record = {
                     "type": "row_count",
                     "op": op,
                     "value": threshold,
                     "actual": row_count,
                     "message": f"row_count {row_count} did not satisfy {op} {threshold}",
-                })
+                }
         elif ctype == "schema_match":
             required = cond["columns"]
             missing = [c for c in required if c not in col_names]
             if missing:
-                failed.append({
+                record = {
                     "type": "schema_match",
                     "missing_columns": missing,
                     "message": f"missing columns: {missing}",
-                })
+                }
+        if record is None:
+            continue
+        record["on_fail"] = on_fail
+        if on_fail == "warn":
+            warned.append(record)
+        else:
+            paused.append(record)
 
-    if failed:
-        raise FlagPauseSignal(conditions_failed=failed, gate_id=gate_id)
+    # Surface warn-mode failures as a structured export so the platform
+    # job-detail view can render them. Exported regardless of whether
+    # paused failures are also present (warning + pause both useful).
+    if warned and ctx is not None and hasattr(ctx, "export"):
+        ctx.export("flag_gate_warnings", {
+            "gate_id": gate_id,
+            "warnings": warned,
+        })
+
+    if paused:
+        raise FlagPauseSignal(conditions_failed=paused, gate_id=gate_id)
 
     return df
 
