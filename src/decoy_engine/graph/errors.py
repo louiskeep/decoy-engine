@@ -69,8 +69,14 @@ def translate(exc: Exception, op_kind: str, node_id: str) -> OpError:
         return OpError(f"Node {node_id!r} ({op_kind}): {duckdb_msg}")
 
     # Default: wrap with node context. Don't lose the original message —
-    # advanced users may need it for diagnosis.
-    return OpError(f"Node {node_id!r} ({op_kind}): {exc}")
+    # advanced users may need it for diagnosis. Forward any structured
+    # ``.code`` / ``.path`` attributes from the source exception onto
+    # the wrapped OpError so typed exceptions raised by ops (e.g.
+    # PKDuplicatesError carries ``code = "pk.duplicates"``) make it
+    # through to the manifest's per-node error metadata.
+    out = OpError(f"Node {node_id!r} ({op_kind}): {exc}")
+    _forward_structured_metadata(out, exc)
+    return out
 
 
 def _maybe_translate_polars(exc: Exception) -> str | None:

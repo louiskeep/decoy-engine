@@ -29,9 +29,21 @@ from decoy_engine.transforms.base import BaseMaskingStrategy
 
 # Preset width shortcuts. Match the names in DISGUISES_GUIDE so a
 # Disguise YAML can reference them directly.
+#
+# Naming convention: ``by_<unit>`` where <unit> is a singular noun or
+# n-noun pair. The width is the literal integer the unit names, so
+# operators can read the preset and immediately know the bucket size
+# without consulting a table.
 _PRESETS = {
-    'by_decade': 10,
-    'by_5_years': 5,
+    # Time-axis buckets (ages, tenure, year-of-birth, vintage).
+    'by_year':         1,
+    'by_2_years':      2,
+    'by_5_years':      5,
+    'by_decade':      10,
+    'by_century':    100,
+    # Currency-axis buckets (transaction amounts, balances, salaries).
+    'by_thousand':       1_000,
+    'by_ten_thousand':  10_000,
 }
 
 _FORMATS = {'lower', 'range', 'midpoint'}
@@ -43,8 +55,11 @@ class BucketizeStrategy(BaseMaskingStrategy):
     Config:
       width:    int|float — required (or use ``preset``). Bucket width.
                 Must be > 0.
-      preset:   str — optional shortcut. ``by_decade`` (=10) or
-                ``by_5_years`` (=5). Overrides ``width`` if both set.
+      preset:   str — optional shortcut. See ``_PRESETS`` for the full
+                list. Common picks: ``by_year`` (=1), ``by_5_years`` (=5),
+                ``by_decade`` (=10), ``by_century`` (=100),
+                ``by_thousand`` (=1000), ``by_ten_thousand`` (=10000).
+                Overrides ``width`` if both set.
       format:   str — optional, default ``lower``. One of ``lower``,
                 ``range``, ``midpoint``.
     """

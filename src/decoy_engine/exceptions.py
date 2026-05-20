@@ -123,4 +123,46 @@ class UnknownFKColumnError(FKPreservationError):
     raise covers schema drift inside the op."""
 
 
+class PKDuplicatesError(DecoyError):
+    """Column declared ``primary_key: true`` produced duplicate values
+    after generation. Strict-by-default since a non-unique PK breaks
+    join semantics downstream (same key identifies multiple rows).
+
+    Set ``DECOY_PK_LENIENT=1`` to downgrade to a logged warning + a
+    manifest entry so a one-off scrub with a faker-based PK + small
+    row_count can still ship. Tier-1 audit (2026-05-20) flipped the
+    default from lenient to strict — analytics pipelines should not
+    silently ship duplicate primary keys.
+
+    Maps to code ``pk.duplicates``. Carries the column name + counts
+    on the exception for the manifest assembler."""
+
+    code: str = "pk.duplicates"
+
+    def __init__(
+        self,
+        column: str,
+        total_non_null: int,
+        unique_values: int,
+        strategy: str | None = None,
+    ) -> None:
+        self.column = column
+        self.total_non_null = total_non_null
+        self.unique_values = unique_values
+        self.duplicate_count = total_non_null - unique_values
+        self.strategy = strategy
+        message = (
+            f"PK column {column!r} has {self.duplicate_count} duplicate value(s) "
+            f"out of {total_non_null} non-null rows"
+        )
+        if strategy:
+            message += (
+                f". The declared strategy ({strategy!r}) doesn't guarantee "
+                f"uniqueness at this row count. Switch to 'sequence' for a "
+                f"hard uniqueness guarantee, or set DECOY_PK_LENIENT=1 to "
+                f"downgrade this to a warning."
+            )
+        super().__init__(message)
+
+
 ForgeError = DecoyError

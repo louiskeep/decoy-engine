@@ -321,30 +321,45 @@ class ColumnGenerator:
         reference_table = column_config.get('reference_table')
         reference_column = column_config.get('reference_column')
         distribution = column_config.get('distribution', 'random')  # random, sequential, weighted
+        # Cardinality bounds. min_per_parent: every parent value must
+        # appear at least this many times in the child column.
+        # max_per_parent: no parent value can appear more than this
+        # many times. 0 means "no bound" (matches the YAML helper which
+        # omits zero values to keep entries minimal).
+        min_per_parent = int(column_config.get('min_per_parent') or 0)
+        max_per_parent = int(column_config.get('max_per_parent') or 0)
         # Note: null_probability is now handled at the column level, not here
-        
+
         self.logger.debug(f"Generating reference column referencing {reference_table}.{reference_column}")
-        
+
         # Check if reference table exists
         if reference_table not in reference_data:
             self.logger.warning(f"Reference table '{reference_table}' not found. Returning placeholder values.")
             return pd.Series([f"REF_TABLE_NOT_FOUND_{i}" for i in range(num_rows)])
-        
+
         # Get reference DataFrame
         ref_df = reference_data[reference_table]
-        
+
         # Check if reference column exists
         if reference_column not in ref_df.columns:
             self.logger.warning(f"Reference column '{reference_column}' not found in table '{reference_table}'. Returning placeholder values.")
             return pd.Series([f"REF_COLUMN_NOT_FOUND_{i}" for i in range(num_rows)])
-        
+
         # Get reference values
         ref_values = ref_df[reference_column].dropna().unique().tolist()
-        
+
         if not ref_values:
             self.logger.warning(f"No reference values found in {reference_table}.{reference_column}. Returning NULL values.")
             return pd.Series([None] * num_rows)
-        
+
+        # Reseed so the choice sequence + any repair shuffles are stable
+        # across runs when a key is provided + stable per-column even
+        # without one. Mirrors the categorical generator's pattern at
+        # the top of _generate_categorical_column. Otherwise output
+        # depends on the order of column generation calls.
+        column_name = column_config.get('name', 'unnamed_column')
+        random.seed(self._column_seed(column_name, column_config))
+
         # Generate references based on distribution type
         values = []
         for i in range(num_rows):
@@ -352,11 +367,11 @@ class ColumnGenerator:
             if distribution == 'random':
                 # Random selection with replacement
                 values.append(random.choice(ref_values))
-                
+
             elif distribution == 'sequential':
                 # Cycle through values sequentially
                 values.append(ref_values[i % len(ref_values)])
-                
+
             elif distribution == 'weighted':
                 # If weights are provided, use them
                 weights = column_config.get('weights')
@@ -364,12 +379,132 @@ class ColumnGenerator:
                     # Default to equal weights
                     weights = None
                 values.append(random.choices(ref_values, weights=weights, k=1)[0])
-                
+
             else:
                 self.logger.warning(f"Unknown distribution type: {distribution}, using random")
                 values.append(random.choice(ref_values))
-                
+
+        # Cardinality repair. When bounds are set, post-process the
+        # value list to satisfy per-parent min + max. Note that this
+        # phase reorders / shuffles, so sequential distribution + bounds
+        # do not compose (the sequence is broken by the repair). Bounds
+        # are inherently a global constraint; combine them with random
+        # or weighted when ordering doesn't matter.
+        if min_per_parent > 0 or max_per_parent > 0:
+            values = self._apply_cardinality_bounds(
+                values, ref_values, min_per_parent, max_per_parent,
+            )
+
         return pd.Series(values)
+
+    def _apply_cardinality_bounds(
+        self,
+        values: list,
+        ref_values: list,
+        min_per_parent: int,
+        max_per_parent: int,
+    ) -> list:
+        """Repair a generated value list to honor per-parent cardinality bounds.
+
+        Repair algorithm:
+          1. Free over-max slots: for any parent value above max, mark
+             the excess slot positions for replacement.
+          2. Compute under-min deficits per parent value.
+          3. If the deficit exceeds the over-max free slots, pull donor
+             slots from over-min values (values that have more than
+             min). Each donor can supply at most ``count - min`` slots
+             without violating its own min.
+          4. Build a replacement queue: under-min injections first, any
+             remaining slots filled randomly from eligible parent values
+             (those not yet at max).
+          5. Shuffle + apply to the freed slots.
+
+        Best-effort on impossible constraints (warn, never raise):
+          - ``min * |pool| > num_rows``: cannot satisfy min for every
+            parent; partially satisfy and warn.
+          - All values at max while slots remain: over-fill the pool
+            uniformly and warn (the constraint is unsatisfiable but the
+            caller wanted num_rows back).
+        """
+        from collections import Counter
+        n = len(values)
+        max_eff = max_per_parent if max_per_parent > 0 else n + 1
+        counts = Counter(values)
+        free_slots: list[int] = []
+
+        # 1. Mandatory: free over-max excess slots.
+        for pv in ref_values:
+            if counts[pv] > max_eff:
+                excess = counts[pv] - max_eff
+                indices = [i for i, v in enumerate(values) if v == pv]
+                random.shuffle(indices)
+                free_slots.extend(indices[:excess])
+                counts[pv] = max_eff
+
+        # 2. Compute under-min deficits using post-truncation counts.
+        deficits = {pv: max(0, min_per_parent - counts[pv]) for pv in ref_values}
+        total_deficit = sum(deficits.values())
+
+        # 3. Optional: pull donor slots from over-min values when the
+        #    deficit exceeds what step 1 freed. Each donor pv can give
+        #    up to (counts[pv] - min_per_parent) slots without dropping
+        #    below its own min.
+        if total_deficit > len(free_slots):
+            needed = total_deficit - len(free_slots)
+            already_free = set(free_slots)
+            donor_indices: list[int] = []
+            for pv in ref_values:
+                surplus = counts[pv] - min_per_parent
+                if surplus <= 0:
+                    continue
+                candidates = [
+                    i for i, v in enumerate(values)
+                    if v == pv and i not in already_free
+                ]
+                random.shuffle(candidates)
+                donor_indices.extend(candidates[:surplus])
+            random.shuffle(donor_indices)
+            taken = donor_indices[:needed]
+            for i in taken:
+                counts[values[i]] -= 1
+            free_slots.extend(taken)
+
+        # 4. Build replacement queue: deficits first, then eligible fills.
+        queue: list = []
+        for pv in ref_values:
+            if deficits[pv] > 0:
+                queue.extend([pv] * deficits[pv])
+
+        if len(queue) > len(free_slots):
+            self.logger.warning(
+                f"Cardinality: min_per_parent={min_per_parent} cannot be "
+                f"fully satisfied — would need {len(queue)} injections, only "
+                f"{len(free_slots)} slots available without violating other "
+                f"min bounds. Partial satisfaction."
+            )
+            queue = queue[:len(free_slots)]
+
+        remaining = len(free_slots) - len(queue)
+        if remaining > 0:
+            tally = Counter(counts)
+            for q in queue:
+                tally[q] += 1
+            eligible = [v for v in ref_values if tally[v] < max_eff]
+            if not eligible:
+                self.logger.warning(
+                    f"Cardinality: all values at max_per_parent={max_per_parent}; "
+                    f"over-filling proportionally for {remaining} rows."
+                )
+                eligible = ref_values
+            queue.extend(random.choices(eligible, k=remaining))
+
+        # 5. Apply replacements in shuffled order so the repair doesn't
+        #    bias position.
+        random.shuffle(queue)
+        for slot, replacement in zip(free_slots, queue):
+            values[slot] = replacement
+
+        return values
     
     def _generate_formula_column(self, num_rows: int, column_config: Dict[str, Any],
                                table_name: str, reference_data: Dict[str, pd.DataFrame]) -> pd.Series:
