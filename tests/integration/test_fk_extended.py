@@ -194,6 +194,76 @@ class TestManyToMany:
         # Every pair is a unique (student, course) combination.
         assert len(set(pairs)) == 12, f"cartesian pairs must be distinct: {pairs}"
 
+    def test_weighted_biases_pair_distribution(self, tmp_path):
+        """Tier-4 #21 (2026-05-20): weighted pool_strategy honors
+        per-side weights. With skewed right-side weights, the popular
+        course should dominate the junction output."""
+        cfg = {
+            "mode": "graph",
+            "nodes": [
+                {"id": "students", "kind": "generate",
+                 "config": {"row_count": 5, "columns": {
+                     "id": {"strategy": "sequence", "start": 1},
+                 }}},
+                {"id": "courses", "kind": "generate",
+                 "config": {"row_count": 3, "columns": {
+                     "id": {"strategy": "sequence", "start": 100},
+                 }}},
+                {"id": "enrollments", "kind": "generate",
+                 "config": {"row_count": 200, "columns": {
+                     "student_id": {"strategy": "faker", "faker_type": "word"},
+                     "course_id":  {"strategy": "faker", "faker_type": "word"},
+                 }}},
+                {"id": "tgt_s", "kind": "target.file",
+                 "config": {"output_filename": str(tmp_path / "s.csv"), "format": "csv"}},
+                {"id": "tgt_c", "kind": "target.file",
+                 "config": {"output_filename": str(tmp_path / "c.csv"), "format": "csv"}},
+                {"id": "tgt_e", "kind": "target.file",
+                 "config": {"output_filename": str(tmp_path / "e.csv"), "format": "csv"}},
+            ],
+            "edges": [
+                {"from": "students", "to": "tgt_s"},
+                {"from": "courses",  "to": "tgt_c"},
+                {"from": "enrollments", "to": "tgt_e"},
+            ],
+            "column_relationships": [
+                {"kind": "m2m",
+                 "junction":    {"node": "enrollments", "columns": ["student_id", "course_id"]},
+                 "left_parent":  {"node": "students", "column": "id"},
+                 "right_parent": {"node": "courses",  "column": "id"},
+                 "pool_strategy": "weighted",
+                 # Right side: course 100 is the popular one (weight 95);
+                 # 101 + 102 are unpopular (5 + 0). The output should be
+                 # dominated by course_id=100.
+                 "right_weights": [95.0, 5.0, 0.0],
+                 # Left side: leave weights off -> uniform.
+                },
+            ],
+        }
+        ctx = ExecutionContext(
+            derive_key=make_key_resolver(b"\x42" * 32, "m2m-weighted-test"),
+            pipeline_derive_key=make_key_resolver(b"\x33" * 32, "m2m-weighted-test"),
+        )
+        result, cache = execute_graph_capture(
+            _y(cfg), ctx=ctx,
+            keep_nodes=["students", "courses", "enrollments"],
+        )
+        assert result["success"], f"m2m weighted run failed: {result}"
+        from collections import Counter
+        # Values in the cache round-trip as strings via the CSV target;
+        # normalize to ints so the assertions don't depend on storage type.
+        course_counts = Counter(
+            int(v) for v in _column_values(cache["enrollments"], "course_id")
+        )
+        # Course 100 should dominate (weight 95 out of 100 total).
+        assert course_counts[100] > course_counts[101] * 5, (
+            f"weighted m2m didn't bias toward course 100: {course_counts}"
+        )
+        # Course 102 (weight 0) should never appear.
+        assert course_counts.get(102, 0) == 0, (
+            f"zero-weight course leaked into output: {course_counts}"
+        )
+
 
 class TestMultiParentFK:
     """Composite-key FK: parent: [...] array form."""

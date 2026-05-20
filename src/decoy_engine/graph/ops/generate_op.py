@@ -521,16 +521,21 @@ def _emit_m2m_junction(
         left_parent:  { node: <l_node>,  column: <l_col> }
         right_parent: { node: <r_node>,  column: <r_col> }
         pool_strategy: cartesian | sampled | weighted   # default cartesian
+        left_weights:  [w1, w2, ...]   # optional; parallel to left_pool
+        right_weights: [w1, w2, ...]   # optional; parallel to right_pool
 
     Pool strategies:
       - cartesian: every (left, right) pair gets one row. row_count is
         ignored — output has `len(left_pool) * len(right_pool)` rows.
       - sampled:   pick `row_count` random pairs from the cartesian
-        product. Same input keys -> same picks (HMAC-deterministic
-        per-row index inside ColumnGenerator's reference path).
-      - weighted:  not yet supported as a distinct path; falls back
-        to sampled. Future: take a weights column from one of the
-        parents.
+        product, uniform per side. Same input keys -> same picks
+        (HMAC-deterministic per-row index).
+      - weighted:  pick `row_count` random pairs but bias each side by
+        its weights list. Operators control per-pool popularity (e.g.
+        which courses are popular, which students enroll most). Falls
+        back to uniform when weights aren't provided or don't match
+        the parent pool length. Same deterministic seed pattern as
+        sampled.
 
     Mutates `out` in place by writing the two junction columns. Also
     populates fk_metrics for the manifest assembler.
@@ -573,21 +578,74 @@ def _emit_m2m_junction(
                 left_vals.append(lv)
                 right_vals.append(rv)
     else:
-        # sampled (and weighted, which falls back to sampled today).
-        # Use the row index as the HMAC seed for deterministic pair
-        # picks. Same pipeline key + same row index -> same pair.
+        # sampled or weighted: deterministic pair picks. We HMAC the
+        # row index to get the indices, with the bias step applied
+        # when pool_strategy is "weighted" and a usable weights list
+        # is present for that side.
         import hashlib
         import hmac
 
         n_left = len(left_pool)
         n_right = len(right_pool)
         seed_bytes = f"m2m:{current_node_id}:{left_col_out}:{right_col_out}".encode()
+
+        # Pre-compute weighted cumulative indices when weights are
+        # supplied + valid. The CDF lets us map a uniform [0, total)
+        # draw to a weighted pool index via bisect_right. Falling back
+        # to None means "use uniform modulo" — matches sampled.
+        def _cdf_or_none(weights, n: int) -> tuple[list[float], float] | None:
+            if not isinstance(weights, list):
+                return None
+            if len(weights) != n:
+                if logger:
+                    logger.warning(
+                        f"m2m {pool_strategy} weights length {len(weights)} "
+                        f"doesn't match pool size {n}; falling back to uniform "
+                        f"for this side"
+                    )
+                return None
+            # Coerce to floats; drop negatives + non-numerics by zeroing.
+            cdf: list[float] = []
+            running = 0.0
+            for w in weights:
+                try:
+                    wf = float(w)
+                except (TypeError, ValueError):
+                    wf = 0.0
+                if wf < 0:
+                    wf = 0.0
+                running += wf
+                cdf.append(running)
+            if running <= 0:
+                if logger:
+                    logger.warning(
+                        f"m2m {pool_strategy} weights sum to 0; falling back to uniform"
+                    )
+                return None
+            return cdf, running
+
+        left_cdf: tuple[list[float], float] | None = None
+        right_cdf: tuple[list[float], float] | None = None
+        if pool_strategy == "weighted":
+            left_cdf = _cdf_or_none(spec.get("left_weights"), n_left)
+            right_cdf = _cdf_or_none(spec.get("right_weights"), n_right)
+
+        import bisect
+        def _pick(cdf: tuple[list[float], float] | None, n: int, mac_bytes: bytes) -> int:
+            if cdf is None:
+                return int.from_bytes(mac_bytes[:4], "big") % n
+            # Uniform draw in [0, total) from the high-entropy mac slice.
+            draw = (int.from_bytes(mac_bytes[:8], "big") / 2**64) * cdf[1]
+            return bisect.bisect_right(cdf[0], draw)
+
         left_vals = []
         right_vals = []
         for i in range(num_rows):
             mac = hmac.new(seed_bytes, str(i).encode(), hashlib.sha256).digest()
-            li = int.from_bytes(mac[:4], "big") % n_left
-            ri = int.from_bytes(mac[4:8], "big") % n_right
+            li = _pick(left_cdf,  n_left,  mac[:8])
+            ri = _pick(right_cdf, n_right, mac[8:16])
+            if li >= n_left:  li = n_left - 1
+            if ri >= n_right: ri = n_right - 1
             left_vals.append(left_pool[li])
             right_vals.append(right_pool[ri])
 
