@@ -286,7 +286,33 @@ class CODES:
     FK_PARALLEL_BRANCHES = "fk.parallel_branches"        # validation, warning (advisory)
     FK_STRATEGY_COERCED = "fk.strategy_coerced"          # validation, warning (advisory)
     FK_NONDETERMINISTIC_MASK = "fk.nondeterministic_mask"  # validation, warning (advisory; error under DECOY_FK_STRICT_DETERMINISM=1)
-    FK_SELF_REFERENCE = "fk.self_reference"              # validation, error (V2 will lift)
+    # Self-reference: parent.node == child.node. V1 supported when
+    # child.column != parent.column (engine reads pool from in-flight
+    # output instead of pool_resolver). V1 rejects same-column
+    # self-edges (FK_SELF_CYCLE) and longer column cycles within one
+    # node (a -> b, b -> a).
+    FK_SELF_REFERENCE = "fk.self_reference"              # legacy: kept for back-compat (now a warning when child.column != parent.column; previously a hard error)
+    FK_SELF_CYCLE = "fk.self_cycle"                      # validation, error (cycle within one node's column relationships)
+
+    # Many-to-many junction kind. Engine accepts `kind: m2m` with
+    # left_parent + right_parent + junction columns; rejects unknown
+    # parent nodes / columns / missing junction columns the same way
+    # the kind: fk path does.
+    FK_M2M_UNKNOWN_NODE = "fk.m2m_unknown_node"          # validation, error
+    FK_M2M_UNKNOWN_COLUMN = "fk.m2m_unknown_column"      # validation, error
+    FK_M2M_BAD_POOL = "fk.m2m_bad_pool"                  # validation, error (unsupported pool_strategy)
+
+    # Composite / multi-parent FK: parent: [...] array form for
+    # junction-style FKs where a single child column references two
+    # parents jointly. Engine accepts; validator checks all parents
+    # resolve. (Sprint C.2 stub today; full support shipped here.)
+    FK_MULTI_PARENT_BAD_SHAPE = "fk.multi_parent_bad_shape"  # validation, error
+
+    # PK uniqueness: a column marked primary_key has duplicate values
+    # in the output. Hard error in strict, warning otherwise (some
+    # generation strategies — faker — can produce duplicates by
+    # chance; operators may want to tolerate when sample size is small).
+    PK_DUPLICATES = "pk.duplicates"                      # runtime, error in strict / warning otherwise
 
     # Generic catch-all for validators that haven't been migrated yet.
     # New gates should add a specific code rather than reusing this.

@@ -187,14 +187,86 @@ class TestParentAfterChild:
 
 
 class TestSelfReference:
-    def test_self_reference_rejected_in_v1(self):
+    def test_same_column_self_edge_is_cycle(self):
+        # Same column referenced as both parent and child on one node.
+        # Engine treats this as a cycle — there's no valid resolution
+        # order. Validator should reject with fk.self_cycle.
         yaml = _base_two_table_graph().replace(
             "child: {node: mask_2, column: customer_id}",
             "child: {node: mask_1, column: id}",
         )
         res = validate_graph_full(yaml)
         codes = [e.code for e in res.errors]
-        assert CODES.FK_SELF_REFERENCE in codes
+        assert CODES.FK_SELF_CYCLE in codes
+
+    def test_self_reference_between_columns_accepted(self):
+        # Self-FK between TWO columns of the same node (e.g.,
+        # employees.manager_id -> employees.id) is the supported
+        # pattern. Validator passes; generate_op resolves the pool
+        # from in-flight output at apply time.
+        import textwrap
+        yaml = textwrap.dedent("""
+            mode: graph
+            nodes:
+              - id: src
+                kind: source.file
+                config: {path: e.csv, format: csv}
+              - id: mask_1
+                kind: mask
+                config:
+                  columns:
+                    id: {strategy: hash}
+                    manager_id: {strategy: hash}
+              - id: tgt
+                kind: target.file
+                config: {output_filename: out.csv, format: csv}
+            edges:
+              - {from: src, to: mask_1}
+              - {from: mask_1, to: tgt}
+            column_relationships:
+              - kind: fk
+                parent: {node: mask_1, column: id}
+                child:  {node: mask_1, column: manager_id}
+        """)
+        res = validate_graph_full(yaml)
+        # Filter for FK-related errors only — other validators may
+        # emit unrelated warnings about the test fixture.
+        fk_errors = [e for e in res.errors if e.code.startswith("fk.")]
+        assert not fk_errors, f"unexpected FK errors: {fk_errors}"
+
+    def test_column_cycle_within_one_node_rejected(self):
+        # Two self-FK entries forming a cycle: (a -> b) AND (b -> a).
+        # Neither can resolve at apply time; validator rejects.
+        import textwrap
+        yaml = textwrap.dedent("""
+            mode: graph
+            nodes:
+              - id: src
+                kind: source.file
+                config: {path: e.csv, format: csv}
+              - id: mask_1
+                kind: mask
+                config:
+                  columns:
+                    a: {strategy: hash}
+                    b: {strategy: hash}
+              - id: tgt
+                kind: target.file
+                config: {output_filename: out.csv, format: csv}
+            edges:
+              - {from: src, to: mask_1}
+              - {from: mask_1, to: tgt}
+            column_relationships:
+              - kind: fk
+                parent: {node: mask_1, column: a}
+                child:  {node: mask_1, column: b}
+              - kind: fk
+                parent: {node: mask_1, column: b}
+                child:  {node: mask_1, column: a}
+        """)
+        res = validate_graph_full(yaml)
+        codes = [e.code for e in res.errors]
+        assert CODES.FK_SELF_CYCLE in codes
 
 
 class TestParallelBranchesStrictMode:
@@ -256,6 +328,143 @@ class TestNondeterministicMask:
         # is deterministic — the FK roundtrips cleanly.
         assert CODES.FK_NONDETERMINISTIC_MASK not in codes
         assert CODES.FK_NONDETERMINISTIC_MASK not in warning_codes
+
+
+class TestManyToMany:
+    def test_m2m_accepted_when_well_formed(self):
+        yaml = textwrap.dedent("""
+            mode: graph
+            nodes:
+              - id: students__gen
+                kind: generate
+                config:
+                  row_count: 10
+                  columns:
+                    id: {strategy: sequence, start: 1}
+              - id: courses__gen
+                kind: generate
+                config:
+                  row_count: 5
+                  columns:
+                    id: {strategy: sequence, start: 100}
+              - id: enrollments
+                kind: generate
+                config:
+                  row_count: 25
+                  columns:
+                    student_id: {strategy: faker, faker_type: word}
+                    course_id:  {strategy: faker, faker_type: word}
+              - id: tgt
+                kind: target.file
+                config: {output_filename: e.csv, format: csv}
+            edges:
+              - {from: enrollments, to: tgt}
+            column_relationships:
+              - kind: m2m
+                junction:    {node: enrollments, columns: [student_id, course_id]}
+                left_parent:  {node: students__gen, column: id}
+                right_parent: {node: courses__gen,  column: id}
+                pool_strategy: cartesian
+        """)
+        res = validate_graph_full(yaml)
+        fk_errors = [e for e in res.errors if e.code.startswith("fk.")]
+        assert not fk_errors, f"unexpected FK errors: {fk_errors}"
+
+    def test_m2m_bad_pool_strategy_rejected(self):
+        yaml = textwrap.dedent("""
+            mode: graph
+            nodes:
+              - id: a
+                kind: generate
+                config: {row_count: 5, columns: {id: {strategy: sequence, start: 1}}}
+              - id: b
+                kind: generate
+                config: {row_count: 5, columns: {id: {strategy: sequence, start: 1}}}
+              - id: junction
+                kind: generate
+                config:
+                  row_count: 10
+                  columns:
+                    a_id: {strategy: faker, faker_type: word}
+                    b_id: {strategy: faker, faker_type: word}
+              - id: tgt
+                kind: target.file
+                config: {output_filename: j.csv, format: csv}
+            edges:
+              - {from: junction, to: tgt}
+            column_relationships:
+              - kind: m2m
+                junction:    {node: junction, columns: [a_id, b_id]}
+                left_parent:  {node: a, column: id}
+                right_parent: {node: b, column: id}
+                pool_strategy: chaos
+        """)
+        res = validate_graph_full(yaml)
+        codes = [e.code for e in res.errors]
+        assert CODES.FK_M2M_BAD_POOL in codes
+
+
+class TestMultiParentFK:
+    def test_multi_parent_accepted_when_well_formed(self):
+        yaml = textwrap.dedent("""
+            mode: graph
+            nodes:
+              - id: a
+                kind: generate
+                config: {row_count: 5, columns: {id: {strategy: sequence, start: 1}}}
+              - id: b
+                kind: generate
+                config: {row_count: 5, columns: {id: {strategy: sequence, start: 1}}}
+              - id: child
+                kind: generate
+                config:
+                  row_count: 10
+                  columns:
+                    composite_key: {strategy: faker, faker_type: word}
+              - id: tgt
+                kind: target.file
+                config: {output_filename: c.csv, format: csv}
+            edges:
+              - {from: child, to: tgt}
+            column_relationships:
+              - kind: fk
+                parent:
+                  - {node: a, column: id}
+                  - {node: b, column: id}
+                child: {node: child, column: composite_key}
+        """)
+        res = validate_graph_full(yaml)
+        fk_errors = [e for e in res.errors if e.code.startswith("fk.")]
+        assert not fk_errors, f"unexpected FK errors: {fk_errors}"
+
+    def test_multi_parent_single_entry_rejected(self):
+        # Multi-parent needs at least 2 parents in the array form.
+        yaml = textwrap.dedent("""
+            mode: graph
+            nodes:
+              - id: a
+                kind: generate
+                config: {row_count: 5, columns: {id: {strategy: sequence, start: 1}}}
+              - id: child
+                kind: generate
+                config:
+                  row_count: 10
+                  columns:
+                    k: {strategy: faker, faker_type: word}
+              - id: tgt
+                kind: target.file
+                config: {output_filename: c.csv, format: csv}
+            edges:
+              - {from: child, to: tgt}
+            column_relationships:
+              - kind: fk
+                parent:
+                  - {node: a, column: id}
+                child: {node: child, column: k}
+        """)
+        res = validate_graph_full(yaml)
+        codes = [e.code for e in res.errors]
+        assert CODES.FK_MULTI_PARENT_BAD_SHAPE in codes
 
 
 class TestNoBlockNoOp:

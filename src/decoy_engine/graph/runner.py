@@ -413,6 +413,11 @@ def _validate_column_relationships(
             return None
         return col_spec.get("strategy")
 
+    # Self-reference entries collected to detect column cycles within
+    # one node post-loop. Each tuple is (node_id, parent_col, child_col,
+    # path) — we already validated p_col != c_col when appending.
+    self_ref_entries: list[tuple[str, str, str, str]] = []
+
     for i, rel in enumerate(rels):
         path = f"column_relationships[{i}]"
         if not isinstance(rel, dict):
@@ -422,7 +427,17 @@ def _validate_column_relationships(
                 path=path,
             )
             continue
+        # m2m and multi-parent shapes get their own validators below
+        # the main fk loop. Bypass the kind: fk shape check for them.
+        kind = rel.get("kind", "fk")
+        if kind == "m2m":
+            _validate_m2m_entry(rel, path, nodes_by_id, result, CODES)
+            continue
         parent = rel.get("parent") or {}
+        # Multi-parent (parent: [...] array): defer to dedicated validator.
+        if isinstance(parent, list):
+            _validate_multi_parent_entry(rel, path, nodes_by_id, result, CODES)
+            continue
         child = rel.get("child") or {}
         p_node = parent.get("node") if isinstance(parent, dict) else None
         p_col = parent.get("column") if isinstance(parent, dict) else None
@@ -437,13 +452,31 @@ def _validate_column_relationships(
             )
             continue
 
-        # Self-reference: V2.
+        # Self-reference: supported when child.column != parent.column.
+        # The engine reads the pool from the in-flight output buffer
+        # (out[parent_column]) instead of pool_resolver because the
+        # parent column hasn't been cached yet — it's being produced
+        # in the same op invocation. Same-column self-edges (a -> a)
+        # would be a cycle; reject as fk.self_cycle.
         if p_node == c_node:
-            result.add_error(
-                code=CODES.FK_SELF_REFERENCE,
-                message=f"self-references not supported in V1 (parent and child are both {p_node!r})",
-                path=path,
-            )
+            if p_col == c_col:
+                result.add_error(
+                    code=CODES.FK_SELF_CYCLE,
+                    message=(
+                        f"self-edge on the same column is a cycle "
+                        f"({c_node}.{c_col} cannot FK to itself)"
+                    ),
+                    path=path,
+                )
+                continue
+            # Self-reference between two columns within one node:
+            # accepted. Skip the topology + parent-after-child check
+            # below; the column-order check (handled at apply time
+            # via out[parent_column] reads) is the real ordering
+            # constraint.
+            # Column-cycle detection (a->b, b->a within one node)
+            # is captured below after we've collected all entries.
+            self_ref_entries.append((c_node, p_col, c_col, path))
             continue
 
         # Unknown nodes.
@@ -561,6 +594,150 @@ def _validate_column_relationships(
                         message=msg + " (advisory — set DECOY_FK_STRICT_DETERMINISM=1 to block)",
                         path=f"{path}.{side}.column",
                     )
+
+    # ── Post-loop: detect column cycles within a single node ──
+    # When a node has both (a -> b) and (b -> a) self-FK entries, the
+    # apply-time two-pass approach can't satisfy both — they form a
+    # cycle. Single self-edges (a -> b only) are fine; the cycle case
+    # surfaces only when two entries on the same node close the loop.
+    if self_ref_entries:
+        from collections import defaultdict
+        by_node: defaultdict[str, set[tuple[str, str]]] = defaultdict(set)
+        for node_id, p_col, c_col, _ in self_ref_entries:
+            by_node[node_id].add((p_col, c_col))
+        for node_id, pairs in by_node.items():
+            # Direct two-edge cycle: (a, b) AND (b, a) both present.
+            for (p_col, c_col) in pairs:
+                if (c_col, p_col) in pairs:
+                    # Find one of the paths to attach the error to.
+                    for entry in self_ref_entries:
+                        if entry[0] == node_id and entry[1] == p_col and entry[2] == c_col:
+                            result.add_error(
+                                code=CODES.FK_SELF_CYCLE,
+                                message=(
+                                    f"column cycle within node {node_id!r}: "
+                                    f"{p_col!r} -> {c_col!r} and {c_col!r} -> {p_col!r} "
+                                    "both declared; neither can resolve at apply time"
+                                ),
+                                path=entry[3],
+                            )
+                            break
+                    break
+
+
+def _validate_m2m_entry(
+    rel: dict, path: str, nodes_by_id: dict[str, dict], result, CODES,
+) -> None:
+    """Validate a `kind: m2m` (many-to-many junction) column_relationships
+    entry. Shape:
+
+        - kind: m2m
+          junction:    { node: enrollments__gen, columns: [s_id, c_id] }
+          left_parent:  { node: students__mask,  column: id }
+          right_parent: { node: courses__mask,   column: id }
+          pool_strategy: cartesian | sampled | weighted   # default cartesian
+
+    The engine's m2m runtime path (generate_op.py) reads each parent's
+    pool, then emits the junction's two columns by sampling
+    (left, right) pairs according to pool_strategy.
+    """
+    junction = rel.get("junction") or {}
+    left = rel.get("left_parent") or {}
+    right = rel.get("right_parent") or {}
+    j_node = junction.get("node") if isinstance(junction, dict) else None
+    j_cols = junction.get("columns") if isinstance(junction, dict) else None
+    if not j_node or not isinstance(j_cols, list) or len(j_cols) != 2:
+        result.add_error(
+            code=CODES.FK_M2M_BAD_POOL,
+            message="m2m entry needs junction.node + junction.columns (2 columns)",
+            path=path,
+        )
+        return
+    for side, side_dict in (("left_parent", left), ("right_parent", right)):
+        node = side_dict.get("node") if isinstance(side_dict, dict) else None
+        col = side_dict.get("column") if isinstance(side_dict, dict) else None
+        if not node or not col:
+            result.add_error(
+                code=CODES.FK_M2M_UNKNOWN_NODE,
+                message=f"m2m {side} needs node + column",
+                path=f"{path}.{side}",
+            )
+            return
+        if node not in nodes_by_id:
+            result.add_error(
+                code=CODES.FK_M2M_UNKNOWN_NODE,
+                message=f"m2m {side} node {node!r} not in graph",
+                path=f"{path}.{side}.node",
+            )
+            return
+    pool_strategy = rel.get("pool_strategy", "cartesian")
+    if pool_strategy not in ("cartesian", "sampled", "weighted"):
+        result.add_error(
+            code=CODES.FK_M2M_BAD_POOL,
+            message=(
+                f"m2m pool_strategy {pool_strategy!r} unsupported "
+                "(use cartesian | sampled | weighted)"
+            ),
+            path=f"{path}.pool_strategy",
+        )
+
+
+def _validate_multi_parent_entry(
+    rel: dict, path: str, nodes_by_id: dict[str, dict], result, CODES,
+) -> None:
+    """Validate a multi-parent FK entry — `parent` is an array of
+    parent specs instead of a single object. Each entry contributes to
+    a composite-key pool: the child column draws (left_val, right_val,
+    ...) tuples from the joint distribution of parents. Shape:
+
+        - kind: fk
+          parent:
+            - { node: students__mask, column: id }
+            - { node: courses__mask,  column: id }
+          child: { node: enrollments__gen, column: enrollment_key }
+    """
+    parents = rel.get("parent") or []
+    child = rel.get("child") or {}
+    c_node = child.get("node") if isinstance(child, dict) else None
+    c_col = child.get("column") if isinstance(child, dict) else None
+    if not c_node or not c_col:
+        result.add_error(
+            code=CODES.FK_MULTI_PARENT_BAD_SHAPE,
+            message="multi-parent FK missing child.node or child.column",
+            path=path,
+        )
+        return
+    if not isinstance(parents, list) or len(parents) < 2:
+        result.add_error(
+            code=CODES.FK_MULTI_PARENT_BAD_SHAPE,
+            message="multi-parent FK needs parent: [...] with 2+ entries",
+            path=f"{path}.parent",
+        )
+        return
+    for i, p in enumerate(parents):
+        if not isinstance(p, dict):
+            result.add_error(
+                code=CODES.FK_MULTI_PARENT_BAD_SHAPE,
+                message=f"multi-parent entry [{i}] must be a mapping",
+                path=f"{path}.parent[{i}]",
+            )
+            return
+        p_node = p.get("node")
+        p_col = p.get("column")
+        if not p_node or not p_col:
+            result.add_error(
+                code=CODES.FK_MULTI_PARENT_BAD_SHAPE,
+                message=f"multi-parent entry [{i}] needs node + column",
+                path=f"{path}.parent[{i}]",
+            )
+            return
+        if p_node not in nodes_by_id:
+            result.add_error(
+                code=CODES.FK_UNKNOWN_NODE,
+                message=f"multi-parent entry [{i}] parent node {p_node!r} not in graph",
+                path=f"{path}.parent[{i}].node",
+            )
+            return
 
 
 def run_graph(
