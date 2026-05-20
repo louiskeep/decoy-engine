@@ -1,20 +1,18 @@
 """filter -- keep rows that match a predicate.
 
 Config:
-    predicate: str   - e.g. "state == 'CA' and age >= 18"
+    predicate: str   - e.g. "state = 'CA' and age >= 18"
 
 Per Q2 in PIPELINE_GRAPH_GUIDE.md, MVP shipped pandas df.query() syntax.
 
 Phase 3 of the polars-duckdb hybrid plan: NATIVE_ENGINE='polars'. The polars
-implementation uses `pl.SQLContext` which accepts the same boolean-expression
-shape pandas-query supports for our usage (==, !=, <, >, <=, >=, and, or,
-not, parentheses, single-quoted string literals). Documented divergences are
-captured in tests/parity/SEMANTIC_DIFFERENCES.md when a parity test surfaces
-one.
+implementation uses pl.sql_expr() to parse the predicate into a Polars Expr
+and applies it with df.filter(). This avoids SQL string construction: the
+predicate is parsed as an expression tree evaluated against the in-memory
+frame's columns only -- no external table access, no UNION/subquery surface.
 
-SECURITY: 'predicate' is user YAML config concatenated into a Polars
-SQLContext SQL string (in-memory only, no external DB). Medium risk --
-see docs/security/sql-surfaces.md. Fix planned for Sprint 6.
+Sprint 6: replaced pl.SQLContext SQL string construction with pl.sql_expr().
+See docs/security/sql-surfaces.md for the S608 surface history.
 """
 
 from typing import Any
@@ -67,21 +65,15 @@ def _apply_pandas(df: pd.DataFrame, predicate: str) -> pd.DataFrame:
 
 
 def _apply_polars(df, predicate: str):
-    """Evaluate the predicate via Polars' SQLContext.
+    """Evaluate the predicate using the Polars expression API.
 
-    Polars SQL accepts the boolean-expression dialect pandas-query users
-    write -- `state == 'CA' and age >= 18` works as-is. Polars is strict
-    about quoting (single quotes for strings only); the validator already
-    rejected empty / non-string predicates, so the user-facing failure
-    surface here is "the predicate is not valid SQL"."""
+    pl.sql_expr() parses a SQL expression string into a Polars Expr object.
+    Evaluation is scoped to the frame's own columns -- no SQL string is ever
+    constructed, so UNION / stacked-query injection is not possible.
+    """
     import polars as pl
 
     try:
-        # S608: predicate is user YAML config concatenated into SQL.
-        # In-memory Polars SQLContext -- no external DB. Medium risk.
-        # See docs/security/sql-surfaces.md. Fix planned for Sprint 6.
-        sql = f"SELECT * FROM df WHERE {predicate}"  # noqa: S608
-        with pl.SQLContext(df=df, eager=True) as ctx:
-            return ctx.execute(sql)
+        return df.filter(pl.sql_expr(predicate))
     except Exception as exc:
         raise OpError(f"filter predicate failed ({predicate!r}): {exc}") from exc
