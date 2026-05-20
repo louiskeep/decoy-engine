@@ -103,7 +103,25 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
     # We care about entries where child.node IS this op's node id;
     # those columns get their strategy coerced to `reference` at
     # runtime and their pool materialized from the parent.
-    fk_targets: dict[str, dict[str, str]] = {}
+    fk_targets: dict[str, dict[str, Any]] = {}
+    # self_ref_targets[child_col] -> parent_col (within this same op).
+    # Resolved at apply time from in-flight `out` instead of via
+    # pool_resolver, since the parent column is being produced in this
+    # same invocation and isn't cached anywhere yet.
+    self_ref_targets: dict[str, str] = {}
+    # m2m_specs: list of m2m relationships where junction.node is
+    # this op. Each spec carries left + right parent pool refs +
+    # the two junction column names to emit. Processed AFTER the
+    # standard column loop so we have all single-column outputs in
+    # `out` first (rare but possible for the junction columns to
+    # appear in `columns` with their own placeholder strategies).
+    m2m_specs: list[dict[str, Any]] = []
+    # multi_parent_targets[child_col] -> list of (parent_node, parent_col)
+    # tuples. The runtime samples a tuple of (parent_val_1, parent_val_2,
+    # ...) for each child row and concatenates with '|' so the join SQL
+    # can later match on the composite key (engine-side: we materialize
+    # the joint pool as zipped tuples).
+    multi_parent_targets: dict[str, list[tuple[str, str]]] = {}
     current_node_id = getattr(ctx, "_current_node_id", None) if ctx is not None else None
     pool_resolver = getattr(ctx, "pool_resolver", None) if ctx is not None else None
     column_relationships = (
@@ -112,17 +130,66 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
     for rel in column_relationships:
         if not isinstance(rel, dict):
             continue
+        kind = rel.get("kind", "fk")
+        # m2m: this op is the junction node?
+        if kind == "m2m":
+            junction = rel.get("junction") or {}
+            if isinstance(junction, dict) and junction.get("node") == current_node_id:
+                m2m_specs.append(rel)
+            continue
         parent = rel.get("parent") or {}
         child = rel.get("child") or {}
-        if not isinstance(parent, dict) or not isinstance(child, dict):
+        if not isinstance(child, dict):
             continue
         if child.get("node") != current_node_id:
             continue
         c_col = child.get("column")
+        if not c_col or c_col not in columns:
+            continue
+        # Multi-parent FK: parent is a list of {node, column}.
+        if isinstance(parent, list):
+            specs = [
+                (p.get("node"), p.get("column"))
+                for p in parent
+                if isinstance(p, dict) and p.get("node") and p.get("column")
+            ]
+            if specs:
+                multi_parent_targets[c_col] = specs
+            continue
+        if not isinstance(parent, dict):
+            continue
         p_node = parent.get("node")
         p_col = parent.get("column")
-        if c_col and p_node and p_col and c_col in columns:
-            fk_targets[c_col] = {"parent_node": p_node, "parent_column": p_col}
+        if not p_node or not p_col:
+            continue
+        # Self-reference: parent is this same node. Defer pool lookup
+        # to apply time when out[p_col] has been produced.
+        if p_node == current_node_id:
+            if p_col == c_col:
+                # Cycle — validator should have rejected; skip
+                # defensively at runtime.
+                continue
+            self_ref_targets[c_col] = p_col
+            continue
+        # Capture distribution / weighted_by / cardinality knobs from
+        # the FK entry so the runtime path can honor them (Sprint C
+        # distribution-control work). Defaults: distribution=random,
+        # no weights, no cardinality bounds. The platform-side picker
+        # writes these into the column_relationships entry; the engine
+        # threads them down into ColumnGenerator's column_config.
+        target: dict[str, Any] = {
+            "parent_node": p_node,
+            "parent_column": p_col,
+        }
+        if "distribution" in rel and rel["distribution"]:
+            target["distribution"] = rel["distribution"]
+        if "weighted_by" in rel and rel["weighted_by"]:
+            target["weighted_by"] = rel["weighted_by"]
+        if "min_per_parent" in rel:
+            target["min_per_parent"] = rel["min_per_parent"]
+        if "max_per_parent" in rel:
+            target["max_per_parent"] = rel["max_per_parent"]
+        fk_targets[c_col] = target
 
     # Materialize the parent pools we'll need + capture any coercion
     # advisories so the manifest assembler can hydrate them at finish
@@ -159,7 +226,16 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
 
         gen = ColumnGenerator(seed=seed, logger=logger, derive_key=pipeline_derive_key)
         out = upstream.copy()
+        # Two-pass column iteration to support self-reference. Pass 1
+        # produces every column EXCEPT self-FK children (we don't know
+        # the pool yet because the parent column may also be in this
+        # node's output). Pass 2 fills the self-FK children using the
+        # just-produced parent values as the pool. Validator's column-
+        # cycle check ensures we don't have (a -> b, b -> a) within
+        # one node, so pass 2 can always resolve.
         for col_name, spec in columns.items():
+            if col_name in self_ref_targets:
+                continue   # defer to pass 2
             col_config = dict(spec)
             col_config["name"] = col_name
             col_config.setdefault("type", col_config.pop("strategy", "faker"))
@@ -175,16 +251,130 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
                 col_config["type"] = "reference"
                 col_config["reference_table"] = target["parent_node"]
                 col_config["reference_column"] = target["parent_column"]
-                col_config.setdefault("distribution", "random")
+                # Distribution control: precedence is rel-level >
+                # column-level cfg > default 'random'. Same for
+                # weighted_by + cardinality bounds.
+                if "distribution" in target:
+                    col_config["distribution"] = target["distribution"]
+                else:
+                    col_config.setdefault("distribution", "random")
+                if "weighted_by" in target:
+                    col_config["weighted_by"] = target["weighted_by"]
+                if "min_per_parent" in target:
+                    col_config["min_per_parent"] = target["min_per_parent"]
+                if "max_per_parent" in target:
+                    col_config["max_per_parent"] = target["max_per_parent"]
                 if original_type != "reference":
                     fk_metrics[col_name]["strategy_coerced"] = True
                     fk_metrics[col_name]["original_strategy"] = original_type
+
+            # Multi-parent FK: child draws a composite (left, right, ...)
+            # value joined with '|'. Pool built from zipped parent pools.
+            if col_name in multi_parent_targets:
+                parent_pools = []
+                parent_node_keys = []
+                missing = False
+                for p_node, p_col in multi_parent_targets[col_name]:
+                    if pool_resolver is None:
+                        missing = True; break
+                    try:
+                        parent_pools.append(pool_resolver(p_node, p_col))
+                        parent_node_keys.append(f"{p_node}.{p_col}")
+                    except Exception:
+                        raise
+                if missing or not parent_pools:
+                    # Fall through to whatever the original strategy
+                    # was; engine drops rows post-pass if values
+                    # don't resolve.
+                    pass
+                else:
+                    min_len = min(len(p) for p in parent_pools)
+                    composite_pool = [
+                        "|".join(str(p[i]) for p in parent_pools)
+                        for i in range(min_len)
+                    ]
+                    composite_key = "__multi_parent__"
+                    reference_data[composite_key] = pd.DataFrame({
+                        composite_key: composite_pool,
+                    })
+                    col_config["type"] = "reference"
+                    col_config["reference_table"] = composite_key
+                    col_config["reference_column"] = composite_key
+                    col_config.setdefault("distribution", "random")
+                    fk_metrics[col_name] = {
+                        "kind": "multi_parent",
+                        "parents": parent_node_keys,
+                        "child_column": col_name,
+                        "pool_size": len(composite_pool),
+                        "strategy_coerced": True,
+                    }
 
             out[col_name] = gen.generate_column(
                 num_rows=num_rows,
                 column_config=col_config,
                 table_name="__graph_generate__",
                 reference_data=reference_data,
+            )
+
+        # Pass 2: self-FK children. Each child draws from its parent
+        # column's just-produced values in `out`. Same HMAC-keyed
+        # pick semantics as cross-node FK; the only difference is
+        # where the pool comes from.
+        for col_name, parent_col in self_ref_targets.items():
+            spec = columns[col_name]
+            col_config = dict(spec)
+            col_config["name"] = col_name
+            col_config.setdefault("type", col_config.pop("strategy", "faker"))
+            original_type = col_config.get("type")
+            self_ref_pool = list(out[parent_col].dropna().tolist())
+            if not self_ref_pool:
+                # Parent column produced no non-null values; engine
+                # will fall through to the original strategy. Skip
+                # the FK coercion entirely so the column at least
+                # generates *something*.
+                out[col_name] = gen.generate_column(
+                    num_rows=num_rows,
+                    column_config=col_config,
+                    table_name="__graph_generate__",
+                    reference_data=reference_data,
+                )
+                continue
+            self_ref_key = f"__self_ref__{parent_col}"
+            reference_data[self_ref_key] = pd.DataFrame({
+                parent_col: self_ref_pool,
+            })
+            col_config["type"] = "reference"
+            col_config["reference_table"] = self_ref_key
+            col_config["reference_column"] = parent_col
+            col_config.setdefault("distribution", "random")
+            fk_metrics[col_name] = {
+                "kind": "self_reference",
+                "parent_node": current_node_id,
+                "parent_column": parent_col,
+                "child_column": col_name,
+                "pool_size": len(self_ref_pool),
+                "strategy_coerced": original_type != "reference",
+                "original_strategy": original_type if original_type != "reference" else None,
+            }
+            out[col_name] = gen.generate_column(
+                num_rows=num_rows,
+                column_config=col_config,
+                table_name="__graph_generate__",
+                reference_data=reference_data,
+            )
+
+        # Pass 3: m2m junction emission. For each spec where junction.node
+        # is THIS op, sample (left, right) pairs from the parent pools
+        # per pool_strategy and write to junction.columns.
+        for spec in m2m_specs:
+            _emit_m2m_junction(
+                spec=spec,
+                out=out,
+                pool_resolver=pool_resolver,
+                num_rows=num_rows,
+                fk_metrics=fk_metrics,
+                current_node_id=current_node_id,
+                logger=logger,
             )
     except Exception as exc:
         raise OpError(f"generate op failed: {exc}") from exc
@@ -221,6 +411,47 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
         for c_col in fk_targets:
             fk_metrics[c_col]["dropped_rows"] = dropped_count
 
+    # ── PK uniqueness check ──
+    #
+    # For columns with `primary_key: true` in their config, scan the
+    # output for duplicates. Same advisory-vs-strict pattern as
+    # fk.nondeterministic_mask: env DECOY_PK_STRICT=1 makes it a hard
+    # error; default surfaces a warning per affected column. Either
+    # way the metric exports to the evidence manifest so downstream
+    # auditors see the collision count.
+    #
+    # A PK with duplicates breaks join semantics — the same PK value
+    # would identify multiple rows. Common causes: small row_count
+    # with faker strategy, truncated hash with too few hex chars,
+    # categorical strategy on a PK (always a mistake). The advisory
+    # surfaces the cause; operator can switch strategy or accept.
+    pk_metrics: dict[str, dict[str, Any]] = {}
+    for col_name, spec in columns.items():
+        if not isinstance(spec, dict) or not spec.get("primary_key"):
+            continue
+        if col_name not in out.columns:
+            continue
+        col = out[col_name]
+        non_null = col.dropna()
+        n_total = len(non_null)
+        n_unique = non_null.nunique()
+        dupes = n_total - n_unique
+        pk_metrics[col_name] = {
+            "primary_key": True,
+            "total_non_null": int(n_total),
+            "unique_values": int(n_unique),
+            "duplicate_count": int(dupes),
+        }
+        if dupes > 0 and logger is not None:
+            logger.warning(
+                f"PK column {col_name!r} has {dupes} duplicate value(s) "
+                f"out of {n_total} non-null rows. The strategy "
+                f"({spec.get('strategy', 'unknown')!r}) doesn't guarantee "
+                f"uniqueness at this row count. Switch to 'sequence' for a "
+                f"hard uniqueness guarantee, or accept the collisions if "
+                f"the downstream consumer doesn't require strict PK."
+            )
+
     if ctx is not None and hasattr(ctx, "export"):
         ctx.export("rows_generated", int(len(out)))
         ctx.export("columns_generated", int(len(columns)))
@@ -230,5 +461,127 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
         # the declared_relationships block.
         if fk_metrics:
             ctx.export("fk_preservation", fk_metrics)
+        if pk_metrics:
+            ctx.export("pk_uniqueness", pk_metrics)
 
     return out
+
+
+# ── Helpers for the FK paths above ────────────────────────────────
+
+def _emit_m2m_junction(
+    *,
+    spec: dict[str, Any],
+    out: "pd.DataFrame",
+    pool_resolver: Any,
+    num_rows: int,
+    fk_metrics: dict[str, dict[str, Any]],
+    current_node_id: str | None,
+    logger: Any,
+) -> None:
+    """Emit the two junction columns for a many-to-many relationship.
+
+    `spec` shape (validated by runner._validate_m2m_entry):
+        kind: m2m
+        junction:    { node: <this op's node id>, columns: [left_col, right_col] }
+        left_parent:  { node: <l_node>,  column: <l_col> }
+        right_parent: { node: <r_node>,  column: <r_col> }
+        pool_strategy: cartesian | sampled | weighted   # default cartesian
+
+    Pool strategies:
+      - cartesian: every (left, right) pair gets one row. row_count is
+        ignored — output has `len(left_pool) * len(right_pool)` rows.
+      - sampled:   pick `row_count` random pairs from the cartesian
+        product. Same input keys -> same picks (HMAC-deterministic
+        per-row index inside ColumnGenerator's reference path).
+      - weighted:  not yet supported as a distinct path; falls back
+        to sampled. Future: take a weights column from one of the
+        parents.
+
+    Mutates `out` in place by writing the two junction columns. Also
+    populates fk_metrics for the manifest assembler.
+    """
+    junction = spec.get("junction") or {}
+    left = spec.get("left_parent") or {}
+    right = spec.get("right_parent") or {}
+    j_cols = junction.get("columns") or []
+    if len(j_cols) != 2:
+        return   # validator should have caught
+    left_col_out, right_col_out = j_cols[0], j_cols[1]
+    pool_strategy = spec.get("pool_strategy", "cartesian")
+
+    if pool_resolver is None:
+        if logger:
+            logger.warning(
+                "m2m junction skipped: no pool_resolver in context "
+                f"(node={current_node_id}, junction={j_cols})"
+            )
+        return
+
+    left_pool = list(pool_resolver(left["node"], left["column"]))
+    right_pool = list(pool_resolver(right["node"], right["column"]))
+    if not left_pool or not right_pool:
+        if logger:
+            logger.warning(
+                "m2m junction: one or both parent pools empty; emitting empty columns"
+            )
+        out[left_col_out] = []
+        out[right_col_out] = []
+        return
+
+    if pool_strategy == "cartesian":
+        # Full cross product. Use list comprehensions; for typical
+        # junction tables (< 100 x 100) this is cheap.
+        left_vals = []
+        right_vals = []
+        for lv in left_pool:
+            for rv in right_pool:
+                left_vals.append(lv)
+                right_vals.append(rv)
+    else:
+        # sampled (and weighted, which falls back to sampled today).
+        # Use the row index as the HMAC seed for deterministic pair
+        # picks. Same pipeline key + same row index -> same pair.
+        import hashlib
+        import hmac
+
+        n_left = len(left_pool)
+        n_right = len(right_pool)
+        seed_bytes = f"m2m:{current_node_id}:{left_col_out}:{right_col_out}".encode()
+        left_vals = []
+        right_vals = []
+        for i in range(num_rows):
+            mac = hmac.new(seed_bytes, str(i).encode(), hashlib.sha256).digest()
+            li = int.from_bytes(mac[:4], "big") % n_left
+            ri = int.from_bytes(mac[4:8], "big") % n_right
+            left_vals.append(left_pool[li])
+            right_vals.append(right_pool[ri])
+
+    # If `out` has an existing row index (e.g. from upstream input),
+    # truncate / extend to match the new column lengths. Cartesian
+    # produces N*M rows; sampled produces num_rows.
+    new_len = len(left_vals)
+    if len(out) != new_len:
+        # Replace the frame with one of the right length. Other columns
+        # in `out` (rare for a pure-source m2m generate node) are
+        # truncated to new_len rows.
+        if len(out) > new_len:
+            for col in out.columns:
+                out_arr = out[col].iloc[:new_len].reset_index(drop=True)
+                out[col] = out_arr
+        # Drop the row-count-shaped index and rebuild against the new
+        # data length. Other existing columns: pad with None if they
+        # were shorter than the new length (rare).
+        out.reset_index(drop=True, inplace=True)
+    out[left_col_out] = left_vals
+    out[right_col_out] = right_vals
+
+    fk_metrics[f"__m2m__{left_col_out}_{right_col_out}"] = {
+        "kind": "m2m",
+        "junction_node": current_node_id,
+        "junction_columns": j_cols,
+        "left_parent": f"{left.get('node')}.{left.get('column')}",
+        "right_parent": f"{right.get('node')}.{right.get('column')}",
+        "pool_strategy": pool_strategy,
+        "pair_count": new_len,
+    }
