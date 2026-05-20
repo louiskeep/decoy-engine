@@ -103,6 +103,27 @@ def test_bucketize_5_years_range(mock_logger):
     assert list(out) == ['0-4', '5-9', '10-14', '20-24']
 
 
+def test_bucketize_extended_presets(mock_logger):
+    """New presets added by the 2026-05-20 audit cover common time-axis
+    + currency-axis buckets. Verify each preset resolves to the documented
+    width."""
+    strat = BucketizeStrategy(seed=0, logger=mock_logger)
+    cases = [
+        # (preset, input, expected lower-bound output)
+        ('by_year',         pd.Series([0, 1, 7, 12]),          ['0', '1', '7', '12']),
+        ('by_2_years',      pd.Series([0, 1, 3, 7, 12]),       ['0', '0', '2', '6', '12']),
+        ('by_century',      pd.Series([1, 99, 100, 250]),      ['0', '0', '100', '200']),
+        ('by_thousand',     pd.Series([0, 999, 1000, 4500]),   ['0', '0', '1000', '4000']),
+        ('by_ten_thousand', pd.Series([0, 9999, 10000, 75000]),
+                            ['0', '0', '10000', '70000']),
+    ]
+    for preset, column, expected in cases:
+        out = strat.apply(
+            column, {'column': 'v', 'type': 'bucketize', 'preset': preset},
+        )
+        assert list(out) == expected, f"preset={preset!r} produced {list(out)}"
+
+
 def test_bucketize_midpoint_format(mock_logger):
     """`format: midpoint` returns the bucket center. Convenient when
     downstream code expects a single representative number per bucket."""
