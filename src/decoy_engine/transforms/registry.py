@@ -39,8 +39,16 @@ class StrategyManager:
         # Cache for strategy instances
         self._strategy_cache = {}
 
-        keyed = "yes" if derive_key is not None else "no"
-        self.logger.debug(f"Initialized StrategyManager with seed: {seed} (keyed: {keyed})")
+        # Log only the operating mode the strategies will actually use:
+        # in keyed mode the seed is a dormant legacy fallback (covered
+        # by faker_based / categorical / fpe), so it's noise in the
+        # log; in seeded mode the seed value is what drives output.
+        if derive_key is not None:
+            self.logger.debug("Initialized StrategyManager (mode: keyed)")
+        else:
+            self.logger.debug(
+                f"Initialized StrategyManager (mode: seeded, seed: {seed})",
+            )
     
     def get_strategy(self, strategy_type: str) -> BaseMaskingStrategy:
         """
