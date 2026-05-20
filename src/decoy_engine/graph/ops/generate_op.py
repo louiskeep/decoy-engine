@@ -159,6 +159,25 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
             continue
         if not isinstance(parent, dict):
             continue
+        # Custom-provider parent shape (tier-4 audit, 2026-05-20):
+        # parent: {custom_provider: <name>} sources the FK pool from a
+        # registered list-backed custom Faker provider instead of a
+        # pipeline node's output. Bypasses the graph topology check
+        # (custom providers aren't in the DAG) + column-presence check
+        # (no column on a custom provider).
+        custom_provider = parent.get("custom_provider")
+        if custom_provider:
+            target: dict[str, Any] = {"custom_provider": custom_provider}
+            if "distribution" in rel and rel["distribution"]:
+                target["distribution"] = rel["distribution"]
+            if "weights" in rel and rel["weights"]:
+                target["weights"] = rel["weights"]
+            if "min_per_parent" in rel:
+                target["min_per_parent"] = rel["min_per_parent"]
+            if "max_per_parent" in rel:
+                target["max_per_parent"] = rel["max_per_parent"]
+            fk_targets[c_col] = target
+            continue
         p_node = parent.get("node")
         p_col = parent.get("column")
         if not p_node or not p_col:
@@ -179,7 +198,7 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
         # entry; the engine threads them down into ColumnGenerator's
         # column_config under the same names the columns generator
         # already reads (see _generate_reference_column).
-        target: dict[str, Any] = {
+        target = {
             "parent_node": p_node,
             "parent_column": p_col,
         }
@@ -201,6 +220,48 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
     reference_data: dict[str, pd.DataFrame] = {}
     fk_metrics: dict[str, dict[str, Any]] = {}
     for c_col, target in fk_targets.items():
+        # Custom-provider FK: source the pool from the registered
+        # custom Faker provider's values list (tier-4 audit). The
+        # provider must be a list-backed provider (registered via
+        # register_faker_list_provider / load_custom_providers /
+        # platform-side sync_db_custom_faker_providers). Closure-only
+        # providers can't surface their pool — they raise the same
+        # EmptyParentPoolError shape so the operator sees a clear
+        # signal in the manifest + advisory.
+        if "custom_provider" in target:
+            from decoy_engine.internal.helpers import get_custom_faker_provider_values
+            pname = target["custom_provider"]
+            pool = get_custom_faker_provider_values(pname)
+            if not pool:
+                from decoy_engine.exceptions import EmptyParentPoolError
+                raise EmptyParentPoolError(
+                    f"custom provider {pname!r} has no list-backed values "
+                    f"(provider not registered or registered as a closure-only "
+                    f"function — list-backed registration required for FK "
+                    f"pool source)",
+                    parent_node=f"@custom:{pname}",
+                    parent_column="",
+                )
+            # Use a synthetic node-id key so the reference_data lookup
+            # below + the column generator's `reference_table` key
+            # stay self-consistent without colliding with real node
+            # ids. The @custom: prefix is invalid in YAML node ids
+            # (validators reject @ in identifiers), so collision is
+            # impossible.
+            synth_key = f"@custom:{pname}"
+            reference_data[synth_key] = pd.DataFrame({"value": pool})
+            target["parent_node"] = synth_key
+            target["parent_column"] = "value"
+            fk_metrics[c_col] = {
+                "parent_node": synth_key,
+                "parent_column": "value",
+                "child_column": c_col,
+                "pool_size": len(pool),
+                "strategy_coerced": False,
+                "kind": "custom_provider",
+                "custom_provider": pname,
+            }
+            continue
         if pool_resolver is None:
             # Validator should catch this at validation time
             # (column_relationships present + this op has no

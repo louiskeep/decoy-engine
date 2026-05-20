@@ -439,6 +439,14 @@ def _validate_column_relationships(
             _validate_multi_parent_entry(rel, path, nodes_by_id, result, CODES)
             continue
         child = rel.get("child") or {}
+        # Custom-provider parent shape (tier-4 audit): pool sourced
+        # from a registered list-backed custom Faker provider instead
+        # of a pipeline node's output. Skip topology + column-presence
+        # checks (custom providers aren't in the graph). Still verify
+        # the provider name is non-empty and the child is well-formed.
+        if isinstance(parent, dict) and parent.get("custom_provider"):
+            _validate_custom_provider_entry(rel, path, nodes_by_id, result, CODES)
+            continue
         p_node = parent.get("node") if isinstance(parent, dict) else None
         p_col = parent.get("column") if isinstance(parent, dict) else None
         c_node = child.get("node") if isinstance(child, dict) else None
@@ -806,6 +814,91 @@ def _validate_multi_parent_entry(
                 path=f"{path}.parent[{i}].node",
             )
             return
+
+
+def _validate_custom_provider_entry(
+    rel: dict, path: str, nodes_by_id: dict, result, CODES,
+) -> None:
+    """Validate a column_relationships entry whose parent sources the
+    pool from a registered custom Faker provider (parent: {custom_provider:
+    <name>}). Tier-4 audit (2026-05-20).
+
+    Skips topology + column-presence checks for the parent (custom
+    providers aren't in the graph). Still verifies the child node
+    exists + is FK-eligible (mask / generate) + has the named column.
+    The provider-name registration is a runtime check — validator
+    can't verify it because the registry is populated by the platform
+    at run time (filesystem custom_providers/ + DB-backed sync).
+    """
+    from decoy_engine.internal.helpers import list_custom_faker_list_providers
+    parent = rel.get("parent") or {}
+    child = rel.get("child") or {}
+    pname = parent.get("custom_provider")
+    c_node = child.get("node") if isinstance(child, dict) else None
+    c_col = child.get("column") if isinstance(child, dict) else None
+
+    if not pname or not isinstance(pname, str):
+        result.add_error(
+            code=CODES.FK_UNKNOWN_NODE,
+            message="parent.custom_provider must be a non-empty string",
+            path=f"{path}.parent.custom_provider",
+        )
+        return
+    if not c_node or not c_col:
+        result.add_error(
+            code=CODES.FK_UNKNOWN_NODE,
+            message="entry missing child.node / child.column",
+            path=path,
+        )
+        return
+    if c_node not in nodes_by_id:
+        result.add_error(
+            code=CODES.FK_UNKNOWN_NODE,
+            message=f"child node {c_node!r} not present in graph",
+            path=f"{path}.child.node",
+        )
+        return
+    c_node_obj = nodes_by_id[c_node]
+    c_kind = c_node_obj.get("kind", "")
+    if c_kind and c_kind != "mask" and c_kind != "generate":
+        result.add_error(
+            code=CODES.FK_INELIGIBLE_CHILD_KIND,
+            message=(
+                f"child node {c_node!r} has kind {c_kind!r} — only "
+                f"mask + generate nodes can carry an FK at run time."
+            ),
+            path=f"{path}.child.node",
+            node_id=c_node,
+        )
+        return
+    if not _column_in_node(c_node_obj, c_col):
+        result.add_error(
+            code=CODES.FK_UNKNOWN_COLUMN,
+            message=(
+                f"child column {c_col!r} not declared in child {c_node!r} config "
+                f"(kind={c_kind})"
+            ),
+            path=f"{path}.child.column",
+        )
+        return
+    # Provider registration check is best-effort at validation time —
+    # the engine registers providers from filesystem + DB at run time,
+    # so the validator only warns when the provider isn't visible right
+    # now. Run-time `EmptyParentPoolError` is the hard backstop.
+    registered = set(list_custom_faker_list_providers())
+    if pname not in registered:
+        result.add_warning(
+            code=CODES.FK_INELIGIBLE_CHILD_KIND,  # closest existing code; specific code TODO
+            message=(
+                f"custom provider {pname!r} not currently registered "
+                f"(known: {sorted(registered) or '<none loaded>'}); engine "
+                f"will raise empty_parent_pool at run time if it's still "
+                f"missing then. Confirm the provider is loaded via "
+                f"AppSettings or the custom_providers/ filesystem directory."
+            ),
+            path=f"{path}.parent.custom_provider",
+            node_id=c_node,
+        )
 
 
 def run_graph(

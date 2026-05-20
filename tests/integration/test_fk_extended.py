@@ -265,6 +265,59 @@ class TestManyToMany:
         )
 
 
+class TestCustomProviderPool:
+    """parent: {custom_provider: <name>} — FK pool sources from a
+    registered custom Faker provider's value list instead of a pipeline
+    node's output column. Tier-4 audit, 2026-05-20."""
+
+    def test_fk_child_draws_from_custom_provider(self, tmp_path):
+        """A generate child column wired to a custom-provider parent
+        produces values exclusively from that provider's list."""
+        from decoy_engine.internal.helpers import (
+            register_faker_list_provider, unregister_faker_provider,
+        )
+        # Register a small list-backed provider for the test.
+        provider_name = "test_ca_zips"
+        ca_zips = ["94016", "94102", "94110", "95014", "90210"]
+        register_faker_list_provider(provider_name, ca_zips)
+        try:
+            cfg = {
+                "mode": "graph",
+                "nodes": [
+                    {"id": "addresses", "kind": "generate",
+                     "config": {"row_count": 100, "columns": {
+                         "id": {"strategy": "sequence", "start": 1},
+                         "postal_code": {"strategy": "faker", "faker_type": "word"},
+                     }}},
+                    {"id": "tgt", "kind": "target.file",
+                     "config": {"output_filename": str(tmp_path / "a.csv"), "format": "csv"}},
+                ],
+                "edges": [{"from": "addresses", "to": "tgt"}],
+                "column_relationships": [
+                    {"kind": "fk",
+                     "parent": {"custom_provider": provider_name},
+                     "child":  {"node": "addresses", "column": "postal_code"}},
+                ],
+            }
+            ctx = ExecutionContext(
+                derive_key=make_key_resolver(b"\x42" * 32, "cp-test"),
+                pipeline_derive_key=make_key_resolver(b"\x33" * 32, "cp-test"),
+            )
+            result, cache = execute_graph_capture(
+                _y(cfg), ctx=ctx, keep_nodes=["addresses"],
+            )
+            assert result["success"], f"custom-provider FK run failed: {result}"
+            postal = _column_values(cache["addresses"], "postal_code")
+            assert len(postal) == 100
+            # Every value must be from the curated CA zips list.
+            assert set(postal).issubset(set(ca_zips)), (
+                f"postal_code contains values outside CA zips: "
+                f"{set(postal) - set(ca_zips)}"
+            )
+        finally:
+            unregister_faker_provider(provider_name)
+
+
 class TestMultiParentFK:
     """Composite-key FK: parent: [...] array form."""
 

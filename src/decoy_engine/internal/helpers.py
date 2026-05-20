@@ -66,6 +66,13 @@ def hmac_seed(key: bytes, value) -> int:
 
 
 _CUSTOM_FAKER_PROVIDERS: Dict[str, Callable[[Faker], Any]] = {}
+# Side registry of raw values per list-backed provider. Populated by
+# _register_list_provider so the engine's FK pool resolver can read the
+# values directly when a relationship targets custom_provider: <name>
+# (tier-4 audit, 2026-05-20). Closure-only providers (operator-supplied
+# callables that don't come from a list) won't appear here — only list-
+# backed providers expose their pool to the FK channel.
+_CUSTOM_FAKER_PROVIDER_VALUES: Dict[str, List[Any]] = {}
 
 
 def register_faker_provider(name: str, fn: Callable[[Faker], Any]) -> None:
@@ -88,6 +95,43 @@ def unregister_faker_provider(name: str) -> None:
     """Remove a previously registered custom provider. No-op if the name was
     never registered. Mostly useful in tests."""
     _CUSTOM_FAKER_PROVIDERS.pop(name, None)
+    _CUSTOM_FAKER_PROVIDER_VALUES.pop(name, None)
+
+
+def get_custom_faker_provider_values(name: str) -> List[Any] | None:
+    """Return the raw values list backing a list-backed custom provider,
+    or None when the name isn't registered as a list provider.
+
+    Used by the FK pool resolver to source pools from named custom
+    providers (relationship's parent: {custom_provider: <name>} shape).
+    Closure-only providers (registered via register_faker_provider with
+    a non-list function) return None because their values aren't
+    introspectable."""
+    values = _CUSTOM_FAKER_PROVIDER_VALUES.get(name)
+    if values is None:
+        return None
+    return list(values)
+
+
+def list_custom_faker_list_providers() -> List[str]:
+    """Return names of all list-backed custom providers currently
+    registered, sorted. Used by the platform's relationship-authoring
+    UI to populate the "Custom provider" picker for FK pool sources."""
+    return sorted(_CUSTOM_FAKER_PROVIDER_VALUES.keys())
+
+
+def register_faker_list_provider(name: str, values: List[str]) -> None:
+    """Register a custom Faker provider backed by a fixed list of values.
+
+    The provider selects from *values* using the seeded Faker instance, so
+    repeated runs with the same Decoy seed/key path stay deterministic.
+    """
+    if not isinstance(values, list):
+        raise TypeError("custom faker provider values must be a list")
+    frozen = [str(v) for v in values if v is not None]
+    if not frozen:
+        raise ValueError("custom faker provider values must not be empty")
+    _register_list_provider(name, frozen)
 
 
 def load_custom_providers(
@@ -222,12 +266,15 @@ def _register_list_provider(provider_name: str, values: List[str]) -> None:
     The provider function receives the seeded Faker instance so it can use
     ``fake.random.choice`` for deterministic selection — same seed → same
     pick, consistent with every other Faker-backed provider in the engine.
-    """
-    import random as _random
 
+    Also populates _CUSTOM_FAKER_PROVIDER_VALUES so the FK pool resolver
+    can read the values list directly when a relationship targets this
+    provider via parent: {custom_provider: <name>} (tier-4 audit).
+    """
     # Snapshot the list at registration time so later mutations to the
     # caller’s list don’t affect generation behaviour.
     frozen = list(values)
+    _CUSTOM_FAKER_PROVIDER_VALUES[provider_name] = list(frozen)
 
     def _provider(fake: Faker) -> str:
         # Faker’s random attribute is the seeded Random instance — use it
