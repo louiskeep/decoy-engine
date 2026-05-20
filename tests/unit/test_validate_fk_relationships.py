@@ -202,31 +202,32 @@ class TestSelfReference:
     def test_self_reference_between_columns_accepted(self):
         # Self-FK between TWO columns of the same node (e.g.,
         # employees.manager_id -> employees.id) is the supported
-        # pattern. Validator passes; generate_op resolves the pool
-        # from in-flight output at apply time.
+        # pattern when authored on a generate node. Validator passes;
+        # generate_op resolves the pool from in-flight output at apply
+        # time (two-pass within one op). The 2026-05-20 audit added
+        # FK_SELF_REF_INERT to reject the same shape on mask / other
+        # kinds (no two-pass mechanism); this test covers the happy
+        # path on a generate node.
         import textwrap
         yaml = textwrap.dedent("""
             mode: graph
             nodes:
-              - id: src
-                kind: source.file
-                config: {path: e.csv, format: csv}
-              - id: mask_1
-                kind: mask
+              - id: gen_1
+                kind: generate
                 config:
+                  row_count: 10
                   columns:
-                    id: {strategy: hash}
-                    manager_id: {strategy: hash}
+                    id: {strategy: sequence, start: 1, step: 1}
+                    manager_id: {strategy: faker, faker_type: random_int}
               - id: tgt
                 kind: target.file
                 config: {output_filename: out.csv, format: csv}
             edges:
-              - {from: src, to: mask_1}
-              - {from: mask_1, to: tgt}
+              - {from: gen_1, to: tgt}
             column_relationships:
               - kind: fk
-                parent: {node: mask_1, column: id}
-                child:  {node: mask_1, column: manager_id}
+                parent: {node: gen_1, column: id}
+                child:  {node: gen_1, column: manager_id}
         """)
         res = validate_graph_full(yaml)
         # Filter for FK-related errors only — other validators may
@@ -237,32 +238,31 @@ class TestSelfReference:
     def test_column_cycle_within_one_node_rejected(self):
         # Two self-FK entries forming a cycle: (a -> b) AND (b -> a).
         # Neither can resolve at apply time; validator rejects.
+        # Authored on a generate node so the FK_SELF_REF_INERT check
+        # added by the 2026-05-20 audit doesn't fire first.
         import textwrap
         yaml = textwrap.dedent("""
             mode: graph
             nodes:
-              - id: src
-                kind: source.file
-                config: {path: e.csv, format: csv}
-              - id: mask_1
-                kind: mask
+              - id: gen_1
+                kind: generate
                 config:
+                  row_count: 10
                   columns:
-                    a: {strategy: hash}
-                    b: {strategy: hash}
+                    a: {strategy: sequence, start: 1, step: 1}
+                    b: {strategy: faker, faker_type: random_int}
               - id: tgt
                 kind: target.file
                 config: {output_filename: out.csv, format: csv}
             edges:
-              - {from: src, to: mask_1}
-              - {from: mask_1, to: tgt}
+              - {from: gen_1, to: tgt}
             column_relationships:
               - kind: fk
-                parent: {node: mask_1, column: a}
-                child:  {node: mask_1, column: b}
+                parent: {node: gen_1, column: a}
+                child:  {node: gen_1, column: b}
               - kind: fk
-                parent: {node: mask_1, column: b}
-                child:  {node: mask_1, column: a}
+                parent: {node: gen_1, column: b}
+                child:  {node: gen_1, column: a}
         """)
         res = validate_graph_full(yaml)
         codes = [e.code for e in res.errors]
@@ -485,3 +485,196 @@ class TestNoBlockNoOp:
         # No column_relationships block; no FK checks fire.
         assert not any(e.code.startswith("fk.") for e in res.errors)
         assert not any(w.code.startswith("fk.") for w in res.warnings)
+
+
+# ─────────────────────────────────────────── Tier-1 audit (2026-05-20) ──
+
+class TestIneligibleChildKind:
+    """fk.ineligible_child_kind — reject FK declarations whose child is
+    on a node kind that has no runtime hook to rewrite column values
+    (source.*, drop_column, filter, dedupe, etc.). Only mask + generate
+    are valid FK children."""
+
+    def test_source_file_child_rejected(self):
+        # Pre-filter entries with source.file children used to silently
+        # save + run; engine ignored them at apply time. Validator now
+        # surfaces the problem before save.
+        import textwrap
+        yaml = textwrap.dedent("""
+            mode: graph
+            nodes:
+              - id: src_parent
+                kind: source.file
+                config: {path: p.csv, format: csv}
+              - id: mask_parent
+                kind: mask
+                config: {columns: {id: {strategy: hash}}}
+              - id: src_child
+                kind: source.file
+                config: {path: c.csv, format: csv}
+              - id: tgt_p
+                kind: target.file
+                config: {output_filename: p.csv, format: csv}
+              - id: tgt_c
+                kind: target.file
+                config: {output_filename: c.csv, format: csv}
+            edges:
+              - {from: src_parent, to: mask_parent}
+              - {from: mask_parent, to: tgt_p}
+              - {from: src_child, to: tgt_c}
+            column_relationships:
+              - kind: fk
+                parent: {node: mask_parent, column: id}
+                child:  {node: src_child, column: customer_id}
+        """).strip()
+        res = validate_graph_full(yaml)
+        codes = [e.code for e in res.errors]
+        assert CODES.FK_INELIGIBLE_CHILD_KIND in codes
+
+    def test_mask_child_accepted(self):
+        # Sanity: mask children are eligible, no inert-kind error.
+        res = validate_graph_full(_base_two_table_graph())
+        assert not any(
+            e.code == CODES.FK_INELIGIBLE_CHILD_KIND for e in res.errors
+        )
+
+
+class TestSelfRefInert:
+    """fk.self_ref_inert — reject self-references on nodes that don't
+    have the two-pass mechanism. Only generate nodes can carry a
+    self-ref at run time (parent column produced first into the output
+    buffer, child reads from out[parent_column])."""
+
+    def test_self_ref_on_mask_rejected(self):
+        # Mask is per-cell single-pass — no mechanism to derive one
+        # column from another in-flight. Pre-fix the engine silently
+        # ignored these entries.
+        import textwrap
+        yaml = textwrap.dedent("""
+            mode: graph
+            nodes:
+              - id: src
+                kind: source.file
+                config: {path: e.csv, format: csv}
+              - id: mask_1
+                kind: mask
+                config:
+                  columns:
+                    id: {strategy: hash}
+                    manager_id: {strategy: hash}
+              - id: tgt
+                kind: target.file
+                config: {output_filename: out.csv, format: csv}
+            edges:
+              - {from: src, to: mask_1}
+              - {from: mask_1, to: tgt}
+            column_relationships:
+              - kind: fk
+                parent: {node: mask_1, column: id}
+                child:  {node: mask_1, column: manager_id}
+        """).strip()
+        res = validate_graph_full(yaml)
+        codes = [e.code for e in res.errors]
+        assert CODES.FK_SELF_REF_INERT in codes
+
+    def test_self_ref_on_generate_accepted(self):
+        # Generate's two-pass mechanism makes self-ref work; no inert
+        # error should fire.
+        import textwrap
+        yaml = textwrap.dedent("""
+            mode: graph
+            nodes:
+              - id: gen_1
+                kind: generate
+                config:
+                  row_count: 5
+                  columns:
+                    id: {strategy: sequence, start: 1, step: 1}
+                    manager_id: {strategy: faker, faker_type: random_int}
+              - id: tgt
+                kind: target.file
+                config: {output_filename: out.csv, format: csv}
+            edges:
+              - {from: gen_1, to: tgt}
+            column_relationships:
+              - kind: fk
+                parent: {node: gen_1, column: id}
+                child:  {node: gen_1, column: manager_id}
+        """).strip()
+        res = validate_graph_full(yaml)
+        codes = [e.code for e in res.errors]
+        assert CODES.FK_SELF_REF_INERT not in codes
+
+
+class TestSequentialBoundsConflict:
+    """fk.sequential_bounds_conflict — sequential distribution + min/max
+    per-parent cardinality bounds don't compose: the bounds repair
+    phase shuffles placement, breaking the sequence. Surface a warning
+    so the operator picks one or the other."""
+
+    def _build_yaml_with_distribution(
+        self, distribution: str, min_per_parent: int = 0, max_per_parent: int = 0,
+    ) -> str:
+        import textwrap
+        return textwrap.dedent(f"""
+            mode: graph
+            nodes:
+              - id: src_p
+                kind: source.file
+                config: {{path: p.csv, format: csv}}
+              - id: mask_p
+                kind: mask
+                config: {{columns: {{id: {{strategy: hash}}}}}}
+              - id: tgt_p
+                kind: target.file
+                config: {{output_filename: p.csv, format: csv}}
+              - id: gen_c
+                kind: generate
+                config:
+                  row_count: 100
+                  columns:
+                    customer_id: {{strategy: faker, faker_type: random_int}}
+              - id: tgt_c
+                kind: target.file
+                config: {{output_filename: c.csv, format: csv}}
+            edges:
+              - {{from: src_p, to: mask_p}}
+              - {{from: mask_p, to: tgt_p}}
+              - {{from: gen_c, to: tgt_c}}
+            column_relationships:
+              - kind: fk
+                parent: {{node: mask_p, column: id}}
+                child: {{node: gen_c, column: customer_id}}
+                distribution: {distribution}
+                min_per_parent: {min_per_parent}
+                max_per_parent: {max_per_parent}
+        """).strip()
+
+    def test_sequential_with_min_warns(self):
+        res = validate_graph_full(
+            self._build_yaml_with_distribution("sequential", min_per_parent=1)
+        )
+        warn_codes = [w.code for w in res.warnings]
+        assert CODES.FK_SEQUENTIAL_BOUNDS_CONFLICT in warn_codes
+
+    def test_sequential_with_max_warns(self):
+        res = validate_graph_full(
+            self._build_yaml_with_distribution("sequential", max_per_parent=5)
+        )
+        warn_codes = [w.code for w in res.warnings]
+        assert CODES.FK_SEQUENTIAL_BOUNDS_CONFLICT in warn_codes
+
+    def test_sequential_without_bounds_ok(self):
+        res = validate_graph_full(self._build_yaml_with_distribution("sequential"))
+        warn_codes = [w.code for w in res.warnings]
+        assert CODES.FK_SEQUENTIAL_BOUNDS_CONFLICT not in warn_codes
+
+    def test_random_with_bounds_ok(self):
+        # Bounds compose fine with random / weighted; no warning.
+        res = validate_graph_full(
+            self._build_yaml_with_distribution(
+                "random", min_per_parent=1, max_per_parent=5,
+            )
+        )
+        warn_codes = [w.code for w in res.warnings]
+        assert CODES.FK_SEQUENTIAL_BOUNDS_CONFLICT not in warn_codes

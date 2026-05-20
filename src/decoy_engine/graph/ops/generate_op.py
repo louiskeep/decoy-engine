@@ -15,6 +15,7 @@ Two arities supported:
           row count from the upstream df (config.row_count is ignored if input present)
 """
 
+import os
 from typing import Any
 
 import pandas as pd
@@ -415,18 +416,28 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
     # ── PK uniqueness check ──
     #
     # For columns with `primary_key: true` in their config, scan the
-    # output for duplicates. Same advisory-vs-strict pattern as
-    # fk.nondeterministic_mask: env DECOY_PK_STRICT=1 makes it a hard
-    # error; default surfaces a warning per affected column. Either
-    # way the metric exports to the evidence manifest so downstream
-    # auditors see the collision count.
+    # output for duplicates. Tier-1 audit (2026-05-20) flipped the
+    # default from lenient (log + warn) to strict (raise) — a non-unique
+    # PK breaks join semantics downstream (same key identifies multiple
+    # rows), so analytics pipelines shouldn't silently ship them.
     #
-    # A PK with duplicates breaks join semantics — the same PK value
-    # would identify multiple rows. Common causes: small row_count
-    # with faker strategy, truncated hash with too few hex chars,
-    # categorical strategy on a PK (always a mistake). The advisory
-    # surfaces the cause; operator can switch strategy or accept.
+    # Opt-out: DECOY_PK_LENIENT=1 reverts to the old behavior (log a
+    # warning, emit the metric to the manifest, continue). Useful for
+    # one-off scrubs where the operator knows the collisions are fine
+    # (e.g. faker-based PK on a tiny demo dataset).
+    #
+    # Either way the metric exports to the evidence manifest so
+    # downstream auditors see the collision count. Common causes:
+    # small row_count with faker strategy, truncated hash with too
+    # few hex chars, categorical strategy on a PK (always a mistake).
+    pk_lenient = (
+        os.environ.get("DECOY_PK_LENIENT", "")
+        .strip()
+        .lower()
+        in {"1", "true", "yes", "on"}
+    )
     pk_metrics: dict[str, dict[str, Any]] = {}
+    pk_duplicate_failures: list[tuple[str, int, int, str | None]] = []
     for col_name, spec in columns.items():
         if not isinstance(spec, dict) or not spec.get("primary_key"):
             continue
@@ -443,15 +454,16 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
             "unique_values": int(n_unique),
             "duplicate_count": int(dupes),
         }
-        if dupes > 0 and logger is not None:
-            logger.warning(
-                f"PK column {col_name!r} has {dupes} duplicate value(s) "
-                f"out of {n_total} non-null rows. The strategy "
-                f"({spec.get('strategy', 'unknown')!r}) doesn't guarantee "
-                f"uniqueness at this row count. Switch to 'sequence' for a "
-                f"hard uniqueness guarantee, or accept the collisions if "
-                f"the downstream consumer doesn't require strict PK."
-            )
+        if dupes > 0:
+            strategy = spec.get("strategy")
+            if logger is not None:
+                logger.warning(
+                    f"PK column {col_name!r} has {dupes} duplicate value(s) "
+                    f"out of {n_total} non-null rows. The strategy "
+                    f"({strategy!r}) doesn't guarantee uniqueness at this "
+                    f"row count."
+                )
+            pk_duplicate_failures.append((col_name, n_total, n_unique, strategy))
 
     if ctx is not None and hasattr(ctx, "export"):
         ctx.export("rows_generated", int(len(out)))
@@ -464,6 +476,15 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
             ctx.export("fk_preservation", fk_metrics)
         if pk_metrics:
             ctx.export("pk_uniqueness", pk_metrics)
+
+    # Strict PK uniqueness raise (tier-1 audit, 2026-05-20). Done after
+    # the manifest export so even on failure the assembler sees the
+    # collision count — auditors can see why the run aborted, not just
+    # that it did. DECOY_PK_LENIENT=1 skips the raise.
+    if pk_duplicate_failures and not pk_lenient:
+        from decoy_engine.exceptions import PKDuplicatesError
+        col_name, n_total, n_unique, strategy = pk_duplicate_failures[0]
+        raise PKDuplicatesError(col_name, n_total, n_unique, strategy)
 
     return out
 

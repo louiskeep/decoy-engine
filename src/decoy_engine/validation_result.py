@@ -284,15 +284,31 @@ class CODES:
     FK_PARENT_UNRESOLVED = "fk.parent_unresolved"        # runtime, error in strict / warning otherwise
     FK_EMPTY_PARENT_POOL = "fk.empty_parent_pool"        # runtime, error in strict / warning otherwise
     FK_PARALLEL_BRANCHES = "fk.parallel_branches"        # validation, warning (advisory)
-    FK_STRATEGY_COERCED = "fk.strategy_coerced"          # validation, warning (advisory)
     FK_NONDETERMINISTIC_MASK = "fk.nondeterministic_mask"  # validation, warning (advisory; error under DECOY_FK_STRICT_DETERMINISM=1)
+    # Pre-V1 tier-1 audit fixes (2026-05-20):
+    # Reject column_relationships entries whose child / junction node
+    # can't carry the relationship at run time. source.* nodes are
+    # read-only inputs (no engine hook to rewrite their column values);
+    # transforms that don't materialize values (drop_column, filter,
+    # dedupe) likewise have no place for the engine to inject FK pool
+    # lookups. The platform-side panel already warns on these at author
+    # time; this code stops them from saving silently.
+    FK_INELIGIBLE_CHILD_KIND = "fk.ineligible_child_kind"  # validation, error
+    # Distribution-bound composition: sequential ordering + cardinality
+    # bounds don't compose because the bounds repair phase shuffles
+    # placement. Operator gets a clear warning instead of silently
+    # broken ordering at run time.
+    FK_SEQUENTIAL_BOUNDS_CONFLICT = "fk.sequential_bounds_conflict"  # validation, warning
     # Self-reference: parent.node == child.node. V1 supported when
     # child.column != parent.column (engine reads pool from in-flight
     # output instead of pool_resolver). V1 rejects same-column
     # self-edges (FK_SELF_CYCLE) and longer column cycles within one
-    # node (a -> b, b -> a).
+    # node (a -> b, b -> a). Mask + non-generate kinds are inert (no
+    # two-pass mechanism); FK_SELF_REF_INERT rejects those instead of
+    # the engine silently ignoring the entry at run time.
     FK_SELF_REFERENCE = "fk.self_reference"              # legacy: kept for back-compat (now a warning when child.column != parent.column; previously a hard error)
     FK_SELF_CYCLE = "fk.self_cycle"                      # validation, error (cycle within one node's column relationships)
+    FK_SELF_REF_INERT = "fk.self_ref_inert"              # validation, error (self-ref on a node kind that can't two-pass)
 
     # Many-to-many junction kind. Engine accepts `kind: m2m` with
     # left_parent + right_parent + junction columns; rejects unknown

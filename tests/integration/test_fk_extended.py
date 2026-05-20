@@ -285,3 +285,79 @@ class TestPKUniqueness:
         assert "id" in pk_metrics
         assert pk_metrics["id"]["duplicate_count"] == 0
         assert pk_metrics["id"]["unique_values"] == 100
+
+    def test_categorical_pk_strict_default_fails(self, tmp_path, monkeypatch):
+        """Tier-1 audit (2026-05-20): PK duplicates now error by default.
+        A categorical strategy on a PK is guaranteed to collide when
+        row_count > len(categories) — that should fail the run, not
+        silently produce non-unique keys."""
+        # Ensure no leftover env var from another test.
+        monkeypatch.delenv("DECOY_PK_LENIENT", raising=False)
+        cfg = {
+            "mode": "graph",
+            "nodes": [
+                {"id": "synth", "kind": "generate",
+                 "config": {"row_count": 50, "columns": {
+                     "id": {
+                         "strategy": "categorical",
+                         "categories": ["A", "B", "C"],
+                         "primary_key": True,
+                     },
+                 }}},
+                {"id": "tgt", "kind": "target.file",
+                 "config": {"output_filename": str(tmp_path / "u.csv"), "format": "csv"}},
+            ],
+            "edges": [{"from": "synth", "to": "tgt"}],
+        }
+        ctx = ExecutionContext(
+            derive_key=make_key_resolver(b"\x42" * 32, "pk-test"),
+            pipeline_derive_key=make_key_resolver(b"\x33" * 32, "pk-test"),
+        )
+        result, _ = execute_graph_capture(_y(cfg), ctx=ctx, keep_nodes=["synth"])
+        # Run should fail.
+        assert not result["success"]
+        # Inspect the failing node — its error_code should carry pk.duplicates
+        # (translate_engine_error forwards the .code attribute set on
+        # PKDuplicatesError onto the resulting OpError via
+        # _forward_structured_metadata).
+        synth_rec = next(r for r in result["nodes"] if r["node_id"] == "synth")
+        assert synth_rec.get("error_code") == "pk.duplicates", (
+            f"expected error_code pk.duplicates, got "
+            f"error_code={synth_rec.get('error_code')!r} "
+            f"error={synth_rec.get('error')!r}"
+        )
+        # Metric still exported despite the failure so auditors can see why.
+        pk_metrics = synth_rec.get("exports", {}).get("pk_uniqueness", {})
+        assert "id" in pk_metrics
+        assert pk_metrics["id"]["duplicate_count"] > 0
+
+    def test_categorical_pk_lenient_env_passes(self, tmp_path, monkeypatch):
+        """DECOY_PK_LENIENT=1 reverts to the pre-audit behavior: log +
+        manifest export, continue. Useful for one-off scrubs where the
+        operator knows the collisions are tolerated."""
+        monkeypatch.setenv("DECOY_PK_LENIENT", "1")
+        cfg = {
+            "mode": "graph",
+            "nodes": [
+                {"id": "synth", "kind": "generate",
+                 "config": {"row_count": 50, "columns": {
+                     "id": {
+                         "strategy": "categorical",
+                         "categories": ["A", "B", "C"],
+                         "primary_key": True,
+                     },
+                 }}},
+                {"id": "tgt", "kind": "target.file",
+                 "config": {"output_filename": str(tmp_path / "u.csv"), "format": "csv"}},
+            ],
+            "edges": [{"from": "synth", "to": "tgt"}],
+        }
+        ctx = ExecutionContext(
+            derive_key=make_key_resolver(b"\x42" * 32, "pk-test"),
+            pipeline_derive_key=make_key_resolver(b"\x33" * 32, "pk-test"),
+        )
+        result, _ = execute_graph_capture(_y(cfg), ctx=ctx, keep_nodes=["synth"])
+        assert result["success"]
+        synth_rec = next(r for r in result["nodes"] if r["node_id"] == "synth")
+        pk_metrics = synth_rec.get("exports", {}).get("pk_uniqueness", {})
+        assert pk_metrics["id"]["duplicate_count"] > 0

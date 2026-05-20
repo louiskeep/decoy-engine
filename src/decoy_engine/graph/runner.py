@@ -470,10 +470,31 @@ def _validate_column_relationships(
                 )
                 continue
             # Self-reference between two columns within one node:
-            # accepted. Skip the topology + parent-after-child check
-            # below; the column-order check (handled at apply time
-            # via out[parent_column] reads) is the real ordering
-            # constraint.
+            # accepted on generate nodes (two-pass within one op via
+            # out[parent_column]). Mask + transform + source kinds
+            # have no two-pass mechanism (mask is per-cell single-pass;
+            # source columns are read-only). Reject rather than silently
+            # ignoring at run time. The check uses the node's stored
+            # kind; if the node isn't in the graph at all, the unknown-
+            # node branch below catches it.
+            self_node_obj = nodes_by_id.get(c_node)
+            self_kind = (self_node_obj or {}).get("kind")
+            if self_node_obj and self_kind != "generate":
+                result.add_error(
+                    code=CODES.FK_SELF_REF_INERT,
+                    message=(
+                        f"self-reference on {c_node!r} (kind={self_kind!r}) "
+                        f"has no engine effect — only generate nodes have a "
+                        f"two-pass mechanism. Move the self-ref to a generate "
+                        f"node downstream, or use a derive node with a formula "
+                        f"strategy if the value depends on a sibling column."
+                    ),
+                    path=path,
+                )
+                continue
+            # Skip the topology + parent-after-child check below; the
+            # column-order check (handled at apply time via
+            # out[parent_column] reads) is the real ordering constraint.
             # Column-cycle detection (a->b, b->a within one node)
             # is captured below after we've collected all entries.
             self_ref_entries.append((c_node, p_col, c_col, path))
@@ -494,6 +515,49 @@ def _validate_column_relationships(
                 path=f"{path}.child.node",
             )
             continue
+
+        # Child-kind eligibility + sequential-bounds composition checks
+        # (tier-1 audit, 2026-05-20). Run BEFORE the topology + column
+        # checks below because they depend only on the entry itself
+        # (node kind, distribution config), not on graph topology. This
+        # ensures the operator sees these higher-priority misconfiguration
+        # errors even when the FK also has unrelated topology issues.
+        c_kind_early = nodes_by_id[c_node].get("kind", "")
+        if c_kind_early and c_kind_early != "mask" and c_kind_early != "generate":
+            result.add_error(
+                code=CODES.FK_INELIGIBLE_CHILD_KIND,
+                message=(
+                    f"child node {c_node!r} has kind {c_kind_early!r} — only "
+                    f"mask + generate nodes can carry an FK at run time. "
+                    f"source.* nodes are read-only inputs; transforms "
+                    f"like drop_column / filter / dedupe don't materialize "
+                    f"new column values. Move the FK to a downstream mask "
+                    f"or generate node that processes this column."
+                ),
+                path=f"{path}.child.node",
+            )
+            continue
+        rel_distribution_early = rel.get("distribution")
+        rel_min_early = rel.get("min_per_parent")
+        rel_max_early = rel.get("max_per_parent")
+        bounds_set_early = (
+            (isinstance(rel_min_early, int) and rel_min_early > 0)
+            or (isinstance(rel_max_early, int) and rel_max_early > 0)
+        )
+        if rel_distribution_early == "sequential" and bounds_set_early:
+            result.add_warning(
+                code=CODES.FK_SEQUENTIAL_BOUNDS_CONFLICT,
+                message=(
+                    "sequential distribution + cardinality bounds "
+                    "(min_per_parent / max_per_parent) don't compose: "
+                    "the bounds repair phase shuffles placement, breaking "
+                    "the sequence. Pick one or the other — bounds are "
+                    "designed to combine with random / weighted."
+                ),
+                path=path,
+            )
+            # Don't continue — the FK is still authorable, just the
+            # combination is broken; let downstream checks run too.
 
         # Topology: parent must precede child in plan.order.
         if pos_in_order.get(p_node, 0) >= pos_in_order.get(c_node, 0):
@@ -553,6 +617,7 @@ def _validate_column_relationships(
                 ),
                 path=f"{path}.child.column",
             )
+
 
         # Mask determinism: both ends, if they're mask ops, must use a
         # deterministic strategy to preserve the FK. Advisory by
