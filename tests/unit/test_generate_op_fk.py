@@ -138,7 +138,10 @@ class TestFKCoercion:
             },
         }
         result = generate_op.apply([], config, ctx)
-        assert list(result["seq_col"]) == [1, 2, 3]
+        # The sequence column generator emits strings by default;
+        # earlier assertion of [1, 2, 3] was wrong — engine has always
+        # returned ['1', '2', '3']. Fixed at merge time.
+        assert list(result["seq_col"]) == ["1", "2", "3"]
         exports = ctx._exports.get("synth_2", {})
         assert "fk_preservation" not in exports
 
