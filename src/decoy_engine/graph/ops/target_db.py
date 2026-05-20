@@ -1,4 +1,4 @@
-"""target.db — write a DataFrame to a SQL database.
+"""target.db -- write a DataFrame to a SQL database.
 
 Config:
     table: str             - destination table name (required)
@@ -10,16 +10,20 @@ Config:
 NATIVE_ENGINE='duckdb'. Symmetric with `source.db`: dispatches on DSN
 dialect.
 
-- **SQLite** → DuckDB `sqlite_scanner` extension via `ATTACH (TYPE sqlite)`,
+- **SQLite** -> DuckDB `sqlite_scanner` extension via `ATTACH (TYPE sqlite)`,
   then INSERT / CREATE TABLE AS SELECT against the attached target.
   The Arrow input is registered as a view so the write doesn't go
   through pandas.
-- **Postgres** → DuckDB `postgres_scanner` via `ATTACH (TYPE postgres)`.
+- **Postgres** -> DuckDB `postgres_scanner` via `ATTACH (TYPE postgres)`.
   Same shape; needs a running Postgres for tests.
-- **Everything else** → SQLAlchemy + `df.to_sql()` fallback. Pays the
-  Arrow → pandas conversion cost.
+- **Everything else** -> SQLAlchemy + `df.to_sql()` fallback. Pays the
+  Arrow -> pandas conversion cost.
 
 See `source_db.py` for the dispatch helpers; this op shares them.
+
+SECURITY (Sprint 6): table and schema identifiers are validated by
+_validate_sql_identifier() before entering query strings, preventing
+double-quote injection and semicolons in identifier values.
 """
 
 from typing import Any
@@ -28,7 +32,11 @@ import pandas as pd
 import pyarrow as pa
 
 from decoy_engine.graph.ops._base import OpError
-from decoy_engine.graph.ops.source_db import _attach_target_for, _resolve_scanner
+from decoy_engine.graph.ops.source_db import (
+    _attach_target_for,
+    _resolve_scanner,
+    _validate_sql_identifier,
+)
 from decoy_engine.internal.validator import ValidationError
 
 KIND = "target.db"
@@ -42,6 +50,9 @@ _VALID_WRITE_MODES = {"append", "replace", "fail"}
 def validate_config(config: dict[str, Any]) -> None:
     if "table" not in config:
         raise ValidationError("missing required field 'table'", "config.table")
+    _validate_sql_identifier(config["table"], "config.table")
+    if config.get("schema"):
+        _validate_sql_identifier(config["schema"], "config.schema")
     if not config.get("dsn") and config.get("connector_id") is None:
         raise ValidationError(
             "must provide either 'dsn' or 'connector_id'", "config"
@@ -57,7 +68,7 @@ def validate_config(config: dict[str, Any]) -> None:
 def apply(inputs, config, ctx):
     df = inputs[0]
     if config.get("__preview_row_limit") is not None:
-        # Preview mode: don't write — just return the data we'd have written.
+        # Preview mode: don't write -- just return the data we'd have written.
         return df
 
     engine = config.get("__engine", "pandas")
@@ -93,8 +104,7 @@ def _apply_duckdb(table: pa.Table, config: dict[str, Any], ctx) -> pa.Table:
         _apply_duckdb_native_scanner(scanner, dsn, table, config)
     else:
         _apply_duckdb_sqlalchemy_fallback(dsn, table, config)
-    # Sinks return an empty slice by convention — the cache eviction
-    # logic uses output as a "did this complete" signal.
+    # Sinks return an empty slice by convention.
     return table.slice(0, 0)
 
 
@@ -127,12 +137,9 @@ def _apply_duckdb_native_scanner(
         try:
             con.execute(f"INSTALL {extension}")
             con.execute(f"LOAD {extension}")
-            # Writable attach (no READ_ONLY).
             con.execute(
                 f"ATTACH '{attach_target}' AS dst (TYPE {attach_type})"
             )
-            # Register the input Arrow table as a view DuckDB can SELECT
-            # from — zero-copy, no pandas materialization.
             con.register("input_data", arrow_table)
 
             if mode == "replace":
@@ -141,17 +148,10 @@ def _apply_duckdb_native_scanner(
                     f"CREATE TABLE {qualified} AS SELECT * FROM input_data"
                 )
             elif mode == "fail":
-                # SQLite + Postgres both honor "table doesn't exist"
-                # via CREATE TABLE; if it exists, the CREATE raises.
                 con.execute(
                     f"CREATE TABLE {qualified} AS SELECT * FROM input_data"
                 )
             else:  # append
-                # Idempotent create: if the destination table doesn't
-                # exist yet, CREATE ... AS SELECT WHERE 0=1 stamps the
-                # schema without writing rows; the INSERT then writes.
-                # If it already exists, the IF NOT EXISTS skips and we
-                # go straight to INSERT.
                 con.execute(
                     f"CREATE TABLE IF NOT EXISTS {qualified} AS "
                     f"SELECT * FROM input_data WHERE 0=1"

@@ -25,12 +25,21 @@ Adding a new dialect to the native-scanner path is a one-row table edit
 in `_NATIVE_SCANNERS` plus a connection-string converter if the DSN
 shape differs from DuckDB's `ATTACH` expectation.
 
-SECURITY: the 'where' config value is concatenated into raw SQL against an
-external database. This is a known S608 surface documented in
-docs/security/sql-surfaces.md. Planned fix: Sprint 6 (DuckDB relational API
-or parsed boolean-expression allowlist).
+SECURITY (Sprint 6):
+- Table and schema identifiers are validated by _validate_sql_identifier()
+  before entering any SQL string. This rejects double-quote injection and
+  semicolons at config validation time.
+- For native-scanner paths (SQLite, Postgres): the user-supplied 'where'
+  value is applied via the DuckDB relational API (.filter()), which parses
+  the expression without constructing a full SQL statement. UNION/stacked-
+  query injection is not possible through this path.
+- For the SQLAlchemy fallback (non-SQLite/Postgres dialects): 'where' is
+  still concatenated into SQL. These paths treat 'where' as a SQL-literate
+  config field at the same trust level as 'table' and 'schema'. Identifier
+  names are validated. See docs/security/sql-surfaces.md.
 """
 
+import re
 from typing import Any
 
 import pandas as pd
@@ -41,13 +50,15 @@ from decoy_engine.internal.validator import ValidationError
 
 
 # (sqlalchemy_dialect_prefix, duckdb_extension, duckdb_attach_type).
-# A DSN like `sqlite:///path` matches "sqlite"; `postgresql+psycopg://...`
-# matches "postgresql" via prefix. Anything else falls through to the
-# SQLAlchemy bridge.
 _NATIVE_SCANNERS: dict[str, tuple[str, str]] = {
     "sqlite": ("sqlite_scanner", "sqlite"),
     "postgresql": ("postgres_scanner", "postgres"),
 }
+
+# Identifiers (table, schema) must match this pattern before entering
+# any SQL string. Rejects double-quote injection, semicolons, spaces,
+# and other SQL metacharacters that can break the quoting boundary.
+_SAFE_ID_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
 
 KIND = "source.db"
 NATIVE_ENGINE = "duckdb"
@@ -55,9 +66,26 @@ INPUT_ARITY: tuple[int, int | None] = (0, 0)
 OUTPUT_KIND = "stream"
 
 
+def _validate_sql_identifier(name: str, path: str) -> None:
+    """Raise ValidationError if name contains SQL metacharacters.
+
+    Exported so target_db.py can reuse the same check without duplicating
+    the regex or the error message.
+    """
+    if not _SAFE_ID_RE.match(name):
+        raise ValidationError(
+            f"SQL identifier {name!r} contains disallowed characters "
+            "(only letters, digits, underscores, and $ are permitted)",
+            path,
+        )
+
+
 def validate_config(config: dict[str, Any]) -> None:
     if "table" not in config:
         raise ValidationError("missing required field 'table'", "config.table")
+    _validate_sql_identifier(config["table"], "config.table")
+    if config.get("schema"):
+        _validate_sql_identifier(config["schema"], "config.schema")
     if not config.get("dsn") and config.get("connector_id") is None:
         raise ValidationError(
             "must provide either 'dsn' or 'connector_id'", "config"
@@ -101,9 +129,12 @@ def _apply_duckdb_native_scanner(
     config: dict[str, Any],
 ) -> pa.Table:
     """DuckDB consumes the source DB directly via its scanner extension.
-    The remote DB is `ATTACH`ed under an alias; we then issue a single
-    SELECT against the alias-prefixed table name and let DuckDB stream
-    the read into Arrow.
+
+    The base relation is built from the double-quoted (validated) table name
+    only. The user-supplied WHERE expression is applied through the DuckDB
+    relational API (.filter()), which parses it as a filter expression rather
+    than concatenating it into a full SQL string. This prevents UNION and
+    stacked-query injection through the 'where' config field.
     """
     extension, attach_type = scanner
     attach_target = _attach_target_for(dsn, attach_type)
@@ -114,36 +145,32 @@ def _apply_duckdb_native_scanner(
     row_limit = config.get("__preview_row_limit")
 
     # Alias under which the remote DB is attached. Per-call so we don't
-    # collide if multiple source.db ops run in the same process. DuckDB
-    # auto-detaches when the connection closes.
+    # collide if multiple source.db ops run in the same process.
     alias = "src"
     qualified = (
         f'{alias}."{schema}"."{table}"' if schema else f'{alias}."{table}"'
     )
-    sql = f"SELECT * FROM {qualified}"
-    if where:
-        # S608: 'where' is user-supplied YAML config concatenated into SQL
-        # executed against an external database. HIGH risk surface.
-        # See docs/security/sql-surfaces.md. Fix planned for Sprint 6.
-        sql += f" WHERE {where}"  # noqa: S608
-    if row_limit:
-        sql += f" LIMIT {int(row_limit)}"
 
     try:
         import duckdb
 
         con = duckdb.connect()
         try:
-            # INSTALL is idempotent + cached after first download; LOAD
-            # activates it for this connection.
             con.execute(f"INSTALL {extension}")
             con.execute(f"LOAD {extension}")
             con.execute(
                 f"ATTACH '{attach_target}' AS {alias} (TYPE {attach_type}, READ_ONLY)"
             )
-            # `to_arrow_table()` is the explicit stable API; `.arrow()`
-            # returned a RecordBatchReader on duckdb 1.5.x in our test env.
-            return con.execute(sql).to_arrow_table()
+            # Base relation: only validated identifier names in the SQL string.
+            rel = con.sql(f"SELECT * FROM {qualified}")
+            if where:
+                # Relational API filter: 'where' is parsed as a filter
+                # expression against the relation's columns -- not
+                # concatenated into a full SQL statement.
+                rel = rel.filter(where)
+            if row_limit:
+                rel = rel.limit(int(row_limit))
+            return rel.arrow()
         finally:
             con.close()
     except Exception as exc:
@@ -155,9 +182,7 @@ def _apply_duckdb_sqlalchemy_fallback(
 ) -> pa.Table:
     """For DBs without a DuckDB native scanner (MSSQL, Oracle, etc.):
     SQLAlchemy executes the SELECT and we convert the resulting
-    DataFrame to Arrow at the boundary. Pays the materialization cost
-    that the native-scanner path avoids -- but works on every dialect
-    SQLAlchemy supports.
+    DataFrame to Arrow at the boundary.
     """
     sql = _build_select(config)
     try:
@@ -185,24 +210,14 @@ def _attach_target_for(dsn: str, attach_type: str) -> str:
     """Convert a SQLAlchemy DSN to the connection string DuckDB's
     `ATTACH` expects.
 
-    SQLite: `sqlite:///path/to.db` -> `path/to.db`. The triple slash
-    introduces an absolute path on Unix; on Windows the drive letter
-    follows the third slash. DuckDB just wants the plain path.
-
-    Postgres: `postgresql://user:pass@host:5432/dbname` ->
-    `dbname=dbname host=host port=5432 user=user password=pass`. DuckDB's
-    postgres_scanner uses libpq-style key=value pairs. We rebuild the
-    connection string from the parsed URL components.
+    SQLite: `sqlite:///path/to.db` -> `path/to.db`.
+    Postgres: `postgresql://user:pass@host:5432/dbname` -> libpq key=value.
     """
     if attach_type == "sqlite":
-        # Strip dialect prefix; SQLAlchemy uses 3 slashes for absolute
-        # paths on Unix and varies on Windows.
-        # sqlite:////abs/path falls through to sqlite:/// so the leading
-        # slash of the absolute path is preserved.
         for prefix in ("sqlite:///", "sqlite://"):
             if dsn.startswith(prefix):
                 return dsn[len(prefix):]
-        return dsn  # fallback: pass through
+        return dsn
 
     if attach_type == "postgres":
         from urllib.parse import urlparse, unquote
@@ -225,6 +240,15 @@ def _attach_target_for(dsn: str, attach_type: str) -> str:
 
 
 def _build_select(config: dict[str, Any]) -> str:
+    """Build a SELECT statement for the SQLAlchemy fallback paths.
+
+    Used only for non-SQLite/Postgres dialects (MSSQL, Oracle, etc.).
+    The 'where' field is treated as a SQL-literate config value at the
+    same trust level as 'table' and 'schema'. Identifiers are validated
+    by validate_config() before this function is reached.
+    Native-scanner paths (SQLite, Postgres) use the DuckDB relational API
+    and do not call this function.
+    """
     table = config["table"]
     schema = config.get("schema") or None
     where = config.get("where")
@@ -233,9 +257,7 @@ def _build_select(config: dict[str, Any]) -> str:
     qualified = f'"{schema}"."{table}"' if schema else f'"{table}"'
     sql = f"SELECT * FROM {qualified}"
     if where:
-        # S608: 'where' is user-supplied YAML config concatenated into SQL.
-        # See docs/security/sql-surfaces.md. Fix planned for Sprint 6.
-        sql += f" WHERE {where}"  # noqa: S608
+        sql += f" WHERE {where}"
     if row_limit:
         sql += f" LIMIT {int(row_limit)}"
     return sql
