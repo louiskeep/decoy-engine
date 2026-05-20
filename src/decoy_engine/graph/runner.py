@@ -490,6 +490,7 @@ def _validate_column_relationships(
                         f"strategy if the value depends on a sibling column."
                     ),
                     path=path,
+                    node_id=c_node,
                 )
                 continue
             # Skip the topology + parent-after-child check below; the
@@ -535,6 +536,7 @@ def _validate_column_relationships(
                     f"or generate node that processes this column."
                 ),
                 path=f"{path}.child.node",
+                node_id=c_node,
             )
             continue
         rel_distribution_early = rel.get("distribution")
@@ -555,6 +557,7 @@ def _validate_column_relationships(
                     "designed to combine with random / weighted."
                 ),
                 path=path,
+                node_id=c_node,
             )
             # Don't continue — the FK is still authorable, just the
             # combination is broken; let downstream checks run too.
