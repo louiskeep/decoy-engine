@@ -171,20 +171,21 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
                 continue
             self_ref_targets[c_col] = p_col
             continue
-        # Capture distribution / weighted_by / cardinality knobs from
-        # the FK entry so the runtime path can honor them (Sprint C
-        # distribution-control work). Defaults: distribution=random,
-        # no weights, no cardinality bounds. The platform-side picker
-        # writes these into the column_relationships entry; the engine
-        # threads them down into ColumnGenerator's column_config.
+        # Capture distribution / weights / cardinality knobs from the
+        # FK entry so the runtime path can honor them. Defaults:
+        # distribution=random, no weights, no cardinality bounds. The
+        # platform-side picker writes these into the column_relationships
+        # entry; the engine threads them down into ColumnGenerator's
+        # column_config under the same names the columns generator
+        # already reads (see _generate_reference_column).
         target: dict[str, Any] = {
             "parent_node": p_node,
             "parent_column": p_col,
         }
         if "distribution" in rel and rel["distribution"]:
             target["distribution"] = rel["distribution"]
-        if "weighted_by" in rel and rel["weighted_by"]:
-            target["weighted_by"] = rel["weighted_by"]
+        if "weights" in rel and rel["weights"]:
+            target["weights"] = rel["weights"]
         if "min_per_parent" in rel:
             target["min_per_parent"] = rel["min_per_parent"]
         if "max_per_parent" in rel:
@@ -253,13 +254,13 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
                 col_config["reference_column"] = target["parent_column"]
                 # Distribution control: precedence is rel-level >
                 # column-level cfg > default 'random'. Same for
-                # weighted_by + cardinality bounds.
+                # weights + cardinality bounds.
                 if "distribution" in target:
                     col_config["distribution"] = target["distribution"]
                 else:
                     col_config.setdefault("distribution", "random")
-                if "weighted_by" in target:
-                    col_config["weighted_by"] = target["weighted_by"]
+                if "weights" in target:
+                    col_config["weights"] = target["weights"]
                 if "min_per_parent" in target:
                     col_config["min_per_parent"] = target["min_per_parent"]
                 if "max_per_parent" in target:
