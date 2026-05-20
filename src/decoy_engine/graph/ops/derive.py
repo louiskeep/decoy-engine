@@ -10,13 +10,13 @@ at once and lives outside Mask/Generate, so a YAML can compute a column
 without configuring a Mask node just for that one job.
 
 Phase 3 of the polars-duckdb hybrid plan: NATIVE_ENGINE='polars'. The polars
-implementation uses `pl.SQLContext` to evaluate the expression -- pandas-eval
-syntax for arithmetic / boolean is a subset of SQL expressions for the cases
-we actually use (`a + b`, `price * 1.1`, `discount > 0`).
+implementation uses pl.sql_expr() to parse the expression into a Polars Expr
+and applies it with df.with_columns(expr.alias(column)). No SQL string is
+ever constructed -- the expression is evaluated against the frame's columns
+only.
 
-SECURITY: 'expression' is user YAML config concatenated into a Polars
-SQLContext SQL string (in-memory only, no external DB). Medium risk --
-see docs/security/sql-surfaces.md. Fix planned for Sprint 6.
+Sprint 6: replaced pl.SQLContext SQL string construction with pl.sql_expr()
++ df.with_columns(). See docs/security/sql-surfaces.md for the S608 history.
 """
 
 from typing import Any
@@ -65,18 +65,16 @@ def _apply_pandas(df: pd.DataFrame, column: str, expression: str) -> pd.DataFram
 
 
 def _apply_polars(df, column: str, expression: str):
+    """Add or replace `column` with the result of `expression`.
+
+    pl.sql_expr() parses the expression into a Polars Expr; with_columns
+    evaluates it against the original frame before writing the output column,
+    so overwriting an existing column name works correctly.
+    """
     import polars as pl
 
     try:
-        # S608: expression is user YAML config concatenated into SQL.
-        # In-memory Polars SQLContext -- no external DB. Medium risk.
-        # See docs/security/sql-surfaces.md. Fix planned for Sprint 6.
-        # SELECT * preserves all original columns; the computed column is
-        # appended via a SELECT alias. SQLContext quotes the alias so
-        # column names with spaces work.
-        sql = f'SELECT *, ({expression}) AS "{column}" FROM df'  # noqa: S608
-        with pl.SQLContext(df=df, eager=True) as ctx:
-            return ctx.execute(sql)
+        return df.with_columns(pl.sql_expr(expression).alias(column))
     except Exception as exc:
         raise OpError(
             f"derive expression failed for column {column!r} ({expression!r}): {exc}"
