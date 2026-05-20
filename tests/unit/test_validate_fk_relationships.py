@@ -213,12 +213,34 @@ class TestParallelBranchesStrictMode:
 
 class TestNondeterministicMask:
     @pytest.mark.parametrize("bad_strategy", ["redact", "shuffle", "truncate", "passthrough"])
-    def test_nondeterministic_strategy_on_fk_rejected(self, bad_strategy):
+    def test_nondeterministic_strategy_advisory_by_default(self, bad_strategy, monkeypatch):
+        # Sprint A.3 of fk-preservation plan: the gate softens from
+        # hard-reject to advisory by default so one-off scrubs with
+        # redact / shuffle on an FK column don't hard-fail. The
+        # message still fires; severity moves from error -> warning.
+        monkeypatch.delenv("DECOY_FK_STRICT_DETERMINISM", raising=False)
         yaml = _base_two_table_graph(parent_mask_strategy=bad_strategy)
         res = validate_graph_full(yaml)
-        codes = [e.code for e in res.errors]
-        assert CODES.FK_NONDETERMINISTIC_MASK in codes, (
-            f"strategy {bad_strategy!r} must trigger fk.nondeterministic_mask"
+        error_codes = [e.code for e in res.errors]
+        warning_codes = [w.code for w in res.warnings]
+        assert CODES.FK_NONDETERMINISTIC_MASK not in error_codes, (
+            f"strategy {bad_strategy!r} should now be advisory, not error"
+        )
+        assert CODES.FK_NONDETERMINISTIC_MASK in warning_codes, (
+            f"strategy {bad_strategy!r} must still surface the advisory"
+        )
+
+    @pytest.mark.parametrize("bad_strategy", ["redact", "shuffle", "truncate"])
+    def test_nondeterministic_strategy_strict_env_blocks(self, bad_strategy, monkeypatch):
+        # When the operator opts back in to strict determinism via
+        # DECOY_FK_STRICT_DETERMINISM=1, the gate restores hard-reject
+        # behavior for the same strategies.
+        monkeypatch.setenv("DECOY_FK_STRICT_DETERMINISM", "1")
+        yaml = _base_two_table_graph(parent_mask_strategy=bad_strategy)
+        res = validate_graph_full(yaml)
+        error_codes = [e.code for e in res.errors]
+        assert CODES.FK_NONDETERMINISTIC_MASK in error_codes, (
+            f"strategy {bad_strategy!r} must hard-reject under strict env"
         )
 
     @pytest.mark.parametrize("good_strategy", ["hash", "fpe", "faker", "date_shift", "reference"])
@@ -229,7 +251,11 @@ class TestNondeterministicMask:
         )
         res = validate_graph_full(yaml)
         codes = [e.code for e in res.errors]
+        warning_codes = [w.code for w in res.warnings]
+        # Neither an error nor an advisory should fire when the strategy
+        # is deterministic — the FK roundtrips cleanly.
         assert CODES.FK_NONDETERMINISTIC_MASK not in codes
+        assert CODES.FK_NONDETERMINISTIC_MASK not in warning_codes
 
 
 class TestNoBlockNoOp:

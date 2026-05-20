@@ -285,7 +285,7 @@ class CODES:
     FK_EMPTY_PARENT_POOL = "fk.empty_parent_pool"        # runtime, error in strict / warning otherwise
     FK_PARALLEL_BRANCHES = "fk.parallel_branches"        # validation, warning (advisory)
     FK_STRATEGY_COERCED = "fk.strategy_coerced"          # validation, warning (advisory)
-    FK_NONDETERMINISTIC_MASK = "fk.nondeterministic_mask"  # validation, error
+    FK_NONDETERMINISTIC_MASK = "fk.nondeterministic_mask"  # validation, warning (advisory; error under DECOY_FK_STRICT_DETERMINISM=1)
     FK_SELF_REFERENCE = "fk.self_reference"              # validation, error (V2 will lift)
 
     # Generic catch-all for validators that haven't been migrated yet.
