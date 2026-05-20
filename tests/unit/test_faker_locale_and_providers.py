@@ -3,12 +3,19 @@ strategy and the ColumnGenerator. Built to catch the two regressions the
 roadmap entry calls out: a UK / EU / JP locale silently rendering en_US
 output, or a custom provider failing to seed deterministically."""
 
+import json
+
 import pandas as pd
 import pytest
 
 from decoy_engine.transforms.faker_based import FakerStrategy
 from decoy_engine.generators.columns import ColumnGenerator
-from decoy_engine import register_faker_provider, unregister_faker_provider
+from decoy_engine import (
+    load_custom_providers,
+    register_faker_list_provider,
+    register_faker_provider,
+    unregister_faker_provider,
+)
 
 
 @pytest.fixture
@@ -94,6 +101,60 @@ def test_register_validates_input():
         register_faker_provider('x', 'not callable')
 
 
+def test_register_faker_list_provider_is_deterministic(sample_emails, mock_logger):
+    register_faker_list_provider('custom.departments', ['Cardiology', 'Oncology'])
+    try:
+        s = FakerStrategy(seed=42, logger=mock_logger)
+        out = s.apply(
+            sample_emails,
+            {'column': 'department', 'type': 'faker', 'faker_type': 'custom.departments'},
+        )
+        out2 = s.apply(
+            sample_emails,
+            {'column': 'department', 'type': 'faker', 'faker_type': 'custom.departments'},
+        )
+        assert set(out).issubset({'Cardiology', 'Oncology'})
+        pd.testing.assert_series_equal(out, out2)
+    finally:
+        unregister_faker_provider('custom.departments')
+
+
+def test_register_faker_list_provider_validates_values():
+    with pytest.raises(ValueError):
+        register_faker_list_provider('custom.empty', [])
+    with pytest.raises(TypeError):
+        register_faker_list_provider('custom.bad', 'not-a-list')
+
+
+def test_load_custom_providers_reads_txt_and_json(tmp_path):
+    (tmp_path / 'departments.txt').write_text(
+        'Cardiology\n\n# comment\nOncology\n',
+        encoding='utf-8',
+    )
+    (tmp_path / 'regions.json').write_text(
+        json.dumps(['North', 'South']),
+        encoding='utf-8',
+    )
+    (tmp_path / 'ignored.csv').write_text('x,y\n', encoding='utf-8')
+
+    loaded = load_custom_providers(tmp_path)
+    try:
+        assert loaded == {
+            'custom.departments': ['Cardiology', 'Oncology'],
+            'custom.regions': ['North', 'South'],
+        }
+    finally:
+        unregister_faker_provider('custom.departments')
+        unregister_faker_provider('custom.regions')
+
+
+def test_load_custom_providers_skips_empty_and_malformed_files(tmp_path):
+    (tmp_path / 'empty.txt').write_text('\n# only comments\n', encoding='utf-8')
+    (tmp_path / 'bad.json').write_text('{"not": "a list"}', encoding='utf-8')
+
+    assert load_custom_providers(tmp_path) == {}
+
+
 def test_column_generator_locale(mock_logger):
     """ColumnGenerator's faker path also honors `locale`. Same seed, two
     locales — outputs should differ."""
@@ -112,6 +173,55 @@ def test_column_generator_locale(mock_logger):
         reference_data={},
     )
     assert not en.equals(de), "de_DE column-gen produced identical output to en_US"
+
+
+def test_column_generator_instance_default_locale(mock_logger):
+    """Tier-4 audit (2026-05-20): ColumnGenerator built with
+    instance_default_locale uses that locale for the no-column-override
+    path. Same seed, default en_US vs default de_DE should produce
+    different output even when no column sets `locale`."""
+    g_en = ColumnGenerator(seed=42, logger=mock_logger, instance_default_locale='en_US')
+    en_out = g_en._generate_faker_column(
+        num_rows=5,
+        column_config={'name': 'first_name', 'faker_type': 'first_name'},
+        table_name='customers',
+        reference_data={},
+    )
+    g_de = ColumnGenerator(seed=42, logger=mock_logger, instance_default_locale='de_DE')
+    de_out = g_de._generate_faker_column(
+        num_rows=5,
+        column_config={'name': 'first_name', 'faker_type': 'first_name'},
+        table_name='customers',
+        reference_data={},
+    )
+    assert not en_out.equals(de_out), (
+        "instance_default_locale=de_DE produced identical output to en_US"
+    )
+
+
+def test_column_level_locale_overrides_instance_default(mock_logger):
+    """Per-column `locale` still wins over the instance default — the
+    setting is a fallback, not an override."""
+    # Instance default = de_DE, but column says fr_FR.
+    g = ColumnGenerator(seed=42, logger=mock_logger, instance_default_locale='de_DE')
+    fr_out = g._generate_faker_column(
+        num_rows=5,
+        column_config={'name': 'first_name', 'faker_type': 'first_name', 'locale': 'fr_FR'},
+        table_name='customers',
+        reference_data={},
+    )
+    # And same column rendered with explicit fr_FR (no instance default).
+    g2 = ColumnGenerator(seed=42, logger=mock_logger)
+    fr_explicit = g2._generate_faker_column(
+        num_rows=5,
+        column_config={'name': 'first_name', 'faker_type': 'first_name', 'locale': 'fr_FR'},
+        table_name='customers',
+        reference_data={},
+    )
+    # Both should produce the same fr_FR output — column locale wins.
+    assert fr_out.equals(fr_explicit), (
+        "column-level locale failed to override instance_default_locale"
+    )
 
 
 def test_column_generator_custom_provider(mock_logger):

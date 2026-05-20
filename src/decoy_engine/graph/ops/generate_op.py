@@ -226,7 +226,19 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
     try:
         from decoy_engine.generators.columns import ColumnGenerator
 
-        gen = ColumnGenerator(seed=seed, logger=logger, derive_key=pipeline_derive_key)
+        # Instance-wide default Faker locale (platform-supplied via
+        # AppSettings.default_faker_locale). Per-column `locale` keys
+        # still override at the column level — this only affects
+        # columns that didn't pick their own.
+        instance_locale = (
+            getattr(ctx, "instance_default_locale", None) if ctx is not None else None
+        )
+        gen = ColumnGenerator(
+            seed=seed,
+            logger=logger,
+            derive_key=pipeline_derive_key,
+            instance_default_locale=instance_locale,
+        )
         out = upstream.copy()
         # Two-pass column iteration to support self-reference. Pass 1
         # produces every column EXCEPT self-FK children (we don't know

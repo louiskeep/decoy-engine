@@ -232,6 +232,7 @@ class ExecutionContext:
         captured_outputs: list[dict[str, Any]] | None = None,
         pool_resolver: Callable[[str, str], list[Any]] | None = None,
         column_relationships: list[dict[str, Any]] | None = None,
+        instance_default_locale: str | None = None,
     ) -> None:
         self.logger = logger
         self.telemetry = telemetry
@@ -298,6 +299,14 @@ class ExecutionContext:
         # their normal consumer count.
         self.pool_resolver = pool_resolver
         self.column_relationships = column_relationships
+
+        # Instance-wide default Faker locale. Platform reads
+        # AppSettings.default_faker_locale + passes it in here so the
+        # engine can fall back to the operator's chosen locale when a
+        # per-column locale isn't set. None means "engine library
+        # default" (en_US in Faker), preserving the legacy behavior
+        # for callers that don't supply this.
+        self.instance_default_locale = instance_default_locale
 
     def export(self, key: str, value: Any) -> None:
         """Emit a node-level export the runner folds into NodeRunRecord.

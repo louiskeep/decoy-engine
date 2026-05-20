@@ -30,7 +30,8 @@ class ColumnGenerator:
     Supports various column types and ensures consistent generation.
     """
     
-    def __init__(self, seed: int = 42, logger=None, derive_key=None):
+    def __init__(self, seed: int = 42, logger=None, derive_key=None,
+                 instance_default_locale: str | None = None):
         """
         Initialize with a seed for deterministic behavior
 
@@ -44,15 +45,27 @@ class ColumnGenerator:
                 the same bytes across runs and across instances. When None,
                 generation is reproducible by ``seed`` alone but ignores any
                 pipeline / instance master key (i.e. random-by-policy).
+            instance_default_locale: Optional locale code (e.g. ``en_GB``).
+                When a column doesn't set its own ``locale``, generated Faker
+                values come from this locale instead of the library default
+                (en_US). Platform passes the operator's chosen value from
+                AppSettings.default_faker_locale here.
         """
         self.seed = seed
         self.derive_key = derive_key
+        self.instance_default_locale = instance_default_locale
         random.seed(self.seed)
 
-        # Initialize faker
-        self.faker = Faker()
+        # Initialize faker. When an instance-wide default locale is set,
+        # bind the shared Faker to that locale so the "no column-level
+        # override" path produces locale-correct output without each
+        # column generation rebuilding a Faker.
+        if instance_default_locale:
+            self.faker = make_faker(instance_default_locale)
+        else:
+            self.faker = Faker()
         self.faker.seed_instance(self.seed)
-        
+
         # Get all available faker providers
         self.faker_providers = get_faker_providers(self.faker)
         

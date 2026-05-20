@@ -145,6 +145,18 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
     logger = ctx.logger if ctx is not None else None
     derive_key = getattr(ctx, "derive_key", None) if ctx is not None else None
 
+    # Instance-wide default Faker locale (platform-supplied via
+    # AppSettings.default_faker_locale on ctx). Fill it onto any faker
+    # rule that doesn't set its own locale. Per-column locale still
+    # overrides — this only affects rules that didn't pick one.
+    instance_locale = (
+        getattr(ctx, "instance_default_locale", None) if ctx is not None else None
+    )
+    if instance_locale:
+        for rule in rules:
+            if rule.get("type") == "faker" and not rule.get("locale"):
+                rule["locale"] = instance_locale
+
     try:
         from decoy_engine.transforms.registry import StrategyManager
 

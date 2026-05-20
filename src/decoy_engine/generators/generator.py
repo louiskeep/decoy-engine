@@ -71,8 +71,12 @@ class DataGenerator:
 
         # Initialize column generator
         from decoy_engine.generators.columns import ColumnGenerator
+        instance_locale = (
+            getattr(ctx, "instance_default_locale", None) if ctx is not None else None
+        )
         self.column_generator = ColumnGenerator(
             self.seed, self.logger, derive_key=self.pipeline_derive_key,
+            instance_default_locale=instance_locale,
         )
         
         # Initialize relationship handler
