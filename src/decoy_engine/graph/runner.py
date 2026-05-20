@@ -317,14 +317,20 @@ def _validate_column_relationships(
                                  survival); error in strict mode.
       - fk.nondeterministic_mask : a mask op participates in an FK and
                                  uses a non-deterministic strategy
-                                 (redact, shuffle, truncate). Strategy
-                                 is required to be one of
-                                 {hash, fpe, faker, date_shift,
-                                 reference} for mask-on-FK columns to
-                                 preserve referential integrity.
+                                 (redact, shuffle, truncate). Advisory
+                                 (severity=warning) by default so
+                                 operators shipping a one-off scrub
+                                 don't hit a hard wall when roundtrip
+                                 joinability isn't required. Set the
+                                 env var ``DECOY_FK_STRICT_DETERMINISM=1``
+                                 (or ``true`` / ``yes``) to restore the
+                                 hard reject; that's the right knob for
+                                 long-lived analytics pipelines where
+                                 cross-run join stability matters.
 
     Skips silently when no column_relationships block exists.
     """
+    import os
     from decoy_engine.graph.planner import build_plan
     from decoy_engine.validation_result import CODES
 
@@ -516,22 +522,45 @@ def _validate_column_relationships(
             )
 
         # Mask determinism: both ends, if they're mask ops, must use a
-        # deterministic strategy to preserve the FK.
+        # deterministic strategy to preserve the FK. Advisory by
+        # default (severity=warning) so a one-off run with redact or
+        # shuffle on an FK column doesn't hard-fail; set
+        # DECOY_FK_STRICT_DETERMINISM=1 to upgrade back to error. The
+        # advisory still records the affected column so the platform
+        # manifest assembler can hydrate `fk_preservation.advisories`
+        # for downstream auditors.
+        strict_determinism = (
+            os.environ.get("DECOY_FK_STRICT_DETERMINISM", "")
+            .strip()
+            .lower()
+            in {"1", "true", "yes", "on"}
+        )
         for side, node_obj, col_name in (
             ("parent", p_node_obj, p_col),
             ("child",  c_node_obj, c_col),
         ):
             strategy = _mask_strategy_for_column(node_obj, col_name)
             if strategy is not None and strategy not in DETERMINISTIC_MASK_STRATEGIES:
-                result.add_error(
-                    code=CODES.FK_NONDETERMINISTIC_MASK,
-                    message=(
-                        f"{side} mask column {col_name!r} uses strategy {strategy!r} which is "
-                        "not deterministic; declared FK requires one of "
-                        f"{sorted(DETERMINISTIC_MASK_STRATEGIES)}"
-                    ),
-                    path=f"{path}.{side}.column",
+                msg = (
+                    f"{side} mask column {col_name!r} uses strategy {strategy!r} which is "
+                    "not deterministic; declared FK requires one of "
+                    f"{sorted(DETERMINISTIC_MASK_STRATEGIES)} for cross-run join stability"
                 )
+                if strict_determinism:
+                    result.add_error(
+                        code=CODES.FK_NONDETERMINISTIC_MASK,
+                        message=msg,
+                        path=f"{path}.{side}.column",
+                    )
+                else:
+                    # Advisory path: same code so platform validation routers
+                    # (web/src/pipelines/hifi/validation.ts) can still pattern-
+                    # match on it. Severity=warning is the only difference.
+                    result.add_warning(
+                        code=CODES.FK_NONDETERMINISTIC_MASK,
+                        message=msg + " (advisory — set DECOY_FK_STRICT_DETERMINISM=1 to block)",
+                        path=f"{path}.{side}.column",
+                    )
 
 
 def run_graph(
