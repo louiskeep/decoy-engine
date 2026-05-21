@@ -62,7 +62,7 @@ def test_engine_pandas_default_unchanged(tmp_csv):
 
 def test_engine_default_is_hybrid_after_phase_8(tmp_csv):
     """Phase 8 flip: graphs without an `engine:` key get hybrid mode."""
-    from decoy_engine.graph.runner import _resolve_engine_mode
+    from decoy_engine.graph.planner import _resolve_engine_mode
 
     cfg = {"mode": "graph", "nodes": [{"id": "x", "kind": "drop_column", "config": {"columns": []}}]}
     assert _resolve_engine_mode(cfg) == "hybrid"
