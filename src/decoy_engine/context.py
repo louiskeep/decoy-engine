@@ -4,13 +4,15 @@ Pluggable runtime context for engine execution.
 The engine accepts an ExecutionContext from its caller (CLI or platform)
 to receive a logger and telemetry client. This lets the CLI surface logs
 through Rich and the platform surface them through structured logging to
-a database — without the engine knowing which.
+a database -- without the engine knowing which.
 
-Status: the Protocol and ExecutionContext class are published now so CLI
-and platform code have a stable contract to depend on. The engine entry
-points (Masker, DataGenerator) do not yet accept an ExecutionContext;
-they construct their own logger from the YAML config. Wiring the engine
-to consume ExecutionContext is a follow-up change.
+Status: the Protocol and ExecutionContext class are published and stable.
+Both Masker and DataGenerator accept an optional ``ctx`` parameter and
+extract ``ctx.logger`` and key-resolver callbacks
+(``derive_key``, ``pipeline_derive_key``) from it. They do not propagate
+the full context to every internal subsystem; the graph runner uses
+ExecutionContext end-to-end while the legacy Masker and DataGenerator
+paths use it partially.
 """
 
 import hashlib
@@ -27,13 +29,13 @@ class Logger(Protocol):
     structured DB-backed one.
 
     Structured events (step boundaries, lineage, fidelity, quarantines,
-    throughput samples) are an *optional* surface — see ``StructuredEvents``
+    throughput samples) are an *optional* surface -- see ``StructuredEvents``
     below. The engine reaches them via the ``emit_step`` / ``emit_lineage``
     / etc. helpers in this module, which no-op gracefully when the active
     logger doesn't implement them. Keeping that surface off of the
     runtime_checkable ``Logger`` Protocol means a bare stdlib logger
     (without the structured methods) still satisfies ``isinstance(.,
-    Logger)`` — engine fallback paths don't need to be wrapped.
+    Logger)`` -- engine fallback paths don't need to be wrapped.
     """
 
     def debug(self, msg: str, *args: Any, **kwargs: Any) -> None: ...
@@ -51,7 +53,7 @@ class StructuredEvents(Protocol):
     implements all of them and persists into the companion job_* tables
     (see LOGGING_GUIDE.md §4f). Implementations that only need
     narrative output (stdlib, RichLogger in --quiet mode, tests) can
-    skip them entirely — the ``emit_*`` helpers below are no-ops in
+    skip them entirely -- the ``emit_*`` helpers below are no-ops in
     that case.
 
     Not ``@runtime_checkable``: an ``isinstance(..., StructuredEvents)``
@@ -82,14 +84,14 @@ class StructuredEvents(Protocol):
     def throughput_sample(self, rows_per_sec: float) -> None: ...
 
 
-# ── safe emit helpers ──────────────────────────────────────────────
+# -- safe emit helpers ---------------------------------------------------------
 # Each helper looks up the named method on the logger and calls it if
 # present. The engine uses these instead of direct method calls so a
 # bare stdlib logger (the common ctx-omitted fallback) doesn't raise
 # AttributeError when the engine emits step / lineage / etc. A logger
 # implementing ``StructuredEvents`` receives the call; everything else
 # silently no-ops. Exceptions inside the structured method itself are
-# swallowed — a JobLogger DB hiccup mid-run mustn't take the engine
+# swallowed -- a JobLogger DB hiccup mid-run mustn't take the engine
 # down. Narrative logging (info/warning/error) is the source of truth.
 
 def emit_step(
@@ -115,7 +117,7 @@ def emit_step(
     row so the reporting UI can group errors by exception type without
     re-parsing the log tail.
 
-    ``node_id`` defaults to ``name`` when unset — most engine ops emit
+    ``node_id`` defaults to ``name`` when unset -- most engine ops emit
     one step per node so the step name *is* the node id, but callers
     that emit a coarser step (e.g. a "mask" step covering multiple
     nodes) can pass a finer ``node_id`` for the canvas deep-link.
@@ -151,7 +153,7 @@ def emit_lineage(
     label: str,
     type_: str,
 ) -> None:
-    """Record a node in the source → transform → output graph."""
+    """Record a node in the source -> transform -> output graph."""
     if logger is None:
         return
     fn = getattr(logger, "lineage", None)
@@ -256,7 +258,7 @@ class ExecutionContext:
         # per op kind in PIPELINE_GRAPH_GUIDE.md "Node exports".
         self._exports: dict[str, dict[str, Any]] = {}
         self._current_node_id: str | None = None
-        # ── two key resolvers, by design ──
+        # -- two key resolvers, by design --
         #
         # `derive_key(info)` is the **mask** resolver. Caller pre-binds the
         # tenant master instance key (and only the master). Same input row +
@@ -267,7 +269,7 @@ class ExecutionContext:
         #
         # `pipeline_derive_key(info)` is the **generate** resolver. Caller
         # pre-binds master + pipeline-specific label. When None, generate
-        # falls back to seed-based RNG (random across runs) — the policy
+        # falls back to seed-based RNG (random across runs) -- the policy
         # surface in front of this resolver decides whether a label exists
         # for the current pipeline (admin modes A/B/C in the platform).
         #
@@ -276,7 +278,7 @@ class ExecutionContext:
         self.derive_key = derive_key
         self.pipeline_derive_key = pipeline_derive_key
 
-        # ── FK preservation (Sprint 4, item 4) ──
+        # -- FK preservation (Sprint 4, item 4) --
         #
         # Pattern: SDV HMA1 (sdv-dev/SDV, MIT). Parent-first DAG;
         # materialize parent pool; child samples with replacement.
@@ -325,7 +327,7 @@ class ExecutionContext:
         self._exports.setdefault(self._current_node_id, {})[key] = value
 
 
-# ── helpers callers (CLI, platform) can use to build a derive_key resolver ──
+# -- helpers callers (CLI, platform) can use to build a derive_key resolver --
 
 def _hkdf_sha256(master: bytes, info: str, length: int = 32) -> bytes:
     """HKDF-SHA256(master, info) -> `length` bytes (max 32 in this impl).
@@ -351,7 +353,7 @@ def make_key_resolver(
 
     Pre-binds master + pipeline_label so the engine just asks for
     column-scoped subkeys via labels like ``"col:email"``. Same master +
-    same pipeline_label always yields the same column subkeys, anywhere —
+    same pipeline_label always yields the same column subkeys, anywhere --
     that's the cross-instance recovery property.
 
     CLI passes a master key from ``--master-key``; platform's
