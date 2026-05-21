@@ -99,7 +99,9 @@ def test_fixed_width_handler(sample_fixed_width_file, mock_logger, tmp_path):
     # Verify the saved CSV file exists and can be loaded
     assert os.path.exists(output_config_csv['path'])
     df_loaded_csv = pd.read_csv(output_config_csv['path'])
-    pd.testing.assert_frame_equal(df_loaded_csv, df)
+    # CSV round-trip does not preserve pandas dtype metadata (object vs StringDtype);
+    # compare values only.
+    pd.testing.assert_frame_equal(df_loaded_csv, df, check_dtype=False)
     
     # Test fixed-width to fixed-width with the same definition
     output_config_fw = {

@@ -44,7 +44,7 @@ class TestAlphabet:
         assert fields["phone"].alphabet == "mixed"
 
     def test_numeric_column_has_no_alphabet(self):
-        # alphabet is only computed for object-dtype columns.
+        # alphabet is only computed for string-typed columns (object or native str dtype).
         fields = _scan(amount=[1, 2, 3, 4, 5] * 4)
         assert fields["amount"].alphabet is None
 

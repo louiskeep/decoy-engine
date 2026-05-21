@@ -686,7 +686,7 @@ def _profile_column(
         inferred = "integer"
     elif pd.api.types.is_float_dtype(series):
         inferred = "float"
-    elif dtype_raw == "object":
+    elif pd.api.types.is_string_dtype(series):
         inferred = "string"
     else:
         inferred = "mixed"
@@ -715,8 +715,8 @@ def _profile_column(
         fs.date_min = non_null.min().isoformat()
         fs.date_max = non_null.max().isoformat()
 
-    # String length + date sniffing on object columns.
-    if dtype_raw == "object" and non_null_count > 0:
+    # String length + date sniffing on string-typed columns (object or native str dtype).
+    if pd.api.types.is_string_dtype(series) and non_null_count > 0:
         str_lens = non_null.astype(str).str.len()
         fs.min_length = int(str_lens.min())
         fs.max_length = int(str_lens.max())
@@ -755,7 +755,7 @@ def _profile_column(
     fs.casing_pattern = _detect_casing(series)
 
     # Plan B-2 — column-shape signals FORECAST choosers read.
-    if dtype_raw == "object" and non_null_count > 0:
+    if pd.api.types.is_string_dtype(series) and non_null_count > 0:
         fs.alphabet = _classify_alphabet(series)
     fs.value_set_size_class = _classify_value_set_size(distinct_count, unique_rate)
     fs.numeric_range_class = _classify_numeric_range(series, inferred)
