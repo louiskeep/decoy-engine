@@ -118,7 +118,7 @@ class DetectionSignal:
 @dataclass
 class SentinelFlag:
     """A value (or pattern) that parsed structurally but is suspicious."""
-    kind: str                  # "date_outlier", "numeric_sentinel", "string_sentinel", "future_date"
+    kind: str                  # "date_sentinel", "date_out_of_range", "numeric_sentinel", "string_sentinel"
     value: str
     count: int
     note: str                  # human-readable explanation for FORECAST + UI
