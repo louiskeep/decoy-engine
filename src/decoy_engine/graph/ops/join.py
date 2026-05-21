@@ -1,9 +1,9 @@
-"""unite — combine 2+ tables side by side (column-wise concat / horizontal join).
+"""join — combine 2+ tables side by side (column-wise concat / horizontal join).
 
 Sister to a future `stack` op that would concat row-wise. Both `mask` and
 `generate` declare `INPUT_ARITY = (_, 1)` — they only ever consume a single
 table — so when a user wants to feed a multi-table shape into masking they
-must `unite` first. That's the whole reason this op exists.
+must `join` first. That's the whole reason this op exists.
 
 Three modes, in order of specificity:
 
@@ -54,7 +54,7 @@ import pandas as pd
 from decoy_engine.graph.ops._base import OpError
 from decoy_engine.internal.validator import ValidationError
 
-KIND = "unite"
+KIND = "join"
 # Pandas-native: the op uses df.merge / pd.concat under the hood. The
 # runner materializes upstream Arrow inputs to pandas DataFrames at the
 # op boundary; we hand the results back as pandas and the runner
@@ -134,7 +134,7 @@ def validate_config(config: dict[str, Any]) -> None:
             isinstance(c, str) and c.strip() for c in on
         ):
             raise ValidationError(
-                "'on' must be a non-empty list of column-name strings (or omitted for positional unite)",
+                "'on' must be a non-empty list of column-name strings (or omitted for positional join)",
                 "config.on",
             )
 
@@ -161,7 +161,7 @@ def validate_config(config: dict[str, Any]) -> None:
 def apply(inputs, config, ctx) -> pd.DataFrame:
     if len(inputs) < 2:
         raise OpError(
-            f"unite requires at least 2 inputs, got {len(inputs)}"
+            f"join requires at least 2 inputs, got {len(inputs)}"
         )
 
     joins = config.get("joins")
@@ -173,7 +173,7 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
         if joins is not None:
             if len(joins) != len(inputs) - 1:
                 raise OpError(
-                    f"unite: 'joins' length ({len(joins)}) must equal inputs - 1 "
+                    f"join: 'joins' length ({len(joins)}) must equal inputs - 1 "
                     f"({len(inputs) - 1})"
                 )
             result = inputs[0]
@@ -188,12 +188,12 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
                 missing_right = [c for c in right_on if c not in right_df.columns]
                 if missing_left:
                     raise OpError(
-                        f"unite: joins[{i}] left_on column(s) missing from "
+                        f"join: joins[{i}] left_on column(s) missing from "
                         f"accumulated frame: {missing_left}"
                     )
                 if missing_right:
                     raise OpError(
-                        f"unite: joins[{i}] right_on column(s) missing from "
+                        f"join: joins[{i}] right_on column(s) missing from "
                         f"input #{i + 2}: {missing_right}"
                     )
 
@@ -216,7 +216,7 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
             missing = [c for c in on if c not in df.columns]
             if missing:
                 raise OpError(
-                    f"unite: input #{i + 1} is missing 'on' column(s): {missing}"
+                    f"join: input #{i + 1} is missing 'on' column(s): {missing}"
                 )
 
         result = inputs[0]
@@ -231,4 +231,4 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
     except OpError:
         raise
     except Exception as exc:
-        raise OpError(f"unite failed: {exc}") from exc
+        raise OpError(f"join failed: {exc}") from exc

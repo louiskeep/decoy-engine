@@ -233,13 +233,13 @@ def test_execution_plan_is_frozen():
 # ---------------------------------------------------------------------------
 
 
-def test_unite_fan_in_in_edges():
-    """Two sources feeding a unite node: unite.in_edges lists both."""
+def test_join_fan_in_in_edges():
+    """Two sources feeding a join node: join.in_edges lists both."""
     config = _cfg(
         nodes=[
             {"id": "s1", "kind": "source.file", "config": {}},
             {"id": "s2", "kind": "source.file", "config": {}},
-            {"id": "u", "kind": "unite", "config": {}},
+            {"id": "u", "kind": "join", "config": {}},
         ],
         edges=[
             {"from": "s1", "to": "u"},

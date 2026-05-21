@@ -235,7 +235,7 @@ def test_run_records_failure(tmp_csv):
 
 @pytest.fixture
 def tmp_two_csvs():
-    """Two CSVs that share an `id` column so `unite` can keyed-join them."""
+    """Two CSVs that share an `id` column so `join` can keyed-join them."""
     tmpdir = tempfile.mkdtemp()
     src1 = os.path.join(tmpdir, "people.csv")
     src2 = os.path.join(tmpdir, "scores.csv")
@@ -251,15 +251,15 @@ def tmp_two_csvs():
     return src1, src2, out
 
 
-def test_run_unite_keyed_join(tmp_two_csvs):
-    """unite combines two upstream tables into one wider one before mask."""
+def test_run_join_keyed_join(tmp_two_csvs):
+    """join combines two upstream tables into one wider one before mask."""
     src1, src2, out = tmp_two_csvs
     cfg = _yaml({
         "mode": "graph",
         "nodes": [
             {"id": "p", "kind": "source.file", "config": {"path": src1}},
             {"id": "s", "kind": "source.file", "config": {"path": src2}},
-            {"id": "u", "kind": "unite", "config": {"on": ["id"]}},
+            {"id": "u", "kind": "join", "config": {"on": ["id"]}},
             {"id": "t", "kind": "target.file", "config": {"output_filename": out}},
         ],
         "edges": [
@@ -276,8 +276,8 @@ def test_run_unite_keyed_join(tmp_two_csvs):
     assert len(written) == 3
 
 
-def test_run_unite_then_mask(tmp_two_csvs):
-    """End-to-end: two sources → unite → mask. The motivation for `unite`:
+def test_run_join_then_mask(tmp_two_csvs):
+    """End-to-end: two sources → join → mask. The motivation for `join`:
     mask only accepts one input, so multi-source pipelines must merge first."""
     src1, src2, out = tmp_two_csvs
     cfg = _yaml({
@@ -285,7 +285,7 @@ def test_run_unite_then_mask(tmp_two_csvs):
         "nodes": [
             {"id": "p", "kind": "source.file", "config": {"path": src1}},
             {"id": "s", "kind": "source.file", "config": {"path": src2}},
-            {"id": "u", "kind": "unite", "config": {"on": ["id"]}},
+            {"id": "u", "kind": "join", "config": {"on": ["id"]}},
             {"id": "m", "kind": "mask", "config": {"columns": {
                 "name": {"strategy": "redact", "redact_with": "***"},
             }}},
@@ -306,7 +306,7 @@ def test_run_unite_then_mask(tmp_two_csvs):
     assert sorted(written["score"].tolist()) == [73, 87, 99]
 
 
-def test_arity_error_hints_at_unite_for_mask():
+def test_arity_error_hints_at_join_for_mask():
     cfg = _yaml({
         "mode": "graph",
         "nodes": [
@@ -318,7 +318,7 @@ def test_arity_error_hints_at_unite_for_mask():
     })
     with pytest.raises(PipelineValidationError) as ei:
         validate_graph(cfg)
-    assert "unite" in str(ei.value)
+    assert "join" in str(ei.value)
 
 
 def test_run_logs_include_node_name_when_set(tmp_csv):

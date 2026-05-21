@@ -93,7 +93,7 @@ def engine_to_arrow(result: Any, engine: EngineType) -> pa.Table:
             dupes = sorted({name for name, n in Counter(cols).items() if n > 1})
             raise ValueError(
                 f"Duplicate column names: {dupes}. Use drop_column upstream to remove the "
-                "collision, or unite's keyed mode with suffixes to disambiguate."
+                "collision, or join's keyed mode with suffixes to disambiguate."
             )
         return pa.Table.from_pandas(result, preserve_index=False)
     if engine == "polars":

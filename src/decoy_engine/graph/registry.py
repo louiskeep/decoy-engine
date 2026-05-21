@@ -6,7 +6,7 @@ calling `apply()`.
 
 Ops declare their preferred substrate via a module-level `NATIVE_ENGINE`
 constant. File and cloud source/target ops use "duckdb"; transform ops
-(mask, generate, sort, dedupe, derive, filter, unite) use "pandas" because
+(mask, generate, sort, dedupe, derive, filter, join) use "pandas" because
 their strategies rely on per-row Python callbacks. Ops without a declaration
 fall back to "pandas".
 

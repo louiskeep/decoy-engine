@@ -875,8 +875,8 @@ class GraphConfigValidator(ConfigValidator):
                 )
             if max_in is not None and ic > max_in:
                 hint = (
-                    " -- combine upstream tables with a 'unite' node first"
-                    if max_in == 1 and kind != "unite"
+                    " -- combine upstream tables with a 'join' node first"
+                    if max_in == 1 and kind != "join"
                     else ""
                 )
                 raise ValidationError(
