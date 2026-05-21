@@ -3,6 +3,10 @@
 Config:
     output_filename: str  - filesystem path to write
     format: 'csv' | 'parquet'  (optional; inferred from extension)
+    include_header: bool  - csv only; default True. Set False when the
+        consumer is a downstream system that expects header-less rows
+        (e.g. bulk-load tools, legacy mainframe drops). Ignored for
+        parquet (the column schema is embedded in the file).
 
 Phase 4 port: NATIVE_ENGINE='duckdb'. The DuckDB path uses `COPY ... TO`
 which streams the write and produces well-formed parquet without going
@@ -71,10 +75,12 @@ def _apply_pandas(df: pd.DataFrame, config: dict[str, Any]) -> pd.DataFrame:
     path = Path(config["output_filename"])
     path.parent.mkdir(parents=True, exist_ok=True)
     fmt = (config.get("format") or _infer_format(str(path))).lower()
+    include_header = bool(config.get("include_header", True))
     try:
         if fmt == "csv":
-            df.to_csv(path, index=False)
+            df.to_csv(path, index=False, header=include_header)
         elif fmt == "parquet":
+            # Parquet schema is embedded; include_header doesn't apply.
             df.to_parquet(path, index=False)
     except Exception as exc:
         raise OpError(f"failed to write {path}: {exc}") from exc
@@ -87,6 +93,7 @@ def _apply_duckdb(table: pa.Table, config: dict[str, Any]) -> pa.Table:
     path = Path(config["output_filename"])
     path.parent.mkdir(parents=True, exist_ok=True)
     fmt = (config.get("format") or _infer_format(str(path))).lower()
+    include_header = bool(config.get("include_header", True))
 
     try:
         con = duckdb.connect(":memory:")
@@ -96,11 +103,13 @@ def _apply_duckdb(table: pa.Table, config: dict[str, Any]) -> pa.Table:
             # `df.to_parquet` for big tables because COPY writes in batches.
             con.register("in_table", table)
             if fmt == "csv":
+                header_opt = "HEADER" if include_header else "HEADER FALSE"
                 con.execute(
                     f"COPY (SELECT * FROM in_table) TO '{path}' "
-                    f"(FORMAT CSV, HEADER)"
+                    f"(FORMAT CSV, {header_opt})"
                 )
             elif fmt == "parquet":
+                # Parquet schema is embedded; include_header doesn't apply.
                 con.execute(
                     f"COPY (SELECT * FROM in_table) TO '{path}' "
                     f"(FORMAT PARQUET)"
