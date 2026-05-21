@@ -307,11 +307,25 @@ def _draft_pipeline_yaml(
 
     Uses the top-ranked Disguise's masking rules if any Disguise was
     recommended; otherwise falls back to per-field recommendations.
-    Source and target configs use placeholder paths so the user knows
-    which dataset this pipeline targets but must fill in actual paths.
 
-    Emits mode: graph YAML (V1 graph mental model). The CLI sidecar
-    produced by ``decoy forecast`` can be passed directly to ``decoy run``.
+    Source `path` and target `output_filename` come back as obvious
+    placeholder strings of the form
+    ``<replace_with_input_path: e.g. ./data/{label}>``. The engine has
+    no file-path context at recommend-time (it only sees a StormProfile,
+    not the actual upload); the placeholder leaves a clear edit point
+    for the operator or for the CLI/platform layer that wraps this
+    output. The placeholder contains characters (``<``, ``>``, ``:``)
+    that won't appear in real filesystem paths on most operating
+    systems, so the engine fails loudly at run time if the operator
+    forgets to substitute.
+
+    The platform's ``api/pipelines/templates.py::build_from_forecast``
+    replaces the placeholders with real paths because it has access to
+    the UploadedFile + the configured output_dir. The CLI's
+    ``decoy forecast`` ships the placeholder text and expects the user
+    to edit before passing to ``decoy run``.
+
+    Emits mode: graph YAML (V1 graph mental model).
     """
     # Build mask node columns dict.
     # FORECAST field_masks shape: {column, type, ...params, _why?}
@@ -347,7 +361,7 @@ def _draft_pipeline_yaml(
                 "id": "src_1",
                 "kind": "source.file",
                 "config": {
-                    "path": f"TODO: path to {src_label}",
+                    "path": f"<replace_with_input_path: e.g. ./data/{src_label}>",
                     "format": "csv",
                     "has_header": True,
                 },
@@ -363,7 +377,7 @@ def _draft_pipeline_yaml(
                 "id": "tgt_1",
                 "kind": "target.file",
                 "config": {
-                    "output_filename": f"TODO: output path for masked {src_label}",
+                    "output_filename": f"<replace_with_output_path: e.g. ./out/masked_{src_label}>",
                     "format": "csv",
                 },
                 "position": {"x": 650, "y": 100},
