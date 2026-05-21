@@ -77,10 +77,55 @@ def apply(inputs, config, ctx):
         try:
             return con.execute(sql).to_arrow_table()
         except duckdb.Error as exc:
-            raise OpError(f"sql_run: SQL execution failed: {exc}") from exc
+            raise OpError(_format_duckdb_error(sql, exc)) from exc
         except Exception as exc:
             # Anything not-a-DuckDB-error (e.g. memory error) gets the
             # same OpError treatment but with a less specific message.
             raise OpError(f"sql_run: unexpected error: {exc}") from exc
     finally:
         con.close()
+
+
+# DuckDB error prefix -> human-readable category. The DuckDB error
+# message itself leads with one of these (e.g. "Binder Error: ..."),
+# which is precise but jargon-heavy. Mapping it to a short operator-
+# facing phrase lets the error message lead with "what's wrong"
+# instead of burying it behind a DuckDB taxonomy word.
+_DUCKDB_ERROR_CATEGORIES = {
+    "Parser Error": "syntax error",
+    "Binder Error": "type or name mismatch",
+    "Catalog Error": "missing table or column",
+    "Conversion Error": "value type cast failed",
+    "Constraint Error": "constraint violation",
+    "Out of Memory Error": "out of memory",
+    "IO Error": "I/O error",
+}
+
+
+def _format_duckdb_error(sql: str, exc: Exception) -> str:
+    """Build the operator-facing error message for a failed sql_run.
+
+    Leads with "invalid SQL" + a category hint so the log line answers
+    the operator's first question ("is my SQL wrong?") without making
+    them parse DuckDB's "Binder Error / Catalog Error / ..." taxonomy.
+    Preserves the full DuckDB detail (with its LINE/caret marker)
+    underneath because that's what locates the offending token.
+    """
+    raw = str(exc)
+    # DuckDB messages start with "<Category>: ..." -- pull the prefix
+    # to map to a human phrase. Fall back to a generic label when the
+    # message doesn't match the known prefixes.
+    category = "invalid SQL"
+    for prefix, label in _DUCKDB_ERROR_CATEGORIES.items():
+        if raw.startswith(prefix):
+            category = f"invalid SQL ({label})"
+            break
+    # Truncate very long SQL so the log line stays readable. 200 chars
+    # is plenty to see the shape; the operator's editor still has the
+    # full text.
+    sql_preview = sql if len(sql) <= 200 else sql[:197] + "..."
+    return (
+        f"sql_run: {category}.\n"
+        f"SQL: {sql_preview}\n"
+        f"{raw}"
+    )
