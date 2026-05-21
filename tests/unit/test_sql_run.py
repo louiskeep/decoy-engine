@@ -109,7 +109,8 @@ class TestApply:
 class TestErrors:
     def test_invalid_sql_raises_op_error(self):
         df = _table_from_dict({"id": [1]})
-        with pytest.raises(OpError, match="SQL execution failed"):
+        # Missing table -> DuckDB Catalog Error -> "missing table or column" hint
+        with pytest.raises(OpError, match="missing table or column"):
             sql_run.apply(
                 inputs=[df],
                 config={"sql": "SELECT * FROM nonexistent_table"},
@@ -118,7 +119,8 @@ class TestErrors:
 
     def test_syntax_error_raises_op_error(self):
         df = _table_from_dict({"id": [1]})
-        with pytest.raises(OpError, match="SQL execution failed"):
+        # Parser-level garbage -> DuckDB Parser Error -> "syntax error" hint
+        with pytest.raises(OpError, match="syntax error"):
             sql_run.apply(
                 inputs=[df],
                 config={"sql": "SELEC * FRM df"},
@@ -127,12 +129,42 @@ class TestErrors:
 
     def test_referencing_missing_column_raises_op_error(self):
         df = _table_from_dict({"id": [1]})
-        with pytest.raises(OpError, match="SQL execution failed"):
+        # Missing column -> DuckDB Binder Error -> "type or name mismatch" hint
+        with pytest.raises(OpError, match="type or name mismatch"):
             sql_run.apply(
                 inputs=[df],
                 config={"sql": "SELECT no_such_column FROM df"},
                 ctx=None,
             )
+
+    def test_error_includes_sql_and_invalid_label(self):
+        """The operator-facing error message leads with "invalid SQL"
+        and includes the offending SQL so they can spot the bad token
+        without scrolling past DuckDB's stack trace."""
+        df = _table_from_dict({"id": [1]})
+        with pytest.raises(OpError) as exc_info:
+            sql_run.apply(
+                inputs=[df],
+                config={"sql": "SELECT bad FROM df"},
+                ctx=None,
+            )
+        msg = str(exc_info.value)
+        assert "invalid SQL" in msg
+        assert "SELECT bad FROM df" in msg
+
+    def test_long_sql_is_truncated_in_message(self):
+        df = _table_from_dict({"id": [1]})
+        long_sql = "SELECT " + ", ".join(f"col{i}" for i in range(200)) + " FROM df"
+        with pytest.raises(OpError) as exc_info:
+            sql_run.apply(
+                inputs=[df],
+                config={"sql": long_sql},
+                ctx=None,
+            )
+        msg = str(exc_info.value)
+        # The full 200-column SELECT would be > 200 chars; the message
+        # truncates so the log line stays readable.
+        assert "..." in msg
 
 
 class TestRegistry:
