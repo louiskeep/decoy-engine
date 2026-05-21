@@ -155,14 +155,22 @@ class TestProposedPipelineYAML:
     def test_yaml_parses_to_a_runnable_pipeline_shape(self, storm_then_forecast):
         _, report = storm_then_forecast
         cfg = yaml.safe_load(report.proposed_pipeline_yaml)
-        assert {"version", "global_settings", "input", "output", "masking_rules"} <= cfg.keys()
+        assert cfg["mode"] == "graph"
+        assert any(n["kind"] == "source.file" for n in cfg["nodes"])
+        assert any(n["kind"] == "mask" for n in cfg["nodes"])
+        assert any(n["kind"] == "target.file" for n in cfg["nodes"])
+        # Verify the YAML passes the engine's graph validator.
+        from decoy_engine import validate_graph_full
+        result = validate_graph_full(report.proposed_pipeline_yaml)
+        assert result.ok, result.errors
 
     def test_yaml_masking_rules_match_apply_payload(self, storm_then_forecast):
         _, report = storm_then_forecast
         cfg = yaml.safe_load(report.proposed_pipeline_yaml)
         top = report.disguise_recommendations[0]
 
-        # Same column set in both.
-        cols_yaml = {r["column"] for r in cfg["masking_rules"]}
+        # Same column set in mask node and apply_payload.field_masks.
+        mask_node = next(n for n in cfg["nodes"] if n["kind"] == "mask")
+        cols_yaml = set(mask_node["config"]["columns"].keys())
         cols_payload = {m["column"] for m in top.apply_payload["field_masks"]}
         assert cols_yaml == cols_payload

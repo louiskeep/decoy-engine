@@ -303,43 +303,75 @@ def _draft_pipeline_yaml(
     disguise_recs: list[DisguiseRecommendation],
     field_recs: list[FieldRecommendation],
 ) -> str:
-    """Render a ready-to-edit pipeline config string.
+    """Render a ready-to-edit graph pipeline config string.
 
     Uses the top-ranked Disguise's masking rules if any Disguise was
-    recommended; otherwise falls back to per-field recommendations. Source
-    and output sections are stubbed with the profile's source_label so the
-    user knows which dataset this pipeline targets, but they need to fill
-    in actual paths/connectors.
-    """
-    if disguise_recs:
-        masking_rules = [
-            _strip_underscored(entry)
-            for entry in disguise_recs[0].apply_payload["field_masks"]
-        ]
-    else:
-        masking_rules = [
-            {"column": r.field_name, "type": r.recommended_mask, **r.mask_params}
-            for r in field_recs
-        ]
+    recommended; otherwise falls back to per-field recommendations.
+    Source and target configs use placeholder paths so the user knows
+    which dataset this pipeline targets but must fill in actual paths.
 
+    Emits mode: graph YAML (V1 graph mental model). The CLI sidecar
+    produced by ``decoy forecast`` can be passed directly to ``decoy run``.
+    """
+    # Build mask node columns dict.
+    # FORECAST field_masks shape: {column, type, ...params, _why?}
+    # Graph mask op columns shape: {name: {strategy, ...params}}
+    # Translation: 'type' -> 'strategy'; 'column' dropped as dict key;
+    # '_why' and other '_'-prefixed hint keys stripped (engine ignores them).
+    columns: dict[str, Any] = {}
+    if disguise_recs:
+        for entry in disguise_recs[0].apply_payload["field_masks"]:
+            col = entry["column"]
+            col_config: dict[str, Any] = {}
+            for k, v in entry.items():
+                if k == "column" or k.startswith("_"):
+                    continue
+                col_config["strategy" if k == "type" else k] = v
+            col_config.setdefault("strategy", "passthrough")
+            columns[col] = col_config
+    else:
+        for r in field_recs:
+            col_config = {"strategy": r.recommended_mask}
+            col_config.update(r.mask_params)
+            columns[r.field_name] = col_config
+
+    if not columns:
+        columns = {"col_1": {"strategy": "passthrough"}}
+
+    src_label = profile.source_label or "source"
     config = {
-        "version": "1.0",
-        "global_settings": {"seed": 42},
-        "input": {
-            "type": "csv",
-            "path": f"# TODO: path to {profile.source_label}",
-            "csv_options": {"delimiter": ",", "encoding": "utf-8", "header": True},
-        },
-        "output": {
-            "type": "csv",
-            "path": f"# TODO: path for masked output (was: {profile.source_label})",
-            "csv_options": {"delimiter": ",", "encoding": "utf-8"},
-        },
-        "masking_rules": masking_rules,
+        "mode": "graph",
+        "schema_version": 1,
+        "nodes": [
+            {
+                "id": "src_1",
+                "kind": "source.file",
+                "config": {
+                    "path": f"TODO: path to {src_label}",
+                    "format": "csv",
+                    "has_header": True,
+                },
+                "position": {"x": 50, "y": 100},
+            },
+            {
+                "id": "mask_1",
+                "kind": "mask",
+                "config": {"columns": columns},
+                "position": {"x": 350, "y": 100},
+            },
+            {
+                "id": "tgt_1",
+                "kind": "target.file",
+                "config": {
+                    "output_filename": f"TODO: output path for masked {src_label}",
+                    "format": "csv",
+                },
+                "position": {"x": 650, "y": 100},
+            },
+        ],
+        "edges": [
+            {"from": "src_1", "to": "mask_1"},
+            {"from": "mask_1", "to": "tgt_1"},
+        ],
     }
     return yaml.safe_dump(config, sort_keys=False, allow_unicode=True)
-
-
-def _strip_underscored(d: dict[str, Any]) -> dict[str, Any]:
-    """Remove `_why`-style hint keys before rendering the user-facing YAML."""
-    return {k: v for k, v in d.items() if not k.startswith("_")}

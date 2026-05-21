@@ -207,10 +207,11 @@ class TestProposedYAML:
         profile = _profile(_field("email", detectors=[("email", 1.0)]))
         report = recommend(profile)
         cfg = yaml.safe_load(report.proposed_pipeline_yaml)
-        assert "masking_rules" in cfg
-        assert "input" in cfg
-        assert "output" in cfg
-        assert cfg["version"] == "1.0"
+        assert cfg["mode"] == "graph"
+        assert any(n["kind"] == "source.file" for n in cfg["nodes"])
+        assert any(n["kind"] == "mask" for n in cfg["nodes"])
+        assert any(n["kind"] == "target.file" for n in cfg["nodes"])
+        assert "edges" in cfg
 
     def test_yaml_uses_top_disguise_rules_when_disguise_recommended(self):
         profile = _profile(
@@ -219,11 +220,12 @@ class TestProposedYAML:
         )
         report = recommend(profile)
         cfg = yaml.safe_load(report.proposed_pipeline_yaml)
-        rules = cfg["masking_rules"]
-        # Each rule has column + type + (optional) params, no _why hints.
-        for r in rules:
-            assert "column" in r and "type" in r
-            assert not any(k.startswith("_") for k in r.keys())
+        mask_node = next(n for n in cfg["nodes"] if n["kind"] == "mask")
+        columns = mask_node["config"]["columns"]
+        # Each column entry has strategy + (optional) params, no _why hints.
+        for col_name, col_cfg in columns.items():
+            assert "strategy" in col_cfg, f"missing strategy key in column {col_name!r}"
+            assert not any(k.startswith("_") for k in col_cfg.keys())
 
     def test_source_label_appears_in_yaml_stub(self):
         profile = _profile(_field("email", detectors=[("email", 1.0)]))
