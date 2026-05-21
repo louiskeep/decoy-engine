@@ -80,6 +80,7 @@ from decoy_engine.exceptions import (
 )
 from decoy_engine.internal.helpers import (
     register_faker_provider,
+    register_faker_list_provider,
     unregister_faker_provider,
     load_custom_providers,
 )
@@ -153,6 +154,7 @@ __all__ = [
     'LicenseExpiredError',
     'FlagPauseSignal',
     'register_faker_provider',
+    'register_faker_list_provider',
     'unregister_faker_provider',
     'load_custom_providers',
     # Connector SDK.
