@@ -1035,6 +1035,23 @@ def _execute_graph(
             t0 = time.monotonic()
             ctx._current_node_id = nid
             try:
+                # Defensive: cache.consume() returns None when the source
+                # key isn't in the cache (skipped router port, gated branch,
+                # or upstream that returned no table). Without this guard
+                # the op fails with a native-engine error like DuckDB's
+                # "Python Object 'df' of type 'NoneType' not suitable for
+                # replacement scans" -- accurate but unhelpful to the
+                # operator. Surface a runner-level error that names the
+                # upstream edge(s) instead.
+                none_edges = [k for k, v in zip(in_edge_keys, inputs) if v is None]
+                if none_edges:
+                    raise ConfigError(
+                        f"node {nid!r} ({kind}) has no data on input edge(s) "
+                        f"{none_edges!r}: upstream node(s) produced no output. "
+                        f"Check that the upstream node ran successfully and "
+                        f"that any router/gate branch upstream routes data "
+                        f"into this path."
+                    )
                 result = op.apply(inputs, node_cfg, ctx)
                 if isinstance(result, dict) and getattr(op, "OUTPUT_KIND", None) == "split":
                     ports = getattr(op, "OUTPUT_PORTS", ())
