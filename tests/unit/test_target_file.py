@@ -122,6 +122,46 @@ class TestCSVWrite:
         read_back = pd.read_csv(out, encoding="utf-8")
         assert list(read_back["name"]) == list(df["name"])
 
+    def test_csv_writes_header_by_default(self, tmp_path):
+        df = _simple_df(2)
+        out = tmp_path / "with_header.csv"
+        target_file.apply([df], {"output_filename": str(out), "__engine": "pandas"}, ctx=None)
+        # First line must be the column header.
+        first_line = out.read_text(encoding="utf-8").splitlines()[0]
+        assert first_line == "id,name,score"
+
+    def test_csv_omits_header_when_include_header_false(self, tmp_path):
+        df = _simple_df(2)
+        out = tmp_path / "no_header.csv"
+        target_file.apply(
+            [df],
+            {
+                "output_filename": str(out),
+                "__engine": "pandas",
+                "include_header": False,
+            },
+            ctx=None,
+        )
+        lines = out.read_text(encoding="utf-8").splitlines()
+        # First line must be the first data row, not the column names.
+        assert lines[0].startswith("1,person_1,")
+        assert len(lines) == 2  # 2 data rows, no header
+
+    def test_csv_include_header_true_explicit(self, tmp_path):
+        df = _simple_df(2)
+        out = tmp_path / "explicit_header.csv"
+        target_file.apply(
+            [df],
+            {
+                "output_filename": str(out),
+                "__engine": "pandas",
+                "include_header": True,
+            },
+            ctx=None,
+        )
+        first_line = out.read_text(encoding="utf-8").splitlines()[0]
+        assert first_line == "id,name,score"
+
 
 # ----- Parquet round-trip ------------------------------------------------
 
