@@ -1,7 +1,7 @@
 {
   "$schema": "https://aka.ms/codetour-schema",
-  "title": "2 - Hardest flow: graph runner Arrow cache + per-op engine dispatch",
-  "description": "Walks the engine's hottest path — the graph runner that caches `pyarrow.Table` between ops, dispatches each op to its declared `NATIVE_ENGINE` (pandas / Polars / DuckDB / Arrow), and bounds peak RSS via consumer-counted eviction. ~15 minutes. Install the CodeTour VS Code extension (publisher: vsls-contrib) to play it. Pairs with `1-onboarding.tour` — start there if you haven't already, since this tour assumes you know what `Masker`, `ExecutionContext`, and the public engine surface look like. The substrate decision itself is captured in `docs/adr/0001-polars-duckdb-hybrid-engine-substrate.md`; this tour shows you the runtime that makes that decision pay off.",
+  "title": "2 - Hardest flow (STALE - do not use for V1 onboarding)",
+  "description": "STALE AT V1. Companion to the stale 1-onboarding.tour; predates the platform rename, the V1 scope cut, and the unite-to-join op rename. Some line numbers and op names no longer match. Do not use this as a first-day asset. Use docs/guides/new-developer-onboarding.md in decoy-platform instead. The substrate decision is still captured in `docs/adr/0001-polars-duckdb-hybrid-engine-substrate.md`. Refresh of this tour is post-V1 work.",
   "steps": [
     {
       "file": "src/decoy_engine/graph/runner.py",

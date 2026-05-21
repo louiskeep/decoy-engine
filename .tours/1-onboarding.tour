@@ -1,7 +1,7 @@
 {
   "$schema": "https://aka.ms/codetour-schema",
-  "title": "1 - Onboarding: how the engine actually works",
-  "description": "Click-through introduction to decoy-engine for first-time contributors. ~15 minutes. Install the CodeTour VS Code extension (publisher: vsls-contrib) to play it.",
+  "title": "1 - Onboarding (STALE - do not use for V1 onboarding)",
+  "description": "STALE AT V1. This tour predates the platform rename + the V1 scope cut. It mentions Forge product names, the old `map` transform path, and root-level guide names that have moved under docs/. Some line numbers no longer match. Do not use this as a first-day onboarding asset. Use docs/guides/new-developer-onboarding.md in decoy-platform instead. Refresh of this tour is post-V1 work.",
   "steps": [
     {
       "file": "src/decoy_engine/__init__.py",
