@@ -53,7 +53,26 @@ from decoy_engine.context import (
     emit_lineage,
 )
 from decoy_engine.exceptions import ConfigError, FlagPauseSignal, PipelineValidationError
+from decoy_engine.graph.config_loading import (
+    _load_yaml,
+    _validate_or_raise,
+    _validate_top_level_or_raise,
+)
 from decoy_engine.graph.errors import translate as translate_engine_error
+from decoy_engine.graph.node_descriptors import (
+    _REDACT_KEYS,
+    _jsonable,
+    _node_descriptor,
+    _summarize_node_config,
+)
+from decoy_engine.graph.node_exports import (
+    _NODE_TOKEN_RE,
+    _NodeExportResolutionError,
+    _replace_node_exports_in_string,
+    _resolve_node_exports,
+    _resolve_one_node_export,
+    _walk_for_exports,
+)
 from decoy_engine.graph.types import (
     NodeRunRecord,
     PreviewResult,
@@ -65,6 +84,43 @@ from decoy_engine.internal.validator import GraphConfigValidator, ValidationErro
 _MEMORY_WARN_THRESHOLD = float(
     os.environ.get("DECOY_MEMORY_WARN_THRESHOLD", "0.7")
 )
+
+
+def _ancestor_node_ids_safe(
+    nodes: list, edges: list, target: str
+) -> set[str]:
+    """Walk backward from ``target`` along edges and return every node id
+    that ultimately feeds it. Used by ``preview_graph`` to prune the run
+    to the minimum needed subgraph.
+
+    "Safe" because the walk tolerates malformed nodes/edges entries —
+    anything that isn't a dict or has a non-string id/from/to is skipped
+    rather than crashed on. Caller passes in raw config; structural
+    validation has not necessarily run yet.
+    """
+    valid_ids = {
+        n.get("id") for n in nodes
+        if isinstance(n, dict) and isinstance(n.get("id"), str)
+    }
+    in_edges: dict[str, list[str]] = {}
+    for e in edges or []:
+        if not isinstance(e, dict):
+            continue
+        src = e.get("from")
+        dst = e.get("to")
+        if not isinstance(src, str) or not isinstance(dst, str):
+            continue
+        in_edges.setdefault(dst, []).append(src.split(".", 1)[0])
+
+    needed: set[str] = set()
+    stack = [target]
+    while stack:
+        nid = stack.pop()
+        if nid in needed or nid not in valid_ids:
+            continue
+        needed.add(nid)
+        stack.extend(in_edges.get(nid, []))
+    return needed
 
 
 class _PeakRSSMonitor:
@@ -1218,196 +1274,3 @@ def _build_pool_resolver(cache, by_id: dict[str, dict]):
     return resolver
 
 
-def _load_yaml(yaml_text: str) -> dict:
-    try:
-        data = yaml.safe_load(yaml_text)
-    except yaml.YAMLError as e:
-        raise ConfigError(f"failed to parse YAML: {e}") from e
-    if not isinstance(data, dict):
-        raise ConfigError("graph config root must be a mapping")
-    return data
-
-
-def _validate_or_raise(config: dict) -> None:
-    quiet = logging.getLogger("decoy_engine.graph.runner")
-    if not quiet.handlers:
-        quiet.addHandler(logging.NullHandler())
-    try:
-        GraphConfigValidator(quiet).validate(config)
-    except ValidationError as e:
-        raise PipelineValidationError(str(e), path=e.path) from e
-
-
-def _validate_top_level_or_raise(config: dict) -> None:
-    if config.get("mode") != "graph":
-        raise PipelineValidationError(
-            f"top-level 'mode' must be 'graph' (got {config.get('mode')!r})"
-        )
-    nodes = config.get("nodes")
-    if not isinstance(nodes, list) or not nodes:
-        raise PipelineValidationError("'nodes' must be a non-empty list")
-    edges = config.get("edges")
-    if edges is not None and not isinstance(edges, list):
-        raise PipelineValidationError("'edges' must be a list")
-
-
-def _ancestor_node_ids_safe(
-    nodes: list, edges: list, target: str
-) -> set[str]:
-    valid_ids = {
-        n.get("id") for n in nodes
-        if isinstance(n, dict) and isinstance(n.get("id"), str)
-    }
-    in_edges: dict[str, list[str]] = {}
-    for e in edges or []:
-        if not isinstance(e, dict):
-            continue
-        src = e.get("from")
-        dst = e.get("to")
-        if not isinstance(src, str) or not isinstance(dst, str):
-            continue
-        in_edges.setdefault(dst, []).append(src.split(".", 1)[0])
-
-    needed: set[str] = set()
-    stack = [target]
-    while stack:
-        nid = stack.pop()
-        if nid in needed or nid not in valid_ids:
-            continue
-        needed.add(nid)
-        stack.extend(in_edges.get(nid, []))
-    return needed
-
-
-def _node_descriptor(node: dict) -> str:
-    nid = node.get("id", "?")
-    kind = node.get("kind", "?")
-    name = node.get("name")
-    if isinstance(name, str) and name.strip():
-        return f"{name!r} [id={nid}, kind={kind}]"
-    return f"[id={nid}, kind={kind}]"
-
-
-_REDACT_KEYS = {"password", "secret", "token", "api_key", "apikey", "auth"}
-
-
-def _summarize_node_config(kind: str, cfg: dict) -> str:
-    if not isinstance(cfg, dict) or not cfg:
-        return f"config: (no config)"
-    parts: list[str] = []
-    for k, v in cfg.items():
-        if k.startswith("_"):
-            continue
-        key_l = str(k).lower()
-        if any(rk in key_l for rk in _REDACT_KEYS):
-            parts.append(f"{k}=***")
-            continue
-        if isinstance(v, (dict, list)):
-            kind_word = "keys" if isinstance(v, dict) else "items"
-            parts.append(f"{k}=<{len(v)} {kind_word}>")
-        elif isinstance(v, str) and len(v) > 80:
-            parts.append(f"{k}={v[:77]!r}...")
-        else:
-            parts.append(f"{k}={v!r}")
-        if len(parts) >= 6:
-            parts.append("...")
-            break
-    return f"config: " + ", ".join(parts)
-
-
-def _jsonable(v: Any) -> Any:
-    """Replace NaN/NaT/etc. with None so the row tuples serialize cleanly."""
-    try:
-        import pandas as pd
-        if pd.isna(v):
-            return None
-    except Exception:
-        pass
-    return v
-
-
-_NODE_TOKEN_RE = re.compile(r"\$\{nodes\.([a-zA-Z0-9_-]+)\.([a-zA-Z_][\w.]*)}")
-
-
-class _NodeExportResolutionError(Exception):
-    """Raised when a `${nodes.X.Y}` token can't be resolved."""
-
-
-def _resolve_node_exports(
-    cfg: Any,
-    exports: dict[str, dict[str, Any]],
-    current_node_id: str,
-) -> Any:
-    return _walk_for_exports(cfg, exports, current_node_id)
-
-
-def _walk_for_exports(
-    node: Any,
-    exports: dict[str, dict[str, Any]],
-    current_node_id: str,
-) -> Any:
-    if isinstance(node, dict):
-        return {k: _walk_for_exports(v, exports, current_node_id) for k, v in node.items()}
-    if isinstance(node, list):
-        return [_walk_for_exports(v, exports, current_node_id) for v in node]
-    if isinstance(node, str):
-        return _replace_node_exports_in_string(node, exports, current_node_id)
-    return node
-
-
-def _replace_node_exports_in_string(
-    s: str,
-    exports: dict[str, dict[str, Any]],
-    current_node_id: str,
-) -> Any:
-    full = _NODE_TOKEN_RE.fullmatch(s)
-    if full is not None:
-        return _resolve_one_node_export(
-            full.group(1), full.group(2), exports, current_node_id
-        )
-
-    def replace(match: re.Match[str]) -> str:
-        return str(_resolve_one_node_export(
-            match.group(1), match.group(2), exports, current_node_id
-        ))
-
-    return _NODE_TOKEN_RE.sub(replace, s)
-
-
-def _resolve_one_node_export(
-    node_id: str,
-    key: str,
-    exports: dict[str, dict[str, Any]],
-    current_node_id: str,
-) -> Any:
-    if node_id == current_node_id:
-        raise _NodeExportResolutionError(
-            f"node {current_node_id!r} references its own exports via "
-            f"${{nodes.{node_id}.{key}}} -- exports are only readable from "
-            f"downstream nodes"
-        )
-    if node_id not in exports:
-        raise _NodeExportResolutionError(
-            f"unresolved variable: ${{nodes.{node_id}.{key}}} -- node "
-            f"{node_id!r} has not run yet (forward reference or upstream "
-            f"failure)"
-        )
-    cur: Any = exports[node_id]
-    for part in key.split("."):
-        if isinstance(cur, dict) and part in cur:
-            cur = cur[part]
-        elif isinstance(cur, list) and part.isdigit():
-            idx = int(part)
-            if 0 <= idx < len(cur):
-                cur = cur[idx]
-            else:
-                raise _NodeExportResolutionError(
-                    f"unresolved variable: ${{nodes.{node_id}.{key}}} -- "
-                    f"index {idx} out of range"
-                )
-        else:
-            raise _NodeExportResolutionError(
-                f"unresolved variable: ${{nodes.{node_id}.{key}}} -- "
-                f"key {part!r} not in {node_id!r}'s exports"
-            )
-    return cur
