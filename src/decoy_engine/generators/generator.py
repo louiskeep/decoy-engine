@@ -64,7 +64,7 @@ class DataGenerator:
         # bytes across runs and across instances. Without this thread,
         # generation falls back to the legacy `seed + hash(name)` per-column
         # seed and the "lose the DB, restore the master key" recovery story
-        # only holds for mask. ROADMAP Item 6.
+        # only holds for mask.
         self.pipeline_derive_key = (
             ctx.pipeline_derive_key if ctx is not None else None
         )
