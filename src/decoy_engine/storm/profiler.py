@@ -95,7 +95,10 @@ _K_ANON_MAX_DISTINCT_ABSOLUTE = 20
 # noise rarely participate in linkage attacks because the values are
 # already too granular to share across rows; the cardinality filter
 # above also catches them, but being explicit keeps the groupby fast.
-_K_ANON_TYPES = {"integer", "string", "boolean", "date"}
+# "mixed" is included because STORM infers it for short-string
+# categorical columns (gender, city, state) whose values don't match
+# a single narrow type pattern — these are valid quasi-id candidates.
+_K_ANON_TYPES = {"integer", "string", "boolean", "date", "mixed"}
 
 
 def _compute_k_anonymity(
