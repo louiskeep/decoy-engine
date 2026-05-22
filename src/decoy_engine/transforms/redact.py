@@ -32,6 +32,18 @@ class RedactStrategy(BaseMaskingStrategy):
 
         self.logger.debug(f"Applying redaction mask with value '{redact_with}'")
 
+        # Drop any extension-dtype tag (e.g. int64[pyarrow] for a CSV
+        # column the reader inferred as int) before .where() runs --
+        # the redaction value is a string, and pandas extension-array
+        # setitem path tries to cast the string to the original dtype
+        # ("Could not convert 'REDACTED' to int64"). Casting to plain
+        # object dtype here lets .where() see a python-object column
+        # and write the string cleanly. Same pattern as date_shift.py
+        # lines 108-109. The registry-level drop+reinsert covers the
+        # back-assignment; this covers the per-strategy internal path.
+        if pd.api.types.is_extension_array_dtype(column.dtype):
+            column = column.astype(object)
+
         # Vectorized: where the value IS NA, keep it; otherwise replace
         # with the redaction string. Replaces a per-row Python loop that
         # existed mostly to do this exact branch — pandas handles it
