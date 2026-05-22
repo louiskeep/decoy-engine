@@ -103,29 +103,64 @@ class StrategyManager:
     def apply_masking_rules(self, df: pd.DataFrame, rules: List[Dict[str, Any]]) -> pd.DataFrame:
         """
         Apply multiple masking rules to a DataFrame
-        
+
         Args:
             df: Pandas DataFrame to mask
             rules: List of masking rule dictionaries
-            
+
         Returns:
             Masked pandas DataFrame
         """
         result = df.copy()
-        
+
         # Apply each rule
         for rule in rules:
             column_name = rule.get('column')
-            
+
             # Skip if column doesn't exist
             if column_name not in df.columns:
                 self.logger.warning(f"Column '{column_name}' not found in DataFrame. Skipping.")
                 continue
-            
+
             # Apply the rule
             self.logger.info(f"Applying masking rule to column '{column_name}' with type '{rule.get('type')}'")
-            result[column_name] = self.apply_masking_rule(df[column_name], rule)
-        
+            new_col = self.apply_masking_rule(df[column_name], rule)
+
+            # Drop the original column's extension-dtype tag (e.g.
+            # int64[pyarrow] for a date column that the CSV reader
+            # inferred as int because values looked like 20260522)
+            # when the masked output is a different semantic type.
+            # Without this, pa.Table.from_pandas at the op boundary
+            # (decoy_engine.graph.conversion.engine_to_arrow line 98)
+            # honors the original int64 tag and tries to coerce the
+            # now-string masked values back to int, raising the
+            # opaque "object of type <class 'str'> cannot be
+            # converted to int" / "Conversion failed for column X"
+            # tuple. Re-instantiating result[column_name] from a
+            # fresh Series whose dtype matches the masked output
+            # (object for the str-typed strategies) lets Arrow
+            # infer cleanly on the way out.
+            original_dtype = df[column_name].dtype
+            if (
+                pd.api.types.is_extension_array_dtype(original_dtype)
+                and not pd.api.types.is_extension_array_dtype(new_col.dtype)
+            ):
+                # Strategy returned a numpy-backed Series (object dtype
+                # for date_shift / hash / faker / redact / etc.). Pandas
+                # would otherwise try to coerce the new values to fit
+                # the existing extension dtype tag at assignment time;
+                # for int64[pyarrow] columns receiving string masked
+                # values, that raises the opaque "object of type
+                # <class 'str'> cannot be converted to int" tuple.
+                # Drop + reinsert at the same column index so order is
+                # preserved (a straight reassign appends to the end).
+                col_idx = result.columns.get_loc(column_name)
+                result = result.drop(columns=[column_name])
+                result.insert(col_idx, column_name, new_col)
+                continue
+
+            result[column_name] = new_col
+
         return result
     
     def available_strategies(self) -> List[str]:
