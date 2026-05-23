@@ -40,7 +40,6 @@ full-run behavior because both paths use the same plan builder.
 
 import logging
 import os
-import threading
 import time
 from typing import Any
 
@@ -57,6 +56,7 @@ from decoy_engine.graph.config_loading import (
     _validate_top_level_or_raise,
 )
 from decoy_engine.graph.errors import translate as translate_engine_error
+from decoy_engine.graph.memory_monitor import PeakRSSMonitor
 from decoy_engine.graph.node_descriptors import (
     _node_descriptor,
     _summarize_node_config,
@@ -114,48 +114,8 @@ def _ancestor_node_ids_safe(
     return needed
 
 
-class _PeakRSSMonitor:
-    """Background thread that polls this process's RSS and tracks peak.
-
-    Fixed 200 ms sample interval -- fast enough to catch peaks during op
-    execution (where the cross-engine dual-representation cost lands),
-    slow enough that the polling overhead is negligible. Daemon thread
-    so a runner crash doesn't hang the process.
-    """
-
-    def __init__(self) -> None:
-        self.peak_rss = 0
-        self._stop = threading.Event()
-        self._thread: threading.Thread | None = None
-        self._psutil = None
-        try:
-            import psutil
-            self._psutil = psutil
-        except ImportError:
-            self._psutil = None
-
-    def __enter__(self) -> "_PeakRSSMonitor":
-        if self._psutil is None:
-            return self
-        self.peak_rss = self._psutil.Process().memory_info().rss
-        self._thread = threading.Thread(target=self._poll, daemon=True)
-        self._thread.start()
-        return self
-
-    def __exit__(self, *args) -> None:
-        self._stop.set()
-        if self._thread is not None:
-            self._thread.join(timeout=1)
-
-    def _poll(self) -> None:
-        process = self._psutil.Process()
-        while not self._stop.wait(0.2):
-            try:
-                rss = process.memory_info().rss
-            except self._psutil.NoSuchProcess:
-                return
-            if rss > self.peak_rss:
-                self.peak_rss = rss
+# _PeakRSSMonitor moved to graph/memory_monitor.py as PeakRSSMonitor
+# (V2.0-A.2, 2026-05-23) per the runner-decomposition plan.
 
 
 def _check_memory_pressure(
@@ -1054,7 +1014,7 @@ def _execute_graph(
     # (used by every op) continues to route values to the right node.
     state = RunState(overall_start=time.monotonic())
 
-    with _PeakRSSMonitor() as monitor:
+    with PeakRSSMonitor() as monitor:
         state.memory_monitor = monitor
         # Emit lineage entries for every node before execution starts so
         # the audit trail is complete even if a node fails mid-run.
