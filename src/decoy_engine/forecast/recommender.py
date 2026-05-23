@@ -1,13 +1,20 @@
-"""FORECAST recommender — `recommend(profile: StormProfile) -> ForecastReport`.
+"""FORECAST recommender: ``recommend(profile: StormProfile) -> ForecastReport``.
 
 Pure function. Reads only the StormProfile (a JSON-serializable summary),
-never raw data. The signature is enforced by `tests/unit/test_forecast_security_boundary.py`.
+never raw data. The signature is enforced by
+``tests/unit/test_forecast_security_boundary.py``.
 
 What it produces:
   - Ranked Disguise recommendations (top one is the "Apply Disguise" CTA)
   - Per-field Mask recommendations for any PII-flagged column
   - Risk flags lifted from STORM's sentinels (with FORECAST-suggested fixes)
   - A draft pipeline YAML the user can copy/edit/run as-is
+
+Pattern: SDV HMA1 multi-table fidelity scoring (sdv-dev/SDV, MIT).
+  SDV HMA1: https://docs.sdv.dev/sdv/multi-table-data/modeling
+  Disguise ranking uses a coverage + risk-reduction score modeled on
+  HMA1's parent-then-child sampling discipline (parent fidelity sets
+  an upper bound on what child rows can preserve).
 """
 
 from __future__ import annotations

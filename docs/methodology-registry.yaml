@@ -1,0 +1,44 @@
+# Methodology citation registry
+#
+# Modules implementing established-methodology primitives. Each entry
+# MUST have a `Pattern:` line in its module docstring matching the
+# `pattern` field here. The sentry test at
+# tests/sentry/test_methodology_citations.py enforces presence.
+#
+# Adding a module: register it here AND add the `Pattern:` line to the
+# module docstring in the same PR. Removing a module: delete the
+# entry here AND scrub the docstring marker (or leave a regular
+# docstring without the marker).
+#
+# Per the V2 sprint plan (Engineering Best Practices §6.1):
+#   "If a module is in the registry, it has a citation; if it has a
+#    citation, it is in the registry. No third state."
+#
+# Format conventions for the docstring line:
+#   "Pattern: <name> (<source>, <license>). See: <link>."
+# Multi-line additions (design notes, deferral rationale) follow.
+
+modules:
+  - path: src/decoy_engine/transforms/hash.py
+    pattern: HMAC-SHA256 with HKDF-SHA256 key derivation
+    source: HMAC RFC 2104; HKDF RFC 5869
+
+  - path: src/decoy_engine/transforms/fpe.py
+    pattern: Type-II Feistel + HMAC-SHA256
+    source: Feistel 1973; HMAC RFC 2104
+
+  - path: src/decoy_engine/transforms/date_shift.py
+    pattern: HMAC-SHA256-keyed deterministic offset
+    source: HMAC RFC 2104
+
+  - path: src/decoy_engine/transforms/faker_based.py
+    pattern: Faker seeded deterministic generation
+    source: joke2k/faker (MIT)
+
+  - path: src/decoy_engine/transforms/format_preservation.py
+    pattern: strptime/strftime format inference
+    source: CPython datetime stdlib
+
+  - path: src/decoy_engine/forecast/recommender.py
+    pattern: SDV HMA1 multi-table fidelity scoring
+    source: sdv-dev/SDV (MIT)

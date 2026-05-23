@@ -1,7 +1,16 @@
-# decoy_engine/strategies/hash.py
 """
 Hash masking strategy for the decoy_engine package.
-Replaces values with deterministic hash values.
+
+Replaces values with deterministic hash strings. Two paths:
+the keyed path (preferred) derives a per-column key via HKDF-SHA256
+and then computes HMAC-SHA256(column_key, value) per cell; the
+seeded fallback uses SHA-256(value + seed) for backward compatibility
+with pre-keyed configs.
+
+Pattern: HMAC-SHA256 with HKDF-SHA256 key derivation
+  (HMAC RFC 2104; HKDF RFC 5869).
+  HMAC: https://datatracker.ietf.org/doc/html/rfc2104
+  HKDF: https://datatracker.ietf.org/doc/html/rfc5869
 """
 
 from typing import Any

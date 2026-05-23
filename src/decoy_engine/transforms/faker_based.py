@@ -1,7 +1,15 @@
-# decoy_engine/strategies/faker.py
 """
 Faker masking strategy for the decoy_engine package.
-Replaces values with realistic fake data using the Faker library.
+
+Replaces values with realistic fake data using the Faker library. Both
+the keyed and the seeded-fallback paths derive each output from the
+input value, so duplicate source values always map to duplicate fake
+values. No state is stored locally; reruns reproduce the same outputs
+given the same key (or seed).
+
+Pattern: Faker seeded deterministic generation (joke2k/faker, MIT).
+  Faker: https://faker.readthedocs.io/
+  Determinism via Faker(...).seed_instance(seed) per value.
 """
 
 from typing import Any

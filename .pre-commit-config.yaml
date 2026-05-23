@@ -1,0 +1,17 @@
+# Pre-commit hooks.
+#
+# Mirrors the fast checks from CI so contributors get feedback before
+# pushing. Mypy stays on CI only (slow startup; ~5 seconds per run).
+# The ruff hook runs ~0.1 s on the whole engine; not noticeable.
+#
+# Install once: `pip install pre-commit && pre-commit install`.
+# Run manually against the whole repo: `pre-commit run --all-files`.
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    # Pin matches the ruff version used in CI; bump both together.
+    rev: v0.5.0
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format

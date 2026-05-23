@@ -1,3 +1,23 @@
+"""
+Date-shift masking strategy for the decoy_engine package.
+
+Shifts each date by a per-value offset within ``[min_days, max_days]``.
+Same input + same key produces the same shift across runs and
+instances. Used to break temporal joinability between datasets while
+preserving relative ordering and rough temporal density.
+
+Two paths:
+  - **Keyed (preferred).** Engine-supplied master key derives a
+    per-column key via the existing derive_key path; per-value shift
+    comes from HMAC-SHA256(column_key, value) reduced into the
+    declared range.
+  - **Legacy fallback.** Pre-keyed configs use MD5(value) reduced
+    into the range. Preserved for reproducibility on existing
+    fixtures; new configs should always declare a key.
+
+Pattern: HMAC-SHA256-keyed deterministic offset (HMAC RFC 2104).
+  HMAC: https://datatracker.ietf.org/doc/html/rfc2104
+"""
 import hashlib
 import hmac
 from datetime import datetime

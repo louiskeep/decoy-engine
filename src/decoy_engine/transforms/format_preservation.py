@@ -1,4 +1,4 @@
-"""Format-preservation post-pass for masking strategies (Item 65 — Layer B).
+"""Format-preservation post-pass for masking strategies.
 
 Reads two hints off the mask rule:
   - ``format_pattern``  : either a regex shape like ``r'\\d{3}-\\d{3}-\\d{4}'``
@@ -17,9 +17,12 @@ Then re-shapes the masked output to match. Two cases:
     is a no-op for that strategy by design.
 
 Skips silently when the strategy is structurally incompatible (hash output
-is hex; redact output is a fixed string) per the plan's decision #2.
+is hex; redact output is a fixed string).
 
-Pure functions — no engine state. The MaskingProcessor calls
+Pattern: strptime/strftime format inference (CPython datetime stdlib).
+  https://docs.python.org/3/library/datetime.html#strftime-strptime-behavior
+
+Pure functions, no engine state. The MaskingProcessor calls
 ``apply_format_preservation`` immediately after the strategy returns.
 """
 from __future__ import annotations

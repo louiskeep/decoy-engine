@@ -1,24 +1,28 @@
-# decoy_engine/transforms/fpe.py
 """
-Format-Preserving Encryption (FPE) mask strategy — Sprint B · Item 32.
+Format-Preserving Encryption (FPE) mask strategy.
 
 Replaces each string value with another string of the same length over the
-same character set.  Same input + same key → same output across runs and
-instances (keyed determinism via the existing derive_key path, identical to
-HashStrategy and DateShiftStrategy).
+same character set. Same input + same key produces the same output across
+runs and instances (keyed determinism via the existing derive_key path,
+identical to HashStrategy and DateShiftStrategy).
 
-Algorithm: 8-round type-II Feistel permutation over Z_(r^u) × Z_(r^v) where
+Algorithm: 8-round type-II Feistel permutation over Z_(r^u) x Z_(r^v) where
 n = u + v = input length and r = |charset|, using HMAC-SHA256 as the round
-function.  The Feistel construction is a bijection regardless of the round
+function. The Feistel construction is a bijection regardless of the round
 function (odd rounds shift B keyed on A; even rounds shift A keyed on B),
-so no two inputs map to the same output.  Requires only stdlib — no new
-package dependency added.
+so no two inputs map to the same output. Requires only stdlib (no new
+package dependency added).
 
-Design note: this is not NIST FF1 (which requires AES-CBC and therefore the
-`cryptography` package).  The Feistel+HMAC approach has the same user-visible
-properties — format-preserving, bijective, keyed-deterministic — using the
-HMAC-SHA256 primitive that is already in every other keyed transform.  Defer a
-hard AES dep until a customer asks for NIST SP 800-38G compliance by name.
+Pattern: Type-II Feistel + HMAC-SHA256 (Feistel 1973; HMAC RFC 2104).
+  Feistel: original construction by Horst Feistel at IBM (1973).
+  HMAC: https://datatracker.ietf.org/doc/html/rfc2104
+
+Design note: this is not NIST FF1 (which requires AES-CBC and therefore
+the `cryptography` package). The Feistel+HMAC approach has the same
+user-visible properties (format-preserving, bijective, keyed-deterministic)
+using the HMAC-SHA256 primitive that is already in every other keyed
+transform. Defer a hard AES dep until a customer asks for NIST SP 800-38G
+compliance by name.
 """
 
 import hashlib
