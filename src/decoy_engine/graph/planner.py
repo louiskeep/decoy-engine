@@ -5,18 +5,18 @@ each node" step. The runner calls build_plan() once before the execution
 loop; the returned ExecutionPlan is read-only and safe to inspect from
 tests without running any op.
 
-Audit Sprint 1.1 - Planner Extraction.
-
 Primary consumers:
   - graph.runner._execute_graph: uses plan.order, plan.in_edges,
     plan.consumer_counts, plan.graph_engine_mode.
   - tests/unit/test_graph_planner.py: verifies plan shape for many
     graph shapes without needing a full graph run.
 
-Non-goals for Sprint 1.1:
-  - preview_graph still builds its own sub-plan inline (Sprint 1.4).
-  - No new validation logic; the caller must validate before calling
-    build_plan.
+Design notes:
+  - preview_graph builds its own sub-plan on a pruned subgraph rather
+    than calling build_plan on the full graph; see runner.preview_graph
+    and graph/preview.py.
+  - build_plan does not re-validate; callers must run GraphConfigValidator
+    first.
 """
 from __future__ import annotations
 

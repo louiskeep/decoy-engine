@@ -93,7 +93,7 @@ def _ancestor_node_ids_safe(
     that ultimately feeds it. Used by ``preview_graph`` to prune the run
     to the minimum needed subgraph.
 
-    "Safe" because the walk tolerates malformed nodes/edges entries —
+    "Safe" because the walk tolerates malformed nodes/edges entries --
     anything that isn't a dict or has a non-string id/from/to is skipped
     rather than crashed on. Caller passes in raw config; structural
     validation has not necessarily run yet.
@@ -172,6 +172,14 @@ def _check_memory_pressure(
     graph_engine_mode: str,
     log: Any,
 ) -> None:
+    """Emit a warning when peak RSS exceeded _MEMORY_WARN_THRESHOLD of system RAM.
+
+    Called once after the execution loop with the RSS peak recorded by
+    _PeakRSSMonitor.  No-ops silently when psutil is unavailable or
+    peak_rss_bytes is 0.  In hybrid mode the warning suggests switching to
+    pandas to cut peak memory by ~2x at a throughput cost; in other modes
+    it advises moving to a larger host.
+    """
     if log is None or peak_rss_bytes == 0:
         return
     try:
@@ -322,16 +330,11 @@ def validate_graph_full(yaml_text: str, *, strict: bool = False):
         _collect(lambda: validator._validate_mask_column_reachability(nodes, edges))
         _collect(lambda: validator._validate_nodes_ref_reachability(nodes, edges))
 
-    # ── Stage 9: column_relationships (Sprint 4, item 4) ──
-    #
-    # Pattern: SDV HMA1 (sdv-dev/SDV, MIT). Parent-first DAG;
-    # materialize parent pool; child samples with replacement.
-    #
-    # Validates the top-level column_relationships: block emitted by
-    # the platform's FORECAST pipeline build. Independent of stages
-    # 6-8 (those check the graph mechanics; this one checks the FK
-    # declaration shape). Topology-aware: requires plan order from
-    # build_plan, so it runs only when topology_ok is True.
+    # Stage 9: FK / m2m / multi-parent relationship validation.
+    # Independent of stages 6-8 (those check graph mechanics); this
+    # checks the column_relationships: block shape and ordering.
+    # Requires topology_ok because it needs plan.order for
+    # parent-before-child checks.
     if topology_ok:
         _collect(lambda: _validate_column_relationships(working, strict=strict, result=result))
 
@@ -437,7 +440,9 @@ def _validate_column_relationships(
         _reach_cache[key] = False
         return False
 
-    # Set of deterministic mask strategies. Anything outside breaks FK.
+    # Mask strategies that preserve referential integrity across runs.
+    # Non-members on an FK column emit a warning (or hard error when
+    # DECOY_FK_STRICT_DETERMINISM=1 is set).
     DETERMINISTIC_MASK_STRATEGIES = frozenset(
         {"hash", "fpe", "faker", "date_shift", "reference"}
     )
@@ -471,7 +476,7 @@ def _validate_column_relationships(
 
     # Self-reference entries collected to detect column cycles within
     # one node post-loop. Each tuple is (node_id, parent_col, child_col,
-    # path) — we already validated p_col != c_col when appending.
+    # path) -- we already validated p_col != c_col when appending.
     self_ref_entries: list[tuple[str, str, str, str]] = []
 
     for i, rel in enumerate(rels):
@@ -519,7 +524,7 @@ def _validate_column_relationships(
         # Self-reference: supported when child.column != parent.column.
         # The engine reads the pool from the in-flight output buffer
         # (out[parent_column]) instead of pool_resolver because the
-        # parent column hasn't been cached yet — it's being produced
+        # parent column hasn't been cached yet -- it's being produced
         # in the same op invocation. Same-column self-edges (a -> a)
         # would be a cycle; reject as fk.self_cycle.
         if p_node == c_node:
@@ -548,7 +553,7 @@ def _validate_column_relationships(
                     code=CODES.FK_SELF_REF_INERT,
                     message=(
                         f"self-reference on {c_node!r} (kind={self_kind!r}) "
-                        f"has no engine effect — only generate nodes have a "
+                        f"has no engine effect -- only generate nodes have a "
                         f"two-pass mechanism. Move the self-ref to a generate "
                         f"node downstream, or use a derive node with a formula "
                         f"strategy if the value depends on a sibling column."
@@ -581,18 +586,17 @@ def _validate_column_relationships(
             )
             continue
 
-        # Child-kind eligibility + sequential-bounds composition checks
-        # (tier-1 audit, 2026-05-20). Run BEFORE the topology + column
-        # checks below because they depend only on the entry itself
-        # (node kind, distribution config), not on graph topology. This
-        # ensures the operator sees these higher-priority misconfiguration
-        # errors even when the FK also has unrelated topology issues.
+        # Child-kind eligibility + sequential-bounds composition checks.
+        # Run before the topology + column checks because they depend only
+        # on the entry itself (node kind, distribution config). This ensures
+        # the operator sees these higher-priority misconfiguration errors
+        # even when the FK also has unrelated topology issues.
         c_kind_early = nodes_by_id[c_node].get("kind", "")
         if c_kind_early and c_kind_early != "mask" and c_kind_early != "generate":
             result.add_error(
                 code=CODES.FK_INELIGIBLE_CHILD_KIND,
                 message=(
-                    f"child node {c_node!r} has kind {c_kind_early!r} — only "
+                    f"child node {c_node!r} has kind {c_kind_early!r} -- only "
                     f"mask + generate nodes can carry an FK at run time. "
                     f"source.* nodes are read-only inputs; transforms "
                     f"like drop_column / filter / dedupe don't materialize "
@@ -617,13 +621,13 @@ def _validate_column_relationships(
                     "sequential distribution + cardinality bounds "
                     "(min_per_parent / max_per_parent) don't compose: "
                     "the bounds repair phase shuffles placement, breaking "
-                    "the sequence. Pick one or the other — bounds are "
+                    "the sequence. Pick one or the other -- bounds are "
                     "designed to combine with random / weighted."
                 ),
                 path=path,
                 node_id=c_node,
             )
-            # Don't continue — the FK is still authorable, just the
+            # Don't continue -- the FK is still authorable, just the
             # combination is broken; let downstream checks run too.
 
         # Topology: parent must precede child in plan.order.
@@ -723,13 +727,13 @@ def _validate_column_relationships(
                     # match on it. Severity=warning is the only difference.
                     result.add_warning(
                         code=CODES.FK_NONDETERMINISTIC_MASK,
-                        message=msg + " (advisory — set DECOY_FK_STRICT_DETERMINISM=1 to block)",
+                        message=msg + " (advisory -- set DECOY_FK_STRICT_DETERMINISM=1 to block)",
                         path=f"{path}.{side}.column",
                     )
 
-    # ── Post-loop: detect column cycles within a single node ──
+    # -- Post-loop: detect column cycles within a single node --
     # When a node has both (a -> b) and (b -> a) self-FK entries, the
-    # apply-time two-pass approach can't satisfy both — they form a
+    # apply-time two-pass approach can't satisfy both -- they form a
     # cycle. Single self-edges (a -> b only) are fine; the cycle case
     # surfaces only when two entries on the same node close the loop.
     if self_ref_entries:
@@ -817,7 +821,7 @@ def _validate_m2m_entry(
 def _validate_multi_parent_entry(
     rel: dict, path: str, nodes_by_id: dict[str, dict], result, CODES,
 ) -> None:
-    """Validate a multi-parent FK entry — `parent` is an array of
+    """Validate a multi-parent FK entry -- `parent` is an array of
     parent specs instead of a single object. Each entry contributes to
     a composite-key pool: the child column draws (left_val, right_val,
     ...) tuples from the joint distribution of parents. Shape:
@@ -877,14 +881,11 @@ def _validate_custom_provider_entry(
 ) -> None:
     """Validate a column_relationships entry whose parent sources the
     pool from a registered custom Faker provider (parent: {custom_provider:
-    <name>}). Tier-4 audit (2026-05-20).
-
-    Skips topology + column-presence checks for the parent (custom
-    providers aren't in the graph). Still verifies the child node
-    exists + is FK-eligible (mask / generate) + has the named column.
-    The provider-name registration is a runtime check — validator
-    can't verify it because the registry is populated by the platform
-    at run time (filesystem custom_providers/ + DB-backed sync).
+    <name>}). Skips topology + column-presence checks for the parent
+    (custom providers aren't graph nodes). Verifies the child node
+    exists, is FK-eligible (mask / generate), and has the named column.
+    Provider registration is best-effort: the registry is populated at
+    run time, so a missing provider is a warning, not a hard error.
     """
     from decoy_engine.internal.helpers import list_custom_faker_list_providers
     parent = rel.get("parent") or {}
@@ -920,7 +921,7 @@ def _validate_custom_provider_entry(
         result.add_error(
             code=CODES.FK_INELIGIBLE_CHILD_KIND,
             message=(
-                f"child node {c_node!r} has kind {c_kind!r} — only "
+                f"child node {c_node!r} has kind {c_kind!r} -- only "
                 f"mask + generate nodes can carry an FK at run time."
             ),
             path=f"{path}.child.node",
@@ -937,7 +938,7 @@ def _validate_custom_provider_entry(
             path=f"{path}.child.column",
         )
         return
-    # Provider registration check is best-effort at validation time —
+    # Provider registration check is best-effort at validation time --
     # the engine registers providers from filesystem + DB at run time,
     # so the validator only warns when the provider isn't visible right
     # now. Run-time `EmptyParentPoolError` is the hard backstop.
@@ -1011,17 +1012,10 @@ def _execute_graph(
     plan = build_plan(config)
     graph_engine_mode = plan.graph_engine_mode
 
-    # ── FK preservation (Sprint 4, item 4) ──
-    #
-    # Pattern: SDV HMA1 (sdv-dev/SDV, MIT). Parent-first DAG;
-    # materialize parent pool; child samples with replacement.
-    #
-    # Read `column_relationships` from the parsed config. Each entry's
-    # parent.node must stay live in the cache past its normal consumer
-    # count so a downstream op can still query the pool. We extend
-    # `keep_set` with every parent node referenced by an FK entry --
-    # the cache's existing keep-set mechanism (cache.py) already
-    # implements "do not evict at zero consumers."
+    # Pin every FK parent node in the cache so it survives past its last
+    # regular consumer.  Without this the parent would be evicted before
+    # a downstream child op reads it as a pool.  The cache keep-set
+    # mechanism (cache.py) implements "do not evict at zero consumers."
     column_relationships = config.get("column_relationships") or []
     fk_parent_nodes: set[str] = {
         rel["parent"]["node"]
@@ -1050,6 +1044,8 @@ def _execute_graph(
     log = ctx.logger
 
     with _PeakRSSMonitor() as monitor:
+        # Emit lineage entries for every node before execution starts so
+        # the audit trail is complete even if a node fails mid-run.
         for nid in plan.order:
             node = by_id[nid]
             kind = node["kind"]
@@ -1227,9 +1223,9 @@ def _build_pool_resolver(cache, by_id: dict[str, dict]):
         table = cache.get(parent_node_id)
         if table is None:
             # Parent not yet materialized in the cache. Normally
-            # unreachable because the topology validator (Commit 3)
-            # rejects parent-after-child orderings; but if a graph
-            # ran in lenient validation, fail clearly here.
+            # unreachable because the topology stage rejects
+            # parent-after-child orderings; but if a graph ran in
+            # lenient validation, fail clearly here.
             raise UnknownFKColumnError(
                 f"parent node {parent_node_id!r} has no cached output yet "
                 "(parent must run before child; check DAG topology)",
@@ -1272,5 +1268,3 @@ def _build_pool_resolver(cache, by_id: dict[str, dict]):
         return values
 
     return resolver
-
-
