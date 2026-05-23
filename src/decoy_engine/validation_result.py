@@ -1,4 +1,4 @@
-"""Validation result contract (R2.1).
+"""Validation result contract.
 
 A typed, multi-message validation outcome shared by engine, API, web,
 and CLI callers. Replaces the older single-`ValidationError`-raises
@@ -279,16 +279,14 @@ class CODES:
     GENERATION_KEY_REQUIRED = "generation.key_required"
     GENERATION_RANDOM_NOT_ALLOWED = "generation.random_not_allowed"
 
-    # ── Sprint 4: FK preservation (item 4) ──
+    # ── FK preservation codes ──
     #
     # Pattern: SDV HMA1 (sdv-dev/SDV, MIT). Parent-first DAG;
     # materialize parent pool; child samples with replacement.
     #
-    # Codes split into validation-time (caught by the validator stage
-    # added in Commit 3) and runtime (raised by the pool resolver +
-    # generate op consumption in Commits 2 + 4). Strict mode promotes
-    # the advisory codes (parallel_branches, strategy_coerced) from
-    # warning to error.
+    # Codes split into validation-time (validator stage 9) and runtime
+    # (pool resolver + generate op). Strict mode promotes advisory codes
+    # (parallel_branches, strategy_coerced) from warning to error.
     FK_UNKNOWN_NODE = "fk.unknown_node"  # validation, error
     FK_UNKNOWN_COLUMN = "fk.unknown_column"  # validation + runtime, error
     FK_PARENT_AFTER_CHILD = "fk.parent_after_child"  # validation, error
@@ -336,8 +334,15 @@ class CODES:
     # Composite / multi-parent FK: parent: [...] array form for
     # junction-style FKs where a single child column references two
     # parents jointly. Engine accepts; validator checks all parents
-    # resolve. (Sprint C.2 stub today; full support shipped here.)
+    # resolve.
     FK_MULTI_PARENT_BAD_SHAPE = "fk.multi_parent_bad_shape"  # validation, error
+
+    # Custom Faker provider pool: parent.custom_provider names a
+    # provider that is not currently registered. Warning at validation
+    # time (providers load from filesystem/DB at run time; the provider
+    # may register itself before execution). The engine's
+    # EmptyParentPoolError is the hard backstop at run time.
+    FK_CUSTOM_PROVIDER_UNREGISTERED = "fk.custom_provider_unregistered"  # validation, warning
 
     # PK uniqueness: a column marked primary_key has duplicate values
     # in the output. Hard error in strict, warning otherwise (some

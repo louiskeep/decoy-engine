@@ -117,9 +117,9 @@ def validate_graph_full(yaml_text: str, *, strict: bool = False) -> "ValidationR
     site if needed.
 
     Each validation stage is tried independently. A top-level structural
-    error stops further validation (no safe graph to walk). The nodes
-    stage (stage 2, R2.2) collects all per-node errors so a graph with
-    multiple bad nodes surfaces every failure in one pass. Edge,
+    error stops further validation (no safe graph to walk). Stage 2
+    collects all per-node errors so a graph with multiple bad nodes
+    surfaces every failure in one pass. Edge,
     cardinality, topology, and cross-node stages each capture their first
     failure before moving on. The cross-node semantic checks (format
     consistency, mask column reachability, nodes-ref reachability) run
@@ -132,10 +132,11 @@ def validate_graph_full(yaml_text: str, *, strict: bool = False) -> "ValidationR
     never mutated.
 
     ``strict=True`` enables production-mode gating: checks that are
-    advisory in lenient mode become blocking errors. Full strict-mode
-    coverage (credentials, variable resolution, side-effect policy) is
-    Sprint 2 follow-up work; the parameter is accepted now so callers
-    can adopt it forward.
+    advisory in lenient mode become blocking errors. The current strict
+    coverage is file-format consistency and FK parallel-branches; full
+    strict coverage for credentials, variable resolution, and
+    side-effect policy is deferred post-V1. The parameter is accepted
+    now so callers can adopt it forward.
     """
     from decoy_engine.validation_result import CODES, ValidationResult
 
@@ -168,7 +169,7 @@ def validate_graph_full(yaml_text: str, *, strict: bool = False) -> "ValidationR
     kinds = known_kinds()
 
     # Stage 2: per-node metadata -- collects ALL per-node errors so a graph
-    # with multiple bad nodes surfaces all of them in one pass (R2.2).
+    # with multiple bad nodes surfaces all of them in one pass.
     node_errors = collect_node_errors(nodes, kinds)
     for _e in node_errors:
         result.add_error(
