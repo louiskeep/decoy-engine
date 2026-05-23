@@ -10,6 +10,7 @@ import pytest
 import yaml
 
 from decoy_engine.generators import DataGenerator
+from decoy_engine.internal.validator import ValidationError
 
 
 def test_generator_integration(sample_generator_config, tmp_path, mock_logger):
@@ -338,13 +339,13 @@ def test_generator_dependency_order_validation(tmp_path, mock_logger):
     with open(config_path, "w") as f:
         yaml.dump(config, f)
 
-    generator = DataGenerator(str(config_path), mock_logger)
-
-    # Should raise ValueError due to missing target table
-    with pytest.raises(
-        ValueError, match=r"Relationship validation failed.*nonexistent_departments"
-    ):
-        generator.generate()
+    # Relationship validation runs at DataGenerator __init__ time via
+    # GeneratorConfigValidator (overnight-dev session 9 wired the deep
+    # validators that were previously dead code). The wiring also
+    # switched from ValueError to ValidationError for consistency with
+    # the other validators.
+    with pytest.raises(ValidationError, match="nonexistent_departments"):
+        DataGenerator(str(config_path), mock_logger)
 
 
 def test_generator_fixed_width(tmp_path, mock_logger):
