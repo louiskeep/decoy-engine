@@ -65,8 +65,8 @@ from decoy_engine.graph.node_exports import (
     _NodeExportResolutionError,
     _resolve_node_exports,
 )
+from decoy_engine.graph.run_state import RunState
 from decoy_engine.graph.types import (
-    NodeRunRecord,
     PreviewResult,
     RunResult,
 )
@@ -1031,9 +1031,6 @@ def _execute_graph(
 
     keep_set = set(keep_nodes or []) | fk_parent_nodes
     cache = GraphCache(plan.consumer_counts, keep=keep_set)
-    records: list[NodeRunRecord] = []
-    overall_start = time.monotonic()
-    success = True
 
     if ctx is None:
         ctx = ExecutionContext()
@@ -1048,7 +1045,17 @@ def _execute_graph(
 
     log = ctx.logger
 
+    # V2.0-A.1: per-execution state lives in a named dataclass. Earlier
+    # versions of this function threaded `records`, `overall_start`,
+    # `success`, and the current-node marker through as floating locals
+    # and on `ctx._current_node_id`. The RunState aggregator makes those
+    # writes explicit and greppable; the begin_node/end_node helpers
+    # mirror current_node_id to ctx so the existing ctx.export() API
+    # (used by every op) continues to route values to the right node.
+    state = RunState(overall_start=time.monotonic())
+
     with _PeakRSSMonitor() as monitor:
+        state.memory_monitor = monitor
         # Emit lineage entries for every node before execution starts so
         # the audit trail is complete even if a node fails mid-run.
         for nid in plan.order:
@@ -1072,10 +1079,10 @@ def _execute_graph(
             try:
                 node_cfg = _resolve_node_exports(node_cfg, ctx._exports, nid)
             except _NodeExportResolutionError as exc:
-                records.append(make_node_error_record(nid, kind, 0, str(exc)))
+                state.records.append(make_node_error_record(nid, kind, 0, str(exc)))
                 if log is not None:
                     log.error("graph: node %s failed: %s", _node_descriptor(node), exc)
-                success = False
+                state.success = False
                 break
 
             in_edge_keys = plan.in_edges.get(nid, [])
@@ -1090,7 +1097,7 @@ def _execute_graph(
                 log.info(_summarize_node_config(kind, node_cfg))
 
             t0 = time.monotonic()
-            ctx._current_node_id = nid
+            state.begin_node(nid, ctx)
             try:
                 # Defensive: cache.consume() returns None when the source
                 # key isn't in the cache (skipped router port, gated branch,
@@ -1114,7 +1121,7 @@ def _execute_graph(
                     ports = getattr(op, "OUTPUT_PORTS", ())
                     total_rows = cache.write_split(nid, result, ports, engine)
                     elapsed_ms = int((time.monotonic() - t0) * 1000)
-                    records.append(make_node_ok_record(
+                    state.records.append(make_node_ok_record(
                         nid, kind, total_rows, elapsed_ms, ctx._exports.get(nid),
                     ))
                     emit_node_ok(
@@ -1124,7 +1131,7 @@ def _execute_graph(
                 else:
                     rows_out = cache.write_stream(nid, result, engine)
                     elapsed_ms = int((time.monotonic() - t0) * 1000)
-                    records.append(make_node_ok_record(
+                    state.records.append(make_node_ok_record(
                         nid, kind, rows_out, elapsed_ms, ctx._exports.get(nid),
                     ))
                     emit_node_ok(
@@ -1136,7 +1143,7 @@ def _execute_graph(
             except Exception as exc:
                 translated = translate_engine_error(exc, kind, nid)
                 elapsed_ms = int((time.monotonic() - t0) * 1000)
-                records.append(make_node_error_record(
+                state.records.append(make_node_error_record(
                     nid, kind, elapsed_ms, str(translated),
                     exports=ctx._exports.get(nid),
                     error_code=getattr(translated, "code", None),
@@ -1146,17 +1153,17 @@ def _execute_graph(
                     log, step_name, descriptor, rows_in_total,
                     exc, translated, nid, elapsed_ms,
                 )
-                success = False
+                state.success = False
                 break
             finally:
-                ctx._current_node_id = None
+                state.end_node(ctx)
 
     _check_memory_pressure(monitor.peak_rss, graph_engine_mode, log)
 
     result: RunResult = {
-        "nodes": records,
-        "success": success,
-        "elapsed_ms": int((time.monotonic() - overall_start) * 1000),
+        "nodes": state.records,
+        "success": state.success,
+        "elapsed_ms": int((time.monotonic() - state.overall_start) * 1000),
     }
     return result, cache.kept()
 
