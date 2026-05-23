@@ -343,6 +343,30 @@ def validate_graph_full(yaml_text: str, *, strict: bool = False):
     return result
 
 
+def _column_in_node(node: dict, column: str) -> bool:
+    """True if `column` appears in `node`'s config columns mapping.
+
+    For source nodes the schema is the file's actual columns, unknowable
+    at validation time, so we treat them as opaque and return True. The
+    runtime resolver will catch a true miss at execution time and emit
+    fk.unknown_column then.
+
+    Promoted from a nested helper inside _validate_column_relationships
+    to module scope 2026-05-23: a sibling validator
+    (_validate_custom_provider_entry) was already calling it, which
+    raised NameError at runtime on custom-provider FK paths. See
+    docs/v2-app-audit-findings.md F-AUDIT-001.
+    """
+    kind = node.get("kind", "")
+    if kind.startswith("source."):
+        return True
+    cfg = node.get("config") or {}
+    cols = cfg.get("columns")
+    if not isinstance(cols, dict):
+        return True
+    return column in cols
+
+
 def _validate_column_relationships(
     config: dict,
     *,
@@ -447,21 +471,9 @@ def _validate_column_relationships(
         {"hash", "fpe", "faker", "date_shift", "reference"}
     )
 
-    def _column_in_node(node: dict, column: str) -> bool:
-        """True if `column` appears in `node`'s config columns mapping.
-        For source nodes the schema is the file's actual columns,
-        unknowable at validation time, so we treat them as opaque and
-        return True. The runtime resolver will catch a true miss at
-        execution time and emit fk.unknown_column then."""
-        kind = node.get("kind", "")
-        if kind.startswith("source."):
-            return True
-        cfg = node.get("config") or {}
-        cols = cfg.get("columns")
-        if not isinstance(cols, dict):
-            # Unknown shape; be lenient at validation time.
-            return True
-        return column in cols
+    # _column_in_node was previously a nested function here. Promoted
+    # to module scope 2026-05-23 (F-AUDIT-001) because a sibling
+    # validator was already trying to call it.
 
     def _mask_strategy_for_column(node: dict, column: str) -> str | None:
         """If `node` is a mask op and `column` is configured, return its
