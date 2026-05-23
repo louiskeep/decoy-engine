@@ -7,16 +7,15 @@ all bundles in `disguises/` as a smoke test so a broken YAML breaks the build.
 
 from __future__ import annotations
 
-from typing import Any, Optional, Union
+from typing import Any
 
 from pydantic import BaseModel, Field
-
 
 # Detection sprint (V1): each entry in expected_fields is either a single
 # detector_id (str) or a group of detector_ids (list[str]) meaning "any
 # of these satisfies the expectation". The platform's preflight code
 # expands the groups when evaluating strict-mode coverage.
-ExpectedField = Union[str, list[str]]
+ExpectedField = str | list[str]
 
 
 class TriggerSpec(BaseModel):
@@ -52,15 +51,15 @@ class FieldRule(BaseModel):
     detectors: list[str]
     mask: str
     params: dict[str, Any] = Field(default_factory=dict)
-    why: Optional[str] = None
+    why: str | None = None
 
 
 class Disguise(BaseModel):
     id: str
     name: str
     summary: str
-    regulation: Optional[str] = None
-    primary_buyer: Optional[str] = None
+    regulation: str | None = None
+    primary_buyer: str | None = None
     triggers: TriggerSpec
     # Detection sprint (V1) strict-mode contract. Defaults to empty so
     # pre-V1 bundles parse cleanly; in V1 every shipped Disguise has a

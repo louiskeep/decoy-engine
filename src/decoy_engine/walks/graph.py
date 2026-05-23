@@ -8,8 +8,8 @@ to render the graph or query it in their own way.
 """
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 from decoy_engine.walks.types import Edge, SchemaSnapshot
 

@@ -1,15 +1,17 @@
 # decoy_engine/core/base.py
 
 from abc import ABC, abstractmethod
+from typing import Any
+
 import pandas as pd
-from typing import Dict, Any, Optional
+
 
 class BaseMasker(ABC):
     """
     Abstract base class for data masking operations
     """
     
-    def __init__(self, input_config: Dict[str, Any], output_config: Dict[str, Any], logger=None):
+    def __init__(self, input_config: dict[str, Any], output_config: dict[str, Any], logger=None):
         """
         Initialize with input and output configurations
         
@@ -100,7 +102,7 @@ class ConfigValidator(ABC):
             self.logger = get_logger()
     
     @abstractmethod
-    def validate(self, config: Dict[str, Any]) -> None:
+    def validate(self, config: dict[str, Any]) -> None:
         """
         Validate the configuration
         
@@ -142,7 +144,7 @@ class MaskingStrategy(ABC):
             self.logger = get_logger()
     
     @abstractmethod
-    def apply(self, column: pd.Series, rule: Dict[str, Any]) -> pd.Series:
+    def apply(self, column: pd.Series, rule: dict[str, Any]) -> pd.Series:
         """
         Apply the masking strategy to a column
         
@@ -155,7 +157,7 @@ class MaskingStrategy(ABC):
         """
         pass
     
-    def validate_rule(self, rule: Dict[str, Any]) -> None:
+    def validate_rule(self, rule: dict[str, Any]) -> None:
         """
         Validate that the rule contains all required fields for this strategy
         

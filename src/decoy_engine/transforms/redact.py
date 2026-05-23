@@ -4,8 +4,9 @@ Redact masking strategy for the decoy_engine package.
 Replaces values with a fixed redaction string.
 """
 
+from typing import Any
+
 import pandas as pd
-from typing import Dict, Any, Optional
 
 from decoy_engine.transforms.base import BaseMaskingStrategy
 
@@ -16,7 +17,7 @@ class RedactStrategy(BaseMaskingStrategy):
     Simple and effective for hiding sensitive data completely.
     """
     
-    def apply(self, column: pd.Series, rule: Dict[str, Any]) -> pd.Series:
+    def apply(self, column: pd.Series, rule: dict[str, Any]) -> pd.Series:
         """
         Replace all values in a column with a fixed redaction string.
         Null positions are preserved.
@@ -55,7 +56,7 @@ class RedactStrategy(BaseMaskingStrategy):
         self.logger.debug(f"Redacted {non_null_count} non-null values")
         return result
     
-    def validate_rule(self, rule: Dict[str, Any]) -> None:
+    def validate_rule(self, rule: dict[str, Any]) -> None:
         """
         Validate that the rule contains all required fields for the redact strategy
         

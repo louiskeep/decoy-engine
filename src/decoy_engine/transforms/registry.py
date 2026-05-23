@@ -3,8 +3,9 @@
 Strategy manager for coordinating masking strategies in the decoy_engine package.
 """
 
+from typing import Any
+
 import pandas as pd
-from typing import Dict, Any, Optional, List
 
 from decoy_engine.transforms.base import BaseMaskingStrategy
 from decoy_engine.transforms.factory import create_strategy
@@ -74,7 +75,7 @@ class StrategyManager:
 
         return strategy
     
-    def apply_masking_rule(self, column: pd.Series, rule: Dict[str, Any]) -> pd.Series:
+    def apply_masking_rule(self, column: pd.Series, rule: dict[str, Any]) -> pd.Series:
         """
         Apply a masking rule to a column
         
@@ -100,7 +101,7 @@ class StrategyManager:
         # Apply the strategy
         return strategy.apply(column, rule)
     
-    def apply_masking_rules(self, df: pd.DataFrame, rules: List[Dict[str, Any]]) -> pd.DataFrame:
+    def apply_masking_rules(self, df: pd.DataFrame, rules: list[dict[str, Any]]) -> pd.DataFrame:
         """
         Apply multiple masking rules to a DataFrame
 
@@ -163,7 +164,7 @@ class StrategyManager:
 
         return result
     
-    def available_strategies(self) -> List[str]:
+    def available_strategies(self) -> list[str]:
         """
         Get a list of available masking strategy types
         
@@ -171,8 +172,12 @@ class StrategyManager:
             List of strategy type names
         """
         from decoy_engine.transforms import (
-            CategoricalStrategy, FakerStrategy, HashStrategy, RedactStrategy,
-            ShuffleStrategy, PassthroughStrategy
+            CategoricalStrategy,
+            FakerStrategy,
+            HashStrategy,
+            PassthroughStrategy,
+            RedactStrategy,
+            ShuffleStrategy,
         )
         
         # Get all strategy classes from the strategies module
@@ -184,7 +189,7 @@ class StrategyManager:
         # Extract strategy names
         return [strategy().strategy_name for strategy in strategies]
     
-    def get_strategy_info(self, strategy_type: str) -> Dict[str, Any]:
+    def get_strategy_info(self, strategy_type: str) -> dict[str, Any]:
         """
         Get information about a specific strategy
         

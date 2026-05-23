@@ -26,12 +26,11 @@ Built-in detector set:
 from __future__ import annotations
 
 import re
-from typing import Callable, Optional
+from collections.abc import Callable
 
 import pandas as pd
 
 from decoy_engine.storm.types import CustomDetectorSpec, DetectorMatch
-
 
 # ── thresholds ──────────────────────────────────────────────────────────────────────────────
 #
@@ -68,9 +67,9 @@ def _evaluate(
     *,
     name_hint: bool,
     min_rate: float,
-    validator: Optional[Callable[[str], bool]] = None,
-    format_variants: Optional[list[tuple[str, re.Pattern[str]]]] = None,
-) -> Optional[DetectorMatch]:
+    validator: Callable[[str], bool] | None = None,
+    format_variants: list[tuple[str, re.Pattern[str]]] | None = None,
+) -> DetectorMatch | None:
     """Apply a regex to non-null values and decide whether the detector fires.
 
     Optional `validator` runs per-value AFTER regex match — used for
@@ -111,7 +110,7 @@ def _evaluate(
         return None
     misses = values[~matches].head(SAMPLE_MISS_LIMIT).tolist()
     # Variant bucketing — count which sub-pattern won among the matches.
-    format_pattern: Optional[str] = None
+    format_pattern: str | None = None
     if format_variants:
         matched_values = values[matches]
         format_pattern = _dominant_variant(matched_values, format_variants)
@@ -142,7 +141,7 @@ def _confidence_bucket(rate: float, *, name_hint: bool) -> str:
 def _dominant_variant(
     values: pd.Series,
     variants: list[tuple[str, re.Pattern[str]]],
-) -> Optional[str]:
+) -> str | None:
     """Return the label of the variant that matches the most values.
 
     Variants are tested in order; each value is counted under the first
@@ -666,34 +665,34 @@ def _icd10_valid(value: str) -> bool:
 
 # ── detectors (callables) ───────────────────────────────────────────────────────────────────
 
-def detect_email(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+def detect_email(series: pd.Series, col_name: str) -> DetectorMatch | None:
     return _evaluate("email", _series_str(series), _EMAIL_RE,
                      name_hint=_hits_name_hint("email", col_name),
                      min_rate=DEFAULT_MIN_MATCH_RATE)
 
 
-def detect_ssn(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+def detect_ssn(series: pd.Series, col_name: str) -> DetectorMatch | None:
     return _evaluate("ssn", _series_str(series), _SSN_RE,
                      name_hint=_hits_name_hint("ssn", col_name),
                      min_rate=DEFAULT_MIN_MATCH_RATE,
                      format_variants=_SSN_VARIANTS)
 
 
-def detect_us_phone(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+def detect_us_phone(series: pd.Series, col_name: str) -> DetectorMatch | None:
     return _evaluate("us_phone", _series_str(series), _US_PHONE_RE,
                      name_hint=_hits_name_hint("us_phone", col_name),
                      min_rate=DEFAULT_MIN_MATCH_RATE,
                      format_variants=_US_PHONE_VARIANTS)
 
 
-def detect_us_zip(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+def detect_us_zip(series: pd.Series, col_name: str) -> DetectorMatch | None:
     return _evaluate("us_zip", _series_str(series), _US_ZIP_RE,
                      name_hint=_hits_name_hint("us_zip", col_name),
                      min_rate=DEFAULT_MIN_MATCH_RATE,
                      format_variants=_US_ZIP_VARIANTS)
 
 
-def detect_person_name(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+def detect_person_name(series: pd.Series, col_name: str) -> DetectorMatch | None:
     """Heuristic: name-hinted column name + values look like proper-cased tokens.
 
     Without a strong column-name hint, person_name is too noisy — most short
@@ -706,7 +705,7 @@ def detect_person_name(series: pd.Series, col_name: str) -> Optional[DetectorMat
                      min_rate=DEFAULT_MIN_MATCH_RATE)
 
 
-def detect_first_name(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+def detect_first_name(series: pd.Series, col_name: str) -> DetectorMatch | None:
     """First-name columns (fn, f_name, firstname, mm_fn, cust_fn, ...).
 
     Detection sprint (V1): split out from person_name so the strategy
@@ -721,7 +720,7 @@ def detect_first_name(series: pd.Series, col_name: str) -> Optional[DetectorMatc
                      min_rate=NAME_HINT_MIN_RATE)
 
 
-def detect_last_name(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+def detect_last_name(series: pd.Series, col_name: str) -> DetectorMatch | None:
     """Last-name columns (ln, l_name, lastname, surname, mm_ln, cust_ln, ...).
 
     Detection sprint (V1) sibling of detect_first_name. Routes to
@@ -734,7 +733,7 @@ def detect_last_name(series: pd.Series, col_name: str) -> Optional[DetectorMatch
                      min_rate=NAME_HINT_MIN_RATE)
 
 
-def detect_address(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+def detect_address(series: pd.Series, col_name: str) -> DetectorMatch | None:
     """Street addresses (addr, addr1, line1, street_1, mailing_address, ...).
 
     Detection sprint (V1). Name-hint only — street formats vary too widely
@@ -749,7 +748,7 @@ def detect_address(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
                      min_rate=NAME_HINT_MIN_RATE)
 
 
-def detect_iso_date(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+def detect_iso_date(series: pd.Series, col_name: str) -> DetectorMatch | None:
     return _evaluate("iso_date", _series_str(series), _ISO_DATE_RE,
                      name_hint=_hits_name_hint("iso_date", col_name),
                      min_rate=DEFAULT_MIN_MATCH_RATE,
@@ -757,21 +756,21 @@ def detect_iso_date(series: pd.Series, col_name: str) -> Optional[DetectorMatch]
                      format_variants=_ISO_DATE_VARIANTS)
 
 
-def detect_us_date(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+def detect_us_date(series: pd.Series, col_name: str) -> DetectorMatch | None:
     return _evaluate("us_date", _series_str(series), _US_DATE_RE,
                      name_hint=_hits_name_hint("us_date", col_name),
                      min_rate=DEFAULT_MIN_MATCH_RATE,
                      format_variants=_US_DATE_VARIANTS)
 
 
-def detect_eu_date(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+def detect_eu_date(series: pd.Series, col_name: str) -> DetectorMatch | None:
     return _evaluate("eu_date", _series_str(series), _EU_DATE_RE,
                      name_hint=_hits_name_hint("eu_date", col_name),
                      min_rate=DEFAULT_MIN_MATCH_RATE,
                      format_variants=_EU_DATE_VARIANTS)
 
 
-def detect_pan(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+def detect_pan(series: pd.Series, col_name: str) -> DetectorMatch | None:
     """Credit-card PAN. Regex picks up 13-19-digit groups; Luhn checksum
     rejects random digit strings so a 16-digit phone stub or transaction
     ID doesn't false-positive."""
@@ -782,7 +781,7 @@ def detect_pan(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
                      format_variants=_PAN_VARIANTS)
 
 
-def detect_cvv(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+def detect_cvv(series: pd.Series, col_name: str) -> DetectorMatch | None:
     """CVV / CVC. Any 3-digit string matches the regex, so the detector
     only fires on a strong column-name hint — false-positive rate
     without the hint would be unmanageable."""
@@ -793,7 +792,7 @@ def detect_cvv(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
                      min_rate=DEFAULT_MIN_MATCH_RATE)
 
 
-def detect_iban(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+def detect_iban(series: pd.Series, col_name: str) -> DetectorMatch | None:
     """IBAN — country code + checksum + BBAN. Mod-97 validates the
     checksum so random alphanumeric strings don't false-positive."""
     return _evaluate("iban", _series_str(series), _IBAN_RE,
@@ -802,7 +801,7 @@ def detect_iban(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
                      validator=_iban_valid)
 
 
-def detect_ipv4(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+def detect_ipv4(series: pd.Series, col_name: str) -> DetectorMatch | None:
     """IPv4 dotted-quad. Validator clamps each octet to 0-255 so
     "999.1.1.1" is rejected even though it matches the regex."""
     return _evaluate("ipv4", _series_str(series), _IPV4_RE,
@@ -811,7 +810,7 @@ def detect_ipv4(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
                      validator=_ipv4_valid)
 
 
-def detect_icd10(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+def detect_icd10(series: pd.Series, col_name: str) -> DetectorMatch | None:
     """ICD-10-CM diagnosis codes. Regex matches the chapter-letter + 2-digit
     category structure; validator enforces minimal structural rules to reduce
     false-positives on short arbitrary strings. Fires on value pattern alone;
@@ -823,7 +822,7 @@ def detect_icd10(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
                      format_variants=_ICD10_VARIANTS)
 
 
-def detect_npi(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+def detect_npi(series: pd.Series, col_name: str) -> DetectorMatch | None:
     """National Provider Identifier — 10-digit with CMS Luhn check digit."""
     return _evaluate("npi", _series_str(series), _NPI_RE,
                      name_hint=_hits_name_hint("npi", col_name),
@@ -831,7 +830,7 @@ def detect_npi(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
                      validator=_npi_valid)
 
 
-def detect_mrn(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+def detect_mrn(series: pd.Series, col_name: str) -> DetectorMatch | None:
     """Medical Record Number — no universal format; fires on name hint only.
     The alphanumeric pattern guards against obviously non-identifier values
     (plain prose, floats, very short strings)."""
@@ -842,7 +841,7 @@ def detect_mrn(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
                      min_rate=NAME_HINT_MIN_RATE)
 
 
-def detect_url(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+def detect_url(series: pd.Series, col_name: str) -> DetectorMatch | None:
     """Web URLs — http/https scheme. Fires on value pattern alone (no
     name hint required) since the URL format is distinctive enough."""
     return _evaluate("url", _series_str(series), _URL_RE,
@@ -850,7 +849,7 @@ def detect_url(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
                      min_rate=DEFAULT_MIN_MATCH_RATE)
 
 
-def detect_fax_number(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+def detect_fax_number(series: pd.Series, col_name: str) -> DetectorMatch | None:
     """Fax numbers — identical format to US phone; name hint is the only
     way to distinguish a fax column from a phone column."""
     if not _hits_name_hint("fax_number", col_name):
@@ -860,7 +859,7 @@ def detect_fax_number(series: pd.Series, col_name: str) -> Optional[DetectorMatc
                      min_rate=DEFAULT_MIN_MATCH_RATE)
 
 
-def detect_health_plan_id(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+def detect_health_plan_id(series: pd.Series, col_name: str) -> DetectorMatch | None:
     """Health-plan beneficiary / member / subscriber IDs — name hint only.
     No standard value format; meaning lives in the column name."""
     if not _hits_name_hint("health_plan_id", col_name):
@@ -870,7 +869,7 @@ def detect_health_plan_id(series: pd.Series, col_name: str) -> Optional[Detector
                      min_rate=NAME_HINT_MIN_RATE)
 
 
-def detect_license_num(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+def detect_license_num(series: pd.Series, col_name: str) -> DetectorMatch | None:
     """Certificate and license numbers — name hint only. Formats vary by
     state / regulatory body; the column name is the definitive signal."""
     if not _hits_name_hint("license_num", col_name):
@@ -880,7 +879,7 @@ def detect_license_num(series: pd.Series, col_name: str) -> Optional[DetectorMat
                      min_rate=NAME_HINT_MIN_RATE)
 
 
-def detect_vehicle_id(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+def detect_vehicle_id(series: pd.Series, col_name: str) -> DetectorMatch | None:
     """Vehicle identifiers. The VIN format (17 alphanum, no I/O/Q per ISO 3779)
     fires without a name hint; name hint lowers the threshold for partial or
     non-VIN vehicle identifiers."""
@@ -889,7 +888,7 @@ def detect_vehicle_id(series: pd.Series, col_name: str) -> Optional[DetectorMatc
                      min_rate=DEFAULT_MIN_MATCH_RATE)
 
 
-def detect_device_id(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+def detect_device_id(series: pd.Series, col_name: str) -> DetectorMatch | None:
     """Device identifiers and serial numbers — name hint only. Medical device
     UDIs, implant serial numbers, and equipment IDs have no shared format."""
     if not _hits_name_hint("device_id", col_name):
@@ -899,7 +898,7 @@ def detect_device_id(series: pd.Series, col_name: str) -> Optional[DetectorMatch
                      min_rate=NAME_HINT_MIN_RATE)
 
 
-def detect_biometric_id(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+def detect_biometric_id(series: pd.Series, col_name: str) -> DetectorMatch | None:
     """Biometric identifiers (fingerprints, retina scans, etc.) — name hint only.
     Biometric data has no universal string format; the column name is definitive."""
     if not _hits_name_hint("biometric_id", col_name):
@@ -911,7 +910,7 @@ def detect_biometric_id(series: pd.Series, col_name: str) -> Optional[DetectorMa
 
 # ── registry ──────────────────────────────────────────────────────────────────────────────────
 
-DetectorFn = Callable[[pd.Series, str], Optional[DetectorMatch]]
+DetectorFn = Callable[[pd.Series, str], DetectorMatch | None]
 
 REGISTERED_DETECTORS: list[DetectorFn] = [
     detect_email,
@@ -950,7 +949,7 @@ def run_all_detectors(
     series: pd.Series,
     col_name: str,
     *,
-    custom: Optional[list[CustomDetectorSpec]] = None,
+    custom: list[CustomDetectorSpec] | None = None,
 ) -> list[DetectorMatch]:
     """Run every registered detector against a column, plus any caller-supplied
     custom detectors. Returns matches sorted by descending match_rate so the
@@ -981,7 +980,7 @@ def run_all_detectors(
 
 # ── custom detectors ──────────────────────────────────────────────────────────────────────────
 
-def _custom_name_hint_pattern(name_hints: list[str]) -> Optional[re.Pattern[str]]:
+def _custom_name_hint_pattern(name_hints: list[str]) -> re.Pattern[str] | None:
     """Compile a column-name-matching regex from a list of substrings.
 
     Mirrors the built-in `_NAME_HINTS` shape: case-insensitive, matches when
@@ -1002,7 +1001,7 @@ def _hits_custom_name_hint(spec: CustomDetectorSpec, col_name: str) -> bool:
 
 def _run_custom_detector(
     series: pd.Series, col_name: str, spec: CustomDetectorSpec,
-) -> Optional[DetectorMatch]:
+) -> DetectorMatch | None:
     """Compile + apply one custom regex spec to a column."""
     pattern = re.compile(spec.pattern)
     name_hint = _hits_custom_name_hint(spec, col_name)

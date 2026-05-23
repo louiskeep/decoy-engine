@@ -4,10 +4,12 @@ Data processing logic for the decoy_engine masker.
 Handles the application of masking rules to dataframes and chunks.
 """
 
+from typing import Any
+
 import pandas as pd
-from typing import Dict, Any, List
 
 from decoy_engine.transforms.format_preservation import apply_format_preservation
+
 
 class MaskingProcessor:
     """
@@ -15,7 +17,7 @@ class MaskingProcessor:
     Manages referential integrity and strategy application.
     """
     
-    def __init__(self, config: Dict[str, Any], strategy_manager, ref_integrity, logger=None):
+    def __init__(self, config: dict[str, Any], strategy_manager, ref_integrity, logger=None):
         """
         Initialize the processor with required components
         

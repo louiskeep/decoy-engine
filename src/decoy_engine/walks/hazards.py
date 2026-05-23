@@ -25,11 +25,10 @@ to confirm.
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Iterable
+from collections.abc import Iterable
 
 from decoy_engine.walks.graph import ERGraph, build_er_graph
-from decoy_engine.walks.types import Column, Edge, Hazard, SchemaSnapshot, Table
-
+from decoy_engine.walks.types import Column, Edge, Hazard, SchemaSnapshot
 
 # Threshold above which a table's in-degree counts as a HUB. The
 # chaser stress-test schema's `users` and `issues` are deliberately

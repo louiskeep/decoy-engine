@@ -28,11 +28,9 @@ sub-pipeline. The runner caches it just like any other op's output.
 from __future__ import annotations
 
 import contextvars
-import string
 from pathlib import Path
 from typing import Any
 
-from decoy_engine.context import ExecutionContext
 from decoy_engine.graph.ops._base import OpError
 from decoy_engine.internal.validator import ValidationError
 

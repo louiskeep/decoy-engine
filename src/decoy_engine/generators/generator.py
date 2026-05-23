@@ -5,16 +5,16 @@ Handles the creation of synthetic data.
 """
 
 import os
-import yaml
-import pandas as pd
 import random
 import time
-import hashlib
-from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Any
+
+import pandas as pd
+import yaml
 
 from decoy_engine.context import emit_lineage, emit_step
 from decoy_engine.expressions import BASE_GLOBALS, safe_eval
+
 
 class DataGenerator:
     """
@@ -35,7 +35,7 @@ class DataGenerator:
                 default logger.
         """
         # Load configuration
-        with open(config_path, 'r') as f:
+        with open(config_path) as f:
             self.config = yaml.safe_load(f)
 
         # Pick a logger: ctx.logger > logger > engine default
@@ -96,7 +96,7 @@ class DataGenerator:
         """
         Generate synthetic data according to the configuration
         """
-        self.logger.info(f"=== Starting data generation process ===")
+        self.logger.info("=== Starting data generation process ===")
 
         # Pre-process configuration to ensure definition files exist
         self._preprocess_configuration()
@@ -159,7 +159,7 @@ class DataGenerator:
         self.logger.info(f"Average time per table: {avg_time_per_table:.1f} seconds")
         self.logger.info("=== Data generation completed successfully ===")
     
-    def _generate_table(self, table_config: Dict[str, Any]):
+    def _generate_table(self, table_config: dict[str, Any]):
         """
         Generate a single table of data
         
@@ -347,7 +347,7 @@ class DataGenerator:
                     encoding = fixed_width_options.get('encoding', 'utf-8')
                     
                     # Read all data into memory
-                    with open(output_path, 'r', encoding=encoding) as f:
+                    with open(output_path, encoding=encoding) as f:
                         lines = f.readlines()
                     
                     self.logger.debug(f"Read {len(lines)} lines from {output_path}")
@@ -452,12 +452,12 @@ class DataGenerator:
                     self.logger.info(f"Saved CSV with processed composite formulas: {output_path}")
                     
             except Exception as e:
-                self.logger.error(f"Failed to process composite formulas for {table_name}: {str(e)}")
+                self.logger.error(f"Failed to process composite formulas for {table_name}: {e!s}")
                 import traceback
                 self.logger.error(f"Traceback: {traceback.format_exc()}")
         
     def _evaluate_composite_formula(
-        self, formula: str, context: Dict[str, Any], row_index: int,
+        self, formula: str, context: dict[str, Any], row_index: int,
         column_name: str = 'unnamed_column',
     ) -> str:
         """Evaluate a referenced formula as a Python expression. Same scope
@@ -492,7 +492,7 @@ class DataGenerator:
         result = safe_eval(formula, BASE_GLOBALS, scope)
         return "" if result is None else str(result)
 
-    def _parse_fixed_width_definition(self, definition_path: str, fixed_width_options: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _parse_fixed_width_definition(self, definition_path: str, fixed_width_options: dict[str, Any]) -> list[dict[str, Any]]:
         """
         Parse a fixed width definition file to get field information
         
@@ -512,7 +512,7 @@ class DataGenerator:
         self.logger.debug(f"Parsing definition file: {definition_path}")
         
         try:
-            with open(definition_path, 'r', encoding=encoding) as f:
+            with open(definition_path, encoding=encoding) as f:
                 # Skip header line and determine column positions
                 header = next(f).strip().split(delimiter)
                 header = [h.strip() for h in header]  # Clean whitespace
@@ -549,14 +549,14 @@ class DataGenerator:
                             'end': end
                         })
                     except (ValueError, IndexError) as e:
-                        self.logger.warning(f"Error parsing line {line_count}: {str(e)}")
+                        self.logger.warning(f"Error parsing line {line_count}: {e!s}")
             
             self.logger.debug(f"Successfully parsed {len(fields)} fields from definition file")
             return fields
             
         except Exception as e:
             self.logger.error(f"Failed to parse definition file: {definition_path}")
-            self.logger.error(f"Error details: {str(e)}")
+            self.logger.error(f"Error details: {e!s}")
             return []
 
     def _preprocess_configuration(self):

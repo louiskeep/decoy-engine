@@ -17,8 +17,9 @@ from __future__ import annotations
 
 import io
 import stat as stat_lib
+from collections.abc import Iterator
 from datetime import datetime
-from typing import ClassVar, Iterator, Optional
+from typing import ClassVar
 
 from pydantic import Field, SecretStr, model_validator
 
@@ -35,7 +36,7 @@ from decoy_engine.sdk import (
     WriteResult,
 )
 
-__all__ = ["SFTPConfig", "SFTPFileSource", "SFTPFileSink"]
+__all__ = ["SFTPConfig", "SFTPFileSink", "SFTPFileSource"]
 
 
 # Streaming read/write chunk size. Matches the S3 connector for
@@ -83,11 +84,11 @@ class SFTPConfig(ConnectorConfig):
     host: str = Field(..., min_length=1, max_length=255)
     port: int = Field(default=22, ge=1, le=65535)
     username: str = Field(..., min_length=1, max_length=255)
-    password: Optional[SecretStr] = None
+    password: SecretStr | None = None
     # PEM-encoded private key text. RSA, Ed25519, ECDSA, DSA all OK;
     # paramiko sniffs the type. Use a service account, not a personal
     # key, for production deploys.
-    private_key: Optional[SecretStr] = None
+    private_key: SecretStr | None = None
     # Directory on the remote host that scopes the connector. Empty
     # means the SSH user's home directory.
     base_path: str = ""
@@ -115,7 +116,7 @@ def _open_sftp(config: SFTPConfig):
         # in production should pre-populate known_hosts and set a stricter
         # policy via paramiko configuration; the SDK default just makes
         # first-run smoke tests work.
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())  # noqa: S507 -- trust-on-first-use is the documented SDK default; customers configure stricter policies via paramiko config in production. See connector docs.
 
         connect_kwargs: dict = {
             "hostname": config.host,
@@ -221,7 +222,7 @@ class SFTPFileSource(_SFTPMixin, FileSource[SFTPConfig]):
             return CheckResult(ok=False, detail=str(exc))
         return CheckResult(ok=True)
 
-    def list(self, prefix: Optional[str] = None) -> Iterator[FileMeta]:
+    def list(self, prefix: str | None = None) -> Iterator[FileMeta]:
         sftp = self._connect()
         target_dir = _join_path(self.config.base_path, prefix or "")
         try:

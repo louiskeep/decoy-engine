@@ -76,7 +76,7 @@ class PreviewPolicy:
 def run_preview(
     sub_config: dict[str, Any],
     policy: PreviewPolicy,
-    ctx: "ExecutionContext | None",
+    ctx: ExecutionContext | None,
 ) -> dict[str, Any]:
     """Execute a validated ancestor subgraph under preview policy.
 

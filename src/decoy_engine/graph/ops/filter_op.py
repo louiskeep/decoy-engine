@@ -54,7 +54,7 @@ def apply(inputs, config, ctx):
 
 def _frame_len(frame: Any) -> int:
     """Length helper that works for both pandas and polars frames."""
-    return int(len(frame))
+    return len(frame)
 
 
 def _apply_pandas(df: pd.DataFrame, predicate: str) -> pd.DataFrame:

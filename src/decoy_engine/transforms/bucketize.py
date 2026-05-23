@@ -19,13 +19,12 @@ value=-3 → -10..-1 bucket → "-10" / "-10--1" / "-5"). NaN / None pass
 through unchanged.
 """
 
-import math
+from typing import Any
+
 import numpy as np
 import pandas as pd
-from typing import Dict, Any, Optional
 
 from decoy_engine.transforms.base import BaseMaskingStrategy
-
 
 # Preset width shortcuts. Match the names in DISGUISES_GUIDE so a
 # Disguise YAML can reference them directly.
@@ -64,7 +63,7 @@ class BucketizeStrategy(BaseMaskingStrategy):
                 ``range``, ``midpoint``.
     """
 
-    def apply(self, column: pd.Series, rule: Dict[str, Any]) -> pd.Series:
+    def apply(self, column: pd.Series, rule: dict[str, Any]) -> pd.Series:
         column_name = rule.get('column', 'unnamed')
         width = self._resolve_width(rule, column_name)
         if width is None:
@@ -126,7 +125,7 @@ class BucketizeStrategy(BaseMaskingStrategy):
         self._log_stats(column, result, rule)
         return result
 
-    def _resolve_width(self, rule: Dict[str, Any], column_name: str):
+    def _resolve_width(self, rule: dict[str, Any], column_name: str):
         preset = rule.get('preset')
         if preset is not None:
             if preset in _PRESETS:
@@ -157,7 +156,7 @@ class BucketizeStrategy(BaseMaskingStrategy):
             return None
         return raw
 
-    def validate_rule(self, rule: Dict[str, Any]) -> None:
+    def validate_rule(self, rule: dict[str, Any]) -> None:
         super().validate_rule(rule)
         if 'width' not in rule and 'preset' not in rule:
             self.logger.debug(

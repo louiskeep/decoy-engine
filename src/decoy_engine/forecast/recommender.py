@@ -12,7 +12,7 @@ What it produces:
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 import yaml
 
@@ -26,7 +26,7 @@ from decoy_engine.forecast.types import (
     ForecastReport,
     RiskFlag,
 )
-from decoy_engine.storm.types import FieldStats, SentinelFlag, StormProfile
+from decoy_engine.storm.types import FieldStats, StormProfile
 
 # Loaded once at import time — small, deterministic, fine to module-cache.
 _DISGUISES: list[Disguise] = load_disguises()
@@ -36,7 +36,7 @@ _DISGUISES: list[Disguise] = load_disguises()
 
 def recommend(
     profile: StormProfile,
-    ctx: Optional[ExecutionContext] = None,
+    ctx: ExecutionContext | None = None,
 ) -> ForecastReport:
     """Generate a ForecastReport for the given StormProfile.
 
@@ -65,7 +65,7 @@ def recommend(
             risk_flags=risk_flags,
             proposed_pipeline_yaml=yaml_text,
         )
-    except Exception as exc:  # noqa: BLE001 — re-raised below
+    except Exception as exc:
         emit_step(
             logger, "forecast.recommend", status="error",
             error_class=type(exc).__name__, error_msg=str(exc),

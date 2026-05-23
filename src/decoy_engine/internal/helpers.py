@@ -8,8 +8,10 @@ import hmac
 import json
 import logging
 import os
+from collections.abc import Callable
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Callable
+from typing import Any
+
 from faker import Faker
 
 _log = logging.getLogger(__name__)
@@ -65,14 +67,14 @@ def hmac_seed(key: bytes, value) -> int:
     return int.from_bytes(digest[:4], "big")
 
 
-_CUSTOM_FAKER_PROVIDERS: Dict[str, Callable[[Faker], Any]] = {}
+_CUSTOM_FAKER_PROVIDERS: dict[str, Callable[[Faker], Any]] = {}
 # Side registry of raw values per list-backed provider. Populated by
 # _register_list_provider so the engine's FK pool resolver can read the
 # values directly when a relationship targets custom_provider: <name>
 # (tier-4 audit, 2026-05-20). Closure-only providers (operator-supplied
 # callables that don't come from a list) won't appear here — only list-
 # backed providers expose their pool to the FK channel.
-_CUSTOM_FAKER_PROVIDER_VALUES: Dict[str, List[Any]] = {}
+_CUSTOM_FAKER_PROVIDER_VALUES: dict[str, list[Any]] = {}
 
 
 def register_faker_provider(name: str, fn: Callable[[Faker], Any]) -> None:
@@ -98,7 +100,7 @@ def unregister_faker_provider(name: str) -> None:
     _CUSTOM_FAKER_PROVIDER_VALUES.pop(name, None)
 
 
-def get_custom_faker_provider_values(name: str) -> List[Any] | None:
+def get_custom_faker_provider_values(name: str) -> list[Any] | None:
     """Return the raw values list backing a list-backed custom provider,
     or None when the name isn't registered as a list provider.
 
@@ -113,14 +115,14 @@ def get_custom_faker_provider_values(name: str) -> List[Any] | None:
     return list(values)
 
 
-def list_custom_faker_list_providers() -> List[str]:
+def list_custom_faker_list_providers() -> list[str]:
     """Return names of all list-backed custom providers currently
     registered, sorted. Used by the platform's relationship-authoring
     UI to populate the "Custom provider" picker for FK pool sources."""
     return sorted(_CUSTOM_FAKER_PROVIDER_VALUES.keys())
 
 
-def register_faker_list_provider(name: str, values: List[str]) -> None:
+def register_faker_list_provider(name: str, values: list[str]) -> None:
     """Register a custom Faker provider backed by a fixed list of values.
 
     The provider selects from *values* using the seeded Faker instance, so
@@ -136,7 +138,7 @@ def register_faker_list_provider(name: str, values: List[str]) -> None:
 
 def load_custom_providers(
     custom_dir: Path | None = None,
-) -> Dict[str, List[str]]:
+) -> dict[str, list[str]]:
     """Scan *custom_dir* for user-supplied word lists and register them as
     custom Faker providers under the ``custom.<stem>`` namespace.
 
@@ -199,7 +201,7 @@ def load_custom_providers(
         )
         return {}
 
-    loaded: Dict[str, List[str]] = {}
+    loaded: dict[str, list[str]] = {}
 
     for path in sorted(custom_dir.iterdir()):
         if path.suffix.lower() == ".txt":
@@ -230,7 +232,7 @@ def load_custom_providers(
     return loaded
 
 
-def _load_txt(path: Path) -> List[str]:
+def _load_txt(path: Path) -> list[str]:
     """Read a .txt file; one value per line. Ignores blank lines and comments."""
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
@@ -244,7 +246,7 @@ def _load_txt(path: Path) -> List[str]:
         return []
 
 
-def _load_json(path: Path) -> List[str]:
+def _load_json(path: Path) -> list[str]:
     """Read a .json file containing a JSON array of strings."""
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
@@ -260,7 +262,7 @@ def _load_json(path: Path) -> List[str]:
         return []
 
 
-def _register_list_provider(provider_name: str, values: List[str]) -> None:
+def _register_list_provider(provider_name: str, values: list[str]) -> None:
     """Register a random-choice provider for *values* under *provider_name*.
 
     The provider function receives the seeded Faker instance so it can use
@@ -374,7 +376,7 @@ def _make_reflected_provider(method: Callable) -> Callable:
     return call
 
 
-def get_faker_providers(faker_instance: Faker) -> Dict[str, Callable]:
+def get_faker_providers(faker_instance: Faker) -> dict[str, Callable]:
     """Return a dict of every safe Faker provider on ``faker_instance``.
 
     Built by reflection: each public method that isn\'t in
@@ -400,7 +402,7 @@ def get_faker_providers(faker_instance: Faker) -> Dict[str, Callable]:
     added last and override reflection on name collision.
     """
     fake = faker_instance
-    providers: Dict[str, Callable] = {}
+    providers: dict[str, Callable] = {}
 
     for name in dir(fake):
         if name.startswith('_'):
@@ -553,7 +555,7 @@ def convert_file_size(size_bytes: int) -> str:
         return f"{size_bytes:.2f} {units[i]}"
 
 
-def get_file_size(file_path: str) -> Optional[int]:
+def get_file_size(file_path: str) -> int | None:
     """
     Get the size of a file in bytes
     

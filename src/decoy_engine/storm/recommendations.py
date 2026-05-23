@@ -21,8 +21,7 @@ Cross-references:
 
 from __future__ import annotations
 
-from typing import Any, Optional
-
+from typing import Any
 
 # (strategy_name, params_dict) — strategy_name is the canonical mask kind
 # (faker.first_name / fpe / date_shift / redact / ...). The platform
@@ -106,7 +105,7 @@ VALID_STRATEGIES: frozenset[str] = frozenset({
 })
 
 
-def get_default_strategy(detector_id: str) -> Optional[StrategyDefault]:
+def get_default_strategy(detector_id: str) -> StrategyDefault | None:
     """Return the default (strategy_name, params) for a detector_id.
 
     Returns None when the detector_id isn't in the table — callers should

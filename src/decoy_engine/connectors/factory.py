@@ -3,12 +3,12 @@
 Factory pattern for creating I/O handlers based on configuration.
 """
 
-from typing import Dict, Any, Optional
+from typing import Any
 
 from decoy_engine.connectors.base import IOHandler
 
 
-def create_io_handler(input_config: Dict[str, Any], output_config: Dict[str, Any], config: Dict[str, Any] = None, logger=None) -> IOHandler:
+def create_io_handler(input_config: dict[str, Any], output_config: dict[str, Any], config: dict[str, Any] = None, logger=None) -> IOHandler:
     """
     Factory function to create appropriate I/O handler based on configuration
     

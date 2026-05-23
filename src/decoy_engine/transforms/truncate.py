@@ -11,8 +11,9 @@ joins on a real ZIP3 column do — many-to-one mapping rather than the
 one-to-one identity that masking strategies normally guarantee.
 """
 
+from typing import Any
+
 import pandas as pd
-from typing import Dict, Any, Optional
 
 from decoy_engine.transforms.base import BaseMaskingStrategy
 
@@ -27,7 +28,7 @@ class TruncateStrategy(BaseMaskingStrategy):
                  last-4 of a card / SSN style affordances).
     """
 
-    def apply(self, column: pd.Series, rule: Dict[str, Any]) -> pd.Series:
+    def apply(self, column: pd.Series, rule: dict[str, Any]) -> pd.Series:
         column_name = rule.get('column', 'unnamed')
         length = self._resolve_length(rule.get('length'), column_name)
         if length is None:
@@ -56,7 +57,7 @@ class TruncateStrategy(BaseMaskingStrategy):
         self._log_stats(column, result, rule)
         return result
 
-    def _resolve_length(self, raw, column_name: str) -> Optional[int]:
+    def _resolve_length(self, raw, column_name: str) -> int | None:
         """Coerce + validate the `length` config. None / 0 / non-int values
         are treated as "no truncate" with a warning rather than raised so
         the run keeps going on a single bad rule."""
@@ -81,7 +82,7 @@ class TruncateStrategy(BaseMaskingStrategy):
             return None
         return raw
 
-    def validate_rule(self, rule: Dict[str, Any]) -> None:
+    def validate_rule(self, rule: dict[str, Any]) -> None:
         super().validate_rule(rule)
         if 'length' not in rule:
             self.logger.debug(

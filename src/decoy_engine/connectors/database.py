@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any
 
 import pandas as pd
 from sqlalchemy import create_engine, text
@@ -16,8 +16,8 @@ class DBHandler(IOHandler):
 
     def __init__(
         self,
-        input_config: Dict[str, Any],
-        output_config: Dict[str, Any],
+        input_config: dict[str, Any],
+        output_config: dict[str, Any],
         logger=None,
     ) -> None:
         super().__init__(input_config, output_config, logger=logger)

@@ -26,10 +26,9 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 import pandas as pd
-
 
 # Strategies whose output shape can't be re-formatted without breaking
 # the strategy's own semantics. The post-pass is a no-op for these.

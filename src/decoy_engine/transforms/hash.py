@@ -4,11 +4,12 @@ Hash masking strategy for the decoy_engine package.
 Replaces values with deterministic hash values.
 """
 
-import pandas as pd
-from typing import Dict, Any, Optional
+from typing import Any
 
-from decoy_engine.transforms.base import BaseMaskingStrategy
+import pandas as pd
+
 from decoy_engine.internal.helpers import deterministic_hash, hmac_hex
+from decoy_engine.transforms.base import BaseMaskingStrategy
 
 
 class HashStrategy(BaseMaskingStrategy):
@@ -25,7 +26,7 @@ class HashStrategy(BaseMaskingStrategy):
         derivable from the value alone, so don't use across tenants.
     """
 
-    def apply(self, column: pd.Series, rule: Dict[str, Any]) -> pd.Series:
+    def apply(self, column: pd.Series, rule: dict[str, Any]) -> pd.Series:
         """
         Replace values with deterministic hash strings that can't be reversed
         """
@@ -66,7 +67,7 @@ class HashStrategy(BaseMaskingStrategy):
         self._log_stats(column, result, rule)
         return result
 
-    def _resolve_truncate(self, raw, column_name: str) -> Optional[int]:
+    def _resolve_truncate(self, raw, column_name: str) -> int | None:
         """Coerce + validate the `truncate` config. None / 0 / missing means
         no truncation. Out-of-range or non-integer values are coerced to None
         with a warning rather than raising — keeps the masking run going on
@@ -89,7 +90,7 @@ class HashStrategy(BaseMaskingStrategy):
             return None
         return raw
 
-    def _column_key(self, column_name: str) -> Optional[bytes]:
+    def _column_key(self, column_name: str) -> bytes | None:
         """Derive the mask subkey via the caller-supplied resolver, if one
         was injected. The same input value hashes identically across every
         column, table, and pipeline on the instance — preserves FK joins

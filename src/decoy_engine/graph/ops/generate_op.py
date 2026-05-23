@@ -168,9 +168,9 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
         custom_provider = parent.get("custom_provider")
         if custom_provider:
             target: dict[str, Any] = {"custom_provider": custom_provider}
-            if "distribution" in rel and rel["distribution"]:
+            if rel.get("distribution"):
                 target["distribution"] = rel["distribution"]
-            if "weights" in rel and rel["weights"]:
+            if rel.get("weights"):
                 target["weights"] = rel["weights"]
             if "min_per_parent" in rel:
                 target["min_per_parent"] = rel["min_per_parent"]
@@ -202,9 +202,9 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
             "parent_node": p_node,
             "parent_column": p_col,
         }
-        if "distribution" in rel and rel["distribution"]:
+        if rel.get("distribution"):
             target["distribution"] = rel["distribution"]
-        if "weights" in rel and rel["weights"]:
+        if rel.get("weights"):
             target["weights"] = rel["weights"]
         if "min_per_parent" in rel:
             target["min_per_parent"] = rel["min_per_parent"]
@@ -351,7 +351,8 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
                 missing = False
                 for p_node, p_col in multi_parent_targets[col_name]:
                     if pool_resolver is None:
-                        missing = True; break
+                        missing = True
+                        break
                     try:
                         parent_pools.append(pool_resolver(p_node, p_col))
                         parent_node_keys.append(f"{p_node}.{p_col}")
@@ -539,8 +540,8 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
             pk_duplicate_failures.append((col_name, n_total, n_unique, strategy))
 
     if ctx is not None and hasattr(ctx, "export"):
-        ctx.export("rows_generated", int(len(out)))
-        ctx.export("columns_generated", int(len(columns)))
+        ctx.export("rows_generated", len(out))
+        ctx.export("columns_generated", len(columns))
         ctx.export("seed_used", seed)
         # Per-FK metrics for the platform-side evidence assembler.
         # Keyed by child column name so the manifest can join against
@@ -705,8 +706,10 @@ def _emit_m2m_junction(
             mac = hmac.new(seed_bytes, str(i).encode(), hashlib.sha256).digest()
             li = _pick(left_cdf,  n_left,  mac[:8])
             ri = _pick(right_cdf, n_right, mac[8:16])
-            if li >= n_left:  li = n_left - 1
-            if ri >= n_right: ri = n_right - 1
+            if li >= n_left:
+                li = n_left - 1
+            if ri >= n_right:
+                ri = n_right - 1
             left_vals.append(left_pool[li])
             right_vals.append(right_pool[ri])
 

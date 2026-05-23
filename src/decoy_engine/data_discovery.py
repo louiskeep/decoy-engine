@@ -22,8 +22,9 @@ TABLE`` etc. So we layer a statement-kind filter on top.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any
 
 from decoy_engine.exceptions import DecoyError
 
@@ -147,7 +148,7 @@ def run_discovery_sql(
     Raises ``DiscoverySqlError`` on validation failure or DuckDB
     execution error.
     """
-    import duckdb  # noqa: PLC0415 -- keeps duckdb off the import path for callers that don't need it
+    import duckdb
 
     _validate_select_only(sql)
 
@@ -173,7 +174,7 @@ def run_discovery_sql(
         # everything in case the user wrote `SELECT * FROM huge`.
         raw = rel.fetchmany(row_limit)
         rows = [
-            {col: _coerce(value) for col, value in zip(cols, row)}
+            {col: _coerce(value) for col, value in zip(cols, row, strict=False)}
             for row in raw
         ]
         return DiscoveryResult(columns=cols, rows=rows)

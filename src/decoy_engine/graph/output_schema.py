@@ -26,9 +26,9 @@ a no-op there until they migrate.
 """
 from __future__ import annotations
 
-from typing import Any, Union
+from typing import Any
 
-ColumnPrediction = Union[list[str], str, None]
+ColumnPrediction = list[str] | str | None
 
 
 def predicted_output_columns(node: dict[str, Any]) -> ColumnPrediction:

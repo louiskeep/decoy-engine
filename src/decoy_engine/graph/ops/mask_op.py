@@ -166,7 +166,7 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
         raise OpError(f"mask op failed: {exc}") from exc
 
     if ctx is not None and hasattr(ctx, "export"):
-        ctx.export("rows_processed", int(len(result)))
+        ctx.export("rows_processed", len(result))
         # Strategies that touched the data — distinct values, sorted for
         # stable downstream comparisons.
         strategies_applied = sorted({

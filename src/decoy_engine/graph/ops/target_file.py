@@ -58,7 +58,7 @@ def apply(inputs, config, ctx):
         rows_written = int(df.num_rows)
         result = _apply_duckdb(df, config)
     else:
-        rows_written = int(len(df))
+        rows_written = len(df)
         result = _apply_pandas(df, config)
     if ctx is not None and hasattr(ctx, "export"):
         path = Path(config["output_filename"])

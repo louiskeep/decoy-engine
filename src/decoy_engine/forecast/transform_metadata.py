@@ -25,11 +25,11 @@ phone locale flips with format_pattern, etc.).
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
-from decoy_engine.storm.types import FieldStats
 from decoy_engine.storm.recommendations import get_default_strategy
-
+from decoy_engine.storm.types import FieldStats
 
 # (mask_id, params, one-line why)
 TransformChoice = tuple[str, dict[str, Any], str]

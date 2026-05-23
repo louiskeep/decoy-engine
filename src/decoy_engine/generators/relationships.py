@@ -4,10 +4,12 @@ Relationship handling for the decoy_engine generator.
 Manages relationships between tables and self-references.
 """
 
-import pandas as pd
-import random
 import os
-from typing import Dict, Any, Optional, List
+import random
+from typing import Any
+
+import pandas as pd
+
 
 class RelationshipHandler:
     """
@@ -35,7 +37,7 @@ class RelationshipHandler:
         
         self.logger.debug(f"Initialized RelationshipHandler with seed: {seed}")
     
-    def process_self_references(self, table_config: Dict[str, Any], config: Dict[str, Any]) -> None:
+    def process_self_references(self, table_config: dict[str, Any], config: dict[str, Any]) -> None:
         """
         Process self-referential relationships within a table
         
@@ -79,7 +81,7 @@ class RelationshipHandler:
                 target_column = rel['column']
                 
                 if ref_column not in df.columns or target_column not in df.columns:
-                    self.logger.warning(f"Cannot process self-reference: Columns not found in table")
+                    self.logger.warning("Cannot process self-reference: Columns not found in table")
                     continue
                     
                 # Get all possible reference values
@@ -114,9 +116,9 @@ class RelationshipHandler:
                 self.logger.info(f"Updated self-references in table: {table_name}")
                 
             except Exception as e:
-                self.logger.error(f"Error processing self-references for table {table_name}: {str(e)}")
+                self.logger.error(f"Error processing self-references for table {table_name}: {e!s}")
     
-    def process_relationships(self, config: Dict[str, Any], reference_data: Dict[str, pd.DataFrame]) -> None:
+    def process_relationships(self, config: dict[str, Any], reference_data: dict[str, pd.DataFrame]) -> None:
         """
         Process relationships between tables
         
@@ -154,9 +156,9 @@ class RelationshipHandler:
             else:
                 self.logger.warning(f"Unsupported relationship type: {rel_type}")
     
-    def _process_foreign_key_relationship(self, relationship: Dict[str, Any], 
-                                        config: Dict[str, Any], 
-                                        reference_data: Dict[str, pd.DataFrame],
+    def _process_foreign_key_relationship(self, relationship: dict[str, Any], 
+                                        config: dict[str, Any], 
+                                        reference_data: dict[str, pd.DataFrame],
                                         rel_name: str) -> None:
         """
         Process a foreign key relationship between tables
@@ -280,11 +282,11 @@ class RelationshipHandler:
             self.logger.info(f"Updated foreign key references in table: {source_table}")
             
         except Exception as e:
-            self.logger.error(f"Error processing foreign key relationship: {str(e)}")
+            self.logger.error(f"Error processing foreign key relationship: {e!s}")
     
-    def _process_many_to_many_relationship(self, relationship: Dict[str, Any], 
-                                         config: Dict[str, Any], 
-                                         reference_data: Dict[str, pd.DataFrame],
+    def _process_many_to_many_relationship(self, relationship: dict[str, Any], 
+                                         config: dict[str, Any], 
+                                         reference_data: dict[str, pd.DataFrame],
                                          rel_name: str) -> None:
         """
         Process a many-to-many relationship between tables
@@ -418,8 +420,8 @@ class RelationshipHandler:
         junction_df.to_csv(junction_output_path, index=False)
         self.logger.info(f"Generated {len(relationships)} many-to-many relationships in junction table '{junction_table}'")
     
-    def _validate_relationship_dependencies(self, relationships: List[Dict[str, Any]], 
-                                          reference_data: Dict[str, pd.DataFrame]) -> None:
+    def _validate_relationship_dependencies(self, relationships: list[dict[str, Any]], 
+                                          reference_data: dict[str, pd.DataFrame]) -> None:
         """
         Validate that all referenced tables exist before processing relationships
         

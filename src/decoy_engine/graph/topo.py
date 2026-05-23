@@ -10,7 +10,7 @@ plain node IDs.
 """
 
 from collections import deque
-from typing import Iterable
+from collections.abc import Iterable
 
 from decoy_engine.internal.validator import ValidationError
 

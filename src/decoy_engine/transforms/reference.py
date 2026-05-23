@@ -16,7 +16,7 @@ import hashlib
 import hmac
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import pandas as pd
 
@@ -43,9 +43,9 @@ class ReferenceStrategy(BaseMaskingStrategy):
         super().__init__(seed, logger, derive_key=derive_key)
         # Cache parsed reference datasets across `apply()` calls so a single
         # pipeline doesn't reread the same CSV per masked column.
-        self._cache: Dict[str, pd.DataFrame] = {}
+        self._cache: dict[str, pd.DataFrame] = {}
 
-    def apply(self, column: pd.Series, rule: Dict[str, Any]) -> pd.Series:
+    def apply(self, column: pd.Series, rule: dict[str, Any]) -> pd.Series:
         column_name = rule.get('column', 'unnamed')
         ref_path = rule['reference']
         key_column = rule.get('key_column')
@@ -93,7 +93,7 @@ class ReferenceStrategy(BaseMaskingStrategy):
         self._log_stats(column, result, rule)
         return result
 
-    def validate_rule(self, rule: Dict[str, Any]) -> None:
+    def validate_rule(self, rule: dict[str, Any]) -> None:
         super().validate_rule(rule)
         if 'reference' not in rule or not rule['reference']:
             raise ValueError(
@@ -106,8 +106,8 @@ class ReferenceStrategy(BaseMaskingStrategy):
     # ── Internal helpers ──────────────────────────────────────────────
 
     def _load_reference_values(
-        self, ref_path: str, key_column: Optional[str]
-    ) -> List[Any]:
+        self, ref_path: str, key_column: str | None
+    ) -> list[Any]:
         """Resolve `ref_path` to a list of pickable values. Cached per
         (path, key_column) pair so repeated columns don't re-read disk."""
         cache_key = f"{ref_path}::{key_column or ''}"
@@ -163,7 +163,7 @@ class ReferenceStrategy(BaseMaskingStrategy):
         self._cache[cache_key] = series
         return series.tolist()
 
-    def _column_key(self) -> Optional[bytes]:
+    def _column_key(self) -> bytes | None:
         """Mirror HashStrategy._column_key — same `mask` info string so a
         column-level key set up once flows through every keyed strategy
         consistently."""

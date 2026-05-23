@@ -4,8 +4,9 @@ Passthrough masking strategy for the decoy_engine package.
 Keeps the original values unchanged.
 """
 
+from typing import Any
+
 import pandas as pd
-from typing import Dict, Any, Optional
 
 from decoy_engine.transforms.base import BaseMaskingStrategy
 
@@ -16,7 +17,7 @@ class PassthroughStrategy(BaseMaskingStrategy):
     Useful for non-sensitive data or fields needed for reference.
     """
     
-    def apply(self, column: pd.Series, rule: Dict[str, Any]) -> pd.Series:
+    def apply(self, column: pd.Series, rule: dict[str, Any]) -> pd.Series:
         """
         Keeps the original values unchanged
         
@@ -27,7 +28,7 @@ class PassthroughStrategy(BaseMaskingStrategy):
         Returns:
             The original pandas Series unchanged
         """
-        self.logger.debug(f"Applying passthrough mask (no changes)")
+        self.logger.debug("Applying passthrough mask (no changes)")
         
         # Simply return the original column
         return column

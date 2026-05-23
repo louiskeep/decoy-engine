@@ -5,15 +5,15 @@ Logging utilities for the decoy_engine package.
 
 import logging
 import os
-from pathlib import Path
 from logging.handlers import RotatingFileHandler
-from typing import Dict, Any, Optional
+from pathlib import Path
+from typing import Any
 
 # Create a module-level logger instance
 _LOGGER_INSTANCE = None
 
 
-def get_logger(config: Optional[Dict[str, Any]] = None):
+def get_logger(config: dict[str, Any] | None = None):
     """
     Get or create a logger instance (singleton pattern)
     
@@ -33,7 +33,7 @@ def get_logger(config: Optional[Dict[str, Any]] = None):
     return _LOGGER_INSTANCE
 
 
-def _create_logger(config: Optional[Dict[str, Any]] = None):
+def _create_logger(config: dict[str, Any] | None = None):
     """
     Create a new logger instance
     
@@ -52,7 +52,7 @@ def _create_logger(config: Optional[Dict[str, Any]] = None):
     return logger
 
 
-def _configure_logger(logger, config: Dict[str, Any]):
+def _configure_logger(logger, config: dict[str, Any]):
     """
     Configure the logger with the provided settings
     

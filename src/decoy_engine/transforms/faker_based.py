@@ -4,16 +4,17 @@ Faker masking strategy for the decoy_engine package.
 Replaces values with realistic fake data using the Faker library.
 """
 
-import pandas as pd
-from typing import Dict, Any, Optional
+from typing import Any
 
-from decoy_engine.transforms.base import BaseMaskingStrategy
+import pandas as pd
+
 from decoy_engine.internal.helpers import (
     deterministic_hash,
     get_faker_providers,
     hmac_seed,
     make_faker,
 )
+from decoy_engine.transforms.base import BaseMaskingStrategy
 
 
 class FakerStrategy(BaseMaskingStrategy):
@@ -28,7 +29,7 @@ class FakerStrategy(BaseMaskingStrategy):
     def __init__(self, seed: int = 42, logger=None, derive_key=None):
         super().__init__(seed, logger, derive_key=derive_key)
 
-    def apply(self, column: pd.Series, rule: Dict[str, Any]) -> pd.Series:
+    def apply(self, column: pd.Series, rule: dict[str, Any]) -> pd.Series:
         faker_type = rule.get('faker_type', 'word')
         column_name = rule.get('column', 'unnamed')
         column_key = self._column_key(column_name)
@@ -73,12 +74,12 @@ class FakerStrategy(BaseMaskingStrategy):
         faker_type: str,
         preserve_domain: bool,
         locale,
-        rule: Dict[str, Any],
-        faker_kwargs: Dict[str, Any],
+        rule: dict[str, Any],
+        faker_kwargs: dict[str, Any],
     ) -> pd.Series:
         # Cache is local to this call and only avoids repeated Faker setup for
         # duplicate values. It is not persisted and does not define behavior.
-        cache: Dict[Any, Any] = {}
+        cache: dict[Any, Any] = {}
 
         def fake_for(value):
             if value is None or pd.isna(value):
@@ -108,7 +109,7 @@ class FakerStrategy(BaseMaskingStrategy):
 
         return column.apply(fake_for)
 
-    def _column_key(self, column_name: str) -> Optional[bytes]:
+    def _column_key(self, column_name: str) -> bytes | None:
         """Derive the mask subkey via the caller-supplied resolver."""
         if self.derive_key is None:
             return None
@@ -120,7 +121,7 @@ class FakerStrategy(BaseMaskingStrategy):
             )
             return None
 
-    def validate_rule(self, rule: Dict[str, Any]) -> None:
+    def validate_rule(self, rule: dict[str, Any]) -> None:
         """
         Validate that the rule contains all required fields for the faker strategy.
 

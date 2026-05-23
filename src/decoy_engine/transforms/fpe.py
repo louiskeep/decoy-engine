@@ -24,14 +24,13 @@ hard AES dep until a customer asks for NIST SP 800-38G compliance by name.
 import hashlib
 import hmac
 import struct
-from typing import Dict, Any, Optional
+from typing import Any
 
 import pandas as pd
 
 from decoy_engine.transforms.base import BaseMaskingStrategy
 
-
-_CHARSETS: Dict[str, str] = {
+_CHARSETS: dict[str, str] = {
     "digits":   "0123456789",
     "alpha":    "abcdefghijklmnopqrstuvwxyz",
     "ALPHA":    "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
@@ -121,7 +120,7 @@ class FPEStrategy(BaseMaskingStrategy):
         ignored when the charset contains non-digit characters.
     """
 
-    def apply(self, column: pd.Series, rule: Dict[str, Any]) -> pd.Series:
+    def apply(self, column: pd.Series, rule: dict[str, Any]) -> pd.Series:
         column_name = rule.get("column", "unnamed")
         column_key = self._column_key(column_name)
 
@@ -207,7 +206,7 @@ class FPEStrategy(BaseMaskingStrategy):
                 "".join(charset_chars), key, charset, tweak, validate_luhn
             )
             result = list(val)
-            for pos, enc_ch in zip(charset_indices, encrypted_body):
+            for pos, enc_ch in zip(charset_indices, encrypted_body, strict=False):
                 result[pos] = enc_ch
             return "".join(result)
         else:
@@ -253,7 +252,7 @@ class FPEStrategy(BaseMaskingStrategy):
 
         return result
 
-    def _column_key(self, column_name: str) -> Optional[bytes]:
+    def _column_key(self, column_name: str) -> bytes | None:
         """Derive the mask sub-key from the master key resolver (same pattern as HashStrategy)."""
         if self.derive_key is None:
             return None

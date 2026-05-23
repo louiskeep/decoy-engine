@@ -20,10 +20,9 @@ a distinct security profile that is owned by the derive op directly.
 
 from __future__ import annotations
 
-import re as _re
 import random as _random
+import re as _re
 from typing import Any
-
 
 BASE_GLOBALS: dict[str, Any] = {"__builtins__": {}}
 

@@ -9,9 +9,10 @@ takes by .iloc — both dispatch to fast C paths regardless of dtype
 backend.
 """
 
+from typing import Any
+
 import numpy as np
 import pandas as pd
-from typing import Any, Dict
 
 from decoy_engine.transforms.base import BaseMaskingStrategy
 
@@ -21,7 +22,7 @@ class ShuffleStrategy(BaseMaskingStrategy):
     distribution of values while breaking the association with records.
     Null positions are preserved."""
 
-    def apply(self, column: pd.Series, rule: Dict[str, Any]) -> pd.Series:
+    def apply(self, column: pd.Series, rule: dict[str, Any]) -> pd.Series:
         self.logger.debug("Applying shuffle mask to column")
 
         seed = rule.get("seed", self.seed)

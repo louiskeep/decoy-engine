@@ -21,7 +21,6 @@ from __future__ import annotations
 
 from typing import Any
 
-
 _REDACT_KEYS = {"password", "secret", "token", "api_key", "apikey", "auth"}
 
 
@@ -36,7 +35,7 @@ def _node_descriptor(node: dict) -> str:
 
 def _summarize_node_config(kind: str, cfg: dict) -> str:
     if not isinstance(cfg, dict) or not cfg:
-        return f"config: (no config)"
+        return "config: (no config)"
     parts: list[str] = []
     for k, v in cfg.items():
         if k.startswith("_"):
@@ -55,7 +54,7 @@ def _summarize_node_config(kind: str, cfg: dict) -> str:
         if len(parts) >= 6:
             parts.append("...")
             break
-    return f"config: " + ", ".join(parts)
+    return "config: " + ", ".join(parts)
 
 
 def _jsonable(v: Any) -> Any:

@@ -1,7 +1,7 @@
 import hashlib
 import hmac
-from datetime import datetime, timedelta
-from typing import Any, Dict, Optional
+from datetime import datetime
+from typing import Any
 
 import pandas as pd
 
@@ -22,7 +22,7 @@ _COMMON_FORMATS = [
 ]
 
 
-def _parse_date(val: str, date_format: Optional[str]) -> Optional[datetime]:
+def _parse_date(val: str, date_format: str | None) -> datetime | None:
     if date_format:
         try:
             return datetime.strptime(val, date_format)
@@ -36,7 +36,7 @@ def _parse_date(val: str, date_format: Optional[str]) -> Optional[datetime]:
     return None
 
 
-def _detect_format(series: pd.Series) -> Optional[str]:
+def _detect_format(series: pd.Series) -> str | None:
     sample = series.dropna().astype(str).head(20)
     for fmt in _COMMON_FORMATS:
         try:
@@ -49,9 +49,15 @@ def _detect_format(series: pd.Series) -> Optional[str]:
 
 
 def _shift_for_value_md5(val: str, min_days: int, max_days: int) -> int:
-    """Legacy per-value shift derived from MD5 hash (no key)."""
+    """Legacy per-value shift derived from MD5 hash (no key).
+
+    Non-crypto use of MD5: this fallback exists for date-shift configs
+    that did not declare a key. New configs should always declare a
+    key and hit the HMAC-SHA256 path below; this branch is preserved
+    for reproducibility on existing pre-keyed configs.
+    """
     range_size = max_days - min_days + 1
-    h = int(hashlib.md5(val.encode('utf-8', errors='replace')).hexdigest(), 16)
+    h = int(hashlib.md5(val.encode('utf-8', errors='replace')).hexdigest(), 16)  # noqa: S324
     return min_days + (h % range_size)
 
 
@@ -87,10 +93,10 @@ class DateShiftStrategy(BaseMaskingStrategy):
         super().__init__(seed, logger, derive_key=derive_key)
         self.strategy_name = 'date_shift'
 
-    def apply(self, column: pd.Series, rule: Dict[str, Any]) -> pd.Series:
+    def apply(self, column: pd.Series, rule: dict[str, Any]) -> pd.Series:
         min_days = int(rule.get('min_days', -365))
         max_days = int(rule.get('max_days', 365))
-        date_format: Optional[str] = rule.get('date_format') or None
+        date_format: str | None = rule.get('date_format') or None
         column_name = rule.get('column', 'unnamed')
         column_key = self._column_key(column_name)
 
@@ -159,7 +165,7 @@ class DateShiftStrategy(BaseMaskingStrategy):
         self._log_stats(column, result, rule)
         return result
 
-    def _column_key(self, column_name: str) -> Optional[bytes]:
+    def _column_key(self, column_name: str) -> bytes | None:
         """Derive the mask subkey via the caller-supplied resolver. Same as
         HashStrategy._column_key — instance-master-only, no per-column
         tagging. ``column_name`` is kept for log context only."""
@@ -173,6 +179,6 @@ class DateShiftStrategy(BaseMaskingStrategy):
             )
             return None
 
-    def validate_rule(self, rule: Dict[str, Any]) -> None:
+    def validate_rule(self, rule: dict[str, Any]) -> None:
         if 'column' not in rule:
             raise ValueError("date_shift rule is missing 'column' field")

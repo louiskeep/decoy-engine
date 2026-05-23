@@ -3,10 +3,13 @@
 Base class for masking strategies in the decoy_engine package.
 """
 
-from abc import ABC, abstractmethod
+from abc import abstractmethod
+from typing import Any
+
 import pandas as pd
-from typing import Dict, Any, Optional
+
 from decoy_engine.internal.base import MaskingStrategy
+
 
 class BaseMaskingStrategy(MaskingStrategy):
     """
@@ -27,7 +30,7 @@ class BaseMaskingStrategy(MaskingStrategy):
         super().__init__(seed, logger, derive_key=derive_key)
     
     @abstractmethod
-    def apply(self, column: pd.Series, rule: Dict[str, Any]) -> pd.Series:
+    def apply(self, column: pd.Series, rule: dict[str, Any]) -> pd.Series:
         """
         Apply the masking strategy to a column
         
@@ -60,7 +63,7 @@ class BaseMaskingStrategy(MaskingStrategy):
         
         return result
     
-    def _log_stats(self, column: pd.Series, result: pd.Series, rule: Dict[str, Any]) -> None:
+    def _log_stats(self, column: pd.Series, result: pd.Series, rule: dict[str, Any]) -> None:
         """
         Log statistics about the masking operation
         
@@ -106,7 +109,7 @@ class BaseMaskingStrategy(MaskingStrategy):
         
         self.logger.debug(f"Unique values: {unique_original} original, {unique_result} masked")
     
-    def validate_rule(self, rule: Dict[str, Any]) -> None:
+    def validate_rule(self, rule: dict[str, Any]) -> None:
         """
         Validate that the rule contains all required fields for this strategy
         

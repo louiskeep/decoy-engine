@@ -5,12 +5,12 @@ Orchestrates the masking process according to configuration.
 """
 
 import os
-import yaml
-import pandas as pd
 import time
-from typing import Dict, Any, Optional, List
+
+import yaml
 
 from decoy_engine.context import emit_lineage, emit_step
+
 
 class Masker:
     """
@@ -31,7 +31,7 @@ class Masker:
                 config's 'logging' section, preserving prior behavior.
         """
         # Load configuration
-        with open(config_path, 'r') as f:
+        with open(config_path) as f:
             self.config = yaml.safe_load(f)
 
         # Add default global settings if not present
@@ -149,7 +149,7 @@ class Masker:
             
             self.logger.info("=== Masking process completed successfully ===")
         except Exception as e:
-            self.logger.error(f"Error during masking process: {str(e)}")
+            self.logger.error(f"Error during masking process: {e!s}")
             self.logger.error(f"Error type: {type(e).__name__}")
             
             # Log detailed traceback

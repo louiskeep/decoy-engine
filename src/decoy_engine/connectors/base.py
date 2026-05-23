@@ -4,8 +4,9 @@ Base I/O functionality for the decoy_engine package.
 """
 
 from abc import ABC, abstractmethod
+from typing import Any
+
 import pandas as pd
-from typing import Dict, Any, Optional, List
 
 
 class IOHandler(ABC):
@@ -14,7 +15,7 @@ class IOHandler(ABC):
     Handles loading and saving data from different file formats.
     """
     
-    def __init__(self, input_config: Dict[str, Any], output_config: Dict[str, Any], logger=None):
+    def __init__(self, input_config: dict[str, Any], output_config: dict[str, Any], logger=None):
         """
         Initialize with input and output configurations
         
@@ -73,7 +74,7 @@ class IOHandler(ABC):
         if 'path' not in self.output_config:
             raise ValueError("Output configuration must specify 'path'")
     
-    def chunk_dataframe(self, df: pd.DataFrame, chunk_size: int = 100000) -> List[pd.DataFrame]:
+    def chunk_dataframe(self, df: pd.DataFrame, chunk_size: int = 100000) -> list[pd.DataFrame]:
         """
         Split dataframe into chunks for processing large datasets
         
@@ -115,7 +116,7 @@ class IOHandler(ABC):
         Returns:
             Human-readable string with file size information
         """
-        from decoy_engine.internal.helpers import get_file_size, convert_file_size
+        from decoy_engine.internal.helpers import convert_file_size, get_file_size
         
         size_bytes = get_file_size(self.input_path)
         if size_bytes is None:
@@ -123,7 +124,7 @@ class IOHandler(ABC):
         
         return f"Input file size: {convert_file_size(size_bytes)}"
     
-    def set_column_configurations(self, column_configs: List[Dict[str, Any]]) -> None:
+    def set_column_configurations(self, column_configs: list[dict[str, Any]]) -> None:
         """
         Set column configurations for formatting purposes
         Default implementation does nothing

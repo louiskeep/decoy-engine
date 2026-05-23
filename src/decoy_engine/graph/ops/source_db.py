@@ -48,7 +48,6 @@ import pyarrow as pa
 from decoy_engine.graph.ops._base import OpError
 from decoy_engine.internal.validator import ValidationError
 
-
 # (sqlalchemy_dialect_prefix, duckdb_extension, duckdb_attach_type).
 _NATIVE_SCANNERS: dict[str, tuple[str, str]] = {
     "sqlite": ("sqlite_scanner", "sqlite"),
@@ -220,7 +219,7 @@ def _attach_target_for(dsn: str, attach_type: str) -> str:
         return dsn
 
     if attach_type == "postgres":
-        from urllib.parse import urlparse, unquote
+        from urllib.parse import unquote, urlparse
 
         parsed = urlparse(dsn)
         parts: list[str] = []

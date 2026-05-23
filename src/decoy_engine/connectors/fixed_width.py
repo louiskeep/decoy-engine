@@ -4,9 +4,9 @@ Fixed-width file I/O functionality for the decoy_engine package.
 """
 
 import os
+from typing import Any
+
 import pandas as pd
-from typing import Dict, Any, Optional, List
-from pathlib import Path
 
 from decoy_engine.connectors.base import IOHandler
 from decoy_engine.internal.helpers import create_directory_for_file
@@ -17,7 +17,7 @@ class FixedWidthHandler(IOHandler):
     I/O handler for fixed-width files.
     Handles loading and saving data from fixed-width format.
     """
-    def __init__(self, input_config: Dict[str, Any], output_config: Dict[str, Any], config_or_logger=None, logger=None):
+    def __init__(self, input_config: dict[str, Any], output_config: dict[str, Any], config_or_logger=None, logger=None):
         """
         Initialize with input and output configurations
         
@@ -63,8 +63,8 @@ class FixedWidthHandler(IOHandler):
             df = pd.DataFrame(columns=column_names)
             
             # For large files, we'll process line by line
-            self.logger.debug(f"Reading fixed-width file line by line")
-            with open(input_path, 'r', encoding=encoding) as f:
+            self.logger.debug("Reading fixed-width file line by line")
+            with open(input_path, encoding=encoding) as f:
                 rows = []
                 line_count = 0
                 for line in f:
@@ -91,7 +91,7 @@ class FixedWidthHandler(IOHandler):
             
         except Exception as e:
             self.logger.error(f"Failed to load fixed-width file: {input_path}")
-            self.logger.error(f"Error details: {str(e)}")
+            self.logger.error(f"Error details: {e!s}")
             raise ValueError(f"Failed to load fixed-width file: {e}")
     
     def save_data(self, df: pd.DataFrame) -> None:
@@ -119,7 +119,7 @@ class FixedWidthHandler(IOHandler):
             self.logger.error(error_msg)
             raise ValueError(error_msg)
     
-    def _parse_definition_file(self, definition_path: str) -> List[Dict[str, Any]]:
+    def _parse_definition_file(self, definition_path: str) -> list[dict[str, Any]]:
         """
         Parse the fixed width definition file.
         
@@ -139,7 +139,7 @@ class FixedWidthHandler(IOHandler):
         self.logger.debug(f"Definition delimiter: '{delimiter}', encoding: '{encoding}'")
         
         try:
-            with open(definition_path, 'r', encoding=encoding) as f:
+            with open(definition_path, encoding=encoding) as f:
                 # Skip header line and determine column positions
                 header = next(f).strip().split(delimiter)
                 header = [h.strip() for h in header]  # Clean whitespace
@@ -178,7 +178,7 @@ class FixedWidthHandler(IOHandler):
                         })
                         self.logger.debug(f"Added field: {name} (positions {start+1}-{end})")
                     except (ValueError, IndexError) as e:
-                        self.logger.warning(f"Error parsing line {line_count}: {str(e)}")
+                        self.logger.warning(f"Error parsing line {line_count}: {e!s}")
                         self.logger.warning(f"Line content: {line.strip()}")
                 
             self.logger.info(f"Successfully parsed {len(fields)} fields from definition file")
@@ -186,7 +186,7 @@ class FixedWidthHandler(IOHandler):
             
         except Exception as e:
             self.logger.error(f"Failed to parse definition file: {definition_path}")
-            self.logger.error(f"Error details: {str(e)}")
+            self.logger.error(f"Error details: {e!s}")
             raise
     
     def _save_as_fixed_width(self, df: pd.DataFrame) -> None:
@@ -226,7 +226,7 @@ class FixedWidthHandler(IOHandler):
         
         self.logger.info(f"Successfully saved {len(df)} rows to {output_path}")
     
-    def _get_output_field_definitions(self) -> List[Dict[str, Any]]:
+    def _get_output_field_definitions(self) -> list[dict[str, Any]]:
         """
         Get field definitions for output, either from input or specified output definition
         
@@ -264,7 +264,7 @@ class FixedWidthHandler(IOHandler):
         self.logger.warning("No definition file found for fixed-width output")
         return None
     
-    def _format_fixed_width_line(self, row: pd.Series, fields: List[Dict[str, Any]]) -> str:
+    def _format_fixed_width_line(self, row: pd.Series, fields: list[dict[str, Any]]) -> str:
         """
         Format a single data row as a fixed-width line with custom padding
         
@@ -336,7 +336,7 @@ class FixedWidthHandler(IOHandler):
         
         return line
     
-    def _write_definition_file(self, fields: List[Dict[str, Any]], output_def_path: str, encoding: str = 'utf-8') -> None:
+    def _write_definition_file(self, fields: list[dict[str, Any]], output_def_path: str, encoding: str = 'utf-8') -> None:
         """
         Write field definitions to a definition file
         
@@ -391,7 +391,7 @@ class FixedWidthHandler(IOHandler):
             df_sample = pd.DataFrame(columns=column_names)
             
             # Read sample rows
-            with open(input_path, 'r', encoding=encoding) as f:
+            with open(input_path, encoding=encoding) as f:
                 for i, line in enumerate(f):
                     if i >= sample_rows:
                         break
@@ -410,10 +410,10 @@ class FixedWidthHandler(IOHandler):
             
         except Exception as e:
             self.logger.error(f"Failed to load sample from fixed-width file: {input_path}")
-            self.logger.error(f"Error details: {str(e)}")
+            self.logger.error(f"Error details: {e!s}")
             raise ValueError(f"Failed to load sample from fixed-width file: {e}")
         
-    def set_column_configurations(self, column_configs: List[Dict[str, Any]]) -> None:
+    def set_column_configurations(self, column_configs: list[dict[str, Any]]) -> None:
         """
         Set column configurations for padding and formatting purposes
         
@@ -423,7 +423,7 @@ class FixedWidthHandler(IOHandler):
         self.column_configs = column_configs
         self.logger.debug(f"Set column configurations for {len(column_configs)} columns")
 
-    def _get_column_padding_settings(self, column_name: str) -> Dict[str, str]:
+    def _get_column_padding_settings(self, column_name: str) -> dict[str, str]:
         """
         Get padding settings for a specific column, checking multiple sources
         
@@ -468,7 +468,7 @@ class FixedWidthHandler(IOHandler):
             'padding_alignment': global_alignment
         }
 
-    def _format_fixed_width_line(self, row: pd.Series, fields: List[Dict[str, Any]]) -> str:
+    def _format_fixed_width_line(self, row: pd.Series, fields: list[dict[str, Any]]) -> str:
         """
         Format a single data row as a fixed-width line with custom padding
         

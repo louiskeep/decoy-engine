@@ -8,14 +8,14 @@ touching output paths, etc.).
 
 import logging
 from pathlib import Path
-from typing import Any, Union
+from typing import Any
 
 import yaml
 
 from decoy_engine.exceptions import ConfigError, PipelineValidationError
 
 
-def validate_config(config: Union[str, Path, dict]) -> None:
+def validate_config(config: str | Path | dict) -> None:
     """Validate a decoy_engine pipeline config.
 
     Accepts a YAML file path or an already-loaded config dict. Detects
@@ -33,7 +33,7 @@ def validate_config(config: Union[str, Path, dict]) -> None:
     _run_validator(validator_cls, data)
 
 
-def _load_config(config: Union[str, Path, dict]) -> dict:
+def _load_config(config: str | Path | dict) -> dict:
     if isinstance(config, dict):
         return config
     if not isinstance(config, (str, Path)):

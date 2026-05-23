@@ -27,33 +27,34 @@ Design notes (read before adding capabilities or breaking changes):
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import ClassVar, Generic, Iterator, Optional, TypeVar
+from typing import ClassVar, Generic, TypeVar
 
 from pydantic import BaseModel
 
 __all__ = [
-    "SDK_VERSION",
-    # Capability flag constants.
-    "CAP_STREAMING",
+    "CAP_DRY_RUN",
+    "CAP_INTROSPECTION",
+    "CAP_MULTIPART",
     "CAP_RESUMABLE",
     "CAP_SIGNED_URL",
-    "CAP_MULTIPART",
-    "CAP_INTROSPECTION",
-    "CAP_DRY_RUN",
+    # Capability flag constants.
+    "CAP_STREAMING",
+    "SDK_VERSION",
+    "CheckResult",
+    "ConfigError",
     # Config + value types.
     "ConnectorConfig",
-    "FileMeta",
-    "CheckResult",
-    "WriteResult",
-    # Abstract bases.
-    "FileSource",
-    "FileSink",
     # Exceptions.
     "ConnectorError",
-    "TransientError",
+    "FileMeta",
+    "FileSink",
+    # Abstract bases.
+    "FileSource",
     "PermanentError",
-    "ConfigError",
+    "TransientError",
+    "WriteResult",
 ]
 
 
@@ -101,9 +102,9 @@ class FileMeta:
     """
 
     path: str
-    size: Optional[int] = None
-    content_type: Optional[str] = None
-    modified: Optional[str] = None  # ISO-8601, or None.
+    size: int | None = None
+    content_type: str | None = None
+    modified: str | None = None  # ISO-8601, or None.
 
 
 @dataclass(frozen=True)
@@ -224,7 +225,7 @@ class FileSource(_ConnectorBase[ConfigT]):
     """
 
     @abstractmethod
-    def list(self, prefix: Optional[str] = None) -> Iterator[FileMeta]:
+    def list(self, prefix: str | None = None) -> Iterator[FileMeta]:
         """Yield metadata for files under `prefix`.
 
         Empty `prefix` (or None) lists everything the connector's config

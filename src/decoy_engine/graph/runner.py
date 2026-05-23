@@ -40,13 +40,11 @@ full-run behavior because both paths use the same plan builder.
 
 import logging
 import os
-import re
 import threading
 import time
 from typing import Any
 
 import pyarrow as pa
-import yaml
 
 from decoy_engine.context import (
     ExecutionContext,
@@ -60,18 +58,12 @@ from decoy_engine.graph.config_loading import (
 )
 from decoy_engine.graph.errors import translate as translate_engine_error
 from decoy_engine.graph.node_descriptors import (
-    _REDACT_KEYS,
-    _jsonable,
     _node_descriptor,
     _summarize_node_config,
 )
 from decoy_engine.graph.node_exports import (
-    _NODE_TOKEN_RE,
     _NodeExportResolutionError,
-    _replace_node_exports_in_string,
     _resolve_node_exports,
-    _resolve_one_node_export,
-    _walk_for_exports,
 )
 from decoy_engine.graph.types import (
     NodeRunRecord,
@@ -79,7 +71,6 @@ from decoy_engine.graph.types import (
     RunResult,
 )
 from decoy_engine.internal.validator import GraphConfigValidator, ValidationError
-
 
 _MEMORY_WARN_THRESHOLD = float(
     os.environ.get("DECOY_MEMORY_WARN_THRESHOLD", "0.7")
@@ -266,6 +257,7 @@ def validate_graph_full(yaml_text: str, *, strict: bool = False):
     can adopt it forward.
     """
     import copy
+
     from decoy_engine.validation_result import CODES, ValidationResult
 
     result = ValidationResult()
@@ -414,6 +406,7 @@ def _validate_column_relationships(
     Skips silently when no column_relationships block exists.
     """
     import os
+
     from decoy_engine.graph.planner import build_plan
     from decoy_engine.validation_result import CODES
 
@@ -528,7 +521,7 @@ def _validate_column_relationships(
         if not p_node or not c_node or not p_col or not c_col:
             result.add_error(
                 code=CODES.FK_UNKNOWN_NODE,
-                message=f"entry missing parent.node / parent.column / child.node / child.column",
+                message="entry missing parent.node / parent.column / child.node / child.column",
                 path=path,
             )
             continue
@@ -1107,7 +1100,7 @@ def _execute_graph(
                 # replacement scans" -- accurate but unhelpful to the
                 # operator. Surface a runner-level error that names the
                 # upstream edge(s) instead.
-                none_edges = [k for k, v in zip(in_edge_keys, inputs) if v is None]
+                none_edges = [k for k, v in zip(in_edge_keys, inputs, strict=False) if v is None]
                 if none_edges:
                     raise ConfigError(
                         f"node {nid!r} ({kind}) has no data on input edge(s) "

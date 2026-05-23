@@ -5,9 +5,11 @@ Handles processing large files in chunks to minimize memory usage.
 """
 
 import os
-import pandas as pd
 import time
-from typing import Dict, Any, Optional, Callable
+from collections.abc import Callable
+from typing import Any
+
+import pandas as pd
 
 from decoy_engine.internal.memory import MemoryMonitor
 
@@ -17,7 +19,7 @@ class LargeFileProcessor:
     Handles processing of large files in chunks to minimize memory usage.
     """
     
-    def __init__(self, config: Dict[str, Any], logger=None):
+    def __init__(self, config: dict[str, Any], logger=None):
         """
         Initialize with configuration and logger
         
@@ -93,7 +95,7 @@ class LargeFileProcessor:
         try:
             self.logger.debug("Counting total rows in file (this may take a moment for large files)")
             count_start = time.time()
-            total_rows = sum(1 for _ in open(input_path, 'r', encoding=encoding))
+            total_rows = sum(1 for _ in open(input_path, encoding=encoding))
             total_rows = total_rows - 1  # Subtract header row
             count_time = time.time() - count_start
             

@@ -3,9 +3,9 @@
 Configuration validation utilities for the decoy_engine package.
 """
 
-from typing import Dict, Any, List, Set, Optional, Union
-from pathlib import Path
 import os
+from typing import Any
+
 from decoy_engine.internal.base import ConfigValidator
 
 
@@ -24,8 +24,8 @@ class ValidationError(Exception):
     def __init__(
         self,
         message: str,
-        path: Optional[str] = None,
-        code: Optional[str] = None,
+        path: str | None = None,
+        code: str | None = None,
     ):
         self.path = path
         self.code = code
@@ -97,7 +97,7 @@ class MaskerConfigValidator(ConfigValidator):
         'reference', 'truncate', 'bucketize', 'fpe',
     ]
     
-    def validate(self, config: Dict[str, Any]) -> None:
+    def validate(self, config: dict[str, Any]) -> None:
         try:
             self._validate_required_sections(config)
             self._validate_input_config(config['input'])
@@ -114,13 +114,13 @@ class MaskerConfigValidator(ConfigValidator):
             self.logger.error(str(e))
             raise
     
-    def _validate_required_sections(self, config: Dict[str, Any]) -> None:
+    def _validate_required_sections(self, config: dict[str, Any]) -> None:
         required_sections = ['input', 'output', 'masking_rules']
         for section in required_sections:
             if section not in config:
                 raise ValidationError(f"Missing required section '{section}' in configuration")
     
-    def _validate_input_config(self, input_config: Dict[str, Any]) -> None:
+    def _validate_input_config(self, input_config: dict[str, Any]) -> None:
         if 'type' not in input_config:
             raise ValidationError("Missing required field 'type'", "input")
         
@@ -160,7 +160,7 @@ class MaskerConfigValidator(ConfigValidator):
             if 'fixed_width_options' not in input_config:
                 input_config['fixed_width_options'] = self.DEFAULT_FIXED_WIDTH_OPTIONS.copy()
     
-    def _validate_output_config(self, output_config: Dict[str, Any]) -> None:
+    def _validate_output_config(self, output_config: dict[str, Any]) -> None:
         if 'type' not in output_config:
             raise ValidationError("Missing required field 'type'", "output")
             
@@ -194,7 +194,7 @@ class MaskerConfigValidator(ConfigValidator):
             if 'fixed_width_options' not in output_config:
                 output_config['fixed_width_options'] = self.DEFAULT_FIXED_WIDTH_OPTIONS.copy()
     
-    def _validate_masking_rules(self, masking_rules: List[Dict[str, Any]]) -> None:
+    def _validate_masking_rules(self, masking_rules: list[dict[str, Any]]) -> None:
         if not masking_rules:
             raise ValidationError("No masking rules defined", "masking_rules")
             
@@ -311,7 +311,7 @@ class MaskerConfigValidator(ConfigValidator):
                     if cond['operator'] not in ('is_null', 'is_not_null') and 'value' not in cond:
                         raise ValidationError("Missing required field 'value'", cpath)
 
-    def _validate_referential_integrity(self, relationships: List[Dict[str, Any]]) -> None:
+    def _validate_referential_integrity(self, relationships: list[dict[str, Any]]) -> None:
         if not relationships:
             return
             
@@ -355,7 +355,7 @@ class GeneratorConfigValidator(ConfigValidator):
         'self_reference', 'foreign_key', 'many_to_many'
     ]
     
-    def validate(self, config: Dict[str, Any]) -> None:
+    def validate(self, config: dict[str, Any]) -> None:
         if 'tables' not in config:
             raise ValueError("Missing required section 'tables' in generator configuration")
         
@@ -390,7 +390,7 @@ class GeneratorConfigValidator(ConfigValidator):
                 if col_type == 'faker' and 'faker_type' not in column:
                     column['faker_type'] = 'word'
     
-    def _validate_tables(self, tables: List[Dict[str, Any]]) -> None:
+    def _validate_tables(self, tables: list[dict[str, Any]]) -> None:
         table_names = set()
         for i, table in enumerate(tables):
             table_path = f"tables[{i}]"
@@ -413,7 +413,7 @@ class GeneratorConfigValidator(ConfigValidator):
                     self.logger.info(f"Output directory '{output_dir}' doesn't exist.")
             self._validate_columns(table['columns'], table_path, table_name)
     
-    def _validate_columns(self, columns: List[Dict[str, Any]], table_path: str, table_name: str) -> None:
+    def _validate_columns(self, columns: list[dict[str, Any]], table_path: str, table_name: str) -> None:
         if not columns:
             raise ValidationError("No columns defined", f"{table_path}.columns")
         column_names = set()
@@ -435,7 +435,7 @@ class GeneratorConfigValidator(ConfigValidator):
                 )
             self._validate_column_type_specific(column, column_path, column_type)
     
-    def _validate_column_type_specific(self, column: Dict[str, Any], column_path: str, column_type: str) -> None:
+    def _validate_column_type_specific(self, column: dict[str, Any], column_path: str, column_type: str) -> None:
         if 'null_probability' in column:
             null_prob = column['null_probability']
             if not isinstance(null_prob, (int, float)) or not (0 <= null_prob <= 1):
@@ -497,7 +497,7 @@ class GeneratorConfigValidator(ConfigValidator):
                     self.logger.warning(f"Column '{column.get('name')}': Invalid padding_alignment: '{alignment}'.")
                     fixed_width_opts['padding_alignment'] = 'left'
     
-    def _validate_relationships(self, relationships: List[Dict[str, Any]], tables: List[Dict[str, Any]]) -> None:
+    def _validate_relationships(self, relationships: list[dict[str, Any]], tables: list[dict[str, Any]]) -> None:
         if not relationships:
             return
         table_map = {}
@@ -587,7 +587,7 @@ class GraphConfigValidator(ConfigValidator):
         "target.sftp",
     })
 
-    def validate(self, config: Dict[str, Any]) -> None:
+    def validate(self, config: dict[str, Any]) -> None:
         try:
             self._validate_top_level(config)
             kinds = self._known_kinds()
@@ -602,11 +602,11 @@ class GraphConfigValidator(ConfigValidator):
             self.logger.error(str(e))
             raise
 
-    def _known_kinds(self) -> Set[str]:
+    def _known_kinds(self) -> set[str]:
         from decoy_engine.graph.ops import OPS
         return set(OPS.keys())
 
-    def _validate_top_level(self, config: Dict[str, Any]) -> None:
+    def _validate_top_level(self, config: dict[str, Any]) -> None:
         from decoy_engine.validation_result import CODES
 
         mode = config.get("mode")
@@ -643,13 +643,13 @@ class GraphConfigValidator(ConfigValidator):
             )
 
     def _validate_nodes(
-        self, nodes: List[Dict[str, Any]], kinds: Set[str]
+        self, nodes: list[dict[str, Any]], kinds: set[str]
     ) -> None:
-        from decoy_engine.graph.ops import OPS
         from decoy_engine.graph.conversion import VALID_ENGINES
+        from decoy_engine.graph.ops import OPS
         from decoy_engine.validation_result import CODES
 
-        seen_ids: Set[str] = set()
+        seen_ids: set[str] = set()
         for i, node in enumerate(nodes):
             path = f"nodes[{i}]"
             if not isinstance(node, dict):
@@ -714,8 +714,8 @@ class GraphConfigValidator(ConfigValidator):
                 ) from e
 
     def _validate_nodes_collecting(
-        self, nodes: List[Dict[str, Any]], kinds: Set[str]
-    ) -> List[ValidationError]:
+        self, nodes: list[dict[str, Any]], kinds: set[str]
+    ) -> list[ValidationError]:
         """Like _validate_nodes but collects ALL per-node errors instead of
         raising on the first. Called by validate_graph_full (R2.2) so that
         a graph with multiple bad nodes surfaces all of them in one pass.
@@ -723,12 +723,12 @@ class GraphConfigValidator(ConfigValidator):
         _validate_nodes is unchanged for backward compatibility -- validate()
         and _validate_or_raise still use it via the raise-on-first path.
         """
-        from decoy_engine.graph.ops import OPS
         from decoy_engine.graph.conversion import VALID_ENGINES
+        from decoy_engine.graph.ops import OPS
         from decoy_engine.validation_result import CODES
 
-        errors: List[ValidationError] = []
-        seen_ids: Set[str] = set()
+        errors: list[ValidationError] = []
+        seen_ids: set[str] = set()
 
         for i, node in enumerate(nodes):
             path = f"nodes[{i}]"
@@ -800,7 +800,7 @@ class GraphConfigValidator(ConfigValidator):
         return errors
 
     def _validate_edges(
-        self, edges: List[Dict[str, Any]], nodes: List[Dict[str, Any]]
+        self, edges: list[dict[str, Any]], nodes: list[dict[str, Any]]
     ) -> None:
         from decoy_engine.graph.ops import OPS
 
@@ -846,14 +846,14 @@ class GraphConfigValidator(ConfigValidator):
 
     def _validate_cardinality(
         self,
-        nodes: List[Dict[str, Any]],
-        edges: List[Dict[str, Any]],
-        kinds: Set[str],
+        nodes: list[dict[str, Any]],
+        edges: list[dict[str, Any]],
+        kinds: set[str],
     ) -> None:
         from decoy_engine.graph.ops import OPS
 
-        in_count: Dict[str, int] = {n["id"]: 0 for n in nodes}
-        out_count: Dict[str, int] = {n["id"]: 0 for n in nodes}
+        in_count: dict[str, int] = {n["id"]: 0 for n in nodes}
+        out_count: dict[str, int] = {n["id"]: 0 for n in nodes}
         for e in edges:
             in_count[e["to"]] += 1
             base_src = e["from"].split(".", 1)[0]  # strip port suffix for split ops
@@ -890,13 +890,13 @@ class GraphConfigValidator(ConfigValidator):
                 )
 
     def _validate_acyclic(
-        self, nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]]
+        self, nodes: list[dict[str, Any]], edges: list[dict[str, Any]]
     ) -> None:
         from decoy_engine.graph.topo import topo_order
         topo_order(nodes, edges)  # raises ValidationError on cycle
 
     def _validate_file_format_consistency(
-        self, nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]],
+        self, nodes: list[dict[str, Any]], edges: list[dict[str, Any]],
         strict: bool = False,
     ) -> None:
         """Warn when file-source and file-target formats differ without a convert.file_type.
@@ -912,14 +912,14 @@ class GraphConfigValidator(ConfigValidator):
         """
         from decoy_engine.graph.ops._cloud_io import infer_format as _infer_fmt
 
-        node_by_id: Dict[str, Dict[str, Any]] = {n["id"]: n for n in nodes}
-        node_idx: Dict[str, int] = {
+        node_by_id: dict[str, dict[str, Any]] = {n["id"]: n for n in nodes}
+        node_idx: dict[str, int] = {
             n["id"]: i for i, n in enumerate(nodes) if isinstance(n, dict)
         }
 
         # Adjacency list: node_id -> list of direct downstream node_ids.
         # Strip the ".port" suffix that split ops use so the BFS stays simple.
-        adj: Dict[str, List[str]] = {n["id"]: [] for n in nodes}
+        adj: dict[str, list[str]] = {n["id"]: [] for n in nodes}
         for e in edges:
             src = e["from"].split(".", 1)[0]
             adj[src].append(e["to"])
@@ -935,9 +935,9 @@ class GraphConfigValidator(ConfigValidator):
             if not src_fmt:
                 continue
 
-            visited_states: Set[tuple] = set()
-            queue: List[tuple] = [(src_id, False)]
-            target_reach: Dict[str, Set[bool]] = {}
+            visited_states: set[tuple] = set()
+            queue: list[tuple] = [(src_id, False)]
+            target_reach: dict[str, set[bool]] = {}
 
             while queue:
                 cur_id, has_convert = queue.pop(0)
@@ -1003,7 +1003,7 @@ class GraphConfigValidator(ConfigValidator):
                     )
 
     def _validate_mask_column_reachability(
-        self, nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]]
+        self, nodes: list[dict[str, Any]], edges: list[dict[str, Any]]
     ) -> None:
         """R2.3: a mask node references column names; those names must
         exist in the schema the upstream source produces.
@@ -1016,7 +1016,7 @@ class GraphConfigValidator(ConfigValidator):
 
         node_by_id = {n["id"]: n for n in nodes if isinstance(n, dict) and "id" in n}
 
-        upstream: Dict[str, List[str]] = {nid: [] for nid in node_by_id}
+        upstream: dict[str, list[str]] = {nid: [] for nid in node_by_id}
         for e in edges:
             if not isinstance(e, dict):
                 continue
@@ -1055,7 +1055,7 @@ class GraphConfigValidator(ConfigValidator):
             if had_unknown:
                 continue
 
-            for col_name in cols_cfg.keys():
+            for col_name in cols_cfg:
                 if had_auto:
                     if not is_auto_name(col_name):
                         raise ValidationError(
@@ -1082,21 +1082,22 @@ class GraphConfigValidator(ConfigValidator):
                     )
 
     def _validate_nodes_ref_reachability(
-        self, nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]]
+        self, nodes: list[dict[str, Any]], edges: list[dict[str, Any]]
     ) -> None:
         """R2.3: every ``${nodes.<id>.<key>}`` reference must point at
         a node that exists and is UPSTREAM of the referrer.
         """
         import re as _re
+
         from decoy_engine.graph.topo import upstream_subgraph
         from decoy_engine.validation_result import CODES
 
         ref_re = _re.compile(r"\$\{nodes\.([a-zA-Z][\w]*)\.([a-zA-Z_][\w.]*)}")
         node_ids = {n["id"] for n in nodes if isinstance(n, dict) and "id" in n}
 
-        def walk(value: Any) -> List[tuple[str, str]]:
+        def walk(value: Any) -> list[tuple[str, str]]:
             """Yield (target_id, key) for every nodes-ref token under value."""
-            found: List[tuple[str, str]] = []
+            found: list[tuple[str, str]] = []
             if isinstance(value, str):
                 for m in ref_re.finditer(value):
                     found.append((m.group(1), m.group(2)))

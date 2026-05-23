@@ -23,7 +23,6 @@ from __future__ import annotations
 import re
 from typing import Any
 
-
 _NODE_TOKEN_RE = re.compile(r"\$\{nodes\.([a-zA-Z0-9_-]+)\.([a-zA-Z_][\w.]*)}")
 
 

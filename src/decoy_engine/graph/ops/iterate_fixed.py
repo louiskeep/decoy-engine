@@ -24,7 +24,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from decoy_engine.graph.ops._base import OpError
 from decoy_engine.graph.ops._iterator_core import (
     run_iterations,
     validate_iterator_config,

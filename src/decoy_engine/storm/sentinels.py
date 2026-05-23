@@ -28,7 +28,6 @@ import pandas as pd
 
 from decoy_engine.storm.types import SentinelFlag
 
-
 # ── known sentinel values ─────────────────────────────────────────────────────
 
 # Date sentinels — parse to a real date but are placeholder-y.
@@ -167,8 +166,8 @@ def _scan_dates(non_null: pd.Series, col_name: str) -> list[SentinelFlag]:
             value=f"{out_of_range_count} value(s)",
             count=out_of_range_count,
             note=(
-                "DOB values outside 1880–today" if is_dob_column
-                else "date values outside 1900–2100"
+                "DOB values outside 1880-today" if is_dob_column
+                else "date values outside 1900-2100"
             ),
         ))
 

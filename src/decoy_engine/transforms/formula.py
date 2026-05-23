@@ -1,5 +1,5 @@
 # decoy_engine/strategies/formula.py
-from typing import Any, Dict
+from typing import Any
 
 import pandas as pd
 
@@ -31,7 +31,7 @@ class FormulaStrategy(BaseMaskingStrategy):
     :func:`decoy_engine.expressions.safe_eval`.
     """
 
-    def apply(self, column: pd.Series, rule: Dict[str, Any]) -> pd.Series:
+    def apply(self, column: pd.Series, rule: dict[str, Any]) -> pd.Series:
         expr = rule.get('formula', '')
         if not expr:
             self.logger.warning(

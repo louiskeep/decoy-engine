@@ -17,7 +17,8 @@ paths use it partially.
 
 import hashlib
 import hmac
-from typing import Any, Callable, Literal, Protocol, runtime_checkable
+from collections.abc import Callable
+from typing import Any, Literal, Protocol, runtime_checkable
 
 
 @runtime_checkable

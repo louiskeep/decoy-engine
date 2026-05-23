@@ -4,23 +4,21 @@ Column data generators for the decoy_engine package.
 Provides various strategies for generating synthetic column data.
 """
 
-import os
-import pandas as pd
 import random
-import hashlib
 import time
+from typing import Any
+
+import pandas as pd
 from faker import Faker
-from typing import Dict, Any, Optional, List, Callable
 
 from decoy_engine.expressions import BASE_GLOBALS, safe_eval
+from decoy_engine.generators.derivation import (
+    synthetic_column_seed,
+)
 from decoy_engine.internal.helpers import (
     deterministic_hash,
     get_faker_providers,
     make_faker,
-)
-from decoy_engine.generators.derivation import (
-    strategy_config_fingerprint,
-    synthetic_column_seed,
 )
 
 
@@ -93,7 +91,7 @@ class ColumnGenerator:
     def _column_seed(
         self,
         column_name: str,
-        column_config: Optional[Dict[str, Any]] = None,
+        column_config: dict[str, Any] | None = None,
     ) -> int:
         """Per-column base seed used by every row-level seeding site.
 
@@ -126,8 +124,8 @@ class ColumnGenerator:
             fallback_seed=self.seed,
         )
     
-    def generate_column(self, num_rows: int, column_config: Dict[str, Any], 
-                    table_name: str, reference_data: Dict[str, pd.DataFrame]) -> pd.Series:
+    def generate_column(self, num_rows: int, column_config: dict[str, Any], 
+                    table_name: str, reference_data: dict[str, pd.DataFrame]) -> pd.Series:
         """
         Generate data for a column based on its configuration
         
@@ -180,8 +178,8 @@ class ColumnGenerator:
         
         return result
     
-    def _generate_faker_column(self, num_rows: int, column_config: Dict[str, Any], 
-                              table_name: str, reference_data: Dict[str, pd.DataFrame]) -> pd.Series:
+    def _generate_faker_column(self, num_rows: int, column_config: dict[str, Any], 
+                              table_name: str, reference_data: dict[str, pd.DataFrame]) -> pd.Series:
         """
         Generate data using Faker
         
@@ -250,8 +248,8 @@ class ColumnGenerator:
 
         return pd.Series(values)
 
-    def _generate_sequence_column(self, num_rows: int, column_config: Dict[str, Any],
-                                 table_name: str, reference_data: Dict[str, pd.DataFrame]) -> pd.Series:
+    def _generate_sequence_column(self, num_rows: int, column_config: dict[str, Any],
+                                 table_name: str, reference_data: dict[str, pd.DataFrame]) -> pd.Series:
         """
         Generate sequential data (e.g., IDs)
         
@@ -288,8 +286,8 @@ class ColumnGenerator:
             
         return pd.Series(values)
     
-    def _generate_categorical_column(self, num_rows: int, column_config: Dict[str, Any], 
-                                    table_name: str, reference_data: Dict[str, pd.DataFrame]) -> pd.Series:
+    def _generate_categorical_column(self, num_rows: int, column_config: dict[str, Any], 
+                                    table_name: str, reference_data: dict[str, pd.DataFrame]) -> pd.Series:
         """
         Generate data from a set of categories with specified probabilities
         
@@ -303,7 +301,7 @@ class ColumnGenerator:
             pandas.Series with generated data
         """
         categories = column_config.get('categories', ['Category A', 'Category B'])
-        weights = column_config.get('weights', None)  # Optional probability weights
+        weights = column_config.get('weights')  # Optional probability weights
         
         self.logger.debug(f"Generating categorical column with {len(categories)} categories")
 
@@ -317,8 +315,8 @@ class ColumnGenerator:
         values = random.choices(categories, weights=weights, k=num_rows)
         return pd.Series(values)
     
-    def _generate_reference_column(self, num_rows: int, column_config: Dict[str, Any], 
-                              table_name: str, reference_data: Dict[str, pd.DataFrame]) -> pd.Series:
+    def _generate_reference_column(self, num_rows: int, column_config: dict[str, Any], 
+                              table_name: str, reference_data: dict[str, pd.DataFrame]) -> pd.Series:
         """
         Generate data that references values from another table or column
         
@@ -514,13 +512,13 @@ class ColumnGenerator:
         # 5. Apply replacements in shuffled order so the repair doesn't
         #    bias position.
         random.shuffle(queue)
-        for slot, replacement in zip(free_slots, queue):
+        for slot, replacement in zip(free_slots, queue, strict=False):
             values[slot] = replacement
 
         return values
     
-    def _generate_formula_column(self, num_rows: int, column_config: Dict[str, Any],
-                               table_name: str, reference_data: Dict[str, pd.DataFrame]) -> pd.Series:
+    def _generate_formula_column(self, num_rows: int, column_config: dict[str, Any],
+                               table_name: str, reference_data: dict[str, pd.DataFrame]) -> pd.Series:
         """
         Generate data based on a formula.
 
@@ -571,7 +569,7 @@ class ColumnGenerator:
         num_rows: int,
         formula: str,
         column_name: str = 'unnamed_column',
-        column_config: Optional[Dict[str, Any]] = None,
+        column_config: dict[str, Any] | None = None,
     ) -> pd.Series:
         """Per-row eval of a Python expression. Same deterministic seeding
         as the legacy ``basic`` path: ``column_seed + row_index`` reseeds
@@ -621,7 +619,7 @@ class ColumnGenerator:
 
         return pd.Series(values)
 
-    def _formula_scope(self, local_seed: int) -> Dict[str, Any]:
+    def _formula_scope(self, local_seed: int) -> dict[str, Any]:
         """Build the names available inside a formula eval. Shared between
         the inline path here and the post-pass in
         ``DataGenerator._process_referenced_formulas`` so users get the

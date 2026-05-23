@@ -4,8 +4,9 @@ Referential integrity management for the decoy_engine package.
 Ensures consistent masking across related columns and tables.
 """
 
+from typing import Any
+
 import pandas as pd
-from typing import Dict, Any, Optional
 
 
 class ReferentialIntegrityManager:
@@ -14,7 +15,7 @@ class ReferentialIntegrityManager:
     Ensures that related data elements are masked consistently.
     """
     
-    def __init__(self, config: Dict[str, Any], logger=None):
+    def __init__(self, config: dict[str, Any], logger=None):
         """
         Initialize with relationship configuration
         
@@ -44,7 +45,7 @@ class ReferentialIntegrityManager:
         else:
             self.logger.info("No referential integrity relationships defined")
     
-    def get_referential_relationship(self, table_name: str, column_name: str) -> Optional[str]:
+    def get_referential_relationship(self, table_name: str, column_name: str) -> str | None:
         """
         Determine if a column is part of a referential integrity relationship
         
@@ -81,7 +82,7 @@ class ReferentialIntegrityManager:
         self.logger.debug(f"No relationship found for column '{column_ref}'")
         return None
     
-    def apply_relationship_transform(self, column: pd.Series, rel_name: str, rule: Dict[str, Any]) -> pd.Series:
+    def apply_relationship_transform(self, column: pd.Series, rel_name: str, rule: dict[str, Any]) -> pd.Series:
         """
         Apply a deterministic transform under a shared relationship name.
         

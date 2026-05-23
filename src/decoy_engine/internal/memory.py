@@ -3,7 +3,7 @@
 Memory monitoring utilities for the decoy_engine package.
 """
 
-from typing import Optional, Dict, Any, Tuple
+from typing import Any
 
 
 class MemoryMonitor:
@@ -12,7 +12,7 @@ class MemoryMonitor:
     """
     
     @staticmethod
-    def monitor_memory_usage(logger, label: str = "Current") -> Optional[float]:
+    def monitor_memory_usage(logger, label: str = "Current") -> float | None:
         """
         Monitor and report current memory usage
         
@@ -24,8 +24,9 @@ class MemoryMonitor:
             Memory usage in MB or None if monitoring failed
         """
         try:
-            import psutil
             import os
+
+            import psutil
             
             # Get the current process
             process = psutil.Process(os.getpid())
@@ -55,7 +56,7 @@ class MemoryMonitor:
             return None
     
     @staticmethod
-    def get_memory_usage() -> Optional[Dict[str, Any]]:
+    def get_memory_usage() -> dict[str, Any] | None:
         """
         Get current memory usage statistics without logging
         
@@ -63,8 +64,9 @@ class MemoryMonitor:
             Dictionary with memory usage information or None if monitoring failed
         """
         try:
-            import psutil
             import os
+
+            import psutil
             
             # Get the current process
             process = psutil.Process(os.getpid())
@@ -91,7 +93,7 @@ class MemoryMonitor:
             return None
     
     @staticmethod
-    def is_memory_critical(threshold_percent: float = 90.0) -> Tuple[bool, Optional[float]]:
+    def is_memory_critical(threshold_percent: float = 90.0) -> tuple[bool, float | None]:
         """
         Check if system memory usage is at a critical level
         

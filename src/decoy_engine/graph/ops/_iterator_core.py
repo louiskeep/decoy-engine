@@ -28,7 +28,8 @@ Parallelism: serial v1. Threadpool / process-pool are v1.1.
 """
 from __future__ import annotations
 
-from typing import Any, Callable, Iterable
+from collections.abc import Callable, Iterable
+from typing import Any
 
 import pyarrow as pa
 
