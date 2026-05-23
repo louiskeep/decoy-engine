@@ -250,3 +250,160 @@ def test_join_fan_in_in_edges():
     assert set(plan.in_edges["u"]) == {"s1", "s2"}
     assert plan.consumer_counts["s1"] == 1
     assert plan.consumer_counts["s2"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Purity: same input must produce equal output across calls.
+# ---------------------------------------------------------------------------
+
+
+class TestPlannerPurity:
+    """build_plan is documented as a pure function. Verify by calling
+    it twice on the same config and asserting the two plans are equal
+    field-by-field. A future refactor that introduces hidden mutable
+    state would surface here.
+
+    Pattern: property test cited from V2.0-A.3 plan acceptance:
+    "Planner is pure: a property test that runs build_plan(cfg, v)
+    == build_plan(cfg, v) for 10 fixtures (no nondeterminism)."
+    """
+
+    def _fixtures(self) -> list[dict]:
+        return [
+            _cfg(nodes=[
+                {"id": "s", "kind": "source.file", "config": {}},
+            ]),
+            _cfg(
+                nodes=[
+                    {"id": "s", "kind": "source.file", "config": {}},
+                    {"id": "m", "kind": "mask", "config": {}},
+                    {"id": "t", "kind": "target.file", "config": {}},
+                ],
+                edges=[{"from": "s", "to": "m"}, {"from": "m", "to": "t"}],
+            ),
+            _cfg(
+                nodes=[
+                    {"id": "s", "kind": "source.file", "config": {}},
+                    {"id": "m1", "kind": "mask", "config": {}},
+                    {"id": "m2", "kind": "mask", "config": {}},
+                ],
+                edges=[{"from": "s", "to": "m1"}, {"from": "s", "to": "m2"}],
+            ),
+            _cfg(
+                nodes=[
+                    {"id": "s1", "kind": "source.file", "config": {}},
+                    {"id": "s2", "kind": "source.file", "config": {}},
+                    {"id": "j", "kind": "join", "config": {}},
+                ],
+                edges=[{"from": "s1", "to": "j"}, {"from": "s2", "to": "j"}],
+            ),
+            _cfg(
+                nodes=[
+                    {"id": "s", "kind": "source.file", "config": {}},
+                    {"id": "m", "kind": "mask", "config": {}},
+                ],
+                edges=[{"from": "s", "to": "m"}],
+                engine="pandas",
+            ),
+        ]
+
+    def test_repeat_calls_produce_equal_plans(self) -> None:
+        """Direct property: build_plan(cfg) == build_plan(cfg)."""
+        for cfg in self._fixtures():
+            plan_a = build_plan(cfg)
+            plan_b = build_plan(cfg)
+            assert plan_a == plan_b, (
+                f"build_plan was nondeterministic for config={cfg!r}"
+            )
+
+    def test_build_plan_does_not_mutate_config(self) -> None:
+        """Planner must not write back into the caller's config dict
+        (Engineering Best Practices section 2.1: validation never
+        mutates input; the planner inherits the same contract because
+        it reads the same config).
+        """
+        import copy
+        for cfg in self._fixtures():
+            snapshot = copy.deepcopy(cfg)
+            _ = build_plan(cfg)
+            assert cfg == snapshot, (
+                f"build_plan mutated input for config={cfg!r}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Ancestor subgraph traversal (used by preview_graph)
+# ---------------------------------------------------------------------------
+
+
+class TestAncestorNodeIds:
+    """ancestor_node_ids walks backward from a target and returns every
+    node id that ultimately feeds it. Used by preview_graph to prune
+    a full graph down to the smallest subgraph needed to render a
+    single node's output.
+    """
+
+    def test_linear_chain(self) -> None:
+        """source -> mask -> target. Ancestors of target = {source, mask}."""
+        from decoy_engine.graph.planner import ancestor_node_ids
+        nodes = [
+            {"id": "s", "kind": "source.file"},
+            {"id": "m", "kind": "mask"},
+            {"id": "t", "kind": "target.file"},
+        ]
+        edges = [{"from": "s", "to": "m"}, {"from": "m", "to": "t"}]
+        assert ancestor_node_ids(nodes, edges, "t") == {"s", "m", "t"}
+        assert ancestor_node_ids(nodes, edges, "m") == {"s", "m"}
+        assert ancestor_node_ids(nodes, edges, "s") == {"s"}
+
+    def test_unreachable_target_returns_only_self(self) -> None:
+        from decoy_engine.graph.planner import ancestor_node_ids
+        nodes = [
+            {"id": "a", "kind": "source.file"},
+            {"id": "b", "kind": "source.file"},
+        ]
+        # No edge between them; b has no ancestors.
+        edges: list[dict] = []
+        assert ancestor_node_ids(nodes, edges, "b") == {"b"}
+
+    def test_target_not_in_graph_returns_empty(self) -> None:
+        from decoy_engine.graph.planner import ancestor_node_ids
+        nodes = [{"id": "s", "kind": "source.file"}]
+        # Target not present; walk produces nothing.
+        assert ancestor_node_ids(nodes, [], "nonexistent") == set()
+
+    def test_tolerates_malformed_entries(self) -> None:
+        """The function is "safe" by design: malformed nodes/edges
+        are skipped rather than crashed on. Caller passes raw config
+        before structural validation."""
+        from decoy_engine.graph.planner import ancestor_node_ids
+        nodes = [
+            {"id": "s", "kind": "source.file"},
+            "not-a-dict",
+            {"id": 42, "kind": "weird"},  # non-string id
+        ]
+        edges = [
+            {"from": "s", "to": "x"},
+            None,                          # type: ignore[list-item]
+            {"from": 42, "to": "s"},       # non-string from
+        ]
+        # Should not raise; should not include the malformed entries.
+        result = ancestor_node_ids(nodes, edges, "s")
+        assert "s" in result
+
+    def test_split_port_normalizes_to_base_node_id(self) -> None:
+        """When an edge's `from` is a split-port key like 'router.pass',
+        the walk should treat it as a reference to the base node 'router'."""
+        from decoy_engine.graph.planner import ancestor_node_ids
+        nodes = [
+            {"id": "src", "kind": "source.file"},
+            {"id": "router", "kind": "if"},
+            {"id": "downstream", "kind": "mask"},
+        ]
+        edges = [
+            {"from": "src", "to": "router"},
+            {"from": "router.pass", "to": "downstream"},
+        ]
+        assert ancestor_node_ids(nodes, edges, "downstream") == {
+            "src", "router", "downstream",
+        }

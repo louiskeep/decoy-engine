@@ -65,6 +65,7 @@ from decoy_engine.graph.node_exports import (
     _NodeExportResolutionError,
     _resolve_node_exports,
 )
+from decoy_engine.graph.planner import ancestor_node_ids
 from decoy_engine.graph.run_state import RunState
 from decoy_engine.graph.types import (
     PreviewResult,
@@ -77,45 +78,9 @@ _MEMORY_WARN_THRESHOLD = float(
 )
 
 
-def _ancestor_node_ids_safe(
-    nodes: list, edges: list, target: str
-) -> set[str]:
-    """Walk backward from ``target`` along edges and return every node id
-    that ultimately feeds it. Used by ``preview_graph`` to prune the run
-    to the minimum needed subgraph.
-
-    "Safe" because the walk tolerates malformed nodes/edges entries --
-    anything that isn't a dict or has a non-string id/from/to is skipped
-    rather than crashed on. Caller passes in raw config; structural
-    validation has not necessarily run yet.
-    """
-    valid_ids = {
-        n.get("id") for n in nodes
-        if isinstance(n, dict) and isinstance(n.get("id"), str)
-    }
-    in_edges: dict[str, list[str]] = {}
-    for e in edges or []:
-        if not isinstance(e, dict):
-            continue
-        src = e.get("from")
-        dst = e.get("to")
-        if not isinstance(src, str) or not isinstance(dst, str):
-            continue
-        in_edges.setdefault(dst, []).append(src.split(".", 1)[0])
-
-    needed: set[str] = set()
-    stack = [target]
-    while stack:
-        nid = stack.pop()
-        if nid in needed or nid not in valid_ids:
-            continue
-        needed.add(nid)
-        stack.extend(in_edges.get(nid, []))
-    return needed
-
-
-# _PeakRSSMonitor moved to graph/memory_monitor.py as PeakRSSMonitor
-# (V2.0-A.2, 2026-05-23) per the runner-decomposition plan.
+# Subgraph traversal moved to graph/planner.py as ancestor_node_ids
+# (V2.0-A.3, 2026-05-23). _PeakRSSMonitor moved to graph/memory_monitor.py
+# as PeakRSSMonitor (V2.0-A.2). Both per the runner-decomposition plan.
 
 
 def _check_memory_pressure(
@@ -1145,7 +1110,7 @@ def preview_graph(
     if not any(isinstance(n, dict) and n.get("id") == node_id for n in nodes):
         raise PipelineValidationError(f"node {node_id!r} not in graph")
 
-    needed = _ancestor_node_ids_safe(nodes, edges, node_id)
+    needed = ancestor_node_ids(nodes, edges, node_id)
     sub_config = {
         **config,
         "nodes": [n for n in nodes if isinstance(n, dict) and n.get("id") in needed],

@@ -47,6 +47,26 @@ provider FK path and would have caught this.
 
 ---
 
+### 2026-05-23 · F-AUDIT-002 · Parity test fails on current pyarrow (S2)
+
+**Discovered during:** V2.0-A.3 full-suite verification.
+
+**Location:** [tests/parity/test_source_sink_parity.py:184](../tests/parity/test_source_sink_parity.py#L184) (and possibly also lives at the pre-rebrand sibling path `Forge Repos/forge-engine/tests/parity/...` since both directories appear to share the same file).
+
+**Symptom.** `test_source_db_parity_pandas_vs_duckdb` raises
+`AttributeError: 'pyarrow.lib.RecordBatchReader' object has no attribute 'reset_index'`.
+The test code is calling pandas's `.reset_index()` on what is now a pyarrow `RecordBatchReader` instead of a `pandas.DataFrame`. Either the source.db op returns a different type than the test expects (pyarrow version drift), or the test was written for an older API.
+
+**Why this matters.** The parity tests are the V2.1 backstop for the legacy-removal sprint. A failing parity test today either masks a real divergence between the pandas and DuckDB code paths OR is a test-code bug that needs fixing before V2.1 can rely on parity coverage. Either way, surfacing during V2.0-A.3 (well before V2.1 kickoff) is the right time to triage.
+
+**Why this matters less for sprint 2 specifically.** The failure exists on `main`, was not caused by V2.0-A.1 / .2 / .3 changes (none of those touched source.db or the pyarrow conversion path), and is suppressed when running the unit + sentry + snapshot suites that V2.0-A acceptance depends on. Fixing it is V2.0-B or V2.1 work, not V2.0-A.
+
+**Fix applied:** none in this loop. Tracked for V2.0-B / V2.1 triage.
+
+**Followup ticket:** to be filed.
+
+---
+
 ### How to add a finding
 
 Use the heading pattern `### <date> · F-AUDIT-NNN · <one-line summary> (Sx)`
