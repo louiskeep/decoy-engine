@@ -17,9 +17,6 @@ Public exceptions (also in decoy_engine.exceptions):
     LicenseError, LicenseExpiredError,
     FlagPauseSignal
 
-`ForgeError` is a deprecated alias for `DecoyError` kept for one minor
-version while the rebrand rolls through downstream consumers.
-
 Anything not listed in __all__ -- and anything under decoy_engine.internal --
 is private and may change without a version bump.
 """
@@ -47,7 +44,6 @@ from decoy_engine.exceptions import (
     ConnectorError,
     DecoyError,
     FlagPauseSignal,
-    ForgeError,
     LicenseError,
     LicenseExpiredError,
     PipelineValidationError,
@@ -137,7 +133,6 @@ __all__ = [
     'FileSource',
     'FlagPauseSignal',
     'ForecastReport',
-    'ForgeError',
     'LicenseError',
     'LicenseExpiredError',
     'LicenseVerifier',

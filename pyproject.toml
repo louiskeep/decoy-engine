@@ -52,10 +52,6 @@ docs = [
     # Pygments treats `mermaid` as an unknown lexer and -W fails the build.
     "sphinxcontrib-mermaid>=0.9",
 ]
-# `hybrid` retained as an empty alias so any caller that already wrote
-# `pip install decoy-engine[hybrid]` keeps working: the libs are required
-# either way now.
-hybrid = []
 # First-party cloud-storage connectors as optional extras. S3 is covered
 # by `boto3`, which is already a transitive dep via `moto[s3]` in `[dev]`
 # and via the platform's runtime requirements. GCS and SFTP have heavier

@@ -163,6 +163,3 @@ class PKDuplicatesError(DecoyError):
                 f"downgrade this to a warning."
             )
         super().__init__(message)
-
-
-ForgeError = DecoyError

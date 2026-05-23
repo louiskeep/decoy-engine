@@ -20,7 +20,6 @@ from decoy_engine import (
     SchemaInspector,
     LicenseVerifier,
     DecoyError,
-    ForgeError,
     ConfigError,
     PipelineValidationError,
     ConnectorError,
@@ -49,7 +48,7 @@ def test_all_lists_every_public_name():
         "run_discovery_sql", "DiscoveryResult", "DiscoverySqlError",
         "recommend", "ForecastReport", "DisguiseRecommendation",
         "FieldRecommendation", "RiskFlag",
-        "DecoyError", "ForgeError", "ConfigError", "PipelineValidationError",
+        "DecoyError", "ConfigError", "PipelineValidationError",
         "ConnectorError", "ConnectorAuthError",
         "LicenseError", "LicenseExpiredError",
         "FlagPauseSignal",
@@ -67,23 +66,19 @@ def test_all_lists_every_public_name():
     assert set(decoy_engine.__all__) == expected
 
 
-def test_forge_error_is_deprecated_alias_for_decoy_error():
-    assert ForgeError is DecoyError
-
-
 def test_version_attribute_exists():
     assert isinstance(decoy_engine.__version__, str)
 
 
 class TestExceptions:
-    def test_config_error_subclasses_forge_error(self):
-        assert issubclass(ConfigError, ForgeError)
+    def test_config_error_subclasses_decoy_error(self):
+        assert issubclass(ConfigError, DecoyError)
 
     def test_pipeline_validation_error_subclasses_config_error(self):
         assert issubclass(PipelineValidationError, ConfigError)
 
-    def test_connector_error_subclasses_forge_error(self):
-        assert issubclass(ConnectorError, ForgeError)
+    def test_connector_error_subclasses_decoy_error(self):
+        assert issubclass(ConnectorError, DecoyError)
 
     def test_connector_auth_error_subclasses_connector_error(self):
         assert issubclass(ConnectorAuthError, ConnectorError)
