@@ -13,7 +13,7 @@ from unittest.mock import patch
 import pandas as pd
 import pytest
 
-from decoy_engine.graph.runner import _check_memory_pressure
+from decoy_engine.graph.memory_monitor import check_memory_pressure as _check_memory_pressure
 
 
 class _CapturingLogger:
@@ -105,26 +105,32 @@ def test_threshold_overridable_via_env(monkeypatch):
     """Customers on quiet-or-loud preferences can re-tune the threshold
     at startup via DECOY_MEMORY_WARN_THRESHOLD. We re-import the module
     to pick up the new value because the constant captures the env var
-    at import time."""
+    at import time.
+
+    Updated 2026-05-23 (V2.0-A.4): the MEMORY_WARN_THRESHOLD constant
+    moved from runner.py to memory_monitor.py along with the
+    check_memory_pressure function. Reloading memory_monitor refreshes
+    both the threshold and the function that reads it.
+    """
     import importlib
     monkeypatch.setenv("DECOY_MEMORY_WARN_THRESHOLD", "0.9")
 
-    import decoy_engine.graph.runner as runner_mod
-    importlib.reload(runner_mod)
+    import decoy_engine.graph.memory_monitor as mm_mod
+    importlib.reload(mm_mod)
 
     log = _CapturingLogger()
-    # 24 GB / 32 GB = 75% — under the new 90% threshold; no warning.
+    # 24 GB / 32 GB = 75% (under the new 90% threshold; no warning).
     with _set_total_ram(32):
-        runner_mod._check_memory_pressure(
+        mm_mod.check_memory_pressure(
             peak_rss_bytes=24 * 1024 * 1024 * 1024,
             graph_engine_mode="hybrid",
             log=log,
         )
     assert log.records == []
 
-    # 30 GB / 32 GB = ~94% — fires.
+    # 30 GB / 32 GB = ~94% (above the threshold; fires).
     with _set_total_ram(32):
-        runner_mod._check_memory_pressure(
+        mm_mod.check_memory_pressure(
             peak_rss_bytes=30 * 1024 * 1024 * 1024,
             graph_engine_mode="hybrid",
             log=log,
@@ -133,4 +139,4 @@ def test_threshold_overridable_via_env(monkeypatch):
 
     # Restore default threshold for other tests.
     monkeypatch.delenv("DECOY_MEMORY_WARN_THRESHOLD")
-    importlib.reload(runner_mod)
+    importlib.reload(mm_mod)

@@ -34,8 +34,17 @@ worth pinning. For now it is mechanical utility code.
 """
 from __future__ import annotations
 
+import os
 import threading
 from typing import Any
+
+# Threshold (fraction of system RAM) above which the runner emits a
+# memory-pressure warning at the end of a run. Set via env var so
+# operators can tune without touching code. Default 0.7 matches the
+# documented "70% of system RAM" line in the engineering docs.
+MEMORY_WARN_THRESHOLD = float(
+    os.environ.get("DECOY_MEMORY_WARN_THRESHOLD", "0.7")
+)
 
 
 class PeakRSSMonitor:
@@ -85,3 +94,50 @@ class PeakRSSMonitor:
                 return
             if rss > self.peak_rss:
                 self.peak_rss = rss
+
+
+def check_memory_pressure(
+    peak_rss_bytes: int,
+    graph_engine_mode: str,
+    log: Any,
+) -> None:
+    """Emit a warning when peak RSS exceeded MEMORY_WARN_THRESHOLD of system RAM.
+
+    Called once after the execution loop with the RSS peak recorded by
+    PeakRSSMonitor. No-ops silently when psutil is unavailable or
+    peak_rss_bytes is 0. In hybrid mode the warning suggests switching
+    to pandas to cut peak memory by ~2x at a throughput cost; in other
+    modes it advises moving to a larger host.
+
+    Moved from runner.py (V2.0-A.4, 2026-05-23): the function reads
+    nothing from the runner; it only consumes the peak_rss number that
+    PeakRSSMonitor already produces. Co-locating both halves of the
+    memory-pressure feedback loop makes the module's contract clear.
+    """
+    if log is None or peak_rss_bytes == 0:
+        return
+    try:
+        import psutil
+        total_bytes = psutil.virtual_memory().total
+    except Exception:
+        return
+    fraction = peak_rss_bytes / total_bytes if total_bytes else 0
+    if fraction < MEMORY_WARN_THRESHOLD:
+        return
+    peak_gb = peak_rss_bytes / 1024 / 1024 / 1024
+    total_gb = total_bytes / 1024 / 1024 / 1024
+    if graph_engine_mode == "hybrid":
+        log.warning(
+            "Pipeline peak memory: %.1f GB (%d%% of %.1f GB system RAM). "
+            "For larger jobs on memory-constrained hosts, set "
+            "`engine: pandas` in your pipeline YAML to reduce peak memory "
+            "by ~2x (trade-off: ~2-3x slower CPU). See "
+            "SHARED_ENGINE_ARCHITECTURE.md.",
+            peak_gb, int(fraction * 100), total_gb,
+        )
+    else:
+        log.warning(
+            "Pipeline peak memory: %.1f GB (%d%% of %.1f GB system RAM). "
+            "Job is memory-tight; consider running on a larger instance.",
+            peak_gb, int(fraction * 100), total_gb,
+        )
