@@ -809,9 +809,50 @@ def run_storm(
     logger = ctx.logger if ctx is not None else None
     emit_lineage(logger, "source", source_label, "dataset")
     emit_step(logger, "storm.scan", status="start")
+    # Narrative log lines so the Job Detail page tells the
+    # operator what STORM is actually doing. Before this, the
+    # log carried just "▶ storm.scan" / "✓ storm.scan" -- the
+    # 30-second gap between them was a black box.
+    custom_count = len(custom_detectors) if custom_detectors else 0
+    if logger is not None:
+        logger.info(
+            f"▶ profiling {len(df.columns)} columns × {len(df):,} rows "
+            f"(sample_strategy={sample_strategy}"
+            + (f", cap={sample_row_cap:,}" if sample_row_cap else "")
+            + (f", custom_detectors={custom_count}" if custom_count else "")
+            + ")"
+        )
     try:
         total = len(df)
-        fields = [_profile_column(df[col], total, custom_detectors) for col in df.columns]
+        fields: list = []
+        # Tally detector hits as columns are profiled so we can emit
+        # a one-line summary of which detectors fired -- saves the
+        # operator from manually counting in the field table.
+        detector_hits: dict[str, int] = {}
+        pii_count = 0
+        for col in df.columns:
+            f = _profile_column(df[col], total, custom_detectors)
+            fields.append(f)
+            for dm in (f.detector_matches or []):
+                detector_hits[dm.detector_id] = detector_hits.get(dm.detector_id, 0) + 1
+            if (getattr(f, "pii_score", 0.0) or 0.0) > 0:
+                pii_count += 1
+
+        if logger is not None:
+            if detector_hits:
+                top = sorted(detector_hits.items(), key=lambda kv: -kv[1])
+                summary = ", ".join(f"{name}×{n}" for name, n in top[:8])
+                more = "" if len(top) <= 8 else f" (+{len(top) - 8} more)"
+                logger.info(
+                    f"✓ detector pass: {len(fields)} fields scanned, "
+                    f"{pii_count} flagged PII; hits: {summary}{more}"
+                )
+            else:
+                logger.info(
+                    f"✓ detector pass: {len(fields)} fields scanned, "
+                    f"no detector hits"
+                )
+            logger.info("▶ k-anonymity / re-id risk computation")
 
         # Plan B-1: data-driven k-anonymity replaces the old
         # "% of unique columns" heuristic. k_anonymity is the
@@ -831,6 +872,16 @@ def run_storm(
         # exist.
         reid_cols = sorted({col for group in qi_groups for col in group})
 
+        if logger is not None:
+            if k_anonymity is not None:
+                logger.info(
+                    f"✓ k-anonymity = {k_anonymity}, re-id risk = {reid_score:.1f}%; "
+                    f"{len(qi_groups)} quasi-identifier combination"
+                    + ("" if len(qi_groups) == 1 else "s")
+                )
+            else:
+                logger.info("✓ no quasi-identifier combinations found (re-id risk = 0)")
+
         profile = StormProfile(
             source_label=source_label,
             row_count=total,
@@ -843,11 +894,18 @@ def run_storm(
             k_anonymity=k_anonymity,
         )
     except Exception as exc:  # noqa: BLE001 — re-raised below
+        if logger is not None:
+            logger.error(f"✗ storm.scan failed: {type(exc).__name__}: {exc}")
         emit_step(
             logger, "storm.scan", status="error",
             error_class=type(exc).__name__, error_msg=str(exc),
         )
         raise
+    if logger is not None:
+        logger.info(
+            f"✓ storm.scan complete: {len(fields)} fields "
+            f"({pii_count} PII, re-id risk {reid_score:.1f}%)"
+        )
     emit_step(
         logger, "storm.scan", status="finish",
         rows_in=total, rows_out=len(fields),
