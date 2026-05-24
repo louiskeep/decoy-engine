@@ -53,7 +53,18 @@ def _validate_or_raise(config: dict) -> None:
     """Run every modular validator stage; on first failure re-raise as
     PipelineValidationError carrying the original code + path so callers
     can route the failure without string-matching the message text.
+
+    Stage parity with :func:`decoy_engine.graph.validate_graph_full`:
+    after the graph-mechanics stages, run the FK / column_relationships
+    stage too. Before the V2.0-B correction gate, `validate_graph(...)`
+    silently skipped this stage so a config with a missing FK parent,
+    invalid child, bad column, or strict-mode relationship error would
+    pass the raise-style path even though the non-raising full path
+    rejected it. Now both entry points enforce the same contract.
     """
+    from decoy_engine.graph._fk_validators import _validate_column_relationships
+    from decoy_engine.validation_result import ValidationResult
+
     try:
         kinds = known_kinds()
         validate_top_level(config)
@@ -72,6 +83,19 @@ def _validate_or_raise(config: dict) -> None:
             path=e.path,
             code=getattr(e, "code", None),
         ) from e
+
+    # FK / column_relationships stage. Writes errors to a transient
+    # ValidationResult; the first error is re-raised as
+    # PipelineValidationError so the raise-style contract holds.
+    fk_result = ValidationResult()
+    _validate_column_relationships(config, strict=False, result=fk_result)
+    if fk_result.errors:
+        first = fk_result.errors[0]
+        raise PipelineValidationError(
+            getattr(first, "message", None) or str(first),
+            path=getattr(first, "path", None),
+            code=getattr(first, "code", None),
+        )
 
 
 def _validate_top_level_or_raise(config: dict) -> None:

@@ -60,6 +60,7 @@ from decoy_engine.generators import DataGenerator
 from decoy_engine.graph import (
     PreviewResult,
     RunResult,
+    normalize_config,
     preview_graph,
     run_graph,
     validate_graph,
@@ -161,6 +162,7 @@ __all__ = [
     "emit_throughput_sample",
     "load_custom_providers",
     "make_key_resolver",
+    "normalize_config",
     "preview_graph",
     "recommend",
     "register_faker_list_provider",

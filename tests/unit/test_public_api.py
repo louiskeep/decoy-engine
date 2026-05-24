@@ -45,6 +45,7 @@ def test_all_lists_every_public_name():
         "validate_config",
         "validate_graph",
         "validate_graph_full",
+        "normalize_config",
         "run_graph",
         "preview_graph",
         "RunResult",

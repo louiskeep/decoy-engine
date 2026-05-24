@@ -35,18 +35,27 @@ The module is pure: takes dicts, returns a dict, never raises on
 bad input (malformed config is treated as no-policy -> pass).
 
 Strategy expectation defaults are listed in
-`_DEFAULT_STRATEGY_EXPECTATIONS`. These are starting points based on
-the per-strategy semantics in
-`docs/backlog/v2/plans/decoy-platform/2026-05-09-distribution-synthesis.md`:
+`_DEFAULT_STRATEGY_EXPECTATIONS`. They are tuned to the CURRENT D1c
+comparator (value-identity TVD on categorical top-K, quantile RMSE
+on numeric), not to an aspirational shape-preserving comparator.
+D5a corrected the original D4 defaults after the survey caught
+that hash / bucketize / date_shift / faker all produce disjoint
+or shifted values under value-identity TVD; the constants below
+match what `compute_fidelity` actually reports for each strategy.
 
-  - identity: 1.00  (no change at all)
-  - hash:     0.95  (preserves cardinality + null rate)
-  - shuffle:  0.85  (preserves marginals exactly; pairwise shifts)
-  - bucketize: 0.70 (intentional generalization)
-  - date_shift: 0.80 (preserves intervals)
-  - faker:    0.10  (preserves type but not value semantics)
-  - redact:   0.05  (intentional destruction)
-  - generate: 0.30  (synthetic; D6 will raise this)
+  - identity:   1.00  (no change at all)
+  - hash:       0.05  (value-identity TVD treats hashes as disjoint)
+  - shuffle:    0.85  (same value set + same frequencies preserved)
+  - bucketize:  0.30  (collapses many source values into one bucket)
+  - date_shift: 0.50  (shifted dates land in different year bins)
+  - faker:      0.05  (faker produces a disjoint value set)
+  - redact:     0.05  (intentional destruction)
+  - generate:   0.30  (synthetic baseline; D6 may revisit)
+
+These defaults will RISE again in D5b once a shape-only similarity
+metric lands, because the new metric will recognize hash's
+structural preservation. See `docs/audit/v2-d5-design-survey.md`
+for the comparator-vs-strategy interaction analysis.
 
 Overrides via `policy_config["strategy_expectations"]` win over
 defaults; explicit per-column thresholds via
@@ -88,13 +97,13 @@ QUALITY_POLICY_SCHEMA_VERSION = "quality-policy/v1"
 # need defaults that match measurement reality.
 _DEFAULT_STRATEGY_EXPECTATIONS: dict[str, float] = {
     "identity": 1.00,
-    "hash": 0.05,        # D5a: was 0.95; value-identity TVD treats hashes as disjoint
-    "shuffle": 0.85,     # unchanged: shuffle keeps same value set + frequencies
-    "bucketize": 0.30,   # D5a: was 0.70; collapses values, TVD reflects the loss
+    "hash": 0.05,  # D5a: was 0.95; value-identity TVD treats hashes as disjoint
+    "shuffle": 0.85,  # unchanged: shuffle keeps same value set + frequencies
+    "bucketize": 0.30,  # D5a: was 0.70; collapses values, TVD reflects the loss
     "date_shift": 0.50,  # D5a: was 0.80; shifted dates land in different year bins
-    "faker": 0.05,       # D5a: was 0.10; faker produces disjoint values
-    "redact": 0.05,      # unchanged
-    "generate": 0.30,    # unchanged: synthetic data, modest baseline
+    "faker": 0.05,  # D5a: was 0.10; faker produces disjoint values
+    "redact": 0.05,  # unchanged
+    "generate": 0.30,  # unchanged: synthetic data, modest baseline
 }
 
 _VALID_MODES = {"report", "warn", "fail"}
