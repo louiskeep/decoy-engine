@@ -5,7 +5,7 @@ import pytest
 
 from decoy_engine.graph.ops import OPS, join
 from decoy_engine.graph.ops._base import OpError
-from decoy_engine.internal.validator import GraphConfigValidator, ValidationError
+from decoy_engine.internal.validator import ValidationError
 
 
 class TestRegistry:
@@ -132,12 +132,26 @@ class TestArityHintsAtJoin:
     op (mask/gen/derive/...) is wired with too many incoming edges."""
 
     def _validate(self, cfg):
-        import logging
+        # Inline the modular validator stages (V2.0-B split) so tests
+        # see the raw ValidationError without the
+        # PipelineValidationError wrapping that the public API adds.
+        from decoy_engine.graph.validators import (
+            known_kinds,
+            validate_acyclic,
+            validate_cardinality,
+            validate_edges,
+            validate_nodes,
+            validate_top_level,
+        )
 
-        log = logging.getLogger("test_join_arity")
-        if not log.handlers:
-            log.addHandler(logging.NullHandler())
-        GraphConfigValidator(log).validate(cfg)
+        kinds = known_kinds()
+        validate_top_level(cfg)
+        nodes = cfg["nodes"]
+        edges = cfg.get("edges") or []
+        validate_nodes(nodes, kinds)
+        validate_edges(edges, nodes)
+        validate_cardinality(nodes, edges, kinds)
+        validate_acyclic(nodes, edges)
 
     def test_two_edges_into_mask_hints_at_join(self):
         cfg = {
@@ -174,12 +188,25 @@ class TestNodeNameField:
     surfaces in run logs (covered in test_graph_logging)."""
 
     def _validate(self, cfg):
-        import logging
+        # Inline modular validator chain (V2.0-B split). Same pattern
+        # as the helper in TestArityHintsAtJoin above.
+        from decoy_engine.graph.validators import (
+            known_kinds,
+            validate_acyclic,
+            validate_cardinality,
+            validate_edges,
+            validate_nodes,
+            validate_top_level,
+        )
 
-        log = logging.getLogger("test_join_name")
-        if not log.handlers:
-            log.addHandler(logging.NullHandler())
-        GraphConfigValidator(log).validate(cfg)
+        kinds = known_kinds()
+        validate_top_level(cfg)
+        nodes = cfg["nodes"]
+        edges = cfg.get("edges") or []
+        validate_nodes(nodes, kinds)
+        validate_edges(edges, nodes)
+        validate_cardinality(nodes, edges, kinds)
+        validate_acyclic(nodes, edges)
 
     def test_node_name_optional(self):
         # No `name` — still valid.

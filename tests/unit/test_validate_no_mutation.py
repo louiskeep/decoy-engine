@@ -1,37 +1,36 @@
 """Validation never mutates caller input (V2.0-B contract test).
 
-Done-state from the V2 roadmap: `validate(config)` and
-`validate_graph_full(...)` never mutate caller input. This test is the
-mechanical enforcement: deep-copy the input before validation, then
-assert the input dict is byte-equal to its pre-validation snapshot.
+Done-state from the V2 roadmap: validation never mutates caller input.
+This test is the mechanical enforcement: deep-copy the input before
+validation, then assert the caller's dict is byte-equal to its
+pre-validation snapshot.
 
-A failure here means a validator wrote into the caller's config. The
-fix is to move the write out of the validator and into
-`normalize_config(config)`, which is the explicit normalization path.
+A failure here means a validator (or the public validate_graph /
+validate_graph_full entry) wrote into the caller's config. The fix is
+to move the write into `decoy_engine.graph.normalize.normalize_config`,
+the single named normalization path.
 
-Covers both validation entry points:
-  - GraphConfigValidator.validate(config) (raises on first error)
-  - validate_graph_full(yaml_text) (collects all errors)
+Covers both entry points:
+  - validate_graph(yaml_text) (raise-on-first-error)
+  - validate_graph_full(yaml_text) (collect-all errors)
 
-Fixtures exercise both validation-success and validation-with-warning
-paths. The format-backfill case is the historical pain point: pre-V2.0-B
-`_validate_file_format_consistency` wrote `target.file.config.format`
-into the validator's local copy via `tgt_cfg["format"] = tgt_fmt`. The
-validate_graph_full path was already protected by a deep-copy at the
-entry, but GraphConfigValidator.validate was not. V2.0-B removes the
-mutation entirely.
+Includes the historical pain point as a fixture: a target.file node
+that omits `format` and gets it inferred from a parquet source. Pre-
+V2.0-B, this case wrote `target.config.format = parquet` into the
+caller's parsed dict via `_validate_file_format_consistency`. V2.0-B
+moves that write into normalize_config; the validators are pure now,
+so this fixture must pass without any caller-visible mutation.
 """
 
 from __future__ import annotations
 
 import copy
-import logging
 
 import pytest
 import yaml
 
-from decoy_engine import validate_graph_full
-from decoy_engine.internal.validator import GraphConfigValidator
+from decoy_engine import validate_graph, validate_graph_full
+from decoy_engine.graph.normalize import normalize_config
 
 
 def _format_backfill_config() -> dict:
@@ -75,40 +74,22 @@ def _minimal_valid_config() -> dict:
     }
 
 
-@pytest.fixture
-def quiet_logger():
-    log = logging.getLogger("decoy_engine.test_validate_no_mutation")
-    if not log.handlers:
-        log.addHandler(logging.NullHandler())
-    return log
-
-
-_FORMAT_BACKFILL_XFAIL_REASON = (
-    "Pre-V2.0-B GraphConfigValidator._validate_file_format_consistency writes "
-    "target.config.format into the caller's dict (validator.py:1076). V2.0-B "
-    "moves that write to normalize_config(config) and removes the xfail."
-)
-
-
 @pytest.mark.parametrize(
     "config_factory",
-    [
-        _minimal_valid_config,
-        pytest.param(
-            _format_backfill_config,
-            marks=pytest.mark.xfail(reason=_FORMAT_BACKFILL_XFAIL_REASON, strict=True),
-        ),
-    ],
+    [_minimal_valid_config, _format_backfill_config],
     ids=["minimal_valid", "format_backfill_target"],
 )
-def test_graph_config_validator_does_not_mutate(config_factory, quiet_logger) -> None:
+def test_validate_graph_does_not_mutate_parsed_config(config_factory) -> None:
+    """validate_graph parses YAML internally, so the only way to inspect
+    mutation is to compare a re-parse of the same text before and after.
+    Equivalent to: validation has no caller-visible side effects."""
     config = config_factory()
-    snapshot = copy.deepcopy(config)
-    GraphConfigValidator(quiet_logger).validate(config)
-    assert config == snapshot, (
-        "GraphConfigValidator.validate(config) mutated caller input. "
-        "Move the write to normalize_config(config)."
-    )
+    yaml_text = yaml.safe_dump(config, sort_keys=False)
+    pre = yaml.safe_load(yaml_text)
+    snapshot = copy.deepcopy(pre)
+    validate_graph(yaml_text)
+    post = yaml.safe_load(yaml_text)
+    assert post == snapshot, "validate_graph mutated parser-visible state"
 
 
 @pytest.mark.parametrize(
@@ -116,16 +97,43 @@ def test_graph_config_validator_does_not_mutate(config_factory, quiet_logger) ->
     [_minimal_valid_config, _format_backfill_config],
     ids=["minimal_valid", "format_backfill_target"],
 )
-def test_validate_graph_full_does_not_mutate(config_factory) -> None:
+def test_validate_graph_full_does_not_mutate_parsed_config(config_factory) -> None:
     config = config_factory()
     yaml_text = yaml.safe_dump(config, sort_keys=False)
     pre = yaml.safe_load(yaml_text)
     snapshot = copy.deepcopy(pre)
-    # validate_graph_full parses the YAML internally, so the mutation
-    # vector is whatever the parse produces. We assert here that re-
-    # parsing the same text after validation yields an unchanged tree,
-    # which means validation hasn't reached out and modified shared
-    # caches or globals that the parser depends on.
     validate_graph_full(yaml_text)
     post = yaml.safe_load(yaml_text)
     assert post == snapshot, "validate_graph_full mutated parser-visible state"
+
+
+def test_normalize_config_is_pure_on_input() -> None:
+    """normalize_config returns a new dict; the input is never mutated."""
+    config = _format_backfill_config()
+    snapshot = copy.deepcopy(config)
+    normalized = normalize_config(config)
+    assert config == snapshot, "normalize_config mutated its input"
+    # Sanity: the normalized copy carries the back-filled format.
+    assert normalized["nodes"][1]["config"].get("format") == "parquet"
+
+
+def test_normalize_config_is_idempotent() -> None:
+    """normalize_config(normalize_config(c)) == normalize_config(c)."""
+    config = _format_backfill_config()
+    once = normalize_config(config)
+    twice = normalize_config(once)
+    assert once == twice
+
+
+def test_validate_graph_full_normalized_config_present_on_success() -> None:
+    """validate_graph_full surfaces normalize_config's output on the
+    result object when validation passes. Removing this would break
+    callers that read result.normalized_config to drive the runner."""
+    config = _format_backfill_config()
+    yaml_text = yaml.safe_dump(config, sort_keys=False)
+    result = validate_graph_full(yaml_text)
+    assert not result.errors
+    assert result.normalized_config is not None
+    # Back-fill is visible on the normalized copy, not on the original.
+    nc_tgt = result.normalized_config["nodes"][1]["config"]
+    assert nc_tgt.get("format") == "parquet"

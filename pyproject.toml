@@ -185,12 +185,21 @@ strict_equality = true
 # scoped to the listed modules.
 [[tool.mypy.overrides]]
 module = [
+    # V2.0-A Sprint A modules (runner decomposition).
     "decoy_engine.graph.run_state",
     "decoy_engine.graph.memory_monitor",
     "decoy_engine.graph._fk_validators",
     "decoy_engine.graph.executor",
     "decoy_engine.graph.planner",
     "decoy_engine.graph.runner",
+    # V2.0-B Sprint B modules (validator split + normalize_config).
+    "decoy_engine.graph.normalize",
+    "decoy_engine.graph.validators",
+    "decoy_engine.graph.validators._shared",
+    "decoy_engine.graph.validators.top_level",
+    "decoy_engine.graph.validators.nodes",
+    "decoy_engine.graph.validators.edges",
+    "decoy_engine.graph.validators.cross_node",
 ]
 disallow_any_generics = true
 disallow_subclassing_any = true
