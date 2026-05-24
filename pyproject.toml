@@ -221,6 +221,8 @@ module = [
     # V2 Phase 3 Sprint D1a (Distribution Integrity: snapshot foundation).
     "decoy_engine.quality",
     "decoy_engine.quality.snapshot",
+    # V2 Phase 3 Sprint D1b (Distribution Integrity: diagnostic structural checks).
+    "decoy_engine.quality.diagnostic",
 ]
 disallow_any_generics = true
 disallow_subclassing_any = true

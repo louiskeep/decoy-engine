@@ -20,6 +20,10 @@ shape. The shape is documented in `snapshot.compute_distribution_snapshot`
 and pinned by tests/snapshots/test_distribution_snapshot_baseline.py.
 """
 
+from decoy_engine.quality.diagnostic import (
+    QUALITY_DIAGNOSTIC_SCHEMA_VERSION,
+    compute_diagnostic,
+)
 from decoy_engine.quality.snapshot import (
     DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION,
     compute_distribution_snapshot,
@@ -27,5 +31,7 @@ from decoy_engine.quality.snapshot import (
 
 __all__ = [
     "DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION",
+    "QUALITY_DIAGNOSTIC_SCHEMA_VERSION",
+    "compute_diagnostic",
     "compute_distribution_snapshot",
 ]
