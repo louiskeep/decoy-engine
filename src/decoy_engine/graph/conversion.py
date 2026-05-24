@@ -64,15 +64,17 @@ def engine_to_arrow(result: Any, engine: EngineType) -> pa.Table:
             )
         return result
     if engine == "duckdb":
-        # DuckDB ops return pyarrow.Table by convention (the .arrow() method
-        # on a DuckDB relation). If a DuckDB op returns a relation directly,
-        # convert here.
+        # DuckDB ops return pyarrow.Table by convention. If a DuckDB op
+        # returns a relation directly, convert here via
+        # to_arrow_table() -- the materialized form. rel.arrow() in
+        # DuckDB 1.5.x returns a RecordBatchReader which leaks the open
+        # connection and breaks downstream code that expects a Table.
         if isinstance(result, pa.Table):
             return result
-        # duckdb.DuckDBPyRelation has .arrow(); guard with hasattr to keep the
-        # duckdb import lazy.
-        if hasattr(result, "arrow"):
-            return result.arrow()
+        # duckdb.DuckDBPyRelation has to_arrow_table(); guard with
+        # hasattr to keep the duckdb import lazy.
+        if hasattr(result, "to_arrow_table"):
+            return result.to_arrow_table()
         raise TypeError(
             f"engine='duckdb' op must return pyarrow.Table or DuckDBPyRelation; "
             f"got {type(result).__name__}"
