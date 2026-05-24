@@ -42,56 +42,15 @@ Chooser = Callable[[FieldStats | None], TransformChoice]
 
 
 # ── helpers for chooser branches ─────────────────────────────────────
-
-
-def _is_high_cardinality(f: FieldStats | None) -> bool:
-    """True when the column looks like an identifier (PK / FK / direct ID).
-
-    Reads ``is_likely_unique`` and ``value_set_size_class`` from FieldStats.
-
-    NOTE (Sprint 5 audit 2026-05-22): this helper is currently not called by
-    any chooser. The SSN and email choosers were simplified to unconditional
-    FPE / faker in V1 (cardinality no longer determines the right answer for
-    those detectors). The helper is preserved for future choosers that may
-    want to branch on join-key vs display-column behavior. If no chooser
-    needs it by V2 planning, delete it.
-
-    Falls back to ``False`` when no FieldStats is passed so chooser defaults
-    stay stable for callers (e.g. UI previews) that only know the detector_id.
-    """
-    if f is None:
-        return False
-    if f.is_likely_unique:
-        return True
-    return f.value_set_size_class in ("unique", "high")
-
-
-def _hash_truncate_for_alphabet(f: FieldStats | None, fallback: int = 12) -> int:
-    """Pick a hash.truncate length matched to the column's alphabet.
-
-    Reads ``alphabet`` and ``max_length`` from FieldStats.
-
-    NOTE (Sprint 5 audit 2026-05-22): this helper is currently not called by
-    any chooser. It was written for a hash-based SSN/ID chooser that was
-    superseded by FPE (which preserves length natively without a truncate
-    param). Preserved for future hash-based choosers that may need length
-    tuning. If no chooser needs it by V2 planning, delete it.
-
-    Reasoning for the math: hashed output is hex (0-9a-f) regardless of the
-    source alphabet, but choosing a truncate that mirrors source character
-    classes keeps masked output visually similar -- 9-char SSN-shaped
-    numerics truncate to 9 hex chars, 12-char alphanumerics truncate
-    to 12, mixed-shape strings keep the conservative 12 default.
-    """
-    if f is None:
-        return fallback
-    alphabet = f.alphabet
-    max_length = f.max_length or 0
-    if alphabet == "digits" and 1 <= max_length <= 64:
-        return max_length
-    if alphabet == "alphanum" and 1 <= max_length <= 64:
-        return min(max_length, 16)
-    return fallback
+#
+# _is_high_cardinality and _hash_truncate_for_alphabet were removed
+# 2026-05-23 (overnight-dev session 11). Both were confirmed dead:
+# zero callers across all choosers and all tests. The SSN/email
+# choosers that originally motivated them were simplified to
+# unconditional FPE/faker in V1 (cardinality and alphabet no longer
+# determine the right answer). If a future chooser needs either
+# concept, see FieldStats.is_likely_unique / value_set_size_class /
+# alphabet / max_length: the data is still in the profile.
 
 
 def _faker_locale_for_format(f: FieldStats | None) -> dict[str, Any]:

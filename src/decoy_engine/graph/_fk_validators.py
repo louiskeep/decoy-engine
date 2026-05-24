@@ -653,8 +653,12 @@ def _validate_custom_provider_entry(
     # now. Run-time `EmptyParentPoolError` is the hard backstop.
     registered = set(list_custom_faker_list_providers())
     if pname not in registered:
+        # overnight-dev commit 465c61a: use the dedicated
+        # FK_CUSTOM_PROVIDER_UNREGISTERED code instead of the
+        # generic FK_INELIGIBLE_CHILD_KIND. Routes the error to
+        # the right inspector field for the platform / UI.
         result.add_warning(
-            code=CODES.FK_INELIGIBLE_CHILD_KIND,  # closest existing code; specific code TODO
+            code=CODES.FK_CUSTOM_PROVIDER_UNREGISTERED,
             message=(
                 f"custom provider {pname!r} not currently registered "
                 f"(known: {sorted(registered) or '<none loaded>'}); engine "

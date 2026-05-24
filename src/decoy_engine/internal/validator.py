@@ -3,7 +3,14 @@ Configuration validation utilities for the decoy_engine package.
 
 V2.0-C: ValidationError moved to ``decoy_engine.errors`` (public
 surface). This module retains the V1 legacy MaskerConfigValidator and
-GeneratorConfigValidator classes that V2.1 audits for deletion.
+GeneratorConfigValidator classes that V2.1 audits for deletion. The
+GraphConfigValidator was extracted into the modular
+``decoy_engine.graph.validators`` package in V2.0-B.
+
+GeneratorConfigValidator.validate() runs both a basic structural pass
+and the deep per-table / per-column / relationship validators (wired
+in by overnight-dev session 9, fix b2de7bd). Earlier it only ran the
+structural pass; the deep methods were defined but never called.
 """
 
 import os
@@ -346,15 +353,40 @@ class GeneratorConfigValidator(ConfigValidator):
     SUPPORTED_RELATIONSHIP_TYPES = ["self_reference", "foreign_key", "many_to_many"]
 
     def validate(self, config: dict[str, Any]) -> None:
+        """Validate a generator config dict. Raises ValidationError on failure.
+
+        Performs two passes:
+        1. Basic structural checks (output_type, fixed_width_options) that
+           are specific to the outer table format and not covered by the
+           deep validators.
+        2. Deep per-table / per-column / relationship validation via
+           _validate_tables and _validate_relationships, which catch
+           duplicate names, cardinality constraints, weight sums,
+           null_probability ranges, and formula reference errors.
+
+        overnight-dev session 9 fix b2de7bd: the deep validators were
+        defined as private methods but never called; validate() also
+        raised ValueError instead of ValidationError, so callers
+        catching ValidationError silently missed generator config errors.
+        Both are fixed here. Backfill mutations (rows default = 1000,
+        faker_type default = "word") are preserved for V1 callers that
+        rely on them; the legacy validator is slated for V2.1 deletion
+        anyway so the validate-never-mutates contract is enforced only
+        on the graph-mode validators.
+        """
         if "tables" not in config:
-            raise ValueError("Missing required section 'tables' in generator configuration")
+            raise ValidationError("Missing required section 'tables' in generator configuration")
 
         for i, table in enumerate(config["tables"]):
             if "name" not in table:
-                raise ValueError(f"Table at index {i} is missing a 'name'")
+                raise ValidationError(
+                    f"Table at index {i} is missing a 'name'",
+                    f"tables[{i}].name",
+                )
             if "columns" not in table:
-                raise ValueError(
-                    f"Table '{table.get('name', f'at index {i}')}' is missing 'columns' definition"
+                raise ValidationError(
+                    f"Table '{table.get('name', f'at index {i}')}' is missing 'columns' definition",
+                    f"tables[{i}].columns",
                 )
             if "rows" not in table:
                 table["rows"] = 1000
@@ -362,16 +394,18 @@ class GeneratorConfigValidator(ConfigValidator):
             if "output_type" in table:
                 output_type = table["output_type"].lower()
                 if output_type not in ["csv", "fixed_width"]:
-                    raise ValueError(
+                    raise ValidationError(
                         f"Unsupported output_type: {output_type} for table '{table.get('name')}'. "
-                        "Supported types: 'csv', 'fixed_width'"
+                        "Supported types: 'csv', 'fixed_width'",
+                        f"tables[{i}].output_type",
                     )
                 if output_type == "fixed_width":
                     if "fixed_width_options" not in table:
                         table["fixed_width_options"] = {"encoding": "utf-8"}
                     if "definition_path" not in table["fixed_width_options"]:
-                        raise ValueError(
-                            f"Missing required 'definition_path' in fixed_width_options for table '{table.get('name')}'"
+                        raise ValidationError(
+                            f"Missing required 'definition_path' in fixed_width_options for table '{table.get('name')}'",
+                            f"tables[{i}].fixed_width_options.definition_path",
                         )
                     definition_path = table["fixed_width_options"]["definition_path"]
                     if not os.path.exists(definition_path):
@@ -379,16 +413,27 @@ class GeneratorConfigValidator(ConfigValidator):
 
             for j, column in enumerate(table["columns"]):
                 if "name" not in column:
-                    raise ValueError(
-                        f"Column at index {j} in table '{table.get('name')}' is missing a 'name'"
+                    raise ValidationError(
+                        f"Column at index {j} in table '{table.get('name')}' is missing a 'name'",
+                        f"tables[{i}].columns[{j}].name",
                     )
                 if "type" not in column:
-                    raise ValueError(
-                        f"Column '{column.get('name', f'at index {j}')}' in table '{table.get('name')}' is missing a 'type'"
+                    raise ValidationError(
+                        f"Column '{column.get('name', f'at index {j}')}' in table '{table.get('name')}' is missing a 'type'",
+                        f"tables[{i}].columns[{j}].type",
                     )
                 col_type = column["type"]
                 if col_type == "faker" and "faker_type" not in column:
                     column["faker_type"] = "word"
+
+        # Deep per-table and per-column validation: duplicate names, row
+        # counts, type-specific constraints (null_probability, weight
+        # sums, formula refs). overnight-dev session 9 wired these in.
+        self._validate_tables(config["tables"])
+
+        # Relationship validation: referential integrity across the table map.
+        if "relationships" in config:
+            self._validate_relationships(config["relationships"], config["tables"])
 
     def _validate_tables(self, tables: list[dict[str, Any]]) -> None:
         table_names = set()
@@ -418,6 +463,7 @@ class GeneratorConfigValidator(ConfigValidator):
     def _validate_columns(
         self, columns: list[dict[str, Any]], table_path: str, table_name: str
     ) -> None:
+        """Deep-validate column list: checks names and per-type constraints."""
         if not columns:
             raise ValidationError("No columns defined", f"{table_path}.columns")
         column_names = set()
@@ -444,6 +490,10 @@ class GeneratorConfigValidator(ConfigValidator):
     def _validate_column_type_specific(
         self, column: dict[str, Any], column_path: str, column_type: str
     ) -> None:
+        """Per-type column validation: null_probability, faker defaults,
+        sequence defaults, categorical weights, reference fields, formula
+        references.
+        """
         if "null_probability" in column:
             null_prob = column["null_probability"]
             if not isinstance(null_prob, (int, float)) or not (0 <= null_prob <= 1):
@@ -522,6 +572,7 @@ class GeneratorConfigValidator(ConfigValidator):
     def _validate_relationships(
         self, relationships: list[dict[str, Any]], tables: list[dict[str, Any]]
     ) -> None:
+        """Validate relationship declarations against the table map."""
         if not relationships:
             return
         table_map = {}
