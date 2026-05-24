@@ -1,4 +1,3 @@
-# decoy_engine/io/csv.py
 """
 CSV I/O functionality for the decoy_engine package.
 """

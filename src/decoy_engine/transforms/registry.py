@@ -1,4 +1,3 @@
-# decoy_engine/strategies/manager.py
 """
 Strategy manager for coordinating masking strategies in the decoy_engine package.
 """

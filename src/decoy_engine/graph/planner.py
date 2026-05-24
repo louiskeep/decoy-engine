@@ -59,8 +59,8 @@ def build_plan(config: dict[str, Any]) -> ExecutionPlan:
     from decoy_engine.graph.ops import OPS
     from decoy_engine.graph.topo import topo_order
 
-    nodes: list[dict] = config["nodes"]
-    edges: list[dict] = config.get("edges") or []
+    nodes: list[dict[str, Any]] = config["nodes"]
+    edges: list[dict[str, Any]] = config.get("edges") or []
     graph_engine_mode = _resolve_engine_mode(config)
 
     order = tuple(topo_order(nodes, edges))
@@ -87,9 +87,9 @@ def _resolve_engine_mode(config: dict[str, Any]) -> GraphEngineMode:
 
 
 def _count_consumers(
-    nodes: list[dict],
-    edges: list[dict],
-    ops: dict,
+    nodes: list[dict[str, Any]],
+    edges: list[dict[str, Any]],
+    ops: dict[str, Any],
 ) -> dict[str, int]:
     """Per-node (or per split-port) downstream consumer count.
 
@@ -114,7 +114,7 @@ def _count_consumers(
     return counts
 
 
-def ancestor_node_ids(nodes: list, edges: list, target: str) -> set[str]:
+def ancestor_node_ids(nodes: list[Any], edges: list[Any], target: str) -> set[str]:
     """Walk backward from ``target`` along edges and return every node id
     that ultimately feeds it.
 

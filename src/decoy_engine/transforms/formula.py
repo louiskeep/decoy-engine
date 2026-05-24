@@ -1,4 +1,3 @@
-# decoy_engine/strategies/formula.py
 from typing import Any
 
 import pandas as pd

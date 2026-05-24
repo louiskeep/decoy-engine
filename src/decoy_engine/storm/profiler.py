@@ -42,15 +42,15 @@ _QUASI_ID_DETECTORS = {"us_zip", "iso_date", "us_date", "eu_date"}
 
 
 def _score_pii(detector_matches: list[DetectorMatch], unique_rate: float) -> float:
-    """Heuristic 0.0 – 1.0 likelihood the column is identifying."""
+    """Heuristic 0.0 - 1.0 likelihood the column is identifying."""
     if not detector_matches:
         return 0.0
     best = detector_matches[0]
     base = 0.0
     if best.detector_id in _PII_DETECTORS:
-        base = 0.6 + 0.4 * best.match_rate  # 0.6 – 1.0
+        base = 0.6 + 0.4 * best.match_rate  # 0.6 - 1.0
     elif best.detector_id in _QUASI_ID_DETECTORS:
-        base = 0.3 + 0.3 * best.match_rate  # 0.3 – 0.6
+        base = 0.3 + 0.3 * best.match_rate  # 0.3 - 0.6
     # Boost when the column is also highly unique (more identifying in practice).
     boost = min(0.15, unique_rate * 0.15) if unique_rate > 0.5 else 0.0
     return round(min(1.0, base + boost), 3)

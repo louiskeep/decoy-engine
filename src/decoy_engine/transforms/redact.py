@@ -1,4 +1,3 @@
-# decoy_engine/strategies/redact.py
 """
 Redact masking strategy for the decoy_engine package.
 Replaces values with a fixed redaction string.

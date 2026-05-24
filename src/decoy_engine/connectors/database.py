@@ -1,5 +1,4 @@
-# decoy_engine/io/database.py
-"""DBHandler â€” IOHandler implementation for database sources and targets."""
+"""DBHandler - IOHandler implementation for database sources and targets."""
 
 from __future__ import annotations
 

@@ -1,4 +1,3 @@
-# decoy_engine/strategies/passthrough.py
 """
 Passthrough masking strategy for the decoy_engine package.
 Keeps the original values unchanged.

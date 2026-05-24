@@ -1,4 +1,3 @@
-# decoy_engine/generator/relationships.py
 """
 Relationship handling for the decoy_engine generator.
 Manages relationships between tables and self-references.

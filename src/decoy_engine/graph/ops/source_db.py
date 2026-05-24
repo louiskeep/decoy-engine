@@ -163,7 +163,14 @@ def _apply_duckdb_native_scanner(
                 rel = rel.filter(where)
             if row_limit:
                 rel = rel.limit(int(row_limit))
-            return rel.arrow()
+            # Materialize to a pa.Table. As of DuckDB 1.5.x, rel.arrow()
+            # returns a RecordBatchReader rather than a Table, which
+            # breaks every downstream consumer that expects a Table
+            # (cache.write_stream, parity test _to_pd, pd.DataFrame
+            # init). to_arrow_table() is the explicit materialized form
+            # -- the same lesson is documented in source_file.py and
+            # sql_run.py where this regression already bit once.
+            return rel.to_arrow_table()
         finally:
             con.close()
     except Exception as exc:

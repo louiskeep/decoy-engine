@@ -102,8 +102,11 @@ ignore = [
     "E731",   # lambda assignment: occasional in callback wiring
     "B904",   # raise-without-from: cosmetic; high-volume; cleanup as touched
     "RUF012", # mutable-class-default: false positives on dataclass-like defaults
-    "RUF002", # ambiguous-unicode-docstring: math symbols (×) in fpe.py docstrings
-    "RUF003", # ambiguous-unicode-comment: same reasoning
+    # RUF002 / RUF003 (ambiguous unicode in docstrings / comments) are NOT
+    # globally ignored: the no-em-dash repo rule extends to en-dash + smart
+    # quotes, and the lint catches drift before it lands. The two intentional
+    # math-notation callsites (× in fpe.py docstring + a test comment) carry
+    # narrow per-file ignores below.
     "RUF013", # implicit-Optional: cleanup as touched; high-volume
 ]
 [tool.ruff.lint.per-file-ignores]
@@ -127,6 +130,13 @@ ignore = [
 # plan): not worth churning lint cleanup before removal. Allowlist
 # narrows to a small set of cosmetic rules; deleted as the legacy
 # files themselves are deleted in V2.1.
+# × (multiplication sign) is intentional math notation in the FPE docstring.
+# Narrow to RUF002 so any other ambiguous-unicode regression still trips CI.
+"src/decoy_engine/transforms/fpe.py" = ["RUF002"]
+# Same character in a test comment ("2 cities × 2 statuses = 4 buckets")
+# explaining a balanced-categoricals fixture; ASCII would obscure the
+# product semantics.
+"tests/unit/test_storm_reid_risk.py" = ["RUF003"]
 "src/decoy_engine/masker/processor.py" = ["E701"]
 "src/decoy_engine/generators/generator.py" = ["F841"]
 "src/decoy_engine/generators/relationships.py" = ["F841"]
@@ -162,8 +172,35 @@ warn_redundant_casts = true
 warn_unused_ignores = true
 strict_equality = true
 # Per-subpackage strict-mode escalation lands alongside structural work
-# in V2.0-A / V2.0-B / V2.0-C. Until then, the cheap-mode flags above
-# catch the highest-value issues without forcing a 700-error allowlist.
+# in V2.0-A / V2.0-B / V2.0-C. The Sprint A modules below are at strict
+# already; the legacy/pre-V2 modules carry bounded per-code allowlists
+# that V2.0-B/C/V2.1 will shrink.
+
+# V2.0-A Sprint A bar: modules created or refactored by the runner
+# decomposition get the full --strict treatment. New code lands here
+# from V2.0-B/C as those sprints touch their respective subpackages.
+# Per-module override expanded into individual flags because mypy 2.x
+# does not recognize `strict = true` as a per-module key (only as a
+# global one); listing each strict-mode flag explicitly keeps the gate
+# scoped to the listed modules.
+[[tool.mypy.overrides]]
+module = [
+    "decoy_engine.graph.run_state",
+    "decoy_engine.graph.memory_monitor",
+    "decoy_engine.graph._fk_validators",
+    "decoy_engine.graph.executor",
+    "decoy_engine.graph.planner",
+    "decoy_engine.graph.runner",
+]
+disallow_any_generics = true
+disallow_subclassing_any = true
+disallow_untyped_calls = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+warn_return_any = true
+no_implicit_reexport = true
 
 [[tool.mypy.overrides]]
 # Third-party libs without type stubs. Listed individually so a new
@@ -185,25 +222,97 @@ module = [
 ]
 ignore_missing_imports = true
 
-# Legacy and pre-V2 modules carry pre-existing type debt that the V2.0-A
-# / V2.0-B / V2.0-C refactor sprints will reduce module-by-module. Until
-# each module's structural sprint lands, mypy gates only the new and
-# touched modules to keep CI green without forcing a 60-error allowlist.
+# ---------------------------------------------------------------------------
+# Bounded shrink-only allowlist for pre-V2 type debt.
+#
+# Replaces an earlier blanket `ignore_errors = true` per module, which let
+# arbitrary new error categories slip in silently. Now each legacy module
+# enumerates the specific error codes that fire today; any code that is
+# NOT on the list still trips CI for that module. Removing a code from a
+# list is allowed (it tightens the gate); adding one requires a comment
+# explaining the new debt category and which sprint will close it.
+#
+# Each module is also tagged with its scheduled deletion or refactor
+# sprint per the V2 sprint plan; V2.1 entries vanish with the files,
+# V2.0-B/C entries shrink as those sprints land.
+# ---------------------------------------------------------------------------
+
+# masker.masker — V2.1 hard delete (legacy IOHandler-bound Masker).
 [[tool.mypy.overrides]]
-module = [
-    "decoy_engine.connectors.*",
-    "decoy_engine.transforms.registry",
-    "decoy_engine.internal.large_file_processor",
-    "decoy_engine.internal.validator",
-    "decoy_engine.internal.helpers",
-    "decoy_engine.internal.memory",
-    "decoy_engine.internal.logging",
-    "decoy_engine.internal.base",
-    "decoy_engine.masker.masker",
-    "decoy_engine.generators.generator",
-    "decoy_engine.generators.relationships",
-]
-ignore_errors = true
+module = ["decoy_engine.masker.masker"]
+disable_error_code = ["attr-defined"]
+
+# generators.* — V2.1 hard delete (legacy DataGenerator).
+[[tool.mypy.overrides]]
+module = ["decoy_engine.generators.generator"]
+disable_error_code = ["var-annotated"]
+
+[[tool.mypy.overrides]]
+module = ["decoy_engine.generators.relationships"]
+disable_error_code = ["call-arg"]
+
+# internal.* — V2.0-C boundary sprint refactors these; until then each
+# carries a narrow list of the categories already present in the module.
+[[tool.mypy.overrides]]
+module = ["decoy_engine.internal.base"]
+disable_error_code = ["import-untyped"]
+
+[[tool.mypy.overrides]]
+module = ["decoy_engine.internal.helpers"]
+disable_error_code = ["assignment", "return-value"]
+
+[[tool.mypy.overrides]]
+module = ["decoy_engine.internal.large_file_processor"]
+disable_error_code = ["assignment"]
+
+[[tool.mypy.overrides]]
+module = ["decoy_engine.internal.logging"]
+disable_error_code = ["assignment"]
+
+[[tool.mypy.overrides]]
+module = ["decoy_engine.internal.validator"]
+disable_error_code = ["attr-defined", "index"]
+
+# connectors.* — V1.5 DB-connector cleanup + V2.0-C boundary; for now
+# every connector enumerates its own debt categories independently so the
+# V1.5 sweep can shrink each list one connector at a time.
+[[tool.mypy.overrides]]
+module = ["decoy_engine.connectors"]
+disable_error_code = ["misc"]
+
+[[tool.mypy.overrides]]
+module = ["decoy_engine.connectors.csv_connector"]
+disable_error_code = ["arg-type"]
+
+[[tool.mypy.overrides]]
+module = ["decoy_engine.connectors.database"]
+disable_error_code = ["assignment"]
+
+[[tool.mypy.overrides]]
+module = ["decoy_engine.connectors.factory"]
+disable_error_code = ["assignment"]
+
+[[tool.mypy.overrides]]
+module = ["decoy_engine.connectors.fixed_width"]
+disable_error_code = ["arg-type", "no-redef", "return-value", "var-annotated"]
+
+[[tool.mypy.overrides]]
+module = ["decoy_engine.connectors.gcs"]
+disable_error_code = ["attr-defined", "import-untyped"]
+
+[[tool.mypy.overrides]]
+module = ["decoy_engine.connectors.s3"]
+disable_error_code = ["import-untyped"]
+
+[[tool.mypy.overrides]]
+module = ["decoy_engine.connectors.sftp"]
+disable_error_code = ["attr-defined", "call-arg", "import-untyped"]
+
+# transforms.registry — V2.0-B validator-split sprint refactors the
+# strategy registry; abstract + var-annotated debt clears with it.
+[[tool.mypy.overrides]]
+module = ["decoy_engine.transforms.registry"]
+disable_error_code = ["abstract", "assignment", "attr-defined", "var-annotated"]
 
 [tool.coverage.run]
 source = ["src/decoy_engine"]

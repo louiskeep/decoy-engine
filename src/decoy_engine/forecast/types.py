@@ -19,7 +19,7 @@ class FieldRecommendation:
     field_name: str
     recommended_mask: str  # transform id: "faker", "hash", "date_shift", ...
     mask_params: dict[str, Any]  # the params dict that goes into the masking_rules entry
-    confidence: float  # 0.0 – 1.0; mirrors the strongest detector's match_rate
+    confidence: float  # 0.0 - 1.0; mirrors the strongest detector's match_rate
     why: str  # short user-facing explanation
     matched_detector: str  # the detector_id that drove this pick
 
@@ -32,7 +32,7 @@ class DisguiseRecommendation:
     name: str
     summary: str
     regulation: str | None
-    match_score: float  # 0.0 – 1.0
+    match_score: float  # 0.0 - 1.0
     matched_fields: list[str]  # column names this Disguise's rules cover
     reasoning: str  # one-sentence "why" for the user
     apply_payload: dict[

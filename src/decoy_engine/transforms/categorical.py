@@ -1,4 +1,3 @@
-# decoy_engine/strategies/categorical.py
 """Categorical masking strategy.
 
 Replaces non-null source values with values from a configured category list.

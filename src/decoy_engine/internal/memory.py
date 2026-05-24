@@ -1,4 +1,3 @@
-# decoy_engine/utils/memory.py
 """
 Memory monitoring utilities for the decoy_engine package.
 """

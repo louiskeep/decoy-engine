@@ -1,4 +1,3 @@
-# decoy_engine/utils/helpers.py
 """
 General helper functions for the decoy_engine package.
 """
@@ -267,12 +266,12 @@ def _register_list_provider(provider_name: str, values: list[str]) -> None:
     provider via parent: {custom_provider: <name>} (tier-4 audit).
     """
     # Snapshot the list at registration time so later mutations to the
-    # caller’s list don’t affect generation behaviour.
+    # caller's list don't affect generation behaviour.
     frozen = list(values)
     _CUSTOM_FAKER_PROVIDER_VALUES[provider_name] = list(frozen)
 
     def _provider(fake: Faker) -> str:
-        # Faker’s random attribute is the seeded Random instance — use it
+        # Faker's random attribute is the seeded Random instance — use it
         # so the selection inherits the per-value or per-row seed set by
         # the strategy / column generator before calling this provider.
         return fake.random.choice(frozen)
@@ -283,7 +282,7 @@ def _register_list_provider(provider_name: str, values: list[str]) -> None:
 # ── Faker reflection denylist ─────────────────────────────────
 #
 # Methods on a Faker instance that the engine never wants to surface as a
-# masking provider, even though they’re public. Two categories:
+# masking provider, even though they're public. Two categories:
 #
 #   1. Wrong return type for a cell value: bytes (binary/image/tar/zip/
 #      json_bytes), tuples (currency, latlng, cryptocurrency,
@@ -292,10 +291,10 @@ def _register_list_provider(provider_name: str, values: list[str]) -> None:
 #      time_delta, time_object, pyiterable, pylist, pyset, pytuple,
 #      pyobject, pystruct, pydict).
 #
-#   2. Configuration / introspection helpers that aren’t providers
+#   2. Configuration / introspection helpers that aren't providers
 #      (random, factories, parse, format, set_arguments, etc.).
 #
-# Anything not in this set + that is callable + that isn’t a dunder is
+# Anything not in this set + that is callable + that isn't a dunder is
 # eligible. Reflection plus the curated overrides below gives the UI ~200
 # safe providers without a hand-maintained whitelist.
 _FAKER_DENYLIST: set[str] = {

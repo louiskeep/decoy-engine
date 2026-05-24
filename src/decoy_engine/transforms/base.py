@@ -1,4 +1,3 @@
-# decoy_engine/strategies/base.py
 """
 Base class for masking strategies in the decoy_engine package.
 """

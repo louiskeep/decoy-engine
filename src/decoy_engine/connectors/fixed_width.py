@@ -1,4 +1,3 @@
-# decoy_engine/io/fixed_width.py
 """
 Fixed-width file I/O functionality for the decoy_engine package.
 """

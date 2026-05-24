@@ -1,4 +1,3 @@
-# decoy_engine/io/base.py
 """
 Base I/O functionality for the decoy_engine package.
 """

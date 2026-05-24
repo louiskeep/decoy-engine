@@ -1,4 +1,3 @@
-# decoy_engine/core/validator.py
 """
 Configuration validation utilities for the decoy_engine package.
 """

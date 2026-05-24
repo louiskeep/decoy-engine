@@ -1,4 +1,3 @@
-# decoy_engine/generator/generator.py
 """
 Main generator class for the decoy_engine package.
 Handles the creation of synthetic data.

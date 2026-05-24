@@ -67,7 +67,7 @@ def test_snapshot_strips_file_extension_from_source_label():
 
 def test_snapshot_keeps_schema_qualified_table_name_intact():
     # Connector-sourced scans use ``schema.table`` as the source_label.
-    # The 1–5 char alnum extension heuristic leaves names ending in
+    # The 1-5 char alnum extension heuristic leaves names ending in
     # 6+ char fragments alone, so ``public.orders`` survives intact.
     snap = storm_profiles_to_snapshot(
         [

@@ -19,7 +19,7 @@ that needs a cloud VM.
 Run with:
   pytest tests/benchmark/calibration/test_engineering_correctness.py -m benchmark -s
 
-Expected duration on a 32 GB i7-1265U: ~5–10 min total across all cells
+Expected duration on a 32 GB i7-1265U: ~5-10 min total across all cells
 (fixture build + 6 pipeline runs).
 """
 

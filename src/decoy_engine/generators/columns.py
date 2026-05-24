@@ -1,4 +1,3 @@
-# decoy_engine/generator/columns.py
 """
 Column data generators for the decoy_engine package.
 Provides various strategies for generating synthetic column data.

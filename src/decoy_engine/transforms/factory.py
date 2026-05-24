@@ -1,4 +1,3 @@
-# decoy_engine/strategies/factory.py
 """
 Factory pattern for creating masking strategies based on configuration.
 """

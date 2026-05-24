@@ -27,7 +27,7 @@ class CustomDetectorSpec:
     colliding with built-in ids. `name_hints` is a list of substrings;
     the engine compiles a case-insensitive regex matching any of them
     against the column name to drop the match-rate threshold.
-    `threshold` is the default-fire match rate (0.0–1.0) when no name
+    `threshold` is the default-fire match rate (0.0-1.0) when no name
     hint matches; the name-hint floor is fixed at 0.4 mirroring the
     built-in detectors.
     """
@@ -50,7 +50,7 @@ class DetectorMatch:
     """A single PII/format detector matched against a column."""
 
     detector_id: str  # "ssn", "email", "us_phone", "us_zip", "iso_date", ...
-    match_rate: float  # fraction of non-null values that matched (0.0 – 1.0)
+    match_rate: float  # fraction of non-null values that matched (0.0 - 1.0)
     sample_misses: list[str] = field(default_factory=list)  # up to 3 values that didn't match
     # Item 65 — surface which sub-pattern variant actually fired so the
     # mask post-pass can splice separators back at the right positions.
@@ -113,7 +113,7 @@ class DetectionSignal:
     """
 
     signal: str  # "regex · ssn_pattern", "name-hint · col=\"ssn\"", ...
-    confidence: float | None = None  # 0.0 – 100.0; None when skipped
+    confidence: float | None = None  # 0.0 - 100.0; None when skipped
     winner: bool = False
     ml: bool = False
     skipped: bool = False  # signal was considered but not run (e.g. ML disabled)
@@ -206,7 +206,7 @@ class FieldStats:
     # Outliers / sentinels
     sentinels: list[SentinelFlag] = field(default_factory=list)
 
-    # Heuristic 0.0 – 1.0 likelihood this column contains PII
+    # Heuristic 0.0 - 1.0 likelihood this column contains PII
     pii_score: float = 0.0
 
     # Value distribution for the Profile/Drill UI. Optional so old persisted
