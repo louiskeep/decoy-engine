@@ -225,6 +225,8 @@ module = [
     "decoy_engine.quality.diagnostic",
     # V2 Phase 3 Sprint D1c (Distribution Integrity: fidelity scoring).
     "decoy_engine.quality.fidelity",
+    # V2 Phase 3 Sprint D1d (Distribution Integrity: QualityReport assembly).
+    "decoy_engine.quality.report",
 ]
 disallow_any_generics = true
 disallow_subclassing_any = true
