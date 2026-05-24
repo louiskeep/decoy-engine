@@ -227,6 +227,8 @@ module = [
     "decoy_engine.quality.fidelity",
     # V2 Phase 3 Sprint D1d (Distribution Integrity: QualityReport assembly).
     "decoy_engine.quality.report",
+    # V2 Phase 3 Sprint D4 (Distribution Integrity: strategy-aware policy).
+    "decoy_engine.quality.policy",
 ]
 disallow_any_generics = true
 disallow_subclassing_any = true
