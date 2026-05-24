@@ -133,20 +133,22 @@ def test_per_column_explicit_override_violation() -> None:
 
 
 def test_per_column_strategy_fallback() -> None:
-    # Column has no explicit min; strategy_map says hash -> default
-    # expectation is 0.95; actual 0.80 violates.
+    # Column has no explicit min; strategy_map says shuffle -> default
+    # expectation is 0.85; actual 0.50 violates. (Hash default dropped
+    # to 0.05 in D5a because the current TVD comparator scores hashed
+    # columns as ~0 similarity; use shuffle here to test the fallback.)
     cols = [
-        {"column": "ssn", "similarity": 0.80, "method": "tvd", "comparable": True},
+        {"column": "name", "similarity": 0.50, "method": "tvd", "comparable": True},
     ]
     verdict = apply_quality_policy(
         _report(columns=cols),
         {"mode": "fail"},
-        strategy_map={"ssn": "hash"},
+        strategy_map={"name": "shuffle"},
     )
     assert verdict["verdict"] == "fail"
     col_violations = [v for v in verdict["violations"] if v["check"] == "column"]
-    assert col_violations[0]["column"] == "ssn"
-    assert col_violations[0]["strategy"] == "hash"
+    assert col_violations[0]["column"] == "name"
+    assert col_violations[0]["strategy"] == "shuffle"
 
 
 def test_per_column_redact_strategy_tolerates_low_score() -> None:
@@ -190,18 +192,21 @@ def test_per_column_incomparable_skipped() -> None:
 
 
 def test_per_column_override_wins_over_strategy_default() -> None:
-    # strategy says hash -> 0.95 (would violate at 0.80); explicit
-    # override drops to 0.70 -> passes.
+    # Strategy default would yield a different threshold than the
+    # explicit column override; verify the explicit override wins.
+    # Use shuffle (default 0.85) so explicit 0.70 is meaningfully
+    # different. Actual sim 0.80 passes under explicit 0.70 but
+    # would fail under shuffle's 0.85 default.
     cols = [
-        {"column": "ssn", "similarity": 0.80, "method": "tvd", "comparable": True},
+        {"column": "name", "similarity": 0.80, "method": "tvd", "comparable": True},
     ]
     verdict = apply_quality_policy(
         _report(columns=cols),
         {
             "mode": "fail",
-            "thresholds": {"columns": [{"column": "ssn", "min": 0.70}]},
+            "thresholds": {"columns": [{"column": "name", "min": 0.70}]},
         },
-        strategy_map={"ssn": "hash"},
+        strategy_map={"name": "shuffle"},
     )
     assert verdict["verdict"] == "pass"
 

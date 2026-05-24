@@ -65,18 +65,36 @@ from typing import Any
 
 QUALITY_POLICY_SCHEMA_VERSION = "quality-policy/v1"
 
-# Per-strategy default expected minimum overall similarity in [0, 1].
-# These are conservative starting points; D5 strategy improvements
-# may raise hash / shuffle / bucketize as the comparators sharpen.
+# Per-strategy default expected minimum similarity in [0, 1] under
+# the CURRENT D1c comparator (TVD on value identity for categorical
+# top-K, quantile RMSE for numeric). Corrected in D5a after the D5
+# design survey caught that the original D4 defaults assumed an
+# aspirational "shape-preserving" comparator that doesn't exist yet.
+# See docs/audit/v2-d5-design-survey.md for the full table + rationale.
+#
+# Under value-identity TVD:
+#   - hash produces totally disjoint value sets (the hashes don't
+#     match source values), so similarity collapses to ~0.0.
+#   - bucketize collapses many source values into one bucket
+#     value, also driving TVD up.
+#   - date_shift moves values into new year bins.
+#   - faker / redact / generate replace value sets entirely.
+# Only identity, shuffle, and (with limits) per-row passthroughs
+# preserve value identity.
+#
+# These defaults will RISE again in D5b once a shape-only similarity
+# metric lands; until then, this is what the current TVD comparator
+# actually reports, and operators who turn on policy mode=warn|fail
+# need defaults that match measurement reality.
 _DEFAULT_STRATEGY_EXPECTATIONS: dict[str, float] = {
     "identity": 1.00,
-    "hash": 0.95,
-    "shuffle": 0.85,
-    "bucketize": 0.70,
-    "date_shift": 0.80,
-    "faker": 0.10,
-    "redact": 0.05,
-    "generate": 0.30,
+    "hash": 0.05,        # D5a: was 0.95; value-identity TVD treats hashes as disjoint
+    "shuffle": 0.85,     # unchanged: shuffle keeps same value set + frequencies
+    "bucketize": 0.30,   # D5a: was 0.70; collapses values, TVD reflects the loss
+    "date_shift": 0.50,  # D5a: was 0.80; shifted dates land in different year bins
+    "faker": 0.05,       # D5a: was 0.10; faker produces disjoint values
+    "redact": 0.05,      # unchanged
+    "generate": 0.30,    # unchanged: synthetic data, modest baseline
 }
 
 _VALID_MODES = {"report", "warn", "fail"}

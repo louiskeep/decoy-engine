@@ -55,13 +55,17 @@ def _overall_fail() -> dict[str, Any]:
 
 
 def _per_column_strategy_violation() -> dict[str, Any]:
+    # Uses shuffle (default expectation 0.85 under corrected D5a
+    # defaults) to demonstrate the strategy-fallback violation path.
+    # Hash dropped to 0.05 in D5a because TVD treats hashed values
+    # as disjoint; an 0.80 actual easily passes hash's 0.05 floor.
     cols = [
-        {"column": "ssn", "similarity": 0.80, "method": "tvd", "comparable": True},
+        {"column": "name", "similarity": 0.50, "method": "tvd", "comparable": True},
     ]
     return apply_quality_policy(
         _report(columns=cols),
         {"mode": "fail"},
-        strategy_map={"ssn": "hash"},
+        strategy_map={"name": "shuffle"},
     )
 
 
