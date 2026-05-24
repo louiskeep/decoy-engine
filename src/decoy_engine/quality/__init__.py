@@ -24,6 +24,10 @@ from decoy_engine.quality.diagnostic import (
     QUALITY_DIAGNOSTIC_SCHEMA_VERSION,
     compute_diagnostic,
 )
+from decoy_engine.quality.fidelity import (
+    QUALITY_FIDELITY_SCHEMA_VERSION,
+    compute_fidelity,
+)
 from decoy_engine.quality.snapshot import (
     DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION,
     compute_distribution_snapshot,
@@ -32,6 +36,8 @@ from decoy_engine.quality.snapshot import (
 __all__ = [
     "DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION",
     "QUALITY_DIAGNOSTIC_SCHEMA_VERSION",
+    "QUALITY_FIDELITY_SCHEMA_VERSION",
     "compute_diagnostic",
     "compute_distribution_snapshot",
+    "compute_fidelity",
 ]
