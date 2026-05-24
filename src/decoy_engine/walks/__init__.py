@@ -3,7 +3,7 @@
 Pure-function PK/FK inference, hazard detection, ER graph construction,
 and schema-drift comparison. No DB I/O — input is `SchemaSnapshot`,
 output is `WalkResult` / `DriftResult`. The platform layer
-(`forge-platform/api/aqueduct/walks/`) wires these into the runner;
+(`decoy-platform/api/aqueduct/walks/`) wires these into the runner;
 the snapshotter that produces `SchemaSnapshot` from a live DB connection
 also lives platform-side (or in a future engine `connectors/snapshotter.py`).
 

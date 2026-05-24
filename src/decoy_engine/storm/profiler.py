@@ -4,7 +4,7 @@ Pure function over a pandas DataFrame. Computes per-field statistics, runs
 PII / format detectors, scans for sentinel values, and rolls everything up
 into a StormProfile that FORECAST consumes.
 
-This logic was ported down from forge-platform/api/analytics/router.py
+This logic was ported down from decoy-platform/api/analytics/router.py
 (`_profile_column` / `_profile_df` / `_reid_risk`) so the engine can run
 analysis offline and from the CLI without depending on the platform.
 """

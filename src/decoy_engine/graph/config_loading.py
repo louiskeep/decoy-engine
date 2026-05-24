@@ -50,6 +50,10 @@ def _load_yaml(yaml_text: str) -> dict:
 
 
 def _validate_or_raise(config: dict) -> None:
+    """Run every modular validator stage; on first failure re-raise as
+    PipelineValidationError carrying the original code + path so callers
+    can route the failure without string-matching the message text.
+    """
     try:
         kinds = known_kinds()
         validate_top_level(config)
@@ -63,7 +67,11 @@ def _validate_or_raise(config: dict) -> None:
         validate_mask_column_reachability(nodes, edges)
         validate_nodes_ref_reachability(nodes, edges)
     except ValidationError as e:
-        raise PipelineValidationError(str(e), path=e.path) from e
+        raise PipelineValidationError(
+            str(e),
+            path=e.path,
+            code=getattr(e, "code", None),
+        ) from e
 
 
 def _validate_top_level_or_raise(config: dict) -> None:

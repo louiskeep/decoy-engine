@@ -60,7 +60,6 @@ from decoy_engine.graph.validators import (
     validate_edges,
     validate_file_format_consistency,
     validate_mask_column_reachability,
-    validate_nodes,
     validate_nodes_ref_reachability,
     validate_top_level,
 )
@@ -101,25 +100,7 @@ def validate_graph(yaml_text: str) -> None:
     (e.g. target.file format back-fill) call
     :func:`decoy_engine.normalize_config` explicitly.
     """
-    config = _load_yaml(yaml_text)
-    try:
-        kinds = known_kinds()
-        validate_top_level(config)
-        nodes = config["nodes"]
-        edges = config.get("edges") or []
-        validate_nodes(nodes, kinds)
-        validate_edges(edges, nodes)
-        validate_cardinality(nodes, edges, kinds)
-        validate_acyclic(nodes, edges)
-        validate_file_format_consistency(nodes, edges, logger=None)
-        validate_mask_column_reachability(nodes, edges)
-        validate_nodes_ref_reachability(nodes, edges)
-    except ValidationError as e:
-        raise PipelineValidationError(
-            str(e),
-            path=e.path,
-            code=getattr(e, "code", None),
-        ) from e
+    _validate_or_raise(_load_yaml(yaml_text))
 
 
 def validate_graph_full(yaml_text: str, *, strict: bool = False) -> "ValidationResult":
