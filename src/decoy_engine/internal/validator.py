@@ -375,9 +375,7 @@ class GeneratorConfigValidator(ConfigValidator):
         on the graph-mode validators.
         """
         if "tables" not in config:
-            raise ValidationError(
-                "Missing required section 'tables' in generator configuration"
-            )
+            raise ValidationError("Missing required section 'tables' in generator configuration")
 
         for i, table in enumerate(config["tables"]):
             if "name" not in table:

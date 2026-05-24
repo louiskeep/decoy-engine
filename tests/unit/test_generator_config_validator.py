@@ -3,7 +3,9 @@
 and the deep per-table / per-column / relationship validation that was previously
 dead code (wired in as of FINDING-S9-01 fix, 2026-05-23).
 """
+
 import logging
+
 import pytest
 
 from decoy_engine.internal.validator import GeneratorConfigValidator, ValidationError
@@ -178,7 +180,7 @@ class TestDeepColumnValidation:
                 }
             ],
         }
-        with pytest.raises(ValidationError, match="references.*list"):
+        with pytest.raises(ValidationError, match=r"references.*list"):
             validator.validate({"tables": [table]})
 
     def test_faker_type_defaulted(self, validator):
@@ -195,8 +197,13 @@ class TestRelationshipValidation:
         config = {
             "tables": [_minimal_table("users")],
             "relationships": [
-                {"type": "foreign_key", "source_table": "users", "source_column": "id",
-                 "target_table": "users", "target_column": "id"}
+                {
+                    "type": "foreign_key",
+                    "source_table": "users",
+                    "source_column": "id",
+                    "target_table": "users",
+                    "target_column": "id",
+                }
             ],
         }
         with pytest.raises(ValidationError, match="'name'"):
@@ -234,8 +241,12 @@ class TestRelationshipValidation:
             "rows": 5,
             "columns": [
                 {"name": "order_id", "type": "sequence"},
-                {"name": "user_id", "type": "reference",
-                 "reference_table": "users", "reference_column": "id"},
+                {
+                    "name": "user_id",
+                    "type": "reference",
+                    "reference_table": "users",
+                    "reference_column": "id",
+                },
             ],
         }
         config = {

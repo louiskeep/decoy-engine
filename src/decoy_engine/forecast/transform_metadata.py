@@ -52,6 +52,7 @@ Chooser = Callable[[FieldStats | None], TransformChoice]
 # concept, see FieldStats.is_likely_unique / value_set_size_class /
 # alphabet / max_length: the data is still in the profile.
 
+
 def _faker_locale_for_format(f: FieldStats | None) -> dict[str, Any]:
     """Add a faker locale param when the column's format_pattern is
     locale-specific (e.g. US phone with parens, UK postcode, etc.).
