@@ -1,4 +1,5 @@
 """Unit tests for graph.events node lifecycle helpers."""
+
 import pytest
 
 from decoy_engine.graph.events import (
@@ -75,7 +76,10 @@ class TestMakeNodeErrorRecord:
 
     def test_error_code_and_path_included_when_set(self):
         rec = make_node_error_record(
-            "n1", "mask", 0, "err",
+            "n1",
+            "mask",
+            0,
+            "err",
             error_code="mask.column_missing",
             error_path="nodes.n1.columns",
         )

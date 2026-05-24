@@ -86,7 +86,9 @@ def validate_graph(yaml_text: str) -> None:
         GraphConfigValidator(_quiet_logger).validate(config)
     except ValidationError as e:
         raise PipelineValidationError(
-            str(e), path=e.path, code=getattr(e, "code", None),
+            str(e),
+            path=e.path,
+            code=getattr(e, "code", None),
         ) from e
 
 
@@ -178,9 +180,7 @@ def validate_graph_full(yaml_text: str, *, strict: bool = False):
     cardinality_ok = edges_ok and _collect(
         lambda: validator._validate_cardinality(nodes, edges, kinds)
     )
-    topology_ok = cardinality_ok and _collect(
-        lambda: validator._validate_acyclic(nodes, edges)
-    )
+    topology_ok = cardinality_ok and _collect(lambda: validator._validate_acyclic(nodes, edges))
 
     # Stages 6-8: cross-node semantic checks. Each runs independently so
     # all three can surface errors in one pass. All require a sound acyclic
@@ -203,10 +203,7 @@ def validate_graph_full(yaml_text: str, *, strict: bool = False):
     return result
 
 
-
-def run_graph(
-    yaml_text: str, ctx: ExecutionContext | None = None
-) -> RunResult:
+def run_graph(yaml_text: str, ctx: ExecutionContext | None = None) -> RunResult:
     """Execute the DAG end-to-end.
 
     Returns a RunResult with per-node telemetry. On the first node that
@@ -236,7 +233,6 @@ def execute_graph_capture(
     return result, cache
 
 
-
 def preview_graph(
     yaml_text: str,
     node_id: str,
@@ -259,7 +255,8 @@ def preview_graph(
         **config,
         "nodes": [n for n in nodes if isinstance(n, dict) and n.get("id") in needed],
         "edges": [
-            e for e in edges
+            e
+            for e in edges
             if isinstance(e, dict)
             and isinstance(e.get("from"), str)
             and isinstance(e.get("to"), str)
@@ -274,5 +271,3 @@ def preview_graph(
         row_limit=max(1, min(int(row_limit), 1000)),
     )
     return run_preview(sub_config, policy, ctx)
-
-

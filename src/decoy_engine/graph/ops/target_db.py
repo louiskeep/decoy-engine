@@ -54,9 +54,7 @@ def validate_config(config: dict[str, Any]) -> None:
     if config.get("schema"):
         _validate_sql_identifier(config["schema"], "config.schema")
     if not config.get("dsn") and config.get("connector_id") is None:
-        raise ValidationError(
-            "must provide either 'dsn' or 'connector_id'", "config"
-        )
+        raise ValidationError("must provide either 'dsn' or 'connector_id'", "config")
     mode = config.get("write_mode", "append")
     if mode not in _VALID_WRITE_MODES:
         raise ValidationError(
@@ -124,11 +122,7 @@ def _apply_duckdb_native_scanner(
     schema = config.get("schema") or None
     mode = config.get("write_mode", "append")
 
-    qualified = (
-        f'dst."{schema}"."{target_table}"'
-        if schema
-        else f'dst."{target_table}"'
-    )
+    qualified = f'dst."{schema}"."{target_table}"' if schema else f'dst."{target_table}"'
 
     try:
         import duckdb
@@ -137,28 +131,19 @@ def _apply_duckdb_native_scanner(
         try:
             con.execute(f"INSTALL {extension}")
             con.execute(f"LOAD {extension}")
-            con.execute(
-                f"ATTACH '{attach_target}' AS dst (TYPE {attach_type})"
-            )
+            con.execute(f"ATTACH '{attach_target}' AS dst (TYPE {attach_type})")
             con.register("input_data", arrow_table)
 
             if mode == "replace":
                 con.execute(f"DROP TABLE IF EXISTS {qualified}")
-                con.execute(
-                    f"CREATE TABLE {qualified} AS SELECT * FROM input_data"
-                )
+                con.execute(f"CREATE TABLE {qualified} AS SELECT * FROM input_data")
             elif mode == "fail":
-                con.execute(
-                    f"CREATE TABLE {qualified} AS SELECT * FROM input_data"
-                )
+                con.execute(f"CREATE TABLE {qualified} AS SELECT * FROM input_data")
             else:  # append
                 con.execute(
-                    f"CREATE TABLE IF NOT EXISTS {qualified} AS "
-                    f"SELECT * FROM input_data WHERE 0=1"
+                    f"CREATE TABLE IF NOT EXISTS {qualified} AS SELECT * FROM input_data WHERE 0=1"
                 )
-                con.execute(
-                    f"INSERT INTO {qualified} SELECT * FROM input_data"
-                )
+                con.execute(f"INSERT INTO {qualified} SELECT * FROM input_data")
         finally:
             con.close()
     except Exception as exc:
@@ -180,9 +165,7 @@ def _apply_duckdb_sqlalchemy_fallback(
         df = arrow_table.to_pandas()
         engine = create_engine(dsn)
         try:
-            df.to_sql(
-                target_table, engine, schema=schema, if_exists=mode, index=False
-            )
+            df.to_sql(target_table, engine, schema=schema, if_exists=mode, index=False)
         finally:
             engine.dispose()
     except Exception as exc:

@@ -12,56 +12,87 @@ import pytest
 
 import decoy_engine
 from decoy_engine import (
-    Masker,
-    DataGenerator,
-    ExecutionContext,
-    Logger,
-    TelemetryClient,
-    SchemaInspector,
-    LicenseVerifier,
-    DecoyError,
     ConfigError,
-    PipelineValidationError,
-    ConnectorError,
     ConnectorAuthError,
+    ConnectorError,
+    DecoyError,
+    ExecutionContext,
     LicenseError,
     LicenseExpiredError,
-    run_discovery_sql,
-    DiscoveryResult,
-    DiscoverySqlError,
+    LicenseVerifier,
+    Logger,
+    PipelineValidationError,
+    SchemaInspector,
 )
 
 
 def test_all_lists_every_public_name():
     expected = {
-        "Masker", "DataGenerator",
-        "ExecutionContext", "Logger", "StructuredEvents", "TelemetryClient",
-        "emit_step", "emit_lineage", "emit_fidelity",
-        "emit_quarantine", "emit_throughput_sample",
+        "Masker",
+        "DataGenerator",
+        "ExecutionContext",
+        "Logger",
+        "StructuredEvents",
+        "TelemetryClient",
+        "emit_step",
+        "emit_lineage",
+        "emit_fidelity",
+        "emit_quarantine",
+        "emit_throughput_sample",
         "make_key_resolver",
-        "SchemaInspector", "LicenseVerifier",
+        "SchemaInspector",
+        "LicenseVerifier",
         "validate_config",
-        "validate_graph", "validate_graph_full", "run_graph", "preview_graph",
-        "RunResult", "PreviewResult",
-        "VALIDATION_CODES", "ValidationMessage", "ValidationResult",
-        "run_storm", "StormProfile", "FieldStats", "DetectorMatch", "SentinelFlag",
-        "run_discovery_sql", "DiscoveryResult", "DiscoverySqlError",
-        "recommend", "ForecastReport", "DisguiseRecommendation",
-        "FieldRecommendation", "RiskFlag",
-        "DecoyError", "ConfigError", "PipelineValidationError",
-        "ConnectorError", "ConnectorAuthError",
-        "LicenseError", "LicenseExpiredError",
+        "validate_graph",
+        "validate_graph_full",
+        "run_graph",
+        "preview_graph",
+        "RunResult",
+        "PreviewResult",
+        "VALIDATION_CODES",
+        "ValidationMessage",
+        "ValidationResult",
+        "run_storm",
+        "StormProfile",
+        "FieldStats",
+        "DetectorMatch",
+        "SentinelFlag",
+        "run_discovery_sql",
+        "DiscoveryResult",
+        "DiscoverySqlError",
+        "recommend",
+        "ForecastReport",
+        "DisguiseRecommendation",
+        "FieldRecommendation",
+        "RiskFlag",
+        "DecoyError",
+        "ConfigError",
+        "PipelineValidationError",
+        "ConnectorError",
+        "ConnectorAuthError",
+        "LicenseError",
+        "LicenseExpiredError",
         "FlagPauseSignal",
-        "register_faker_provider", "register_faker_list_provider",
+        "register_faker_provider",
+        "register_faker_list_provider",
         "unregister_faker_provider",
         "load_custom_providers",
         # Connector SDK (Sprint G Week 1).
         "SDK_VERSION",
-        "CAP_STREAMING", "CAP_RESUMABLE", "CAP_SIGNED_URL",
-        "CAP_MULTIPART", "CAP_INTROSPECTION", "CAP_DRY_RUN",
-        "ConnectorConfig", "FileMeta", "CheckResult", "WriteResult",
-        "FileSource", "FileSink",
-        "TransientError", "PermanentError",
+        "CAP_STREAMING",
+        "CAP_RESUMABLE",
+        "CAP_SIGNED_URL",
+        "CAP_MULTIPART",
+        "CAP_INTROSPECTION",
+        "CAP_DRY_RUN",
+        "ConnectorConfig",
+        "FileMeta",
+        "CheckResult",
+        "WriteResult",
+        "FileSource",
+        "FileSink",
+        "TransientError",
+        "PermanentError",
     }
     assert set(decoy_engine.__all__) == expected
 
@@ -94,10 +125,17 @@ class TestLoggerProtocol:
 
     def test_object_missing_method_does_not_satisfy_protocol(self):
         class Incomplete:
-            def info(self, msg): pass
-            def warning(self, msg): pass
-            def error(self, msg): pass
+            def info(self, msg):
+                pass
+
+            def warning(self, msg):
+                pass
+
+            def error(self, msg):
+                pass
+
             # missing debug
+
         assert not isinstance(Incomplete(), Logger)
 
 

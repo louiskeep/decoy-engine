@@ -14,6 +14,7 @@ Coverage:
   - OPS registry: all 6 new kinds present with correct KIND / NATIVE_ENGINE /
     INPUT_ARITY / OUTPUT_KIND metadata.
 """
+
 from __future__ import annotations
 
 import io
@@ -24,12 +25,17 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from decoy_engine.graph.ops import OPS
-from decoy_engine.graph.ops import source_gcs, source_s3, source_sftp
-from decoy_engine.graph.ops import target_gcs, target_s3, target_sftp
+from decoy_engine.graph.ops import (
+    OPS,
+    source_gcs,
+    source_s3,
+    source_sftp,
+    target_gcs,
+    target_s3,
+    target_sftp,
+)
 from decoy_engine.graph.ops._base import OpError
 from decoy_engine.internal.validator import ValidationError
-
 
 # ---------------------------------------------------------------------------
 # Test fixtures
@@ -115,27 +121,19 @@ class TestSourceGCSValidation:
 class TestSourceSFTPValidation:
     def test_missing_host(self):
         with pytest.raises(ValidationError, match="host"):
-            source_sftp.validate_config(
-                {"username": "u", "path": "/data/f.csv", "password": "p"}
-            )
+            source_sftp.validate_config({"username": "u", "path": "/data/f.csv", "password": "p"})
 
     def test_missing_username(self):
         with pytest.raises(ValidationError, match="username"):
-            source_sftp.validate_config(
-                {"host": "h", "path": "/data/f.csv", "password": "p"}
-            )
+            source_sftp.validate_config({"host": "h", "path": "/data/f.csv", "password": "p"})
 
     def test_missing_path(self):
         with pytest.raises(ValidationError, match="path"):
-            source_sftp.validate_config(
-                {"host": "h", "username": "u", "password": "p"}
-            )
+            source_sftp.validate_config({"host": "h", "username": "u", "password": "p"})
 
     def test_missing_auth(self):
         with pytest.raises(ValidationError):
-            source_sftp.validate_config(
-                {"host": "h", "username": "u", "path": "/f.csv"}
-            )
+            source_sftp.validate_config({"host": "h", "username": "u", "path": "/f.csv"})
 
     def test_valid_with_password(self):
         source_sftp.validate_config(
@@ -192,15 +190,11 @@ class TestTargetGCSValidation:
 class TestTargetSFTPValidation:
     def test_missing_host(self):
         with pytest.raises(ValidationError, match="host"):
-            target_sftp.validate_config(
-                {"username": "u", "path": "/out.csv", "password": "p"}
-            )
+            target_sftp.validate_config({"username": "u", "path": "/out.csv", "password": "p"})
 
     def test_missing_path(self):
         with pytest.raises(ValidationError, match="path"):
-            target_sftp.validate_config(
-                {"host": "h", "username": "u", "password": "p"}
-            )
+            target_sftp.validate_config({"host": "h", "username": "u", "password": "p"})
 
     def test_missing_auth(self):
         with pytest.raises(ValidationError):
@@ -360,9 +354,9 @@ class TestSourceSFTPApply:
         with (
             patch("decoy_engine.connectors.sftp.SFTPConfig"),
             patch("decoy_engine.connectors.sftp.SFTPFileSource", return_value=mock_src),
+            pytest.raises(OpError, match="sftp"),
         ):
-            with pytest.raises(OpError, match="sftp"):
-                source_sftp.apply(inputs=[], config=self._BASE_CFG, ctx=None)
+            source_sftp.apply(inputs=[], config=self._BASE_CFG, ctx=None)
         mock_src.close.assert_called_once()
 
 
@@ -490,9 +484,7 @@ class TestTargetSFTPApply:
             patch("decoy_engine.connectors.sftp.SFTPConfig"),
             patch("decoy_engine.connectors.sftp.SFTPFileSink", return_value=mock_sink),
         ):
-            result = target_sftp.apply(
-                inputs=[df], config=self._BASE_CFG, ctx=None
-            )
+            result = target_sftp.apply(inputs=[df], config=self._BASE_CFG, ctx=None)
         mock_sink.write.assert_called_once()
         mock_sink.close.assert_called_once()
         assert len(result) == 0
@@ -504,11 +496,9 @@ class TestTargetSFTPApply:
         with (
             patch("decoy_engine.connectors.sftp.SFTPConfig"),
             patch("decoy_engine.connectors.sftp.SFTPFileSink", return_value=mock_sink),
+            pytest.raises((OpError, RuntimeError)),
         ):
-            with pytest.raises((OpError, RuntimeError)):
-                target_sftp.apply(
-                    inputs=[df], config=self._BASE_CFG, ctx=None
-                )
+            target_sftp.apply(inputs=[df], config=self._BASE_CFG, ctx=None)
         mock_sink.close.assert_called_once()
 
 
@@ -529,12 +519,10 @@ class TestRegistry:
             ("target.sftp", target_sftp, (1, 1), "sink"),
         ],
     )
-    def test_kind_registered_with_correct_metadata(
-        self, kind, module, arity, output_kind
-    ):
+    def test_kind_registered_with_correct_metadata(self, kind, module, arity, output_kind):
         assert kind in OPS, f"{kind!r} not found in OPS"
         op = OPS[kind]
-        assert op.KIND == kind
+        assert kind == op.KIND
         assert op.NATIVE_ENGINE == "duckdb"
-        assert op.INPUT_ARITY == arity
-        assert op.OUTPUT_KIND == output_kind
+        assert arity == op.INPUT_ARITY
+        assert output_kind == op.OUTPUT_KIND

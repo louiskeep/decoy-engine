@@ -7,7 +7,6 @@ biometric_id) that fire on name hint alone.
 """
 
 import pandas as pd
-import pytest
 
 from decoy_engine.storm.detectors import (
     _icd10_valid,
@@ -24,8 +23,8 @@ from decoy_engine.storm.detectors import (
     detect_vehicle_id,
 )
 
-
 # ── ICD-10 ──────────────────────────────────────────────────────────────────────────────
+
 
 class TestICD10Detector:
     _VALID_CODES = ["A01.0", "M79.3", "S72.001A", "Z23", "F32.9"]
@@ -62,6 +61,7 @@ class TestICD10Detector:
 
 # ── NPI ─────────────────────────────────────────────────────────────────────────────────
 
+
 class TestNPIDetector:
     # Known-good NPIs verified against the CMS Luhn algorithm:
     # 1234567893: prefix 80840123456789 → sum 67 → check 3 ✓
@@ -94,7 +94,7 @@ class TestNPIDetector:
             assert _npi_valid(npi), f"Expected valid NPI: {npi!r}"
 
     def test_npi_valid_rejects_bad_length(self):
-        assert not _npi_valid("123456789")    # 9 digits
+        assert not _npi_valid("123456789")  # 9 digits
         assert not _npi_valid("12345678901")  # 11 digits
 
     def test_npi_valid_rejects_wrong_check_digit(self):
@@ -109,6 +109,7 @@ class TestNPIDetector:
 
 
 # ── MRN ─────────────────────────────────────────────────────────────────────────────────
+
 
 class TestMRNDetector:
     def test_fires_on_mrn_col_name(self):
@@ -138,12 +139,16 @@ class TestMRNDetector:
 
 # ── HIPAA Safe Harbor completers ───────────────────────────────────────────────────────
 
+
 class TestHIPAASafeHarborCompletors:
     def test_url_fires_on_http_values_with_hint(self):
-        series = pd.Series([
-            "https://example.com/patient/123",
-            "https://hospital.org/records",
-        ] * 40)
+        series = pd.Series(
+            [
+                "https://example.com/patient/123",
+                "https://hospital.org/records",
+            ]
+            * 40
+        )
         result = detect_url(series, "profile_url")
         assert result is not None
         assert result.detector_id == "url"

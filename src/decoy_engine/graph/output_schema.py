@@ -24,6 +24,7 @@ Only the release-visible source kinds carry a useful implementation
 today. Other ops fall through to ``None`` so the cross-node check is
 a no-op there until they migrate.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -98,5 +99,5 @@ def is_auto_name(name: str) -> bool:
     checks when the upstream prediction is the ``"$auto"`` marker."""
     if not isinstance(name, str) or not name.startswith("column"):
         return False
-    rest = name[len("column"):]
+    rest = name[len("column") :]
     return rest.isdigit()

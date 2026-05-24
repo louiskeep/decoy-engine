@@ -27,6 +27,7 @@ Updating an existing fixture's expected output:
   goldens. The commit that does this MUST explain why the engine's
   output legitimately changed.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -168,9 +169,7 @@ def test_per_column_digest(
             (fixture_dir / f"{col}.sha256").write_text(digest)
         # Also write a manifest listing every column captured, so a
         # reviewer can verify the golden set is complete.
-        (fixture_dir / "MANIFEST.txt").write_text(
-            "\n".join(sorted(digests.keys())) + "\n"
-        )
+        (fixture_dir / "MANIFEST.txt").write_text("\n".join(sorted(digests.keys())) + "\n")
         pytest.skip(
             f"goldens updated at {fixture_dir.relative_to(REPO_ROOT)}; "
             "review the diff before committing"
@@ -178,8 +177,7 @@ def test_per_column_digest(
 
     if not fixture_dir.exists():
         pytest.skip(
-            f"no golden directory yet for {fixture_id}; "
-            f"run with UPDATE_SNAPSHOTS=1 to generate"
+            f"no golden directory yet for {fixture_id}; run with UPDATE_SNAPSHOTS=1 to generate"
         )
 
     missing: list[str] = []

@@ -13,6 +13,7 @@ Auth modes:
 to a sub-tree of the SFTP host. Call-level prefixes are joined under
 the base path.
 """
+
 from __future__ import annotations
 
 import io
@@ -96,9 +97,7 @@ class SFTPConfig(ConnectorConfig):
     @model_validator(mode="after")
     def _require_at_least_one_auth(self):
         if self.password is None and self.private_key is None:
-            raise ValueError(
-                "SFTPConfig requires either `password` or `private_key`"
-            )
+            raise ValueError("SFTPConfig requires either `password` or `private_key`")
         return self
 
 
@@ -231,9 +230,7 @@ class SFTPFileSource(_SFTPMixin, FileSource[SFTPConfig]):
                 if entry.st_mode is not None and stat_lib.S_ISDIR(entry.st_mode):
                     continue
                 full_path = (
-                    f"{target_dir.rstrip('/')}/{entry.filename}"
-                    if target_dir
-                    else entry.filename
+                    f"{target_dir.rstrip('/')}/{entry.filename}" if target_dir else entry.filename
                 )
                 yield FileMeta(
                     path=full_path,

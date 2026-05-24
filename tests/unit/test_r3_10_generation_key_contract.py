@@ -27,7 +27,6 @@ from decoy_engine.generators.derivation import (
     synthetic_column_seed,
 )
 
-
 _MASTER = bytes(range(32))
 
 
@@ -63,12 +62,12 @@ def test_fingerprint_ignores_column_name():
 
 def test_fingerprint_ignores_null_probability():
     """Null is a post-filter, not part of the strategy contract."""
-    a = strategy_config_fingerprint(
-        {"name": "x", "type": "faker", "faker_type": "first_name"}
-    )
+    a = strategy_config_fingerprint({"name": "x", "type": "faker", "faker_type": "first_name"})
     b = strategy_config_fingerprint(
         {
-            "name": "x", "type": "faker", "faker_type": "first_name",
+            "name": "x",
+            "type": "faker",
+            "faker_type": "first_name",
             "null_probability": 0.1,
         }
     )
@@ -77,12 +76,8 @@ def test_fingerprint_ignores_null_probability():
 
 def test_fingerprint_changes_when_strategy_config_changes():
     """Anything that actually affects output must change the fingerprint."""
-    a = strategy_config_fingerprint(
-        {"type": "faker", "faker_type": "first_name"}
-    )
-    b = strategy_config_fingerprint(
-        {"type": "faker", "faker_type": "last_name"}
-    )
+    a = strategy_config_fingerprint({"type": "faker", "faker_type": "first_name"})
+    b = strategy_config_fingerprint({"type": "faker", "faker_type": "last_name"})
     assert a != b
 
 
@@ -115,7 +110,8 @@ def test_rename_does_not_change_unkeyed_output():
 
 def test_rename_for_categorical_does_not_change_output():
     base = {
-        "name": "status", "type": "categorical",
+        "name": "status",
+        "type": "categorical",
         "categories": ["new", "shipped", "delivered"],
     }
     renamed = {**base, "name": "order_status"}
@@ -149,17 +145,13 @@ def test_different_faker_type_produces_different_output():
 def test_same_master_same_label_reproduces():
     """Pipeline Key mode: same master + same label must reproduce."""
     config = {"name": "x", "type": "faker", "faker_type": "first_name"}
-    assert _gen(config, derive_key=_resolver("p1")) == _gen(
-        config, derive_key=_resolver("p1")
-    )
+    assert _gen(config, derive_key=_resolver("p1")) == _gen(config, derive_key=_resolver("p1"))
 
 
 def test_different_pipeline_label_shifts_output():
     """Changing the pipeline key changes generated output."""
     config = {"name": "x", "type": "faker", "faker_type": "first_name"}
-    assert _gen(config, derive_key=_resolver("p1")) != _gen(
-        config, derive_key=_resolver("p2")
-    )
+    assert _gen(config, derive_key=_resolver("p1")) != _gen(config, derive_key=_resolver("p2"))
 
 
 # ── Legacy column-name opt-in ────────────────────────────────────────────────
@@ -172,7 +164,9 @@ def test_legacy_column_name_seed_restores_pre_r3_10_coupling():
     hatch for legacy CLI pipelines that rely on the old behavior."""
     resolver = _resolver()
     base = {
-        "name": "first_name", "type": "faker", "faker_type": "first_name",
+        "name": "first_name",
+        "type": "faker",
+        "faker_type": "first_name",
         "_legacy_column_name_seed": True,
     }
     renamed = {**base, "name": "given_name"}
@@ -199,10 +193,14 @@ def test_synthetic_column_seed_fresh_path_returns_fresh_bytes():
     calls should almost certainly differ."""
     cfg = {"determinism": "fresh", "type": "faker", "faker_type": "first_name"}
     a = synthetic_column_seed(
-        derive_key=_resolver(), column_config=cfg, fallback_seed=42,
+        derive_key=_resolver(),
+        column_config=cfg,
+        fallback_seed=42,
     )
     b = synthetic_column_seed(
-        derive_key=_resolver(), column_config=cfg, fallback_seed=42,
+        derive_key=_resolver(),
+        column_config=cfg,
+        fallback_seed=42,
     )
     # 32-bit urandom collision probability is ~2^-32; this is safe.
     assert a != b

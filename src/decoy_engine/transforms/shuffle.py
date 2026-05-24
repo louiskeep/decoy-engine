@@ -32,8 +32,7 @@ class ShuffleStrategy(BaseMaskingStrategy):
         non_na_count = len(non_na)
 
         self.logger.debug(
-            f"Shuffling {non_na_count} non-null values, "
-            f"preserving {na_mask.sum()} null positions"
+            f"Shuffling {non_na_count} non-null values, preserving {na_mask.sum()} null positions"
         )
 
         # Permute integer indices via numpy (C-level on a small int array),

@@ -16,6 +16,7 @@ Public API — only these names are stable:
 
 Everything else under `walks/` is an implementation detail and may change.
 """
+
 from decoy_engine.walks.cross_file import (
     CrossFileWalkResult,
     infer_cross_file_edges,

@@ -4,6 +4,7 @@ Verifies the safe_eval wrapper, the MASK_GLOBALS allowlist, and
 BASE_GLOBALS builtins suppression. The goal is that all Python eval()
 calls in the engine are auditable through this module.
 """
+
 from __future__ import annotations
 
 import pytest

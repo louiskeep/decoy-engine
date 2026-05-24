@@ -11,6 +11,7 @@ path that re-raised FlagPauseSignal before manually calling
 monitor.__exit__(); converting the call site to a `with` block fixed
 the bug. These tests pin the fix.
 """
+
 from __future__ import annotations
 
 import threading
@@ -48,10 +49,9 @@ class TestEnterExitProtocol:
         monitor's cleanup.
         """
         baseline = threading.active_count()
-        with pytest.raises(FlagPauseSignal):
-            with PeakRSSMonitor() as monitor:
-                _ = monitor.peak_rss  # use the monitor reference
-                raise FlagPauseSignal([{"message": "test"}], gate_id="test_gate")
+        with pytest.raises(FlagPauseSignal), PeakRSSMonitor() as monitor:
+            _ = monitor.peak_rss  # use the monitor reference
+            raise FlagPauseSignal([{"message": "test"}], gate_id="test_gate")
         # If __exit__ did not run, the polling thread would still be
         # alive and active_count would stay above baseline. The
         # 1 second join timeout in __exit__ caps the verification
@@ -60,8 +60,7 @@ class TestEnterExitProtocol:
         # returns from its run() method.
         final = threading.active_count()
         assert final <= baseline + 1, (
-            f"thread leaked past FlagPauseSignal: baseline={baseline}, "
-            f"final={final}"
+            f"thread leaked past FlagPauseSignal: baseline={baseline}, final={final}"
         )
 
     def test_arbitrary_exception_cleans_up(self) -> None:
@@ -70,9 +69,8 @@ class TestEnterExitProtocol:
         FlagPauseSignal but the regression cover should be broader.
         """
         baseline = threading.active_count()
-        with pytest.raises(ValueError):
-            with PeakRSSMonitor():
-                raise ValueError("test failure")
+        with pytest.raises(ValueError), PeakRSSMonitor():
+            raise ValueError("test failure")
         final = threading.active_count()
         assert final <= baseline + 1
 
@@ -107,7 +105,7 @@ class TestPeakRSSValue:
         construction (which mimics the ImportError path).
         """
         monitor = PeakRSSMonitor()
-        monitor._psutil = None  # noqa: SLF001 -- intentional test override
+        monitor._psutil = None
         with monitor as m:
             pass
         assert m.peak_rss == 0

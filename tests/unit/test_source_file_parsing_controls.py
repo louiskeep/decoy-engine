@@ -7,11 +7,11 @@ fw_columns. Each control is exercised on both the pandas and duckdb
 substrates where the substrate supports it; controls that only work on
 one substrate document the fallback.
 """
+
 from __future__ import annotations
 
 import os
 import tempfile
-from pathlib import Path
 
 import pandas as pd
 import pyarrow as pa
@@ -20,8 +20,8 @@ import pytest
 from decoy_engine.graph.ops import source_file
 from decoy_engine.internal.validator import ValidationError
 
-
 # ── shared fixtures ─────────────────────────────────────────────────────────
+
 
 def _write_tmp(content: str, suffix: str = ".csv", encoding: str = "utf-8") -> str:
     fd, path = tempfile.mkstemp(suffix=suffix)
@@ -75,11 +75,7 @@ def latin1_csv():
 def fixed_width_file():
     # Columns: id (1-3), name (4-13), amount (14-19). 1-based starts.
     # Three rows.
-    content = (
-        "001Alice     000100\n"
-        "002Bob       000200\n"
-        "003Carol     000300\n"
-    )
+    content = "001Alice     000100\n002Bob       000200\n003Carol     000300\n"
     path = _write_tmp(content, suffix=".txt")
     yield path
     os.unlink(path)
@@ -95,6 +91,7 @@ def large_csv():
 
 
 # ── validate_config ─────────────────────────────────────────────────────────
+
 
 class TestValidateNewFields:
     def test_delimiter_accepts_non_empty_string(self, semicolon_csv):
@@ -116,9 +113,7 @@ class TestValidateNewFields:
 
     def test_delimiter_is_regex_rejects_non_bool(self, semicolon_csv):
         with pytest.raises(ValidationError):
-            source_file.validate_config(
-                {"path": semicolon_csv, "delimiter_is_regex": "yes"}
-            )
+            source_file.validate_config({"path": semicolon_csv, "delimiter_is_regex": "yes"})
 
     def test_strip_quotes_accepts_bool(self, semicolon_csv):
         source_file.validate_config({"path": semicolon_csv, "strip_quotes": False})
@@ -202,9 +197,7 @@ class TestValidateFixedWidth:
 
     def test_requires_fw_columns_when_fixed_width(self, fixed_width_file):
         with pytest.raises(ValidationError, match="fw_columns"):
-            source_file.validate_config(
-                {"path": fixed_width_file, "format": "fixed_width"}
-            )
+            source_file.validate_config({"path": fixed_width_file, "format": "fixed_width"})
 
     def test_rejects_empty_fw_columns(self, fixed_width_file):
         with pytest.raises(ValidationError):
@@ -245,12 +238,11 @@ class TestValidateFixedWidth:
 
     def test_rejects_unsupported_format(self, semicolon_csv):
         with pytest.raises(ValidationError, match="format"):
-            source_file.validate_config(
-                {"path": semicolon_csv, "format": "tsv"}
-            )
+            source_file.validate_config({"path": semicolon_csv, "format": "tsv"})
 
 
 # ── apply: csv parsing controls ─────────────────────────────────────────────
+
 
 @pytest.mark.parametrize("engine", ["pandas", "duckdb"])
 class TestCsvDelimiter:
@@ -314,14 +306,8 @@ class TestCsvDelimiterRegex:
 @pytest.mark.parametrize("engine", ["pandas", "duckdb"])
 class TestCsvStripQuotes:
     def test_strip_quotes_default_strips(self, quoted_csv, engine):
-        result = source_file.apply(
-            [], {"path": quoted_csv, "__engine": engine}, None
-        )
-        names = (
-            result.column("name").to_pylist()
-            if engine == "duckdb"
-            else result["name"].tolist()
-        )
+        result = source_file.apply([], {"path": quoted_csv, "__engine": engine}, None)
+        names = result.column("name").to_pylist() if engine == "duckdb" else result["name"].tolist()
         assert names == ["Alice", "Bob"]
 
     def test_strip_quotes_false_keeps_quotes(self, quoted_csv, engine):
@@ -330,11 +316,7 @@ class TestCsvStripQuotes:
             {"path": quoted_csv, "strip_quotes": False, "__engine": engine},
             None,
         )
-        names = (
-            result.column("name").to_pylist()
-            if engine == "duckdb"
-            else result["name"].tolist()
-        )
+        names = result.column("name").to_pylist() if engine == "duckdb" else result["name"].tolist()
         assert names == ['"Alice"', '"Bob"']
 
 
@@ -376,6 +358,7 @@ class TestCsvEncoding:
 
 # ── apply: row_limit ────────────────────────────────────────────────────────
 
+
 @pytest.mark.parametrize("engine", ["pandas", "duckdb"])
 class TestRowLimit:
     def test_row_limit_caps_output(self, large_csv, engine):
@@ -403,6 +386,7 @@ class TestRowLimit:
 
 
 # ── apply: fixed-width ──────────────────────────────────────────────────────
+
 
 class TestFixedWidth:
     """Fixed-width always routes through pandas regardless of __engine
@@ -457,6 +441,7 @@ class TestFixedWidth:
 
 # ── apply: format inference ─────────────────────────────────────────────────
 
+
 class TestFormatInference:
     def test_parquet_extension_inferred(self, tmp_path):
         pq = tmp_path / "data.parquet"
@@ -478,6 +463,7 @@ class TestFormatInference:
 
 
 # ── export hooks ────────────────────────────────────────────────────────────
+
 
 class _CaptureCtx:
     def __init__(self) -> None:
@@ -520,6 +506,7 @@ class TestExports:
 
 # ── housekeeping: bool subtype guard ────────────────────────────────────────
 
+
 @pytest.fixture
 def headerless_csv():
     path = _write_tmp("1,Alice,10\n2,Bob,20\n3,Carol,30\n")
@@ -529,11 +516,13 @@ def headerless_csv():
 
 class TestValidateColumnNames:
     def test_accepts_non_empty_list_of_strings(self, headerless_csv):
-        source_file.validate_config({
-            "path": headerless_csv,
-            "has_header": False,
-            "column_names": ["id", "name", "amount"],
-        })
+        source_file.validate_config(
+            {
+                "path": headerless_csv,
+                "has_header": False,
+                "column_names": ["id", "name", "amount"],
+            }
+        )
 
     def test_requires_has_header_false(self, headerless_csv):
         # column_names overrides the auto-generated col_0..N names, which
@@ -541,45 +530,62 @@ class TestValidateColumnNames:
         # contradiction; validator rejects rather than silently letting
         # one path or the other win.
         with pytest.raises(ValidationError, match="column_names"):
-            source_file.validate_config({
-                "path": headerless_csv,
-                "has_header": True,
-                "column_names": ["a", "b"],
-            })
+            source_file.validate_config(
+                {
+                    "path": headerless_csv,
+                    "has_header": True,
+                    "column_names": ["a", "b"],
+                }
+            )
         # Default has_header=True also rejects.
         with pytest.raises(ValidationError, match="column_names"):
-            source_file.validate_config({
-                "path": headerless_csv,
-                "column_names": ["a", "b"],
-            })
+            source_file.validate_config(
+                {
+                    "path": headerless_csv,
+                    "column_names": ["a", "b"],
+                }
+            )
 
     def test_rejects_empty_list(self, headerless_csv):
         with pytest.raises(ValidationError):
-            source_file.validate_config({
-                "path": headerless_csv, "has_header": False, "column_names": [],
-            })
+            source_file.validate_config(
+                {
+                    "path": headerless_csv,
+                    "has_header": False,
+                    "column_names": [],
+                }
+            )
 
     def test_rejects_non_string_entries(self, headerless_csv):
         with pytest.raises(ValidationError, match=r"column_names\[1\]"):
-            source_file.validate_config({
-                "path": headerless_csv, "has_header": False,
-                "column_names": ["id", 99, "amount"],
-            })
+            source_file.validate_config(
+                {
+                    "path": headerless_csv,
+                    "has_header": False,
+                    "column_names": ["id", 99, "amount"],
+                }
+            )
 
     def test_rejects_empty_string_entries(self, headerless_csv):
         with pytest.raises(ValidationError, match=r"column_names\[0\]"):
-            source_file.validate_config({
-                "path": headerless_csv, "has_header": False,
-                "column_names": ["", "name"],
-            })
+            source_file.validate_config(
+                {
+                    "path": headerless_csv,
+                    "has_header": False,
+                    "column_names": ["", "name"],
+                }
+            )
 
     def test_rejected_on_parquet(self, tmp_path):
         pq = tmp_path / "x.parquet"
         pd.DataFrame({"a": [1]}).to_parquet(pq)
         with pytest.raises(ValidationError, match="column_names"):
-            source_file.validate_config({
-                "path": str(pq), "column_names": ["a", "b"],
-            })
+            source_file.validate_config(
+                {
+                    "path": str(pq),
+                    "column_names": ["a", "b"],
+                }
+            )
 
 
 @pytest.mark.parametrize("engine", ["pandas", "duckdb"])
@@ -600,6 +606,7 @@ class TestApplyColumnNames:
 
     def test_length_mismatch_raises_operror(self, headerless_csv, engine):
         from decoy_engine.graph.ops._base import OpError
+
         with pytest.raises(OpError, match="column_names has"):
             source_file.apply(
                 [],

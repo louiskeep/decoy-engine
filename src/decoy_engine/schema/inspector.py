@@ -10,6 +10,4 @@ the symbol once. Implementation arrives with Phase 2.
 
 class SchemaInspector:
     def __init__(self, *args, **kwargs) -> None:
-        raise NotImplementedError(
-            "SchemaInspector is not yet implemented; planned for Phase 2."
-        )
+        raise NotImplementedError("SchemaInspector is not yet implemented; planned for Phase 2.")

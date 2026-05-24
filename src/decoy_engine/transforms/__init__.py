@@ -17,15 +17,15 @@ from decoy_engine.transforms.registry import StrategyManager
 from decoy_engine.transforms.shuffle import ShuffleStrategy
 
 __all__ = [
-    'BaseMaskingStrategy',
-    'CategoricalStrategy',
-    'DateShiftStrategy',
-    'FPEStrategy',
-    'FakerStrategy',
-    'HashStrategy',
-    'PassthroughStrategy',
-    'RedactStrategy',
-    'ShuffleStrategy',
-    'StrategyManager',
-    'create_strategy'
+    "BaseMaskingStrategy",
+    "CategoricalStrategy",
+    "DateShiftStrategy",
+    "FPEStrategy",
+    "FakerStrategy",
+    "HashStrategy",
+    "PassthroughStrategy",
+    "RedactStrategy",
+    "ShuffleStrategy",
+    "StrategyManager",
+    "create_strategy",
 ]

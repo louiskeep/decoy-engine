@@ -39,21 +39,19 @@ class HashStrategy(BaseMaskingStrategy):
         """
         Replace values with deterministic hash strings that can't be reversed
         """
-        column_name = rule.get('column', 'unnamed')
+        column_name = rule.get("column", "unnamed")
         column_key = self._column_key(column_name)
-        seed = rule.get('seed', self.seed)
+        seed = rule.get("seed", self.seed)
         # Optional output-length cap. SHA-256 hex is 64 chars; legacy targets
         # with `CHAR(N)` columns can ask for a shorter slice. Truncation is
         # bitwise stable across runs because it slices a deterministic hash.
-        truncate = self._resolve_truncate(rule.get('truncate'), column_name)
+        truncate = self._resolve_truncate(rule.get("truncate"), column_name)
 
         if column_key is not None:
             self.logger.debug(f"Applying keyed hash to column '{column_name}'")
             hash_str = lambda s: hmac_hex(column_key, s)
         else:
-            self.logger.debug(
-                f"Applying legacy hash with seed {seed} (no master key configured)"
-            )
+            self.logger.debug(f"Applying legacy hash with seed {seed} (no master key configured)")
             hash_str = lambda s: deterministic_hash(s, seed)
 
         # The crypto itself (HMAC-SHA256) has to run once per value — there's

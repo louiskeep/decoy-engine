@@ -6,6 +6,7 @@ happens here; build_plan is pure graph-structure computation.
 
 Sprint 1.1 - Planner Extraction.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -270,9 +271,11 @@ class TestPlannerPurity:
 
     def _fixtures(self) -> list[dict]:
         return [
-            _cfg(nodes=[
-                {"id": "s", "kind": "source.file", "config": {}},
-            ]),
+            _cfg(
+                nodes=[
+                    {"id": "s", "kind": "source.file", "config": {}},
+                ]
+            ),
             _cfg(
                 nodes=[
                     {"id": "s", "kind": "source.file", "config": {}},
@@ -312,9 +315,7 @@ class TestPlannerPurity:
         for cfg in self._fixtures():
             plan_a = build_plan(cfg)
             plan_b = build_plan(cfg)
-            assert plan_a == plan_b, (
-                f"build_plan was nondeterministic for config={cfg!r}"
-            )
+            assert plan_a == plan_b, f"build_plan was nondeterministic for config={cfg!r}"
 
     def test_build_plan_does_not_mutate_config(self) -> None:
         """Planner must not write back into the caller's config dict
@@ -323,12 +324,11 @@ class TestPlannerPurity:
         it reads the same config).
         """
         import copy
+
         for cfg in self._fixtures():
             snapshot = copy.deepcopy(cfg)
             _ = build_plan(cfg)
-            assert cfg == snapshot, (
-                f"build_plan mutated input for config={cfg!r}"
-            )
+            assert cfg == snapshot, f"build_plan mutated input for config={cfg!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -346,6 +346,7 @@ class TestAncestorNodeIds:
     def test_linear_chain(self) -> None:
         """source -> mask -> target. Ancestors of target = {source, mask}."""
         from decoy_engine.graph.planner import ancestor_node_ids
+
         nodes = [
             {"id": "s", "kind": "source.file"},
             {"id": "m", "kind": "mask"},
@@ -358,6 +359,7 @@ class TestAncestorNodeIds:
 
     def test_unreachable_target_returns_only_self(self) -> None:
         from decoy_engine.graph.planner import ancestor_node_ids
+
         nodes = [
             {"id": "a", "kind": "source.file"},
             {"id": "b", "kind": "source.file"},
@@ -368,6 +370,7 @@ class TestAncestorNodeIds:
 
     def test_target_not_in_graph_returns_empty(self) -> None:
         from decoy_engine.graph.planner import ancestor_node_ids
+
         nodes = [{"id": "s", "kind": "source.file"}]
         # Target not present; walk produces nothing.
         assert ancestor_node_ids(nodes, [], "nonexistent") == set()
@@ -377,6 +380,7 @@ class TestAncestorNodeIds:
         are skipped rather than crashed on. Caller passes raw config
         before structural validation."""
         from decoy_engine.graph.planner import ancestor_node_ids
+
         nodes = [
             {"id": "s", "kind": "source.file"},
             "not-a-dict",
@@ -384,8 +388,8 @@ class TestAncestorNodeIds:
         ]
         edges = [
             {"from": "s", "to": "x"},
-            None,                          # type: ignore[list-item]
-            {"from": 42, "to": "s"},       # non-string from
+            None,  # type: ignore[list-item]
+            {"from": 42, "to": "s"},  # non-string from
         ]
         # Should not raise; should not include the malformed entries.
         result = ancestor_node_ids(nodes, edges, "s")
@@ -395,6 +399,7 @@ class TestAncestorNodeIds:
         """When an edge's `from` is a split-port key like 'router.pass',
         the walk should treat it as a reference to the base node 'router'."""
         from decoy_engine.graph.planner import ancestor_node_ids
+
         nodes = [
             {"id": "src", "kind": "source.file"},
             {"id": "router", "kind": "if"},
@@ -405,5 +410,7 @@ class TestAncestorNodeIds:
             {"from": "router.pass", "to": "downstream"},
         ]
         assert ancestor_node_ids(nodes, edges, "downstream") == {
-            "src", "router", "downstream",
+            "src",
+            "router",
+            "downstream",
         }

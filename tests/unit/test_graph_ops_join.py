@@ -124,9 +124,7 @@ class TestJoinValidation:
     def test_validate_accepts_minimal_config(self):
         join.validate_config({})
         join.validate_config({"on": ["id"]})
-        join.validate_config(
-            {"on": ["id"], "join_type": "outer", "suffixes": ["_x", "_y"]}
-        )
+        join.validate_config({"on": ["id"], "join_type": "outer", "suffixes": ["_x", "_y"]})
 
 
 class TestArityHintsAtJoin:
@@ -185,27 +183,31 @@ class TestNodeNameField:
 
     def test_node_name_optional(self):
         # No `name` — still valid.
-        self._validate({
-            "mode": "graph",
-            "nodes": [
-                {"id": "s", "kind": "source.file", "config": {"path": "/tmp/a"}},
-            ],
-            "edges": [],
-        })
+        self._validate(
+            {
+                "mode": "graph",
+                "nodes": [
+                    {"id": "s", "kind": "source.file", "config": {"path": "/tmp/a"}},
+                ],
+                "edges": [],
+            }
+        )
 
     def test_node_name_string_accepted(self):
-        self._validate({
-            "mode": "graph",
-            "nodes": [
-                {
-                    "id": "s",
-                    "kind": "source.file",
-                    "name": "Customers PII",
-                    "config": {"path": "/tmp/a"},
-                },
-            ],
-            "edges": [],
-        })
+        self._validate(
+            {
+                "mode": "graph",
+                "nodes": [
+                    {
+                        "id": "s",
+                        "kind": "source.file",
+                        "name": "Customers PII",
+                        "config": {"path": "/tmp/a"},
+                    },
+                ],
+                "edges": [],
+            }
+        )
 
     @pytest.mark.parametrize("bad", ["", "  ", 42, [], {}])
     def test_node_name_rejects_non_string_or_blank(self, bad):

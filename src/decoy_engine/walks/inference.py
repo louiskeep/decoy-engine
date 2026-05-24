@@ -24,6 +24,7 @@ heuristic only fires when:
 Anything more aggressive needs data inspection (e.g. value-overlap
 sampling), which is Phase 3.
 """
+
 from __future__ import annotations
 
 from decoy_engine.walks.types import Edge, SchemaSnapshot, Table
@@ -67,9 +68,7 @@ def infer_edges(snapshot: SchemaSnapshot) -> tuple[Edge, ...]:
                 )
             )
 
-    inferred.sort(
-        key=lambda e: (e.source_table, e.source_column, e.target_table)
-    )
+    inferred.sort(key=lambda e: (e.source_table, e.source_column, e.target_table))
     return tuple(inferred)
 
 

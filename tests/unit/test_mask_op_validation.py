@@ -10,34 +10,42 @@ The codes round-trip through the graph-level validator
 (:func:`decoy_engine.validate_graph_full`) so the platform layer
 can route each failure to the right inspector field.
 """
+
 from __future__ import annotations
 
 import pytest
 import yaml
 
-from decoy_engine import validate_graph_full, VALIDATION_CODES
+from decoy_engine import VALIDATION_CODES, validate_graph_full
 from decoy_engine.graph.ops.mask_op import validate_config
 from decoy_engine.internal.validator import ValidationError
 
 
 def _wrap_graph(mask_columns):
     """Build a minimal src -> mask -> tgt graph with the given mask columns."""
-    return yaml.safe_dump({
-        "mode": "graph",
-        "schema_version": 1,
-        "nodes": [
-            {"id": "src_1", "kind": "source.file",
-             "config": {"path": "uploads/x.csv", "format": "csv"}},
-            {"id": "mask_1", "kind": "mask",
-             "config": {"columns": mask_columns}},
-            {"id": "tgt_1", "kind": "target.file",
-             "config": {"output_filename": "out.csv", "format": "csv"}},
-        ],
-        "edges": [
-            {"from": "src_1", "to": "mask_1"},
-            {"from": "mask_1", "to": "tgt_1"},
-        ],
-    })
+    return yaml.safe_dump(
+        {
+            "mode": "graph",
+            "schema_version": 1,
+            "nodes": [
+                {
+                    "id": "src_1",
+                    "kind": "source.file",
+                    "config": {"path": "uploads/x.csv", "format": "csv"},
+                },
+                {"id": "mask_1", "kind": "mask", "config": {"columns": mask_columns}},
+                {
+                    "id": "tgt_1",
+                    "kind": "target.file",
+                    "config": {"output_filename": "out.csv", "format": "csv"},
+                },
+            ],
+            "edges": [
+                {"from": "src_1", "to": "mask_1"},
+                {"from": "mask_1", "to": "tgt_1"},
+            ],
+        }
+    )
 
 
 class TestMaskValidateConfig:
@@ -80,9 +88,7 @@ class TestMaskValidateConfig:
         assert exc.value.code == VALIDATION_CODES.MASK_FORMULA_MISSING
 
     def test_formula_with_expression_passes(self):
-        validate_config({
-            "columns": {"a": {"strategy": "formula", "formula": "value.upper()"}}
-        })
+        validate_config({"columns": {"a": {"strategy": "formula", "formula": "value.upper()"}}})
 
     def test_reference_requires_reference_path(self):
         with pytest.raises(ValidationError) as exc:
@@ -90,9 +96,9 @@ class TestMaskValidateConfig:
         assert exc.value.code == VALIDATION_CODES.MASK_REFERENCE_MISSING
 
     def test_reference_with_dataset_passes(self):
-        validate_config({
-            "columns": {"a": {"strategy": "reference", "reference": "refs/names.csv"}}
-        })
+        validate_config(
+            {"columns": {"a": {"strategy": "reference", "reference": "refs/names.csv"}}}
+        )
 
 
 class TestMaskCodesRoundTripThroughGraph:

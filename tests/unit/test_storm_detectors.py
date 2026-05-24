@@ -33,8 +33,8 @@ from decoy_engine.storm.detectors import (
     run_all_detectors,
 )
 
-
 # ── email ────────────────────────────────────────────────────────────────────
+
 
 class TestEmail:
     def test_clean_email_column_fires(self):
@@ -73,6 +73,7 @@ class TestEmail:
 
 # ── ssn ──────────────────────────────────────────────────────────────────────
 
+
 class TestSSN:
     def test_clean_ssn_column_fires(self):
         s = pd.Series(["123-45-6789", "555-12-3456", "111-22-3333", "444-55-6677"])
@@ -96,14 +97,17 @@ class TestSSN:
 
 # ── us_phone ─────────────────────────────────────────────────────────────────
 
+
 class TestUSPhone:
     def test_clean_phones_fire(self):
-        s = pd.Series([
-            "(555) 234-5678",
-            "555.234.5678",
-            "+1 555 234 5678",
-            "5552345678",
-        ])
+        s = pd.Series(
+            [
+                "(555) 234-5678",
+                "555.234.5678",
+                "+1 555 234 5678",
+                "5552345678",
+            ]
+        )
         m = detect_us_phone(s, "phone")
         assert m is not None and m.match_rate >= 0.9
 
@@ -114,6 +118,7 @@ class TestUSPhone:
 
 
 # ── us_zip ───────────────────────────────────────────────────────────────────
+
 
 class TestUSZip:
     def test_5_and_9_digit_zips_fire(self):
@@ -127,6 +132,7 @@ class TestUSZip:
 
 
 # ── person_name ──────────────────────────────────────────────────────────────
+
 
 class TestPersonName:
     def test_name_hinted_column_fires(self):
@@ -150,6 +156,7 @@ class TestPersonName:
 
 # ── date format detectors ────────────────────────────────────────────────────
 
+
 class TestDateFormats:
     def test_iso_date(self):
         s = pd.Series(["2024-01-15", "2024-07-22", "1990-03-08"])
@@ -168,6 +175,7 @@ class TestDateFormats:
 
 
 # ── registry orchestrator ────────────────────────────────────────────────────
+
 
 class TestRunAllDetectors:
     def test_returns_matches_sorted_by_descending_rate(self):
@@ -194,13 +202,14 @@ class TestRunAllDetectors:
 
 # ── pan (credit card) ────────────────────────────────────────────────────────
 
+
 class TestPAN:
     # Real test card numbers from the major-issuer test ranges (all Luhn-valid).
     VALID = [
-        "4111111111111111",   # Visa
-        "5555555555554444",   # Mastercard
-        "378282246310005",    # Amex (15 digits)
-        "6011111111111117",   # Discover
+        "4111111111111111",  # Visa
+        "5555555555554444",  # Mastercard
+        "378282246310005",  # Amex (15 digits)
+        "6011111111111117",  # Discover
     ]
 
     def test_clean_pan_column_fires(self):
@@ -229,6 +238,7 @@ class TestPAN:
 
 # ── cvv ──────────────────────────────────────────────────────────────────────
 
+
 class TestCVV:
     def test_only_fires_with_name_hint(self):
         # Without the name hint CVV is uselessly broad — any 3-digit string.
@@ -253,13 +263,14 @@ class TestCVV:
 
 # ── iban ─────────────────────────────────────────────────────────────────────
 
+
 class TestIBAN:
     # Real test IBANs from Wikipedia / SWIFT — all mod-97 valid.
     VALID = [
-        "GB82WEST12345698765432",   # UK
-        "DE89370400440532013000",   # Germany
-        "FR1420041010050500013M02606",   # France
-        "ES9121000418450200051332",   # Spain
+        "GB82WEST12345698765432",  # UK
+        "DE89370400440532013000",  # Germany
+        "FR1420041010050500013M02606",  # France
+        "ES9121000418450200051332",  # Spain
     ]
 
     def test_clean_iban_column_fires(self):
@@ -270,10 +281,12 @@ class TestIBAN:
 
     def test_invalid_checksum_doesnt_fire(self):
         # Right shape, wrong checksum — mod-97 should reject.
-        s = pd.Series([
-            "GB00WEST12345698765432",
-            "DE00370400440532013000",
-        ])
+        s = pd.Series(
+            [
+                "GB00WEST12345698765432",
+                "DE00370400440532013000",
+            ]
+        )
         m = detect_iban(s, "iban")
         assert m is None, "regex-only path would have fired; mod-97 must reject"
 
@@ -284,6 +297,7 @@ class TestIBAN:
 
 
 # ── ipv4 ─────────────────────────────────────────────────────────────────────
+
 
 class TestIPv4:
     def test_clean_ip_column_fires(self):
@@ -306,12 +320,23 @@ class TestIPv4:
 
 # ── sample_misses behavior ───────────────────────────────────────────────────
 
+
 def test_sample_misses_capped_at_3():
     # 5 emails + 5 misses → above name-hint threshold, but more than 3 misses.
-    s = pd.Series([
-        "a@b.com", "c@d.com", "e@f.com", "g@h.com", "i@j.com",
-        "miss1", "miss2", "miss3", "miss4", "miss5",
-    ])
+    s = pd.Series(
+        [
+            "a@b.com",
+            "c@d.com",
+            "e@f.com",
+            "g@h.com",
+            "i@j.com",
+            "miss1",
+            "miss2",
+            "miss3",
+            "miss4",
+            "miss5",
+        ]
+    )
     m = detect_email(s, "email")
     assert m is not None
     assert len(m.sample_misses) <= 3
@@ -322,9 +347,9 @@ def test_sample_misses_capped_at_3():
 
 class TestConfidenceBuckets:
     """Plan thresholds:
-        high   = (name_hint AND rate >= 0.45) OR (rate >= 0.75)
-        medium = no_hint AND rate >= 0.50, or name_hint AND rate in [0.40, 0.45)
-        low    = opt-in only (not fired by default in V1)
+    high   = (name_hint AND rate >= 0.45) OR (rate >= 0.75)
+    medium = no_hint AND rate >= 0.50, or name_hint AND rate in [0.40, 0.45)
+    low    = opt-in only (not fired by default in V1)
     """
 
     def test_perfect_match_with_hint_is_high(self):
@@ -359,45 +384,111 @@ class TestAbbreviatedNameHints:
     headers that left columns silently unidentified pre-V1 (e.g. mm_fn, cust_ln,
     addr1, phn). Cross-cultural variants are V1.5; this matrix stays US-only."""
 
-    @pytest.mark.parametrize("col", [
-        "fn", "f_name", "fname", "firstn", "first_nm", "frst_nm",
-        "mm_fn", "cust_fn", "pt_fn", "pat_fn", "first_name", "given_name",
-    ])
+    @pytest.mark.parametrize(
+        "col",
+        [
+            "fn",
+            "f_name",
+            "fname",
+            "firstn",
+            "first_nm",
+            "frst_nm",
+            "mm_fn",
+            "cust_fn",
+            "pt_fn",
+            "pat_fn",
+            "first_name",
+            "given_name",
+        ],
+    )
     def test_first_name_hints(self, col):
         assert hits_name_hint("first_name", col), f"{col} should hint first_name"
 
-    @pytest.mark.parametrize("col", [
-        "ln", "l_name", "lname", "lastn", "last_nm", "lst_nm",
-        "mm_ln", "cust_ln", "pt_ln", "last_name", "surname",
-    ])
+    @pytest.mark.parametrize(
+        "col",
+        [
+            "ln",
+            "l_name",
+            "lname",
+            "lastn",
+            "last_nm",
+            "lst_nm",
+            "mm_ln",
+            "cust_ln",
+            "pt_ln",
+            "last_name",
+            "surname",
+        ],
+    )
     def test_last_name_hints(self, col):
         assert hits_name_hint("last_name", col), f"{col} should hint last_name"
 
-    @pytest.mark.parametrize("col", [
-        "dob", "bdate", "b_date", "birth_dt", "bday", "birthday",
-        "date_of_birth", "birth_date",
-    ])
+    @pytest.mark.parametrize(
+        "col",
+        [
+            "dob",
+            "bdate",
+            "b_date",
+            "birth_dt",
+            "bday",
+            "birthday",
+            "date_of_birth",
+            "birth_date",
+        ],
+    )
     def test_dob_hints(self, col):
         assert hits_name_hint("iso_date", col), f"{col} should hint iso_date"
 
-    @pytest.mark.parametrize("col", [
-        "addr", "addr1", "addr2", "addr_1", "addr_2", "ln1", "line1",
-        "street", "street_1", "street_addr", "mailing_address",
-    ])
+    @pytest.mark.parametrize(
+        "col",
+        [
+            "addr",
+            "addr1",
+            "addr2",
+            "addr_1",
+            "addr_2",
+            "ln1",
+            "line1",
+            "street",
+            "street_1",
+            "street_addr",
+            "mailing_address",
+        ],
+    )
     def test_address_hints(self, col):
         assert hits_name_hint("address", col), f"{col} should hint address"
 
-    @pytest.mark.parametrize("col", [
-        "tel", "phn", "mob", "cel", "wphone", "hphone", "work_phone",
-        "home_phone", "cell_phone", "mobile_phone",
-    ])
+    @pytest.mark.parametrize(
+        "col",
+        [
+            "tel",
+            "phn",
+            "mob",
+            "cel",
+            "wphone",
+            "hphone",
+            "work_phone",
+            "home_phone",
+            "cell_phone",
+            "mobile_phone",
+        ],
+    )
     def test_phone_hints(self, col):
         assert hits_name_hint("us_phone", col), f"{col} should hint us_phone"
 
-    @pytest.mark.parametrize("col", [
-        "cust_id", "customer_id", "pt_id", "pat_id", "emp_id",
-        "employee_id", "client_id", "acct",
-    ])
+    @pytest.mark.parametrize(
+        "col",
+        [
+            "cust_id",
+            "customer_id",
+            "pt_id",
+            "pat_id",
+            "emp_id",
+            "employee_id",
+            "client_id",
+            "acct",
+        ],
+    )
     def test_generic_id_hints_route_to_mrn(self, col):
         # Plan: generic id columns route to mrn so the strict fail-safe
         # doesn't miss them. FPE is a safe default for any ID-shaped column.
@@ -427,12 +518,14 @@ class TestLastName:
 
 class TestAddress:
     def test_fires_on_addr1_hint(self):
-        s = pd.Series([
-            "123 Main St",
-            "456 Oak Ave Apt 2B",
-            "789 Elm Rd",
-            "1010 Cedar Blvd",
-        ])
+        s = pd.Series(
+            [
+                "123 Main St",
+                "456 Oak Ave Apt 2B",
+                "789 Elm Rd",
+                "1010 Cedar Blvd",
+            ]
+        )
         m = detect_address(s, "addr1")
         assert m is not None and m.detector_id == "address"
 
@@ -458,10 +551,12 @@ class TestIBANCountryGate:
         # Construct a "ZZ" string that satisfies mod-97 mathematically:
         # take a real IBAN and swap the country prefix.
         # The country-prefix filter rejects regardless of mod-97 result.
-        s = pd.Series([
-            "ZZ82WEST12345698765432",
-            "ZZ89370400440532013000",
-        ])
+        s = pd.Series(
+            [
+                "ZZ82WEST12345698765432",
+                "ZZ89370400440532013000",
+            ]
+        )
         assert detect_iban(s, "iban") is None
 
 

@@ -31,6 +31,7 @@ class CustomDetectorSpec:
     hint matches; the name-hint floor is fixed at 0.4 mirroring the
     built-in detectors.
     """
+
     id: str
     pattern: str
     name_hints: list[str] = field(default_factory=list)
@@ -47,8 +48,9 @@ class TopValue:
 @dataclass
 class DetectorMatch:
     """A single PII/format detector matched against a column."""
-    detector_id: str           # "ssn", "email", "us_phone", "us_zip", "iso_date", ...
-    match_rate: float          # fraction of non-null values that matched (0.0 – 1.0)
+
+    detector_id: str  # "ssn", "email", "us_phone", "us_zip", "iso_date", ...
+    match_rate: float  # fraction of non-null values that matched (0.0 – 1.0)
     sample_misses: list[str] = field(default_factory=list)  # up to 3 values that didn't match
     # Item 65 — surface which sub-pattern variant actually fired so the
     # mask post-pass can splice separators back at the right positions.
@@ -86,12 +88,13 @@ class Distribution:
     `data` and `labels` are parallel arrays. min/max/mean only meaningful for
     numeric or date kinds; left as None otherwise.
     """
-    kind: str                                  # "numeric" | "date" | "categorical" | "pattern" | "freetext"
+
+    kind: str  # "numeric" | "date" | "categorical" | "pattern" | "freetext"
     data: list[float] = field(default_factory=list)
     labels: list[str] = field(default_factory=list)
-    min: str | None = None                  # stringified for JSON parity (numeric or ISO date)
+    min: str | None = None  # stringified for JSON parity (numeric or ISO date)
     max: str | None = None
-    mean: float | None = None               # numeric only
+    mean: float | None = None  # numeric only
 
 
 @dataclass
@@ -108,28 +111,31 @@ class DetectionSignal:
     today; ML detection phases (Roadmap Item 8) will append `ml=True` rows
     without disturbing the existing schema.
     """
-    signal: str                                # "regex · ssn_pattern", "name-hint · col=\"ssn\"", ...
-    confidence: float | None = None         # 0.0 – 100.0; None when skipped
+
+    signal: str  # "regex · ssn_pattern", "name-hint · col=\"ssn\"", ...
+    confidence: float | None = None  # 0.0 – 100.0; None when skipped
     winner: bool = False
     ml: bool = False
-    skipped: bool = False                      # signal was considered but not run (e.g. ML disabled)
+    skipped: bool = False  # signal was considered but not run (e.g. ML disabled)
 
 
 @dataclass
 class SentinelFlag:
     """A value (or pattern) that parsed structurally but is suspicious."""
-    kind: str                  # "date_sentinel", "date_out_of_range", "numeric_sentinel", "string_sentinel"
+
+    kind: str  # "date_sentinel", "date_out_of_range", "numeric_sentinel", "string_sentinel"
     value: str
     count: int
-    note: str                  # human-readable explanation for FORECAST + UI
+    note: str  # human-readable explanation for FORECAST + UI
 
 
 @dataclass
 class FieldStats:
     """Everything STORM computed about one column."""
+
     name: str
-    inferred_type: str         # "integer", "float", "string", "date", "boolean", "mixed"
-    dtype_raw: str             # the underlying pandas dtype, for debugging
+    inferred_type: str  # "integer", "float", "string", "date", "boolean", "mixed"
+    dtype_raw: str  # the underlying pandas dtype, for debugging
     row_count: int
     null_count: int
     null_rate: float
@@ -150,7 +156,7 @@ class FieldStats:
     # Date (sniffed or native)
     date_min: str | None = None
     date_max: str | None = None
-    date_format: str | None = None      # "iso_date", "us_date", "eu_date", "datetime", or None
+    date_format: str | None = None  # "iso_date", "us_date", "eu_date", "datetime", or None
     invalid_count: int | None = None
     sample_invalid: list[str] = field(default_factory=list)
 
@@ -216,9 +222,10 @@ class FieldStats:
 @dataclass
 class StormProfile:
     """The artifact STORM produces. Input to FORECAST. JSON-serializable."""
-    source_label: str          # "users.csv" / "public.orders" / etc.
-    row_count: int             # rows actually scanned
-    sample_strategy: str       # "full", "head", "random", "stratified"
+
+    source_label: str  # "users.csv" / "public.orders" / etc.
+    row_count: int  # rows actually scanned
+    sample_strategy: str  # "full", "head", "random", "stratified"
     sample_row_cap: int | None = None
     fields: list[FieldStats] = field(default_factory=list)
 

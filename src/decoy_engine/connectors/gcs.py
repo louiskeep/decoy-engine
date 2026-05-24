@@ -13,6 +13,7 @@ GCS does not require an explicit endpoint override the way S3 does for
 S3-compatibles. The library handles signed-URL generation and resumable
 uploads internally; the SDK capabilities flag both.
 """
+
 from __future__ import annotations
 
 import json

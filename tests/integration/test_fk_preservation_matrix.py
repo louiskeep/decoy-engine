@@ -37,10 +37,8 @@ For each case the test:
   3. Asserts the child column's distinct values are a strict subset
      of the parent column's distinct values (referential integrity).
 """
-from __future__ import annotations
 
-import os
-import tempfile
+from __future__ import annotations
 
 import pandas as pd
 import pyarrow as pa
@@ -59,10 +57,12 @@ def _y(cfg: dict) -> str:
 def parent_csv(tmp_path):
     """A small parent CSV with a unique PK column + a noise column."""
     src = tmp_path / "parent.csv"
-    pd.DataFrame({
-        "id": ["alice", "bob", "carol", "dave", "eve"],
-        "noise": [1, 2, 3, 4, 5],
-    }).to_csv(src, index=False)
+    pd.DataFrame(
+        {
+            "id": ["alice", "bob", "carol", "dave", "eve"],
+            "noise": [1, 2, 3, 4, 5],
+        }
+    ).to_csv(src, index=False)
     return str(src)
 
 
@@ -70,10 +70,12 @@ def parent_csv(tmp_path):
 def child_csv(tmp_path):
     """A child CSV whose customer_id column references parent.id."""
     src = tmp_path / "child.csv"
-    pd.DataFrame({
-        "customer_id": ["alice", "bob", "alice", "carol", "bob", "dave"],
-        "amount": [100, 200, 150, 300, 250, 175],
-    }).to_csv(src, index=False)
+    pd.DataFrame(
+        {
+            "customer_id": ["alice", "bob", "alice", "carol", "bob", "dave"],
+            "amount": [100, 200, 150, 300, 250, 175],
+        }
+    ).to_csv(src, index=False)
     return str(src)
 
 
@@ -100,26 +102,40 @@ class TestCase1MaskToMask:
     with the same key + the same plaintext, so the FK survives by
     construction. No runtime pool_resolver call."""
 
-    def test_mask_to_mask_fk_stable(
-        self, parent_csv, child_csv, out_dir, tmp_path
-    ):
+    def test_mask_to_mask_fk_stable(self, parent_csv, child_csv, out_dir, tmp_path):
         cfg = {
             "mode": "graph",
             "nodes": [
-                {"id": "src_1", "kind": "source.file",
-                 "config": {"path": parent_csv, "format": "csv"}},
-                {"id": "mask_1", "kind": "mask",
-                 "config": {"columns": {"id": {"strategy": "hash"}}}},
-                {"id": "tgt_1", "kind": "target.file",
-                 "config": {"output_filename": str(tmp_path / "p_out.csv"),
-                            "format": "csv"}},
-                {"id": "src_2", "kind": "source.file",
-                 "config": {"path": child_csv, "format": "csv"}},
-                {"id": "mask_2", "kind": "mask",
-                 "config": {"columns": {"customer_id": {"strategy": "hash"}}}},
-                {"id": "tgt_2", "kind": "target.file",
-                 "config": {"output_filename": str(tmp_path / "c_out.csv"),
-                            "format": "csv"}},
+                {
+                    "id": "src_1",
+                    "kind": "source.file",
+                    "config": {"path": parent_csv, "format": "csv"},
+                },
+                {
+                    "id": "mask_1",
+                    "kind": "mask",
+                    "config": {"columns": {"id": {"strategy": "hash"}}},
+                },
+                {
+                    "id": "tgt_1",
+                    "kind": "target.file",
+                    "config": {"output_filename": str(tmp_path / "p_out.csv"), "format": "csv"},
+                },
+                {
+                    "id": "src_2",
+                    "kind": "source.file",
+                    "config": {"path": child_csv, "format": "csv"},
+                },
+                {
+                    "id": "mask_2",
+                    "kind": "mask",
+                    "config": {"columns": {"customer_id": {"strategy": "hash"}}},
+                },
+                {
+                    "id": "tgt_2",
+                    "kind": "target.file",
+                    "config": {"output_filename": str(tmp_path / "c_out.csv"), "format": "csv"},
+                },
             ],
             "edges": [
                 {"from": "src_1", "to": "mask_1"},
@@ -128,19 +144,24 @@ class TestCase1MaskToMask:
                 {"from": "mask_2", "to": "tgt_2"},
             ],
             "column_relationships": [
-                {"kind": "fk",
-                 "parent": {"node": "mask_1", "column": "id"},
-                 "child":  {"node": "mask_2", "column": "customer_id"}},
+                {
+                    "kind": "fk",
+                    "parent": {"node": "mask_1", "column": "id"},
+                    "child": {"node": "mask_2", "column": "customer_id"},
+                },
             ],
         }
         # Master key bound via context.make_key_resolver so both
         # masks derive from the same root.
         from decoy_engine.context import make_key_resolver
+
         ctx = ExecutionContext(
             derive_key=make_key_resolver(b"\x42" * 32, "test-pipeline"),
         )
         result, cache = execute_graph_capture(
-            _y(cfg), ctx=ctx, keep_nodes=["mask_1", "mask_2"],
+            _y(cfg),
+            ctx=ctx,
+            keep_nodes=["mask_1", "mask_2"],
         )
         assert result["success"], "run failed"
 
@@ -162,35 +183,46 @@ class TestCase2MaskToSynth:
     `reference`; pool_resolver hands it the masked parent's distinct
     values."""
 
-    def test_mask_to_synth_fk_drawn_from_masked_pool(
-        self, parent_csv, out_dir, tmp_path
-    ):
+    def test_mask_to_synth_fk_drawn_from_masked_pool(self, parent_csv, out_dir, tmp_path):
         cfg = {
             "mode": "graph",
             "nodes": [
-                {"id": "src_1", "kind": "source.file",
-                 "config": {"path": parent_csv, "format": "csv"}},
-                {"id": "mask_1", "kind": "mask",
-                 "config": {"columns": {"id": {"strategy": "hash"}}}},
-                {"id": "tgt_1", "kind": "target.file",
-                 "config": {"output_filename": str(tmp_path / "p_out.csv"),
-                            "format": "csv"}},
+                {
+                    "id": "src_1",
+                    "kind": "source.file",
+                    "config": {"path": parent_csv, "format": "csv"},
+                },
+                {
+                    "id": "mask_1",
+                    "kind": "mask",
+                    "config": {"columns": {"id": {"strategy": "hash"}}},
+                },
+                {
+                    "id": "tgt_1",
+                    "kind": "target.file",
+                    "config": {"output_filename": str(tmp_path / "p_out.csv"), "format": "csv"},
+                },
                 # Synth child takes mask_1 as upstream. The edge
                 # mask_1 -> synth_1 forces topo ordering (parent
                 # before child) AND hands the child its row count
                 # via generate_op's len(upstream) path. FK declaration
                 # tells generate_op to coerce customer_id to
                 # `reference` and populate the pool from mask_1.id.
-                {"id": "synth_1", "kind": "generate",
-                 "config": {
-                     "columns": {
-                         "customer_id": {"strategy": "faker", "faker_type": "name"},
-                         "amount": {"strategy": "sequence", "start": 100},
-                     },
-                 }},
-                {"id": "tgt_2", "kind": "target.file",
-                 "config": {"output_filename": str(tmp_path / "c_out.csv"),
-                            "format": "csv"}},
+                {
+                    "id": "synth_1",
+                    "kind": "generate",
+                    "config": {
+                        "columns": {
+                            "customer_id": {"strategy": "faker", "faker_type": "name"},
+                            "amount": {"strategy": "sequence", "start": 100},
+                        },
+                    },
+                },
+                {
+                    "id": "tgt_2",
+                    "kind": "target.file",
+                    "config": {"output_filename": str(tmp_path / "c_out.csv"), "format": "csv"},
+                },
             ],
             "edges": [
                 {"from": "src_1", "to": "mask_1"},
@@ -200,18 +232,23 @@ class TestCase2MaskToSynth:
                 {"from": "synth_1", "to": "tgt_2"},
             ],
             "column_relationships": [
-                {"kind": "fk",
-                 "parent": {"node": "mask_1", "column": "id"},
-                 "child":  {"node": "synth_1", "column": "customer_id"}},
+                {
+                    "kind": "fk",
+                    "parent": {"node": "mask_1", "column": "id"},
+                    "child": {"node": "synth_1", "column": "customer_id"},
+                },
             ],
         }
         from decoy_engine.context import make_key_resolver
+
         ctx = ExecutionContext(
             derive_key=make_key_resolver(b"\x42" * 32, "test-pipeline"),
             pipeline_derive_key=make_key_resolver(b"\x33" * 32, "test-pipeline"),
         )
         result, cache = execute_graph_capture(
-            _y(cfg), ctx=ctx, keep_nodes=["mask_1", "synth_1"],
+            _y(cfg),
+            ctx=ctx,
+            keep_nodes=["mask_1", "synth_1"],
         )
         assert result["success"], "run failed"
 
@@ -233,36 +270,50 @@ class TestCase3MaskDownstreamToSynth:
     Verifies that cache pinning keeps the intermediate parent alive
     past its single normal consumer (the target write)."""
 
-    def test_mask_downstream_to_synth_fk(
-        self, parent_csv, out_dir, tmp_path
-    ):
+    def test_mask_downstream_to_synth_fk(self, parent_csv, out_dir, tmp_path):
         cfg = {
             "mode": "graph",
             "nodes": [
-                {"id": "src_1", "kind": "source.file",
-                 "config": {"path": parent_csv, "format": "csv"}},
+                {
+                    "id": "src_1",
+                    "kind": "source.file",
+                    "config": {"path": parent_csv, "format": "csv"},
+                },
                 # First mask hashes id (pass-through on the column shape).
-                {"id": "mask_1", "kind": "mask",
-                 "config": {"columns": {"id": {"strategy": "hash"}}}},
+                {
+                    "id": "mask_1",
+                    "kind": "mask",
+                    "config": {"columns": {"id": {"strategy": "hash"}}},
+                },
                 # Second mask reads mask_1's output and applies a
                 # date_shift to noise (different deterministic
                 # strategy). id passes through unchanged.
-                {"id": "mask_2", "kind": "mask",
-                 "config": {"columns": {"id": {"strategy": "hash"}}}},
-                {"id": "tgt_1", "kind": "target.file",
-                 "config": {"output_filename": str(tmp_path / "p_out.csv"),
-                            "format": "csv"}},
+                {
+                    "id": "mask_2",
+                    "kind": "mask",
+                    "config": {"columns": {"id": {"strategy": "hash"}}},
+                },
+                {
+                    "id": "tgt_1",
+                    "kind": "target.file",
+                    "config": {"output_filename": str(tmp_path / "p_out.csv"), "format": "csv"},
+                },
                 # Synth child reads from mask_2 (downstream parent).
                 # Edge mask_2 -> synth_1 forces parent-first ordering.
-                {"id": "synth_1", "kind": "generate",
-                 "config": {
-                     "columns": {
-                         "customer_id": {"strategy": "faker", "faker_type": "name"},
-                     },
-                 }},
-                {"id": "tgt_2", "kind": "target.file",
-                 "config": {"output_filename": str(tmp_path / "c_out.csv"),
-                            "format": "csv"}},
+                {
+                    "id": "synth_1",
+                    "kind": "generate",
+                    "config": {
+                        "columns": {
+                            "customer_id": {"strategy": "faker", "faker_type": "name"},
+                        },
+                    },
+                },
+                {
+                    "id": "tgt_2",
+                    "kind": "target.file",
+                    "config": {"output_filename": str(tmp_path / "c_out.csv"), "format": "csv"},
+                },
             ],
             "edges": [
                 {"from": "src_1", "to": "mask_1"},
@@ -272,18 +323,23 @@ class TestCase3MaskDownstreamToSynth:
                 {"from": "synth_1", "to": "tgt_2"},
             ],
             "column_relationships": [
-                {"kind": "fk",
-                 "parent": {"node": "mask_2", "column": "id"},
-                 "child":  {"node": "synth_1", "column": "customer_id"}},
+                {
+                    "kind": "fk",
+                    "parent": {"node": "mask_2", "column": "id"},
+                    "child": {"node": "synth_1", "column": "customer_id"},
+                },
             ],
         }
         from decoy_engine.context import make_key_resolver
+
         ctx = ExecutionContext(
             derive_key=make_key_resolver(b"\x42" * 32, "test-pipeline"),
             pipeline_derive_key=make_key_resolver(b"\x33" * 32, "test-pipeline"),
         )
         result, cache = execute_graph_capture(
-            _y(cfg), ctx=ctx, keep_nodes=["mask_2", "synth_1"],
+            _y(cfg),
+            ctx=ctx,
+            keep_nodes=["mask_2", "synth_1"],
         )
         assert result["success"], "run failed"
 
@@ -300,52 +356,65 @@ class TestCase4SynthToSynth:
         cfg = {
             "mode": "graph",
             "nodes": [
-                {"id": "synth_1", "kind": "generate",
-                 "config": {
-                     "row_count": 8,
-                     "columns": {
-                         "user_id": {"strategy": "sequence", "start": 1000},
-                     },
-                 }},
-                {"id": "tgt_1", "kind": "target.file",
-                 "config": {"output_filename": str(tmp_path / "p_out.csv"),
-                            "format": "csv"}},
-                {"id": "synth_2", "kind": "generate",
-                 "config": {
-                     "row_count": 15,
-                     "columns": {
-                         "fk_user_id": {"strategy": "faker", "faker_type": "name"},
-                     },
-                 }},
-                {"id": "tgt_2", "kind": "target.file",
-                 "config": {"output_filename": str(tmp_path / "c_out.csv"),
-                            "format": "csv"}},
+                {
+                    "id": "synth_1",
+                    "kind": "generate",
+                    "config": {
+                        "row_count": 8,
+                        "columns": {
+                            "user_id": {"strategy": "sequence", "start": 1000},
+                        },
+                    },
+                },
+                {
+                    "id": "tgt_1",
+                    "kind": "target.file",
+                    "config": {"output_filename": str(tmp_path / "p_out.csv"), "format": "csv"},
+                },
+                {
+                    "id": "synth_2",
+                    "kind": "generate",
+                    "config": {
+                        "row_count": 15,
+                        "columns": {
+                            "fk_user_id": {"strategy": "faker", "faker_type": "name"},
+                        },
+                    },
+                },
+                {
+                    "id": "tgt_2",
+                    "kind": "target.file",
+                    "config": {"output_filename": str(tmp_path / "c_out.csv"), "format": "csv"},
+                },
             ],
             "edges": [
                 {"from": "synth_1", "to": "tgt_1"},
                 {"from": "synth_2", "to": "tgt_2"},
             ],
             "column_relationships": [
-                {"kind": "fk",
-                 "parent": {"node": "synth_1", "column": "user_id"},
-                 "child":  {"node": "synth_2", "column": "fk_user_id"}},
+                {
+                    "kind": "fk",
+                    "parent": {"node": "synth_1", "column": "user_id"},
+                    "child": {"node": "synth_2", "column": "fk_user_id"},
+                },
             ],
         }
         from decoy_engine.context import make_key_resolver
+
         ctx = ExecutionContext(
             derive_key=make_key_resolver(b"\x42" * 32, "test-pipeline"),
             pipeline_derive_key=make_key_resolver(b"\x33" * 32, "test-pipeline"),
         )
         result, cache = execute_graph_capture(
-            _y(cfg), ctx=ctx, keep_nodes=["synth_1", "synth_2"],
+            _y(cfg),
+            ctx=ctx,
+            keep_nodes=["synth_1", "synth_2"],
         )
         assert result["success"], "run failed"
 
         parent_pks = set(_column_values(cache["synth_1"], "user_id"))
         child_fks = set(_column_values(cache["synth_2"], "fk_user_id"))
-        assert child_fks.issubset(parent_pks), (
-            f"child FKs not in parent: {child_fks - parent_pks}"
-        )
+        assert child_fks.issubset(parent_pks), f"child FKs not in parent: {child_fks - parent_pks}"
 
 
 class TestCoercionAdvisory:
@@ -358,21 +427,34 @@ class TestCoercionAdvisory:
         cfg = {
             "mode": "graph",
             "nodes": [
-                {"id": "src_1", "kind": "source.file",
-                 "config": {"path": parent_csv, "format": "csv"}},
-                {"id": "mask_1", "kind": "mask",
-                 "config": {"columns": {"id": {"strategy": "hash"}}}},
-                {"id": "tgt_1", "kind": "target.file",
-                 "config": {"output_filename": str(tmp_path / "p_out.csv"),
-                            "format": "csv"}},
-                {"id": "synth_1", "kind": "generate",
-                 "config": {
-                     # Note: faker, not reference. Coercion flips it.
-                     "columns": {"customer_id": {"strategy": "faker"}},
-                 }},
-                {"id": "tgt_2", "kind": "target.file",
-                 "config": {"output_filename": str(tmp_path / "c_out.csv"),
-                            "format": "csv"}},
+                {
+                    "id": "src_1",
+                    "kind": "source.file",
+                    "config": {"path": parent_csv, "format": "csv"},
+                },
+                {
+                    "id": "mask_1",
+                    "kind": "mask",
+                    "config": {"columns": {"id": {"strategy": "hash"}}},
+                },
+                {
+                    "id": "tgt_1",
+                    "kind": "target.file",
+                    "config": {"output_filename": str(tmp_path / "p_out.csv"), "format": "csv"},
+                },
+                {
+                    "id": "synth_1",
+                    "kind": "generate",
+                    "config": {
+                        # Note: faker, not reference. Coercion flips it.
+                        "columns": {"customer_id": {"strategy": "faker"}},
+                    },
+                },
+                {
+                    "id": "tgt_2",
+                    "kind": "target.file",
+                    "config": {"output_filename": str(tmp_path / "c_out.csv"), "format": "csv"},
+                },
             ],
             "edges": [
                 {"from": "src_1", "to": "mask_1"},
@@ -382,18 +464,23 @@ class TestCoercionAdvisory:
                 {"from": "synth_1", "to": "tgt_2"},
             ],
             "column_relationships": [
-                {"kind": "fk",
-                 "parent": {"node": "mask_1", "column": "id"},
-                 "child":  {"node": "synth_1", "column": "customer_id"}},
+                {
+                    "kind": "fk",
+                    "parent": {"node": "mask_1", "column": "id"},
+                    "child": {"node": "synth_1", "column": "customer_id"},
+                },
             ],
         }
         from decoy_engine.context import make_key_resolver
+
         ctx = ExecutionContext(
             derive_key=make_key_resolver(b"\x42" * 32, "test-pipeline"),
             pipeline_derive_key=make_key_resolver(b"\x33" * 32, "test-pipeline"),
         )
-        result, cache = execute_graph_capture(
-            _y(cfg), ctx=ctx, keep_nodes=["mask_1", "synth_1"],
+        result, _cache = execute_graph_capture(
+            _y(cfg),
+            ctx=ctx,
+            keep_nodes=["mask_1", "synth_1"],
         )
         assert result["success"]
         # Inspect the exports for synth_1 -- fk_preservation key should
@@ -405,5 +492,3 @@ class TestCoercionAdvisory:
         assert fk_info["customer_id"]["strategy_coerced"] is True
         assert fk_info["customer_id"]["original_strategy"] == "faker"
         assert fk_info["customer_id"]["pool_size"] == 5  # parent has 5 unique ids
-
-

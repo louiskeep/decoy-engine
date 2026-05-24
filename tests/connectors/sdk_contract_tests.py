@@ -27,6 +27,7 @@ remote location: each connector test provides a `source` (or `sink`)
 fixture configured against its own moto / mock-gcs / paramiko-server.
 The contract tests check shape and protocol compliance, not data.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -34,13 +35,12 @@ import pytest
 from decoy_engine.sdk import (
     CAP_INTROSPECTION,
     CAP_MULTIPART,
-    CAP_STREAMING,
+    SDK_VERSION,
     CheckResult,
     ConnectorError,
     FileMeta,
     FileSink,
     FileSource,
-    SDK_VERSION,
     WriteResult,
 )
 
@@ -58,9 +58,7 @@ class FileSourceContract:
 
     @pytest.fixture
     def source(self) -> FileSource:
-        raise NotImplementedError(
-            "FileSourceContract subclass must provide a `source` fixture"
-        )
+        raise NotImplementedError("FileSourceContract subclass must provide a `source` fixture")
 
     @pytest.fixture
     def seeded_path(self) -> str | None:
@@ -79,9 +77,7 @@ class FileSourceContract:
         )
 
     def test_name_is_declared(self, source):
-        assert type(source).name, (
-            "FileSource subclass must declare a non-empty `name` class attr"
-        )
+        assert type(source).name, "FileSource subclass must declare a non-empty `name` class attr"
 
     def test_version_is_declared(self, source):
         assert type(source).version, (
@@ -102,9 +98,7 @@ class FileSourceContract:
         assert isinstance(caps, dict)
         for k, v in caps.items():
             assert isinstance(k, str)
-            assert isinstance(v, bool), (
-                f"Capability `{k}` must be bool, got {type(v).__name__}"
-            )
+            assert isinstance(v, bool), f"Capability `{k}` must be bool, got {type(v).__name__}"
 
     # ----- Runtime contract: check + list + open -------------------------
 
@@ -181,9 +175,7 @@ class FileSinkContract:
 
     @pytest.fixture
     def sink(self) -> FileSink:
-        raise NotImplementedError(
-            "FileSinkContract subclass must provide a `sink` fixture"
-        )
+        raise NotImplementedError("FileSinkContract subclass must provide a `sink` fixture")
 
     @pytest.fixture
     def reader_for(self):
@@ -198,9 +190,7 @@ class FileSinkContract:
     # ----- Static contract -----------------------------------------------
 
     def test_inherits_filesink(self, sink):
-        assert isinstance(sink, FileSink), (
-            f"Connector {type(sink).__name__} must inherit FileSink"
-        )
+        assert isinstance(sink, FileSink), f"Connector {type(sink).__name__} must inherit FileSink"
 
     def test_name_is_declared(self, sink):
         assert type(sink).name
@@ -228,15 +218,11 @@ class FileSinkContract:
 
     def test_write_round_trip(self, sink, reader_for):
         if reader_for is None:
-            pytest.skip(
-                "FileSinkContract subclass did not provide `reader_for` fixture"
-            )
+            pytest.skip("FileSinkContract subclass did not provide `reader_for` fixture")
         body = b"hello round trip\n"
         result = sink.write("decoy-contract-roundtrip.txt", iter([body]))
         got = reader_for(result.path)
-        assert got == body, (
-            f"Round-trip mismatch: wrote {body!r}, read back {got!r}"
-        )
+        assert got == body, f"Round-trip mismatch: wrote {body!r}, read back {got!r}"
 
     def test_multipart_round_trip_when_advertised(self, sink, reader_for):
         # A multipart-capable sink must accept a multi-chunk iterator and
@@ -252,6 +238,7 @@ class FileSinkContract:
 
 
 # ----- Sentinel: SDK_VERSION sanity --------------------------------------
+
 
 def test_sdk_version_is_declared_and_parseable():
     """Belt-and-braces check that the module-level SDK_VERSION constant

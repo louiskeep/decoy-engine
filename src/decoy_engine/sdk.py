@@ -24,6 +24,7 @@ Design notes (read before adding capabilities or breaking changes):
   and refuses to load an incompatible connector with a clear admin-facing
   error rather than a runtime crash.
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -249,9 +250,7 @@ class FileSource(_ConnectorBase[ConfigT]):
         for item in self.list():
             if item.path == path:
                 return item
-        raise PermanentError(
-            f"{type(self).name}: head failed, path not found: {path!r}"
-        )
+        raise PermanentError(f"{type(self).name}: head failed, path not found: {path!r}")
 
     @abstractmethod
     def open(self, path: str) -> Iterator[bytes]:

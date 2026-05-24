@@ -10,6 +10,7 @@ Note on sub-pipeline YAML encoding:
     Those sub-pipeline files are written as raw text rather than via
     yaml.safe_dump, which always quotes strings containing '{{'.
 """
+
 from __future__ import annotations
 
 import os
@@ -23,10 +24,10 @@ import yaml
 from decoy_engine import run_graph, validate_graph
 from decoy_engine.exceptions import PipelineValidationError
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _yaml(d):
     return yaml.safe_dump(d)
@@ -42,12 +43,14 @@ def work_dir():
 def input_csv(work_dir):
     """Five-row CSV with numeric + string columns."""
     path = os.path.join(work_dir, "input.csv")
-    pd.DataFrame({
-        "id": [1, 2, 3, 4, 5],
-        "name": ["Alice", "Bob", "Carol", "Dave", "Eve"],
-        "score": [90, 75, 85, 60, 95],
-        "dept": ["eng", "sales", "eng", "hr", "eng"],
-    }).to_csv(path, index=False)
+    pd.DataFrame(
+        {
+            "id": [1, 2, 3, 4, 5],
+            "name": ["Alice", "Bob", "Carol", "Dave", "Eve"],
+            "score": [90, 75, 85, 60, 95],
+            "dept": ["eng", "sales", "eng", "hr", "eng"],
+        }
+    ).to_csv(path, index=False)
     return path
 
 
@@ -60,19 +63,22 @@ def out_path(work_dir):
 # sql_run
 # ---------------------------------------------------------------------------
 
+
 class TestSqlRun:
     """DuckDB-on-DataFrame SQL escape hatch."""
 
     def test_select_all_is_passthrough(self, input_csv, out_path):
-        cfg = _yaml({
-            "mode": "graph",
-            "nodes": [
-                {"id": "src", "kind": "source.file", "config": {"path": input_csv}},
-                {"id": "sql", "kind": "sql_run", "config": {"sql": "SELECT * FROM df"}},
-                {"id": "tgt", "kind": "target.file", "config": {"output_filename": out_path}},
-            ],
-            "edges": [{"from": "src", "to": "sql"}, {"from": "sql", "to": "tgt"}],
-        })
+        cfg = _yaml(
+            {
+                "mode": "graph",
+                "nodes": [
+                    {"id": "src", "kind": "source.file", "config": {"path": input_csv}},
+                    {"id": "sql", "kind": "sql_run", "config": {"sql": "SELECT * FROM df"}},
+                    {"id": "tgt", "kind": "target.file", "config": {"output_filename": out_path}},
+                ],
+                "edges": [{"from": "src", "to": "sql"}, {"from": "sql", "to": "tgt"}],
+            }
+        )
         validate_graph(cfg)
         result = run_graph(cfg)
         assert result["success"], result
@@ -82,17 +88,23 @@ class TestSqlRun:
 
     def test_where_filters_rows(self, input_csv, out_path):
         """WHERE clause cuts rows; only high-scorers survive."""
-        cfg = _yaml({
-            "mode": "graph",
-            "nodes": [
-                {"id": "src", "kind": "source.file", "config": {"path": input_csv}},
-                {"id": "sql", "kind": "sql_run", "config": {
-                    "sql": "SELECT * FROM df WHERE score > 80",
-                }},
-                {"id": "tgt", "kind": "target.file", "config": {"output_filename": out_path}},
-            ],
-            "edges": [{"from": "src", "to": "sql"}, {"from": "sql", "to": "tgt"}],
-        })
+        cfg = _yaml(
+            {
+                "mode": "graph",
+                "nodes": [
+                    {"id": "src", "kind": "source.file", "config": {"path": input_csv}},
+                    {
+                        "id": "sql",
+                        "kind": "sql_run",
+                        "config": {
+                            "sql": "SELECT * FROM df WHERE score > 80",
+                        },
+                    },
+                    {"id": "tgt", "kind": "target.file", "config": {"output_filename": out_path}},
+                ],
+                "edges": [{"from": "src", "to": "sql"}, {"from": "sql", "to": "tgt"}],
+            }
+        )
         result = run_graph(cfg)
         assert result["success"], result
         out = pd.read_csv(out_path)
@@ -102,17 +114,23 @@ class TestSqlRun:
 
     def test_projection_and_alias(self, input_csv, out_path):
         """Columns can be projected and renamed; source columns not selected are dropped."""
-        cfg = _yaml({
-            "mode": "graph",
-            "nodes": [
-                {"id": "src", "kind": "source.file", "config": {"path": input_csv}},
-                {"id": "sql", "kind": "sql_run", "config": {
-                    "sql": "SELECT id, name, score * 2 AS double_score FROM df",
-                }},
-                {"id": "tgt", "kind": "target.file", "config": {"output_filename": out_path}},
-            ],
-            "edges": [{"from": "src", "to": "sql"}, {"from": "sql", "to": "tgt"}],
-        })
+        cfg = _yaml(
+            {
+                "mode": "graph",
+                "nodes": [
+                    {"id": "src", "kind": "source.file", "config": {"path": input_csv}},
+                    {
+                        "id": "sql",
+                        "kind": "sql_run",
+                        "config": {
+                            "sql": "SELECT id, name, score * 2 AS double_score FROM df",
+                        },
+                    },
+                    {"id": "tgt", "kind": "target.file", "config": {"output_filename": out_path}},
+                ],
+                "edges": [{"from": "src", "to": "sql"}, {"from": "sql", "to": "tgt"}],
+            }
+        )
         result = run_graph(cfg)
         assert result["success"], result
         out = pd.read_csv(out_path)
@@ -122,20 +140,26 @@ class TestSqlRun:
 
     def test_aggregate_group_by(self, input_csv, out_path):
         """GROUP BY aggregation shrinks the row count."""
-        cfg = _yaml({
-            "mode": "graph",
-            "nodes": [
-                {"id": "src", "kind": "source.file", "config": {"path": input_csv}},
-                {"id": "sql", "kind": "sql_run", "config": {
-                    "sql": (
-                        "SELECT dept, COUNT(*) AS headcount, AVG(score) AS avg_score "
-                        "FROM df GROUP BY dept ORDER BY dept"
-                    ),
-                }},
-                {"id": "tgt", "kind": "target.file", "config": {"output_filename": out_path}},
-            ],
-            "edges": [{"from": "src", "to": "sql"}, {"from": "sql", "to": "tgt"}],
-        })
+        cfg = _yaml(
+            {
+                "mode": "graph",
+                "nodes": [
+                    {"id": "src", "kind": "source.file", "config": {"path": input_csv}},
+                    {
+                        "id": "sql",
+                        "kind": "sql_run",
+                        "config": {
+                            "sql": (
+                                "SELECT dept, COUNT(*) AS headcount, AVG(score) AS avg_score "
+                                "FROM df GROUP BY dept ORDER BY dept"
+                            ),
+                        },
+                    },
+                    {"id": "tgt", "kind": "target.file", "config": {"output_filename": out_path}},
+                ],
+                "edges": [{"from": "src", "to": "sql"}, {"from": "sql", "to": "tgt"}],
+            }
+        )
         result = run_graph(cfg)
         assert result["success"], result
         out = pd.read_csv(out_path)
@@ -145,24 +169,34 @@ class TestSqlRun:
 
     def test_chained_after_mask(self, input_csv, out_path):
         """sql_run can sit downstream of a mask node and query the masked data."""
-        cfg = _yaml({
-            "mode": "graph",
-            "nodes": [
-                {"id": "src", "kind": "source.file", "config": {"path": input_csv}},
-                {"id": "msk", "kind": "mask", "config": {
-                    "columns": {"name": {"strategy": "redact", "redact_with": "ANON"}},
-                }},
-                {"id": "sql", "kind": "sql_run", "config": {
-                    "sql": "SELECT * FROM df WHERE name = 'ANON'",
-                }},
-                {"id": "tgt", "kind": "target.file", "config": {"output_filename": out_path}},
-            ],
-            "edges": [
-                {"from": "src", "to": "msk"},
-                {"from": "msk", "to": "sql"},
-                {"from": "sql", "to": "tgt"},
-            ],
-        })
+        cfg = _yaml(
+            {
+                "mode": "graph",
+                "nodes": [
+                    {"id": "src", "kind": "source.file", "config": {"path": input_csv}},
+                    {
+                        "id": "msk",
+                        "kind": "mask",
+                        "config": {
+                            "columns": {"name": {"strategy": "redact", "redact_with": "ANON"}},
+                        },
+                    },
+                    {
+                        "id": "sql",
+                        "kind": "sql_run",
+                        "config": {
+                            "sql": "SELECT * FROM df WHERE name = 'ANON'",
+                        },
+                    },
+                    {"id": "tgt", "kind": "target.file", "config": {"output_filename": out_path}},
+                ],
+                "edges": [
+                    {"from": "src", "to": "msk"},
+                    {"from": "msk", "to": "sql"},
+                    {"from": "sql", "to": "tgt"},
+                ],
+            }
+        )
         result = run_graph(cfg)
         assert result["success"], result
         out = pd.read_csv(out_path)
@@ -172,15 +206,17 @@ class TestSqlRun:
 
     def test_invalid_sql_surfaces_as_node_error(self, input_csv, out_path):
         """Malformed SQL produces a node-level error, not an unhandled exception."""
-        cfg = _yaml({
-            "mode": "graph",
-            "nodes": [
-                {"id": "src", "kind": "source.file", "config": {"path": input_csv}},
-                {"id": "sql", "kind": "sql_run", "config": {"sql": "NOT VALID SQL @@@"}},
-                {"id": "tgt", "kind": "target.file", "config": {"output_filename": out_path}},
-            ],
-            "edges": [{"from": "src", "to": "sql"}, {"from": "sql", "to": "tgt"}],
-        })
+        cfg = _yaml(
+            {
+                "mode": "graph",
+                "nodes": [
+                    {"id": "src", "kind": "source.file", "config": {"path": input_csv}},
+                    {"id": "sql", "kind": "sql_run", "config": {"sql": "NOT VALID SQL @@@"}},
+                    {"id": "tgt", "kind": "target.file", "config": {"output_filename": out_path}},
+                ],
+                "edges": [{"from": "src", "to": "sql"}, {"from": "sql", "to": "tgt"}],
+            }
+        )
         result = run_graph(cfg)
         assert result["success"] is False
         failed = next(n for n in result["nodes"] if n["status"] == "error")
@@ -189,15 +225,17 @@ class TestSqlRun:
 
     def test_reference_to_missing_table_surfaces_as_node_error(self, input_csv, out_path):
         """Referencing `foo` instead of `df` is caught at run time."""
-        cfg = _yaml({
-            "mode": "graph",
-            "nodes": [
-                {"id": "src", "kind": "source.file", "config": {"path": input_csv}},
-                {"id": "sql", "kind": "sql_run", "config": {"sql": "SELECT * FROM foo"}},
-                {"id": "tgt", "kind": "target.file", "config": {"output_filename": out_path}},
-            ],
-            "edges": [{"from": "src", "to": "sql"}, {"from": "sql", "to": "tgt"}],
-        })
+        cfg = _yaml(
+            {
+                "mode": "graph",
+                "nodes": [
+                    {"id": "src", "kind": "source.file", "config": {"path": input_csv}},
+                    {"id": "sql", "kind": "sql_run", "config": {"sql": "SELECT * FROM foo"}},
+                    {"id": "tgt", "kind": "target.file", "config": {"output_filename": out_path}},
+                ],
+                "edges": [{"from": "src", "to": "sql"}, {"from": "sql", "to": "tgt"}],
+            }
+        )
         result = run_graph(cfg)
         assert result["success"] is False
         failed = next(n for n in result["nodes"] if n["status"] == "error")
@@ -206,27 +244,31 @@ class TestSqlRun:
     @pytest.mark.parametrize("bad_sql", ["", "   ", None])
     def test_empty_or_null_sql_fails_validation(self, bad_sql):
         """Empty / null `sql` is caught at validate_graph time."""
-        cfg = _yaml({
-            "mode": "graph",
-            "nodes": [
-                {"id": "src", "kind": "source.file", "config": {"path": "/tmp/x.csv"}},
-                {"id": "sql", "kind": "sql_run", "config": {"sql": bad_sql}},
-            ],
-            "edges": [{"from": "src", "to": "sql"}],
-        })
+        cfg = _yaml(
+            {
+                "mode": "graph",
+                "nodes": [
+                    {"id": "src", "kind": "source.file", "config": {"path": "/tmp/x.csv"}},
+                    {"id": "sql", "kind": "sql_run", "config": {"sql": bad_sql}},
+                ],
+                "edges": [{"from": "src", "to": "sql"}],
+            }
+        )
         with pytest.raises(PipelineValidationError):
             validate_graph(cfg)
 
     def test_missing_sql_key_fails_validation(self):
         """Missing `sql` key is caught at validate_graph time."""
-        cfg = _yaml({
-            "mode": "graph",
-            "nodes": [
-                {"id": "src", "kind": "source.file", "config": {"path": "/tmp/x.csv"}},
-                {"id": "sql", "kind": "sql_run", "config": {}},
-            ],
-            "edges": [{"from": "src", "to": "sql"}],
-        })
+        cfg = _yaml(
+            {
+                "mode": "graph",
+                "nodes": [
+                    {"id": "src", "kind": "source.file", "config": {"path": "/tmp/x.csv"}},
+                    {"id": "sql", "kind": "sql_run", "config": {}},
+                ],
+                "edges": [{"from": "src", "to": "sql"}],
+            }
+        )
         with pytest.raises(PipelineValidationError):
             validate_graph(cfg)
 
@@ -234,6 +276,7 @@ class TestSqlRun:
 # ---------------------------------------------------------------------------
 # sub_pipeline
 # ---------------------------------------------------------------------------
+
 
 class TestSubPipeline:
     """Call a sub-pipeline from within a parent graph."""
@@ -252,18 +295,20 @@ class TestSubPipeline:
             ],
             edges=[{"from": "src", "to": "filt"}],
         )
-        cfg = _yaml({
-            "mode": "graph",
-            "nodes": [
-                {
-                    "id": "sub",
-                    "kind": "sub_pipeline",
-                    "config": {"pipeline_ref": sub_path, "output_node": "filt"},
-                },
-                {"id": "tgt", "kind": "target.file", "config": {"output_filename": out_path}},
-            ],
-            "edges": [{"from": "sub", "to": "tgt"}],
-        })
+        cfg = _yaml(
+            {
+                "mode": "graph",
+                "nodes": [
+                    {
+                        "id": "sub",
+                        "kind": "sub_pipeline",
+                        "config": {"pipeline_ref": sub_path, "output_node": "filt"},
+                    },
+                    {"id": "tgt", "kind": "target.file", "config": {"output_filename": out_path}},
+                ],
+                "edges": [{"from": "sub", "to": "tgt"}],
+            }
+        )
         validate_graph(cfg)
         result = run_graph(cfg)
         assert result["success"], result
@@ -291,22 +336,24 @@ class TestSubPipeline:
             f"  - from: src\n"
             f"    to: filt\n"
         )
-        cfg = _yaml({
-            "mode": "graph",
-            "nodes": [
-                {
-                    "id": "sub",
-                    "kind": "sub_pipeline",
-                    "config": {
-                        "pipeline_ref": sub_path,
-                        "output_node": "filt",
-                        "template_vars": {"dept": "eng"},
+        cfg = _yaml(
+            {
+                "mode": "graph",
+                "nodes": [
+                    {
+                        "id": "sub",
+                        "kind": "sub_pipeline",
+                        "config": {
+                            "pipeline_ref": sub_path,
+                            "output_node": "filt",
+                            "template_vars": {"dept": "eng"},
+                        },
                     },
-                },
-                {"id": "tgt", "kind": "target.file", "config": {"output_filename": out_path}},
-            ],
-            "edges": [{"from": "sub", "to": "tgt"}],
-        })
+                    {"id": "tgt", "kind": "target.file", "config": {"output_filename": out_path}},
+                ],
+                "edges": [{"from": "sub", "to": "tgt"}],
+            }
+        )
         result = run_graph(cfg)
         assert result["success"], result
         out = pd.read_csv(out_path)
@@ -321,20 +368,22 @@ class TestSubPipeline:
             nodes=[{"id": "src", "kind": "source.file", "config": {"path": input_csv}}],
             edges=[],
         )
-        cfg = _yaml({
-            "mode": "graph",
-            "nodes": [
-                {
-                    "id": "sub",
-                    "kind": "sub_pipeline",
-                    "config": {"pipeline_ref": sub_path, "output_node": "src"},
-                },
-                # Drop a column in the parent graph, post sub-pipeline.
-                {"id": "drop", "kind": "drop_column", "config": {"columns": ["dept"]}},
-                {"id": "tgt", "kind": "target.file", "config": {"output_filename": out_path}},
-            ],
-            "edges": [{"from": "sub", "to": "drop"}, {"from": "drop", "to": "tgt"}],
-        })
+        cfg = _yaml(
+            {
+                "mode": "graph",
+                "nodes": [
+                    {
+                        "id": "sub",
+                        "kind": "sub_pipeline",
+                        "config": {"pipeline_ref": sub_path, "output_node": "src"},
+                    },
+                    # Drop a column in the parent graph, post sub-pipeline.
+                    {"id": "drop", "kind": "drop_column", "config": {"columns": ["dept"]}},
+                    {"id": "tgt", "kind": "target.file", "config": {"output_filename": out_path}},
+                ],
+                "edges": [{"from": "sub", "to": "drop"}, {"from": "drop", "to": "tgt"}],
+            }
+        )
         result = run_graph(cfg)
         assert result["success"], result
         out = pd.read_csv(out_path)
@@ -343,18 +392,20 @@ class TestSubPipeline:
 
     def test_missing_pipeline_ref_errors_at_run_time(self, out_path):
         """Non-existent pipeline_ref raises at run time (not validate time)."""
-        cfg = _yaml({
-            "mode": "graph",
-            "nodes": [
-                {
-                    "id": "sub",
-                    "kind": "sub_pipeline",
-                    "config": {"pipeline_ref": "/no/such/file.yaml", "output_node": "x"},
-                },
-                {"id": "tgt", "kind": "target.file", "config": {"output_filename": out_path}},
-            ],
-            "edges": [{"from": "sub", "to": "tgt"}],
-        })
+        cfg = _yaml(
+            {
+                "mode": "graph",
+                "nodes": [
+                    {
+                        "id": "sub",
+                        "kind": "sub_pipeline",
+                        "config": {"pipeline_ref": "/no/such/file.yaml", "output_node": "x"},
+                    },
+                    {"id": "tgt", "kind": "target.file", "config": {"output_filename": out_path}},
+                ],
+                "edges": [{"from": "sub", "to": "tgt"}],
+            }
+        )
         # validate_graph cannot check that the file exists at validation time.
         validate_graph(cfg)
         result = run_graph(cfg)
@@ -362,19 +413,24 @@ class TestSubPipeline:
         failed = next(n for n in result["nodes"] if n["status"] == "error")
         assert failed["node_id"] == "sub"
 
-    @pytest.mark.parametrize("bad_config", [
-        {"output_node": "out"},           # missing pipeline_ref
-        {"pipeline_ref": "x.yaml"},       # missing output_node
-        {},                                # missing both
-        {"pipeline_ref": "", "output_node": "out"},  # empty pipeline_ref
-    ])
+    @pytest.mark.parametrize(
+        "bad_config",
+        [
+            {"output_node": "out"},  # missing pipeline_ref
+            {"pipeline_ref": "x.yaml"},  # missing output_node
+            {},  # missing both
+            {"pipeline_ref": "", "output_node": "out"},  # empty pipeline_ref
+        ],
+    )
     def test_invalid_config_fails_validation(self, bad_config):
         """Missing or empty pipeline_ref / output_node caught at validate time."""
-        cfg = _yaml({
-            "mode": "graph",
-            "nodes": [{"id": "sub", "kind": "sub_pipeline", "config": bad_config}],
-            "edges": [],
-        })
+        cfg = _yaml(
+            {
+                "mode": "graph",
+                "nodes": [{"id": "sub", "kind": "sub_pipeline", "config": bad_config}],
+                "edges": [],
+            }
+        )
         with pytest.raises(PipelineValidationError):
             validate_graph(cfg)
 
@@ -382,6 +438,7 @@ class TestSubPipeline:
 # ---------------------------------------------------------------------------
 # iterate_fixed
 # ---------------------------------------------------------------------------
+
 
 class TestIterateFixed:
     """Fan-out over a hardcoded list of values."""
@@ -415,23 +472,25 @@ class TestIterateFixed:
         sub_path = os.path.join(work_dir, "sub.yaml")
         self._write_path_sub(sub_path)
 
-        cfg = _yaml({
-            "mode": "graph",
-            "nodes": [
-                {
-                    "id": "iter",
-                    "kind": "iterate_fixed",
-                    "config": {
-                        "values": paths,
-                        "pipeline_ref": sub_path,
-                        "output_node": "src",
-                        "output": "concat",
+        cfg = _yaml(
+            {
+                "mode": "graph",
+                "nodes": [
+                    {
+                        "id": "iter",
+                        "kind": "iterate_fixed",
+                        "config": {
+                            "values": paths,
+                            "pipeline_ref": sub_path,
+                            "output_node": "src",
+                            "output": "concat",
+                        },
                     },
-                },
-                {"id": "tgt", "kind": "target.file", "config": {"output_filename": out_path}},
-            ],
-            "edges": [{"from": "iter", "to": "tgt"}],
-        })
+                    {"id": "tgt", "kind": "target.file", "config": {"output_filename": out_path}},
+                ],
+                "edges": [{"from": "iter", "to": "tgt"}],
+            }
+        )
         validate_graph(cfg)
         result = run_graph(cfg)
         assert result["success"], result
@@ -466,22 +525,24 @@ class TestIterateFixed:
             f"  - from: src\n"
             f"    to: tgt\n"
         )
-        cfg = _yaml({
-            "mode": "graph",
-            "nodes": [
-                {
-                    "id": "iter",
-                    "kind": "iterate_fixed",
-                    "config": {
-                        "values": [sentinel_a, sentinel_b],
-                        "pipeline_ref": sub_path,
-                        "output_node": "tgt",
-                        "output": "void",
+        cfg = _yaml(
+            {
+                "mode": "graph",
+                "nodes": [
+                    {
+                        "id": "iter",
+                        "kind": "iterate_fixed",
+                        "config": {
+                            "values": [sentinel_a, sentinel_b],
+                            "pipeline_ref": sub_path,
+                            "output_node": "tgt",
+                            "output": "void",
+                        },
                     },
-                },
-            ],
-            "edges": [],
-        })
+                ],
+                "edges": [],
+            }
+        )
         result = run_graph(cfg)
         assert result["success"], result
         # Both side-effect files were written by the sub-pipelines.
@@ -507,23 +568,25 @@ class TestIterateFixed:
             f"  - from: src\n"
             f"    to: filt\n"
         )
-        cfg = _yaml({
-            "mode": "graph",
-            "nodes": [
-                {
-                    "id": "iter",
-                    "kind": "iterate_fixed",
-                    "config": {
-                        "values": [{"dept": "eng"}, {"dept": "hr"}],
-                        "pipeline_ref": sub_path,
-                        "output_node": "filt",
-                        "output": "concat",
+        cfg = _yaml(
+            {
+                "mode": "graph",
+                "nodes": [
+                    {
+                        "id": "iter",
+                        "kind": "iterate_fixed",
+                        "config": {
+                            "values": [{"dept": "eng"}, {"dept": "hr"}],
+                            "pipeline_ref": sub_path,
+                            "output_node": "filt",
+                            "output": "concat",
+                        },
                     },
-                },
-                {"id": "tgt", "kind": "target.file", "config": {"output_filename": out_path}},
-            ],
-            "edges": [{"from": "iter", "to": "tgt"}],
-        })
+                    {"id": "tgt", "kind": "target.file", "config": {"output_filename": out_path}},
+                ],
+                "edges": [{"from": "iter", "to": "tgt"}],
+            }
+        )
         result = run_graph(cfg)
         assert result["success"], result
         out = pd.read_csv(out_path)
@@ -533,29 +596,37 @@ class TestIterateFixed:
 
     def test_empty_values_fails_validation(self):
         """An empty `values` list is caught at validate_graph time."""
-        cfg = _yaml({
-            "mode": "graph",
-            "nodes": [{
-                "id": "iter",
-                "kind": "iterate_fixed",
-                "config": {"values": [], "pipeline_ref": "x.yaml", "output_node": "out"},
-            }],
-            "edges": [],
-        })
+        cfg = _yaml(
+            {
+                "mode": "graph",
+                "nodes": [
+                    {
+                        "id": "iter",
+                        "kind": "iterate_fixed",
+                        "config": {"values": [], "pipeline_ref": "x.yaml", "output_node": "out"},
+                    }
+                ],
+                "edges": [],
+            }
+        )
         with pytest.raises(PipelineValidationError):
             validate_graph(cfg)
 
     def test_missing_values_fails_validation(self):
         """Missing `values` key is caught at validate_graph time."""
-        cfg = _yaml({
-            "mode": "graph",
-            "nodes": [{
-                "id": "iter",
-                "kind": "iterate_fixed",
-                "config": {"pipeline_ref": "x.yaml", "output_node": "out"},
-            }],
-            "edges": [],
-        })
+        cfg = _yaml(
+            {
+                "mode": "graph",
+                "nodes": [
+                    {
+                        "id": "iter",
+                        "kind": "iterate_fixed",
+                        "config": {"pipeline_ref": "x.yaml", "output_node": "out"},
+                    }
+                ],
+                "edges": [],
+            }
+        )
         with pytest.raises(PipelineValidationError):
             validate_graph(cfg)
 
@@ -563,6 +634,7 @@ class TestIterateFixed:
 # ---------------------------------------------------------------------------
 # iterate_loop
 # ---------------------------------------------------------------------------
+
 
 class TestIterateLoop:
     """Fan-out over a numeric range."""
@@ -595,24 +667,26 @@ class TestIterateLoop:
         """iterate_loop from 1..3 limits to 1, 2 rows -> 3 concat rows."""
         sub_path = os.path.join(work_dir, "loop_sub.yaml")
         self._write_limit_sub(sub_path, input_csv)
-        cfg = _yaml({
-            "mode": "graph",
-            "nodes": [
-                {
-                    "id": "iter",
-                    "kind": "iterate_loop",
-                    "config": {
-                        "start": 1,
-                        "end": 3,        # range(1, 3) -> [1, 2]
-                        "pipeline_ref": sub_path,
-                        "output_node": "lim",
-                        "output": "concat",
+        cfg = _yaml(
+            {
+                "mode": "graph",
+                "nodes": [
+                    {
+                        "id": "iter",
+                        "kind": "iterate_loop",
+                        "config": {
+                            "start": 1,
+                            "end": 3,  # range(1, 3) -> [1, 2]
+                            "pipeline_ref": sub_path,
+                            "output_node": "lim",
+                            "output": "concat",
+                        },
                     },
-                },
-                {"id": "tgt", "kind": "target.file", "config": {"output_filename": out_path}},
-            ],
-            "edges": [{"from": "iter", "to": "tgt"}],
-        })
+                    {"id": "tgt", "kind": "target.file", "config": {"output_filename": out_path}},
+                ],
+                "edges": [{"from": "iter", "to": "tgt"}],
+            }
+        )
         validate_graph(cfg)
         result = run_graph(cfg)
         assert result["success"], result
@@ -624,73 +698,94 @@ class TestIterateLoop:
         """Non-default step skips values: range(2, 8, 3) -> [2, 5] -> 7 rows."""
         sub_path = os.path.join(work_dir, "step_sub.yaml")
         self._write_limit_sub(sub_path, input_csv)
-        cfg = _yaml({
-            "mode": "graph",
-            "nodes": [
-                {
-                    "id": "iter",
-                    "kind": "iterate_loop",
-                    "config": {
-                        "start": 2,
-                        "end": 8,
-                        "step": 3,    # values: 2, 5
-                        "pipeline_ref": sub_path,
-                        "output_node": "lim",
-                        "output": "concat",
+        cfg = _yaml(
+            {
+                "mode": "graph",
+                "nodes": [
+                    {
+                        "id": "iter",
+                        "kind": "iterate_loop",
+                        "config": {
+                            "start": 2,
+                            "end": 8,
+                            "step": 3,  # values: 2, 5
+                            "pipeline_ref": sub_path,
+                            "output_node": "lim",
+                            "output": "concat",
+                        },
                     },
-                },
-                {"id": "tgt", "kind": "target.file", "config": {"output_filename": out_path}},
-            ],
-            "edges": [{"from": "iter", "to": "tgt"}],
-        })
+                    {"id": "tgt", "kind": "target.file", "config": {"output_filename": out_path}},
+                ],
+                "edges": [{"from": "iter", "to": "tgt"}],
+            }
+        )
         result = run_graph(cfg)
         assert result["success"], result
         out = pd.read_csv(out_path)
         # limit(2) + limit(5) = 7 rows
         assert len(out) == 7
 
-    @pytest.mark.parametrize("bad", [
-        {"start": 5, "end": 1},    # start > end, positive step
-        {"start": 5, "end": 5},    # equal, also invalid
-    ])
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            {"start": 5, "end": 1},  # start > end, positive step
+            {"start": 5, "end": 5},  # equal, also invalid
+        ],
+    )
     def test_invalid_range_fails_validation(self, bad):
         """start >= end with a positive step is caught at validate_graph time."""
-        cfg = _yaml({
-            "mode": "graph",
-            "nodes": [{
-                "id": "iter",
-                "kind": "iterate_loop",
-                "config": {**bad, "pipeline_ref": "x.yaml", "output_node": "out"},
-            }],
-            "edges": [],
-        })
+        cfg = _yaml(
+            {
+                "mode": "graph",
+                "nodes": [
+                    {
+                        "id": "iter",
+                        "kind": "iterate_loop",
+                        "config": {**bad, "pipeline_ref": "x.yaml", "output_node": "out"},
+                    }
+                ],
+                "edges": [],
+            }
+        )
         with pytest.raises(PipelineValidationError):
             validate_graph(cfg)
 
     def test_zero_step_fails_validation(self):
         """step=0 is caught at validate_graph time."""
-        cfg = _yaml({
-            "mode": "graph",
-            "nodes": [{
-                "id": "iter",
-                "kind": "iterate_loop",
-                "config": {"start": 0, "end": 5, "step": 0, "pipeline_ref": "x.yaml", "output_node": "out"},
-            }],
-            "edges": [],
-        })
+        cfg = _yaml(
+            {
+                "mode": "graph",
+                "nodes": [
+                    {
+                        "id": "iter",
+                        "kind": "iterate_loop",
+                        "config": {
+                            "start": 0,
+                            "end": 5,
+                            "step": 0,
+                            "pipeline_ref": "x.yaml",
+                            "output_node": "out",
+                        },
+                    }
+                ],
+                "edges": [],
+            }
+        )
         with pytest.raises(PipelineValidationError):
             validate_graph(cfg)
 
     def test_missing_start_or_end_fails_validation(self):
         """Missing start or end is caught at validate_graph time."""
         for bad_config in [
-            {"end": 5, "pipeline_ref": "x.yaml", "output_node": "out"},   # no start
-            {"start": 0, "pipeline_ref": "x.yaml", "output_node": "out"}, # no end
+            {"end": 5, "pipeline_ref": "x.yaml", "output_node": "out"},  # no start
+            {"start": 0, "pipeline_ref": "x.yaml", "output_node": "out"},  # no end
         ]:
-            cfg = _yaml({
-                "mode": "graph",
-                "nodes": [{"id": "iter", "kind": "iterate_loop", "config": bad_config}],
-                "edges": [],
-            })
+            cfg = _yaml(
+                {
+                    "mode": "graph",
+                    "nodes": [{"id": "iter", "kind": "iterate_loop", "config": bad_config}],
+                    "edges": [],
+                }
+            )
             with pytest.raises(PipelineValidationError):
                 validate_graph(cfg)

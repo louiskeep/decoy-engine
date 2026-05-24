@@ -38,12 +38,12 @@ class FakerStrategy(BaseMaskingStrategy):
         super().__init__(seed, logger, derive_key=derive_key)
 
     def apply(self, column: pd.Series, rule: dict[str, Any]) -> pd.Series:
-        faker_type = rule.get('faker_type', 'word')
-        column_name = rule.get('column', 'unnamed')
+        faker_type = rule.get("faker_type", "word")
+        column_name = rule.get("column", "unnamed")
         column_key = self._column_key(column_name)
-        preserve_domain = rule.get('preserve_domain', False) and faker_type == 'email'
-        locale = rule.get('locale')
-        faker_kwargs = rule.get('faker_kwargs') or {}
+        preserve_domain = rule.get("preserve_domain", False) and faker_type == "email"
+        locale = rule.get("locale")
+        faker_kwargs = rule.get("faker_kwargs") or {}
         if not isinstance(faker_kwargs, dict):
             self.logger.warning(
                 f"faker_kwargs for column {column_name!r} must be a mapping, "
@@ -58,7 +58,7 @@ class FakerStrategy(BaseMaskingStrategy):
             )
             seed_for = lambda value: hmac_seed(column_key, value)
         else:
-            rule_seed = rule.get('seed', self.seed)
+            rule_seed = rule.get("seed", self.seed)
             self.logger.debug(
                 f"Applying seeded faker (type={faker_type!r}, seed={rule_seed}, "
                 f"locale={locale!r}) to column '{column_name}'"
@@ -69,7 +69,12 @@ class FakerStrategy(BaseMaskingStrategy):
             )
 
         result = self._apply_value_seeded(
-            column, seed_for, faker_type, preserve_domain, locale, rule,
+            column,
+            seed_for,
+            faker_type,
+            preserve_domain,
+            locale,
+            rule,
             faker_kwargs,
         )
         self._log_stats(column, result, rule)
@@ -99,18 +104,16 @@ class FakerStrategy(BaseMaskingStrategy):
             fake = make_faker(locale)
             fake.seed_instance(seed_for(value))
 
-            if preserve_domain and '@' in str(value):
-                _, domain = str(value).split('@', 1)
+            if preserve_domain and "@" in str(value):
+                _, domain = str(value).split("@", 1)
                 out = f"{fake.user_name()}@{domain}"
             else:
                 providers = get_faker_providers(fake)
                 if faker_type in providers:
                     out = providers[faker_type](**faker_kwargs)
                 else:
-                    self.logger.warning(
-                        f"Unknown faker_type {faker_type!r}, using 'word' instead"
-                    )
-                    out = providers['word']()
+                    self.logger.warning(f"Unknown faker_type {faker_type!r}, using 'word' instead")
+                    out = providers["word"]()
 
             cache[cache_key] = out
             return out
@@ -142,7 +145,7 @@ class FakerStrategy(BaseMaskingStrategy):
         super().validate_rule(rule)
 
         # Faker-specific validation
-        if 'faker_type' not in rule:
+        if "faker_type" not in rule:
             # Default to 'word' if not specified
-            rule['faker_type'] = 'word'
+            rule["faker_type"] = "word"
             self.logger.debug(f"Using default faker_type: 'word' for column '{rule['column']}'")

@@ -44,12 +44,14 @@ from typing import Any
 # generator emits for a given row. ``determinism`` flips between stable
 # and fresh paths but the *config* itself is the same set of inputs;
 # determinism is recorded as a separate evidence field.
-_EXCLUDED_FROM_FINGERPRINT = frozenset({
-    "name",
-    "null_probability",
-    "determinism",
-    "_legacy_column_name_seed",
-})
+_EXCLUDED_FROM_FINGERPRINT = frozenset(
+    {
+        "name",
+        "null_probability",
+        "determinism",
+        "_legacy_column_name_seed",
+    }
+)
 
 
 def strategy_config_fingerprint(column_config: dict[str, Any]) -> str:
@@ -61,8 +63,7 @@ def strategy_config_fingerprint(column_config: dict[str, Any]) -> str:
     truncate.
     """
     payload = {
-        k: v for k, v in (column_config or {}).items()
-        if k not in _EXCLUDED_FROM_FINGERPRINT
+        k: v for k, v in (column_config or {}).items() if k not in _EXCLUDED_FROM_FINGERPRINT
     }
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
@@ -107,13 +108,13 @@ def synthetic_column_seed(
     if column_config is not None and column_config.get("determinism") == "fresh":
         return _bytes_to_seed(os.urandom(4))
 
-    if derive_key is not None and column_config is not None and column_config.get(
-        "_legacy_column_name_seed"
+    if (
+        derive_key is not None
+        and column_config is not None
+        and column_config.get("_legacy_column_name_seed")
     ):
         try:
-            return _bytes_to_seed(
-                derive_key(f"col:{column_config.get('name', 'unnamed')}")
-            )
+            return _bytes_to_seed(derive_key(f"col:{column_config.get('name', 'unnamed')}"))
         except Exception:
             pass  # fall through to fingerprint-based path
 

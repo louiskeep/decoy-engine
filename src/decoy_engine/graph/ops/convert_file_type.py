@@ -45,8 +45,7 @@ def validate_config(config: dict[str, Any]) -> None:
     fmt = config.get("format")
     if not isinstance(fmt, str) or not fmt.strip():
         raise ValidationError(
-            "missing required field 'format' "
-            f"({'|'.join(_SUPPORTED_FORMATS)})",
+            f"missing required field 'format' ({'|'.join(_SUPPORTED_FORMATS)})",
             "config.format",
         )
     if fmt.lower() not in _SUPPORTED_FORMATS:
@@ -81,17 +80,13 @@ def apply(inputs, config, ctx):
         try:
             con.register("in_table", table)
             copy_clause = _copy_clause(fmt)
-            con.execute(
-                f"COPY (SELECT * FROM in_table) TO '{path}' {copy_clause}"
-            )
+            con.execute(f"COPY (SELECT * FROM in_table) TO '{path}' {copy_clause}")
         finally:
             con.close()
     except OpError:
         raise
     except Exception as exc:
-        raise OpError(
-            f"convert.file_type: failed to write {path} as {fmt}: {exc}"
-        ) from exc
+        raise OpError(f"convert.file_type: failed to write {path} as {fmt}: {exc}") from exc
 
     # Stream semantics: pass the input through unchanged so downstream
     # nodes still see the data. target.file returns slice(0, 0) because

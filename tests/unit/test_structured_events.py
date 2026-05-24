@@ -58,21 +58,37 @@ class NarrativeOnly:
     stdlib logger, or the existing CapturingLogger in
     test_context_injection.py before this slice."""
 
-    def debug(self, msg, *args, **kwargs): pass
-    def info(self, msg, *args, **kwargs): pass
-    def warning(self, msg, *args, **kwargs): pass
-    def error(self, msg, *args, **kwargs): pass
+    def debug(self, msg, *args, **kwargs):
+        pass
+
+    def info(self, msg, *args, **kwargs):
+        pass
+
+    def warning(self, msg, *args, **kwargs):
+        pass
+
+    def error(self, msg, *args, **kwargs):
+        pass
 
 
 class Exploder:
     """Implements the structured surface but raises on every call. The
     engine must not let a logger failure escalate into a job failure."""
 
-    def step(self, *a, **kw): raise RuntimeError("boom")
-    def lineage(self, *a, **kw): raise RuntimeError("boom")
-    def fidelity(self, *a, **kw): raise RuntimeError("boom")
-    def quarantine(self, *a, **kw): raise RuntimeError("boom")
-    def throughput_sample(self, *a, **kw): raise RuntimeError("boom")
+    def step(self, *a, **kw):
+        raise RuntimeError("boom")
+
+    def lineage(self, *a, **kw):
+        raise RuntimeError("boom")
+
+    def fidelity(self, *a, **kw):
+        raise RuntimeError("boom")
+
+    def quarantine(self, *a, **kw):
+        raise RuntimeError("boom")
+
+    def throughput_sample(self, *a, **kw):
+        raise RuntimeError("boom")
 
 
 class TestEmitStep:

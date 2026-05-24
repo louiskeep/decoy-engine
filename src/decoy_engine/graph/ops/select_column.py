@@ -18,9 +18,7 @@ OUTPUT_KIND = "stream"
 def validate_config(config: dict[str, Any]) -> None:
     cols = config.get("columns")
     if not isinstance(cols, list) or not cols:
-        raise ValidationError(
-            "'columns' must be a non-empty list", "config.columns"
-        )
+        raise ValidationError("'columns' must be a non-empty list", "config.columns")
     if not all(isinstance(c, str) for c in cols):
         raise ValidationError("'columns' entries must be strings", "config.columns")
 

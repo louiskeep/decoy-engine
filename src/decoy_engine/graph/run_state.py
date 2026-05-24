@@ -29,6 +29,7 @@ design (the runner writes to it during execution) but its shape is
 fixed at instantiation. Citing this in the methodology registry would
 be over-engineering; the pattern is too universal.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -36,7 +37,6 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:  # pragma: no cover -- type-checker only
     import pyarrow as pa
-
 
 
 @dataclass

@@ -5,6 +5,7 @@ S3FileSourceContract / S3FileSinkContract subclasses provide the
 fixtures that the shared `FileSourceContract` / `FileSinkContract` base
 classes (from sdk_contract_tests) need.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -15,10 +16,10 @@ import pytest
 boto3 = pytest.importorskip("boto3")
 mock_aws = pytest.importorskip("moto").mock_aws
 
+from sdk_contract_tests import FileSinkContract, FileSourceContract  # noqa: E402
+
 from decoy_engine.connectors.s3 import S3Config, S3FileSink, S3FileSource  # noqa: E402
 from decoy_engine.sdk import PermanentError  # noqa: E402
-
-from sdk_contract_tests import FileSinkContract, FileSourceContract  # noqa: E402
 
 BUCKET = "test-bucket"
 REGION = "us-east-1"

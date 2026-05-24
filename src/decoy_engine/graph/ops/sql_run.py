@@ -25,6 +25,7 @@ NATIVE_ENGINE='duckdb' so the runner hands us a pyarrow.Table. We
 register it as `df` on a private in-memory DuckDB connection, execute,
 return Arrow.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -41,9 +42,7 @@ OUTPUT_KIND = "stream"
 def validate_config(config: dict[str, Any]) -> None:
     sql = config.get("sql")
     if not isinstance(sql, str) or not sql.strip():
-        raise ValidationError(
-            "'sql' must be a non-empty string", "config.sql"
-        )
+        raise ValidationError("'sql' must be a non-empty string", "config.sql")
 
 
 def apply(inputs, config, ctx):
@@ -63,9 +62,7 @@ def apply(inputs, config, ctx):
         try:
             con.register("df", upstream)
         except Exception as exc:
-            raise OpError(
-                f"sql_run: failed to register upstream input as `df`: {exc}"
-            ) from exc
+            raise OpError(f"sql_run: failed to register upstream input as `df`: {exc}") from exc
 
         # Execute. Catch + retype any DuckDB error as OpError so the
         # graph runner surfaces it consistently with other ops.
@@ -124,8 +121,4 @@ def _format_duckdb_error(sql: str, exc: Exception) -> str:
     # is plenty to see the shape; the operator's editor still has the
     # full text.
     sql_preview = sql if len(sql) <= 200 else sql[:197] + "..."
-    return (
-        f"sql_run: {category}.\n"
-        f"SQL: {sql_preview}\n"
-        f"{raw}"
-    )
+    return f"sql_run: {category}.\nSQL: {sql_preview}\n{raw}"

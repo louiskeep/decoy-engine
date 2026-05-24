@@ -69,9 +69,7 @@ def validate_config(config: dict[str, Any]) -> None:
         )
 
     strat = config.get("sample_strategy", "full")
-    if not isinstance(strat, str) or strat not in (
-        "full", "head", "random", "stratified"
-    ):
+    if not isinstance(strat, str) or strat not in ("full", "head", "random", "stratified"):
         raise ValidationError(
             "'sample_strategy' must be one of full / head / random / stratified",
             "config.sample_strategy",
@@ -151,6 +149,7 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
         # can pin to a specific scan output.
         import hashlib as _hashlib
         import json as _json
+
         profile_dict = profile.to_dict()
         body = _json.dumps(profile_dict, sort_keys=True, default=str).encode("utf-8")
         ctx.export("profile_hash", _hashlib.sha256(body).hexdigest())

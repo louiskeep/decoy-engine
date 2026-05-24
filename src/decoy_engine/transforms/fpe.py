@@ -35,9 +35,9 @@ import pandas as pd
 from decoy_engine.transforms.base import BaseMaskingStrategy
 
 _CHARSETS: dict[str, str] = {
-    "digits":   "0123456789",
-    "alpha":    "abcdefghijklmnopqrstuvwxyz",
-    "ALPHA":    "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+    "digits": "0123456789",
+    "alpha": "abcdefghijklmnopqrstuvwxyz",
+    "ALPHA": "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
     "alphanum": "0123456789abcdefghijklmnopqrstuvwxyz",
     "ALPHANUM": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
 }
@@ -155,9 +155,7 @@ class FPEStrategy(BaseMaskingStrategy):
             key = column_key
             self.logger.debug(f"Applying keyed FPE to column '{column_name}'")
         else:
-            self.logger.debug(
-                f"Applying legacy FPE (no master key) to column '{column_name}'"
-            )
+            self.logger.debug(f"Applying legacy FPE (no master key) to column '{column_name}'")
             seed_material = f"fpe-legacy-{self.seed}-{column_name}".encode()
             key = hashlib.sha256(seed_material).digest()
 
@@ -242,8 +240,8 @@ class FPEStrategy(BaseMaskingStrategy):
             F = int.from_bytes(hmac.new(key, msg, hashlib.sha256).digest(), "big")
             return charset[(idx + F) % len(charset)]
 
-        u = (n + 1) // 2   # ceil(n/2)
-        v = n - u            # floor(n/2)
+        u = (n + 1) // 2  # ceil(n/2)
+        v = n - u  # floor(n/2)
         u_mod = len(charset) ** u
         v_mod = len(charset) ** v
 
@@ -263,7 +261,5 @@ class FPEStrategy(BaseMaskingStrategy):
         try:
             return self.derive_key("mask")
         except Exception as exc:
-            self.logger.warning(
-                f"derive_key failed for 'mask' ({exc}); falling back to legacy FPE"
-            )
+            self.logger.warning(f"derive_key failed for 'mask' ({exc}); falling back to legacy FPE")
             return None

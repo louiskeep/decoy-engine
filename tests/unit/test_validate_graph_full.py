@@ -16,13 +16,11 @@ Sprint 2.2 additions:
 Sprint 2.3 additions:
   - strict=True rejects target.file nodes with inferred (not declared) format
 """
+
 from __future__ import annotations
 
-import pytest
-
-from decoy_engine import validate_graph_full, VALIDATION_CODES
+from decoy_engine import VALIDATION_CODES, validate_graph_full
 from decoy_engine.validation_result import ValidationResult
-
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -68,6 +66,7 @@ edges:
 # Return type and happy-path
 # ---------------------------------------------------------------------------
 
+
 class TestReturnType:
     def test_returns_validation_result(self):
         res = validate_graph_full(_SRC_TGT)
@@ -94,6 +93,7 @@ class TestReturnType:
 # Deep copy: normalized_config is independent of any internally-held dict
 # ---------------------------------------------------------------------------
 
+
 class TestDeepCopy:
     def test_mutating_normalized_config_does_not_affect_next_call(self):
         res1 = validate_graph_full(_SRC_TGT)
@@ -110,6 +110,7 @@ class TestDeepCopy:
 # Format inference: normalized_config contains back-filled target format
 # ---------------------------------------------------------------------------
 
+
 class TestFormatNormalization:
     def test_target_format_inferred_from_source_in_normalized_config(self):
         res = validate_graph_full(_SRC_TGT_NO_TARGET_FORMAT)
@@ -124,6 +125,7 @@ class TestFormatNormalization:
 # Stage-level early exit: top-level failure stops immediately
 # ---------------------------------------------------------------------------
 
+
 class TestTopLevelEarlyExit:
     def test_bad_mode_stops_at_stage_1(self):
         yaml_text = _SRC_TGT.replace("mode: graph", "mode: legacy")
@@ -134,6 +136,7 @@ class TestTopLevelEarlyExit:
 
     def test_empty_nodes_stops_at_stage_1(self):
         import yaml
+
         yaml_text = yaml.safe_dump({"mode": "graph", "nodes": []})
         res = validate_graph_full(yaml_text)
         assert not res.ok
@@ -143,6 +146,7 @@ class TestTopLevelEarlyExit:
 # ---------------------------------------------------------------------------
 # Cross-node stage independence: stages 6, 7, 8 run independently
 # ---------------------------------------------------------------------------
+
 
 class TestCrossNodeStageIndependence:
     """When the graph passes structural validation (stages 1-5), the three
@@ -202,6 +206,7 @@ edges:
 # Strict parameter
 # ---------------------------------------------------------------------------
 
+
 class TestStrictParam:
     def test_strict_true_accepted_on_valid_graph(self):
         res = validate_graph_full(_SRC_TGT, strict=True)
@@ -216,6 +221,7 @@ class TestStrictParam:
 # Errors carry stable codes and human-readable messages
 # ---------------------------------------------------------------------------
 
+
 class TestErrorShape:
     def test_error_has_code_and_message(self):
         yaml_text = _SRC_TGT.replace("mode: graph", "mode: bad")
@@ -227,12 +233,15 @@ class TestErrorShape:
 
     def test_unknown_kind_error_has_path(self):
         import yaml
-        yaml_text = yaml.safe_dump({
-            "mode": "graph",
-            "schema_version": 1,
-            "nodes": [{"id": "src", "kind": "source.bogus", "config": {}}],
-            "edges": [],
-        })
+
+        yaml_text = yaml.safe_dump(
+            {
+                "mode": "graph",
+                "schema_version": 1,
+                "nodes": [{"id": "src", "kind": "source.bogus", "config": {}}],
+                "edges": [],
+            }
+        )
         res = validate_graph_full(yaml_text)
         assert not res.ok
         err = next(e for e in res.errors if e.code == VALIDATION_CODES.NODE_UNKNOWN_KIND)
@@ -243,6 +252,7 @@ class TestErrorShape:
 # Sprint 2.2: nodes stage collects ALL per-node errors in one pass
 # ---------------------------------------------------------------------------
 
+
 class TestNodeStageMultiError:
     """R2.2: _validate_nodes_collecting gathers all per-node errors before
     returning, so a graph with N bad nodes shows N errors in one pass rather
@@ -250,35 +260,45 @@ class TestNodeStageMultiError:
 
     def test_two_bad_kind_nodes_both_reported(self):
         import yaml as _yaml
-        yaml_text = _yaml.safe_dump({
-            "mode": "graph",
-            "nodes": [
-                {"id": "a", "kind": "source.bogus_a", "config": {}},
-                {"id": "b", "kind": "source.bogus_b", "config": {}},
-            ],
-            "edges": [],
-        })
+
+        yaml_text = _yaml.safe_dump(
+            {
+                "mode": "graph",
+                "nodes": [
+                    {"id": "a", "kind": "source.bogus_a", "config": {}},
+                    {"id": "b", "kind": "source.bogus_b", "config": {}},
+                ],
+                "edges": [],
+            }
+        )
         res = validate_graph_full(yaml_text)
         assert not res.ok
-        unknown_kind_errors = [e for e in res.errors if e.code == VALIDATION_CODES.NODE_UNKNOWN_KIND]
+        unknown_kind_errors = [
+            e for e in res.errors if e.code == VALIDATION_CODES.NODE_UNKNOWN_KIND
+        ]
         assert len(unknown_kind_errors) == 2, (
             f"Expected 2 NODE_UNKNOWN_KIND errors, got {len(unknown_kind_errors)}: {res.errors}"
         )
 
     def test_three_bad_kind_nodes_all_reported(self):
         import yaml as _yaml
-        yaml_text = _yaml.safe_dump({
-            "mode": "graph",
-            "nodes": [
-                {"id": "a", "kind": "bogus.x", "config": {}},
-                {"id": "b", "kind": "bogus.y", "config": {}},
-                {"id": "c", "kind": "bogus.z", "config": {}},
-            ],
-            "edges": [],
-        })
+
+        yaml_text = _yaml.safe_dump(
+            {
+                "mode": "graph",
+                "nodes": [
+                    {"id": "a", "kind": "bogus.x", "config": {}},
+                    {"id": "b", "kind": "bogus.y", "config": {}},
+                    {"id": "c", "kind": "bogus.z", "config": {}},
+                ],
+                "edges": [],
+            }
+        )
         res = validate_graph_full(yaml_text)
         assert not res.ok
-        unknown_kind_errors = [e for e in res.errors if e.code == VALIDATION_CODES.NODE_UNKNOWN_KIND]
+        unknown_kind_errors = [
+            e for e in res.errors if e.code == VALIDATION_CODES.NODE_UNKNOWN_KIND
+        ]
         assert len(unknown_kind_errors) == 3, (
             f"Expected 3 NODE_UNKNOWN_KIND errors, got {len(unknown_kind_errors)}: {res.errors}"
         )
@@ -287,35 +307,41 @@ class TestNodeStageMultiError:
         """Node 0 has an invalid ID (starts with digit); node 1 has an unknown kind.
         Both errors must appear in the result."""
         import yaml as _yaml
-        yaml_text = _yaml.safe_dump({
-            "mode": "graph",
-            "nodes": [
-                {"id": "1badid", "kind": "source.file", "config": {"path": "f.csv", "format": "csv"}},
-                {"id": "node_b", "kind": "source.bogus", "config": {}},
-            ],
-            "edges": [],
-        })
+
+        yaml_text = _yaml.safe_dump(
+            {
+                "mode": "graph",
+                "nodes": [
+                    {
+                        "id": "1badid",
+                        "kind": "source.file",
+                        "config": {"path": "f.csv", "format": "csv"},
+                    },
+                    {"id": "node_b", "kind": "source.bogus", "config": {}},
+                ],
+                "edges": [],
+            }
+        )
         res = validate_graph_full(yaml_text)
         assert not res.ok
         codes = {e.code for e in res.errors}
-        assert VALIDATION_CODES.NODE_BAD_ID in codes, (
-            f"Expected NODE_BAD_ID in {codes}"
-        )
-        assert VALIDATION_CODES.NODE_UNKNOWN_KIND in codes, (
-            f"Expected NODE_UNKNOWN_KIND in {codes}"
-        )
+        assert VALIDATION_CODES.NODE_BAD_ID in codes, f"Expected NODE_BAD_ID in {codes}"
+        assert VALIDATION_CODES.NODE_UNKNOWN_KIND in codes, f"Expected NODE_UNKNOWN_KIND in {codes}"
 
     def test_error_paths_identify_individual_nodes(self):
         """Each error must carry a path that points to its specific node."""
         import yaml as _yaml
-        yaml_text = _yaml.safe_dump({
-            "mode": "graph",
-            "nodes": [
-                {"id": "a", "kind": "bogus.one", "config": {}},
-                {"id": "b", "kind": "bogus.two", "config": {}},
-            ],
-            "edges": [],
-        })
+
+        yaml_text = _yaml.safe_dump(
+            {
+                "mode": "graph",
+                "nodes": [
+                    {"id": "a", "kind": "bogus.one", "config": {}},
+                    {"id": "b", "kind": "bogus.two", "config": {}},
+                ],
+                "edges": [],
+            }
+        )
         res = validate_graph_full(yaml_text)
         paths = [e.path for e in res.errors if e.code == VALIDATION_CODES.NODE_UNKNOWN_KIND]
         assert len(paths) == 2
@@ -326,14 +352,17 @@ class TestNodeStageMultiError:
         """Node 0 is bad; node 1 is also bad. Node 1's error must appear
         even though node 0 already failed."""
         import yaml as _yaml
-        yaml_text = _yaml.safe_dump({
-            "mode": "graph",
-            "nodes": [
-                {"id": "first", "kind": "not.a.kind", "config": {}},
-                {"id": "second", "kind": "also.not.a.kind", "config": {}},
-            ],
-            "edges": [],
-        })
+
+        yaml_text = _yaml.safe_dump(
+            {
+                "mode": "graph",
+                "nodes": [
+                    {"id": "first", "kind": "not.a.kind", "config": {}},
+                    {"id": "second", "kind": "also.not.a.kind", "config": {}},
+                ],
+                "edges": [],
+            }
+        )
         res = validate_graph_full(yaml_text)
         assert not res.ok
         kind_errors = [e for e in res.errors if e.code == VALIDATION_CODES.NODE_UNKNOWN_KIND]
@@ -345,6 +374,7 @@ class TestNodeStageMultiError:
 # ---------------------------------------------------------------------------
 # Sprint 2.3: strict=True rejects target.file with inferred (not declared) format
 # ---------------------------------------------------------------------------
+
 
 class TestStrictModeFormatInference:
     """R2.3 strict mode: when strict=True, a target.file node that omits
@@ -366,10 +396,7 @@ class TestStrictModeFormatInference:
     def test_strict_error_carries_path_to_format_field(self):
         res = validate_graph_full(_SRC_TGT_NO_TARGET_FORMAT, strict=True)
         assert not res.ok
-        err = next(
-            e for e in res.errors
-            if e.code == VALIDATION_CODES.TARGET_FILE_FORMAT_INFERRED
-        )
+        err = next(e for e in res.errors if e.code == VALIDATION_CODES.TARGET_FILE_FORMAT_INFERRED)
         assert err.path is not None
         assert "format" in err.path
 
@@ -381,6 +408,4 @@ class TestStrictModeFormatInference:
         res = validate_graph_full(_SRC_TGT_NO_TARGET_FORMAT)
         assert res.ok
         tgt_cfg = res.normalized_config["nodes"][1]["config"]
-        assert tgt_cfg.get("format") == "csv", (
-            f"Expected back-filled format='csv', got: {tgt_cfg}"
-        )
+        assert tgt_cfg.get("format") == "csv", f"Expected back-filled format='csv', got: {tgt_cfg}"

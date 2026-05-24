@@ -15,12 +15,12 @@ What the fake does not cover: signed-URL generation, resumable-session
 state, server-side encryption. Tests that need those should run against
 the real GCS or gcp-storage-emulator (out of scope for Sprint G Week 3).
 """
+
 from __future__ import annotations
 
 import io
 import json
 from datetime import datetime, timezone
-from typing import Optional
 
 import pytest
 
@@ -32,15 +32,14 @@ import pytest
 # submodule directly. Skips the file cleanly when the cloud SDK is absent.
 gax_exc = pytest.importorskip("google.api_core.exceptions")
 
+from sdk_contract_tests import FileSinkContract, FileSourceContract  # noqa: E402
+
 from decoy_engine.connectors.gcs import (  # noqa: E402
     GCSConfig,
     GCSFileSink,
     GCSFileSource,
 )
 from decoy_engine.sdk import PermanentError  # noqa: E402
-
-from sdk_contract_tests import FileSinkContract, FileSourceContract  # noqa: E402
-
 
 # ----- Fake google-cloud-storage layer -----------------------------------
 
@@ -110,7 +109,7 @@ class _FakeBucket:
         self.name = name
         self._exists = exists
 
-    def list_blobs(self, prefix: Optional[str] = None):
+    def list_blobs(self, prefix: str | None = None):
         for key, entry in sorted(self.store.items()):
             if prefix and not key.startswith(prefix):
                 continue
@@ -127,7 +126,7 @@ class _FakeBucket:
 class _FakeStorageClient:
     """Minimal google.cloud.storage.Client surrogate."""
 
-    def __init__(self, store: dict, *, project: Optional[str] = None, credentials=None):
+    def __init__(self, store: dict, *, project: str | None = None, credentials=None):
         self.project = project
         self.credentials = credentials
         self._store = store
@@ -224,6 +223,7 @@ class TestGCSFileSinkContract(FileSinkContract):
     def reader_for(self, gcs_store):
         def _read(path: str) -> bytes:
             return gcs_store[path]["body"]
+
         return _read
 
 

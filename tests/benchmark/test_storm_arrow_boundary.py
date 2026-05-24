@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import time
 
-import pandas as pd
 import pyarrow as pa
 import pytest
 
@@ -32,16 +31,19 @@ def _hipaa_shaped_fixture(rows: int) -> pa.Table:
     STORM tends to scan in production.
     """
     base = {
-        "patient_id":  list(range(rows)),
-        "first_name":  ["Alice", "Bob", "Carol", "Dave", "Eve"] * (rows // 5 + 1),
-        "last_name":   ["Smith", "Jones", "Davis", "Martin", "Wilson"] * (rows // 5 + 1),
-        "ssn":         ["123-45-6789", "555-12-3456", "111-22-3333", "444-55-6677", "222-99-1212"] * (rows // 5 + 1),
-        "dob":         ["1985-03-15", "1990-07-22", "0001-01-01", "1972-11-08", "9999-12-31"] * (rows // 5 + 1),
-        "zip":         ["90210", "10001", "60601", "94102", "02134"] * (rows // 5 + 1),
-        "email":       ["a@b.com", "c@d.org", "e@f.io", "g@h.co", "i@j.net"] * (rows // 5 + 1),
-        "phone":       ["555-234-5678", "555-345-6789", "555-456-7890", "555-567-8901", "555-678-9012"] * (rows // 5 + 1),
-        "amount":      [10.5, 20.25, 30.75, 40.0, 50.5] * (rows // 5 + 1),
-        "score":       [0.1, 0.5, 0.9, 0.3, 0.7] * (rows // 5 + 1),
+        "patient_id": list(range(rows)),
+        "first_name": ["Alice", "Bob", "Carol", "Dave", "Eve"] * (rows // 5 + 1),
+        "last_name": ["Smith", "Jones", "Davis", "Martin", "Wilson"] * (rows // 5 + 1),
+        "ssn": ["123-45-6789", "555-12-3456", "111-22-3333", "444-55-6677", "222-99-1212"]
+        * (rows // 5 + 1),
+        "dob": ["1985-03-15", "1990-07-22", "0001-01-01", "1972-11-08", "9999-12-31"]
+        * (rows // 5 + 1),
+        "zip": ["90210", "10001", "60601", "94102", "02134"] * (rows // 5 + 1),
+        "email": ["a@b.com", "c@d.org", "e@f.io", "g@h.co", "i@j.net"] * (rows // 5 + 1),
+        "phone": ["555-234-5678", "555-345-6789", "555-456-7890", "555-567-8901", "555-678-9012"]
+        * (rows // 5 + 1),
+        "amount": [10.5, 20.25, 30.75, 40.0, 50.5] * (rows // 5 + 1),
+        "score": [0.1, 0.5, 0.9, 0.3, 0.7] * (rows // 5 + 1),
     }
     truncated = {k: v[:rows] for k, v in base.items()}
     return pa.Table.from_pydict(truncated)

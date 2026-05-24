@@ -32,6 +32,7 @@ Standard pattern; cited in the methodology-registry only if the
 project decides peak-RSS monitoring is a load-bearing methodology
 worth pinning. For now it is mechanical utility code.
 """
+
 from __future__ import annotations
 
 import os
@@ -42,9 +43,7 @@ from typing import Any
 # memory-pressure warning at the end of a run. Set via env var so
 # operators can tune without touching code. Default 0.7 matches the
 # documented "70% of system RAM" line in the engineering docs.
-MEMORY_WARN_THRESHOLD = float(
-    os.environ.get("DECOY_MEMORY_WARN_THRESHOLD", "0.7")
-)
+MEMORY_WARN_THRESHOLD = float(os.environ.get("DECOY_MEMORY_WARN_THRESHOLD", "0.7"))
 
 
 class PeakRSSMonitor:
@@ -68,6 +67,7 @@ class PeakRSSMonitor:
         self._psutil: Any = None
         try:
             import psutil
+
             self._psutil = psutil
         except ImportError:
             self._psutil = None
@@ -118,6 +118,7 @@ def check_memory_pressure(
         return
     try:
         import psutil
+
         total_bytes = psutil.virtual_memory().total
     except Exception:
         return
@@ -133,11 +134,15 @@ def check_memory_pressure(
             "`engine: pandas` in your pipeline YAML to reduce peak memory "
             "by ~2x (trade-off: ~2-3x slower CPU). See "
             "SHARED_ENGINE_ARCHITECTURE.md.",
-            peak_gb, int(fraction * 100), total_gb,
+            peak_gb,
+            int(fraction * 100),
+            total_gb,
         )
     else:
         log.warning(
             "Pipeline peak memory: %.1f GB (%d%% of %.1f GB system RAM). "
             "Job is memory-tight; consider running on a larger instance.",
-            peak_gb, int(fraction * 100), total_gb,
+            peak_gb,
+            int(fraction * 100),
+            total_gb,
         )

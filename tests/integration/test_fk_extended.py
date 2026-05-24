@@ -24,11 +24,11 @@ kinds shipped after Sprint 4:
     the metric exports to ctx so the manifest assembler hydrates
     the pk_uniqueness section.
 """
+
 from __future__ import annotations
 
 import pandas as pd
 import pyarrow as pa
-import pytest
 import yaml as _yaml
 
 from decoy_engine.context import ExecutionContext, make_key_resolver
@@ -54,25 +54,32 @@ class TestSelfReference:
         cfg = {
             "mode": "graph",
             "nodes": [
-                {"id": "synth_emp", "kind": "generate",
-                 "config": {
-                     "row_count": 10,
-                     "columns": {
-                         "id":         {"strategy": "sequence", "start": 1000},
-                         "manager_id": {"strategy": "faker", "faker_type": "word"},
-                     },
-                 }},
-                {"id": "tgt", "kind": "target.file",
-                 "config": {"output_filename": str(tmp_path / "emp.csv"),
-                            "format": "csv"}},
+                {
+                    "id": "synth_emp",
+                    "kind": "generate",
+                    "config": {
+                        "row_count": 10,
+                        "columns": {
+                            "id": {"strategy": "sequence", "start": 1000},
+                            "manager_id": {"strategy": "faker", "faker_type": "word"},
+                        },
+                    },
+                },
+                {
+                    "id": "tgt",
+                    "kind": "target.file",
+                    "config": {"output_filename": str(tmp_path / "emp.csv"), "format": "csv"},
+                },
             ],
             "edges": [
                 {"from": "synth_emp", "to": "tgt"},
             ],
             "column_relationships": [
-                {"kind": "fk",
-                 "parent": {"node": "synth_emp", "column": "id"},
-                 "child":  {"node": "synth_emp", "column": "manager_id"}},
+                {
+                    "kind": "fk",
+                    "parent": {"node": "synth_emp", "column": "id"},
+                    "child": {"node": "synth_emp", "column": "manager_id"},
+                },
             ],
         }
         ctx = ExecutionContext(
@@ -80,40 +87,50 @@ class TestSelfReference:
             pipeline_derive_key=make_key_resolver(b"\x33" * 32, "test-pipeline"),
         )
         result, cache = execute_graph_capture(
-            _y(cfg), ctx=ctx, keep_nodes=["synth_emp"],
+            _y(cfg),
+            ctx=ctx,
+            keep_nodes=["synth_emp"],
         )
         assert result["success"], f"run failed: {result}"
         ids = set(_column_values(cache["synth_emp"], "id"))
         mids = set(_column_values(cache["synth_emp"], "manager_id"))
         # Every manager_id must be one of the produced ids (self-ref FK).
-        assert mids.issubset(ids), (
-            f"self-ref violation: manager_ids not in ids: {mids - ids}"
-        )
+        assert mids.issubset(ids), f"self-ref violation: manager_ids not in ids: {mids - ids}"
 
     def test_self_ref_deterministic_with_same_key(self, tmp_path):
         """Same pipeline key -> same per-row manager assignment."""
+
         def _build_cfg(out_path):
             return {
                 "mode": "graph",
                 "nodes": [
-                    {"id": "synth_emp", "kind": "generate",
-                     "config": {
-                         "row_count": 5,
-                         "columns": {
-                             "id":         {"strategy": "sequence", "start": 1},
-                             "manager_id": {"strategy": "faker", "faker_type": "word"},
-                         },
-                     }},
-                    {"id": "tgt", "kind": "target.file",
-                     "config": {"output_filename": out_path, "format": "csv"}},
+                    {
+                        "id": "synth_emp",
+                        "kind": "generate",
+                        "config": {
+                            "row_count": 5,
+                            "columns": {
+                                "id": {"strategy": "sequence", "start": 1},
+                                "manager_id": {"strategy": "faker", "faker_type": "word"},
+                            },
+                        },
+                    },
+                    {
+                        "id": "tgt",
+                        "kind": "target.file",
+                        "config": {"output_filename": out_path, "format": "csv"},
+                    },
                 ],
                 "edges": [{"from": "synth_emp", "to": "tgt"}],
                 "column_relationships": [
-                    {"kind": "fk",
-                     "parent": {"node": "synth_emp", "column": "id"},
-                     "child":  {"node": "synth_emp", "column": "manager_id"}},
+                    {
+                        "kind": "fk",
+                        "parent": {"node": "synth_emp", "column": "id"},
+                        "child": {"node": "synth_emp", "column": "manager_id"},
+                    },
                 ],
             }
+
         key = b"\x99" * 32
         runs = []
         for i in range(2):
@@ -123,17 +140,20 @@ class TestSelfReference:
             )
             _, cache = execute_graph_capture(
                 _y(_build_cfg(str(tmp_path / f"r{i}.csv"))),
-                ctx=ctx, keep_nodes=["synth_emp"],
+                ctx=ctx,
+                keep_nodes=["synth_emp"],
             )
-            runs.append([
-                (str(a), str(b)) for a, b in zip(
-                    _column_values(cache["synth_emp"], "id"),
-                    _column_values(cache["synth_emp"], "manager_id"),
-                )
-            ])
-        assert runs[0] == runs[1], (
-            "self-ref FK should be deterministic with the same pipeline key"
-        )
+            runs.append(
+                [
+                    (str(a), str(b))
+                    for a, b in zip(
+                        _column_values(cache["synth_emp"], "id"),
+                        _column_values(cache["synth_emp"], "manager_id"),
+                        strict=False,
+                    )
+                ]
+            )
+        assert runs[0] == runs[1], "self-ref FK should be deterministic with the same pipeline key"
 
 
 class TestManyToMany:
@@ -143,37 +163,66 @@ class TestManyToMany:
         cfg = {
             "mode": "graph",
             "nodes": [
-                {"id": "students", "kind": "generate",
-                 "config": {"row_count": 3, "columns": {
-                     "id": {"strategy": "sequence", "start": 1},
-                 }}},
-                {"id": "courses", "kind": "generate",
-                 "config": {"row_count": 4, "columns": {
-                     "id": {"strategy": "sequence", "start": 100},
-                 }}},
-                {"id": "enrollments", "kind": "generate",
-                 "config": {"row_count": 12, "columns": {
-                     "student_id": {"strategy": "faker", "faker_type": "word"},
-                     "course_id":  {"strategy": "faker", "faker_type": "word"},
-                 }}},
-                {"id": "tgt_s", "kind": "target.file",
-                 "config": {"output_filename": str(tmp_path / "s.csv"), "format": "csv"}},
-                {"id": "tgt_c", "kind": "target.file",
-                 "config": {"output_filename": str(tmp_path / "c.csv"), "format": "csv"}},
-                {"id": "tgt_e", "kind": "target.file",
-                 "config": {"output_filename": str(tmp_path / "e.csv"), "format": "csv"}},
+                {
+                    "id": "students",
+                    "kind": "generate",
+                    "config": {
+                        "row_count": 3,
+                        "columns": {
+                            "id": {"strategy": "sequence", "start": 1},
+                        },
+                    },
+                },
+                {
+                    "id": "courses",
+                    "kind": "generate",
+                    "config": {
+                        "row_count": 4,
+                        "columns": {
+                            "id": {"strategy": "sequence", "start": 100},
+                        },
+                    },
+                },
+                {
+                    "id": "enrollments",
+                    "kind": "generate",
+                    "config": {
+                        "row_count": 12,
+                        "columns": {
+                            "student_id": {"strategy": "faker", "faker_type": "word"},
+                            "course_id": {"strategy": "faker", "faker_type": "word"},
+                        },
+                    },
+                },
+                {
+                    "id": "tgt_s",
+                    "kind": "target.file",
+                    "config": {"output_filename": str(tmp_path / "s.csv"), "format": "csv"},
+                },
+                {
+                    "id": "tgt_c",
+                    "kind": "target.file",
+                    "config": {"output_filename": str(tmp_path / "c.csv"), "format": "csv"},
+                },
+                {
+                    "id": "tgt_e",
+                    "kind": "target.file",
+                    "config": {"output_filename": str(tmp_path / "e.csv"), "format": "csv"},
+                },
             ],
             "edges": [
                 {"from": "students", "to": "tgt_s"},
-                {"from": "courses",  "to": "tgt_c"},
+                {"from": "courses", "to": "tgt_c"},
                 {"from": "enrollments", "to": "tgt_e"},
             ],
             "column_relationships": [
-                {"kind": "m2m",
-                 "junction":    {"node": "enrollments", "columns": ["student_id", "course_id"]},
-                 "left_parent":  {"node": "students", "column": "id"},
-                 "right_parent": {"node": "courses",  "column": "id"},
-                 "pool_strategy": "cartesian"},
+                {
+                    "kind": "m2m",
+                    "junction": {"node": "enrollments", "columns": ["student_id", "course_id"]},
+                    "left_parent": {"node": "students", "column": "id"},
+                    "right_parent": {"node": "courses", "column": "id"},
+                    "pool_strategy": "cartesian",
+                },
             ],
         }
         ctx = ExecutionContext(
@@ -181,14 +230,18 @@ class TestManyToMany:
             pipeline_derive_key=make_key_resolver(b"\x33" * 32, "m2m-test"),
         )
         result, cache = execute_graph_capture(
-            _y(cfg), ctx=ctx,
+            _y(cfg),
+            ctx=ctx,
             keep_nodes=["students", "courses", "enrollments"],
         )
         assert result["success"], f"m2m cartesian run failed: {result}"
-        pairs = list(zip(
-            _column_values(cache["enrollments"], "student_id"),
-            _column_values(cache["enrollments"], "course_id"),
-        ))
+        pairs = list(
+            zip(
+                _column_values(cache["enrollments"], "student_id"),
+                _column_values(cache["enrollments"], "course_id"),
+                strict=False,
+            )
+        )
         # 3 students x 4 courses = 12 pairs.
         assert len(pairs) == 12, f"cartesian should emit 12 pairs, got {len(pairs)}"
         # Every pair is a unique (student, course) combination.
@@ -201,42 +254,70 @@ class TestManyToMany:
         cfg = {
             "mode": "graph",
             "nodes": [
-                {"id": "students", "kind": "generate",
-                 "config": {"row_count": 5, "columns": {
-                     "id": {"strategy": "sequence", "start": 1},
-                 }}},
-                {"id": "courses", "kind": "generate",
-                 "config": {"row_count": 3, "columns": {
-                     "id": {"strategy": "sequence", "start": 100},
-                 }}},
-                {"id": "enrollments", "kind": "generate",
-                 "config": {"row_count": 200, "columns": {
-                     "student_id": {"strategy": "faker", "faker_type": "word"},
-                     "course_id":  {"strategy": "faker", "faker_type": "word"},
-                 }}},
-                {"id": "tgt_s", "kind": "target.file",
-                 "config": {"output_filename": str(tmp_path / "s.csv"), "format": "csv"}},
-                {"id": "tgt_c", "kind": "target.file",
-                 "config": {"output_filename": str(tmp_path / "c.csv"), "format": "csv"}},
-                {"id": "tgt_e", "kind": "target.file",
-                 "config": {"output_filename": str(tmp_path / "e.csv"), "format": "csv"}},
+                {
+                    "id": "students",
+                    "kind": "generate",
+                    "config": {
+                        "row_count": 5,
+                        "columns": {
+                            "id": {"strategy": "sequence", "start": 1},
+                        },
+                    },
+                },
+                {
+                    "id": "courses",
+                    "kind": "generate",
+                    "config": {
+                        "row_count": 3,
+                        "columns": {
+                            "id": {"strategy": "sequence", "start": 100},
+                        },
+                    },
+                },
+                {
+                    "id": "enrollments",
+                    "kind": "generate",
+                    "config": {
+                        "row_count": 200,
+                        "columns": {
+                            "student_id": {"strategy": "faker", "faker_type": "word"},
+                            "course_id": {"strategy": "faker", "faker_type": "word"},
+                        },
+                    },
+                },
+                {
+                    "id": "tgt_s",
+                    "kind": "target.file",
+                    "config": {"output_filename": str(tmp_path / "s.csv"), "format": "csv"},
+                },
+                {
+                    "id": "tgt_c",
+                    "kind": "target.file",
+                    "config": {"output_filename": str(tmp_path / "c.csv"), "format": "csv"},
+                },
+                {
+                    "id": "tgt_e",
+                    "kind": "target.file",
+                    "config": {"output_filename": str(tmp_path / "e.csv"), "format": "csv"},
+                },
             ],
             "edges": [
                 {"from": "students", "to": "tgt_s"},
-                {"from": "courses",  "to": "tgt_c"},
+                {"from": "courses", "to": "tgt_c"},
                 {"from": "enrollments", "to": "tgt_e"},
             ],
             "column_relationships": [
-                {"kind": "m2m",
-                 "junction":    {"node": "enrollments", "columns": ["student_id", "course_id"]},
-                 "left_parent":  {"node": "students", "column": "id"},
-                 "right_parent": {"node": "courses",  "column": "id"},
-                 "pool_strategy": "weighted",
-                 # Right side: course 100 is the popular one (weight 95);
-                 # 101 + 102 are unpopular (5 + 0). The output should be
-                 # dominated by course_id=100.
-                 "right_weights": [95.0, 5.0, 0.0],
-                 # Left side: leave weights off -> uniform.
+                {
+                    "kind": "m2m",
+                    "junction": {"node": "enrollments", "columns": ["student_id", "course_id"]},
+                    "left_parent": {"node": "students", "column": "id"},
+                    "right_parent": {"node": "courses", "column": "id"},
+                    "pool_strategy": "weighted",
+                    # Right side: course 100 is the popular one (weight 95);
+                    # 101 + 102 are unpopular (5 + 0). The output should be
+                    # dominated by course_id=100.
+                    "right_weights": [95.0, 5.0, 0.0],
+                    # Left side: leave weights off -> uniform.
                 },
             ],
         }
@@ -245,16 +326,16 @@ class TestManyToMany:
             pipeline_derive_key=make_key_resolver(b"\x33" * 32, "m2m-weighted-test"),
         )
         result, cache = execute_graph_capture(
-            _y(cfg), ctx=ctx,
+            _y(cfg),
+            ctx=ctx,
             keep_nodes=["students", "courses", "enrollments"],
         )
         assert result["success"], f"m2m weighted run failed: {result}"
         from collections import Counter
+
         # Values in the cache round-trip as strings via the CSV target;
         # normalize to ints so the assertions don't depend on storage type.
-        course_counts = Counter(
-            int(v) for v in _column_values(cache["enrollments"], "course_id")
-        )
+        course_counts = Counter(int(v) for v in _column_values(cache["enrollments"], "course_id"))
         # Course 100 should dominate (weight 95 out of 100 total).
         assert course_counts[100] > course_counts[101] * 5, (
             f"weighted m2m didn't bias toward course 100: {course_counts}"
@@ -274,8 +355,10 @@ class TestCustomProviderPool:
         """A generate child column wired to a custom-provider parent
         produces values exclusively from that provider's list."""
         from decoy_engine.internal.helpers import (
-            register_faker_list_provider, unregister_faker_provider,
+            register_faker_list_provider,
+            unregister_faker_provider,
         )
+
         # Register a small list-backed provider for the test.
         provider_name = "test_ca_zips"
         ca_zips = ["94016", "94102", "94110", "95014", "90210"]
@@ -284,19 +367,30 @@ class TestCustomProviderPool:
             cfg = {
                 "mode": "graph",
                 "nodes": [
-                    {"id": "addresses", "kind": "generate",
-                     "config": {"row_count": 100, "columns": {
-                         "id": {"strategy": "sequence", "start": 1},
-                         "postal_code": {"strategy": "faker", "faker_type": "word"},
-                     }}},
-                    {"id": "tgt", "kind": "target.file",
-                     "config": {"output_filename": str(tmp_path / "a.csv"), "format": "csv"}},
+                    {
+                        "id": "addresses",
+                        "kind": "generate",
+                        "config": {
+                            "row_count": 100,
+                            "columns": {
+                                "id": {"strategy": "sequence", "start": 1},
+                                "postal_code": {"strategy": "faker", "faker_type": "word"},
+                            },
+                        },
+                    },
+                    {
+                        "id": "tgt",
+                        "kind": "target.file",
+                        "config": {"output_filename": str(tmp_path / "a.csv"), "format": "csv"},
+                    },
                 ],
                 "edges": [{"from": "addresses", "to": "tgt"}],
                 "column_relationships": [
-                    {"kind": "fk",
-                     "parent": {"custom_provider": provider_name},
-                     "child":  {"node": "addresses", "column": "postal_code"}},
+                    {
+                        "kind": "fk",
+                        "parent": {"custom_provider": provider_name},
+                        "child": {"node": "addresses", "column": "postal_code"},
+                    },
                 ],
             }
             ctx = ExecutionContext(
@@ -304,15 +398,16 @@ class TestCustomProviderPool:
                 pipeline_derive_key=make_key_resolver(b"\x33" * 32, "cp-test"),
             )
             result, cache = execute_graph_capture(
-                _y(cfg), ctx=ctx, keep_nodes=["addresses"],
+                _y(cfg),
+                ctx=ctx,
+                keep_nodes=["addresses"],
             )
             assert result["success"], f"custom-provider FK run failed: {result}"
             postal = _column_values(cache["addresses"], "postal_code")
             assert len(postal) == 100
             # Every value must be from the curated CA zips list.
             assert set(postal).issubset(set(ca_zips)), (
-                f"postal_code contains values outside CA zips: "
-                f"{set(postal) - set(ca_zips)}"
+                f"postal_code contains values outside CA zips: {set(postal) - set(ca_zips)}"
             )
         finally:
             unregister_faker_provider(provider_name)
@@ -325,24 +420,51 @@ class TestMultiParentFK:
         cfg = {
             "mode": "graph",
             "nodes": [
-                {"id": "a", "kind": "generate",
-                 "config": {"row_count": 5, "columns": {
-                     "id": {"strategy": "sequence", "start": 1},
-                 }}},
-                {"id": "b", "kind": "generate",
-                 "config": {"row_count": 5, "columns": {
-                     "id": {"strategy": "sequence", "start": 100},
-                 }}},
-                {"id": "child", "kind": "generate",
-                 "config": {"row_count": 8, "columns": {
-                     "composite": {"strategy": "faker", "faker_type": "word"},
-                 }}},
-                {"id": "tgt_a", "kind": "target.file",
-                 "config": {"output_filename": str(tmp_path / "a.csv"), "format": "csv"}},
-                {"id": "tgt_b", "kind": "target.file",
-                 "config": {"output_filename": str(tmp_path / "b.csv"), "format": "csv"}},
-                {"id": "tgt_c", "kind": "target.file",
-                 "config": {"output_filename": str(tmp_path / "c.csv"), "format": "csv"}},
+                {
+                    "id": "a",
+                    "kind": "generate",
+                    "config": {
+                        "row_count": 5,
+                        "columns": {
+                            "id": {"strategy": "sequence", "start": 1},
+                        },
+                    },
+                },
+                {
+                    "id": "b",
+                    "kind": "generate",
+                    "config": {
+                        "row_count": 5,
+                        "columns": {
+                            "id": {"strategy": "sequence", "start": 100},
+                        },
+                    },
+                },
+                {
+                    "id": "child",
+                    "kind": "generate",
+                    "config": {
+                        "row_count": 8,
+                        "columns": {
+                            "composite": {"strategy": "faker", "faker_type": "word"},
+                        },
+                    },
+                },
+                {
+                    "id": "tgt_a",
+                    "kind": "target.file",
+                    "config": {"output_filename": str(tmp_path / "a.csv"), "format": "csv"},
+                },
+                {
+                    "id": "tgt_b",
+                    "kind": "target.file",
+                    "config": {"output_filename": str(tmp_path / "b.csv"), "format": "csv"},
+                },
+                {
+                    "id": "tgt_c",
+                    "kind": "target.file",
+                    "config": {"output_filename": str(tmp_path / "c.csv"), "format": "csv"},
+                },
             ],
             "edges": [
                 {"from": "a", "to": "tgt_a"},
@@ -350,12 +472,14 @@ class TestMultiParentFK:
                 {"from": "child", "to": "tgt_c"},
             ],
             "column_relationships": [
-                {"kind": "fk",
-                 "parent": [
-                     {"node": "a", "column": "id"},
-                     {"node": "b", "column": "id"},
-                 ],
-                 "child": {"node": "child", "column": "composite"}},
+                {
+                    "kind": "fk",
+                    "parent": [
+                        {"node": "a", "column": "id"},
+                        {"node": "b", "column": "id"},
+                    ],
+                    "child": {"node": "child", "column": "composite"},
+                },
             ],
         }
         ctx = ExecutionContext(
@@ -363,18 +487,19 @@ class TestMultiParentFK:
             pipeline_derive_key=make_key_resolver(b"\x33" * 32, "multi-test"),
         )
         result, cache = execute_graph_capture(
-            _y(cfg), ctx=ctx, keep_nodes=["a", "b", "child"],
+            _y(cfg),
+            ctx=ctx,
+            keep_nodes=["a", "b", "child"],
         )
         assert result["success"], f"multi-parent run failed: {result}"
         # Build the expected composite pool by zipping parent values.
         a_vals = _column_values(cache["a"], "id")
         b_vals = _column_values(cache["b"], "id")
-        expected_pool = {f"{a}|{b}" for a, b in zip(a_vals, b_vals)}
+        expected_pool = {f"{a}|{b}" for a, b in zip(a_vals, b_vals, strict=False)}
         child_vals = set(_column_values(cache["child"], "composite"))
         # Every child value must be one of the zipped parent tuples.
         assert child_vals.issubset(expected_pool), (
-            f"multi-parent violation: child values not in zipped pool: "
-            f"{child_vals - expected_pool}"
+            f"multi-parent violation: child values not in zipped pool: {child_vals - expected_pool}"
         )
 
 
@@ -385,12 +510,21 @@ class TestPKUniqueness:
         cfg = {
             "mode": "graph",
             "nodes": [
-                {"id": "synth", "kind": "generate",
-                 "config": {"row_count": 100, "columns": {
-                     "id": {"strategy": "sequence", "start": 1, "primary_key": True},
-                 }}},
-                {"id": "tgt", "kind": "target.file",
-                 "config": {"output_filename": str(tmp_path / "u.csv"), "format": "csv"}},
+                {
+                    "id": "synth",
+                    "kind": "generate",
+                    "config": {
+                        "row_count": 100,
+                        "columns": {
+                            "id": {"strategy": "sequence", "start": 1, "primary_key": True},
+                        },
+                    },
+                },
+                {
+                    "id": "tgt",
+                    "kind": "target.file",
+                    "config": {"output_filename": str(tmp_path / "u.csv"), "format": "csv"},
+                },
             ],
             "edges": [{"from": "synth", "to": "tgt"}],
         }
@@ -401,9 +535,7 @@ class TestPKUniqueness:
         result, _ = execute_graph_capture(_y(cfg), ctx=ctx, keep_nodes=["synth"])
         assert result["success"]
         # Find the node record and inspect its pk_uniqueness export.
-        synth_rec = next(
-            r for r in result["nodes"] if r["node_id"] == "synth"
-        )
+        synth_rec = next(r for r in result["nodes"] if r["node_id"] == "synth")
         pk_metrics = synth_rec.get("exports", {}).get("pk_uniqueness", {})
         assert "id" in pk_metrics
         assert pk_metrics["id"]["duplicate_count"] == 0
@@ -419,16 +551,25 @@ class TestPKUniqueness:
         cfg = {
             "mode": "graph",
             "nodes": [
-                {"id": "synth", "kind": "generate",
-                 "config": {"row_count": 50, "columns": {
-                     "id": {
-                         "strategy": "categorical",
-                         "categories": ["A", "B", "C"],
-                         "primary_key": True,
-                     },
-                 }}},
-                {"id": "tgt", "kind": "target.file",
-                 "config": {"output_filename": str(tmp_path / "u.csv"), "format": "csv"}},
+                {
+                    "id": "synth",
+                    "kind": "generate",
+                    "config": {
+                        "row_count": 50,
+                        "columns": {
+                            "id": {
+                                "strategy": "categorical",
+                                "categories": ["A", "B", "C"],
+                                "primary_key": True,
+                            },
+                        },
+                    },
+                },
+                {
+                    "id": "tgt",
+                    "kind": "target.file",
+                    "config": {"output_filename": str(tmp_path / "u.csv"), "format": "csv"},
+                },
             ],
             "edges": [{"from": "synth", "to": "tgt"}],
         }
@@ -462,16 +603,25 @@ class TestPKUniqueness:
         cfg = {
             "mode": "graph",
             "nodes": [
-                {"id": "synth", "kind": "generate",
-                 "config": {"row_count": 50, "columns": {
-                     "id": {
-                         "strategy": "categorical",
-                         "categories": ["A", "B", "C"],
-                         "primary_key": True,
-                     },
-                 }}},
-                {"id": "tgt", "kind": "target.file",
-                 "config": {"output_filename": str(tmp_path / "u.csv"), "format": "csv"}},
+                {
+                    "id": "synth",
+                    "kind": "generate",
+                    "config": {
+                        "row_count": 50,
+                        "columns": {
+                            "id": {
+                                "strategy": "categorical",
+                                "categories": ["A", "B", "C"],
+                                "primary_key": True,
+                            },
+                        },
+                    },
+                },
+                {
+                    "id": "tgt",
+                    "kind": "target.file",
+                    "config": {"output_filename": str(tmp_path / "u.csv"), "format": "csv"},
+                },
             ],
             "edges": [{"from": "synth", "to": "tgt"}],
         }

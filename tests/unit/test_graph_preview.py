@@ -13,12 +13,12 @@ Fake op kinds used:
 
 Sprint 1.4 - Preview Policy Unification.
 """
+
 from __future__ import annotations
 
 import pytest
 
 from decoy_engine.graph.preview import PreviewPolicy, run_preview
-
 
 # ---------------------------------------------------------------------------
 # Fake ops
@@ -33,6 +33,7 @@ class _FakeSourceOp:
     @staticmethod
     def apply(inputs, cfg, ctx):
         import pandas as pd
+
         n = cfg.get("n", 10)
         return pd.DataFrame({"x": range(n)})
 
@@ -49,6 +50,7 @@ class _FakePassOp:
 
 class _FakeTargetOp:
     """Simulates a side-effecting target. Returns data in preview mode."""
+
     NATIVE_ENGINE = "pandas"
     INPUT_ARITY = (1, 1)
     OUTPUT_KIND = "stream"
@@ -72,6 +74,7 @@ class _FakeGateOp:
         # constructor (str.get on iteration) and the resulting
         # AttributeError escapes the test instead of FlagPauseSignal.
         from decoy_engine.exceptions import FlagPauseSignal
+
         raise FlagPauseSignal([{"message": "test gate"}], gate_id="test")
 
 
@@ -93,6 +96,7 @@ class _FakeErrorOp:
 @pytest.fixture
 def fake_ops(monkeypatch):
     from decoy_engine.graph import ops
+
     monkeypatch.setitem(ops.OPS, "test.source", _FakeSourceOp)
     monkeypatch.setitem(ops.OPS, "test.pass", _FakePassOp)
     monkeypatch.setitem(ops.OPS, "target.fake", _FakeTargetOp)

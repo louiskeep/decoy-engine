@@ -30,12 +30,11 @@ from decoy_engine.context import ExecutionContext
 from decoy_engine.forecast import recommend
 from decoy_engine.storm.types import StormProfile
 
-
 # Map of allowed extra parameter name -> expected type. A param is OK
 # only when both match. Add entries here together with the signature
 # change + a reason in the module docstring above.
 ALLOWED_EXTRA_PARAMS: dict[str, object] = {
-    "ctx": typing.Optional[ExecutionContext],
+    "ctx": ExecutionContext | None,
 }
 
 
@@ -70,8 +69,7 @@ def test_recommend_accepts_only_a_storm_profile():
         expected = ALLOWED_EXTRA_PARAMS[extra.name]
         actual = hints.get(extra.name)
         assert actual == expected, (
-            f"FORECAST parameter {extra.name!r} type changed: expected "
-            f"{expected}, got {actual}."
+            f"FORECAST parameter {extra.name!r} type changed: expected {expected}, got {actual}."
         )
 
 
@@ -81,6 +79,7 @@ def test_recommend_accepts_only_a_storm_profile():
 # strong signal that someone is planning to read raw data.)
 def test_forecast_module_has_no_raw_data_imports():
     import decoy_engine.forecast.recommender as r
+
     forbidden = {"pandas", "sqlalchemy"}
     for mod in forbidden:
         assert not hasattr(r, mod), (

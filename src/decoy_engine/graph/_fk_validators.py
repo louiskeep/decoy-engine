@@ -23,6 +23,7 @@ The parameter is a holdover from when the codes were dynamically
 resolved per call; keeping the explicit signature lets callers (and
 tests) substitute a different code-set if needed. Removable in V2.0-B.
 """
+
 from __future__ import annotations
 
 from decoy_engine.validation_result import CODES
@@ -152,9 +153,7 @@ def _validate_column_relationships(
     # Mask strategies that preserve referential integrity across runs.
     # Non-members on an FK column emit a warning (or hard error when
     # DECOY_FK_STRICT_DETERMINISM=1 is set).
-    DETERMINISTIC_MASK_STRATEGIES = frozenset(
-        {"hash", "fpe", "faker", "date_shift", "reference"}
-    )
+    DETERMINISTIC_MASK_STRATEGIES = frozenset({"hash", "fpe", "faker", "date_shift", "reference"})
 
     # _column_in_node was previously a nested function here. Promoted
     # to module scope 2026-05-23 (F-AUDIT-001) because a sibling
@@ -307,9 +306,8 @@ def _validate_column_relationships(
         rel_distribution_early = rel.get("distribution")
         rel_min_early = rel.get("min_per_parent")
         rel_max_early = rel.get("max_per_parent")
-        bounds_set_early = (
-            (isinstance(rel_min_early, int) and rel_min_early > 0)
-            or (isinstance(rel_max_early, int) and rel_max_early > 0)
+        bounds_set_early = (isinstance(rel_min_early, int) and rel_min_early > 0) or (
+            isinstance(rel_max_early, int) and rel_max_early > 0
         )
         if rel_distribution_early == "sequential" and bounds_set_early:
             result.add_warning(
@@ -386,7 +384,6 @@ def _validate_column_relationships(
                 path=f"{path}.child.column",
             )
 
-
         # Mask determinism: both ends, if they're mask ops, must use a
         # deterministic strategy to preserve the FK. Advisory by
         # default (severity=warning) so a one-off run with redact or
@@ -395,15 +392,15 @@ def _validate_column_relationships(
         # advisory still records the affected column so the platform
         # manifest assembler can hydrate `fk_preservation.advisories`
         # for downstream auditors.
-        strict_determinism = (
-            os.environ.get("DECOY_FK_STRICT_DETERMINISM", "")
-            .strip()
-            .lower()
-            in {"1", "true", "yes", "on"}
-        )
+        strict_determinism = os.environ.get("DECOY_FK_STRICT_DETERMINISM", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
         for side, node_obj, col_name in (
             ("parent", p_node_obj, p_col),
-            ("child",  c_node_obj, c_col),
+            ("child", c_node_obj, c_col),
         ):
             strategy = _mask_strategy_for_column(node_obj, col_name)
             if strategy is not None and strategy not in DETERMINISTIC_MASK_STRATEGIES:
@@ -435,12 +432,13 @@ def _validate_column_relationships(
     # surfaces only when two entries on the same node close the loop.
     if self_ref_entries:
         from collections import defaultdict
+
         by_node: defaultdict[str, set[tuple[str, str]]] = defaultdict(set)
         for node_id, p_col, c_col, _ in self_ref_entries:
             by_node[node_id].add((p_col, c_col))
         for node_id, pairs in by_node.items():
             # Direct two-edge cycle: (a, b) AND (b, a) both present.
-            for (p_col, c_col) in pairs:
+            for p_col, c_col in pairs:
                 if (c_col, p_col) in pairs:
                     # Find one of the paths to attach the error to.
                     for entry in self_ref_entries:
@@ -459,7 +457,11 @@ def _validate_column_relationships(
 
 
 def _validate_m2m_entry(
-    rel: dict, path: str, nodes_by_id: dict[str, dict], result, CODES,
+    rel: dict,
+    path: str,
+    nodes_by_id: dict[str, dict],
+    result,
+    CODES,
 ) -> None:
     """Validate a `kind: m2m` (many-to-many junction) column_relationships
     entry. Shape:
@@ -516,7 +518,11 @@ def _validate_m2m_entry(
 
 
 def _validate_multi_parent_entry(
-    rel: dict, path: str, nodes_by_id: dict[str, dict], result, CODES,
+    rel: dict,
+    path: str,
+    nodes_by_id: dict[str, dict],
+    result,
+    CODES,
 ) -> None:
     """Validate a multi-parent FK entry -- `parent` is an array of
     parent specs instead of a single object. Each entry contributes to
@@ -574,7 +580,11 @@ def _validate_multi_parent_entry(
 
 
 def _validate_custom_provider_entry(
-    rel: dict, path: str, nodes_by_id: dict, result, CODES,
+    rel: dict,
+    path: str,
+    nodes_by_id: dict,
+    result,
+    CODES,
 ) -> None:
     """Validate a column_relationships entry whose parent sources the
     pool from a registered custom Faker provider (parent: {custom_provider:
@@ -585,6 +595,7 @@ def _validate_custom_provider_entry(
     run time, so a missing provider is a warning, not a hard error.
     """
     from decoy_engine.internal.helpers import list_custom_faker_list_providers
+
     parent = rel.get("parent") or {}
     child = rel.get("child") or {}
     pname = parent.get("custom_provider")
@@ -629,8 +640,7 @@ def _validate_custom_provider_entry(
         result.add_error(
             code=CODES.FK_UNKNOWN_COLUMN,
             message=(
-                f"child column {c_col!r} not declared in child {c_node!r} config "
-                f"(kind={c_kind})"
+                f"child column {c_col!r} not declared in child {c_node!r} config (kind={c_kind})"
             ),
             path=f"{path}.child.column",
         )
@@ -653,4 +663,3 @@ def _validate_custom_provider_entry(
             path=f"{path}.parent.custom_provider",
             node_id=c_node,
         )
-

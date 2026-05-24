@@ -18,6 +18,7 @@ def _profile(field_name: str, df: pd.DataFrame, custom=None):
 
 # ── basic firing ─────────────────────────────────────────────────────────────
 
+
 class TestCustomDetectorFiring:
     def test_no_custom_specs_works_as_before(self):
         df = pd.DataFrame({"ssn": ["123-45-6789"] * 10})
@@ -33,9 +34,11 @@ class TestCustomDetectorFiring:
             name_hints=[],
             threshold=0.7,
         )
-        df = pd.DataFrame({
-            "national_id": ["401 023 2137", "612 555 8888", "001 222 3333"] * 10,
-        })
+        df = pd.DataFrame(
+            {
+                "national_id": ["401 023 2137", "612 555 8888", "001 222 3333"] * 10,
+            }
+        )
         f = _profile("national_id", df, custom=[spec])
         ids = {m.detector_id for m in f.detector_matches}
         assert "custom__uk_nhs" in ids
@@ -49,9 +52,11 @@ class TestCustomDetectorFiring:
             name_hints=[],
             threshold=0.7,
         )
-        df = pd.DataFrame({
-            "asset_code": ["A101", "A202", "B999", "C111"] * 5,
-        })
+        df = pd.DataFrame(
+            {
+                "asset_code": ["A101", "A202", "B999", "C111"] * 5,
+            }
+        )
         f = _profile("asset_code", df, custom=[spec_no_hint])
         assert all(m.detector_id != "custom__weak" for m in f.detector_matches)
 
@@ -75,10 +80,12 @@ class TestCustomDetectorFiring:
             name_hints=["zip"],
             threshold=0.7,
         )
-        df = pd.DataFrame({
-            "ssn":      ["123-45-6789"] * 12,
-            "zip_code": ["90210", "10001", "60601"] * 4,
-        })
+        df = pd.DataFrame(
+            {
+                "ssn": ["123-45-6789"] * 12,
+                "zip_code": ["90210", "10001", "60601"] * 4,
+            }
+        )
         ssn_field = _profile("ssn", df, custom=[spec])
         zip_field = _profile("zip_code", df, custom=[spec])
         assert any(m.detector_id == "ssn" for m in ssn_field.detector_matches)
@@ -90,6 +97,7 @@ class TestCustomDetectorFiring:
 
 # ── detection trail ──────────────────────────────────────────────────────────
 
+
 class TestCustomDetectionTrail:
     def test_winner_regex_signal_uses_custom_id(self):
         spec = CustomDetectorSpec(
@@ -98,9 +106,11 @@ class TestCustomDetectionTrail:
             name_hints=["nhs"],
             threshold=0.7,
         )
-        df = pd.DataFrame({
-            "nhs_id": ["401 023 2137", "612 555 8888", "001 222 3333"] * 10,
-        })
+        df = pd.DataFrame(
+            {
+                "nhs_id": ["401 023 2137", "612 555 8888", "001 222 3333"] * 10,
+            }
+        )
         f = _profile("nhs_id", df, custom=[spec])
         # Custom detector wins (100% match rate) → trail's regex row uses
         # the custom id.
@@ -115,15 +125,18 @@ class TestCustomDetectionTrail:
             name_hints=["nhs"],
             threshold=0.7,
         )
-        df = pd.DataFrame({
-            "nhs_id": ["401 023 2137", "612 555 8888", "001 222 3333"] * 10,
-        })
+        df = pd.DataFrame(
+            {
+                "nhs_id": ["401 023 2137", "612 555 8888", "001 222 3333"] * 10,
+            }
+        )
         f = _profile("nhs_id", df, custom=[spec])
         signals = [s.signal for s in f.detection_trail]
         assert any('name-hint · col="nhs_id"' in s for s in signals)
 
 
 # ── safety ───────────────────────────────────────────────────────────────────
+
 
 class TestCustomDetectorSafety:
     def test_bad_regex_does_not_crash_scan(self):
@@ -149,8 +162,10 @@ class TestCustomDetectorSafety:
             name_hints=[],
             threshold=0.7,
         )
-        df = pd.DataFrame({
-            "ref": ["X1", "X2", "Y3", "Z4", "W5"] * 5,  # 40% match
-        })
+        df = pd.DataFrame(
+            {
+                "ref": ["X1", "X2", "Y3", "Z4", "W5"] * 5,  # 40% match
+            }
+        )
         f = _profile("ref", df, custom=[spec])
         assert all(m.detector_id != "custom__strict" for m in f.detector_matches)

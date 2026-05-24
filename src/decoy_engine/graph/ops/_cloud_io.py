@@ -15,6 +15,7 @@ target.s3 / target.gcs / target.sftp invert the flow:
 Centralising this avoids duplicating temp-file lifecycle and
 format-inference code across six op modules.
 """
+
 from __future__ import annotations
 
 import os
@@ -41,8 +42,10 @@ def infer_format(path: str) -> str:
 def validate_format(fmt: str) -> None:
     if fmt not in {"csv", "parquet"}:
         from decoy_engine.validation_result import CODES
+
         raise ValidationError(
-            f"unsupported format {fmt!r} (csv|parquet)", "config.format",
+            f"unsupported format {fmt!r} (csv|parquet)",
+            "config.format",
             code=CODES.CLOUD_IO_UNSUPPORTED_FORMAT,
         )
 
@@ -96,15 +99,9 @@ def _write_duckdb(table: pa.Table, tmp_path: Path, fmt: str) -> None:
         try:
             con.register("in_table", table)
             if fmt == "csv":
-                con.execute(
-                    f"COPY (SELECT * FROM in_table) TO '{tmp_path}' "
-                    f"(FORMAT CSV, HEADER)"
-                )
+                con.execute(f"COPY (SELECT * FROM in_table) TO '{tmp_path}' (FORMAT CSV, HEADER)")
             elif fmt == "parquet":
-                con.execute(
-                    f"COPY (SELECT * FROM in_table) TO '{tmp_path}' "
-                    f"(FORMAT PARQUET)"
-                )
+                con.execute(f"COPY (SELECT * FROM in_table) TO '{tmp_path}' (FORMAT PARQUET)")
             else:
                 raise OpError(f"unsupported format: {fmt}")
         finally:

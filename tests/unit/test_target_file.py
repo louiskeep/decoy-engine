@@ -16,6 +16,7 @@ Coverage targets (from Sprint 4 Done-when criterion):
   - Preview mode: returns input DataFrame without touching the filesystem
   - ctx.export: rows_written, output_path, output_file_size_bytes emitted
 """
+
 from __future__ import annotations
 
 import pandas as pd
@@ -23,7 +24,6 @@ import pytest
 
 from decoy_engine.graph.ops import target_file
 from decoy_engine.internal.validator import ValidationError
-
 
 # ----- helpers -----------------------------------------------------------
 
@@ -58,9 +58,7 @@ class TestValidateConfig:
 
     def test_unsupported_format_raises(self):
         with pytest.raises(ValidationError, match="unsupported format"):
-            target_file.validate_config(
-                {"output_filename": "out.csv", "format": "xlsx"}
-            )
+            target_file.validate_config({"output_filename": "out.csv", "format": "xlsx"})
 
     def test_csv_extension_inferred_is_valid(self):
         target_file.validate_config({"output_filename": "out.csv"})
@@ -72,14 +70,10 @@ class TestValidateConfig:
         target_file.validate_config({"output_filename": "out.pq"})
 
     def test_explicit_csv_format_is_valid(self):
-        target_file.validate_config(
-            {"output_filename": "out.bin", "format": "csv"}
-        )
+        target_file.validate_config({"output_filename": "out.bin", "format": "csv"})
 
     def test_explicit_parquet_format_is_valid(self):
-        target_file.validate_config(
-            {"output_filename": "out.bin", "format": "parquet"}
-        )
+        target_file.validate_config({"output_filename": "out.bin", "format": "parquet"})
 
 
 # ----- CSV round-trip ----------------------------------------------------
@@ -90,7 +84,7 @@ class TestCSVWrite:
         df = _simple_df()
         out = tmp_path / "output.csv"
         config = {"output_filename": str(out), "__engine": "pandas"}
-        result = target_file.apply([df], config, ctx=None)
+        target_file.apply([df], config, ctx=None)
         # Contract: written file exists and can be read back
         assert out.exists(), "CSV file was not created"
         read_back = pd.read_csv(out)
@@ -109,7 +103,9 @@ class TestCSVWrite:
     def test_csv_apply_returns_empty_df_with_correct_schema(self, tmp_path):
         df = _simple_df(4)
         out = tmp_path / "schema_check.csv"
-        result = target_file.apply([df], {"output_filename": str(out), "__engine": "pandas"}, ctx=None)
+        result = target_file.apply(
+            [df], {"output_filename": str(out), "__engine": "pandas"}, ctx=None
+        )
         # Sink ops return an empty value; for the pandas path that's a 0-row df.
         assert isinstance(result, pd.DataFrame)
         assert len(result) == 0

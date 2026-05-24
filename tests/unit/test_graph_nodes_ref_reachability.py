@@ -7,36 +7,53 @@ upstream of the referrer (will never be set when this node runs),
 the runner consumes a bogus value and finishes successfully with
 wrong data. This validator turns both into pre-run errors.
 """
+
 from __future__ import annotations
 
 import yaml
 
-from decoy_engine import validate_graph_full, VALIDATION_CODES
+from decoy_engine import VALIDATION_CODES, validate_graph_full
 
 
 def _wrap_graph(nodes, edges):
-    return yaml.safe_dump({
-        "mode": "graph",
-        "schema_version": 1,
-        "nodes": nodes,
-        "edges": edges,
-    })
+    return yaml.safe_dump(
+        {
+            "mode": "graph",
+            "schema_version": 1,
+            "nodes": nodes,
+            "edges": edges,
+        }
+    )
 
 
 def _three_node_pipeline(target_filename: str):
     """src_1 -> mask_1 -> tgt_1, target's output_filename templated."""
     return _wrap_graph(
         nodes=[
-            {"id": "src_1", "kind": "source.file", "config": {
-                "path": "uploads/x.csv", "format": "csv",
-                "has_header": True,
-            }},
-            {"id": "mask_1", "kind": "mask", "config": {
-                "columns": {"id": {"strategy": "passthrough"}},
-            }},
-            {"id": "tgt_1", "kind": "target.file", "config": {
-                "output_filename": target_filename, "format": "csv",
-            }},
+            {
+                "id": "src_1",
+                "kind": "source.file",
+                "config": {
+                    "path": "uploads/x.csv",
+                    "format": "csv",
+                    "has_header": True,
+                },
+            },
+            {
+                "id": "mask_1",
+                "kind": "mask",
+                "config": {
+                    "columns": {"id": {"strategy": "passthrough"}},
+                },
+            },
+            {
+                "id": "tgt_1",
+                "kind": "target.file",
+                "config": {
+                    "output_filename": target_filename,
+                    "format": "csv",
+                },
+            },
         ],
         edges=[
             {"from": "src_1", "to": "mask_1"},
@@ -72,25 +89,39 @@ class TestNodesRefReachability:
         # from the target id and we exercise the not_upstream branch.
         yaml_text = _wrap_graph(
             nodes=[
-                {"id": "src_1", "kind": "source.file", "config": {
-                    "path": "uploads/x.csv", "format": "csv",
-                    "has_header": True,
-                }},
-                {"id": "mask_1", "kind": "mask", "config": {
-                    # The column name is fine on the source schema (id
-                    # passthrough). The bad token sits in the strategy
-                    # params, which the engine treats as opaque config
-                    # at validate time.
-                    "columns": {
-                        "id": {
-                            "strategy": "passthrough",
-                            "note": "downstream id ${nodes.tgt_1.path}",
+                {
+                    "id": "src_1",
+                    "kind": "source.file",
+                    "config": {
+                        "path": "uploads/x.csv",
+                        "format": "csv",
+                        "has_header": True,
+                    },
+                },
+                {
+                    "id": "mask_1",
+                    "kind": "mask",
+                    "config": {
+                        # The column name is fine on the source schema (id
+                        # passthrough). The bad token sits in the strategy
+                        # params, which the engine treats as opaque config
+                        # at validate time.
+                        "columns": {
+                            "id": {
+                                "strategy": "passthrough",
+                                "note": "downstream id ${nodes.tgt_1.path}",
+                            },
                         },
                     },
-                }},
-                {"id": "tgt_1", "kind": "target.file", "config": {
-                    "output_filename": "out.csv", "format": "csv",
-                }},
+                },
+                {
+                    "id": "tgt_1",
+                    "kind": "target.file",
+                    "config": {
+                        "output_filename": "out.csv",
+                        "format": "csv",
+                    },
+                },
             ],
             edges=[
                 {"from": "src_1", "to": "mask_1"},
@@ -111,17 +142,31 @@ class TestNodesRefReachability:
         # validator doesn't reject it on its own grounds.
         yaml_text = _wrap_graph(
             nodes=[
-                {"id": "src_1", "kind": "source.file", "config": {
-                    "path": "uploads/x.csv", "format": "csv",
-                    "has_header": True,
-                    "note": "see ${nodes.mask_1.row_count}",
-                }},
-                {"id": "mask_1", "kind": "mask", "config": {
-                    "columns": {"id": {"strategy": "passthrough"}},
-                }},
-                {"id": "tgt_1", "kind": "target.file", "config": {
-                    "output_filename": "out.csv", "format": "csv",
-                }},
+                {
+                    "id": "src_1",
+                    "kind": "source.file",
+                    "config": {
+                        "path": "uploads/x.csv",
+                        "format": "csv",
+                        "has_header": True,
+                        "note": "see ${nodes.mask_1.row_count}",
+                    },
+                },
+                {
+                    "id": "mask_1",
+                    "kind": "mask",
+                    "config": {
+                        "columns": {"id": {"strategy": "passthrough"}},
+                    },
+                },
+                {
+                    "id": "tgt_1",
+                    "kind": "target.file",
+                    "config": {
+                        "output_filename": "out.csv",
+                        "format": "csv",
+                    },
+                },
             ],
             edges=[
                 {"from": "src_1", "to": "mask_1"},

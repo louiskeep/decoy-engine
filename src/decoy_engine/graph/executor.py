@@ -26,6 +26,7 @@ and create a shape that misleads readers into thinking the pool
 resolver is a standalone helper rather than part of one execution
 loop's machinery.
 """
+
 from __future__ import annotations
 
 import time
@@ -84,8 +85,7 @@ def _execute_graph(
     fk_parent_nodes: set[str] = {
         rel["parent"]["node"]
         for rel in column_relationships
-        if isinstance(rel, dict) and isinstance(rel.get("parent"), dict)
-        and "node" in rel["parent"]
+        if isinstance(rel, dict) and isinstance(rel.get("parent"), dict) and "node" in rel["parent"]
     }
 
     keep_set = set(keep_nodes or []) | fk_parent_nodes
@@ -175,42 +175,74 @@ def _execute_graph(
                         f"that any router/gate branch upstream routes data "
                         f"into this path."
                     )
-                result = op.apply(inputs, node_cfg, ctx)
-                if isinstance(result, dict) and getattr(op, "OUTPUT_KIND", None) == "split":
+                op_result = op.apply(inputs, node_cfg, ctx)  # type: ignore[attr-defined]
+                if isinstance(op_result, dict) and getattr(op, "OUTPUT_KIND", None) == "split":
                     ports = getattr(op, "OUTPUT_PORTS", ())
-                    total_rows = cache.write_split(nid, result, ports, engine)
+                    total_rows = cache.write_split(nid, op_result, ports, engine)
                     elapsed_ms = int((time.monotonic() - t0) * 1000)
-                    state.records.append(make_node_ok_record(
-                        nid, kind, total_rows, elapsed_ms, ctx._exports.get(nid),
-                    ))
+                    state.records.append(
+                        make_node_ok_record(
+                            nid,
+                            kind,
+                            total_rows,
+                            elapsed_ms,
+                            ctx._exports.get(nid),
+                        )
+                    )
                     emit_node_ok(
-                        log, step_name, descriptor, rows_in_total,
-                        total_rows, elapsed_ms, is_split=True,
+                        log,
+                        step_name,
+                        descriptor,
+                        rows_in_total,
+                        total_rows,
+                        elapsed_ms,
+                        is_split=True,
                     )
                 else:
-                    rows_out = cache.write_stream(nid, result, engine)
+                    rows_out = cache.write_stream(nid, op_result, engine)
                     elapsed_ms = int((time.monotonic() - t0) * 1000)
-                    state.records.append(make_node_ok_record(
-                        nid, kind, rows_out, elapsed_ms, ctx._exports.get(nid),
-                    ))
+                    state.records.append(
+                        make_node_ok_record(
+                            nid,
+                            kind,
+                            rows_out,
+                            elapsed_ms,
+                            ctx._exports.get(nid),
+                        )
+                    )
                     emit_node_ok(
-                        log, step_name, descriptor, rows_in_total,
-                        rows_out, elapsed_ms,
+                        log,
+                        step_name,
+                        descriptor,
+                        rows_in_total,
+                        rows_out,
+                        elapsed_ms,
                     )
             except FlagPauseSignal:
                 raise
             except Exception as exc:
                 translated = translate_engine_error(exc, kind, nid)
                 elapsed_ms = int((time.monotonic() - t0) * 1000)
-                state.records.append(make_node_error_record(
-                    nid, kind, elapsed_ms, str(translated),
-                    exports=ctx._exports.get(nid),
-                    error_code=getattr(translated, "code", None),
-                    error_path=getattr(translated, "path", None),
-                ))
+                state.records.append(
+                    make_node_error_record(
+                        nid,
+                        kind,
+                        elapsed_ms,
+                        str(translated),
+                        exports=ctx._exports.get(nid),
+                        error_code=getattr(translated, "code", None),
+                        error_path=getattr(translated, "path", None),
+                    )
+                )
                 emit_node_error(
-                    log, step_name, descriptor, rows_in_total,
-                    exc, translated, nid, elapsed_ms,
+                    log,
+                    step_name,
+                    descriptor,
+                    rows_in_total,
+                    exc,
+                    translated,
+                    nid,
+                    elapsed_ms,
                 )
                 state.success = False
                 break
@@ -225,6 +257,7 @@ def _execute_graph(
         "elapsed_ms": int((time.monotonic() - state.overall_start) * 1000),
     }
     return result, cache.kept()
+
 
 def _build_pool_resolver(cache, by_id: dict[str, dict]):
     """Build the FK pool resolver closure for an ExecutionContext.
@@ -276,7 +309,8 @@ def _build_pool_resolver(cache, by_id: dict[str, dict]):
         # result is a ChunkedArray we convert to Python list once.
         try:
             import pyarrow.compute as pc
-            distinct = pc.unique(pc.drop_null(column_array))
+
+            distinct = pc.unique(pc.drop_null(column_array))  # type: ignore[attr-defined]
         except Exception:
             # If pyarrow.compute is unavailable, fall back to Python.
             raw = column_array.to_pylist()

@@ -10,9 +10,6 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-import pandas as pd
-import pytest
-
 from decoy_engine.graph.memory_monitor import check_memory_pressure as _check_memory_pressure
 
 
@@ -38,8 +35,10 @@ class _CapturingLogger:
 
 def _set_total_ram(gb: float):
     """Patch psutil.virtual_memory().total to a fixed value."""
+
     class _Vm:
         total = int(gb * 1024 * 1024 * 1024)
+
     return patch("psutil.virtual_memory", lambda: _Vm())
 
 
@@ -113,9 +112,11 @@ def test_threshold_overridable_via_env(monkeypatch):
     both the threshold and the function that reads it.
     """
     import importlib
+
     monkeypatch.setenv("DECOY_MEMORY_WARN_THRESHOLD", "0.9")
 
     import decoy_engine.graph.memory_monitor as mm_mod
+
     importlib.reload(mm_mod)
 
     log = _CapturingLogger()

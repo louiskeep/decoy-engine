@@ -115,16 +115,12 @@ class TestDerive:
         assert list(df["score"]) == [10, 20, 30, 20, 40]
 
     def test_derive_multi_column_expression(self, df):
-        out = derive.apply(
-            [df], {"column": "score_x_id", "expression": "score * id"}, None
-        )
+        out = derive.apply([df], {"column": "score_x_id", "expression": "score * id"}, None)
         assert list(out["score_x_id"]) == [30, 20, 60, 20, 160]
 
     def test_derive_bad_expression_raises_op_error(self, df):
         with pytest.raises(OpError, match="derive expression failed"):
-            derive.apply(
-                [df], {"column": "x", "expression": "no_such_column + 1"}, None
-            )
+            derive.apply([df], {"column": "x", "expression": "no_such_column + 1"}, None)
 
     @pytest.mark.parametrize(
         "cfg,path_substr",

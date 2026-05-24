@@ -29,17 +29,16 @@ class TruncateStrategy(BaseMaskingStrategy):
     """
 
     def apply(self, column: pd.Series, rule: dict[str, Any]) -> pd.Series:
-        column_name = rule.get('column', 'unnamed')
-        length = self._resolve_length(rule.get('length'), column_name)
+        column_name = rule.get("column", "unnamed")
+        length = self._resolve_length(rule.get("length"), column_name)
         if length is None:
             # Invalid config — log and pass through. Don't raise; one bad
             # rule shouldn't abort the whole masking run.
             return column
-        from_end = bool(rule.get('from_end', False))
+        from_end = bool(rule.get("from_end", False))
 
         self.logger.debug(
-            f"Applying truncate (length={length}, from_end={from_end}) to "
-            f"column '{column_name}'"
+            f"Applying truncate (length={length}, from_end={from_end}) to column '{column_name}'"
         )
 
         # Vectorized: pandas' StringMethods does C-level slicing for the
@@ -84,7 +83,7 @@ class TruncateStrategy(BaseMaskingStrategy):
 
     def validate_rule(self, rule: dict[str, Any]) -> None:
         super().validate_rule(rule)
-        if 'length' not in rule:
+        if "length" not in rule:
             self.logger.debug(
                 f"truncate strategy on column '{rule['column']}' has no "
                 f"`length` set — column will pass through unchanged"

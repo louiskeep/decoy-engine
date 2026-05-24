@@ -35,17 +35,17 @@ from decoy_engine.transforms.base import BaseMaskingStrategy
 # without consulting a table.
 _PRESETS = {
     # Time-axis buckets (ages, tenure, year-of-birth, vintage).
-    'by_year':         1,
-    'by_2_years':      2,
-    'by_5_years':      5,
-    'by_decade':      10,
-    'by_century':    100,
+    "by_year": 1,
+    "by_2_years": 2,
+    "by_5_years": 5,
+    "by_decade": 10,
+    "by_century": 100,
     # Currency-axis buckets (transaction amounts, balances, salaries).
-    'by_thousand':       1_000,
-    'by_ten_thousand':  10_000,
+    "by_thousand": 1_000,
+    "by_ten_thousand": 10_000,
 }
 
-_FORMATS = {'lower', 'range', 'midpoint'}
+_FORMATS = {"lower", "range", "midpoint"}
 
 
 class BucketizeStrategy(BaseMaskingStrategy):
@@ -64,18 +64,18 @@ class BucketizeStrategy(BaseMaskingStrategy):
     """
 
     def apply(self, column: pd.Series, rule: dict[str, Any]) -> pd.Series:
-        column_name = rule.get('column', 'unnamed')
+        column_name = rule.get("column", "unnamed")
         width = self._resolve_width(rule, column_name)
         if width is None:
             return column
 
-        fmt = str(rule.get('format', 'lower')).lower()
+        fmt = str(rule.get("format", "lower")).lower()
         if fmt not in _FORMATS:
             self.logger.warning(
                 f"bucketize.format={fmt!r} for column '{column_name}' is not "
                 f"one of {sorted(_FORMATS)}; using 'lower'"
             )
-            fmt = 'lower'
+            fmt = "lower"
 
         # Ints stay ints when width is integral so "20-29" doesn't print as
         # "20.0-29.0" — the common case for age / year buckets. Floats stay
@@ -83,38 +83,37 @@ class BucketizeStrategy(BaseMaskingStrategy):
         is_int_width = isinstance(width, int) and not isinstance(width, bool)
 
         self.logger.debug(
-            f"Applying bucketize (width={width}, format={fmt}) to column "
-            f"'{column_name}'"
+            f"Applying bucketize (width={width}, format={fmt}) to column '{column_name}'"
         )
 
         # Vectorized: numpy floor on the whole column + vectorized string
         # formatting. Non-numeric / NA values fall through to the original
         # value, matching the legacy per-row contract.
-        nums = pd.to_numeric(column, errors='coerce')
+        nums = pd.to_numeric(column, errors="coerce")
         lower_f = np.floor(nums / width) * width
 
         if is_int_width:
             # Nullable Int64 so positions where `nums` is NaN survive the
             # int cast (becoming pd.NA, which formats correctly later).
-            lower = lower_f.astype('Int64')
+            lower = lower_f.astype("Int64")
             upper_excl = lower + int(width)
         else:
             lower = lower_f
             upper_excl = lower + width
 
-        if fmt == 'lower':
+        if fmt == "lower":
             formatted = lower.astype(str)
-        elif fmt == 'range':
+        elif fmt == "range":
             # Inclusive upper for ints (so "20-29" not "20-30") — matches
             # the legacy `upper_excl - 1` convention.
             upper = upper_excl - 1 if is_int_width else upper_excl
-            formatted = lower.astype(str) + '-' + upper.astype(str)
+            formatted = lower.astype(str) + "-" + upper.astype(str)
         else:  # midpoint
             mid = lower_f + width / 2
             if is_int_width and int(width) % 2 == 0:
                 # Even integer width: half-step midpoint truncates to
                 # int so labels stay compact ("25" not "25.0").
-                mid = mid.astype('Int64')
+                mid = mid.astype("Int64")
             formatted = mid.astype(str)
 
         # Where the original was non-numeric or NaN, fall through to the
@@ -126,7 +125,7 @@ class BucketizeStrategy(BaseMaskingStrategy):
         return result
 
     def _resolve_width(self, rule: dict[str, Any], column_name: str):
-        preset = rule.get('preset')
+        preset = rule.get("preset")
         if preset is not None:
             if preset in _PRESETS:
                 return _PRESETS[preset]
@@ -135,7 +134,7 @@ class BucketizeStrategy(BaseMaskingStrategy):
                 f"not one of {sorted(_PRESETS)}; passing column through"
             )
             return None
-        raw = rule.get('width')
+        raw = rule.get("width")
         if raw is None:
             self.logger.warning(
                 f"bucketize requires `width` or `preset` for column "
@@ -158,7 +157,7 @@ class BucketizeStrategy(BaseMaskingStrategy):
 
     def validate_rule(self, rule: dict[str, Any]) -> None:
         super().validate_rule(rule)
-        if 'width' not in rule and 'preset' not in rule:
+        if "width" not in rule and "preset" not in rule:
             self.logger.debug(
                 f"bucketize on column '{rule['column']}' has neither `width` "
                 f"nor `preset` set — column will pass through unchanged"

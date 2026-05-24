@@ -7,21 +7,23 @@ the source cannot produce. Permissive when the source's schema isn't
 statically derivable (CSV with has_header=true, parquet without
 preview, etc.) so we don't false-positive on headered pipelines.
 """
+
 from __future__ import annotations
 
 import yaml
-import pytest
 
-from decoy_engine import validate_graph_full, VALIDATION_CODES
+from decoy_engine import VALIDATION_CODES, validate_graph_full
 
 
 def _wrap_graph(nodes, edges):
-    return yaml.safe_dump({
-        "mode": "graph",
-        "schema_version": 1,
-        "nodes": nodes,
-        "edges": edges,
-    })
+    return yaml.safe_dump(
+        {
+            "mode": "graph",
+            "schema_version": 1,
+            "nodes": nodes,
+            "edges": edges,
+        }
+    )
 
 
 def _mask_pipeline(source_cfg, mask_cols):
@@ -38,12 +40,17 @@ def _mask_pipeline(source_cfg, mask_cols):
         return _wrap_graph(
             nodes=[
                 {"id": "src_1", "kind": "source.file", "config": source_cfg},
-                {"id": "mask_1", "kind": "mask",
-                 "config": {"columns": mask_cols}},
-                {"id": "cvt_1", "kind": "convert.file_type",
-                 "config": {"format": "csv", "output_filename": "stage.csv"}},
-                {"id": "tgt_1", "kind": "target.file",
-                 "config": {"output_filename": "out.csv", "format": "csv"}},
+                {"id": "mask_1", "kind": "mask", "config": {"columns": mask_cols}},
+                {
+                    "id": "cvt_1",
+                    "kind": "convert.file_type",
+                    "config": {"format": "csv", "output_filename": "stage.csv"},
+                },
+                {
+                    "id": "tgt_1",
+                    "kind": "target.file",
+                    "config": {"output_filename": "out.csv", "format": "csv"},
+                },
             ],
             edges=[
                 {"from": "src_1", "to": "mask_1"},
@@ -59,10 +66,12 @@ def _mask_pipeline(source_cfg, mask_cols):
     return _wrap_graph(
         nodes=[
             {"id": "src_1", "kind": "source.file", "config": source_cfg},
-            {"id": "mask_1", "kind": "mask",
-             "config": {"columns": mask_cols}},
-            {"id": "tgt_1", "kind": "target.file",
-             "config": {"output_filename": tgt_filename, "format": tgt_fmt}},
+            {"id": "mask_1", "kind": "mask", "config": {"columns": mask_cols}},
+            {
+                "id": "tgt_1",
+                "kind": "target.file",
+                "config": {"output_filename": tgt_filename, "format": tgt_fmt},
+            },
         ],
         edges=[
             {"from": "src_1", "to": "mask_1"},
@@ -75,8 +84,10 @@ class TestMaskUnknownColumn:
     def test_source_with_column_names_accepts_matching_mask(self):
         yaml_text = _mask_pipeline(
             source_cfg={
-                "path": "uploads/x.csv", "format": "csv",
-                "has_header": False, "column_names": ["id", "name", "amount"],
+                "path": "uploads/x.csv",
+                "format": "csv",
+                "has_header": False,
+                "column_names": ["id", "name", "amount"],
             },
             mask_cols={"id": {"strategy": "passthrough"}, "name": {"strategy": "hash"}},
         )
@@ -86,8 +97,10 @@ class TestMaskUnknownColumn:
     def test_source_with_column_names_blocks_unknown_mask_column(self):
         yaml_text = _mask_pipeline(
             source_cfg={
-                "path": "uploads/x.csv", "format": "csv",
-                "has_header": False, "column_names": ["id", "name", "amount"],
+                "path": "uploads/x.csv",
+                "format": "csv",
+                "has_header": False,
+                "column_names": ["id", "name", "amount"],
             },
             mask_cols={"emial": {"strategy": "hash"}},  # typo
         )
@@ -106,7 +119,8 @@ class TestMaskUnknownColumn:
         # rationale (silent no-op).
         yaml_text = _mask_pipeline(
             source_cfg={
-                "path": "uploads/x.csv", "format": "csv",
+                "path": "uploads/x.csv",
+                "format": "csv",
                 "has_header": False,
             },
             mask_cols={"id": {"strategy": "passthrough"}},
@@ -122,7 +136,8 @@ class TestMaskUnknownColumn:
         # the column<int> names should pass through.
         yaml_text = _mask_pipeline(
             source_cfg={
-                "path": "uploads/x.csv", "format": "csv",
+                "path": "uploads/x.csv",
+                "format": "csv",
                 "has_header": False,
             },
             mask_cols={"column0": {"strategy": "hash"}, "column1": {"strategy": "passthrough"}},
@@ -137,7 +152,8 @@ class TestMaskUnknownColumn:
         # engine-only validation has to skip.
         yaml_text = _mask_pipeline(
             source_cfg={
-                "path": "uploads/x.csv", "format": "csv",
+                "path": "uploads/x.csv",
+                "format": "csv",
                 "has_header": True,
             },
             mask_cols={"id": {"strategy": "passthrough"}},
@@ -148,7 +164,8 @@ class TestMaskUnknownColumn:
     def test_fixed_width_source_accepts_fw_column_names(self):
         yaml_text = _mask_pipeline(
             source_cfg={
-                "path": "uploads/x.dat", "format": "fixed_width",
+                "path": "uploads/x.dat",
+                "format": "fixed_width",
                 "fw_columns": [
                     {"name": "id", "start": 1, "length": 4},
                     {"name": "name", "start": 5, "length": 20},
@@ -162,7 +179,8 @@ class TestMaskUnknownColumn:
     def test_fixed_width_source_blocks_unknown_mask_column(self):
         yaml_text = _mask_pipeline(
             source_cfg={
-                "path": "uploads/x.dat", "format": "fixed_width",
+                "path": "uploads/x.dat",
+                "format": "fixed_width",
                 "fw_columns": [
                     {"name": "id", "start": 1, "length": 4},
                     {"name": "name", "start": 5, "length": 20},
@@ -179,7 +197,8 @@ class TestMaskUnknownColumn:
         # to skip until R2.4 preflight reads the file.
         yaml_text = _mask_pipeline(
             source_cfg={
-                "path": "uploads/x.parquet", "format": "parquet",
+                "path": "uploads/x.parquet",
+                "format": "parquet",
             },
             mask_cols={"id": {"strategy": "passthrough"}},
         )
@@ -195,8 +214,10 @@ class TestPathRouting:
     def test_path_anchors_on_mask_node_and_column(self):
         yaml_text = _mask_pipeline(
             source_cfg={
-                "path": "uploads/x.csv", "format": "csv",
-                "has_header": False, "column_names": ["id"],
+                "path": "uploads/x.csv",
+                "format": "csv",
+                "has_header": False,
+                "column_names": ["id"],
             },
             mask_cols={"unknown_col": {"strategy": "hash"}},
         )

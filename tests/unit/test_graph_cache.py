@@ -1,7 +1,7 @@
 """Unit tests for graph.cache.GraphCache."""
+
 import pandas as pd
 import pyarrow as pa
-import pytest
 
 from decoy_engine.graph.cache import GraphCache
 

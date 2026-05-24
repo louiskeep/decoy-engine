@@ -46,8 +46,8 @@ def translate(exc: Exception, op_kind: str, node_id: str) -> OpError:
     try:
         from decoy_engine.internal.validator import ValidationError
     except ImportError:
-        ValidationError = ()  # type: ignore[assignment]
-    if ValidationError and isinstance(exc, ValidationError):
+        ValidationError = ()  # type: ignore[assignment,misc]
+    if ValidationError and isinstance(exc, ValidationError):  # type: ignore[truthy-function]
         out = OpError(f"Node {node_id!r} ({op_kind}): {exc}")
         # Promote the validator's code + path attributes onto the OpError
         # so downstream callers can read them via the same attribute
@@ -89,15 +89,9 @@ def _maybe_translate_polars(exc: Exception) -> str | None:
 
     if isinstance(exc, pe.ColumnNotFoundError):
         col = _extract_first_quoted(str(exc)) or "?"
-        return (
-            f"column {col!r} not found in input. "
-            f"Did upstream drop it or rename it?"
-        )
+        return f"column {col!r} not found in input. Did upstream drop it or rename it?"
     if isinstance(exc, pe.SchemaError):
-        return (
-            f"schema mismatch — {exc}. "
-            f"Check column types match between inputs."
-        )
+        return f"schema mismatch — {exc}. Check column types match between inputs."
     if isinstance(exc, pe.ComputeError):
         return f"compute error — {exc}. Check the expression / predicate."
     if isinstance(exc, pe.SQLInterfaceError):
@@ -117,22 +111,13 @@ def _maybe_translate_duckdb(exc: Exception) -> str | None:
         return None
 
     if isinstance(exc, duckdb.CatalogException):
-        return (
-            f"table or column missing — {exc}. "
-            f"Check the connector's schema / table name."
-        )
+        return f"table or column missing — {exc}. Check the connector's schema / table name."
     if isinstance(exc, duckdb.IOException):
         return f"I/O error reading source — {exc}. Check the file path / DSN."
     if isinstance(exc, duckdb.ParserException):
-        return (
-            f"SQL parse error — {exc}. "
-            f"Check the predicate / expression syntax."
-        )
+        return f"SQL parse error — {exc}. Check the predicate / expression syntax."
     if isinstance(exc, duckdb.BinderException):
-        return (
-            f"column binding error — {exc}. "
-            f"Did upstream drop a column the predicate references?"
-        )
+        return f"column binding error — {exc}. Did upstream drop a column the predicate references?"
     return None
 
 

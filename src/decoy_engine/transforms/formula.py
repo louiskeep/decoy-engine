@@ -32,7 +32,7 @@ class FormulaStrategy(BaseMaskingStrategy):
     """
 
     def apply(self, column: pd.Series, rule: dict[str, Any]) -> pd.Series:
-        expr = rule.get('formula', '')
+        expr = rule.get("formula", "")
         if not expr:
             self.logger.warning(
                 f"formula strategy on '{rule.get('column', 'unnamed')}' "
@@ -42,4 +42,4 @@ class FormulaStrategy(BaseMaskingStrategy):
         return column.apply(lambda v: v if pd.isna(v) else self._eval(expr, v))
 
     def _eval(self, expr: str, value: Any) -> Any:
-        return safe_eval(expr, MASK_GLOBALS, {'value': value})
+        return safe_eval(expr, MASK_GLOBALS, {"value": value})

@@ -21,6 +21,7 @@ both the registry and the module docstring; CI fails if they drift.
 Reference: docs/v2-app-audit-findings.md, V2 sprint plan §V2.0-prep,
 engineering-best-practices.md §6.1.
 """
+
 from __future__ import annotations
 
 import ast

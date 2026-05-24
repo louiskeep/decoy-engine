@@ -19,6 +19,7 @@ end-to-end win for the engine lives here, not in the per-transform deltas.
 
 Run with: ``pytest tests/benchmark/test_arrow_to_pandas_conversion.py -m benchmark -s``
 """
+
 from __future__ import annotations
 
 import gc
@@ -27,7 +28,6 @@ import time
 import pandas as pd
 import pyarrow as pa
 import pytest
-
 
 ROW_COUNTS: list[int] = [10_000, 100_000, 1_000_000, 5_000_000]
 
@@ -40,18 +40,20 @@ def _hipaa_shaped_table(rows: int) -> pa.Table:
     Uses pa.array(...) directly to avoid the from_pydict path's overhead
     on million-plus row counts.
     """
-    return pa.Table.from_pydict({
-        "patient_id": pa.array(range(rows), type=pa.int64()),
-        "first_name": pa.array(["Alice"] * rows, type=pa.large_string()),
-        "last_name":  pa.array(["Smith"] * rows, type=pa.large_string()),
-        "ssn":        pa.array(["123-45-6789"] * rows, type=pa.string()),
-        "dob":        pa.array(["1985-03-15"] * rows, type=pa.string()),
-        "zip":        pa.array(["90210"] * rows, type=pa.string()),
-        "email":      pa.array(["a@b.com"] * rows, type=pa.string()),
-        "phone":      pa.array(["555-234-5678"] * rows, type=pa.string()),
-        "amount":     pa.array([10.5] * rows, type=pa.float64()),
-        "score":      pa.array([0.1] * rows, type=pa.float64()),
-    })
+    return pa.Table.from_pydict(
+        {
+            "patient_id": pa.array(range(rows), type=pa.int64()),
+            "first_name": pa.array(["Alice"] * rows, type=pa.large_string()),
+            "last_name": pa.array(["Smith"] * rows, type=pa.large_string()),
+            "ssn": pa.array(["123-45-6789"] * rows, type=pa.string()),
+            "dob": pa.array(["1985-03-15"] * rows, type=pa.string()),
+            "zip": pa.array(["90210"] * rows, type=pa.string()),
+            "email": pa.array(["a@b.com"] * rows, type=pa.string()),
+            "phone": pa.array(["555-234-5678"] * rows, type=pa.string()),
+            "amount": pa.array([10.5] * rows, type=pa.float64()),
+            "score": pa.array([0.1] * rows, type=pa.float64()),
+        }
+    )
 
 
 _RESULTS: dict[int, dict] = {}
@@ -129,10 +131,12 @@ def test_zzz_summary():
     if len(_RESULTS) >= 2:
         smallest = ROW_COUNTS[0]
         largest = max(_RESULTS.keys())
-        small_savings = (_RESULTS[smallest]["numpy_elapsed"]
-                         - _RESULTS[smallest]["arrow_elapsed"]) * 1000
-        large_savings = (_RESULTS[largest]["numpy_elapsed"]
-                         - _RESULTS[largest]["arrow_elapsed"]) * 1000
+        small_savings = (
+            _RESULTS[smallest]["numpy_elapsed"] - _RESULTS[smallest]["arrow_elapsed"]
+        ) * 1000
+        large_savings = (
+            _RESULTS[largest]["numpy_elapsed"] - _RESULTS[largest]["arrow_elapsed"]
+        ) * 1000
         if large_savings > 100:
             print(
                 f"At {largest:,} rows the conversion saves {large_savings:.0f} ms "

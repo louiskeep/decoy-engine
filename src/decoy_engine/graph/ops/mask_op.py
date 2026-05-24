@@ -28,9 +28,18 @@ OUTPUT_KIND = "stream"
 # Mirror MaskerConfigValidator.SUPPORTED_MASKING_STRATEGIES -- the graph-mode
 # allowlist must track the legacy validator's list when new transforms ship.
 _VALID_STRATEGIES = {
-    "faker", "hash", "redact", "categorical", "shuffle",
-    "passthrough", "date_shift", "formula",
-    "reference", "truncate", "bucketize", "fpe",
+    "faker",
+    "hash",
+    "redact",
+    "categorical",
+    "shuffle",
+    "passthrough",
+    "date_shift",
+    "formula",
+    "reference",
+    "truncate",
+    "bucketize",
+    "fpe",
 }
 
 
@@ -45,7 +54,8 @@ def validate_config(config: dict[str, Any]) -> None:
     columns = config.get("columns") or {}
     if not isinstance(columns, dict):
         raise ValidationError(
-            "'columns' must be a mapping", "config.columns",
+            "'columns' must be a mapping",
+            "config.columns",
             code=CODES.MASK_BAD_COLUMNS_TYPE,
         )
     for col_name, spec in columns.items():
@@ -67,8 +77,7 @@ def validate_config(config: dict[str, Any]) -> None:
         # rather than as a runtime exception.
         if strategy == "formula" and not (spec.get("formula") or "").strip():
             raise ValidationError(
-                f"column {col_name!r} uses strategy 'formula' but no "
-                f"'formula' expression is set",
+                f"column {col_name!r} uses strategy 'formula' but no 'formula' expression is set",
                 f"config.columns.{col_name}.formula",
                 code=CODES.MASK_FORMULA_MISSING,
             )
@@ -104,7 +113,11 @@ def validate_config(config: dict[str, Any]) -> None:
                         f"config.columns.{col_name}.weights",
                         code=CODES.MASK_BAD_COLUMN_SPEC_TYPE,
                     )
-                if len(numeric_weights) != len(weights) or any(w < 0 for w in numeric_weights) or sum(numeric_weights) <= 0:
+                if (
+                    len(numeric_weights) != len(weights)
+                    or any(w < 0 for w in numeric_weights)
+                    or sum(numeric_weights) <= 0
+                ):
                     raise ValidationError(
                         f"column {col_name!r} categorical weights must be non-negative with at least one positive value",
                         f"config.columns.{col_name}.weights",
@@ -149,9 +162,7 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
     # AppSettings.default_faker_locale on ctx). Fill it onto any faker
     # rule that doesn't set its own locale. Per-column locale still
     # overrides — this only affects rules that didn't pick one.
-    instance_locale = (
-        getattr(ctx, "instance_default_locale", None) if ctx is not None else None
-    )
+    instance_locale = getattr(ctx, "instance_default_locale", None) if ctx is not None else None
     if instance_locale:
         for rule in rules:
             if rule.get("type") == "faker" and not rule.get("locale"):
@@ -169,11 +180,13 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
         ctx.export("rows_processed", len(result))
         # Strategies that touched the data — distinct values, sorted for
         # stable downstream comparisons.
-        strategies_applied = sorted({
-            (spec.get("strategy") or "")
-            for spec in columns.values()
-            if spec.get("strategy") and spec.get("strategy") != "passthrough"
-        })
+        strategies_applied = sorted(
+            {
+                (spec.get("strategy") or "")
+                for spec in columns.values()
+                if spec.get("strategy") and spec.get("strategy") != "passthrough"
+            }
+        )
         ctx.export("strategies_applied", strategies_applied)
         # Total null cells across the columns the user actually masked.
         # Passes through unchanged when the source value was None — useful

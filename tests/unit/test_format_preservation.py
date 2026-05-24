@@ -15,13 +15,12 @@ import pandas as pd
 
 from decoy_engine.transforms.format_preservation import (
     SKIP_STRATEGIES,
-    apply_format_preservation,
     _apply_casing,
     _apply_digit_template,
     _apply_strftime,
     _parse_digit_template,
+    apply_format_preservation,
 )
-
 
 # ── _parse_digit_template ────────────────────────────────────────────
 
@@ -142,22 +141,30 @@ class TestApplyFormatPreservation:
     def test_noop_when_flag_off(self):
         source = pd.Series(["123-45-6789"])
         masked = pd.Series(["999999999"])
-        out = apply_format_preservation(source, masked, {
-            "type": "faker",
-            "preserve_format": False,
-            "format_pattern": r"\d{3}-\d{2}-\d{4}",
-        })
+        out = apply_format_preservation(
+            source,
+            masked,
+            {
+                "type": "faker",
+                "preserve_format": False,
+                "format_pattern": r"\d{3}-\d{2}-\d{4}",
+            },
+        )
         # Flag off — masked is returned unchanged.
         assert list(out) == ["999999999"]
 
     def test_hash_strategy_is_skipped(self):
         source = pd.Series(["123-45-6789"])
         masked = pd.Series(["abcdef1234567890"])  # hex output
-        out = apply_format_preservation(source, masked, {
-            "type": "hash",
-            "preserve_format": True,
-            "format_pattern": r"\d{3}-\d{2}-\d{4}",
-        })
+        out = apply_format_preservation(
+            source,
+            masked,
+            {
+                "type": "hash",
+                "preserve_format": True,
+                "format_pattern": r"\d{3}-\d{2}-\d{4}",
+            },
+        )
         # Hash is in SKIP_STRATEGIES — output passes through.
         assert list(out) == ["abcdef1234567890"]
         assert "hash" in SKIP_STRATEGIES
@@ -165,11 +172,15 @@ class TestApplyFormatPreservation:
     def test_passthrough_strategy_is_skipped(self):
         source = pd.Series(["alice"])
         masked = pd.Series(["alice"])
-        out = apply_format_preservation(source, masked, {
-            "type": "passthrough",
-            "preserve_format": True,
-            "casing_pattern": "upper",
-        })
+        out = apply_format_preservation(
+            source,
+            masked,
+            {
+                "type": "passthrough",
+                "preserve_format": True,
+                "casing_pattern": "upper",
+            },
+        )
         # Passthrough — skipped (source already equals output).
         assert list(out) == ["alice"]
 
@@ -178,65 +189,89 @@ class TestApplyFormatPreservation:
         # double-format and break the strategy's output.
         source = pd.Series(["2025-06-28"])
         masked = pd.Series(["2030-01-15"])
-        out = apply_format_preservation(source, masked, {
-            "type": "date_shift",
-            "preserve_format": True,
-            "format_pattern": "%Y%m%d",
-        })
+        out = apply_format_preservation(
+            source,
+            masked,
+            {
+                "type": "date_shift",
+                "preserve_format": True,
+                "format_pattern": "%Y%m%d",
+            },
+        )
         assert list(out) == ["2030-01-15"]
 
     def test_phone_format_with_faker(self):
         # Faker emitted bare digits; reshape to dashed template.
         source = pd.Series(["815-233-3333"])
         masked = pd.Series(["2322316595"])
-        out = apply_format_preservation(source, masked, {
-            "type": "faker",
-            "preserve_format": True,
-            "format_pattern": r"\d{3}-\d{3}-\d{4}",
-        })
+        out = apply_format_preservation(
+            source,
+            masked,
+            {
+                "type": "faker",
+                "preserve_format": True,
+                "format_pattern": r"\d{3}-\d{3}-\d{4}",
+            },
+        )
         assert list(out) == ["232-231-6595"]
 
     def test_casing_with_faker(self):
         source = pd.Series(["ERICA"])
         masked = pd.Series(["alice"])
-        out = apply_format_preservation(source, masked, {
-            "type": "faker",
-            "preserve_format": True,
-            "casing_pattern": "upper",
-        })
+        out = apply_format_preservation(
+            source,
+            masked,
+            {
+                "type": "faker",
+                "preserve_format": True,
+                "casing_pattern": "upper",
+            },
+        )
         assert list(out) == ["ALICE"]
 
     def test_casing_plus_digit_template_combined(self):
         # Both hints set — both apply in order (template first, then casing).
         source = pd.Series(["AB-1234"])
         masked = pd.Series(["zz9999"])
-        out = apply_format_preservation(source, masked, {
-            "type": "faker",
-            "preserve_format": True,
-            "casing_pattern": "upper",
-        })
+        out = apply_format_preservation(
+            source,
+            masked,
+            {
+                "type": "faker",
+                "preserve_format": True,
+                "casing_pattern": "upper",
+            },
+        )
         # Only casing applies (no digit template here).
         assert list(out) == ["ZZ9999"]
 
     def test_no_patterns_is_noop(self):
         source = pd.Series(["abc"])
         masked = pd.Series(["xyz"])
-        out = apply_format_preservation(source, masked, {
-            "type": "faker",
-            "preserve_format": True,
-            # neither format_pattern nor casing_pattern provided
-        })
+        out = apply_format_preservation(
+            source,
+            masked,
+            {
+                "type": "faker",
+                "preserve_format": True,
+                # neither format_pattern nor casing_pattern provided
+            },
+        )
         assert list(out) == ["xyz"]
 
     def test_unparseable_row_isolated(self):
         # One row can't be re-shaped (no digits) but the others should.
         source = pd.Series(["123-45-6789", "123-45-6789"])
         masked = pd.Series(["999999999", "abc"])
-        out = apply_format_preservation(source, masked, {
-            "type": "faker",
-            "preserve_format": True,
-            "format_pattern": r"\d{3}-\d{2}-\d{4}",
-        })
+        out = apply_format_preservation(
+            source,
+            masked,
+            {
+                "type": "faker",
+                "preserve_format": True,
+                "format_pattern": r"\d{3}-\d{2}-\d{4}",
+            },
+        )
         assert list(out) == ["999-99-9999", "abc"]
 
 
@@ -250,9 +285,11 @@ class TestProcessorIntegration:
         # off each rule and applies the post-pass after the strategy.
         from decoy_engine.masker.processor import MaskingProcessor
 
-        df = pd.DataFrame({
-            "phone": ["815-233-3333", "212-555-0100", "415-867-5309"],
-        })
+        df = pd.DataFrame(
+            {
+                "phone": ["815-233-3333", "212-555-0100", "415-867-5309"],
+            }
+        )
 
         # Stub strategy_manager that returns bare-digit output (simulates
         # faker.phone with no format awareness).
@@ -266,12 +303,16 @@ class TestProcessorIntegration:
                 return None
 
         proc = MaskingProcessor(
-            config={"masking_rules": [{
-                "column": "phone",
-                "type": "faker",
-                "preserve_format": True,
-                "format_pattern": r"\d{3}-\d{3}-\d{4}",
-            }]},
+            config={
+                "masking_rules": [
+                    {
+                        "column": "phone",
+                        "type": "faker",
+                        "preserve_format": True,
+                        "format_pattern": r"\d{3}-\d{3}-\d{4}",
+                    }
+                ]
+            },
             strategy_manager=_StubStrategyManager(),
             ref_integrity=_StubRefIntegrity(),
         )
@@ -293,12 +334,16 @@ class TestProcessorIntegration:
                 return None
 
         proc = MaskingProcessor(
-            config={"masking_rules": [{
-                "column": "phone",
-                "type": "faker",
-                "preserve_format": False,
-                "format_pattern": r"\d{3}-\d{3}-\d{4}",
-            }]},
+            config={
+                "masking_rules": [
+                    {
+                        "column": "phone",
+                        "type": "faker",
+                        "preserve_format": False,
+                        "format_pattern": r"\d{3}-\d{3}-\d{4}",
+                    }
+                ]
+            },
             strategy_manager=_StubStrategyManager(),
             ref_integrity=_StubRefIntegrity(),
         )

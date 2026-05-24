@@ -17,6 +17,7 @@ Tests this module owns:
     EmptyParentPoolError.
   - Unknown column on parent raises UnknownFKColumnError.
 """
+
 from __future__ import annotations
 
 import pandas as pd

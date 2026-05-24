@@ -15,6 +15,7 @@ If you have a legitimate new use case (extremely rare), update SAFE_PATHS
 below in the same PR that adds the call, and the PR carries the tech
 lead's review on the safety rationale.
 """
+
 from __future__ import annotations
 
 import re

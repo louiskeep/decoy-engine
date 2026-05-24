@@ -19,11 +19,14 @@ caller.
 
 Audit Sprint 1.4 - Preview Policy Unification.
 """
+
 from __future__ import annotations
 
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+
+from decoy_engine.graph.types import PreviewResult
 
 if TYPE_CHECKING:
     from decoy_engine.context import ExecutionContext
@@ -58,8 +61,7 @@ class PreviewPolicy:
     def __post_init__(self) -> None:
         if self.on_upstream_error not in ("stop", "continue"):
             raise ValueError(
-                f"on_upstream_error must be 'stop' or 'continue', "
-                f"got {self.on_upstream_error!r}"
+                f"on_upstream_error must be 'stop' or 'continue', got {self.on_upstream_error!r}"
             )
         if self.row_limit < 1:
             raise ValueError(f"row_limit must be >= 1, got {self.row_limit}")
@@ -77,7 +79,7 @@ def run_preview(
     sub_config: dict[str, Any],
     policy: PreviewPolicy,
     ctx: ExecutionContext | None,
-) -> dict[str, Any]:
+) -> PreviewResult:
     """Execute a validated ancestor subgraph under preview policy.
 
     sub_config must be a post-validation graph config containing only
@@ -116,10 +118,7 @@ def run_preview(
     target_op = OPS.get(by_id[node_id]["kind"]) if node_id in by_id else None
     target_ports: set[str] = set()
     if target_op is not None and getattr(target_op, "OUTPUT_KIND", "") == "split":
-        target_ports = {
-            f"{node_id}.{port}"
-            for port in getattr(target_op, "OUTPUT_PORTS", ())
-        }
+        target_ports = {f"{node_id}.{port}" for port in getattr(target_op, "OUTPUT_PORTS", ())}
     cache = GraphCache(plan.consumer_counts, keep={node_id} | target_ports)
 
     if ctx is None:
@@ -155,7 +154,7 @@ def run_preview(
         emit_node_start(log, nid, descriptor, engine, rows_in_total)
 
         try:
-            result = op.apply(inputs, node_cfg, ctx)
+            result = op.apply(inputs, node_cfg, ctx)  # type: ignore[attr-defined]
             if isinstance(result, dict) and getattr(op, "OUTPUT_KIND", None) == "split":
                 ports = getattr(op, "OUTPUT_PORTS", ())
                 # Capture the largest port's input row count for truncated
@@ -211,8 +210,7 @@ def run_preview(
     try:
         df_preview = capped.to_pandas()
         rows = [
-            [_jsonable(v) for v in row]
-            for row in df_preview.itertuples(index=False, name=None)
+            [_jsonable(v) for v in row] for row in df_preview.itertuples(index=False, name=None)
         ]
     except Exception:
         rows = []
@@ -241,18 +239,18 @@ def _result_row_count(result: Any) -> int:
     """
     if result is None:
         return 0
-    if hasattr(result, "height"):           # polars LazyFrame / DataFrame
+    if hasattr(result, "height"):  # polars LazyFrame / DataFrame
         try:
             return int(result.height)
         except Exception:
             return 0
-    if hasattr(result, "num_rows"):         # pyarrow Table / RecordBatch
+    if hasattr(result, "num_rows"):  # pyarrow Table / RecordBatch
         try:
             return int(result.num_rows)
         except Exception:
             return 0
     try:
-        return len(result)                  # pandas DataFrame, list, etc.
+        return len(result)  # pandas DataFrame, list, etc.
     except Exception:
         return 0
 
@@ -269,6 +267,7 @@ def _node_descriptor(node: dict) -> str:
 def _jsonable(v: Any) -> Any:
     try:
         import pandas as pd
+
         if pd.isna(v):
             return None
     except Exception:

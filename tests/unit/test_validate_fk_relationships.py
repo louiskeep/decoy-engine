@@ -20,6 +20,7 @@ Covers all FK_* codes added to validation_result.CODES:
 Each test composes a minimal YAML graph + an FK declaration and
 asserts the codes that fire.
 """
+
 from __future__ import annotations
 
 import textwrap
@@ -124,17 +125,13 @@ class TestHappyPath:
 
 class TestUnknownNode:
     def test_parent_node_missing(self):
-        yaml = _base_two_table_graph().replace(
-            "node: mask_1", "node: nonexistent_parent"
-        )
+        yaml = _base_two_table_graph().replace("node: mask_1", "node: nonexistent_parent")
         res = validate_graph_full(yaml)
         codes = [e.code for e in res.errors]
         assert CODES.FK_UNKNOWN_NODE in codes
 
     def test_child_node_missing(self):
-        yaml = _base_two_table_graph().replace(
-            "node: mask_2", "node: nonexistent_child"
-        )
+        yaml = _base_two_table_graph().replace("node: mask_2", "node: nonexistent_child")
         res = validate_graph_full(yaml)
         codes = [e.code for e in res.errors]
         assert CODES.FK_UNKNOWN_NODE in codes
@@ -162,21 +159,23 @@ class TestUnknownColumn:
         res = validate_graph_full(yaml)
         # FK_UNKNOWN_COLUMN must NOT fire for the source-side reference.
         assert not any(
-            e.code == CODES.FK_UNKNOWN_COLUMN
-            and "parent column" in e.message
-            for e in res.errors
+            e.code == CODES.FK_UNKNOWN_COLUMN and "parent column" in e.message for e in res.errors
         )
 
 
 class TestParentAfterChild:
     def test_parent_topologically_after_child_rejected(self):
         # Swap roles so the FK declares mask_2 as parent of mask_1.
-        yaml = _base_two_table_graph().replace(
-            "parent: {node: mask_1, column: id}",
-            "parent: {node: mask_2, column: customer_id}",
-        ).replace(
-            "child: {node: mask_2, column: customer_id}",
-            "child: {node: mask_1, column: id}",
+        yaml = (
+            _base_two_table_graph()
+            .replace(
+                "parent: {node: mask_1, column: id}",
+                "parent: {node: mask_2, column: customer_id}",
+            )
+            .replace(
+                "child: {node: mask_2, column: customer_id}",
+                "child: {node: mask_1, column: id}",
+            )
         )
         res = validate_graph_full(yaml)
         codes = [e.code for e in res.errors]
@@ -209,6 +208,7 @@ class TestSelfReference:
         # kinds (no two-pass mechanism); this test covers the happy
         # path on a generate node.
         import textwrap
+
         yaml = textwrap.dedent("""
             mode: graph
             nodes:
@@ -241,6 +241,7 @@ class TestSelfReference:
         # Authored on a generate node so the FK_SELF_REF_INERT check
         # added by the 2026-05-20 audit doesn't fire first.
         import textwrap
+
         yaml = textwrap.dedent("""
             mode: graph
             nodes:
@@ -489,6 +490,7 @@ class TestNoBlockNoOp:
 
 # ─────────────────────────────────────────── Tier-1 audit (2026-05-20) ──
 
+
 class TestIneligibleChildKind:
     """fk.ineligible_child_kind — reject FK declarations whose child is
     on a node kind that has no runtime hook to rewrite column values
@@ -500,6 +502,7 @@ class TestIneligibleChildKind:
         # save + run; engine ignored them at apply time. Validator now
         # surfaces the problem before save.
         import textwrap
+
         yaml = textwrap.dedent("""
             mode: graph
             nodes:
@@ -534,9 +537,7 @@ class TestIneligibleChildKind:
     def test_mask_child_accepted(self):
         # Sanity: mask children are eligible, no inert-kind error.
         res = validate_graph_full(_base_two_table_graph())
-        assert not any(
-            e.code == CODES.FK_INELIGIBLE_CHILD_KIND for e in res.errors
-        )
+        assert not any(e.code == CODES.FK_INELIGIBLE_CHILD_KIND for e in res.errors)
 
 
 class TestSelfRefInert:
@@ -550,6 +551,7 @@ class TestSelfRefInert:
         # column from another in-flight. Pre-fix the engine silently
         # ignored these entries.
         import textwrap
+
         yaml = textwrap.dedent("""
             mode: graph
             nodes:
@@ -581,6 +583,7 @@ class TestSelfRefInert:
         # Generate's two-pass mechanism makes self-ref work; no inert
         # error should fire.
         import textwrap
+
         yaml = textwrap.dedent("""
             mode: graph
             nodes:
@@ -613,9 +616,13 @@ class TestSequentialBoundsConflict:
     so the operator picks one or the other."""
 
     def _build_yaml_with_distribution(
-        self, distribution: str, min_per_parent: int = 0, max_per_parent: int = 0,
+        self,
+        distribution: str,
+        min_per_parent: int = 0,
+        max_per_parent: int = 0,
     ) -> str:
         import textwrap
+
         return textwrap.dedent(f"""
             mode: graph
             nodes:
@@ -673,7 +680,9 @@ class TestSequentialBoundsConflict:
         # Bounds compose fine with random / weighted; no warning.
         res = validate_graph_full(
             self._build_yaml_with_distribution(
-                "random", min_per_parent=1, max_per_parent=5,
+                "random",
+                min_per_parent=1,
+                max_per_parent=5,
             )
         )
         warn_codes = [w.code for w in res.warnings]
@@ -752,9 +761,7 @@ class TestCustomProviderFK:
             self._build_yaml(child_column_in_rel="not_a_real_column"),
         )
         codes = [e.code for e in res.errors]
-        assert CODES.FK_UNKNOWN_COLUMN in codes, (
-            f"expected FK_UNKNOWN_COLUMN; got errors={codes}"
-        )
+        assert CODES.FK_UNKNOWN_COLUMN in codes, f"expected FK_UNKNOWN_COLUMN; got errors={codes}"
 
     def test_child_node_missing_emits_unknown_node(self):
         """When the child node id in the FK does not match any graph

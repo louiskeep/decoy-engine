@@ -58,7 +58,11 @@ INPUT_ARITY: tuple[int, int | None] = (0, 0)
 OUTPUT_KIND = "stream"
 
 _CSV_PARAM_KEYS = (
-    "delimiter", "delimiter_is_regex", "strip_quotes", "encoding", "column_names",
+    "delimiter",
+    "delimiter_is_regex",
+    "strip_quotes",
+    "encoding",
+    "column_names",
 )
 
 
@@ -67,7 +71,8 @@ def validate_config(config: dict[str, Any]) -> None:
 
     if "path" not in config:
         raise ValidationError(
-            "missing required field 'path'", "config.path",
+            "missing required field 'path'",
+            "config.path",
             code=CODES.SOURCE_FILE_MISSING_PATH,
         )
     fmt = (config.get("format") or _infer_format(config["path"])).lower()
@@ -80,7 +85,8 @@ def validate_config(config: dict[str, Any]) -> None:
 
     if "has_header" in config and not isinstance(config["has_header"], bool):
         raise ValidationError(
-            "'has_header' must be a boolean when set", "config.has_header",
+            "'has_header' must be a boolean when set",
+            "config.has_header",
             code=CODES.SOURCE_FILE_BAD_HAS_HEADER_TYPE,
         )
 
@@ -102,9 +108,7 @@ def validate_config(config: dict[str, Any]) -> None:
                     "config.delimiter",
                     code=CODES.SOURCE_FILE_BAD_DELIMITER,
                 )
-        if "delimiter_is_regex" in config and not isinstance(
-            config["delimiter_is_regex"], bool
-        ):
+        if "delimiter_is_regex" in config and not isinstance(config["delimiter_is_regex"], bool):
             raise ValidationError(
                 "'delimiter_is_regex' must be a boolean when set",
                 "config.delimiter_is_regex",
@@ -265,9 +269,7 @@ def _apply_pandas(config: dict[str, Any]) -> pd.DataFrame:
     raise OpError(f"unsupported format: {fmt}")
 
 
-def _read_csv_pandas(
-    path: Path, config: dict[str, Any], row_limit: int | None
-) -> pd.DataFrame:
+def _read_csv_pandas(path: Path, config: dict[str, Any], row_limit: int | None) -> pd.DataFrame:
     has_header = config.get("has_header", True)
     delimiter = config.get("delimiter")
     delimiter_is_regex = bool(config.get("delimiter_is_regex"))
@@ -309,9 +311,7 @@ def _read_csv_pandas(
     return df
 
 
-def _read_fwf_pandas(
-    path: Path, config: dict[str, Any], row_limit: int | None
-) -> pd.DataFrame:
+def _read_fwf_pandas(path: Path, config: dict[str, Any], row_limit: int | None) -> pd.DataFrame:
     fw_columns = config["fw_columns"]
     # fw_columns uses 1-based start + length; pandas read_fwf wants
     # 0-based half-open (start_inclusive, end_exclusive). Convert here.
@@ -326,7 +326,10 @@ def _read_fwf_pandas(
     # the scan that profiled it. Downstream nodes can cast explicitly
     # if they want numeric typing.
     kwargs: dict[str, Any] = {
-        "colspecs": colspecs, "names": names, "header": None, "dtype": str,
+        "colspecs": colspecs,
+        "names": names,
+        "header": None,
+        "dtype": str,
     }
     if row_limit:
         kwargs["nrows"] = row_limit
@@ -374,7 +377,9 @@ def _apply_duckdb(config: dict[str, Any]) -> pa.Table:
                         df = _read_csv_pandas(path, config, row_limit)
                         return pa.Table.from_pandas(df, preserve_index=False)
                     opts.append(f"encoding='{_escape_sql_literal(encoding)}'")
-                sql = f"SELECT * FROM read_csv('{_escape_sql_literal(str(path))}', {', '.join(opts)})"
+                sql = (
+                    f"SELECT * FROM read_csv('{_escape_sql_literal(str(path))}', {', '.join(opts)})"
+                )
             elif fmt == "parquet":
                 sql = f"SELECT * FROM read_parquet('{_escape_sql_literal(str(path))}')"
             else:
@@ -397,9 +402,7 @@ def _apply_duckdb(config: dict[str, Any]) -> pa.Table:
                     # Normalize DuckDB's `column0`/`column1` to `col_0`/`col_1`
                     # so downstream configs reference the same names regardless
                     # of which substrate read the file.
-                    table = table.rename_columns(
-                        [f"col_{i}" for i in range(table.num_columns)]
-                    )
+                    table = table.rename_columns([f"col_{i}" for i in range(table.num_columns)])
             return table
         finally:
             con.close()

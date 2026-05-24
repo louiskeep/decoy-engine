@@ -18,6 +18,7 @@ The sub-pipeline accesses `{{iteration.value}}` (the integer) and
 `{{iteration.index}}` (the 0-based count, distinct from `value` when
 start != 0).
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -38,9 +39,7 @@ def validate_config(config: dict[str, Any]) -> None:
     validate_iterator_config(config)
     for field in ("start", "end"):
         if field not in config:
-            raise ValidationError(
-                f"missing required field {field!r}", f"config.{field}"
-            )
+            raise ValidationError(f"missing required field {field!r}", f"config.{field}")
         if not isinstance(config[field], int) or isinstance(config[field], bool):
             raise ValidationError(
                 f"{field!r} must be an int (got {type(config[field]).__name__})",
@@ -48,9 +47,7 @@ def validate_config(config: dict[str, Any]) -> None:
             )
     step = config.get("step", 1)
     if not isinstance(step, int) or isinstance(step, bool) or step == 0:
-        raise ValidationError(
-            "'step' must be a non-zero int", "config.step"
-        )
+        raise ValidationError("'step' must be a non-zero int", "config.step")
     start, end = config["start"], config["end"]
     if step > 0 and start >= end:
         raise ValidationError(

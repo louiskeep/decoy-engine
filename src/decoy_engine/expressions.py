@@ -29,9 +29,15 @@ BASE_GLOBALS: dict[str, Any] = {"__builtins__": {}}
 MASK_GLOBALS: dict[str, Any] = {
     "__builtins__": {},
     "re": _re,
-    "str": str, "int": int, "float": float, "bool": bool,
-    "len": len, "round": round, "abs": abs,
-    "min": min, "max": max,
+    "str": str,
+    "int": int,
+    "float": float,
+    "bool": bool,
+    "len": len,
+    "round": round,
+    "abs": abs,
+    "min": min,
+    "max": max,
     "randint": _random.randint,
     "choice": _random.choice,
 }

@@ -14,6 +14,7 @@ Writes the DataFrame to a local temp file via DuckDB / pandas, then streams
 the bytes to S3 via S3FileSink.write(). Preview mode skips the upload and
 returns the DataFrame unchanged.
 """
+
 from typing import Any
 
 from decoy_engine.graph.ops._base import OpError
@@ -31,12 +32,14 @@ def validate_config(config: dict[str, Any]) -> None:
 
     if "bucket" not in config:
         raise ValidationError(
-            "missing required field 'bucket'", "config.bucket",
+            "missing required field 'bucket'",
+            "config.bucket",
             code=CODES.TARGET_S3_MISSING_BUCKET,
         )
     if "path" not in config:
         raise ValidationError(
-            "missing required field 'path'", "config.path",
+            "missing required field 'path'",
+            "config.path",
             code=CODES.TARGET_S3_MISSING_PATH,
         )
     fmt = (config.get("format") or infer_format(config["path"])).lower()

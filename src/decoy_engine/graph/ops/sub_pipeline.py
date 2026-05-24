@@ -25,6 +25,7 @@ that is a v2 enhancement once a customer actually needs it.
 Output: the pyarrow.Table from the configured `output_node` of the
 sub-pipeline. The runner caches it just like any other op's output.
 """
+
 from __future__ import annotations
 
 import contextvars
@@ -57,19 +58,13 @@ _sub_pipeline_depth: contextvars.ContextVar[int] = contextvars.ContextVar(
 def validate_config(config: dict[str, Any]) -> None:
     ref = config.get("pipeline_ref")
     if not isinstance(ref, str) or not ref.strip():
-        raise ValidationError(
-            "'pipeline_ref' must be a non-empty string", "config.pipeline_ref"
-        )
+        raise ValidationError("'pipeline_ref' must be a non-empty string", "config.pipeline_ref")
     output_node = config.get("output_node")
     if not isinstance(output_node, str) or not output_node.strip():
-        raise ValidationError(
-            "'output_node' must be a non-empty string", "config.output_node"
-        )
+        raise ValidationError("'output_node' must be a non-empty string", "config.output_node")
     template_vars = config.get("template_vars")
     if template_vars is not None and not isinstance(template_vars, dict):
-        raise ValidationError(
-            "'template_vars' must be a dict if provided", "config.template_vars"
-        )
+        raise ValidationError("'template_vars' must be a dict if provided", "config.template_vars")
 
 
 def apply(inputs, config, ctx):
@@ -100,13 +95,9 @@ def apply(inputs, config, ctx):
     from decoy_engine.graph.runner import execute_graph_capture
 
     try:
-        result, cache = execute_graph_capture(
-            yaml_text, ctx=ctx, keep_nodes=[output_node]
-        )
+        result, cache = execute_graph_capture(yaml_text, ctx=ctx, keep_nodes=[output_node])
     except Exception as exc:
-        raise OpError(
-            f"sub_pipeline {pipeline_ref!r} failed during execution: {exc}"
-        ) from exc
+        raise OpError(f"sub_pipeline {pipeline_ref!r} failed during execution: {exc}") from exc
     finally:
         _sub_pipeline_depth.reset(depth_token)
 
@@ -114,9 +105,7 @@ def apply(inputs, config, ctx):
         # Pluck the first node that errored for a clearer message than
         # "sub-pipeline failed". Telemetry from inside the sub-run is
         # still available on result["nodes"] for the caller's logger.
-        failed = next(
-            (n for n in result["nodes"] if n["status"] == "error"), None
-        )
+        failed = next((n for n in result["nodes"] if n["status"] == "error"), None)
         detail = (
             f"node {failed['node_id']!r} ({failed['kind']}): {failed['error']}"
             if failed
@@ -159,9 +148,7 @@ def _read_sub_yaml(pipeline_ref: str) -> str:
     except FileNotFoundError as exc:
         raise OpError(f"sub_pipeline ref not found: {pipeline_ref}") from exc
     except OSError as exc:
-        raise OpError(
-            f"sub_pipeline ref unreadable: {pipeline_ref}: {exc}"
-        ) from exc
+        raise OpError(f"sub_pipeline ref unreadable: {pipeline_ref}: {exc}") from exc
 
 
 def _substitute_template_vars(yaml_text: str, template_vars: dict) -> str:

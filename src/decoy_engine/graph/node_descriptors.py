@@ -61,6 +61,7 @@ def _jsonable(v: Any) -> Any:
     """Replace NaN/NaT/etc. with None so the row tuples serialize cleanly."""
     try:
         import pandas as pd
+
         if pd.isna(v):
             return None
     except Exception:

@@ -48,9 +48,9 @@ def _score_pii(detector_matches: list[DetectorMatch], unique_rate: float) -> flo
     best = detector_matches[0]
     base = 0.0
     if best.detector_id in _PII_DETECTORS:
-        base = 0.6 + 0.4 * best.match_rate          # 0.6 – 1.0
+        base = 0.6 + 0.4 * best.match_rate  # 0.6 – 1.0
     elif best.detector_id in _QUASI_ID_DETECTORS:
-        base = 0.3 + 0.3 * best.match_rate          # 0.3 – 0.6
+        base = 0.3 + 0.3 * best.match_rate  # 0.3 – 0.6
     # Boost when the column is also highly unique (more identifying in practice).
     boost = min(0.15, unique_rate * 0.15) if unique_rate > 0.5 else 0.0
     return round(min(1.0, base + boost), 3)
@@ -81,7 +81,7 @@ _K_ANON_MAX_CANDIDATES = 10
 # to identify rows) and near-constant ones (don't discriminate at all).
 _K_ANON_MIN_UNIQUE_RATE = 0.005
 _K_ANON_MAX_UNIQUE_RATE = 0.95
-_K_ANON_MAX_DISTINCT_FRACTION = 0.25   # < 25% of rows distinct = categorical-like
+_K_ANON_MAX_DISTINCT_FRACTION = 0.25  # < 25% of rows distinct = categorical-like
 # Absolute floor so the fraction doesn't over-filter on tiny datasets.
 # A column with <=20 distinct values is categorical-like in practice
 # regardless of row count.
@@ -194,16 +194,19 @@ def _compute_k_anonymity(
 
 # ── per-column profiler ───────────────────────────────────────────────────────
 
+
 def _top_values(series: pd.Series, total_rows: int, n: int = 5) -> list[TopValue]:
     vc = series.value_counts(dropna=False).head(n)
     out: list[TopValue] = []
     for val, cnt in vc.items():
         is_na = val is None or (isinstance(val, float) and pd.isna(val))
-        out.append(TopValue(
-            value="(null)" if is_na else str(val),
-            count=int(cnt),
-            pct=round(cnt / total_rows * 100, 1) if total_rows > 0 else 0.0,
-        ))
+        out.append(
+            TopValue(
+                value="(null)" if is_na else str(val),
+                count=int(cnt),
+                pct=round(cnt / total_rows * 100, 1) if total_rows > 0 else 0.0,
+            )
+        )
     return out
 
 
@@ -301,7 +304,7 @@ def _classify_alphabet(series: pd.Series) -> str | None:
 # Cardinality buckets — coarser than unique_rate so the chooser
 # doesn't need to re-derive these thresholds.
 _B2_VALUE_SET_BANDS: tuple[tuple[float, str], ...] = (
-    (0.95, "unique"),     # near-PK
+    (0.95, "unique"),  # near-PK
     (0.50, "high"),
     (0.10, "medium"),
     (0.0, "low"),
@@ -314,13 +317,13 @@ def _classify_value_set_size(
 ) -> str | None:
     """Bucket a column's cardinality into one of:
 
-      'constant' — exactly one distinct value (incl. all-NULL columns)
-      'binary'   — two distinct values (yes/no, 0/1, true/false)
-      'low'      — <=10 distinct values OR <10% unique_rate
-      'medium'   — <50% unique_rate
-      'high'     — <95% unique_rate
-      'unique'   — >=95% unique_rate (PK-shaped)
-      None       — empty column (no non-null values)
+    'constant' — exactly one distinct value (incl. all-NULL columns)
+    'binary'   — two distinct values (yes/no, 0/1, true/false)
+    'low'      — <=10 distinct values OR <10% unique_rate
+    'medium'   — <50% unique_rate
+    'high'     — <95% unique_rate
+    'unique'   — >=95% unique_rate (PK-shaped)
+    None       — empty column (no non-null values)
     """
     if distinct_count == 0:
         return None
@@ -565,10 +568,10 @@ def _distribution_freetext(non_null: pd.Series) -> Distribution | None:
         return None
     lens = non_null.astype(str).str.len()
     buckets = [
-        ("<20",     int((lens < 20).sum())),
-        ("20-50",   int(((lens >= 20) & (lens < 50)).sum())),
-        ("50-100",  int(((lens >= 50) & (lens < 100)).sum())),
-        (">100",    int((lens >= 100).sum())),
+        ("<20", int((lens < 20).sum())),
+        ("20-50", int(((lens >= 20) & (lens < 50)).sum())),
+        ("50-100", int(((lens >= 50) & (lens < 100)).sum())),
+        (">100", int((lens >= 100).sum())),
     ]
     return Distribution(
         kind="freetext",
@@ -649,12 +652,14 @@ def _build_detection_trail(
     if not name_hint_matched and hits_name_hint(winner.detector_id, col_name):
         name_hint_matched = True
     if name_hint_matched:
-        rows.append(DetectionSignal(
-            signal=f'name-hint · col="{col_name}"',
-            confidence=100.0,
-            winner=False,
-            ml=False,
-        ))
+        rows.append(
+            DetectionSignal(
+                signal=f'name-hint · col="{col_name}"',
+                confidence=100.0,
+                winner=False,
+                ml=False,
+            )
+        )
     return rows
 
 
@@ -768,7 +773,11 @@ def _profile_column(
     # reasoning behind the winning detector. Both are JSON-serializable
     # via dataclasses.asdict and degrade to None / [] when nothing fires.
     fs.distribution = _build_distribution(
-        series, inferred, fs.detector_matches, distinct_count, total_rows,
+        series,
+        inferred,
+        fs.detector_matches,
+        distinct_count,
+        total_rows,
     )
     fs.detection_trail = _build_detection_trail(fs.detector_matches, name, custom_detectors)
 
@@ -776,6 +785,7 @@ def _profile_column(
 
 
 # ── public entry point ───────────────────────────────────────────────────────
+
 
 def run_storm(
     df: pd.DataFrame,
@@ -829,7 +839,7 @@ def run_storm(
         for col in df.columns:
             f = _profile_column(df[col], total, custom_detectors)
             fields.append(f)
-            for dm in (f.detector_matches or []):
+            for dm in f.detector_matches or []:
                 detector_hits[dm.detector_id] = detector_hits.get(dm.detector_id, 0) + 1
             if (getattr(f, "pii_score", 0.0) or 0.0) > 0:
                 pii_count += 1
@@ -844,10 +854,7 @@ def run_storm(
                     f"{pii_count} flagged PII; hits: {summary}{more}"
                 )
             else:
-                logger.info(
-                    f"✓ detector pass: {len(fields)} fields scanned, "
-                    f"no detector hits"
-                )
+                logger.info(f"✓ detector pass: {len(fields)} fields scanned, no detector hits")
             logger.info("▶ k-anonymity / re-id risk computation")
 
         # Plan B-1: data-driven k-anonymity replaces the old
@@ -893,8 +900,11 @@ def run_storm(
         if logger is not None:
             logger.error(f"✗ storm.scan failed: {type(exc).__name__}: {exc}")
         emit_step(
-            logger, "storm.scan", status="error",
-            error_class=type(exc).__name__, error_msg=str(exc),
+            logger,
+            "storm.scan",
+            status="error",
+            error_class=type(exc).__name__,
+            error_msg=str(exc),
         )
         raise
     if logger is not None:
@@ -903,7 +913,10 @@ def run_storm(
             f"({pii_count} PII, re-id risk {reid_score:.1f}%)"
         )
     emit_step(
-        logger, "storm.scan", status="finish",
-        rows_in=total, rows_out=len(fields),
+        logger,
+        "storm.scan",
+        status="finish",
+        rows_in=total,
+        rows_out=len(fields),
     )
     return profile

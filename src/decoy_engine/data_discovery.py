@@ -69,6 +69,7 @@ class DiscoveryResult:
     friendly Python types (str/int/float/bool/None) so the platform can
     return them directly through FastAPI without extra serialization.
     """
+
     columns: list[str]
     rows: list[dict[str, Any]]
 
@@ -93,9 +94,7 @@ def _validate_select_only(sql: str) -> None:
     # split-point a user would naturally hit.
     body = cleaned.rstrip(";").strip()
     if ";" in body:
-        raise DiscoverySqlError(
-            "Multiple statements are not allowed. Run one SELECT at a time."
-        )
+        raise DiscoverySqlError("Multiple statements are not allowed. Run one SELECT at a time.")
 
     leader = body.split(None, 1)[0].upper() if body else ""
     if leader not in _ALLOWED_LEADERS:
@@ -173,10 +172,7 @@ def run_discovery_sql(
         # fetchmany pulls at most row_limit rows; we don't materialize
         # everything in case the user wrote `SELECT * FROM huge`.
         raw = rel.fetchmany(row_limit)
-        rows = [
-            {col: _coerce(value) for col, value in zip(cols, row, strict=False)}
-            for row in raw
-        ]
+        rows = [{col: _coerce(value) for col, value in zip(cols, row, strict=False)} for row in raw]
         return DiscoveryResult(columns=cols, rows=rows)
     finally:
         con.close()

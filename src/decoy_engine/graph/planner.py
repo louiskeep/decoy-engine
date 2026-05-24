@@ -18,10 +18,13 @@ Design notes:
   - build_plan does not re-validate; callers must run GraphConfigValidator
     first.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+
+from decoy_engine.graph.registry import GraphEngineMode
 
 
 @dataclass(frozen=True)
@@ -43,7 +46,7 @@ class ExecutionPlan:
     order: tuple[str, ...]
     in_edges: dict[str, list[str]]
     consumer_counts: dict[str, int]
-    graph_engine_mode: str
+    graph_engine_mode: GraphEngineMode
 
 
 def build_plan(config: dict[str, Any]) -> ExecutionPlan:
@@ -76,11 +79,11 @@ def build_plan(config: dict[str, Any]) -> ExecutionPlan:
     )
 
 
-def _resolve_engine_mode(config: dict[str, Any]) -> str:
+def _resolve_engine_mode(config: dict[str, Any]) -> GraphEngineMode:
     mode = config.get("engine") or "hybrid"
-    if mode not in ("pandas", "hybrid"):
-        return "hybrid"
-    return mode
+    if mode == "pandas":
+        return "pandas"
+    return "hybrid"
 
 
 def _count_consumers(
@@ -111,9 +114,7 @@ def _count_consumers(
     return counts
 
 
-def ancestor_node_ids(
-    nodes: list, edges: list, target: str
-) -> set[str]:
+def ancestor_node_ids(nodes: list, edges: list, target: str) -> set[str]:
     """Walk backward from ``target`` along edges and return every node id
     that ultimately feeds it.
 
@@ -128,10 +129,7 @@ def ancestor_node_ids(
     build_plan() for the same reason: anything that walks the graph's
     structure before execution belongs in the planner module.
     """
-    valid_ids = {
-        n.get("id") for n in nodes
-        if isinstance(n, dict) and isinstance(n.get("id"), str)
-    }
+    valid_ids = {n.get("id") for n in nodes if isinstance(n, dict) and isinstance(n.get("id"), str)}
     in_edges: dict[str, list[str]] = {}
     for e in edges or []:
         if not isinstance(e, dict):

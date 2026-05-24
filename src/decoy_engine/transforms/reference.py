@@ -46,9 +46,9 @@ class ReferenceStrategy(BaseMaskingStrategy):
         self._cache: dict[str, pd.DataFrame] = {}
 
     def apply(self, column: pd.Series, rule: dict[str, Any]) -> pd.Series:
-        column_name = rule.get('column', 'unnamed')
-        ref_path = rule['reference']
-        key_column = rule.get('key_column')
+        column_name = rule.get("column", "unnamed")
+        ref_path = rule["reference"]
+        key_column = rule.get("key_column")
 
         ref_values = self._load_reference_values(ref_path, key_column)
         if not ref_values:
@@ -60,7 +60,7 @@ class ReferenceStrategy(BaseMaskingStrategy):
 
         n = len(ref_values)
         column_key = self._column_key()
-        seed = rule.get('seed', self.seed)
+        seed = rule.get("seed", self.seed)
 
         if column_key is not None:
             self.logger.debug(
@@ -95,7 +95,7 @@ class ReferenceStrategy(BaseMaskingStrategy):
 
     def validate_rule(self, rule: dict[str, Any]) -> None:
         super().validate_rule(rule)
-        if 'reference' not in rule or not rule['reference']:
+        if "reference" not in rule or not rule["reference"]:
             raise ValueError(
                 f"Rule for reference strategy is missing required 'reference' field "
                 f"(column '{rule.get('column', 'unnamed')}')"
@@ -105,9 +105,7 @@ class ReferenceStrategy(BaseMaskingStrategy):
 
     # ── Internal helpers ──────────────────────────────────────────────
 
-    def _load_reference_values(
-        self, ref_path: str, key_column: str | None
-    ) -> list[Any]:
+    def _load_reference_values(self, ref_path: str, key_column: str | None) -> list[Any]:
         """Resolve `ref_path` to a list of pickable values. Cached per
         (path, key_column) pair so repeated columns don't re-read disk."""
         cache_key = f"{ref_path}::{key_column or ''}"
@@ -122,17 +120,12 @@ class ReferenceStrategy(BaseMaskingStrategy):
             path = Path(os.getcwd()) / path
 
         if not path.exists():
-            raise ValueError(
-                f"Reference dataset not found: {ref_path} "
-                f"(resolved to {path})"
-            )
+            raise ValueError(f"Reference dataset not found: {ref_path} (resolved to {path})")
 
         try:
             df = pd.read_csv(path)
         except Exception as exc:
-            raise ValueError(
-                f"Failed to read reference CSV '{path}': {exc}"
-            ) from exc
+            raise ValueError(f"Failed to read reference CSV '{path}': {exc}") from exc
 
         if df.empty:
             self.logger.warning(f"Reference dataset '{ref_path}' is empty.")

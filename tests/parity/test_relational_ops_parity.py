@@ -28,12 +28,14 @@ from decoy_engine.graph.ops import (
 
 @pytest.fixture
 def standard_pandas() -> pd.DataFrame:
-    return pd.DataFrame({
-        "id": [1, 2, 3, 4, 5, 5],
-        "state": ["CA", "NY", "CA", "TX", "CA", "CA"],
-        "value": [10, 20, 30, 40, 50, 50],
-        "name": ["Alice", "Bob", "Carol", "Dave", "Eve", "Eve"],
-    })
+    return pd.DataFrame(
+        {
+            "id": [1, 2, 3, 4, 5, 5],
+            "state": ["CA", "NY", "CA", "TX", "CA", "CA"],
+            "value": [10, 20, 30, 40, 50, 50],
+            "name": ["Alice", "Bob", "Carol", "Dave", "Eve", "Eve"],
+        }
+    )
 
 
 @pytest.fixture
@@ -145,13 +147,16 @@ def test_limit_zero_returns_empty_frame_both_engines(standard_pandas, standard_p
 # -------- filter ------------------------------------------------------------
 
 
-@pytest.mark.parametrize("predicate", [
-    "state == 'CA'",
-    "value > 20",
-    "state == 'CA' and value >= 30",
-    "state == 'NY' or state == 'TX'",
-    "value != 50",
-])
+@pytest.mark.parametrize(
+    "predicate",
+    [
+        "state == 'CA'",
+        "value > 20",
+        "state == 'CA' and value >= 30",
+        "state == 'NY' or state == 'TX'",
+        "value != 50",
+    ],
+)
 def test_filter_parity_basic(standard_pandas, standard_polars, predicate):
     cfg = {"predicate": predicate}
     pd_out = filter_op.apply([standard_pandas], cfg, ctx=None)
@@ -168,6 +173,7 @@ def test_filter_polars_rejects_pandas_only_syntax(standard_polars):
     engine='python'; polars SQLContext rejects them. The op surfaces the
     failure as OpError."""
     from decoy_engine.graph.ops._base import OpError
+
     with pytest.raises(OpError):
         filter_op.apply(
             [standard_polars],

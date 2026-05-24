@@ -22,6 +22,7 @@ Error mapping:
 * Networking errors (`EndpointConnectionError`, transient 5xx) raise
   `TransientError` so the engine's retry logic kicks in.
 """
+
 from __future__ import annotations
 
 from collections.abc import Iterator
@@ -170,9 +171,9 @@ class S3FileSource(FileSource[S3Config]):
     version: ClassVar[str] = "1.0.0"
     capabilities: ClassVar[dict[str, bool]] = {
         CAP_STREAMING: True,
-        CAP_RESUMABLE: True,        # supported via Range header re-requests
-        CAP_SIGNED_URL: True,        # via boto3 generate_presigned_url
-        CAP_INTROSPECTION: True,     # list returns size + content_type
+        CAP_RESUMABLE: True,  # supported via Range header re-requests
+        CAP_SIGNED_URL: True,  # via boto3 generate_presigned_url
+        CAP_INTROSPECTION: True,  # list returns size + content_type
     }
 
     def __init__(self, config: S3Config) -> None:
@@ -386,9 +387,7 @@ class S3FileSink(FileSink[S3Config]):
 
     def _initiate_multipart(self, client, key: str) -> str:
         try:
-            response = client.create_multipart_upload(
-                Bucket=self.config.bucket, Key=key
-            )
+            response = client.create_multipart_upload(Bucket=self.config.bucket, Key=key)
         except Exception as exc:
             raise _wrap_client_error(exc) from exc
         return response["UploadId"]

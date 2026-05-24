@@ -20,6 +20,7 @@ placeholders: a value of `{"state": "KY", "year": 2024}` produces
 `{{iteration.value.state}}` and `{{iteration.value.year}}` in addition
 to the JSON-stringified `{{iteration.value}}`.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -40,9 +41,7 @@ def validate_config(config: dict[str, Any]) -> None:
     validate_iterator_config(config)
     values = config.get("values")
     if not isinstance(values, list) or not values:
-        raise ValidationError(
-            "'values' must be a non-empty list", "config.values"
-        )
+        raise ValidationError("'values' must be a non-empty list", "config.values")
 
 
 def apply(inputs, config, ctx):

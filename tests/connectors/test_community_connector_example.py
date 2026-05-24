@@ -13,12 +13,15 @@ Imports the test class only from `decoy_engine.sdk` and the contract
 test classes from the contract suite (the same way a real community
 connector author would in their own repo).
 """
+
 from __future__ import annotations
 
-from typing import ClassVar, Iterator, Optional
+from collections.abc import Iterator
+from typing import ClassVar
 
 import pytest
 from pydantic import Field
+from sdk_contract_tests import FileSinkContract, FileSourceContract
 
 # Public SDK only. If you have to add a `from decoy_engine.internal...`
 # import to make this file work, the SDK has a leaky abstraction.
@@ -33,9 +36,6 @@ from decoy_engine.sdk import (
     PermanentError,
     WriteResult,
 )
-
-from sdk_contract_tests import FileSinkContract, FileSourceContract  # noqa: E402
-
 
 # ----- The community connector --------------------------------------------
 
@@ -72,7 +72,7 @@ class _CommunitySource(FileSource[_InMemoryConfig]):
             return CheckResult(ok=False, detail="namespace not initialized")
         return CheckResult(ok=True)
 
-    def list(self, prefix: Optional[str] = None) -> Iterator[FileMeta]:
+    def list(self, prefix: str | None = None) -> Iterator[FileMeta]:
         bucket = _STORE.get(self.config.namespace, {})
         for path, body in sorted(bucket.items()):
             if prefix and not path.startswith(prefix):
@@ -142,6 +142,7 @@ class TestCommunitySinkContract(FileSinkContract):
     def reader_for(self, fresh_store):
         def _read(path: str) -> bytes:
             return fresh_store["ns1"][path]
+
         return _read
 
 

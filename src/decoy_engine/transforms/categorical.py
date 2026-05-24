@@ -27,9 +27,7 @@ class CategoricalStrategy(BaseMaskingStrategy):
         seed = int(rule.get("seed", self.seed))
         categories = list(rule["categories"])
         weights = self._normalize_weights(rule.get("weights"), categories)
-        null_probability = self._normalize_null_probability(
-            rule.get("null_probability", 0.0)
-        )
+        null_probability = self._normalize_null_probability(rule.get("null_probability", 0.0))
         policy = json.dumps(
             {
                 "categories": categories,

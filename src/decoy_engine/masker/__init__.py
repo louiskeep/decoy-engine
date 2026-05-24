@@ -7,4 +7,4 @@ Provides functionality for masking sensitive data with referential integrity.
 from decoy_engine.masker.masker import Masker
 from decoy_engine.masker.processor import MaskingProcessor
 
-__all__ = ['Masker', 'MaskingProcessor']
+__all__ = ["Masker", "MaskingProcessor"]

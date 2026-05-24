@@ -1,4 +1,5 @@
 """Tests for FLAG gate op."""
+
 import pandas as pd
 import polars as pl
 import pytest
@@ -18,22 +19,22 @@ def _pl(records):
 
 class TestValidateConfig:
     def test_valid_row_count(self):
-        flag_gate.validate_config({
-            "conditions": [{"type": "row_count", "op": "gte", "value": 1}]
-        })
+        flag_gate.validate_config({"conditions": [{"type": "row_count", "op": "gte", "value": 1}]})
 
     def test_valid_schema_match(self):
-        flag_gate.validate_config({
-            "conditions": [{"type": "schema_match", "columns": ["id", "email"]}]
-        })
+        flag_gate.validate_config(
+            {"conditions": [{"type": "schema_match", "columns": ["id", "email"]}]}
+        )
 
     def test_valid_multiple_conditions(self):
-        flag_gate.validate_config({
-            "conditions": [
-                {"type": "row_count", "op": "gte", "value": 1},
-                {"type": "schema_match", "columns": ["id"]},
-            ]
-        })
+        flag_gate.validate_config(
+            {
+                "conditions": [
+                    {"type": "row_count", "op": "gte", "value": 1},
+                    {"type": "schema_match", "columns": ["id"]},
+                ]
+            }
+        )
 
     def test_empty_conditions_raises(self):
         with pytest.raises(ValidationError):
@@ -45,63 +46,69 @@ class TestValidateConfig:
 
     def test_invalid_op_raises(self):
         with pytest.raises(ValidationError):
-            flag_gate.validate_config({
-                "conditions": [{"type": "row_count", "op": "bad", "value": 5}]
-            })
+            flag_gate.validate_config(
+                {"conditions": [{"type": "row_count", "op": "bad", "value": 5}]}
+            )
 
     def test_non_int_value_raises(self):
         with pytest.raises(ValidationError):
-            flag_gate.validate_config({
-                "conditions": [{"type": "row_count", "op": "gte", "value": "5"}]
-            })
+            flag_gate.validate_config(
+                {"conditions": [{"type": "row_count", "op": "gte", "value": "5"}]}
+            )
 
     def test_unknown_type_raises(self):
         with pytest.raises(ValidationError):
-            flag_gate.validate_config({
-                "conditions": [{"type": "unknown_type"}]
-            })
+            flag_gate.validate_config({"conditions": [{"type": "unknown_type"}]})
 
     def test_empty_columns_raises(self):
         with pytest.raises(ValidationError):
-            flag_gate.validate_config({
-                "conditions": [{"type": "schema_match", "columns": []}]
-            })
+            flag_gate.validate_config({"conditions": [{"type": "schema_match", "columns": []}]})
 
 
 class TestApplyRowCount:
     def test_passes_when_satisfied(self):
         df = _pd([{"x": 1}, {"x": 2}])
-        result = flag_gate.apply([df], {
-            "conditions": [{"type": "row_count", "op": "gte", "value": 1}]
-        })
+        result = flag_gate.apply(
+            [df], {"conditions": [{"type": "row_count", "op": "gte", "value": 1}]}
+        )
         assert result is df
 
     def test_raises_when_not_satisfied(self):
         df = _pd([])
         with pytest.raises(FlagPauseSignal) as exc_info:
-            flag_gate.apply([df], {
-                "conditions": [{"type": "row_count", "op": "gte", "value": 1}]
-            })
+            flag_gate.apply([df], {"conditions": [{"type": "row_count", "op": "gte", "value": 1}]})
         assert exc_info.value.conditions_failed[0]["type"] == "row_count"
 
     def test_gate_id_propagated(self):
         df = _pd([])
         with pytest.raises(FlagPauseSignal) as exc_info:
-            flag_gate.apply([df], {
-                "gate_id": "my_gate",
-                "conditions": [{"type": "row_count", "op": "gt", "value": 0}],
-            })
+            flag_gate.apply(
+                [df],
+                {
+                    "gate_id": "my_gate",
+                    "conditions": [{"type": "row_count", "op": "gt", "value": 0}],
+                },
+            )
         assert exc_info.value.gate_id == "my_gate"
         assert "my_gate" in str(exc_info.value)
 
-    @pytest.mark.parametrize("op,threshold,expect_pass", [
-        ("lt", 10, True), ("lt", 5, False),
-        ("lte", 5, True), ("lte", 4, False),
-        ("gt", 4, True), ("gt", 5, False),
-        ("gte", 5, True), ("gte", 6, False),
-        ("eq", 5, True), ("eq", 4, False),
-        ("ne", 4, True), ("ne", 5, False),
-    ])
+    @pytest.mark.parametrize(
+        "op,threshold,expect_pass",
+        [
+            ("lt", 10, True),
+            ("lt", 5, False),
+            ("lte", 5, True),
+            ("lte", 4, False),
+            ("gt", 4, True),
+            ("gt", 5, False),
+            ("gte", 5, True),
+            ("gte", 6, False),
+            ("eq", 5, True),
+            ("eq", 4, False),
+            ("ne", 4, True),
+            ("ne", 5, False),
+        ],
+    )
     def test_all_ops(self, op, threshold, expect_pass):
         df = _pd([{"x": i} for i in range(5)])  # 5 rows
         cfg = {"conditions": [{"type": "row_count", "op": op, "value": threshold}]}
@@ -114,29 +121,32 @@ class TestApplyRowCount:
     def test_multiple_failures_all_reported(self):
         df = _pd([])
         with pytest.raises(FlagPauseSignal) as exc_info:
-            flag_gate.apply([df], {
-                "conditions": [
-                    {"type": "row_count", "op": "gt", "value": 0},
-                    {"type": "row_count", "op": "gte", "value": 10},
-                ]
-            })
+            flag_gate.apply(
+                [df],
+                {
+                    "conditions": [
+                        {"type": "row_count", "op": "gt", "value": 0},
+                        {"type": "row_count", "op": "gte", "value": 10},
+                    ]
+                },
+            )
         assert len(exc_info.value.conditions_failed) == 2
 
 
 class TestApplySchemaMatch:
     def test_passes_when_all_cols_present(self):
         df = _pd([{"id": 1, "email": "a@b.com"}])
-        result = flag_gate.apply([df], {
-            "conditions": [{"type": "schema_match", "columns": ["id", "email"]}]
-        })
+        result = flag_gate.apply(
+            [df], {"conditions": [{"type": "schema_match", "columns": ["id", "email"]}]}
+        )
         assert result is df
 
     def test_raises_when_col_missing(self):
         df = _pd([{"id": 1}])
         with pytest.raises(FlagPauseSignal) as exc_info:
-            flag_gate.apply([df], {
-                "conditions": [{"type": "schema_match", "columns": ["id", "email"]}]
-            })
+            flag_gate.apply(
+                [df], {"conditions": [{"type": "schema_match", "columns": ["id", "email"]}]}
+            )
         failed = exc_info.value.conditions_failed[0]
         assert failed["type"] == "schema_match"
         assert "email" in failed["missing_columns"]
@@ -144,31 +154,29 @@ class TestApplySchemaMatch:
 
 class TestApplyPreRun:
     def test_no_input_zero_row_count_passes(self):
-        result = flag_gate.apply([], {
-            "conditions": [{"type": "row_count", "op": "gte", "value": 0}]
-        })
+        result = flag_gate.apply(
+            [], {"conditions": [{"type": "row_count", "op": "gte", "value": 0}]}
+        )
         assert result is None
 
     def test_no_input_nonzero_row_count_fails(self):
         with pytest.raises(FlagPauseSignal):
-            flag_gate.apply([], {
-                "conditions": [{"type": "row_count", "op": "gt", "value": 0}]
-            })
+            flag_gate.apply([], {"conditions": [{"type": "row_count", "op": "gt", "value": 0}]})
 
 
 class TestApplyPolarsInput:
     def test_polars_frame_passes_row_count(self):
         df = _pl([{"id": 1, "name": "Alice"}])
-        result = flag_gate.apply([df], {
-            "conditions": [{"type": "row_count", "op": "eq", "value": 1}]
-        })
+        result = flag_gate.apply(
+            [df], {"conditions": [{"type": "row_count", "op": "eq", "value": 1}]}
+        )
         assert result is df
 
     def test_polars_frame_schema_match(self):
         df = _pl([{"id": 1, "email": "x@y.com"}])
-        flag_gate.apply([df], {
-            "conditions": [{"type": "schema_match", "columns": ["id", "email"]}]
-        })
+        flag_gate.apply(
+            [df], {"conditions": [{"type": "schema_match", "columns": ["id", "email"]}]}
+        )
 
 
 class TestMetadata:
@@ -213,9 +221,12 @@ class TestOnFail:
     def test_default_is_pause(self):
         df = _pd([])
         with pytest.raises(FlagPauseSignal) as exc_info:
-            flag_gate.apply([df], {
-                "conditions": [{"type": "row_count", "op": "gte", "value": 1}],
-            })
+            flag_gate.apply(
+                [df],
+                {
+                    "conditions": [{"type": "row_count", "op": "gte", "value": 1}],
+                },
+            )
         # Default on_fail = pause; failure record carries the explicit mode.
         assert exc_info.value.conditions_failed[0]["on_fail"] == "pause"
 
@@ -260,10 +271,13 @@ class TestOnFail:
 
     def test_invalid_on_fail_rejected(self):
         from decoy_engine.internal.validator import ValidationError
+
         with pytest.raises(ValidationError) as exc:
-            flag_gate.validate_config({
-                "conditions": [
-                    {"type": "row_count", "op": "gte", "value": 1, "on_fail": "bogus"},
-                ],
-            })
+            flag_gate.validate_config(
+                {
+                    "conditions": [
+                        {"type": "row_count", "op": "gte", "value": 1, "on_fail": "bogus"},
+                    ],
+                }
+            )
         assert "on_fail" in (exc.value.path or "")

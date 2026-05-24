@@ -87,16 +87,18 @@ class TestRedactDefaults:
     realistic value into a redact'd column."""
 
     REDACT_DETECTORS = [
-        "icd10", "url", "license_num", "health_plan_id",
-        "device_id", "biometric_id",
+        "icd10",
+        "url",
+        "license_num",
+        "health_plan_id",
+        "device_id",
+        "biometric_id",
     ]
 
     @pytest.mark.parametrize("detector_id", REDACT_DETECTORS)
     def test_redact_default_has_redacted_marker(self, detector_id):
         strategy, params = DEFAULT_STRATEGY_BY_DETECTOR[detector_id]
-        assert strategy == "redact", (
-            f"{detector_id} should redact in V1 (semantic FPE is V2)"
-        )
+        assert strategy == "redact", f"{detector_id} should redact in V1 (semantic FPE is V2)"
         # The CVV entry uses "XXX"; the rest use "REDACTED". Both are
         # valid "obviously redacted" strings — assert it's at least one
         # of those. The engine's redact strategy keys this as
@@ -113,14 +115,27 @@ class TestFormatPreservingDefaults:
     point at fpe / date_shift / faker.* — never redact."""
 
     FORMAT_PRESERVING = [
-        "first_name", "last_name", "person_name", "email", "us_phone",
-        "fax_number", "address", "ssn", "iso_date", "us_date", "eu_date",
-        "us_zip", "ipv4", "mrn", "npi", "pan", "iban", "vehicle_id",
+        "first_name",
+        "last_name",
+        "person_name",
+        "email",
+        "us_phone",
+        "fax_number",
+        "address",
+        "ssn",
+        "iso_date",
+        "us_date",
+        "eu_date",
+        "us_zip",
+        "ipv4",
+        "mrn",
+        "npi",
+        "pan",
+        "iban",
+        "vehicle_id",
     ]
 
     @pytest.mark.parametrize("detector_id", FORMAT_PRESERVING)
     def test_does_not_redact(self, detector_id):
         strategy, _ = DEFAULT_STRATEGY_BY_DETECTOR[detector_id]
-        assert strategy != "redact", (
-            f"{detector_id} should format-preserve, not redact"
-        )
+        assert strategy != "redact", f"{detector_id} should format-preserve, not redact"

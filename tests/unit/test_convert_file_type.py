@@ -4,6 +4,7 @@ Covers config validation, per-format round-trips (CSV / TSV / Parquet /
 JSONL), stream passthrough semantics, preview-mode bypass of the write,
 parent-directory creation, error mapping, and OPS registry plumbing.
 """
+
 from __future__ import annotations
 
 import json
@@ -28,21 +29,15 @@ class TestValidation:
 
     def test_empty_format_rejected(self):
         with pytest.raises(ValidationError, match="format"):
-            convert_file_type.validate_config(
-                {"format": "", "output_filename": "out.csv"}
-            )
+            convert_file_type.validate_config({"format": "", "output_filename": "out.csv"})
 
     def test_non_string_format_rejected(self):
         with pytest.raises(ValidationError, match="format"):
-            convert_file_type.validate_config(
-                {"format": 42, "output_filename": "out.csv"}
-            )
+            convert_file_type.validate_config({"format": 42, "output_filename": "out.csv"})
 
     def test_unsupported_format_rejected(self):
         with pytest.raises(ValidationError, match="xml"):
-            convert_file_type.validate_config(
-                {"format": "xml", "output_filename": "out.xml"}
-            )
+            convert_file_type.validate_config({"format": "xml", "output_filename": "out.xml"})
 
     def test_missing_output_filename_rejected(self):
         with pytest.raises(ValidationError, match="output_filename"):
@@ -50,14 +45,10 @@ class TestValidation:
 
     @pytest.mark.parametrize("fmt", ["csv", "tsv", "parquet", "jsonl"])
     def test_supported_formats_pass(self, fmt):
-        convert_file_type.validate_config(
-            {"format": fmt, "output_filename": f"out.{fmt}"}
-        )
+        convert_file_type.validate_config({"format": fmt, "output_filename": f"out.{fmt}"})
 
     def test_format_is_case_insensitive(self):
-        convert_file_type.validate_config(
-            {"format": "Parquet", "output_filename": "out.parquet"}
-        )
+        convert_file_type.validate_config({"format": "Parquet", "output_filename": "out.parquet"})
 
 
 class TestApplyRoundTrip:
@@ -159,7 +150,7 @@ class TestErrors:
         # surface as OpError, not the raw duckdb exception.
         out = tmp_path / "existing_dir"
         out.mkdir()
-        with pytest.raises(OpError, match="convert.file_type"):
+        with pytest.raises(OpError, match=r"convert\.file_type"):
             convert_file_type.apply(
                 inputs=[_table()],
                 config={"format": "csv", "output_filename": str(out)},

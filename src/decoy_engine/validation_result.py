@@ -96,10 +96,16 @@ class ValidationResult:
         node_id: str | None = None,
         hint: str | None = None,
     ) -> None:
-        self.errors.append(ValidationMessage(
-            severity="error", code=code, message=message,
-            path=path, node_id=node_id, hint=hint,
-        ))
+        self.errors.append(
+            ValidationMessage(
+                severity="error",
+                code=code,
+                message=message,
+                path=path,
+                node_id=node_id,
+                hint=hint,
+            )
+        )
 
     def add_warning(
         self,
@@ -110,10 +116,16 @@ class ValidationResult:
         node_id: str | None = None,
         hint: str | None = None,
     ) -> None:
-        self.warnings.append(ValidationMessage(
-            severity="warning", code=code, message=message,
-            path=path, node_id=node_id, hint=hint,
-        ))
+        self.warnings.append(
+            ValidationMessage(
+                severity="warning",
+                code=code,
+                message=message,
+                path=path,
+                node_id=node_id,
+                hint=hint,
+            )
+        )
 
 
 # -- Code registry -----------------------------------------------------------------------
@@ -277,12 +289,12 @@ class CODES:
     # generate op consumption in Commits 2 + 4). Strict mode promotes
     # the advisory codes (parallel_branches, strategy_coerced) from
     # warning to error.
-    FK_UNKNOWN_NODE = "fk.unknown_node"                  # validation, error
-    FK_UNKNOWN_COLUMN = "fk.unknown_column"              # validation + runtime, error
-    FK_PARENT_AFTER_CHILD = "fk.parent_after_child"      # validation, error
-    FK_PARENT_UNRESOLVED = "fk.parent_unresolved"        # runtime, error in strict / warning otherwise
-    FK_EMPTY_PARENT_POOL = "fk.empty_parent_pool"        # runtime, error in strict / warning otherwise
-    FK_PARALLEL_BRANCHES = "fk.parallel_branches"        # validation, warning (advisory)
+    FK_UNKNOWN_NODE = "fk.unknown_node"  # validation, error
+    FK_UNKNOWN_COLUMN = "fk.unknown_column"  # validation + runtime, error
+    FK_PARENT_AFTER_CHILD = "fk.parent_after_child"  # validation, error
+    FK_PARENT_UNRESOLVED = "fk.parent_unresolved"  # runtime, error in strict / warning otherwise
+    FK_EMPTY_PARENT_POOL = "fk.empty_parent_pool"  # runtime, error in strict / warning otherwise
+    FK_PARALLEL_BRANCHES = "fk.parallel_branches"  # validation, warning (advisory)
     FK_NONDETERMINISTIC_MASK = "fk.nondeterministic_mask"  # validation, warning (advisory; error under DECOY_FK_STRICT_DETERMINISM=1)
     # Pre-V1 tier-1 audit fixes (2026-05-20):
     # Reject column_relationships entries whose child / junction node
@@ -305,17 +317,21 @@ class CODES:
     # node (a -> b, b -> a). Mask + non-generate kinds are inert (no
     # two-pass mechanism); FK_SELF_REF_INERT rejects those instead of
     # the engine silently ignoring the entry at run time.
-    FK_SELF_REFERENCE = "fk.self_reference"              # legacy: kept for back-compat (now a warning when child.column != parent.column; previously a hard error)
-    FK_SELF_CYCLE = "fk.self_cycle"                      # validation, error (cycle within one node's column relationships)
-    FK_SELF_REF_INERT = "fk.self_ref_inert"              # validation, error (self-ref on a node kind that can't two-pass)
+    FK_SELF_REFERENCE = "fk.self_reference"  # legacy: kept for back-compat (now a warning when child.column != parent.column; previously a hard error)
+    FK_SELF_CYCLE = (
+        "fk.self_cycle"  # validation, error (cycle within one node's column relationships)
+    )
+    FK_SELF_REF_INERT = (
+        "fk.self_ref_inert"  # validation, error (self-ref on a node kind that can't two-pass)
+    )
 
     # Many-to-many junction kind. Engine accepts `kind: m2m` with
     # left_parent + right_parent + junction columns; rejects unknown
     # parent nodes / columns / missing junction columns the same way
     # the kind: fk path does.
-    FK_M2M_UNKNOWN_NODE = "fk.m2m_unknown_node"          # validation, error
-    FK_M2M_UNKNOWN_COLUMN = "fk.m2m_unknown_column"      # validation, error
-    FK_M2M_BAD_POOL = "fk.m2m_bad_pool"                  # validation, error (unsupported pool_strategy)
+    FK_M2M_UNKNOWN_NODE = "fk.m2m_unknown_node"  # validation, error
+    FK_M2M_UNKNOWN_COLUMN = "fk.m2m_unknown_column"  # validation, error
+    FK_M2M_BAD_POOL = "fk.m2m_bad_pool"  # validation, error (unsupported pool_strategy)
 
     # Composite / multi-parent FK: parent: [...] array form for
     # junction-style FKs where a single child column references two
@@ -327,7 +343,7 @@ class CODES:
     # in the output. Hard error in strict, warning otherwise (some
     # generation strategies — faker — can produce duplicates by
     # chance; operators may want to tolerate when sample size is small).
-    PK_DUPLICATES = "pk.duplicates"                      # runtime, error in strict / warning otherwise
+    PK_DUPLICATES = "pk.duplicates"  # runtime, error in strict / warning otherwise
 
     # Generic catch-all for validators that haven't been migrated yet.
     # New gates should add a specific code rather than reusing this.

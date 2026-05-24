@@ -18,6 +18,7 @@ Two paths:
 Pattern: HMAC-SHA256-keyed deterministic offset (HMAC RFC 2104).
   HMAC: https://datatracker.ietf.org/doc/html/rfc2104
 """
+
 import hashlib
 import hmac
 from datetime import datetime
@@ -28,17 +29,17 @@ import pandas as pd
 from decoy_engine.transforms.base import BaseMaskingStrategy
 
 _COMMON_FORMATS = [
-    '%Y-%m-%d',
-    '%m/%d/%Y',
-    '%d/%m/%Y',
-    '%Y/%m/%d',
-    '%m-%d-%Y',
-    '%d-%m-%Y',
-    '%Y%m%d',
-    '%m/%d/%y',
-    '%d/%m/%y',
-    '%Y-%m-%dT%H:%M:%S',
-    '%Y-%m-%d %H:%M:%S',
+    "%Y-%m-%d",
+    "%m/%d/%Y",
+    "%d/%m/%Y",
+    "%Y/%m/%d",
+    "%m-%d-%Y",
+    "%d-%m-%Y",
+    "%Y%m%d",
+    "%m/%d/%y",
+    "%d/%m/%y",
+    "%Y-%m-%dT%H:%M:%S",
+    "%Y-%m-%d %H:%M:%S",
 ]
 
 
@@ -77,22 +78,18 @@ def _shift_for_value_md5(val: str, min_days: int, max_days: int) -> int:
     for reproducibility on existing pre-keyed configs.
     """
     range_size = max_days - min_days + 1
-    h = int(hashlib.md5(val.encode('utf-8', errors='replace')).hexdigest(), 16)  # noqa: S324
+    h = int(hashlib.md5(val.encode("utf-8", errors="replace")).hexdigest(), 16)  # noqa: S324
     return min_days + (h % range_size)
 
 
-def _shift_for_value_keyed(
-    key: bytes, val: str, min_days: int, max_days: int
-) -> int:
+def _shift_for_value_keyed(key: bytes, val: str, min_days: int, max_days: int) -> int:
     """Keyed per-value shift via HMAC-SHA256(column_key, val).
     Same value + same key → same shift, but the shift amount is not
     derivable from the value alone (unlike the legacy MD5 path).
     """
     range_size = max_days - min_days + 1
-    digest = hmac.new(
-        key, val.encode('utf-8', errors='replace'), hashlib.sha256
-    ).digest()
-    h = int.from_bytes(digest[:8], 'big')
+    digest = hmac.new(key, val.encode("utf-8", errors="replace"), hashlib.sha256).digest()
+    h = int.from_bytes(digest[:8], "big")
     return min_days + (h % range_size)
 
 
@@ -111,13 +108,13 @@ class DateShiftStrategy(BaseMaskingStrategy):
 
     def __init__(self, seed: int = 42, logger=None, derive_key=None):
         super().__init__(seed, logger, derive_key=derive_key)
-        self.strategy_name = 'date_shift'
+        self.strategy_name = "date_shift"
 
     def apply(self, column: pd.Series, rule: dict[str, Any]) -> pd.Series:
-        min_days = int(rule.get('min_days', -365))
-        max_days = int(rule.get('max_days', 365))
-        date_format: str | None = rule.get('date_format') or None
-        column_name = rule.get('column', 'unnamed')
+        min_days = int(rule.get("min_days", -365))
+        max_days = int(rule.get("max_days", 365))
+        date_format: str | None = rule.get("date_format") or None
+        column_name = rule.get("column", "unnamed")
         column_key = self._column_key(column_name)
 
         if min_days > max_days:
@@ -137,14 +134,10 @@ class DateShiftStrategy(BaseMaskingStrategy):
         fmt = date_format or _detect_format(column)
 
         if column_key is not None:
-            self.logger.debug(
-                f"Applying keyed date_shift to column '{column_name}'"
-            )
+            self.logger.debug(f"Applying keyed date_shift to column '{column_name}'")
             shift_fn = lambda s: _shift_for_value_keyed(column_key, s, min_days, max_days)
         else:
-            self.logger.debug(
-                f"Applying legacy date_shift (MD5) to column '{column_name}'"
-            )
+            self.logger.debug(f"Applying legacy date_shift (MD5) to column '{column_name}'")
             shift_fn = lambda s: _shift_for_value_md5(s, min_days, max_days)
 
         # Vectorized: turn every value into datetime64 in one C-level pass
@@ -156,7 +149,7 @@ class DateShiftStrategy(BaseMaskingStrategy):
         # cases. Per-value crypto for the shift amount is irreducible —
         # but a list comprehension over .tolist() avoids pandas.apply's
         # per-row dispatch overhead. Net at 5M rows: ~15 min → ~30-60 s.
-        parsed = pd.to_datetime(column, format=fmt, errors='coerce')
+        parsed = pd.to_datetime(column, format=fmt, errors="coerce")
         na_mask = column.isna()
         parse_failed = parsed.isna() & ~na_mask
 
@@ -165,15 +158,13 @@ class DateShiftStrategy(BaseMaskingStrategy):
             # the legacy path logged once per row which spammed the log
             # pipeline on big columns of mostly-bad data.
             for v in column[parse_failed].dropna().unique()[:20]:
-                self.logger.warning(
-                    f"date_shift: could not parse '{v}' — leaving unchanged"
-                )
+                self.logger.warning(f"date_shift: could not parse '{v}' — leaving unchanged")
 
         str_values = column.astype(str)
         shifts = [shift_fn(v) for v in str_values.tolist()]
 
-        shifted = parsed + pd.to_timedelta(shifts, unit='D')
-        out_fmt = fmt or '%Y-%m-%d'
+        shifted = parsed + pd.to_timedelta(shifts, unit="D")
+        out_fmt = fmt or "%Y-%m-%d"
         formatted = shifted.dt.strftime(out_fmt)
 
         # Build output from the original (preserves NaN + unparseable),
@@ -194,11 +185,9 @@ class DateShiftStrategy(BaseMaskingStrategy):
         try:
             return self.derive_key("mask")
         except Exception as exc:
-            self.logger.warning(
-                f"derive_key failed for 'mask' ({exc}); falling back to legacy MD5"
-            )
+            self.logger.warning(f"derive_key failed for 'mask' ({exc}); falling back to legacy MD5")
             return None
 
     def validate_rule(self, rule: dict[str, Any]) -> None:
-        if 'column' not in rule:
+        if "column" not in rule:
             raise ValueError("date_shift rule is missing 'column' field")

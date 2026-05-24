@@ -22,11 +22,13 @@ from decoy_engine import preview_graph
 def tmp_csv():
     tmpdir = tempfile.mkdtemp()
     src = os.path.join(tmpdir, "in.csv")
-    pd.DataFrame({
-        "id": [1, 2, 3, 4],
-        "state": ["CA", "NY", "CA", "TX"],
-        "value": [10, 20, 30, 40],
-    }).to_csv(src, index=False)
+    pd.DataFrame(
+        {
+            "id": [1, 2, 3, 4],
+            "state": ["CA", "NY", "CA", "TX"],
+            "value": [10, 20, 30, 40],
+        }
+    ).to_csv(src, index=False)
     return src
 
 
@@ -84,15 +86,17 @@ def test_preview_at_source_node_identical_across_engines(tmp_csv):
 def test_preview_error_carries_friendly_message_in_hybrid(tmp_csv):
     """A deliberately-broken pipeline produces a translated error msg
     instead of a raw polars / duckdb traceback."""
-    cfg = yaml.safe_dump({
-        "mode": "graph",
-        "engine": "hybrid",
-        "nodes": [
-            {"id": "s", "kind": "source.file", "config": {"path": tmp_csv}},
-            {"id": "so", "kind": "sort", "config": {"by": ["does_not_exist"]}},
-        ],
-        "edges": [{"from": "s", "to": "so"}],
-    })
+    cfg = yaml.safe_dump(
+        {
+            "mode": "graph",
+            "engine": "hybrid",
+            "nodes": [
+                {"id": "s", "kind": "source.file", "config": {"path": tmp_csv}},
+                {"id": "so", "kind": "sort", "config": {"by": ["does_not_exist"]}},
+            ],
+            "edges": [{"from": "s", "to": "so"}],
+        }
+    )
     p = preview_graph(cfg, "so", row_limit=10)
     assert p["error"] is not None
     # Error message should reference the column the user was asking for —

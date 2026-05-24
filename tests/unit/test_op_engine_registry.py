@@ -24,9 +24,7 @@ from decoy_engine.graph.registry import native_engine_for
 
 
 def test_every_op_declares_native_engine():
-    missing = [
-        kind for kind, op in OPS.items() if not hasattr(op, "NATIVE_ENGINE")
-    ]
+    missing = [kind for kind, op in OPS.items() if not hasattr(op, "NATIVE_ENGINE")]
     assert not missing, (
         f"ops missing NATIVE_ENGINE declaration: {missing}. "
         "Each op module must declare NATIVE_ENGINE = 'pandas' | 'polars' | 'duckdb' | 'arrow'."
@@ -40,8 +38,7 @@ def test_every_declared_engine_is_valid():
         if engine not in VALID_ENGINES:
             invalid.append((kind, engine))
     assert not invalid, (
-        f"ops with invalid NATIVE_ENGINE: {invalid}. "
-        f"Must be one of {VALID_ENGINES}."
+        f"ops with invalid NATIVE_ENGINE: {invalid}. Must be one of {VALID_ENGINES}."
     )
 
 
@@ -73,31 +70,34 @@ def test_unknown_kind_falls_back_to_pandas():
     assert native_engine_for("does_not_exist", "pandas") == "pandas"
 
 
-@pytest.mark.parametrize("kind,expected_engine", [
-    # Frozen baseline of NATIVE_ENGINE per kind. The list moves explicitly
-    # as phases land: Phase 3 flipped the relational ops to polars; Phase 4
-    # will flip the source.* / target.* ops to duckdb. A surprise diff in
-    # this list = an undocumented engine flip -- fail loud, don't shrug.
-    ("source.file", "duckdb"),       # Phase 4
-    ("source.db", "duckdb"),         # Phase 4
-    ("filter", "polars"),            # Phase 3
-    ("sort", "polars"),              # Phase 3
-    ("dedupe", "polars"),            # Phase 3
-    ("derive", "polars"),            # Phase 3
-    ("drop_column", "polars"),       # Phase 3
-    ("select_column", "polars"),     # Phase 3
-    ("limit", "polars"),             # Phase 3
-    ("run_storm", "pandas"),         # stays pandas (Phase 1 benchmark: 2.4% Arrow overhead)
-    ("mask", "pandas"),              # stays pandas (per-row Python)
-    ("generate", "pandas"),          # stays pandas (per-row Python)
-    ("target.file", "duckdb"),       # Phase 4
-    ("target.db", "duckdb"),         # Phase 4
-    ("convert.file_type", "duckdb"), # Item 57 + 66(b): wraps DuckDB COPY ... TO
-])
+@pytest.mark.parametrize(
+    "kind,expected_engine",
+    [
+        # Frozen baseline of NATIVE_ENGINE per kind. The list moves explicitly
+        # as phases land: Phase 3 flipped the relational ops to polars; Phase 4
+        # will flip the source.* / target.* ops to duckdb. A surprise diff in
+        # this list = an undocumented engine flip -- fail loud, don't shrug.
+        ("source.file", "duckdb"),  # Phase 4
+        ("source.db", "duckdb"),  # Phase 4
+        ("filter", "polars"),  # Phase 3
+        ("sort", "polars"),  # Phase 3
+        ("dedupe", "polars"),  # Phase 3
+        ("derive", "polars"),  # Phase 3
+        ("drop_column", "polars"),  # Phase 3
+        ("select_column", "polars"),  # Phase 3
+        ("limit", "polars"),  # Phase 3
+        ("run_storm", "pandas"),  # stays pandas (Phase 1 benchmark: 2.4% Arrow overhead)
+        ("mask", "pandas"),  # stays pandas (per-row Python)
+        ("generate", "pandas"),  # stays pandas (per-row Python)
+        ("target.file", "duckdb"),  # Phase 4
+        ("target.db", "duckdb"),  # Phase 4
+        ("convert.file_type", "duckdb"),  # Item 57 + 66(b): wraps DuckDB COPY ... TO
+    ],
+)
 def test_op_engine_baseline_declarations(kind, expected_engine):
     """Frozen baseline. Updates here are intentional; surprises are not."""
     op = OPS[kind]
-    assert getattr(op, "NATIVE_ENGINE") == expected_engine
+    assert expected_engine == op.NATIVE_ENGINE
 
 
 def test_validator_rejects_bad_native_engine_declaration(monkeypatch):
@@ -158,11 +158,7 @@ def test_op_kind_matches_registry_key():
     This catches copy-paste errors where an op module's KIND constant
     drifts from the registry key, causing confusing validation messages.
     """
-    mismatched = [
-        (key, getattr(op, "KIND"))
-        for key, op in OPS.items()
-        if getattr(op, "KIND", None) != key
-    ]
+    mismatched = [(key, op.KIND) for key, op in OPS.items() if getattr(op, "KIND", None) != key]
     assert not mismatched, (
         f"ops whose KIND does not match their registry key: {mismatched}. "
         "op.KIND must equal the OPS dict key."
