@@ -38,6 +38,10 @@ from decoy_engine.quality.report import (
     compute_quality_report,
     score_to_grade,
 )
+from decoy_engine.quality.shape_fidelity import (
+    QUALITY_SHAPE_FIDELITY_SCHEMA_VERSION,
+    compute_shape_fidelity,
+)
 from decoy_engine.quality.snapshot import (
     DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION,
     compute_distribution_snapshot,
@@ -49,11 +53,13 @@ __all__ = [
     "QUALITY_FIDELITY_SCHEMA_VERSION",
     "QUALITY_POLICY_SCHEMA_VERSION",
     "QUALITY_REPORT_SCHEMA_VERSION",
+    "QUALITY_SHAPE_FIDELITY_SCHEMA_VERSION",
     "apply_quality_policy",
     "assemble_quality_report",
     "compute_diagnostic",
     "compute_distribution_snapshot",
     "compute_fidelity",
     "compute_quality_report",
+    "compute_shape_fidelity",
     "score_to_grade",
 ]
