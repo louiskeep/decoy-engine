@@ -6,8 +6,6 @@ Config:
 
 from typing import Any
 
-import pandas as pd
-
 from decoy_engine.graph.ops._base import OpError, is_polars_frame
 from decoy_engine.internal.validator import ValidationError
 
@@ -37,7 +35,7 @@ def apply(inputs, config, ctx):
     df = inputs[0]
     columns = config.get("columns") or []
     if not columns:
-        return df   # no-op
+        return df  # no-op
     missing = [c for c in columns if c not in df.columns]
     if missing:
         raise OpError(f"columns not in input: {missing}")

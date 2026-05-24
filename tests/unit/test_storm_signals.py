@@ -15,7 +15,7 @@ import pandas as pd
 from decoy_engine.storm import run_storm
 
 
-def _scan(**columns) -> dict[str, "object"]:
+def _scan(**columns) -> dict[str, object]:
     """Run STORM on the columns and return a {name: FieldStats} map."""
     df = pd.DataFrame(columns)
     profile = run_storm(df, source_label="signals-test.csv")
@@ -23,6 +23,7 @@ def _scan(**columns) -> dict[str, "object"]:
 
 
 # ── alphabet ─────────────────────────────────────────────────────────
+
 
 class TestAlphabet:
     def test_pure_digits_column(self):
@@ -50,6 +51,7 @@ class TestAlphabet:
 
 
 # ── value_set_size_class ─────────────────────────────────────────────
+
 
 class TestValueSetSizeClass:
     def test_constant_column(self):
@@ -79,6 +81,7 @@ class TestValueSetSizeClass:
 
 # ── numeric_range_class ──────────────────────────────────────────────
 
+
 class TestNumericRangeClass:
     def test_small_int(self):
         fields = _scan(age=[20, 30, 40, 50] * 5)
@@ -104,6 +107,7 @@ class TestNumericRangeClass:
 
 
 # ── mode_value / mode_freq ───────────────────────────────────────────
+
 
 class TestModeValue:
     def test_dominant_value_picked(self):

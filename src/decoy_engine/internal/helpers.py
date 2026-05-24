@@ -8,8 +8,10 @@ import hmac
 import json
 import logging
 import os
+from collections.abc import Callable
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Callable
+from typing import Any
+
 from faker import Faker
 
 _log = logging.getLogger(__name__)
@@ -65,14 +67,14 @@ def hmac_seed(key: bytes, value) -> int:
     return int.from_bytes(digest[:4], "big")
 
 
-_CUSTOM_FAKER_PROVIDERS: Dict[str, Callable[[Faker], Any]] = {}
+_CUSTOM_FAKER_PROVIDERS: dict[str, Callable[[Faker], Any]] = {}
 # Side registry of raw values per list-backed provider. Populated by
 # _register_list_provider so the engine's FK pool resolver can read the
 # values directly when a relationship targets custom_provider: <name>
 # (tier-4 audit, 2026-05-20). Closure-only providers (operator-supplied
 # callables that don't come from a list) won't appear here — only list-
 # backed providers expose their pool to the FK channel.
-_CUSTOM_FAKER_PROVIDER_VALUES: Dict[str, List[Any]] = {}
+_CUSTOM_FAKER_PROVIDER_VALUES: dict[str, list[Any]] = {}
 
 
 def register_faker_provider(name: str, fn: Callable[[Faker], Any]) -> None:
@@ -98,7 +100,7 @@ def unregister_faker_provider(name: str) -> None:
     _CUSTOM_FAKER_PROVIDER_VALUES.pop(name, None)
 
 
-def get_custom_faker_provider_values(name: str) -> List[Any] | None:
+def get_custom_faker_provider_values(name: str) -> list[Any] | None:
     """Return the raw values list backing a list-backed custom provider,
     or None when the name isn't registered as a list provider.
 
@@ -113,14 +115,14 @@ def get_custom_faker_provider_values(name: str) -> List[Any] | None:
     return list(values)
 
 
-def list_custom_faker_list_providers() -> List[str]:
+def list_custom_faker_list_providers() -> list[str]:
     """Return names of all list-backed custom providers currently
     registered, sorted. Used by the platform's relationship-authoring
     UI to populate the "Custom provider" picker for FK pool sources."""
     return sorted(_CUSTOM_FAKER_PROVIDER_VALUES.keys())
 
 
-def register_faker_list_provider(name: str, values: List[str]) -> None:
+def register_faker_list_provider(name: str, values: list[str]) -> None:
     """Register a custom Faker provider backed by a fixed list of values.
 
     The provider selects from *values* using the seeded Faker instance, so
@@ -136,7 +138,7 @@ def register_faker_list_provider(name: str, values: List[str]) -> None:
 
 def load_custom_providers(
     custom_dir: Path | None = None,
-) -> Dict[str, List[str]]:
+) -> dict[str, list[str]]:
     """Scan *custom_dir* for user-supplied word lists and register them as
     custom Faker providers under the ``custom.<stem>`` namespace.
 
@@ -188,18 +190,14 @@ def load_custom_providers(
     custom_dir = Path(custom_dir)
 
     if not custom_dir.exists():
-        _log.debug(
-            "custom_providers: directory %s does not exist; skipping", custom_dir
-        )
+        _log.debug("custom_providers: directory %s does not exist; skipping", custom_dir)
         return {}
 
     if not custom_dir.is_dir():
-        _log.warning(
-            "custom_providers: %s exists but is not a directory; skipping", custom_dir
-        )
+        _log.warning("custom_providers: %s exists but is not a directory; skipping", custom_dir)
         return {}
 
-    loaded: Dict[str, List[str]] = {}
+    loaded: dict[str, list[str]] = {}
 
     for path in sorted(custom_dir.iterdir()):
         if path.suffix.lower() == ".txt":
@@ -210,9 +208,7 @@ def load_custom_providers(
             continue
 
         if not values:
-            _log.warning(
-                "custom_providers: %s produced no values; skipping", path.name
-            )
+            _log.warning("custom_providers: %s produced no values; skipping", path.name)
             continue
 
         provider_name = f"custom.{path.stem}"
@@ -224,34 +220,33 @@ def load_custom_providers(
         loaded[provider_name] = values
         _log.info(
             "custom_providers: registered '%s' with %d values from %s",
-            provider_name, len(values), path.name,
+            provider_name,
+            len(values),
+            path.name,
         )
 
     return loaded
 
 
-def _load_txt(path: Path) -> List[str]:
+def _load_txt(path: Path) -> list[str]:
     """Read a .txt file; one value per line. Ignores blank lines and comments."""
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
-        return [
-            line.strip()
-            for line in lines
-            if line.strip() and not line.strip().startswith("#")
-        ]
+        return [line.strip() for line in lines if line.strip() and not line.strip().startswith("#")]
     except Exception as exc:
         _log.warning("custom_providers: failed to read %s: %s", path.name, exc)
         return []
 
 
-def _load_json(path: Path) -> List[str]:
+def _load_json(path: Path) -> list[str]:
     """Read a .json file containing a JSON array of strings."""
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(raw, list):
             _log.warning(
                 "custom_providers: %s must contain a JSON array; got %s",
-                path.name, type(raw).__name__,
+                path.name,
+                type(raw).__name__,
             )
             return []
         return [str(v) for v in raw if v is not None]
@@ -260,7 +255,7 @@ def _load_json(path: Path) -> List[str]:
         return []
 
 
-def _register_list_provider(provider_name: str, values: List[str]) -> None:
+def _register_list_provider(provider_name: str, values: list[str]) -> None:
     """Register a random-choice provider for *values* under *provider_name*.
 
     The provider function receives the seeded Faker instance so it can use
@@ -305,21 +300,57 @@ def _register_list_provider(provider_name: str, values: List[str]) -> None:
 # safe providers without a hand-maintained whitelist.
 _FAKER_DENYLIST: set[str] = {
     # Bytes / binary outputs.
-    'binary', 'image', 'image_url', 'tar', 'zip', 'json_bytes',
+    "binary",
+    "image",
+    "image_url",
+    "tar",
+    "zip",
+    "json_bytes",
     # Non-scalar returns (tuples / dicts / generators / typed objects).
-    'profile', 'simple_profile', 'time_series',
-    'cryptocurrency', 'currency',
-    'latlng', 'local_latlng', 'location_on_land', 'passport_owner',
-    'pytimezone', 'time_delta', 'time_object',
-    'pylist', 'pyset', 'pytuple', 'pydict', 'pyiterable',
-    'pyobject', 'pystruct',
-    'enum',  # requires an enum class arg
+    "profile",
+    "simple_profile",
+    "time_series",
+    "cryptocurrency",
+    "currency",
+    "latlng",
+    "local_latlng",
+    "location_on_land",
+    "passport_owner",
+    "pytimezone",
+    "time_delta",
+    "time_object",
+    "pylist",
+    "pyset",
+    "pytuple",
+    "pydict",
+    "pyiterable",
+    "pyobject",
+    "pystruct",
+    "enum",  # requires an enum class arg
     # Faker internals / configuration helpers (not masking providers).
-    'add_provider', 'add_arguments', 'optional', 'unique', 'random',
-    'get_arguments', 'get_providers', 'factories', 'factory',
-    'seed', 'seed_instance', 'seed_locale', 'cache', 'parse', 'format',
-    'pystr_format', 'set_arguments', 'set_formatter', 'generator_attrs',
-    'locales', 'weights', 'generator_method', 'items',
+    "add_provider",
+    "add_arguments",
+    "optional",
+    "unique",
+    "random",
+    "get_arguments",
+    "get_providers",
+    "factories",
+    "factory",
+    "seed",
+    "seed_instance",
+    "seed_locale",
+    "cache",
+    "parse",
+    "format",
+    "pystr_format",
+    "set_arguments",
+    "set_formatter",
+    "generator_attrs",
+    "locales",
+    "weights",
+    "generator_method",
+    "items",
 }
 
 
@@ -343,6 +374,7 @@ def _make_reflected_provider(method: Callable) -> Callable:
     silently dropped rather than raised so a stale YAML doesn\'t kill a
     job — the masker emits a warning at the call site."""
     import inspect as _inspect
+
     try:
         sig = _inspect.signature(method)
         # Includes **kwargs methods (faker is sometimes flexible).
@@ -350,12 +382,14 @@ def _make_reflected_provider(method: Callable) -> Callable:
             p.kind == _inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
         )
         param_names = {
-            p.name for p in sig.parameters.values()
-            if p.kind in (
+            p.name
+            for p in sig.parameters.values()
+            if p.kind
+            in (
                 _inspect.Parameter.KEYWORD_ONLY,
                 _inspect.Parameter.POSITIONAL_OR_KEYWORD,
             )
-        } - {'self'}
+        } - {"self"}
     except (TypeError, ValueError):
         has_var_keyword = True
         param_names = set()
@@ -374,7 +408,7 @@ def _make_reflected_provider(method: Callable) -> Callable:
     return call
 
 
-def get_faker_providers(faker_instance: Faker) -> Dict[str, Callable]:
+def get_faker_providers(faker_instance: Faker) -> dict[str, Callable]:
     """Return a dict of every safe Faker provider on ``faker_instance``.
 
     Built by reflection: each public method that isn\'t in
@@ -400,10 +434,10 @@ def get_faker_providers(faker_instance: Faker) -> Dict[str, Callable]:
     added last and override reflection on name collision.
     """
     fake = faker_instance
-    providers: Dict[str, Callable] = {}
+    providers: dict[str, Callable] = {}
 
     for name in dir(fake):
-        if name.startswith('_'):
+        if name.startswith("_"):
             continue
         if name in _FAKER_DENYLIST:
             continue
@@ -419,16 +453,16 @@ def get_faker_providers(faker_instance: Faker) -> Dict[str, Callable]:
     # quoted-CSV-aware.
     def _addr(**kwargs: Any) -> str:
         out = fake.address(**kwargs) if kwargs else fake.address()
-        return out.replace('\n', ', ') if isinstance(out, str) else _coerce_to_str(out)
+        return out.replace("\n", ", ") if isinstance(out, str) else _coerce_to_str(out)
 
-    providers['address'] = _addr
+    providers["address"] = _addr
 
     # ``postcode`` -> ``zipcode`` alias. Faker\'s en_US locale doesn\'t
     # expose ``postcode`` directly (some other locales do), so legacy
     # YAML used to trip the unknown-faker-type warning. Aliasing keeps
     # old pipelines warning-free; new ones should emit ``zipcode``.
-    if 'zipcode' in providers and 'postcode' not in providers:
-        providers['postcode'] = providers['zipcode']
+    if "zipcode" in providers and "postcode" not in providers:
+        providers["postcode"] = providers["zipcode"]
 
     # Custom providers wrap the seeded ``fake`` instance so user-supplied
     # functions can call any Faker method (``fake.first_name()``,
@@ -463,18 +497,18 @@ def make_faker(locale=None) -> Faker:
 def convert_quoting_mode(quoting_mode: str) -> int:
     """
     Convert a quoting mode string to the corresponding CSV module constant
-    
+
     Args:
         quoting_mode: String representation of quoting mode
-        
+
     Returns:
         Integer value matching csv module constants
     """
     quoting_map = {
-        'minimal': 0,  # csv.QUOTE_MINIMAL
-        'all': 1,      # csv.QUOTE_ALL
-        'nonnumeric': 2,  # csv.QUOTE_NONNUMERIC
-        'none': 3      # csv.QUOTE_NONE
+        "minimal": 0,  # csv.QUOTE_MINIMAL
+        "all": 1,  # csv.QUOTE_ALL
+        "nonnumeric": 2,  # csv.QUOTE_NONNUMERIC
+        "none": 3,  # csv.QUOTE_NONE
     }
     return quoting_map.get(quoting_mode.lower(), 0)
 
@@ -482,13 +516,13 @@ def convert_quoting_mode(quoting_mode: str) -> int:
 def create_directory_for_file(file_path: str) -> None:
     """
     Create the directory for a file path if it doesn\'t exist
-    
+
     Args:
         file_path: Path to a file
     """
     import os
     from pathlib import Path
-    
+
     directory = os.path.dirname(file_path)
     if directory:
         Path(directory).mkdir(parents=True, exist_ok=True)
@@ -497,28 +531,30 @@ def create_directory_for_file(file_path: str) -> None:
 def is_path_exists(path: str) -> bool:
     """
     Check if a path exists (file or directory)
-    
+
     Args:
         path: Path to check
-        
+
     Returns:
         True if path exists, False otherwise
     """
     import os
+
     return os.path.exists(path)
 
 
 def get_filename_without_extension(file_path: str) -> str:
     """
     Get the filename without extension from a path
-    
+
     Args:
         file_path: Path to a file
-        
+
     Returns:
         Filename without extension
     """
     import os
+
     base_name = os.path.basename(file_path)
     return os.path.splitext(base_name)[0]
 
@@ -526,26 +562,26 @@ def get_filename_without_extension(file_path: str) -> str:
 def convert_file_size(size_bytes: int) -> str:
     """
     Convert file size in bytes to a human-readable string
-    
+
     Args:
         size_bytes: File size in bytes
-        
+
     Returns:
         Human-readable file size string
     """
     # Define unit prefixes
-    units = ['B', 'KB', 'MB', 'GB', 'TB']
-    
+    units = ["B", "KB", "MB", "GB", "TB"]
+
     # Special case for size=0
     if size_bytes == 0:
-        return '0 B'
-    
+        return "0 B"
+
     # Determine the appropriate unit
     i = 0
     while size_bytes >= 1024 and i < len(units) - 1:
         size_bytes /= 1024
         i += 1
-    
+
     # Format with appropriate precision
     if i == 0:  # Bytes
         return f"{size_bytes:.0f} {units[i]}"
@@ -553,17 +589,18 @@ def convert_file_size(size_bytes: int) -> str:
         return f"{size_bytes:.2f} {units[i]}"
 
 
-def get_file_size(file_path: str) -> Optional[int]:
+def get_file_size(file_path: str) -> int | None:
     """
     Get the size of a file in bytes
-    
+
     Args:
         file_path: Path to the file
-        
+
     Returns:
         File size in bytes or None if file doesn\'t exist
     """
     import os
+
     if os.path.exists(file_path) and os.path.isfile(file_path):
         return os.path.getsize(file_path)
     return None
@@ -572,10 +609,10 @@ def get_file_size(file_path: str) -> Optional[int]:
 def format_elapsed_time(seconds: float) -> str:
     """
     Format elapsed time in seconds to a human-readable string
-    
+
     Args:
         seconds: Time in seconds
-        
+
     Returns:
         Formatted time string
     """

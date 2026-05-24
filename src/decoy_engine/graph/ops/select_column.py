@@ -6,8 +6,6 @@ Config:
 
 from typing import Any
 
-import pandas as pd
-
 from decoy_engine.graph.ops._base import OpError, is_polars_frame
 from decoy_engine.internal.validator import ValidationError
 
@@ -20,9 +18,7 @@ OUTPUT_KIND = "stream"
 def validate_config(config: dict[str, Any]) -> None:
     cols = config.get("columns")
     if not isinstance(cols, list) or not cols:
-        raise ValidationError(
-            "'columns' must be a non-empty list", "config.columns"
-        )
+        raise ValidationError("'columns' must be a non-empty list", "config.columns")
     if not all(isinstance(c, str) for c in cols):
         raise ValidationError("'columns' entries must be strings", "config.columns")
 

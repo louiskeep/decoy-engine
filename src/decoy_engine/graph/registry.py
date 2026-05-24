@@ -53,4 +53,4 @@ def native_engine_for(kind: str, graph_engine_mode: GraphEngineMode = "pandas") 
         # as a validation error before execution reaches this point.
         # This branch is a defensive fallback for callers that skip validation.
         return "pandas"
-    return declared  # type: ignore[return-value]
+    return declared

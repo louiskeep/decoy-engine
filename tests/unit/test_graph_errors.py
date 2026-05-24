@@ -44,9 +44,11 @@ def test_translate_polars_column_not_found_is_user_friendly():
 def test_translate_polars_compute_error_is_translated():
     import polars as pl
 
-    with pytest.raises(Exception) as ei:
-        with pl.SQLContext(df=pl.DataFrame({"a": [1]}), eager=True) as ctx:
-            ctx.execute("SELECT * FROM df WHERE a banana 'x'")
+    with (
+        pytest.raises(Exception) as ei,
+        pl.SQLContext(df=pl.DataFrame({"a": [1]}), eager=True) as ctx,
+    ):
+        ctx.execute("SELECT * FROM df WHERE a banana 'x'")
 
     out = translate(ei.value, op_kind="filter", node_id="f1")
     assert isinstance(out, OpError)
@@ -97,15 +99,17 @@ def test_translate_unknown_exception_keeps_original_message():
 def test_runner_surfaces_translated_message_for_polars_failure(tmp_csv):
     """End-to-end: a polars op raises ColumnNotFoundError; the runner
     catches, translates, and the NodeRunRecord carries the friendly msg."""
-    cfg = yaml.safe_dump({
-        "mode": "graph",
-        "engine": "hybrid",
-        "nodes": [
-            {"id": "s", "kind": "source.file", "config": {"path": tmp_csv}},
-            {"id": "so", "kind": "sort", "config": {"by": ["does_not_exist"]}},
-        ],
-        "edges": [{"from": "s", "to": "so"}],
-    })
+    cfg = yaml.safe_dump(
+        {
+            "mode": "graph",
+            "engine": "hybrid",
+            "nodes": [
+                {"id": "s", "kind": "source.file", "config": {"path": tmp_csv}},
+                {"id": "so", "kind": "sort", "config": {"by": ["does_not_exist"]}},
+            ],
+            "edges": [{"from": "s", "to": "so"}],
+        }
+    )
     result = run_graph(cfg)
     assert result["success"] is False
     failed = next(n for n in result["nodes"] if n["status"] == "error")
@@ -123,7 +127,8 @@ def test_translate_forwards_validation_error_code_and_path():
     from decoy_engine.internal.validator import ValidationError
 
     src = ValidationError(
-        "missing required field 'path'", "config.path",
+        "missing required field 'path'",
+        "config.path",
         code="source_file.missing_path",
     )
     out = translate(src, "source.file", "src_1")

@@ -8,14 +8,14 @@ touching output paths, etc.).
 
 import logging
 from pathlib import Path
-from typing import Any, Union
+from typing import Any
 
 import yaml
 
 from decoy_engine.exceptions import ConfigError, PipelineValidationError
 
 
-def validate_config(config: Union[str, Path, dict]) -> None:
+def validate_config(config: str | Path | dict) -> None:
     """Validate a decoy_engine pipeline config.
 
     Accepts a YAML file path or an already-loaded config dict. Detects
@@ -33,13 +33,11 @@ def validate_config(config: Union[str, Path, dict]) -> None:
     _run_validator(validator_cls, data)
 
 
-def _load_config(config: Union[str, Path, dict]) -> dict:
+def _load_config(config: str | Path | dict) -> dict:
     if isinstance(config, dict):
         return config
     if not isinstance(config, (str, Path)):
-        raise ConfigError(
-            f"Config must be a path or dict, got {type(config).__name__}"
-        )
+        raise ConfigError(f"Config must be a path or dict, got {type(config).__name__}")
     path = Path(config)
     if not path.exists():
         raise ConfigError(f"Config file not found: {path}")
@@ -49,9 +47,7 @@ def _load_config(config: Union[str, Path, dict]) -> dict:
     except yaml.YAMLError as e:
         raise ConfigError(f"Failed to parse YAML: {e}") from e
     if not isinstance(data, dict):
-        raise ConfigError(
-            f"Config root must be a YAML mapping, got {type(data).__name__}"
-        )
+        raise ConfigError(f"Config root must be a YAML mapping, got {type(data).__name__}")
     return data
 
 

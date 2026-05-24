@@ -28,6 +28,7 @@ apply-time, `close()`-d in a finally block. One connector per
 iteration run; sub-pipelines that need to talk to the same source
 should be passed connector configs through their own template vars.
 """
+
 from __future__ import annotations
 
 from importlib import import_module
@@ -56,14 +57,10 @@ def validate_config(config: dict[str, Any]) -> None:
         )
     source_config = config.get("source_config")
     if not isinstance(source_config, dict):
-        raise ValidationError(
-            "'source_config' must be a dict", "config.source_config"
-        )
+        raise ValidationError("'source_config' must be a dict", "config.source_config")
     prefix = config.get("prefix")
     if prefix is not None and not isinstance(prefix, str):
-        raise ValidationError(
-            "'prefix' must be a string if provided", "config.prefix"
-        )
+        raise ValidationError("'prefix' must be a string if provided", "config.prefix")
 
 
 def apply(inputs, config, ctx):
@@ -78,8 +75,7 @@ def apply(inputs, config, ctx):
             metas = list(source.list(prefix=config.get("prefix")))
         except Exception as exc:
             raise OpError(
-                f"iterate_files: listing failed for "
-                f"{config['source_class']}: {exc}"
+                f"iterate_files: listing failed for {config['source_class']}: {exc}"
             ) from exc
     finally:
         source.close()
@@ -117,16 +113,13 @@ def _build_source(class_path: str, source_config: dict):
     try:
         module = import_module(module_name)
     except ImportError as exc:
-        raise OpError(
-            f"iterate_files: cannot import source module {module_name!r}: {exc}"
-        ) from exc
+        raise OpError(f"iterate_files: cannot import source module {module_name!r}: {exc}") from exc
 
     try:
         source_cls = getattr(module, class_name)
     except AttributeError as exc:
         raise OpError(
-            f"iterate_files: source class {class_name!r} not found in "
-            f"{module_name!r}"
+            f"iterate_files: source class {class_name!r} not found in {module_name!r}"
         ) from exc
 
     # Find the ConnectorConfig subclass via Generic typing on the source.
@@ -135,9 +128,7 @@ def _build_source(class_path: str, source_config: dict):
     try:
         cfg = config_cls(**source_config)
     except Exception as exc:
-        raise OpError(
-            f"iterate_files: source config invalid for {class_path}: {exc}"
-        ) from exc
+        raise OpError(f"iterate_files: source config invalid for {class_path}: {exc}") from exc
 
     return source_cls(cfg)
 

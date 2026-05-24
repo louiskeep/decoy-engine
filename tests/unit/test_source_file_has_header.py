@@ -30,9 +30,7 @@ def headerless_csv():
 def headered_csv():
     fd, path = tempfile.mkstemp(suffix=".csv")
     os.close(fd)
-    pd.DataFrame({"id": [1, 2, 3], "name": ["Alice", "Bob", "Carol"]}).to_csv(
-        path, index=False
-    )
+    pd.DataFrame({"id": [1, 2, 3], "name": ["Alice", "Bob", "Carol"]}).to_csv(path, index=False)
     yield path
     os.unlink(path)
 
@@ -51,10 +49,13 @@ class TestValidate:
         source_file.validate_config({"path": headerless_csv, "has_header": False})
 
     def test_has_header_false_passes_when_column_names_set(self, headerless_csv):
-        source_file.validate_config({
-            "path": headerless_csv, "has_header": False,
-            "column_names": ["id", "name", "age"],
-        })
+        source_file.validate_config(
+            {
+                "path": headerless_csv,
+                "has_header": False,
+                "column_names": ["id", "name", "age"],
+            }
+        )
 
     def test_has_header_rejects_non_bool(self, headerless_csv):
         with pytest.raises(ValidationError) as exc:
@@ -97,8 +98,6 @@ class TestApplyDuckDB:
         assert table.num_rows == 3
 
     def test_default_uses_header_row(self, headered_csv):
-        table = source_file.apply(
-            [], {"path": headered_csv, "__engine": "duckdb"}, None
-        )
+        table = source_file.apply([], {"path": headered_csv, "__engine": "duckdb"}, None)
         assert table.column_names == ["id", "name"]
         assert table.num_rows == 3

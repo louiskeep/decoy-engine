@@ -52,10 +52,6 @@ docs = [
     # Pygments treats `mermaid` as an unknown lexer and -W fails the build.
     "sphinxcontrib-mermaid>=0.9",
 ]
-# `hybrid` retained as an empty alias so any caller that already wrote
-# `pip install decoy-engine[hybrid]` keeps working: the libs are required
-# either way now.
-hybrid = []
 # First-party cloud-storage connectors as optional extras. S3 is covered
 # by `boto3`, which is already a transitive dep via `moto[s3]` in `[dev]`
 # and via the platform's runtime requirements. GCS and SFTP have heavier
@@ -74,3 +70,153 @@ pythonpath = ["src"]
 markers = [
     "benchmark: informational performance benchmarks; not a regression gate",
 ]
+
+# ── Tooling baseline (V2.0-prep, sprint 1) ──────────────────────────────────
+# Lint + type-check + format gate land before any structural V2 refactor so
+# decomposition PRs run against the gate from day 1. Mypy starts at
+# check_untyped_defs and escalates per-subpackage as touched (resolved
+# question #2). See docs/v2-app-audit-findings.md F-AUDIT for related items.
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+src = ["src", "tests"]
+exclude = [".pytest_cache", "__pycache__", "logs", "mappings", "docs/_build"]
+
+[tool.ruff.lint]
+# Pragmatic selection. E501 (line length) is owned by ruff format so it
+# stays out. S-rule false-positives in tests are handled via per-file
+# ignores below. UP rules drive the gradual move to PEP 585 / 604.
+select = ["E", "F", "I", "B", "SIM", "UP", "N", "PT", "S", "RUF"]
+ignore = [
+    "E501",   # line-too-long: handled by ruff format
+    "S311",   # non-crypto random: legit in Faker seeding and generators
+    "S608",   # hardcoded SQL: source.db ops build SQL on purpose; documented power-user surface
+    "S110",   # try-except-pass: telemetry paths intentionally swallow
+    "S112",   # try-except-continue: telemetry paths intentionally swallow
+    "N806",   # non-lowercase var: math notation in stats/crypto modules
+    "N803",   # non-lowercase arg: same reason
+    "SIM105", # contextlib.suppress: marginal readability win; not worth churn
+    "SIM102", # nested-if-collapse: sometimes clearer split
+    "SIM108", # ternary-instead-of-if: ternaries are often less readable
+    "E731",   # lambda assignment: occasional in callback wiring
+    "B904",   # raise-without-from: cosmetic; high-volume; cleanup as touched
+    "RUF012", # mutable-class-default: false positives on dataclass-like defaults
+    "RUF002", # ambiguous-unicode-docstring: math symbols (×) in fpe.py docstrings
+    "RUF003", # ambiguous-unicode-comment: same reasoning
+    "RUF013", # implicit-Optional: cleanup as touched; high-volume
+]
+[tool.ruff.lint.per-file-ignores]
+# Tests can use assert (S101) and have lower naming bars. Additional
+# test-only suppressions cover cosmetic pytest-style nits (PT018
+# assertion-too-complex, PT006 parametrize tuple-vs-list, PT012/PT019
+# fixture/raises body shape) and patterns legitimate in tests but
+# loud under the broader src ratchet (S108 /tmp paths, SLF001 private
+# member access in white-box tests).
+"tests/**" = [
+    "S101", "S105", "S106", "S108",
+    "N802", "N803", "N806",
+    "PT011", "PT017", "PT018", "PT006", "PT012", "PT019",
+    "SLF001",
+]
+# Connector contract tests intentionally use insecure hashing.
+"tests/connectors/**" = ["S101", "S105", "S106", "S324"]
+# Benchmark suite has measurement loops that look stylistically loud.
+"tests/benchmark/**" = ["S101", "S105", "S106", "N802", "N806", "PT011"]
+# Legacy modules scheduled for V2.1 hard deletion (per the V2 sprint
+# plan): not worth churning lint cleanup before removal. Allowlist
+# narrows to a small set of cosmetic rules; deleted as the legacy
+# files themselves are deleted in V2.1.
+"src/decoy_engine/masker/processor.py" = ["E701"]
+"src/decoy_engine/generators/generator.py" = ["F841"]
+"src/decoy_engine/generators/relationships.py" = ["F841"]
+"src/decoy_engine/connectors/base.py" = ["B027"]
+"src/decoy_engine/connectors/fixed_width.py" = ["SIM113"]
+"src/decoy_engine/internal/large_file_processor.py" = ["SIM115"]
+# Modules with intentional layout patterns that ruff misreads.
+"src/decoy_engine/internal/base.py" = ["B027"]  # base class with empty hook intended for subclass override
+"src/decoy_engine/internal/validator.py" = ["E402"]  # late import to avoid circular dep
+"src/decoy_engine/sdk.py" = ["E402"]  # late import is documented in the module header
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+
+[tool.black]
+target-version = ["py310"]
+line-length = 100
+include = '\.pyi?$'
+extend-exclude = '''
+(
+    /__pycache__
+  | /\.pytest_cache
+  | /logs
+)
+'''
+
+[tool.mypy]
+python_version = "3.10"
+check_untyped_defs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+strict_equality = true
+# Per-subpackage strict-mode escalation lands alongside structural work
+# in V2.0-A / V2.0-B / V2.0-C. Until then, the cheap-mode flags above
+# catch the highest-value issues without forcing a 700-error allowlist.
+
+[[tool.mypy.overrides]]
+# Third-party libs without type stubs. Listed individually so a new
+# missing-stubs surface trips review instead of silently passing.
+module = [
+    "duckdb",
+    "duckdb.*",
+    "faker",
+    "faker.*",
+    "pandas",
+    "pandas.*",
+    "polars",
+    "polars.*",
+    "psutil",
+    "psutil.*",
+    "pyarrow",
+    "pyarrow.*",
+    "yaml",
+]
+ignore_missing_imports = true
+
+# Legacy and pre-V2 modules carry pre-existing type debt that the V2.0-A
+# / V2.0-B / V2.0-C refactor sprints will reduce module-by-module. Until
+# each module's structural sprint lands, mypy gates only the new and
+# touched modules to keep CI green without forcing a 60-error allowlist.
+[[tool.mypy.overrides]]
+module = [
+    "decoy_engine.connectors.*",
+    "decoy_engine.transforms.registry",
+    "decoy_engine.internal.large_file_processor",
+    "decoy_engine.internal.validator",
+    "decoy_engine.internal.helpers",
+    "decoy_engine.internal.memory",
+    "decoy_engine.internal.logging",
+    "decoy_engine.internal.base",
+    "decoy_engine.masker.masker",
+    "decoy_engine.generators.generator",
+    "decoy_engine.generators.relationships",
+]
+ignore_errors = true
+
+[tool.coverage.run]
+source = ["src/decoy_engine"]
+branch = true
+omit = [
+    "*/tests/*",
+    "*/__main__.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+# Coverage is not gated as part of V2.0-prep. The configuration exists so
+# `pytest --cov` produces useful output for V2.0-A's per-module unit-test
+# work. A floor lands once V2.0-C closes and the test surface stabilizes.
+fail_under = 0

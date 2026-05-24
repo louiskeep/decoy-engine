@@ -39,9 +39,7 @@ def validate_config(config: dict[str, Any]) -> None:
 
     expression = config.get("expression")
     if not isinstance(expression, str) or not expression.strip():
-        raise ValidationError(
-            "'expression' must be a non-empty string", "config.expression"
-        )
+        raise ValidationError("'expression' must be a non-empty string", "config.expression")
 
 
 def apply(inputs, config, ctx):

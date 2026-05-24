@@ -9,6 +9,7 @@ shape changed."
 The change-kind vocabulary mirrors the storm DiffScreen so the UI can
 render walks-drift and storm-diff with a single component family.
 """
+
 from __future__ import annotations
 
 from decoy_engine.walks.types import Column, DriftResult, SchemaSnapshot, Table
@@ -54,42 +55,52 @@ def _diff_columns(before: Table, after: Table) -> list[dict]:
 
     out: list[dict] = []
     for name in sorted(b_cols.keys() - a_cols.keys()):
-        out.append({
-            "table": before.name,
-            "column": name,
-            "change_kind": "added",
-        })
+        out.append(
+            {
+                "table": before.name,
+                "column": name,
+                "change_kind": "added",
+            }
+        )
     for name in sorted(a_cols.keys() - b_cols.keys()):
-        out.append({
-            "table": before.name,
-            "column": name,
-            "change_kind": "removed",
-        })
+        out.append(
+            {
+                "table": before.name,
+                "column": name,
+                "change_kind": "removed",
+            }
+        )
     for name in sorted(a_cols.keys() & b_cols.keys()):
         before_col = a_cols[name]
         after_col = b_cols[name]
         if before_col.data_type != after_col.data_type:
-            out.append({
-                "table": before.name,
-                "column": name,
-                "change_kind": "type_changed",
-                "from": before_col.data_type,
-                "to": after_col.data_type,
-            })
+            out.append(
+                {
+                    "table": before.name,
+                    "column": name,
+                    "change_kind": "type_changed",
+                    "from": before_col.data_type,
+                    "to": after_col.data_type,
+                }
+            )
         if before_col.nullable != after_col.nullable:
-            out.append({
-                "table": before.name,
-                "column": name,
-                "change_kind": "nullability_changed",
-                "from": before_col.nullable,
-                "to": after_col.nullable,
-            })
+            out.append(
+                {
+                    "table": before.name,
+                    "column": name,
+                    "change_kind": "nullability_changed",
+                    "from": before_col.nullable,
+                    "to": after_col.nullable,
+                }
+            )
         if before_col.is_primary_key != after_col.is_primary_key:
-            out.append({
-                "table": before.name,
-                "column": name,
-                "change_kind": "pk_changed",
-                "from": before_col.is_primary_key,
-                "to": after_col.is_primary_key,
-            })
+            out.append(
+                {
+                    "table": before.name,
+                    "column": name,
+                    "change_kind": "pk_changed",
+                    "from": before_col.is_primary_key,
+                    "to": after_col.is_primary_key,
+                }
+            )
     return out

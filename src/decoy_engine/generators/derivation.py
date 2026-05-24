@@ -35,7 +35,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from typing import Any, Callable, Dict, Optional
+from collections.abc import Callable
+from typing import Any
 
 # Fields that are intentionally excluded from the fingerprint. ``name``
 # is the rename surface R3.10 is severing. ``null_probability`` is a
@@ -43,15 +44,17 @@ from typing import Any, Callable, Dict, Optional
 # generator emits for a given row. ``determinism`` flips between stable
 # and fresh paths but the *config* itself is the same set of inputs;
 # determinism is recorded as a separate evidence field.
-_EXCLUDED_FROM_FINGERPRINT = frozenset({
-    "name",
-    "null_probability",
-    "determinism",
-    "_legacy_column_name_seed",
-})
+_EXCLUDED_FROM_FINGERPRINT = frozenset(
+    {
+        "name",
+        "null_probability",
+        "determinism",
+        "_legacy_column_name_seed",
+    }
+)
 
 
-def strategy_config_fingerprint(column_config: Dict[str, Any]) -> str:
+def strategy_config_fingerprint(column_config: dict[str, Any]) -> str:
     """SHA-256 hex of canonical JSON of the strategy-relevant config.
 
     Canonical JSON: sorted keys, no whitespace, default ``ensure_ascii``
@@ -60,8 +63,7 @@ def strategy_config_fingerprint(column_config: Dict[str, Any]) -> str:
     truncate.
     """
     payload = {
-        k: v for k, v in (column_config or {}).items()
-        if k not in _EXCLUDED_FROM_FINGERPRINT
+        k: v for k, v in (column_config or {}).items() if k not in _EXCLUDED_FROM_FINGERPRINT
     }
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
@@ -73,8 +75,8 @@ def _bytes_to_seed(b: bytes) -> int:
 
 
 def synthetic_column_seed(
-    derive_key: Optional[Callable[[str], bytes]],
-    column_config: Dict[str, Any],
+    derive_key: Callable[[str], bytes] | None,
+    column_config: dict[str, Any],
     fallback_seed: int,
 ) -> int:
     """Per-column base seed for synthetic generators.
@@ -106,13 +108,13 @@ def synthetic_column_seed(
     if column_config is not None and column_config.get("determinism") == "fresh":
         return _bytes_to_seed(os.urandom(4))
 
-    if derive_key is not None and column_config is not None and column_config.get(
-        "_legacy_column_name_seed"
+    if (
+        derive_key is not None
+        and column_config is not None
+        and column_config.get("_legacy_column_name_seed")
     ):
         try:
-            return _bytes_to_seed(
-                derive_key(f"col:{column_config.get('name', 'unnamed')}")
-            )
+            return _bytes_to_seed(derive_key(f"col:{column_config.get('name', 'unnamed')}"))
         except Exception:
             pass  # fall through to fingerprint-based path
 
@@ -124,6 +126,9 @@ def synthetic_column_seed(
         except Exception:
             pass
 
-    digest = hashlib.md5(fingerprint.encode("utf-8")).digest()
+    # Non-crypto use: MD5 is just a fast deterministic 16-byte digest
+    # mixed into the fallback seed for reproducibility across runs.
+    # Cryptographic strength is not a requirement here.
+    digest = hashlib.md5(fingerprint.encode("utf-8")).digest()  # noqa: S324
     name_int = _bytes_to_seed(digest)
     return (int(fallback_seed) ^ name_int) & 0x7FFFFFFF

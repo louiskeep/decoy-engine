@@ -10,7 +10,7 @@ plain node IDs.
 """
 
 from collections import deque
-from typing import Iterable
+from collections.abc import Iterable
 
 from decoy_engine.internal.validator import ValidationError
 
@@ -43,6 +43,7 @@ def topo_order(nodes: Iterable[dict], edges: Iterable[dict]) -> list[str]:
 
     if len(order) != len(node_ids):
         from decoy_engine.validation_result import CODES
+
         raise ValidationError("graph has a cycle", "edges", code=CODES.GRAPH_CYCLE)
     return order
 
@@ -76,8 +77,5 @@ def upstream_subgraph(
 
     sub_nodes = [n for n in nodes if n["id"] in needed]
     # Keep original edges (with port notation) so runner can use port keys.
-    sub_edges = [
-        e for e in edges
-        if e["from"].split(".", 1)[0] in needed and e["to"] in needed
-    ]
+    sub_edges = [e for e in edges if e["from"].split(".", 1)[0] in needed and e["to"] in needed]
     return topo_order(sub_nodes, sub_edges), sub_edges

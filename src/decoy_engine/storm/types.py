@@ -8,9 +8,9 @@ Everything here must be JSON-serializable via dataclasses.asdict.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 
 @dataclass
@@ -31,6 +31,7 @@ class CustomDetectorSpec:
     hint matches; the name-hint floor is fixed at 0.4 mirroring the
     built-in detectors.
     """
+
     id: str
     pattern: str
     name_hints: list[str] = field(default_factory=list)
@@ -47,15 +48,16 @@ class TopValue:
 @dataclass
 class DetectorMatch:
     """A single PII/format detector matched against a column."""
-    detector_id: str           # "ssn", "email", "us_phone", "us_zip", "iso_date", ...
-    match_rate: float          # fraction of non-null values that matched (0.0 – 1.0)
+
+    detector_id: str  # "ssn", "email", "us_phone", "us_zip", "iso_date", ...
+    match_rate: float  # fraction of non-null values that matched (0.0 – 1.0)
     sample_misses: list[str] = field(default_factory=list)  # up to 3 values that didn't match
     # Item 65 — surface which sub-pattern variant actually fired so the
     # mask post-pass can splice separators back at the right positions.
     # Detectors with no variants (email, name, etc.) leave this None.
     # Detectors with variants (SSN dash/no-dash, phone separator styles,
     # date strptime, ZIP 5/9) write the winning variant's label here.
-    format_pattern: Optional[str] = None
+    format_pattern: str | None = None
     # Detection sprint (V1): three-bucket confidence so the UI can render
     # "detected" / "needs review" / "low signal" without re-deriving from
     # match_rate. 'high' is the safe-to-auto-apply bucket; 'medium' asks
@@ -86,12 +88,13 @@ class Distribution:
     `data` and `labels` are parallel arrays. min/max/mean only meaningful for
     numeric or date kinds; left as None otherwise.
     """
-    kind: str                                  # "numeric" | "date" | "categorical" | "pattern" | "freetext"
+
+    kind: str  # "numeric" | "date" | "categorical" | "pattern" | "freetext"
     data: list[float] = field(default_factory=list)
     labels: list[str] = field(default_factory=list)
-    min: Optional[str] = None                  # stringified for JSON parity (numeric or ISO date)
-    max: Optional[str] = None
-    mean: Optional[float] = None               # numeric only
+    min: str | None = None  # stringified for JSON parity (numeric or ISO date)
+    max: str | None = None
+    mean: float | None = None  # numeric only
 
 
 @dataclass
@@ -108,28 +111,31 @@ class DetectionSignal:
     today; ML detection phases (Roadmap Item 8) will append `ml=True` rows
     without disturbing the existing schema.
     """
-    signal: str                                # "regex · ssn_pattern", "name-hint · col=\"ssn\"", ...
-    confidence: Optional[float] = None         # 0.0 – 100.0; None when skipped
+
+    signal: str  # "regex · ssn_pattern", "name-hint · col=\"ssn\"", ...
+    confidence: float | None = None  # 0.0 – 100.0; None when skipped
     winner: bool = False
     ml: bool = False
-    skipped: bool = False                      # signal was considered but not run (e.g. ML disabled)
+    skipped: bool = False  # signal was considered but not run (e.g. ML disabled)
 
 
 @dataclass
 class SentinelFlag:
     """A value (or pattern) that parsed structurally but is suspicious."""
-    kind: str                  # "date_sentinel", "date_out_of_range", "numeric_sentinel", "string_sentinel"
+
+    kind: str  # "date_sentinel", "date_out_of_range", "numeric_sentinel", "string_sentinel"
     value: str
     count: int
-    note: str                  # human-readable explanation for FORECAST + UI
+    note: str  # human-readable explanation for FORECAST + UI
 
 
 @dataclass
 class FieldStats:
     """Everything STORM computed about one column."""
+
     name: str
-    inferred_type: str         # "integer", "float", "string", "date", "boolean", "mixed"
-    dtype_raw: str             # the underlying pandas dtype, for debugging
+    inferred_type: str  # "integer", "float", "string", "date", "boolean", "mixed"
+    dtype_raw: str  # the underlying pandas dtype, for debugging
     row_count: int
     null_count: int
     null_rate: float
@@ -138,20 +144,20 @@ class FieldStats:
     is_likely_unique: bool
 
     # Numeric
-    min_value: Optional[str] = None
-    max_value: Optional[str] = None
-    mean_value: Optional[str] = None
+    min_value: str | None = None
+    max_value: str | None = None
+    mean_value: str | None = None
 
     # String
-    min_length: Optional[int] = None
-    max_length: Optional[int] = None
-    avg_length: Optional[float] = None
+    min_length: int | None = None
+    max_length: int | None = None
+    avg_length: float | None = None
 
     # Date (sniffed or native)
-    date_min: Optional[str] = None
-    date_max: Optional[str] = None
-    date_format: Optional[str] = None      # "iso_date", "us_date", "eu_date", "datetime", or None
-    invalid_count: Optional[int] = None
+    date_min: str | None = None
+    date_max: str | None = None
+    date_format: str | None = None  # "iso_date", "us_date", "eu_date", "datetime", or None
+    invalid_count: int | None = None
     sample_invalid: list[str] = field(default_factory=list)
 
     # Item 65 — surface-format hints consumed by the masking-strategy
@@ -161,8 +167,8 @@ class FieldStats:
     #                    (e.g. r'\\d{3}-\\d{2}-\\d{4}' for dashed SSN,
     #                    '%Y-%m-%d' strptime for ISO dates). None when
     #                    no detector with a variant fired.
-    casing_pattern: Optional[str] = None
-    format_pattern: Optional[str] = None
+    casing_pattern: str | None = None
+    format_pattern: str | None = None
 
     # Plan B-2 — column-shape signals FORECAST's per-detector choosers
     # consume to pick mask params instead of using hardcoded defaults.
@@ -185,10 +191,10 @@ class FieldStats:
     #                          Detects "default value pollution" alongside
     #                          mode_freq.
     #   mode_freq           : frequency of mode_value in 0.0..1.0.
-    alphabet: Optional[str] = None
-    value_set_size_class: Optional[str] = None
-    numeric_range_class: Optional[str] = None
-    mode_value: Optional[str] = None
+    alphabet: str | None = None
+    value_set_size_class: str | None = None
+    numeric_range_class: str | None = None
+    mode_value: str | None = None
     mode_freq: float = 0.0
 
     # Top values for distribution awareness
@@ -206,7 +212,7 @@ class FieldStats:
     # Value distribution for the Profile/Drill UI. Optional so old persisted
     # profiles (pre-PR3) deserialize cleanly via dict-spreading at the
     # platform edge.
-    distribution: Optional[Distribution] = None
+    distribution: Distribution | None = None
 
     # Per-column detection-reasoning trail. Empty when no detector fires.
     # ML rows (column classifier, cell-level NER) append in Roadmap Item 8.
@@ -216,10 +222,11 @@ class FieldStats:
 @dataclass
 class StormProfile:
     """The artifact STORM produces. Input to FORECAST. JSON-serializable."""
-    source_label: str          # "users.csv" / "public.orders" / etc.
-    row_count: int             # rows actually scanned
-    sample_strategy: str       # "full", "head", "random", "stratified"
-    sample_row_cap: Optional[int] = None
+
+    source_label: str  # "users.csv" / "public.orders" / etc.
+    row_count: int  # rows actually scanned
+    sample_strategy: str  # "full", "head", "random", "stratified"
+    sample_row_cap: int | None = None
     fields: list[FieldStats] = field(default_factory=list)
 
     # Dataset-level
@@ -238,7 +245,7 @@ class StormProfile:
     # (re-id risk via linkage is high). k=None means no
     # candidates were eligible (either dataset is too small or
     # every column is either unique or constant).
-    k_anonymity: Optional[int] = None
+    k_anonymity: int | None = None
 
     # Run metadata
     engine_version: str = "0.1.0"

@@ -27,11 +27,13 @@ def tmp_csv():
     src = os.path.join(tmpdir, "in.csv")
     out_pandas = os.path.join(tmpdir, "out_pandas.csv")
     out_hybrid = os.path.join(tmpdir, "out_hybrid.csv")
-    df = pd.DataFrame({
-        "id": [1, 2, 3, 4, 5, 5],
-        "state": ["CA", "NY", "CA", "TX", "CA", "CA"],
-        "value": [10, 20, 30, 40, 50, 50],
-    })
+    df = pd.DataFrame(
+        {
+            "id": [1, 2, 3, 4, 5, 5],
+            "state": ["CA", "NY", "CA", "TX", "CA", "CA"],
+            "value": [10, 20, 30, 40, 50, 50],
+        }
+    )
     df.to_csv(src, index=False)
     return src, out_pandas, out_hybrid
 
@@ -45,15 +47,17 @@ def test_engine_pandas_default_unchanged(tmp_csv):
     default flipped to hybrid; this test confirms the no-key path still
     runs cleanly (just routes through the polars / duckdb ops now)."""
     src, out, _ = tmp_csv
-    cfg = _yaml({
-        "mode": "graph",
-        "nodes": [
-            {"id": "s", "kind": "source.file", "config": {"path": src}},
-            {"id": "f", "kind": "filter", "config": {"predicate": "state == 'CA'"}},
-            {"id": "t", "kind": "target.file", "config": {"output_filename": out}},
-        ],
-        "edges": [{"from": "s", "to": "f"}, {"from": "f", "to": "t"}],
-    })
+    cfg = _yaml(
+        {
+            "mode": "graph",
+            "nodes": [
+                {"id": "s", "kind": "source.file", "config": {"path": src}},
+                {"id": "f", "kind": "filter", "config": {"predicate": "state == 'CA'"}},
+                {"id": "t", "kind": "target.file", "config": {"output_filename": out}},
+            ],
+            "edges": [{"from": "s", "to": "f"}, {"from": "f", "to": "t"}],
+        }
+    )
     result = run_graph(cfg)
     assert result["success"] is True
     written = pd.read_csv(out)
@@ -64,7 +68,10 @@ def test_engine_default_is_hybrid_after_phase_8(tmp_csv):
     """Phase 8 flip: graphs without an `engine:` key get hybrid mode."""
     from decoy_engine.graph.planner import _resolve_engine_mode
 
-    cfg = {"mode": "graph", "nodes": [{"id": "x", "kind": "drop_column", "config": {"columns": []}}]}
+    cfg = {
+        "mode": "graph",
+        "nodes": [{"id": "x", "kind": "drop_column", "config": {"columns": []}}],
+    }
     assert _resolve_engine_mode(cfg) == "hybrid"
 
 
@@ -73,16 +80,18 @@ def test_engine_pandas_opt_out_still_works(tmp_csv):
     that forces every op through its pandas fallback regardless of
     declared NATIVE_ENGINE."""
     src, out, _ = tmp_csv
-    cfg = _yaml({
-        "mode": "graph",
-        "engine": "pandas",
-        "nodes": [
-            {"id": "s", "kind": "source.file", "config": {"path": src}},
-            {"id": "f", "kind": "filter", "config": {"predicate": "state == 'CA'"}},
-            {"id": "t", "kind": "target.file", "config": {"output_filename": out}},
-        ],
-        "edges": [{"from": "s", "to": "f"}, {"from": "f", "to": "t"}],
-    })
+    cfg = _yaml(
+        {
+            "mode": "graph",
+            "engine": "pandas",
+            "nodes": [
+                {"id": "s", "kind": "source.file", "config": {"path": src}},
+                {"id": "f", "kind": "filter", "config": {"predicate": "state == 'CA'"}},
+                {"id": "t", "kind": "target.file", "config": {"output_filename": out}},
+            ],
+            "edges": [{"from": "s", "to": "f"}, {"from": "f", "to": "t"}],
+        }
+    )
     result = run_graph(cfg)
     assert result["success"] is True
     written = pd.read_csv(out)
@@ -91,23 +100,25 @@ def test_engine_pandas_opt_out_still_works(tmp_csv):
 
 def test_engine_hybrid_filter_sort_dedupe(tmp_csv):
     src, _, out = tmp_csv
-    cfg = _yaml({
-        "mode": "graph",
-        "engine": "hybrid",  # opt in
-        "nodes": [
-            {"id": "s", "kind": "source.file", "config": {"path": src}},
-            {"id": "f", "kind": "filter", "config": {"predicate": "state == 'CA'"}},
-            {"id": "d", "kind": "dedupe", "config": {"on": ["id"]}},
-            {"id": "so", "kind": "sort", "config": {"by": ["id"], "order": "desc"}},
-            {"id": "t", "kind": "target.file", "config": {"output_filename": out}},
-        ],
-        "edges": [
-            {"from": "s", "to": "f"},
-            {"from": "f", "to": "d"},
-            {"from": "d", "to": "so"},
-            {"from": "so", "to": "t"},
-        ],
-    })
+    cfg = _yaml(
+        {
+            "mode": "graph",
+            "engine": "hybrid",  # opt in
+            "nodes": [
+                {"id": "s", "kind": "source.file", "config": {"path": src}},
+                {"id": "f", "kind": "filter", "config": {"predicate": "state == 'CA'"}},
+                {"id": "d", "kind": "dedupe", "config": {"on": ["id"]}},
+                {"id": "so", "kind": "sort", "config": {"by": ["id"], "order": "desc"}},
+                {"id": "t", "kind": "target.file", "config": {"output_filename": out}},
+            ],
+            "edges": [
+                {"from": "s", "to": "f"},
+                {"from": "f", "to": "d"},
+                {"from": "d", "to": "so"},
+                {"from": "so", "to": "t"},
+            ],
+        }
+    )
     result = run_graph(cfg)
     assert result["success"] is True
     written = pd.read_csv(out)
@@ -151,19 +162,25 @@ def test_engine_hybrid_and_pandas_produce_same_output(tmp_csv):
 
 def test_engine_hybrid_derive_adds_column(tmp_csv):
     src, _, out = tmp_csv
-    cfg = _yaml({
-        "mode": "graph",
-        "engine": "hybrid",
-        "nodes": [
-            {"id": "s", "kind": "source.file", "config": {"path": src}},
-            {"id": "dr", "kind": "derive", "config": {
-                "column": "doubled",
-                "expression": "value * 2",
-            }},
-            {"id": "t", "kind": "target.file", "config": {"output_filename": out}},
-        ],
-        "edges": [{"from": "s", "to": "dr"}, {"from": "dr", "to": "t"}],
-    })
+    cfg = _yaml(
+        {
+            "mode": "graph",
+            "engine": "hybrid",
+            "nodes": [
+                {"id": "s", "kind": "source.file", "config": {"path": src}},
+                {
+                    "id": "dr",
+                    "kind": "derive",
+                    "config": {
+                        "column": "doubled",
+                        "expression": "value * 2",
+                    },
+                },
+                {"id": "t", "kind": "target.file", "config": {"output_filename": out}},
+            ],
+            "edges": [{"from": "s", "to": "dr"}, {"from": "dr", "to": "t"}],
+        }
+    )
     result = run_graph(cfg)
     assert result["success"] is True
     written = pd.read_csv(out)
@@ -172,14 +189,16 @@ def test_engine_hybrid_derive_adds_column(tmp_csv):
 
 
 def test_invalid_engine_value_rejected_at_validation():
-    cfg = _yaml({
-        "mode": "graph",
-        "engine": "spark",  # not supported
-        "nodes": [
-            {"id": "a", "kind": "drop_column", "config": {"columns": ["x"]}},
-        ],
-        "edges": [],
-    })
+    cfg = _yaml(
+        {
+            "mode": "graph",
+            "engine": "spark",  # not supported
+            "nodes": [
+                {"id": "a", "kind": "drop_column", "config": {"columns": ["x"]}},
+            ],
+            "edges": [],
+        }
+    )
     with pytest.raises(PipelineValidationError) as ei:
         validate_graph(cfg)
     assert "engine" in str(ei.value).lower()
@@ -187,15 +206,17 @@ def test_invalid_engine_value_rejected_at_validation():
 
 def test_preview_works_in_hybrid_mode(tmp_csv):
     src, _, _ = tmp_csv
-    cfg = _yaml({
-        "mode": "graph",
-        "engine": "hybrid",
-        "nodes": [
-            {"id": "s", "kind": "source.file", "config": {"path": src}},
-            {"id": "f", "kind": "filter", "config": {"predicate": "state == 'CA'"}},
-        ],
-        "edges": [{"from": "s", "to": "f"}],
-    })
+    cfg = _yaml(
+        {
+            "mode": "graph",
+            "engine": "hybrid",
+            "nodes": [
+                {"id": "s", "kind": "source.file", "config": {"path": src}},
+                {"id": "f", "kind": "filter", "config": {"predicate": "state == 'CA'"}},
+            ],
+            "edges": [{"from": "s", "to": "f"}],
+        }
+    )
     p = preview_graph(cfg, "f", row_limit=10)
     assert p["row_count"] == 4
     assert p["error"] is None
@@ -206,30 +227,38 @@ def test_hybrid_end_to_end_three_engines_in_one_pipeline(tmp_csv):
     pandas at the mask boundary, all sharing Arrow. This test exercises
     a pipeline that crosses every engine boundary."""
     src, _, out = tmp_csv
-    cfg = _yaml({
-        "mode": "graph",
-        "engine": "hybrid",
-        "nodes": [
-            # source.file → duckdb
-            {"id": "s", "kind": "source.file", "config": {"path": src}},
-            # filter → polars
-            {"id": "f", "kind": "filter", "config": {"predicate": "state == 'CA'"}},
-            # mask → pandas (per-row Faker / redact)
-            {"id": "m", "kind": "mask", "config": {"columns": {
-                "state": {"strategy": "redact", "redact_with": "***"},
-            }}},
-            # sort → polars
-            {"id": "so", "kind": "sort", "config": {"by": ["id"]}},
-            # target.file → duckdb
-            {"id": "t", "kind": "target.file", "config": {"output_filename": out}},
-        ],
-        "edges": [
-            {"from": "s", "to": "f"},
-            {"from": "f", "to": "m"},
-            {"from": "m", "to": "so"},
-            {"from": "so", "to": "t"},
-        ],
-    })
+    cfg = _yaml(
+        {
+            "mode": "graph",
+            "engine": "hybrid",
+            "nodes": [
+                # source.file → duckdb
+                {"id": "s", "kind": "source.file", "config": {"path": src}},
+                # filter → polars
+                {"id": "f", "kind": "filter", "config": {"predicate": "state == 'CA'"}},
+                # mask → pandas (per-row Faker / redact)
+                {
+                    "id": "m",
+                    "kind": "mask",
+                    "config": {
+                        "columns": {
+                            "state": {"strategy": "redact", "redact_with": "***"},
+                        }
+                    },
+                },
+                # sort → polars
+                {"id": "so", "kind": "sort", "config": {"by": ["id"]}},
+                # target.file → duckdb
+                {"id": "t", "kind": "target.file", "config": {"output_filename": out}},
+            ],
+            "edges": [
+                {"from": "s", "to": "f"},
+                {"from": "f", "to": "m"},
+                {"from": "m", "to": "so"},
+                {"from": "so", "to": "t"},
+            ],
+        }
+    )
     result = run_graph(cfg)
     assert result["success"] is True
     written = pd.read_csv(out)

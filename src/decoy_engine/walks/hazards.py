@@ -22,14 +22,14 @@ different parents — the intent is "exactly one is set" but we can't
 verify without scanning data, so we surface as a hazard for the user
 to confirm.
 """
+
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Iterable
+from collections.abc import Iterable
 
 from decoy_engine.walks.graph import ERGraph, build_er_graph
-from decoy_engine.walks.types import Column, Edge, Hazard, SchemaSnapshot, Table
-
+from decoy_engine.walks.types import Column, Edge, Hazard, SchemaSnapshot
 
 # Threshold above which a table's in-degree counts as a HUB. The
 # chaser stress-test schema's `users` and `issues` are deliberately
@@ -66,6 +66,7 @@ def detect_hazards(
 
 # ── HUB ───────────────────────────────────────────────────────────────
 
+
 def _detect_hub(graph: ERGraph) -> list[Hazard]:
     """Tables referenced by lots of others. They become visualization
     hubs in the ER graph and they're typically the high-value PII
@@ -74,16 +75,19 @@ def _detect_hub(graph: ERGraph) -> list[Hazard]:
     hazards: list[Hazard] = []
     for table, in_degree in graph.incoming_edge_count.items():
         if in_degree >= _HUB_INCOMING_THRESHOLD:
-            hazards.append(Hazard(
-                kind="HUB",
-                table=table,
-                description=f"{table} is referenced by {in_degree} other tables",
-                details={"incoming_edge_count": in_degree},
-            ))
+            hazards.append(
+                Hazard(
+                    kind="HUB",
+                    table=table,
+                    description=f"{table} is referenced by {in_degree} other tables",
+                    details={"incoming_edge_count": in_degree},
+                )
+            )
     return hazards
 
 
 # ── SR ────────────────────────────────────────────────────────────────
+
 
 def _detect_self_reference(graph: ERGraph) -> list[Hazard]:
     """A table FKs to itself: parent/child trees, manager/employee,
@@ -98,19 +102,22 @@ def _detect_self_reference(graph: ERGraph) -> list[Hazard]:
             if key in seen:
                 continue
             seen.add(key)
-            hazards.append(Hazard(
-                kind="SR",
-                table=edge.source_table,
-                description=(
-                    f"{edge.source_table}.{edge.source_column} references "
-                    f"{edge.source_table}.{edge.target_column} (self-reference)"
-                ),
-                details={"column": edge.source_column},
-            ))
+            hazards.append(
+                Hazard(
+                    kind="SR",
+                    table=edge.source_table,
+                    description=(
+                        f"{edge.source_table}.{edge.source_column} references "
+                        f"{edge.source_table}.{edge.target_column} (self-reference)"
+                    ),
+                    details={"column": edge.source_column},
+                )
+            )
     return hazards
 
 
 # ── PE ────────────────────────────────────────────────────────────────
+
 
 def _detect_parallel_edges(graph: ERGraph) -> list[Hazard]:
     """Multiple FKs from one table to the same target. Examples from
@@ -128,22 +135,24 @@ def _detect_parallel_edges(graph: ERGraph) -> list[Hazard]:
     for (source, target), edges in pairs.items():
         if len(edges) > 1:
             cols = sorted({e.source_column for e in edges})
-            hazards.append(Hazard(
-                kind="PE",
-                table=source,
-                description=(
-                    f"{source} has {len(edges)} FKs to {target} "
-                    f"(columns: {', '.join(cols)})"
-                ),
-                details={
-                    "target_table": target,
-                    "source_columns": cols,
-                },
-            ))
+            hazards.append(
+                Hazard(
+                    kind="PE",
+                    table=source,
+                    description=(
+                        f"{source} has {len(edges)} FKs to {target} (columns: {', '.join(cols)})"
+                    ),
+                    details={
+                        "target_table": target,
+                        "source_columns": cols,
+                    },
+                )
+            )
     return hazards
 
 
 # ── PM ────────────────────────────────────────────────────────────────
+
 
 def _detect_polymorphic_fk(
     snapshot: SchemaSnapshot,
@@ -178,22 +187,25 @@ def _detect_polymorphic_fk(
             # entity type" — not strictly polymorphic, so skip those.
             if (table.name, id_col) in declared_pairs:
                 continue
-            hazards.append(Hazard(
-                kind="PM",
-                table=table.name,
-                description=(
-                    f"{table.name}.{id_col} is polymorphic — target depends "
-                    f"on {table.name}.{col.name}"
-                ),
-                details={
-                    "type_column": col.name,
-                    "id_column": id_col,
-                },
-            ))
+            hazards.append(
+                Hazard(
+                    kind="PM",
+                    table=table.name,
+                    description=(
+                        f"{table.name}.{id_col} is polymorphic — target depends "
+                        f"on {table.name}.{col.name}"
+                    ),
+                    details={
+                        "type_column": col.name,
+                        "id_column": id_col,
+                    },
+                )
+            )
     return hazards
 
 
 # ── ALT ───────────────────────────────────────────────────────────────
+
 
 def _detect_alternative_parents(
     snapshot: SchemaSnapshot,
@@ -227,22 +239,25 @@ def _detect_alternative_parents(
                 nullable_singletons.append(edge)
         targets = {e.target_table for e in nullable_singletons}
         if len(targets) >= 2:
-            hazards.append(Hazard(
-                kind="ALT",
-                table=source_table,
-                description=(
-                    f"{source_table} has nullable FKs to "
-                    f"{len(targets)} different parents: {', '.join(sorted(targets))}"
-                ),
-                details={
-                    "parent_tables": sorted(targets),
-                    "source_columns": sorted({e.source_column for e in nullable_singletons}),
-                },
-            ))
+            hazards.append(
+                Hazard(
+                    kind="ALT",
+                    table=source_table,
+                    description=(
+                        f"{source_table} has nullable FKs to "
+                        f"{len(targets)} different parents: {', '.join(sorted(targets))}"
+                    ),
+                    details={
+                        "parent_tables": sorted(targets),
+                        "source_columns": sorted({e.source_column for e in nullable_singletons}),
+                    },
+                )
+            )
     return hazards
 
 
 # ── CIR ───────────────────────────────────────────────────────────────
+
 
 def _detect_cycles(graph: ERGraph) -> list[Hazard]:
     """Find cycles in the FK graph via DFS with white/gray/black
@@ -276,12 +291,14 @@ def _detect_cycles(graph: ERGraph) -> list[Hazard]:
 
     hazards: list[Hazard] = []
     for cycle in sorted(cycles):
-        hazards.append(Hazard(
-            kind="CIR",
-            table=None,
-            description=f"Cycle: {' -> '.join(cycle)} -> {cycle[0]}",
-            details={"cycle": list(cycle)},
-        ))
+        hazards.append(
+            Hazard(
+                kind="CIR",
+                table=None,
+                description=f"Cycle: {' -> '.join(cycle)} -> {cycle[0]}",
+                details={"cycle": list(cycle)},
+            )
+        )
     return hazards
 
 

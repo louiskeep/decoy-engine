@@ -16,15 +16,7 @@ Public API — only these names are stable:
 
 Everything else under `walks/` is an implementation detail and may change.
 """
-from decoy_engine.walks.types import (
-    Column,
-    DriftResult,
-    Edge,
-    Hazard,
-    SchemaSnapshot,
-    Table,
-    WalkResult,
-)
+
 from decoy_engine.walks.cross_file import (
     CrossFileWalkResult,
     infer_cross_file_edges,
@@ -35,13 +27,22 @@ from decoy_engine.walks.diff import compare
 from decoy_engine.walks.graph import ERGraph, build_er_graph
 from decoy_engine.walks.hazards import detect_hazards
 from decoy_engine.walks.inference import infer_edges
+from decoy_engine.walks.types import (
+    Column,
+    DriftResult,
+    Edge,
+    Hazard,
+    SchemaSnapshot,
+    Table,
+    WalkResult,
+)
 
 __all__ = [
     "Column",
     "CrossFileWalkResult",
     "DriftResult",
-    "Edge",
     "ERGraph",
+    "Edge",
     "Hazard",
     "SchemaSnapshot",
     "Table",

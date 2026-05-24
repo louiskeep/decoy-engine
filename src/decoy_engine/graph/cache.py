@@ -14,6 +14,7 @@ with the target's port keys) so the target's output survives past the run
 loop.  Use ``set_raw`` to alias the split "pass" port onto the direct node
 key without triggering conversion or eviction logic.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -21,6 +22,7 @@ from typing import Any
 import pyarrow as pa
 
 from decoy_engine.graph.conversion import (
+    EngineType,
     arrow_row_count,
     arrow_to_engine,
     engine_to_arrow,
@@ -58,12 +60,10 @@ class GraphCache:
     def row_sum(self, keys: list[str]) -> int:
         """Sum row counts for the given cache keys without consuming them."""
         return sum(
-            arrow_row_count(self._data.get(k))
-            for k in keys
-            if self._data.get(k) is not None
+            arrow_row_count(self._data.get(k)) for k in keys if self._data.get(k) is not None
         )
 
-    def consume(self, key: str, engine: str, hold: str | None = None) -> Any:
+    def consume(self, key: str, engine: EngineType, hold: str | None = None) -> Any:
         """Convert ``key``'s Arrow table to ``engine`` format and evict when last consumer reads.
 
         ``hold`` pins a key past zero consumers.  With the keep-set approach
@@ -91,7 +91,7 @@ class GraphCache:
         self,
         key: str,
         result: Any,
-        engine: str,
+        engine: EngineType,
         row_limit: int | None = None,
     ) -> int:
         """Convert and store a single-output op result.  Returns the row count.
@@ -113,7 +113,7 @@ class GraphCache:
         nid: str,
         result: dict[str, Any],
         ports: tuple[str, ...],
-        engine: str,
+        engine: EngineType,
         row_limit: int | None = None,
     ) -> int:
         """Convert and store split-op port outputs.  Returns total row count.

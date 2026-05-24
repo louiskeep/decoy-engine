@@ -42,15 +42,11 @@ def validate_config(config: dict[str, Any]) -> None:
     # which is silly but not malformed. Validator stays structural.
     columns = config.get("columns") or {}
     if not isinstance(columns, dict):
-        raise ValidationError(
-            "'columns' must be a mapping", "config.columns"
-        )
+        raise ValidationError("'columns' must be a mapping", "config.columns")
     if "row_count" in config:
         rc = config["row_count"]
         if not isinstance(rc, int) or rc <= 0:
-            raise ValidationError(
-                "'row_count' must be a positive integer", "config.row_count"
-            )
+            raise ValidationError("'row_count' must be a positive integer", "config.row_count")
     for col_name, spec in columns.items():
         if not isinstance(spec, dict):
             raise ValidationError(
@@ -149,8 +145,8 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
             continue
         # Multi-parent FK: parent is a list of {node, column}.
         if isinstance(parent, list):
-            specs = [
-                (p.get("node"), p.get("column"))
+            specs: list[tuple[str, str]] = [
+                (str(p["node"]), str(p["column"]))
                 for p in parent
                 if isinstance(p, dict) and p.get("node") and p.get("column")
             ]
@@ -168,9 +164,9 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
         custom_provider = parent.get("custom_provider")
         if custom_provider:
             target: dict[str, Any] = {"custom_provider": custom_provider}
-            if "distribution" in rel and rel["distribution"]:
+            if rel.get("distribution"):
                 target["distribution"] = rel["distribution"]
-            if "weights" in rel and rel["weights"]:
+            if rel.get("weights"):
                 target["weights"] = rel["weights"]
             if "min_per_parent" in rel:
                 target["min_per_parent"] = rel["min_per_parent"]
@@ -202,9 +198,9 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
             "parent_node": p_node,
             "parent_column": p_col,
         }
-        if "distribution" in rel and rel["distribution"]:
+        if rel.get("distribution"):
             target["distribution"] = rel["distribution"]
-        if "weights" in rel and rel["weights"]:
+        if rel.get("weights"):
             target["weights"] = rel["weights"]
         if "min_per_parent" in rel:
             target["min_per_parent"] = rel["min_per_parent"]
@@ -230,10 +226,12 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
         # signal in the manifest + advisory.
         if "custom_provider" in target:
             from decoy_engine.internal.helpers import get_custom_faker_provider_values
+
             pname = target["custom_provider"]
             pool = get_custom_faker_provider_values(pname)
             if not pool:
                 from decoy_engine.exceptions import EmptyParentPoolError
+
                 raise EmptyParentPoolError(
                     f"custom provider {pname!r} has no list-backed values "
                     f"(provider not registered or registered as a closure-only "
@@ -271,9 +269,11 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
             pool = pool_resolver(target["parent_node"], target["parent_column"])
         except Exception:
             raise  # surface to runner's translate_engine_error
-        reference_data[target["parent_node"]] = pd.DataFrame({
-            target["parent_column"]: pool,
-        })
+        reference_data[target["parent_node"]] = pd.DataFrame(
+            {
+                target["parent_column"]: pool,
+            }
+        )
         # Track per-FK metrics for the manifest. _exports is hydrated
         # at finish time by the platform's evidence assembler.
         fk_metrics[c_col] = {
@@ -291,9 +291,7 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
         # AppSettings.default_faker_locale). Per-column `locale` keys
         # still override at the column level — this only affects
         # columns that didn't pick their own.
-        instance_locale = (
-            getattr(ctx, "instance_default_locale", None) if ctx is not None else None
-        )
+        instance_locale = getattr(ctx, "instance_default_locale", None) if ctx is not None else None
         gen = ColumnGenerator(
             seed=seed,
             logger=logger,
@@ -310,7 +308,7 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
         # one node, so pass 2 can always resolve.
         for col_name, spec in columns.items():
             if col_name in self_ref_targets:
-                continue   # defer to pass 2
+                continue  # defer to pass 2
             col_config = dict(spec)
             col_config["name"] = col_name
             col_config.setdefault("type", col_config.pop("strategy", "faker"))
@@ -351,7 +349,8 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
                 missing = False
                 for p_node, p_col in multi_parent_targets[col_name]:
                     if pool_resolver is None:
-                        missing = True; break
+                        missing = True
+                        break
                     try:
                         parent_pools.append(pool_resolver(p_node, p_col))
                         parent_node_keys.append(f"{p_node}.{p_col}")
@@ -365,13 +364,14 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
                 else:
                     min_len = min(len(p) for p in parent_pools)
                     composite_pool = [
-                        "|".join(str(p[i]) for p in parent_pools)
-                        for i in range(min_len)
+                        "|".join(str(p[i]) for p in parent_pools) for i in range(min_len)
                     ]
                     composite_key = "__multi_parent__"
-                    reference_data[composite_key] = pd.DataFrame({
-                        composite_key: composite_pool,
-                    })
+                    reference_data[composite_key] = pd.DataFrame(
+                        {
+                            composite_key: composite_pool,
+                        }
+                    )
                     col_config["type"] = "reference"
                     col_config["reference_table"] = composite_key
                     col_config["reference_column"] = composite_key
@@ -415,9 +415,11 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
                 )
                 continue
             self_ref_key = f"__self_ref__{parent_col}"
-            reference_data[self_ref_key] = pd.DataFrame({
-                parent_col: self_ref_pool,
-            })
+            reference_data[self_ref_key] = pd.DataFrame(
+                {
+                    parent_col: self_ref_pool,
+                }
+            )
             col_config["type"] = "reference"
             col_config["reference_table"] = self_ref_key
             col_config["reference_column"] = parent_col
@@ -503,12 +505,12 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
     # downstream auditors see the collision count. Common causes:
     # small row_count with faker strategy, truncated hash with too
     # few hex chars, categorical strategy on a PK (always a mistake).
-    pk_lenient = (
-        os.environ.get("DECOY_PK_LENIENT", "")
-        .strip()
-        .lower()
-        in {"1", "true", "yes", "on"}
-    )
+    pk_lenient = os.environ.get("DECOY_PK_LENIENT", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
     pk_metrics: dict[str, dict[str, Any]] = {}
     pk_duplicate_failures: list[tuple[str, int, int, str | None]] = []
     for col_name, spec in columns.items():
@@ -539,8 +541,8 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
             pk_duplicate_failures.append((col_name, n_total, n_unique, strategy))
 
     if ctx is not None and hasattr(ctx, "export"):
-        ctx.export("rows_generated", int(len(out)))
-        ctx.export("columns_generated", int(len(columns)))
+        ctx.export("rows_generated", len(out))
+        ctx.export("columns_generated", len(columns))
         ctx.export("seed_used", seed)
         # Per-FK metrics for the platform-side evidence assembler.
         # Keyed by child column name so the manifest can join against
@@ -556,6 +558,7 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
     # that it did. DECOY_PK_LENIENT=1 skips the raise.
     if pk_duplicate_failures and not pk_lenient:
         from decoy_engine.exceptions import PKDuplicatesError
+
         col_name, n_total, n_unique, strategy = pk_duplicate_failures[0]
         raise PKDuplicatesError(col_name, n_total, n_unique, strategy)
 
@@ -563,6 +566,7 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
 
 
 # ── Helpers for the FK paths above ────────────────────────────────
+
 
 def _emit_m2m_junction(
     *,
@@ -606,7 +610,7 @@ def _emit_m2m_junction(
     right = spec.get("right_parent") or {}
     j_cols = junction.get("columns") or []
     if len(j_cols) != 2:
-        return   # validator should have caught
+        return  # validator should have caught
     left_col_out, right_col_out = j_cols[0], j_cols[1]
     pool_strategy = spec.get("pool_strategy", "cartesian")
 
@@ -622,9 +626,7 @@ def _emit_m2m_junction(
     right_pool = list(pool_resolver(right["node"], right["column"]))
     if not left_pool or not right_pool:
         if logger:
-            logger.warning(
-                "m2m junction: one or both parent pools empty; emitting empty columns"
-            )
+            logger.warning("m2m junction: one or both parent pools empty; emitting empty columns")
         out[left_col_out] = []
         out[right_col_out] = []
         return
@@ -679,9 +681,7 @@ def _emit_m2m_junction(
                 cdf.append(running)
             if running <= 0:
                 if logger:
-                    logger.warning(
-                        f"m2m {pool_strategy} weights sum to 0; falling back to uniform"
-                    )
+                    logger.warning(f"m2m {pool_strategy} weights sum to 0; falling back to uniform")
                 return None
             return cdf, running
 
@@ -692,6 +692,7 @@ def _emit_m2m_junction(
             right_cdf = _cdf_or_none(spec.get("right_weights"), n_right)
 
         import bisect
+
         def _pick(cdf: tuple[list[float], float] | None, n: int, mac_bytes: bytes) -> int:
             if cdf is None:
                 return int.from_bytes(mac_bytes[:4], "big") % n
@@ -703,10 +704,12 @@ def _emit_m2m_junction(
         right_vals = []
         for i in range(num_rows):
             mac = hmac.new(seed_bytes, str(i).encode(), hashlib.sha256).digest()
-            li = _pick(left_cdf,  n_left,  mac[:8])
+            li = _pick(left_cdf, n_left, mac[:8])
             ri = _pick(right_cdf, n_right, mac[8:16])
-            if li >= n_left:  li = n_left - 1
-            if ri >= n_right: ri = n_right - 1
+            if li >= n_left:
+                li = n_left - 1
+            if ri >= n_right:
+                ri = n_right - 1
             left_vals.append(left_pool[li])
             right_vals.append(right_pool[ri])
 

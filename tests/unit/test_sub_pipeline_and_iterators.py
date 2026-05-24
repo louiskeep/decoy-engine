@@ -5,9 +5,9 @@ shared `_iterator_core` helper), so tests live in one module to keep
 the cross-op fixtures (temp YAML files, etc.) DRY. Per-op behavior is
 asserted in dedicated classes.
 """
+
 from __future__ import annotations
 
-import json
 import textwrap
 from pathlib import Path
 
@@ -23,7 +23,6 @@ from decoy_engine.graph.ops import (
 )
 from decoy_engine.graph.ops._base import OpError
 from decoy_engine.internal.validator import ValidationError
-
 
 # ----- Helpers -----------------------------------------------------------
 
@@ -65,9 +64,7 @@ class TestSubPipelineValidation:
             )
 
     def test_valid_config_passes(self):
-        sub_pipeline.validate_config(
-            {"pipeline_ref": "x.yaml", "output_node": "out"}
-        )
+        sub_pipeline.validate_config({"pipeline_ref": "x.yaml", "output_node": "out"})
 
 
 class TestSubPipelineDepthCap:
@@ -76,6 +73,7 @@ class TestSubPipelineDepthCap:
 
     def test_depth_cap_default_is_32(self):
         from decoy_engine.graph.ops.sub_pipeline import MAX_SUB_PIPELINE_DEPTH
+
         assert MAX_SUB_PIPELINE_DEPTH == 32
 
     def test_self_referential_sub_pipeline_raises_at_cap(self, tmp_path):
@@ -297,9 +295,7 @@ class TestIterateFixedApply:
     def test_dict_values_expose_keyed_template_vars(self, tmp_path):
         # values list contains dicts; sub-pipeline references one dict key.
         for prefix in ("alpha", "beta"):
-            _make_csv(
-                tmp_path, f"src-{prefix}.csv", "id\n1\n"
-            )
+            _make_csv(tmp_path, f"src-{prefix}.csv", "id\n1\n")
         sub_yaml = tmp_path / "sub.yaml"
         sub_yaml.write_text(
             "mode: graph\n"
@@ -356,9 +352,7 @@ class TestIterateFixedApply:
 class TestIterateLoopValidation:
     def test_missing_start_rejected(self):
         with pytest.raises(ValidationError):
-            iterate_loop.validate_config(
-                {"end": 5, "pipeline_ref": "x.yaml", "output_node": "out"}
-            )
+            iterate_loop.validate_config({"end": 5, "pipeline_ref": "x.yaml", "output_node": "out"})
 
     def test_zero_step_rejected(self):
         with pytest.raises(ValidationError):
@@ -486,9 +480,7 @@ class TestIterateFilesApply:
         # Seed two files on disk so the sub-pipeline source.file can
         # actually read them.
         for name in ("alpha.csv", "beta.csv"):
-            (tmp_path / name).write_text(
-                f"id\n{name.split('.')[0]}\n", encoding="utf-8"
-            )
+            (tmp_path / name).write_text(f"id\n{name.split('.')[0]}\n", encoding="utf-8")
 
         class _StubConfig(ConnectorConfig):
             base: str
@@ -516,10 +508,8 @@ class TestIterateFilesApply:
         monkeypatch.setitem(sys.modules, "stub_pkg", mod)
         return mod, tmp_path
 
-    def test_iterates_over_listed_files_in_sorted_order(
-        self, stub_module, tmp_path
-    ):
-        mod, base = stub_module
+    def test_iterates_over_listed_files_in_sorted_order(self, stub_module, tmp_path):
+        _mod, base = stub_module
         # Sub-pipeline reads the file at the iteration path.
         sub_yaml = tmp_path / "sub.yaml"
         sub_yaml.write_text(
@@ -549,9 +539,7 @@ class TestIterateFilesApply:
 
     def test_missing_source_class_raises_op_error(self, tmp_path):
         sub_yaml = tmp_path / "sub.yaml"
-        sub_yaml.write_text(
-            "mode: graph\nnodes: []\nedges: []\n", encoding="utf-8"
-        )
+        sub_yaml.write_text("mode: graph\nnodes: []\nedges: []\n", encoding="utf-8")
         with pytest.raises(OpError, match="cannot import"):
             iterate_files.apply(
                 inputs=[],
@@ -576,7 +564,7 @@ class TestOpsRegistry:
     def test_ops_declare_required_metadata(self):
         for kind in ("sub_pipeline", "iterate_fixed", "iterate_loop", "iterate_files"):
             op = OPS[kind]
-            assert hasattr(op, "KIND") and op.KIND == kind
+            assert hasattr(op, "KIND") and kind == op.KIND
             assert hasattr(op, "NATIVE_ENGINE")
             assert hasattr(op, "INPUT_ARITY")
             assert hasattr(op, "OUTPUT_KIND")

@@ -6,8 +6,6 @@ Config:
 
 from typing import Any
 
-import pandas as pd
-
 from decoy_engine.graph.ops._base import is_polars_frame
 from decoy_engine.internal.validator import ValidationError
 

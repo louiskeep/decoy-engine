@@ -3,9 +3,8 @@
 Covers SQLite prefix stripping and Postgres libpq key=value rebuilding.
 No running database is required — these are pure string-transformation tests.
 """
-from __future__ import annotations
 
-import pytest
+from __future__ import annotations
 
 from decoy_engine.graph.ops.source_db import _attach_target_for, _resolve_scanner
 
@@ -15,11 +14,17 @@ class TestResolveScanner:
         assert _resolve_scanner("sqlite:///path/to/db") == ("sqlite_scanner", "sqlite")
 
     def test_postgresql_returns_postgres_scanner(self):
-        assert _resolve_scanner("postgresql://user:pass@host/db") == ("postgres_scanner", "postgres")
+        assert _resolve_scanner("postgresql://user:pass@host/db") == (
+            "postgres_scanner",
+            "postgres",
+        )
 
     def test_postgresql_with_driver_prefix(self):
         # postgresql+psycopg2:// is a valid SQLAlchemy URL; the +driver suffix is stripped.
-        assert _resolve_scanner("postgresql+psycopg2://user:pass@host/db") == ("postgres_scanner", "postgres")
+        assert _resolve_scanner("postgresql+psycopg2://user:pass@host/db") == (
+            "postgres_scanner",
+            "postgres",
+        )
 
     def test_mysql_returns_none(self):
         assert _resolve_scanner("mysql://user:pass@host/db") is None

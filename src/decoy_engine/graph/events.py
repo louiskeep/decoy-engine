@@ -13,6 +13,7 @@ Done when:
   - New op authors do not touch runner internals to get normal
     event/result behavior.
 """
+
 from __future__ import annotations
 
 import traceback as _traceback
@@ -79,7 +80,10 @@ def emit_node_ok(
         suffix = " (split)" if is_split else ""
         log.info(
             "graph: node %s ok rows=%d elapsed=%dms%s",
-            descriptor, row_count, elapsed_ms, suffix,
+            descriptor,
+            row_count,
+            elapsed_ms,
+            suffix,
         )
     emit_step(log, step_name, status="finish", rows_in=rows_in or None, rows_out=row_count)
     if elapsed_ms > 0 and row_count > 0:
@@ -139,7 +143,9 @@ def emit_node_error(
         log.error("graph: node %s failed: %s", descriptor, translated)
         log.error(_traceback.format_exc())
     emit_step(
-        log, step_name, status="error",
+        log,
+        step_name,
+        status="error",
         rows_in=rows_in or None,
         error_class=type(exc).__name__,
         error_msg=str(translated),

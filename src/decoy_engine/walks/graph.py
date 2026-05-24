@@ -6,10 +6,11 @@ need: in-degree / out-degree counts and a directed adjacency list.
 Used by `hazards.detect_hazards`; also returned to callers that want
 to render the graph or query it in their own way.
 """
+
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 from decoy_engine.walks.types import Edge, SchemaSnapshot
 

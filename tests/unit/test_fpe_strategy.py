@@ -18,12 +18,10 @@ import hashlib
 import hmac
 
 import pandas as pd
-import pytest
 
-from decoy_engine.transforms.fpe import FPEStrategy, _luhn_check_digit, _CHARSETS
-from decoy_engine.transforms.factory import create_strategy
 from decoy_engine.internal.validator import MaskerConfigValidator
-
+from decoy_engine.transforms.factory import create_strategy
+from decoy_engine.transforms.fpe import _CHARSETS, FPEStrategy
 
 MASTER_KEY_A = b"test-master-key-A-32bytes-padded"
 MASTER_KEY_B = b"test-master-key-B-32bytes-padded"
@@ -31,14 +29,17 @@ MASTER_KEY_B = b"test-master-key-B-32bytes-padded"
 
 def _make_derive_key(master: bytes):
     """Simple derive_key factory mirroring the platform's make_key_resolver."""
+
     def derive_key(info: str) -> bytes:
         return hmac.new(master, info.encode(), hashlib.sha256).digest()
+
     return derive_key
 
 
 # ---------------------------------------------------------------------------
 # Keyed determinism
 # ---------------------------------------------------------------------------
+
 
 def test_keyed_same_input_same_output_across_instances():
     dk = _make_derive_key(MASTER_KEY_A)
@@ -71,13 +72,14 @@ def test_keyed_different_input_different_output():
 # Format preservation
 # ---------------------------------------------------------------------------
 
+
 def test_preserves_length_digits():
     dk = _make_derive_key(MASTER_KEY_A)
     rule = {"column": "id", "type": "fpe", "charset": "digits"}
     values = ["0", "12", "123456789", "1234567890123456"]
     col = pd.Series(values)
     out = FPEStrategy(derive_key=dk).apply(col, rule)
-    for orig, enc in zip(values, out):
+    for orig, enc in zip(values, out, strict=False):
         assert len(enc) == len(orig), f"length changed: {orig!r} → {enc!r}"
 
 
@@ -105,7 +107,7 @@ def test_output_stays_in_alphanum_charset():
     charset = _CHARSETS["alphanum"]
     col = pd.Series(["abc123", "000zzz"])
     out = FPEStrategy(derive_key=dk).apply(col, rule)
-    for orig, enc in zip(["abc123", "000zzz"], out):
+    for orig, enc in zip(["abc123", "000zzz"], out, strict=False):
         assert all(c in charset for c in enc), f"char outside alphanum charset: {enc!r}"
         assert len(enc) == len(orig)
 
@@ -123,6 +125,7 @@ def test_explicit_charset():
 # ---------------------------------------------------------------------------
 # Separator preservation
 # ---------------------------------------------------------------------------
+
 
 def test_preserves_ssn_dashes():
     dk = _make_derive_key(MASTER_KEY_A)
@@ -157,6 +160,7 @@ def test_separator_determinism():
 # ---------------------------------------------------------------------------
 # Luhn validation
 # ---------------------------------------------------------------------------
+
 
 def _luhn_passes(s: str) -> bool:
     total = 0
@@ -203,6 +207,7 @@ def test_luhn_ignored_for_non_digit_charset():
 # NULL / NaN passthrough
 # ---------------------------------------------------------------------------
 
+
 def test_null_passthrough():
     dk = _make_derive_key(MASTER_KEY_A)
     rule = {"column": "ssn", "type": "fpe", "charset": "digits"}
@@ -217,6 +222,7 @@ def test_null_passthrough():
 # ---------------------------------------------------------------------------
 # Factory wiring
 # ---------------------------------------------------------------------------
+
 
 def test_factory_returns_fpe_strategy():
     assert isinstance(create_strategy("fpe"), FPEStrategy)
@@ -233,6 +239,7 @@ def test_factory_passes_derive_key():
 # Validator acceptance
 # ---------------------------------------------------------------------------
 
+
 def test_validator_accepts_fpe_strategy():
     validator = MaskerConfigValidator()
     config = {
@@ -248,13 +255,15 @@ def test_validator_accepts_fpe_with_options():
     config = {
         "input": {"type": "csv", "path": "input.csv"},
         "output": {"type": "csv", "path": "output.csv"},
-        "masking_rules": [{
-            "column": "pan",
-            "type": "fpe",
-            "charset": "digits",
-            "preserve_separators": True,
-            "validate_luhn": True,
-        }],
+        "masking_rules": [
+            {
+                "column": "pan",
+                "type": "fpe",
+                "charset": "digits",
+                "preserve_separators": True,
+                "validate_luhn": True,
+            }
+        ],
     }
     validator.validate(config)  # must not raise
 
@@ -262,6 +271,7 @@ def test_validator_accepts_fpe_with_options():
 # ---------------------------------------------------------------------------
 # Legacy fallback (no derive_key)
 # ---------------------------------------------------------------------------
+
 
 def test_legacy_deterministic_same_seed():
     rule = {"column": "ssn", "type": "fpe", "charset": "digits"}

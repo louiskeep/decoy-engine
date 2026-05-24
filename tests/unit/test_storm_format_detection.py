@@ -15,6 +15,7 @@ test below.
 import pandas as pd
 
 from decoy_engine.storm.detectors import (
+    detect_email,
     detect_eu_date,
     detect_icd10,
     detect_iso_date,
@@ -23,7 +24,6 @@ from decoy_engine.storm.detectors import (
     detect_us_date,
     detect_us_phone,
     detect_us_zip,
-    detect_email,
 )
 from decoy_engine.storm.profiler import (
     _detect_casing,
@@ -31,7 +31,6 @@ from decoy_engine.storm.profiler import (
     run_storm,
 )
 from decoy_engine.storm.types import DetectorMatch
-
 
 # ── per-detector format variants ─────────────────────────────────────
 
@@ -98,11 +97,13 @@ class TestISODateFormatVariants:
         assert m.format_pattern == "%Y%m%d"
 
     def test_with_time_component(self):
-        s = pd.Series([
-            "2025-06-28T14:30:00Z",
-            "2024-01-15T09:00:00Z",
-            "2023-12-31T23:59:59Z",
-        ])
+        s = pd.Series(
+            [
+                "2025-06-28T14:30:00Z",
+                "2024-01-15T09:00:00Z",
+                "2023-12-31T23:59:59Z",
+            ]
+        )
         m = detect_iso_date(s, "date")
         assert m is not None
         assert m.format_pattern == "%Y-%m-%dT%H:%M:%SZ"
@@ -139,11 +140,13 @@ class TestEUDateFormatVariants:
 class TestPANFormatVariants:
     def test_grouped_with_spaces(self):
         # Real Luhn-valid test card numbers spaced in groups of 4.
-        s = pd.Series([
-            "4111 1111 1111 1111",  # Visa test
-            "5500 0000 0000 0004",  # Mastercard test
-            "6011 1111 1111 1117",  # Discover test
-        ])
+        s = pd.Series(
+            [
+                "4111 1111 1111 1111",  # Visa test
+                "5500 0000 0000 0004",  # Mastercard test
+                "6011 1111 1111 1117",  # Discover test
+            ]
+        )
         m = detect_pan(s, "card_number")
         assert m is not None
         assert m.format_pattern == r"\d{4} \d{4} \d{4} \d{4}"
@@ -201,7 +204,7 @@ class TestFormatPatternFromDetectors:
         # Highest match_rate first (sort already applied by run_all_detectors).
         matches = [
             DetectorMatch(detector_id="email", match_rate=0.95, format_pattern=None),
-            DetectorMatch(detector_id="ssn",   match_rate=0.80, format_pattern=r"\d{9}"),
+            DetectorMatch(detector_id="ssn", match_rate=0.80, format_pattern=r"\d{9}"),
         ]
         # Email's None is skipped; SSN's variant wins.
         assert _format_pattern_from_detectors(matches) == r"\d{9}"
@@ -221,10 +224,12 @@ class TestFormatPatternFromDetectors:
 
 class TestFieldStatsCarriesFormatHints:
     def test_ssn_column_gets_dashed_variant(self):
-        df = pd.DataFrame({
-            "ssn": ["123-45-6789", "555-12-3456", "111-22-3333", "222-33-4444"],
-            "name": ["Alice", "Bob", "Carol", "Dave"],
-        })
+        df = pd.DataFrame(
+            {
+                "ssn": ["123-45-6789", "555-12-3456", "111-22-3333", "222-33-4444"],
+                "name": ["Alice", "Bob", "Carol", "Dave"],
+            }
+        )
         profile = run_storm(df, "users.csv")
         ssn_field = next(f for f in profile.fields if f.name == "ssn")
         assert ssn_field.format_pattern == r"\d{3}-\d{2}-\d{4}"
@@ -232,25 +237,31 @@ class TestFieldStatsCarriesFormatHints:
         assert ssn_field.casing_pattern == "digits_only"
 
     def test_iso_date_column_gets_strptime(self):
-        df = pd.DataFrame({
-            "dob": ["1985-04-12", "1990-08-22", "1975-11-03", "2001-02-28"],
-        })
+        df = pd.DataFrame(
+            {
+                "dob": ["1985-04-12", "1990-08-22", "1975-11-03", "2001-02-28"],
+            }
+        )
         profile = run_storm(df, "patients.csv")
         dob = next(f for f in profile.fields if f.name == "dob")
         assert dob.format_pattern == "%Y-%m-%d"
 
     def test_upper_case_name_column(self):
-        df = pd.DataFrame({
-            "last_name": ["SMITH", "JONES", "WILLIAMS", "BROWN"],
-        })
+        df = pd.DataFrame(
+            {
+                "last_name": ["SMITH", "JONES", "WILLIAMS", "BROWN"],
+            }
+        )
         profile = run_storm(df, "people.csv")
         f = next(fs for fs in profile.fields if fs.name == "last_name")
         assert f.casing_pattern == "upper"
 
     def test_email_column_carries_no_format_pattern(self):
-        df = pd.DataFrame({
-            "email": ["a@b.com", "c@d.org", "e@f.io", "g@h.co"],
-        })
+        df = pd.DataFrame(
+            {
+                "email": ["a@b.com", "c@d.org", "e@f.io", "g@h.co"],
+            }
+        )
         profile = run_storm(df, "contacts.csv")
         e = next(f for f in profile.fields if f.name == "email")
         assert e.format_pattern is None

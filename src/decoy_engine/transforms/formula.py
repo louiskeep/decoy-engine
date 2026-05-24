@@ -1,5 +1,5 @@
 # decoy_engine/strategies/formula.py
-from typing import Any, Dict
+from typing import Any
 
 import pandas as pd
 
@@ -31,8 +31,8 @@ class FormulaStrategy(BaseMaskingStrategy):
     :func:`decoy_engine.expressions.safe_eval`.
     """
 
-    def apply(self, column: pd.Series, rule: Dict[str, Any]) -> pd.Series:
-        expr = rule.get('formula', '')
+    def apply(self, column: pd.Series, rule: dict[str, Any]) -> pd.Series:
+        expr = rule.get("formula", "")
         if not expr:
             self.logger.warning(
                 f"formula strategy on '{rule.get('column', 'unnamed')}' "
@@ -42,4 +42,4 @@ class FormulaStrategy(BaseMaskingStrategy):
         return column.apply(lambda v: v if pd.isna(v) else self._eval(expr, v))
 
     def _eval(self, expr: str, value: Any) -> Any:
-        return safe_eval(expr, MASK_GLOBALS, {'value': value})
+        return safe_eval(expr, MASK_GLOBALS, {"value": value})

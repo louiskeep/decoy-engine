@@ -11,6 +11,7 @@ tests focus on the op contract as seen through the graph runner:
   - Validation errors for missing required config fields
   - Reference-pipeline shape: source.s3 -> mask -> target.s3
 """
+
 from __future__ import annotations
 
 import io
@@ -40,17 +41,20 @@ _S3_CREDS = {
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _yaml(d):
     return yaml.safe_dump(d)
 
 
 def _input_df() -> pd.DataFrame:
-    return pd.DataFrame({
-        "id": [1, 2, 3, 4, 5],
-        "name": ["Alice", "Bob", "Carol", "Dave", "Eve"],
-        "score": [90, 75, 85, 60, 95],
-        "dept": ["eng", "sales", "eng", "hr", "eng"],
-    })
+    return pd.DataFrame(
+        {
+            "id": [1, 2, 3, 4, 5],
+            "name": ["Alice", "Bob", "Carol", "Dave", "Eve"],
+            "score": [90, 75, 85, 60, 95],
+            "dept": ["eng", "sales", "eng", "hr", "eng"],
+        }
+    )
 
 
 def _seed_csv(client, key: str, df: pd.DataFrame) -> None:
@@ -67,6 +71,7 @@ def _read_s3_csv(client, key: str) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def work_dir():
@@ -99,6 +104,7 @@ def boto_client(aws_mocked):
 # source.s3
 # ---------------------------------------------------------------------------
 
+
 class TestSourceS3:
     """source.s3 graph op — reads from a mocked S3 bucket."""
 
@@ -108,17 +114,28 @@ class TestSourceS3:
         output_path = os.path.join(work_dir, "out.csv")
         _seed_csv(boto_client, input_key, _input_df())
 
-        cfg = _yaml({
-            "mode": "graph",
-            "nodes": [
-                {"id": "src", "kind": "source.s3", "config": {
-                    "bucket": BUCKET, "path": input_key, **_S3_CREDS,
-                }},
-                {"id": "tgt", "kind": "target.file",
-                 "config": {"output_filename": output_path}},
-            ],
-            "edges": [{"from": "src", "to": "tgt"}],
-        })
+        cfg = _yaml(
+            {
+                "mode": "graph",
+                "nodes": [
+                    {
+                        "id": "src",
+                        "kind": "source.s3",
+                        "config": {
+                            "bucket": BUCKET,
+                            "path": input_key,
+                            **_S3_CREDS,
+                        },
+                    },
+                    {
+                        "id": "tgt",
+                        "kind": "target.file",
+                        "config": {"output_filename": output_path},
+                    },
+                ],
+                "edges": [{"from": "src", "to": "tgt"}],
+            }
+        )
         validate_graph(cfg)
         result = run_graph(cfg)
         assert result["success"], result
@@ -132,19 +149,29 @@ class TestSourceS3:
         output_path = os.path.join(work_dir, "out.csv")
         _seed_csv(boto_client, input_key, _input_df())
 
-        cfg = _yaml({
-            "mode": "graph",
-            "nodes": [
-                {"id": "src", "kind": "source.s3", "config": {
-                    "bucket": BUCKET, "path": input_key, **_S3_CREDS,
-                }},
-                {"id": "filt", "kind": "filter",
-                 "config": {"predicate": "score > 80"}},
-                {"id": "tgt", "kind": "target.file",
-                 "config": {"output_filename": output_path}},
-            ],
-            "edges": [{"from": "src", "to": "filt"}, {"from": "filt", "to": "tgt"}],
-        })
+        cfg = _yaml(
+            {
+                "mode": "graph",
+                "nodes": [
+                    {
+                        "id": "src",
+                        "kind": "source.s3",
+                        "config": {
+                            "bucket": BUCKET,
+                            "path": input_key,
+                            **_S3_CREDS,
+                        },
+                    },
+                    {"id": "filt", "kind": "filter", "config": {"predicate": "score > 80"}},
+                    {
+                        "id": "tgt",
+                        "kind": "target.file",
+                        "config": {"output_filename": output_path},
+                    },
+                ],
+                "edges": [{"from": "src", "to": "filt"}, {"from": "filt", "to": "tgt"}],
+            }
+        )
         result = run_graph(cfg)
         assert result["success"], result
         out = pd.read_csv(output_path)
@@ -157,19 +184,29 @@ class TestSourceS3:
         output_path = os.path.join(work_dir, "out.csv")
         _seed_csv(boto_client, input_key, _input_df())
 
-        cfg = _yaml({
-            "mode": "graph",
-            "nodes": [
-                {"id": "src", "kind": "source.s3", "config": {
-                    "bucket": BUCKET, "path": input_key, **_S3_CREDS,
-                }},
-                {"id": "drop", "kind": "drop_column",
-                 "config": {"columns": ["dept", "score"]}},
-                {"id": "tgt", "kind": "target.file",
-                 "config": {"output_filename": output_path}},
-            ],
-            "edges": [{"from": "src", "to": "drop"}, {"from": "drop", "to": "tgt"}],
-        })
+        cfg = _yaml(
+            {
+                "mode": "graph",
+                "nodes": [
+                    {
+                        "id": "src",
+                        "kind": "source.s3",
+                        "config": {
+                            "bucket": BUCKET,
+                            "path": input_key,
+                            **_S3_CREDS,
+                        },
+                    },
+                    {"id": "drop", "kind": "drop_column", "config": {"columns": ["dept", "score"]}},
+                    {
+                        "id": "tgt",
+                        "kind": "target.file",
+                        "config": {"output_filename": output_path},
+                    },
+                ],
+                "edges": [{"from": "src", "to": "drop"}, {"from": "drop", "to": "tgt"}],
+            }
+        )
         result = run_graph(cfg)
         assert result["success"], result
         out = pd.read_csv(output_path)
@@ -181,35 +218,51 @@ class TestSourceS3:
     def test_missing_key_is_runtime_not_validation_error(self, boto_client, work_dir):
         """A non-existent S3 key can't be detected at validate time; fails at run."""
         output_path = os.path.join(work_dir, "out.csv")
-        cfg = _yaml({
-            "mode": "graph",
-            "nodes": [
-                {"id": "src", "kind": "source.s3", "config": {
-                    "bucket": BUCKET, "path": "never/exists.csv", **_S3_CREDS,
-                }},
-                {"id": "tgt", "kind": "target.file",
-                 "config": {"output_filename": output_path}},
-            ],
-            "edges": [{"from": "src", "to": "tgt"}],
-        })
+        cfg = _yaml(
+            {
+                "mode": "graph",
+                "nodes": [
+                    {
+                        "id": "src",
+                        "kind": "source.s3",
+                        "config": {
+                            "bucket": BUCKET,
+                            "path": "never/exists.csv",
+                            **_S3_CREDS,
+                        },
+                    },
+                    {
+                        "id": "tgt",
+                        "kind": "target.file",
+                        "config": {"output_filename": output_path},
+                    },
+                ],
+                "edges": [{"from": "src", "to": "tgt"}],
+            }
+        )
         validate_graph(cfg)  # key existence is a run-time concern
         result = run_graph(cfg)
         assert result["success"] is False
         failed = next(n for n in result["nodes"] if n["status"] == "error")
         assert failed["node_id"] == "src"
 
-    @pytest.mark.parametrize("bad_config", [
-        {"path": "data.csv"},    # missing bucket
-        {"bucket": BUCKET},      # missing path
-        {},                       # missing both
-    ])
+    @pytest.mark.parametrize(
+        "bad_config",
+        [
+            {"path": "data.csv"},  # missing bucket
+            {"bucket": BUCKET},  # missing path
+            {},  # missing both
+        ],
+    )
     def test_invalid_config_fails_validation(self, bad_config):
         """Missing required fields caught at validate_graph time."""
-        cfg = _yaml({
-            "mode": "graph",
-            "nodes": [{"id": "src", "kind": "source.s3", "config": bad_config}],
-            "edges": [],
-        })
+        cfg = _yaml(
+            {
+                "mode": "graph",
+                "nodes": [{"id": "src", "kind": "source.s3", "config": bad_config}],
+                "edges": [],
+            }
+        )
         with pytest.raises(PipelineValidationError):
             validate_graph(cfg)
 
@@ -218,23 +271,31 @@ class TestSourceS3:
 # target.s3
 # ---------------------------------------------------------------------------
 
+
 class TestTargetS3:
     """target.s3 graph op — writes graph output to a mocked S3 bucket."""
 
     def test_writes_csv_to_bucket(self, boto_client, input_csv):
         """target.s3 uploads a CSV; the object is readable with the right rows."""
         output_key = "output/written.csv"
-        cfg = _yaml({
-            "mode": "graph",
-            "nodes": [
-                {"id": "src", "kind": "source.file",
-                 "config": {"path": input_csv}},
-                {"id": "tgt", "kind": "target.s3", "config": {
-                    "bucket": BUCKET, "path": output_key, **_S3_CREDS,
-                }},
-            ],
-            "edges": [{"from": "src", "to": "tgt"}],
-        })
+        cfg = _yaml(
+            {
+                "mode": "graph",
+                "nodes": [
+                    {"id": "src", "kind": "source.file", "config": {"path": input_csv}},
+                    {
+                        "id": "tgt",
+                        "kind": "target.s3",
+                        "config": {
+                            "bucket": BUCKET,
+                            "path": output_key,
+                            **_S3_CREDS,
+                        },
+                    },
+                ],
+                "edges": [{"from": "src", "to": "tgt"}],
+            }
+        )
         validate_graph(cfg)
         result = run_graph(cfg)
         assert result["success"], result
@@ -245,41 +306,51 @@ class TestTargetS3:
     def test_filtered_rows_land_in_s3(self, boto_client, input_csv):
         """Only rows that pass the upstream filter are written to S3."""
         output_key = "output/filtered.csv"
-        cfg = _yaml({
-            "mode": "graph",
-            "nodes": [
-                {"id": "src", "kind": "source.file",
-                 "config": {"path": input_csv}},
-                {"id": "filt", "kind": "filter",
-                 "config": {"predicate": "dept == 'eng'"}},
-                {"id": "tgt", "kind": "target.s3", "config": {
-                    "bucket": BUCKET, "path": output_key, **_S3_CREDS,
-                }},
-            ],
-            "edges": [{"from": "src", "to": "filt"}, {"from": "filt", "to": "tgt"}],
-        })
+        cfg = _yaml(
+            {
+                "mode": "graph",
+                "nodes": [
+                    {"id": "src", "kind": "source.file", "config": {"path": input_csv}},
+                    {"id": "filt", "kind": "filter", "config": {"predicate": "dept == 'eng'"}},
+                    {
+                        "id": "tgt",
+                        "kind": "target.s3",
+                        "config": {
+                            "bucket": BUCKET,
+                            "path": output_key,
+                            **_S3_CREDS,
+                        },
+                    },
+                ],
+                "edges": [{"from": "src", "to": "filt"}, {"from": "filt", "to": "tgt"}],
+            }
+        )
         result = run_graph(cfg)
         assert result["success"], result
         out = _read_s3_csv(boto_client, output_key)
         assert len(out) == 3  # Alice, Carol, Eve are in eng
         assert (out["dept"] == "eng").all()
 
-    @pytest.mark.parametrize("bad_config", [
-        {"path": "data.csv"},    # missing bucket
-        {"bucket": BUCKET},      # missing path
-        {},                       # missing both
-    ])
+    @pytest.mark.parametrize(
+        "bad_config",
+        [
+            {"path": "data.csv"},  # missing bucket
+            {"bucket": BUCKET},  # missing path
+            {},  # missing both
+        ],
+    )
     def test_invalid_config_fails_validation(self, bad_config):
         """Missing required fields caught at validate_graph time."""
-        cfg = _yaml({
-            "mode": "graph",
-            "nodes": [
-                {"id": "src", "kind": "source.file",
-                 "config": {"path": "/tmp/x.csv"}},
-                {"id": "tgt", "kind": "target.s3", "config": bad_config},
-            ],
-            "edges": [{"from": "src", "to": "tgt"}],
-        })
+        cfg = _yaml(
+            {
+                "mode": "graph",
+                "nodes": [
+                    {"id": "src", "kind": "source.file", "config": {"path": "/tmp/x.csv"}},
+                    {"id": "tgt", "kind": "target.s3", "config": bad_config},
+                ],
+                "edges": [{"from": "src", "to": "tgt"}],
+            }
+        )
         with pytest.raises(PipelineValidationError):
             validate_graph(cfg)
 
@@ -287,6 +358,7 @@ class TestTargetS3:
 # ---------------------------------------------------------------------------
 # End-to-end round-trips
 # ---------------------------------------------------------------------------
+
 
 class TestS3RoundTrip:
     """source.s3 -> [transform] -> target.s3 round-trips."""
@@ -297,18 +369,32 @@ class TestS3RoundTrip:
         output_key = "roundtrip/output.csv"
         _seed_csv(boto_client, input_key, _input_df())
 
-        cfg = _yaml({
-            "mode": "graph",
-            "nodes": [
-                {"id": "src", "kind": "source.s3", "config": {
-                    "bucket": BUCKET, "path": input_key, **_S3_CREDS,
-                }},
-                {"id": "tgt", "kind": "target.s3", "config": {
-                    "bucket": BUCKET, "path": output_key, **_S3_CREDS,
-                }},
-            ],
-            "edges": [{"from": "src", "to": "tgt"}],
-        })
+        cfg = _yaml(
+            {
+                "mode": "graph",
+                "nodes": [
+                    {
+                        "id": "src",
+                        "kind": "source.s3",
+                        "config": {
+                            "bucket": BUCKET,
+                            "path": input_key,
+                            **_S3_CREDS,
+                        },
+                    },
+                    {
+                        "id": "tgt",
+                        "kind": "target.s3",
+                        "config": {
+                            "bucket": BUCKET,
+                            "path": output_key,
+                            **_S3_CREDS,
+                        },
+                    },
+                ],
+                "edges": [{"from": "src", "to": "tgt"}],
+            }
+        )
         result = run_graph(cfg)
         assert result["success"], result
         out = _read_s3_csv(boto_client, output_key)
@@ -325,29 +411,47 @@ class TestS3RoundTrip:
         output_key = "ref/output.csv"
         _seed_csv(boto_client, input_key, _input_df())
 
-        cfg = _yaml({
-            "mode": "graph",
-            "nodes": [
-                {"id": "src", "kind": "source.s3", "config": {
-                    "bucket": BUCKET, "path": input_key, **_S3_CREDS,
-                }},
-                {"id": "msk", "kind": "mask", "config": {
-                    "columns": {
-                        "name": {"strategy": "redact", "redact_with": "MASKED"},
+        cfg = _yaml(
+            {
+                "mode": "graph",
+                "nodes": [
+                    {
+                        "id": "src",
+                        "kind": "source.s3",
+                        "config": {
+                            "bucket": BUCKET,
+                            "path": input_key,
+                            **_S3_CREDS,
+                        },
                     },
-                }},
-                {"id": "tgt", "kind": "target.s3", "config": {
-                    "bucket": BUCKET, "path": output_key, **_S3_CREDS,
-                }},
-            ],
-            "edges": [{"from": "src", "to": "msk"}, {"from": "msk", "to": "tgt"}],
-        })
+                    {
+                        "id": "msk",
+                        "kind": "mask",
+                        "config": {
+                            "columns": {
+                                "name": {"strategy": "redact", "redact_with": "MASKED"},
+                            },
+                        },
+                    },
+                    {
+                        "id": "tgt",
+                        "kind": "target.s3",
+                        "config": {
+                            "bucket": BUCKET,
+                            "path": output_key,
+                            **_S3_CREDS,
+                        },
+                    },
+                ],
+                "edges": [{"from": "src", "to": "msk"}, {"from": "msk", "to": "tgt"}],
+            }
+        )
         result = run_graph(cfg)
         assert result["success"], result
         out = _read_s3_csv(boto_client, output_key)
         assert len(out) == 5
-        assert (out["name"] == "MASKED").all()   # masking applied
-        assert (out["score"] > 0).all()           # non-masked column unchanged
+        assert (out["name"] == "MASKED").all()  # masking applied
+        assert (out["score"] > 0).all()  # non-masked column unchanged
         assert set(out["dept"]).issubset({"eng", "sales", "hr"})  # dept preserved
 
     def test_sql_run_between_s3_source_and_target(self, boto_client):
@@ -356,21 +460,39 @@ class TestS3RoundTrip:
         output_key = "sql/output.csv"
         _seed_csv(boto_client, input_key, _input_df())
 
-        cfg = _yaml({
-            "mode": "graph",
-            "nodes": [
-                {"id": "src", "kind": "source.s3", "config": {
-                    "bucket": BUCKET, "path": input_key, **_S3_CREDS,
-                }},
-                {"id": "sql", "kind": "sql_run", "config": {
-                    "sql": "SELECT dept, COUNT(*) AS n FROM df GROUP BY dept ORDER BY dept",
-                }},
-                {"id": "tgt", "kind": "target.s3", "config": {
-                    "bucket": BUCKET, "path": output_key, **_S3_CREDS,
-                }},
-            ],
-            "edges": [{"from": "src", "to": "sql"}, {"from": "sql", "to": "tgt"}],
-        })
+        cfg = _yaml(
+            {
+                "mode": "graph",
+                "nodes": [
+                    {
+                        "id": "src",
+                        "kind": "source.s3",
+                        "config": {
+                            "bucket": BUCKET,
+                            "path": input_key,
+                            **_S3_CREDS,
+                        },
+                    },
+                    {
+                        "id": "sql",
+                        "kind": "sql_run",
+                        "config": {
+                            "sql": "SELECT dept, COUNT(*) AS n FROM df GROUP BY dept ORDER BY dept",
+                        },
+                    },
+                    {
+                        "id": "tgt",
+                        "kind": "target.s3",
+                        "config": {
+                            "bucket": BUCKET,
+                            "path": output_key,
+                            **_S3_CREDS,
+                        },
+                    },
+                ],
+                "edges": [{"from": "src", "to": "sql"}, {"from": "sql", "to": "tgt"}],
+            }
+        )
         result = run_graph(cfg)
         assert result["success"], result
         out = _read_s3_csv(boto_client, output_key)

@@ -55,9 +55,7 @@ def validate_config(config: dict) -> None:
 
     conditions = config.get("conditions")
     if not isinstance(conditions, list) or not conditions:
-        raise ValidationError(
-            "conditions must be a non-empty list", "config.conditions"
-        )
+        raise ValidationError("conditions must be a non-empty list", "config.conditions")
     for i, cond in enumerate(conditions):
         ctype = cond.get("type")
         if ctype == "row_count":
@@ -141,10 +139,13 @@ def apply(inputs: list, config: dict, ctx=None):
     # job-detail view can render them. Exported regardless of whether
     # paused failures are also present (warning + pause both useful).
     if warned and ctx is not None and hasattr(ctx, "export"):
-        ctx.export("flag_gate_warnings", {
-            "gate_id": gate_id,
-            "warnings": warned,
-        })
+        ctx.export(
+            "flag_gate_warnings",
+            {
+                "gate_id": gate_id,
+                "warnings": warned,
+            },
+        )
 
     if paused:
         raise FlagPauseSignal(conditions_failed=paused, gate_id=gate_id)

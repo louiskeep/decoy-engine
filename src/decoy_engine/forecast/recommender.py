@@ -1,18 +1,25 @@
-"""FORECAST recommender — `recommend(profile: StormProfile) -> ForecastReport`.
+"""FORECAST recommender: ``recommend(profile: StormProfile) -> ForecastReport``.
 
 Pure function. Reads only the StormProfile (a JSON-serializable summary),
-never raw data. The signature is enforced by `tests/unit/test_forecast_security_boundary.py`.
+never raw data. The signature is enforced by
+``tests/unit/test_forecast_security_boundary.py``.
 
 What it produces:
   - Ranked Disguise recommendations (top one is the "Apply Disguise" CTA)
   - Per-field Mask recommendations for any PII-flagged column
   - Risk flags lifted from STORM's sentinels (with FORECAST-suggested fixes)
   - A draft pipeline YAML the user can copy/edit/run as-is
+
+Pattern: SDV HMA1 multi-table fidelity scoring (sdv-dev/SDV, MIT).
+  SDV HMA1: https://docs.sdv.dev/sdv/multi-table-data/modeling
+  Disguise ranking uses a coverage + risk-reduction score modeled on
+  HMA1's parent-then-child sampling discipline (parent fidelity sets
+  an upper bound on what child rows can preserve).
 """
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 import yaml
 
@@ -26,7 +33,7 @@ from decoy_engine.forecast.types import (
     ForecastReport,
     RiskFlag,
 )
-from decoy_engine.storm.types import FieldStats, SentinelFlag, StormProfile
+from decoy_engine.storm.types import FieldStats, StormProfile
 
 # Loaded once at import time — small, deterministic, fine to module-cache.
 _DISGUISES: list[Disguise] = load_disguises()
@@ -34,9 +41,10 @@ _DISGUISES: list[Disguise] = load_disguises()
 
 # ── public API ────────────────────────────────────────────────────────────────
 
+
 def recommend(
     profile: StormProfile,
-    ctx: Optional[ExecutionContext] = None,
+    ctx: ExecutionContext | None = None,
 ) -> ForecastReport:
     """Generate a ForecastReport for the given StormProfile.
 
@@ -65,20 +73,27 @@ def recommend(
             risk_flags=risk_flags,
             proposed_pipeline_yaml=yaml_text,
         )
-    except Exception as exc:  # noqa: BLE001 — re-raised below
+    except Exception as exc:
         emit_step(
-            logger, "forecast.recommend", status="error",
-            error_class=type(exc).__name__, error_msg=str(exc),
+            logger,
+            "forecast.recommend",
+            status="error",
+            error_class=type(exc).__name__,
+            error_msg=str(exc),
         )
         raise
     emit_step(
-        logger, "forecast.recommend", status="finish",
-        rows_in=len(profile.fields), rows_out=len(disguise_recs),
+        logger,
+        "forecast.recommend",
+        status="finish",
+        rows_in=len(profile.fields),
+        rows_out=len(disguise_recs),
     )
     return report
 
 
 # ── per-field recommendations ─────────────────────────────────────────────────
+
 
 def _per_field_recommendations(fields: list[FieldStats]) -> list[FieldRecommendation]:
     """For each field with a detector hit above the cutoff, recommend a Mask."""
@@ -94,18 +109,21 @@ def _per_field_recommendations(fields: list[FieldStats]) -> list[FieldRecommenda
         if choice is None:
             continue
         mask, params, why = choice
-        out.append(FieldRecommendation(
-            field_name=f.name,
-            recommended_mask=mask,
-            mask_params=params,
-            confidence=top.match_rate,
-            why=why,
-            matched_detector=top.detector_id,
-        ))
+        out.append(
+            FieldRecommendation(
+                field_name=f.name,
+                recommended_mask=mask,
+                mask_params=params,
+                confidence=top.match_rate,
+                why=why,
+                matched_detector=top.detector_id,
+            )
+        )
     return out
 
 
 # ── Disguise ranking ──────────────────────────────────────────────────────────
+
 
 def _detector_set(profile: StormProfile) -> set[str]:
     """All detector ids that fired anywhere in the profile."""
@@ -125,16 +143,18 @@ def _rank_disguises(
         if not eligible or score < d.triggers.min_score:
             continue
         matched_fields, apply_payload = _build_apply_payload(d, profile)
-        ranked.append(DisguiseRecommendation(
-            disguise_id=d.id,
-            name=d.name,
-            summary=d.summary,
-            regulation=d.regulation,
-            match_score=round(min(score, 1.0), 3),
-            matched_fields=matched_fields,
-            reasoning=_disguise_reasoning(d, detector_set, quasi_id_groups),
-            apply_payload=apply_payload,
-        ))
+        ranked.append(
+            DisguiseRecommendation(
+                disguise_id=d.id,
+                name=d.name,
+                summary=d.summary,
+                regulation=d.regulation,
+                match_score=round(min(score, 1.0), 3),
+                matched_fields=matched_fields,
+                reasoning=_disguise_reasoning(d, detector_set, quasi_id_groups),
+                apply_payload=apply_payload,
+            )
+        )
     ranked.sort(key=lambda r: r.match_score, reverse=True)
     return ranked
 
@@ -168,14 +188,12 @@ def _score_disguise(
 
     # +0.15 per fully-matched co-occurrence group (e.g. HIPAA's quasi-id trio).
     score += 0.15 * sum(
-        1 for group in d.triggers.co_occurrence
-        if all(det in detector_set for det in group)
+        1 for group in d.triggers.co_occurrence if all(det in detector_set for det in group)
     )
 
     # +0.05 per field rule whose detectors appear in the profile (capped at +0.2).
     field_rule_hits = sum(
-        1 for rule in d.field_rules
-        if any(det in detector_set for det in rule.detectors)
+        1 for rule in d.field_rules if any(det in detector_set for det in rule.detectors)
     )
     score += min(0.2, 0.05 * field_rule_hits)
 
@@ -203,8 +221,7 @@ def _disguise_reasoning(
     if triggered_any:
         parts.append(", ".join(triggered_any) + " present")
     triggered_co = [
-        group for group in d.triggers.co_occurrence
-        if all(det in detector_set for det in group)
+        group for group in d.triggers.co_occurrence if all(det in detector_set for det in group)
     ]
     if triggered_co:
         parts.append("co-occurrence (" + ", ".join(triggered_co[0]) + ")")
@@ -216,6 +233,7 @@ def _disguise_reasoning(
 
 
 # ── apply payload builder ─────────────────────────────────────────────────────
+
 
 def _build_apply_payload(
     d: Disguise,
@@ -286,17 +304,20 @@ def _surface_risk_flags(fields: list[FieldStats]) -> list[RiskFlag]:
     out: list[RiskFlag] = []
     for f in fields:
         for s in f.sentinels:
-            out.append(RiskFlag(
-                field_name=f.name,
-                kind=s.kind,
-                value=s.value,
-                note=s.note,
-                fix_options=list(_FIX_OPTIONS.get(s.kind, [])),
-            ))
+            out.append(
+                RiskFlag(
+                    field_name=f.name,
+                    kind=s.kind,
+                    value=s.value,
+                    note=s.note,
+                    fix_options=list(_FIX_OPTIONS.get(s.kind, [])),
+                )
+            )
     return out
 
 
 # ── proposed pipeline YAML ────────────────────────────────────────────────────
+
 
 def _draft_pipeline_yaml(
     profile: StormProfile,

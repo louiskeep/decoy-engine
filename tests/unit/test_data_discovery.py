@@ -5,6 +5,7 @@ end-to-end Parquet-backed query path. Parquet fixtures are written to
 the per-test tmp_path so DuckDB's read_parquet can pick them up the
 same way it would on the platform.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -27,11 +28,13 @@ def _write_parquet(tmp_path: Path, name: str, table: pa.Table) -> str:
 
 @pytest.fixture
 def customers_table(tmp_path: Path) -> dict[str, str]:
-    table = pa.table({
-        "id": [1, 2, 3, 4],
-        "country": ["US", "US", "UK", "FR"],
-        "amount": [10.0, 20.0, 30.0, 40.0],
-    })
+    table = pa.table(
+        {
+            "id": [1, 2, 3, 4],
+            "country": ["US", "US", "UK", "FR"],
+            "amount": [10.0, 20.0, 30.0, 40.0],
+        }
+    )
     return {"customers": _write_parquet(tmp_path, "customers", table)}
 
 
@@ -57,7 +60,8 @@ class TestValidation:
         # the splitter catches it even though the first is a benign SELECT.
         with pytest.raises(DiscoverySqlError, match="Multiple statements"):
             run_discovery_sql(
-                "SELECT 1; DROP TABLE customers", customers_table,
+                "SELECT 1; DROP TABLE customers",
+                customers_table,
             )
 
     def test_sneaky_drop_in_cte_rejected(self, customers_table):
@@ -65,13 +69,13 @@ class TestValidation:
         # catch the DROP buried inside.
         with pytest.raises(DiscoverySqlError, match="DROP"):
             run_discovery_sql(
-                "WITH x AS (DROP TABLE customers) SELECT 1", customers_table,
+                "WITH x AS (DROP TABLE customers) SELECT 1",
+                customers_table,
             )
 
     def test_with_select_allowed(self, customers_table):
         out = run_discovery_sql(
-            "WITH us AS (SELECT * FROM customers WHERE country='US') "
-            "SELECT count(*) AS n FROM us",
+            "WITH us AS (SELECT * FROM customers WHERE country='US') SELECT count(*) AS n FROM us",
             customers_table,
         )
         assert out.rows == [{"n": 2}]
@@ -110,7 +114,9 @@ class TestExecution:
 
     def test_row_limit_truncates(self, customers_table):
         out = run_discovery_sql(
-            "SELECT * FROM customers", customers_table, row_limit=2,
+            "SELECT * FROM customers",
+            customers_table,
+            row_limit=2,
         )
         assert len(out.rows) == 2
 

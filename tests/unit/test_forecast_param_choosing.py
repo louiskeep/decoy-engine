@@ -59,10 +59,18 @@ def _f(
 # pre-V1 hash branch was a workaround for "joins survive" before FPE
 # existed in the engine.
 
+
 class TestSsnChooser:
     def test_unique_ssn_gets_fpe(self):
-        f = _f("ssn", detector="ssn", unique_rate=1.0, is_likely_unique=True,
-               alphabet="digits", max_length=9, value_set_size_class="unique")
+        f = _f(
+            "ssn",
+            detector="ssn",
+            unique_rate=1.0,
+            is_likely_unique=True,
+            alphabet="digits",
+            max_length=9,
+            value_set_size_class="unique",
+        )
         mask, params, _ = best_transform_for("ssn", f)
         assert mask == "fpe"
         # FPE in the engine reads `charset` (not "alphabet") and preserves
@@ -73,8 +81,13 @@ class TestSsnChooser:
         # Cardinality is no longer load-bearing for the SSN chooser;
         # format preservation is always the right answer for an
         # SSN-shaped column.
-        f = _f("ssn", detector="ssn", unique_rate=0.05, is_likely_unique=False,
-               value_set_size_class="low")
+        f = _f(
+            "ssn",
+            detector="ssn",
+            unique_rate=0.05,
+            is_likely_unique=False,
+            value_set_size_class="low",
+        )
         mask, params, _ = best_transform_for("ssn", f)
         assert mask == "fpe"
         assert params == {"charset": "digits"}
@@ -82,17 +95,29 @@ class TestSsnChooser:
 
 # ── email: always faker.email (deterministic + preserves @-shape) ────
 
+
 class TestEmailChooser:
     def test_unique_email_gets_faker(self):
-        f = _f("email", detector="email", unique_rate=1.0, is_likely_unique=True,
-               alphabet="mixed", value_set_size_class="unique")
+        f = _f(
+            "email",
+            detector="email",
+            unique_rate=1.0,
+            is_likely_unique=True,
+            alphabet="mixed",
+            value_set_size_class="unique",
+        )
         mask, params, _ = best_transform_for("email", f)
         assert mask == "faker"
         assert params == {"faker_type": "email"}
 
     def test_low_card_email_also_gets_faker(self):
-        f = _f("email_template", detector="email", unique_rate=0.05,
-               is_likely_unique=False, value_set_size_class="low")
+        f = _f(
+            "email_template",
+            detector="email",
+            unique_rate=0.05,
+            is_likely_unique=False,
+            value_set_size_class="low",
+        )
         mask, params, _ = best_transform_for("email", f)
         assert mask == "faker"
         assert params == {"faker_type": "email"}
@@ -115,8 +140,13 @@ class TestNameChoosers:
     def test_person_name_chooser_unique_no_longer_hashes(self):
         # The pre-V1 person_name chooser flipped to hash on
         # high-cardinality columns. Detection sprint dropped that branch.
-        f = _f("full_name", detector="person_name", unique_rate=1.0,
-               is_likely_unique=True, value_set_size_class="unique")
+        f = _f(
+            "full_name",
+            detector="person_name",
+            unique_rate=1.0,
+            is_likely_unique=True,
+            value_set_size_class="unique",
+        )
         mask, params, _ = best_transform_for("person_name", f)
         assert mask == "faker"
         assert params == {"faker_type": "name"}
@@ -169,10 +199,10 @@ class TestFallbackToDefaultStrategy:
 
 # ── phone: locale from format_pattern ─────────────────────────────────
 
+
 class TestPhoneChooser:
     def test_us_format_phone_gets_en_us_locale(self):
-        f = _f("phone", detector="us_phone",
-               format_pattern=r"\(\d{3}\)\s\d{3}-\d{4}")
+        f = _f("phone", detector="us_phone", format_pattern=r"\(\d{3}\)\s\d{3}-\d{4}")
         mask, params, _ = best_transform_for("us_phone", f)
         assert mask == "faker"
         assert params["faker_type"] == "phone_number"
@@ -193,19 +223,18 @@ class TestPhoneChooser:
 
 # ── date: jitter scales to the date span ──────────────────────────────
 
+
 class TestDateChooser:
     def test_wide_span_uses_default_30_day_jitter(self):
         # 5-year span → wider than 365 days → fall back to default 30d.
-        f = _f("event_date", detector="iso_date",
-               date_min="2020-01-01", date_max="2025-01-01")
+        f = _f("event_date", detector="iso_date", date_min="2020-01-01", date_max="2025-01-01")
         mask, params, _ = best_transform_for("iso_date", f)
         assert mask == "date_shift"
         assert params["jitter_days"] == 30
 
     def test_tight_span_scales_jitter_down(self):
         # 90-day span → ±22d (span // 4 with a 7d floor).
-        f = _f("enrollment_date", detector="iso_date",
-               date_min="2025-01-01", date_max="2025-04-01")
+        f = _f("enrollment_date", detector="iso_date", date_min="2025-01-01", date_max="2025-04-01")
         _mask, params, _ = best_transform_for("iso_date", f)
         assert params["jitter_days"] == 22
 
@@ -217,15 +246,24 @@ class TestDateChooser:
 
 # ── unknown detector returns None ─────────────────────────────────────
 
+
 def test_unknown_detector_returns_none():
     assert best_transform_for("bogus_detector_id", None) is None
 
 
 # ── chooser is deterministic for the same input ───────────────────────
 
+
 def test_same_input_same_output():
-    f = _f("ssn", detector="ssn", unique_rate=1.0, is_likely_unique=True,
-           alphabet="digits", max_length=9, value_set_size_class="unique")
+    f = _f(
+        "ssn",
+        detector="ssn",
+        unique_rate=1.0,
+        is_likely_unique=True,
+        alphabet="digits",
+        max_length=9,
+        value_set_size_class="unique",
+    )
     out1 = best_transform_for("ssn", f)
     out2 = best_transform_for("ssn", f)
     assert out1 == out2

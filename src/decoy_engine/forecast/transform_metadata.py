@@ -25,11 +25,11 @@ phone locale flips with format_pattern, etc.).
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
-from decoy_engine.storm.types import FieldStats
 from decoy_engine.storm.recommendations import get_default_strategy
-
+from decoy_engine.storm.types import FieldStats
 
 # (mask_id, params, one-line why)
 TransformChoice = tuple[str, dict[str, Any], str]
@@ -42,6 +42,7 @@ Chooser = Callable[[FieldStats | None], TransformChoice]
 
 
 # ── helpers for chooser branches ─────────────────────────────────────
+
 
 def _is_high_cardinality(f: FieldStats | None) -> bool:
     """True when the column looks like an identifier (PK / FK / direct ID).
@@ -110,6 +111,7 @@ def _faker_locale_for_format(f: FieldStats | None) -> dict[str, Any]:
 
 # ── per-detector choosers ────────────────────────────────────────────
 
+
 def _email_chooser(f: FieldStats | None) -> TransformChoice:
     # Detection sprint (V1): faker.email is deterministic when seeded by
     # row, so high-cardinality (unique) email columns no longer need to
@@ -142,7 +144,8 @@ def _phone_chooser(f: FieldStats | None) -> TransformChoice:
     return (
         "faker",
         {"faker_type": "phone_number", **locale},
-        "Replace with a fake phone number." + (" Locale picked from source format." if locale else ""),
+        "Replace with a fake phone number."
+        + (" Locale picked from source format." if locale else ""),
     )
 
 
@@ -236,21 +239,21 @@ DETECTOR_TO_CHOOSER: dict[str, Chooser] = {
 # of a shape-aware chooser. Keeps the per-field plan's Why column
 # helpful without duplicating the table from the override surface.
 _FALLBACK_WHY: dict[str, str] = {
-    "fax_number":     "Fax number — replace with a realistic fake.",
-    "address":        "Street address — replace with a realistic fake address.",
-    "ipv4":           "IP address — replace with a realistic fake IPv4.",
-    "mrn":            "Medical record number — format-preserving so joins survive.",
-    "npi":            "National Provider Identifier — 10-digit format-preserving.",
-    "pan":            "Credit card PAN — format-preserving with Luhn-valid output.",
-    "cvv":            "CVV — redacted (PCI DSS §3.2 forbids storage post-auth).",
-    "iban":           "IBAN — format-preserving, country prefix kept.",
-    "vehicle_id":     "VIN / vehicle identifier — 17-char format-preserving.",
-    "icd10":          "ICD-10 code — redacted in V1 (semantic FPE is V2).",
-    "url":            "URL — redacted in V1 (structural FPE is V2).",
-    "license_num":    "License / certificate — redacted (format varies too widely).",
+    "fax_number": "Fax number — replace with a realistic fake.",
+    "address": "Street address — replace with a realistic fake address.",
+    "ipv4": "IP address — replace with a realistic fake IPv4.",
+    "mrn": "Medical record number — format-preserving so joins survive.",
+    "npi": "National Provider Identifier — 10-digit format-preserving.",
+    "pan": "Credit card PAN — format-preserving with Luhn-valid output.",
+    "cvv": "CVV — redacted (PCI DSS §3.2 forbids storage post-auth).",
+    "iban": "IBAN — format-preserving, country prefix kept.",
+    "vehicle_id": "VIN / vehicle identifier — 17-char format-preserving.",
+    "icd10": "ICD-10 code — redacted in V1 (semantic FPE is V2).",
+    "url": "URL — redacted in V1 (structural FPE is V2).",
+    "license_num": "License / certificate — redacted (format varies too widely).",
     "health_plan_id": "Health-plan beneficiary ID — redacted (format varies).",
-    "device_id":      "Device identifier — redacted (format varies).",
-    "biometric_id":   "Biometric identifier — redacted (always sensitive).",
+    "device_id": "Device identifier — redacted (format varies).",
+    "biometric_id": "Biometric identifier — redacted (always sensitive).",
 }
 
 

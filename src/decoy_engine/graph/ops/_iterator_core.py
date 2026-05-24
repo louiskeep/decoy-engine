@@ -26,9 +26,11 @@ once a customer actually has a use case for partial completion.
 
 Parallelism: serial v1. Threadpool / process-pool are v1.1.
 """
+
 from __future__ import annotations
 
-from typing import Any, Callable, Iterable
+from collections.abc import Callable, Iterable
+from typing import Any
 
 import pyarrow as pa
 
@@ -115,8 +117,7 @@ def run_iterations(
             result_table = sub_pipeline_apply([], sub_config, ctx)
         except OpError as exc:
             raise OpError(
-                f"{log_prefix}: iteration {index} (value={value!r}) failed: "
-                f"{exc}"
+                f"{log_prefix}: iteration {index} (value={value!r}) failed: {exc}"
             ) from exc
 
         if output_mode == "concat":
@@ -157,14 +158,10 @@ def validate_iterator_config(config: dict[str, Any]) -> None:
     """
     ref = config.get("pipeline_ref")
     if not isinstance(ref, str) or not ref.strip():
-        raise ValidationError(
-            "'pipeline_ref' must be a non-empty string", "config.pipeline_ref"
-        )
+        raise ValidationError("'pipeline_ref' must be a non-empty string", "config.pipeline_ref")
     output_node = config.get("output_node")
     if not isinstance(output_node, str) or not output_node.strip():
-        raise ValidationError(
-            "'output_node' must be a non-empty string", "config.output_node"
-        )
+        raise ValidationError("'output_node' must be a non-empty string", "config.output_node")
     output_mode = config.get("output", "concat")
     if output_mode not in {"concat", "void"}:
         raise ValidationError(

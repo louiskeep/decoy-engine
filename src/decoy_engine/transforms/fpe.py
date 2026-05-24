@@ -1,40 +1,43 @@
-# decoy_engine/transforms/fpe.py
 """
-Format-Preserving Encryption (FPE) mask strategy — Sprint B · Item 32.
+Format-Preserving Encryption (FPE) mask strategy.
 
 Replaces each string value with another string of the same length over the
-same character set.  Same input + same key → same output across runs and
-instances (keyed determinism via the existing derive_key path, identical to
-HashStrategy and DateShiftStrategy).
+same character set. Same input + same key produces the same output across
+runs and instances (keyed determinism via the existing derive_key path,
+identical to HashStrategy and DateShiftStrategy).
 
-Algorithm: 8-round type-II Feistel permutation over Z_(r^u) × Z_(r^v) where
+Algorithm: 8-round type-II Feistel permutation over Z_(r^u) x Z_(r^v) where
 n = u + v = input length and r = |charset|, using HMAC-SHA256 as the round
-function.  The Feistel construction is a bijection regardless of the round
+function. The Feistel construction is a bijection regardless of the round
 function (odd rounds shift B keyed on A; even rounds shift A keyed on B),
-so no two inputs map to the same output.  Requires only stdlib — no new
-package dependency added.
+so no two inputs map to the same output. Requires only stdlib (no new
+package dependency added).
 
-Design note: this is not NIST FF1 (which requires AES-CBC and therefore the
-`cryptography` package).  The Feistel+HMAC approach has the same user-visible
-properties — format-preserving, bijective, keyed-deterministic — using the
-HMAC-SHA256 primitive that is already in every other keyed transform.  Defer a
-hard AES dep until a customer asks for NIST SP 800-38G compliance by name.
+Pattern: Type-II Feistel + HMAC-SHA256 (Feistel 1973; HMAC RFC 2104).
+  Feistel: original construction by Horst Feistel at IBM (1973).
+  HMAC: https://datatracker.ietf.org/doc/html/rfc2104
+
+Design note: this is not NIST FF1 (which requires AES-CBC and therefore
+the `cryptography` package). The Feistel+HMAC approach has the same
+user-visible properties (format-preserving, bijective, keyed-deterministic)
+using the HMAC-SHA256 primitive that is already in every other keyed
+transform. Defer a hard AES dep until a customer asks for NIST SP 800-38G
+compliance by name.
 """
 
 import hashlib
 import hmac
 import struct
-from typing import Dict, Any, Optional
+from typing import Any
 
 import pandas as pd
 
 from decoy_engine.transforms.base import BaseMaskingStrategy
 
-
-_CHARSETS: Dict[str, str] = {
-    "digits":   "0123456789",
-    "alpha":    "abcdefghijklmnopqrstuvwxyz",
-    "ALPHA":    "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+_CHARSETS: dict[str, str] = {
+    "digits": "0123456789",
+    "alpha": "abcdefghijklmnopqrstuvwxyz",
+    "ALPHA": "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
     "alphanum": "0123456789abcdefghijklmnopqrstuvwxyz",
     "ALPHANUM": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
 }
@@ -121,7 +124,7 @@ class FPEStrategy(BaseMaskingStrategy):
         ignored when the charset contains non-digit characters.
     """
 
-    def apply(self, column: pd.Series, rule: Dict[str, Any]) -> pd.Series:
+    def apply(self, column: pd.Series, rule: dict[str, Any]) -> pd.Series:
         column_name = rule.get("column", "unnamed")
         column_key = self._column_key(column_name)
 
@@ -152,9 +155,7 @@ class FPEStrategy(BaseMaskingStrategy):
             key = column_key
             self.logger.debug(f"Applying keyed FPE to column '{column_name}'")
         else:
-            self.logger.debug(
-                f"Applying legacy FPE (no master key) to column '{column_name}'"
-            )
+            self.logger.debug(f"Applying legacy FPE (no master key) to column '{column_name}'")
             seed_material = f"fpe-legacy-{self.seed}-{column_name}".encode()
             key = hashlib.sha256(seed_material).digest()
 
@@ -207,7 +208,7 @@ class FPEStrategy(BaseMaskingStrategy):
                 "".join(charset_chars), key, charset, tweak, validate_luhn
             )
             result = list(val)
-            for pos, enc_ch in zip(charset_indices, encrypted_body):
+            for pos, enc_ch in zip(charset_indices, encrypted_body, strict=False):
                 result[pos] = enc_ch
             return "".join(result)
         else:
@@ -239,8 +240,8 @@ class FPEStrategy(BaseMaskingStrategy):
             F = int.from_bytes(hmac.new(key, msg, hashlib.sha256).digest(), "big")
             return charset[(idx + F) % len(charset)]
 
-        u = (n + 1) // 2   # ceil(n/2)
-        v = n - u            # floor(n/2)
+        u = (n + 1) // 2  # ceil(n/2)
+        v = n - u  # floor(n/2)
         u_mod = len(charset) ** u
         v_mod = len(charset) ** v
 
@@ -253,14 +254,12 @@ class FPEStrategy(BaseMaskingStrategy):
 
         return result
 
-    def _column_key(self, column_name: str) -> Optional[bytes]:
+    def _column_key(self, column_name: str) -> bytes | None:
         """Derive the mask sub-key from the master key resolver (same pattern as HashStrategy)."""
         if self.derive_key is None:
             return None
         try:
             return self.derive_key("mask")
         except Exception as exc:
-            self.logger.warning(
-                f"derive_key failed for 'mask' ({exc}); falling back to legacy FPE"
-            )
+            self.logger.warning(f"derive_key failed for 'mask' ({exc}); falling back to legacy FPE")
             return None

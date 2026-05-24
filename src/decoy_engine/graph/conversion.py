@@ -90,6 +90,7 @@ def engine_to_arrow(result: Any, engine: EngineType) -> pa.Table:
         cols = list(result.columns)
         if len(set(cols)) != len(cols):
             from collections import Counter
+
             dupes = sorted({name for name, n in Counter(cols).items() if n > 1})
             raise ValueError(
                 f"Duplicate column names: {dupes}. Use drop_column upstream to remove the "

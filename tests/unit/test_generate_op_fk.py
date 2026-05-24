@@ -13,6 +13,7 @@ four-case matrix end-to-end; these tests target the op-level mechanics:
   - fk_preservation dict is exported via ctx.export.
   - pool_resolver error propagates cleanly.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -37,7 +38,7 @@ def _make_ctx(
         {
             "kind": "fk",
             "parent": {"node": parent_node, "column": parent_col},
-            "child":  {"node": node_id,    "column": "customer_id"},
+            "child": {"node": node_id, "column": "customer_id"},
         }
     ]
     ctx._current_node_id = node_id
@@ -149,16 +150,14 @@ class TestFKCoercion:
         from decoy_engine.exceptions import EmptyParentPoolError
 
         def bad_resolver(nid: str, col: str) -> list:
-            raise EmptyParentPoolError(
-                "pool empty", parent_node=nid, parent_column=col
-            )
+            raise EmptyParentPoolError("pool empty", parent_node=nid, parent_column=col)
 
         ctx = ExecutionContext(pool_resolver=bad_resolver)
         ctx.column_relationships = [
             {
                 "kind": "fk",
                 "parent": {"node": "mask_1", "column": "id"},
-                "child":  {"node": "synth_1", "column": "customer_id"},
+                "child": {"node": "synth_1", "column": "customer_id"},
             }
         ]
         ctx._current_node_id = "synth_1"
@@ -212,7 +211,7 @@ def _make_ctx_with_distribution(
     rel: dict = {
         "kind": "fk",
         "parent": {"node": "mask_1", "column": "id"},
-        "child":  {"node": node_id,  "column": "customer_id"},
+        "child": {"node": node_id, "column": "customer_id"},
     }
     if distribution is not None:
         rel["distribution"] = distribution
@@ -237,7 +236,9 @@ class TestDistributionControls:
     def test_sequential_distribution_cycles_the_pool(self):
         pool = ["A", "B", "C"]
         ctx = _make_ctx_with_distribution(
-            "synth_1", pool, distribution="sequential",
+            "synth_1",
+            pool,
+            distribution="sequential",
         )
         config = {
             "row_count": 9,
@@ -253,7 +254,8 @@ class TestDistributionControls:
         # weighted value should dominate the output.
         pool = ["A", "B"]
         ctx = _make_ctx_with_distribution(
-            "synth_1", pool,
+            "synth_1",
+            pool,
             distribution="weighted",
             weights=[99, 1],
         )
@@ -263,6 +265,7 @@ class TestDistributionControls:
         }
         result = generate_op.apply([], config, ctx)
         from collections import Counter
+
         counts = Counter(result["customer_id"].tolist())
         # With weights 99:1, A should appear far more than B. Use a
         # loose lower bound (90%) to keep the test stable across seeds.
@@ -276,7 +279,8 @@ class TestDistributionControls:
         # over 10 rows can easily miss a value entirely.
         pool = ["A", "B", "C", "D", "E"]
         ctx = _make_ctx_with_distribution(
-            "synth_1", pool,
+            "synth_1",
+            pool,
             distribution="random",
             min_per_parent=2,
         )
@@ -286,6 +290,7 @@ class TestDistributionControls:
         }
         result = generate_op.apply([], config, ctx)
         from collections import Counter
+
         counts = Counter(result["customer_id"].tolist())
         for parent in pool:
             assert counts[parent] >= 2, f"{parent} appeared {counts[parent]} times, below min=2"
@@ -299,7 +304,8 @@ class TestDistributionControls:
         # Use pool of 3 instead to give the repair room.
         pool = ["A", "B", "C"]
         ctx = _make_ctx_with_distribution(
-            "synth_1", pool,
+            "synth_1",
+            pool,
             distribution="random",
             max_per_parent=4,
         )
@@ -309,6 +315,7 @@ class TestDistributionControls:
         }
         result = generate_op.apply([], config, ctx)
         from collections import Counter
+
         counts = Counter(result["customer_id"].tolist())
         # Sum is 30, pool=3, max=4 -> impossible (3 * 4 = 12 < 30),
         # so over-fill warning fires. We still get 30 rows back; just
@@ -320,7 +327,8 @@ class TestDistributionControls:
         # Pool of 4, row_count 20, min=3, max=8 -> every value 3..8 times.
         pool = ["A", "B", "C", "D"]
         ctx = _make_ctx_with_distribution(
-            "synth_1", pool,
+            "synth_1",
+            pool,
             distribution="random",
             min_per_parent=3,
             max_per_parent=8,
@@ -331,6 +339,7 @@ class TestDistributionControls:
         }
         result = generate_op.apply([], config, ctx)
         from collections import Counter
+
         counts = Counter(result["customer_id"].tolist())
         for parent in pool:
             assert 3 <= counts[parent] <= 8, (
@@ -342,7 +351,8 @@ class TestDistributionControls:
         # return best-effort, never crash.
         pool = ["A", "B", "C", "D", "E"]
         ctx = _make_ctx_with_distribution(
-            "synth_1", pool,
+            "synth_1",
+            pool,
             distribution="random",
             min_per_parent=10,  # 5 * 10 = 50 > row_count=5
         )

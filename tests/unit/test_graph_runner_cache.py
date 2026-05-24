@@ -35,11 +35,13 @@ def tmp_csv():
     tmpdir = tempfile.mkdtemp()
     src = os.path.join(tmpdir, "in.csv")
     out = os.path.join(tmpdir, "out.csv")
-    df = pd.DataFrame({
-        "id": [1, 2, 3, 4, 5, 5],
-        "state": ["CA", "NY", "CA", "TX", "CA", "CA"],
-        "value": [10, 20, 30, 40, 50, 50],
-    })
+    df = pd.DataFrame(
+        {
+            "id": [1, 2, 3, 4, 5, 5],
+            "state": ["CA", "NY", "CA", "TX", "CA", "CA"],
+            "value": [10, 20, 30, 40, 50, 50],
+        }
+    )
     df.to_csv(src, index=False)
     return src, out
 
@@ -157,20 +159,22 @@ def test_consume_respects_hold_for_preview_target():
 def test_run_graph_arrow_cache_does_not_break_existing_pipelines(tmp_csv):
     """The whole point of Phase 1: existing ops keep working unchanged."""
     src, out = tmp_csv
-    cfg = _yaml({
-        "mode": "graph",
-        "nodes": [
-            {"id": "s", "kind": "source.file", "config": {"path": src}},
-            {"id": "f", "kind": "filter", "config": {"predicate": "state == 'CA'"}},
-            {"id": "d", "kind": "dedupe", "config": {"on": ["id"]}},
-            {"id": "t", "kind": "target.file", "config": {"output_filename": out}},
-        ],
-        "edges": [
-            {"from": "s", "to": "f"},
-            {"from": "f", "to": "d"},
-            {"from": "d", "to": "t"},
-        ],
-    })
+    cfg = _yaml(
+        {
+            "mode": "graph",
+            "nodes": [
+                {"id": "s", "kind": "source.file", "config": {"path": src}},
+                {"id": "f", "kind": "filter", "config": {"predicate": "state == 'CA'"}},
+                {"id": "d", "kind": "dedupe", "config": {"on": ["id"]}},
+                {"id": "t", "kind": "target.file", "config": {"output_filename": out}},
+            ],
+            "edges": [
+                {"from": "s", "to": "f"},
+                {"from": "f", "to": "d"},
+                {"from": "d", "to": "t"},
+            ],
+        }
+    )
     validate_graph(cfg)
     result = run_graph(cfg)
     assert result["success"] is True
@@ -182,18 +186,20 @@ def test_run_graph_arrow_cache_does_not_break_existing_pipelines(tmp_csv):
 def test_preview_branching_graph_returns_correct_target(tmp_csv):
     """Branching graph: source feeds two filters; preview either."""
     src, _ = tmp_csv
-    cfg = _yaml({
-        "mode": "graph",
-        "nodes": [
-            {"id": "s", "kind": "source.file", "config": {"path": src}},
-            {"id": "ca", "kind": "filter", "config": {"predicate": "state == 'CA'"}},
-            {"id": "ny", "kind": "filter", "config": {"predicate": "state == 'NY'"}},
-        ],
-        "edges": [
-            {"from": "s", "to": "ca"},
-            {"from": "s", "to": "ny"},
-        ],
-    })
+    cfg = _yaml(
+        {
+            "mode": "graph",
+            "nodes": [
+                {"id": "s", "kind": "source.file", "config": {"path": src}},
+                {"id": "ca", "kind": "filter", "config": {"predicate": "state == 'CA'"}},
+                {"id": "ny", "kind": "filter", "config": {"predicate": "state == 'NY'"}},
+            ],
+            "edges": [
+                {"from": "s", "to": "ca"},
+                {"from": "s", "to": "ny"},
+            ],
+        }
+    )
     p_ca = preview_graph(cfg, "ca", row_limit=10)
     p_ny = preview_graph(cfg, "ny", row_limit=10)
     assert p_ca["row_count"] == 4
@@ -202,14 +208,16 @@ def test_preview_branching_graph_returns_correct_target(tmp_csv):
 
 def test_run_graph_records_arrow_row_count(tmp_csv):
     src, out = tmp_csv
-    cfg = _yaml({
-        "mode": "graph",
-        "nodes": [
-            {"id": "s", "kind": "source.file", "config": {"path": src}},
-            {"id": "t", "kind": "target.file", "config": {"output_filename": out}},
-        ],
-        "edges": [{"from": "s", "to": "t"}],
-    })
+    cfg = _yaml(
+        {
+            "mode": "graph",
+            "nodes": [
+                {"id": "s", "kind": "source.file", "config": {"path": src}},
+                {"id": "t", "kind": "target.file", "config": {"output_filename": out}},
+            ],
+            "edges": [{"from": "s", "to": "t"}],
+        }
+    )
     result = run_graph(cfg)
     assert result["success"] is True
     s_record = next(n for n in result["nodes"] if n["node_id"] == "s")

@@ -17,15 +17,10 @@ Public exceptions (also in decoy_engine.exceptions):
     LicenseError, LicenseExpiredError,
     FlagPauseSignal
 
-`ForgeError` is a deprecated alias for `DecoyError` kept for one minor
-version while the rebrand rolls through downstream consumers.
-
 Anything not listed in __all__ -- and anything under decoy_engine.internal --
 is private and may change without a version bump.
 """
 
-from decoy_engine.masker import Masker
-from decoy_engine.generators import DataGenerator
 from decoy_engine.context import (
     ExecutionContext,
     Logger,
@@ -38,139 +33,141 @@ from decoy_engine.context import (
     emit_throughput_sample,
     make_key_resolver,
 )
-from decoy_engine.schema import SchemaInspector
-from decoy_engine.license import LicenseVerifier
-from decoy_engine.validation import validate_config
-from decoy_engine.graph import (
-    validate_graph,
-    validate_graph_full,
-    run_graph,
-    preview_graph,
-    RunResult,
-    PreviewResult,
-)
-from decoy_engine.validation_result import (
-    CODES as VALIDATION_CODES,
-    ValidationMessage,
-    ValidationResult,
-)
-from decoy_engine.storm import run_storm, StormProfile, FieldStats, DetectorMatch, SentinelFlag
 from decoy_engine.data_discovery import (
     DiscoveryResult,
     DiscoverySqlError,
     run_discovery_sql,
 )
-from decoy_engine.forecast import (
-    recommend,
-    ForecastReport,
-    DisguiseRecommendation,
-    FieldRecommendation,
-    RiskFlag,
-)
 from decoy_engine.exceptions import (
-    DecoyError,
-    ForgeError,
     ConfigError,
-    PipelineValidationError,
-    ConnectorError,
     ConnectorAuthError,
+    ConnectorError,
+    DecoyError,
+    FlagPauseSignal,
     LicenseError,
     LicenseExpiredError,
-    FlagPauseSignal,
+    PipelineValidationError,
+)
+from decoy_engine.forecast import (
+    DisguiseRecommendation,
+    FieldRecommendation,
+    ForecastReport,
+    RiskFlag,
+    recommend,
+)
+from decoy_engine.generators import DataGenerator
+from decoy_engine.graph import (
+    PreviewResult,
+    RunResult,
+    preview_graph,
+    run_graph,
+    validate_graph,
+    validate_graph_full,
 )
 from decoy_engine.internal.helpers import (
-    register_faker_provider,
-    register_faker_list_provider,
-    unregister_faker_provider,
     load_custom_providers,
+    register_faker_list_provider,
+    register_faker_provider,
+    unregister_faker_provider,
 )
+from decoy_engine.license import LicenseVerifier
+from decoy_engine.masker import Masker
+from decoy_engine.schema import SchemaInspector
 
 # Connector SDK.
 from decoy_engine.sdk import (
-    SDK_VERSION,
-    CAP_STREAMING,
+    CAP_DRY_RUN,
+    CAP_INTROSPECTION,
+    CAP_MULTIPART,
     CAP_RESUMABLE,
     CAP_SIGNED_URL,
-    CAP_MULTIPART,
-    CAP_INTROSPECTION,
-    CAP_DRY_RUN,
+    CAP_STREAMING,
+    SDK_VERSION,
+    CheckResult,
     ConnectorConfig,
     FileMeta,
-    CheckResult,
-    WriteResult,
-    FileSource,
     FileSink,
-    TransientError,
+    FileSource,
     PermanentError,
+    TransientError,
+    WriteResult,
+)
+from decoy_engine.storm import DetectorMatch, FieldStats, SentinelFlag, StormProfile, run_storm
+from decoy_engine.validation import validate_config
+from decoy_engine.validation_result import (
+    CODES as VALIDATION_CODES,
+)
+from decoy_engine.validation_result import (
+    ValidationMessage,
+    ValidationResult,
 )
 
-__version__ = '0.1.0'
+__version__ = "0.1.0"
 
 __all__ = [
-    'Masker',
-    'DataGenerator',
-    'ExecutionContext',
-    'Logger',
-    'StructuredEvents',
-    'TelemetryClient',
-    'emit_step',
-    'emit_lineage',
-    'emit_fidelity',
-    'emit_quarantine',
-    'emit_throughput_sample',
-    'make_key_resolver',
-    'SchemaInspector',
-    'LicenseVerifier',
-    'validate_config',
-    'validate_graph',
-    'validate_graph_full',
-    'run_graph',
-    'preview_graph',
-    'RunResult',
-    'PreviewResult',
-    'VALIDATION_CODES',
-    'ValidationMessage',
-    'ValidationResult',
-    'run_storm',
-    'StormProfile',
-    'FieldStats',
-    'DetectorMatch',
-    'SentinelFlag',
-    'run_discovery_sql',
-    'DiscoveryResult',
-    'DiscoverySqlError',
-    'recommend',
-    'ForecastReport',
-    'DisguiseRecommendation',
-    'FieldRecommendation',
-    'RiskFlag',
-    'DecoyError',
-    'ForgeError',
-    'ConfigError',
-    'PipelineValidationError',
-    'ConnectorError',
-    'ConnectorAuthError',
-    'LicenseError',
-    'LicenseExpiredError',
-    'FlagPauseSignal',
-    'register_faker_provider',
-    'register_faker_list_provider',
-    'unregister_faker_provider',
-    'load_custom_providers',
+    "CAP_DRY_RUN",
+    "CAP_INTROSPECTION",
+    "CAP_MULTIPART",
+    "CAP_RESUMABLE",
+    "CAP_SIGNED_URL",
+    "CAP_STREAMING",
     # Connector SDK.
-    'SDK_VERSION',
-    'CAP_STREAMING',
-    'CAP_RESUMABLE',
-    'CAP_SIGNED_URL',
-    'CAP_MULTIPART',
-    'CAP_INTROSPECTION',
-    'CAP_DRY_RUN',
-    'ConnectorConfig',
-    'FileMeta',
-    'CheckResult',
-    'WriteResult',
-    'FileSource',
-    'FileSink',
-    'TransientError',
-    'PermanentError',
+    "SDK_VERSION",
+    "VALIDATION_CODES",
+    "CheckResult",
+    "ConfigError",
+    "ConnectorAuthError",
+    "ConnectorConfig",
+    "ConnectorError",
+    "DataGenerator",
+    "DecoyError",
+    "DetectorMatch",
+    "DiscoveryResult",
+    "DiscoverySqlError",
+    "DisguiseRecommendation",
+    "ExecutionContext",
+    "FieldRecommendation",
+    "FieldStats",
+    "FileMeta",
+    "FileSink",
+    "FileSource",
+    "FlagPauseSignal",
+    "ForecastReport",
+    "LicenseError",
+    "LicenseExpiredError",
+    "LicenseVerifier",
+    "Logger",
+    "Masker",
+    "PermanentError",
+    "PipelineValidationError",
+    "PreviewResult",
+    "RiskFlag",
+    "RunResult",
+    "SchemaInspector",
+    "SentinelFlag",
+    "StormProfile",
+    "StructuredEvents",
+    "TelemetryClient",
+    "TransientError",
+    "ValidationMessage",
+    "ValidationResult",
+    "WriteResult",
+    "emit_fidelity",
+    "emit_lineage",
+    "emit_quarantine",
+    "emit_step",
+    "emit_throughput_sample",
+    "load_custom_providers",
+    "make_key_resolver",
+    "preview_graph",
+    "recommend",
+    "register_faker_list_provider",
+    "register_faker_provider",
+    "run_discovery_sql",
+    "run_graph",
+    "run_storm",
+    "unregister_faker_provider",
+    "validate_config",
+    "validate_graph",
+    "validate_graph_full",
 ]

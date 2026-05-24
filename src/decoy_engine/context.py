@@ -17,7 +17,8 @@ paths use it partially.
 
 import hashlib
 import hmac
-from typing import Any, Callable, Literal, Protocol, runtime_checkable
+from collections.abc import Callable
+from typing import Any, Literal, Protocol, runtime_checkable
 
 
 @runtime_checkable
@@ -94,6 +95,7 @@ class StructuredEvents(Protocol):
 # swallowed -- a JobLogger DB hiccup mid-run mustn't take the engine
 # down. Narrative logging (info/warning/error) is the source of truth.
 
+
 def emit_step(
     logger: Logger | None,
     name: str,
@@ -129,9 +131,12 @@ def emit_step(
         return
     try:
         fn(
-            name, status=status,
-            rows_in=rows_in, rows_out=rows_out,
-            error_class=error_class, error_msg=error_msg,
+            name,
+            status=status,
+            rows_in=rows_in,
+            rows_out=rows_out,
+            error_class=error_class,
+            error_msg=error_msg,
             node_id=node_id,
         )
     except TypeError:
@@ -328,6 +333,7 @@ class ExecutionContext:
 
 
 # -- helpers callers (CLI, platform) can use to build a derive_key resolver --
+
 
 def _hkdf_sha256(master: bytes, info: str, length: int = 32) -> bytes:
     """HKDF-SHA256(master, info) -> `length` bytes (max 32 in this impl).

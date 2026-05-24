@@ -1,4 +1,5 @@
 """Tests for IF router (two-output-port row router)."""
+
 import pandas as pd
 import polars as pl
 import pytest
@@ -35,7 +36,9 @@ class TestValidateConfig:
 
 class TestApplyPolars:
     def test_basic_split(self):
-        df = _pl([{"age": 10, "name": "Alice"}, {"age": 20, "name": "Bob"}, {"age": 15, "name": "Carol"}])
+        df = _pl(
+            [{"age": 10, "name": "Alice"}, {"age": 20, "name": "Bob"}, {"age": 15, "name": "Carol"}]
+        )
         result = if_router.apply([df], {"predicate": "age >= 18"})
         assert isinstance(result, dict)
         assert set(result.keys()) == {"pass", "fail"}

@@ -19,8 +19,6 @@ Each op module exposes:
 
 from typing import Any, Literal, Protocol
 
-import pandas as pd
-
 from decoy_engine.context import ExecutionContext
 
 NativeEngine = Literal["pandas", "polars", "duckdb", "arrow"]

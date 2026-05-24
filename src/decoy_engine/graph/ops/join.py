@@ -82,15 +82,19 @@ def validate_config(config: dict[str, Any]) -> None:
                 )
             left_on = spec.get("left_on")
             right_on = spec.get("right_on")
-            if not isinstance(left_on, list) or not left_on or not all(
-                isinstance(c, str) and c.strip() for c in left_on
+            if (
+                not isinstance(left_on, list)
+                or not left_on
+                or not all(isinstance(c, str) and c.strip() for c in left_on)
             ):
                 raise ValidationError(
                     f"joins[{i}].left_on must be a non-empty list of column-name strings",
                     f"config.joins[{i}].left_on",
                 )
-            if not isinstance(right_on, list) or not right_on or not all(
-                isinstance(c, str) and c.strip() for c in right_on
+            if (
+                not isinstance(right_on, list)
+                or not right_on
+                or not all(isinstance(c, str) and c.strip() for c in right_on)
             ):
                 raise ValidationError(
                     f"joins[{i}].right_on must be a non-empty list of column-name strings",
@@ -130,8 +134,10 @@ def validate_config(config: dict[str, Any]) -> None:
 
     on = config.get("on")
     if on is not None:
-        if not isinstance(on, list) or not on or not all(
-            isinstance(c, str) and c.strip() for c in on
+        if (
+            not isinstance(on, list)
+            or not on
+            or not all(isinstance(c, str) and c.strip() for c in on)
         ):
             raise ValidationError(
                 "'on' must be a non-empty list of column-name strings (or omitted for positional join)",
@@ -160,9 +166,7 @@ def validate_config(config: dict[str, Any]) -> None:
 
 def apply(inputs, config, ctx) -> pd.DataFrame:
     if len(inputs) < 2:
-        raise OpError(
-            f"join requires at least 2 inputs, got {len(inputs)}"
-        )
+        raise OpError(f"join requires at least 2 inputs, got {len(inputs)}")
 
     joins = config.get("joins")
     on = config.get("on")
@@ -173,8 +177,7 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
         if joins is not None:
             if len(joins) != len(inputs) - 1:
                 raise OpError(
-                    f"join: 'joins' length ({len(joins)}) must equal inputs - 1 "
-                    f"({len(inputs) - 1})"
+                    f"join: 'joins' length ({len(joins)}) must equal inputs - 1 ({len(inputs) - 1})"
                 )
             result = inputs[0]
             for i, spec in enumerate(joins):
@@ -198,8 +201,11 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
                     )
 
                 result = result.merge(
-                    right_df, left_on=left_on, right_on=right_on,
-                    how=spec_join_type, suffixes=spec_suffixes,
+                    right_df,
+                    left_on=left_on,
+                    right_on=right_on,
+                    how=spec_join_type,
+                    suffixes=spec_suffixes,
                 )
             return result
 
@@ -215,18 +221,14 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
         for i, df in enumerate(inputs):
             missing = [c for c in on if c not in df.columns]
             if missing:
-                raise OpError(
-                    f"join: input #{i + 1} is missing 'on' column(s): {missing}"
-                )
+                raise OpError(f"join: input #{i + 1} is missing 'on' column(s): {missing}")
 
         result = inputs[0]
         for i, df in enumerate(inputs[1:], start=1):
             # Numbered suffixes after the first merge so a 3+ way join
             # doesn't put `_left`/`_right` on every iteration.
             iter_suffixes = suffixes if i == 1 else (f"_{i}a", f"_{i}b")
-            result = result.merge(
-                df, on=on, how=join_type, suffixes=iter_suffixes
-            )
+            result = result.merge(df, on=on, how=join_type, suffixes=iter_suffixes)
         return result
     except OpError:
         raise

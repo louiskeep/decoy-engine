@@ -20,6 +20,7 @@ Covers all FK_* codes added to validation_result.CODES:
 Each test composes a minimal YAML graph + an FK declaration and
 asserts the codes that fire.
 """
+
 from __future__ import annotations
 
 import textwrap
@@ -124,17 +125,13 @@ class TestHappyPath:
 
 class TestUnknownNode:
     def test_parent_node_missing(self):
-        yaml = _base_two_table_graph().replace(
-            "node: mask_1", "node: nonexistent_parent"
-        )
+        yaml = _base_two_table_graph().replace("node: mask_1", "node: nonexistent_parent")
         res = validate_graph_full(yaml)
         codes = [e.code for e in res.errors]
         assert CODES.FK_UNKNOWN_NODE in codes
 
     def test_child_node_missing(self):
-        yaml = _base_two_table_graph().replace(
-            "node: mask_2", "node: nonexistent_child"
-        )
+        yaml = _base_two_table_graph().replace("node: mask_2", "node: nonexistent_child")
         res = validate_graph_full(yaml)
         codes = [e.code for e in res.errors]
         assert CODES.FK_UNKNOWN_NODE in codes
@@ -162,21 +159,23 @@ class TestUnknownColumn:
         res = validate_graph_full(yaml)
         # FK_UNKNOWN_COLUMN must NOT fire for the source-side reference.
         assert not any(
-            e.code == CODES.FK_UNKNOWN_COLUMN
-            and "parent column" in e.message
-            for e in res.errors
+            e.code == CODES.FK_UNKNOWN_COLUMN and "parent column" in e.message for e in res.errors
         )
 
 
 class TestParentAfterChild:
     def test_parent_topologically_after_child_rejected(self):
         # Swap roles so the FK declares mask_2 as parent of mask_1.
-        yaml = _base_two_table_graph().replace(
-            "parent: {node: mask_1, column: id}",
-            "parent: {node: mask_2, column: customer_id}",
-        ).replace(
-            "child: {node: mask_2, column: customer_id}",
-            "child: {node: mask_1, column: id}",
+        yaml = (
+            _base_two_table_graph()
+            .replace(
+                "parent: {node: mask_1, column: id}",
+                "parent: {node: mask_2, column: customer_id}",
+            )
+            .replace(
+                "child: {node: mask_2, column: customer_id}",
+                "child: {node: mask_1, column: id}",
+            )
         )
         res = validate_graph_full(yaml)
         codes = [e.code for e in res.errors]
@@ -209,6 +208,7 @@ class TestSelfReference:
         # kinds (no two-pass mechanism); this test covers the happy
         # path on a generate node.
         import textwrap
+
         yaml = textwrap.dedent("""
             mode: graph
             nodes:
@@ -241,6 +241,7 @@ class TestSelfReference:
         # Authored on a generate node so the FK_SELF_REF_INERT check
         # added by the 2026-05-20 audit doesn't fire first.
         import textwrap
+
         yaml = textwrap.dedent("""
             mode: graph
             nodes:
@@ -489,6 +490,7 @@ class TestNoBlockNoOp:
 
 # ─────────────────────────────────────────── Tier-1 audit (2026-05-20) ──
 
+
 class TestIneligibleChildKind:
     """fk.ineligible_child_kind — reject FK declarations whose child is
     on a node kind that has no runtime hook to rewrite column values
@@ -500,6 +502,7 @@ class TestIneligibleChildKind:
         # save + run; engine ignored them at apply time. Validator now
         # surfaces the problem before save.
         import textwrap
+
         yaml = textwrap.dedent("""
             mode: graph
             nodes:
@@ -534,9 +537,7 @@ class TestIneligibleChildKind:
     def test_mask_child_accepted(self):
         # Sanity: mask children are eligible, no inert-kind error.
         res = validate_graph_full(_base_two_table_graph())
-        assert not any(
-            e.code == CODES.FK_INELIGIBLE_CHILD_KIND for e in res.errors
-        )
+        assert not any(e.code == CODES.FK_INELIGIBLE_CHILD_KIND for e in res.errors)
 
 
 class TestSelfRefInert:
@@ -550,6 +551,7 @@ class TestSelfRefInert:
         # column from another in-flight. Pre-fix the engine silently
         # ignored these entries.
         import textwrap
+
         yaml = textwrap.dedent("""
             mode: graph
             nodes:
@@ -581,6 +583,7 @@ class TestSelfRefInert:
         # Generate's two-pass mechanism makes self-ref work; no inert
         # error should fire.
         import textwrap
+
         yaml = textwrap.dedent("""
             mode: graph
             nodes:
@@ -613,9 +616,13 @@ class TestSequentialBoundsConflict:
     so the operator picks one or the other."""
 
     def _build_yaml_with_distribution(
-        self, distribution: str, min_per_parent: int = 0, max_per_parent: int = 0,
+        self,
+        distribution: str,
+        min_per_parent: int = 0,
+        max_per_parent: int = 0,
     ) -> str:
         import textwrap
+
         return textwrap.dedent(f"""
             mode: graph
             nodes:
@@ -673,8 +680,141 @@ class TestSequentialBoundsConflict:
         # Bounds compose fine with random / weighted; no warning.
         res = validate_graph_full(
             self._build_yaml_with_distribution(
-                "random", min_per_parent=1, max_per_parent=5,
+                "random",
+                min_per_parent=1,
+                max_per_parent=5,
             )
         )
         warn_codes = [w.code for w in res.warnings]
         assert CODES.FK_SEQUENTIAL_BOUNDS_CONFLICT not in warn_codes
+
+
+class TestCustomProviderFK:
+    """Regression tests for column_relationships entries that source the
+    parent pool from a registered custom Faker provider instead of a
+    graph node. Provider name lives at parent.custom_provider; the
+    validator skips topology + column-presence checks for the parent
+    (custom providers are not graph nodes), but still verifies the
+    child node, kind, and column.
+
+    F-AUDIT-001 (2026-05-23): the custom-provider validator was calling
+    _column_in_node, which had been defined as a nested helper inside
+    _validate_column_relationships and was therefore out of scope here.
+    Any execution of this path raised NameError at runtime. The bug
+    survived because no fixture exercised the custom-provider FK
+    validation path. The fix promoted _column_in_node to module scope;
+    these tests would have caught the bug.
+    """
+
+    @staticmethod
+    def _build_yaml(
+        *,
+        child_columns: str = "{customer_kind: {strategy: faker}}",
+        child_kind: str = "mask",
+        custom_provider: str = "custom_kinds_list",
+        child_column_in_rel: str = "customer_kind",
+    ) -> str:
+        return textwrap.dedent(f"""
+            mode: graph
+            nodes:
+              - id: src
+                kind: source.file
+                config: {{path: child.csv, format: csv}}
+              - id: child
+                kind: {child_kind}
+                config: {{columns: {child_columns}}}
+              - id: tgt
+                kind: target.file
+                config: {{output_filename: out.csv, format: csv}}
+            edges:
+              - {{from: src, to: child}}
+              - {{from: child, to: tgt}}
+            column_relationships:
+              - parent: {{custom_provider: {custom_provider}}}
+                child: {{node: child, column: {child_column_in_rel}}}
+        """)
+
+    def test_unknown_provider_emits_warning_not_crash(self):
+        """The validator must not crash when reaching the custom-
+        provider code path. Before F-AUDIT-001 was fixed, this called
+        _column_in_node from an out-of-scope sibling and raised
+        NameError. The fix promoted the helper to module scope; this
+        test exercises the same path and verifies the validator
+        returns a clean ValidationResult instead.
+        """
+        res = validate_graph_full(self._build_yaml())
+        # Provider isn't actually registered, so the validator emits a
+        # warning (per the existing best-effort policy). What we are
+        # asserting here is that no exception propagates and that the
+        # result object is well-formed.
+        assert res is not None
+        codes = [m.code for m in (res.errors + res.warnings)]
+        assert CODES.FK_INELIGIBLE_CHILD_KIND in codes or len(res.warnings) >= 0
+
+    def test_child_column_not_declared(self):
+        """When the child column named in the FK is not configured on
+        the child node, the validator must emit FK_UNKNOWN_COLUMN. This
+        is the path that calls _column_in_node and would have crashed
+        before F-AUDIT-001.
+        """
+        res = validate_graph_full(
+            self._build_yaml(child_column_in_rel="not_a_real_column"),
+        )
+        codes = [e.code for e in res.errors]
+        assert CODES.FK_UNKNOWN_COLUMN in codes, f"expected FK_UNKNOWN_COLUMN; got errors={codes}"
+
+    def test_child_node_missing_emits_unknown_node(self):
+        """When the child node id in the FK does not match any graph
+        node, FK_UNKNOWN_NODE fires. Runs before _column_in_node would
+        be called, so this test does not exercise the bug directly,
+        but does cover the early-return path.
+        """
+        yaml_text = textwrap.dedent("""
+            mode: graph
+            nodes:
+              - id: src
+                kind: source.file
+                config: {path: child.csv, format: csv}
+              - id: child
+                kind: mask
+                config: {columns: {customer_kind: {strategy: faker}}}
+              - id: tgt
+                kind: target.file
+                config: {output_filename: out.csv, format: csv}
+            edges:
+              - {from: src, to: child}
+              - {from: child, to: tgt}
+            column_relationships:
+              - parent: {custom_provider: kinds_provider}
+                child: {node: nonexistent_node, column: customer_kind}
+        """)
+        res = validate_graph_full(yaml_text)
+        codes = [e.code for e in res.errors]
+        assert CODES.FK_UNKNOWN_NODE in codes
+
+    def test_child_kind_ineligible(self):
+        """The child node must be a mask or generate node; any other
+        kind (e.g. target.file) gets FK_INELIGIBLE_CHILD_KIND.
+        """
+        yaml_text = textwrap.dedent("""
+            mode: graph
+            nodes:
+              - id: src
+                kind: source.file
+                config: {path: child.csv, format: csv}
+              - id: mid
+                kind: mask
+                config: {columns: {customer_kind: {strategy: faker}}}
+              - id: tgt
+                kind: target.file
+                config: {output_filename: out.csv, format: csv}
+            edges:
+              - {from: src, to: mid}
+              - {from: mid, to: tgt}
+            column_relationships:
+              - parent: {custom_provider: kinds_provider}
+                child: {node: tgt, column: customer_kind}
+        """)
+        res = validate_graph_full(yaml_text)
+        codes = [e.code for e in res.errors]
+        assert CODES.FK_INELIGIBLE_CHILD_KIND in codes

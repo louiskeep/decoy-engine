@@ -17,4 +17,4 @@ of compliance Disguises (PCI/GLBA/GDPR/CCPA/FERPA/SOX + the rest of HIPAA's
 from decoy_engine.disguises.loader import load_disguises
 from decoy_engine.disguises.schema import Disguise, FieldRule, TriggerSpec
 
-__all__ = ["load_disguises", "Disguise", "FieldRule", "TriggerSpec"]
+__all__ = ["Disguise", "FieldRule", "TriggerSpec", "load_disguises"]

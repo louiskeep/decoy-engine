@@ -1,4 +1,4 @@
-"""Format-preservation post-pass for masking strategies (Item 65 — Layer B).
+"""Format-preservation post-pass for masking strategies.
 
 Reads two hints off the mask rule:
   - ``format_pattern``  : either a regex shape like ``r'\\d{3}-\\d{3}-\\d{4}'``
@@ -17,19 +17,22 @@ Then re-shapes the masked output to match. Two cases:
     is a no-op for that strategy by design.
 
 Skips silently when the strategy is structurally incompatible (hash output
-is hex; redact output is a fixed string) per the plan's decision #2.
+is hex; redact output is a fixed string).
 
-Pure functions — no engine state. The MaskingProcessor calls
+Pattern: strptime/strftime format inference (CPython datetime stdlib).
+  https://docs.python.org/3/library/datetime.html#strftime-strptime-behavior
+
+Pure functions, no engine state. The MaskingProcessor calls
 ``apply_format_preservation`` immediately after the strategy returns.
 """
+
 from __future__ import annotations
 
 import re
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 import pandas as pd
-
 
 # Strategies whose output shape can't be re-formatted without breaking
 # the strategy's own semantics. The post-pass is a no-op for these.
@@ -38,9 +41,14 @@ import pandas as pd
 #   redact  — fixed replacement string, reformatting is meaningless
 #   passthrough — output equals input, source format already preserved
 #   date_shift  — strategy already handles strftime internally
-SKIP_STRATEGIES: frozenset[str] = frozenset({
-    "hash", "redact", "passthrough", "date_shift",
-})
+SKIP_STRATEGIES: frozenset[str] = frozenset(
+    {
+        "hash",
+        "redact",
+        "passthrough",
+        "date_shift",
+    }
+)
 
 
 def apply_format_preservation(
@@ -128,7 +136,7 @@ def _apply_digit_template(masked: pd.Series, template: str) -> pd.Series:
         idx = 0
         for sep, width in slots:
             parts.append(sep)
-            parts.append(digits[idx:idx + width])
+            parts.append(digits[idx : idx + width])
             idx += width
         return "".join(parts)
 
@@ -151,7 +159,7 @@ def _parse_digit_template(template: str) -> list[tuple[str, int]]:
     slots: list[tuple[str, int]] = []
     cursor = 0
     for m in matches:
-        sep = template[cursor:m.start()]
+        sep = template[cursor : m.start()]
         # Strip regex-escape characters that should pass through as
         # their literal selves (``\.`` → ``.``, ``\(`` → ``(`` etc.).
         sep = re.sub(r"\\(.)", r"\1", sep)
@@ -169,9 +177,16 @@ def _apply_strftime(masked: pd.Series, fmt: str) -> pd.Series:
     # Try every plausible source format; the masked output likely came
     # from a clean ISO string but date_shift / faker can emit others.
     _CANDIDATES = (
-        "%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%SZ",
-        "%Y-%m-%d %H:%M:%S", "%m/%d/%Y", "%m/%d/%y",
-        "%d/%m/%Y", "%d.%m.%Y", "%d-%m-%Y", "%Y%m%d",
+        "%Y-%m-%d",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%dT%H:%M:%SZ",
+        "%Y-%m-%d %H:%M:%S",
+        "%m/%d/%Y",
+        "%m/%d/%y",
+        "%d/%m/%Y",
+        "%d.%m.%Y",
+        "%d-%m-%Y",
+        "%Y%m%d",
     )
 
     def reshape(value: Any) -> Any:

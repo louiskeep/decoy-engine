@@ -26,6 +26,7 @@ The security-blind boundary holds: this module only consumes
 ``StormProfile`` dataclasses (which never carry raw row data), so it
 can run anywhere in the engine without elevating data access.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -43,6 +44,7 @@ class CrossFileWalkResult:
     ``snapshot_summary`` is a small dict the platform can log or render
     without re-deriving counts.
     """
+
     snapshot_summary: dict
     edges: tuple[Edge, ...]
 

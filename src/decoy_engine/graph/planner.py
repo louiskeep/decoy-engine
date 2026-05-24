@@ -18,10 +18,13 @@ Design notes:
   - build_plan does not re-validate; callers must run GraphConfigValidator
     first.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+
+from decoy_engine.graph.registry import GraphEngineMode
 
 
 @dataclass(frozen=True)
@@ -43,7 +46,7 @@ class ExecutionPlan:
     order: tuple[str, ...]
     in_edges: dict[str, list[str]]
     consumer_counts: dict[str, int]
-    graph_engine_mode: str
+    graph_engine_mode: GraphEngineMode
 
 
 def build_plan(config: dict[str, Any]) -> ExecutionPlan:
@@ -76,11 +79,11 @@ def build_plan(config: dict[str, Any]) -> ExecutionPlan:
     )
 
 
-def _resolve_engine_mode(config: dict[str, Any]) -> str:
+def _resolve_engine_mode(config: dict[str, Any]) -> GraphEngineMode:
     mode = config.get("engine") or "hybrid"
-    if mode not in ("pandas", "hybrid"):
-        return "hybrid"
-    return mode
+    if mode == "pandas":
+        return "pandas"
+    return "hybrid"
 
 
 def _count_consumers(
@@ -109,3 +112,40 @@ def _count_consumers(
         if src != e["to"] and src in counts:
             counts[src] += 1
     return counts
+
+
+def ancestor_node_ids(nodes: list, edges: list, target: str) -> set[str]:
+    """Walk backward from ``target`` along edges and return every node id
+    that ultimately feeds it.
+
+    Used by ``preview_graph`` to prune a full graph down to the minimum
+    subgraph needed to render the requested node. Tolerates malformed
+    entries (anything that is not a dict or has a non-string id/from/to
+    is skipped rather than crashed on) because the caller passes raw
+    config; structural validation has not necessarily run yet.
+
+    Moved here from runner.py (V2.0-A.3, 2026-05-23) because the
+    function is structural-graph planning, not execution. Lives next to
+    build_plan() for the same reason: anything that walks the graph's
+    structure before execution belongs in the planner module.
+    """
+    valid_ids = {n.get("id") for n in nodes if isinstance(n, dict) and isinstance(n.get("id"), str)}
+    in_edges: dict[str, list[str]] = {}
+    for e in edges or []:
+        if not isinstance(e, dict):
+            continue
+        src = e.get("from")
+        dst = e.get("to")
+        if not isinstance(src, str) or not isinstance(dst, str):
+            continue
+        in_edges.setdefault(dst, []).append(src.split(".", 1)[0])
+
+    needed: set[str] = set()
+    stack = [target]
+    while stack:
+        nid = stack.pop()
+        if nid in needed or nid not in valid_ids:
+            continue
+        needed.add(nid)
+        stack.extend(in_edges.get(nid, []))
+    return needed

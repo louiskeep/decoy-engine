@@ -12,14 +12,10 @@ instances.
 
 from __future__ import annotations
 
-import os
+import pandas as pd
 import yaml
 
-import pandas as pd
-import pytest
-
 from decoy_engine import DataGenerator, ExecutionContext, make_key_resolver
-
 
 MASTER_A = b"\x00" * 32
 MASTER_B = b"\xff" * 32
@@ -44,7 +40,9 @@ def _write_minimal_config(tmp_path) -> str:
                     {
                         "name": "customer_id",
                         "type": "sequence",
-                        "start": 1, "prefix": "C", "pad_length": 4,
+                        "start": 1,
+                        "prefix": "C",
+                        "pad_length": 4,
                     },
                     {"name": "first_name", "type": "faker", "faker_type": "first_name"},
                     {"name": "last_name", "type": "faker", "faker_type": "last_name"},
@@ -153,7 +151,9 @@ def _write_fresh_mode_config(tmp_path) -> str:
                     {
                         "name": "order_id",
                         "type": "sequence",
-                        "start": 1, "prefix": "O", "pad_length": 4,
+                        "start": 1,
+                        "prefix": "O",
+                        "pad_length": 4,
                     },
                     {"name": "customer", "type": "faker", "faker_type": "first_name"},
                     # Fresh mode — every run rolls.
@@ -207,9 +207,7 @@ class TestFreshDeterminism:
         # because price uses `randint(1000, 50000)` so the chance of a
         # collision on the *full series* is vanishingly small but non-zero
         # for any single row — assert the series differs as a whole.
-        assert not df_a["price"].equals(df_b["price"]), (
-            "fresh formula column should roll per run"
-        )
+        assert not df_a["price"].equals(df_b["price"]), "fresh formula column should roll per run"
         # Categorical with 3 categories has higher collision odds per
         # row, but across 10 rows two random sequences are extremely
         # unlikely to match exactly.

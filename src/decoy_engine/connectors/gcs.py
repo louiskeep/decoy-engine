@@ -13,10 +13,12 @@ GCS does not require an explicit endpoint override the way S3 does for
 S3-compatibles. The library handles signed-URL generation and resumable
 uploads internally; the SDK capabilities flag both.
 """
+
 from __future__ import annotations
 
 import json
-from typing import ClassVar, Iterator, Optional
+from collections.abc import Iterator
+from typing import ClassVar
 
 from pydantic import Field, SecretStr
 
@@ -35,7 +37,7 @@ from decoy_engine.sdk import (
     WriteResult,
 )
 
-__all__ = ["GCSConfig", "GCSFileSource", "GCSFileSink"]
+__all__ = ["GCSConfig", "GCSFileSink", "GCSFileSource"]
 
 
 _DEFAULT_CHUNK_BYTES = 1 * 1024 * 1024
@@ -86,8 +88,8 @@ class GCSConfig(ConnectorConfig):
 
     bucket: str = Field(..., min_length=1, max_length=255)
     prefix: str = ""
-    project: Optional[str] = None
-    service_account_json: Optional[SecretStr] = Field(
+    project: str | None = None
+    service_account_json: SecretStr | None = Field(
         default=None,
         description=(
             "JSON-encoded service account key content. When unset the SDK "
@@ -155,7 +157,7 @@ class GCSFileSource(FileSource[GCSConfig]):
             return CheckResult(ok=False, detail=str(_wrap_gcs_error(exc)))
         return CheckResult(ok=True)
 
-    def list(self, prefix: Optional[str] = None) -> Iterator[FileMeta]:
+    def list(self, prefix: str | None = None) -> Iterator[FileMeta]:
         bucket = self._bucket_or_build()
         effective_prefix = _join_key(self.config.prefix, prefix or "")
         try:

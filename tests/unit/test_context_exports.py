@@ -31,9 +31,7 @@ def test_multiple_exports_accumulate():
     ctx.export("row_count", 42)
     ctx.export("column_count", 5)
     ctx.export("inferred_format", "csv")
-    assert ctx._exports == {
-        "src1": {"row_count": 42, "column_count": 5, "inferred_format": "csv"}
-    }
+    assert ctx._exports == {"src1": {"row_count": 42, "column_count": 5, "inferred_format": "csv"}}
 
 
 def test_exports_isolated_per_node():

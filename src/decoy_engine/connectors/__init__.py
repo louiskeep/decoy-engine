@@ -17,8 +17,8 @@ the connector SDK entry-point mechanism instead.
 
 from decoy_engine.connectors.base import IOHandler
 from decoy_engine.connectors.csv_connector import CSVHandler
-from decoy_engine.connectors.fixed_width import FixedWidthHandler
 from decoy_engine.connectors.factory import create_io_handler
+from decoy_engine.connectors.fixed_width import FixedWidthHandler
 from decoy_engine.connectors.s3 import S3Config, S3FileSink, S3FileSource
 
 # GCS and SFTP connectors are optional installs (`decoy-engine[gcs]` and
@@ -36,19 +36,19 @@ except ImportError:
     SFTPConfig = SFTPFileSink = SFTPFileSource = None  # type: ignore[assignment]
 
 __all__ = [
-    # Legacy IOHandler family.
-    "IOHandler",
     "CSVHandler",
     "FixedWidthHandler",
-    "create_io_handler",
+    "GCSConfig",
+    "GCSFileSink",
+    "GCSFileSource",
+    # Legacy IOHandler family.
+    "IOHandler",
     # SDK-based file connectors (Sprint G).
     "S3Config",
-    "S3FileSource",
     "S3FileSink",
-    "GCSConfig",
-    "GCSFileSource",
-    "GCSFileSink",
+    "S3FileSource",
     "SFTPConfig",
-    "SFTPFileSource",
     "SFTPFileSink",
+    "SFTPFileSource",
+    "create_io_handler",
 ]

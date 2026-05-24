@@ -11,32 +11,44 @@ that:
     source.file gate (e.g. SOURCE_FILE_NO_HEADER_COLUMNS) reaches the
     caller intact
 """
+
 from __future__ import annotations
 
-import yaml
 import pytest
+import yaml
 
-from decoy_engine import validate_graph_full, ValidationResult, VALIDATION_CODES
+from decoy_engine import VALIDATION_CODES, ValidationResult, validate_graph_full
 
 
 def _wrap_graph(nodes, edges=None):
-    return yaml.safe_dump({
-        "mode": "graph",
-        "schema_version": 1,
-        "nodes": nodes,
-        "edges": edges or [],
-    })
+    return yaml.safe_dump(
+        {
+            "mode": "graph",
+            "schema_version": 1,
+            "nodes": nodes,
+            "edges": edges or [],
+        }
+    )
 
 
 def _valid_graph():
     return _wrap_graph(
         nodes=[
-            {"id": "src_1", "kind": "source.file",
-             "config": {"path": "uploads/x.csv", "format": "csv"}},
-            {"id": "mask_1", "kind": "mask",
-             "config": {"columns": {"a": {"strategy": "passthrough"}}}},
-            {"id": "tgt_1", "kind": "target.file",
-             "config": {"output_filename": "out/x.csv", "format": "csv"}},
+            {
+                "id": "src_1",
+                "kind": "source.file",
+                "config": {"path": "uploads/x.csv", "format": "csv"},
+            },
+            {
+                "id": "mask_1",
+                "kind": "mask",
+                "config": {"columns": {"a": {"strategy": "passthrough"}}},
+            },
+            {
+                "id": "tgt_1",
+                "kind": "target.file",
+                "config": {"output_filename": "out/x.csv", "format": "csv"},
+            },
         ],
         edges=[
             {"from": "src_1", "to": "mask_1"},
@@ -78,10 +90,13 @@ class TestValidateGraphFullStableCodes:
         # used here previously was demoted to a UI-only nudge - mid-
         # drafting users shouldn't be blocked by it.
         yaml_text = _wrap_graph(
-            nodes=[{
-                "id": "src_1", "kind": "source.file",
-                "config": {"path": "uploads/x.csv", "format": "csv", "delimiter": ""},
-            }],
+            nodes=[
+                {
+                    "id": "src_1",
+                    "kind": "source.file",
+                    "config": {"path": "uploads/x.csv", "format": "csv", "delimiter": ""},
+                }
+            ],
         )
         result = validate_graph_full(yaml_text)
         assert result.ok is False
@@ -131,6 +146,7 @@ class TestValidateGraphFullDoesNotRaise:
         # underlying YAMLError in ConfigError; that contract is
         # unchanged by R2.1.
         from decoy_engine.exceptions import ConfigError
+
         with pytest.raises(ConfigError):
             validate_graph_full("nodes: [unclosed")
 

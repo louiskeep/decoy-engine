@@ -24,9 +24,10 @@ heuristic only fires when:
 Anything more aggressive needs data inspection (e.g. value-overlap
 sampling), which is Phase 3.
 """
+
 from __future__ import annotations
 
-from decoy_engine.walks.types import Column, Edge, SchemaSnapshot, Table
+from decoy_engine.walks.types import Edge, SchemaSnapshot, Table
 
 
 def infer_edges(snapshot: SchemaSnapshot) -> tuple[Edge, ...]:
@@ -67,9 +68,7 @@ def infer_edges(snapshot: SchemaSnapshot) -> tuple[Edge, ...]:
                 )
             )
 
-    inferred.sort(
-        key=lambda e: (e.source_table, e.source_column, e.target_table)
-    )
+    inferred.sort(key=lambda e: (e.source_table, e.source_column, e.target_table))
     return tuple(inferred)
 
 
@@ -122,7 +121,4 @@ def _has_id_pk(table: Table) -> bool:
     column) avoids spurious edges to columns named `id` that aren't
     actually keys.
     """
-    for col in table.columns:
-        if col.name.lower() == "id" and col.is_primary_key:
-            return True
-    return False
+    return any(col.name.lower() == "id" and col.is_primary_key for col in table.columns)

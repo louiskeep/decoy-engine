@@ -20,19 +20,24 @@ a distinct security profile that is owned by the derive op directly.
 
 from __future__ import annotations
 
-import re as _re
 import random as _random
+import re as _re
 from typing import Any
-
 
 BASE_GLOBALS: dict[str, Any] = {"__builtins__": {}}
 
 MASK_GLOBALS: dict[str, Any] = {
     "__builtins__": {},
     "re": _re,
-    "str": str, "int": int, "float": float, "bool": bool,
-    "len": len, "round": round, "abs": abs,
-    "min": min, "max": max,
+    "str": str,
+    "int": int,
+    "float": float,
+    "bool": bool,
+    "len": len,
+    "round": round,
+    "abs": abs,
+    "min": min,
+    "max": max,
     "randint": _random.randint,
     "choice": _random.choice,
 }

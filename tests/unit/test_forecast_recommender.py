@@ -51,7 +51,9 @@ def _field(
         unique_rate=unique_rate,
         is_likely_unique=is_likely_unique,
         value_set_size_class=value_set_size_class,
-        detector_matches=[DetectorMatch(detector_id=did, match_rate=rate) for did, rate in (detectors or [])],
+        detector_matches=[
+            DetectorMatch(detector_id=did, match_rate=rate) for did, rate in (detectors or [])
+        ],
         sentinels=sentinels or [],
     )
 
@@ -67,6 +69,7 @@ def _profile(*fields: FieldStats, qi_groups: list[list[str]] | None = None) -> S
 
 
 # ── per-field recommendations ────────────────────────────────────────────────
+
 
 class TestPerFieldRecommendations:
     def test_low_card_email_column_recommends_faker_email(self):
@@ -109,6 +112,7 @@ class TestPerFieldRecommendations:
 
 
 # ── Disguise ranking ─────────────────────────────────────────────────────────
+
 
 class TestDisguiseRanking:
     def test_hipaa_outranks_default_when_ssn_present(self):
@@ -166,6 +170,7 @@ class TestDisguiseRanking:
 
 # ── apply payload structure ──────────────────────────────────────────────────
 
+
 class TestApplyPayload:
     def test_apply_payload_has_field_masks_in_pipeline_shape(self):
         profile = _profile(_field("ssn", detectors=[("ssn", 1.0)]))
@@ -182,6 +187,7 @@ class TestApplyPayload:
 
 
 # ── risk flags from sentinels ────────────────────────────────────────────────
+
 
 class TestRiskFlags:
     def test_date_sentinel_surfaces_as_risk_flag_with_fixes(self):
@@ -201,6 +207,7 @@ class TestRiskFlags:
 
 
 # ── proposed pipeline YAML ───────────────────────────────────────────────────
+
 
 class TestProposedYAML:
     def test_yaml_parses_back_to_dict(self):
@@ -225,7 +232,7 @@ class TestProposedYAML:
         # Each column entry has strategy + (optional) params, no _why hints.
         for col_name, col_cfg in columns.items():
             assert "strategy" in col_cfg, f"missing strategy key in column {col_name!r}"
-            assert not any(k.startswith("_") for k in col_cfg.keys())
+            assert not any(k.startswith("_") for k in col_cfg)
 
     def test_source_label_appears_in_yaml_stub(self):
         profile = _profile(_field("email", detectors=[("email", 1.0)]))
@@ -236,8 +243,10 @@ class TestProposedYAML:
 
 # ── output is JSON-serializable ──────────────────────────────────────────────
 
+
 def test_forecast_report_is_json_serializable():
     import json
+
     profile = _profile(_field("ssn", detectors=[("ssn", 1.0)]))
     report = recommend(profile)
     json.dumps(report.to_dict())

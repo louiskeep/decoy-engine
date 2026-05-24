@@ -22,10 +22,11 @@ Error mapping:
 * Networking errors (`EndpointConnectionError`, transient 5xx) raise
   `TransientError` so the engine's retry logic kicks in.
 """
+
 from __future__ import annotations
 
-import io
-from typing import ClassVar, Iterator, Optional
+from collections.abc import Iterator
+from typing import ClassVar
 
 from pydantic import Field, SecretStr
 
@@ -45,7 +46,7 @@ from decoy_engine.sdk import (
     WriteResult,
 )
 
-__all__ = ["S3Config", "S3FileSource", "S3FileSink"]
+__all__ = ["S3Config", "S3FileSink", "S3FileSource"]
 
 
 # S3 multipart minimum part size. AWS rejects parts smaller than 5 MiB
@@ -74,7 +75,7 @@ _PERMANENT_S3_ERROR_CODES = frozenset(
 )
 
 
-def _wrap_client_error(exc: "Exception") -> Exception:
+def _wrap_client_error(exc: Exception) -> Exception:
     """Translate a botocore ClientError into a typed SDK error.
 
     Permanent codes (bucket/key missing, auth) raise `PermanentError`.
@@ -110,9 +111,9 @@ class S3Config(ConnectorConfig):
     # EKS IRSA, IAM Identity Center, env vars (AWS_ACCESS_KEY_ID etc.),
     # `~/.aws/credentials`. When both are None, boto3 walks the chain.
     # When provided, they take precedence over the chain.
-    access_key_id: Optional[SecretStr] = None
-    secret_access_key: Optional[SecretStr] = None
-    endpoint_url: Optional[str] = Field(
+    access_key_id: SecretStr | None = None
+    secret_access_key: SecretStr | None = None
+    endpoint_url: str | None = Field(
         default=None,
         description=(
             "Override the AWS endpoint, e.g. https://<account>.r2.cloudflarestorage.com "
@@ -170,9 +171,9 @@ class S3FileSource(FileSource[S3Config]):
     version: ClassVar[str] = "1.0.0"
     capabilities: ClassVar[dict[str, bool]] = {
         CAP_STREAMING: True,
-        CAP_RESUMABLE: True,        # supported via Range header re-requests
-        CAP_SIGNED_URL: True,        # via boto3 generate_presigned_url
-        CAP_INTROSPECTION: True,     # list returns size + content_type
+        CAP_RESUMABLE: True,  # supported via Range header re-requests
+        CAP_SIGNED_URL: True,  # via boto3 generate_presigned_url
+        CAP_INTROSPECTION: True,  # list returns size + content_type
     }
 
     def __init__(self, config: S3Config) -> None:
@@ -195,7 +196,7 @@ class S3FileSource(FileSource[S3Config]):
             return CheckResult(ok=False, detail=str(_wrap_client_error(exc)))
         return CheckResult(ok=True)
 
-    def list(self, prefix: Optional[str] = None) -> Iterator[FileMeta]:
+    def list(self, prefix: str | None = None) -> Iterator[FileMeta]:
         """Yield FileMeta for every object under prefix.
 
         Combines the config-level prefix with the call-level prefix (the
@@ -317,7 +318,7 @@ class S3FileSink(FileSink[S3Config]):
         key = _join_key(self.config.prefix, path)
 
         buffer = bytearray()
-        upload_id: Optional[str] = None
+        upload_id: str | None = None
         parts: list[dict] = []
         part_number = 0
         total_bytes = 0
@@ -386,9 +387,7 @@ class S3FileSink(FileSink[S3Config]):
 
     def _initiate_multipart(self, client, key: str) -> str:
         try:
-            response = client.create_multipart_upload(
-                Bucket=self.config.bucket, Key=key
-            )
+            response = client.create_multipart_upload(Bucket=self.config.bucket, Key=key)
         except Exception as exc:
             raise _wrap_client_error(exc) from exc
         return response["UploadId"]

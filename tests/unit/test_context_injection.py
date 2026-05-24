@@ -21,10 +21,17 @@ class CapturingLogger:
     def __init__(self):
         self.messages: list[tuple[str, str]] = []
 
-    def debug(self, msg, *args, **kwargs):    self.messages.append(("debug", str(msg)))
-    def info(self, msg, *args, **kwargs):     self.messages.append(("info", str(msg)))
-    def warning(self, msg, *args, **kwargs):  self.messages.append(("warning", str(msg)))
-    def error(self, msg, *args, **kwargs):    self.messages.append(("error", str(msg)))
+    def debug(self, msg, *args, **kwargs):
+        self.messages.append(("debug", str(msg)))
+
+    def info(self, msg, *args, **kwargs):
+        self.messages.append(("info", str(msg)))
+
+    def warning(self, msg, *args, **kwargs):
+        self.messages.append(("warning", str(msg)))
+
+    def error(self, msg, *args, **kwargs):
+        self.messages.append(("error", str(msg)))
 
 
 @pytest.fixture

@@ -14,15 +14,16 @@ What it does not cover: directory creation, permission errors beyond
 "path not found". Tests that need those should use a real paramiko
 server fixture (out of scope for Sprint G Week 3).
 """
+
 from __future__ import annotations
 
 import io
 import os
 import stat as stat_lib
 import time
-from typing import Optional
 
 import pytest
+from sdk_contract_tests import FileSinkContract, FileSourceContract
 
 from decoy_engine.connectors.sftp import (
     SFTPConfig,
@@ -30,9 +31,6 @@ from decoy_engine.connectors.sftp import (
     SFTPFileSource,
 )
 from decoy_engine.sdk import PermanentError
-
-from sdk_contract_tests import FileSinkContract, FileSourceContract  # noqa: E402
-
 
 # ----- Fake paramiko SFTP layer ------------------------------------------
 
@@ -88,9 +86,7 @@ class _FakeSFTPClient:
         for full_path, body in self.fs.items():
             parent, _, name = full_path.rpartition("/")
             if parent == path_norm:
-                results.append(
-                    _FakeSFTPAttributes(name, len(body), time.time())
-                )
+                results.append(_FakeSFTPAttributes(name, len(body), time.time()))
         if not results and path_norm:
             # Path itself does not exist as a directory anchor: raise so
             # callers map it to PermanentError.
@@ -101,9 +97,7 @@ class _FakeSFTPClient:
     def stat(self, path: str):
         if path not in self.fs:
             raise FileNotFoundError(f"No such file: {path}")
-        return _FakeSFTPAttributes(
-            os.path.basename(path), len(self.fs[path]), time.time()
-        )
+        return _FakeSFTPAttributes(os.path.basename(path), len(self.fs[path]), time.time())
 
     def open(self, path: str, mode: str):
         return _FakeSFTPFile(self.fs, path, mode)
@@ -119,7 +113,7 @@ class _FakeSSHClient:
     def __init__(self, fs: dict):
         self.fs = fs
         self.connected = False
-        self.connect_kwargs: Optional[dict] = None
+        self.connect_kwargs: dict | None = None
 
     def set_missing_host_key_policy(self, policy):
         return None
@@ -203,6 +197,7 @@ class TestSFTPFileSinkContract(FileSinkContract):
     def reader_for(self, remote_fs):
         def _read(path: str) -> bytes:
             return remote_fs[path]
+
         return _read
 
 
@@ -219,9 +214,7 @@ class TestSFTPSourceBehavior:
         assert patched_paramiko.connect_kwargs["hostname"] == "sftp.test"
         assert patched_paramiko.connect_kwargs["password"] == "hunter2"
 
-    def test_list_returns_size_and_skips_dirs(
-        self, sftp_config, patched_paramiko, remote_fs
-    ):
+    def test_list_returns_size_and_skips_dirs(self, sftp_config, patched_paramiko, remote_fs):
         remote_fs["data/one.txt"] = b"first"
         remote_fs["data/two.txt"] = b"second-body"
         source = SFTPFileSource(sftp_config)

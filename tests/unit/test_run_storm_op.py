@@ -7,7 +7,6 @@ import pytest
 
 from decoy_engine.context import ExecutionContext
 from decoy_engine.graph.ops import OPS, run_storm
-from decoy_engine.graph.ops._base import OpError
 from decoy_engine.internal.validator import ValidationError
 
 
@@ -17,11 +16,18 @@ def df() -> pd.DataFrame:
         {
             "patient_id": [1, 2, 3, 4, 5],
             "ssn": [
-                "111-22-3333", "222-33-4444", "333-44-5555",
-                "444-55-6666", "555-66-7777",
+                "111-22-3333",
+                "222-33-4444",
+                "333-44-5555",
+                "444-55-6666",
+                "555-66-7777",
             ],
             "email": [
-                "a@x.com", "b@x.com", "c@x.com", "d@x.com", "e@x.com",
+                "a@x.com",
+                "b@x.com",
+                "c@x.com",
+                "d@x.com",
+                "e@x.com",
             ],
             "state": ["CA", "NY", "CA", "TX", "CA"],
         }
@@ -191,10 +197,8 @@ class TestEndToEndGraph:
             "mode": "graph",
             "nodes": [
                 {"id": "s", "kind": "source.file", "config": {"path": str(src)}},
-                {"id": "rs", "kind": "run_storm",
-                 "config": {"source_label": "tiny"}},
-                {"id": "t", "kind": "target.file",
-                 "config": {"output_filename": str(out)}},
+                {"id": "rs", "kind": "run_storm", "config": {"source_label": "tiny"}},
+                {"id": "t", "kind": "target.file", "config": {"output_filename": str(out)}},
             ],
             "edges": [
                 {"from": "s", "to": "rs"},

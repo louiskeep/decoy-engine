@@ -18,18 +18,17 @@ These tests pin three contracts:
 
 import pandas as pd
 import pytest
+from faker import Faker
 
 from decoy_engine.internal.helpers import (
-    _FAKER_DENYLIST,
     get_faker_providers,
 )
 from decoy_engine.transforms.faker_based import FakerStrategy
-from faker import Faker
 
 
 @pytest.fixture
 def fake():
-    f = Faker('en_US')
+    f = Faker("en_US")
     f.seed_instance(42)
     return f
 
@@ -39,17 +38,34 @@ class TestReflectedCatalog:
         providers = get_faker_providers(fake)
         # A representative sample across the 15 visible categories.
         for name in (
-            'first_name', 'last_name', 'name',          # person
-            'email', 'safe_email', 'ipv4', 'url',       # internet
-            'address', 'city', 'street_address',         # address
-            'zipcode', 'country_code',                   # address (with args)
-            'phone_number',                              # phone
-            'ssn',                                       # ssn
-            'iban', 'aba', 'swift',                      # bank
-            'credit_card_number', 'credit_card_expire',  # credit_card
-            'date', 'date_of_birth', 'iso8601',          # date_time
-            'paragraph', 'sentence', 'word',             # lorem
-            'uuid4', 'password', 'boolean',              # misc
+            "first_name",
+            "last_name",
+            "name",  # person
+            "email",
+            "safe_email",
+            "ipv4",
+            "url",  # internet
+            "address",
+            "city",
+            "street_address",  # address
+            "zipcode",
+            "country_code",  # address (with args)
+            "phone_number",  # phone
+            "ssn",  # ssn
+            "iban",
+            "aba",
+            "swift",  # bank
+            "credit_card_number",
+            "credit_card_expire",  # credit_card
+            "date",
+            "date_of_birth",
+            "iso8601",  # date_time
+            "paragraph",
+            "sentence",
+            "word",  # lorem
+            "uuid4",
+            "password",
+            "boolean",  # misc
         ):
             assert name in providers, f"{name!r} missing from catalog"
 
@@ -57,30 +73,38 @@ class TestReflectedCatalog:
         providers = get_faker_providers(fake)
         # A representative slice across the denylist categories.
         for name in (
-            'binary', 'image', 'tar', 'zip', 'json_bytes',  # bytes
-            'profile', 'simple_profile',                     # dict
-            'time_series',                                   # generator
-            'cryptocurrency', 'currency',                    # tuple
-            'latlng', 'local_latlng', 'passport_owner',      # tuple
-            'pytimezone',                                    # ZoneInfo
-            'enum',                                          # requires arg
+            "binary",
+            "image",
+            "tar",
+            "zip",
+            "json_bytes",  # bytes
+            "profile",
+            "simple_profile",  # dict
+            "time_series",  # generator
+            "cryptocurrency",
+            "currency",  # tuple
+            "latlng",
+            "local_latlng",
+            "passport_owner",  # tuple
+            "pytimezone",  # ZoneInfo
+            "enum",  # requires arg
         ):
             assert name not in providers, f"{name!r} should be denylisted"
 
     def test_postcode_aliases_zipcode(self, fake):
         providers = get_faker_providers(fake)
         # Both names point at the same callable so legacy YAML stays warning-free.
-        assert 'postcode' in providers
-        assert 'zipcode' in providers
+        assert "postcode" in providers
+        assert "zipcode" in providers
 
     def test_returns_are_str_coerced(self, fake):
         providers = get_faker_providers(fake)
         # date_of_birth would return a datetime.date in raw Faker — the
         # reflection wrapper coerces to str so pandas cells stay text.
-        out = providers['date_of_birth']()
+        out = providers["date_of_birth"]()
         assert isinstance(out, str)
         # uuid4 returns a UUID in raw Faker — str-coerced here.
-        out = providers['uuid4']()
+        out = providers["uuid4"]()
         assert isinstance(out, str)
 
 
@@ -93,9 +117,9 @@ class TestKwargsPassthrough:
         providers = get_faker_providers(fake)
         # Re-seed for determinism within each call.
         fake.seed_instance(42)
-        alpha2 = providers['country_code'](representation='alpha-2')
+        alpha2 = providers["country_code"](representation="alpha-2")
         fake.seed_instance(42)
-        alpha3 = providers['country_code'](representation='alpha-3')
+        alpha3 = providers["country_code"](representation="alpha-3")
         assert len(alpha2) == 2
         assert len(alpha3) == 3
 
@@ -103,8 +127,9 @@ class TestKwargsPassthrough:
         """``minimum_age=21, maximum_age=21`` should produce a date
         roughly 21 years before today, regardless of seed."""
         from datetime import date
+
         providers = get_faker_providers(fake)
-        out = providers['date_of_birth'](minimum_age=21, maximum_age=21)
+        out = providers["date_of_birth"](minimum_age=21, maximum_age=21)
         # str-coerced ISO date.
         born = date.fromisoformat(out)
         age = (date.today() - born).days // 365
@@ -117,7 +142,7 @@ class TestKwargsPassthrough:
         falls back to library defaults."""
         providers = get_faker_providers(fake)
         # `first_name` accepts no args; passing one should drop it.
-        out = providers['first_name'](bogus_kwarg='ignored')
+        out = providers["first_name"](bogus_kwarg="ignored")
         assert isinstance(out, str) and out
 
 
@@ -127,40 +152,62 @@ class TestStrategyIntegration:
     vs. the no-kwarg baseline."""
 
     def test_faker_kwargs_flows_through_keyed_path(self, mock_logger):
-        col = pd.Series(['a', 'b', 'c', 'd', 'e'])
+        col = pd.Series(["a", "b", "c", "d", "e"])
+
         # Provide a derive_key so the keyed (Path B) path runs.
         def derive_key(info: str) -> bytes:
-            return (info.encode('utf-8') * 8)[:32]
+            return (info.encode("utf-8") * 8)[:32]
+
         s = FakerStrategy(seed=42, logger=mock_logger, derive_key=derive_key)
 
-        baseline = s.apply(col, {
-            'column': 'country', 'type': 'faker', 'faker_type': 'country_code',
-        })
-        with_alpha3 = s.apply(col, {
-            'column': 'country', 'type': 'faker', 'faker_type': 'country_code',
-            'faker_kwargs': {'representation': 'alpha-3'},
-        })
+        baseline = s.apply(
+            col,
+            {
+                "column": "country",
+                "type": "faker",
+                "faker_type": "country_code",
+            },
+        )
+        with_alpha3 = s.apply(
+            col,
+            {
+                "column": "country",
+                "type": "faker",
+                "faker_type": "country_code",
+                "faker_kwargs": {"representation": "alpha-3"},
+            },
+        )
         # Baseline = alpha-2 (length 2), alpha-3 = length 3.
         assert all(len(v) == 2 for v in baseline)
         assert all(len(v) == 3 for v in with_alpha3)
 
     def test_faker_kwargs_flows_through_legacy_path(self, mock_logger):
-        col = pd.Series(['a', 'b', 'c'])
+        col = pd.Series(["a", "b", "c"])
         # No derive_key → legacy (Path A) path.
         s = FakerStrategy(seed=42, logger=mock_logger)
-        with_alpha3 = s.apply(col, {
-            'column': 'country', 'type': 'faker', 'faker_type': 'country_code',
-            'faker_kwargs': {'representation': 'alpha-3'},
-        })
+        with_alpha3 = s.apply(
+            col,
+            {
+                "column": "country",
+                "type": "faker",
+                "faker_type": "country_code",
+                "faker_kwargs": {"representation": "alpha-3"},
+            },
+        )
         assert all(len(v) == 3 for v in with_alpha3)
 
     def test_non_dict_faker_kwargs_warns_and_ignored(self, mock_logger):
         """A YAML where ``faker_kwargs: "not a dict"`` shouldn't crash —
         the strategy logs a warning and falls back to no-kwargs."""
-        col = pd.Series(['a'])
+        col = pd.Series(["a"])
         s = FakerStrategy(seed=42, logger=mock_logger)
-        out = s.apply(col, {
-            'column': 'x', 'type': 'faker', 'faker_type': 'first_name',
-            'faker_kwargs': 'not a dict',
-        })
+        out = s.apply(
+            col,
+            {
+                "column": "x",
+                "type": "faker",
+                "faker_type": "first_name",
+                "faker_kwargs": "not a dict",
+            },
+        )
         assert len(out) == 1

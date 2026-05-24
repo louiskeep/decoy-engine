@@ -13,19 +13,20 @@ from decoy_engine.context import ExecutionContext, make_key_resolver
 from decoy_engine.generators.columns import ColumnGenerator
 from decoy_engine.graph.ops import generate_op
 
-
 _MASTER_A = bytes(range(32))
-_MASTER_B = bytes((255 - b for b in range(32)))
+_MASTER_B = bytes(255 - b for b in range(32))
 
 
 def _gen_column(derive_key, num_rows: int = 10):
     gen = ColumnGenerator(seed=42, derive_key=derive_key)
-    return list(gen.generate_column(
-        num_rows=num_rows,
-        column_config={"name": "first_name", "type": "faker", "faker_type": "first_name"},
-        table_name="t",
-        reference_data={},
-    ))
+    return list(
+        gen.generate_column(
+            num_rows=num_rows,
+            column_config={"name": "first_name", "type": "faker", "faker_type": "first_name"},
+            table_name="t",
+            reference_data={},
+        )
+    )
 
 
 def test_same_key_same_column_yields_identical_bytes():
@@ -71,12 +72,8 @@ def test_generate_op_consumes_pipeline_derive_key_from_ctx():
         "row_count": 10,
         "columns": {"first_name": {"strategy": "faker", "faker_type": "first_name"}},
     }
-    ctx_keyed = ExecutionContext(
-        pipeline_derive_key=make_key_resolver(_MASTER_A, "alpha")
-    )
-    ctx_other = ExecutionContext(
-        pipeline_derive_key=make_key_resolver(_MASTER_A, "beta")
-    )
+    ctx_keyed = ExecutionContext(pipeline_derive_key=make_key_resolver(_MASTER_A, "alpha"))
+    ctx_other = ExecutionContext(pipeline_derive_key=make_key_resolver(_MASTER_A, "beta"))
     ctx_unkeyed = ExecutionContext()  # no pipeline_derive_key
 
     a = list(generate_op.apply([], cfg, ctx_keyed)["first_name"])

@@ -23,7 +23,6 @@ from __future__ import annotations
 import re
 from typing import Any
 
-
 _NODE_TOKEN_RE = re.compile(r"\$\{nodes\.([a-zA-Z0-9_-]+)\.([a-zA-Z_][\w.]*)}")
 
 
@@ -60,14 +59,12 @@ def _replace_node_exports_in_string(
 ) -> Any:
     full = _NODE_TOKEN_RE.fullmatch(s)
     if full is not None:
-        return _resolve_one_node_export(
-            full.group(1), full.group(2), exports, current_node_id
-        )
+        return _resolve_one_node_export(full.group(1), full.group(2), exports, current_node_id)
 
     def replace(match: re.Match[str]) -> str:
-        return str(_resolve_one_node_export(
-            match.group(1), match.group(2), exports, current_node_id
-        ))
+        return str(
+            _resolve_one_node_export(match.group(1), match.group(2), exports, current_node_id)
+        )
 
     return _NODE_TOKEN_RE.sub(replace, s)
 
@@ -100,8 +97,7 @@ def _resolve_one_node_export(
                 cur = cur[idx]
             else:
                 raise _NodeExportResolutionError(
-                    f"unresolved variable: ${{nodes.{node_id}.{key}}} -- "
-                    f"index {idx} out of range"
+                    f"unresolved variable: ${{nodes.{node_id}.{key}}} -- index {idx} out of range"
                 )
         else:
             raise _NodeExportResolutionError(

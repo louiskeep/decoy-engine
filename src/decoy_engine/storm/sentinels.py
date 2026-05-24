@@ -28,34 +28,50 @@ import pandas as pd
 
 from decoy_engine.storm.types import SentinelFlag
 
-
 # ── known sentinel values ─────────────────────────────────────────────────────
 
 # Date sentinels — parse to a real date but are placeholder-y.
 _DATE_SENTINELS: dict[date, str] = {
-    date(1, 1, 1):       "year-0001 placeholder, won't load into Postgres date type",
-    date(1900, 1, 1):    "1900-01-01 — common 'unknown date' placeholder",
-    date(1899, 12, 31):  "1899-12-31 — Excel date origin, often appears from corrupted serializations",
-    date(1970, 1, 1):    "1970-01-01 — Unix epoch, often a default for missing timestamps",
-    date(9999, 12, 31):  "9999-12-31 — common 'end of time' placeholder",
+    date(1, 1, 1): "year-0001 placeholder, won't load into Postgres date type",
+    date(1900, 1, 1): "1900-01-01 — common 'unknown date' placeholder",
+    date(
+        1899, 12, 31
+    ): "1899-12-31 — Excel date origin, often appears from corrupted serializations",
+    date(1970, 1, 1): "1970-01-01 — Unix epoch, often a default for missing timestamps",
+    date(9999, 12, 31): "9999-12-31 — common 'end of time' placeholder",
 }
 
 # Numeric sentinels — keyed by exact value.
 _NUMERIC_SENTINELS: dict[float, str] = {
-    -1.0:           "-1 — common 'unknown / no parent' sentinel",
-    -999.0:         "-999 — common missing-value sentinel",
-    999999999.0:    "999999999 — common SSN/ID filler",
-    -2147483648.0:  "INT_MIN — likely overflow or 'no value' placeholder",
+    -1.0: "-1 — common 'unknown / no parent' sentinel",
+    -999.0: "-999 — common missing-value sentinel",
+    999999999.0: "999999999 — common SSN/ID filler",
+    -2147483648.0: "INT_MIN — likely overflow or 'no value' placeholder",
 }
 
 # String sentinels — case-insensitive exact match after stripping whitespace.
 _STRING_SENTINELS: set[str] = {
-    "n/a", "na", "null", "none", "nil",
-    "tbd", "tba", "todo",
-    "unknown", "unk",
-    "missing", "no data", "n.a.",
-    "?", "-", "--", "...",
-    "x", "xxx", "xxxx", "xxxxx",
+    "n/a",
+    "na",
+    "null",
+    "none",
+    "nil",
+    "tbd",
+    "tba",
+    "todo",
+    "unknown",
+    "unk",
+    "missing",
+    "no data",
+    "n.a.",
+    "?",
+    "-",
+    "--",
+    "...",
+    "x",
+    "xxx",
+    "xxxx",
+    "xxxxx",
 }
 
 
@@ -105,6 +121,7 @@ def _to_date(v: Any) -> date | None:
 
 # ── public detector ───────────────────────────────────────────────────────────
 
+
 def detect_sentinels(series: pd.Series, col_name: str) -> list[SentinelFlag]:
     """Return a list of SentinelFlags found in this column. Empty list if clean."""
     flags: list[SentinelFlag] = []
@@ -123,13 +140,17 @@ def detect_sentinels(series: pd.Series, col_name: str) -> list[SentinelFlag]:
     # 0001-01-01 / 9999-12-31 sentinels we care most about).
     else:
         flags.extend(_scan_strings(non_null))
-        if any(hint in (col_name or "").lower() for hint in ("date", "dob", "birth", "start", "end", "due")):
+        if any(
+            hint in (col_name or "").lower()
+            for hint in ("date", "dob", "birth", "start", "end", "due")
+        ):
             flags.extend(_scan_dates(non_null, col_name))
 
     return flags
 
 
 # ── scanners (private) ────────────────────────────────────────────────────────
+
 
 def _scan_dates(non_null: pd.Series, col_name: str) -> list[SentinelFlag]:
     flags: list[SentinelFlag] = []
@@ -154,23 +175,28 @@ def _scan_dates(non_null: pd.Series, col_name: str) -> list[SentinelFlag]:
             out_of_range_count += 1
 
     for d, count in counter.items():
-        flags.append(SentinelFlag(
-            kind="date_sentinel",
-            value=d.isoformat(),
-            count=count,
-            note=_DATE_SENTINELS[d],
-        ))
+        flags.append(
+            SentinelFlag(
+                kind="date_sentinel",
+                value=d.isoformat(),
+                count=count,
+                note=_DATE_SENTINELS[d],
+            )
+        )
 
     if out_of_range_count > 0:
-        flags.append(SentinelFlag(
-            kind="date_out_of_range",
-            value=f"{out_of_range_count} value(s)",
-            count=out_of_range_count,
-            note=(
-                "DOB values outside 1880–today" if is_dob_column
-                else "date values outside 1900–2100"
-            ),
-        ))
+        flags.append(
+            SentinelFlag(
+                kind="date_out_of_range",
+                value=f"{out_of_range_count} value(s)",
+                count=out_of_range_count,
+                note=(
+                    "DOB values outside 1880-today"
+                    if is_dob_column
+                    else "date values outside 1900-2100"
+                ),
+            )
+        )
 
     return flags
 
@@ -186,12 +212,14 @@ def _scan_numerics(non_null: pd.Series) -> list[SentinelFlag]:
         if f in _NUMERIC_SENTINELS:
             counter[f] += 1
     for f, count in counter.items():
-        flags.append(SentinelFlag(
-            kind="numeric_sentinel",
-            value=str(int(f)) if f.is_integer() else str(f),
-            count=count,
-            note=_NUMERIC_SENTINELS[f],
-        ))
+        flags.append(
+            SentinelFlag(
+                kind="numeric_sentinel",
+                value=str(int(f)) if f.is_integer() else str(f),
+                count=count,
+                note=_NUMERIC_SENTINELS[f],
+            )
+        )
     return flags
 
 
@@ -203,10 +231,12 @@ def _scan_strings(non_null: pd.Series) -> list[SentinelFlag]:
         if normalized in _STRING_SENTINELS:
             counter[normalized] += 1
     for normalized, count in counter.items():
-        flags.append(SentinelFlag(
-            kind="string_sentinel",
-            value=normalized,
-            count=count,
-            note=f"placeholder string {normalized!r} — probably means missing data",
-        ))
+        flags.append(
+            SentinelFlag(
+                kind="string_sentinel",
+                value=normalized,
+                count=count,
+                note=f"placeholder string {normalized!r} — probably means missing data",
+            )
+        )
     return flags

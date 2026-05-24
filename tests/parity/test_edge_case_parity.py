@@ -23,7 +23,6 @@ import pytest
 
 from decoy_engine.graph.ops import (
     dedupe,
-    derive,
     drop_column,
     filter_op,
     limit,
@@ -54,12 +53,15 @@ def empty_polars(empty_pandas) -> pl.DataFrame:
     return pl.from_pandas(empty_pandas)
 
 
-@pytest.mark.parametrize("op,cfg", [
-    (sort, {"by": ["id"]}),
-    (dedupe, {"on": ["id"]}),
-    (drop_column, {"columns": ["name"]}),
-    (limit, {"n": 5}),
-])
+@pytest.mark.parametrize(
+    "op,cfg",
+    [
+        (sort, {"by": ["id"]}),
+        (dedupe, {"on": ["id"]}),
+        (drop_column, {"columns": ["name"]}),
+        (limit, {"n": 5}),
+    ],
+)
 def test_empty_input_parity(op, cfg, empty_pandas, empty_polars):
     pd_out = op.apply([empty_pandas], cfg, ctx=None)
     pl_out = op.apply([empty_polars], cfg, ctx=None)
@@ -113,10 +115,12 @@ def test_all_null_column_select_column_parity():
 
 
 def test_unicode_filter_parity():
-    pdf = pd.DataFrame({
-        "name": ["Алёна", "Zoë", "山田", "Renée"],
-        "id": [1, 2, 3, 4],
-    })
+    pdf = pd.DataFrame(
+        {
+            "name": ["Алёна", "Zoë", "山田", "Renée"],
+            "id": [1, 2, 3, 4],
+        }
+    )
     pdf_polars = pl.from_pandas(pdf)
     cfg = {"predicate": "name == 'Zoë'"}
     pd_out = filter_op.apply([pdf], cfg, ctx=None)
@@ -185,9 +189,7 @@ def test_source_file_empty_csv_parity():
 def test_source_file_csv_with_unicode_data_parity():
     tmpdir = tempfile.mkdtemp()
     src = os.path.join(tmpdir, "unicode.csv")
-    pd.DataFrame({"name": ["Zoë", "Алёна", "山田"], "id": [1, 2, 3]}).to_csv(
-        src, index=False
-    )
+    pd.DataFrame({"name": ["Zoë", "Алёна", "山田"], "id": [1, 2, 3]}).to_csv(src, index=False)
 
     pd_out = source_file.apply([], {"path": src, "__engine": "pandas"}, ctx=None)
     db_out = source_file.apply([], {"path": src, "__engine": "duckdb"}, ctx=None)

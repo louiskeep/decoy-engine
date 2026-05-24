@@ -30,9 +30,7 @@ _DIRECTIONS = ("asc", "desc")
 def validate_config(config: dict[str, Any]) -> None:
     by = config.get("by")
     if not isinstance(by, list) or not by or not all(isinstance(c, str) and c for c in by):
-        raise ValidationError(
-            "'by' must be a non-empty list of column names", "config.by"
-        )
+        raise ValidationError("'by' must be a non-empty list of column names", "config.by")
 
     order = config.get("order", "asc")
     if isinstance(order, str):
@@ -47,13 +45,9 @@ def validate_config(config: dict[str, Any]) -> None:
                 "config.order",
             )
         if not all(o in _DIRECTIONS for o in order):
-            raise ValidationError(
-                "every entry in 'order' must be 'asc' or 'desc'", "config.order"
-            )
+            raise ValidationError("every entry in 'order' must be 'asc' or 'desc'", "config.order")
     else:
-        raise ValidationError(
-            "'order' must be a string or list of strings", "config.order"
-        )
+        raise ValidationError("'order' must be a string or list of strings", "config.order")
 
 
 def apply(inputs, config, ctx):
@@ -72,6 +66,7 @@ def _apply_pandas(df: pd.DataFrame, config: dict[str, Any]) -> pd.DataFrame:
         raise OpError(f"sort columns not in input: {missing}")
 
     order = config.get("order", "asc")
+    ascending: bool | list[bool]
     if isinstance(order, str):
         ascending = order == "asc"
     else:
@@ -90,6 +85,7 @@ def _apply_polars(df, config: dict[str, Any]):
         raise OpError(f"sort columns not in input: {missing}")
 
     order = config.get("order", "asc")
+    descending: bool | list[bool]
     if isinstance(order, str):
         descending = order == "desc"
     else:
@@ -101,5 +97,3 @@ def _apply_polars(df, config: dict[str, Any]):
         return df.sort(by=by, descending=descending, maintain_order=True)
     except Exception as exc:
         raise OpError(f"sort failed: {exc}") from exc
-
-

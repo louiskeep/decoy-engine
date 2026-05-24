@@ -22,6 +22,7 @@ Run with:
 Expected duration on a 32 GB i7-1265U: ~5–10 min total across all cells
 (fixture build + 6 pipeline runs).
 """
+
 from __future__ import annotations
 
 import gc
@@ -35,7 +36,6 @@ import pyarrow.parquet as pq
 import pytest
 
 from decoy_engine.graph import run_graph
-
 
 # Three scales: 1M (smoke), 5M (where 16 GB pandas was supposed to OOM
 # per the original plan), 10M (gives clean linear-vs-flat signal on a
@@ -52,18 +52,20 @@ def _build_hipaa_fixture(rows: int, dst: Path) -> None:
     """
     if dst.exists():
         return
-    table = pa.Table.from_pydict({
-        "patient_id":  pa.array(range(rows), type=pa.int64()),
-        "first_name":  pa.array(["Alice"] * rows),
-        "last_name":   pa.array(["Smith"] * rows),
-        "ssn":         pa.array(["123-45-6789"] * rows),
-        "dob":         pa.array(["1985-03-15"] * rows),
-        "zip":         pa.array(["90210"] * rows),
-        "email":       pa.array(["a@b.com"] * rows),
-        "phone":       pa.array(["555-234-5678"] * rows),
-        "amount":      pa.array([10.5] * rows, type=pa.float64()),
-        "score":       pa.array([0.1] * rows, type=pa.float64()),
-    })
+    table = pa.Table.from_pydict(
+        {
+            "patient_id": pa.array(range(rows), type=pa.int64()),
+            "first_name": pa.array(["Alice"] * rows),
+            "last_name": pa.array(["Smith"] * rows),
+            "ssn": pa.array(["123-45-6789"] * rows),
+            "dob": pa.array(["1985-03-15"] * rows),
+            "zip": pa.array(["90210"] * rows),
+            "email": pa.array(["a@b.com"] * rows),
+            "phone": pa.array(["555-234-5678"] * rows),
+            "amount": pa.array([10.5] * rows, type=pa.float64()),
+            "score": pa.array([0.1] * rows, type=pa.float64()),
+        }
+    )
     pq.write_table(table, dst, compression="snappy")
 
 
@@ -80,7 +82,7 @@ class _RSSPoller:
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._poll, daemon=True)
 
-    def __enter__(self) -> "_RSSPoller":
+    def __enter__(self) -> _RSSPoller:
         self.peak_rss = self._process.memory_info().rss
         self._thread.start()
         return self
@@ -228,7 +230,11 @@ def test_zzz_summary() -> None:
         pd_r = _RESULTS.get((rows, "pandas"))
         hy_r = _RESULTS.get((rows, "hybrid"))
         if pd_r and hy_r and pd_r["success"] and hy_r["success"]:
-            ratio = pd_r["peak_rss_mb"] / hy_r["peak_rss_mb"] if hy_r["peak_rss_mb"] > 0 else float("inf")
+            ratio = (
+                pd_r["peak_rss_mb"] / hy_r["peak_rss_mb"]
+                if hy_r["peak_rss_mb"] > 0
+                else float("inf")
+            )
             print(
                 f"At {rows:,} rows: pandas peak {pd_r['peak_rss_mb']:.0f} MB; "
                 f"hybrid peak {hy_r['peak_rss_mb']:.0f} MB ({ratio:.1f}x more on pandas). "
@@ -236,5 +242,7 @@ def test_zzz_summary() -> None:
             )
             break
     else:
-        print("VERDICT: no row-count tier where both engines completed; "
-              "extend ROWS_TIERS or investigate the failures above.")
+        print(
+            "VERDICT: no row-count tier where both engines completed; "
+            "extend ROWS_TIERS or investigate the failures above."
+        )

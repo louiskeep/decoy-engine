@@ -32,9 +32,7 @@ def validate_config(config: dict) -> None:
 
     pred = config.get("predicate")
     if not isinstance(pred, str) or not pred.strip():
-        raise ValidationError(
-            "predicate must be a non-empty string", "config.predicate"
-        )
+        raise ValidationError("predicate must be a non-empty string", "config.predicate")
 
 
 def apply(inputs: list, config: dict, ctx=None) -> dict:

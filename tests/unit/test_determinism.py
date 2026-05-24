@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-from typing import Callable
+from collections.abc import Callable
 
 import pandas as pd
 import pytest
@@ -27,14 +27,16 @@ from decoy_engine.transforms.faker_based import FakerStrategy
 from decoy_engine.transforms.hash import HashStrategy
 from decoy_engine.transforms.reference import ReferenceStrategy
 
-
 # ── helpers ────────────────────────────────────────────────────────────────
+
 
 def make_derive_key(master: bytes) -> Callable[[str], bytes]:
     """Mimic the platform's HKDF-style resolver with a stable byte derivation
     suitable for tests. Stand-in for HKDF-SHA256(master, info)."""
+
     def derive(info: str) -> bytes:
         return hmac.new(master, info.encode(), hashlib.sha256).digest()
+
     return derive
 
 
@@ -43,6 +45,7 @@ MASTER_B = b"\x11" * 32
 
 
 # ── HMAC primitive ──────────────────────────────────────────────────────────
+
 
 class TestHmacPrimitives:
     def test_hmac_hex_is_stable(self):
@@ -72,6 +75,7 @@ class TestHmacPrimitives:
 
 # ── hash strategy (keyed path) ──────────────────────────────────────────────
 
+
 class TestKeyedHash:
     def setup_method(self):
         self.derive = make_derive_key(MASTER_A)
@@ -97,14 +101,12 @@ class TestKeyedHash:
         out_shuffled = HashStrategy(derive_key=self.derive).apply(shuffled, self.rule)
         # Pull alice's hash from each — must match.
         alice_orig = out_orig.iloc[0]
-        alice_shuffled = out_shuffled.iloc[1]   # alice is now at index 1
+        alice_shuffled = out_shuffled.iloc[1]  # alice is now at index 1
         assert alice_orig == alice_shuffled
 
     def test_different_master_key_yields_different_output(self):
         out_a = self.strategy.apply(self.col, self.rule)
-        out_b = HashStrategy(derive_key=make_derive_key(MASTER_B)).apply(
-            self.col, self.rule
-        )
+        out_b = HashStrategy(derive_key=make_derive_key(MASTER_B)).apply(self.col, self.rule)
         assert out_a.iloc[0] != out_b.iloc[0]
 
     def test_same_value_yields_same_output_across_column_names(self):
@@ -124,10 +126,11 @@ class TestKeyedHash:
     def test_legacy_path_still_works_when_no_derive_key(self):
         legacy = HashStrategy()  # no derive_key
         out = legacy.apply(self.col, self.rule)
-        assert out.iloc[0] == out.iloc[3]   # still per-input deterministic
+        assert out.iloc[0] == out.iloc[3]  # still per-input deterministic
 
 
 # ── faker strategy (keyed path: stateless, bitwise stable) ─────────────────
+
 
 class TestKeyedFaker:
     def setup_method(self):
@@ -157,12 +160,8 @@ class TestKeyedFaker:
         assert out_f.iloc[0] == out_r.iloc[2]
 
     def test_different_keys_yield_different_fakes(self):
-        out_a = FakerStrategy(derive_key=make_derive_key(MASTER_A)).apply(
-            self.col, self.rule
-        )
-        out_b = FakerStrategy(derive_key=make_derive_key(MASTER_B)).apply(
-            self.col, self.rule
-        )
+        out_a = FakerStrategy(derive_key=make_derive_key(MASTER_A)).apply(self.col, self.rule)
+        out_b = FakerStrategy(derive_key=make_derive_key(MASTER_B)).apply(self.col, self.rule)
         assert out_a.iloc[0] != out_b.iloc[0]
 
     def test_preserve_domain_works_keyed(self):
@@ -180,18 +179,21 @@ class TestKeyedFaker:
 
 # ── date_shift (keyed path) ────────────────────────────────────────────────
 
+
 class TestKeyedDateShift:
     def setup_method(self):
         self.derive = make_derive_key(MASTER_A)
         self.col = pd.Series(["1985-03-15", "1990-07-22", "1985-03-15"])
         self.rule = {
-            "column": "dob", "type": "date_shift",
-            "min_days": -365, "max_days": 365,
+            "column": "dob",
+            "type": "date_shift",
+            "min_days": -365,
+            "max_days": 365,
         }
 
     def test_same_date_same_shift_within_run(self):
         out = DateShiftStrategy(derive_key=self.derive).apply(self.col, self.rule)
-        assert out.iloc[0] == out.iloc[2]    # same input → same shifted output
+        assert out.iloc[0] == out.iloc[2]  # same input → same shifted output
 
     def test_keyed_shift_stable_across_runs(self):
         out1 = DateShiftStrategy(derive_key=self.derive).apply(self.col, self.rule)
@@ -199,12 +201,8 @@ class TestKeyedDateShift:
         pd.testing.assert_series_equal(out1, out2)
 
     def test_different_keys_yield_different_shifts(self):
-        out_a = DateShiftStrategy(derive_key=make_derive_key(MASTER_A)).apply(
-            self.col, self.rule
-        )
-        out_b = DateShiftStrategy(derive_key=make_derive_key(MASTER_B)).apply(
-            self.col, self.rule
-        )
+        out_a = DateShiftStrategy(derive_key=make_derive_key(MASTER_A)).apply(self.col, self.rule)
+        out_b = DateShiftStrategy(derive_key=make_derive_key(MASTER_B)).apply(self.col, self.rule)
         # At least one of the three shifted dates differs.
         assert any(out_a.iloc[i] != out_b.iloc[i] for i in range(len(self.col)))
 
@@ -216,6 +214,7 @@ class TestKeyedDateShift:
 
 
 # ── reference strategy (keyed path) ────────────────────────────────────────
+
 
 class TestKeyedReference:
     """Reference strategy keyed path. Mirrors TestKeyedHash / TestKeyedFaker
@@ -238,7 +237,8 @@ class TestKeyedReference:
     def _ref_csv(self, tmp_path):
         path = tmp_path / "names.csv"
         path.write_text(
-            "name\n" + "\n".join(self.ref_values) + "\n", encoding="utf-8",
+            "name\n" + "\n".join(self.ref_values) + "\n",
+            encoding="utf-8",
         )
         return path
 
@@ -308,6 +308,7 @@ class TestKeyedReference:
 
 
 # ── cross-strategy: foreign-key integrity ──────────────────────────────────
+
 
 class TestForeignKeyIntegrity:
     """The whole point of mask key derivation being master-only: any value
@@ -386,6 +387,7 @@ class TestForeignKeyIntegrity:
 
 # ── make_key_resolver: the public helper CLI + platform both use ───────────
 
+
 class TestMakeKeyResolver:
     """The bytes produced by ``make_key_resolver`` MUST be reproducible across
     callers. CLI passes a master from ``--master-key``; platform pulls it
@@ -396,12 +398,14 @@ class TestMakeKeyResolver:
 
     def test_resolver_returns_32_bytes(self):
         from decoy_engine import make_key_resolver
+
         resolver = make_key_resolver(MASTER_A, "customers_q4")
         out = resolver("col:email")
         assert len(out) == 32
 
     def test_same_master_same_label_same_info_yields_same_bytes(self):
         from decoy_engine import make_key_resolver
+
         a = make_key_resolver(MASTER_A, "customers_q4")
         b = make_key_resolver(MASTER_A, "customers_q4")
         assert a("col:email") == b("col:email")
@@ -409,27 +413,32 @@ class TestMakeKeyResolver:
 
     def test_different_label_yields_different_bytes(self):
         from decoy_engine import make_key_resolver
+
         a = make_key_resolver(MASTER_A, "customers_q4")
         b = make_key_resolver(MASTER_A, "orders_q4")
         assert a("col:email") != b("col:email")
 
     def test_different_master_yields_different_bytes(self):
         from decoy_engine import make_key_resolver
+
         a = make_key_resolver(MASTER_A, "customers_q4")
         b = make_key_resolver(MASTER_B, "customers_q4")
         assert a("col:email") != b("col:email")
 
     def test_rejects_wrong_master_length(self):
         from decoy_engine import make_key_resolver
+
         with pytest.raises(ValueError, match="32 bytes"):
             make_key_resolver(b"short", "label")
 
     def test_rejects_none_master(self):
         from decoy_engine import make_key_resolver
+
         with pytest.raises(ValueError, match="32 bytes"):
             make_key_resolver(None, "label")
 
     def test_rejects_empty_bytes_master(self):
         from decoy_engine import make_key_resolver
+
         with pytest.raises(ValueError, match="32 bytes"):
             make_key_resolver(b"", "label")

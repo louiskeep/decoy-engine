@@ -6,6 +6,7 @@ plumbing. The op runs DuckDB SQL against a pyarrow.Table; tests use
 pa.table fixtures so they don't depend on the runner's Arrow boundary
 materialization.
 """
+
 from __future__ import annotations
 
 import pyarrow as pa
@@ -95,11 +96,7 @@ class TestApply:
         out = sql_run.apply(
             inputs=[df],
             config={
-                "sql": (
-                    "SELECT id, value, "
-                    "SUM(value) OVER (ORDER BY id) AS running_sum "
-                    "FROM df"
-                ),
+                "sql": ("SELECT id, value, SUM(value) OVER (ORDER BY id) AS running_sum FROM df"),
             },
             ctx=None,
         )

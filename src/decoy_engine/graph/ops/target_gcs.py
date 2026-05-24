@@ -12,6 +12,7 @@ mode skips the upload and returns the DataFrame unchanged.
 
 GCS connector is an optional extra (`pip install decoy-engine[gcs]`).
 """
+
 from typing import Any
 
 from decoy_engine.graph.ops._base import OpError
@@ -29,12 +30,14 @@ def validate_config(config: dict[str, Any]) -> None:
 
     if "bucket" not in config:
         raise ValidationError(
-            "missing required field 'bucket'", "config.bucket",
+            "missing required field 'bucket'",
+            "config.bucket",
             code=CODES.TARGET_GCS_MISSING_BUCKET,
         )
     if "path" not in config:
         raise ValidationError(
-            "missing required field 'path'", "config.path",
+            "missing required field 'path'",
+            "config.path",
             code=CODES.TARGET_GCS_MISSING_PATH,
         )
     fmt = (config.get("format") or infer_format(config["path"])).lower()
@@ -50,8 +53,7 @@ def apply(inputs, config, ctx):
         from decoy_engine.connectors.gcs import GCSConfig, GCSFileSink
     except ImportError as exc:
         raise OpError(
-            "target.gcs requires google-cloud-storage: "
-            "pip install 'decoy-engine[gcs]'"
+            "target.gcs requires google-cloud-storage: pip install 'decoy-engine[gcs]'"
         ) from exc
 
     try:

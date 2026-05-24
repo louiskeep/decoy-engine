@@ -20,6 +20,7 @@ These tests confirm:
   - the back-fill logic (target.file format inferred from source when
     absent and the extension matches) is unchanged
 """
+
 from __future__ import annotations
 
 import logging
@@ -95,10 +96,12 @@ def test_convert_file_type_on_path_suppresses_warning(caplog):
         "mode": "graph",
         "nodes": [
             {"id": "src", "kind": "source.file", "config": {"path": "in.csv"}},
-            {"id": "cvt", "kind": "convert.file_type",
-             "config": {"format": "parquet", "output_filename": "converted.parquet"}},
-            {"id": "tgt", "kind": "target.file",
-             "config": {"output_filename": "out.parquet"}},
+            {
+                "id": "cvt",
+                "kind": "convert.file_type",
+                "config": {"format": "parquet", "output_filename": "converted.parquet"},
+            },
+            {"id": "tgt", "kind": "target.file", "config": {"output_filename": "out.parquet"}},
         ],
         "edges": [
             {"from": "src", "to": "cvt"},
@@ -199,20 +202,21 @@ def test_target_format_backfilled_from_csv_source():
 
 def test_forked_graph_warns_only_for_direct_branch(caplog):
     """source.file forks to two targets:
-      - one branch goes through convert.file_type (no warning)
-      - the other goes direct with a format mismatch (warning logs,
-        validate does NOT raise)
+    - one branch goes through convert.file_type (no warning)
+    - the other goes direct with a format mismatch (warning logs,
+      validate does NOT raise)
     """
     cfg = {
         "mode": "graph",
         "nodes": [
             {"id": "src", "kind": "source.file", "config": {"path": "in.csv"}},
-            {"id": "cvt", "kind": "convert.file_type",
-             "config": {"format": "parquet", "output_filename": "converted.parquet"}},
-            {"id": "tgt_ok", "kind": "target.file",
-             "config": {"output_filename": "ok.parquet"}},
-            {"id": "tgt_bad", "kind": "target.file",
-             "config": {"output_filename": "bad.parquet"}},
+            {
+                "id": "cvt",
+                "kind": "convert.file_type",
+                "config": {"format": "parquet", "output_filename": "converted.parquet"},
+            },
+            {"id": "tgt_ok", "kind": "target.file", "config": {"output_filename": "ok.parquet"}},
+            {"id": "tgt_bad", "kind": "target.file", "config": {"output_filename": "bad.parquet"}},
         ],
         "edges": [
             {"from": "src", "to": "cvt"},

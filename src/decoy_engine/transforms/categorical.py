@@ -9,7 +9,7 @@ seed/key material. No source-to-output mapping file is created or read.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict
+from typing import Any
 
 import pandas as pd
 
@@ -20,16 +20,14 @@ from decoy_engine.transforms.base import BaseMaskingStrategy
 class CategoricalStrategy(BaseMaskingStrategy):
     """Mask values by selecting from a configured categorical vocabulary."""
 
-    def apply(self, column: pd.Series, rule: Dict[str, Any]) -> pd.Series:
+    def apply(self, column: pd.Series, rule: dict[str, Any]) -> pd.Series:
         self.validate_rule(rule)
 
         column_name = rule.get("column", "unnamed")
         seed = int(rule.get("seed", self.seed))
         categories = list(rule["categories"])
         weights = self._normalize_weights(rule.get("weights"), categories)
-        null_probability = self._normalize_null_probability(
-            rule.get("null_probability", 0.0)
-        )
+        null_probability = self._normalize_null_probability(rule.get("null_probability", 0.0))
         policy = json.dumps(
             {
                 "categories": categories,
@@ -67,7 +65,7 @@ class CategoricalStrategy(BaseMaskingStrategy):
         self._log_stats(column, result, rule)
         return result
 
-    def validate_rule(self, rule: Dict[str, Any]) -> None:
+    def validate_rule(self, rule: dict[str, Any]) -> None:
         super().validate_rule(rule)
         categories = rule.get("categories")
         if not isinstance(categories, list) or not categories:
@@ -121,7 +119,7 @@ class CategoricalStrategy(BaseMaskingStrategy):
         total = sum(weights)
         threshold = roll * total
         cumulative = 0.0
-        for category, weight in zip(categories, weights):
+        for category, weight in zip(categories, weights, strict=False):
             cumulative += weight
             if threshold < cumulative:
                 return category

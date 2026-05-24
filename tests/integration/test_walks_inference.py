@@ -8,9 +8,8 @@ Conservative on purpose: only fires on `*_id` columns whose stem
 matches a table name (singular or plural) AND that table has an `id`
 PK AND no declared FK already exists on the same column.
 """
-from __future__ import annotations
 
-import pytest
+from __future__ import annotations
 
 from decoy_engine.walks import Column, Edge, SchemaSnapshot, Table, infer_edges
 
@@ -29,10 +28,13 @@ def test_infers_simple_id_to_id_relationship():
         schema_name="public",
         tables=(
             _table("customers", [_col("id", pk=True, nullable=False)]),
-            _table("orders", [
-                _col("id", pk=True, nullable=False),
-                _col("customer_id", nullable=False),
-            ]),
+            _table(
+                "orders",
+                [
+                    _col("id", pk=True, nullable=False),
+                    _col("customer_id", nullable=False),
+                ],
+            ),
         ),
         declared_edges=(),
     )
@@ -55,14 +57,15 @@ def test_does_not_shadow_a_declared_fk():
         schema_name="public",
         tables=(
             _table("customers", [_col("id", pk=True, nullable=False)]),
-            _table("orders", [
-                _col("id", pk=True, nullable=False),
-                _col("customer_id", nullable=False),
-            ]),
+            _table(
+                "orders",
+                [
+                    _col("id", pk=True, nullable=False),
+                    _col("customer_id", nullable=False),
+                ],
+            ),
         ),
-        declared_edges=(
-            Edge("orders", "customer_id", "customers", "id", declared=True),
-        ),
+        declared_edges=(Edge("orders", "customer_id", "customers", "id", declared=True),),
     )
     edges = infer_edges(snap)
     assert edges == ()
@@ -77,10 +80,13 @@ def test_does_not_fire_when_target_table_lacks_id_pk():
         schema_name="public",
         tables=(
             _table("lookup", [_col("code", pk=True, nullable=False, dtype="varchar")]),
-            _table("orders", [
-                _col("id", pk=True, nullable=False),
-                _col("lookup_id", nullable=False),
-            ]),
+            _table(
+                "orders",
+                [
+                    _col("id", pk=True, nullable=False),
+                    _col("lookup_id", nullable=False),
+                ],
+            ),
         ),
         declared_edges=(),
     )
@@ -96,10 +102,13 @@ def test_singular_naming_preferred_over_plural():
         tables=(
             _table("customer", [_col("id", pk=True, nullable=False)]),
             _table("customers", [_col("id", pk=True, nullable=False)]),
-            _table("orders", [
-                _col("id", pk=True, nullable=False),
-                _col("customer_id", nullable=False),
-            ]),
+            _table(
+                "orders",
+                [
+                    _col("id", pk=True, nullable=False),
+                    _col("customer_id", nullable=False),
+                ],
+            ),
         ),
         declared_edges=(),
     )
@@ -116,10 +125,13 @@ def test_plural_naming_when_singular_does_not_exist():
         schema_name="public",
         tables=(
             _table("users", [_col("id", pk=True, nullable=False)]),
-            _table("orders", [
-                _col("id", pk=True, nullable=False),
-                _col("user_id", nullable=False),
-            ]),
+            _table(
+                "orders",
+                [
+                    _col("id", pk=True, nullable=False),
+                    _col("user_id", nullable=False),
+                ],
+            ),
         ),
         declared_edges=(),
     )
@@ -136,11 +148,14 @@ def test_emits_edges_in_stable_sorted_order():
         tables=(
             _table("aaa", [_col("id", pk=True, nullable=False)]),
             _table("bbb", [_col("id", pk=True, nullable=False)]),
-            _table("z_table", [
-                _col("id", pk=True, nullable=False),
-                _col("bbb_id", nullable=False),
-                _col("aaa_id", nullable=False),
-            ]),
+            _table(
+                "z_table",
+                [
+                    _col("id", pk=True, nullable=False),
+                    _col("bbb_id", nullable=False),
+                    _col("aaa_id", nullable=False),
+                ],
+            ),
         ),
         declared_edges=(),
     )
@@ -156,10 +171,13 @@ def test_id_only_column_does_not_infer():
         db_kind="postgres",
         schema_name="public",
         tables=(
-            _table("foo", [
-                _col("id", pk=True, nullable=False),
-                _col("name", dtype="varchar"),
-            ]),
+            _table(
+                "foo",
+                [
+                    _col("id", pk=True, nullable=False),
+                    _col("name", dtype="varchar"),
+                ],
+            ),
         ),
         declared_edges=(),
     )
@@ -173,10 +191,13 @@ def test_self_reference_inferable():
         db_kind="postgres",
         schema_name="public",
         tables=(
-            _table("teams", [
-                _col("id", pk=True, nullable=False),
-                _col("parent_team_id", nullable=True),
-            ]),
+            _table(
+                "teams",
+                [
+                    _col("id", pk=True, nullable=False),
+                    _col("parent_team_id", nullable=True),
+                ],
+            ),
         ),
         declared_edges=(),
     )

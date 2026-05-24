@@ -48,7 +48,6 @@ import pyarrow as pa
 from decoy_engine.graph.ops._base import OpError
 from decoy_engine.internal.validator import ValidationError
 
-
 # (sqlalchemy_dialect_prefix, duckdb_extension, duckdb_attach_type).
 _NATIVE_SCANNERS: dict[str, tuple[str, str]] = {
     "sqlite": ("sqlite_scanner", "sqlite"),
@@ -87,9 +86,7 @@ def validate_config(config: dict[str, Any]) -> None:
     if config.get("schema"):
         _validate_sql_identifier(config["schema"], "config.schema")
     if not config.get("dsn") and config.get("connector_id") is None:
-        raise ValidationError(
-            "must provide either 'dsn' or 'connector_id'", "config"
-        )
+        raise ValidationError("must provide either 'dsn' or 'connector_id'", "config")
 
 
 def apply(inputs, config, ctx):
@@ -147,9 +144,7 @@ def _apply_duckdb_native_scanner(
     # Alias under which the remote DB is attached. Per-call so we don't
     # collide if multiple source.db ops run in the same process.
     alias = "src"
-    qualified = (
-        f'{alias}."{schema}"."{table}"' if schema else f'{alias}."{table}"'
-    )
+    qualified = f'{alias}."{schema}"."{table}"' if schema else f'{alias}."{table}"'
 
     try:
         import duckdb
@@ -158,9 +153,7 @@ def _apply_duckdb_native_scanner(
         try:
             con.execute(f"INSTALL {extension}")
             con.execute(f"LOAD {extension}")
-            con.execute(
-                f"ATTACH '{attach_target}' AS {alias} (TYPE {attach_type}, READ_ONLY)"
-            )
+            con.execute(f"ATTACH '{attach_target}' AS {alias} (TYPE {attach_type}, READ_ONLY)")
             # Base relation: only validated identifier names in the SQL string.
             rel = con.sql(f"SELECT * FROM {qualified}")
             if where:
@@ -177,9 +170,7 @@ def _apply_duckdb_native_scanner(
         raise OpError(f"source.db read failed: {exc}") from exc
 
 
-def _apply_duckdb_sqlalchemy_fallback(
-    dsn: str, config: dict[str, Any]
-) -> pa.Table:
+def _apply_duckdb_sqlalchemy_fallback(dsn: str, config: dict[str, Any]) -> pa.Table:
     """For DBs without a DuckDB native scanner (MSSQL, Oracle, etc.):
     SQLAlchemy executes the SELECT and we convert the resulting
     DataFrame to Arrow at the boundary.
@@ -216,11 +207,11 @@ def _attach_target_for(dsn: str, attach_type: str) -> str:
     if attach_type == "sqlite":
         for prefix in ("sqlite:///", "sqlite://"):
             if dsn.startswith(prefix):
-                return dsn[len(prefix):]
+                return dsn[len(prefix) :]
         return dsn
 
     if attach_type == "postgres":
-        from urllib.parse import urlparse, unquote
+        from urllib.parse import unquote, urlparse
 
         parsed = urlparse(dsn)
         parts: list[str] = []

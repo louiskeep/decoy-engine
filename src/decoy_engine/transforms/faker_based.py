@@ -1,19 +1,28 @@
-# decoy_engine/strategies/faker.py
 """
 Faker masking strategy for the decoy_engine package.
-Replaces values with realistic fake data using the Faker library.
+
+Replaces values with realistic fake data using the Faker library. Both
+the keyed and the seeded-fallback paths derive each output from the
+input value, so duplicate source values always map to duplicate fake
+values. No state is stored locally; reruns reproduce the same outputs
+given the same key (or seed).
+
+Pattern: Faker seeded deterministic generation (joke2k/faker, MIT).
+  Faker: https://faker.readthedocs.io/
+  Determinism via Faker(...).seed_instance(seed) per value.
 """
 
-import pandas as pd
-from typing import Dict, Any, Optional
+from typing import Any
 
-from decoy_engine.transforms.base import BaseMaskingStrategy
+import pandas as pd
+
 from decoy_engine.internal.helpers import (
     deterministic_hash,
     get_faker_providers,
     hmac_seed,
     make_faker,
 )
+from decoy_engine.transforms.base import BaseMaskingStrategy
 
 
 class FakerStrategy(BaseMaskingStrategy):
@@ -28,13 +37,13 @@ class FakerStrategy(BaseMaskingStrategy):
     def __init__(self, seed: int = 42, logger=None, derive_key=None):
         super().__init__(seed, logger, derive_key=derive_key)
 
-    def apply(self, column: pd.Series, rule: Dict[str, Any]) -> pd.Series:
-        faker_type = rule.get('faker_type', 'word')
-        column_name = rule.get('column', 'unnamed')
+    def apply(self, column: pd.Series, rule: dict[str, Any]) -> pd.Series:
+        faker_type = rule.get("faker_type", "word")
+        column_name = rule.get("column", "unnamed")
         column_key = self._column_key(column_name)
-        preserve_domain = rule.get('preserve_domain', False) and faker_type == 'email'
-        locale = rule.get('locale')
-        faker_kwargs = rule.get('faker_kwargs') or {}
+        preserve_domain = rule.get("preserve_domain", False) and faker_type == "email"
+        locale = rule.get("locale")
+        faker_kwargs = rule.get("faker_kwargs") or {}
         if not isinstance(faker_kwargs, dict):
             self.logger.warning(
                 f"faker_kwargs for column {column_name!r} must be a mapping, "
@@ -49,7 +58,7 @@ class FakerStrategy(BaseMaskingStrategy):
             )
             seed_for = lambda value: hmac_seed(column_key, value)
         else:
-            rule_seed = rule.get('seed', self.seed)
+            rule_seed = rule.get("seed", self.seed)
             self.logger.debug(
                 f"Applying seeded faker (type={faker_type!r}, seed={rule_seed}, "
                 f"locale={locale!r}) to column '{column_name}'"
@@ -60,7 +69,12 @@ class FakerStrategy(BaseMaskingStrategy):
             )
 
         result = self._apply_value_seeded(
-            column, seed_for, faker_type, preserve_domain, locale, rule,
+            column,
+            seed_for,
+            faker_type,
+            preserve_domain,
+            locale,
+            rule,
             faker_kwargs,
         )
         self._log_stats(column, result, rule)
@@ -73,12 +87,12 @@ class FakerStrategy(BaseMaskingStrategy):
         faker_type: str,
         preserve_domain: bool,
         locale,
-        rule: Dict[str, Any],
-        faker_kwargs: Dict[str, Any],
+        rule: dict[str, Any],
+        faker_kwargs: dict[str, Any],
     ) -> pd.Series:
         # Cache is local to this call and only avoids repeated Faker setup for
         # duplicate values. It is not persisted and does not define behavior.
-        cache: Dict[Any, Any] = {}
+        cache: dict[Any, Any] = {}
 
         def fake_for(value):
             if value is None or pd.isna(value):
@@ -90,25 +104,23 @@ class FakerStrategy(BaseMaskingStrategy):
             fake = make_faker(locale)
             fake.seed_instance(seed_for(value))
 
-            if preserve_domain and '@' in str(value):
-                _, domain = str(value).split('@', 1)
+            if preserve_domain and "@" in str(value):
+                _, domain = str(value).split("@", 1)
                 out = f"{fake.user_name()}@{domain}"
             else:
                 providers = get_faker_providers(fake)
                 if faker_type in providers:
                     out = providers[faker_type](**faker_kwargs)
                 else:
-                    self.logger.warning(
-                        f"Unknown faker_type {faker_type!r}, using 'word' instead"
-                    )
-                    out = providers['word']()
+                    self.logger.warning(f"Unknown faker_type {faker_type!r}, using 'word' instead")
+                    out = providers["word"]()
 
             cache[cache_key] = out
             return out
 
         return column.apply(fake_for)
 
-    def _column_key(self, column_name: str) -> Optional[bytes]:
+    def _column_key(self, column_name: str) -> bytes | None:
         """Derive the mask subkey via the caller-supplied resolver."""
         if self.derive_key is None:
             return None
@@ -120,7 +132,7 @@ class FakerStrategy(BaseMaskingStrategy):
             )
             return None
 
-    def validate_rule(self, rule: Dict[str, Any]) -> None:
+    def validate_rule(self, rule: dict[str, Any]) -> None:
         """
         Validate that the rule contains all required fields for the faker strategy.
 
@@ -133,7 +145,7 @@ class FakerStrategy(BaseMaskingStrategy):
         super().validate_rule(rule)
 
         # Faker-specific validation
-        if 'faker_type' not in rule:
+        if "faker_type" not in rule:
             # Default to 'word' if not specified
-            rule['faker_type'] = 'word'
+            rule["faker_type"] = "word"
             self.logger.debug(f"Using default faker_type: 'word' for column '{rule['column']}'")

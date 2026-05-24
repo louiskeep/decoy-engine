@@ -60,10 +60,10 @@ class LicenseExpiredError(LicenseError):
     """Raised when a license has expired."""
 
 
-class FlagPauseSignal(DecoyError):
+class FlagPauseSignal(DecoyError):  # noqa: N818 -- this is a control-flow Signal, not a runtime Error; the "Signal" suffix is intentional and contrasts with sibling *Error classes that are real failures.
     """Raised by flag_gate op when review conditions fail.
 
-    Not a crash — the platform runner catches this and transitions the
+    Not a crash: the platform runner catches this and transitions the
     job to `review_pending` rather than `failed`. The conditions_failed
     list is stored in the `job_reviews` table for the approver.
     """
@@ -163,6 +163,3 @@ class PKDuplicatesError(DecoyError):
                 f"downgrade this to a warning."
             )
         super().__init__(message)
-
-
-ForgeError = DecoyError

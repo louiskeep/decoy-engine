@@ -9,7 +9,6 @@ Covers:
 
 import inspect
 
-import pandas as pd
 import polars as pl
 import pytest
 
@@ -17,11 +16,12 @@ from decoy_engine.graph.ops import derive, filter_op, if_router
 from decoy_engine.graph.ops._base import OpError
 from decoy_engine.graph.ops.source_db import (
     _validate_sql_identifier,
+)
+from decoy_engine.graph.ops.source_db import (
     validate_config as source_validate,
 )
 from decoy_engine.graph.ops.target_db import validate_config as target_validate
 from decoy_engine.internal.validator import ValidationError
-
 
 # ---------------------------------------------------------------------------
 # _validate_sql_identifier
@@ -141,9 +141,7 @@ class TestFilterPolarsExprAPI:
 
     def test_compound_predicate(self):
         df = pl.DataFrame({"age": [10, 20, 30], "score": [5, 10, 3]})
-        result = filter_op.apply(
-            [df], {"predicate": "age >= 20 AND score >= 10"}, None
-        )
+        result = filter_op.apply([df], {"predicate": "age >= 20 AND score >= 10"}, None)
         assert len(result) == 1
         assert result["age"].to_list() == [20]
 
@@ -227,44 +225,32 @@ class TestDerivePolarsExprAPI:
 
     def test_arithmetic_expression(self):
         df = pl.DataFrame({"score": [10, 20, 30]})
-        result = derive.apply(
-            [df], {"column": "doubled", "expression": "score * 2"}, None
-        )
+        result = derive.apply([df], {"column": "doubled", "expression": "score * 2"}, None)
         assert result["doubled"].to_list() == [20, 40, 60]
 
     def test_constant_expression(self):
         df = pl.DataFrame({"x": [1, 2, 3]})
-        result = derive.apply(
-            [df], {"column": "tag", "expression": "1"}, None
-        )
+        result = derive.apply([df], {"column": "tag", "expression": "1"}, None)
         assert result["tag"].to_list() == [1, 1, 1]
 
     def test_multi_column_expression(self):
         df = pl.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
-        result = derive.apply(
-            [df], {"column": "sum_ab", "expression": "a + b"}, None
-        )
+        result = derive.apply([df], {"column": "sum_ab", "expression": "a + b"}, None)
         assert result["sum_ab"].to_list() == [5, 7, 9]
 
     def test_overwrites_existing_column(self):
         df = pl.DataFrame({"score": [10, 20, 30]})
-        result = derive.apply(
-            [df], {"column": "score", "expression": "score + 1"}, None
-        )
+        result = derive.apply([df], {"column": "score", "expression": "score + 1"}, None)
         assert result["score"].to_list() == [11, 21, 31]
         # original frame must not be mutated
         assert df["score"].to_list() == [10, 20, 30]
 
     def test_all_original_columns_preserved(self):
         df = pl.DataFrame({"a": [1], "b": [2]})
-        result = derive.apply(
-            [df], {"column": "c", "expression": "a + b"}, None
-        )
+        result = derive.apply([df], {"column": "c", "expression": "a + b"}, None)
         assert set(result.columns) == {"a", "b", "c"}
 
     def test_missing_column_raises_op_error(self):
         df = pl.DataFrame({"x": [1]})
         with pytest.raises(OpError, match="derive expression failed"):
-            derive.apply(
-                [df], {"column": "y", "expression": "no_such_col + 1"}, None
-            )
+            derive.apply([df], {"column": "y", "expression": "no_such_col + 1"}, None)

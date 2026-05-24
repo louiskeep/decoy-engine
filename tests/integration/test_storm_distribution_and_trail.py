@@ -18,6 +18,7 @@ def _profile(field_name: str, df: pd.DataFrame):
 
 # ── Distribution ─────────────────────────────────────────────────────────────
 
+
 class TestNumericDistribution:
     def test_emits_numeric_kind_with_min_max_mean(self):
         df = pd.DataFrame({"score": list(range(0, 100))})
@@ -42,12 +43,19 @@ class TestNumericDistribution:
 
 class TestDateDistribution:
     def test_decade_bins_for_native_datetime(self):
-        df = pd.DataFrame({
-            "dob": pd.to_datetime([
-                "1985-03-15", "1992-07-22", "1972-11-08",
-                "1985-12-25", "1990-01-01",
-            ]),
-        })
+        df = pd.DataFrame(
+            {
+                "dob": pd.to_datetime(
+                    [
+                        "1985-03-15",
+                        "1992-07-22",
+                        "1972-11-08",
+                        "1985-12-25",
+                        "1990-01-01",
+                    ]
+                ),
+            }
+        )
         f = _profile("dob", df)
         assert f.distribution is not None
         assert f.distribution.kind == "date"
@@ -58,9 +66,11 @@ class TestDateDistribution:
 
 class TestCategoricalDistribution:
     def test_low_cardinality_object_emits_top_plus_other(self):
-        df = pd.DataFrame({
-            "gender": ["F", "M", "F", "M", "F", "X", "F", "M"],
-        })
+        df = pd.DataFrame(
+            {
+                "gender": ["F", "M", "F", "M", "F", "X", "F", "M"],
+            }
+        )
         f = _profile("gender", df)
         assert f.distribution is not None
         assert f.distribution.kind == "categorical"
@@ -75,9 +85,13 @@ class TestCategoricalDistribution:
         # Wait — over the cap routes to freetext, not categorical-with-other.
         # The "other" path is for categorical when distinct count exceeds top-10
         # but is still under the cap. Build a column of 15 distinct values.
-        df = pd.DataFrame({
-            "tag": (["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o"] * 2),
-        })
+        df = pd.DataFrame(
+            {
+                "tag": (
+                    ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o"] * 2
+                ),
+            }
+        )
         f = _profile("tag", df)
         assert f.distribution is not None
         assert f.distribution.kind == "categorical"
@@ -86,9 +100,11 @@ class TestCategoricalDistribution:
 
 class TestPatternDistribution:
     def test_detector_fired_emits_pattern_buckets(self):
-        df = pd.DataFrame({
-            "ssn": ["123-45-6789", "555-12-3456", "111-22-3333"] * 5,
-        })
+        df = pd.DataFrame(
+            {
+                "ssn": ["123-45-6789", "555-12-3456", "111-22-3333"] * 5,
+            }
+        )
         f = _profile("ssn", df)
         # SSN detector should fire, and column is small enough that we'd hit
         # the categorical path unless detector takes priority. The profiler
@@ -104,9 +120,11 @@ class TestPatternDistribution:
 
     def test_high_cardinality_detector_fired_uses_pattern(self):
         # 100 distinct emails — over the categorical cap, detector fires.
-        df = pd.DataFrame({
-            "email": [f"user{i}@example.com" for i in range(100)],
-        })
+        df = pd.DataFrame(
+            {
+                "email": [f"user{i}@example.com" for i in range(100)],
+            }
+        )
         f = _profile("email", df)
         assert f.distribution is not None
         assert f.distribution.kind == "pattern"
@@ -118,13 +136,21 @@ class TestPatternDistribution:
 
 class TestFreetextDistribution:
     def test_high_cardinality_no_detector_uses_freetext(self):
-        df = pd.DataFrame({
-            "comment": [
-                "short note", "a much longer comment with more substance to it",
-                "tiny", "yet another distinct value here",
-                "x" * 120, "y" * 60, "z" * 30, "aa" * 6,
-            ] * 5,
-        })
+        df = pd.DataFrame(
+            {
+                "comment": [
+                    "short note",
+                    "a much longer comment with more substance to it",
+                    "tiny",
+                    "yet another distinct value here",
+                    "x" * 120,
+                    "y" * 60,
+                    "z" * 30,
+                    "aa" * 6,
+                ]
+                * 5,
+            }
+        )
         f = _profile("comment", df)
         assert f.distribution is not None
         # 8 distinct comments * 5 = 40 rows but only 8 distinct values — under
@@ -133,9 +159,11 @@ class TestFreetextDistribution:
         assert f.distribution.kind in ("categorical", "freetext")
 
     def test_truly_unique_rows_use_freetext(self):
-        df = pd.DataFrame({
-            "comment": [f"distinct comment {i}" for i in range(50)],
-        })
+        df = pd.DataFrame(
+            {
+                "comment": [f"distinct comment {i}" for i in range(50)],
+            }
+        )
         f = _profile("comment", df)
         assert f.distribution is not None
         assert f.distribution.kind == "freetext"
@@ -148,6 +176,7 @@ class TestFreetextDistribution:
 
 # ── Detection trail ──────────────────────────────────────────────────────────
 
+
 class TestDetectionTrail:
     def test_no_detector_means_empty_trail(self):
         df = pd.DataFrame({"random_id": [101, 202, 303, 404]})
@@ -157,9 +186,11 @@ class TestDetectionTrail:
     def test_regex_only_emits_one_signal(self):
         # ssn-pattern values in a column NOT named ssn — regex fires, no
         # name-hint row.
-        df = pd.DataFrame({
-            "external_ref": ["123-45-6789", "555-12-3456", "111-22-3333"] * 5,
-        })
+        df = pd.DataFrame(
+            {
+                "external_ref": ["123-45-6789", "555-12-3456", "111-22-3333"] * 5,
+            }
+        )
         f = _profile("external_ref", df)
         # There's no name-hint match, so detector must fire on regex alone
         # (>= 0.7 threshold). 100% match rate clears that easily.
@@ -170,9 +201,11 @@ class TestDetectionTrail:
             assert f.detection_trail[0].signal.startswith("regex · ")
 
     def test_regex_plus_name_hint_emits_two_signals(self):
-        df = pd.DataFrame({
-            "ssn": ["123-45-6789", "555-12-3456", "111-22-3333"] * 5,
-        })
+        df = pd.DataFrame(
+            {
+                "ssn": ["123-45-6789", "555-12-3456", "111-22-3333"] * 5,
+            }
+        )
         f = _profile("ssn", df)
         assert len(f.detection_trail) == 2
         regex_row, hint_row = f.detection_trail
@@ -186,18 +219,22 @@ class TestDetectionTrail:
         assert hint_row.skipped is False
 
     def test_winning_detector_drives_trail_signal_id(self):
-        df = pd.DataFrame({
-            "email": ["a@b.com", "c@d.org", "e@f.io"] * 5,
-        })
+        df = pd.DataFrame(
+            {
+                "email": ["a@b.com", "c@d.org", "e@f.io"] * 5,
+            }
+        )
         f = _profile("email", df)
         assert f.detection_trail
         assert f.detection_trail[0].signal == "regex · email_pattern"
 
     def test_no_ml_signals_yet(self):
         # Until Item 8 lands, no signal should be ml=True.
-        df = pd.DataFrame({
-            "ssn": ["123-45-6789"] * 10,
-        })
+        df = pd.DataFrame(
+            {
+                "ssn": ["123-45-6789"] * 10,
+            }
+        )
         f = _profile("ssn", df)
         assert all(not s.ml for s in f.detection_trail)
         assert all(not s.skipped for s in f.detection_trail)
@@ -205,12 +242,15 @@ class TestDetectionTrail:
 
 # ── JSON serialization ───────────────────────────────────────────────────────
 
+
 class TestSerialization:
     def test_storm_profile_to_dict_includes_new_fields(self):
-        df = pd.DataFrame({
-            "ssn": ["123-45-6789"] * 10,
-            "score": list(range(10, 20)),
-        })
+        df = pd.DataFrame(
+            {
+                "ssn": ["123-45-6789"] * 10,
+                "score": list(range(10, 20)),
+            }
+        )
         profile = run_storm(df, "test.csv")
         d = profile.to_dict()
         ssn_field = next(f for f in d["fields"] if f["name"] == "ssn")

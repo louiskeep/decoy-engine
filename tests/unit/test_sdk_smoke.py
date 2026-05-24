@@ -6,6 +6,7 @@ and that the SDK exports are reachable both from `decoy_engine` and
 `decoy_engine.sdk`. Per-connector behavior tests live alongside each
 connector implementation (Week 2-3 of Sprint G).
 """
+
 from __future__ import annotations
 
 import pytest
@@ -21,16 +22,17 @@ class TestPublicSurface:
         # `from decoy_engine import FileSource, FileSink, ...` is the
         # documented import shape; if these vanish, every connector breaks.
         from decoy_engine import (
+            SDK_VERSION,
             CheckResult,
             ConnectorConfig,
             FileMeta,
             FileSink,
             FileSource,
             PermanentError,
-            SDK_VERSION,
             TransientError,
             WriteResult,
         )
+
         assert SDK_VERSION
         assert all(
             cls is not None
@@ -47,7 +49,8 @@ class TestPublicSurface:
         )
 
     def test_submodule_imports_work(self):
-        from decoy_engine.sdk import FileSource, FileSink, SDK_VERSION
+        from decoy_engine.sdk import SDK_VERSION, FileSink, FileSource
+
         assert FileSource and FileSink and SDK_VERSION
 
     def test_top_level_and_submodule_export_same_classes(self):
@@ -55,6 +58,7 @@ class TestPublicSurface:
         # `isinstance(x, FileSource)` will silently miss valid connectors.
         from decoy_engine import FileSource as Top
         from decoy_engine.sdk import FileSource as Sub
+
         assert Top is Sub
 
 

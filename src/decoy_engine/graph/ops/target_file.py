@@ -33,13 +33,15 @@ def validate_config(config: dict[str, Any]) -> None:
 
     if "output_filename" not in config:
         raise ValidationError(
-            "missing required field 'output_filename'", "config.output_filename",
+            "missing required field 'output_filename'",
+            "config.output_filename",
             code=CODES.TARGET_FILE_MISSING_OUTPUT_FILENAME,
         )
     fmt = (config.get("format") or _infer_format(config["output_filename"])).lower()
     if fmt not in {"csv", "parquet"}:
         raise ValidationError(
-            f"unsupported format {fmt!r} (csv|parquet)", "config.format",
+            f"unsupported format {fmt!r} (csv|parquet)",
+            "config.format",
             code=CODES.TARGET_FILE_UNSUPPORTED_FORMAT,
         )
 
@@ -58,7 +60,7 @@ def apply(inputs, config, ctx):
         rows_written = int(df.num_rows)
         result = _apply_duckdb(df, config)
     else:
-        rows_written = int(len(df))
+        rows_written = len(df)
         result = _apply_pandas(df, config)
     if ctx is not None and hasattr(ctx, "export"):
         path = Path(config["output_filename"])
@@ -104,16 +106,10 @@ def _apply_duckdb(table: pa.Table, config: dict[str, Any]) -> pa.Table:
             con.register("in_table", table)
             if fmt == "csv":
                 header_opt = "HEADER" if include_header else "HEADER FALSE"
-                con.execute(
-                    f"COPY (SELECT * FROM in_table) TO '{path}' "
-                    f"(FORMAT CSV, {header_opt})"
-                )
+                con.execute(f"COPY (SELECT * FROM in_table) TO '{path}' (FORMAT CSV, {header_opt})")
             elif fmt == "parquet":
                 # Parquet schema is embedded; include_header doesn't apply.
-                con.execute(
-                    f"COPY (SELECT * FROM in_table) TO '{path}' "
-                    f"(FORMAT PARQUET)"
-                )
+                con.execute(f"COPY (SELECT * FROM in_table) TO '{path}' (FORMAT PARQUET)")
             else:
                 raise OpError(f"unsupported format: {fmt}")
         finally:

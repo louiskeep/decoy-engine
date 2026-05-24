@@ -8,9 +8,8 @@ hazard kind labeled in commentary.
 
 No real DB needed — these are pure-function tests.
 """
-from __future__ import annotations
 
-import pytest
+from __future__ import annotations
 
 from decoy_engine.walks import (
     Column,
@@ -18,7 +17,6 @@ from decoy_engine.walks import (
     SchemaSnapshot,
     Table,
     detect_hazards,
-    infer_edges,
 )
 
 
@@ -42,16 +40,18 @@ def test_hub_fires_when_in_degree_above_threshold():
         tables=(
             _table("users", [_col("id", pk=True, nullable=False)]),
             *[
-                _table(f"feature_{i}", [
-                    _col("id", pk=True, nullable=False),
-                    _col("user_id", nullable=False),
-                ])
+                _table(
+                    f"feature_{i}",
+                    [
+                        _col("id", pk=True, nullable=False),
+                        _col("user_id", nullable=False),
+                    ],
+                )
                 for i in range(6)
             ],
         ),
         declared_edges=tuple(
-            Edge(f"feature_{i}", "user_id", "users", "id", declared=True)
-            for i in range(6)
+            Edge(f"feature_{i}", "user_id", "users", "id", declared=True) for i in range(6)
         ),
     )
     hazards = detect_hazards(snap)
@@ -69,16 +69,18 @@ def test_hub_does_not_fire_below_threshold():
         tables=(
             _table("users", [_col("id", pk=True, nullable=False)]),
             *[
-                _table(f"feature_{i}", [
-                    _col("id", pk=True, nullable=False),
-                    _col("user_id", nullable=False),
-                ])
+                _table(
+                    f"feature_{i}",
+                    [
+                        _col("id", pk=True, nullable=False),
+                        _col("user_id", nullable=False),
+                    ],
+                )
                 for i in range(3)
             ],
         ),
         declared_edges=tuple(
-            Edge(f"feature_{i}", "user_id", "users", "id", declared=True)
-            for i in range(3)
+            Edge(f"feature_{i}", "user_id", "users", "id", declared=True) for i in range(3)
         ),
     )
     hazards = detect_hazards(snap)
@@ -95,14 +97,15 @@ def test_self_reference_fires_for_parent_id_column():
         db_kind="postgres",
         schema_name="public",
         tables=(
-            _table("teams", [
-                _col("id", pk=True, nullable=False),
-                _col("parent_team_id", nullable=True),
-            ]),
+            _table(
+                "teams",
+                [
+                    _col("id", pk=True, nullable=False),
+                    _col("parent_team_id", nullable=True),
+                ],
+            ),
         ),
-        declared_edges=(
-            Edge("teams", "parent_team_id", "teams", "id", declared=True),
-        ),
+        declared_edges=(Edge("teams", "parent_team_id", "teams", "id", declared=True),),
     )
     hazards = detect_hazards(snap)
     sr = [h for h in hazards if h.kind == "SR"]
@@ -122,13 +125,16 @@ def test_parallel_edges_fires_when_multiple_fks_to_same_target():
         schema_name="public",
         tables=(
             _table("users", [_col("id", pk=True, nullable=False)]),
-            _table("issues", [
-                _col("id", pk=True, nullable=False),
-                _col("assignee_id", nullable=True),
-                _col("reporter_id", nullable=True),
-                _col("created_by_id", nullable=False),
-                _col("resolved_by_id", nullable=True),
-            ]),
+            _table(
+                "issues",
+                [
+                    _col("id", pk=True, nullable=False),
+                    _col("assignee_id", nullable=True),
+                    _col("reporter_id", nullable=True),
+                    _col("created_by_id", nullable=False),
+                    _col("resolved_by_id", nullable=True),
+                ],
+            ),
         ),
         declared_edges=(
             Edge("issues", "assignee_id", "users", "id", declared=True),
@@ -143,7 +149,10 @@ def test_parallel_edges_fires_when_multiple_fks_to_same_target():
     assert pe[0].table == "issues"
     assert pe[0].details["target_table"] == "users"
     assert sorted(pe[0].details["source_columns"]) == [
-        "assignee_id", "created_by_id", "reporter_id", "resolved_by_id",
+        "assignee_id",
+        "created_by_id",
+        "reporter_id",
+        "resolved_by_id",
     ]
 
 
@@ -154,11 +163,14 @@ def test_parallel_edges_excludes_self_reference():
         db_kind="postgres",
         schema_name="public",
         tables=(
-            _table("comments", [
-                _col("id", pk=True, nullable=False),
-                _col("parent_id", nullable=True),
-                _col("thread_id", nullable=True),
-            ]),
+            _table(
+                "comments",
+                [
+                    _col("id", pk=True, nullable=False),
+                    _col("parent_id", nullable=True),
+                    _col("thread_id", nullable=True),
+                ],
+            ),
         ),
         declared_edges=(
             Edge("comments", "parent_id", "comments", "id", declared=True),
@@ -182,11 +194,14 @@ def test_polymorphic_fk_fires_on_type_id_pattern():
         db_kind="postgres",
         schema_name="public",
         tables=(
-            _table("comments", [
-                _col("id", pk=True, nullable=False),
-                _col("entity_type", dtype="varchar", nullable=False),
-                _col("entity_id", nullable=False),
-            ]),
+            _table(
+                "comments",
+                [
+                    _col("id", pk=True, nullable=False),
+                    _col("entity_type", dtype="varchar", nullable=False),
+                    _col("entity_id", nullable=False),
+                ],
+            ),
         ),
         declared_edges=(),
     )
@@ -209,15 +224,16 @@ def test_polymorphic_fk_does_not_fire_when_id_has_declared_fk():
         schema_name="public",
         tables=(
             _table("posts", [_col("id", pk=True, nullable=False)]),
-            _table("comments", [
-                _col("id", pk=True, nullable=False),
-                _col("post_type", dtype="varchar", nullable=False),
-                _col("post_id", nullable=False),
-            ]),
+            _table(
+                "comments",
+                [
+                    _col("id", pk=True, nullable=False),
+                    _col("post_type", dtype="varchar", nullable=False),
+                    _col("post_id", nullable=False),
+                ],
+            ),
         ),
-        declared_edges=(
-            Edge("comments", "post_id", "posts", "id", declared=True),
-        ),
+        declared_edges=(Edge("comments", "post_id", "posts", "id", declared=True),),
     )
     hazards = detect_hazards(snap)
     assert not [h for h in hazards if h.kind == "PM"]
@@ -236,12 +252,15 @@ def test_alt_fires_for_two_nullable_fks_to_different_parents():
         tables=(
             _table("organizations", [_col("id", pk=True, nullable=False)]),
             _table("projects", [_col("id", pk=True, nullable=False)]),
-            _table("labels", [
-                _col("id", pk=True, nullable=False),
-                _col("name", dtype="varchar", nullable=False),
-                _col("organization_id", nullable=True),
-                _col("project_id", nullable=True),
-            ]),
+            _table(
+                "labels",
+                [
+                    _col("id", pk=True, nullable=False),
+                    _col("name", dtype="varchar", nullable=False),
+                    _col("organization_id", nullable=True),
+                    _col("project_id", nullable=True),
+                ],
+            ),
         ),
         declared_edges=(
             Edge("labels", "organization_id", "organizations", "id", declared=True),
@@ -265,18 +284,27 @@ def test_cycle_fires_for_three_table_loop():
         db_kind="postgres",
         schema_name="public",
         tables=(
-            _table("workflows", [
-                _col("id", pk=True, nullable=False),
-                _col("start_status_id", nullable=True),
-            ]),
-            _table("statuses", [
-                _col("id", pk=True, nullable=False),
-                _col("transition_id", nullable=True),
-            ]),
-            _table("status_transitions", [
-                _col("id", pk=True, nullable=False),
-                _col("workflow_id", nullable=False),
-            ]),
+            _table(
+                "workflows",
+                [
+                    _col("id", pk=True, nullable=False),
+                    _col("start_status_id", nullable=True),
+                ],
+            ),
+            _table(
+                "statuses",
+                [
+                    _col("id", pk=True, nullable=False),
+                    _col("transition_id", nullable=True),
+                ],
+            ),
+            _table(
+                "status_transitions",
+                [
+                    _col("id", pk=True, nullable=False),
+                    _col("workflow_id", nullable=False),
+                ],
+            ),
         ),
         declared_edges=(
             Edge("workflows", "start_status_id", "statuses", "id", declared=True),

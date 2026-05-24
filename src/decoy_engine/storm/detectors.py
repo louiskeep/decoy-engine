@@ -26,12 +26,11 @@ Built-in detector set:
 from __future__ import annotations
 
 import re
-from typing import Callable, Optional
+from collections.abc import Callable
 
 import pandas as pd
 
 from decoy_engine.storm.types import CustomDetectorSpec, DetectorMatch
-
 
 # ── thresholds ──────────────────────────────────────────────────────────────────────────────
 #
@@ -46,15 +45,16 @@ from decoy_engine.storm.types import CustomDetectorSpec, DetectorMatch
 # firing threshold behind a "weak signals" flag in V1.5 without re-deriving
 # the bucket math.
 
-DEFAULT_MIN_MATCH_RATE         = 0.5   # 50% of non-null values must match (no hint)
-NAME_HINT_MIN_RATE             = 0.4   # 40% if the column name strongly hints
-LOW_CONFIDENCE_NO_HINT_FLOOR   = 0.3   # opt-in floor for surfacing low-confidence finds
-HIGH_CONFIDENCE_NO_HINT_FLOOR  = 0.75  # content alone, name hint absent
-HIGH_CONFIDENCE_WITH_HINT_FLOOR = 0.45 # content alongside a confirming name hint
-SAMPLE_MISS_LIMIT              = 3
+DEFAULT_MIN_MATCH_RATE = 0.5  # 50% of non-null values must match (no hint)
+NAME_HINT_MIN_RATE = 0.4  # 40% if the column name strongly hints
+LOW_CONFIDENCE_NO_HINT_FLOOR = 0.3  # opt-in floor for surfacing low-confidence finds
+HIGH_CONFIDENCE_NO_HINT_FLOOR = 0.75  # content alone, name hint absent
+HIGH_CONFIDENCE_WITH_HINT_FLOOR = 0.45  # content alongside a confirming name hint
+SAMPLE_MISS_LIMIT = 3
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────────────────
+
 
 def _series_str(series: pd.Series) -> pd.Series:
     """Drop nulls and coerce to string — every detector needs this prelude."""
@@ -68,9 +68,9 @@ def _evaluate(
     *,
     name_hint: bool,
     min_rate: float,
-    validator: Optional[Callable[[str], bool]] = None,
-    format_variants: Optional[list[tuple[str, re.Pattern[str]]]] = None,
-) -> Optional[DetectorMatch]:
+    validator: Callable[[str], bool] | None = None,
+    format_variants: list[tuple[str, re.Pattern[str]]] | None = None,
+) -> DetectorMatch | None:
     """Apply a regex to non-null values and decide whether the detector fires.
 
     Optional `validator` runs per-value AFTER regex match — used for
@@ -111,7 +111,7 @@ def _evaluate(
         return None
     misses = values[~matches].head(SAMPLE_MISS_LIMIT).tolist()
     # Variant bucketing — count which sub-pattern won among the matches.
-    format_pattern: Optional[str] = None
+    format_pattern: str | None = None
     if format_variants:
         matched_values = values[matches]
         format_pattern = _dominant_variant(matched_values, format_variants)
@@ -132,7 +132,9 @@ def _confidence_bucket(rate: float, *, name_hint: bool) -> str:
     the bucket boundaries live in one place. See module-level thresholds
     block for the source-of-truth bounds.
     """
-    if (name_hint and rate >= HIGH_CONFIDENCE_WITH_HINT_FLOOR) or rate >= HIGH_CONFIDENCE_NO_HINT_FLOOR:
+    if (
+        name_hint and rate >= HIGH_CONFIDENCE_WITH_HINT_FLOOR
+    ) or rate >= HIGH_CONFIDENCE_NO_HINT_FLOOR:
         return "high"
     if (not name_hint and rate >= 0.50) or (name_hint and rate >= NAME_HINT_MIN_RATE):
         return "medium"
@@ -142,7 +144,7 @@ def _confidence_bucket(rate: float, *, name_hint: bool) -> str:
 def _dominant_variant(
     values: pd.Series,
     variants: list[tuple[str, re.Pattern[str]]],
-) -> Optional[str]:
+) -> str | None:
     """Return the label of the variant that matches the most values.
 
     Variants are tested in order; each value is counted under the first
@@ -173,6 +175,7 @@ def _dominant_variant(
 # variants (Spanish / French / German / etc.) are V1.5; keeping V1 to a
 # single locale keeps the false-positive surface predictable.
 
+
 def _hint(terms: list[str]) -> re.Pattern[str]:
     """Build a case-insensitive name-hint regex from a list of token strings.
 
@@ -185,134 +188,417 @@ def _hint(terms: list[str]) -> re.Pattern[str]:
 
 
 _NAME_HINTS: dict[str, re.Pattern[str]] = {
-    "email":       _hint([
-        "email", "e_mail", "mail", "emailaddress", "email_address",
-        "email_addr", "mail_addr", "contact_email",
-    ]),
-    "ssn":         _hint([
-        "ssn", "social_security", "social_security_num", "social_security_number",
-        "socsec", "socialsec", "ss_num", "ss_no",
-    ]),
+    "email": _hint(
+        [
+            "email",
+            "e_mail",
+            "mail",
+            "emailaddress",
+            "email_address",
+            "email_addr",
+            "mail_addr",
+            "contact_email",
+        ]
+    ),
+    "ssn": _hint(
+        [
+            "ssn",
+            "social_security",
+            "social_security_num",
+            "social_security_number",
+            "socsec",
+            "socialsec",
+            "ss_num",
+            "ss_no",
+        ]
+    ),
     # Detection sprint additions: tel, phn, mob, cel, wphone, hphone — plus
     # work_phone / home_phone / cell_phone / mobile_phone spelled-out forms.
-    "us_phone":    _hint([
-        "phone", "phn", "tel", "telephone", "mobile", "cell", "mob", "cel",
-        "wphone", "hphone", "work_phone", "home_phone", "cell_phone",
-        "mobile_phone", "day_phone", "night_phone", "primary_phone",
-        "phone_num", "phone_number", "contact_phone",
-    ]),
-    "us_zip":      _hint([
-        "zip", "zip_code", "zipcode", "postal", "postal_code", "post_code",
-        "postcode", "zipcde", "zip_cd",
-    ]),
+    "us_phone": _hint(
+        [
+            "phone",
+            "phn",
+            "tel",
+            "telephone",
+            "mobile",
+            "cell",
+            "mob",
+            "cel",
+            "wphone",
+            "hphone",
+            "work_phone",
+            "home_phone",
+            "cell_phone",
+            "mobile_phone",
+            "day_phone",
+            "night_phone",
+            "primary_phone",
+            "phone_num",
+            "phone_number",
+            "contact_phone",
+        ]
+    ),
+    "us_zip": _hint(
+        [
+            "zip",
+            "zip_code",
+            "zipcode",
+            "postal",
+            "postal_code",
+            "post_code",
+            "postcode",
+            "zipcde",
+            "zip_cd",
+        ]
+    ),
     # first_name and last_name split out from person_name so the strategy
     # table can route to faker.first_name / faker.last_name (preserves
     # gendered shape and avoids picking from the full-name pool).
-    "first_name":  _hint([
-        "first_name", "firstname", "given_name", "fn", "f_name", "fname",
-        "firstn", "first_nm", "frst_nm", "mm_fn", "cust_fn", "pt_fn",
-        "pat_fn", "emp_fn",
-    ]),
-    "last_name":   _hint([
-        "last_name", "lastname", "family_name", "surname", "sur_name", "ln",
-        "l_name", "lname", "lastn", "last_nm", "lst_nm", "mm_ln", "cust_ln",
-        "pt_ln", "pat_ln", "emp_ln",
-    ]),
-    "person_name": _hint([
-        "name", "full_name", "fullname", "user_name", "username",
-        "customer_name", "patient_name", "client_name", "middle_name",
-        "maiden_name", "mi", "m_name", "mname",
-    ]),
+    "first_name": _hint(
+        [
+            "first_name",
+            "firstname",
+            "given_name",
+            "fn",
+            "f_name",
+            "fname",
+            "firstn",
+            "first_nm",
+            "frst_nm",
+            "mm_fn",
+            "cust_fn",
+            "pt_fn",
+            "pat_fn",
+            "emp_fn",
+        ]
+    ),
+    "last_name": _hint(
+        [
+            "last_name",
+            "lastname",
+            "family_name",
+            "surname",
+            "sur_name",
+            "ln",
+            "l_name",
+            "lname",
+            "lastn",
+            "last_nm",
+            "lst_nm",
+            "mm_ln",
+            "cust_ln",
+            "pt_ln",
+            "pat_ln",
+            "emp_ln",
+        ]
+    ),
+    "person_name": _hint(
+        [
+            "name",
+            "full_name",
+            "fullname",
+            "user_name",
+            "username",
+            "customer_name",
+            "patient_name",
+            "client_name",
+            "middle_name",
+            "maiden_name",
+            "mi",
+            "m_name",
+            "mname",
+        ]
+    ),
     # Date hints share the same vocabulary across iso / us / eu — the
     # detector function chooses the right value-shape regex.
-    "iso_date":    _hint([
-        "date", "created", "updated", "modified", "dob", "birth", "start",
-        "end", "due", "effective", "expir", "bdate", "b_date", "birth_dt",
-        "bday", "birthday", "date_of_birth", "birth_date", "dt",
-    ]),
-    "us_date":     _hint([
-        "date", "created", "updated", "modified", "dob", "birth", "start",
-        "end", "due", "effective", "expir", "bdate", "b_date", "birth_dt",
-        "bday", "birthday", "date_of_birth", "birth_date", "dt",
-    ]),
-    "eu_date":     _hint([
-        "date", "created", "updated", "modified", "dob", "birth", "start",
-        "end", "due", "effective", "expir", "bdate", "b_date", "birth_dt",
-        "bday", "birthday", "date_of_birth", "birth_date", "dt",
-    ]),
+    "iso_date": _hint(
+        [
+            "date",
+            "created",
+            "updated",
+            "modified",
+            "dob",
+            "birth",
+            "start",
+            "end",
+            "due",
+            "effective",
+            "expir",
+            "bdate",
+            "b_date",
+            "birth_dt",
+            "bday",
+            "birthday",
+            "date_of_birth",
+            "birth_date",
+            "dt",
+        ]
+    ),
+    "us_date": _hint(
+        [
+            "date",
+            "created",
+            "updated",
+            "modified",
+            "dob",
+            "birth",
+            "start",
+            "end",
+            "due",
+            "effective",
+            "expir",
+            "bdate",
+            "b_date",
+            "birth_dt",
+            "bday",
+            "birthday",
+            "date_of_birth",
+            "birth_date",
+            "dt",
+        ]
+    ),
+    "eu_date": _hint(
+        [
+            "date",
+            "created",
+            "updated",
+            "modified",
+            "dob",
+            "birth",
+            "start",
+            "end",
+            "due",
+            "effective",
+            "expir",
+            "bdate",
+            "b_date",
+            "birth_dt",
+            "bday",
+            "birthday",
+            "date_of_birth",
+            "birth_date",
+            "dt",
+        ]
+    ),
     # Address has no dedicated value pattern (street formats vary too widely
     # for a useful regex); column name is the sole signal.
-    "address":     _hint([
-        "address", "addr", "addr1", "addr2", "addr_1", "addr_2",
-        "addr_line", "addr_line_1", "addr_line_2", "ln1", "ln2", "line1",
-        "line2", "street", "street_1", "street_2", "street1", "street2",
-        "street_addr", "street_address", "mailing_addr", "mailing_address",
-        "home_addr", "work_addr",
-    ]),
+    "address": _hint(
+        [
+            "address",
+            "addr",
+            "addr1",
+            "addr2",
+            "addr_1",
+            "addr_2",
+            "addr_line",
+            "addr_line_1",
+            "addr_line_2",
+            "ln1",
+            "ln2",
+            "line1",
+            "line2",
+            "street",
+            "street_1",
+            "street_2",
+            "street1",
+            "street2",
+            "street_addr",
+            "street_address",
+            "mailing_addr",
+            "mailing_address",
+            "home_addr",
+            "work_addr",
+        ]
+    ),
     # Item 31 phase 1 — PCI + GDPR additions.
-    "pan":   _hint([
-        "pan", "card", "cc", "credit_card", "creditcard", "card_number",
-        "account_number", "payment_card", "card_no", "card_num", "ccnum",
-        "cc_num", "cc_number",
-    ]),
-    "cvv":   _hint([
-        "cvv", "cvc", "csc", "security_code", "card_security", "card_code",
-        "card_security_code",
-    ]),
-    "iban":  _hint([
-        "iban", "bank_account", "account_iban", "iban_num", "iban_number",
-    ]),
-    "ipv4":  _hint([
-        "ip", "ipv4", "ip_addr", "ip_address", "ipaddr", "client_ip",
-        "remote_ip", "src_ip", "dst_ip", "source_ip",
-    ]),
+    "pan": _hint(
+        [
+            "pan",
+            "card",
+            "cc",
+            "credit_card",
+            "creditcard",
+            "card_number",
+            "account_number",
+            "payment_card",
+            "card_no",
+            "card_num",
+            "ccnum",
+            "cc_num",
+            "cc_number",
+        ]
+    ),
+    "cvv": _hint(
+        [
+            "cvv",
+            "cvc",
+            "csc",
+            "security_code",
+            "card_security",
+            "card_code",
+            "card_security_code",
+        ]
+    ),
+    "iban": _hint(
+        [
+            "iban",
+            "bank_account",
+            "account_iban",
+            "iban_num",
+            "iban_number",
+        ]
+    ),
+    "ipv4": _hint(
+        [
+            "ip",
+            "ipv4",
+            "ip_addr",
+            "ip_address",
+            "ipaddr",
+            "client_ip",
+            "remote_ip",
+            "src_ip",
+            "dst_ip",
+            "source_ip",
+        ]
+    ),
     # Item 31 phase 3 — HIPAA Safe Harbor completers + clinical identifiers.
-    "icd10":          _hint([
-        "icd", "icd10", "icd_10", "diagnosis", "diag", "dx", "diag_code",
-        "diagnosis_code", "icd_code",
-    ]),
-    "npi":            _hint([
-        "npi", "natl_provider", "national_provider", "provider_npi",
-        "physician_id", "provider_id",
-    ]),
+    "icd10": _hint(
+        [
+            "icd",
+            "icd10",
+            "icd_10",
+            "diagnosis",
+            "diag",
+            "dx",
+            "diag_code",
+            "diagnosis_code",
+            "icd_code",
+        ]
+    ),
+    "npi": _hint(
+        [
+            "npi",
+            "natl_provider",
+            "national_provider",
+            "provider_npi",
+            "physician_id",
+            "provider_id",
+        ]
+    ),
     # mrn picks up generic patient/customer/employee identifier columns so
     # the strict fail-safe doesn't miss them. The smart-default strategy
     # is FPE-with-length-preservation, which is safe for any ID-shaped
     # column — the user can override after the fact.
-    "mrn":            _hint([
-        "mrn", "medical_record", "chart", "patient_id", "chart_num",
-        "chart_number", "medical_id", "med_rec", "pt_id", "pat_id",
-        "cust_id", "customer_id", "client_id", "emp_id", "employee_id",
-        "member_num", "acct", "account",
-    ]),
-    "url":            _hint([
-        "url", "uri", "href", "link", "website", "web_address", "endpoint",
-        "site",
-    ]),
-    "fax_number":     _hint([
-        "fax", "fax_num", "fax_number", "facsimile",
-    ]),
-    "health_plan_id": _hint([
-        "beneficiary", "member_id", "hplan", "health_plan", "plan_id",
-        "subscriber_id", "enrollee_id", "coverage_id", "member_no",
-    ]),
-    "license_num":    _hint([
-        "license", "licence", "cert", "certificate", "credential",
-        "license_num", "license_number", "cert_num", "cert_id",
-        "drivers_license", "drivers_lic", "dl_num", "dl_number", "dlnum",
-    ]),
-    "vehicle_id":     _hint([
-        "vin", "vehicle_id", "vehicle_num", "vehicle_serial",
-        "license_plate", "plate_num", "plate_number",
-    ]),
-    "device_id":      _hint([
-        "device_id", "device_serial", "serial_num", "serial_number",
-        "equipment_id", "implant_id", "device_code", "asset_id", "udi",
-    ]),
-    "biometric_id":   _hint([
-        "fingerprint", "retina", "iris", "biometric", "voice_print",
-        "hand_geometry", "bio_id", "biometric_id",
-    ]),
+    "mrn": _hint(
+        [
+            "mrn",
+            "medical_record",
+            "chart",
+            "patient_id",
+            "chart_num",
+            "chart_number",
+            "medical_id",
+            "med_rec",
+            "pt_id",
+            "pat_id",
+            "cust_id",
+            "customer_id",
+            "client_id",
+            "emp_id",
+            "employee_id",
+            "member_num",
+            "acct",
+            "account",
+        ]
+    ),
+    "url": _hint(
+        [
+            "url",
+            "uri",
+            "href",
+            "link",
+            "website",
+            "web_address",
+            "endpoint",
+            "site",
+        ]
+    ),
+    "fax_number": _hint(
+        [
+            "fax",
+            "fax_num",
+            "fax_number",
+            "facsimile",
+        ]
+    ),
+    "health_plan_id": _hint(
+        [
+            "beneficiary",
+            "member_id",
+            "hplan",
+            "health_plan",
+            "plan_id",
+            "subscriber_id",
+            "enrollee_id",
+            "coverage_id",
+            "member_no",
+        ]
+    ),
+    "license_num": _hint(
+        [
+            "license",
+            "licence",
+            "cert",
+            "certificate",
+            "credential",
+            "license_num",
+            "license_number",
+            "cert_num",
+            "cert_id",
+            "drivers_license",
+            "drivers_lic",
+            "dl_num",
+            "dl_number",
+            "dlnum",
+        ]
+    ),
+    "vehicle_id": _hint(
+        [
+            "vin",
+            "vehicle_id",
+            "vehicle_num",
+            "vehicle_serial",
+            "license_plate",
+            "plate_num",
+            "plate_number",
+        ]
+    ),
+    "device_id": _hint(
+        [
+            "device_id",
+            "device_serial",
+            "serial_num",
+            "serial_number",
+            "equipment_id",
+            "implant_id",
+            "device_code",
+            "asset_id",
+            "udi",
+        ]
+    ),
+    "biometric_id": _hint(
+        [
+            "fingerprint",
+            "retina",
+            "iris",
+            "biometric",
+            "voice_print",
+            "hand_geometry",
+            "bio_id",
+            "biometric_id",
+        ]
+    ),
 }
 
 
@@ -340,9 +626,7 @@ _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 _SSN_RE = re.compile(r"(?!000|666|9\d{2})\d{3}-?(?!00)\d{2}-?(?!0000)\d{4}")
 
 # US phone — 10 digits with common separators, optional +1 country code.
-_US_PHONE_RE = re.compile(
-    r"(?:\+?1[\s.-]?)?\(?[2-9]\d{2}\)?[\s.-]?[2-9]\d{2}[\s.-]?\d{4}"
-)
+_US_PHONE_RE = re.compile(r"(?:\+?1[\s.-]?)?\(?[2-9]\d{2}\)?[\s.-]?[2-9]\d{2}[\s.-]?\d{4}")
 
 # US ZIP — 5 digits, optional -#### extension.
 _US_ZIP_RE = re.compile(r"\d{5}(?:-\d{4})?")
@@ -354,18 +638,14 @@ _US_ZIP_RE = re.compile(r"\d{5}(?:-\d{4})?")
 # component) AND the compact 8-digit shape (YYYYMMDD). The compact
 # branch is gated by `_iso_compact_date_valid` so a random 8-digit
 # ID column doesn't false-positive as a date.
-_ISO_DATE_RE = re.compile(
-    r"\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?)?Z?|\d{8}"
-)
-_US_DATE_RE  = re.compile(r"\d{1,2}/\d{1,2}/\d{2,4}")
-_EU_DATE_RE  = re.compile(r"\d{1,2}\.\d{1,2}\.\d{2,4}|\d{1,2}-\d{1,2}-\d{4}")
+_ISO_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?)?Z?|\d{8}")
+_US_DATE_RE = re.compile(r"\d{1,2}/\d{1,2}/\d{2,4}")
+_EU_DATE_RE = re.compile(r"\d{1,2}\.\d{1,2}\.\d{2,4}|\d{1,2}-\d{1,2}-\d{4}")
 
 # Person name — 1-3 whitespace-separated tokens, each starts with a letter,
 # letters / hyphens / apostrophes / dots only. Length 2-50 total.
 _NAME_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z''.\-]{0,29}")
-_PERSON_NAME_RE = re.compile(
-    rf"{_NAME_TOKEN_RE.pattern}(?:\s+{_NAME_TOKEN_RE.pattern}){{0,2}}"
-)
+_PERSON_NAME_RE = re.compile(rf"{_NAME_TOKEN_RE.pattern}(?:\s+{_NAME_TOKEN_RE.pattern}){{0,2}}")
 
 # PAN (credit card) — 13-19 digits with optional spaces or dashes between
 # groups of 4. Final validity check is Luhn (mod-10) — the regex alone
@@ -400,20 +680,18 @@ _URL_RE = re.compile(r"https?://[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]{4,}")
 
 # Fax number — identical value pattern to US phone; name hint is the
 # disambiguation signal (phone vs fax).
-_FAX_NUMBER_RE = re.compile(
-    r"(?:\+?1[\s.-]?)?\(?[2-9]\d{2}\)?[\s.-]?[2-9]\d{2}[\s.-]?\d{4}"
-)
+_FAX_NUMBER_RE = re.compile(r"(?:\+?1[\s.-]?)?\(?[2-9]\d{2}\)?[\s.-]?[2-9]\d{2}[\s.-]?\d{4}")
 
 # Name-hint-only detectors — patterns broad enough to match any plausible
 # identifier value; meaning lives in the column name, not the value shape.
 _HEALTH_PLAN_ID_RE = re.compile(r"[A-Z0-9\-]{4,30}", re.IGNORECASE)
-_LICENSE_NUM_RE    = re.compile(r"[A-Z0-9\-]{4,20}", re.IGNORECASE)
+_LICENSE_NUM_RE = re.compile(r"[A-Z0-9\-]{4,20}", re.IGNORECASE)
 
 # VIN — exactly 17 chars with restricted charset (no I, O, or Q per ISO 3779).
 _VEHICLE_ID_RE = re.compile(r"[A-HJ-NPR-Z0-9]{17}", re.IGNORECASE)
 
-_DEVICE_ID_RE    = re.compile(r"[A-Z0-9\-_.]{4,30}", re.IGNORECASE)
-_BIOMETRIC_ID_RE = re.compile(r".+")   # any non-empty value; name hint is definitive
+_DEVICE_ID_RE = re.compile(r"[A-Z0-9\-_.]{4,30}", re.IGNORECASE)
+_BIOMETRIC_ID_RE = re.compile(r".+")  # any non-empty value; name hint is definitive
 
 # Address — number + street word(s). Loose by design; the column-name hint
 # carries the meaning and the value pattern just filters out obvious non-
@@ -434,37 +712,37 @@ _ADDRESS_RE = re.compile(
 
 _SSN_VARIANTS = [
     (r"\d{3}-\d{2}-\d{4}", re.compile(r"\d{3}-\d{2}-\d{4}")),
-    (r"\d{9}",             re.compile(r"\d{9}")),
+    (r"\d{9}", re.compile(r"\d{9}")),
 ]
 
 _US_PHONE_VARIANTS = [
     # NB: most distinctive shapes first so e.g. "(NNN) NNN-NNNN" doesn't
     # leak into the bare-dash bucket.
     (r"\(\d{3}\) \d{3}-\d{4}", re.compile(r"\(\d{3}\) \d{3}-\d{4}")),
-    (r"\(\d{3}\)\d{3}-\d{4}",  re.compile(r"\(\d{3}\)\d{3}-\d{4}")),
-    (r"\d{3}-\d{3}-\d{4}",     re.compile(r"\d{3}-\d{3}-\d{4}")),
-    (r"\d{3}\.\d{3}\.\d{4}",   re.compile(r"\d{3}\.\d{3}\.\d{4}")),
-    (r"\d{3} \d{3} \d{4}",     re.compile(r"\d{3} \d{3} \d{4}")),
+    (r"\(\d{3}\)\d{3}-\d{4}", re.compile(r"\(\d{3}\)\d{3}-\d{4}")),
+    (r"\d{3}-\d{3}-\d{4}", re.compile(r"\d{3}-\d{3}-\d{4}")),
+    (r"\d{3}\.\d{3}\.\d{4}", re.compile(r"\d{3}\.\d{3}\.\d{4}")),
+    (r"\d{3} \d{3} \d{4}", re.compile(r"\d{3} \d{3} \d{4}")),
     (r"\+1 \d{3} \d{3} \d{4}", re.compile(r"\+1 \d{3} \d{3} \d{4}")),
     (r"\+1-\d{3}-\d{3}-\d{4}", re.compile(r"\+1-\d{3}-\d{3}-\d{4}")),
-    (r"\d{10}",                re.compile(r"\d{10}")),
+    (r"\d{10}", re.compile(r"\d{10}")),
 ]
 
 _US_ZIP_VARIANTS = [
     (r"\d{5}-\d{4}", re.compile(r"\d{5}-\d{4}")),
-    (r"\d{5}",       re.compile(r"\d{5}")),
+    (r"\d{5}", re.compile(r"\d{5}")),
 ]
 
 # Date detectors map directly to strptime — the format_pattern label is
 # what date_shift's dt.strftime() will consume on the masked output.
 _ISO_DATE_VARIANTS = [
     ("%Y-%m-%dT%H:%M:%SZ", re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")),
-    ("%Y-%m-%dT%H:%M:%S",  re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")),
-    ("%Y-%m-%d %H:%M:%S",  re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}")),
-    ("%Y-%m-%dT%H:%M",     re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}")),
-    ("%Y-%m-%d %H:%M",     re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}")),
-    ("%Y-%m-%d",           re.compile(r"\d{4}-\d{2}-\d{2}")),
-    ("%Y%m%d",             re.compile(r"\d{8}")),
+    ("%Y-%m-%dT%H:%M:%S", re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")),
+    ("%Y-%m-%d %H:%M:%S", re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}")),
+    ("%Y-%m-%dT%H:%M", re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}")),
+    ("%Y-%m-%d %H:%M", re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}")),
+    ("%Y-%m-%d", re.compile(r"\d{4}-\d{2}-\d{2}")),
+    ("%Y%m%d", re.compile(r"\d{8}")),
 ]
 _US_DATE_VARIANTS = [
     ("%m/%d/%Y", re.compile(r"\d{1,2}/\d{1,2}/\d{4}")),
@@ -479,19 +757,20 @@ _EU_DATE_VARIANTS = [
 _PAN_VARIANTS = [
     (r"\d{4} \d{4} \d{4} \d{4}", re.compile(r"\d{4} \d{4} \d{4} \d{4}")),
     (r"\d{4}-\d{4}-\d{4}-\d{4}", re.compile(r"\d{4}-\d{4}-\d{4}-\d{4}")),
-    (r"\d{16}",                  re.compile(r"\d{16}")),
-    (r"\d{15}",                  re.compile(r"\d{15}")),   # Amex
-    (r"\d{14}",                  re.compile(r"\d{14}")),   # Diners
+    (r"\d{16}", re.compile(r"\d{16}")),
+    (r"\d{15}", re.compile(r"\d{15}")),  # Amex
+    (r"\d{14}", re.compile(r"\d{14}")),  # Diners
 ]
 
 _ICD10_VARIANTS = [
     (r"[A-Z]\d{2}\.[A-Z0-9]{1,4}", re.compile(r"[A-Z]\d{2}\.[A-Z0-9]{1,4}")),
-    (r"[A-Z]\d{2}",                re.compile(r"[A-Z]\d{2}")),
-    (r"[A-Z]\d{2}[A-Z0-9]{1,4}",   re.compile(r"[A-Z]\d{2}[A-Z0-9]{1,4}")),
+    (r"[A-Z]\d{2}", re.compile(r"[A-Z]\d{2}")),
+    (r"[A-Z]\d{2}[A-Z0-9]{1,4}", re.compile(r"[A-Z]\d{2}[A-Z0-9]{1,4}")),
 ]
 
 
 # ── validators ──────────────────────────────────────────────────────────────────────────────
+
 
 def _luhn_valid(value: str) -> bool:
     """Luhn / mod-10 checksum used by every major credit-card scheme.
@@ -517,15 +796,88 @@ def _luhn_valid(value: str) -> bool:
 # so random "GB"- or "DE"-prefixed alphanumerics don't pass the mod-97 check
 # by luck. Adding a new country (e.g. when SWIFT publishes the next update)
 # is a one-line edit here.
-_IBAN_COUNTRIES: frozenset[str] = frozenset({
-    "AD", "AE", "AL", "AT", "AZ", "BA", "BE", "BG", "BH", "BR", "BY", "CH",
-    "CR", "CY", "CZ", "DE", "DK", "DO", "EE", "EG", "ES", "FI", "FO", "FR",
-    "GB", "GE", "GI", "GL", "GR", "GT", "HR", "HU", "IE", "IL", "IQ", "IS",
-    "IT", "JO", "KW", "KZ", "LB", "LC", "LI", "LT", "LU", "LV", "MC", "MD",
-    "ME", "MK", "MR", "MT", "MU", "NL", "NO", "PK", "PL", "PS", "PT", "QA",
-    "RO", "RS", "RU", "SA", "SC", "SE", "SI", "SK", "SM", "ST", "SV", "TL",
-    "TN", "TR", "UA", "VA", "VG", "XK",
-})
+_IBAN_COUNTRIES: frozenset[str] = frozenset(
+    {
+        "AD",
+        "AE",
+        "AL",
+        "AT",
+        "AZ",
+        "BA",
+        "BE",
+        "BG",
+        "BH",
+        "BR",
+        "BY",
+        "CH",
+        "CR",
+        "CY",
+        "CZ",
+        "DE",
+        "DK",
+        "DO",
+        "EE",
+        "EG",
+        "ES",
+        "FI",
+        "FO",
+        "FR",
+        "GB",
+        "GE",
+        "GI",
+        "GL",
+        "GR",
+        "GT",
+        "HR",
+        "HU",
+        "IE",
+        "IL",
+        "IQ",
+        "IS",
+        "IT",
+        "JO",
+        "KW",
+        "KZ",
+        "LB",
+        "LC",
+        "LI",
+        "LT",
+        "LU",
+        "LV",
+        "MC",
+        "MD",
+        "ME",
+        "MK",
+        "MR",
+        "MT",
+        "MU",
+        "NL",
+        "NO",
+        "PK",
+        "PL",
+        "PS",
+        "PT",
+        "QA",
+        "RO",
+        "RS",
+        "RU",
+        "SA",
+        "SC",
+        "SE",
+        "SI",
+        "SK",
+        "SM",
+        "ST",
+        "SV",
+        "TL",
+        "TN",
+        "TR",
+        "UA",
+        "VA",
+        "VG",
+        "XK",
+    }
+)
 
 
 def _iban_valid(value: str) -> bool:
@@ -554,13 +906,13 @@ def _iban_valid(value: str) -> bool:
         else:
             return False
     try:
-        return int(''.join(digits)) % 97 == 1
+        return int("".join(digits)) % 97 == 1
     except ValueError:
         return False
 
 
 def _ipv4_valid(value: str) -> bool:
-    parts = str(value).split('.')
+    parts = str(value).split(".")
     if len(parts) != 4:
         return False
     for p in parts:
@@ -621,27 +973,32 @@ def _iso_date_valid(value: str) -> bool:
 # valid but non-existent codes like J50.0); that's tracked in the gap doc
 # as a V1.5 item alongside the cross-cultural patterns.
 _ICD10_CHAPTERS: dict[str, tuple[int, int]] = {
-    "A": (0, 99), "B": (0, 99),     # infectious + parasitic
-    "C": (0, 99), "D": (0, 89),     # neoplasms / blood (D50-D89 separate chapter but same letter)
-    "E": (0, 89),                    # endocrine
-    "F": (1, 99),                    # mental
-    "G": (0, 99),                    # nervous
-    "H": (0, 95),                    # eye + ear
-    "I": (0, 99),                    # circulatory
-    "J": (0, 99),                    # respiratory
-    "K": (0, 95),                    # digestive
-    "L": (0, 99),                    # skin
-    "M": (0, 99),                    # musculoskeletal
-    "N": (0, 99),                    # genitourinary
-    "O": (0, 99),                    # pregnancy (O9A handled separately)
-    "P": (0, 96),                    # perinatal
-    "Q": (0, 99),                    # congenital
-    "R": (0, 99),                    # symptoms / signs
-    "S": (0, 99), "T": (0, 88),     # injury / poisoning
-    "U": (0, 85),                    # special purposes (COVID-19)
-    "V": (0, 99), "W": (0, 99),     # external causes
-    "X": (0, 99), "Y": (0, 99),
-    "Z": (0, 99),                    # factors influencing health
+    "A": (0, 99),
+    "B": (0, 99),  # infectious + parasitic
+    "C": (0, 99),
+    "D": (0, 89),  # neoplasms / blood (D50-D89 separate chapter but same letter)
+    "E": (0, 89),  # endocrine
+    "F": (1, 99),  # mental
+    "G": (0, 99),  # nervous
+    "H": (0, 95),  # eye + ear
+    "I": (0, 99),  # circulatory
+    "J": (0, 99),  # respiratory
+    "K": (0, 95),  # digestive
+    "L": (0, 99),  # skin
+    "M": (0, 99),  # musculoskeletal
+    "N": (0, 99),  # genitourinary
+    "O": (0, 99),  # pregnancy (O9A handled separately)
+    "P": (0, 96),  # perinatal
+    "Q": (0, 99),  # congenital
+    "R": (0, 99),  # symptoms / signs
+    "S": (0, 99),
+    "T": (0, 88),  # injury / poisoning
+    "U": (0, 85),  # special purposes (COVID-19)
+    "V": (0, 99),
+    "W": (0, 99),  # external causes
+    "X": (0, 99),
+    "Y": (0, 99),
+    "Z": (0, 99),  # factors influencing health
 }
 
 
@@ -666,34 +1023,51 @@ def _icd10_valid(value: str) -> bool:
 
 # ── detectors (callables) ───────────────────────────────────────────────────────────────────
 
-def detect_email(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
-    return _evaluate("email", _series_str(series), _EMAIL_RE,
-                     name_hint=_hits_name_hint("email", col_name),
-                     min_rate=DEFAULT_MIN_MATCH_RATE)
+
+def detect_email(series: pd.Series, col_name: str) -> DetectorMatch | None:
+    return _evaluate(
+        "email",
+        _series_str(series),
+        _EMAIL_RE,
+        name_hint=_hits_name_hint("email", col_name),
+        min_rate=DEFAULT_MIN_MATCH_RATE,
+    )
 
 
-def detect_ssn(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
-    return _evaluate("ssn", _series_str(series), _SSN_RE,
-                     name_hint=_hits_name_hint("ssn", col_name),
-                     min_rate=DEFAULT_MIN_MATCH_RATE,
-                     format_variants=_SSN_VARIANTS)
+def detect_ssn(series: pd.Series, col_name: str) -> DetectorMatch | None:
+    return _evaluate(
+        "ssn",
+        _series_str(series),
+        _SSN_RE,
+        name_hint=_hits_name_hint("ssn", col_name),
+        min_rate=DEFAULT_MIN_MATCH_RATE,
+        format_variants=_SSN_VARIANTS,
+    )
 
 
-def detect_us_phone(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
-    return _evaluate("us_phone", _series_str(series), _US_PHONE_RE,
-                     name_hint=_hits_name_hint("us_phone", col_name),
-                     min_rate=DEFAULT_MIN_MATCH_RATE,
-                     format_variants=_US_PHONE_VARIANTS)
+def detect_us_phone(series: pd.Series, col_name: str) -> DetectorMatch | None:
+    return _evaluate(
+        "us_phone",
+        _series_str(series),
+        _US_PHONE_RE,
+        name_hint=_hits_name_hint("us_phone", col_name),
+        min_rate=DEFAULT_MIN_MATCH_RATE,
+        format_variants=_US_PHONE_VARIANTS,
+    )
 
 
-def detect_us_zip(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
-    return _evaluate("us_zip", _series_str(series), _US_ZIP_RE,
-                     name_hint=_hits_name_hint("us_zip", col_name),
-                     min_rate=DEFAULT_MIN_MATCH_RATE,
-                     format_variants=_US_ZIP_VARIANTS)
+def detect_us_zip(series: pd.Series, col_name: str) -> DetectorMatch | None:
+    return _evaluate(
+        "us_zip",
+        _series_str(series),
+        _US_ZIP_RE,
+        name_hint=_hits_name_hint("us_zip", col_name),
+        min_rate=DEFAULT_MIN_MATCH_RATE,
+        format_variants=_US_ZIP_VARIANTS,
+    )
 
 
-def detect_person_name(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+def detect_person_name(series: pd.Series, col_name: str) -> DetectorMatch | None:
     """Heuristic: name-hinted column name + values look like proper-cased tokens.
 
     Without a strong column-name hint, person_name is too noisy — most short
@@ -701,12 +1075,16 @@ def detect_person_name(series: pd.Series, col_name: str) -> Optional[DetectorMat
     """
     if not _hits_name_hint("person_name", col_name):
         return None
-    return _evaluate("person_name", _series_str(series), _PERSON_NAME_RE,
-                     name_hint=True,
-                     min_rate=DEFAULT_MIN_MATCH_RATE)
+    return _evaluate(
+        "person_name",
+        _series_str(series),
+        _PERSON_NAME_RE,
+        name_hint=True,
+        min_rate=DEFAULT_MIN_MATCH_RATE,
+    )
 
 
-def detect_first_name(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+def detect_first_name(series: pd.Series, col_name: str) -> DetectorMatch | None:
     """First-name columns (fn, f_name, firstname, mm_fn, cust_fn, ...).
 
     Detection sprint (V1): split out from person_name so the strategy
@@ -716,12 +1094,16 @@ def detect_first_name(series: pd.Series, col_name: str) -> Optional[DetectorMatc
     """
     if not _hits_name_hint("first_name", col_name):
         return None
-    return _evaluate("first_name", _series_str(series), _PERSON_NAME_RE,
-                     name_hint=True,
-                     min_rate=NAME_HINT_MIN_RATE)
+    return _evaluate(
+        "first_name",
+        _series_str(series),
+        _PERSON_NAME_RE,
+        name_hint=True,
+        min_rate=NAME_HINT_MIN_RATE,
+    )
 
 
-def detect_last_name(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+def detect_last_name(series: pd.Series, col_name: str) -> DetectorMatch | None:
     """Last-name columns (ln, l_name, lastname, surname, mm_ln, cust_ln, ...).
 
     Detection sprint (V1) sibling of detect_first_name. Routes to
@@ -729,12 +1111,16 @@ def detect_last_name(series: pd.Series, col_name: str) -> Optional[DetectorMatch
     """
     if not _hits_name_hint("last_name", col_name):
         return None
-    return _evaluate("last_name", _series_str(series), _PERSON_NAME_RE,
-                     name_hint=True,
-                     min_rate=NAME_HINT_MIN_RATE)
+    return _evaluate(
+        "last_name",
+        _series_str(series),
+        _PERSON_NAME_RE,
+        name_hint=True,
+        min_rate=NAME_HINT_MIN_RATE,
+    )
 
 
-def detect_address(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+def detect_address(series: pd.Series, col_name: str) -> DetectorMatch | None:
     """Street addresses (addr, addr1, line1, street_1, mailing_address, ...).
 
     Detection sprint (V1). Name-hint only — street formats vary too widely
@@ -744,174 +1130,230 @@ def detect_address(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
     """
     if not _hits_name_hint("address", col_name):
         return None
-    return _evaluate("address", _series_str(series), _ADDRESS_RE,
-                     name_hint=True,
-                     min_rate=NAME_HINT_MIN_RATE)
+    return _evaluate(
+        "address", _series_str(series), _ADDRESS_RE, name_hint=True, min_rate=NAME_HINT_MIN_RATE
+    )
 
 
-def detect_iso_date(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
-    return _evaluate("iso_date", _series_str(series), _ISO_DATE_RE,
-                     name_hint=_hits_name_hint("iso_date", col_name),
-                     min_rate=DEFAULT_MIN_MATCH_RATE,
-                     validator=_iso_date_valid,
-                     format_variants=_ISO_DATE_VARIANTS)
+def detect_iso_date(series: pd.Series, col_name: str) -> DetectorMatch | None:
+    return _evaluate(
+        "iso_date",
+        _series_str(series),
+        _ISO_DATE_RE,
+        name_hint=_hits_name_hint("iso_date", col_name),
+        min_rate=DEFAULT_MIN_MATCH_RATE,
+        validator=_iso_date_valid,
+        format_variants=_ISO_DATE_VARIANTS,
+    )
 
 
-def detect_us_date(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
-    return _evaluate("us_date", _series_str(series), _US_DATE_RE,
-                     name_hint=_hits_name_hint("us_date", col_name),
-                     min_rate=DEFAULT_MIN_MATCH_RATE,
-                     format_variants=_US_DATE_VARIANTS)
+def detect_us_date(series: pd.Series, col_name: str) -> DetectorMatch | None:
+    return _evaluate(
+        "us_date",
+        _series_str(series),
+        _US_DATE_RE,
+        name_hint=_hits_name_hint("us_date", col_name),
+        min_rate=DEFAULT_MIN_MATCH_RATE,
+        format_variants=_US_DATE_VARIANTS,
+    )
 
 
-def detect_eu_date(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
-    return _evaluate("eu_date", _series_str(series), _EU_DATE_RE,
-                     name_hint=_hits_name_hint("eu_date", col_name),
-                     min_rate=DEFAULT_MIN_MATCH_RATE,
-                     format_variants=_EU_DATE_VARIANTS)
+def detect_eu_date(series: pd.Series, col_name: str) -> DetectorMatch | None:
+    return _evaluate(
+        "eu_date",
+        _series_str(series),
+        _EU_DATE_RE,
+        name_hint=_hits_name_hint("eu_date", col_name),
+        min_rate=DEFAULT_MIN_MATCH_RATE,
+        format_variants=_EU_DATE_VARIANTS,
+    )
 
 
-def detect_pan(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+def detect_pan(series: pd.Series, col_name: str) -> DetectorMatch | None:
     """Credit-card PAN. Regex picks up 13-19-digit groups; Luhn checksum
     rejects random digit strings so a 16-digit phone stub or transaction
     ID doesn't false-positive."""
-    return _evaluate("pan", _series_str(series), _PAN_RE,
-                     name_hint=_hits_name_hint("pan", col_name),
-                     min_rate=DEFAULT_MIN_MATCH_RATE,
-                     validator=_luhn_valid,
-                     format_variants=_PAN_VARIANTS)
+    return _evaluate(
+        "pan",
+        _series_str(series),
+        _PAN_RE,
+        name_hint=_hits_name_hint("pan", col_name),
+        min_rate=DEFAULT_MIN_MATCH_RATE,
+        validator=_luhn_valid,
+        format_variants=_PAN_VARIANTS,
+    )
 
 
-def detect_cvv(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+def detect_cvv(series: pd.Series, col_name: str) -> DetectorMatch | None:
     """CVV / CVC. Any 3-digit string matches the regex, so the detector
     only fires on a strong column-name hint — false-positive rate
     without the hint would be unmanageable."""
     if not _hits_name_hint("cvv", col_name):
         return None
-    return _evaluate("cvv", _series_str(series), _CVV_RE,
-                     name_hint=True,
-                     min_rate=DEFAULT_MIN_MATCH_RATE)
+    return _evaluate(
+        "cvv", _series_str(series), _CVV_RE, name_hint=True, min_rate=DEFAULT_MIN_MATCH_RATE
+    )
 
 
-def detect_iban(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+def detect_iban(series: pd.Series, col_name: str) -> DetectorMatch | None:
     """IBAN — country code + checksum + BBAN. Mod-97 validates the
     checksum so random alphanumeric strings don't false-positive."""
-    return _evaluate("iban", _series_str(series), _IBAN_RE,
-                     name_hint=_hits_name_hint("iban", col_name),
-                     min_rate=DEFAULT_MIN_MATCH_RATE,
-                     validator=_iban_valid)
+    return _evaluate(
+        "iban",
+        _series_str(series),
+        _IBAN_RE,
+        name_hint=_hits_name_hint("iban", col_name),
+        min_rate=DEFAULT_MIN_MATCH_RATE,
+        validator=_iban_valid,
+    )
 
 
-def detect_ipv4(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+def detect_ipv4(series: pd.Series, col_name: str) -> DetectorMatch | None:
     """IPv4 dotted-quad. Validator clamps each octet to 0-255 so
     "999.1.1.1" is rejected even though it matches the regex."""
-    return _evaluate("ipv4", _series_str(series), _IPV4_RE,
-                     name_hint=_hits_name_hint("ipv4", col_name),
-                     min_rate=DEFAULT_MIN_MATCH_RATE,
-                     validator=_ipv4_valid)
+    return _evaluate(
+        "ipv4",
+        _series_str(series),
+        _IPV4_RE,
+        name_hint=_hits_name_hint("ipv4", col_name),
+        min_rate=DEFAULT_MIN_MATCH_RATE,
+        validator=_ipv4_valid,
+    )
 
 
-def detect_icd10(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+def detect_icd10(series: pd.Series, col_name: str) -> DetectorMatch | None:
     """ICD-10-CM diagnosis codes. Regex matches the chapter-letter + 2-digit
     category structure; validator enforces minimal structural rules to reduce
     false-positives on short arbitrary strings. Fires on value pattern alone;
     name hint lowers the threshold."""
-    return _evaluate("icd10", _series_str(series), _ICD10_RE,
-                     name_hint=_hits_name_hint("icd10", col_name),
-                     min_rate=DEFAULT_MIN_MATCH_RATE,
-                     validator=_icd10_valid,
-                     format_variants=_ICD10_VARIANTS)
+    return _evaluate(
+        "icd10",
+        _series_str(series),
+        _ICD10_RE,
+        name_hint=_hits_name_hint("icd10", col_name),
+        min_rate=DEFAULT_MIN_MATCH_RATE,
+        validator=_icd10_valid,
+        format_variants=_ICD10_VARIANTS,
+    )
 
 
-def detect_npi(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+def detect_npi(series: pd.Series, col_name: str) -> DetectorMatch | None:
     """National Provider Identifier — 10-digit with CMS Luhn check digit."""
-    return _evaluate("npi", _series_str(series), _NPI_RE,
-                     name_hint=_hits_name_hint("npi", col_name),
-                     min_rate=DEFAULT_MIN_MATCH_RATE,
-                     validator=_npi_valid)
+    return _evaluate(
+        "npi",
+        _series_str(series),
+        _NPI_RE,
+        name_hint=_hits_name_hint("npi", col_name),
+        min_rate=DEFAULT_MIN_MATCH_RATE,
+        validator=_npi_valid,
+    )
 
 
-def detect_mrn(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+def detect_mrn(series: pd.Series, col_name: str) -> DetectorMatch | None:
     """Medical Record Number — no universal format; fires on name hint only.
     The alphanumeric pattern guards against obviously non-identifier values
     (plain prose, floats, very short strings)."""
     if not _hits_name_hint("mrn", col_name):
         return None
-    return _evaluate("mrn", _series_str(series), _MRN_RE,
-                     name_hint=True,
-                     min_rate=NAME_HINT_MIN_RATE)
+    return _evaluate(
+        "mrn", _series_str(series), _MRN_RE, name_hint=True, min_rate=NAME_HINT_MIN_RATE
+    )
 
 
-def detect_url(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+def detect_url(series: pd.Series, col_name: str) -> DetectorMatch | None:
     """Web URLs — http/https scheme. Fires on value pattern alone (no
     name hint required) since the URL format is distinctive enough."""
-    return _evaluate("url", _series_str(series), _URL_RE,
-                     name_hint=_hits_name_hint("url", col_name),
-                     min_rate=DEFAULT_MIN_MATCH_RATE)
+    return _evaluate(
+        "url",
+        _series_str(series),
+        _URL_RE,
+        name_hint=_hits_name_hint("url", col_name),
+        min_rate=DEFAULT_MIN_MATCH_RATE,
+    )
 
 
-def detect_fax_number(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+def detect_fax_number(series: pd.Series, col_name: str) -> DetectorMatch | None:
     """Fax numbers — identical format to US phone; name hint is the only
     way to distinguish a fax column from a phone column."""
     if not _hits_name_hint("fax_number", col_name):
         return None
-    return _evaluate("fax_number", _series_str(series), _FAX_NUMBER_RE,
-                     name_hint=True,
-                     min_rate=DEFAULT_MIN_MATCH_RATE)
+    return _evaluate(
+        "fax_number",
+        _series_str(series),
+        _FAX_NUMBER_RE,
+        name_hint=True,
+        min_rate=DEFAULT_MIN_MATCH_RATE,
+    )
 
 
-def detect_health_plan_id(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+def detect_health_plan_id(series: pd.Series, col_name: str) -> DetectorMatch | None:
     """Health-plan beneficiary / member / subscriber IDs — name hint only.
     No standard value format; meaning lives in the column name."""
     if not _hits_name_hint("health_plan_id", col_name):
         return None
-    return _evaluate("health_plan_id", _series_str(series), _HEALTH_PLAN_ID_RE,
-                     name_hint=True,
-                     min_rate=NAME_HINT_MIN_RATE)
+    return _evaluate(
+        "health_plan_id",
+        _series_str(series),
+        _HEALTH_PLAN_ID_RE,
+        name_hint=True,
+        min_rate=NAME_HINT_MIN_RATE,
+    )
 
 
-def detect_license_num(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+def detect_license_num(series: pd.Series, col_name: str) -> DetectorMatch | None:
     """Certificate and license numbers — name hint only. Formats vary by
     state / regulatory body; the column name is the definitive signal."""
     if not _hits_name_hint("license_num", col_name):
         return None
-    return _evaluate("license_num", _series_str(series), _LICENSE_NUM_RE,
-                     name_hint=True,
-                     min_rate=NAME_HINT_MIN_RATE)
+    return _evaluate(
+        "license_num",
+        _series_str(series),
+        _LICENSE_NUM_RE,
+        name_hint=True,
+        min_rate=NAME_HINT_MIN_RATE,
+    )
 
 
-def detect_vehicle_id(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+def detect_vehicle_id(series: pd.Series, col_name: str) -> DetectorMatch | None:
     """Vehicle identifiers. The VIN format (17 alphanum, no I/O/Q per ISO 3779)
     fires without a name hint; name hint lowers the threshold for partial or
     non-VIN vehicle identifiers."""
-    return _evaluate("vehicle_id", _series_str(series), _VEHICLE_ID_RE,
-                     name_hint=_hits_name_hint("vehicle_id", col_name),
-                     min_rate=DEFAULT_MIN_MATCH_RATE)
+    return _evaluate(
+        "vehicle_id",
+        _series_str(series),
+        _VEHICLE_ID_RE,
+        name_hint=_hits_name_hint("vehicle_id", col_name),
+        min_rate=DEFAULT_MIN_MATCH_RATE,
+    )
 
 
-def detect_device_id(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+def detect_device_id(series: pd.Series, col_name: str) -> DetectorMatch | None:
     """Device identifiers and serial numbers — name hint only. Medical device
     UDIs, implant serial numbers, and equipment IDs have no shared format."""
     if not _hits_name_hint("device_id", col_name):
         return None
-    return _evaluate("device_id", _series_str(series), _DEVICE_ID_RE,
-                     name_hint=True,
-                     min_rate=NAME_HINT_MIN_RATE)
+    return _evaluate(
+        "device_id", _series_str(series), _DEVICE_ID_RE, name_hint=True, min_rate=NAME_HINT_MIN_RATE
+    )
 
 
-def detect_biometric_id(series: pd.Series, col_name: str) -> Optional[DetectorMatch]:
+def detect_biometric_id(series: pd.Series, col_name: str) -> DetectorMatch | None:
     """Biometric identifiers (fingerprints, retina scans, etc.) — name hint only.
     Biometric data has no universal string format; the column name is definitive."""
     if not _hits_name_hint("biometric_id", col_name):
         return None
-    return _evaluate("biometric_id", _series_str(series), _BIOMETRIC_ID_RE,
-                     name_hint=True,
-                     min_rate=NAME_HINT_MIN_RATE)
+    return _evaluate(
+        "biometric_id",
+        _series_str(series),
+        _BIOMETRIC_ID_RE,
+        name_hint=True,
+        min_rate=NAME_HINT_MIN_RATE,
+    )
 
 
 # ── registry ──────────────────────────────────────────────────────────────────────────────────
 
-DetectorFn = Callable[[pd.Series, str], Optional[DetectorMatch]]
+DetectorFn = Callable[[pd.Series, str], DetectorMatch | None]
 
 REGISTERED_DETECTORS: list[DetectorFn] = [
     detect_email,
@@ -950,7 +1392,7 @@ def run_all_detectors(
     series: pd.Series,
     col_name: str,
     *,
-    custom: Optional[list[CustomDetectorSpec]] = None,
+    custom: list[CustomDetectorSpec] | None = None,
 ) -> list[DetectorMatch]:
     """Run every registered detector against a column, plus any caller-supplied
     custom detectors. Returns matches sorted by descending match_rate so the
@@ -981,7 +1423,8 @@ def run_all_detectors(
 
 # ── custom detectors ──────────────────────────────────────────────────────────────────────────
 
-def _custom_name_hint_pattern(name_hints: list[str]) -> Optional[re.Pattern[str]]:
+
+def _custom_name_hint_pattern(name_hints: list[str]) -> re.Pattern[str] | None:
     """Compile a column-name-matching regex from a list of substrings.
 
     Mirrors the built-in `_NAME_HINTS` shape: case-insensitive, matches when
@@ -1001,13 +1444,17 @@ def _hits_custom_name_hint(spec: CustomDetectorSpec, col_name: str) -> bool:
 
 
 def _run_custom_detector(
-    series: pd.Series, col_name: str, spec: CustomDetectorSpec,
-) -> Optional[DetectorMatch]:
+    series: pd.Series,
+    col_name: str,
+    spec: CustomDetectorSpec,
+) -> DetectorMatch | None:
     """Compile + apply one custom regex spec to a column."""
     pattern = re.compile(spec.pattern)
     name_hint = _hits_custom_name_hint(spec, col_name)
     return _evaluate(
-        spec.id, _series_str(series), pattern,
+        spec.id,
+        _series_str(series),
+        pattern,
         name_hint=name_hint,
         min_rate=max(0.0, min(1.0, spec.threshold)),
     )

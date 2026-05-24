@@ -21,11 +21,12 @@ Decision matrix in plans/2026-05-09-hybrid-engine-bug-followup.md §Bug 4:
 
 Run with: ``pytest tests/benchmark/transforms/test_bug_4_arrow_pandas_compat.py -m benchmark -s``
 """
+
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from datetime import datetime, timedelta
-from typing import Callable
 
 import pandas as pd
 import pytest
@@ -40,7 +41,6 @@ from decoy_engine.transforms import (
     RedactStrategy,
     ShuffleStrategy,
 )
-
 
 # Multi-scale: smoke / standard / large / scaled. The 5M tier needs ~32 GB
 # RAM to comfortably hold both backends. Faker is too slow per-row to run
@@ -65,6 +65,7 @@ SKIP_RULES: dict[tuple[str, str, int], str] = {
 
 
 # ── Fixture builders ────────────────────────────────────────────────────────
+
 
 def build_string_column(rows: int, backend: str) -> pd.Series:
     values = [f"user{i}@example.com" for i in range(rows)]
@@ -167,8 +168,7 @@ _RESULTS: dict[tuple[str, str, int], dict] = {}
 @pytest.mark.benchmark
 @pytest.mark.parametrize("rows", ROW_COUNTS)
 @pytest.mark.parametrize("backend", ["numpy", "arrow"])
-@pytest.mark.parametrize("name,strategy_cls,rule,builder", SCENARIOS,
-                         ids=[s[0] for s in SCENARIOS])
+@pytest.mark.parametrize("name,strategy_cls,rule,builder", SCENARIOS, ids=[s[0] for s in SCENARIOS])
 def test_transform_under_dtype_backend(name, strategy_cls, rule, builder, backend, rows):
     """Per-cell test in the (transform x backend x rows) matrix.
 
@@ -244,8 +244,10 @@ def test_zzz_summary():
         if not any_at_scale:
             continue
         print(f"\n--- {rows:,} rows ---")
-        print(f"{'transform':12s} {'numpy ok':>9s} {'numpy s':>10s} "
-              f"{'arrow ok':>9s} {'arrow s':>10s}  {'verdict':s}")
+        print(
+            f"{'transform':12s} {'numpy ok':>9s} {'numpy s':>10s} "
+            f"{'arrow ok':>9s} {'arrow s':>10s}  {'verdict':s}"
+        )
         print("-" * 80)
         for scenario in SCENARIOS:
             name = scenario[0]
@@ -273,8 +275,7 @@ def test_zzz_summary():
             else:
                 verdict = "--"
 
-            print(f"{name:12s} {str(np_ok):>9s} {np_str:>10s} "
-                  f"{str(ar_ok):>9s} {ar_str:>10s}  {verdict}")
+            print(f"{name:12s} {np_ok!s:>9s} {np_str:>10s} {ar_ok!s:>9s} {ar_str:>10s}  {verdict}")
 
     # Cross-scale trend table for the headline transforms.
     print()
@@ -302,16 +303,21 @@ def test_zzz_summary():
     print()
     print("=" * 100)
     catastrophic_combos = [
-        (n, b, r) for (n, b, r), v in _RESULTS.items()
-        if v.get("elapsed") and v["elapsed"] > 10 * (
-            _RESULTS.get((n, "numpy" if b == "arrow" else "arrow", r), {}).get("elapsed") or 1
-        )
+        (n, b, r)
+        for (n, b, r), v in _RESULTS.items()
+        if v.get("elapsed")
+        and v["elapsed"]
+        > 10 * (_RESULTS.get((n, "numpy" if b == "arrow" else "arrow", r), {}).get("elapsed") or 1)
     ]
     if catastrophic_combos:
         broken_names = sorted(set(n for n, _, _ in catastrophic_combos))
-        print(f"VERDICT: Arrow-backed pandas works for most transforms but is "
-              f"CATASTROPHICALLY slower for: {', '.join(broken_names)}.")
+        print(
+            f"VERDICT: Arrow-backed pandas works for most transforms but is "
+            f"CATASTROPHICALLY slower for: {', '.join(broken_names)}."
+        )
         print("-> ADD OPT-IN FLAG; default stays numpy. Document the broken transforms;")
         print("  callers can opt in only when their pipeline doesn't include the broken ones.")
     else:
-        print("VERDICT: Arrow-backed pandas works across all transforms; details in trend table above.")
+        print(
+            "VERDICT: Arrow-backed pandas works across all transforms; details in trend table above."
+        )

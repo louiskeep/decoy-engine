@@ -4,6 +4,7 @@ All frozen dataclasses — snapshots are immutable input; results are
 immutable output. Lets the runner cache them safely and lets tests
 construct them inline without spinning up a real DB.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -33,6 +34,7 @@ class Edge:
     inference (best-guess). The UI surfaces inferred edges with a
     dashed line so users know which is which.
     """
+
     source_table: str
     source_column: str
     target_table: str
@@ -61,6 +63,7 @@ class SchemaSnapshot:
     edges where columns named `*_id` match a table's PK but no declared
     FK exists.
     """
+
     db_kind: str
     schema_name: str
     tables: tuple[Table, ...]
@@ -84,6 +87,7 @@ class Hazard:
 
     Each detector is a single pure function in `hazards.py`.
     """
+
     kind: str
     table: str | None
     description: str
@@ -97,8 +101,9 @@ class WalkResult:
     Persisted as JSONB by the runner so the dashboard can show
     historical results without re-executing.
     """
-    snapshot_summary: dict       # {table_count, column_count, declared_edge_count, inferred_edge_count}
-    edges: tuple[Edge, ...]      # declared + inferred merged; UI distinguishes via Edge.declared
+
+    snapshot_summary: dict  # {table_count, column_count, declared_edge_count, inferred_edge_count}
+    edges: tuple[Edge, ...]  # declared + inferred merged; UI distinguishes via Edge.declared
     hazards: tuple[Hazard, ...]
 
 
@@ -108,6 +113,7 @@ class DriftResult:
     two snapshots. Row-count comparison is explicitly out of scope —
     drift is structural only. Phase 3 may add a row-count toggle.
     """
+
     added_tables: tuple[str, ...]
     removed_tables: tuple[str, ...]
     # Each entry: {"table": str, "column": str, "change_kind": str}
