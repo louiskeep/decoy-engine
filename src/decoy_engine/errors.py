@@ -1,14 +1,21 @@
-"""
-Public exceptions raised by decoy_engine.
+"""Public exceptions raised by decoy_engine (V2.0-C).
 
-The engine raises these typed exceptions where the caller benefits from
-catching a specific failure mode (config errors, connector auth issues,
-license problems). Internal code that has not been migrated to typed
-exceptions yet may still raise generic ValueError / RuntimeError; that
-is fine and will be tightened incrementally.
+Single canonical location for every typed exception the engine raises
+that a caller might want to catch. Pre-V2.0-C this surface was split
+across ``decoy_engine.exceptions`` (orchestration/config/connector
+errors) and ``decoy_engine.internal.validator`` (ValidationError);
+V2.0-C consolidates them here so callers depend on one module and
+neither needs to reach into ``decoy_engine.internal.*``.
 
-Anything not listed here is private and may change without a version bump.
+Anything not listed here is private and may change without a version
+bump. Internal code may still raise generic ValueError / RuntimeError;
+that is fine and will be tightened incrementally as those callsites
+move to typed exceptions.
 """
+
+from __future__ import annotations
+
+from typing import Any
 
 
 class DecoyError(Exception):
@@ -44,6 +51,52 @@ class PipelineValidationError(ConfigError):
         super().__init__(message)
 
 
+class ValidationError(Exception):
+    """Lower-level validation failure raised by individual modular
+    validators (``decoy_engine.graph.validators.*``).
+
+    The public boundary catches this and re-wraps as
+    :class:`PipelineValidationError` for the raise-on-first-error
+    public API, or collects it into a
+    :class:`decoy_engine.validation_result.ValidationResult` for the
+    collect-all API. Callers should normally catch
+    PipelineValidationError or read the ValidationResult; this type
+    is exposed mainly because the per-op ``validate_config``
+    callbacks raise it.
+
+    R2.1: carries an optional stable ``code`` so callers can map the
+    failure to UI inspector fields without parsing the message
+    string. Codes live in
+    ``decoy_engine.validation_result.CODES``. Older raises with no
+    code are tolerated -- they surface as ``CODES.UNTAGGED`` when
+    converted to a ValidationResult.
+
+    Moved from ``decoy_engine.internal.validator`` to this public
+    module in V2.0-C so platform/CLI callers stop importing from
+    ``decoy_engine.internal.*``.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        path: str | None = None,
+        code: str | None = None,
+    ) -> None:
+        self.path = path
+        self.code = code
+        if path:
+            full_message = f"Validation error at '{path}': {message}"
+        else:
+            full_message = f"Validation error: {message}"
+        super().__init__(full_message)
+        self._raw_message = message
+
+    @property
+    def raw_message(self) -> str:
+        """The original message without the `Validation error at '<path>':` wrapper."""
+        return self._raw_message
+
+
 class ConnectorError(DecoyError):
     """Base class for connector-related errors."""
 
@@ -60,7 +113,7 @@ class LicenseExpiredError(LicenseError):
     """Raised when a license has expired."""
 
 
-class FlagPauseSignal(DecoyError):  # noqa: N818 -- this is a control-flow Signal, not a runtime Error; the "Signal" suffix is intentional and contrasts with sibling *Error classes that are real failures.
+class FlagPauseSignal(DecoyError):  # noqa: N818 -- control-flow Signal, not a runtime Error.
     """Raised by flag_gate op when review conditions fail.
 
     Not a crash: the platform runner catches this and transitions the
@@ -68,7 +121,7 @@ class FlagPauseSignal(DecoyError):  # noqa: N818 -- this is a control-flow Signa
     list is stored in the `job_reviews` table for the approver.
     """
 
-    def __init__(self, conditions_failed: list[dict], gate_id: str = "") -> None:
+    def __init__(self, conditions_failed: list[dict[str, Any]], gate_id: str = "") -> None:
         self.conditions_failed = conditions_failed
         self.gate_id = gate_id
         detail = "; ".join(c.get("message", str(c)) for c in conditions_failed)
@@ -131,7 +184,7 @@ class PKDuplicatesError(DecoyError):
     Set ``DECOY_PK_LENIENT=1`` to downgrade to a logged warning + a
     manifest entry so a one-off scrub with a faker-based PK + small
     row_count can still ship. Tier-1 audit (2026-05-20) flipped the
-    default from lenient to strict — analytics pipelines should not
+    default from lenient to strict -- analytics pipelines should not
     silently ship duplicate primary keys.
 
     Maps to code ``pk.duplicates``. Carries the column name + counts
@@ -163,3 +216,20 @@ class PKDuplicatesError(DecoyError):
                 f"downgrade this to a warning."
             )
         super().__init__(message)
+
+
+__all__ = [
+    "ConfigError",
+    "ConnectorAuthError",
+    "ConnectorError",
+    "DecoyError",
+    "EmptyParentPoolError",
+    "FKPreservationError",
+    "FlagPauseSignal",
+    "LicenseError",
+    "LicenseExpiredError",
+    "PKDuplicatesError",
+    "PipelineValidationError",
+    "UnknownFKColumnError",
+    "ValidationError",
+]

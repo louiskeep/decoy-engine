@@ -14,8 +14,10 @@ from decoy_engine.expressions import BASE_GLOBALS, safe_eval
 from decoy_engine.generators.derivation import (
     synthetic_column_seed,
 )
-from decoy_engine.internal.helpers import (
+from decoy_engine.internal.crypto import (
     deterministic_hash,
+)
+from decoy_engine.internal.faker_setup import (
     get_faker_providers,
     make_faker,
 )

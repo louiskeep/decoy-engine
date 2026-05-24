@@ -21,7 +21,7 @@ from collections.abc import Callable
 import pandas as pd
 import pytest
 
-from decoy_engine.internal.helpers import hmac_hex, hmac_seed
+from decoy_engine.internal.crypto import hmac_hex, hmac_seed
 from decoy_engine.transforms.date_shift import DateShiftStrategy
 from decoy_engine.transforms.faker_based import FakerStrategy
 from decoy_engine.transforms.hash import HashStrategy

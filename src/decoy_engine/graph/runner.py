@@ -36,10 +36,11 @@ from typing import TYPE_CHECKING
 import pyarrow as pa
 
 from decoy_engine.context import ExecutionContext
-from decoy_engine.exceptions import PipelineValidationError
+from decoy_engine.errors import PipelineValidationError
 
 if TYPE_CHECKING:
     from decoy_engine.validation_result import ValidationResult
+from decoy_engine.errors import ValidationError
 from decoy_engine.graph._fk_validators import _validate_column_relationships
 from decoy_engine.graph.config_loading import (
     _load_yaml,
@@ -63,7 +64,6 @@ from decoy_engine.graph.validators import (
     validate_nodes_ref_reachability,
     validate_top_level,
 )
-from decoy_engine.internal.validator import ValidationError
 
 # Back-compat re-exports for callers that historically reached into
 # runner.py for these symbols. The implementations live elsewhere now;
@@ -131,7 +131,7 @@ def validate_graph_full(yaml_text: str, *, strict: bool = False) -> "ValidationR
     at once and map each to a UI field via the stable ``code`` string.
 
     YAML parse errors (the input isn't valid YAML at all) still raise
-    as ``decoy_engine.exceptions.ConfigError`` -- they're an upstream
+    as ``decoy_engine.errors.ConfigError`` -- they're an upstream
     problem, not a validation outcome. Use a try/except at the call
     site if needed.
 

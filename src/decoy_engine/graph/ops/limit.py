@@ -6,8 +6,8 @@ Config:
 
 from typing import Any
 
+from decoy_engine.errors import ValidationError
 from decoy_engine.graph.ops._base import is_polars_frame
-from decoy_engine.internal.validator import ValidationError
 
 KIND = "limit"
 NATIVE_ENGINE = "polars"

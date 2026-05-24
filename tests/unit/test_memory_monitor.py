@@ -18,7 +18,7 @@ import threading
 
 import pytest
 
-from decoy_engine.exceptions import FlagPauseSignal
+from decoy_engine.errors import FlagPauseSignal
 from decoy_engine.graph.memory_monitor import PeakRSSMonitor
 
 

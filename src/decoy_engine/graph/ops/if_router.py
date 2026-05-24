@@ -28,7 +28,7 @@ OUTPUT_PORTS = ("pass", "fail")
 
 
 def validate_config(config: dict) -> None:
-    from decoy_engine.internal.validator import ValidationError
+    from decoy_engine.errors import ValidationError
 
     pred = config.get("predicate")
     if not isinstance(pred, str) or not pred.strip():

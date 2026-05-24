@@ -68,7 +68,7 @@ class LargeFileProcessor:
 
         # Create output path and directory if output is needed
         if output_path:
-            from decoy_engine.internal.helpers import create_directory_for_file
+            from decoy_engine.internal.fs import create_directory_for_file
 
             create_directory_for_file(output_path)
             self.logger.debug(f"Created output directory: {os.path.dirname(output_path)}")
@@ -79,7 +79,7 @@ class LargeFileProcessor:
             out_encoding = output_options.get("encoding", "utf-8")
             quoting_mode = output_options.get("quoting", "minimal")
 
-            from decoy_engine.internal.helpers import convert_quoting_mode
+            from decoy_engine.internal.fs import convert_quoting_mode
 
             quoting = convert_quoting_mode(quoting_mode)
 
@@ -175,7 +175,7 @@ class LargeFileProcessor:
                 )
 
                 # Format ETA nicely
-                from decoy_engine.internal.helpers import format_elapsed_time
+                from decoy_engine.internal.fs import format_elapsed_time
 
                 eta_str = format_elapsed_time(eta_seconds)
 

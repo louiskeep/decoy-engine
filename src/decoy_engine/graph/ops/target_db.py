@@ -31,13 +31,13 @@ from typing import Any
 import pandas as pd
 import pyarrow as pa
 
+from decoy_engine.errors import ValidationError
 from decoy_engine.graph.ops._base import OpError
 from decoy_engine.graph.ops.source_db import (
     _attach_target_for,
     _resolve_scanner,
     _validate_sql_identifier,
 )
-from decoy_engine.internal.validator import ValidationError
 
 KIND = "target.db"
 NATIVE_ENGINE = "duckdb"

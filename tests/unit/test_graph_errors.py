@@ -123,8 +123,8 @@ def test_translate_forwards_validation_error_code_and_path():
     """R3.4 typed errors: translate() should promote ValidationError.code
     and .path onto the returned OpError so the runner can persist them
     on the records dict."""
+    from decoy_engine.errors import ValidationError
     from decoy_engine.graph.errors import translate
-    from decoy_engine.internal.validator import ValidationError
 
     src = ValidationError(
         "missing required field 'path'",

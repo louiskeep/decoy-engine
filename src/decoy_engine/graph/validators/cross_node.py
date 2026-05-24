@@ -33,11 +33,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from decoy_engine.errors import ValidationError
 from decoy_engine.graph.validators._shared import (
     FILE_SOURCE_KINDS,
     FILE_TARGET_KINDS,
 )
-from decoy_engine.internal.validator import ValidationError
 from decoy_engine.validation_result import CODES
 
 

@@ -17,9 +17,9 @@ hybrid-engine behaviour (DuckDB Arrow table, pandas DataFrame) is preserved.
 
 from typing import Any
 
+from decoy_engine.errors import ValidationError
 from decoy_engine.graph.ops._base import OpError
 from decoy_engine.graph.ops._cloud_io import download_and_read, infer_format, validate_format
-from decoy_engine.internal.validator import ValidationError
 
 KIND = "source.s3"
 NATIVE_ENGINE = "duckdb"

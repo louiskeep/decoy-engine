@@ -26,7 +26,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from decoy_engine.exceptions import DecoyError
+from decoy_engine.errors import DecoyError
 
 
 class DiscoverySqlError(DecoyError):

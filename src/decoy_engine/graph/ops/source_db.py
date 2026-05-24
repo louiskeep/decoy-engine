@@ -45,8 +45,8 @@ from typing import Any
 import pandas as pd
 import pyarrow as pa
 
+from decoy_engine.errors import ValidationError
 from decoy_engine.graph.ops._base import OpError
-from decoy_engine.internal.validator import ValidationError
 
 # (sqlalchemy_dialect_prefix, duckdb_extension, duckdb_attach_type).
 _NATIVE_SCANNERS: dict[str, tuple[str, str]] = {

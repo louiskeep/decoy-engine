@@ -116,7 +116,7 @@ class IOHandler(ABC):
         Returns:
             Human-readable string with file size information
         """
-        from decoy_engine.internal.helpers import convert_file_size, get_file_size
+        from decoy_engine.internal.fs import convert_file_size, get_file_size
 
         size_bytes = get_file_size(self.input_path)
         if size_bytes is None:

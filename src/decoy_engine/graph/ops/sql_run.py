@@ -30,8 +30,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from decoy_engine.errors import ValidationError
 from decoy_engine.graph.ops._base import OpError
-from decoy_engine.internal.validator import ValidationError
 
 KIND = "sql_run"
 NATIVE_ENGINE = "duckdb"

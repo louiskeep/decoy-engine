@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from decoy_engine.internal.validator import ValidationError
+from decoy_engine.errors import ValidationError
 
 
 def validate_edges(edges: list[dict[str, Any]], nodes: list[dict[str, Any]]) -> None:

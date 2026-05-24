@@ -4,9 +4,9 @@ import pandas as pd
 import polars as pl
 import pytest
 
+from decoy_engine.errors import ValidationError
 from decoy_engine.graph.ops import if_router
 from decoy_engine.graph.ops._base import OpError
-from decoy_engine.internal.validator import ValidationError
 
 
 def _pd(records):

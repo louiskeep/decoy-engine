@@ -18,7 +18,7 @@ import pytest
 import yaml
 
 from decoy_engine import preview_graph, run_graph, validate_graph
-from decoy_engine.exceptions import PipelineValidationError
+from decoy_engine.errors import PipelineValidationError
 
 
 @pytest.fixture

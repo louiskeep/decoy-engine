@@ -112,8 +112,8 @@ def test_validator_rejects_bad_native_engine_declaration(monkeypatch):
     V2.0-B: assertion runs against the modular validate_nodes function
     directly (the bundled GraphConfigValidator was deleted in V2.0-B).
     """
+    from decoy_engine.errors import ValidationError
     from decoy_engine.graph.validators import known_kinds, validate_nodes
-    from decoy_engine.internal.validator import ValidationError
     from decoy_engine.validation_result import CODES
 
     # A minimal fake op with an invalid engine string.

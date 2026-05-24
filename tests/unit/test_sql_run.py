@@ -12,9 +12,9 @@ from __future__ import annotations
 import pyarrow as pa
 import pytest
 
+from decoy_engine.errors import ValidationError
 from decoy_engine.graph.ops import OPS, sql_run
 from decoy_engine.graph.ops._base import OpError
-from decoy_engine.internal.validator import ValidationError
 
 
 def _table_from_dict(data: dict[str, list]) -> pa.Table:

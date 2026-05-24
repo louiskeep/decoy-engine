@@ -16,8 +16,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from decoy_engine.errors import ValidationError
 from decoy_engine.graph.validators._shared import SUPPORTED_SCHEMA_VERSIONS
-from decoy_engine.internal.validator import ValidationError
 from decoy_engine.validation_result import CODES
 
 

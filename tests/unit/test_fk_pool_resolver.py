@@ -24,7 +24,7 @@ import pandas as pd
 import pyarrow as pa
 import pytest
 
-from decoy_engine.exceptions import (
+from decoy_engine.errors import (
     EmptyParentPoolError,
     UnknownFKColumnError,
 )

@@ -6,8 +6,8 @@ import pandas as pd
 import pytest
 
 from decoy_engine.context import ExecutionContext
+from decoy_engine.errors import ValidationError
 from decoy_engine.graph.ops import OPS, run_storm
-from decoy_engine.internal.validator import ValidationError
 
 
 @pytest.fixture
@@ -124,7 +124,7 @@ class TestApply:
         assert entry["parent_source_label"] == "patients"
 
     def test_parent_source_label_empty_or_whitespace_rejected(self):
-        from decoy_engine.internal.validator import ValidationError
+        from decoy_engine.errors import ValidationError
 
         for bad in ("", "  ", 42):
             with warnings.catch_warnings():

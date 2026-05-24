@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import yaml
 
-from decoy_engine.exceptions import ConfigError, PipelineValidationError
+from decoy_engine.errors import ConfigError, PipelineValidationError, ValidationError
 from decoy_engine.graph.validators import (
     known_kinds,
     validate_acyclic,
@@ -37,7 +37,6 @@ from decoy_engine.graph.validators import (
     validate_nodes_ref_reachability,
     validate_top_level,
 )
-from decoy_engine.internal.validator import ValidationError
 
 
 def _load_yaml(yaml_text: str) -> dict:

@@ -44,7 +44,7 @@ def translate(exc: Exception, op_kind: str, node_id: str) -> OpError:
     # and .path; surface them on the returned OpError so the manifest's
     # nodes[].error gets a structured payload.
     try:
-        from decoy_engine.internal.validator import ValidationError
+        from decoy_engine.errors import ValidationError
     except ImportError:
         ValidationError = ()  # type: ignore[assignment,misc]
     if ValidationError and isinstance(exc, ValidationError):  # type: ignore[truthy-function]

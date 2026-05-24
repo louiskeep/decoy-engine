@@ -17,8 +17,8 @@ import pytest
 import yaml
 
 from decoy_engine import VALIDATION_CODES, validate_graph_full
+from decoy_engine.errors import ValidationError
 from decoy_engine.graph.ops.mask_op import validate_config
-from decoy_engine.internal.validator import ValidationError
 
 
 def _wrap_graph(mask_columns):

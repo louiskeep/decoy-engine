@@ -12,7 +12,7 @@ from typing import Any
 
 import pandas as pd
 
-from decoy_engine.internal.helpers import deterministic_hash, hmac_hex
+from decoy_engine.internal.crypto import deterministic_hash, hmac_hex
 from decoy_engine.transforms.base import BaseMaskingStrategy
 
 

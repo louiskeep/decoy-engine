@@ -200,6 +200,12 @@ module = [
     "decoy_engine.graph.validators.nodes",
     "decoy_engine.graph.validators.edges",
     "decoy_engine.graph.validators.cross_node",
+    # V2.0-C Sprint C modules (public boundary + helpers split).
+    "decoy_engine.errors",
+    "decoy_engine.providers",
+    "decoy_engine.internal.crypto",
+    "decoy_engine.internal.fs",
+    "decoy_engine.internal.faker_setup",
 ]
 disallow_any_generics = true
 disallow_subclassing_any = true
@@ -259,6 +265,29 @@ disable_error_code = ["var-annotated"]
 [[tool.mypy.overrides]]
 module = ["decoy_engine.generators.relationships"]
 disable_error_code = ["call-arg"]
+
+# generators.columns — V2.1 hard delete. `index` debt surfaced by
+# V2.0-C tightening deterministic_hash to return str | None; the
+# callsite filters nulls upstream so the slice is safe.
+[[tool.mypy.overrides]]
+module = ["decoy_engine.generators.columns"]
+disable_error_code = ["index"]
+
+# transforms.{hash,categorical,faker_based} — V2.1 candidates for the
+# legacy V1 Masker stack. `index` / `return-value` debt is the same
+# str|None pattern surfaced by the V2.0-C deterministic_hash tightening;
+# the V2.0-D transform-pipeline refactor clears them.
+[[tool.mypy.overrides]]
+module = ["decoy_engine.transforms.hash"]
+disable_error_code = ["index"]
+
+[[tool.mypy.overrides]]
+module = ["decoy_engine.transforms.categorical"]
+disable_error_code = ["return-value"]
+
+[[tool.mypy.overrides]]
+module = ["decoy_engine.transforms.faker_based"]
+disable_error_code = ["index"]
 
 # internal.* — V2.0-C boundary sprint refactors these; until then each
 # carries a narrow list of the categories already present in the module.

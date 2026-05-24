@@ -12,7 +12,7 @@ from typing import Any
 
 import yaml
 
-from decoy_engine.exceptions import ConfigError, PipelineValidationError
+from decoy_engine.errors import ConfigError, PipelineValidationError
 
 
 def validate_config(config: str | Path | dict) -> None:
@@ -68,7 +68,7 @@ def _select_validator(data: dict) -> Any:
 
 
 def _run_validator(validator_cls: Any, data: dict) -> None:
-    from decoy_engine.internal.validator import ValidationError
+    from decoy_engine.errors import ValidationError
 
     quiet_logger = logging.getLogger("decoy_engine.validate")
     if not quiet_logger.handlers:

@@ -133,13 +133,13 @@ class WriteResult:
 
 # ----- Exceptions ---------------------------------------------------------
 #
-# SDK errors compose into the existing `decoy_engine.exceptions` hierarchy
+# SDK errors compose into the existing `decoy_engine.errors` hierarchy
 # so engine-level handlers that already `except ConnectorError` keep working
 # across the boundary. `ConfigError` deliberately stays under `DecoyError`,
 # not under `ConnectorError`: a bad config is a fix-the-form problem, not
 # a fix-the-network problem, and shouldn't be caught by retry logic.
 
-from decoy_engine.exceptions import (
+from decoy_engine.errors import (
     ConfigError,
     ConnectorError,
 )

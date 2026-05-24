@@ -20,8 +20,8 @@ from __future__ import annotations
 
 from typing import Any, cast
 
+from decoy_engine.errors import ValidationError
 from decoy_engine.graph.validators._shared import NODE_ID_RE
-from decoy_engine.internal.validator import ValidationError
 from decoy_engine.validation_result import CODES
 
 

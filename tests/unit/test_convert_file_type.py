@@ -13,9 +13,9 @@ from pathlib import Path
 import pyarrow as pa
 import pytest
 
+from decoy_engine.errors import ValidationError
 from decoy_engine.graph.ops import OPS, convert_file_type
 from decoy_engine.graph.ops._base import OpError
-from decoy_engine.internal.validator import ValidationError
 
 
 def _table() -> pa.Table:

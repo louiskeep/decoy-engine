@@ -1,44 +1,18 @@
 """
 Configuration validation utilities for the decoy_engine package.
+
+V2.0-C: ValidationError moved to ``decoy_engine.errors`` (public
+surface). This module retains the V1 legacy MaskerConfigValidator and
+GeneratorConfigValidator classes that V2.1 audits for deletion.
 """
 
 import os
 from typing import Any
 
+from decoy_engine.errors import (
+    ValidationError,
+)
 from decoy_engine.internal.base import ConfigValidator
-
-
-class ValidationError(Exception):
-    """
-    Custom exception for configuration validation errors.
-    Provides more context for troubleshooting configuration issues.
-
-    R2.1: carries an optional stable `code` so callers can map the
-    failure to UI inspector fields without parsing the message string.
-    Codes live in `decoy_engine.validation_result.CODES`. Older
-    raises with no code are tolerated -- they surface as
-    `CODES.UNTAGGED` when converted to a `ValidationResult`.
-    """
-
-    def __init__(
-        self,
-        message: str,
-        path: str | None = None,
-        code: str | None = None,
-    ):
-        self.path = path
-        self.code = code
-        if path:
-            full_message = f"Validation error at '{path}': {message}"
-        else:
-            full_message = f"Validation error: {message}"
-        super().__init__(full_message)
-        self._raw_message = message
-
-    @property
-    def raw_message(self) -> str:
-        """The original message without the `Validation error at '<path>':` wrapper."""
-        return self._raw_message
 
 
 class MaskerConfigValidator(ConfigValidator):

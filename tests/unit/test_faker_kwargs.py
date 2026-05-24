@@ -20,7 +20,7 @@ import pandas as pd
 import pytest
 from faker import Faker
 
-from decoy_engine.internal.helpers import (
+from decoy_engine.internal.faker_setup import (
     get_faker_providers,
 )
 from decoy_engine.transforms.faker_based import FakerStrategy

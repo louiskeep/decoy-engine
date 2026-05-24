@@ -68,6 +68,7 @@ def test_all_lists_every_public_name():
         "DecoyError",
         "ConfigError",
         "PipelineValidationError",
+        "ValidationError",
         "ConnectorError",
         "ConnectorAuthError",
         "LicenseError",

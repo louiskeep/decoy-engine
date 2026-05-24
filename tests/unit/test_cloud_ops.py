@@ -25,6 +25,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from decoy_engine.errors import ValidationError
 from decoy_engine.graph.ops import (
     OPS,
     source_gcs,
@@ -35,7 +36,6 @@ from decoy_engine.graph.ops import (
     target_sftp,
 )
 from decoy_engine.graph.ops._base import OpError
-from decoy_engine.internal.validator import ValidationError
 
 # ---------------------------------------------------------------------------
 # Test fixtures

@@ -8,7 +8,7 @@ from typing import Any
 import pandas as pd
 
 from decoy_engine.connectors.base import IOHandler
-from decoy_engine.internal.helpers import create_directory_for_file
+from decoy_engine.internal.fs import create_directory_for_file
 
 
 class FixedWidthHandler(IOHandler):

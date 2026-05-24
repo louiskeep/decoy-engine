@@ -16,8 +16,8 @@ from typing import Any
 
 import pandas as pd
 
+from decoy_engine.errors import ValidationError
 from decoy_engine.graph.ops._base import OpError, is_polars_frame
-from decoy_engine.internal.validator import ValidationError
 
 KIND = "sort"
 NATIVE_ENGINE = "polars"
