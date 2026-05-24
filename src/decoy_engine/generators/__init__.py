@@ -1,4 +1,3 @@
-# decoy_engine/generator/__init__.py
 """
 Data generation module for the decoy_engine package.
 Provides functionality for generating synthetic data with referential integrity.

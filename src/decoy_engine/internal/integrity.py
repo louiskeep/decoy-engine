@@ -1,4 +1,3 @@
-# decoy_engine/core/integrity.py
 """
 Referential integrity management for the decoy_engine package.
 Ensures consistent masking across related columns and tables.

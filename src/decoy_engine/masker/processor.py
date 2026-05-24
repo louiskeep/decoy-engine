@@ -1,4 +1,3 @@
-# decoy_engine/masker/processor.py
 """
 Data processing logic for the decoy_engine masker.
 Handles the application of masking rules to dataframes and chunks.
@@ -157,11 +156,11 @@ class MaskingProcessor:
             val = cond.get("value", "")
             if col not in df.columns:
                 self.logger.warning(
-                    f"Condition column '{col}' not found in data â€” condition skipped"
+                    f"Condition column '{col}' not found in data - condition skipped"
                 )
                 continue
             if op not in VALID_OPS:
-                self.logger.warning(f"Unknown condition operator '{op}' â€” condition skipped")
+                self.logger.warning(f"Unknown condition operator '{op}' - condition skipped")
                 continue
             s = df[col]
             if op == "eq":

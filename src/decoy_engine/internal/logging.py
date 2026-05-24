@@ -1,4 +1,3 @@
-# decoy_engine/utils/logging.py
 """
 Logging utilities for the decoy_engine package.
 """

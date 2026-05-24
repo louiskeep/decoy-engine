@@ -143,7 +143,7 @@ class DateShiftStrategy(BaseMaskingStrategy):
         # Vectorized: turn every value into datetime64 in one C-level pass
         # instead of 5M-per-row strptime calls. `errors='coerce'` produces
         # NaT for unparseable values OR for dates outside pandas'
-        # nanosecond range (~1677–2262); we restore those positions to the
+        # nanosecond range (~1677-2262); we restore those positions to the
         # original input at the end so behavior matches the legacy
         # per-row path for normal data and degrades gracefully on edge
         # cases. Per-value crypto for the shift amount is irreducible —

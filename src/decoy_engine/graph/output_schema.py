@@ -8,14 +8,14 @@ that the upstream cannot produce is a silent-no-op bug today.
 
 This module exposes :func:`predicted_output_columns` which returns:
 
-  - ``list[str]``     – the exact ordered column names the node will
+  - ``list[str]``     - the exact ordered column names the node will
                         produce when statically known.
-  - ``"$auto"``       – the node WILL produce columns but their names
+  - ``"$auto"``       - the node WILL produce columns but their names
                         come from DuckDB / pandas auto-numbering
                         (``column0``, ``column1``, …). Downstream
                         checks should accept ``column<int>`` names and
                         flag everything else.
-  - ``None``          – we cannot tell. The downstream check should
+  - ``None``          - we cannot tell. The downstream check should
                         SKIP rather than fail; we don't want to block
                         a parquet source just because we haven't read
                         its schema.

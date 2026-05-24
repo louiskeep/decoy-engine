@@ -26,10 +26,12 @@ tests) substitute a different code-set if needed. Removable in V2.0-B.
 
 from __future__ import annotations
 
-from decoy_engine.validation_result import CODES
+from typing import Any
+
+from decoy_engine.validation_result import CODES, ValidationResult
 
 
-def _column_in_node(node: dict, column: str) -> bool:
+def _column_in_node(node: dict[str, Any], column: str) -> bool:
     """True if `column` appears in `node`'s config columns mapping.
 
     For source nodes the schema is the file's actual columns, unknowable
@@ -54,10 +56,10 @@ def _column_in_node(node: dict, column: str) -> bool:
 
 
 def _validate_column_relationships(
-    config: dict,
+    config: dict[str, Any],
     *,
     strict: bool,
-    result,
+    result: ValidationResult,
 ) -> None:
     """Validate the top-level ``column_relationships:`` block.
 
@@ -159,7 +161,7 @@ def _validate_column_relationships(
     # to module scope 2026-05-23 (F-AUDIT-001) because a sibling
     # validator was already trying to call it.
 
-    def _mask_strategy_for_column(node: dict, column: str) -> str | None:
+    def _mask_strategy_for_column(node: dict[str, Any], column: str) -> str | None:
         """If `node` is a mask op and `column` is configured, return its
         strategy. Otherwise None (caller skips the determinism check)."""
         if node.get("kind") != "mask":
@@ -457,11 +459,11 @@ def _validate_column_relationships(
 
 
 def _validate_m2m_entry(
-    rel: dict,
+    rel: dict[str, Any],
     path: str,
-    nodes_by_id: dict[str, dict],
-    result,
-    CODES,
+    nodes_by_id: dict[str, dict[str, Any]],
+    result: ValidationResult,
+    CODES: Any,
 ) -> None:
     """Validate a `kind: m2m` (many-to-many junction) column_relationships
     entry. Shape:
@@ -518,11 +520,11 @@ def _validate_m2m_entry(
 
 
 def _validate_multi_parent_entry(
-    rel: dict,
+    rel: dict[str, Any],
     path: str,
-    nodes_by_id: dict[str, dict],
-    result,
-    CODES,
+    nodes_by_id: dict[str, dict[str, Any]],
+    result: ValidationResult,
+    CODES: Any,
 ) -> None:
     """Validate a multi-parent FK entry -- `parent` is an array of
     parent specs instead of a single object. Each entry contributes to
@@ -580,11 +582,11 @@ def _validate_multi_parent_entry(
 
 
 def _validate_custom_provider_entry(
-    rel: dict,
+    rel: dict[str, Any],
     path: str,
-    nodes_by_id: dict,
-    result,
-    CODES,
+    nodes_by_id: dict[str, Any],
+    result: ValidationResult,
+    CODES: Any,
 ) -> None:
     """Validate a column_relationships entry whose parent sources the
     pool from a registered custom Faker provider (parent: {custom_provider:

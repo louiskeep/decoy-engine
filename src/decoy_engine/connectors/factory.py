@@ -1,4 +1,3 @@
-# decoy_engine/io/factory.py
 """
 Factory pattern for creating I/O handlers based on configuration.
 """

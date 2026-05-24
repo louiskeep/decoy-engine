@@ -30,11 +30,16 @@ Sub-milestone history:
 """
 
 import logging
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 import pyarrow as pa
 
 from decoy_engine.context import ExecutionContext
 from decoy_engine.exceptions import PipelineValidationError
+
+if TYPE_CHECKING:
+    from decoy_engine.validation_result import ValidationResult
 from decoy_engine.graph._fk_validators import _validate_column_relationships
 from decoy_engine.graph.config_loading import (
     _load_yaml,
@@ -83,7 +88,7 @@ def validate_graph(yaml_text: str) -> None:
     if not _quiet_logger.handlers:
         _quiet_logger.addHandler(logging.NullHandler())
     try:
-        GraphConfigValidator(_quiet_logger).validate(config)
+        GraphConfigValidator(_quiet_logger).validate(config)  # type: ignore[no-untyped-call]
     except ValidationError as e:
         raise PipelineValidationError(
             str(e),
@@ -92,7 +97,7 @@ def validate_graph(yaml_text: str) -> None:
         ) from e
 
 
-def validate_graph_full(yaml_text: str, *, strict: bool = False):
+def validate_graph_full(yaml_text: str, *, strict: bool = False) -> "ValidationResult":
     """Validate graph YAML and return a non-raising :class:`ValidationResult`.
 
     Unlike :func:`validate_graph`, this never raises on validation
@@ -140,9 +145,9 @@ def validate_graph_full(yaml_text: str, *, strict: bool = False):
     # never mutates the locally-parsed config dict. The normalized_config
     # returned to the caller is the deep copy with defaults applied.
     working = copy.deepcopy(config)
-    validator = GraphConfigValidator(_quiet_logger)
+    validator = GraphConfigValidator(_quiet_logger)  # type: ignore[no-untyped-call]
 
-    def _collect(stage_fn) -> bool:
+    def _collect(stage_fn: Callable[[], None]) -> bool:
         """Call stage_fn(). Add its first error to result. Return True iff it passed."""
         try:
             stage_fn()

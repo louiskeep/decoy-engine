@@ -30,7 +30,11 @@ loop's machinery.
 from __future__ import annotations
 
 import time
-from typing import Any
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from decoy_engine.graph.cache import GraphCache
 
 import pyarrow as pa
 
@@ -56,7 +60,7 @@ from decoy_engine.graph.types import RunResult
 
 
 def _execute_graph(
-    config: dict,
+    config: dict[str, Any],
     ctx: ExecutionContext | None,
     keep_nodes: list[str] | None = None,
 ) -> tuple[RunResult, dict[str, pa.Table]]:
@@ -259,7 +263,10 @@ def _execute_graph(
     return result, cache.kept()
 
 
-def _build_pool_resolver(cache, by_id: dict[str, dict]):
+def _build_pool_resolver(
+    cache: GraphCache,
+    by_id: dict[str, dict[str, Any]],
+) -> Callable[[str, str], list[Any]]:
     """Build the FK pool resolver closure for an ExecutionContext.
 
     Pattern: SDV HMA1 (sdv-dev/SDV, MIT). Parent-first DAG;

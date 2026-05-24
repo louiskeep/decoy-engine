@@ -1,4 +1,3 @@
-# decoy_engine/utils/processor.py
 """
 Large file processor for the decoy_engine package.
 Handles processing large files in chunks to minimize memory usage.

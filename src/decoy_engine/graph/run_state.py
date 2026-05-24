@@ -35,6 +35,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from decoy_engine.graph.types import NodeRunRecord
+
 if TYPE_CHECKING:  # pragma: no cover -- type-checker only
     import pyarrow as pa
 
@@ -77,7 +79,7 @@ class RunState:
 
     current_node_id: str | None = None
     success: bool = True
-    records: list = field(default_factory=list)
+    records: list[NodeRunRecord] = field(default_factory=list)
     overall_start: float = 0.0
     node_outputs: dict[str, pa.Table] = field(default_factory=dict)
     memory_monitor: Any | None = None
