@@ -218,6 +218,9 @@ module = [
     "decoy_engine.internal.crypto",
     "decoy_engine.internal.fs",
     "decoy_engine.internal.faker_setup",
+    # V2 Phase 3 Sprint D1a (Distribution Integrity: snapshot foundation).
+    "decoy_engine.quality",
+    "decoy_engine.quality.snapshot",
 ]
 disallow_any_generics = true
 disallow_subclassing_any = true
