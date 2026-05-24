@@ -12,6 +12,7 @@ import inspect
 import polars as pl
 import pytest
 
+from decoy_engine.errors import ValidationError
 from decoy_engine.graph.ops import derive, filter_op, if_router
 from decoy_engine.graph.ops._base import OpError
 from decoy_engine.graph.ops.source_db import (
@@ -21,7 +22,6 @@ from decoy_engine.graph.ops.source_db import (
     validate_config as source_validate,
 )
 from decoy_engine.graph.ops.target_db import validate_config as target_validate
-from decoy_engine.internal.validator import ValidationError
 
 # ---------------------------------------------------------------------------
 # _validate_sql_identifier

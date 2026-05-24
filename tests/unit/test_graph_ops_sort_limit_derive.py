@@ -4,9 +4,9 @@
 import pandas as pd
 import pytest
 
+from decoy_engine.errors import ValidationError
 from decoy_engine.graph.ops import OPS, derive, limit, sort
 from decoy_engine.graph.ops._base import OpError
-from decoy_engine.internal.validator import ValidationError
 
 
 @pytest.fixture

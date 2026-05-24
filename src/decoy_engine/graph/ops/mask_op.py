@@ -15,8 +15,8 @@ from typing import Any
 
 import pandas as pd
 
+from decoy_engine.errors import ValidationError
 from decoy_engine.graph.ops._base import OpError
-from decoy_engine.internal.validator import ValidationError
 
 KIND = "mask"
 # Mask transforms are per-row Python (Faker, scipy, custom callbacks) — kept

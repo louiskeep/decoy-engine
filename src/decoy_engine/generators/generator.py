@@ -222,7 +222,7 @@ class DataGenerator:
         self.reference_data[table_name] = df
 
         # Create output directory if it doesn't exist
-        from decoy_engine.internal.helpers import create_directory_for_file
+        from decoy_engine.internal.fs import create_directory_for_file
 
         create_directory_for_file(output_path)
 

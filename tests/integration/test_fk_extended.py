@@ -354,7 +354,7 @@ class TestCustomProviderPool:
     def test_fk_child_draws_from_custom_provider(self, tmp_path):
         """A generate child column wired to a custom-provider parent
         produces values exclusively from that provider's list."""
-        from decoy_engine.internal.helpers import (
+        from decoy_engine.internal.faker_setup import (
             register_faker_list_provider,
             unregister_faker_provider,
         )

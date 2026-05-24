@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 
 from decoy_engine import sdk
-from decoy_engine.exceptions import ConnectorError as LegacyConnectorError
+from decoy_engine.errors import ConnectorError as LegacyConnectorError
 
 
 class TestPublicSurface:

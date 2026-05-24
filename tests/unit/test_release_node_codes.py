@@ -17,6 +17,7 @@ from __future__ import annotations
 import pytest
 
 from decoy_engine import VALIDATION_CODES
+from decoy_engine.errors import ValidationError
 from decoy_engine.graph.ops import (
     source_gcs,
     source_s3,
@@ -26,7 +27,6 @@ from decoy_engine.graph.ops import (
     target_s3,
     target_sftp,
 )
-from decoy_engine.internal.validator import ValidationError
 
 
 class TestTargetFileCodes:

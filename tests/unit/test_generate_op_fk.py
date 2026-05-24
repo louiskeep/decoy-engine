@@ -147,7 +147,7 @@ class TestFKCoercion:
         assert "fk_preservation" not in exports
 
     def test_pool_resolver_error_propagates(self):
-        from decoy_engine.exceptions import EmptyParentPoolError
+        from decoy_engine.errors import EmptyParentPoolError
 
         def bad_resolver(nid: str, col: str) -> list:
             raise EmptyParentPoolError("pool empty", parent_node=nid, parent_column=col)

@@ -12,7 +12,7 @@ plain node IDs.
 from collections import deque
 from collections.abc import Iterable
 
-from decoy_engine.internal.validator import ValidationError
+from decoy_engine.errors import ValidationError
 
 
 def topo_order(nodes: Iterable[dict], edges: Iterable[dict]) -> list[str]:

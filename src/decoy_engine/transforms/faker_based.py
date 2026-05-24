@@ -16,10 +16,12 @@ from typing import Any
 
 import pandas as pd
 
-from decoy_engine.internal.helpers import (
+from decoy_engine.internal.crypto import (
     deterministic_hash,
-    get_faker_providers,
     hmac_seed,
+)
+from decoy_engine.internal.faker_setup import (
+    get_faker_providers,
     make_faker,
 )
 from decoy_engine.transforms.base import BaseMaskingStrategy

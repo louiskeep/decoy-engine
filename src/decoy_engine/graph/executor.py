@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 import pyarrow as pa
 
 from decoy_engine.context import ExecutionContext, emit_lineage
-from decoy_engine.exceptions import (
+from decoy_engine.errors import (
     ConfigError,
     EmptyParentPoolError,
     FlagPauseSignal,

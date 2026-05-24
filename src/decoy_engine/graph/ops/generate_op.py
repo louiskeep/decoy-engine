@@ -20,8 +20,8 @@ from typing import Any
 
 import pandas as pd
 
+from decoy_engine.errors import ValidationError
 from decoy_engine.graph.ops._base import OpError
-from decoy_engine.internal.validator import ValidationError
 
 KIND = "generate"
 # Generation uses per-row Faker / scipy callbacks; stays on pandas. FK-aware
@@ -225,12 +225,12 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
         # EmptyParentPoolError shape so the operator sees a clear
         # signal in the manifest + advisory.
         if "custom_provider" in target:
-            from decoy_engine.internal.helpers import get_custom_faker_provider_values
+            from decoy_engine.internal.faker_setup import get_custom_faker_provider_values
 
             pname = target["custom_provider"]
             pool = get_custom_faker_provider_values(pname)
             if not pool:
-                from decoy_engine.exceptions import EmptyParentPoolError
+                from decoy_engine.errors import EmptyParentPoolError
 
                 raise EmptyParentPoolError(
                     f"custom provider {pname!r} has no list-backed values "
@@ -557,7 +557,7 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
     # collision count — auditors can see why the run aborted, not just
     # that it did. DECOY_PK_LENIENT=1 skips the raise.
     if pk_duplicate_failures and not pk_lenient:
-        from decoy_engine.exceptions import PKDuplicatesError
+        from decoy_engine.errors import PKDuplicatesError
 
         col_name, n_total, n_unique, strategy = pk_duplicate_failures[0]
         raise PKDuplicatesError(col_name, n_total, n_unique, strategy)

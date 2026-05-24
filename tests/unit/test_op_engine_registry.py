@@ -101,15 +101,19 @@ def test_op_engine_baseline_declarations(kind, expected_engine):
 
 
 def test_validator_rejects_bad_native_engine_declaration(monkeypatch):
-    """GraphConfigValidator must catch invalid NATIVE_ENGINE at graph-validation
-    time, not silently fall back to pandas at execution time.
+    """The node-level validator must catch invalid NATIVE_ENGINE at graph-
+    validation time, not silently fall back to pandas at execution time.
 
     Simulates the failure mode where a developer adds an op with a typo or
     wrong value in its NATIVE_ENGINE constant. Previously the registry fell
-    back silently; now the validator raises NODE_BAD_NATIVE_ENGINE before
+    back silently; now validate_nodes raises NODE_BAD_NATIVE_ENGINE before
     any op executes.
+
+    V2.0-B: assertion runs against the modular validate_nodes function
+    directly (the bundled GraphConfigValidator was deleted in V2.0-B).
     """
-    from decoy_engine.internal.validator import GraphConfigValidator, ValidationError
+    from decoy_engine.errors import ValidationError
+    from decoy_engine.graph.validators import known_kinds, validate_nodes
     from decoy_engine.validation_result import CODES
 
     # A minimal fake op with an invalid engine string.
@@ -122,15 +126,10 @@ def test_validator_rejects_bad_native_engine_declaration(monkeypatch):
     )
     monkeypatch.setitem(OPS, "test_bad_engine_kind", bad_op)
 
-    config = {
-        "mode": "graph",
-        "nodes": [{"id": "n1", "kind": "test_bad_engine_kind", "config": {}}],
-        "edges": [],
-    }
+    nodes = [{"id": "n1", "kind": "test_bad_engine_kind", "config": {}}]
 
-    validator = GraphConfigValidator()
     with pytest.raises(ValidationError) as exc_info:
-        validator.validate(config)
+        validate_nodes(nodes, known_kinds())
 
     err = exc_info.value
     assert err.code == CODES.NODE_BAD_NATIVE_ENGINE

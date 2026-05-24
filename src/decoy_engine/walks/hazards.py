@@ -5,7 +5,7 @@ graph and returns a tuple of `Hazard` objects. `detect_hazards`
 composes them.
 
 The taxonomy comes from the chaser stress-test schema commentary
-(`forge-platform/plans/chaser-stress-test-schema.sql`):
+(`decoy-platform/plans/chaser-stress-test-schema.sql`):
 
     HUB — table referenced by many others (in-degree above threshold)
     SR  — self-reference (table FKs to itself)

@@ -22,8 +22,8 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
+from decoy_engine.errors import ValidationError
 from decoy_engine.graph.ops import target_file
-from decoy_engine.internal.validator import ValidationError
 
 # ----- helpers -----------------------------------------------------------
 

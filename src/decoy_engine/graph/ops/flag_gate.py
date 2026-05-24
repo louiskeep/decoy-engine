@@ -34,7 +34,7 @@ conditions failed). Raises FlagPauseSignal when any pause-mode condition
 fails; warn-mode failures from the same run are recorded as warnings.
 """
 
-from decoy_engine.exceptions import FlagPauseSignal
+from decoy_engine.errors import FlagPauseSignal
 from decoy_engine.graph.ops._base import OpError  # noqa: F401 (re-exported for tests)
 
 KIND = "flag_gate"
@@ -51,7 +51,7 @@ _VALID_ON_FAIL = frozenset({"pause", "warn"})
 
 
 def validate_config(config: dict) -> None:
-    from decoy_engine.internal.validator import ValidationError
+    from decoy_engine.errors import ValidationError
 
     conditions = config.get("conditions")
     if not isinstance(conditions, list) or not conditions:

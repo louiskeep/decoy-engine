@@ -51,8 +51,8 @@ from typing import Any
 
 import pandas as pd
 
+from decoy_engine.errors import ValidationError
 from decoy_engine.graph.ops._base import OpError
-from decoy_engine.internal.validator import ValidationError
 
 KIND = "join"
 # Pandas-native: the op uses df.merge / pd.concat under the hood. The

@@ -36,10 +36,11 @@ from typing import TYPE_CHECKING
 import pyarrow as pa
 
 from decoy_engine.context import ExecutionContext
-from decoy_engine.exceptions import PipelineValidationError
+from decoy_engine.errors import PipelineValidationError
 
 if TYPE_CHECKING:
     from decoy_engine.validation_result import ValidationResult
+from decoy_engine.errors import ValidationError
 from decoy_engine.graph._fk_validators import _validate_column_relationships
 from decoy_engine.graph.config_loading import (
     _load_yaml,
@@ -48,9 +49,20 @@ from decoy_engine.graph.config_loading import (
 )
 from decoy_engine.graph.executor import _build_pool_resolver, _execute_graph
 from decoy_engine.graph.node_exports import _resolve_node_exports
+from decoy_engine.graph.normalize import normalize_config
 from decoy_engine.graph.planner import ancestor_node_ids
 from decoy_engine.graph.types import PreviewResult, RunResult
-from decoy_engine.internal.validator import GraphConfigValidator, ValidationError
+from decoy_engine.graph.validators import (
+    collect_node_errors,
+    known_kinds,
+    validate_acyclic,
+    validate_cardinality,
+    validate_edges,
+    validate_file_format_consistency,
+    validate_mask_column_reachability,
+    validate_nodes_ref_reachability,
+    validate_top_level,
+)
 
 # Back-compat re-exports for callers that historically reached into
 # runner.py for these symbols. The implementations live elsewhere now;
@@ -82,19 +94,13 @@ def validate_graph(yaml_text: str) -> None:
     message. New callers should prefer :func:`validate_graph_full`
     which returns a multi-message ``ValidationResult`` instead of
     raising; this raise-style entry stays for backward compatibility.
+
+    Per the V2.0-B contract, validation never mutates the parsed
+    config. Callers that need engine defaults applied
+    (e.g. target.file format back-fill) call
+    :func:`decoy_engine.normalize_config` explicitly.
     """
-    config = _load_yaml(yaml_text)
-    _quiet_logger = logging.getLogger("decoy_engine.graph.validate")
-    if not _quiet_logger.handlers:
-        _quiet_logger.addHandler(logging.NullHandler())
-    try:
-        GraphConfigValidator(_quiet_logger).validate(config)  # type: ignore[no-untyped-call]
-    except ValidationError as e:
-        raise PipelineValidationError(
-            str(e),
-            path=e.path,
-            code=getattr(e, "code", None),
-        ) from e
+    _validate_or_raise(_load_yaml(yaml_text))
 
 
 def validate_graph_full(yaml_text: str, *, strict: bool = False) -> "ValidationResult":
@@ -106,7 +112,7 @@ def validate_graph_full(yaml_text: str, *, strict: bool = False) -> "ValidationR
     at once and map each to a UI field via the stable ``code`` string.
 
     YAML parse errors (the input isn't valid YAML at all) still raise
-    as ``decoy_engine.exceptions.ConfigError`` -- they're an upstream
+    as ``decoy_engine.errors.ConfigError`` -- they're an upstream
     problem, not a validation outcome. Use a try/except at the call
     site if needed.
 
@@ -131,8 +137,6 @@ def validate_graph_full(yaml_text: str, *, strict: bool = False) -> "ValidationR
     Sprint 2 follow-up work; the parameter is accepted now so callers
     can adopt it forward.
     """
-    import copy
-
     from decoy_engine.validation_result import CODES, ValidationResult
 
     result = ValidationResult()
@@ -140,12 +144,6 @@ def validate_graph_full(yaml_text: str, *, strict: bool = False) -> "ValidationR
     _quiet_logger = logging.getLogger("decoy_engine.graph.validate")
     if not _quiet_logger.handlers:
         _quiet_logger.addHandler(logging.NullHandler())
-
-    # Deep copy so _validate_file_format_consistency's format back-fill
-    # never mutates the locally-parsed config dict. The normalized_config
-    # returned to the caller is the deep copy with defaults applied.
-    working = copy.deepcopy(config)
-    validator = GraphConfigValidator(_quiet_logger)  # type: ignore[no-untyped-call]
 
     def _collect(stage_fn: Callable[[], None]) -> bool:
         """Call stage_fn(). Add its first error to result. Return True iff it passed."""
@@ -161,17 +159,17 @@ def validate_graph_full(yaml_text: str, *, strict: bool = False) -> "ValidationR
             return False
 
     # Stage 1: top-level shape. Required before safely extracting nodes/edges.
-    if not _collect(lambda: validator._validate_top_level(working)):
+    if not _collect(lambda: validate_top_level(config)):
         return result
 
     # Post-stage-1: nodes is a non-empty list, edges is a list or absent.
-    nodes = working["nodes"]
-    edges = working.get("edges") or []
-    kinds = validator._known_kinds()
+    nodes = config["nodes"]
+    edges = config.get("edges") or []
+    kinds = known_kinds()
 
     # Stage 2: per-node metadata -- collects ALL per-node errors so a graph
     # with multiple bad nodes surfaces all of them in one pass (R2.2).
-    node_errors = validator._validate_nodes_collecting(nodes, kinds)
+    node_errors = collect_node_errors(nodes, kinds)
     for _e in node_errors:
         result.add_error(
             code=getattr(_e, "code", None) or CODES.UNTAGGED,
@@ -181,19 +179,22 @@ def validate_graph_full(yaml_text: str, *, strict: bool = False) -> "ValidationR
     nodes_ok = not node_errors
 
     # Stages 3-5: graph structure. Each requires the prior stage to pass.
-    edges_ok = nodes_ok and _collect(lambda: validator._validate_edges(edges, nodes))
-    cardinality_ok = edges_ok and _collect(
-        lambda: validator._validate_cardinality(nodes, edges, kinds)
-    )
-    topology_ok = cardinality_ok and _collect(lambda: validator._validate_acyclic(nodes, edges))
+    edges_ok = nodes_ok and _collect(lambda: validate_edges(edges, nodes))
+    cardinality_ok = edges_ok and _collect(lambda: validate_cardinality(nodes, edges, kinds))
+    topology_ok = cardinality_ok and _collect(lambda: validate_acyclic(nodes, edges))
 
     # Stages 6-8: cross-node semantic checks. Each runs independently so
     # all three can surface errors in one pass. All require a sound acyclic
-    # graph to walk.
+    # graph to walk. validate_file_format_consistency does NOT mutate
+    # (V2.0-B contract); format back-fill happens below in normalize_config.
     if topology_ok:
-        _collect(lambda: validator._validate_file_format_consistency(nodes, edges, strict=strict))
-        _collect(lambda: validator._validate_mask_column_reachability(nodes, edges))
-        _collect(lambda: validator._validate_nodes_ref_reachability(nodes, edges))
+        _collect(
+            lambda: validate_file_format_consistency(
+                nodes, edges, strict=strict, logger=_quiet_logger
+            )
+        )
+        _collect(lambda: validate_mask_column_reachability(nodes, edges))
+        _collect(lambda: validate_nodes_ref_reachability(nodes, edges))
 
     # Stage 9: FK / m2m / multi-parent relationship validation.
     # Independent of stages 6-8 (those check graph mechanics); this
@@ -201,10 +202,15 @@ def validate_graph_full(yaml_text: str, *, strict: bool = False) -> "ValidationR
     # Requires topology_ok because it needs plan.order for
     # parent-before-child checks.
     if topology_ok:
-        _collect(lambda: _validate_column_relationships(working, strict=strict, result=result))
+        _collect(lambda: _validate_column_relationships(config, strict=strict, result=result))
 
+    # Apply engine defaults to a normalized copy. Surfaces on the result
+    # for callers that want the post-normalization view (the runner reads
+    # back-filled formats, for instance) without ever touching the
+    # caller's original config. Normalization is its own named call so
+    # operators that just want validation get exactly that.
     if not result.errors:
-        result.normalized_config = working
+        result.normalized_config = normalize_config(config)
     return result
 
 

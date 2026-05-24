@@ -145,7 +145,7 @@ class TestValidateGraphFullDoesNotRaise:
         # validation outcome. The engine's _load_yaml wraps the
         # underlying YAMLError in ConfigError; that contract is
         # unchanged by R2.1.
-        from decoy_engine.exceptions import ConfigError
+        from decoy_engine.errors import ConfigError
 
         with pytest.raises(ConfigError):
             validate_graph_full("nodes: [unclosed")
@@ -183,7 +183,7 @@ class TestLegacyValidateGraphStillRaises:
 
     def test_raises_with_code_attribute(self):
         from decoy_engine import validate_graph
-        from decoy_engine.exceptions import PipelineValidationError
+        from decoy_engine.errors import PipelineValidationError
 
         yaml_text = _wrap_graph(
             nodes=[{"id": "src_1", "kind": "source.bogus", "config": {}}],

@@ -34,12 +34,12 @@ from __future__ import annotations
 from importlib import import_module
 from typing import Any
 
+from decoy_engine.errors import ValidationError
 from decoy_engine.graph.ops._base import OpError
 from decoy_engine.graph.ops._iterator_core import (
     run_iterations,
     validate_iterator_config,
 )
-from decoy_engine.internal.validator import ValidationError
 
 KIND = "iterate_files"
 NATIVE_ENGINE = "arrow"

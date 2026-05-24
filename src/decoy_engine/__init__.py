@@ -11,7 +11,7 @@ Public API (the contract CLI and platform code depend on):
     SchemaInspector   connector schema introspection (stub, Phase 2)
     LicenseVerifier   license verification (stub)
 
-Public exceptions (also in decoy_engine.exceptions):
+Public exceptions (also in decoy_engine.errors):
     DecoyError, ConfigError, PipelineValidationError,
     ConnectorError, ConnectorAuthError,
     LicenseError, LicenseExpiredError,
@@ -38,7 +38,7 @@ from decoy_engine.data_discovery import (
     DiscoverySqlError,
     run_discovery_sql,
 )
-from decoy_engine.exceptions import (
+from decoy_engine.errors import (
     ConfigError,
     ConnectorAuthError,
     ConnectorError,
@@ -47,6 +47,7 @@ from decoy_engine.exceptions import (
     LicenseError,
     LicenseExpiredError,
     PipelineValidationError,
+    ValidationError,
 )
 from decoy_engine.forecast import (
     DisguiseRecommendation,
@@ -59,19 +60,20 @@ from decoy_engine.generators import DataGenerator
 from decoy_engine.graph import (
     PreviewResult,
     RunResult,
+    normalize_config,
     preview_graph,
     run_graph,
     validate_graph,
     validate_graph_full,
 )
-from decoy_engine.internal.helpers import (
+from decoy_engine.license import LicenseVerifier
+from decoy_engine.masker import Masker
+from decoy_engine.providers import (
     load_custom_providers,
     register_faker_list_provider,
     register_faker_provider,
     unregister_faker_provider,
 )
-from decoy_engine.license import LicenseVerifier
-from decoy_engine.masker import Masker
 from decoy_engine.schema import SchemaInspector
 
 # Connector SDK.
@@ -149,6 +151,7 @@ __all__ = [
     "StructuredEvents",
     "TelemetryClient",
     "TransientError",
+    "ValidationError",
     "ValidationMessage",
     "ValidationResult",
     "WriteResult",
@@ -159,6 +162,7 @@ __all__ = [
     "emit_throughput_sample",
     "load_custom_providers",
     "make_key_resolver",
+    "normalize_config",
     "preview_graph",
     "recommend",
     "register_faker_list_provider",

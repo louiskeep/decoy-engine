@@ -126,27 +126,39 @@ ignore = [
 "tests/connectors/**" = ["S101", "S105", "S106", "S324"]
 # Benchmark suite has measurement loops that look stylistically loud.
 "tests/benchmark/**" = ["S101", "S105", "S106", "N802", "N806", "PT011"]
-# Legacy modules scheduled for V2.1 hard deletion (per the V2 sprint
-# plan): not worth churning lint cleanup before removal. Allowlist
-# narrows to a small set of cosmetic rules; deleted as the legacy
-# files themselves are deleted in V2.1.
-# × (multiplication sign) is intentional math notation in the FPE docstring.
-# Narrow to RUF002 so any other ambiguous-unicode regression still trips CI.
+# Intentional design / math-notation exceptions (no removal trigger;
+# the carve-out itself is the right behaviour):
+# × (multiplication sign) is intentional math notation in the FPE
+# docstring. Narrow to RUF002 so any other ambiguous-unicode
+# regression still trips CI.
 "src/decoy_engine/transforms/fpe.py" = ["RUF002"]
 # Same character in a test comment ("2 cities × 2 statuses = 4 buckets")
 # explaining a balanced-categoricals fixture; ASCII would obscure the
 # product semantics.
 "tests/unit/test_storm_reid_risk.py" = ["RUF003"]
+# Empty-hook base classes intentionally swallow their body for
+# subclasses to override.
+"src/decoy_engine/internal/base.py" = ["B027"]
+# Late-import-to-break-cycle pattern, documented in the module header.
+"src/decoy_engine/internal/validator.py" = ["E402"]
+"src/decoy_engine/sdk.py" = ["E402"]
+
+# Legacy modules scheduled for V2.1 hard deletion (per the V2 sprint
+# plan + v2-roadmap Phase 1 Sprint 5). Each entry deletes with its
+# file. Adding a new entry here without a V2.1 tag is a review
+# blocker.
+# V2.1 delete: legacy Masker pipeline.
 "src/decoy_engine/masker/processor.py" = ["E701"]
+# V2.1 delete: legacy DataGenerator.
 "src/decoy_engine/generators/generator.py" = ["F841"]
 "src/decoy_engine/generators/relationships.py" = ["F841"]
+# V2.1 delete: legacy connector base + fixed-width path; cloud
+# connectors (s3/gcs/sftp) survive but the abstract base class
+# pattern collapses when Masker dies.
 "src/decoy_engine/connectors/base.py" = ["B027"]
 "src/decoy_engine/connectors/fixed_width.py" = ["SIM113"]
+# V2.1 delete: legacy large-file processor wired through Masker.
 "src/decoy_engine/internal/large_file_processor.py" = ["SIM115"]
-# Modules with intentional layout patterns that ruff misreads.
-"src/decoy_engine/internal/base.py" = ["B027"]  # base class with empty hook intended for subclass override
-"src/decoy_engine/internal/validator.py" = ["E402"]  # late import to avoid circular dep
-"src/decoy_engine/sdk.py" = ["E402"]  # late import is documented in the module header
 
 [tool.ruff.format]
 quote-style = "double"
@@ -185,12 +197,40 @@ strict_equality = true
 # scoped to the listed modules.
 [[tool.mypy.overrides]]
 module = [
+    # V2.0-A Sprint A modules (runner decomposition).
     "decoy_engine.graph.run_state",
     "decoy_engine.graph.memory_monitor",
     "decoy_engine.graph._fk_validators",
     "decoy_engine.graph.executor",
     "decoy_engine.graph.planner",
     "decoy_engine.graph.runner",
+    # V2.0-B Sprint B modules (validator split + normalize_config).
+    "decoy_engine.graph.normalize",
+    "decoy_engine.graph.validators",
+    "decoy_engine.graph.validators._shared",
+    "decoy_engine.graph.validators.top_level",
+    "decoy_engine.graph.validators.nodes",
+    "decoy_engine.graph.validators.edges",
+    "decoy_engine.graph.validators.cross_node",
+    # V2.0-C Sprint C modules (public boundary + helpers split).
+    "decoy_engine.errors",
+    "decoy_engine.providers",
+    "decoy_engine.internal.crypto",
+    "decoy_engine.internal.fs",
+    "decoy_engine.internal.faker_setup",
+    # V2 Phase 3 Sprint D1a (Distribution Integrity: snapshot foundation).
+    "decoy_engine.quality",
+    "decoy_engine.quality.snapshot",
+    # V2 Phase 3 Sprint D1b (Distribution Integrity: diagnostic structural checks).
+    "decoy_engine.quality.diagnostic",
+    # V2 Phase 3 Sprint D1c (Distribution Integrity: fidelity scoring).
+    "decoy_engine.quality.fidelity",
+    # V2 Phase 3 Sprint D1d (Distribution Integrity: QualityReport assembly).
+    "decoy_engine.quality.report",
+    # V2 Phase 3 Sprint D4 (Distribution Integrity: strategy-aware policy).
+    "decoy_engine.quality.policy",
+    # V2 Phase 3 Sprint D5b (Distribution Integrity: shape-only fidelity).
+    "decoy_engine.quality.shape_fidelity",
 ]
 disallow_any_generics = true
 disallow_subclassing_any = true
@@ -251,24 +291,52 @@ disable_error_code = ["var-annotated"]
 module = ["decoy_engine.generators.relationships"]
 disable_error_code = ["call-arg"]
 
-# internal.* — V2.0-C boundary sprint refactors these; until then each
-# carries a narrow list of the categories already present in the module.
+# generators.columns — V2.1 hard delete. `index` debt surfaced by
+# V2.0-C tightening deterministic_hash to return str | None; the
+# callsite filters nulls upstream so the slice is safe.
+[[tool.mypy.overrides]]
+module = ["decoy_engine.generators.columns"]
+disable_error_code = ["index"]
+
+# transforms.{hash,categorical,faker_based} — V2.1 candidates for the
+# legacy V1 Masker stack. `index` / `return-value` debt is the same
+# str|None pattern surfaced by the V2.0-C deterministic_hash tightening;
+# the V2.0-D transform-pipeline refactor clears them.
+[[tool.mypy.overrides]]
+module = ["decoy_engine.transforms.hash"]
+disable_error_code = ["index"]
+
+[[tool.mypy.overrides]]
+module = ["decoy_engine.transforms.categorical"]
+disable_error_code = ["return-value"]
+
+[[tool.mypy.overrides]]
+module = ["decoy_engine.transforms.faker_based"]
+disable_error_code = ["index"]
+
+# internal.* type-debt allowlist. V2.0-C split internal/helpers.py into
+# crypto/fs/faker_setup (now strict-gated). What remains in internal/
+# is the V1 legacy stack that V2.1 hard-deletes.
+
+# V1 legacy IOHandler base class. V2.1 delete with the Masker stack.
 [[tool.mypy.overrides]]
 module = ["decoy_engine.internal.base"]
 disable_error_code = ["import-untyped"]
 
-[[tool.mypy.overrides]]
-module = ["decoy_engine.internal.helpers"]
-disable_error_code = ["assignment", "return-value"]
-
+# V1 legacy Masker large-file path. V2.1 delete.
 [[tool.mypy.overrides]]
 module = ["decoy_engine.internal.large_file_processor"]
 disable_error_code = ["assignment"]
 
+# V1 legacy logging wrapper. V2.0-D / V2.1 audits replacement with the
+# context.Logger Protocol everywhere.
 [[tool.mypy.overrides]]
 module = ["decoy_engine.internal.logging"]
 disable_error_code = ["assignment"]
 
+# V1 legacy MaskerConfigValidator + GeneratorConfigValidator. V2.1
+# delete; the V2 graph validator stack (decoy_engine.graph.validators)
+# is the replacement.
 [[tool.mypy.overrides]]
 module = ["decoy_engine.internal.validator"]
 disable_error_code = ["attr-defined", "index"]

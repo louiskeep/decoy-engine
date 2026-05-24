@@ -15,9 +15,9 @@ GCS connector is an optional extra (`pip install decoy-engine[gcs]`).
 
 from typing import Any
 
+from decoy_engine.errors import ValidationError
 from decoy_engine.graph.ops._base import OpError
 from decoy_engine.graph.ops._cloud_io import infer_format, validate_format, write_and_upload
-from decoy_engine.internal.validator import ValidationError
 
 KIND = "target.gcs"
 NATIVE_ENGINE = "duckdb"

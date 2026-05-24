@@ -6,8 +6,8 @@ Config:
 
 from typing import Any
 
+from decoy_engine.errors import ValidationError
 from decoy_engine.graph.ops._base import OpError, is_polars_frame
-from decoy_engine.internal.validator import ValidationError
 
 KIND = "select_column"
 NATIVE_ENGINE = "polars"

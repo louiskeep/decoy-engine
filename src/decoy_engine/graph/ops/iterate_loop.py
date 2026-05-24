@@ -23,11 +23,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from decoy_engine.errors import ValidationError
 from decoy_engine.graph.ops._iterator_core import (
     run_iterations,
     validate_iterator_config,
 )
-from decoy_engine.internal.validator import ValidationError
 
 KIND = "iterate_loop"
 NATIVE_ENGINE = "arrow"

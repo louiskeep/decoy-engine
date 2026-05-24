@@ -4,9 +4,8 @@ import pandas as pd
 import polars as pl
 import pytest
 
-from decoy_engine.exceptions import FlagPauseSignal
+from decoy_engine.errors import FlagPauseSignal, ValidationError
 from decoy_engine.graph.ops import flag_gate
-from decoy_engine.internal.validator import ValidationError
 
 
 def _pd(records):
@@ -270,7 +269,7 @@ class TestOnFail:
         assert types == ["schema_match"]
 
     def test_invalid_on_fail_rejected(self):
-        from decoy_engine.internal.validator import ValidationError
+        from decoy_engine.errors import ValidationError
 
         with pytest.raises(ValidationError) as exc:
             flag_gate.validate_config(

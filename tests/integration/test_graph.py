@@ -16,7 +16,7 @@ from decoy_engine import (
     run_graph,
     validate_graph,
 )
-from decoy_engine.exceptions import PipelineValidationError
+from decoy_engine.errors import PipelineValidationError
 
 
 @pytest.fixture

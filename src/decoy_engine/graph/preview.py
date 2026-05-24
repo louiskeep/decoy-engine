@@ -93,7 +93,7 @@ def run_preview(
     in the caller (bad sub_config shape) may propagate as exceptions.
     """
     from decoy_engine.context import ExecutionContext
-    from decoy_engine.exceptions import FlagPauseSignal
+    from decoy_engine.errors import FlagPauseSignal
     from decoy_engine.graph.cache import GraphCache
     from decoy_engine.graph.conversion import arrow_columns
     from decoy_engine.graph.errors import translate as translate_engine_error

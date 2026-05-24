@@ -11,8 +11,8 @@ import tempfile
 import pandas as pd
 import pytest
 
+from decoy_engine.errors import ValidationError
 from decoy_engine.graph.ops import source_file
-from decoy_engine.internal.validator import ValidationError
 
 
 @pytest.fixture

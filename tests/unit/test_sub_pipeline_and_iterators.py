@@ -14,6 +14,7 @@ from pathlib import Path
 import pyarrow as pa
 import pytest
 
+from decoy_engine.errors import ValidationError
 from decoy_engine.graph.ops import (
     OPS,
     iterate_files,
@@ -22,7 +23,6 @@ from decoy_engine.graph.ops import (
     sub_pipeline,
 )
 from decoy_engine.graph.ops._base import OpError
-from decoy_engine.internal.validator import ValidationError
 
 # ----- Helpers -----------------------------------------------------------
 

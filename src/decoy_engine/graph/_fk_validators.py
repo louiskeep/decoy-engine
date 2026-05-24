@@ -596,7 +596,7 @@ def _validate_custom_provider_entry(
     Provider registration is best-effort: the registry is populated at
     run time, so a missing provider is a warning, not a hard error.
     """
-    from decoy_engine.internal.helpers import list_custom_faker_list_providers
+    from decoy_engine.internal.faker_setup import list_custom_faker_list_providers
 
     parent = rel.get("parent") or {}
     child = rel.get("child") or {}
