@@ -17,6 +17,7 @@ The polars / duckdb branches lazy-import so a pandas-only install (no `hybrid`
 extra) doesn't pay an import cost or fail to load this module.
 """
 
+import logging
 from typing import Any, Literal
 
 import pandas as pd
@@ -25,6 +26,8 @@ import pyarrow as pa
 EngineType = Literal["pandas", "polars", "duckdb", "arrow"]
 
 VALID_ENGINES: tuple[EngineType, ...] = ("pandas", "polars", "duckdb", "arrow")
+
+_logger = logging.getLogger(__name__)
 
 
 def arrow_to_engine(table: pa.Table, engine: EngineType) -> Any:
@@ -98,7 +101,7 @@ def engine_to_arrow(result: Any, engine: EngineType) -> pa.Table:
                 f"Duplicate column names: {dupes}. Use drop_column upstream to remove the "
                 "collision, or join's keyed mode with suffixes to disambiguate."
             )
-        return pa.Table.from_pandas(result, preserve_index=False)
+        return _pandas_to_arrow_resilient(result)
     if engine == "polars":
         # polars.DataFrame.to_arrow() returns pa.Table; LazyFrame must be
         # collected first. We accept either by feature-detecting `.collect`.
@@ -110,6 +113,81 @@ def engine_to_arrow(result: Any, engine: EngineType) -> pa.Table:
             f"engine='polars' op must return polars.DataFrame; got {type(result).__name__}"
         )
     raise ValueError(f"unknown engine: {engine!r}")
+
+
+def _pandas_to_arrow_resilient(df: pd.DataFrame) -> pa.Table:
+    """``pa.Table.from_pandas`` wrapper that survives type-mismatch on
+    pandas object columns.
+
+    Why this exists: pandas object columns are typed permissively (any
+    Python value), but pyarrow's ``Table.from_pandas`` chooses an Arrow
+    type by sampling the first non-null value and then errors when a
+    later value doesn't fit. The most common trigger is a CSV column
+    that started as int64 (date-like values such as 20260522) but
+    received string-valued masking output partway through, leaving
+    pandas with ``dtype=object`` and a mix of ints + strings. The
+    failure surfaces as the opaque tuple:
+
+      ArrowTypeError(
+        "object of type <class 'str'> cannot be converted to int",
+        "Conversion failed for column ENRL_END_DT with type object",
+      )
+
+    We do NOT silently mask this with a re-cast on every conversion --
+    that would mask real bugs. Instead: the happy path stays
+    ``Table.from_pandas`` directly, with no per-column overhead. On
+    failure we identify the offending column(s), coerce just those
+    to string (the safest universal type), warn the operator via
+    the standard engine logger, and retry. The string fallback
+    preserves the visible value -- downstream nodes that expect a
+    numeric type will fail at THAT boundary with a clearer message
+    pointing at their type expectation rather than the deep pandas
+    + arrow tuple here.
+
+    Reference: https://arrow.apache.org/docs/python/pandas.html
+    ("Object columns" section -- pyarrow infers from the first
+    non-null value).
+    """
+    try:
+        return pa.Table.from_pandas(df, preserve_index=False)
+    except (pa.lib.ArrowTypeError, pa.lib.ArrowInvalid) as exc:
+        # Identify the offending column(s) by trying each object column
+        # independently. Non-object columns (already int64 / float64 /
+        # datetime / extension-typed) skip the retry because they don't
+        # hit this inference path.
+        bad_cols: list[str] = []
+        for col_name in df.columns:
+            if df[col_name].dtype != object:
+                continue
+            try:
+                pa.array(df[col_name])
+            except (pa.lib.ArrowTypeError, pa.lib.ArrowInvalid):
+                bad_cols.append(col_name)
+
+        if not bad_cols:
+            # The error wasn't about object-column inference; re-raise
+            # the original so the caller sees the real cause instead of
+            # a misleading "fixed nothing, retried, still broken".
+            raise
+
+        _logger.warning(
+            "pandas->arrow conversion failed on object column(s) %s with "
+            "mixed-type values; coercing to string. Original error: %s",
+            bad_cols, exc,
+        )
+
+        # Coerce just the offending columns to all-string and retry. We
+        # use .astype(str) on a copy so callers' DataFrames aren't
+        # mutated. NaN/None values round-trip as 'nan'/'None' through
+        # astype(str); use .where(notna, None) to keep nulls intact so
+        # downstream null-handling stays correct.
+        coerced = df.copy()
+        for col_name in bad_cols:
+            ser = coerced[col_name]
+            coerced[col_name] = ser.where(ser.notna(), None).astype(object).map(
+                lambda v: None if v is None else str(v),
+            )
+        return pa.Table.from_pandas(coerced, preserve_index=False)
 
 
 def arrow_row_count(table: pa.Table) -> int:
