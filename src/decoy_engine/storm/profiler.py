@@ -12,6 +12,7 @@ analysis offline and from the CLI without depending on the platform.
 from __future__ import annotations
 
 import warnings
+from typing import Any
 
 import pandas as pd
 
@@ -794,6 +795,7 @@ def run_storm(
     sample_strategy: str = "full",
     sample_row_cap: int | None = None,
     custom_detectors: list[CustomDetectorSpec] | None = None,
+    extra_name_hints: dict[str, list[str]] | None = None,
     ctx: ExecutionContext | None = None,
 ) -> StormProfile:
     """Scan a DataFrame and produce a StormProfile.
@@ -805,6 +807,14 @@ def run_storm(
     patterns at scan time without touching the engine. Each spec runs against
     every column alongside the built-ins; their hits show up in
     DetectorMatch.detector_id with whatever id the caller supplied.
+
+    `extra_name_hints` is the per-scan additive name-hint overrides --
+    the platform reads its storm_detector_overrides table at scan
+    start and passes the resulting {detector_id: [terms]} mapping
+    here. Behavior is additive: shipped patterns still apply
+    unchanged; extras add coverage on top. Installed via the
+    ContextVar-backed name_hint_extras() context manager so concurrent
+    scans on the same process don't cross-contaminate.
 
     ``ctx`` (Item 71) routes structured events through the caller's
     JobLogger so a standalone STORM scan shows up in the bottom-pane
@@ -820,14 +830,43 @@ def run_storm(
     # log carried just "▶ storm.scan" / "✓ storm.scan" -- the
     # 30-second gap between them was a black box.
     custom_count = len(custom_detectors) if custom_detectors else 0
+    extras_count = sum(
+        len(v) for v in (extra_name_hints or {}).values()
+    )
     if logger is not None:
         logger.info(
             f"▶ profiling {len(df.columns)} columns x {len(df):,} rows "
             f"(sample_strategy={sample_strategy}"
             + (f", cap={sample_row_cap:,}" if sample_row_cap else "")
             + (f", custom_detectors={custom_count}" if custom_count else "")
+            + (f", extra_name_hints={extras_count}" if extras_count else "")
             + ")"
         )
+    # Install per-scan extras for the lifetime of this call. The
+    # context manager is a no-op when extras is None or empty.
+    from decoy_engine.storm.detectors import name_hint_extras
+    with name_hint_extras(extra_name_hints):
+        return _run_storm_inner(
+            df, source_label,
+            sample_strategy=sample_strategy,
+            sample_row_cap=sample_row_cap,
+            custom_detectors=custom_detectors,
+            logger=logger,
+        )
+
+
+def _run_storm_inner(
+    df: pd.DataFrame,
+    source_label: str,
+    *,
+    sample_strategy: str,
+    sample_row_cap: int | None,
+    custom_detectors: list[CustomDetectorSpec] | None,
+    logger: Any,
+) -> StormProfile:
+    """The original run_storm body. Split out so run_storm() can wrap
+    it in the name_hint_extras() context manager without indenting
+    the whole 200-line block one level deeper."""
     try:
         total = len(df)
         fields: list = []

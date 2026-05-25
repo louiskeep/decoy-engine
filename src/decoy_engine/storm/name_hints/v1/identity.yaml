@@ -1,0 +1,100 @@
+# Identity detectors: personal-name + address + fax. These hints power
+# the HIPAA / GDPR / PII column-classification flow.
+#
+# first_name and last_name are split from person_name so the strategy
+# table can route them to faker.first_name / faker.last_name (preserves
+# gendered shape and avoids picking from the full-name pool).
+
+detectors:
+  - detector_id: first_name
+    description: First / given name column.
+    patterns:
+      - first_name
+      - firstname
+      - given_name
+      - fn
+      - f_name
+      - fname
+      - firstn
+      - first_nm
+      - frst_nm
+      - mm_fn
+      - cust_fn
+      - pt_fn
+      - pat_fn
+      - emp_fn
+
+  - detector_id: last_name
+    description: Last / family / surname column.
+    patterns:
+      - last_name
+      - lastname
+      - family_name
+      - surname
+      - sur_name
+      - ln
+      - l_name
+      - lname
+      - lastn
+      - last_nm
+      - lst_nm
+      - mm_ln
+      - cust_ln
+      - pt_ln
+      - pat_ln
+      - emp_ln
+
+  - detector_id: person_name
+    description: Full / middle / generic person-name column.
+    patterns:
+      - name
+      - full_name
+      - fullname
+      - user_name
+      - username
+      - customer_name
+      - patient_name
+      - client_name
+      - middle_name
+      - maiden_name
+      - mi
+      - m_name
+      - mname
+
+  # Address has no dedicated value pattern (street formats vary too widely
+  # for a useful regex); column name is the sole signal.
+  - detector_id: address
+    description: Street / mailing address column.
+    patterns:
+      - address
+      - addr
+      - addr1
+      - addr2
+      - addr_1
+      - addr_2
+      - addr_line
+      - addr_line_1
+      - addr_line_2
+      - ln1
+      - ln2
+      - line1
+      - line2
+      - street
+      - street_1
+      - street_2
+      - street1
+      - street2
+      - street_addr
+      - street_address
+      - mailing_addr
+      - mailing_address
+      - home_addr
+      - work_addr
+
+  - detector_id: fax_number
+    description: Fax / facsimile number column.
+    patterns:
+      - fax
+      - fax_num
+      - fax_number
+      - facsimile

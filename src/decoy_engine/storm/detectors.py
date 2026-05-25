@@ -187,424 +187,95 @@ def _hint(terms: list[str]) -> re.Pattern[str]:
     return re.compile(rf"(?i)^(.*[._-])?({body})([._-].*)?$")
 
 
+# The 26 built-in detectors' column-name hint patterns live in YAML
+# under decoy_engine.storm.name_hints.v1/; the loader returns a flat
+# dict {detector_id: [term, ...]} and we apply `_hint(terms)` here to
+# build the actual re.Pattern objects. Keeping regex construction in
+# this module means there's exactly one implementation; the loader is
+# a pure data layer.
+#
+# Behavior matches the pre-extraction hard-coded dict bit-for-bit;
+# this is verified by tests/snapshots/test_name_hints_baseline.py.
+# Any YAML edit that changes coverage breaks the snapshot and forces
+# an explicit re-baseline commit.
+#
+# See decoy_engine.storm.name_hints.v1/README.md for the YAML format
+# + contribution conventions.
+from decoy_engine.storm.name_hints.loader import load_name_hint_terms
+
 _NAME_HINTS: dict[str, re.Pattern[str]] = {
-    "email": _hint(
-        [
-            "email",
-            "e_mail",
-            "mail",
-            "emailaddress",
-            "email_address",
-            "email_addr",
-            "mail_addr",
-            "contact_email",
-        ]
-    ),
-    "ssn": _hint(
-        [
-            "ssn",
-            "social_security",
-            "social_security_num",
-            "social_security_number",
-            "socsec",
-            "socialsec",
-            "ss_num",
-            "ss_no",
-        ]
-    ),
-    # Detection sprint additions: tel, phn, mob, cel, wphone, hphone — plus
-    # work_phone / home_phone / cell_phone / mobile_phone spelled-out forms.
-    "us_phone": _hint(
-        [
-            "phone",
-            "phn",
-            "tel",
-            "telephone",
-            "mobile",
-            "cell",
-            "mob",
-            "cel",
-            "wphone",
-            "hphone",
-            "work_phone",
-            "home_phone",
-            "cell_phone",
-            "mobile_phone",
-            "day_phone",
-            "night_phone",
-            "primary_phone",
-            "phone_num",
-            "phone_number",
-            "contact_phone",
-        ]
-    ),
-    "us_zip": _hint(
-        [
-            "zip",
-            "zip_code",
-            "zipcode",
-            "postal",
-            "postal_code",
-            "post_code",
-            "postcode",
-            "zipcde",
-            "zip_cd",
-        ]
-    ),
-    # first_name and last_name split out from person_name so the strategy
-    # table can route to faker.first_name / faker.last_name (preserves
-    # gendered shape and avoids picking from the full-name pool).
-    "first_name": _hint(
-        [
-            "first_name",
-            "firstname",
-            "given_name",
-            "fn",
-            "f_name",
-            "fname",
-            "firstn",
-            "first_nm",
-            "frst_nm",
-            "mm_fn",
-            "cust_fn",
-            "pt_fn",
-            "pat_fn",
-            "emp_fn",
-        ]
-    ),
-    "last_name": _hint(
-        [
-            "last_name",
-            "lastname",
-            "family_name",
-            "surname",
-            "sur_name",
-            "ln",
-            "l_name",
-            "lname",
-            "lastn",
-            "last_nm",
-            "lst_nm",
-            "mm_ln",
-            "cust_ln",
-            "pt_ln",
-            "pat_ln",
-            "emp_ln",
-        ]
-    ),
-    "person_name": _hint(
-        [
-            "name",
-            "full_name",
-            "fullname",
-            "user_name",
-            "username",
-            "customer_name",
-            "patient_name",
-            "client_name",
-            "middle_name",
-            "maiden_name",
-            "mi",
-            "m_name",
-            "mname",
-        ]
-    ),
-    # Date hints share the same vocabulary across iso / us / eu — the
-    # detector function chooses the right value-shape regex.
-    "iso_date": _hint(
-        [
-            "date",
-            "created",
-            "updated",
-            "modified",
-            "dob",
-            "birth",
-            "start",
-            "end",
-            "due",
-            "effective",
-            "expir",
-            "bdate",
-            "b_date",
-            "birth_dt",
-            "bday",
-            "birthday",
-            "date_of_birth",
-            "birth_date",
-            "dt",
-        ]
-    ),
-    "us_date": _hint(
-        [
-            "date",
-            "created",
-            "updated",
-            "modified",
-            "dob",
-            "birth",
-            "start",
-            "end",
-            "due",
-            "effective",
-            "expir",
-            "bdate",
-            "b_date",
-            "birth_dt",
-            "bday",
-            "birthday",
-            "date_of_birth",
-            "birth_date",
-            "dt",
-        ]
-    ),
-    "eu_date": _hint(
-        [
-            "date",
-            "created",
-            "updated",
-            "modified",
-            "dob",
-            "birth",
-            "start",
-            "end",
-            "due",
-            "effective",
-            "expir",
-            "bdate",
-            "b_date",
-            "birth_dt",
-            "bday",
-            "birthday",
-            "date_of_birth",
-            "birth_date",
-            "dt",
-        ]
-    ),
-    # Address has no dedicated value pattern (street formats vary too widely
-    # for a useful regex); column name is the sole signal.
-    "address": _hint(
-        [
-            "address",
-            "addr",
-            "addr1",
-            "addr2",
-            "addr_1",
-            "addr_2",
-            "addr_line",
-            "addr_line_1",
-            "addr_line_2",
-            "ln1",
-            "ln2",
-            "line1",
-            "line2",
-            "street",
-            "street_1",
-            "street_2",
-            "street1",
-            "street2",
-            "street_addr",
-            "street_address",
-            "mailing_addr",
-            "mailing_address",
-            "home_addr",
-            "work_addr",
-        ]
-    ),
-    # Item 31 phase 1 — PCI + GDPR additions.
-    "pan": _hint(
-        [
-            "pan",
-            "card",
-            "cc",
-            "credit_card",
-            "creditcard",
-            "card_number",
-            "account_number",
-            "payment_card",
-            "card_no",
-            "card_num",
-            "ccnum",
-            "cc_num",
-            "cc_number",
-        ]
-    ),
-    "cvv": _hint(
-        [
-            "cvv",
-            "cvc",
-            "csc",
-            "security_code",
-            "card_security",
-            "card_code",
-            "card_security_code",
-        ]
-    ),
-    "iban": _hint(
-        [
-            "iban",
-            "bank_account",
-            "account_iban",
-            "iban_num",
-            "iban_number",
-        ]
-    ),
-    "ipv4": _hint(
-        [
-            "ip",
-            "ipv4",
-            "ip_addr",
-            "ip_address",
-            "ipaddr",
-            "client_ip",
-            "remote_ip",
-            "src_ip",
-            "dst_ip",
-            "source_ip",
-        ]
-    ),
-    # Item 31 phase 3 — HIPAA Safe Harbor completers + clinical identifiers.
-    "icd10": _hint(
-        [
-            "icd",
-            "icd10",
-            "icd_10",
-            "diagnosis",
-            "diag",
-            "dx",
-            "diag_code",
-            "diagnosis_code",
-            "icd_code",
-        ]
-    ),
-    "npi": _hint(
-        [
-            "npi",
-            "natl_provider",
-            "national_provider",
-            "provider_npi",
-            "physician_id",
-            "provider_id",
-        ]
-    ),
-    # mrn picks up generic patient/customer/employee identifier columns so
-    # the strict fail-safe doesn't miss them. The smart-default strategy
-    # is FPE-with-length-preservation, which is safe for any ID-shaped
-    # column — the user can override after the fact.
-    "mrn": _hint(
-        [
-            "mrn",
-            "medical_record",
-            "chart",
-            "patient_id",
-            "chart_num",
-            "chart_number",
-            "medical_id",
-            "med_rec",
-            "pt_id",
-            "pat_id",
-            "cust_id",
-            "customer_id",
-            "client_id",
-            "emp_id",
-            "employee_id",
-            "member_num",
-            "acct",
-            "account",
-        ]
-    ),
-    "url": _hint(
-        [
-            "url",
-            "uri",
-            "href",
-            "link",
-            "website",
-            "web_address",
-            "endpoint",
-            "site",
-        ]
-    ),
-    "fax_number": _hint(
-        [
-            "fax",
-            "fax_num",
-            "fax_number",
-            "facsimile",
-        ]
-    ),
-    "health_plan_id": _hint(
-        [
-            "beneficiary",
-            "member_id",
-            "hplan",
-            "health_plan",
-            "plan_id",
-            "subscriber_id",
-            "enrollee_id",
-            "coverage_id",
-            "member_no",
-        ]
-    ),
-    "license_num": _hint(
-        [
-            "license",
-            "licence",
-            "cert",
-            "certificate",
-            "credential",
-            "license_num",
-            "license_number",
-            "cert_num",
-            "cert_id",
-            "drivers_license",
-            "drivers_lic",
-            "dl_num",
-            "dl_number",
-            "dlnum",
-        ]
-    ),
-    "vehicle_id": _hint(
-        [
-            "vin",
-            "vehicle_id",
-            "vehicle_num",
-            "vehicle_serial",
-            "license_plate",
-            "plate_num",
-            "plate_number",
-        ]
-    ),
-    "device_id": _hint(
-        [
-            "device_id",
-            "device_serial",
-            "serial_num",
-            "serial_number",
-            "equipment_id",
-            "implant_id",
-            "device_code",
-            "asset_id",
-            "udi",
-        ]
-    ),
-    "biometric_id": _hint(
-        [
-            "fingerprint",
-            "retina",
-            "iris",
-            "biometric",
-            "voice_print",
-            "hand_geometry",
-            "bio_id",
-            "biometric_id",
-        ]
-    ),
+    det_id: _hint(terms)
+    for det_id, terms in load_name_hint_terms().items()
 }
 
 
+# Per-scan additive name-hint extras. The platform reads its
+# storm_detector_overrides table at scan start and stashes
+# {detector_id: re.Pattern} here via set_name_hint_extras(); the
+# detect_* functions consult this via _hits_name_hint().
+#
+# Additive semantics: a column name matches if EITHER the shipped
+# pattern OR the per-scan extras pattern matches. Customers cannot
+# disable shipped patterns through this surface (that's a "full
+# override" mode deferred to a later sprint if real demand appears).
+#
+# ContextVar (not module-global) so concurrent scans on the same
+# process don't cross-contaminate -- each scan's run_storm() call
+# sets its own extras for the duration of that call.
+from contextlib import contextmanager
+from contextvars import ContextVar
+
+_NAME_HINT_EXTRAS: ContextVar[dict[str, re.Pattern[str]] | None] = ContextVar(
+    "_NAME_HINT_EXTRAS", default=None,
+)
+
+
+@contextmanager
+def name_hint_extras(extras: dict[str, list[str]] | None):
+    """Context manager: install per-scan name-hint extras.
+
+    Pass a dict mapping detector_id to a list of additional
+    column-name term strings. The terms are compiled with the same
+    _hint() regex helper used for the shipped library. Behavior is
+    additive: shipped patterns still apply unchanged; extras add
+    coverage on top.
+
+    Yields and restores the ContextVar so the caller doesn't have
+    to manage the token. Pass None to skip installation (no-op).
+    """
+    if not extras:
+        yield
+        return
+    compiled = {
+        det_id: _hint(list(terms))
+        for det_id, terms in extras.items()
+        if terms  # skip empty lists silently
+    }
+    token = _NAME_HINT_EXTRAS.set(compiled if compiled else None)
+    try:
+        yield
+    finally:
+        _NAME_HINT_EXTRAS.reset(token)
+
+
 def _hits_name_hint(detector_id: str, col_name: str) -> bool:
+    """True if col_name matches the shipped pattern OR a per-scan extra.
+
+    Checked in this order:
+      1. Shipped pattern from the YAML library (_NAME_HINTS).
+      2. Per-scan extras installed by name_hint_extras() context.
+    Either match returns True; matching is additive.
+    """
+    target = col_name or ""
     pat = _NAME_HINTS.get(detector_id)
-    return bool(pat and pat.fullmatch(col_name or ""))
+    if pat and pat.fullmatch(target):
+        return True
+    extras = _NAME_HINT_EXTRAS.get()
+    if extras:
+        extra_pat = extras.get(detector_id)
+        if extra_pat and extra_pat.fullmatch(target):
+            return True
+    return False
 
 
 def hits_name_hint(detector_id: str, col_name: str) -> bool:
