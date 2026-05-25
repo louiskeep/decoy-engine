@@ -64,8 +64,8 @@ mandatory.
 | G11 | Multi-parent FK (composite key from multiple parents, joined with `\|`) | generate\_op multi\_parent\_targets | Yes — generate\_op handles multi\_parent\_targets | **COVERED.** |
 | G12 | Custom Faker provider pool (list-backed, platform-synced) | generate\_op custom\_provider FK path | Yes — generate\_op handles `custom_provider` FK source | **COVERED.** |
 | G13 | PK uniqueness check with `DECOY_PK_LENIENT` escape hatch | generate\_op pk\_metrics + PKDuplicatesError | Yes — generate\_op has full PK uniqueness check | **COVERED.** |
-| G14 | Fixed-width file output (`output_type: fixed_width`, `_parse_fixed_width_definition`) | `generators/generator.py:_generate_table()` + `_parse_fixed_width_definition()` | **No.** `target.file` supports CSV/parquet only. | **AUDIT USAGE.** Search all demo configs, platform fixture YAML, and test fixtures for `output_type: fixed_width` in generator configs. If no hits: drop. If hits: evaluate whether to add fixed-width format to `target.file` or declare as dropped. |
-| G15 | Fixed-width post-pass for referenced formulas | `generators/generator.py:_process_referenced_formulas()` (fixed\_width branch) | **No.** Blocked by G14 gap. | **Follows G14 decision.** |
+| G14 | Fixed-width file output (`output_type: fixed_width`, `_parse_fixed_width_definition`) | `generators/generator.py:_generate_table()` + `_parse_fixed_width_definition()` | **No.** `target.file` supports CSV/parquet only. | **DROP.** Usage audit complete (session 14): `output_type: fixed_width` appears only in legacy DataGenerator integration tests (`tests/integration/test_generator.py:373`) and the generator validator unit test — no platform code, no user-facing config, no demo fixture uses it. When legacy tests are deleted with the legacy code, no usage remains. |
+| G15 | Fixed-width post-pass for referenced formulas | `generators/generator.py:_process_referenced_formulas()` (fixed\_width branch) | **No.** Blocked by G14 gap. | **DROP.** Follows G14 DROP decision. |
 | G16 | Pipeline-bound keyed determinism (`pipeline_derive_key` from ctx) | `generators/generator.py:DataGenerator.__init__` | Yes — generate\_op reads `pipeline_derive_key` from ctx | **COVERED.** |
 | G17 | Instance-default locale for Faker (`instance_default_locale` from ctx) | `generators/generator.py:DataGenerator.__init__` | Yes — generate\_op reads `instance_default_locale` from ctx | **COVERED.** |
 | G18 | Configuration pre-flight (validates fixed-width definition files exist before run starts) | `generators/generator.py:_preprocess_configuration()` | Partial — graph validator runs structural checks before execution; fixed-width definition file existence not checked | **Follows G14 decision.** If fixed-width output is dropped, pre-flight is moot. |
@@ -98,7 +98,7 @@ All other DataGenerator capabilities are already covered by the graph generate o
 | C5 | Parquet save | `connectors/base.py` subclasses | Yes — `target.file format:parquet` | **COVERED.** |
 | C6 | SQLite save | `connectors/base.py` + factory routing | Yes — `target.db` | **COVERED.** |
 | C7 | Fixed-width load (positional column parsing from definition file) | `connectors/fixed_width.py:FixedWidthHandler.load_data()` | Yes — `source.file format:fixed_width fw_columns:[...]` | **COVERED.** Graph source.file has native fixed-width read support. |
-| C8 | Fixed-width save (write padded fixed-width from DataFrame + definition file) | `connectors/fixed_width.py:FixedWidthHandler.save_data()` | **No.** `target.file` supports CSV/parquet only. | **AUDIT USAGE.** Same as G14: search for any config that saves to fixed-width. If no hits, drop FixedWidthHandler.save\_data and the entire connector. |
+| C8 | Fixed-width save (write padded fixed-width from DataFrame + definition file) | `connectors/fixed_width.py:FixedWidthHandler.save_data()` | **No.** `target.file` supports CSV/parquet only. | **DROP.** Follows G14 DROP decision. No user-facing config or platform code uses this. |
 | C9 | Chunked DataFrame splitting (`chunk_dataframe()`) | `connectors/base.py:IOHandler.chunk_dataframe()` | Partial — DuckDB source.file streams; pandas mask path is in-memory | **Follows M3 (LargeFileProcessor) decision.** |
 | C10 | File size info logging (`get_file_size_info()`) | `connectors/base.py:IOHandler.get_file_size_info()` | Partial — graph logs I/O events via ctx logger | **DROP.** Diagnostic utility; not a user-facing feature. |
 | C11 | Column configuration injection (`set_column_configurations()`) | `connectors/base.py:IOHandler.set_column_configurations()` | Not needed — graph ops carry their own column config | **DROP.** |
@@ -142,7 +142,7 @@ Before any V2.1 deletion PR opens:
 - [ ] **Dennis sign-off** on this audit table (week 1 deliverable).
 - [ ] **M4 resolution**: Dennis decides Option A (port conditions to mask op) or Option B (compose via if\_router). If Option A, the port PR lands before the Masker delete PR.
 - [ ] **G6 fix**: Port cross-column formula post-pass to generate\_op.py. This is a correctness bug; must be fixed regardless of V2.1 timing. Suggested: land as a standalone bug-fix PR now, not gated on V2.1.
-- [ ] **G14/C8 usage audit**: `grep -r "output_type.*fixed_width\|fixed.width" decoy-platform/api decoy/src docs/` — if any hit, evaluate port-vs-drop; if no hit, safe to drop.
+- [x] **G14/C8 usage audit**: Complete (session 14). Zero non-legacy usages found. Decision: DROP fixed-width output from both generator and connectors.
 - [ ] **M3/L1 large-file verification**: Run a 1.5 GB fixture through `run_graph` (DuckDB path). Measure memory ceiling and runtime vs legacy. Document result.
 - [ ] **Platform PR first**: `decoy-platform/api/jobs/runner.py` and any other platform callers of `Masker`, `DataGenerator`, `create_io_handler` must be updated to graph-only APIs before the engine delete PR lands.
 - [ ] **CLI PR first**: CLI commands that call `Masker()` or `DataGenerator()` must be updated to call `run_graph` internally before the engine delete PR lands.
@@ -159,8 +159,13 @@ Features requiring porting/verification:
 1. **M4** (conditional masking) — PORT or COMPOSE decision needed
 2. **G6** (cross-column formula references) — PORT required (correctness bug)
 3. **M3/L1** (large-file chunked processing) — VERIFY before delete
-4. **G14/C8** (fixed-width output) — AUDIT then DROP or PORT
+4. **G14/C8** (fixed-width output) — **DROPPED** (session 14 usage audit found zero non-legacy usage)
 
-Count: **4 items** — one over the "more than 3" re-scope threshold per the sprint plan. Dennis should review whether G6 (a pre-existing correctness bug, already present) counts toward the threshold or whether it's a separate bug fix that doesn't pause the sprint, reducing the pause-worthy items to 3 (M4, M3/L1, G14/C8).
+Count update: G14/C8 resolved to DROP. Remaining actionable items = **3** (M4, G6, M3/L1):
+- M4 and M3/L1 require Dennis decision or verification
+- G6 is a pre-existing correctness bug recommended for immediate fix, independent of V2.1
 
-Dennis's call: proceed at the current scope, or add a scoping buffer.
+Sprint count is exactly at the "more than 3 = re-scope" threshold (3 items). Dennis's
+call on whether G6 (correctness bug in existing code, not a new porting task) counts.
+If G6 is treated as a standalone bug fix and not a V2.1 scoping item, the sprint
+stays under threshold at 2 items (M4 + M3/L1).
