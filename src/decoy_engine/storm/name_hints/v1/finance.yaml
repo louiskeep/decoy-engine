@@ -1,0 +1,39 @@
+# Finance / payments detectors. Item 31 phase 1 -- PCI + GDPR additions.
+
+detectors:
+  - detector_id: pan
+    description: Primary Account Number (credit / debit card) column.
+    patterns:
+      - pan
+      - card
+      - cc
+      - credit_card
+      - creditcard
+      - card_number
+      - account_number
+      - payment_card
+      - card_no
+      - card_num
+      - ccnum
+      - cc_num
+      - cc_number
+
+  - detector_id: cvv
+    description: Card security / verification code column.
+    patterns:
+      - cvv
+      - cvc
+      - csc
+      - security_code
+      - card_security
+      - card_code
+      - card_security_code
+
+  - detector_id: iban
+    description: International Bank Account Number column.
+    patterns:
+      - iban
+      - bank_account
+      - account_iban
+      - iban_num
+      - iban_number

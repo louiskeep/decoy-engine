@@ -1,0 +1,91 @@
+# Healthcare / clinical detectors. Item 31 phase 3 -- HIPAA Safe Harbor
+# completers + clinical identifiers.
+#
+# mrn picks up generic patient/customer/employee identifier columns so
+# the strict fail-safe doesn't miss them. The smart-default strategy
+# is FPE-with-length-preservation, which is safe for any ID-shaped
+# column; the operator can override after the fact.
+
+detectors:
+  - detector_id: icd10
+    description: ICD-10 diagnosis code column.
+    patterns:
+      - icd
+      - icd10
+      - icd_10
+      - diagnosis
+      - diag
+      - dx
+      - diag_code
+      - diagnosis_code
+      - icd_code
+
+  - detector_id: npi
+    description: National Provider Identifier column.
+    patterns:
+      - npi
+      - natl_provider
+      - national_provider
+      - provider_npi
+      - physician_id
+      - provider_id
+
+  - detector_id: mrn
+    description: Medical Record Number + generic patient/customer/employee identifier columns.
+    patterns:
+      - mrn
+      - medical_record
+      - chart
+      - patient_id
+      - chart_num
+      - chart_number
+      - medical_id
+      - med_rec
+      - pt_id
+      - pat_id
+      - cust_id
+      - customer_id
+      - client_id
+      - emp_id
+      - employee_id
+      - member_num
+      - acct
+      - account
+
+  - detector_id: health_plan_id
+    description: Health-plan / benefit / member-coverage identifier column.
+    patterns:
+      - beneficiary
+      - member_id
+      - hplan
+      - health_plan
+      - plan_id
+      - subscriber_id
+      - enrollee_id
+      - coverage_id
+      - member_no
+
+  - detector_id: device_id
+    description: Medical / industrial device identifier column.
+    patterns:
+      - device_id
+      - device_serial
+      - serial_num
+      - serial_number
+      - equipment_id
+      - implant_id
+      - device_code
+      - asset_id
+      - udi
+
+  - detector_id: biometric_id
+    description: Biometric identifier column (fingerprint, iris, voice, etc.).
+    patterns:
+      - fingerprint
+      - retina
+      - iris
+      - biometric
+      - voice_print
+      - hand_geometry
+      - bio_id
+      - biometric_id

@@ -1,0 +1,22 @@
+# Name-hint library manifest. Lists every YAML file in this version
+# directory and the integrity hash the loader uses to detect partial
+# /  corrupted shipments at import time.
+#
+# Bump `library_version` when a coordinated edit ships (e.g. v1 -> v2
+# is a re-organization of detector IDs; v1.1 is a content addition
+# under the same schema). The loader keys cache slots by this string.
+
+library_version: "1.0.0"
+schema_version: "name-hints/v1"
+
+# Files load in this order. Order matters only when two files declare
+# the same detector_id (which is an error -- the loader raises). Listed
+# files MUST exist; extras in the directory are ignored. See
+# README.md for the contribution conventions.
+files:
+  - base.yaml
+  - identity.yaml
+  - dates.yaml
+  - finance.yaml
+  - healthcare.yaml
+  - identifiers.yaml
