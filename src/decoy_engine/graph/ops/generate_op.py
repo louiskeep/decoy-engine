@@ -440,7 +440,30 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
                 reference_data=reference_data,
             )
 
-        # Pass 3: m2m junction emission. For each spec where junction.node
+        # Pass 3: referenced formula post-pass.
+        #
+        # formula columns with non-empty `references: [col_a, ...]` were
+        # emitted as None placeholders during pass 1 by
+        # ColumnGenerator._generate_formula_column (it defers to this
+        # pass so the formula can read sibling values). Every non-formula
+        # column is now in `out`, so we evaluate them here.
+        for col_name, spec in columns.items():
+            if col_name in self_ref_targets:
+                continue  # already resolved in pass 2
+            col_type = spec.get("strategy") or spec.get("type")
+            if col_type != "formula":
+                continue
+            refs = spec.get("references") or []
+            if not refs:
+                continue  # inline formula — already evaluated in pass 1
+            formula = spec.get("formula") or ""
+            if not formula:
+                continue
+            out[col_name] = gen.fill_referenced_formula_column(
+                col_name, formula, refs, out
+            )
+
+        # Pass 4: m2m junction emission. For each spec where junction.node
         # is THIS op, sample (left, right) pairs from the parent pools
         # per pool_strategy and write to junction.columns.
         for spec in m2m_specs:

@@ -615,6 +615,58 @@ class ColumnGenerator:
             column_config,
         )
 
+    def fill_referenced_formula_column(
+        self,
+        col_name: str,
+        formula: str,
+        references: list[str],
+        out: "pd.DataFrame",
+    ) -> "pd.Series":
+        """Evaluate a formula column whose expression reads sibling columns.
+
+        Called by generate_op after pass 1 has produced all non-formula
+        columns, so ``out`` contains finalized values for every referenced
+        column. Uses the same per-row deterministic seeding and safe_eval
+        scope as ``_eval_formula_inline``.
+
+        Mirrors DataGenerator._evaluate_composite_formula but operates
+        on the in-memory DataFrame instead of a CSV file.
+        """
+        missing = [r for r in references if r not in out.columns]
+        if missing:
+            self.logger.warning(
+                f"Formula column {col_name!r} references missing columns "
+                f"{missing!r} -- emitting None"
+            )
+            return pd.Series([None] * len(out), dtype=object)
+
+        column_seed = self._column_seed(col_name)
+        values: list = []
+        for i in range(len(out)):
+            local_seed = column_seed + i
+            random.seed(local_seed)
+            self.faker.seed_instance(local_seed)
+
+            scope = self._formula_scope(local_seed)
+            scope["i"] = i
+            scope["index"] = i
+            for ref in references:
+                val = out.at[i, ref]
+                if val is None or (isinstance(val, float) and pd.isna(val)):
+                    val = ""
+                scope[ref] = val
+
+            try:
+                result = safe_eval(formula, BASE_GLOBALS, scope)
+                values.append(result)
+            except Exception as exc:
+                self.logger.warning(
+                    f"Formula column {col_name!r} row {i} eval error: {exc}"
+                )
+                values.append(None)
+
+        return pd.Series(values, dtype=object)
+
     def _eval_formula_inline(
         self,
         num_rows: int,
