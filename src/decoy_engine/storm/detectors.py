@@ -209,9 +209,73 @@ _NAME_HINTS: dict[str, re.Pattern[str]] = {
 }
 
 
+# Per-scan additive name-hint extras. The platform reads its
+# storm_detector_overrides table at scan start and stashes
+# {detector_id: re.Pattern} here via set_name_hint_extras(); the
+# detect_* functions consult this via _hits_name_hint().
+#
+# Additive semantics: a column name matches if EITHER the shipped
+# pattern OR the per-scan extras pattern matches. Customers cannot
+# disable shipped patterns through this surface (that's a "full
+# override" mode deferred to a later sprint if real demand appears).
+#
+# ContextVar (not module-global) so concurrent scans on the same
+# process don't cross-contaminate -- each scan's run_storm() call
+# sets its own extras for the duration of that call.
+from contextlib import contextmanager
+from contextvars import ContextVar
+
+_NAME_HINT_EXTRAS: ContextVar[dict[str, re.Pattern[str]] | None] = ContextVar(
+    "_NAME_HINT_EXTRAS", default=None,
+)
+
+
+@contextmanager
+def name_hint_extras(extras: dict[str, list[str]] | None):
+    """Context manager: install per-scan name-hint extras.
+
+    Pass a dict mapping detector_id to a list of additional
+    column-name term strings. The terms are compiled with the same
+    _hint() regex helper used for the shipped library. Behavior is
+    additive: shipped patterns still apply unchanged; extras add
+    coverage on top.
+
+    Yields and restores the ContextVar so the caller doesn't have
+    to manage the token. Pass None to skip installation (no-op).
+    """
+    if not extras:
+        yield
+        return
+    compiled = {
+        det_id: _hint(list(terms))
+        for det_id, terms in extras.items()
+        if terms  # skip empty lists silently
+    }
+    token = _NAME_HINT_EXTRAS.set(compiled if compiled else None)
+    try:
+        yield
+    finally:
+        _NAME_HINT_EXTRAS.reset(token)
+
+
 def _hits_name_hint(detector_id: str, col_name: str) -> bool:
+    """True if col_name matches the shipped pattern OR a per-scan extra.
+
+    Checked in this order:
+      1. Shipped pattern from the YAML library (_NAME_HINTS).
+      2. Per-scan extras installed by name_hint_extras() context.
+    Either match returns True; matching is additive.
+    """
+    target = col_name or ""
     pat = _NAME_HINTS.get(detector_id)
-    return bool(pat and pat.fullmatch(col_name or ""))
+    if pat and pat.fullmatch(target):
+        return True
+    extras = _NAME_HINT_EXTRAS.get()
+    if extras:
+        extra_pat = extras.get(detector_id)
+        if extra_pat and extra_pat.fullmatch(target):
+            return True
+    return False
 
 
 def hits_name_hint(detector_id: str, col_name: str) -> bool:
