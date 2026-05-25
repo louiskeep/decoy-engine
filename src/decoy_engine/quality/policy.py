@@ -106,6 +106,36 @@ _DEFAULT_STRATEGY_EXPECTATIONS: dict[str, float] = {
     "generate": 0.30,  # unchanged: synthetic data, modest baseline
 }
 
+# D5b wiring (e): parallel per-strategy expectations for the
+# shape-only fidelity scorer (`compute_shape_fidelity`,
+# `quality-shape-fidelity/v1`). These are what each strategy should
+# preserve on SHAPE (sorted-descending normalized count vectors per
+# column / joint), regardless of value identity.
+#
+# The defining difference from `_DEFAULT_STRATEGY_EXPECTATIONS`: hash
+# and faker score HIGH here because they preserve the frequency shape
+# of the source even though their output values are completely
+# disjoint. The original D4 defaults (before D5a corrected them)
+# accidentally assumed this was what the value-identity scorer
+# measured; D5b finally makes a scorer that does, and these defaults
+# match its behavior.
+#
+# Numbers are calibrated against the D5b unit tests + the design
+# survey in v2-d5-design-survey.md. Operators can override via
+# `policy_config["shape_strategy_expectations"]` the same way the
+# value-identity table is overridden today.
+_DEFAULT_SHAPE_STRATEGY_EXPECTATIONS: dict[str, float] = {
+    "identity": 1.00,   # no change at all
+    "hash": 0.95,       # 1:1 transform preserves sorted freq vector exactly
+    "shuffle": 1.00,    # same value set + same frequencies
+    "bucketize": 0.30,  # collapses many source bins into one bucket; shape DOES change
+    "date_shift": 0.80, # subject-keyed shift preserves shape modulo edge bin spillover
+    "faker": 0.80,      # faker draws independently per row, frequency shape only
+                        # approximated (not 1:1 like hash)
+    "redact": 0.05,     # intentional destruction; collapses everything to one value
+    "generate": 0.50,   # synthetic data: depends on generator's distribution model
+}
+
 _VALID_MODES = {"report", "warn", "fail"}
 
 
@@ -138,8 +168,20 @@ def apply_quality_policy(
         **_DEFAULT_STRATEGY_EXPECTATIONS,
         **(config.get("strategy_expectations") or {}),
     }
+    # D5b wiring (e): shape-only thresholds are siblings to the
+    # value-identity thresholds, namespaced under `thresholds.shape.*`.
+    # `shape_strategy_expectations` is the operator-override hook
+    # parallel to `strategy_expectations`.
+    shape_thresholds = thresholds.get("shape") or {}
+    shape_strategy_expectations = {
+        **_DEFAULT_SHAPE_STRATEGY_EXPECTATIONS,
+        **(config.get("shape_strategy_expectations") or {}),
+    }
     column_overrides = _normalize_column_overrides(
         thresholds.get("columns") or config.get("columns") or [],
+    )
+    shape_column_overrides = _normalize_column_overrides(
+        shape_thresholds.get("columns") or [],
     )
 
     violations: list[dict[str, Any]] = []
@@ -155,6 +197,20 @@ def apply_quality_policy(
         strategy_expectations=strategy_expectations,
         violations=violations,
     )
+    # Shape checks only run when the report includes the
+    # shape_fidelity sibling block (D5b a / engine include flag).
+    # Pre-D5b reports flow through unchanged.
+    if isinstance(report.get("shape_fidelity"), dict):
+        _check_shape_overall(report, shape_thresholds, violations)
+        _check_shape_marginal(report, shape_thresholds, violations)
+        _check_shape_pairwise(report, shape_thresholds, violations)
+        _check_shape_per_column(
+            report,
+            column_overrides=shape_column_overrides,
+            strategy_map=strategy_map or {},
+            strategy_expectations=shape_strategy_expectations,
+            violations=violations,
+        )
 
     verdict = _verdict_for(mode, violations)
     return {
@@ -297,6 +353,137 @@ def _check_per_column(
                     "expected": float(minimum),
                     "actual": float(sim),
                     "detail": f"column {name!r} similarity {sim} below minimum {minimum}",
+                },
+            )
+
+
+# ── D5b wiring (e): shape-only check evaluators ─────────────────────────
+
+
+def _check_shape_overall(
+    report: dict[str, Any],
+    shape_thresholds: dict[str, Any],
+    violations: list[dict[str, Any]],
+) -> None:
+    cfg = shape_thresholds.get("overall") or {}
+    minimum = cfg.get("min")
+    if minimum is None:
+        return
+    actual = report.get("shape_fidelity", {}).get("overall_shape_score")
+    if actual is None or float(actual) < float(minimum):
+        violations.append(
+            {
+                "check": "shape_overall",
+                "severity": "fail",
+                "expected": float(minimum),
+                "actual": actual,
+                "detail": f"shape_fidelity.overall_shape_score {actual} below minimum {minimum}",
+            },
+        )
+
+
+def _check_shape_marginal(
+    report: dict[str, Any],
+    shape_thresholds: dict[str, Any],
+    violations: list[dict[str, Any]],
+) -> None:
+    cfg = shape_thresholds.get("marginal") or {}
+    minimum = cfg.get("min")
+    if minimum is None:
+        return
+    actual = (
+        report.get("shape_fidelity", {})
+        .get("marginal", {})
+        .get("shape_score")
+    )
+    if actual is None or float(actual) < float(minimum):
+        violations.append(
+            {
+                "check": "shape_marginal",
+                "severity": "fail",
+                "expected": float(minimum),
+                "actual": actual,
+                "detail": (
+                    f"shape_fidelity.marginal.shape_score {actual} "
+                    f"below minimum {minimum}"
+                ),
+            },
+        )
+
+
+def _check_shape_pairwise(
+    report: dict[str, Any],
+    shape_thresholds: dict[str, Any],
+    violations: list[dict[str, Any]],
+) -> None:
+    cfg = shape_thresholds.get("pairwise") or {}
+    minimum = cfg.get("min")
+    if minimum is None:
+        return
+    actual = (
+        report.get("shape_fidelity", {})
+        .get("pairwise", {})
+        .get("shape_score")
+    )
+    if actual is None or float(actual) < float(minimum):
+        violations.append(
+            {
+                "check": "shape_pairwise",
+                "severity": "fail",
+                "expected": float(minimum),
+                "actual": actual,
+                "detail": (
+                    f"shape_fidelity.pairwise.shape_score {actual} "
+                    f"below minimum {minimum}"
+                ),
+            },
+        )
+
+
+def _check_shape_per_column(
+    report: dict[str, Any],
+    *,
+    column_overrides: dict[str, float],
+    strategy_map: dict[str, str],
+    strategy_expectations: dict[str, float],
+    violations: list[dict[str, Any]],
+) -> None:
+    columns = (
+        report.get("shape_fidelity", {})
+        .get("marginal", {})
+        .get("columns", [])
+    )
+    for col in columns:
+        if not isinstance(col, dict):
+            continue
+        name = col.get("column")
+        if not isinstance(name, str):
+            continue
+        if not col.get("comparable"):
+            continue
+        sim = col.get("shape_similarity")
+        if sim is None:
+            continue
+        minimum: float | None = column_overrides.get(name)
+        if minimum is None:
+            strategy = strategy_map.get(name)
+            if strategy is not None:
+                minimum = strategy_expectations.get(strategy)
+        if minimum is None:
+            continue
+        if float(sim) < float(minimum):
+            violations.append(
+                {
+                    "check": "shape_column",
+                    "column": name,
+                    "strategy": strategy_map.get(name),
+                    "severity": "fail",
+                    "expected": float(minimum),
+                    "actual": float(sim),
+                    "detail": (
+                        f"column {name!r} shape_similarity {sim} "
+                        f"below minimum {minimum}"
+                    ),
                 },
             )
 
