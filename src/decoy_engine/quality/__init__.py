@@ -46,6 +46,11 @@ from decoy_engine.quality.snapshot import (
     DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION,
     compute_distribution_snapshot,
 )
+from decoy_engine.quality.synth_report import (
+    SYNTH_REPORT_SCHEMA_VERSION,
+    assemble_synth_report,
+    compute_new_row_synthesis,
+)
 
 __all__ = [
     "DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION",
@@ -54,11 +59,14 @@ __all__ = [
     "QUALITY_POLICY_SCHEMA_VERSION",
     "QUALITY_REPORT_SCHEMA_VERSION",
     "QUALITY_SHAPE_FIDELITY_SCHEMA_VERSION",
+    "SYNTH_REPORT_SCHEMA_VERSION",
     "apply_quality_policy",
     "assemble_quality_report",
+    "assemble_synth_report",
     "compute_diagnostic",
     "compute_distribution_snapshot",
     "compute_fidelity",
+    "compute_new_row_synthesis",
     "compute_quality_report",
     "compute_shape_fidelity",
     "score_to_grade",
