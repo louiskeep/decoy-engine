@@ -7,6 +7,7 @@ import random
 import time
 from typing import Any
 
+import numpy as np
 import pandas as pd
 from faker import Faker
 
@@ -88,6 +89,12 @@ class ColumnGenerator:
             "categorical": self._generate_categorical_column,
             "reference": self._generate_reference_column,
             "formula": self._generate_formula_column,
+            # V2 Phase 3 D6: distribution-driven generator. Reads a
+            # snapshot dict matching the shape `compute_distribution_snapshot`
+            # emits and samples rows whose distribution matches the source.
+            # Kind dispatch inside the method (numeric -> D6a; categorical
+            # -> D6b; datetime -> D6c).
+            "distribution": self._generate_distribution_column,
         }
 
         self.logger.debug(
@@ -343,6 +350,149 @@ class ColumnGenerator:
         column_name = column_config.get("name", "unnamed_column")
         random.seed(self._column_seed(column_name, column_config))
         values = random.choices(categories, weights=weights, k=num_rows)
+        return pd.Series(values)
+
+    def _generate_distribution_column(
+        self,
+        num_rows: int,
+        column_config: dict[str, Any],
+        table_name: str,
+        reference_data: dict[str, pd.DataFrame],
+    ) -> pd.Series:
+        """V2 Phase 3 D6: generate rows whose distribution matches a
+        source snapshot.
+
+        Consumes a `snapshot` dict whose shape matches what
+        `decoy_engine.quality.snapshot.compute_distribution_snapshot`
+        emits per column (D1a). Dispatches on `snapshot.kind` so a
+        single strategy covers numeric, categorical, and datetime
+        source columns; freetext is deferred (V2 scope cut).
+
+        Operator config:
+
+            columns:
+              age:
+                strategy: distribution
+                snapshot:
+                  kind: numeric
+                  bin_edges: [18, 30, 45, 60, 80]
+                  bin_counts: [120, 340, 280, 190, 70]
+                  # min / max / mean / std / quantiles are present
+                  # in real snapshots but unused by the sampler.
+
+        Determinism follows the same pattern as the other generators:
+        per-column seed via `_column_seed`, so same key + same
+        snapshot dict -> same output bytes.
+
+        Verification: a column generated from a snapshot should score
+        ~1.0 on the D5b `compute_shape_fidelity` against the source's
+        snapshot (tests pin this contract).
+        """
+        column_name = column_config.get("name", "unnamed_column")
+        snapshot = column_config.get("snapshot")
+        if not isinstance(snapshot, dict):
+            self.logger.warning(
+                f"distribution column '{column_name}' has no snapshot dict; "
+                "emitting nulls",
+            )
+            return pd.Series([None] * num_rows)
+
+        kind = str(snapshot.get("kind") or "").lower()
+        seed = self._column_seed(column_name, column_config)
+
+        # D6a: numeric. Numpy RNG for vectorized sampling + bitwise
+        # determinism across machines/python versions when the
+        # column_seed is stable.
+        if kind == "numeric":
+            return self._generate_distribution_numeric(num_rows, snapshot, seed)
+
+        # D6b + D6c land here next.
+        self.logger.warning(
+            f"distribution column '{column_name}' has unsupported kind {kind!r}; "
+            "emitting nulls",
+        )
+        return pd.Series([None] * num_rows)
+
+    def _generate_distribution_numeric(
+        self,
+        num_rows: int,
+        snapshot: dict[str, Any],
+        seed: int,
+    ) -> pd.Series:
+        """D6a numeric sampler.
+
+        Inverse-CDF sampling on the snapshot's histogram:
+          1. Build per-bin probabilities from `bin_counts`.
+          2. For each output row, pick a bin index proportional to that.
+          3. Within the picked bin, sample uniformly between
+             `bin_edges[i]` and `bin_edges[i+1]`.
+
+        Degenerate cases:
+          - No bins / empty arrays -> all nulls (logged).
+          - Single bin with zero range (lo == hi, the
+            constant-column case D1a explicitly handles) -> emit
+            the constant value `num_rows` times. No randomness needed.
+          - Total bin count zero -> all nulls (snapshot was empty
+            on the source; nothing to sample from).
+
+        Returns a Series of Python floats. Integer-valued source
+        columns will land as floats; D6 doesn't try to infer int
+        vs float from the snapshot (the snapshot doesn't carry a
+        dtype hint). A downstream cast op or a `dtype: int` config
+        can pin the output dtype if needed; deferred to a D6
+        follow-up.
+        """
+        # D1a snapshot shape: per-column dict has `kind` at top level
+        # and the kind-specific fields (bin_edges, bin_counts, min,
+        # max, ...) nested under `stats`. Read from `stats` so the
+        # snapshot can be passed in verbatim from compute_distribution_snapshot
+        # without flattening. Fall back to top-level for callers
+        # constructing simplified snapshots in tests / examples.
+        stats = snapshot.get("stats") or {}
+        bin_edges = stats.get("bin_edges") or snapshot.get("bin_edges") or []
+        bin_counts = stats.get("bin_counts") or snapshot.get("bin_counts") or []
+        if not bin_edges or not bin_counts:
+            self.logger.warning(
+                "distribution numeric snapshot missing bin_edges / bin_counts; "
+                "emitting nulls",
+            )
+            return pd.Series([None] * num_rows)
+        # bin_edges has len(bin_counts) + 1 entries by D1a convention.
+        if len(bin_edges) != len(bin_counts) + 1:
+            self.logger.warning(
+                f"distribution numeric snapshot shape mismatch "
+                f"(edges={len(bin_edges)}, counts={len(bin_counts)}); "
+                "emitting nulls",
+            )
+            return pd.Series([None] * num_rows)
+
+        rng = np.random.default_rng(seed)
+        edges = np.asarray(bin_edges, dtype=float)
+        counts = np.asarray(bin_counts, dtype=float)
+        total = float(counts.sum())
+        if total <= 0:
+            self.logger.warning(
+                "distribution numeric snapshot has zero total count; "
+                "emitting nulls",
+            )
+            return pd.Series([None] * num_rows)
+
+        # Constant-column case from D1a: lo == hi -> single bin with
+        # edges [lo, hi] both equal. Just emit the constant.
+        if len(counts) == 1 and edges[0] == edges[1]:
+            return pd.Series([float(edges[0])] * num_rows)
+
+        # Normal path: weighted bin choice + uniform within bin.
+        probs = counts / total
+        chosen_bins = rng.choice(len(counts), size=num_rows, p=probs)
+        bin_lo = edges[chosen_bins]
+        bin_hi = edges[chosen_bins + 1]
+        # rng.uniform(low, high) is half-open [low, high); fine for
+        # sampling — the snapshot's upper bound was inclusive of the
+        # source max but np.histogram's right-most bin is closed, so
+        # a tiny chance of sampling exactly at the open boundary is
+        # not a real distribution loss.
+        values = rng.uniform(bin_lo, bin_hi)
         return pd.Series(values)
 
     def _generate_reference_column(
