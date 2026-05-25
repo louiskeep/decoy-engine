@@ -1,0 +1,21 @@
+customer_id,first_name,last_name,email,phone,address,ssn
+C001,Alice,Smith,alice@example.com,555-0101,123 Main St,111-22-3333
+C002,Bob,Jones,bob@example.com,555-0102,456 Oak Ave,222-33-4444
+C003,Carol,Williams,carol@example.com,555-0103,789 Pine Rd,333-44-5555
+C004,Dave,Brown,dave@example.com,555-0104,321 Elm St,444-55-6666
+C005,Eve,Davis,eve@example.com,555-0105,654 Maple Dr,555-66-7777
+C006,Frank,Miller,frank@example.com,555-0106,987 Cedar Ln,666-77-8888
+C007,Grace,Wilson,grace@example.com,555-0107,147 Birch Blvd,777-88-9999
+C008,Hank,Moore,hank@example.com,555-0108,258 Spruce Way,888-99-0000
+C009,Iris,Taylor,iris@example.com,555-0109,369 Walnut Ave,999-00-1111
+C010,Jack,Anderson,jack@example.com,555-0110,741 Ash Ct,000-11-2222
+C011,Kate,Thomas,kate@example.com,555-0111,852 Poplar St,111-33-4444
+C012,Leo,Jackson,leo@example.com,555-0112,963 Willow Rd,222-44-5555
+C013,Mia,White,mia@example.com,555-0113,174 Sycamore Dr,333-55-6666
+C014,Nick,Harris,nick@example.com,555-0114,285 Dogwood Ln,444-66-7777
+C015,Olivia,Martin,olivia@example.com,555-0115,396 Magnolia Ave,555-77-8888
+C016,Paul,Garcia,paul@example.com,555-0116,417 Hickory St,666-88-9999
+C017,Quinn,Martinez,quinn@example.com,555-0117,528 Pecan Blvd,777-99-0000
+C018,Ruth,Robinson,ruth@example.com,555-0118,639 Chestnut Way,888-00-1111
+C019,Sam,Clark,sam@example.com,555-0119,750 Locust Ct,999-11-2222
+C020,Tina,Rodriguez,tina@example.com,555-0120,861 Beech Ave,000-22-3333
