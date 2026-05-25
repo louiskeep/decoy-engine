@@ -20,7 +20,7 @@ VERIFY = needs parity test before deciding.
 | M1 | YAML masker config format (`masking_rules`, `global_settings`) | `masker/masker.py:__init__` | Yes — graph YAML replaces it | **DROP.** CLI builds a graph internally for one-file workflows. |
 | M2 | Single-file CSV/parquet mask (load → mask → save) | `masker/masker.py:mask()` + `_process_standard_file()` | Yes — `source.file → mask → target.file` | **COVERED.** Graph handles this end-to-end. |
 | M3 | Large-file chunked processing (>1 GB threshold, configurable via `large_file_threshold_gb`) | `masker/masker.py:_process_large_file()`, `internal/large_file_processor.py` | Partial — DuckDB source.file streams; pandas path is in-memory | **VERIFY.** Run the parity test suite on a 1.5 GB fixture with the graph source.file (DuckDB) path before deleting LargeFileProcessor. If graph throughput is acceptable, drop. If not, port streaming to a graph file-source option. |
-| M4 | Row-level conditional masking (`conditions` block with AND/OR logic, 11 operators: eq, ne, gt, gte, lt, lte, in, not\_in, contains, not\_contains, is\_null, is\_not\_null) | `masker/processor.py:_evaluate_conditions()` | **No.** Graph `mask` op applies strategies unconditionally to all rows. | **PORT.** Add optional `conditions` block to graph `mask` op config. Validator enforces structure; apply-side filters rows before applying strategy. Alternatively, the `if_router` op can route rows to conditional mask paths — audit whether existing graph ops compose to cover this. Decision requires Dennis. |
+| M4 | Row-level conditional masking (`conditions` block with AND/OR logic, 11 operators: eq, ne, gt, gte, lt, lte, in, not\_in, contains, not\_contains, is\_null, is\_not\_null) | `masker/processor.py:_evaluate_conditions()` | **No.** Graph `mask` op applies strategies unconditionally to all rows. | **DECIDED: Option B — compose via if\_router. No port required.** (Session 15.) `conditions` blocks are only emitted by `legacy_translation._translate_mask_table`, gated behind `_is_configbuilder_yaml`. The V1 graph mode never emits or consumes `conditions` blocks. Platform FORECAST and pipeline templates produce zero `conditions` emissions. V2.1 can delete the legacy masker path without porting `conditions` to the graph mask op. |
 | M5 | Format preservation after masking (`preserve_format: true` flag) | `masker/processor.py:apply_masking_rules()` calling `apply_format_preservation()` | Yes — `apply_format_preservation()` is already imported and called in `graph/ops/mask_op.py` | **COVERED.** |
 | M6 | Referential integrity (consistent masking across FK columns across tables) | `internal/integrity.py:ReferentialIntegrityManager` (shared) | Yes — graph handles FK consistency via `column_relationships` config | **KEEP.** Not legacy; shared subsystem. Not deleted. |
 | M7 | Structured lineage emission (`emit_lineage`, `emit_step`) | `masker/masker.py:mask()` via `context.py` | Yes — graph runner emits the same lineage events via `ctx` | **COVERED.** |
@@ -28,22 +28,11 @@ VERIFY = needs parity test before deciding.
 
 ### Masker summary
 
-One genuine gap: **M4 (row-level conditional masking)**. All other features are
-either covered by the graph runner or shared infrastructure not being deleted.
+~~One genuine gap: **M4 (row-level conditional masking)**.~~ **M4 RESOLVED — session 15, Option B.**
 
-M4 must be resolved before the Masker delete PR opens. Two options:
-- **Option A (Port to mask op):** Add `conditions` block to `graph/ops/mask_op.py`.
-  ~80-120 LOC; validator + apply-side changes. Creates parity with the legacy
-  path. Preferred if the feature is used in any current demo/customer config.
-- **Option B (Compose with if\_router):** `if_router` already routes rows by
-  condition. A conditional mask pattern is:
-  `source → if_router (condition) → [mask_branch, passthrough_branch] → join`.
-  More verbose in YAML but no new mask op code. Preferred if M4 is rarely used
-  and ops-compose is acceptable.
+Audit of `api/jobs/legacy_translation.py`, `api/jobs/runner.py`, all platform pipeline template generation paths, and FORECAST output confirmed: `conditions` blocks are only emitted by the legacy ConfigBuilder translation path, gated behind `_is_configbuilder_yaml`. The V1 graph mode never emits or consumes them. No port to the graph mask op is required. V2.1 can delete the legacy masker path directly.
 
-**Action:** Dennis decides between Option A and B. If any existing demo or
-platform-generated config uses `conditions:` in a masker YAML, Option A is
-mandatory.
+All Masker features are either covered by the graph runner, shared infrastructure not being deleted, or resolved to DROP/COMPOSE with no new code needed.
 
 ---
 
@@ -56,7 +45,7 @@ mandatory.
 | G3 | `sequence` column type (sequential integers with start/step) | `generators/columns.py:_generate_sequence_column()` | Yes — generate\_op delegates to ColumnGenerator | **COVERED.** |
 | G4 | `categorical` column type (values list + cardinality bounds) | `generators/columns.py:_generate_categorical_column()` | Yes — generate\_op delegates to ColumnGenerator | **COVERED.** |
 | G5 | `formula` column type (inline Python expression, per-row deterministic seeding) | `generators/columns.py:_generate_formula_column()` → `_eval_formula_inline()` | Yes — generate\_op delegates to ColumnGenerator | **COVERED.** |
-| G6 | `formula` column with **cross-column references** (`references: [col_a, col_b]`) — post-pass fill after all other columns generated | `generators/columns.py:_generate_formula_column()` returns Nones + `generators/generator.py:_process_referenced_formulas()` fills them | **No.** `generate_op.py` calls `gen.generate_column()` which returns None placeholders but has no post-pass to fill them. **Silent bug: referenced formula columns produce all-None output in the graph runner.** | **PORT.** Add a post-pass to `generate_op.apply()`: after pass 1 + pass 2, collect columns where `references` is non-empty; re-evaluate them with sibling values in scope. ~60-80 LOC. This is a correctness gap, not just a feature gap. |
+| G6 | `formula` column with **cross-column references** (`references: [col_a, col_b]`) — post-pass fill after all other columns generated | `generators/columns.py:_generate_formula_column()` returns Nones + `generators/generator.py:_process_referenced_formulas()` fills them | **FIXED (session 15, commit `0220dbd`).** `ColumnGenerator.fill_referenced_formula_column()` added; pass 3 added to `generate_op.apply()` to call it after pass 2 for every formula column with non-empty `references`. 5 regression tests in `tests/unit/test_generate_op_formula_references.py`, all passing. | **DONE.** |
 | G7 | `reference` column type (FK pool sampling from another table) | `generators/columns.py:_generate_reference_column()` | Yes — generate\_op materializes parent pools via pool\_resolver and coerces FK columns to `reference` type | **COVERED.** |
 | G8 | Cross-table FK with distribution control (random / skewed / uniform, min/max per parent) | `generators/columns.py:_generate_reference_column()` + generate\_op FK coercion | Yes — generate\_op threads distribution/weights/min\_per\_parent/max\_per\_parent from column\_relationships | **COVERED.** |
 | G9 | Self-referential FK within same node | `generators/generator.py:RelationshipHandler.process_self_references()` | Yes — generate\_op handles self\_ref\_targets in pass 2 | **COVERED.** |
@@ -140,8 +129,8 @@ These modules are used by the graph runner directly and must not be deleted:
 Before any V2.1 deletion PR opens:
 
 - [ ] **Dennis sign-off** on this audit table (week 1 deliverable).
-- [ ] **M4 resolution**: Dennis decides Option A (port conditions to mask op) or Option B (compose via if\_router). If Option A, the port PR lands before the Masker delete PR.
-- [ ] **G6 fix**: Port cross-column formula post-pass to generate\_op.py. This is a correctness bug; must be fixed regardless of V2.1 timing. Suggested: land as a standalone bug-fix PR now, not gated on V2.1.
+- [x] **M4 resolution**: **DECIDED — Option B (compose via if\_router).** No port required. (Session 15.) `conditions` blocks are only emitted by the legacy ConfigBuilder path and are not used in the V1 graph mode.
+- [x] **G6 fix**: **DONE — session 15, decoy-engine commit `0220dbd`.** `fill_referenced_formula_column` added to `ColumnGenerator`; pass 3 added to `generate_op.apply`. 5 regression tests, all passing.
 - [x] **G14/C8 usage audit**: Complete (session 14). Zero non-legacy usages found. Decision: DROP fixed-width output from both generator and connectors.
 - [ ] **M3/L1 large-file verification**: Run a 1.5 GB fixture through `run_graph` (DuckDB path). Measure memory ceiling and runtime vs legacy. Document result.
 - [ ] **Platform PR first**: `decoy-platform/api/jobs/runner.py` and any other platform callers of `Masker`, `DataGenerator`, `create_io_handler` must be updated to graph-only APIs before the engine delete PR lands.
@@ -156,16 +145,10 @@ Per the sprint plan: "if audit finds more than 3 features requiring porting
 (excluding Masker and DataGenerator themselves), sprint pauses for re-scope."
 
 Features requiring porting/verification:
-1. **M4** (conditional masking) — PORT or COMPOSE decision needed
-2. **G6** (cross-column formula references) — PORT required (correctness bug)
-3. **M3/L1** (large-file chunked processing) — VERIFY before delete
-4. **G14/C8** (fixed-width output) — **DROPPED** (session 14 usage audit found zero non-legacy usage)
+1. ~~**M4** (conditional masking) — PORT or COMPOSE decision needed~~ **RESOLVED (session 15): Option B, no port.**
+2. ~~**G6** (cross-column formula references) — PORT required (correctness bug)~~ **FIXED (session 15, commit `0220dbd`).**
+3. **M3/L1** (large-file chunked processing) — VERIFY before delete. **OPEN.**
+4. ~~**G14/C8** (fixed-width output)~~ **DROPPED** (session 14 usage audit found zero non-legacy usage).
 
-Count update: G14/C8 resolved to DROP. Remaining actionable items = **3** (M4, G6, M3/L1):
-- M4 and M3/L1 require Dennis decision or verification
-- G6 is a pre-existing correctness bug recommended for immediate fix, independent of V2.1
-
-Sprint count is exactly at the "more than 3 = re-scope" threshold (3 items). Dennis's
-call on whether G6 (correctness bug in existing code, not a new porting task) counts.
-If G6 is treated as a standalone bug fix and not a V2.1 scoping item, the sprint
-stays under threshold at 2 items (M4 + M3/L1).
+Count update (session 15): M4 DECIDED, G6 FIXED. **Remaining actionable items = 1 (M3/L1).**
+Sprint is well under the 3-item re-scope threshold. Dennis approves proceeding to deletion phase once M3/L1 is resolved.
