@@ -75,6 +75,7 @@ def _execute_graph(
     from decoy_engine.graph.ops import OPS
     from decoy_engine.graph.planner import build_plan
     from decoy_engine.graph.registry import native_engine_for
+    from decoy_engine.graph.throughput_sampler import PeriodicThroughputSampler
 
     nodes = config["nodes"]
     by_id = {n["id"]: n for n in nodes}
@@ -117,7 +118,25 @@ def _execute_graph(
     # (used by every op) continues to route values to the right node.
     state = RunState(overall_start=time.monotonic())
 
-    with PeakRSSMonitor() as monitor:
+    # Snapshot accessor for the throughput sampler: sums row_count
+    # across nodes that completed successfully. Closes over `state`
+    # so the sampler always reads live cumulative progress without
+    # the runner having to push updates.
+    def _cumulative_completed_rows() -> int:
+        total = 0
+        for rec in state.records:
+            if rec.get("status") != "ok":
+                continue
+            rc = rec.get("row_count")
+            if isinstance(rc, int):
+                total += rc
+        return total
+
+    with PeakRSSMonitor() as monitor, PeriodicThroughputSampler(
+        log=log,
+        get_cumulative_rows=_cumulative_completed_rows,
+        start_time=state.overall_start,
+    ):
         state.memory_monitor = monitor
         # Emit lineage entries for every node before execution starts so
         # the audit trail is complete even if a node fails mid-run.
