@@ -49,6 +49,7 @@ from decoy_engine.quality.snapshot import (
 from decoy_engine.quality.synth_report import (
     SYNTH_REPORT_SCHEMA_VERSION,
     assemble_synth_report,
+    compute_attack_metrics,
     compute_dcr,
     compute_new_row_synthesis,
 )
@@ -64,6 +65,7 @@ __all__ = [
     "apply_quality_policy",
     "assemble_quality_report",
     "assemble_synth_report",
+    "compute_attack_metrics",
     "compute_dcr",
     "compute_diagnostic",
     "compute_distribution_snapshot",

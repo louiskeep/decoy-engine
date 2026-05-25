@@ -28,9 +28,21 @@ D7b adds:
       median(DCR_synth_to_source) << median(DCR_synth_to_holdout)
         -> synth is memorizing the training source
 
-D7c gates attack-based metrics behind an `extras` import (only loaded
-when the operator explicitly opts in to the privacy-attack
-dependencies).
+D7c adds:
+
+  - `compute_attack_metrics`: contract entry point that returns the
+    attacks block when the optional `decoy_engine_privacy_attacks`
+    extras package is installed AND the call site explicitly opts
+    in. Returns an `{available: False, reason: ...}` block otherwise.
+    The extras package implements MIA / shadow-model attacks; D7c
+    only defines the contract so the platform layer can wire the
+    opt-in flag through admin policy.
+
+D7c does NOT install the attack extras automatically. Per the
+sprint security requirements: optional metric libraries stay as
+extras until approved by dependency/security review. The default
+SynthReport behavior is to record that attacks were skipped, not
+to silently run them.
 
 Method citation:
   - New-row synthesis fraction: matches SDV's `NewRowSynthesis`
@@ -324,17 +336,118 @@ def compute_dcr(
     }
 
 
+def compute_attack_metrics(
+    source: pd.DataFrame,
+    output: pd.DataFrame,
+    *,
+    enable_attacks: bool = False,
+    extras_module: str = "decoy_engine_privacy_attacks",
+    holdout: pd.DataFrame | None = None,
+) -> dict[str, Any]:
+    """Run optional attack-based privacy metrics (D7c contract).
+
+    Attack-based metrics (Membership Inference Attack, shadow-model
+    attacks) require heavy ML dependencies and produce results whose
+    interpretation needs care. Per the sprint security requirements:
+
+      "Keep optional metric libraries as extras until approved by
+       dependency/security review."
+
+    So this function ONLY runs attack metrics when BOTH:
+
+      1. The caller explicitly passes `enable_attacks=True`
+         (gates platform admin policy through the call).
+      2. The optional extras package `decoy_engine_privacy_attacks`
+         (or `extras_module` if pinned) is importable.
+
+    Either gate failing -> returns an `{available: False, reason: ...}`
+    block. The default behavior of this function -- and therefore of
+    a `compute_attack_metrics(source, output)` call from the platform
+    runner with no opt-in flag -- is to record that attacks were
+    skipped, not to silently run them.
+
+    Returned shape when available:
+
+        {
+          "metric": "attack_based_metrics",
+          "available": True,
+          "results": <whatever the extras module returned>,
+          "extras_module": str,
+        }
+
+    Returned shape when unavailable:
+
+        {
+          "metric": "attack_based_metrics",
+          "available": False,
+          "reason": "extras_not_installed" | "not_enabled_by_caller",
+          "extras_module": str,
+        }
+
+    The extras package must expose:
+      `run_privacy_attacks(source, output, *, holdout=None) -> dict`
+    Returned dict shape is the extras module's contract; SynthReport
+    persists it under the `results` key without re-shaping. This
+    keeps the engine free of any direct ML attack dependency while
+    still giving operators a single place to read the results.
+
+    NOTE on the holdout pass-through: some attack metrics (notably
+    the MIA family) genuinely require a holdout frame to compute.
+    Forwarding it here lets the extras module use it without
+    duplicating the holdout-resolution logic the platform already
+    does for D7b's DCR.
+    """
+    if not enable_attacks:
+        return _attacks_unavailable("not_enabled_by_caller", extras_module)
+
+    try:
+        attacks_pkg = __import__(extras_module)
+    except ImportError:
+        return _attacks_unavailable("extras_not_installed", extras_module)
+
+    run_fn = getattr(attacks_pkg, "run_privacy_attacks", None)
+    if run_fn is None:
+        return _attacks_unavailable(
+            "extras_module_missing_entry_point", extras_module,
+        )
+
+    try:
+        results = run_fn(source, output, holdout=holdout)
+    except Exception as exc:  # noqa: BLE001 - third-party can raise anything
+        # Defensive: an attack extras module's failure must NOT
+        # take down the rest of the SynthReport assembly. Record
+        # the failure type for operator visibility, not the raw
+        # exception (which could carry sensitive data).
+        return {
+            "metric": "attack_based_metrics",
+            "available": False,
+            "reason": "extras_runtime_error",
+            "extras_module": extras_module,
+            "error_type": type(exc).__name__,
+        }
+
+    return {
+        "metric": "attack_based_metrics",
+        "available": True,
+        "results": results,
+        "extras_module": extras_module,
+    }
+
+
 def assemble_synth_report(
     *,
     new_row_synthesis: dict[str, Any] | None,
     dcr: dict[str, Any] | None = None,
+    attacks: dict[str, Any] | None = None,
     job_id: int | None = None,
 ) -> dict[str, Any]:
     """Bundle the privacy metrics into a single JSON-serializable report.
 
-    D7a populates `new_row_synthesis`. D7b populates `dcr`. D7c will
-    populate `attacks` only when the optional extra is installed AND
-    the platform-side admin policy permits attack-based metrics.
+    D7a populates `new_row_synthesis`. D7b populates `dcr`. D7c
+    populates `attacks` ONLY when the optional extras package is
+    installed AND the call site explicitly opts in - otherwise the
+    attacks block records that attacks were skipped (not silently
+    omitted).
 
     The report always includes the disclaimer block. This is required
     by the sprint acceptance criteria and survives schema evolution:
@@ -347,7 +460,7 @@ def assemble_synth_report(
         "job_id": job_id,
         "new_row_synthesis": new_row_synthesis,
         "dcr": dcr,
-        "attacks": None,    # populated in D7c, only when opted-in
+        "attacks": attacks,
         "disclaimers": [
             "DCR (Distance to Closest Record) is a sanity check, not a "
             "privacy guarantee. A high DCR does not establish that the "
@@ -359,6 +472,12 @@ def assemble_synth_report(
             "marginal or joint similarity can preserve outlier rows "
             "verbatim, which may re-identify individuals. Use this "
             "report ALONGSIDE the QualityReport, not as a substitute.",
+            "Attack-based metrics (Membership Inference, shadow-model) "
+            "are OFF by default and only run when the operator "
+            "explicitly opts in AND the privacy-attacks extras "
+            "package is installed. Absence of attack results does "
+            "NOT mean the synth survived an attack - it means no "
+            "attack was attempted.",
         ],
     }
 
@@ -585,4 +704,24 @@ def _dcr_unavailable(reason: str) -> dict[str, Any]:
         "comparison": {"median_ratio": None, "interpretation": None},
         "subset_columns": [],
         "warning": reason,
+    }
+
+
+# ── attacks helpers (D7c) ─────────────────────────────────────────────────
+
+
+def _attacks_unavailable(reason: str, extras_module: str) -> dict[str, Any]:
+    """The default attacks block: 'no attack was attempted'.
+
+    Operators reading the SynthReport must be able to tell the
+    difference between 'attacks were tried and the synth survived'
+    (results dict) and 'no attack was tried' (this block). The
+    explicit reason makes that distinction unambiguous in the
+    audit trail.
+    """
+    return {
+        "metric": "attack_based_metrics",
+        "available": False,
+        "reason": reason,
+        "extras_module": extras_module,
     }
