@@ -412,7 +412,11 @@ class ColumnGenerator:
         if kind == "categorical":
             return self._generate_distribution_categorical(num_rows, snapshot, seed)
 
-        # D6c lands here next.
+        # D6c: datetime. Weighted year choice from year_bins, then
+        # uniform timestamp within that year clipped to [min, max].
+        if kind == "datetime":
+            return self._generate_distribution_datetime(num_rows, snapshot, seed)
+
         self.logger.warning(
             f"distribution column '{column_name}' has unsupported kind {kind!r}; "
             "emitting nulls",
@@ -608,6 +612,148 @@ class ColumnGenerator:
         chosen_idx = rng.choice(len(values), size=num_rows, p=probs)
         out = [values[i] for i in chosen_idx]
         return pd.Series(out, dtype=object)
+
+    def _generate_distribution_datetime(
+        self,
+        num_rows: int,
+        snapshot: dict[str, Any],
+        seed: int,
+    ) -> pd.Series:
+        """D6c datetime sampler.
+
+        Two-step inverse-CDF on D1a's datetime snapshot shape:
+          1. Pick a year via weighted choice from `year_bins`
+             (each entry is `{year, count}`).
+          2. Sample a uniform timestamp within that year, clipped to
+             [snapshot.min, snapshot.max] so a partial source year
+             (data starts 2020-06-01) doesn't generate January 2020
+             timestamps.
+
+        Snapshot shape (per D1a `_datetime_stats`):
+
+          stats:
+            min: "2020-06-01T00:00:00"
+            max: "2024-03-15T18:30:00"
+            year_bins:
+              - {year: 2020, count: 1200}
+              - {year: 2021, count: 2100}
+              ...
+
+        Determinism: numpy default_rng seeded from the per-column
+        seed; year choice + within-year uniform are both vectorized.
+        Output dtype is pandas datetime64[ns] (matches how the source
+        snapshot is keyed).
+
+        Degenerate cases:
+          - missing year_bins / empty -> nulls + warning
+          - missing min or max -> nulls + warning (can't bound the
+            uniform draw safely)
+          - zero total bin count -> nulls
+          - all bins in a single year that equals the only year in
+            min/max -> uniform across [min, max] (the chosen year
+            collapses to the full span)
+        """
+        stats = snapshot.get("stats") or {}
+        year_bins = stats.get("year_bins") or snapshot.get("year_bins") or []
+        min_iso = stats.get("min") or snapshot.get("min")
+        max_iso = stats.get("max") or snapshot.get("max")
+
+        if not year_bins:
+            self.logger.warning(
+                "distribution datetime snapshot missing year_bins; "
+                "emitting nulls",
+            )
+            return pd.Series([pd.NaT] * num_rows, dtype="datetime64[ns]")
+        if not min_iso or not max_iso:
+            self.logger.warning(
+                "distribution datetime snapshot missing min/max; "
+                "emitting nulls",
+            )
+            return pd.Series([pd.NaT] * num_rows, dtype="datetime64[ns]")
+
+        try:
+            ts_min = pd.Timestamp(min_iso)
+            ts_max = pd.Timestamp(max_iso)
+        except (TypeError, ValueError):
+            self.logger.warning(
+                f"distribution datetime snapshot has unparseable min/max "
+                f"({min_iso!r}, {max_iso!r}); emitting nulls",
+            )
+            return pd.Series([pd.NaT] * num_rows, dtype="datetime64[ns]")
+
+        # Normalize tz-aware bounds to UTC-naive so the in-year
+        # uniform math doesn't trip on mixed-tz arithmetic. D1a
+        # already strips tz before isoformat, so this is defensive.
+        if ts_min.tzinfo is not None:
+            ts_min = ts_min.tz_convert("UTC").tz_localize(None)
+        if ts_max.tzinfo is not None:
+            ts_max = ts_max.tz_convert("UTC").tz_localize(None)
+        if ts_max < ts_min:
+            self.logger.warning(
+                "distribution datetime snapshot has max < min; "
+                "emitting nulls",
+            )
+            return pd.Series([pd.NaT] * num_rows, dtype="datetime64[ns]")
+
+        # Build year -> weight, filter malformed entries.
+        years: list[int] = []
+        weights_list: list[float] = []
+        for entry in year_bins:
+            if not isinstance(entry, dict):
+                continue
+            y = entry.get("year")
+            c = entry.get("count", 0)
+            try:
+                yi = int(y)
+                wi = float(c)
+            except (TypeError, ValueError):
+                continue
+            if wi <= 0:
+                continue
+            years.append(yi)
+            weights_list.append(wi)
+        if not years:
+            self.logger.warning(
+                "distribution datetime snapshot has no usable year_bins; "
+                "emitting nulls",
+            )
+            return pd.Series([pd.NaT] * num_rows, dtype="datetime64[ns]")
+
+        weights = np.asarray(weights_list, dtype=float)
+        total = float(weights.sum())
+        if total <= 0:
+            self.logger.warning(
+                "distribution datetime snapshot has zero total year count; "
+                "emitting nulls",
+            )
+            return pd.Series([pd.NaT] * num_rows, dtype="datetime64[ns]")
+
+        rng = np.random.default_rng(seed)
+        probs = weights / total
+        chosen_idx = rng.choice(len(years), size=num_rows, p=probs)
+
+        # For each row, compute the in-year window clipped to
+        # [ts_min, ts_max]. Vectorized via nanosecond integer math
+        # so the uniform draw is one numpy call.
+        years_arr = np.asarray([years[i] for i in chosen_idx], dtype=np.int64)
+        # Build per-row year-start + year-end timestamps.
+        year_starts = pd.to_datetime([f"{y}-01-01" for y in years_arr])
+        year_ends = pd.to_datetime([f"{y + 1}-01-01" for y in years_arr])  # exclusive
+        # Clip to the snapshot's actual min/max.
+        lo_ns = np.maximum(year_starts.view("int64"), ts_min.value)
+        hi_ns = np.minimum(year_ends.view("int64"), ts_max.value)
+        # A clipped window can be inverted when the chosen year sits
+        # entirely outside [min, max] (snapshot integrity bug, but
+        # be defensive: clamp to year-start so we still emit a
+        # plausible value rather than nulls or an out-of-range draw).
+        bad = hi_ns <= lo_ns
+        if bad.any():
+            hi_ns = np.where(bad, lo_ns + 1, hi_ns)
+        # Random nanosecond offsets within each row's window.
+        rand_floats = rng.random(size=num_rows)
+        offsets = (rand_floats * (hi_ns - lo_ns)).astype(np.int64)
+        sample_ns = lo_ns + offsets
+        return pd.Series(pd.to_datetime(sample_ns, unit="ns"))
 
     def _generate_reference_column(
         self,
