@@ -406,7 +406,13 @@ class ColumnGenerator:
         if kind == "numeric":
             return self._generate_distribution_numeric(num_rows, snapshot, seed)
 
-        # D6b + D6c land here next.
+        # D6b: categorical. Weighted sampling from the snapshot's
+        # top_values head, with a synthetic "<other>" bucket carrying
+        # the collapsed tail weight from `other_count`.
+        if kind == "categorical":
+            return self._generate_distribution_categorical(num_rows, snapshot, seed)
+
+        # D6c lands here next.
         self.logger.warning(
             f"distribution column '{column_name}' has unsupported kind {kind!r}; "
             "emitting nulls",
@@ -494,6 +500,114 @@ class ColumnGenerator:
         # not a real distribution loss.
         values = rng.uniform(bin_lo, bin_hi)
         return pd.Series(values)
+
+    def _generate_distribution_categorical(
+        self,
+        num_rows: int,
+        snapshot: dict[str, Any],
+        seed: int,
+    ) -> pd.Series:
+        """D6b categorical sampler.
+
+        Weighted sampling from the snapshot's `top_values` head. The
+        tail values (everything past `top_k` distinct values at
+        snapshot time) collapse into a single `other_count` weight in
+        D1a's snapshot shape. We re-introduce that mass as a synthetic
+        `<other>` bucket so the value-frequency distribution shape
+        scores well on D5b without inventing fake category names.
+
+        Snapshot shape (per D1a):
+
+          stats:
+            top_values:
+              - {value: "Texas", count: 4200}
+              - {value: "California", count: 3900}
+              ...
+            other_count: 850   # mass collapsed from tail
+
+        Operators who want literal-only output (no `<other>`
+        placeholder) can drop the placeholder downstream or set
+        `other_label` on the config; see below.
+
+        Determinism: per-column seed feeds numpy default_rng.
+        rng.choice with explicit p= is bitwise stable across runs.
+
+        Degenerate cases:
+          - missing / empty top_values + zero other_count -> all nulls
+          - non-dict top_values entry -> skipped (defensive)
+          - zero total weight (top_values present but counts all 0) ->
+            all nulls
+        """
+        # D1a snapshot shape: top_values + other_count nested under
+        # `stats`. Fall back to top-level for simplified inline test
+        # snapshots (matches D6a's two-layer read).
+        stats = snapshot.get("stats") or {}
+        top_values = stats.get("top_values") or snapshot.get("top_values") or []
+        other_count = stats.get("other_count")
+        if other_count is None:
+            other_count = snapshot.get("other_count", 0)
+
+        # Allow operator override of the tail placeholder. Default
+        # picked to be visibly synthetic so it doesn't collide with
+        # real category values; an empty string also works if the
+        # downstream consumer prefers to filter.
+        other_label = snapshot.get("other_label", "<other>")
+
+        # Normalize the head into (value, weight) tuples. Skip malformed
+        # entries silently rather than failing the whole column on a
+        # single bad row in the snapshot.
+        pairs: list[tuple[str, float]] = []
+        for entry in top_values:
+            if not isinstance(entry, dict):
+                continue
+            val = entry.get("value")
+            cnt = entry.get("count", 0)
+            if val is None:
+                continue
+            try:
+                w = float(cnt)
+            except (TypeError, ValueError):
+                continue
+            if w <= 0:
+                continue
+            pairs.append((str(val), w))
+
+        # Synthetic tail bucket. Only add when there's actual collapsed
+        # mass; emitting a 0-weight `<other>` would pollute the value
+        # vocabulary for no benefit.
+        try:
+            tail_weight = float(other_count)
+        except (TypeError, ValueError):
+            tail_weight = 0.0
+        if tail_weight > 0:
+            pairs.append((other_label, tail_weight))
+
+        if not pairs:
+            self.logger.warning(
+                "distribution categorical snapshot has no usable top_values "
+                "or other_count; emitting nulls",
+            )
+            return pd.Series([None] * num_rows)
+
+        values = [v for v, _ in pairs]
+        weights = np.asarray([w for _, w in pairs], dtype=float)
+        total = float(weights.sum())
+        if total <= 0:
+            self.logger.warning(
+                "distribution categorical snapshot has zero total weight; "
+                "emitting nulls",
+            )
+            return pd.Series([None] * num_rows)
+
+        rng = np.random.default_rng(seed)
+        probs = weights / total
+        # rng.choice on a Python list of strings preserves dtype well
+        # (object dtype Series); numpy's str-dtype default would
+        # truncate to the longest seen string and break downstream
+        # mask/compare ops that expect open-ended strings.
+        chosen_idx = rng.choice(len(values), size=num_rows, p=probs)
+        out = [values[i] for i in chosen_idx]
+        return pd.Series(out, dtype=object)
 
     def _generate_reference_column(
         self,
