@@ -213,3 +213,100 @@ def test_generated_at_is_valid_iso_when_not_injected() -> None:
     # produced a value the receiver can interpret as a timestamp.
     parsed = datetime.fromisoformat(report["generated_at"])
     assert parsed.tzinfo is not None  # tz-aware UTC string
+
+
+# ── D5b wiring (a): shape_fidelity embedded into QualityReport ───────────
+
+
+def test_shape_fidelity_block_present_by_default() -> None:
+    """compute_quality_report emits the shape_fidelity sibling block."""
+    df = pd.DataFrame({"x": [1, 2, 3, 4, 5], "state": ["CA", "NY", "CA", "TX", "NY"]})
+    report = compute_quality_report(df, df, now_iso=FIXED_TS)
+    assert "shape_fidelity" in report
+    block = report["shape_fidelity"]
+    assert block["schema_version"] == "quality-shape-fidelity/v1"
+    # Identity input -> shape preservation = 1.0 too.
+    assert block["overall_shape_score"] == 1.0
+
+
+def test_shape_fidelity_block_can_be_opted_out() -> None:
+    """include_shape_fidelity=False drops the block (back-compat path)."""
+    df = pd.DataFrame({"x": [1, 2, 3]})
+    report = compute_quality_report(
+        df, df, now_iso=FIXED_TS, include_shape_fidelity=False,
+    )
+    assert "shape_fidelity" not in report
+    # Pre-D5b consumers see unchanged shape: every other key is still there.
+    assert report["overall_score"] == 1.0
+    assert report["grade"] == "A"
+
+
+def test_shape_fidelity_recognizes_hash_like_preservation() -> None:
+    """The whole point of D5b: a value-disjoint transform that
+    preserves frequency shape scores high on shape but low on
+    value identity. Simulate the hash case by mapping every source
+    value through a distinct fake hash."""
+    src = pd.DataFrame({"state": ["CA"] * 50 + ["NY"] * 30 + ["TX"] * 20})
+    out = pd.DataFrame({
+        "state": ["h_CA"] * 50 + ["h_NY"] * 30 + ["h_TX"] * 20,
+    })
+    report = compute_quality_report(src, out, now_iso=FIXED_TS)
+    # Value identity tanks (disjoint top-K).
+    assert report["overall_score"] < 0.1
+    assert report["grade"] == "F"
+    # Shape stays perfect because the sorted frequency vector is
+    # identical: [50, 30, 20] vs [50, 30, 20].
+    assert report["shape_fidelity"]["overall_shape_score"] == 1.0
+
+
+def test_assemble_uses_shape_fidelity_when_provided() -> None:
+    """The pure assemble path attaches the shape block verbatim."""
+    src_snap = {"row_count": 100, "columns": {}, "joints": []}
+    out_snap = {"row_count": 100, "columns": {}, "joints": []}
+    fidelity = {
+        "marginal": {"score": 0.9, "columns": []},
+        "pairwise": {"score": 0.8, "joints": []},
+        "overall_score": 0.85,
+    }
+    shape = {
+        "schema_version": "quality-shape-fidelity/v1",
+        "overall_shape_score": 0.95,
+        "marginal": {"shape_score": 0.95, "columns": []},
+        "pairwise": {"shape_score": None, "joints": []},
+    }
+    report = assemble_quality_report(
+        source_snapshot=src_snap,
+        output_snapshot=out_snap,
+        diagnostic={"passed": True, "checks": []},
+        fidelity=fidelity,
+        shape_fidelity=shape,
+        now_iso=FIXED_TS,
+    )
+    assert report["shape_fidelity"] == shape
+
+
+def test_assemble_omits_shape_fidelity_when_none() -> None:
+    """assemble_quality_report leaves the key off entirely when None;
+    pre-D5b downstream consumers see the same shape they always did."""
+    report = assemble_quality_report(
+        source_snapshot={"row_count": 0, "columns": {}, "joints": []},
+        output_snapshot={"row_count": 0, "columns": {}, "joints": []},
+        diagnostic={"passed": True, "checks": []},
+        fidelity={
+            "marginal": {"score": None, "columns": []},
+            "pairwise": {"score": None, "joints": []},
+            "overall_score": None,
+        },
+        shape_fidelity=None,
+        now_iso=FIXED_TS,
+    )
+    assert "shape_fidelity" not in report
+
+
+def test_report_with_shape_fidelity_is_json_serializable() -> None:
+    df = pd.DataFrame({"state": ["CA"] * 50 + ["NY"] * 30 + ["TX"] * 20})
+    report = compute_quality_report(df, df, now_iso=FIXED_TS)
+    encoded = json.dumps(report, sort_keys=True)
+    # Round-trip and confirm the shape block survives.
+    decoded = json.loads(encoded)
+    assert decoded["shape_fidelity"]["overall_shape_score"] == 1.0
