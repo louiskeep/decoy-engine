@@ -42,7 +42,8 @@ from decoy_engine import preview_graph
 
 REPO_ROOT = Path(__file__).parents[2]
 GOLDEN = Path(__file__).parent / "golden"
-SAMPLE_CSV = REPO_ROOT / "tests" / "data" / "input" / "sample.csv"
+# Committed fixture under tests/fixtures/ (not tests/data/, which is gitignored).
+SAMPLE_CSV = REPO_ROOT / "tests" / "fixtures" / "sample.csv"
 
 
 def _fixture(target_node: str, columns: dict[str, dict[str, str]]) -> dict[str, Any]:
