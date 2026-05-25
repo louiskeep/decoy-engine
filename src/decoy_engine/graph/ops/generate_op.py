@@ -31,7 +31,13 @@ NATIVE_ENGINE = "pandas"
 INPUT_ARITY: tuple[int, int | None] = (0, 1)
 OUTPUT_KIND = "stream"
 
-_VALID_TYPES = {"faker", "sequence", "categorical", "formula"}
+_VALID_TYPES = {"faker", "sequence", "categorical", "formula", "distribution"}
+# V2 Phase 3 D6: 'distribution' strategy samples from a snapshot dict
+# whose shape matches decoy_engine.quality.snapshot output. Kind
+# dispatch (numeric / categorical / datetime) lives inside the
+# generator (`ColumnGenerator._generate_distribution_column`); the
+# op-side validator below only checks the top-level snapshot shape.
+_DISTRIBUTION_VALID_KINDS = {"numeric", "categorical", "datetime"}
 
 
 def validate_config(config: dict[str, Any]) -> None:
@@ -59,6 +65,29 @@ def validate_config(config: dict[str, Any]) -> None:
                 f"unsupported type {ctype!r} (one of {sorted(_VALID_TYPES)})",
                 f"config.columns.{col_name}.strategy",
             )
+        # D6: distribution columns must carry a snapshot dict with a
+        # known kind. Sampler shape inside the snapshot (bin_edges,
+        # top_values, etc.) is left to the generator to handle
+        # defensively at apply time — operators may paste partial
+        # snapshots while iterating, and the generator already logs
+        # + falls back to nulls cleanly. Validator catches the
+        # obvious "wrong kind" / "missing snapshot" cases here so
+        # they surface at edit time, not at run time.
+        if ctype == "distribution":
+            snap = spec.get("snapshot")
+            if not isinstance(snap, dict):
+                raise ValidationError(
+                    f"column {col_name!r} strategy 'distribution' requires "
+                    "a 'snapshot' dict",
+                    f"config.columns.{col_name}.snapshot",
+                )
+            kind = snap.get("kind")
+            if kind not in _DISTRIBUTION_VALID_KINDS:
+                raise ValidationError(
+                    f"column {col_name!r} distribution snapshot.kind {kind!r} "
+                    f"must be one of {sorted(_DISTRIBUTION_VALID_KINDS)}",
+                    f"config.columns.{col_name}.snapshot.kind",
+                )
 
 
 def apply(inputs, config, ctx) -> pd.DataFrame:

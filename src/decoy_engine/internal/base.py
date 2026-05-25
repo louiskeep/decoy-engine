@@ -160,6 +160,38 @@ class MaskingStrategy(ABC):
         """
         pass
 
+    def apply_with_context(
+        self,
+        column: pd.Series,
+        rule: dict[str, Any],
+        ctx: Any = None,
+    ) -> pd.Series:
+        """V2 Phase 3 D5c: apply with runtime ApplyContext.
+
+        Default implementation ignores `ctx` and delegates to
+        `apply(column, rule)`. Strategies that don't need joint
+        columns or other dispatcher-resolved runtime state get this
+        no-op routing for free — no signature changes required.
+
+        Strategies that DO need ctx (D5c hash joint preservation,
+        future date_shift subject-key work, etc.) should override
+        THIS method instead of `apply`. The base `apply` remains
+        the single-column contract; `apply_with_context` is the
+        joint-aware entry point the dispatcher calls.
+
+        Args:
+            column: Pandas Series to mask
+            rule: Dictionary containing the masking rule configuration
+            ctx: An `ApplyContext` (or None to fall through to
+                single-column `apply`). Type-annotated as `Any` here
+                to avoid a base.py -> apply_context cyclic import;
+                callers and overrides see the real type.
+
+        Returns:
+            Pandas Series with masked values
+        """
+        return self.apply(column, rule)
+
     def validate_rule(self, rule: dict[str, Any]) -> None:
         """
         Validate that the rule contains all required fields for this strategy

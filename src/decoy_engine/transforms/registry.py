@@ -6,6 +6,7 @@ from typing import Any
 
 import pandas as pd
 
+from decoy_engine.transforms.apply_context import ApplyContext
 from decoy_engine.transforms.base import BaseMaskingStrategy
 from decoy_engine.transforms.factory import create_strategy
 
@@ -75,13 +76,22 @@ class StrategyManager:
 
         return strategy
 
-    def apply_masking_rule(self, column: pd.Series, rule: dict[str, Any]) -> pd.Series:
+    def apply_masking_rule(
+        self,
+        column: pd.Series,
+        rule: dict[str, Any],
+        ctx: ApplyContext | None = None,
+    ) -> pd.Series:
         """
         Apply a masking rule to a column
 
         Args:
             column: Pandas Series to mask
             rule: Dictionary containing the masking rule configuration
+            ctx: D5c runtime ApplyContext (joint columns + future
+                cross-cutting state). When None, an empty context is
+                used; strategies that override `apply_with_context`
+                always receive a valid ApplyContext (never None).
 
         Returns:
             Masked pandas Series
@@ -100,8 +110,12 @@ class StrategyManager:
         # Validate rule
         strategy.validate_rule(rule)
 
-        # Apply the strategy
-        return strategy.apply(column, rule)
+        # D5c: route through apply_with_context so joint-aware
+        # strategies (hash D5c part 3, future date_shift work) can
+        # read ctx.joint_columns. The default base implementation
+        # ignores ctx and delegates to apply(), so non-joint
+        # strategies are unaffected.
+        return strategy.apply_with_context(column, rule, ctx or ApplyContext.empty())
 
     def apply_masking_rules(self, df: pd.DataFrame, rules: list[dict[str, Any]]) -> pd.DataFrame:
         """
@@ -125,11 +139,34 @@ class StrategyManager:
                 self.logger.warning(f"Column '{column_name}' not found in DataFrame. Skipping.")
                 continue
 
+            # D5c: resolve joint columns from the rule's `joint_with`
+            # directive against the SOURCE frame (df, not the
+            # in-progress result). The source is the canonical reference
+            # so a strategy that hashes city + zip together sees the
+            # original pairing even when zip has already been masked
+            # earlier in the rule list. Missing joint column refs are
+            # silently dropped (the per-strategy validator should have
+            # caught the operator's typo; if it slipped through, the
+            # strategy gets fewer joint cols and may downgrade behavior).
+            joint_names = rule.get("joint_with") or []
+            if isinstance(joint_names, list) and joint_names:
+                joint_cols = {
+                    str(name): df[name]
+                    for name in joint_names
+                    if isinstance(name, str) and name in df.columns
+                }
+                ctx = (
+                    ApplyContext(joint_columns=joint_cols)
+                    if joint_cols else ApplyContext.empty()
+                )
+            else:
+                ctx = ApplyContext.empty()
+
             # Apply the rule
             self.logger.info(
                 f"Applying masking rule to column '{column_name}' with type '{rule.get('type')}'"
             )
-            new_col = self.apply_masking_rule(df[column_name], rule)
+            new_col = self.apply_masking_rule(df[column_name], rule, ctx=ctx)
 
             # Drop the original column's extension-dtype tag (e.g.
             # int64[pyarrow] for a date column that the CSV reader

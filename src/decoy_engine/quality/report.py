@@ -81,6 +81,7 @@ import pandas as pd
 
 from decoy_engine.quality.diagnostic import compute_diagnostic
 from decoy_engine.quality.fidelity import compute_fidelity
+from decoy_engine.quality.shape_fidelity import compute_shape_fidelity
 from decoy_engine.quality.snapshot import compute_distribution_snapshot
 
 QUALITY_REPORT_SCHEMA_VERSION = "quality-report/v1"
@@ -106,6 +107,7 @@ def compute_quality_report(
     sampled: bool = False,
     sample_size: int | None = None,
     now_iso: str | None = None,
+    include_shape_fidelity: bool = True,
 ) -> dict[str, Any]:
     """End-to-end: snapshot both frames, diagnose, score, assemble report.
 
@@ -147,11 +149,17 @@ def compute_quality_report(
         null_drift_threshold_pp=null_drift_threshold_pp,
     )
     fidelity = compute_fidelity(src_snap, out_snap)
+    # D5b wiring (a): compute the shape-only second opinion alongside
+    # the value-identity score. The QualityReport's primary
+    # overall_score stays value-identity (D5b is additive); shape
+    # lands under its own top-level `shape_fidelity` block.
+    shape = compute_shape_fidelity(src_snap, out_snap) if include_shape_fidelity else None
     return assemble_quality_report(
         source_snapshot=src_snap,
         output_snapshot=out_snap,
         diagnostic=diagnostic,
         fidelity=fidelity,
+        shape_fidelity=shape,
         job_id=job_id,
         source_fingerprint=source_fingerprint,
         output_fingerprint=output_fingerprint,
@@ -167,6 +175,7 @@ def assemble_quality_report(
     output_snapshot: dict[str, Any],
     diagnostic: dict[str, Any],
     fidelity: dict[str, Any],
+    shape_fidelity: dict[str, Any] | None = None,
     job_id: int | None = None,
     source_fingerprint: str | None = None,
     output_fingerprint: str | None = None,
@@ -179,9 +188,16 @@ def assemble_quality_report(
     Used when the caller has already paid for the snapshot +
     diagnostic + fidelity computations and just wants the framed
     output. D2 job integration is the primary caller.
+
+    D5b wiring (a): when shape_fidelity is provided, it lands under
+    the top-level `shape_fidelity` key with the
+    `quality-shape-fidelity/v1` schema. Operators get a second
+    opinion alongside the value-identity overall_score. When
+    shape_fidelity is None, the key is omitted entirely so
+    pre-D5b consumers see the same shape they did before.
     """
     overall = fidelity.get("overall_score")
-    return {
+    report: dict[str, Any] = {
         "schema_version": QUALITY_REPORT_SCHEMA_VERSION,
         "generated_at": now_iso if now_iso is not None else _now_iso(),
         "job_id": job_id,
@@ -205,6 +221,9 @@ def assemble_quality_report(
         "warnings": _collect_warnings(diagnostic, fidelity),
         "omissions": _collect_omissions(fidelity),
     }
+    if shape_fidelity is not None:
+        report["shape_fidelity"] = shape_fidelity
+    return report
 
 
 def score_to_grade(score: float | None) -> str:
