@@ -4,11 +4,11 @@
 
 ## Reporting a vulnerability
 
-**Use GitHub Private Vulnerability Reporting:**
+Email **security@decoy.so** with subject line `[SECURITY] <one-line summary>`.
 
-[https://github.com/louiskeep/decoy-engine/security/advisories/new](https://github.com/louiskeep/decoy-engine/security/advisories/new)
+We will acknowledge receipt within 3 business days and aim to provide an initial assessment within 7 business days. Please do not file a public issue or contact support channels for security disclosures.
 
-The report is private and visible only to repository maintainers. We will acknowledge receipt within 3 business days and aim to provide an initial assessment within 7 business days. Please do not file a public issue or contact support channels for security disclosures.
+> **Note:** R8-REV-03 (dedicated security inbox) is in progress. Until it is live, reports sent to this address are forwarded to the security team directly.
 
 Include as much detail as you can:
 
