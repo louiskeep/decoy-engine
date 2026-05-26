@@ -231,6 +231,9 @@ module = [
     "decoy_engine.quality.policy",
     # V2 Phase 3 Sprint D5b (Distribution Integrity: shape-only fidelity).
     "decoy_engine.quality.shape_fidelity",
+    # V2 PERF.BASE.1 (per-strategy timing + per-node memory instrumentation).
+    "decoy_engine.instrumentation",
+    "decoy_engine.instrumentation.timing",
 ]
 disallow_any_generics = true
 disallow_subclassing_any = true

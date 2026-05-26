@@ -47,14 +47,14 @@ def make_node_ok_record(
     elapsed_ms: int,
     exports: dict[str, Any] | None,
     *,
-    peak_memory_kb: int = 0,
+    memory_delta_kb: int = 0,
 ) -> NodeRunRecord:
     """Build a successful NodeRunRecord for a stream or split op.
 
-    ``peak_memory_kb`` is the RSS delta captured around node execution
-    (PERF.BASE.1). Defaults to 0 for callers that have not been updated
-    to capture memory; non-zero when the executor passes the measured
-    delta.
+    ``memory_delta_kb`` is the RSS delta captured around node execution
+    (PERF.BASE.1): rss_after minus rss_before, clamped to >= 0. Defaults
+    to 0 for callers that have not been updated to capture memory;
+    non-zero when the executor passes the measured delta.
     """
     return {
         "node_id": nid,
@@ -64,7 +64,7 @@ def make_node_ok_record(
         "elapsed_ms": elapsed_ms,
         "error": None,
         "exports": exports,
-        "peak_memory_kb": peak_memory_kb,
+        "memory_delta_kb": memory_delta_kb,
     }
 
 
@@ -108,7 +108,7 @@ def make_node_error_record(
     exports: dict[str, Any] | None = None,
     error_code: str | None = None,
     error_path: str | None = None,
-    peak_memory_kb: int = 0,
+    memory_delta_kb: int = 0,
 ) -> NodeRunRecord:
     """Build a failed NodeRunRecord.
 
@@ -117,9 +117,10 @@ def make_node_error_record(
     when None so downstream readers that iterate record keys don't see
     unexpected None entries for the common non-R3.4 case.
 
-    ``peak_memory_kb`` is the RSS delta captured around node execution
+    ``memory_delta_kb`` is the RSS delta captured around node execution
     (PERF.BASE.1). Captured even on error paths since hot-spot analysis
-    cares about memory pressure regardless of outcome.
+    cares about memory pressure regardless of outcome; in practice we
+    expect this to be tiny on errors since the failed work didn't run.
     """
     rec: NodeRunRecord = {
         "node_id": nid,
@@ -129,7 +130,7 @@ def make_node_error_record(
         "elapsed_ms": elapsed_ms,
         "error": error,
         "exports": exports,
-        "peak_memory_kb": peak_memory_kb,
+        "memory_delta_kb": memory_delta_kb,
     }
     if error_code is not None:
         rec["error_code"] = error_code  # type: ignore[typeddict-unknown-key]

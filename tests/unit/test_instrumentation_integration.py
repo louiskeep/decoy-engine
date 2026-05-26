@@ -1,7 +1,7 @@
 """PERF.BASE.1: end-to-end integration test for engine-side instrumentation.
 
 Exercises a full graph run with a mask op and verifies that:
-1. NodeRunRecord includes peak_memory_kb (per-node memory delta).
+1. NodeRunRecord includes memory_delta_kb (per-node memory delta).
 2. Mask node exports include `timings_per_strategy` with per-strategy
    counts + elapsed totals.
 3. Per-strategy timings reach the manifest via the existing exports
@@ -50,7 +50,7 @@ def _yaml(d: dict) -> str:
     return yaml.safe_dump(d)
 
 
-def test_mask_node_run_record_includes_peak_memory_kb(csv_with_pii):
+def test_mask_node_run_record_includes_memory_delta_kb(csv_with_pii):
     """Per-node memory delta is captured in NodeRunRecord for every node."""
     src, out = csv_with_pii
     cfg = _yaml(
@@ -82,13 +82,13 @@ def test_mask_node_run_record_includes_peak_memory_kb(csv_with_pii):
 
     assert result["success"] is True
 
-    # Every node record should have peak_memory_kb (always present per the
+    # Every node record should have memory_delta_kb (always present per the
     # PERF.BASE.1 schema extension; >= 0).
     for record in result["nodes"]:
-        assert "peak_memory_kb" in record, (
-            f"node {record['node_id']!r} missing peak_memory_kb"
+        assert "memory_delta_kb" in record, (
+            f"node {record['node_id']!r} missing memory_delta_kb"
         )
-        assert record["peak_memory_kb"] >= 0
+        assert record["memory_delta_kb"] >= 0
 
 
 def test_mask_node_exports_timings_per_strategy(csv_with_pii):
@@ -167,7 +167,7 @@ def test_no_mask_strategies_means_no_timings_export(csv_with_pii):
 
 
 def test_node_record_schema_backward_compatible_for_non_mask_nodes(csv_with_pii):
-    """Source and target nodes carry peak_memory_kb but no timings_per_strategy
+    """Source and target nodes carry memory_delta_kb but no timings_per_strategy
     export (the latter is mask-specific)."""
     src, out = csv_with_pii
     cfg = _yaml(
@@ -184,6 +184,6 @@ def test_node_record_schema_backward_compatible_for_non_mask_nodes(csv_with_pii)
     result = run_graph(cfg)
 
     for record in result["nodes"]:
-        assert "peak_memory_kb" in record
+        assert "memory_delta_kb" in record
         exports = record.get("exports") or {}
         assert "timings_per_strategy" not in exports

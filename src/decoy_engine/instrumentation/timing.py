@@ -30,7 +30,22 @@ Design constraints:
   whether they are being timed; the collector is opt-in from above.
 - Thread-safety via `threading.local`. Pipelines are currently single-
   threaded per executor invocation; the design tolerates future
-  parallel execution without API change.
+  parallel execution without API change (each worker thread gets its
+  own active collector slot).
+
+Limitations:
+
+- `threading.local` does not propagate across `asyncio` tasks. If/when
+  the engine gains async execution, this module will need to switch to
+  `contextvars.ContextVar` to keep the collector bound to the active
+  task rather than the OS thread. That migration is tied to the
+  distributed/async work scheduled for end-of-V2 performance
+  enhancements; until then, threading.local is correct for the actual
+  execution model.
+- Memory delta is sampled before/after rather than continuously, so it
+  measures net change at the bracket, not the true high-water mark
+  within the bracket. Adequate for hot-spot ranking; insufficient for
+  fine-grained leak detection (use `tracemalloc` for that).
 """
 
 from __future__ import annotations
