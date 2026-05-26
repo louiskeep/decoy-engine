@@ -1,0 +1,42 @@
+mode: graph
+engine: hybrid
+nodes:
+  - id: source_1
+    kind: source.file
+    name: Sample CSV
+    config:
+      path: tests/fixtures/sample.csv
+      format: csv
+  - id: mask_1
+    kind: mask
+    name: Mask PII fields
+    config:
+      rules:
+        - column: first_name
+          type: faker
+          faker_type: first_name
+        - column: last_name
+          type: faker
+          faker_type: last_name
+        - column: email
+          type: faker
+          faker_type: email
+        - column: ssn
+          type: hash
+        - column: address
+          type: redact
+          redact_with: "[REDACTED]"
+        - column: phone
+          type: redact
+          redact_with: "[REDACTED]"
+  - id: target_1
+    kind: target.file
+    name: Output
+    config:
+      output_filename: tests/fixtures/smoke_output.csv
+      format: csv
+edges:
+  - from: source_1
+    to: mask_1
+  - from: mask_1
+    to: target_1
