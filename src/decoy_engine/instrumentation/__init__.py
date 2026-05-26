@@ -14,6 +14,7 @@ from decoy_engine.instrumentation.timing import (
     StrategyTimingRecord,
     TimingCollector,
     get_active_collector,
+    rss_kb,
     timed_strategy,
     use_collector,
 )
@@ -22,6 +23,7 @@ __all__ = [
     "StrategyTimingRecord",
     "TimingCollector",
     "get_active_collector",
+    "rss_kb",
     "timed_strategy",
     "use_collector",
 ]

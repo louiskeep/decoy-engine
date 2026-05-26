@@ -148,13 +148,21 @@ def use_collector(collector: TimingCollector) -> Iterator[TimingCollector]:
         _thread_local.collector = previous
 
 
-def _rss_kb() -> int:
+def rss_kb() -> int:
     """Process resident-set-size in KB.
 
     psutil's `memory_info()` call is roughly 10-30us on modern hardware;
-    cheap enough to call twice per strategy invocation (before + after).
+    cheap enough to call twice per strategy invocation (before + after)
+    or per node (begin + end). Public so the graph executor can use it
+    for per-node memory delta tracking without re-importing psutil.
     """
     return int(_PROCESS.memory_info().rss / 1024)
+
+
+# Module-private alias used by timed_strategy below. Keeps the public
+# `rss_kb` name stable while letting internal call sites keep their
+# original name.
+_rss_kb = rss_kb
 
 
 @contextmanager

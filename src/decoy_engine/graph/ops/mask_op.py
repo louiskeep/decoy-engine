@@ -168,11 +168,22 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
             if rule.get("type") == "faker" and not rule.get("locale"):
                 rule["locale"] = instance_locale
 
+    # PERF.BASE.1: bind a per-node TimingCollector so each strategy
+    # invocation inside apply_masking_rules records elapsed_ms +
+    # peak_memory_delta_kb. The collector is scoped to this node; the
+    # summary is exported below so the per-strategy breakdown reaches
+    # the evidence manifest as a node export. Zero overhead when this
+    # block is removed (collector is opt-in by binding).
+    from decoy_engine.instrumentation import TimingCollector, use_collector
+
+    timing_collector = TimingCollector()
+
     try:
         from decoy_engine.transforms.registry import StrategyManager
 
         manager = StrategyManager(seed=seed, logger=logger, derive_key=derive_key)
-        result = manager.apply_masking_rules(df, rules)
+        with use_collector(timing_collector):
+            result = manager.apply_masking_rules(df, rules)
     except Exception as exc:
         raise OpError(f"mask op failed: {exc}") from exc
 
@@ -197,6 +208,18 @@ def apply(inputs, config, ctx) -> pd.DataFrame:
         else:
             null_count = 0
         ctx.export("null_passthrough_count", null_count)
+
+        # PERF.BASE.1: per-strategy timing summary. Rolled up from the
+        # TimingCollector bound during apply_masking_rules. Empty dict
+        # if no strategies ran (e.g. all-passthrough mask). Shape:
+        #   {strategy_type: {count, total_ms, max_ms, peak_delta_kb}}
+        # See decoy_engine/instrumentation/timing.py for the data
+        # class definition. Surfaced as a node export so the platform's
+        # evidence manifest reader gets per-strategy timings without
+        # any new integration code.
+        timings_summary = timing_collector.summarize()
+        if timings_summary:
+            ctx.export("timings_per_strategy", timings_summary)
 
     return result
 
