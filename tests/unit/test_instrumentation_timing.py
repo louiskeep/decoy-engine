@@ -99,14 +99,16 @@ class TestTimedStrategy:
         c = TimingCollector()
         with use_collector(c):
             with timed_strategy("fpe", "ssn"):
-                # Simulate a small workload so elapsed_ms > 0.
-                time.sleep(0.005)
+                # Simulate a small workload so elapsed_ms > 0. Windows
+                # clock granularity can shave a few ms off a sleep, so
+                # target 20ms + assert >= 10ms to keep the test stable.
+                time.sleep(0.020)
 
         assert len(c.records) == 1
         record = c.records[0]
         assert record.strategy_type == "fpe"
         assert record.column == "ssn"
-        assert record.elapsed_ms >= 5.0  # at least 5ms from the sleep
+        assert record.elapsed_ms >= 10.0
         # Memory delta should be >= 0 (could be 0 if no allocation happened).
         assert record.peak_memory_delta_kb >= 0
 
