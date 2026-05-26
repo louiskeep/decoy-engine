@@ -8,6 +8,7 @@ exercise both code paths directly so we don't depend on the runner here).
 from __future__ import annotations
 
 import os
+import socket
 import sqlite3
 import tempfile
 
@@ -17,6 +18,60 @@ import pytest
 
 from decoy_engine.graph.ops import source_db, source_file, target_db, target_file
 
+
+# ---------------------------------------------------------------------------
+# Network / extension availability guard
+# ---------------------------------------------------------------------------
+
+def _duckdb_sqlite_scanner_available() -> bool:
+    """Return True if DuckDB can load the sqlite_scanner extension.
+
+    Does a 2-second socket pre-check against the DuckDB extension registry
+    before attempting INSTALL + LOAD.  Returns False immediately on any
+    socket failure so the collection-time penalty is bounded to ~2 seconds
+    in offline environments.
+
+    The result is module-level cached so the check runs once per collection
+    pass, not once per test.
+    """
+    try:
+        # Fast pre-check: is the extension registry reachable?
+        with socket.create_connection(("extensions.duckdb.org", 443), timeout=2):
+            pass
+    except OSError:
+        return False
+
+    # Registry is reachable; verify the extension actually loads.
+    try:
+        import duckdb  # noqa: PLC0415
+        con = duckdb.connect(":memory:")
+        try:
+            con.execute("INSTALL sqlite_scanner")
+            con.execute("LOAD sqlite_scanner")
+            return True
+        except Exception:  # noqa: BLE001
+            return False
+        finally:
+            con.close()
+    except Exception:  # noqa: BLE001
+        return False
+
+
+_SQLITE_SCANNER_AVAILABLE = _duckdb_sqlite_scanner_available()
+
+_needs_sqlite_scanner = pytest.mark.skipif(
+    not _SQLITE_SCANNER_AVAILABLE,
+    reason=(
+        "DuckDB sqlite_scanner extension unavailable -- "
+        "requires outbound network access to extensions.duckdb.org "
+        "(blocked in offline / network-restricted CI environments)"
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
 
 @pytest.fixture
 def tmp_csv():
@@ -52,7 +107,9 @@ def _to_pd(df):
     return df
 
 
-# -------- source.file ------------------------------------------------------
+# ---------------------------------------------------------------------------
+# source.file (no sqlite_scanner extension needed)
+# ---------------------------------------------------------------------------
 
 
 def test_source_file_csv_parity_pandas_vs_duckdb(tmp_csv):
@@ -95,7 +152,9 @@ def test_source_file_duckdb_returns_arrow_table(tmp_csv):
     )
 
 
-# -------- target.file ------------------------------------------------------
+# ---------------------------------------------------------------------------
+# target.file (no sqlite_scanner extension needed)
+# ---------------------------------------------------------------------------
 
 
 def test_target_file_csv_parity_pandas_vs_duckdb(tmp_csv):
@@ -150,7 +209,11 @@ def test_target_file_preview_skips_write_in_duckdb_mode(tmp_csv):
     assert not os.path.exists(out_path), "preview must not write the file"
 
 
-# -------- source.db / target.db (SQLite via SQLAlchemy DSN) ----------------
+# ---------------------------------------------------------------------------
+# source.db / target.db (SQLite via SQLAlchemy DSN)
+# These tests require the DuckDB sqlite_scanner extension.
+# They are skipped in offline / network-restricted environments.
+# ---------------------------------------------------------------------------
 
 
 @pytest.fixture
@@ -168,6 +231,7 @@ def tmp_sqlite():
     return db_path, tmpdir
 
 
+@_needs_sqlite_scanner
 def test_source_db_parity_pandas_vs_duckdb(tmp_sqlite):
     db_path, _ = tmp_sqlite
     dsn = f"sqlite:///{db_path}"
@@ -188,6 +252,7 @@ def test_source_db_parity_pandas_vs_duckdb(tmp_sqlite):
     )
 
 
+@_needs_sqlite_scanner
 def test_target_db_parity_pandas_vs_duckdb(tmp_sqlite):
     db_path, _tmpdir = tmp_sqlite
     dsn = f"sqlite:///{db_path}"
@@ -217,10 +282,11 @@ def test_target_db_parity_pandas_vs_duckdb(tmp_sqlite):
 
 
 # -------- target.db write-mode coverage on the SQLite scanner path --------
-# These tests are not "parity" with pandas — they verify the new DuckDB
+# These tests are not "parity" with pandas -- they verify the new DuckDB
 # native scanner correctly implements the write_mode semantics. Bug 3.
 
 
+@_needs_sqlite_scanner
 def test_target_db_replace_overwrites_existing_rows(tmp_sqlite):
     db_path, _ = tmp_sqlite
     dsn = f"sqlite:///{db_path}"
@@ -236,7 +302,7 @@ def test_target_db_replace_overwrites_existing_rows(tmp_sqlite):
         {"table": "rmode", "dsn": dsn, "__engine": "duckdb", "write_mode": "replace"},
         ctx=None,
     )
-    # Replace with a different shape — should fully replace, not merge.
+    # Replace with a different shape -- should fully replace, not merge.
     fresh = pa.Table.from_pylist(
         [
             {"id": 99, "name": "only-row", "value": 9.0},
@@ -255,6 +321,7 @@ def test_target_db_replace_overwrites_existing_rows(tmp_sqlite):
     assert list(rows["name"]) == ["only-row"]
 
 
+@_needs_sqlite_scanner
 def test_target_db_append_extends_existing_table(tmp_sqlite):
     db_path, _ = tmp_sqlite
     dsn = f"sqlite:///{db_path}"
@@ -287,8 +354,9 @@ def test_target_db_append_extends_existing_table(tmp_sqlite):
     assert list(rows["id"]) == [1, 2, 3]
 
 
+@_needs_sqlite_scanner
 def test_target_db_fail_mode_raises_when_table_exists(tmp_sqlite):
-    """`write_mode: fail` is the safety hatch — if the destination
+    """`write_mode: fail` is the safety hatch -- if the destination
     table already exists, the op refuses to write rather than silently
     appending or replacing."""
     db_path, _ = tmp_sqlite
@@ -311,6 +379,7 @@ def test_target_db_fail_mode_raises_when_table_exists(tmp_sqlite):
         )
 
 
+@_needs_sqlite_scanner
 def test_source_db_with_where_clause_filters_via_duckdb_scanner(tmp_sqlite):
     """The native scanner path should honor the optional `where` config
     just like the SQLAlchemy fallback. Validates the SQL the dispatcher
@@ -332,6 +401,7 @@ def test_source_db_with_where_clause_filters_via_duckdb_scanner(tmp_sqlite):
     assert list(df["id"]) == [2, 3]  # Bob (20.5), Carol (30.5); Alice (10.5) filtered out
 
 
+@_needs_sqlite_scanner
 def test_source_db_preview_row_limit_honored_by_duckdb_scanner(tmp_sqlite):
     """Preview mode passes `__preview_row_limit` through; the scanner
     SQL should LIMIT accordingly so we don't drag the whole source
