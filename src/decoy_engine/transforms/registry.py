@@ -166,7 +166,15 @@ class StrategyManager:
             self.logger.info(
                 f"Applying masking rule to column '{column_name}' with type '{rule.get('type')}'"
             )
-            new_col = self.apply_masking_rule(df[column_name], rule, ctx=ctx)
+            # PERF.BASE.1: per-strategy timing. Records into the
+            # thread-local TimingCollector if one is active for this
+            # thread; otherwise zero-overhead no-op. See
+            # decoy_engine/instrumentation/timing.py.
+            from decoy_engine.instrumentation import timed_strategy
+
+            strategy_type = str(rule.get("type") or "passthrough")
+            with timed_strategy(strategy_type, str(column_name)):
+                new_col = self.apply_masking_rule(df[column_name], rule, ctx=ctx)
 
             # Drop the original column's extension-dtype tag (e.g.
             # int64[pyarrow] for a date column that the CSV reader

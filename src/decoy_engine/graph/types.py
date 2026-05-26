@@ -45,6 +45,12 @@ class NodeRunRecord(TypedDict, total=False):
     # values via `${nodes.<id>.<key>}` substitution at run time. Keys per
     # op kind documented in PIPELINE_GRAPH_GUIDE.md "Node exports".
     exports: dict[str, Any] | None
+    # PERF.BASE.1: per-node RSS delta (peak during node execution minus
+    # RSS at node start). Always >= 0; 0 when memory drops or stays flat
+    # during the node. Useful for hot-spot identification in the baseline
+    # report. Optional because legacy / pre-instrumentation records may
+    # not have it.
+    peak_memory_kb: int
 
 
 class RunResult(TypedDict):

@@ -47,6 +47,7 @@ from decoy_engine.errors import (
 )
 from decoy_engine.graph.errors import translate as translate_engine_error
 from decoy_engine.graph.memory_monitor import PeakRSSMonitor, check_memory_pressure
+from decoy_engine.instrumentation import rss_kb
 from decoy_engine.graph.node_descriptors import (
     _node_descriptor,
     _summarize_node_config,
@@ -179,6 +180,10 @@ def _execute_graph(
                 log.info(_summarize_node_config(kind, node_cfg))
 
             t0 = time.monotonic()
+            # PERF.BASE.1: capture RSS at node start. End-of-node RSS
+            # minus this gives the per-node memory delta surfaced in the
+            # NodeRunRecord (and ultimately in the evidence manifest).
+            rss_before = rss_kb()
             state.begin_node(nid, ctx)
             try:
                 # Defensive: cache.consume() returns None when the source
@@ -203,6 +208,7 @@ def _execute_graph(
                     ports = getattr(op, "OUTPUT_PORTS", ())
                     total_rows = cache.write_split(nid, op_result, ports, engine)
                     elapsed_ms = int((time.monotonic() - t0) * 1000)
+                    peak_memory_kb = max(0, rss_kb() - rss_before)
                     state.records.append(
                         make_node_ok_record(
                             nid,
@@ -210,6 +216,7 @@ def _execute_graph(
                             total_rows,
                             elapsed_ms,
                             ctx._exports.get(nid),
+                            peak_memory_kb=peak_memory_kb,
                         )
                     )
                     emit_node_ok(
@@ -224,6 +231,7 @@ def _execute_graph(
                 else:
                     rows_out = cache.write_stream(nid, op_result, engine)
                     elapsed_ms = int((time.monotonic() - t0) * 1000)
+                    peak_memory_kb = max(0, rss_kb() - rss_before)
                     state.records.append(
                         make_node_ok_record(
                             nid,
@@ -231,6 +239,7 @@ def _execute_graph(
                             rows_out,
                             elapsed_ms,
                             ctx._exports.get(nid),
+                            peak_memory_kb=peak_memory_kb,
                         )
                     )
                     emit_node_ok(
@@ -246,6 +255,7 @@ def _execute_graph(
             except Exception as exc:
                 translated = translate_engine_error(exc, kind, nid)
                 elapsed_ms = int((time.monotonic() - t0) * 1000)
+                peak_memory_kb = max(0, rss_kb() - rss_before)
                 state.records.append(
                     make_node_error_record(
                         nid,
@@ -255,6 +265,7 @@ def _execute_graph(
                         exports=ctx._exports.get(nid),
                         error_code=getattr(translated, "code", None),
                         error_path=getattr(translated, "path", None),
+                        peak_memory_kb=peak_memory_kb,
                     )
                 )
                 emit_node_error(
