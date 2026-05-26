@@ -69,6 +69,7 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 markers = [
     "benchmark: informational performance benchmarks; not a regression gate",
+    "perf: PERF.BASE.2/3 fixture + baseline tests; opt-in via -m perf",
 ]
 
 # ── Tooling baseline (V2.0-prep, sprint 1) ──────────────────────────────────

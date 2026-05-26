@@ -1,0 +1,5 @@
+# Large tier is 5-10 GB; regenerate on demand via:
+#   python scripts/gen_perf_fixtures.py large
+# Companion fixture.yaml stays under version control once produced so
+# the schema + sha256 of the local file is reviewable.
+large/data.parquet
