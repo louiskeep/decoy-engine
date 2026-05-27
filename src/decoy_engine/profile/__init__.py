@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from decoy_engine.profile._hash import profile_hash
 from decoy_engine.profile._serialize import profile_from_json, profile_to_json
+from decoy_engine.profile._source import profile_source
 from decoy_engine.profile._types import (
     ColumnProfile,
     PIIClass,
@@ -39,5 +40,6 @@ __all__ = [
     "TableProfile",
     "profile_from_json",
     "profile_hash",
+    "profile_source",
     "profile_to_json",
 ]

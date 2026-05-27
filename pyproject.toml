@@ -258,6 +258,18 @@ module = [
     "decoy_engine.plan._checks",
     "decoy_engine.plan._compile",
     "decoy_engine.plan._serialize",
+    # engine-v2 S1 pipeline-config adapter (Pydantic strict, choke-point).
+    "decoy_engine.config",
+    "decoy_engine.config._pipeline",
+    "decoy_engine.config._global_settings",
+    "decoy_engine.config._sources",
+    "decoy_engine.config._targets",
+    "decoy_engine.config._tables",
+    "decoy_engine.config._relationships",
+    "decoy_engine.config._errors",
+    "decoy_engine.config._override",
+    # engine-v2 S1 profile_source orchestration.
+    "decoy_engine.profile._source",
 ]
 disallow_any_generics = true
 disallow_subclassing_any = true
