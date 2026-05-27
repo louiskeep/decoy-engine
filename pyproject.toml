@@ -250,6 +250,14 @@ module = [
     # under scripts/ is intentionally not strict-mode-checked, the schema
     # under tests/fixtures/ is).
     "tests.fixtures.golden._manifest_schema",
+    # engine-v2 S1 planner slice (Plan dataclass + compile_plan + 5 checks).
+    "decoy_engine.plan",
+    "decoy_engine.plan._types",
+    "decoy_engine.plan._errors",
+    "decoy_engine.plan._registry_stub",
+    "decoy_engine.plan._checks",
+    "decoy_engine.plan._compile",
+    "decoy_engine.plan._serialize",
 ]
 disallow_any_generics = true
 disallow_subclassing_any = true
