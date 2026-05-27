@@ -26,9 +26,17 @@ from enum import Enum
 class PIIClass(str, Enum):
     """Built-in STORM detector ids.
 
-    Mirrors the detector_id values produced by
-    decoy_engine.storm.detectors. Keep in sync as STORM grows its
-    built-in detector set; custom detectors stay outside this enum.
+    Mirrors the detector_id values produced by every entry in
+    decoy_engine.storm.detectors.REGISTERED_DETECTORS. The enum and the
+    registry are kept in sync by tests/unit/profile/test_pii_storm_sync.py
+    which fails if a new STORM built-in lands without a matching enum
+    member (resolution of slice-3 B1: first_name, last_name, address were
+    added to REGISTERED_DETECTORS in the V1 detection sprint but never
+    propagated to this enum, causing those columns to drop their tags
+    silently during run_pii_detection=True walks).
+
+    Custom detectors (CustomDetectorSpec ids conventionally prefixed
+    "custom__") stay outside this enum by design.
     """
 
     # Core PII
@@ -36,7 +44,10 @@ class PIIClass(str, Enum):
     SSN = "ssn"
     US_PHONE = "us_phone"
     US_ZIP = "us_zip"
+    FIRST_NAME = "first_name"
+    LAST_NAME = "last_name"
     PERSON_NAME = "person_name"
+    ADDRESS = "address"
     ISO_DATE = "iso_date"
     US_DATE = "us_date"
     EU_DATE = "eu_date"

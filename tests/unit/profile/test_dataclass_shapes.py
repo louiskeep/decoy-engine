@@ -127,14 +127,19 @@ class TestProfile:
 
 class TestPIIClass:
     def test_storm_built_in_detectors_are_represented(self) -> None:
-        # These mirror docs/v2/sprints/engine-v2/sprint-01-profile-plan-and-fixtures.md
-        # and decoy_engine.storm.detectors module docstring.
+        # Mirrors decoy_engine.storm.detectors.REGISTERED_DETECTORS exactly.
+        # The cross-module symmetry test in test_pii_storm_sync.py is the
+        # authoritative guard; this set is a local human-readable copy.
+        # Update both lists together when STORM adds a new detector.
         expected_built_ins = {
             "email",
             "ssn",
             "us_phone",
             "us_zip",
+            "first_name",
+            "last_name",
             "person_name",
+            "address",
             "iso_date",
             "us_date",
             "eu_date",

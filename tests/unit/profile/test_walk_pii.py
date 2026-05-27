@@ -230,16 +230,109 @@ class TestBestMatchHelper:
 class TestCustomDetectorIdsSkipped:
     """Detector ids not in the PIIClass enum (custom detectors, future
     built-ins) result in pii_class=None at this layer rather than crashing
-    or silently inventing a tag."""
+    or silently inventing a tag.
 
-    def test_unknown_detector_id_returns_none(self) -> None:
-        # We don't have a real custom detector to wire here, but we can
-        # verify PIIClass rejects values not in its closed set.
+    Slice-3 B1: built-ins missing from PIIClass log a WARNING; only
+    custom__-prefixed ids drop silently.
+    """
+
+    def test_pii_class_rejects_custom_detector_ids(self) -> None:
         with pytest.raises(ValueError):
             PIIClass("custom__uk_nhs_number")
 
-        # In practice _pii.detect_pii_classes catches that ValueError and
-        # skips the column. Direct unit test of that path is hard without
-        # mocking STORM. The exception-catch is exercised implicitly by
-        # the integration tests above (STORM never produces detector ids
-        # outside its built-in set unless custom_detectors is passed).
+    def test_custom_detector_id_drops_silently(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from decoy_engine.profile import _pii
+        from decoy_engine.storm import DetectorMatch, FieldStats, StormProfile
+
+        fake_field = FieldStats(
+            name="weird_col",
+            inferred_type="string",
+            dtype_raw="object",
+            row_count=10,
+            null_count=0,
+            null_rate=0.0,
+            distinct_count=10,
+            unique_rate=1.0,
+            is_likely_unique=True,
+            detector_matches=[
+                DetectorMatch(
+                    detector_id="custom__uk_nhs_number",
+                    match_rate=0.9,
+                    confidence="high",
+                )
+            ],
+        )
+        fake_profile = StormProfile(
+            source_label="t",
+            row_count=10,
+            sample_strategy="full",
+            fields=[fake_field],
+        )
+
+        def _fake_run_storm(df: pd.DataFrame, source_label: str, **kwargs: object) -> StormProfile:
+            return fake_profile
+
+        monkeypatch.setattr(_pii, "run_storm", _fake_run_storm)
+        with caplog.at_level("WARNING", logger="decoy_engine.profile._pii"):
+            tags = _pii.detect_pii_classes(pd.DataFrame({"weird_col": list(range(10))}), "t")
+
+        assert tags == {}
+        warning_records = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert warning_records == [], (
+            "custom__ detector ids should drop silently, no WARNING expected"
+        )
+
+    def test_built_in_not_in_enum_logs_warning(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from decoy_engine.profile import _pii
+        from decoy_engine.storm import DetectorMatch, FieldStats, StormProfile
+
+        # Simulate a future built-in STORM detector ("dob_iso", say) that
+        # lands before the enum catches up. The walker should drop the tag
+        # but log a WARNING so the gap is operationally visible.
+        fake_field = FieldStats(
+            name="dob",
+            inferred_type="string",
+            dtype_raw="object",
+            row_count=10,
+            null_count=0,
+            null_rate=0.0,
+            distinct_count=10,
+            unique_rate=1.0,
+            is_likely_unique=True,
+            detector_matches=[
+                DetectorMatch(
+                    detector_id="dob_iso",  # not in PIIClass, not custom__
+                    match_rate=0.9,
+                    confidence="high",
+                )
+            ],
+        )
+        fake_profile = StormProfile(
+            source_label="t",
+            row_count=10,
+            sample_strategy="full",
+            fields=[fake_field],
+        )
+
+        def _fake_run_storm(df: pd.DataFrame, source_label: str, **kwargs: object) -> StormProfile:
+            return fake_profile
+
+        monkeypatch.setattr(_pii, "run_storm", _fake_run_storm)
+        with caplog.at_level("WARNING", logger="decoy_engine.profile._pii"):
+            tags = _pii.detect_pii_classes(pd.DataFrame({"dob": list(range(10))}), "people")
+
+        assert tags == {}
+        warning_records = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warning_records) == 1
+        msg = warning_records[0].getMessage()
+        assert "dob_iso" in msg
+        assert "dob" in msg
+        assert "PIIClass" in msg
