@@ -2,7 +2,7 @@
 """
 decoy_engine -- data masking and synthetic generation library.
 
-Public API (the contract CLI and platform code depend on):
+V1 public API (the contract CLI and platform code depend on today):
     Masker            orchestrate a masking pipeline from a YAML config
     DataGenerator     generate synthetic data with referential integrity
     ExecutionContext  caller-provided runtime context (logger + telemetry)
@@ -10,6 +10,18 @@ Public API (the contract CLI and platform code depend on):
     TelemetryClient   Protocol for optional telemetry sinks
     SchemaInspector   connector schema introspection (stub, Phase 2)
     LicenseVerifier   license verification (stub)
+
+V2 plan/profile API (engine-v2 S1 deliverables; additive alongside V1):
+    Plan              versioned plan artifact produced by compile_plan
+    PlanCompileError  raised when a plan-compile check fails
+    compile_plan      compile (config, profile, engine_version) -> Plan
+    plan_from_yaml    deserialize a Plan from YAML
+    plan_to_yaml      serialize a Plan to YAML
+    Profile           frozen dataclass describing source data shape
+
+    NOTE: profile_source (the function that produces a Profile by scanning
+    a source file) is not yet exported. The scan-logic slice is pending.
+    Import directly from decoy_engine.profile until it lands.
 
 Public exceptions (also in decoy_engine.errors):
     DecoyError, ConfigError, PipelineValidationError,
@@ -68,6 +80,17 @@ from decoy_engine.graph import (
 )
 from decoy_engine.license import LicenseVerifier
 from decoy_engine.masker import Masker
+
+# V2 plan module (engine-v2 S1; additive alongside V1).
+# profile_source is intentionally absent until the scan-logic slice lands.
+from decoy_engine.plan import (
+    Plan,
+    PlanCompileError,
+    compile_plan,
+    plan_from_yaml,
+    plan_to_yaml,
+)
+from decoy_engine.profile import Profile
 from decoy_engine.providers import (
     load_custom_providers,
     register_faker_list_provider,
@@ -140,9 +163,13 @@ __all__ = [
     "LicenseVerifier",
     "Logger",
     "Masker",
+    # V2 plan/profile (engine-v2 S1; additive alongside V1).
+    "Plan",
+    "PlanCompileError",
     "PermanentError",
     "PipelineValidationError",
     "PreviewResult",
+    "Profile",
     "RiskFlag",
     "RunResult",
     "SchemaInspector",
@@ -155,6 +182,7 @@ __all__ = [
     "ValidationMessage",
     "ValidationResult",
     "WriteResult",
+    "compile_plan",
     "emit_fidelity",
     "emit_lineage",
     "emit_quarantine",
@@ -163,6 +191,8 @@ __all__ = [
     "load_custom_providers",
     "make_key_resolver",
     "normalize_config",
+    "plan_from_yaml",
+    "plan_to_yaml",
     "preview_graph",
     "recommend",
     "register_faker_list_provider",

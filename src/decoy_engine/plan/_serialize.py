@@ -7,6 +7,14 @@ declared. Tuples serialize as lists; ColumnSeed.provider_config
 
 `plan_to_yaml(plan)` produces the manifest-ready string.
 `plan_from_yaml(s)` parses it back; round-trip equality holds.
+
+Namespace declared_by wire format (M1 fix, session 11):
+  Serialized as a list of [table, [col1, col2, ...]] entries.
+  The old "table.col1__col2" string format used '__' as a column
+  separator, which was ambiguous when column names themselves contained
+  '__'.  The structured list format is unambiguous.  A legacy 'table.col'
+  fallback (no '__' in col) is accepted on deserialization for plans
+  serialized by S1-era builds before this fix.
 """
 
 from __future__ import annotations
@@ -118,8 +126,11 @@ def _relationship_to_dict(rel: PlanRelationship) -> dict[str, Any]:
 
 
 def _namespace_to_dict(ns: NamespaceBinding) -> dict[str, Any]:
+    # Wire format: list of [table, [col1, col2, ...]] entries.
+    # The old 'table.col1__col2' string format was ambiguous when column names
+    # contained '__'; this structured form is unambiguous (M1 fix, session 11).
     return {
-        "declared_by": [f"{t}.{'__'.join(cols)}" for (t, cols) in ns.declared_by],
+        "declared_by": [[t, list(cols)] for (t, cols) in ns.declared_by],
         "seed": ns.seed,
     }
 
@@ -223,10 +234,25 @@ def _namespace_from_dict(name: str, body: dict[str, Any]) -> NamespaceBinding:
     declared_by_raw = body.get("declared_by", []) or []
     declared_by: list[tuple[str, tuple[str, ...]]] = []
     for entry in declared_by_raw:
-        if isinstance(entry, str) and "." in entry:
-            table, col_part = entry.split(".", 1)
-            cols = tuple(col_part.split("__")) if "__" in col_part else (col_part,)
-            declared_by.append((table, cols))
+        if isinstance(entry, list) and len(entry) == 2:
+            # Canonical format: [table, [col1, col2, ...]].
+            # Emitted by plan_to_yaml since the M1 fix (session 11).
+            # Column names containing '__' are preserved as-is.
+            table, cols_raw = entry
+            if isinstance(table, str) and isinstance(cols_raw, list) and cols_raw:
+                cols = tuple(str(c) for c in cols_raw)
+                declared_by.append((table, cols))
+        elif isinstance(entry, str) and "." in entry:
+            # Legacy fallback: 'table.col' string (pre-M1, single-column only).
+            # Only safe to parse when col part has no '__' -- anything with '__'
+            # was either an ambiguous composite encoding or a column name
+            # with '__' in it (indistinguishable in the old format). Drop
+            # ambiguous entries; check_namespace_ambiguity catches them at
+            # next plan-compile on the new format.
+            table_part, col_part = entry.split(".", 1)
+            if col_part and "__" not in col_part:
+                declared_by.append((table_part, (col_part,)))
+            # else: ambiguous legacy entry; skip silently
     return NamespaceBinding(
         namespace=name,
         declared_by=tuple(declared_by),
