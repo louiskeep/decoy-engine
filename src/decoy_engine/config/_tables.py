@@ -64,6 +64,12 @@ class ColumnConfig(BaseModel):
     coherent_with: list[str] = Field(default_factory=list)
     backend_type: Literal["faker", "mimesis", "pool", "decoy_native"] | None = None
     backend_version: str | None = None
+    # Capacity hint for the planner's basic_uniqueness_pre_flight check
+    # (S1 spec §2 #4). Only meaningful when cardinality_mode == "unique"
+    # and backend_type == "pool"; the planner reads this directly from
+    # the column dict, so the adapter must allow it. S5 ships the full
+    # pool_capacity_pre_flight check.
+    pool_size: int | None = None
 
 
 class TableConfig(BaseModel):
