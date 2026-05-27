@@ -151,6 +151,22 @@ class TestV2CustomProviderRegistration:
         finally:
             _unregister_faker_provider_v2("v2_only_custom_provider_isolation_test")
 
+    def test_v1_registration_does_not_appear_in_v2(self) -> None:
+        """Inverse isolation: V1 `register_faker_provider` adds to V1's table
+        only; the provider name does NOT appear in V2's custom-provider table.
+        Dennis Session 22 L2."""
+        from decoy_engine.internal.faker_setup import (
+            register_faker_provider,
+            unregister_faker_provider,
+        )
+        from decoy_engine.providers_v2._faker_adapter import _v2_custom_provider_names
+
+        register_faker_provider("v1_only_custom_provider_inverse_test", lambda f: "y")
+        try:
+            assert "v1_only_custom_provider_inverse_test" not in _v2_custom_provider_names()
+        finally:
+            unregister_faker_provider("v1_only_custom_provider_inverse_test")
+
 
 class TestBackendAdapterProtocolConformance:
     """FakerAdapter conforms to the BackendAdapter Protocol."""

@@ -1,8 +1,8 @@
 """Provider-registry pin test (S1 -> S4 migration).
 
-Originally S1's `S1_STUB_REGISTRY` pin (21 names). After S4 the stub
+Originally S1's `S1_STUB_REGISTRY` pin (20 names). After S4 the stub
 is deleted; this test migrates to pin the V2 default registry's known
-names (25; the 21 S1 stubs + 4 S4 additions per spec §6, minus
+names (24; the 20 S1 stubs + 4 S4 additions per spec §6, minus
 `date_shift_offset` which was dropped per cold-read review M1).
 
 Per S4 spec §9 (resolution of cold-read M4): the test's behavior
@@ -18,10 +18,10 @@ from decoy_engine.providers_v2 import get_default_registry
 
 
 def test_registry_contains_exactly_documented_names() -> None:
-    """Exact pinned set: 25 names. Any catalog change is a discrete diff."""
+    """Exact pinned set: 24 names. Any catalog change is a discrete diff."""
     expected = frozenset(
         {
-            # S1 stub names (21 preserved verbatim)
+            # S1 stub names (20 preserved verbatim)
             "synthetic_ssn",
             "synthetic_ein",
             "synthetic_account_number",
