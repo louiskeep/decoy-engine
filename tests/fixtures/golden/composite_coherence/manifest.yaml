@@ -1,0 +1,18 @@
+fixture_name: composite_coherence
+description: 'Composite coherence: first_name/last_name/email match per row; city/state/zip
+  US triples match per row. Exercises S8 composite generators.'
+files:
+- table: people
+  path: people.csv
+  format: csv
+- table: locations
+  path: locations.csv
+  format: csv
+relationships: []
+invariants_post_mask:
+- masked first_name + last_name + email remain coherent (email derives from masked
+  first.last)
+- masked city + state + zip remain a valid US triple
+expected_orphans: 0
+gating_sprints:
+- S8
