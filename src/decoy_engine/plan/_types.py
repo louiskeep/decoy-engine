@@ -42,16 +42,15 @@ BackendType = Literal["faker", "mimesis", "pool", "decoy_native"]
 
 @dataclass(frozen=True)
 class ColumnSeed:
-    """Per-column seed material + masking strategy.
+    """Per-column masking strategy + namespace binding.
 
-    `column_seed` is derived via HKDF-SHA256 (RFC 5869) from `table_seed`
-    + column name in S3 (Determinism Layer). S1 stubs the derivation as
-    a placeholder integer; the `seed_protocol_version: 0` marker on the
-    enclosing Plan signals to S3+ readers that this material is not
-    real cryptographic key material.
+    Post-S3 (per spec §5.5 plan-schema delta): no per-column seed integer.
+    Determinism is fully expressed by
+    `derive(plan.seed_envelope.job_seed, namespace, source_bytes)`;
+    per-column distinctness comes from the namespace string + the source
+    bytes, not from a per-column seed.
     """
 
-    column_seed: int
     namespace: str | None
     strategy: str
     provider: str
@@ -64,22 +63,30 @@ class ColumnSeed:
 
 @dataclass(frozen=True)
 class GroupSeed:
-    """Per-composite-group seed material (resolution of S2 spec B2).
+    """Per-composite-group namespace binding.
 
     A composite FK column tuple gets one GroupSeed for the whole tuple
     instead of N independent ColumnSeed entries. The key under
     `per_group` is the canonical-joined column name (sorted column names
     joined with `__`).
+
+    Post-S3: no per-group seed integer; determinism keys off the
+    namespace string + canonical-tuple source bytes via `derive(...)`.
     """
 
-    group_seed: int
     namespace: str
     coherent_columns: tuple[str, ...]
 
 
 @dataclass(frozen=True)
 class TableSeed:
-    table_seed: int
+    """Per-table grouping of ColumnSeed + GroupSeed entries.
+
+    Post-S3: no `table_seed` integer; tables are not a separate axis in
+    `derive(...)`. Namespace strings already encode the per-table-binding
+    structure where it matters.
+    """
+
     per_column: tuple[tuple[str, ColumnSeed], ...] = field(default_factory=tuple)
     per_group: tuple[tuple[str, GroupSeed], ...] = field(default_factory=tuple)
 
@@ -88,13 +95,14 @@ class TableSeed:
 class SeedEnvelope:
     """Top-level seed material.
 
-    S1 ships the structural envelope with a placeholder per-column seed
-    derivation; the enclosing Plan stamps `seed_protocol_version: 0`.
-    S3 replaces the derivation with real HMAC-keyed material and bumps
-    `seed_protocol_version` to 1.
+    Post-S3 (per spec §5.5): `job_seed` is `bytes` (exactly 8 bytes), not
+    `int`. It is the sole entropy input to
+    `decoy_engine.determinism.derive(...)`. The config-side `int` (or
+    `str`, or absent) for `seed:` is normalized to bytes exactly once at
+    the pipeline-config adapter boundary in `compile_plan`.
     """
 
-    job_seed: int
+    job_seed: bytes
     per_table: tuple[tuple[str, TableSeed], ...] = field(default_factory=tuple)
 
 
@@ -148,11 +156,15 @@ class PlanRelationship:
 
 @dataclass(frozen=True)
 class NamespaceBinding:
-    """One namespace and the (table, columns) tuples bound to it."""
+    """One namespace and the (table, columns) tuples bound to it.
+
+    Post-S3 (per spec §5.5): no `seed` int field. Namespace strings feed
+    into `derive(...)` directly; per-namespace seed material is not
+    stored.
+    """
 
     namespace: str
     declared_by: tuple[tuple[str, tuple[str, ...]], ...]
-    seed: int
 
 
 @dataclass(frozen=True)

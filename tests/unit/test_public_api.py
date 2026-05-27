@@ -95,6 +95,24 @@ def test_all_lists_every_public_name():
         "FileSink",
         "TransientError",
         "PermanentError",
+        # engine-v2 S2 (Relationship Coordinator + Namespace).
+        "NamespaceBinding",
+        "NamespaceConfigError",
+        "NamespaceRegistry",
+        "OrphanPolicy",
+        "RelationshipEdge",
+        "RelationshipGraph",
+        "build_namespace_registry",
+        "build_relationship_graph",
+        "check_orphan_fk_policy_completeness",
+        # engine-v2 S3 (Determinism Layer).
+        "SEED_PROTOCOL_VERSION",
+        "DeterminismError",
+        "Domain",
+        "IdentityDomain",
+        "derive",
+        "derive_index",
+        "derive_value",
     }
     assert set(decoy_engine.__all__) == expected
 

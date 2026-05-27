@@ -20,9 +20,11 @@ class TestCompilePlanHappyPath:
         assert isinstance(plan, Plan)
 
     def test_compile_stamps_versions(self, simple_config: dict, simple_profile: Profile) -> None:
+        """S3 bumped seed_protocol_version from 0 (S1 stub) to 1 (first real
+        envelope)."""
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
         assert plan.plan_version == 1
-        assert plan.seed_protocol_version == 0
+        assert plan.seed_protocol_version == 1
         assert plan.engine_version == "0.1.0"
 
     def test_compile_records_six_checks_passed(
@@ -90,15 +92,16 @@ class TestYamlRoundTrip:
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
         y = plan_to_yaml(plan)
         assert "plan_version: 1" in y
-        assert "seed_protocol_version: 0" in y
+        assert "seed_protocol_version: 1" in y
 
-    def test_yaml_emits_seed_protocol_version_zero(
+    def test_yaml_emits_seed_protocol_version_one(
         self, simple_config: dict, simple_profile: Profile
     ) -> None:
-        """S1 spec H1: seed_protocol_version stamp is `0` in S1 emission."""
+        """S3 bumped seed_protocol_version from S1's `0` (placeholder) to
+        `1` (first 'real' envelope per the v1 contract)."""
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
         y = plan_to_yaml(plan)
-        assert "seed_protocol_version: 0" in y
+        assert "seed_protocol_version: 1" in y
 
     @pytest.mark.parametrize("policy", ["preserve", "remap", "warn", "fail"])
     def test_round_trip_preserves_each_orphan_policy(
@@ -238,8 +241,11 @@ class TestCompositeKeyHandling:
         # match source-tuple positions).
         assert gs.coherent_columns == ("member_id", "plan_id", "effective_date")
         assert gs.namespace == "enrollment_identity"
-        # Seed material is non-zero (derived via stub).
-        assert gs.group_seed != 0
+        # Post-S3 plan-schema delta: GroupSeed no longer carries a
+        # group_seed int field; deterministic material lives in
+        # decoy_engine.determinism.derive(...) and is keyed by namespace
+        # string + canonical-tuple source bytes. The S1 assertion
+        # `gs.group_seed != 0` no longer applies.
 
     def test_composite_skips_per_column_for_member_columns_on_child(
         self, composite_profile: Profile
