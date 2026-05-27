@@ -740,8 +740,16 @@ class ColumnGenerator:
         year_starts = pd.to_datetime([f"{y}-01-01" for y in years_arr])
         year_ends = pd.to_datetime([f"{y + 1}-01-01" for y in years_arr])  # exclusive
         # Clip to the snapshot's actual min/max.
-        lo_ns = np.maximum(year_starts.view("int64"), ts_min.value)
-        hi_ns = np.minimum(year_ends.view("int64"), ts_max.value)
+        # Convert to explicit datetime64[ns] before .view("int64") to ensure
+        # nanosecond integers on all pandas versions.  pandas 3.x changed the
+        # default resolution of pd.to_datetime() from ns to us; .view("int64")
+        # on a us-based DatetimeIndex returns microseconds, not nanoseconds.
+        # pd.Timestamp.value always returns nanoseconds regardless of version,
+        # so forcing the DatetimeIndex to ns here keeps both sides consistent.
+        year_starts_ns = year_starts.values.astype("datetime64[ns]").view("int64")
+        year_ends_ns = year_ends.values.astype("datetime64[ns]").view("int64")
+        lo_ns = np.maximum(year_starts_ns, ts_min.value)
+        hi_ns = np.minimum(year_ends_ns, ts_max.value)
         # A clipped window can be inverted when the chosen year sits
         # entirely outside [min, max] (snapshot integrity bug, but
         # be defensive: clamp to year-start so we still emit a

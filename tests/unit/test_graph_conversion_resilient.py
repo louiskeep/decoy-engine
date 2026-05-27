@@ -32,6 +32,17 @@ import pytest
 from decoy_engine.graph.conversion import engine_to_arrow
 
 
+def _is_string_type(arrow_type: pa.DataType) -> bool:
+    """Accept both pa.string() and pa.large_string().
+
+    PyArrow >=14 maps pandas object-dtype string columns to large_string when
+    converting via Table.from_pandas; older versions return string. The conversion
+    code in graph.conversion is correct either way — this helper avoids pinning
+    tests to a specific PyArrow major version.
+    """
+    return arrow_type in (pa.string(), pa.large_string())
+
+
 class TestResilientArrowConversion:
 
     def test_happy_path_typed_columns_pass_through(self):
@@ -42,7 +53,7 @@ class TestResilientArrowConversion:
         })
         table = engine_to_arrow(df, 'pandas')
         assert table.schema.field('id').type == pa.int64()
-        assert table.schema.field('name').type == pa.string()
+        assert _is_string_type(table.schema.field('name').type)
         assert table.schema.field('amount').type == pa.float64()
         assert table.num_rows == 3
 
@@ -60,7 +71,7 @@ class TestResilientArrowConversion:
 
         # The retry path must convert the offending column to string
         # rather than raising; downstream nodes see a clean Arrow type.
-        assert table.schema.field('ENRL_END_DT').type == pa.string()
+        assert _is_string_type(table.schema.field('ENRL_END_DT').type)
         assert table.column('ENRL_END_DT').to_pylist() == [
             '20260522', '20260523', '20260524',
         ]
@@ -97,9 +108,9 @@ class TestResilientArrowConversion:
         with caplog.at_level(logging.WARNING, logger='decoy_engine.graph.conversion'):
             table = engine_to_arrow(df, 'pandas')
 
-        assert table.schema.field('A').type == pa.string()
-        assert table.schema.field('B').type == pa.string()
-        assert table.schema.field('C').type == pa.string()
+        assert _is_string_type(table.schema.field('A').type)
+        assert _is_string_type(table.schema.field('B').type)
+        assert _is_string_type(table.schema.field('C').type)
         msgs = [r.getMessage() for r in caplog.records]
         assert any('A' in m and 'C' in m and 'B' not in m for m in msgs)
 
