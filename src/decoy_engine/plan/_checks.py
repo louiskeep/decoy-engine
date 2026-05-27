@@ -36,9 +36,12 @@ def check_unknown_provider(config: dict[str, Any]) -> None:
     registered set; the test signature shape changed (per S4 spec §9 + cold-
     read M4).
 
-    The registry import is deferred inside the function so that the plan
-    package does not eagerly load `providers_v2` (which transitively imports
-    faker); the planner only needs the registry at compile time, not import time.
+    The registry import is deferred inside the function. The real motivation
+    is import-cycle prevention: `decoy_engine.providers_v2` and the planner
+    sit on the same dependency tier, and a module-level import here can
+    surface a cycle as the package grows. Faker eagerness is not the issue
+    (faker is already loaded by other engine modules at package import time);
+    cycle prevention is. Dennis Session 22 L1.
     """
     from decoy_engine.providers_v2 import get_default_registry
 

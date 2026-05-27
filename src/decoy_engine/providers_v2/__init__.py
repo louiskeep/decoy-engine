@@ -48,7 +48,9 @@ from decoy_engine.providers_v2._adapter import (
 )
 from decoy_engine.providers_v2._errors import AdapterError, ProviderError
 from decoy_engine.providers_v2._faker_adapter import (
-    FakerAdapter,
+    FakerAdapter as FakerAdapter,  # re-export; intentionally not in __all__ (Dennis S22 L4)
+)
+from decoy_engine.providers_v2._faker_adapter import (
     register_faker_provider_v2,
 )
 from decoy_engine.providers_v2._registry import (
@@ -60,10 +62,15 @@ __all__ = [
     "AdapterError",
     "BackendAdapter",
     "CapabilityMatrix",
-    "FakerAdapter",
     "ProviderError",
     "ProviderRegistry",
     "ProviderSpec",
     "get_default_registry",
     "register_faker_provider_v2",
 ]
+# `FakerAdapter` is intentionally NOT in `__all__` to keep the public surface
+# at 8 entries (matching the S4 spec API summary). It remains importable via
+# `from decoy_engine.providers_v2 import FakerAdapter` for callers that need
+# direct adapter access (S5 PoolAdapter inheritance pattern, tests); the omission
+# from `__all__` only affects `from decoy_engine.providers_v2 import *` behavior.
+# Dennis Session 22 L4.
