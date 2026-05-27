@@ -122,6 +122,17 @@ def test_all_lists_every_public_name():
         "ProviderSpec",
         "get_default_registry",
         "register_faker_provider_v2",
+        # engine-v2 S5 (Pool Manager).
+        "CardinalityMode",
+        "GenerationError",
+        "PoolAdapter",
+        "PoolBuilder",
+        "PoolCache",
+        "PoolCapacityError",
+        "PoolSampler",
+        "QualityWarning",
+        "ValuePool",
+        "get_default_pool_cache",
     }
     assert set(decoy_engine.__all__) == expected
 

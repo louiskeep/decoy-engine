@@ -92,6 +92,7 @@ def _column_seed_to_dict(cs: ColumnSeed) -> dict[str, Any]:
         "backend_type": cs.backend_type,
         "backend_version": cs.backend_version,
         "cardinality_mode": cs.cardinality_mode,
+        "deterministic": cs.deterministic,
     }
     if cs.provider_config:
         out["provider_config"] = dict(cs.provider_config)
@@ -190,6 +191,7 @@ def _column_seed_from_dict(data: dict[str, Any]) -> ColumnSeed:
         backend_type=data["backend_type"],
         backend_version=data["backend_version"],
         cardinality_mode=data["cardinality_mode"],
+        deterministic=bool(data.get("deterministic", False)),
         provider_config=tuple(sorted(provider_config_raw.items())),
         coherent_with=tuple(coherent_with_raw),
     )

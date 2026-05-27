@@ -1,7 +1,9 @@
-"""The default ProviderRegistry catalog: 25 semantic names.
+"""The default ProviderRegistry catalog: 24 semantic names.
 
-Per S4 spec §6: S1's 21 stub names preserved verbatim + 4 additions
+Per S4 spec §6: S1's 20 stub names preserved verbatim + 4 additions
 (`synthetic_npi`, `synthetic_ndc`, `synthetic_mrn`, `person_full_name`).
+(Spec §6 text says "21 S1 stubs + 4 = 25" but the actual S1_STUB_REGISTRY
+had 20 names; one-line spec patch flagged for Dennis end-of-sprint review.)
 The original draft included a 5th addition (`date_shift_offset`); per
 cold-read review M1 it was dropped (date-shift offsets are a strategy
 parameter, not a Faker-shaped value source).

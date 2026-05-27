@@ -163,8 +163,8 @@ def build_namespace_registry(
       when a child FK column is explicitly bound to a namespace other
       than the namespace it auto-inherits from its parent FK.
     - `code='namespace_missing'` when a deterministic-mode column has
-      no namespace declaration (cardinality_mode='deterministic_map'
-      requires explicit namespace per S1).
+      no namespace declaration (`deterministic: true` requires explicit
+      namespace per S1 + S5 R6 reshape).
 
     Pure function: same `(config, profile)` produces an equal registry.
     """
@@ -238,7 +238,12 @@ def build_namespace_registry(
         for col_entry in table_entry.get("columns", []) or []:
             if not isinstance(col_entry, dict):
                 continue
-            if col_entry.get("cardinality_mode") != "deterministic_map":
+            # R6 reshape (S5): the deterministic-vs-random axis moved
+            # from cardinality_mode='deterministic_map' to a first-class
+            # `deterministic: bool` per-column field. The namespace-
+            # requirement carries over: deterministic columns must
+            # declare a namespace.
+            if not bool(col_entry.get("deterministic", False)):
                 continue
             col_name = col_entry.get("name", "?")
             key = (table_name, (col_name,))
@@ -258,8 +263,8 @@ def build_namespace_registry(
                     code="namespace_missing",
                     path=f"tables.{table_name}.columns.{col_name}",
                     message=(
-                        f"Column {table_name}.{col_name} uses cardinality_mode "
-                        "'deterministic_map' but does not declare a namespace. "
+                        f"Column {table_name}.{col_name} declares "
+                        "`deterministic: true` but does not declare a namespace. "
                         "Deterministic columns require an explicit namespace to "
                         "guarantee cross-column consistency."
                     ),

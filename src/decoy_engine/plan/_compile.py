@@ -80,12 +80,6 @@ def compile_plan(
     `__eq__`-equal Plans whose YAML serializations are byte-identical.
     """
     # Lazy import: see the module-level comment for cycle rationale.
-    from decoy_engine.relationships import (
-        build_namespace_registry,
-        build_relationship_graph,
-        check_orphan_fk_policy_completeness,
-    )
-
     # Run the always-on checks. Each raises PlanCompileError on fail;
     # silence on pass means the check went into checks_passed.
     #
@@ -95,6 +89,16 @@ def compile_plan(
     # row 6. The checks_passed tuple preserves S1's order plus the new
     # entry appended (the B1 regression contract: equals S1's list plus
     # exactly one new entry, in the documented position).
+    # S5 wiring (per spec §6): pool_capacity_pre_flight (row 7) lives in
+    # decoy_engine.generation.pool._validate. Lazy import same rationale
+    # as the relationships block above.
+    from decoy_engine.generation.pool import check_pool_capacity_pre_flight
+    from decoy_engine.relationships import (
+        build_namespace_registry,
+        build_relationship_graph,
+        check_orphan_fk_policy_completeness,
+    )
+
     namespace_registry = build_namespace_registry(config, profile)
     check_unknown_provider(config)
     check_composite_columns_length_match(profile)
@@ -105,6 +109,15 @@ def compile_plan(
         orphan_policy_lookup=orphan_policy_lookup,
     )
     check_basic_uniqueness_pre_flight(config, profile)
+    # Row 7 (S5): pool-backed columns supersede the S1 unique check.
+    # on_pool_exhaustion default is 'scale_up' (PO PQ3); only 'fail'
+    # raises here, others defer to runtime QualityWarning.
+    on_pool_exhaustion = config.get("global_settings", {}).get(
+        "on_pool_exhaustion", "scale_up"
+    )
+    check_pool_capacity_pre_flight(
+        config, profile, on_pool_exhaustion=on_pool_exhaustion
+    )
 
     checks_passed = (
         "namespace_ambiguity",
@@ -113,6 +126,7 @@ def compile_plan(
         "basic_uniqueness_pre_flight",
         "composite_columns_length_match",
         "orphan_fk_policy_completeness",
+        "pool_capacity_pre_flight",
     )
 
     # Hashes.
@@ -404,6 +418,26 @@ def _build_seed_envelope(
                     )
                     backend_version = col_entry.get("backend_version", "stub-0")
                 cardinality_mode_raw = col_entry.get("cardinality_mode", "reuse")
+                # R6 reshape (S5): `deterministic_map` is deleted from the
+                # enum; rename error directs to the new shape.
+                if cardinality_mode_raw == "deterministic_map":
+                    raise PlanCompileError(
+                        code="plan_schema_deterministic_map_renamed",
+                        path=(
+                            f"tables.{table_profile.name}.columns.{col_name}"
+                            ".cardinality_mode"
+                        ),
+                        message=(
+                            f"Column {table_profile.name}.{col_name}: "
+                            "`cardinality_mode: deterministic_map` is no longer "
+                            "a valid value after the R6 reshape (S5). The "
+                            "deterministic-vs-random axis is now a separate "
+                            "first-class field. Migrate to:\n"
+                            "    deterministic: true\n"
+                            "    cardinality_mode: reuse   # or another mode\n"
+                            "See S5 spec §6 + cross-sprint contracts R6."
+                        ),
+                    )
                 cardinality_mode = (
                     cardinality_mode_raw
                     if cardinality_mode_raw
@@ -412,10 +446,12 @@ def _build_seed_envelope(
                         "unique",
                         "match_source_cardinality",
                         "scale_source_cardinality",
-                        "deterministic_map",
                     )
                     else "reuse"
                 )
+                # R6: read the new first-class `deterministic: bool` field.
+                # Defaults to False; the column opts in explicitly.
+                deterministic = bool(col_entry.get("deterministic", False))
                 provider_config_raw = col_entry.get("provider_config", {})
                 if isinstance(provider_config_raw, dict):
                     provider_config = tuple(sorted(provider_config_raw.items()))
@@ -433,6 +469,7 @@ def _build_seed_envelope(
                             backend_type=backend_type,  # type: ignore[arg-type]
                             backend_version=backend_version,
                             cardinality_mode=cardinality_mode,  # type: ignore[arg-type]
+                            deterministic=deterministic,
                             provider_config=provider_config,
                             coherent_with=coherent_with,
                         ),

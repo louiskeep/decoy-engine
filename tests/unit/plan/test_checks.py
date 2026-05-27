@@ -89,7 +89,8 @@ class TestNamespaceAmbiguity:
                             "name": "email",
                             "strategy": "faker_email",
                             "provider": "person_email",
-                            "cardinality_mode": "deterministic_map",
+                            "deterministic": True,
+                            "cardinality_mode": "reuse",
                             # namespace intentionally omitted
                         }
                     ],
@@ -117,7 +118,8 @@ class TestNamespaceAmbiguity:
                             "name": "email",
                             "strategy": "faker_email",
                             "provider": "person_email",
-                            "cardinality_mode": "deterministic_map",
+                            "deterministic": True,
+                            "cardinality_mode": "reuse",
                             "namespace": "email_ns",
                         }
                     ],

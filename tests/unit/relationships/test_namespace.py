@@ -134,7 +134,8 @@ class TestDeterministicModeRequiresNamespace:
                     "columns": [
                         {
                             "name": "email",
-                            "cardinality_mode": "deterministic_map",
+                            "deterministic": True,
+                            "cardinality_mode": "reuse",
                             "strategy": "hash_email",
                             "provider": "person_email",
                         }
@@ -157,7 +158,8 @@ class TestDeterministicModeRequiresNamespace:
                     "columns": [
                         {
                             "name": "email",
-                            "cardinality_mode": "deterministic_map",
+                            "deterministic": True,
+                            "cardinality_mode": "reuse",
                             "strategy": "hash_email",
                             "provider": "person_email",
                             "namespace": "logins",

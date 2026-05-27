@@ -284,6 +284,21 @@ module = [
     "decoy_engine.providers_v2._faker_adapter",
     "decoy_engine.providers_v2._real_registry",
     "decoy_engine.providers_v2._registry",
+    # engine-v2 S5 (Pool Manager). Spec:
+    # docs/v2/sprints/engine-v2/sprint-05-pool-manager.md in decoy-platform.
+    # Per best-practices §5.4 + S5 spec §Done state.
+    "decoy_engine.generation",
+    "decoy_engine.generation.pool",
+    "decoy_engine.generation.pool._builder",
+    "decoy_engine.generation.pool._cache",
+    "decoy_engine.generation.pool._canonicalize",
+    "decoy_engine.generation.pool._cardinality",
+    "decoy_engine.generation.pool._errors",
+    "decoy_engine.generation.pool._events",
+    "decoy_engine.generation.pool._pool_adapter",
+    "decoy_engine.generation.pool._sampler",
+    "decoy_engine.generation.pool._validate",
+    "decoy_engine.generation.pool._value_pool",
 ]
 disallow_any_generics = true
 disallow_subclassing_any = true

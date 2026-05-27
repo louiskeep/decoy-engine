@@ -22,12 +22,19 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+# Post-S5 R6 reshape (per spec §6 + cross-sprint contracts §2.4 + R6):
+# `deterministic_map` is REMOVED from the cardinality enumeration. The
+# conflated "deterministic-vs-random" semantic moved to a sibling
+# `deterministic: bool` plan field (see Plan/PlanRelationship). The two
+# fields compose orthogonally; the 2x4 matrix lives in S5 spec §6.
+# Plan-compile raises `plan_schema_deterministic_map_renamed` on any
+# config still using the legacy keyword (pre-GA hard delete per
+# best-practices §8.1).
 CardinalityMode = Literal[
     "reuse",
     "unique",
     "match_source_cardinality",
     "scale_source_cardinality",
-    "deterministic_map",
 ]
 
 OrphanPolicy = Literal["preserve", "remap", "warn", "fail"]
@@ -49,6 +56,12 @@ class ColumnSeed:
     `derive(plan.seed_envelope.job_seed, namespace, source_bytes)`;
     per-column distinctness comes from the namespace string + the source
     bytes, not from a per-column seed.
+
+    Post-S5 (per spec §6 + R6 reshape): `deterministic` is a first-class
+    per-column field. Composes orthogonally with `cardinality_mode` (the
+    2x4 matrix in S5 spec §6). Defaults to False when the plan YAML
+    omits the field; plan-compile fails on legacy `cardinality_mode:
+    deterministic_map` with a rename error directing to the new shape.
     """
 
     namespace: str | None
@@ -57,6 +70,7 @@ class ColumnSeed:
     backend_type: BackendType
     backend_version: str
     cardinality_mode: CardinalityMode
+    deterministic: bool = False
     provider_config: tuple[tuple[str, Any], ...] = field(default_factory=tuple)
     coherent_with: tuple[str, ...] = field(default_factory=tuple)
 
