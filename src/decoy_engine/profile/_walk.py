@@ -60,8 +60,23 @@ def walk_dataframe(
 
     Raises:
         ValueError: if any ColumnProfile invariant fails (see
-            ColumnProfile.__post_init__).
+            ColumnProfile.__post_init__), or if the DataFrame has
+            duplicate column names.
     """
+    # Reject duplicate column names early (L1 from slice-2 review). pandas
+    # auto-suffixes on read_csv but accepts duplicates on hand-constructed
+    # DataFrames. Without this guard, df[duplicate_col] would return a
+    # DataFrame instead of a Series and downstream .isna().sum() would
+    # raise TypeError. Match the slice-1 invariant style (clean ValueError
+    # at the boundary, named in the message).
+    col_names = [str(c) for c in df.columns]
+    if len(set(col_names)) != len(col_names):
+        dupes = sorted({n for n in col_names if col_names.count(n) > 1})
+        raise ValueError(
+            f"walk_dataframe: DataFrame for table {table_name!r} has duplicate "
+            f"column names {dupes!r}; column names must be unique."
+        )
+
     row_count = len(df)
     if sample_rows is not None and row_count > sample_rows:
         will_sample = True
