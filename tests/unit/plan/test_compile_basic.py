@@ -147,6 +147,28 @@ class TestCompositeKeyHandling:
         assert parent_pos < child_pos
 
 
+class TestGlobalSettingsEdgeCases:
+    """M3 regression tests (Dennis session 15): global_settings null/missing edge cases."""
+
+    def test_null_global_settings_does_not_raise(self, simple_profile: Profile) -> None:
+        """global_settings: null (explicit YAML null) must not raise AttributeError."""
+        config = {"global_settings": None}
+        plan = compile_plan(config, simple_profile, decoy_engine_version="0.1.0")
+        assert plan.seed_envelope.job_seed == 0
+
+    def test_missing_global_settings_uses_zero_seed(self, simple_profile: Profile) -> None:
+        """global_settings key absent entirely yields seed=0."""
+        config: dict = {}
+        plan = compile_plan(config, simple_profile, decoy_engine_version="0.1.0")
+        assert plan.seed_envelope.job_seed == 0
+
+    def test_explicit_seed_propagates(self, simple_profile: Profile) -> None:
+        """global_settings.seed is picked up when present."""
+        config = {"global_settings": {"seed": 99}}
+        plan = compile_plan(config, simple_profile, decoy_engine_version="0.1.0")
+        assert plan.seed_envelope.job_seed != 0  # derived from 99; just not zero
+
+
 class TestErrorShape:
     def test_error_carries_code_path_message(self) -> None:
         e = PlanCompileError(code="x", path="a.b.c", message="m")

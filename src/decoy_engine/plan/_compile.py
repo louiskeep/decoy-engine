@@ -234,7 +234,13 @@ def _build_seed_envelope_stub(config: dict[str, Any], profile: Profile) -> SeedE
     seed envelope entirely; the envelope is a structural slot the
     planner fills based on what the config actually masks.
     """
-    job_seed_raw = config.get("global_settings", {}).get("seed", 0)
+    # M3 fix (Dennis session 15): dict.get(key, default) returns default only
+    # when the key is absent. When the key is present with value None (YAML
+    # `global_settings: null`), get() returns None -- bypassing the default --
+    # and the chained .get() raises AttributeError. Use `or {}` to coerce both
+    # absent-key and explicit-None to an empty dict.
+    _global_settings = config.get("global_settings") or {}
+    job_seed_raw = _global_settings.get("seed", 0)
     try:
         job_seed = int(job_seed_raw)
     except (TypeError, ValueError):
