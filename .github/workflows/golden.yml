@@ -1,0 +1,61 @@
+# Golden fixture suite — engine-v2 S1 relational fixture gate.
+#
+# Triggers on every PR that touches any code path the golden fixtures exercise:
+#   - decoy_engine/plan/*, decoy_engine/profile/*   (profiler + planner)
+#   - decoy_engine/generation/*, decoy_engine/relationships/*  (S2+ work)
+#   - decoy_engine/execution/*                      (S9+ work)
+#   - tests/fixtures/golden/**                      (fixture data itself)
+#
+# Why a separate workflow from ci.yml:
+#   - ci.yml runs on every push; golden runs only when relevant paths change.
+#   - The golden marker gates S2-S13 sprint PRs; separating it makes "which
+#     gate broke?" obvious in the Actions sidebar.
+#   - Future: as S2+ add relational invariant assertions the suite will grow;
+#     it is sized separately from the main unit suite.
+#
+# See: docs/v2/sprints/engine-v2/sprint-01-profile-plan-and-fixtures.md §S1 gate
+
+name: golden
+
+on:
+  pull_request:
+    paths:
+      # Profiler + planner (S1)
+      - "src/decoy_engine/plan/**"
+      - "src/decoy_engine/profile/**"
+      # Relationship coordinator (S2+)
+      - "src/decoy_engine/relationships/**"
+      # Generation layer (S2+)
+      - "src/decoy_engine/generation/**"
+      # Execution adapter (S9+)
+      - "src/decoy_engine/execution/**"
+      # Fixture data itself — re-run if fixtures change
+      - "tests/fixtures/golden/**"
+      # Integration test runners
+      - "tests/integration/golden/**"
+  workflow_dispatch:
+
+jobs:
+  golden-suite:
+    name: golden fixture suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # Match the Python version used in PERF.BASE.3 baseline
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install engine + dev extras
+        run: pip install -e ".[dev]"
+
+      - name: Run golden fixture suite
+        run: |
+          pytest -m golden tests/integration/golden/ \
+            --tb=short \
+            -v \
+            --no-header

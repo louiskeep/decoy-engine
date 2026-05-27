@@ -109,7 +109,13 @@ class TestDtypeReporting:
             sample_rows=None,
             rng=_rng(),
         )
-        assert profile.columns[0].dtype == "object"
+        # pandas 2.x reports string columns as "object"; pandas 3.x reports "str".
+        # Both are correct: walk_dataframe faithfully calls str(series.dtype).
+        # Accept either so the test is not pinned to a single pandas major version.
+        assert profile.columns[0].dtype in ("object", "str"), (
+            f"Expected pandas string dtype ('object' on pandas 2.x, 'str' on "
+            f"pandas 3.x), got {profile.columns[0].dtype!r}"
+        )
 
 
 class TestPkAndFkPropagation:

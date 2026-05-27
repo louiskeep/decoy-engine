@@ -95,6 +95,15 @@ def test_all_lists_every_public_name():
         "FileSink",
         "TransientError",
         "PermanentError",
+        # V2 engine-v2 S1: Profiler + Planner public API (H1 fix; commit c8afdb3).
+        # These are the compile-time layer symbols. S2+ adds relationships, determinism,
+        # providers, pools; each sprint extends this set as its module lands.
+        "Profile",
+        "Plan",
+        "PlanCompileError",
+        "compile_plan",
+        "plan_from_yaml",
+        "plan_to_yaml",
     }
     assert set(decoy_engine.__all__) == expected
 
