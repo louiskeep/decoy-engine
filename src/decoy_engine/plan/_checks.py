@@ -1,84 +1,30 @@
-"""The five S1 plan-compile checks.
+"""Plan-compile checks: the foundational validation set.
 
 Each check is a pure function taking `(config, profile)` (and sometimes
 additional precomputed state) and either returning silently on pass or
-raising `PlanCompileError` on fail. The 5 checks are listed in the S1
-spec compile-check ownership table rows 1-5.
+raising `PlanCompileError` on fail. The full check map lives in the
+compile-check ownership table (S1 spec §plan-yaml-shape).
 
-S2+ adds more checks (orphan_fk_policy_completeness row 6,
-pool_capacity_pre_flight row 7, etc.). S2's revisions of the planner
-move some of these checks into `decoy_engine.relationships` (#1 namespace
-ambiguity, #3 fk_plan_ordering); S1 keeps them inline.
+S2 relocated two relationship-related checks into
+`decoy_engine.relationships`: `namespace_ambiguity` (now performed by
+`build_namespace_registry`) and `fk_plan_ordering` (now performed by
+`build_relationship_graph`). The check names still appear in
+`PlanCompileResult.checks_passed` to preserve the S1 -> S2 regression
+contract (per S2 spec B1: `checks_passed` equals S1's list plus exactly
+one new entry, `orphan_fk_policy_completeness`).
+
+`orphan_fk_policy_completeness` (new in S2, row 6) lives in
+`decoy_engine.relationships._graph.check_orphan_fk_policy_completeness`
+alongside the graph builder that consumes its lookup output.
 """
 
 from __future__ import annotations
 
-from collections import defaultdict
 from typing import Any
 
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._registry_stub import S1_STUB_REGISTRY
 from decoy_engine.profile._types import Profile
-
-# Check 1 ----------------------------------------------------------------
-
-
-def check_namespace_ambiguity(config: dict[str, Any]) -> None:
-    """Reject configs where the same column is declared in two namespaces,
-    or a deterministic-mode column is missing a namespace.
-
-    Compile-check ownership table row #1; S2 moves into
-    `decoy_engine.relationships._namespace.build_namespace_registry`.
-    """
-    column_to_namespaces: dict[tuple[str, str], set[str]] = defaultdict(set)
-    namespaces = config.get("namespaces", {})
-    if not isinstance(namespaces, dict):
-        return  # malformed config; let YAML parsing catch it upstream
-    for ns_name, ns_body in namespaces.items():
-        declared_by = ns_body.get("declared_by", []) if isinstance(ns_body, dict) else []
-        for entry in declared_by:
-            if not isinstance(entry, str) or "." not in entry:
-                continue
-            table, col = entry.split(".", 1)
-            column_to_namespaces[(table, col)].add(ns_name)
-
-    for (table, col), ns_set in column_to_namespaces.items():
-        if len(ns_set) > 1:
-            raise PlanCompileError(
-                code="namespace_ambiguity",
-                path=f"namespaces.{{{','.join(sorted(ns_set))}}}.declared_by",
-                message=(
-                    f"Column {table}.{col} is declared in multiple namespaces: "
-                    f"{sorted(ns_set)!r}. Each column may belong to exactly one namespace."
-                ),
-            )
-
-    # Deterministic-mode columns must declare a namespace.
-    tables = config.get("tables", []) if isinstance(config.get("tables"), list) else []
-    for table_entry in tables:
-        if not isinstance(table_entry, dict):
-            continue
-        table_name = table_entry.get("name", "?")
-        for col_entry in table_entry.get("columns", []) or []:
-            if not isinstance(col_entry, dict):
-                continue
-            mode = col_entry.get("cardinality_mode")
-            if mode == "deterministic_map":
-                col_name = col_entry.get("name", "?")
-                if not col_entry.get("namespace"):
-                    raise PlanCompileError(
-                        code="namespace_ambiguity",
-                        path=f"tables.{table_name}.columns.{col_name}",
-                        message=(
-                            f"Column {table_name}.{col_name} uses cardinality_mode "
-                            "'deterministic_map' but does not declare a namespace. "
-                            "Deterministic columns require an explicit namespace to "
-                            "guarantee cross-column consistency."
-                        ),
-                    )
-
-
-# Check 2 ----------------------------------------------------------------
 
 
 def check_unknown_provider(config: dict[str, Any]) -> None:
@@ -111,72 +57,6 @@ def check_unknown_provider(config: dict[str, Any]) -> None:
                 )
 
 
-# Check 3 ----------------------------------------------------------------
-
-
-def check_fk_plan_ordering(profile: Profile) -> list[tuple[str, tuple[str, ...]]]:
-    """Topologically sort the FK DAG; reject cycles.
-
-    Returns the ordered list of (table, columns) nodes the planner uses
-    to fill in `plan.ordering`. Composite parents are a single node;
-    children come after every parent they depend on.
-
-    Compile-check ownership table row #3; S2 moves into
-    `decoy_engine.relationships._graph.build_relationship_graph`.
-    """
-    # Each node is (table, sorted-columns-tuple). Composite parents
-    # collapse to one node by representing their whole column tuple as
-    # a single ordering node.
-    edges: list[tuple[tuple[str, tuple[str, ...]], tuple[str, tuple[str, ...]]]] = []
-    nodes: set[tuple[str, tuple[str, ...]]] = set()
-    for table in profile.tables:
-        for col in table.columns:
-            nodes.add((table.name, (col.name,)))
-    for rel in profile.relationships:
-        parent_node = (rel.parent_table, rel.parent_columns)
-        child_node = (rel.child_table, rel.child_columns)
-        nodes.add(parent_node)
-        nodes.add(child_node)
-        edges.append((parent_node, child_node))
-
-    # Kahn's algorithm.
-    indegree: dict[tuple[str, tuple[str, ...]], int] = dict.fromkeys(nodes, 0)
-    out_edges: dict[tuple[str, tuple[str, ...]], list[tuple[str, tuple[str, ...]]]] = defaultdict(
-        list
-    )
-    for p, c in edges:
-        out_edges[p].append(c)
-        indegree[c] += 1
-
-    queue = sorted([n for n, d in indegree.items() if d == 0])
-    ordered: list[tuple[str, tuple[str, ...]]] = []
-    while queue:
-        node = queue.pop(0)
-        ordered.append(node)
-        for nxt in sorted(out_edges[node]):
-            indegree[nxt] -= 1
-            if indegree[nxt] == 0:
-                queue.append(nxt)
-        queue.sort()  # stability across implementations
-
-    if len(ordered) != len(nodes):
-        cycle_nodes = sorted(n for n, d in indegree.items() if d > 0)
-        raise PlanCompileError(
-            code="fk_cycle",
-            path="relationships",
-            message=(
-                f"FK relationships form a cycle. {len(cycle_nodes)} nodes are part "
-                f"of one or more cycles: {cycle_nodes!r}. Plan cannot determine a "
-                "deterministic mask order."
-            ),
-        )
-
-    return ordered
-
-
-# Check 4 ----------------------------------------------------------------
-
-
 def check_basic_uniqueness_pre_flight(config: dict[str, Any], profile: Profile) -> None:
     """Reject pool-backed `unique` configs whose source distinct count
     exceeds the pool capacity hint.
@@ -188,7 +68,6 @@ def check_basic_uniqueness_pre_flight(config: dict[str, Any], profile: Profile) 
 
     Compile-check ownership table row #4.
     """
-    # Build a lookup from (table, column) -> ColumnProfile.distinct_count.
     distinct_lookup: dict[tuple[str, str], int | None] = {}
     for table in profile.tables:
         for col in table.columns:
@@ -208,11 +87,11 @@ def check_basic_uniqueness_pre_flight(config: dict[str, Any], profile: Profile) 
                 continue
             pool_size = col_entry.get("pool_size")
             if pool_size is None:
-                continue  # no static hint; runtime catches
+                continue
             col_name = col_entry.get("name", "?")
             source_distinct = distinct_lookup.get((table_name, col_name))
             if source_distinct is None:
-                continue  # profile lacks the column (sampled or absent)
+                continue
             if source_distinct > pool_size:
                 raise PlanCompileError(
                     code="pool_capacity_pre_flight_unique",
@@ -227,18 +106,14 @@ def check_basic_uniqueness_pre_flight(config: dict[str, Any], profile: Profile) 
                 )
 
 
-# Check 5 ----------------------------------------------------------------
-
-
 def check_composite_columns_length_match(profile: Profile) -> None:
     """Every relationship's parent.columns and each child.columns must
     have the same length.
 
-    Resolution of S2 spec B2 (composite-key shape). The Profile-layer
-    Relationship dataclass enforces this at construction time; this
-    check exists at the planner layer too so a Profile that was hand-
-    constructed via dict (e.g. through deserialization without going
-    through Relationship.__post_init__) gets caught here.
+    The Profile-layer `Relationship` dataclass enforces this at construction
+    time; this check exists at the planner layer too so a Profile that was
+    hand-constructed via dict (e.g. through deserialization without going
+    through `Relationship.__post_init__`) gets caught here.
 
     Compile-check ownership table row #5.
     """

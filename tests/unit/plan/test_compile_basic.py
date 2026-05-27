@@ -25,9 +25,11 @@ class TestCompilePlanHappyPath:
         assert plan.seed_protocol_version == 0
         assert plan.engine_version == "0.1.0"
 
-    def test_compile_records_five_checks_passed(
+    def test_compile_records_six_checks_passed(
         self, simple_config: dict, simple_profile: Profile
     ) -> None:
+        """S2 added orphan_fk_policy_completeness as row 6 (per the B1
+        regression contract: equals S1's tuple plus exactly one new entry)."""
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
         assert set(plan.plan_compile.checks_passed) == {
             "namespace_ambiguity",
@@ -35,6 +37,7 @@ class TestCompilePlanHappyPath:
             "fk_plan_ordering",
             "basic_uniqueness_pre_flight",
             "composite_columns_length_match",
+            "orphan_fk_policy_completeness",
         }
 
     def test_compile_no_warnings_no_errors_no_skipped(
@@ -153,7 +156,28 @@ class TestCompositeKeyHandling:
         assert rel.children[0].columns == ("member_id", "plan_id", "effective_date")
 
     def test_composite_parent_orders_before_child(self, composite_profile: Profile) -> None:
-        config: dict = {"global_settings": {"seed": 1}}
+        # S2 requires orphan_policy on every relationship; previously this
+        # test passed only global_settings because the orphan_fk_policy
+        # check didn't exist yet.
+        config: dict = {
+            "global_settings": {"seed": 1},
+            "relationships": [
+                {
+                    "parent": {
+                        "table": "enrollments",
+                        "columns": ["member_id", "plan_id", "effective_date"],
+                    },
+                    "children": [
+                        {
+                            "table": "claims",
+                            "columns": ["member_id", "plan_id", "effective_date"],
+                        }
+                    ],
+                    "orphan_policy": "fail",
+                    "namespace": "enrollment_identity",
+                }
+            ],
+        }
         plan = compile_plan(config, composite_profile, decoy_engine_version="0.1.0")
         # Composite parent tuple appears as one ordering node; claims FK
         # nodes come after.
@@ -180,9 +204,26 @@ class TestCompositeKeyHandling:
         produce a `per_group` entry on the CHILD table's TableSeed, keyed
         by the canonical-joined column name (sorted, "__"-joined). Per S1
         spec line 452."""
-        plan = compile_plan(
-            {"global_settings": {"seed": 1}}, composite_profile, decoy_engine_version="0.1.0"
-        )
+        config: dict = {
+            "global_settings": {"seed": 1},
+            "relationships": [
+                {
+                    "parent": {
+                        "table": "enrollments",
+                        "columns": ["member_id", "plan_id", "effective_date"],
+                    },
+                    "children": [
+                        {
+                            "table": "claims",
+                            "columns": ["member_id", "plan_id", "effective_date"],
+                        }
+                    ],
+                    "orphan_policy": "fail",
+                    "namespace": "enrollment_identity",
+                }
+            ],
+        }
+        plan = compile_plan(config, composite_profile, decoy_engine_version="0.1.0")
         per_table = dict(plan.seed_envelope.per_table)
         # claims is the child table (composite FK to enrollments).
         assert "claims" in per_table, "expected per_table entry for claims (child table)"
@@ -227,6 +268,22 @@ class TestCompositeKeyHandling:
                     ],
                 }
             ],
+            "relationships": [
+                {
+                    "parent": {
+                        "table": "enrollments",
+                        "columns": ["member_id", "plan_id", "effective_date"],
+                    },
+                    "children": [
+                        {
+                            "table": "claims",
+                            "columns": ["member_id", "plan_id", "effective_date"],
+                        }
+                    ],
+                    "orphan_policy": "fail",
+                    "namespace": "enrollment_identity",
+                }
+            ],
         }
         plan = compile_plan(config, composite_profile, decoy_engine_version="0.1.0")
         per_table = dict(plan.seed_envelope.per_table)
@@ -242,9 +299,29 @@ class TestCompositeKeyHandling:
         """M2 corollary: a table can have a per_group entry even with no
         config-declared strategies, because the composite relationship is
         a structural fact from the profile, not from the config."""
-        # No `tables` key in config at all; just the relationship-derived per_group.
+        # No `tables` key in config; just the relationship + orphan_policy.
         plan = compile_plan(
-            {"global_settings": {"seed": 1}}, composite_profile, decoy_engine_version="0.1.0"
+            {
+                "global_settings": {"seed": 1},
+                "relationships": [
+                    {
+                        "parent": {
+                            "table": "enrollments",
+                            "columns": ["member_id", "plan_id", "effective_date"],
+                        },
+                        "children": [
+                            {
+                                "table": "claims",
+                                "columns": ["member_id", "plan_id", "effective_date"],
+                            }
+                        ],
+                        "orphan_policy": "fail",
+                        "namespace": "enrollment_identity",
+                    }
+                ],
+            },
+            composite_profile,
+            decoy_engine_version="0.1.0",
         )
         per_table = dict(plan.seed_envelope.per_table)
         assert "claims" in per_table
