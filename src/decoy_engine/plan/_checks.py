@@ -23,16 +23,26 @@ from __future__ import annotations
 from typing import Any
 
 from decoy_engine.plan._errors import PlanCompileError
-from decoy_engine.plan._registry_stub import S1_STUB_REGISTRY
 from decoy_engine.profile._types import Profile
 
 
 def check_unknown_provider(config: dict[str, Any]) -> None:
-    """Reject configs that reference a provider not in S1_STUB_REGISTRY.
+    """Reject configs that reference a provider not in the registry.
 
-    Compile-check ownership table row #2; S4 swaps the stub for the real
-    registry behind the same check signature.
+    Compile-check ownership table row #2. S1 shipped this against
+    `S1_STUB_REGISTRY`; S4 swapped to `get_default_registry().known_providers()`
+    (the real registry from `decoy_engine.providers_v2`). Behavior contract is
+    preserved: same configs accepted, same configs rejected against the
+    registered set; the test signature shape changed (per S4 spec §9 + cold-
+    read M4).
+
+    The registry import is deferred inside the function so that the plan
+    package does not eagerly load `providers_v2` (which transitively imports
+    faker); the planner only needs the registry at compile time, not import time.
     """
+    from decoy_engine.providers_v2 import get_default_registry
+
+    known = get_default_registry().known_providers()
     tables = config.get("tables", []) if isinstance(config.get("tables"), list) else []
     for table_entry in tables:
         if not isinstance(table_entry, dict):
@@ -44,15 +54,16 @@ def check_unknown_provider(config: dict[str, Any]) -> None:
             provider = col_entry.get("provider")
             if provider is None:
                 continue
-            if provider not in S1_STUB_REGISTRY:
+            if provider not in known:
                 col_name = col_entry.get("name", "?")
                 raise PlanCompileError(
                     code="unknown_provider",
                     path=f"tables.{table_name}.columns.{col_name}.provider",
                     message=(
-                        f"Provider {provider!r} is not in S1_STUB_REGISTRY. "
-                        f"Add it to decoy_engine.plan._registry_stub.S1_STUB_REGISTRY or "
-                        "use one of the registered names. Custom providers land in S4."
+                        f"Provider {provider!r} is not in the default registry. "
+                        f"Known providers: {sorted(known)!r}. Custom providers "
+                        "land via `register_faker_provider_v2` (V2) or "
+                        "`register_faker_provider` (V1; until S9)."
                     ),
                 )
 

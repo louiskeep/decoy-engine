@@ -126,7 +126,7 @@ def compile_plan(
     relationships = _build_relationships(config, profile)
     namespaces = _build_namespaces(config)
     ordering = tuple(OrderingNode(table=t, columns=c) for (t, c) in relationship_graph.ordering)
-    seed_envelope = _build_seed_envelope(config, profile)
+    seed_envelope, stamp_warnings = _build_seed_envelope(config, profile)
 
     return Plan(
         plan_version=PLAN_VERSION,
@@ -138,7 +138,10 @@ def compile_plan(
         relationships=relationships,
         namespaces=namespaces,
         ordering=ordering,
-        plan_compile=PlanCompileResult(checks_passed=checks_passed),
+        plan_compile=PlanCompileResult(
+            checks_passed=checks_passed,
+            warnings=stamp_warnings,
+        ),
     )
 
 
@@ -292,17 +295,29 @@ def _normalize_job_seed(config: dict[str, Any]) -> bytes:
     return seed_int.to_bytes(8, "big")
 
 
-def _build_seed_envelope(config: dict[str, Any], profile: Profile) -> SeedEnvelope:
-    """Construct the SeedEnvelope from config + profile.
+def _build_seed_envelope(
+    config: dict[str, Any], profile: Profile
+) -> tuple[SeedEnvelope, tuple[str, ...]]:
+    """Construct the SeedEnvelope from config + profile + the registry.
+
+    Returns `(envelope, warnings)`: the warnings tuple carries any
+    `backend_stamp_user_override_ignored` entries from H1 (the user
+    declared `backend_type:` / `backend_version:` that differs from
+    the registry's binding; the registry wins, the user value is
+    ignored, and the planner emits a non-blocking warning).
 
     Per S3 spec §5.5 plan-schema delta: no per-column / per-table / per-group
     seed integers. `derive(plan.seed_envelope.job_seed, namespace, source_bytes)`
-    is the source of truth for stable bytes; per-context distinctness comes
-    from the namespace string + source bytes, not from a per-context seed.
+    is the source of truth for stable bytes.
 
-    For columns without a config-declared strategy, the planner stays out of
-    the seed envelope entirely; the envelope is a structural slot the planner
-    fills based on what the config actually masks.
+    Per S4 spec §9 (H1 PO call): the planner consults
+    `get_default_registry().get_capabilities(provider)` for the column's
+    `backend_type` + `backend_version`. The user-supplied YAML fields
+    are IGNORED for the stamp (registry is source of truth). If the
+    user supplied a contradicting value, a warning lands in the returned
+    tuple; the warning does not block compile, and the stamp uses the
+    registry value. The default `backend_version: "stub-0"` from S1 is
+    removed.
 
     Composite relationships (M2 from the S1 finish review, preserved here):
     every composite FK gets one GroupSeed on the CHILD table's per_group
@@ -310,6 +325,12 @@ def _build_seed_envelope(config: dict[str, Any], profile: Profile) -> SeedEnvelo
     joined with "__"). Composite-member columns on the child side are NOT
     emitted in per_column; the per_group entry covers them.
     """
+    # Deferred import: see module-level cycle comment.
+    from decoy_engine.providers_v2 import get_default_registry
+    from decoy_engine.providers_v2._errors import ProviderError as _ProviderError
+
+    registry = get_default_registry()
+    warnings: list[str] = []
     job_seed = _normalize_job_seed(config)
 
     # Index config table entries for fast lookup.
@@ -342,12 +363,46 @@ def _build_seed_envelope(config: dict[str, Any], profile: Profile) -> SeedEnvelo
                 provider = col_entry.get("provider")
                 if not col_name or not strategy or not provider:
                     continue
-                backend_type_raw = col_entry.get("backend_type", "faker")
-                backend_type = (
-                    backend_type_raw
-                    if backend_type_raw in ("faker", "mimesis", "pool", "decoy_native")
-                    else "faker"
-                )
+                # H1: consult registry for backend_type + backend_version.
+                # User-supplied YAML fields are ignored for the stamp; if
+                # they contradict the registry, emit a warning.
+                try:
+                    reg_caps = registry.get_capabilities(provider)
+                except _ProviderError:
+                    # check_unknown_provider should have caught this earlier
+                    # in compile_plan; defensively fall back to the legacy
+                    # behavior here so a bug in the check-runner doesn't
+                    # crash the planner.
+                    reg_caps = None
+                if reg_caps is not None:
+                    backend_type = reg_caps.backend_type
+                    backend_version = reg_caps.backend_version
+                    user_backend_type = col_entry.get("backend_type")
+                    user_backend_version = col_entry.get("backend_version")
+                    if user_backend_type is not None and user_backend_type != backend_type:
+                        warnings.append(
+                            f"backend_stamp_user_override_ignored: column "
+                            f"{table_profile.name}.{col_name} declared "
+                            f"backend_type={user_backend_type!r}; registry "
+                            f"binds {provider!r} to {backend_type!r} "
+                            "(registry wins per S4 §9)."
+                        )
+                    if user_backend_version is not None and user_backend_version != backend_version:
+                        warnings.append(
+                            f"backend_stamp_user_override_ignored: column "
+                            f"{table_profile.name}.{col_name} declared "
+                            f"backend_version={user_backend_version!r}; registry "
+                            f"binds {provider!r} to {backend_version!r} "
+                            "(registry wins per S4 §9)."
+                        )
+                else:
+                    backend_type_raw = col_entry.get("backend_type", "faker")
+                    backend_type = (
+                        backend_type_raw
+                        if backend_type_raw in ("faker", "mimesis", "pool", "decoy_native")
+                        else "faker"
+                    )
+                    backend_version = col_entry.get("backend_version", "stub-0")
                 cardinality_mode_raw = col_entry.get("cardinality_mode", "reuse")
                 cardinality_mode = (
                     cardinality_mode_raw
@@ -376,7 +431,7 @@ def _build_seed_envelope(config: dict[str, Any], profile: Profile) -> SeedEnvelo
                             strategy=strategy,
                             provider=provider,
                             backend_type=backend_type,  # type: ignore[arg-type]
-                            backend_version=col_entry.get("backend_version", "stub-0"),
+                            backend_version=backend_version,
                             cardinality_mode=cardinality_mode,  # type: ignore[arg-type]
                             provider_config=provider_config,
                             coherent_with=coherent_with,
@@ -410,4 +465,5 @@ def _build_seed_envelope(config: dict[str, Any], profile: Profile) -> SeedEnvelo
                 ),
             )
         )
-    return SeedEnvelope(job_seed=job_seed, per_table=tuple(per_table_out))
+    envelope = SeedEnvelope(job_seed=job_seed, per_table=tuple(per_table_out))
+    return envelope, tuple(warnings)
