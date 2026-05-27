@@ -6,15 +6,20 @@ produces a frozen Plan. Pure function: same inputs -> byte-identical
 output. Validation runs always (never flag-gated); failures raise
 `PlanCompileError` with `code` + `path` + `message`.
 
-S1 ships five foundational checks (per the compile-check ownership
-table rows 1-5). S2-S9 add per-module rules following the same call
-shape; the check-runner here is the slot they slot into.
+S1 shipped five foundational checks (compile-check ownership table
+rows 1-5). S2 promoted relationship + namespace into
+`decoy_engine.relationships` (the namespace_ambiguity + fk_plan_ordering
+checks moved out of this module into the registry + graph builders)
+and added `orphan_fk_policy_completeness` at row 6. S2-S9 follow this
+relocate-or-add pattern; the check-runner here is the slot they slot into.
 
-Seed envelope derivation in S1 is a stub: each ColumnSeed gets a
-deterministic-but-not-cryptographically-secure integer derived from
-(job_seed, table_name, column_name). S3 replaces with real HKDF-SHA256
-material per the spec; the enclosing Plan stamps
-`seed_protocol_version: 0` for the S1 era.
+S3 replaced S1's stub seed envelope with the determinism layer's keyed
+material per the spec §5.5 plan-schema delta: `SeedEnvelope.job_seed`
+is now `bytes` (the sole entropy input to
+`decoy_engine.determinism.derive(...)`); the per-context `_seed` int
+fields are gone; the four `_derive_*_seed` stub helpers were deleted.
+Every plan stamps `seed_protocol_version: 1` from the determinism
+module's constant.
 """
 
 from __future__ import annotations
@@ -23,11 +28,23 @@ import hashlib
 import json
 from typing import Any
 
+# Note: imports from decoy_engine.relationships are deferred inside
+# compile_plan to break a circular import. decoy_engine/__init__.py
+# eagerly loads decoy_engine.relationships (per S2 spec API summary),
+# which transitively triggers loading plan._errors -> plan/__init__ ->
+# this module -> relationships (partially init). Lazy import inside the
+# function body cuts the cycle without changing the call surface.
+# S1's plan_version is 1. SEED_PROTOCOL_VERSION imported from the
+# determinism module: S1 stamped 0 (placeholder); S3 stamps 1 (first
+# real envelope per the v1 contract). Bumping in future requires a
+# release-notes line per done-definition.md.
+from decoy_engine.determinism import SEED_PROTOCOL_VERSION
 from decoy_engine.plan._checks import (
     check_basic_uniqueness_pre_flight,
     check_composite_columns_length_match,
     check_unknown_provider,
 )
+from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._types import (
     ColumnSeed,
     GroupSeed,
@@ -43,16 +60,7 @@ from decoy_engine.plan._types import (
 from decoy_engine.profile._hash import profile_hash
 from decoy_engine.profile._types import Profile
 
-# Note: imports from decoy_engine.relationships are deferred inside
-# compile_plan to break a circular import. decoy_engine/__init__.py
-# eagerly loads decoy_engine.relationships (per S2 spec API summary),
-# which transitively triggers loading plan._errors -> plan/__init__ ->
-# this module -> relationships (partially init). Lazy import inside the
-# function body cuts the cycle without changing the call surface.
-
-# S1's plan_version is 1. seed_protocol_version is 0 (S3 bumps to 1).
 PLAN_VERSION = 1
-SEED_PROTOCOL_VERSION = 0
 
 
 def compile_plan(
@@ -118,7 +126,7 @@ def compile_plan(
     relationships = _build_relationships(config, profile)
     namespaces = _build_namespaces(config)
     ordering = tuple(OrderingNode(table=t, columns=c) for (t, c) in relationship_graph.ordering)
-    seed_envelope = _build_seed_envelope_stub(config, profile)
+    seed_envelope = _build_seed_envelope(config, profile)
 
     return Plan(
         plan_version=PLAN_VERSION,
@@ -249,44 +257,60 @@ def _build_namespaces(config: dict[str, Any]) -> tuple[NamespaceBinding, ...]:
                 continue
             table, col = entry.split(".", 1)
             declared_by.append((table, (col,)))
-        # Seed material: stub derivation (job_seed XOR hash of ns_name).
-        seed = _derive_namespace_seed(ns_name)
         out.append(
             NamespaceBinding(
                 namespace=ns_name,
                 declared_by=tuple(declared_by),
-                seed=seed,
             )
         )
     return tuple(out)
 
 
-def _build_seed_envelope_stub(config: dict[str, Any], profile: Profile) -> SeedEnvelope:
-    """S1 stub seed-envelope derivation.
+def _normalize_job_seed(config: dict[str, Any]) -> bytes:
+    """Normalize the config-side `seed` value to the 8-byte bytes form
+    that `decoy_engine.determinism.derive(...)` consumes.
 
-    Each column gets a placeholder ColumnSeed only if the config declares
-    a strategy for it. Real HKDF-SHA256 derivation lands in S3
-    (Determinism Layer); the enclosing Plan stamps
-    `seed_protocol_version: 0` to flag this material as non-cryptographic.
+    Per S3 spec §5.5 (resolution of B2 + H1): the int -> bytes conversion
+    happens exactly once at the pipeline-config adapter boundary. The
+    rest of the engine consumes `bytes` only.
 
-    For S1, columns without a config-declared strategy stay out of the
-    seed envelope entirely; the envelope is a structural slot the
-    planner fills based on what the config actually masks.
-
-    Composite relationships (M2 of the Dennis S1-finish review): every
-    composite FK gets one GroupSeed on the CHILD table's per_group tuple,
-    keyed by the canonical-joined column name (sorted column names joined
-    with "__"). Composite-member columns on the child side are NOT
-    emitted in per_column; the per_group entry covers them. Per S1 spec
-    line 452 ("seed_envelope.per_group entries exist for every composite
-    relationship; per_column entries do not duplicate composite-member
-    columns").
+    Raises:
+        PlanCompileError(code='seed_overflow') if the int does not fit
+        in unsigned 64-bit (the size of the bytes form).
     """
     job_seed_raw = config.get("global_settings", {}).get("seed", 0)
     try:
-        job_seed = int(job_seed_raw)
+        seed_int = int(job_seed_raw)
     except (TypeError, ValueError):
-        job_seed = 0
+        seed_int = 0
+    if not 0 <= seed_int < (1 << 64):
+        raise PlanCompileError(
+            code="seed_overflow",
+            path="global_settings.seed",
+            message=(f"seed must fit in unsigned 64-bit (range [0, 2**64)); got {seed_int}"),
+        )
+    return seed_int.to_bytes(8, "big")
+
+
+def _build_seed_envelope(config: dict[str, Any], profile: Profile) -> SeedEnvelope:
+    """Construct the SeedEnvelope from config + profile.
+
+    Per S3 spec §5.5 plan-schema delta: no per-column / per-table / per-group
+    seed integers. `derive(plan.seed_envelope.job_seed, namespace, source_bytes)`
+    is the source of truth for stable bytes; per-context distinctness comes
+    from the namespace string + source bytes, not from a per-context seed.
+
+    For columns without a config-declared strategy, the planner stays out of
+    the seed envelope entirely; the envelope is a structural slot the planner
+    fills based on what the config actually masks.
+
+    Composite relationships (M2 from the S1 finish review, preserved here):
+    every composite FK gets one GroupSeed on the CHILD table's per_group
+    tuple, keyed by the canonical-joined column name (sorted child columns
+    joined with "__"). Composite-member columns on the child side are NOT
+    emitted in per_column; the per_group entry covers them.
+    """
+    job_seed = _normalize_job_seed(config)
 
     # Index config table entries for fast lookup.
     config_tables_list = config.get("tables", [])
@@ -296,10 +320,6 @@ def _build_seed_envelope_stub(config: dict[str, Any], profile: Profile) -> SeedE
             if isinstance(t_entry, dict) and isinstance(t_entry.get("name"), str):
                 config_tables[t_entry["name"]] = t_entry
 
-    # M2 prep: identify composite relationships and the child columns that
-    # are covered by a composite per_group entry. Those columns are
-    # excluded from per_column on the child side; the per_group entry is
-    # the authoritative seed material for the tuple.
     composite_child_cols: dict[str, set[str]] = {}
     composite_rels = [rel for rel in profile.relationships if len(rel.parent_columns) > 1]
     for rel in composite_rels:
@@ -308,11 +328,6 @@ def _build_seed_envelope_stub(config: dict[str, Any], profile: Profile) -> SeedE
     per_table_out: list[tuple[str, TableSeed]] = []
     for table_profile in profile.tables:
         cfg_table = config_tables.get(table_profile.name)
-        # Even if config has no entries for this table, we may still need
-        # to emit per_group for composite relationships that target it.
-        # Build per_column from config (if present) and per_group from
-        # profile.relationships independently.
-        table_seed = _derive_table_seed(job_seed, table_profile.name)
         composite_members_here = composite_child_cols.get(table_profile.name, set())
 
         per_column: list[tuple[str, ColumnSeed]] = []
@@ -321,14 +336,12 @@ def _build_seed_envelope_stub(config: dict[str, Any], profile: Profile) -> SeedE
                 if not isinstance(col_entry, dict):
                     continue
                 col_name = col_entry.get("name")
-                # M2: skip composite-member columns; they're covered by per_group.
                 if col_name in composite_members_here:
                     continue
                 strategy = col_entry.get("strategy")
                 provider = col_entry.get("provider")
                 if not col_name or not strategy or not provider:
                     continue
-                column_seed = _derive_column_seed(table_seed, col_name)
                 backend_type_raw = col_entry.get("backend_type", "faker")
                 backend_type = (
                     backend_type_raw
@@ -359,7 +372,6 @@ def _build_seed_envelope_stub(config: dict[str, Any], profile: Profile) -> SeedE
                     (
                         col_name,
                         ColumnSeed(
-                            column_seed=column_seed,
                             namespace=col_entry.get("namespace"),
                             strategy=strategy,
                             provider=provider,
@@ -372,69 +384,30 @@ def _build_seed_envelope_stub(config: dict[str, Any], profile: Profile) -> SeedE
                     )
                 )
 
-        # M2: emit per_group entries for every composite relationship where
-        # this table is the CHILD. Keyed by the canonical-joined column name
-        # (sorted, "__"-joined). The GroupSeed.coherent_columns preserves
-        # the declared child_columns order so S8 generators can match
-        # source-tuple positions when composing the mask.
         per_group: list[tuple[str, GroupSeed]] = []
         for rel in composite_rels:
             if rel.child_table != table_profile.name:
                 continue
             canonical_key = "__".join(sorted(rel.child_columns))
-            group_seed = _derive_group_seed(table_seed, canonical_key)
             per_group.append(
                 (
                     canonical_key,
                     GroupSeed(
-                        group_seed=group_seed,
                         namespace=rel.namespace or "",
                         coherent_columns=rel.child_columns,
                     ),
                 )
             )
 
-        # Only emit a table entry if it has at least one per_column or per_group
-        # entry; tables that contribute nothing stay out of the envelope.
         if not per_column and not per_group:
             continue
         per_table_out.append(
             (
                 table_profile.name,
                 TableSeed(
-                    table_seed=table_seed,
                     per_column=tuple(per_column),
                     per_group=tuple(per_group),
                 ),
             )
         )
     return SeedEnvelope(job_seed=job_seed, per_table=tuple(per_table_out))
-
-
-# Stub seed derivation: not HKDF, not crypto. S3 replaces.
-
-
-def _derive_namespace_seed(namespace: str) -> int:
-    h = hashlib.sha256(f"ns::{namespace}".encode()).digest()
-    return int.from_bytes(h[:8], "big")
-
-
-def _derive_table_seed(job_seed: int, table_name: str) -> int:
-    h = hashlib.sha256(f"tbl::{job_seed}::{table_name}".encode()).digest()
-    return int.from_bytes(h[:8], "big")
-
-
-def _derive_column_seed(table_seed: int, column_name: str) -> int:
-    h = hashlib.sha256(f"col::{table_seed}::{column_name}".encode()).digest()
-    return int.from_bytes(h[:8], "big")
-
-
-def _derive_group_seed(table_seed: int, canonical_group_name: str) -> int:
-    """Stub composite-group seed derivation (M2 of slice 4-6 review).
-
-    Distinct prefix from `_derive_column_seed` so a group named the same
-    as a column does not collide in the seed space. S3 replaces with
-    real HKDF-SHA256 keyed material; this is non-cryptographic stub.
-    """
-    h = hashlib.sha256(f"grp::{table_seed}::{canonical_group_name}".encode()).digest()
-    return int.from_bytes(h[:8], "big")

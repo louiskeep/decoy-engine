@@ -67,13 +67,16 @@ def _plan_to_dict(plan: Plan) -> dict[str, Any]:
 
 def _seed_envelope_to_dict(env: SeedEnvelope) -> dict[str, Any]:
     return {
-        "job_seed": env.job_seed,
+        # Post-S3 plan-schema delta: job_seed is bytes; serialize as a hex
+        # string for YAML round-trip (bytes are not natively YAML-typed).
+        # Length is always 8 bytes -> 16 hex chars.
+        "job_seed": env.job_seed.hex(),
         "per_table": {name: _table_seed_to_dict(ts) for (name, ts) in env.per_table},
     }
 
 
 def _table_seed_to_dict(ts: TableSeed) -> dict[str, Any]:
-    out: dict[str, Any] = {"table_seed": ts.table_seed}
+    out: dict[str, Any] = {}
     if ts.per_column:
         out["per_column"] = {name: _column_seed_to_dict(cs) for (name, cs) in ts.per_column}
     if ts.per_group:
@@ -83,7 +86,6 @@ def _table_seed_to_dict(ts: TableSeed) -> dict[str, Any]:
 
 def _column_seed_to_dict(cs: ColumnSeed) -> dict[str, Any]:
     out: dict[str, Any] = {
-        "column_seed": cs.column_seed,
         "namespace": cs.namespace,
         "strategy": cs.strategy,
         "provider": cs.provider,
@@ -100,7 +102,6 @@ def _column_seed_to_dict(cs: ColumnSeed) -> dict[str, Any]:
 
 def _group_seed_to_dict(gs: GroupSeed) -> dict[str, Any]:
     return {
-        "group_seed": gs.group_seed,
         "namespace": gs.namespace,
         "coherent_columns": list(gs.coherent_columns),
     }
@@ -120,7 +121,6 @@ def _relationship_to_dict(rel: PlanRelationship) -> dict[str, Any]:
 def _namespace_to_dict(ns: NamespaceBinding) -> dict[str, Any]:
     return {
         "declared_by": [f"{t}.{'__'.join(cols)}" for (t, cols) in ns.declared_by],
-        "seed": ns.seed,
     }
 
 
@@ -163,14 +163,14 @@ def _plan_from_dict(data: dict[str, Any]) -> Plan:
 def _seed_envelope_from_dict(data: dict[str, Any]) -> SeedEnvelope:
     per_table_raw = data.get("per_table", {}) or {}
     per_table = tuple((name, _table_seed_from_dict(body)) for (name, body) in per_table_raw.items())
-    return SeedEnvelope(job_seed=int(data["job_seed"]), per_table=per_table)
+    # job_seed serialized as 16-char hex (8 bytes); see _seed_envelope_to_dict.
+    return SeedEnvelope(job_seed=bytes.fromhex(data["job_seed"]), per_table=per_table)
 
 
 def _table_seed_from_dict(data: dict[str, Any]) -> TableSeed:
     per_column_raw = data.get("per_column", {}) or {}
     per_group_raw = data.get("per_group", {}) or {}
     return TableSeed(
-        table_seed=int(data["table_seed"]),
         per_column=tuple(
             (name, _column_seed_from_dict(body)) for (name, body) in per_column_raw.items()
         ),
@@ -184,7 +184,6 @@ def _column_seed_from_dict(data: dict[str, Any]) -> ColumnSeed:
     provider_config_raw = data.get("provider_config", {}) or {}
     coherent_with_raw = data.get("coherent_with", []) or []
     return ColumnSeed(
-        column_seed=int(data["column_seed"]),
         namespace=data.get("namespace"),
         strategy=data["strategy"],
         provider=data["provider"],
@@ -198,7 +197,6 @@ def _column_seed_from_dict(data: dict[str, Any]) -> ColumnSeed:
 
 def _group_seed_from_dict(data: dict[str, Any]) -> GroupSeed:
     return GroupSeed(
-        group_seed=int(data["group_seed"]),
         namespace=data["namespace"],
         coherent_columns=tuple(data.get("coherent_columns", []) or []),
     )
@@ -230,7 +228,6 @@ def _namespace_from_dict(name: str, body: dict[str, Any]) -> NamespaceBinding:
     return NamespaceBinding(
         namespace=name,
         declared_by=tuple(declared_by),
-        seed=int(body["seed"]),
     )
 
 

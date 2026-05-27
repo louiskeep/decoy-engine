@@ -266,6 +266,13 @@ module = [
     "decoy_engine.relationships",
     "decoy_engine.relationships._graph",
     "decoy_engine.relationships._namespace",
+    # engine-v2 S3 (Determinism Layer). Spec:
+    # docs/v2/sprints/engine-v2/sprint-03-determinism-layer.md in
+    # decoy-platform. Per best-practices §5.4: enumerate submodules
+    # explicitly so the strict gate covers the full surface.
+    "decoy_engine.determinism",
+    "decoy_engine.determinism._derive",
+    "decoy_engine.determinism._hkdf",
 ]
 disallow_any_generics = true
 disallow_subclassing_any = true
