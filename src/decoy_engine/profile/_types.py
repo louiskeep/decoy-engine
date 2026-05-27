@@ -89,6 +89,26 @@ class ColumnProfile:
                 "requires a full-scan profile (sample_rows=None). See H6 in "
                 "the engine-v2 S1 spec review."
             )
+        # is_fk <-> fk_target consistency (L1 from slice-1 review).
+        if self.is_fk != (self.fk_target is not None):
+            raise ValueError(
+                f"ColumnProfile {self.name!r}: is_fk={self.is_fk} but "
+                f"fk_target={self.fk_target!r}; these must agree "
+                "(both set or both unset)."
+            )
+        # Cardinality sanity (L2 from slice-1 review). A profile_source
+        # implementation that violates either of these has a bug; failing
+        # loud at construction time keeps that bug out of downstream consumers.
+        if self.null_count > self.row_count:
+            raise ValueError(
+                f"ColumnProfile {self.name!r}: null_count={self.null_count} "
+                f"exceeds row_count={self.row_count}."
+            )
+        if self.distinct_count is not None and self.distinct_count > self.row_count:
+            raise ValueError(
+                f"ColumnProfile {self.name!r}: distinct_count={self.distinct_count} "
+                f"exceeds row_count={self.row_count}."
+            )
 
 
 @dataclass(frozen=True)
@@ -97,9 +117,12 @@ class Relationship:
 
     Composite keys are represented by length>1 column tuples. Single-column
     relationships are length-1 tuples. parent_columns and child_columns must
-    have the same length; the plan-compile composite_columns_length_match
-    check enforces this when consuming a Profile. See B2 in the engine-v2
-    S1 spec review.
+    have the same length and both must be non-empty; the dataclass enforces
+    this at construction (M1 from the slice-1 review) so a malformed
+    Relationship cannot survive a serialization round-trip even when no
+    planner is in the loop. The plan-compile composite_columns_length_match
+    check (#5) is the equivalent guard at the Plan layer. See B2 in the
+    engine-v2 S1 spec review.
     """
 
     parent_table: str
@@ -108,12 +131,47 @@ class Relationship:
     child_columns: tuple[str, ...]
     namespace: str | None
 
+    def __post_init__(self) -> None:
+        if len(self.parent_columns) == 0 or len(self.child_columns) == 0:
+            raise ValueError(
+                f"Relationship {self.parent_table}->{self.child_table}: "
+                "parent_columns and child_columns must both be non-empty."
+            )
+        if len(self.parent_columns) != len(self.child_columns):
+            raise ValueError(
+                f"Relationship {self.parent_table}.{self.parent_columns} -> "
+                f"{self.child_table}.{self.child_columns}: parent_columns "
+                f"length {len(self.parent_columns)} != child_columns length "
+                f"{len(self.child_columns)}."
+            )
+
 
 @dataclass(frozen=True)
 class TableProfile:
+    """A table-level profile: a name, a row count, and an ordered column tuple.
+
+    Column names are unique within the table (M2 from the slice-1 review);
+    duplicate names cause silent column loss in any dict-keyed consumer.
+    The check fails loud at construction time.
+    """
+
     name: str
     row_count: int
     columns: tuple[ColumnProfile, ...]
+
+    def __post_init__(self) -> None:
+        names = [c.name for c in self.columns]
+        if len(set(names)) != len(names):
+            seen: set[str] = set()
+            dupes: set[str] = set()
+            for n in names:
+                if n in seen:
+                    dupes.add(n)
+                seen.add(n)
+            raise ValueError(
+                f"TableProfile {self.name!r}: duplicate column names "
+                f"{sorted(dupes)!r}; column names must be unique within a table."
+            )
 
 
 @dataclass(frozen=True)
@@ -126,6 +184,13 @@ class Profile:
     hashes regardless of when or by which engine build they were taken.
     See B1 in the engine-v2 S1 spec review and the profile_hash
     docstring for the canonical-bytes definition.
+
+    Table names are unique within a Profile (M3 from the slice-1 review).
+    Cross-table FK validation (every Relationship.parent_table /
+    .child_table references a real TableProfile and the named columns
+    exist) is deferred to the planner: it is cross-cutting validation
+    rather than a Profile-layer invariant, and the planner already owns
+    the FK-DAG construction.
     """
 
     # Data-shape fields (hashed)
@@ -137,3 +202,17 @@ class Profile:
     profiled_at: datetime
     decoy_engine_version: str
     profile_seed: int | None = field(default=None)
+
+    def __post_init__(self) -> None:
+        names = [t.name for t in self.tables]
+        if len(set(names)) != len(names):
+            seen: set[str] = set()
+            dupes: set[str] = set()
+            for n in names:
+                if n in seen:
+                    dupes.add(n)
+                seen.add(n)
+            raise ValueError(
+                f"Profile: duplicate table names {sorted(dupes)!r}; "
+                "table names must be unique within a Profile."
+            )
