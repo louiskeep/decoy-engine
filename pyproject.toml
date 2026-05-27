@@ -235,6 +235,13 @@ module = [
     # V2 PERF.BASE.1 (per-strategy timing + per-node memory instrumentation).
     "decoy_engine.instrumentation",
     "decoy_engine.instrumentation.timing",
+    # engine-v2 S1 (Profile module: dataclasses + hash + serialization).
+    # Spec: docs/v2/sprints/engine-v2/sprint-01-profile-plan-and-fixtures.md
+    # in decoy-platform.
+    "decoy_engine.profile",
+    "decoy_engine.profile._types",
+    "decoy_engine.profile._hash",
+    "decoy_engine.profile._serialize",
 ]
 disallow_any_generics = true
 disallow_subclassing_any = true
