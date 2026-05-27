@@ -113,6 +113,15 @@ def test_all_lists_every_public_name():
         "derive",
         "derive_index",
         "derive_value",
+        # engine-v2 S4 (Provider Registry + Faker Adapter).
+        "AdapterError",
+        "BackendAdapter",
+        "CapabilityMatrix",
+        "ProviderError",
+        "ProviderRegistry",
+        "ProviderSpec",
+        "get_default_registry",
+        "register_faker_provider_v2",
     }
     assert set(decoy_engine.__all__) == expected
 

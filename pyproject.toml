@@ -273,6 +273,17 @@ module = [
     "decoy_engine.determinism",
     "decoy_engine.determinism._derive",
     "decoy_engine.determinism._hkdf",
+    # engine-v2 S4 (Provider Registry + Faker Adapter). Spec:
+    # docs/v2/sprints/engine-v2/sprint-04-provider-registry-and-faker-adapter.md
+    # in decoy-platform. Per best-practices §5.4 + S4 spec §Done state.
+    # Ships alongside V1's decoy_engine.providers per the B1 PO call;
+    # V1 module stays as-is (not added to strict overrides; V2.1 deletes).
+    "decoy_engine.providers_v2",
+    "decoy_engine.providers_v2._adapter",
+    "decoy_engine.providers_v2._errors",
+    "decoy_engine.providers_v2._faker_adapter",
+    "decoy_engine.providers_v2._real_registry",
+    "decoy_engine.providers_v2._registry",
 ]
 disallow_any_generics = true
 disallow_subclassing_any = true

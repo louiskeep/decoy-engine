@@ -166,8 +166,11 @@ def simple_config() -> dict:
                         "name": "name",
                         "strategy": "faker_name",
                         "provider": "person_name",
-                        "backend_type": "faker",
-                        "backend_version": "stub-0",
+                        # backend_type + backend_version intentionally omitted:
+                        # post-S4 the planner consults the registry for both
+                        # (per H1 PO call). Leaving them out avoids emitting
+                        # backend_stamp_user_override_ignored warnings during
+                        # the standard happy-path tests.
                         "cardinality_mode": "reuse",
                     }
                 ],

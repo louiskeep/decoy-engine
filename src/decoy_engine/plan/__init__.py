@@ -32,7 +32,6 @@ from __future__ import annotations
 
 from decoy_engine.plan._compile import compile_plan
 from decoy_engine.plan._errors import PlanCompileError
-from decoy_engine.plan._registry_stub import S1_STUB_REGISTRY
 from decoy_engine.plan._serialize import plan_from_yaml, plan_to_yaml
 from decoy_engine.plan._types import (
     ColumnSeed,
@@ -48,7 +47,6 @@ from decoy_engine.plan._types import (
 )
 
 __all__ = [
-    "S1_STUB_REGISTRY",
     "ColumnSeed",
     "GroupSeed",
     "NamespaceBinding",
