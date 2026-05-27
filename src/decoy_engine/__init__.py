@@ -74,6 +74,17 @@ from decoy_engine.providers import (
     register_faker_provider,
     unregister_faker_provider,
 )
+from decoy_engine.relationships import (
+    NamespaceBinding,
+    NamespaceConfigError,
+    NamespaceRegistry,
+    OrphanPolicy,
+    RelationshipEdge,
+    RelationshipGraph,
+    build_namespace_registry,
+    build_relationship_graph,
+    check_orphan_fk_policy_completeness,
+)
 from decoy_engine.schema import SchemaInspector
 
 # Connector SDK.
@@ -140,9 +151,15 @@ __all__ = [
     "LicenseVerifier",
     "Logger",
     "Masker",
+    "NamespaceBinding",
+    "NamespaceConfigError",
+    "NamespaceRegistry",
+    "OrphanPolicy",
     "PermanentError",
     "PipelineValidationError",
     "PreviewResult",
+    "RelationshipEdge",
+    "RelationshipGraph",
     "RiskFlag",
     "RunResult",
     "SchemaInspector",
@@ -155,6 +172,9 @@ __all__ = [
     "ValidationMessage",
     "ValidationResult",
     "WriteResult",
+    "build_namespace_registry",
+    "build_relationship_graph",
+    "check_orphan_fk_policy_completeness",
     "emit_fidelity",
     "emit_lineage",
     "emit_quarantine",

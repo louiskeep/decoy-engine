@@ -258,6 +258,14 @@ module = [
     "decoy_engine.plan._checks",
     "decoy_engine.plan._compile",
     "decoy_engine.plan._serialize",
+    # engine-v2 S2 (Relationship Coordinator + Namespace). Spec:
+    # docs/v2/sprints/engine-v2/sprint-02-relationship-coordinator-and-namespace.md
+    # in decoy-platform. Per best-practices §5.4 (resolution of S2 M4):
+    # package-level entry alone is insufficient because submodules fall
+    # back to the more permissive default unless listed explicitly.
+    "decoy_engine.relationships",
+    "decoy_engine.relationships._graph",
+    "decoy_engine.relationships._namespace",
 ]
 disallow_any_generics = true
 disallow_subclassing_any = true

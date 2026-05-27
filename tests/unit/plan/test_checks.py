@@ -33,6 +33,37 @@ def _col(name: str, **kwargs) -> ColumnProfile:
     return ColumnProfile(**defaults)
 
 
+# S2 added orphan_fk_policy_completeness as a required compile-time check
+# (row 6). Tests that use the conftest `simple_profile` (which has a
+# customers -> orders FK) must include the matching relationship entry in
+# config; otherwise compile fails on orphan_fk_policy_missing before the
+# check under test even runs. The helper inlines the boilerplate.
+SIMPLE_PROFILE_RELATIONSHIPS_BLOCK = [
+    {
+        "parent": {"table": "customers", "columns": ["customer_id"]},
+        "children": [{"table": "orders", "columns": ["customer_id"]}],
+        "orphan_policy": "fail",
+        "namespace": "customer_identity",
+    }
+]
+COMPOSITE_PROFILE_RELATIONSHIPS_BLOCK = [
+    {
+        "parent": {
+            "table": "enrollments",
+            "columns": ["member_id", "plan_id", "effective_date"],
+        },
+        "children": [
+            {
+                "table": "claims",
+                "columns": ["member_id", "plan_id", "effective_date"],
+            }
+        ],
+        "orphan_policy": "fail",
+        "namespace": "enrollment_identity",
+    }
+]
+
+
 class TestNamespaceAmbiguity:
     def test_rejects_column_declared_in_two_namespaces(self, simple_profile: Profile) -> None:
         config = {
@@ -64,10 +95,15 @@ class TestNamespaceAmbiguity:
                     ],
                 }
             ],
+            "relationships": SIMPLE_PROFILE_RELATIONSHIPS_BLOCK,
         }
+        # S2 raises namespace_missing for the deterministic-mode-no-namespace
+        # case. The S1 spec called this namespace_ambiguity; per the S2
+        # spec §Tests "namespace_missing first clause", the code is now
+        # namespace_missing.
         with pytest.raises(PlanCompileError) as exc:
             compile_plan(config, simple_profile, decoy_engine_version="0.1.0")
-        assert exc.value.code == "namespace_ambiguity"
+        assert exc.value.code == "namespace_missing"
         assert "namespace" in exc.value.message.lower()
 
     def test_accepts_deterministic_mode_with_namespace(self, simple_profile: Profile) -> None:
@@ -88,8 +124,8 @@ class TestNamespaceAmbiguity:
                 }
             ],
             "namespaces": {"email_ns": {"declared_by": ["customers.email"]}},
+            "relationships": SIMPLE_PROFILE_RELATIONSHIPS_BLOCK,
         }
-        # Should not raise.
         compile_plan(config, simple_profile, decoy_engine_version="0.1.0")
 
 
@@ -130,13 +166,17 @@ class TestUnknownProvider:
                     ],
                 }
             ],
+            "relationships": SIMPLE_PROFILE_RELATIONSHIPS_BLOCK,
         }
         compile_plan(config, simple_profile, decoy_engine_version="0.1.0")
 
 
 class TestFkPlanOrdering:
     def test_parent_orders_before_child(self, simple_profile: Profile) -> None:
-        config = {"global_settings": {"seed": 1}}
+        config = {
+            "global_settings": {"seed": 1},
+            "relationships": SIMPLE_PROFILE_RELATIONSHIPS_BLOCK,
+        }
         plan = compile_plan(config, simple_profile, decoy_engine_version="0.1.0")
         parent_pos = next(i for i, o in enumerate(plan.ordering) if o.table == "customers")
         child_pos = next(
@@ -159,6 +199,9 @@ class TestFkPlanOrdering:
             row_count=1,
             columns=(_col("id", row_count=1, distinct_count=1, declared_pk=True),),
         )
+        # Profile-side relationships carry a shared namespace so the
+        # namespace registry doesn't fire ambiguity before the cycle check
+        # gets to run.
         profile = Profile(
             schema_version=1,
             tables=(a, b),
@@ -168,21 +211,38 @@ class TestFkPlanOrdering:
                     parent_columns=("id",),
                     child_table="b",
                     child_columns=("id",),
-                    namespace=None,
+                    namespace="cycle_ns",
                 ),
                 Relationship(
                     parent_table="b",
                     parent_columns=("id",),
                     child_table="a",
                     child_columns=("id",),
-                    namespace=None,
+                    namespace="cycle_ns",
                 ),
             ),
             profiled_at=datetime(2026, 5, 27, 0, 0, 0),
             decoy_engine_version="0.1.0",
         )
+        config = {
+            "global_settings": {"seed": 1},
+            "relationships": [
+                {
+                    "parent": {"table": "a", "columns": ["id"]},
+                    "children": [{"table": "b", "columns": ["id"]}],
+                    "orphan_policy": "fail",
+                    "namespace": "cycle_ns",
+                },
+                {
+                    "parent": {"table": "b", "columns": ["id"]},
+                    "children": [{"table": "a", "columns": ["id"]}],
+                    "orphan_policy": "fail",
+                    "namespace": "cycle_ns",
+                },
+            ],
+        }
         with pytest.raises(PlanCompileError) as exc:
-            compile_plan({"global_settings": {"seed": 1}}, profile, decoy_engine_version="0.1.0")
+            compile_plan(config, profile, decoy_engine_version="0.1.0")
         assert exc.value.code == "fk_cycle"
 
 
@@ -206,6 +266,7 @@ class TestBasicUniquenessPreFlight:
                     ],
                 }
             ],
+            "relationships": SIMPLE_PROFILE_RELATIONSHIPS_BLOCK,
         }
         with pytest.raises(PlanCompileError) as exc:
             compile_plan(config, simple_profile, decoy_engine_version="0.1.0")
@@ -229,6 +290,7 @@ class TestBasicUniquenessPreFlight:
                     ],
                 }
             ],
+            "relationships": SIMPLE_PROFILE_RELATIONSHIPS_BLOCK,
         }
         compile_plan(config, simple_profile, decoy_engine_version="0.1.0")
 
@@ -250,6 +312,7 @@ class TestBasicUniquenessPreFlight:
                     ],
                 }
             ],
+            "relationships": SIMPLE_PROFILE_RELATIONSHIPS_BLOCK,
         }
         compile_plan(config, simple_profile, decoy_engine_version="0.1.0")
 
@@ -258,7 +321,12 @@ class TestCompositeColumnsLengthMatch:
     def test_accepts_matched_composite(self, composite_profile: Profile) -> None:
         # composite_profile has matched 3-column tuples.
         compile_plan(
-            {"global_settings": {"seed": 1}}, composite_profile, decoy_engine_version="0.1.0"
+            {
+                "global_settings": {"seed": 1},
+                "relationships": COMPOSITE_PROFILE_RELATIONSHIPS_BLOCK,
+            },
+            composite_profile,
+            decoy_engine_version="0.1.0",
         )
 
     def test_rejects_mismatched_composite_via_planner(self) -> None:

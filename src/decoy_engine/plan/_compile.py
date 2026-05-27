@@ -26,8 +26,6 @@ from typing import Any
 from decoy_engine.plan._checks import (
     check_basic_uniqueness_pre_flight,
     check_composite_columns_length_match,
-    check_fk_plan_ordering,
-    check_namespace_ambiguity,
     check_unknown_provider,
 )
 from decoy_engine.plan._types import (
@@ -44,6 +42,13 @@ from decoy_engine.plan._types import (
 )
 from decoy_engine.profile._hash import profile_hash
 from decoy_engine.profile._types import Profile
+
+# Note: imports from decoy_engine.relationships are deferred inside
+# compile_plan to break a circular import. decoy_engine/__init__.py
+# eagerly loads decoy_engine.relationships (per S2 spec API summary),
+# which transitively triggers loading plan._errors -> plan/__init__ ->
+# this module -> relationships (partially init). Lazy import inside the
+# function body cuts the cycle without changing the call surface.
 
 # S1's plan_version is 1. seed_protocol_version is 0 (S3 bumps to 1).
 PLAN_VERSION = 1
@@ -66,12 +71,31 @@ def compile_plan(
     Determinism contract: two calls with `__eq__`-equal inputs produce
     `__eq__`-equal Plans whose YAML serializations are byte-identical.
     """
+    # Lazy import: see the module-level comment for cycle rationale.
+    from decoy_engine.relationships import (
+        build_namespace_registry,
+        build_relationship_graph,
+        check_orphan_fk_policy_completeness,
+    )
+
     # Run the always-on checks. Each raises PlanCompileError on fail;
     # silence on pass means the check went into checks_passed.
-    check_namespace_ambiguity(config)
+    #
+    # S2 wiring (per spec §4): namespace_ambiguity check moves into
+    # build_namespace_registry; fk_plan_ordering check moves into
+    # build_relationship_graph; orphan_fk_policy_completeness lands new at
+    # row 6. The checks_passed tuple preserves S1's order plus the new
+    # entry appended (the B1 regression contract: equals S1's list plus
+    # exactly one new entry, in the documented position).
+    namespace_registry = build_namespace_registry(config, profile)
     check_unknown_provider(config)
     check_composite_columns_length_match(profile)
-    ordering_nodes = check_fk_plan_ordering(profile)
+    orphan_policy_lookup = check_orphan_fk_policy_completeness(config, profile.relationships)
+    relationship_graph = build_relationship_graph(
+        profile.relationships,
+        namespace_registry=namespace_registry,
+        orphan_policy_lookup=orphan_policy_lookup,
+    )
     check_basic_uniqueness_pre_flight(config, profile)
 
     checks_passed = (
@@ -80,16 +104,20 @@ def compile_plan(
         "fk_plan_ordering",
         "basic_uniqueness_pre_flight",
         "composite_columns_length_match",
+        "orphan_fk_policy_completeness",
     )
 
     # Hashes.
     cfg_hash = _hash_config(config)
     prof_hash = profile_hash(profile)
 
-    # Build the constituent blocks.
+    # Build the constituent blocks. Relationship + ordering blocks derive
+    # from the relationship_graph (S2 §4 wiring); namespaces still build
+    # from config because the YAML shape carries seed material the
+    # registry doesn't yet track (S3 promotes this).
     relationships = _build_relationships(config, profile)
     namespaces = _build_namespaces(config)
-    ordering = tuple(OrderingNode(table=t, columns=c) for (t, c) in ordering_nodes)
+    ordering = tuple(OrderingNode(table=t, columns=c) for (t, c) in relationship_graph.ordering)
     seed_envelope = _build_seed_envelope_stub(config, profile)
 
     return Plan(
@@ -112,14 +140,24 @@ def compile_plan(
 
 
 def _hash_config(config: dict[str, Any]) -> str:
-    """SHA-256 over a canonical JSON serialization of the config.
+    """SHA-256 over a canonical JSON serialization of the masking-semantics
+    portion of the config (M1 from S1 end-of-sprint Dennis review).
+
+    The `sources` and `targets` blocks are explicitly excluded: they
+    describe data binding (where bytes come from, where bytes go) rather
+    than masking semantics. A user swapping a local file source for an
+    S3 source does not change which columns mask how; the
+    pipeline_config_hash must stay byte-identical across that swap so
+    audit + reproducibility tooling can match the two runs as
+    semantically equivalent.
 
     Sort_keys=True, ensure_ascii=True, separators=(",", ":") for byte
-    stability across Python runtimes. Same input config (regardless of
-    key insertion order) produces the same hash.
+    stability across Python runtimes. Same masking semantics produce the
+    same hash regardless of key insertion order or source/target binding.
     """
+    semantic_config = {k: v for k, v in config.items() if k not in ("sources", "targets")}
     canonical = json.dumps(
-        config,
+        semantic_config,
         sort_keys=True,
         ensure_ascii=True,
         separators=(",", ":"),
