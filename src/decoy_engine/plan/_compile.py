@@ -6,15 +6,20 @@ produces a frozen Plan. Pure function: same inputs -> byte-identical
 output. Validation runs always (never flag-gated); failures raise
 `PlanCompileError` with `code` + `path` + `message`.
 
-S1 ships five foundational checks (per the compile-check ownership
-table rows 1-5). S2-S9 add per-module rules following the same call
-shape; the check-runner here is the slot they slot into.
+S1 shipped five foundational checks (compile-check ownership table
+rows 1-5). S2 promoted relationship + namespace into
+`decoy_engine.relationships` (the namespace_ambiguity + fk_plan_ordering
+checks moved out of this module into the registry + graph builders)
+and added `orphan_fk_policy_completeness` at row 6. S2-S9 follow this
+relocate-or-add pattern; the check-runner here is the slot they slot into.
 
-Seed envelope derivation in S1 is a stub: each ColumnSeed gets a
-deterministic-but-not-cryptographically-secure integer derived from
-(job_seed, table_name, column_name). S3 replaces with real HKDF-SHA256
-material per the spec; the enclosing Plan stamps
-`seed_protocol_version: 0` for the S1 era.
+S3 replaced S1's stub seed envelope with the determinism layer's keyed
+material per the spec §5.5 plan-schema delta: `SeedEnvelope.job_seed`
+is now `bytes` (the sole entropy input to
+`decoy_engine.determinism.derive(...)`); the per-context `_seed` int
+fields are gone; the four `_derive_*_seed` stub helpers were deleted.
+Every plan stamps `seed_protocol_version: 1` from the determinism
+module's constant.
 """
 
 from __future__ import annotations
