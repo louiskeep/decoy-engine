@@ -3,8 +3,8 @@
 walk_dataframe is the pure-function core of the future profile_source
 public API. It takes a DataFrame plus caller-supplied column metadata
 (declared PK columns, declared FK targets) and returns a TableProfile.
-No I/O, no config parsing, no STORM wiring. The orchestration layer that
-loads CSV files and parses pipeline YAML lives in a later slice.
+No I/O, no config parsing. The orchestration layer that loads CSV files
+and parses pipeline YAML lives in a later slice.
 
 Sampling: when sample_rows is set and the DataFrame has more rows than
 sample_rows, the function uses Python stdlib random.Random.sample over
@@ -12,6 +12,11 @@ row indices to select a sample without replacement, then computes
 distinct_count over the sample. is_candidate_key_sampled is always
 False under sampling (H6 invariant; enforced by ColumnProfile).
 Full-scan distinct_count uses pandas Series.nunique on dropna'd values.
+
+PII detection: opt-in via run_pii_detection=True. When enabled, the
+walker calls STORM (decoy_engine.storm.run_storm) on the full DataFrame
+once and maps high-confidence detector matches to the closed PIIClass
+enum. Default off: pii_class stays None on every column. Slice 3 of S1.
 
 The caller is responsible for seeding rng. profile_source (later slice)
 derives a deterministic seed from source path + size + mtime when the
@@ -25,7 +30,8 @@ import random
 
 import pandas as pd
 
-from decoy_engine.profile._types import ColumnProfile, TableProfile
+from decoy_engine.profile._pii import detect_pii_classes
+from decoy_engine.profile._types import ColumnProfile, PIIClass, TableProfile
 
 
 def walk_dataframe(
@@ -36,13 +42,15 @@ def walk_dataframe(
     fk_specs: dict[str, tuple[str, str]],
     sample_rows: int | None,
     rng: random.Random,
+    run_pii_detection: bool = False,
 ) -> TableProfile:
     """Return a TableProfile for the given DataFrame.
 
     Args:
         df: source data as a pandas DataFrame. Column order is preserved
             in the output TableProfile.
-        table_name: name to record in TableProfile.name.
+        table_name: name to record in TableProfile.name. Also passed to
+            STORM as source_label when run_pii_detection=True.
         declared_pk_cols: columns the caller declared as PK in the config.
             Sets ColumnProfile.declared_pk for matching columns.
         fk_specs: mapping {column_name: (parent_table, parent_column)} for
@@ -54,6 +62,11 @@ def walk_dataframe(
             is True; is_candidate_key_sampled is forced to False.
         rng: stdlib random.Random instance, already seeded by the caller.
             Used only when sampling is triggered.
+        run_pii_detection: opt-in STORM PII tagging. Default False
+            preserves the slice-2 behavior of every ColumnProfile carrying
+            pii_class=None. When True, the walker runs STORM once against
+            the full DataFrame and tags columns whose high-confidence
+            built-in detector match maps to a PIIClass enum value.
 
     Returns:
         TableProfile with one ColumnProfile per DataFrame column.
@@ -77,6 +90,12 @@ def walk_dataframe(
             f"column names {dupes!r}; column names must be unique."
         )
 
+    # Resolve PII tags before walking columns (slice 3). STORM runs once
+    # on the full DataFrame, not per-column. When run_pii_detection is
+    # False (default), pii_tags stays empty and every ColumnProfile gets
+    # pii_class=None, preserving slice-2 behavior exactly.
+    pii_tags: dict[str, PIIClass] = detect_pii_classes(df, table_name) if run_pii_detection else {}
+
     row_count = len(df)
     if sample_rows is not None and row_count > sample_rows:
         will_sample = True
@@ -97,6 +116,7 @@ def walk_dataframe(
             sampled=will_sample,
             declared_pk_cols=declared_pk_cols,
             fk_specs=fk_specs,
+            pii_class=pii_tags.get(col_name_str),
         )
         columns.append(column)
 
@@ -112,11 +132,14 @@ def _walk_column(
     sampled: bool,
     declared_pk_cols: frozenset[str],
     fk_specs: dict[str, tuple[str, str]],
+    pii_class: PIIClass | None,
 ) -> ColumnProfile:
     """Build a ColumnProfile for one column.
 
     null_count comes from the full series (always). distinct_count comes
-    from sample_series, which equals series when not sampling.
+    from sample_series, which equals series when not sampling. pii_class
+    is resolved by the caller (walk_dataframe) from a STORM scan when
+    run_pii_detection=True; otherwise None.
     """
     null_count = int(series.isna().sum())
     distinct_count_raw = sample_series.dropna().nunique()
@@ -148,5 +171,5 @@ def _walk_column(
         declared_pk=declared_pk,
         is_fk=is_fk,
         fk_target=fk_target,
-        pii_class=None,  # STORM wiring lands in a later slice
+        pii_class=pii_class,
     )

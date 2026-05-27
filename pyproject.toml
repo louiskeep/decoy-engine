@@ -236,7 +236,7 @@ module = [
     "decoy_engine.instrumentation",
     "decoy_engine.instrumentation.timing",
     # engine-v2 S1 (Profile module: dataclasses + hash + serialization +
-    # DataFrame walker). Spec:
+    # DataFrame walker + STORM PII bridge). Spec:
     # docs/v2/sprints/engine-v2/sprint-01-profile-plan-and-fixtures.md
     # in decoy-platform.
     "decoy_engine.profile",
@@ -244,6 +244,7 @@ module = [
     "decoy_engine.profile._hash",
     "decoy_engine.profile._serialize",
     "decoy_engine.profile._walk",
+    "decoy_engine.profile._pii",
 ]
 disallow_any_generics = true
 disallow_subclassing_any = true
