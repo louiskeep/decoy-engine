@@ -16,7 +16,6 @@ hashing immutable structures with simple value types.
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
 from datetime import datetime
 from typing import Any
 
@@ -87,10 +86,23 @@ def _table_to_dict(table: TableProfile) -> dict[str, Any]:
 
 
 def _column_to_dict(column: ColumnProfile) -> dict[str, Any]:
-    d = asdict(column)
-    d["fk_target"] = list(column.fk_target) if column.fk_target is not None else None
-    d["pii_class"] = column.pii_class.value if column.pii_class is not None else None
-    return d
+    # Hand-listed (L3 from slice-1 review) rather than dataclasses.asdict +
+    # spot fixes. New ColumnProfile fields should not silently change the
+    # wire shape; adding a field here is the deliberate part of a schema
+    # change.
+    return {
+        "name": column.name,
+        "dtype": column.dtype,
+        "row_count": column.row_count,
+        "null_count": column.null_count,
+        "distinct_count": column.distinct_count,
+        "sampled": column.sampled,
+        "is_candidate_key_sampled": column.is_candidate_key_sampled,
+        "declared_pk": column.declared_pk,
+        "is_fk": column.is_fk,
+        "fk_target": list(column.fk_target) if column.fk_target is not None else None,
+        "pii_class": column.pii_class.value if column.pii_class is not None else None,
+    }
 
 
 def _relationship_to_dict(rel: Relationship) -> dict[str, Any]:
