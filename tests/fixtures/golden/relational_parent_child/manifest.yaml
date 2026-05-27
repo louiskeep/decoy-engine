@@ -1,0 +1,46 @@
+fixture_name: relational_parent_child
+description: Parent customers table with three FK-related child tables (orders, invoices,
+  addresses); single-column FK.
+files:
+- table: customers
+  path: customers.csv
+  format: csv
+- table: orders
+  path: orders.csv
+  format: csv
+- table: invoices
+  path: invoices.csv
+  format: csv
+- table: addresses
+  path: addresses.csv
+  format: csv
+relationships:
+- parent:
+    table: customers
+    columns:
+    - customer_id
+  children:
+  - table: orders
+    columns:
+    - customer_id
+  - table: invoices
+    columns:
+    - customer_id
+  - table: addresses
+    columns:
+    - customer_id
+  orphan_policy: fail
+  namespace: customer_identity
+invariants_post_mask:
+- every unique customer_id in customers maps to exactly one masked value
+- every order/invoice/address customer_id is in the masked customer_id set
+- child row counts unchanged
+- FK join produces same row count before + after mask
+expected_orphans: 0
+gating_sprints:
+- S2
+- S3
+- S9
+- S10
+- S12
+- S13

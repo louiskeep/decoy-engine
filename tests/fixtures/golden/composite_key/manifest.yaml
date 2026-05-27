@@ -1,0 +1,36 @@
+fixture_name: composite_key
+description: Healthcare-flavored composite PK (member_id, plan_id, effective_date)
+  on enrollments; claims FK to the whole tuple.
+files:
+- table: enrollments
+  path: enrollments.csv
+  format: csv
+- table: claims
+  path: claims.csv
+  format: csv
+relationships:
+- parent:
+    table: enrollments
+    columns:
+    - member_id
+    - plan_id
+    - effective_date
+  children:
+  - table: claims
+    columns:
+    - member_id
+    - plan_id
+    - effective_date
+  orphan_policy: fail
+  namespace: enrollment_identity
+invariants_post_mask:
+- every claim's (member_id, plan_id, effective_date) tuple appears in enrollments
+  after mask
+- composite tuple masks as one unit (no row mixing different member_id between enrollments
+  and claims)
+expected_orphans: 0
+gating_sprints:
+- S2
+- S8
+- S9
+- S10

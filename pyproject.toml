@@ -70,6 +70,7 @@ pythonpath = ["src"]
 markers = [
     "benchmark: informational performance benchmarks; not a regression gate",
     "perf: PERF.BASE.2/3 fixture + baseline tests; opt-in via -m perf",
+    "golden: engine-v2 S1 golden fixture suite (CSVs + manifests under tests/fixtures/golden/); CI gates engine-v2 sprint work on these",
 ]
 
 # ── Tooling baseline (V2.0-prep, sprint 1) ──────────────────────────────────
@@ -245,6 +246,10 @@ module = [
     "decoy_engine.profile._serialize",
     "decoy_engine.profile._walk",
     "decoy_engine.profile._pii",
+    # engine-v2 S1 fixture-suite slice (golden fixtures schema; build script
+    # under scripts/ is intentionally not strict-mode-checked, the schema
+    # under tests/fixtures/ is).
+    "tests.fixtures.golden._manifest_schema",
 ]
 disallow_any_generics = true
 disallow_subclassing_any = true
