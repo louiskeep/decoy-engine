@@ -11,10 +11,12 @@ from __future__ import annotations
 
 from decoy_engine.execution._adapter import StrategyHandler
 from decoy_engine.execution._strategies._bucketize import BucketizeStrategyHandler
+from decoy_engine.execution._strategies._categorical import CategoricalStrategyHandler
 from decoy_engine.execution._strategies._faker import FakerStrategyHandler
 from decoy_engine.execution._strategies._hash import HashStrategyHandler
 from decoy_engine.execution._strategies._passthrough import PassthroughHandler
 from decoy_engine.execution._strategies._redact import RedactHandler
+from decoy_engine.execution._strategies._shuffle import ShuffleStrategyHandler
 from decoy_engine.execution._strategies._truncate import TruncateHandler
 
 SCALAR_HANDLERS: dict[str, StrategyHandler] = {
@@ -26,15 +28,19 @@ SCALAR_HANDLERS: dict[str, StrategyHandler] = {
         FakerStrategyHandler(),
         HashStrategyHandler(),
         BucketizeStrategyHandler(),
+        ShuffleStrategyHandler(),
+        CategoricalStrategyHandler(),
     )
 }
 
 __all__ = [
     "SCALAR_HANDLERS",
     "BucketizeStrategyHandler",
+    "CategoricalStrategyHandler",
     "FakerStrategyHandler",
     "HashStrategyHandler",
     "PassthroughHandler",
     "RedactHandler",
+    "ShuffleStrategyHandler",
     "TruncateHandler",
 ]
