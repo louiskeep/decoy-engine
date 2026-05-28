@@ -1,0 +1,55 @@
+# engine-v2 substrate parity gates (S12).
+#
+# Two path-filtered jobs, because the v2 strategy path and the V1 graph-op path
+# are different engines (S12 Engine-reality note #2):
+#
+#   - strategy_parity: the v2 execution adapter (pandas vs polars) for the 11
+#     mask strategies. Triggers on changes to the v2 execution package.
+#   - graph_op_parity: the V1 graph engine (pandas vs polars) for the core
+#     relational ops, satisfying the done-definition graph-op gate under
+#     D-S12-A. Triggers on changes to the V1 graph ops.
+#
+# Each job must be green (xfail-with-deferral counts as green and is recorded in
+# the S13 readiness report) or the PR does not merge.
+
+name: engine-v2-parity
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/decoy_engine/execution/**"
+      - "src/decoy_engine/graph/ops/**"
+      - ".github/workflows/engine-v2-parity.yml"
+  pull_request:
+    paths:
+      - "src/decoy_engine/execution/**"
+      - "src/decoy_engine/graph/ops/**"
+      - ".github/workflows/engine-v2-parity.yml"
+
+jobs:
+  strategy_parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+      - name: Install engine + dev extras
+        run: pip install -e ".[dev]"
+      - name: v2 strategy substrate parity (pandas adapter vs polars adapter)
+        run: pytest tests/parity/test_strategy_substrate_parity.py --tb=short
+
+  graph_op_parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+      - name: Install engine + dev extras
+        run: pip install -e ".[dev]"
+      - name: V1 graph-op parity (pandas vs polars; D-S12-A gate)
+        run: pytest tests/parity/test_relational_ops_parity.py --tb=short
