@@ -55,9 +55,9 @@ class PoolCache:
         self._max_bytes = max_bytes
         # OrderedDict preserves insertion + access order; LRU is
         # implemented by `move_to_end` on access.
-        self._entries: OrderedDict[
-            tuple[str, str, str, bytes, int], ValuePool | BundlePool
-        ] = OrderedDict()
+        self._entries: OrderedDict[tuple[str, str, str, bytes, int], ValuePool | BundlePool] = (
+            OrderedDict()
+        )
         self._bytes_used = 0
         self._hits = 0
         self._misses = 0

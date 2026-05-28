@@ -2,8 +2,8 @@
 
 The single source of truth for "what backend serves which provider" at
 runtime and at plan-compile time. `get_default_registry()` returns the
-singleton built from `_real_registry.py`'s 25-entry catalog wired to
-the default FakerAdapter.
+singleton: the 19-entry Faker catalog from `_real_registry.py` + 5 S6
+DecoyNative + 2 S8 composite bindings = 26 providers.
 
 Per S4 spec §5 + best-practices §2.1: the registry is immutable;
 `override(...)` returns a new instance with the override applied. The
