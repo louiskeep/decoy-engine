@@ -21,3 +21,17 @@ When a parity test catches a divergence:
 1. Decide whether one side is wrong (= bug; fix). If both are correct under their own semantics, it's a documented difference.
 2. Add a row to the table above with the behavior, the two outputs, and the downstream handling decision.
 3. If the difference is data-shape-specific, add a parametric parity test that asserts the divergence explicitly so a future change can't silently cross the line.
+
+## v2 strategy-substrate parity (engine-v2 S12)
+
+The rows above cover the V1 graph-engine relational ops (pandas vs duckdb/polars). This section covers the v2 EXECUTION-adapter strategy parity (`test_strategy_substrate_parity.py`): the v2 pandas adapter vs the v2 polars adapter, for the same masking `(plan, sources)`.
+
+The v2 parity gate is **value-level**: `assert_frames_semantically_equal` compares `outputs[table].to_pydict()` (per-column values + null positions), not Arrow schema or buffer identity. The accepted differences:
+
+| # | Behavior | Pandas adapter | Polars adapter | Decision / note |
+|---|---|---|---|---|
+| v1 | Arrow type width after the pa -> pl -> pa boundary | e.g. `string`, `binary`, `list`, `dictionary<int32,..>` | widens to `large_string`, `large_binary`, `large_list`, `dictionary<uint32,..>` | Accepted; Polars 1.x widens on `from_arrow`/`to_arrow`. Values are preserved (Dennis S11 review, 14-dtype probe). The parity gate compares values, not Arrow type. |
+| v2 | `redact` / `truncate` output column dtype | object -> Arrow `string` | Utf8 -> Arrow `large_string` | Accepted (same as v1). Both emit the same strings + nulls. |
+| v3 | deterministic `shuffle` permutation | `numpy.random.default_rng(seed).permutation` | SAME shared primitive (container-only migration) | No divergence: the permutation primitive is shared, so the permuted values are byte-identical for a given seed. |
+
+Non-deterministic strategies (unseeded `shuffle`, etc.) are NOT in the parity set: their output varies per run by design, so a cross-adapter equality assertion is meaningless. Parity fixtures use deterministic mode.

@@ -1,26 +1,30 @@
-"""PolarsExecutionAdapter: the second concrete ExecutionAdapter (engine-v2 S11).
+"""PolarsExecutionAdapter: the second concrete ExecutionAdapter (engine-v2 S11/S12).
 
 Same `ExecutionAdapter` protocol as S9's pandas adapter; the polars column
 substrate sits behind the SAME Arrow boundary (`pa.Table` in, `pa.Table` out).
 
-What S11 ships and what it does NOT:
+Dispatch (S12):
 
-- S11 ships the I/O boundary (polars-direct `read_source_polars` /
-  `write_target_polars`) and this adapter shell. At S11 close NO masking
-  strategy is polars-native (`_POLARS_NATIVE_STRATEGIES` is empty); S12 migrates
-  the 11 strategies one at a time and populates that set.
-- So at S11 close `run(...)` ingests the source tables into the polars substrate
-  (pa -> pl, timed), then -- because nothing is polars-native -- falls back to
-  the pandas adapter (the parity ORACLE) to do the masking, returning a
-  byte-for-byte identical `outputs` dict. S12 inserts per-strategy polars-native
-  dispatch between the ingest and egress conversions, shrinking the fallback.
+- A job whose every node is a polars-native scalar strategy (no FK edges, no
+  composite bundles) runs the PURE-POLARS loop: sources convert pa -> pl ONCE at
+  ingest, every strategy masks in the polars substrate, and outputs convert
+  pl -> pa ONCE at egress (single conversion at the I/O boundary).
+- Any other job (an unmigrated strategy, an FK edge, or a composite bundle)
+  falls back to the pandas ORACLE wholesale (the S11 behavior): ingest the
+  sources into the substrate, round-trip back to Arrow, and let the pandas
+  adapter do the masking, returning byte-for-byte identical outputs. FK +
+  composite polars migration is a later S12 phase; until then those jobs use the
+  oracle.
+
+`_POLARS_NATIVE_STRATEGIES` grows one migration band at a time; a strategy is
+native once it is both in that set and in `POLARS_SCALAR_HANDLERS`.
 
 `fallback_to_pandas` is a MIGRATION-WINDOW mechanism only (PQ6, PO-ratified
-2026-05-28): True through S12 so a polars job completes by routing unmigrated
-strategies through the pandas oracle. At S13 close the flag is REMOVED and an
-unmigrated strategy under polars is a hard ExecutionError, not a silent
-route-through pandas (cross-sprint contracts non-negotiable on silent
-downgrades). Pandas is the parity oracle, not a maintained customer fallback.
+2026-05-28): True through S12 so a polars job completes via the oracle for any
+not-yet-native node. At S13 close the flag is REMOVED and a non-native job is a
+hard ExecutionError, not a silent route-through pandas (cross-sprint contracts
+non-negotiable on silent downgrades). Pandas is the parity oracle, not a
+maintained customer fallback.
 """
 
 from __future__ import annotations
@@ -32,28 +36,35 @@ from typing import TYPE_CHECKING
 import polars as pl
 import pyarrow as pa
 
-from decoy_engine.execution._adapter import ExecutionResult
+from decoy_engine.execution._adapter import ExecutionResult, StrategyContext
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
-from decoy_engine.execution._runner import build_work_list
+from decoy_engine.execution._runner import build_work_list, order_work
 from decoy_engine.execution.polars._conversion_boundary import ConversionBoundary
+from decoy_engine.execution.polars._strategies import POLARS_SCALAR_HANDLERS
+from decoy_engine.generation.pool._cache import PoolCache
+from decoy_engine.generation.pool._events import QualityWarning
+from decoy_engine.instrumentation.timing import TimingCollector, timed_strategy, use_collector
+from decoy_engine.plan._types import ColumnSeed
 
 if TYPE_CHECKING:
-    from decoy_engine.generation.pool._cache import PoolCache
+    from decoy_engine.execution._runner import WorkNode
     from decoy_engine.plan._types import Plan
     from decoy_engine.providers_v2 import ProviderRegistry
     from decoy_engine.relationships import NamespaceRegistry, RelationshipGraph
 
+# Strategies with a polars-native implementation. Grows per migration band; at
+# S12 cheap-band close this holds the four cheap-band strategies.
+_POLARS_NATIVE_STRATEGIES: frozenset[str] = frozenset(
+    {"passthrough", "redact", "truncate", "shuffle"}
+)
+
 
 class PolarsExecutionAdapter:
-    """Concrete polars-substrate execution adapter (S11: I/O boundary + fallback)."""
+    """Concrete polars-substrate execution adapter."""
 
     adapter_name: str = "polars"
     adapter_version: str = pl.__version__
-
-    # Strategies with a polars-native implementation. EMPTY at S11 close; S12
-    # populates it as each of the 11 strategies migrates.
-    _POLARS_NATIVE_STRATEGIES: frozenset[str] = frozenset()
 
     def __init__(
         self,
@@ -62,15 +73,20 @@ class PolarsExecutionAdapter:
         fpe_chunk_count: int = 4,
         fallback_to_pandas: bool = True,
     ) -> None:
-        # Reserved for S12 polars-native per-column parallelism; unused at S11.
+        # Reserved for a future polars-native per-column parallelism; unused now.
         self._max_workers = max_workers
         self._fallback_to_pandas = fallback_to_pandas
         # The pandas adapter is the parity oracle and the migration-window
         # fallback executor (NOT a maintained customer substrate; see module doc).
         self._pandas = PandasExecutionAdapter(fpe_chunk_count=fpe_chunk_count)
+        self._polars_handlers = dict(POLARS_SCALAR_HANDLERS)
 
     def supports_strategy(self, strategy_name: str) -> bool:
-        return strategy_name in self._POLARS_NATIVE_STRATEGIES
+        return strategy_name in _POLARS_NATIVE_STRATEGIES
+
+    def supported_strategies(self) -> frozenset[str]:
+        """The set of strategy names this adapter runs polars-native."""
+        return _POLARS_NATIVE_STRATEGIES
 
     def shutdown(self) -> None:
         """Idempotent resource release; delegates to the pandas oracle."""
@@ -86,32 +102,136 @@ class PolarsExecutionAdapter:
         relationship_graph: RelationshipGraph,
         namespace_registry: NamespaceRegistry,
     ) -> ExecutionResult:
-        substrate_map = self._strategy_substrate_map(plan, registry)
-        unmigrated = sorted(s for s, sub in substrate_map.items() if sub == "pandas")
-        if unmigrated and not self._fallback_to_pandas:
-            # The S13-close behavior the flag removal makes permanent: no silent
-            # downgrade. At S11/S12 the flag defaults True, so this only fires
-            # when a caller explicitly disables fallback before all strategies
-            # are polars-native.
+        work = order_work(build_work_list(plan, registry), relationship_graph)
+        if self._is_fully_polars_native(work, relationship_graph):
+            return self._run_polars_native(
+                plan,
+                sources,
+                work,
+                registry=registry,
+                pool_cache=pool_cache,
+                relationship_graph=relationship_graph,
+                namespace_registry=namespace_registry,
+            )
+        if not self._fallback_to_pandas:
             raise ExecutionError(
                 code="polars_substrate_strategy_unmigrated",
                 message=(
-                    f"strategies {unmigrated} have no polars-native implementation "
+                    "job has work the polars substrate cannot run natively "
+                    f"({self._non_native_reasons(work, relationship_graph)}) "
                     "and fallback_to_pandas is disabled."
                 ),
             )
+        return self._run_via_pandas_oracle(
+            plan,
+            sources,
+            work,
+            registry=registry,
+            pool_cache=pool_cache,
+            relationship_graph=relationship_graph,
+            namespace_registry=namespace_registry,
+        )
 
+    def _is_fully_polars_native(
+        self, work: list[WorkNode], relationship_graph: RelationshipGraph
+    ) -> bool:
+        if relationship_graph.edges:
+            return False
+        return all(
+            node.kind == "scalar" and node.strategy in _POLARS_NATIVE_STRATEGIES for node in work
+        )
+
+    def _non_native_reasons(
+        self, work: list[WorkNode], relationship_graph: RelationshipGraph
+    ) -> str:
+        reasons: list[str] = []
+        if relationship_graph.edges:
+            reasons.append("fk_resolution")
+        non_native = sorted(
+            {
+                node.strategy if node.kind == "scalar" else node.kind
+                for node in work
+                if not (node.kind == "scalar" and node.strategy in _POLARS_NATIVE_STRATEGIES)
+            }
+        )
+        reasons.extend(non_native)
+        return ", ".join(reasons) if reasons else "none"
+
+    def _run_polars_native(
+        self,
+        plan: Plan,
+        sources: Mapping[str, pa.Table],
+        work: list[WorkNode],
+        *,
+        registry: ProviderRegistry,
+        pool_cache: PoolCache | None,
+        relationship_graph: RelationshipGraph,
+        namespace_registry: NamespaceRegistry,
+    ) -> ExecutionResult:
+        boundary = ConversionBoundary()
+        frames: dict[str, pl.DataFrame] = {
+            table: boundary.to_polars(tbl) for table, tbl in sources.items()
+        }
+        cache = pool_cache if pool_cache is not None else PoolCache()
+        ctx = StrategyContext(
+            registry=registry,
+            pool_cache=cache,
+            relationship_graph=relationship_graph,
+            namespace_registry=namespace_registry,
+            job_seed=plan.seed_envelope.job_seed,
+        )
+        warnings: list[QualityWarning] = []
+        collector = TimingCollector()
+        with use_collector(collector):
+            for node in work:
+                if node.table not in frames:
+                    continue
+                plan_slice = node.plan_slice
+                if not isinstance(plan_slice, ColumnSeed):  # scalar nodes carry a ColumnSeed
+                    raise ExecutionError(
+                        code="unsupported_strategy",
+                        message=f"scalar node {node.columns} has a non-ColumnSeed plan slice.",
+                    )
+                handler = self._polars_handlers[node.strategy]
+                with timed_strategy(node.strategy, ",".join(node.columns)):
+                    frames[node.table], node_warnings = handler.run(
+                        frames[node.table], node.columns[0], plan_slice, ctx
+                    )
+                warnings.extend(node_warnings)
+
+        outputs = {table: boundary.to_arrow(frame) for table, frame in frames.items()}
+        return ExecutionResult(
+            outputs=outputs,
+            timings=tuple(collector.records),
+            boundary_conversion_ms=boundary.total_ms,
+            warnings=tuple(warnings),
+            quality_metrics={
+                "conversion_breakdown": boundary.as_dict(),
+                "executed_substrate": {node.strategy: "polars" for node in work},
+            },
+        )
+
+    def _run_via_pandas_oracle(
+        self,
+        plan: Plan,
+        sources: Mapping[str, pa.Table],
+        work: list[WorkNode],
+        *,
+        registry: ProviderRegistry,
+        pool_cache: PoolCache | None,
+        relationship_graph: RelationshipGraph,
+        namespace_registry: NamespaceRegistry,
+    ) -> ExecutionResult:
         # Ingest the sources into the polars substrate and back to Arrow, timing
-        # both legs. At S11 close nothing is polars-native, so the round-trip is
-        # the full extent of the substrate's involvement and the masking falls
-        # back to the pandas oracle on the round-tripped tables (parity: the
-        # pa->pl->pa round-trip is lossless). S12 replaces the throwaway egress
-        # with per-strategy polars-native dispatch.
+        # both legs; the masking then runs on the pandas oracle on the
+        # round-tripped tables (the pa -> pl -> pa round-trip is lossless, so the
+        # result is byte-for-byte identical to a direct pandas run). Used for any
+        # job the polars loop cannot yet run natively (unmigrated strategy, FK, or
+        # composite).
         boundary = ConversionBoundary()
         substrate_sources: dict[str, pa.Table] = {
             table: boundary.to_arrow(boundary.to_polars(tbl)) for table, tbl in sources.items()
         }
-
         result = self._pandas.run(
             plan,
             substrate_sources,
@@ -120,36 +240,26 @@ class PolarsExecutionAdapter:
             relationship_graph=relationship_graph,
             namespace_registry=namespace_registry,
         )
-
         metrics = dict(result.quality_metrics)
         metrics["conversion_breakdown"] = boundary.as_dict()
-        # Per-strategy substrate of record. At S11 every entry is "pandas" (all
-        # strategies fell back); S12 flips entries to "polars" as they migrate.
-        metrics["executed_substrate"] = substrate_map
+        # The whole job ran on the pandas oracle in this path; every strategy's
+        # substrate of record is "pandas" even if some are individually native.
+        metrics["executed_substrate"] = {name: "pandas" for name in self._strategy_names(work)}
         return replace(
             result,
             boundary_conversion_ms=result.boundary_conversion_ms + boundary.total_ms,
             quality_metrics=metrics,
         )
 
-    def _strategy_substrate_map(self, plan: Plan, registry: ProviderRegistry) -> dict[str, str]:
-        """Map each masking strategy in the plan to the substrate that will run it.
-
-        Uses the canonical `build_work_list` enumeration so the classification
-        matches what `run` actually dispatches. Structural nodes (FK groups) are
-        not masking strategies and are excluded; composite bundles report under
-        the single key "composite".
-        """
+    @staticmethod
+    def _strategy_names(work: list[WorkNode]) -> set[str]:
         names: set[str] = set()
-        for node in build_work_list(plan, registry):
+        for node in work:
             if node.kind == "scalar":
                 names.add(node.strategy)
             elif node.kind == "composite":
                 names.add("composite")
-        return {
-            name: ("polars" if name in self._POLARS_NATIVE_STRATEGIES else "pandas")
-            for name in sorted(names)
-        }
+        return names
 
 
 __all__ = ["PolarsExecutionAdapter"]

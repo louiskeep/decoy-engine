@@ -190,10 +190,22 @@ class TestPolarsAdapterConformance:
         assert adapter.adapter_name == "polars"
         assert adapter.adapter_version == pl.__version__
 
-    def test_supports_no_strategy_at_s11_close(self) -> None:
+    def test_supports_cheap_band_native_not_others(self) -> None:
+        # S12 cheap-band: passthrough/redact/truncate/shuffle are polars-native;
+        # the medium/expensive bands have not migrated yet.
         adapter = PolarsExecutionAdapter()
-        for strategy in ("redact", "truncate", "passthrough", "fpe", "hash", "anything"):
-            assert adapter.supports_strategy(strategy) is False
+        for native in ("passthrough", "redact", "truncate", "shuffle"):
+            assert adapter.supports_strategy(native) is True
+        for not_yet in (
+            "fpe",
+            "hash",
+            "categorical",
+            "formula",
+            "date_shift",
+            "bucketize",
+            "faker",
+        ):
+            assert adapter.supports_strategy(not_yet) is False
 
     def test_shutdown_idempotent(self) -> None:
         adapter = PolarsExecutionAdapter()
@@ -304,12 +316,21 @@ class TestFallbackParity:
             "pl_to_pa_ms",
             "total_ms",
         }
-        # every strategy fell back to pandas at S11 close
-        assert res.quality_metrics["executed_substrate"] == {"redact": "pandas"}
+        # redact is polars-native at S12 cheap-band close: it ran on the polars path
+        assert res.quality_metrics["executed_substrate"] == {"redact": "polars"}
+
+    def test_unmigrated_strategy_reports_pandas_substrate(self) -> None:
+        # fpe has not migrated; the job runs via the pandas oracle and reports it.
+        src = pa.table({"acct": ["12345", "67890"]})
+        plan = _plan([("t", TableSeed(per_column=(("acct", _fpe_col()),), per_group=()))])
+        res = _polars_run(plan, {"t": src})
+        assert res.quality_metrics["executed_substrate"] == {"fpe": "pandas"}
 
     def test_fallback_disabled_raises_on_unmigrated(self) -> None:
-        src = pa.table({"a": ["x"]})
-        plan = _plan([("t", TableSeed(per_column=(("a", _col("redact")),), per_group=()))])
+        # fpe is not yet polars-native; with the migration-window fallback off it
+        # hard-fails rather than silently routing through pandas (PQ6 / S13 close).
+        src = pa.table({"acct": ["12345"]})
+        plan = _plan([("t", TableSeed(per_column=(("acct", _fpe_col()),), per_group=()))])
         with pytest.raises(ExecutionError) as exc:
             _polars_run(plan, {"t": src}, fallback_to_pandas=False)
         assert exc.value.code == "polars_substrate_strategy_unmigrated"
