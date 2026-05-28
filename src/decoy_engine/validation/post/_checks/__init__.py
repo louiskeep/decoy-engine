@@ -16,6 +16,8 @@ from collections.abc import Callable
 
 from decoy_engine.validation.post._checks._cardinality import run_cardinality
 from decoy_engine.validation.post._checks._composite_coherence import run_composite_coherence
+from decoy_engine.validation.post._checks._determinism_sample import run_determinism_sample
+from decoy_engine.validation.post._checks._fk_validity import run_fk_validity
 from decoy_engine.validation.post._checks._format_rules import run_format_rules
 from decoy_engine.validation.post._checks._leakage import run_leakage
 from decoy_engine.validation.post._checks._null_audit import run_null_audit
@@ -25,6 +27,7 @@ from decoy_engine.validation.post._scan import ScanContext, ScanOutcome
 
 ScanFn = Callable[[ScanContext], ScanOutcome]
 
+# The 8 scans + the sampled_values evidence step, in run + report order.
 SCANS: tuple[tuple[str, ScanFn], ...] = (
     ("pk_uniqueness", run_pk_uniqueness),
     ("cardinality", run_cardinality),
@@ -32,6 +35,8 @@ SCANS: tuple[tuple[str, ScanFn], ...] = (
     ("composite_coherence", run_composite_coherence),
     ("null_audit", run_null_audit),
     ("leakage", run_leakage),
+    ("fk_validity", run_fk_validity),
+    ("determinism_sample", run_determinism_sample),
     ("sampled_values", run_sampled_values),
 )
 

@@ -282,6 +282,8 @@ module = [
     "decoy_engine.validation.post._checks._null_audit",
     "decoy_engine.validation.post._checks._leakage",
     "decoy_engine.validation.post._checks._sampled_values",
+    "decoy_engine.validation.post._checks._fk_validity",
+    "decoy_engine.validation.post._checks._determinism_sample",
     # engine-v2 S2 (Relationship Coordinator + Namespace). Spec:
     # docs/v2/sprints/engine-v2/sprint-02-relationship-coordinator-and-namespace.md
     # in decoy-platform. Per best-practices §5.4 (resolution of S2 M4):
