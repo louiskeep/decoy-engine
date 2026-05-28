@@ -7,6 +7,7 @@ S9 ExecutionResult, and the quality_summary dataclass shapes.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import pyarrow as pa
@@ -14,6 +15,7 @@ import pytest
 
 from decoy_engine.execution import ExecutionResult
 from decoy_engine.generation.pool._events import QualityWarning
+from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.relationships._graph import RelationshipGraph
 from decoy_engine.relationships._namespace import NamespaceRegistry
 from decoy_engine.validation.post import (
@@ -27,6 +29,12 @@ from decoy_engine.validation.post import (
 
 _GRAPH = RelationshipGraph(edges=(), ordering=())
 _NS = NamespaceRegistry(bindings=())
+_REG = get_default_registry()
+# Empty plan + profile: the registered scans iterate per_table / profile.tables,
+# so empty stubs make every scan a no-op (this file tests the flag gate + the
+# dataclass shapes, not the scans -- those are tested in test_structural_scans.py).
+_EMPTY_PLAN = SimpleNamespace(seed_envelope=SimpleNamespace(per_table=()))
+_EMPTY_PROFILE = SimpleNamespace(tables=())
 
 
 def _run(
@@ -34,9 +42,11 @@ def _run(
 ) -> QualitySummary | None:
     result = ExecutionResult(outputs={"t": pa.table({"a": [1, 2]})}, warnings=warnings)
     return PostValidationRunner().run(
-        plan=object(),  # unused by the slice-2 skeleton (no scans read it yet)
+        plan=_EMPTY_PLAN,
         execution_result=result,
         sources={"t": pa.table({"a": [1, 2]})},
+        profile=_EMPTY_PROFILE,
+        registry=_REG,
         relationship_graph=_GRAPH,
         namespace_registry=_NS,
         config=config,
