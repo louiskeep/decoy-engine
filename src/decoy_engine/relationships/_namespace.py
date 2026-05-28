@@ -229,8 +229,51 @@ def build_namespace_registry(
             if child_key not in namespace_to_columns[rel.namespace]:
                 namespace_to_columns[rel.namespace].append(child_key)
 
-    # Step 3: deterministic-mode columns must have a namespace.
+    # Step 2.5 (S8): composite auto-binding. A column declaring `coherent_with`
+    # forms a composite group; bind the WHOLE (table, sorted(group)) tuple to one
+    # namespace (explicit `namespace:` on any group member, else a derived one).
+    # This is the whole-tuple binding the composite's coherent_namespace and the
+    # row-8 wiring check resolve against (R7). Additive: it does not change the
+    # exact-match for_column contract or the FK auto-binding above. Composite
+    # columns are tracked so step 3 does not demand a per-column namespace for
+    # them (their namespace is the group binding).
     tables_block = config.get("tables", []) if isinstance(config.get("tables"), list) else []
+    composite_columns: set[tuple[str, str]] = set()
+    composite_group_ns: dict[tuple[str, tuple[str, ...]], str | None] = {}
+    for table_entry in tables_block:
+        if not isinstance(table_entry, dict):
+            continue
+        table_name = table_entry.get("name", "?")
+        for col_entry in table_entry.get("columns", []) or []:
+            if not isinstance(col_entry, dict):
+                continue
+            coherent = [c for c in (col_entry.get("coherent_with") or []) if isinstance(c, str)]
+            if not coherent:
+                continue
+            col_name = col_entry.get("name", "?")
+            group = tuple(sorted({col_name, *coherent}))
+            group_key = (table_name, group)
+            composite_columns.add((table_name, col_name))
+            for ref in coherent:
+                composite_columns.add((table_name, ref))
+            explicit_ns = col_entry.get("namespace")
+            if explicit_ns:
+                prev = composite_group_ns.get(group_key)
+                if prev is not None and prev != explicit_ns:
+                    _raise_ambiguity(table_name, group, sorted({prev, explicit_ns}))
+                composite_group_ns[group_key] = explicit_ns
+            elif group_key not in composite_group_ns:
+                composite_group_ns[group_key] = None
+    for (tbl, grp), explicit in composite_group_ns.items():
+        ns = explicit if explicit is not None else f"composite/{tbl}/{'__'.join(grp)}"
+        existing = column_owner.get((tbl, grp))
+        if existing is not None and existing != ns:
+            _raise_ambiguity(tbl, grp, sorted({existing, ns}))
+        column_owner[(tbl, grp)] = ns
+        if (tbl, grp) not in namespace_to_columns[ns]:
+            namespace_to_columns[ns].append((tbl, grp))
+
+    # Step 3: deterministic-mode columns must have a namespace.
     for table_entry in tables_block:
         if not isinstance(table_entry, dict):
             continue
@@ -246,6 +289,10 @@ def build_namespace_registry(
             if not bool(col_entry.get("deterministic", False)):
                 continue
             col_name = col_entry.get("name", "?")
+            if (table_name, col_name) in composite_columns:
+                # Composite columns resolve their namespace via the whole-group
+                # binding (step 2.5), not a per-column one (S8).
+                continue
             key = (table_name, (col_name,))
             explicit_ns = col_entry.get("namespace")
             if explicit_ns:

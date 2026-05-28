@@ -27,12 +27,12 @@ class TestCompilePlanHappyPath:
         assert plan.seed_protocol_version == 2
         assert plan.engine_version == "0.1.0"
 
-    def test_compile_records_eight_checks_passed(
+    def test_compile_records_nine_checks_passed(
         self, simple_config: dict, simple_profile: Profile
     ) -> None:
         """S2 added orphan_fk_policy_completeness at row 6; S5 added
-        pool_capacity_pre_flight at row 7; S6/S7 added
-        deterministic_namespace_completeness at row 9."""
+        pool_capacity_pre_flight at row 7; S8 added composite_wiring_consistent
+        at row 8; S6/S7 added deterministic_namespace_completeness at row 9."""
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
         assert set(plan.plan_compile.checks_passed) == {
             "namespace_ambiguity",
@@ -42,6 +42,7 @@ class TestCompilePlanHappyPath:
             "composite_columns_length_match",
             "orphan_fk_policy_completeness",
             "pool_capacity_pre_flight",
+            "composite_wiring_consistent",
             "deterministic_namespace_completeness",
         }
 

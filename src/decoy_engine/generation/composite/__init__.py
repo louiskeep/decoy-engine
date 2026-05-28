@@ -39,6 +39,7 @@ from decoy_engine.generation.composite._name_email import (
     CompositeNameEmail,
     composite_name_email,
 )
+from decoy_engine.generation.composite._validate import composite_wiring_consistent
 
 __all__ = [
     "BundlePool",
@@ -50,5 +51,6 @@ __all__ = [
     "composite_capability",
     "composite_city_state_zip",
     "composite_name_email",
+    "composite_wiring_consistent",
     "load_locality_table",
 ]

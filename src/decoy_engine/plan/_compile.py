@@ -111,6 +111,7 @@ def compile_plan(
     # S6 wiring (per spec §6): deterministic_namespace_completeness (row 9)
     # lives in decoy_engine.providers_v2.identifiers._validate. Lazy
     # import for symmetry with rows 6 + 7.
+    from decoy_engine.generation.composite import composite_wiring_consistent
     from decoy_engine.generation.pool import check_pool_capacity_pre_flight
     from decoy_engine.providers_v2.identifiers import (
         deterministic_namespace_completeness,
@@ -124,6 +125,9 @@ def compile_plan(
     namespace_registry = build_namespace_registry(config, profile)
     check_unknown_provider(config)
     check_composite_columns_length_match(profile)
+    # Row 8 (S8): composite wiring. Structural (config + registry), so it runs
+    # in both --no-profile and full modes, like row 9.
+    composite_wiring_consistent(config, namespace_registry)
     orphan_policy_lookup = check_orphan_fk_policy_completeness(config, profile.relationships)
     relationship_graph = build_relationship_graph(
         profile.relationships,
@@ -154,6 +158,7 @@ def compile_plan(
             "fk_plan_ordering",
             "composite_columns_length_match",
             "orphan_fk_policy_completeness",
+            "composite_wiring_consistent",
             "deterministic_namespace_completeness",
         )
         checks_skipped: tuple[str, ...] = (
@@ -174,6 +179,7 @@ def compile_plan(
             "composite_columns_length_match",
             "orphan_fk_policy_completeness",
             "pool_capacity_pre_flight",
+            "composite_wiring_consistent",
             "deterministic_namespace_completeness",
         )
         checks_skipped = ()

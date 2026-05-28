@@ -334,6 +334,7 @@ module = [
     "decoy_engine.generation.composite._errors",
     "decoy_engine.generation.composite._generator",
     "decoy_engine.generation.composite._name_email",
+    "decoy_engine.generation.composite._validate",
 ]
 disallow_any_generics = true
 disallow_subclassing_any = true

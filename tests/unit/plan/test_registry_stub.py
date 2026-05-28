@@ -47,6 +47,9 @@ def test_registry_contains_exactly_documented_names() -> None:
             "synthetic_ndc",
             "synthetic_mrn",
             "person_full_name",
+            # S8 composite generators (2)
+            "composite_name_email",
+            "composite_city_state_zip",
         }
     )
     assert expected == get_default_registry().known_providers()
