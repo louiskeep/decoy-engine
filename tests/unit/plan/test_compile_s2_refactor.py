@@ -49,6 +49,8 @@ EXPECTED_S2_CHECKS_PASSED = (
     "pool_capacity_pre_flight",
     "composite_wiring_consistent",
     "deterministic_namespace_completeness",
+    # Row 10 (B1, S13): null-bearing-int reject rule, appended at the tail.
+    "null_bearing_int_unsupported",
 )
 
 
@@ -62,24 +64,27 @@ class TestChecksPassedShape:
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
         assert plan.plan_compile.checks_passed == EXPECTED_S2_CHECKS_PASSED
 
-    def test_checks_passed_contains_exactly_nine_entries(
+    def test_checks_passed_contains_exactly_ten_entries(
         self, simple_config: dict, simple_profile: Profile
     ) -> None:
+        # 9 through S8, plus row 10 (null_bearing_int_unsupported, B1/S13).
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
-        assert len(plan.plan_compile.checks_passed) == 9
+        assert len(plan.plan_compile.checks_passed) == 10
 
     def test_orphan_fk_policy_completeness_at_documented_position(
         self, simple_config: dict, simple_profile: Profile
     ) -> None:
         """Row 6 follows row 5; row 7 (pool_capacity_pre_flight) follows row 6
         post-S5; row 8 (composite_wiring_consistent) post-S8; row 9
-        (deterministic_namespace_completeness) stays at the tail post-S6."""
+        (deterministic_namespace_completeness) post-S6; row 10
+        (null_bearing_int_unsupported) at the tail post-S13 (B1)."""
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
-        assert plan.plan_compile.checks_passed[-5] == "composite_columns_length_match"
-        assert plan.plan_compile.checks_passed[-4] == "orphan_fk_policy_completeness"
-        assert plan.plan_compile.checks_passed[-3] == "pool_capacity_pre_flight"
-        assert plan.plan_compile.checks_passed[-2] == "composite_wiring_consistent"
-        assert plan.plan_compile.checks_passed[-1] == "deterministic_namespace_completeness"
+        assert plan.plan_compile.checks_passed[-6] == "composite_columns_length_match"
+        assert plan.plan_compile.checks_passed[-5] == "orphan_fk_policy_completeness"
+        assert plan.plan_compile.checks_passed[-4] == "pool_capacity_pre_flight"
+        assert plan.plan_compile.checks_passed[-3] == "composite_wiring_consistent"
+        assert plan.plan_compile.checks_passed[-2] == "deterministic_namespace_completeness"
+        assert plan.plan_compile.checks_passed[-1] == "null_bearing_int_unsupported"
 
     def test_s1_check_order_preserved(self, simple_config: dict, simple_profile: Profile) -> None:
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")

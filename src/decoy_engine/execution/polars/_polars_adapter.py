@@ -38,6 +38,7 @@ import pyarrow as pa
 
 from decoy_engine.execution._adapter import ExecutionResult, StrategyContext
 from decoy_engine.execution._errors import ExecutionError
+from decoy_engine.execution._guards import reject_null_bearing_int
 from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
 from decoy_engine.execution._runner import build_work_list, order_work
 from decoy_engine.execution.polars._conversion_boundary import ConversionBoundary
@@ -101,6 +102,11 @@ class PolarsExecutionAdapter:
         relationship_graph: RelationshipGraph,
         namespace_registry: NamespaceRegistry,
     ) -> ExecutionResult:
+        # B1 (S13): reject integer + null-bearing columns under truncate/hash/
+        # categorical on the Arrow sources, identically to the pandas adapter, so
+        # the polars-native path does not silently accept input the oracle rejects.
+        # FK children are exempt (resolved via the edge, not masked).
+        reject_null_bearing_int(plan, sources, registry, relationship_graph)
         work = order_work(build_work_list(plan, registry), relationship_graph)
         if self._is_fully_polars_native(work, relationship_graph):
             return self._run_polars_native(
