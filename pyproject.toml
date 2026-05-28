@@ -25,7 +25,10 @@ dependencies = [
     # Phase 8 flipped `engine: hybrid` to the default, so a pandas-only
     # install would crash on first pipeline run with ModuleNotFoundError.
     # Both libs are now required to match the runtime contract.
-    "polars>=1.0",
+    # Upper bound pinned in S11: Polars ships a major every ~6 months and the
+    # expression surface evolves; the execution-substrate path is validated
+    # against the 1.x I/O API, so cap below 2.0 until a 2.x validation pass.
+    "polars>=1.0,<2.0",
     "duckdb>=0.10.0",
 ]
 

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import pandas as pd
 import pyarrow as pa
@@ -96,8 +96,14 @@ class StrategyHandler(Protocol):
         ...
 
 
+@runtime_checkable
 class ExecutionAdapter(Protocol):
-    """The planning/execution boundary (S9 spec §2). Narrow by design."""
+    """The planning/execution boundary (S9 spec §2). Narrow by design.
+
+    `runtime_checkable` so a second concrete adapter (S11's polars adapter) can
+    assert conformance via `isinstance`; this is name-presence only, the real
+    signature conformance is the mypy gate.
+    """
 
     adapter_name: str
     adapter_version: str

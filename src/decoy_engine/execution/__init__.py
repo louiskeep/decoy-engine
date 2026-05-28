@@ -40,13 +40,21 @@ from decoy_engine.execution._pandas_adapter import (
     get_default_executor,
 )
 from decoy_engine.execution._runner import WorkNode, build_work_list, order_work
+from decoy_engine.execution._substrate import (
+    VALID_SUBSTRATES,
+    resolve_substrate,
+    select_execution_adapter,
+)
+from decoy_engine.execution.polars import PolarsExecutionAdapter
 
 __all__ = [
+    "VALID_SUBSTRATES",
     "ExecutionAdapter",
     "ExecutionError",
     "ExecutionEvent",
     "ExecutionResult",
     "PandasExecutionAdapter",
+    "PolarsExecutionAdapter",
     "StrategyContext",
     "StrategyError",
     "StrategyHandler",
@@ -54,4 +62,6 @@ __all__ = [
     "build_work_list",
     "get_default_executor",
     "order_work",
+    "resolve_substrate",
+    "select_execution_adapter",
 ]
