@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Mapping
+from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
 from decoy_engine.generation.pool._events import QualityWarning
@@ -87,12 +88,34 @@ class PostValidationRunner:
         for name, scan in SCANS:
             if name in skip:
                 continue
-            # Slice 5 wraps this in try/except so a crashing scan becomes a failed
-            # outcome (with the traceback) rather than a lost manifest.
-            outcomes.append(scan(ctx))
+            # Failed-job evidence: a crashing scan becomes a failed outcome (with
+            # the error recorded), never a lost manifest. The job still fails (the
+            # scan is in failed_checks) but the quality_summary is produced.
+            try:
+                outcomes.append(scan(ctx))
+            except Exception as exc:
+                outcomes.append(
+                    ScanOutcome(
+                        name=name,
+                        failed=True,
+                        warnings=(
+                            QualityWarning(
+                                code="scan_crashed",
+                                provider="post_validation",
+                                column=name,
+                                detail={"error": repr(exc)},
+                            ),
+                        ),
+                    )
+                )
 
         elapsed_ms = (time.perf_counter() - t0) * 1000.0
-        return _merge(outcomes, execution_result.warnings, elapsed_ms)
+        summary = _merge(outcomes, execution_result.warnings, elapsed_ms)
+        # Close the S9 quality_metrics={} carry-forward (Dennis S9 M2): write the
+        # serialized block into the mutable dict the frozen ExecutionResult holds.
+        # No S9 surface change -- quality_metrics was typed dict[str, Any] for this.
+        execution_result.quality_metrics["quality_summary"] = asdict(summary)
+        return summary
 
 
 def _merge(
