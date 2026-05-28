@@ -55,7 +55,9 @@ class TestInteger:
 
     def test_max_int64_uses_eight_body_bytes(self) -> None:
         # 2**63 - 1 = max signed int64: 8 body bytes, no overflow.
-        assert _canonicalize_source(2**63 - 1) == b"\x00\x00\x00\x08\x7f\xff\xff\xff\xff\xff\xff\xff"
+        assert (
+            _canonicalize_source(2**63 - 1) == b"\x00\x00\x00\x08\x7f\xff\xff\xff\xff\xff\xff\xff"
+        )
 
     def test_beyond_int64_does_not_overflow(self) -> None:
         """NF2: the prior fixed 8-byte encoding raised OverflowError here; the
@@ -66,7 +68,9 @@ class TestInteger:
         assert _canonicalize_source(2**64) == bytes.fromhex("00000009010000000000000000")
 
     def test_injective_across_magnitudes(self) -> None:
-        seen = {_canonicalize_source(n) for n in (-2, -1, 0, 1, 2, 127, 128, 255, 256, 2**63, 2**70)}
+        seen = {
+            _canonicalize_source(n) for n in (-2, -1, 0, 1, 2, 127, 128, 255, 256, 2**63, 2**70)
+        }
         assert len(seen) == 11  # all distinct
 
     def test_numpy_int_matches_python_int(self) -> None:

@@ -141,9 +141,7 @@ class TestCacheBeforeBuild:
         identity = builder.identity_for(
             "person_email", size=64, job_seed=seed, locale="en_US", namespace="ns"
         )
-        pool = builder.build(
-            "person_email", size=64, job_seed=seed, locale="en_US", namespace="ns"
-        )
+        pool = builder.build("person_email", size=64, job_seed=seed, locale="en_US", namespace="ns")
         assert identity == pool.identity
 
     def test_pool_size_from_extra_reaches_build(self) -> None:
