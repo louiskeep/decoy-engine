@@ -18,10 +18,10 @@ class TestPerCatalogEntry:
         catalog is now 19; full registry is 24."""
         assert len(get_default_catalog()) == 19
 
-    def test_full_registry_has_24_entries(self) -> None:
-        """Full registry: 19 Faker-bound + 5 DecoyNative-bound = 24."""
+    def test_full_registry_has_26_entries(self) -> None:
+        """Full registry: 19 Faker + 5 DecoyNative (S6) + 2 composite (S8) = 26."""
         registry = get_default_registry()
-        assert len(registry.known_providers()) == 24
+        assert len(registry.known_providers()) == 26
 
     def test_all_entries_validate_at_import(self) -> None:
         """Pydantic raises at construction if any field is missing/mistyped.

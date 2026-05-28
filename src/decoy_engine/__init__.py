@@ -65,6 +65,14 @@ from decoy_engine.forecast import (
     RiskFlag,
     recommend,
 )
+from decoy_engine.generation.composite import (
+    BundlePool,
+    CompositeAdapter,
+    CompositeError,
+    CompositeGenerator,
+    composite_city_state_zip,
+    composite_name_email,
+)
 from decoy_engine.generation.pool import (
     CardinalityMode,
     GenerationError,
@@ -179,9 +187,13 @@ __all__ = [
     "VALIDATION_CODES",
     "AdapterError",
     "BackendAdapter",
+    "BundlePool",
     "CapabilityMatrix",
     "CardinalityMode",
     "CheckResult",
+    "CompositeAdapter",
+    "CompositeError",
+    "CompositeGenerator",
     "ConfigError",
     "ConnectorAuthError",
     "ConnectorConfig",
@@ -260,6 +272,8 @@ __all__ = [
     "build_namespace_registry",
     "build_relationship_graph",
     "check_orphan_fk_policy_completeness",
+    "composite_city_state_zip",
+    "composite_name_email",
     "derive",
     "derive_index",
     "derive_value",

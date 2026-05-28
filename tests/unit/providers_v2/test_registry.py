@@ -26,12 +26,12 @@ class TestDefaultRegistry:
     def test_has_unknown_provider_false(self) -> None:
         assert get_default_registry().has("not_a_real_provider") is False
 
-    def test_known_providers_returns_frozenset_of_24(self) -> None:
-        """Spec text says 25 but real S1 count was 20 (not 21); 20 + 4 S4
-        additions = 24. See test_capability_matrix::test_catalog_has_24_entries."""
+    def test_known_providers_returns_frozenset_of_26(self) -> None:
+        """19 Faker + 5 DecoyNative (S6) + 2 composite (S8) = 26. Mimesis adds
+        more only when installed AND adopted (empty by default)."""
         known = get_default_registry().known_providers()
         assert isinstance(known, frozenset)
-        assert len(known) == 24
+        assert len(known) == 26
 
     def test_get_adapter_for_unknown_raises(self) -> None:
         with pytest.raises(ProviderError) as excinfo:

@@ -119,6 +119,12 @@ def check_format(provider: str, mimesis_samples: Sequence[Any]) -> tuple[bool, d
 def check_determinism(
     provider: str, locale: str, seed: bytes = b"\x00\x00\x00\x00\x00\x00\x00\x2a"
 ) -> tuple[bool, dict[str, Any]]:
+    """Parity check 6: seeded `generate_batch` reproducibility.
+
+    This is the IN-PROCESS leg (two adapters in one interpreter). The
+    cross-process leg (the real hard gate) is proven separately in
+    test_mimesis_adapter.py::test_seeded_batch_reproducible_cross_process.
+    """
     spec = ProviderSpec(locale=locale, deterministic=False, namespace=None, seed=seed)
     run1 = MimesisAdapter(locale=locale).generate_batch(provider, spec=spec, count=64)
     run2 = MimesisAdapter(locale=locale).generate_batch(provider, spec=spec, count=64)
@@ -186,4 +192,7 @@ def is_adoptable(results: Sequence[ParityCheckResult]) -> bool:
     if not all(by_check[c].passed for c in gating if c in by_check):
         return False
     ratios = [r.benchmark_ratio for r in results if r.benchmark_ratio is not None]
-    return bool(ratios) and ratios[0] < _ADOPTION_RATIO_THRESHOLD
+    # max(ratios) so the predicate is order-independent (results all carry the
+    # same overall ratio today, but a public predicate should not depend on
+    # which result happens to be first).
+    return bool(ratios) and max(ratios) < _ADOPTION_RATIO_THRESHOLD

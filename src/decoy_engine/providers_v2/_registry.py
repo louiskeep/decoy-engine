@@ -114,10 +114,11 @@ _DEFAULT_REGISTRY: ProviderRegistry | None = None
 def get_default_registry() -> ProviderRegistry:
     """Return the singleton default registry.
 
-    Post-S6 (per S6 spec §7): 19 FakerAdapter-bound entries + 5
-    DecoyNativeAdapter-bound entries (the synthetic-identifier swap
-    targets: synthetic_ssn, synthetic_ein, synthetic_npi, synthetic_ndc,
-    synthetic_mrn). Total: 24.
+    Post-S6: 19 FakerAdapter-bound + 5 DecoyNativeAdapter-bound entries
+    (synthetic_ssn/ein/npi/ndc/mrn) = 24.
+    Post-S8 (per spec §5): + 2 CompositeAdapter-bound entries
+    (composite_name_email, composite_city_state_zip) = 26. Mimesis adds more
+    only when installed AND in the adoption matrix (empty by default).
 
     Two calls return the same object. Tests that want a clean registry
     use `ProviderRegistry({...})` directly.
@@ -186,6 +187,23 @@ def get_default_registry() -> ProviderRegistry:
                 mimesis_adapter = MimesisAdapter(fallback=faker_adapter)
                 for name in ADOPTED_MIMESIS_PROVIDERS:
                     bindings[name] = (mimesis_adapter, mimesis_adapter.capability_matrix(name))
+
+        # S8 (per spec §5 / contracts row 28): fold the two composite generators
+        # into the build via CompositeAdapter so they appear in known_providers()
+        # and the row-2 unknown_provider check accepts them (24 -> 26). The
+        # adapter's single-column path raises (composite_requires_bundle_path);
+        # composites write coherent bundles via CompositeGenerator.generate_bundle.
+        # poolable=True, so S9 routing wraps them in the bundle pool path.
+        from decoy_engine.generation.composite import (
+            CompositeAdapter,
+            composite_capability,
+        )
+
+        for composite_name in ("composite_name_email", "composite_city_state_zip"):
+            bindings[composite_name] = (
+                CompositeAdapter(composite_name),
+                composite_capability(composite_name),
+            )
 
         _DEFAULT_REGISTRY = ProviderRegistry(bindings)
     return _DEFAULT_REGISTRY

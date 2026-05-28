@@ -28,6 +28,13 @@ from decoy_engine import (
 
 def test_all_lists_every_public_name():
     expected = {
+        # engine-v2 S8 composite generators
+        "BundlePool",
+        "CompositeAdapter",
+        "CompositeError",
+        "CompositeGenerator",
+        "composite_city_state_zip",
+        "composite_name_email",
         "Masker",
         "DataGenerator",
         "ExecutionContext",

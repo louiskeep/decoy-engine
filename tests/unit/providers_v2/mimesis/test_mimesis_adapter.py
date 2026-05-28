@@ -93,9 +93,10 @@ class TestDeterministicMode:
             )
         assert exc.value.code == "capability_violation"
 
-    def test_seeded_batch_reproducible_in_process(self) -> None:
-        a = MimesisAdapter().generate_batch("person_first_name", spec=_seeded(), count=32)
-        b = MimesisAdapter().generate_batch("person_first_name", spec=_seeded(), count=32)
+    @pytest.mark.parametrize("provider", sorted(MIMESIS_CANDIDATES))
+    def test_seeded_batch_reproducible_in_process(self, provider: str) -> None:
+        a = MimesisAdapter().generate_batch(provider, spec=_seeded(), count=32)
+        b = MimesisAdapter().generate_batch(provider, spec=_seeded(), count=32)
         assert list(a) == list(b)
 
     def test_seeded_batch_unseeded_is_random(self) -> None:
@@ -103,21 +104,25 @@ class TestDeterministicMode:
         b = MimesisAdapter().generate_batch("person_first_name", spec=_nd(), count=32)
         assert list(a) != list(b)  # astronomically unlikely to collide
 
-    def test_seeded_batch_reproducible_cross_process(self) -> None:
+    @pytest.mark.parametrize("provider", sorted(MIMESIS_CANDIDATES))
+    def test_seeded_batch_reproducible_cross_process(self, provider: str) -> None:
+        # str() each value so the comparison is dtype-agnostic: person_dob emits
+        # datetime.date (not JSON-serializable), and the str repr is sufficient
+        # to prove byte-identical cross-process determinism (MEDIUM-S7-DOB-DTYPE-1).
         script = (
             "import json;"
             "from decoy_engine.providers_v2._adapter import ProviderSpec;"
             "from decoy_engine.providers_v2.mimesis import MimesisAdapter;"
             "s=ProviderSpec(locale='en_US',deterministic=False,namespace=None,seed=(0xABCDEF12).to_bytes(8,'big'));"
-            "print(json.dumps(list(MimesisAdapter().generate_batch('person_first_name',spec=s,count=32))))"
+            f"print(json.dumps([str(v) for v in MimesisAdapter().generate_batch({provider!r},spec=s,count=32)]))"
         )
         result = subprocess.run(  # noqa: S603 -- args are test literals, not untrusted input
             [sys.executable, "-c", script], capture_output=True, text=True, check=True
         )
         child = json.loads(result.stdout.strip())
-        parent = list(
-            MimesisAdapter().generate_batch("person_first_name", spec=_seeded(), count=32)
-        )
+        parent = [
+            str(v) for v in MimesisAdapter().generate_batch(provider, spec=_seeded(), count=32)
+        ]
         assert child == parent
 
     def _pool_adapter(self, provider: str) -> PoolAdapter:
@@ -169,6 +174,21 @@ class TestDeterministicMode:
             MimesisAdapter().capability_matrix("person_first_name").supports_deterministic is False
         )
 
+    def test_pool_routed_person_dob_date_dtype(self) -> None:
+        # MEDIUM-S7-DOB-DTYPE-1: person_dob is the only non-str candidate
+        # (datetime.date). Exercise its pool-routed deterministic path so a
+        # date-typed pool/bundle entry can't silently break a str-assuming consumer.
+        import datetime
+
+        pa = self._pool_adapter("person_dob")
+        spec = ProviderSpec(
+            locale="en_US", deterministic=True, namespace="ns1", seed=SEED, extra={"pool_size": 256}
+        )
+        v1 = pa.generate("person_dob", spec=spec, source_value=b"alice")
+        v2 = pa.generate("person_dob", spec=spec, source_value=b"alice")
+        assert isinstance(v1, datetime.date)
+        assert v1 == v2
+
 
 class TestLocaleFallback:
     def test_supported_locale_uses_mimesis_no_warning(self) -> None:
@@ -199,8 +219,11 @@ class TestLocaleFallback:
 
 
 class TestParitySuite:
-    def test_returns_seven_results(self) -> None:
-        results = run_parity_suite("person_first_name", n=200)
+    @pytest.mark.parametrize("provider", sorted(MIMESIS_CANDIDATES))
+    def test_returns_seven_results(self, provider: str) -> None:
+        # MEDIUM-S7-PARITY-COVERAGE-1: run the full parity suite for every one of
+        # the 11 candidates so a future adoption cannot bypass the gate.
+        results = run_parity_suite(provider, n=100)
         assert len(results) == 7
         assert {r.check for r in results} == {
             "dtype",
@@ -211,6 +234,9 @@ class TestParitySuite:
             "determinism",
             "distribution",
         }
+        # The determinism check (the hard gate) must pass for every candidate.
+        determinism = next(r for r in results if r.check == "determinism")
+        assert determinism.passed is True
 
     def test_results_carry_benchmark_ratio(self) -> None:
         results = run_parity_suite("person_first_name", n=200)
