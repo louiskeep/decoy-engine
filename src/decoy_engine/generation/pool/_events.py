@@ -23,6 +23,14 @@ class QualityWarning:
       converted to fall_back instead.
     - `pool_fallback`: pool path bypassed; per-row generation used.
     - `pool_dominates_cache`: single pool occupies >25% of cache budget.
+
+    Codes added by later sprints (same shape, same emission channel; the type
+    stays S5-owned per R14):
+
+    - `mimesis_locale_fallback` (S7): an adopted Mimesis provider was asked for
+      a locale outside Mimesis coverage; the adapter fell back to Faker for
+      that locale + provider. `detail` carries `requested_locale` +
+      `mimesis_locales`.
     """
 
     code: str

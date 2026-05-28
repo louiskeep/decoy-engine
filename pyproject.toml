@@ -37,6 +37,13 @@ dev = [
     # rather than failing on the first import in test collection.
     "moto[s3]>=5.0",
 ]
+# engine-v2 S7: Mimesis is an OPTIONAL alternative provider backend. The
+# default install does NOT pull it; MimesisAdapter imports behind a
+# try/except and the default registry stays Faker/DecoyNative-only unless
+# `mimesis` is installed AND a provider is in the adoption matrix.
+mimesis = [
+    "mimesis>=14.0",
+]
 # Sphinx + sphinx-autoapi build the API reference site published to
 # GitHub Pages. Build from the repo root via `pip install -e .[docs]`
 # then `make -C docs html`. CI lives at `.github/workflows/docs.yml`.
@@ -295,6 +302,14 @@ module = [
     "decoy_engine.providers_v2.identifiers._npi",
     "decoy_engine.providers_v2.identifiers._ssn",
     "decoy_engine.providers_v2.identifiers._validate",
+    # engine-v2 S7 (Mimesis Adapter, conditional adoption). Spec:
+    # docs/v2/sprints/engine-v2/sprint-07-mimesis-adapter.md in decoy-platform.
+    # Per best-practices §5.4 + S7 spec §1. Optional dep: the modules import
+    # mimesis behind a guard, but the strict gate still covers the source.
+    "decoy_engine.providers_v2.mimesis",
+    "decoy_engine.providers_v2.mimesis._adapter",
+    "decoy_engine.providers_v2.mimesis._adoption_matrix",
+    "decoy_engine.providers_v2.mimesis._parity",
     # engine-v2 S5 (Pool Manager). Spec:
     # docs/v2/sprints/engine-v2/sprint-05-pool-manager.md in decoy-platform.
     # Per best-practices §5.4 + S5 spec §Done state.

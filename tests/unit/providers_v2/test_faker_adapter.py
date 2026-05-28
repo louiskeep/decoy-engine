@@ -123,21 +123,8 @@ class TestCapabilityMatrixAccess:
         assert excinfo.value.code == "unknown_provider"
 
 
-class TestSeedStability:
-    """S4 spec §10 adapter conformance: seed-stability for Faker means same
-    Faker.seed -> same Faker outputs. This is Faker's own contract; the
-    deterministic-mode-via-source-value contract is S5's PoolAdapter."""
-
-    def test_faker_seed_produces_stable_output(self) -> None:
-        """Faker(seed) -> seeded RNG -> same first output across two instances."""
-        import faker as faker_module
-
-        f1 = faker_module.Faker()
-        f1.seed_instance(42)
-        out1 = f1.email()
-
-        f2 = faker_module.Faker()
-        f2.seed_instance(42)
-        out2 = f2.email()
-
-        assert out1 == out2
+# S4 spec §10 adapter conformance (seed-stability) for FakerAdapter is now
+# exercised through the shared harness in test_adapter_conformance.py
+# (engine-v2 S7; closes MEDIUM-ADAPTER-CONFORMANCE-1). The bespoke
+# TestSeedStability class was re-pointed there so every adapter family runs
+# through one gate rather than per-adapter copies.

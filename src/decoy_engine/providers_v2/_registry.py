@@ -16,9 +16,25 @@ package name -> metadata). Immutable lookup table; rebuilds are cheap.
 
 from __future__ import annotations
 
+import importlib.util
+
 from decoy_engine.providers_v2._adapter import BackendAdapter, CapabilityMatrix
 from decoy_engine.providers_v2._errors import ProviderError
 from decoy_engine.providers_v2._real_registry import get_default_catalog
+
+
+def _mimesis_available() -> bool:
+    """True if the optional `mimesis` dependency is importable.
+
+    Uses find_spec so the default (Mimesis-absent) path never imports the
+    mimesis sub-package, which would raise the install-message ImportError.
+    Treats any lookup failure (genuine absence -> None; a blocked or broken
+    parent -> ImportError/ValueError) as "not available".
+    """
+    try:
+        return importlib.util.find_spec("mimesis") is not None
+    except (ImportError, ValueError):
+        return False
 
 
 class ProviderRegistry:
@@ -152,6 +168,24 @@ def get_default_registry() -> ProviderRegistry:
         }
         for name, adapter in decoy_native_adapters.items():
             bindings[name] = (adapter, decoy_native_caps[name])
+
+        # S7 (per spec §5): fold adopted Mimesis providers into the build (NOT a
+        # post-hoc override on the singleton). Gated on (a) mimesis installed
+        # and (b) the provider being in the adoption matrix. The default
+        # adoption set is empty, so the default registry stays 24 providers
+        # unless benchmarks justify adoption. MimesisAdapter is poolable, so the
+        # binding here is the direct adapter; S9 routing wraps it in PoolAdapter
+        # for deterministic columns, identical to Faker-bound poolable providers.
+        if _mimesis_available():
+            from decoy_engine.providers_v2.mimesis import (
+                ADOPTED_MIMESIS_PROVIDERS,
+                MimesisAdapter,
+            )
+
+            if ADOPTED_MIMESIS_PROVIDERS:
+                mimesis_adapter = MimesisAdapter(fallback=faker_adapter)
+                for name in ADOPTED_MIMESIS_PROVIDERS:
+                    bindings[name] = (mimesis_adapter, mimesis_adapter.capability_matrix(name))
 
         _DEFAULT_REGISTRY = ProviderRegistry(bindings)
     return _DEFAULT_REGISTRY
