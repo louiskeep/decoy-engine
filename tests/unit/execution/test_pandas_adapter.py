@@ -140,3 +140,40 @@ class TestPandasAdapter:
 
     def test_get_default_executor_is_singleton(self) -> None:
         assert get_default_executor() is get_default_executor()
+
+
+def _fpe_col() -> ColumnSeed:
+    return ColumnSeed(
+        namespace="fpe_ns",
+        strategy="fpe",
+        provider="fpe",
+        backend_type="faker",
+        backend_version="v",
+        cardinality_mode="reuse",
+        deterministic=True,
+        provider_config=(("charset", "digits"),),
+        coherent_with=(),
+    )
+
+
+class TestParallelismParity:
+    """Spec section 5.2 + acceptance criterion 7: the FPE chunk count is a
+    wall-clock knob only; output is byte-identical regardless. (Faker per-column
+    runner parallelism, section 5.1 / criterion 6, is deferred to S13: the S4
+    faker adapter shares a per-locale Faker instance, so concurrent pool builds
+    are not thread-safe; that fix + its >=10x gate live in S13.)"""
+
+    def test_fpe_chunk_count_knob_honored_and_parity(self) -> None:
+        # 50 rows so chunk_count=4 does not short-circuit to serial inside the
+        # FPE handler; the adapter knob must thread through and be byte-identical.
+        src = pa.table({"acct": [f"{i:05d}" for i in range(50)]})
+        plan = _plan([("t", TableSeed(per_column=(("acct", _fpe_col()),), per_group=()))])
+        one = PandasExecutionAdapter(fpe_chunk_count=1).run_single(
+            plan, src, registry=_REG, relationship_graph=_GRAPH, namespace_registry=_NS
+        )
+        four = PandasExecutionAdapter(fpe_chunk_count=4).run_single(
+            plan, src, registry=_REG, relationship_graph=_GRAPH, namespace_registry=_NS
+        )
+        assert one.output.column("acct").to_pylist() == four.output.column("acct").to_pylist()
+        # The knob actually masked (format-preserving digits, not the source).
+        assert one.output.column("acct").to_pylist() != src.column("acct").to_pylist()

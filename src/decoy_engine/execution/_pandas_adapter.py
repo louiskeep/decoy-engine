@@ -12,11 +12,19 @@ The run loop:
 2. Build the work list from `plan.seed_envelope` (NOT FK-only `plan.ordering`).
 3. Order it (FK parents before children, including composite-PK parent columns
    before a composite-FK child; plus R17 composite-before-child).
-4. Dispatch each node: a node that is an FK CHILD resolves through the parent
-   source->masked map + the edge's OrphanPolicy; every other node masks via its
-   scalar/composite handler. Parent source columns are snapshotted just before
-   they mask so the child can reconstruct the parent key mapping.
+4. Dispatch each node in dependency order: a node that is an FK CHILD resolves
+   through the parent source->masked map + the edge's OrphanPolicy; every other
+   node masks via its scalar/composite handler. FK-parent columns are snapshotted
+   up front (pre-mask) so a child can reconstruct the parent key mapping.
 5. Convert each frame back to `pa.Table` and return `ExecutionResult`.
+
+Dispatch is serial. Runner-level per-column (Faker) parallelism (spec 5.1) is
+deferred to S13: the S4 faker adapter shares a per-locale Faker instance and does
+seed_instance()+generate, so concurrent pool builds for one locale are not
+thread-safe (they race on the shared RNG and break determinism). Making the
+adapter thread-safe is an S4 change, and the >=10x Faker Performance Gate it feeds
+is S13's. FPE's per-row chunked parallelism is independent (pure derive per row)
+and stays live via the `fpe_chunk_count` knob.
 """
 
 from __future__ import annotations
@@ -29,11 +37,12 @@ from typing import TYPE_CHECKING
 import pandas as pd
 import pyarrow as pa
 
-from decoy_engine.execution._adapter import ExecutionResult, StrategyContext
+from decoy_engine.execution._adapter import ExecutionResult, StrategyContext, StrategyHandler
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._runner import WorkNode, build_work_list, order_work
 from decoy_engine.execution._strategies import SCALAR_HANDLERS
 from decoy_engine.execution._strategies._composite import CompositeHandler
+from decoy_engine.execution._strategies._fpe import FpeStrategyHandler
 from decoy_engine.execution._strategies._orphan import resolve_fk_keys
 from decoy_engine.generation.pool._cache import PoolCache
 from decoy_engine.generation.pool._events import QualityWarning
@@ -71,13 +80,18 @@ class PandasExecutionAdapter:
     adapter_name: str = "pandas"
     adapter_version: str = pd.__version__
 
-    def __init__(self, *, max_workers: int = 4, fpe_chunk_count: int = 4) -> None:
-        self._max_workers = max_workers
+    def __init__(self, *, fpe_chunk_count: int = 4) -> None:
         self._fpe_chunk_count = fpe_chunk_count
         self._composite_handler = CompositeHandler()
+        # Per-adapter handler table so the `fpe_chunk_count` knob is live: the
+        # FPE handler is reconstructed with the configured chunk count (the
+        # module-level SCALAR_HANDLERS uses the handler default). All other
+        # handlers are stateless and shared.
+        self._handlers: dict[str, StrategyHandler] = dict(SCALAR_HANDLERS)
+        self._handlers["fpe"] = FpeStrategyHandler(chunk_count=fpe_chunk_count)
 
     def supports_strategy(self, strategy_name: str) -> bool:
-        return strategy_name in SCALAR_HANDLERS
+        return strategy_name in self._handlers
 
     def shutdown(self) -> None:
         """Idempotent resource release. No long-lived pools held; safe any time."""
@@ -142,14 +156,29 @@ class PandasExecutionAdapter:
         ordered = order_work(build_work_list(plan, registry), relationship_graph)
         node_by_key: dict[_NodeKey, WorkNode] = {n.key: n for n in ordered}
 
-        # Columns that are FK parents (per edge); snapshot their pre-mask source
-        # so a child can reconstruct the parent source->masked key mapping.
+        # FK-parent columns are snapshotted pre-mask so an FK child can rebuild
+        # the parent source->masked key map. Parents always mask before children
+        # (parallel scalars run first, then composites; FK children resolve last),
+        # so an up-front snapshot of every parent column is pre-mask by construction.
         parent_cols: dict[str, set[str]] = {}
         for edge in relationship_graph.edges:
             parent_cols.setdefault(edge.parent_table, set()).update(edge.parent_columns)
-        source_snapshots: dict[tuple[str, str], pd.Series] = {}
+        source_snapshots: dict[tuple[str, str], pd.Series] = {
+            (table, col): frames[table][col].copy()
+            for table in frames
+            for col in parent_cols.get(table, set())
+            if col in frames[table].columns
+        }
         parent_map_cache: dict[_NodeKey, dict[_KeyTuple, _KeyTuple]] = {}
 
+        # Serial dispatch in dependency order: FK parents (scalar/composite) mask
+        # before FK children resolve. Runner-level per-column (Faker) parallelism
+        # (spec 5.1) is DEFERRED to S13: the S4 faker adapter shares a per-locale
+        # Faker instance and does seed_instance()+generate, so concurrent pool
+        # builds for the same locale race and break determinism. Making that
+        # thread-safe is an S4 change; its >=10x Performance Gate lives in S13.
+        # FPE's per-value chunked parallelism is independent of this (pure per-row
+        # derive) and stays live via fpe_chunk_count.
         warnings: list[QualityWarning] = []
         collector = TimingCollector()
         with use_collector(collector):
@@ -157,11 +186,6 @@ class PandasExecutionAdapter:
                 if node.table not in frames:
                     continue
                 df = frames[node.table]
-                # Snapshot pre-mask source for any FK-parent columns this node owns.
-                for col in node.columns:
-                    if col in parent_cols.get(node.table, set()):
-                        source_snapshots[(node.table, col)] = df[col].copy()
-
                 child_edges = relationship_graph.parents_of(node.table, node.columns)
                 if child_edges:
                     with timed_strategy("fk_resolve", ",".join(node.columns)):
@@ -176,7 +200,6 @@ class PandasExecutionAdapter:
                         )
                     warnings.extend(node_warnings)
                     continue
-
                 if node.kind == "composite":
                     with timed_strategy("composite", ",".join(node.columns)):
                         frames[node.table], node_warnings = self._composite_handler.run(
@@ -193,7 +216,7 @@ class PandasExecutionAdapter:
                             "node; the relationship graph has no edge for it."
                         ),
                     )
-                handler = SCALAR_HANDLERS.get(node.strategy)
+                handler = self._handlers.get(node.strategy)
                 if handler is None:
                     raise ExecutionError(
                         code="unsupported_strategy",
@@ -320,7 +343,7 @@ class PandasExecutionAdapter:
                             "masked scalar node, but it is absent from the work list."
                         ),
                     )
-                handler = SCALAR_HANDLERS.get(pnode.strategy)
+                handler = self._handlers.get(pnode.strategy)
                 if handler is None:
                     raise ExecutionError(
                         code="unsupported_strategy",
