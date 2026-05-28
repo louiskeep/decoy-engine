@@ -35,3 +35,11 @@ The v2 parity gate is **value-level**: `assert_frames_semantically_equal` compar
 | v3 | deterministic `shuffle` permutation | `numpy.random.default_rng(seed).permutation` | SAME shared primitive (container-only migration) | No divergence: the permutation primitive is shared, so the permuted values are byte-identical for a given seed. |
 
 Non-deterministic strategies (unseeded `shuffle`, etc.) are NOT in the parity set: their output varies per run by design, so a cross-adapter equality assertion is meaningless. Parity fixtures use deterministic mode.
+
+### v2 output-FILE-bytes drift (S11 review M1; S13 disposition)
+
+The value-level parity above covers in-memory `outputs`. The platform evidence manifest, however, hashes the WRITTEN output-file bytes (`decoy-platform/api/evidence/assembly.py`). Polars 1.x widens five Arrow types on `from_arrow`/`to_arrow` (`large_string`, `large_binary`, `large_list`, `dictionary<uint32,..>`, `time64[ns]`), so a file written by the polars writer can carry a different parquet/IPC schema than the pandas-path file for the SAME logical data, and the manifest hash therefore differs across substrates for those types.
+
+**Disposition (S13 M1): ACCEPT and document** (pending PO + Dennis confirmation on the readiness report). Rationale: post-GA there is exactly ONE substrate (polars; pandas is the parity oracle, removed post-GA per PQ6), so in production only the polars writer produces files and the manifest hash is self-consistent. The "not substrate-invariant" caveat applies ONLY to a pandas-written-vs-polars-written comparison, which does not exist after the flip + pandas removal. The logical data is identical in all cases; only the Arrow type width (and thus the file-byte hash) differs. The alternative (normalize Arrow types in `write_target_polars` before write) is recorded as a possible future hardening if a cross-substrate manifest-hash comparison is ever needed.
+
+This disposition is recorded in the S13 release-readiness report's known-limitations section (the canonical ship-decision home); this doc is the accepted-differences cross-reference.
