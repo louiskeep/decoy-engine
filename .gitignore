@@ -12,3 +12,8 @@ venv/
 logs/
 mappings/
 data/
+
+# The composite locality table is packaged source data, not runtime/test data;
+# re-include it past the broad data/ rule above (S8 us_localities starter).
+!src/decoy_engine/generation/composite/data/
+!src/decoy_engine/generation/composite/data/us_localities.csv
