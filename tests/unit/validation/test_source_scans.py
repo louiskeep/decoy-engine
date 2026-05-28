@@ -110,6 +110,42 @@ class TestLeakage:
         assert run_leakage(ctx).failed is False
 
 
+class TestLeakageValueReuse:
+    """B1: value-reuse strategies (shuffle/categorical) re-emit source values by
+    design; set-membership must NOT hard-fail them. A positional fixed-point is a
+    warning, never a hard fail."""
+
+    def test_shuffle_permutation_does_not_hard_fail(self) -> None:
+        # Full derangement: every output value is a source value, but no fixed point.
+        ctx = _ctx(
+            (("a", _seed("shuffle")),),
+            output=pa.table({"a": ["b", "c", "a"]}),
+            source=pa.table({"a": ["a", "b", "c"]}),
+        )
+        outcome = run_leakage(ctx)
+        assert outcome.failed is False  # set-membership would have flagged all 3
+        assert outcome.warnings == ()  # no fixed points
+
+    def test_shuffle_fixed_point_warns_not_fails(self) -> None:
+        ctx = _ctx(
+            (("a", _seed("shuffle")),),
+            output=pa.table({"a": ["a", "c", "b"]}),  # index 0 stayed in place
+            source=pa.table({"a": ["a", "b", "c"]}),
+        )
+        outcome = run_leakage(ctx)
+        assert outcome.failed is False
+        assert outcome.warnings[0].code == "value_reuse_fixed_point"
+        assert outcome.warnings[0].detail["fixed_point_count"] == 1
+
+    def test_categorical_reuse_does_not_hard_fail(self) -> None:
+        ctx = _ctx(
+            (("g", _seed("categorical")),),
+            output=pa.table({"g": ["F", "M", "F"]}),  # categories overlap the source
+            source=pa.table({"g": ["M", "F", "M"]}),
+        )
+        assert run_leakage(ctx).failed is False
+
+
 class TestSampledValues:
     def test_samples_synthetic_output_excludes_passthrough(self) -> None:
         ctx = _ctx(

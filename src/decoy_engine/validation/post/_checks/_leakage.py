@@ -1,10 +1,20 @@
-"""leakage scan (engine-v2 S10): no source value survives into the masked output.
+"""leakage scan (engine-v2 S10): the masked output does not expose the source.
 
-For every NON-passthrough masked column, no non-null SOURCE value may appear in
-the masked output of that column. A passthrough column is excluded (its output
-equals the source by design). Any leak is a HARD job failure (privacy is
-non-negotiable). The emitted warning carries only a COUNT, never the leaked
-values, so the manifest never echoes source PII (R18).
+The leak contract differs by strategy class (Dennis S10 B1 fix):
+
+- SUBSTITUTION strategies (hash, faker, fpe, redact, truncate, date_shift,
+  bucketize, formula, composite, FK-resolved) replace a value with a NEW one, so
+  any source value reappearing in the output is genuine leakage -> set-membership
+  check, HARD fail.
+- VALUE-REUSE strategies (shuffle, categorical) legitimately re-emit source values
+  (a shuffle is a permutation; categorical re-emits a category), so set-membership
+  is meaningless for them. The meaningful privacy property is POSITIONAL: a row
+  that did not move (output[i] == source[i]) is a fixed point. Fixed points are
+  expected to be rare and are a WARNING, never a hard fail (a documented
+  fixed-point allowance).
+
+passthrough is excluded entirely (its output equals the source by design). Every
+warning carries only a COUNT, never the value, so the manifest never echoes PII.
 """
 
 from __future__ import annotations
@@ -18,6 +28,9 @@ from decoy_engine.validation.post._scan import (
 )
 
 _NAME = "leakage"
+# Strategies whose output re-emits source values by design; set-membership leakage
+# is wrong for them (it would flag every row), so they get a positional check.
+_VALUE_REUSE_STRATEGIES = frozenset({"shuffle", "categorical"})
 
 
 def run_leakage(ctx: ScanContext) -> ScanOutcome:
@@ -30,12 +43,36 @@ def run_leakage(ctx: ScanContext) -> ScanOutcome:
         src_table = ctx.sources.get(table_name)
         if out_table is None or src_table is None:
             continue
-        source_values = {v for v in column_values(src_table, col_name) if v is not None}
+        out_vals = column_values(out_table, col_name)
+        src_vals = column_values(src_table, col_name)
+
+        if strategy in _VALUE_REUSE_STRATEGIES:
+            # Positional fixed-point check: a value-reuse strategy is expected to
+            # re-emit source values, so only a row that did NOT move is notable.
+            # Rare self-maps warn (documented allowance); never a hard fail.
+            if len(out_vals) != len(src_vals):
+                continue
+            fixed_points = sum(
+                1
+                for out_v, src_v in zip(out_vals, src_vals, strict=True)
+                if out_v is not None and src_v is not None and out_v == src_v
+            )
+            if fixed_points:
+                warnings.append(
+                    QualityWarning(
+                        code="value_reuse_fixed_point",
+                        provider=strategy,
+                        column=col_name,
+                        detail={"table": table_name, "fixed_point_count": fixed_points},
+                    )
+                )
+            continue
+
+        # Substitution strategy: any source value in the output is genuine leakage.
+        source_values = {v for v in src_vals if v is not None}
         if not source_values:
             continue
-        leaked = {
-            v for v in column_values(out_table, col_name) if v is not None and v in source_values
-        }
+        leaked = {v for v in out_vals if v is not None and v in source_values}
         if leaked:
             failed = True
             warnings.append(
