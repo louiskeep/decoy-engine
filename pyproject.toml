@@ -277,6 +277,8 @@ module = [
     "decoy_engine.validation.post._checks",
     "decoy_engine.validation.post._checks._pk_uniqueness",
     "decoy_engine.validation.post._checks._cardinality",
+    "decoy_engine.validation.post._checks._format_rules",
+    "decoy_engine.validation.post._checks._composite_coherence",
     # engine-v2 S2 (Relationship Coordinator + Namespace). Spec:
     # docs/v2/sprints/engine-v2/sprint-02-relationship-coordinator-and-namespace.md
     # in decoy-platform. Per best-practices §5.4 (resolution of S2 M4):

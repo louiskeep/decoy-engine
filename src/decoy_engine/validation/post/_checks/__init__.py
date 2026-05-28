@@ -15,6 +15,8 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from decoy_engine.validation.post._checks._cardinality import run_cardinality
+from decoy_engine.validation.post._checks._composite_coherence import run_composite_coherence
+from decoy_engine.validation.post._checks._format_rules import run_format_rules
 from decoy_engine.validation.post._checks._pk_uniqueness import run_pk_uniqueness
 from decoy_engine.validation.post._scan import ScanContext, ScanOutcome
 
@@ -23,6 +25,8 @@ ScanFn = Callable[[ScanContext], ScanOutcome]
 SCANS: tuple[tuple[str, ScanFn], ...] = (
     ("pk_uniqueness", run_pk_uniqueness),
     ("cardinality", run_cardinality),
+    ("format_rules", run_format_rules),
+    ("composite_coherence", run_composite_coherence),
 )
 
 __all__ = ["SCANS", "ScanFn"]
