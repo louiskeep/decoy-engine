@@ -133,6 +133,24 @@ def test_all_lists_every_public_name():
         "QualityWarning",
         "ValuePool",
         "get_default_pool_cache",
+        # engine-v2 S6 (Custom Identifier Generators).
+        "EinAdapter",
+        "EinDomain",
+        "EinValidator",
+        "IdentifierError",
+        "IdentifierFormatError",
+        "MrnAdapter",
+        "MrnDomain",
+        "MrnValidator",
+        "NdcAdapter",
+        "NdcDomain",
+        "NdcValidator",
+        "NpiAdapter",
+        "NpiDomain",
+        "NpiValidator",
+        "SsnAdapter",
+        "SsnDomain",
+        "SsnValidator",
     }
     assert set(decoy_engine.__all__) == expected
 

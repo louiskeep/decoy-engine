@@ -108,7 +108,13 @@ def compile_plan(
     # S5 wiring (per spec §6): pool_capacity_pre_flight (row 7) lives in
     # decoy_engine.generation.pool._validate. Lazy import same rationale
     # as the relationships block above.
+    # S6 wiring (per spec §6): deterministic_namespace_completeness (row 9)
+    # lives in decoy_engine.providers_v2.identifiers._validate. Lazy
+    # import for symmetry with rows 6 + 7.
     from decoy_engine.generation.pool import check_pool_capacity_pre_flight
+    from decoy_engine.providers_v2.identifiers import (
+        deterministic_namespace_completeness,
+    )
     from decoy_engine.relationships import (
         build_namespace_registry,
         build_relationship_graph,
@@ -135,16 +141,20 @@ def compile_plan(
     # checks_skipped rather than checks_passed. pool_capacity still runs (it
     # hard-errors on UNIQUE columns, which cannot be deferred); its soft-mode
     # verification is what's skipped.
+    # Row 9 (S6 + S7): deterministic_namespace_completeness is structural (no
+    # distinct counts), so it runs and lands in checks_passed in both branches.
     if no_profile:
         capacity_warnings = check_pool_capacity_pre_flight(
             config, profile, on_pool_exhaustion=on_pool_exhaustion, no_profile=True
         )
+        deterministic_namespace_completeness(config)
         checks_passed: tuple[str, ...] = (
             "namespace_ambiguity",
             "unknown_provider",
             "fk_plan_ordering",
             "composite_columns_length_match",
             "orphan_fk_policy_completeness",
+            "deterministic_namespace_completeness",
         )
         checks_skipped: tuple[str, ...] = (
             "basic_uniqueness_pre_flight",
@@ -155,6 +165,7 @@ def compile_plan(
         capacity_warnings = check_pool_capacity_pre_flight(
             config, profile, on_pool_exhaustion=on_pool_exhaustion
         )
+        deterministic_namespace_completeness(config)
         checks_passed = (
             "namespace_ambiguity",
             "unknown_provider",
@@ -163,6 +174,7 @@ def compile_plan(
             "composite_columns_length_match",
             "orphan_fk_policy_completeness",
             "pool_capacity_pre_flight",
+            "deterministic_namespace_completeness",
         )
         checks_skipped = ()
 

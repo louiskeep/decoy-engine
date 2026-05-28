@@ -35,9 +35,9 @@ from decoy_engine.profile import Profile
 # The exact checks_passed tuple S2 must emit. Documented position: row 6
 # (`orphan_fk_policy_completeness`) appended after row 5
 # (`composite_columns_length_match`). S1's order preserved.
-# S5 added row 7 (pool_capacity_pre_flight) so the post-S5 tuple has
-# seven entries. S2's regression contract (B1) holds: the S1+S2 prefix is
-# unchanged, and post-S2 sprints append in documented order.
+# Post-S6: 8 entries (S5 added row 7; S6 added row 9). S2's regression
+# contract (B1) holds: the S1+S2 prefix is unchanged, and post-S2
+# sprints append in documented order.
 EXPECTED_S2_CHECKS_PASSED = (
     "namespace_ambiguity",
     "unknown_provider",
@@ -46,6 +46,7 @@ EXPECTED_S2_CHECKS_PASSED = (
     "composite_columns_length_match",
     "orphan_fk_policy_completeness",
     "pool_capacity_pre_flight",
+    "deterministic_namespace_completeness",
 )
 
 
@@ -59,21 +60,23 @@ class TestChecksPassedShape:
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
         assert plan.plan_compile.checks_passed == EXPECTED_S2_CHECKS_PASSED
 
-    def test_checks_passed_contains_exactly_seven_entries(
+    def test_checks_passed_contains_exactly_eight_entries(
         self, simple_config: dict, simple_profile: Profile
     ) -> None:
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
-        assert len(plan.plan_compile.checks_passed) == 7
+        assert len(plan.plan_compile.checks_passed) == 8
 
     def test_orphan_fk_policy_completeness_at_documented_position(
         self, simple_config: dict, simple_profile: Profile
     ) -> None:
         """Row 6 of the compile-check ownership table follows row 5; row 7
-        (pool_capacity_pre_flight) follows row 6 post-S5."""
+        (pool_capacity_pre_flight) follows row 6 post-S5; row 9
+        (deterministic_namespace_completeness) appended post-S6."""
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
-        assert plan.plan_compile.checks_passed[-2] == "orphan_fk_policy_completeness"
-        assert plan.plan_compile.checks_passed[-3] == "composite_columns_length_match"
-        assert plan.plan_compile.checks_passed[-1] == "pool_capacity_pre_flight"
+        assert plan.plan_compile.checks_passed[-3] == "orphan_fk_policy_completeness"
+        assert plan.plan_compile.checks_passed[-4] == "composite_columns_length_match"
+        assert plan.plan_compile.checks_passed[-2] == "pool_capacity_pre_flight"
+        assert plan.plan_compile.checks_passed[-1] == "deterministic_namespace_completeness"
 
     def test_s1_check_order_preserved(self, simple_config: dict, simple_profile: Profile) -> None:
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")

@@ -12,14 +12,16 @@ from decoy_engine.providers_v2._real_registry import get_default_catalog
 
 class TestPerCatalogEntry:
     def test_catalog_has_24_entries(self) -> None:
-        """Per S4 spec §6: S1 stubs + 4 S4 additions. M1 dropped date_shift_offset.
+        """Post-S6 swap (per S6 spec §7): the 5 synthetic identifiers
+        (ssn, ein, npi, ndc, mrn) moved out of the Faker catalog and into
+        DecoyNativeAdapter bindings in get_default_registry(). Faker-bound
+        catalog is now 19; full registry is 24."""
+        assert len(get_default_catalog()) == 19
 
-        Spec text at §6 says "21 S1 stub names" but the actual S1_STUB_REGISTRY
-        had 20 names (3 identifiers + 6 person + 5 address + 2 healthcare + 4
-        generic). Real count: 20 + 4 = 24. Flagged as a spec-fidelity nit for
-        the S4 end-of-sprint review; the test asserts the actual count.
-        """
-        assert len(get_default_catalog()) == 24
+    def test_full_registry_has_24_entries(self) -> None:
+        """Full registry: 19 Faker-bound + 5 DecoyNative-bound = 24."""
+        registry = get_default_registry()
+        assert len(registry.known_providers()) == 24
 
     def test_all_entries_validate_at_import(self) -> None:
         """Pydantic raises at construction if any field is missing/mistyped.
@@ -106,15 +108,20 @@ class TestPoolableSubset:
 
     def test_pii_providers_poolable(self) -> None:
         poolable_subset = {cap.provider for cap in get_default_catalog() if cap.poolable}
-        # Identifiers (8) + person attrs (7) + 4 address attrs (city/state/zip/street)
-        # = 19 poolable. address_full + 4 generic providers stay non-poolable.
+        # Post-S6 Faker catalog: 19 entries; poolable subset shrinks because the
+        # 5 synthetic identifiers (ssn/ein/npi/ndc/mrn) moved to DecoyNative
+        # with poolable=False per S6 §3.1.
         assert "person_email" in poolable_subset
-        assert "synthetic_ssn" in poolable_subset
         assert "address_zip" in poolable_subset
+        assert "synthetic_member_id" in poolable_subset  # still Faker-bound
         assert "lorem_text" not in poolable_subset
         assert "uuid" not in poolable_subset
         assert "random_int_range" not in poolable_subset
         assert "address_full" not in poolable_subset
+        # Post-S6: the 5 swapped identifiers are no longer in the Faker
+        # catalog (they're DecoyNative-bound in get_default_registry()).
+        assert "synthetic_ssn" not in poolable_subset
+        assert "synthetic_npi" not in poolable_subset
 
 
 class TestExtraFieldsForbidden:

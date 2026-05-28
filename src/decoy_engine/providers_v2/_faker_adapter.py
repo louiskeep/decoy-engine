@@ -34,14 +34,14 @@ from decoy_engine.providers_v2._adapter import (
 from decoy_engine.providers_v2._errors import AdapterError, ProviderError
 
 # Semantic name -> Faker method name. Frozen; lookup table only.
+# Post-S6 (per spec §7): the 5 swap targets (synthetic_ssn / ein / npi /
+# ndc / mrn) are now bound to DecoyNativeAdapter instances in the
+# registry; FakerAdapter no longer routes them. The 3 remaining
+# synthetic identifiers (account_number, member_id, plan_id) stay
+# Faker-bound.
 _FAKER_METHOD_MAP: dict[str, str] = {
-    # Identifiers
-    "synthetic_ssn": "ssn",
-    "synthetic_ein": "ein",
+    # Identifiers (3 Faker-bound; 5 swapped to DecoyNative per S6)
     "synthetic_account_number": "bban",
-    "synthetic_npi": "numerify",
-    "synthetic_ndc": "numerify",
-    "synthetic_mrn": "numerify",
     "synthetic_member_id": "numerify",
     "synthetic_plan_id": "numerify",
     # Person attributes
@@ -66,12 +66,10 @@ _FAKER_METHOD_MAP: dict[str, str] = {
 }
 
 
-# Per-provider kwargs for Faker methods that need shape hints
-# (e.g. numerify needs a digit pattern for synthetic IDs).
+# Per-provider kwargs for Faker methods that need shape hints. Post-S6:
+# the NPI/NDC/MRN entries are dropped because those identifiers are now
+# DecoyNative-bound.
 _FAKER_DEFAULT_KWARGS: dict[str, dict[str, Any]] = {
-    "synthetic_npi": {"text": "##########"},  # 10-digit NPI
-    "synthetic_ndc": {"text": "#####-####-##"},  # NDC 11-digit format
-    "synthetic_mrn": {"text": "MRN########"},  # 8-digit MRN
     "synthetic_member_id": {"text": "MBR########"},
     "synthetic_plan_id": {"text": "PLN######"},
     "random_choice": {"elements": ("a", "b", "c")},

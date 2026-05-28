@@ -284,6 +284,17 @@ module = [
     "decoy_engine.providers_v2._faker_adapter",
     "decoy_engine.providers_v2._real_registry",
     "decoy_engine.providers_v2._registry",
+    # engine-v2 S6 (Custom Identifier Generators). Spec:
+    # docs/v2/sprints/engine-v2/sprint-06-custom-identifier-generators.md
+    # in decoy-platform. Per best-practices §5.4 + S6 spec §Done state.
+    "decoy_engine.providers_v2.identifiers",
+    "decoy_engine.providers_v2.identifiers._ein",
+    "decoy_engine.providers_v2.identifiers._errors",
+    "decoy_engine.providers_v2.identifiers._mrn",
+    "decoy_engine.providers_v2.identifiers._ndc",
+    "decoy_engine.providers_v2.identifiers._npi",
+    "decoy_engine.providers_v2.identifiers._ssn",
+    "decoy_engine.providers_v2.identifiers._validate",
     # engine-v2 S5 (Pool Manager). Spec:
     # docs/v2/sprints/engine-v2/sprint-05-pool-manager.md in decoy-platform.
     # Per best-practices §5.4 + S5 spec §Done state.

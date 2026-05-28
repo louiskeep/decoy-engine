@@ -57,16 +57,16 @@ def _faker_cap(
     )
 
 
-# 25 catalog entries. The frozenset of names + the per-name
-# CapabilityMatrix are the two public surfaces the registry exposes.
+# Post-S6 swap (per S6 spec §7): the 5 synthetic identifiers
+# (`synthetic_ssn`, `synthetic_ein`, `synthetic_npi`, `synthetic_ndc`,
+# `synthetic_mrn`) are bound to DecoyNativeAdapter instances at
+# get_default_registry() build time instead of FakerAdapter. The
+# Faker-bound entries below are the 3 remaining Faker-shaped identifiers
+# (`synthetic_account_number`, `synthetic_member_id`, `synthetic_plan_id`)
+# plus the rest of the catalog. Total post-S6 count stays at 24.
 _CATALOG: tuple[CapabilityMatrix, ...] = (
-    # Identifiers (8) -- PII-shaped, poolable, participate in FK/PK
-    _faker_cap("synthetic_ssn", poolable=True, participates_in_fk_pk=True),
-    _faker_cap("synthetic_ein", poolable=True, participates_in_fk_pk=True),
+    # Identifiers (3 remaining Faker-bound; 5 swapped to DecoyNative in _registry.py)
     _faker_cap("synthetic_account_number", poolable=True, participates_in_fk_pk=True),
-    _faker_cap("synthetic_npi", poolable=True, participates_in_fk_pk=True),
-    _faker_cap("synthetic_ndc", poolable=True, participates_in_fk_pk=True),
-    _faker_cap("synthetic_mrn", poolable=True, participates_in_fk_pk=True),
     _faker_cap("synthetic_member_id", poolable=True, participates_in_fk_pk=True),
     _faker_cap("synthetic_plan_id", poolable=True, participates_in_fk_pk=True),
     # Person attributes (7) -- PII-shaped, poolable
@@ -93,5 +93,10 @@ _CATALOG: tuple[CapabilityMatrix, ...] = (
 
 
 def get_default_catalog() -> tuple[CapabilityMatrix, ...]:
-    """Return the 25-entry default catalog (immutable tuple)."""
+    """Return the 19-entry Faker-bound default catalog (immutable tuple).
+
+    The full default registry includes 5 additional DecoyNative-bound
+    entries for the synthetic identifiers (per S6 spec §7). Combined
+    count: 24.
+    """
     return _CATALOG

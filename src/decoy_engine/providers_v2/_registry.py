@@ -96,22 +96,46 @@ _DEFAULT_REGISTRY: ProviderRegistry | None = None
 
 
 def get_default_registry() -> ProviderRegistry:
-    """Return the singleton default registry: 25 FakerAdapter-bound entries.
+    """Return the singleton default registry.
+
+    Post-S6 (per S6 spec §7): 19 FakerAdapter-bound entries + 5
+    DecoyNativeAdapter-bound entries (the synthetic-identifier swap
+    targets: synthetic_ssn, synthetic_ein, synthetic_npi, synthetic_ndc,
+    synthetic_mrn). Total: 24.
 
     Two calls return the same object. Tests that want a clean registry
     use `ProviderRegistry({...})` directly.
     """
     global _DEFAULT_REGISTRY
     if _DEFAULT_REGISTRY is None:
-        # Build the default FakerAdapter wired to a closure-style
-        # capabilities lookup that resolves against the registry being
-        # constructed. The two-pass dance (build caps lookup first,
-        # then build registry that references the adapter that references
-        # the caps lookup) keeps the dependency direction clean.
+        # Two-pass dance preserved: build caps lookup over the combined
+        # catalog (Faker + DecoyNative), then construct adapters that
+        # reference the lookup.
         from decoy_engine.providers_v2._faker_adapter import FakerAdapter
+        from decoy_engine.providers_v2.identifiers import (
+            EinAdapter,
+            MrnAdapter,
+            NdcAdapter,
+            NpiAdapter,
+            SsnAdapter,
+        )
 
-        catalog = get_default_catalog()
-        caps_by_name = {cap.provider: cap for cap in catalog}
+        # 19 Faker-bound entries from the catalog.
+        faker_catalog = get_default_catalog()
+        # 5 DecoyNative entries built from each adapter's capability_matrix().
+        decoy_native_adapters: dict[str, BackendAdapter] = {
+            "synthetic_ssn": SsnAdapter(),
+            "synthetic_ein": EinAdapter(),
+            "synthetic_npi": NpiAdapter(),
+            "synthetic_ndc": NdcAdapter(),
+            "synthetic_mrn": MrnAdapter(),
+        }
+        decoy_native_caps = {
+            name: adapter.capability_matrix(name) for name, adapter in decoy_native_adapters.items()
+        }
+
+        caps_by_name = {cap.provider: cap for cap in faker_catalog}
+        caps_by_name.update(decoy_native_caps)
 
         def _caps_lookup(provider: str) -> CapabilityMatrix:
             cap = caps_by_name.get(provider)
@@ -122,10 +146,13 @@ def get_default_registry() -> ProviderRegistry:
                 )
             return cap
 
-        adapter = FakerAdapter(capabilities_lookup=_caps_lookup)
+        faker_adapter = FakerAdapter(capabilities_lookup=_caps_lookup)
         bindings: dict[str, tuple[BackendAdapter, CapabilityMatrix]] = {
-            cap.provider: (adapter, cap) for cap in catalog
+            cap.provider: (faker_adapter, cap) for cap in faker_catalog
         }
+        for name, adapter in decoy_native_adapters.items():
+            bindings[name] = (adapter, decoy_native_caps[name])
+
         _DEFAULT_REGISTRY = ProviderRegistry(bindings)
     return _DEFAULT_REGISTRY
 

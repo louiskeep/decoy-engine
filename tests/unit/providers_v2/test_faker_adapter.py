@@ -42,9 +42,11 @@ class TestNonDeterministicGenerate:
         out = _adapter().generate("address_zip", spec=_spec())
         assert isinstance(out, str) and len(out) > 0
 
-    def test_generate_synthetic_ssn_returns_ssn_shaped_string(self) -> None:
-        out = _adapter().generate("synthetic_ssn", spec=_spec())
-        assert isinstance(out, str) and len(out) >= 9
+    def test_generate_synthetic_member_id_returns_string(self) -> None:
+        """Post-S6: synthetic_ssn is now DecoyNative-bound; test a still-Faker-bound
+        synthetic identifier (synthetic_member_id) instead."""
+        out = _adapter().generate("synthetic_member_id", spec=_spec())
+        assert isinstance(out, str) and len(out) > 0
 
     def test_generate_unknown_provider_raises_adapter_error(self) -> None:
         from decoy_engine.providers_v2 import AdapterError
