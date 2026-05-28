@@ -23,7 +23,7 @@ import pytest
 from decoy_engine.execution import PandasExecutionAdapter, PolarsExecutionAdapter
 from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
 from decoy_engine.providers_v2 import get_default_registry
-from decoy_engine.relationships._graph import RelationshipGraph
+from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge, RelationshipGraph
 from decoy_engine.relationships._namespace import NamespaceRegistry
 
 _REG = get_default_registry()
@@ -155,6 +155,120 @@ _CASES: list[tuple[str, Any, dict[str, pa.Table]]] = [
         _plan("t", (("c", _col("hash", namespace="h_ns")),)),
         {"t": pa.table({"c": _MEDIUM})},
     ),
+    (
+        "categorical-deterministic",
+        _plan(
+            "t",
+            (
+                (
+                    "c",
+                    _col(
+                        "categorical",
+                        namespace="cat_ns",
+                        deterministic=True,
+                        provider_config=(("categories", ["alpha", "beta", "gamma"]),),
+                    ),
+                ),
+            ),
+        ),
+        {"t": pa.table({"c": _SMALL})},
+    ),
+    (
+        "categorical-medium",
+        _plan(
+            "t",
+            (
+                (
+                    "c",
+                    _col(
+                        "categorical",
+                        namespace="cat_ns",
+                        deterministic=True,
+                        provider_config=(("categories", ["A", "B", "C", "D"]),),
+                    ),
+                ),
+            ),
+        ),
+        {"t": pa.table({"c": _MEDIUM})},
+    ),
+    (
+        "date_shift-iso-dates",
+        _plan(
+            "t",
+            (
+                (
+                    "c",
+                    _col(
+                        "date_shift",
+                        namespace="ds_ns",
+                        provider_config=(("min_days", -30), ("max_days", 30)),
+                    ),
+                ),
+            ),
+        ),
+        {"t": pa.table({"c": ["2020-01-15", "2019-06-30", None, "2021-12-01", "2018-03-20"]})},
+    ),
+    (
+        "bucketize-lower-int",
+        _plan("t", (("c", _col("bucketize", provider_config=(("width", 10),))),)),
+        {"t": pa.table({"c": pa.array([3, 17, 42, None, 99], type=pa.int64())})},
+    ),
+    (
+        "bucketize-range-format",
+        _plan(
+            "t",
+            (("c", _col("bucketize", provider_config=(("width", 10), ("format", "range")))),),
+        ),
+        {"t": pa.table({"c": pa.array([3, 17, 42, 99], type=pa.int64())})},
+    ),
+    (
+        "fpe-digits",
+        _plan(
+            "t",
+            (
+                (
+                    "c",
+                    _col(
+                        "fpe",
+                        namespace="fpe_ns",
+                        deterministic=True,
+                        provider="fpe",
+                        provider_config=(("charset", "digits"),),
+                    ),
+                ),
+            ),
+        ),
+        {"t": pa.table({"c": [f"{i:05d}" for i in range(20)]})},
+    ),
+    (
+        "faker-person-email-deterministic",
+        _plan(
+            "t",
+            (
+                (
+                    "c",
+                    _col(
+                        "faker",
+                        namespace="people_ns",
+                        deterministic=True,
+                        provider="person_email",
+                        provider_config=(("pool_size", 256),),
+                    ),
+                ),
+            ),
+        ),
+        {"t": pa.table({"c": ["a", "b", "a", None, "c"]})},
+    ),
+    (
+        "formula-upper",
+        _plan("t", (("c", _col("formula", provider_config=(("formula", "value.upper()"),))),)),
+        {"t": pa.table({"c": ["alpha", "beta", None, "delta"]})},
+    ),
+    (
+        "formula-fstring",
+        _plan("t", (("c", _col("formula", provider_config=(("formula", "f'USER-{value}'"),))),)),
+        {"t": pa.table({"c": ["alpha", "beta", "gamma"]})},
+    ),
 ]
 
 
@@ -162,3 +276,97 @@ _CASES: list[tuple[str, Any, dict[str, pa.Table]]] = [
 def test_strategy_parity(plan: Any, sources: dict[str, pa.Table]) -> None:
     pandas_out, polars_out = _both(plan, sources)
     assert_frames_semantically_equal(pandas_out, polars_out)
+
+
+# --------------------------------------------------------------------------
+# FK / orphan-REMAP parity (S11 review M3). The FK path is the most
+# dtype-sensitive in the engine (the int/float null-dtype split that to_pandas
+# introduces on a null-bearing child FK column). At S12 the polars adapter runs
+# FK jobs via the pandas oracle (the round-trip), so this proves the round-trip
+# preserves FK resolution + orphan policy identically to a direct pandas run,
+# rather than assuming it (the S11 review's "I expect" -> "the suite proves").
+# --------------------------------------------------------------------------
+
+
+def _hash_col(namespace: str) -> ColumnSeed:
+    return _col("hash", namespace=namespace, deterministic=True, provider="hash")
+
+
+def _fk_plan() -> Any:
+    return SimpleNamespace(
+        seed_envelope=SeedEnvelope(
+            job_seed=b"\x07" * 8,
+            per_table=(
+                (
+                    "customers",
+                    TableSeed(per_column=(("customer_id", _hash_col("cust")),), per_group=()),
+                ),
+                (
+                    "orders",
+                    TableSeed(per_column=(("customer_id", _hash_col("cust")),), per_group=()),
+                ),
+            ),
+        )
+    )
+
+
+def _fk_graph(policy: OrphanPolicy) -> RelationshipGraph:
+    edge = RelationshipEdge(
+        parent_table="customers",
+        parent_columns=("customer_id",),
+        child_table="orders",
+        child_columns=("customer_id",),
+        namespace="cust",
+        orphan_policy=policy,
+    )
+    return RelationshipGraph(edges=(edge,), ordering=())
+
+
+def _both_multi(
+    plan: Any, sources: dict[str, pa.Table], graph: RelationshipGraph
+) -> tuple[dict[str, pa.Table], dict[str, pa.Table]]:
+    pandas_res = PandasExecutionAdapter().run(
+        plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
+    )
+    polars_res = PolarsExecutionAdapter().run(
+        plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
+    )
+    return pandas_res.outputs, polars_res.outputs
+
+
+_FK_CASES: list[tuple[str, dict[str, pa.Table], OrphanPolicy]] = [
+    (
+        "fk-null-bearing-child-preserve",
+        {
+            "customers": pa.table({"customer_id": ["c1", "c2", "c3"]}),
+            "orders": pa.table({"customer_id": ["c1", None, "c2", "c1"]}),
+        },
+        OrphanPolicy.PRESERVE,
+    ),
+    (
+        "fk-orphan-remap",
+        {
+            "customers": pa.table({"customer_id": ["c1", "c2", "c3"]}),
+            "orders": pa.table({"customer_id": ["c1", "c2", "c9", None]}),  # c9 orphan
+        },
+        OrphanPolicy.REMAP,
+    ),
+    (
+        "fk-int-null-child",  # to_pandas widens the null child to float64
+        {
+            "customers": pa.table({"customer_id": pa.array([1, 2, 3], type=pa.int64())}),
+            "orders": pa.table({"customer_id": pa.array([1, None, 2], type=pa.int64())}),
+        },
+        OrphanPolicy.PRESERVE,
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "sources,policy", [(c[1], c[2]) for c in _FK_CASES], ids=[c[0] for c in _FK_CASES]
+)
+def test_fk_parity(sources: dict[str, pa.Table], policy: OrphanPolicy) -> None:
+    pandas_out, polars_out = _both_multi(_fk_plan(), sources, _fk_graph(policy))
+    assert set(polars_out) == set(pandas_out)
+    for table in pandas_out:
+        assert_frames_semantically_equal(pandas_out[table], polars_out[table])

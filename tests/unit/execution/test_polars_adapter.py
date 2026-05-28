@@ -32,7 +32,7 @@ from decoy_engine.execution.polars import (
 )
 from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
 from decoy_engine.providers_v2 import get_default_registry
-from decoy_engine.relationships._graph import RelationshipGraph
+from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge, RelationshipGraph
 from decoy_engine.relationships._namespace import NamespaceRegistry
 
 _REG = get_default_registry()
@@ -77,6 +77,47 @@ def _plan(per_table: list[tuple[str, TableSeed]]) -> Any:
     return SimpleNamespace(
         seed_envelope=SeedEnvelope(job_seed=b"\x00" * 8, per_table=tuple(per_table))
     )
+
+
+def _hash_col(namespace: str) -> ColumnSeed:
+    return ColumnSeed(
+        namespace=namespace,
+        strategy="hash",
+        provider="hash",
+        backend_type="faker",
+        backend_version="v",
+        cardinality_mode="reuse",
+        deterministic=True,
+        provider_config=(),
+        coherent_with=(),
+    )
+
+
+def _fk_setup() -> tuple[Any, dict[str, pa.Table], RelationshipGraph]:
+    """A single-column FK job (customers -> orders); FK resolution is the
+    remaining non-polars-native work after the 11 scalar strategies migrate."""
+    plan = _plan(
+        [
+            (
+                "customers",
+                TableSeed(per_column=(("customer_id", _hash_col("cust")),), per_group=()),
+            ),
+            ("orders", TableSeed(per_column=(("customer_id", _hash_col("cust")),), per_group=())),
+        ]
+    )
+    sources = {
+        "customers": pa.table({"customer_id": ["c1", "c2", "c3"]}),
+        "orders": pa.table({"customer_id": ["c1", "c2", "c1"]}),
+    }
+    edge = RelationshipEdge(
+        parent_table="customers",
+        parent_columns=("customer_id",),
+        child_table="orders",
+        child_columns=("customer_id",),
+        namespace="cust",
+        orphan_policy=OrphanPolicy.PRESERVE,
+    )
+    return plan, sources, RelationshipGraph(edges=(edge,), ordering=())
 
 
 def _pandas_outputs(plan: Any, sources: dict[str, pa.Table]) -> dict[str, list[Any]]:
@@ -190,13 +231,24 @@ class TestPolarsAdapterConformance:
         assert adapter.adapter_name == "polars"
         assert adapter.adapter_version == pl.__version__
 
-    def test_supports_migrated_not_others(self) -> None:
-        # S12 migrates strategies band by band; cheap band + hash so far.
+    def test_supports_all_eleven_strategies(self) -> None:
+        # S12 close: all 11 mask strategies are migrated (native or pandas-port).
         adapter = PolarsExecutionAdapter()
-        for native in ("passthrough", "redact", "truncate", "shuffle", "hash"):
+        for native in (
+            "passthrough",
+            "redact",
+            "truncate",
+            "shuffle",
+            "hash",
+            "categorical",
+            "date_shift",
+            "bucketize",
+            "fpe",
+            "faker",
+            "formula",
+        ):
             assert adapter.supports_strategy(native) is True
-        for not_yet in ("fpe", "categorical", "formula", "date_shift", "bucketize", "faker"):
-            assert adapter.supports_strategy(not_yet) is False
+        assert adapter.supports_strategy("not_a_strategy") is False
 
     def test_shutdown_idempotent(self) -> None:
         adapter = PolarsExecutionAdapter()
@@ -310,21 +362,28 @@ class TestFallbackParity:
         # redact is polars-native at S12 cheap-band close: it ran on the polars path
         assert res.quality_metrics["executed_substrate"] == {"redact": "polars"}
 
-    def test_unmigrated_strategy_reports_pandas_substrate(self) -> None:
-        # fpe has not migrated; the job runs via the pandas oracle and reports it.
-        src = pa.table({"acct": ["12345", "67890"]})
-        plan = _plan([("t", TableSeed(per_column=(("acct", _fpe_col()),), per_group=()))])
-        res = _polars_run(plan, {"t": src})
-        assert res.quality_metrics["executed_substrate"] == {"fpe": "pandas"}
+    def test_fk_job_uses_oracle_substrate(self) -> None:
+        # All 11 scalar strategies are polars-native at S12 close; the remaining
+        # non-native work is FK resolution (and composite bundles), which still
+        # runs via the pandas oracle and reports pandas.
+        plan, sources, graph = _fk_setup()
+        res = PolarsExecutionAdapter().run(
+            plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
+        )
+        assert res.quality_metrics["executed_substrate"] == {"hash": "pandas"}
+        assert set(res.outputs) == {"customers", "orders"}
 
-    def test_fallback_disabled_raises_on_unmigrated(self) -> None:
-        # fpe is not yet polars-native; with the migration-window fallback off it
-        # hard-fails rather than silently routing through pandas (PQ6 / S13 close).
-        src = pa.table({"acct": ["12345"]})
-        plan = _plan([("t", TableSeed(per_column=(("acct", _fpe_col()),), per_group=()))])
+    def test_fallback_disabled_raises_on_fk(self) -> None:
+        # FK resolution is not yet polars-native; with the migration-window
+        # fallback off it hard-fails rather than silently routing through pandas
+        # (PQ6 / S13 close: no silent downgrade).
+        plan, sources, graph = _fk_setup()
         with pytest.raises(ExecutionError) as exc:
-            _polars_run(plan, {"t": src}, fallback_to_pandas=False)
+            PolarsExecutionAdapter(fallback_to_pandas=False).run(
+                plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
+            )
         assert exc.value.code == "polars_substrate_strategy_unmigrated"
+        assert "fk_resolution" in str(exc.value)
 
 
 class TestSubstrateSelector:
