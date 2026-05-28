@@ -179,6 +179,14 @@ from decoy_engine.sdk import (
 )
 from decoy_engine.storm import DetectorMatch, FieldStats, SentinelFlag, StormProfile, run_storm
 from decoy_engine.validation import validate_config
+from decoy_engine.validation.post import (
+    CompositeCoherenceReport,
+    DistinctCount,
+    FkValidityReport,
+    NullCount,
+    PostValidationRunner,
+    QualitySummary,
+)
 from decoy_engine.validation_result import (
     CODES as VALIDATION_CODES,
 )
@@ -206,6 +214,7 @@ __all__ = [
     "CardinalityMode",
     "CheckResult",
     "CompositeAdapter",
+    "CompositeCoherenceReport",
     "CompositeError",
     "CompositeGenerator",
     "ConfigError",
@@ -219,6 +228,7 @@ __all__ = [
     "DiscoveryResult",
     "DiscoverySqlError",
     "DisguiseRecommendation",
+    "DistinctCount",
     "Domain",
     "EinAdapter",
     "EinDomain",
@@ -233,6 +243,7 @@ __all__ = [
     "FileMeta",
     "FileSink",
     "FileSource",
+    "FkValidityReport",
     "FlagPauseSignal",
     "ForecastReport",
     "GenerationError",
@@ -256,6 +267,7 @@ __all__ = [
     "NpiAdapter",
     "NpiDomain",
     "NpiValidator",
+    "NullCount",
     "OrphanPolicy",
     "PandasExecutionAdapter",
     "PermanentError",
@@ -267,10 +279,12 @@ __all__ = [
     "PoolCache",
     "PoolCapacityError",
     "PoolSampler",
+    "PostValidationRunner",
     "PreviewResult",
     "ProviderError",
     "ProviderRegistry",
     "ProviderSpec",
+    "QualitySummary",
     "QualityWarning",
     "RelationshipEdge",
     "RelationshipGraph",
