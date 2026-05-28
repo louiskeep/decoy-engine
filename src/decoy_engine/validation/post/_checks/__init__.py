@@ -17,7 +17,10 @@ from collections.abc import Callable
 from decoy_engine.validation.post._checks._cardinality import run_cardinality
 from decoy_engine.validation.post._checks._composite_coherence import run_composite_coherence
 from decoy_engine.validation.post._checks._format_rules import run_format_rules
+from decoy_engine.validation.post._checks._leakage import run_leakage
+from decoy_engine.validation.post._checks._null_audit import run_null_audit
 from decoy_engine.validation.post._checks._pk_uniqueness import run_pk_uniqueness
+from decoy_engine.validation.post._checks._sampled_values import run_sampled_values
 from decoy_engine.validation.post._scan import ScanContext, ScanOutcome
 
 ScanFn = Callable[[ScanContext], ScanOutcome]
@@ -27,6 +30,9 @@ SCANS: tuple[tuple[str, ScanFn], ...] = (
     ("cardinality", run_cardinality),
     ("format_rules", run_format_rules),
     ("composite_coherence", run_composite_coherence),
+    ("null_audit", run_null_audit),
+    ("leakage", run_leakage),
+    ("sampled_values", run_sampled_values),
 )
 
 __all__ = ["SCANS", "ScanFn"]

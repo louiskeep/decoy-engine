@@ -80,6 +80,7 @@ class PostValidationRunner:
             registry=registry,
             relationship_graph=relationship_graph,
             namespace_registry=namespace_registry,
+            sample_size=int(config.get("post_validation_sample_size", 100)),
         )
 
         outcomes: list[ScanOutcome] = []

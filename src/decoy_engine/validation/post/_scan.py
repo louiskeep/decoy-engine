@@ -48,6 +48,7 @@ class ScanContext:
     registry: ProviderRegistry
     relationship_graph: RelationshipGraph
     namespace_registry: NamespaceRegistry
+    sample_size: int = 100  # rows per column for the sampled_values evidence (R18)
 
 
 @dataclass(frozen=True)
@@ -74,3 +75,26 @@ def column_values(table: pa.Table, column: str) -> list[Any]:
         return []
     values: list[Any] = table.column(column).to_pylist()
     return values
+
+
+# Sentinel strategy label for composite-FK group columns (per_group has a
+# GroupSeed, not a per-column strategy; the columns are masked, non-passthrough).
+FK_GROUP_STRATEGY = "<fk_group>"
+
+
+def masked_columns(plan: Plan) -> list[tuple[str, str, str]]:
+    """Every masked (table, column, strategy) the plan declares.
+
+    Per-column entries yield their `ColumnSeed.strategy`; composite-FK group
+    columns (`per_group`) yield `FK_GROUP_STRATEGY`. Source-comparison scans use
+    `strategy == "passthrough"` to exclude unmasked columns (their output equals
+    the source by design).
+    """
+    out: list[tuple[str, str, str]] = []
+    for table_name, table_seed in plan.seed_envelope.per_table:
+        for col_name, seed in table_seed.per_column:
+            out.append((table_name, col_name, seed.strategy))
+        for _key, group_seed in table_seed.per_group:
+            for col_name in group_seed.coherent_columns:
+                out.append((table_name, col_name, FK_GROUP_STRATEGY))
+    return out

@@ -170,10 +170,13 @@ class TestRunnerMergeAndSkip:
                 per_table=(("t", TableSeed(per_column=(("id", _seed("unique")),), per_group=())),),
             )
         )
+        # Distinct source so the leakage scan does not fire (this test is about
+        # pk_uniqueness + cardinality populating failed_checks).
+        sources = {"t": pa.table({"id": ["x", "y", "z"]})}
         return PostValidationRunner().run(
             plan=plan,  # type: ignore[arg-type]
             execution_result=ExecutionResult(outputs=outputs, warnings=()),
-            sources=outputs,
+            sources=sources,
             profile=profile,
             registry=_REG,
             relationship_graph=_GRAPH,
