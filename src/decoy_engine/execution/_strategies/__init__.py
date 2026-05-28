@@ -10,16 +10,24 @@ shuffle, formula, fpe) re-keyed onto S3's `derive`/`derive_index` + S5's
 from __future__ import annotations
 
 from decoy_engine.execution._adapter import StrategyHandler
+from decoy_engine.execution._strategies._faker import FakerStrategyHandler
 from decoy_engine.execution._strategies._passthrough import PassthroughHandler
 from decoy_engine.execution._strategies._redact import RedactHandler
 from decoy_engine.execution._strategies._truncate import TruncateHandler
 
 SCALAR_HANDLERS: dict[str, StrategyHandler] = {
-    handler.name: handler for handler in (PassthroughHandler(), RedactHandler(), TruncateHandler())
+    handler.name: handler
+    for handler in (
+        PassthroughHandler(),
+        RedactHandler(),
+        TruncateHandler(),
+        FakerStrategyHandler(),
+    )
 }
 
 __all__ = [
     "SCALAR_HANDLERS",
+    "FakerStrategyHandler",
     "PassthroughHandler",
     "RedactHandler",
     "TruncateHandler",
