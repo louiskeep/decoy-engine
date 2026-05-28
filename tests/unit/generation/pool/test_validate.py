@@ -129,10 +129,37 @@ class TestPoolCapacityPreFlight:
         )
         assert plan is not None
 
-    def test_scale_up_default_does_not_raise(self) -> None:
-        """on_pool_exhaustion default is scale_up (PO PQ3); the check
-        defers to runtime. Plan-compile does NOT raise."""
+    def test_unique_always_raises_under_scale_up(self) -> None:
+        """F3: uniqueness is a correctness contract, not a soft-cardinality
+        preference. A too-small pool in UNIQUE mode hard-errors at compile
+        regardless of on_pool_exhaustion. The prior code gated the whole
+        check behind on_pool_exhaustion=='fail', so a default-config unique
+        column compiled and then silently reused pool values at runtime."""
         config = _config("unique", pool_size=10)
+        config["global_settings"]["on_pool_exhaustion"] = "scale_up"
+        with pytest.raises(PoolCapacityError) as excinfo:
+            compile_plan(
+                config,
+                _profile_with_distinct("customers", "email", 50),
+                decoy_engine_version="0.1.0",
+            )
+        assert excinfo.value.code == "pool_too_small_for_source"
+
+    def test_unique_always_raises_under_fall_back(self) -> None:
+        config = _config("unique", pool_size=10)
+        config["global_settings"]["on_pool_exhaustion"] = "fall_back"
+        with pytest.raises(PoolCapacityError) as excinfo:
+            compile_plan(
+                config,
+                _profile_with_distinct("customers", "email", 50),
+                decoy_engine_version="0.1.0",
+            )
+        assert excinfo.value.code == "pool_too_small_for_source"
+
+    def test_soft_mode_scale_up_defers_with_warning(self) -> None:
+        """Soft modes (MATCH/SCALE) DO defer under scale_up; the deferral is
+        surfaced as a Plan warning (NF5) rather than silently dropped."""
+        config = _config("match_source_cardinality", pool_size=10)
         config["global_settings"]["on_pool_exhaustion"] = "scale_up"
         plan = compile_plan(
             config,
@@ -140,6 +167,18 @@ class TestPoolCapacityPreFlight:
             decoy_engine_version="0.1.0",
         )
         assert plan is not None
+        assert any("pool_capacity_deferred" in w for w in plan.plan_compile.warnings)
+        assert "pool_capacity_pre_flight" in plan.plan_compile.checks_passed
+
+    def test_soft_mode_fail_raises(self) -> None:
+        """Soft modes still hard-error under on_pool_exhaustion=='fail'."""
+        with pytest.raises(PoolCapacityError) as excinfo:
+            compile_plan(
+                _config("match_source_cardinality", pool_size=10),
+                _profile_with_distinct("customers", "email", 50),
+                decoy_engine_version="0.1.0",
+            )
+        assert excinfo.value.code == "pool_too_small_for_source"
 
     def test_reuse_mode_skips_capacity_check(self) -> None:
         """REUSE doesn't need capacity guarantees; check is skipped even
@@ -218,3 +257,56 @@ class TestR6PlanCompileSchema:
         per_table = dict(plan.seed_envelope.per_table)
         per_column = dict(per_table["customers"].per_column)
         assert per_column["email"].deterministic is True
+
+
+class TestNoProfileMode:
+    """F4: --no-profile compiles without source distinct counts. The two
+    distinct-count-dependent checks are recorded in checks_skipped rather
+    than checks_passed; UNIQUE columns still hard-error because uniqueness
+    cannot be guaranteed or deferred without distinct counts."""
+
+    def test_no_profile_unique_hard_errors(self) -> None:
+        config = _config("unique", pool_size=10_000)
+        with pytest.raises(PoolCapacityError) as excinfo:
+            compile_plan(
+                config,
+                _profile_with_distinct("customers", "email", 50),
+                decoy_engine_version="0.1.0",
+                no_profile=True,
+            )
+        assert excinfo.value.code == "pool_capacity_unverifiable_no_profile"
+
+    def test_no_profile_soft_mode_marks_check_skipped(self) -> None:
+        config = _config("match_source_cardinality", pool_size=10)
+        plan = compile_plan(
+            config,
+            _profile_with_distinct("customers", "email", 50),
+            decoy_engine_version="0.1.0",
+            no_profile=True,
+        )
+        assert "pool_capacity_pre_flight" in plan.plan_compile.checks_skipped
+        assert "basic_uniqueness_pre_flight" in plan.plan_compile.checks_skipped
+        assert "pool_capacity_pre_flight" not in plan.plan_compile.checks_passed
+        # Structural checks still run under --no-profile.
+        assert "orphan_fk_policy_completeness" in plan.plan_compile.checks_passed
+
+    def test_no_profile_reuse_compiles_clean(self) -> None:
+        plan = compile_plan(
+            _config("reuse", pool_size=10),
+            _profile_with_distinct("customers", "email", 50),
+            decoy_engine_version="0.1.0",
+            no_profile=True,
+        )
+        assert plan.plan_compile.checks_skipped == (
+            "basic_uniqueness_pre_flight",
+            "pool_capacity_pre_flight",
+        )
+
+    def test_profile_mode_leaves_checks_skipped_empty(self) -> None:
+        """Sanity: the normal (profiled) path does not populate checks_skipped."""
+        plan = compile_plan(
+            _config("reuse", pool_size=100),
+            _profile_with_distinct("customers", "email", 50),
+            decoy_engine_version="0.1.0",
+        )
+        assert plan.plan_compile.checks_skipped == ()

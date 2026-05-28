@@ -20,11 +20,11 @@ class TestCompilePlanHappyPath:
         assert isinstance(plan, Plan)
 
     def test_compile_stamps_versions(self, simple_config: dict, simple_profile: Profile) -> None:
-        """S3 bumped seed_protocol_version from 0 (S1 stub) to 1 (first real
-        envelope)."""
+        """S3 bumped seed_protocol_version 0 -> 1; the F-series corrections
+        bump 1 -> 2 (coordinated Faker-seeding + canonicalize-integer fixes)."""
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
         assert plan.plan_version == 1
-        assert plan.seed_protocol_version == 1
+        assert plan.seed_protocol_version == 2
         assert plan.engine_version == "0.1.0"
 
     def test_compile_records_seven_checks_passed(
@@ -93,16 +93,16 @@ class TestYamlRoundTrip:
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
         y = plan_to_yaml(plan)
         assert "plan_version: 1" in y
-        assert "seed_protocol_version: 1" in y
+        assert "seed_protocol_version: 2" in y
 
-    def test_yaml_emits_seed_protocol_version_one(
+    def test_yaml_emits_seed_protocol_version_two(
         self, simple_config: dict, simple_profile: Profile
     ) -> None:
-        """S3 bumped seed_protocol_version from S1's `0` (placeholder) to
-        `1` (first 'real' envelope per the v1 contract)."""
+        """The F-series corrections bump the stamped seed_protocol_version to
+        2 (v1 = pre-correction era, v2 = corrected baseline)."""
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
         y = plan_to_yaml(plan)
-        assert "seed_protocol_version: 1" in y
+        assert "seed_protocol_version: 2" in y
 
     @pytest.mark.parametrize("policy", ["preserve", "remap", "warn", "fail"])
     def test_round_trip_preserves_each_orphan_policy(

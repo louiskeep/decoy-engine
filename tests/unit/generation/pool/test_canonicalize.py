@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
+import numpy as np
 import pytest
 
 from decoy_engine.generation.pool._canonicalize import _canonicalize_source
@@ -37,18 +38,46 @@ class TestStringNFC:
 
 
 class TestInteger:
-    def test_zero_big_endian_8_bytes(self) -> None:
-        assert _canonicalize_source(0) == b"\x00\x00\x00\x00\x00\x00\x00\x00"
+    """v2 envelope (F-series NF1/NF2): length-prefixed minimal-width two's
+    complement big-endian (4-byte length prefix + minimal body). Replaces the
+    fixed 8-byte form, which overflowed for |value| >= 2**63 and missed numpy
+    integer scalars."""
 
-    def test_one_big_endian(self) -> None:
-        assert _canonicalize_source(1) == b"\x00\x00\x00\x00\x00\x00\x00\x01"
+    def test_zero(self) -> None:
+        # length 1, body 0x00
+        assert _canonicalize_source(0) == b"\x00\x00\x00\x01\x00"
+
+    def test_one(self) -> None:
+        assert _canonicalize_source(1) == b"\x00\x00\x00\x01\x01"
 
     def test_negative_one_twos_complement(self) -> None:
-        assert _canonicalize_source(-1) == b"\xff\xff\xff\xff\xff\xff\xff\xff"
+        assert _canonicalize_source(-1) == b"\x00\x00\x00\x01\xff"
 
-    def test_large_int_fits(self) -> None:
-        # 2**63 - 1 = max int64 signed
-        assert _canonicalize_source(2**63 - 1) == b"\x7f\xff\xff\xff\xff\xff\xff\xff"
+    def test_max_int64_uses_eight_body_bytes(self) -> None:
+        # 2**63 - 1 = max signed int64: 8 body bytes, no overflow.
+        assert _canonicalize_source(2**63 - 1) == b"\x00\x00\x00\x08\x7f\xff\xff\xff\xff\xff\xff\xff"
+
+    def test_beyond_int64_does_not_overflow(self) -> None:
+        """NF2: the prior fixed 8-byte encoding raised OverflowError here; the
+        variable-length form widens the body instead."""
+        # 2**63 needs 9 body bytes (sign bit forces the extra leading 0x00).
+        assert _canonicalize_source(2**63) == bytes.fromhex("00000009008000000000000000")
+        # 2**64 likewise; arbitrary magnitude is supported.
+        assert _canonicalize_source(2**64) == bytes.fromhex("00000009010000000000000000")
+
+    def test_injective_across_magnitudes(self) -> None:
+        seen = {_canonicalize_source(n) for n in (-2, -1, 0, 1, 2, 127, 128, 255, 256, 2**63, 2**70)}
+        assert len(seen) == 11  # all distinct
+
+    def test_numpy_int_matches_python_int(self) -> None:
+        """NF1: pd.Series.iloc[i] returns numpy scalars. They must canonicalize
+        identically to the equivalent Python int (the prior `isinstance(int)`
+        check missed numpy ints, silently routing them through the str
+        fallback so 42 and numpy.int64(42) produced different bytes)."""
+        for n in (0, 1, -1, 42, 2**31 - 1):
+            assert _canonicalize_source(np.int64(n)) == _canonicalize_source(int(n))
+        # Unsigned numpy ints too (e.g. uint64 indices).
+        assert _canonicalize_source(np.uint64(42)) == _canonicalize_source(42)
 
 
 class TestBoolean:

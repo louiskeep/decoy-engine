@@ -15,6 +15,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 
 from decoy_engine.generation.pool._errors import PoolCapacityError
+from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.generation.pool._value_pool import ValuePool, estimate_pool_bytes
 
 _DEFAULT_MAX_BYTES = 256 * 1024 * 1024  # 256 MB per S5 spec §4
@@ -50,6 +51,12 @@ class PoolCache:
         self._hits = 0
         self._misses = 0
         self._evictions = 0
+        # NF5: QualityWarnings accumulated as pools are inserted. S5 owns the
+        # event shape; S10 reads these into the manifest's quality_summary
+        # (cross-sprint contracts R14). The `pool_dominates_cache` site below
+        # is the first construction site; previously the event type and the
+        # _DOMINATE_THRESHOLD constant were both dead.
+        self._warnings: list[QualityWarning] = []
 
     def get(self, identity: tuple[str, str, str, bytes, int]) -> ValuePool | None:
         """Return the pool for `identity` or None on miss. Touches LRU on hit."""
@@ -85,6 +92,20 @@ class PoolCache:
             self._evictions += 1
         self._entries[pool.identity] = pool
         self._bytes_used += pool_bytes
+        # NF5: a single pool occupying more than the dominate threshold of the
+        # budget is a quality signal (cache thrash risk). Emit it; do not fail.
+        if pool_bytes > self._max_bytes * _DOMINATE_THRESHOLD:
+            self._warnings.append(
+                QualityWarning(
+                    code="pool_dominates_cache",
+                    provider=pool.provider,
+                    detail={
+                        "pool_bytes": pool_bytes,
+                        "cache_bytes_capacity": self._max_bytes,
+                        "dominate_threshold": _DOMINATE_THRESHOLD,
+                    },
+                )
+            )
 
     def stats(self) -> CacheStats:
         """Return a frozen snapshot of cache state."""
@@ -97,6 +118,14 @@ class PoolCache:
             evictions=self._evictions,
         )
 
+    def warnings(self) -> tuple[QualityWarning, ...]:
+        """Return the QualityWarnings accumulated during inserts (NF5).
+
+        S10 reads these into the manifest's quality_summary (R14). Returned
+        as a tuple so callers cannot mutate the cache's internal list.
+        """
+        return tuple(self._warnings)
+
     def clear(self) -> None:
         """Reset state. Test-only; never called in production."""
         self._entries.clear()
@@ -104,6 +133,7 @@ class PoolCache:
         self._hits = 0
         self._misses = 0
         self._evictions = 0
+        self._warnings.clear()
 
 
 _DEFAULT_CACHE: PoolCache | None = None

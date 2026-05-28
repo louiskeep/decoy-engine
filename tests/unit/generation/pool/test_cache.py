@@ -79,6 +79,34 @@ class TestStats:
         assert s.bytes_capacity == 10_000_000
 
 
+class TestQualityWarnings:
+    """NF5: the QualityWarning event type and the _DOMINATE_THRESHOLD constant
+    were both dead (zero construction sites). PoolCache.put now emits a
+    pool_dominates_cache warning when a single pool exceeds 25% of the budget;
+    S10 reads cache.warnings() into the manifest quality_summary (R14)."""
+
+    def test_dominating_pool_emits_warning(self) -> None:
+        cache = PoolCache(max_bytes=4000)
+        cache.put(_make_pool("p", 4))  # ~1600 bytes > 25% of 4000
+        warns = cache.warnings()
+        assert len(warns) == 1
+        assert warns[0].code == "pool_dominates_cache"
+        assert warns[0].provider == "p"
+        assert warns[0].detail["pool_bytes"] > warns[0].detail["cache_bytes_capacity"] * 0.25
+
+    def test_small_pool_emits_no_warning(self) -> None:
+        cache = PoolCache(max_bytes=10_000_000)
+        cache.put(_make_pool("p", 4))  # ~1600 bytes, far below 25%
+        assert cache.warnings() == ()
+
+    def test_clear_resets_warnings(self) -> None:
+        cache = PoolCache(max_bytes=4000)
+        cache.put(_make_pool("p", 4))
+        assert cache.warnings()
+        cache.clear()
+        assert cache.warnings() == ()
+
+
 class TestLruOrdering:
     def test_recent_access_moves_to_end(self) -> None:
         """Per S5 spec §4: LRU on identity tuple via move_to_end on get."""

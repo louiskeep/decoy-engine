@@ -18,8 +18,8 @@ material per the spec §5.5 plan-schema delta: `SeedEnvelope.job_seed`
 is now `bytes` (the sole entropy input to
 `decoy_engine.determinism.derive(...)`); the per-context `_seed` int
 fields are gone; the four `_derive_*_seed` stub helpers were deleted.
-Every plan stamps `seed_protocol_version: 1` from the determinism
-module's constant.
+Every plan stamps `seed_protocol_version` from the determinism module's
+constant (S3 stamped 1; the F-series corrections bumped it to 2).
 """
 
 from __future__ import annotations
@@ -35,9 +35,10 @@ from typing import Any
 # this module -> relationships (partially init). Lazy import inside the
 # function body cuts the cycle without changing the call surface.
 # S1's plan_version is 1. SEED_PROTOCOL_VERSION imported from the
-# determinism module: S1 stamped 0 (placeholder); S3 stamps 1 (first
-# real envelope per the v1 contract). Bumping in future requires a
-# release-notes line per done-definition.md.
+# determinism module: S1 stamped 0 (placeholder); S3 stamped 1 (first
+# real envelope per the v1 contract); the F-series corrections bumped to 2
+# (coordinated Faker-seeding + canonicalize-integer fixes). Bumping
+# requires a release-notes line per done-definition.md.
 from decoy_engine.determinism import SEED_PROTOCOL_VERSION
 from decoy_engine.plan._checks import (
     check_basic_uniqueness_pre_flight,
@@ -68,13 +69,28 @@ def compile_plan(
     profile: Profile,
     *,
     decoy_engine_version: str,
+    no_profile: bool = False,
 ) -> Plan:
     """Compile (config, profile, engine_version) into a frozen Plan.
+
+    Args:
+        no_profile: when True, source distinct counts are treated as
+            unavailable (S1's `--no-profile` mode, restored in S5 F4). The
+            distinct-count-dependent checks (`basic_uniqueness_pre_flight`,
+            `pool_capacity_pre_flight`) do not run and are recorded in
+            `PlanCompileResult.checks_skipped` instead of `checks_passed`.
+            Pool-backed UNIQUE columns still hard-error, because uniqueness
+            cannot be guaranteed without distinct counts and cannot be
+            deferred to runtime the way soft cardinality can. The structural
+            checks (provider, composite-length, orphan policy, namespace, FK
+            ordering) run regardless: they do not consume distinct counts.
 
     Raises:
         PlanCompileError: if any of the five S1 compile-time checks fails.
             The error carries `code`, `path`, and `message` for downstream
             UI rendering.
+        PoolCapacityError: if a pool-backed column cannot be guaranteed
+            enough capacity (see check_pool_capacity_pre_flight).
 
     Determinism contract: two calls with `__eq__`-equal inputs produce
     `__eq__`-equal Plans whose YAML serializations are byte-identical.
@@ -108,26 +124,47 @@ def compile_plan(
         namespace_registry=namespace_registry,
         orphan_policy_lookup=orphan_policy_lookup,
     )
-    check_basic_uniqueness_pre_flight(config, profile)
     # Row 7 (S5): pool-backed columns supersede the S1 unique check.
-    # on_pool_exhaustion default is 'scale_up' (PO PQ3); only 'fail'
-    # raises here, others defer to runtime QualityWarning.
-    on_pool_exhaustion = config.get("global_settings", {}).get(
-        "on_pool_exhaustion", "scale_up"
-    )
-    check_pool_capacity_pre_flight(
-        config, profile, on_pool_exhaustion=on_pool_exhaustion
-    )
-
-    checks_passed = (
-        "namespace_ambiguity",
-        "unknown_provider",
-        "fk_plan_ordering",
-        "basic_uniqueness_pre_flight",
-        "composite_columns_length_match",
-        "orphan_fk_policy_completeness",
-        "pool_capacity_pre_flight",
-    )
+    # on_pool_exhaustion default is 'scale_up' (PO PQ3). UNIQUE columns
+    # hard-error regardless of this setting (F3); soft modes defer under
+    # scale_up/fall_back and raise under 'fail'.
+    on_pool_exhaustion = config.get("global_settings", {}).get("on_pool_exhaustion", "scale_up")
+    # F4 (--no-profile): the two distinct-count-dependent checks
+    # (basic_uniqueness_pre_flight + pool_capacity_pre_flight) cannot verify
+    # capacity without source distinct counts. They are recorded in
+    # checks_skipped rather than checks_passed. pool_capacity still runs (it
+    # hard-errors on UNIQUE columns, which cannot be deferred); its soft-mode
+    # verification is what's skipped.
+    if no_profile:
+        capacity_warnings = check_pool_capacity_pre_flight(
+            config, profile, on_pool_exhaustion=on_pool_exhaustion, no_profile=True
+        )
+        checks_passed: tuple[str, ...] = (
+            "namespace_ambiguity",
+            "unknown_provider",
+            "fk_plan_ordering",
+            "composite_columns_length_match",
+            "orphan_fk_policy_completeness",
+        )
+        checks_skipped: tuple[str, ...] = (
+            "basic_uniqueness_pre_flight",
+            "pool_capacity_pre_flight",
+        )
+    else:
+        check_basic_uniqueness_pre_flight(config, profile)
+        capacity_warnings = check_pool_capacity_pre_flight(
+            config, profile, on_pool_exhaustion=on_pool_exhaustion
+        )
+        checks_passed = (
+            "namespace_ambiguity",
+            "unknown_provider",
+            "fk_plan_ordering",
+            "basic_uniqueness_pre_flight",
+            "composite_columns_length_match",
+            "orphan_fk_policy_completeness",
+            "pool_capacity_pre_flight",
+        )
+        checks_skipped = ()
 
     # Hashes.
     cfg_hash = _hash_config(config)
@@ -154,7 +191,8 @@ def compile_plan(
         ordering=ordering,
         plan_compile=PlanCompileResult(
             checks_passed=checks_passed,
-            warnings=stamp_warnings,
+            checks_skipped=checks_skipped,
+            warnings=stamp_warnings + capacity_warnings,
         ),
     )
 
@@ -423,10 +461,7 @@ def _build_seed_envelope(
                 if cardinality_mode_raw == "deterministic_map":
                     raise PlanCompileError(
                         code="plan_schema_deterministic_map_renamed",
-                        path=(
-                            f"tables.{table_profile.name}.columns.{col_name}"
-                            ".cardinality_mode"
-                        ),
+                        path=(f"tables.{table_profile.name}.columns.{col_name}.cardinality_mode"),
                         message=(
                             f"Column {table_profile.name}.{col_name}: "
                             "`cardinality_mode: deterministic_map` is no longer "

@@ -221,11 +221,12 @@ class Plan:
     """Versioned plan artifact: the output of `compile_plan`.
 
     Frozen dataclass; same compile input produces a byte-identical Plan.
-    The `seed_protocol_version` field is the S1-S3 transition marker:
-    S1 stamps `0` (placeholder seed derivation); S3 bumps to `1` when
-    real HMAC-keyed material lands. Any manifest carrying
-    `seed_protocol_version: 0` is a development-era artifact that cannot
-    be reproduced by post-S3 builds (per S1 spec H1 + done-definition
+    The `seed_protocol_version` field tracks the determinism-envelope
+    version: S1 stamped `0` (placeholder seed derivation); S3 bumped to `1`
+    when real HMAC-keyed material landed; the F-series corrections bumped to
+    `2` (coordinated Faker-seeding + canonicalize-integer fixes that shift
+    deterministic output). A manifest carrying an older version cannot be
+    reproduced by builds at a newer version (per S1 spec H1 + done-definition
     release-notes rule).
     """
 

@@ -92,9 +92,10 @@ class TestDeriveValidation:
 
 
 class TestSeedProtocolVersion:
-    def test_constant_is_one(self) -> None:
-        """S3 ships SEED_PROTOCOL_VERSION = 1 (first 'real' envelope)."""
-        assert SEED_PROTOCOL_VERSION == 1
+    def test_constant_is_two(self) -> None:
+        """S3 shipped SEED_PROTOCOL_VERSION = 1; the F-series corrections bump
+        to 2 (coordinated Faker-seeding + canonicalize-integer fixes)."""
+        assert SEED_PROTOCOL_VERSION == 2
 
 
 class TestDeriveIndex:
