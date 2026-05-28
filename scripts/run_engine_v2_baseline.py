@@ -302,7 +302,7 @@ def _correctness(
 
 def run_matrix(
     tier_names: list[str], strategy_filter: str | None, iterations: int
-) -> list[CellResult]:
+) -> tuple[list[CellResult], list[str]]:
     process = psutil.Process()
     cells = V2_CELLS
     if strategy_filter:
@@ -310,9 +310,14 @@ def run_matrix(
         if not cells:
             raise SystemExit(f"unknown strategy {strategy_filter!r}")
     results: list[CellResult] = []
+    skipped_tiers: list[str] = []
     for tier in tier_names:
         if tier not in available_tiers():
-            print(f"[v2-baseline] SKIP tier={tier} (fixture missing; gen_perf_fixtures.py)")
+            # A REQUESTED tier whose fixture is missing is a loud failure, not a
+            # silent skip: a CI run that asked for medium must not quietly produce
+            # a small-only baseline (Dennis S13 tooling review).
+            print(f"[v2-baseline] MISSING requested tier={tier} (gen via gen_perf_fixtures.py)")
+            skipped_tiers.append(tier)
             continue
         table = pa.Table.from_pandas(load_tier(tier), preserve_index=False)
         rows = table.num_rows
@@ -345,7 +350,7 @@ def run_matrix(
                 f"polars p50={polars_res.p50_ms:.2f}ms  {tag}",
                 flush=True,
             )
-    return results
+    return results, skipped_tiers
 
 
 def _substrate_dict(res: SubstrateResult, gate: str) -> dict[str, Any]:
@@ -409,13 +414,16 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     tier_names = args.tier or ["small", "medium"]
     t0 = time.perf_counter()
-    results = run_matrix(tier_names, args.strategy, args.iterations)
+    results, skipped_tiers = run_matrix(tier_names, args.strategy, args.iterations)
     write_results(results, args.out, args.env_note)
     failed = [r for r in results if r.correctness_gate != "PASS"]
     print(
-        f"[v2-baseline] total {time.perf_counter() - t0:.1f}s; {len(failed)} correctness failures"
+        f"[v2-baseline] total {time.perf_counter() - t0:.1f}s; "
+        f"{len(failed)} correctness failures; {len(skipped_tiers)} missing tier(s)"
     )
-    return 1 if failed else 0
+    if skipped_tiers:
+        print(f"[v2-baseline] MISSING requested tiers: {skipped_tiers} (baseline is incomplete)")
+    return 1 if (failed or skipped_tiers) else 0
 
 
 if __name__ == "__main__":
