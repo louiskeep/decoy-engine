@@ -13,10 +13,19 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from decoy_engine.generation.pool._errors import PoolCapacityError
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.generation.pool._value_pool import ValuePool, estimate_pool_bytes
+
+if TYPE_CHECKING:
+    # S8: BundlePool subclasses ValuePool and rides the same cache (R5).
+    # TYPE_CHECKING-only to avoid a pool -> composite import cycle; with
+    # `from __future__ import annotations` the union annotation is never
+    # evaluated at runtime, and BundlePool is-a ValuePool so put/get/estimate
+    # all work unchanged.
+    from decoy_engine.generation.composite._bundle_pool import BundlePool
 
 _DEFAULT_MAX_BYTES = 256 * 1024 * 1024  # 256 MB per S5 spec §4
 _DOMINATE_THRESHOLD = 0.25  # warn at 25% per operating model
@@ -46,7 +55,9 @@ class PoolCache:
         self._max_bytes = max_bytes
         # OrderedDict preserves insertion + access order; LRU is
         # implemented by `move_to_end` on access.
-        self._entries: OrderedDict[tuple[str, str, str, bytes, int], ValuePool] = OrderedDict()
+        self._entries: OrderedDict[
+            tuple[str, str, str, bytes, int], ValuePool | BundlePool
+        ] = OrderedDict()
         self._bytes_used = 0
         self._hits = 0
         self._misses = 0
@@ -58,7 +69,7 @@ class PoolCache:
         # _DOMINATE_THRESHOLD constant were both dead.
         self._warnings: list[QualityWarning] = []
 
-    def get(self, identity: tuple[str, str, str, bytes, int]) -> ValuePool | None:
+    def get(self, identity: tuple[str, str, str, bytes, int]) -> ValuePool | BundlePool | None:
         """Return the pool for `identity` or None on miss. Touches LRU on hit."""
         pool = self._entries.get(identity)
         if pool is None:

@@ -28,6 +28,7 @@ from decoy_engine.generation.pool._cardinality import CardinalityMode
 from decoy_engine.generation.pool._errors import GenerationError
 
 if TYPE_CHECKING:
+    from decoy_engine.generation.composite._bundle_pool import BundlePool
     from decoy_engine.generation.pool._value_pool import ValuePool
 
 
@@ -208,3 +209,89 @@ class PoolSampler:
             else:
                 output.append(value_map[source.iloc[i]])
         return pd.Series(output)
+
+    def sample_bundle(
+        self,
+        pool: BundlePool,
+        n: int,
+        *,
+        mode: CardinalityMode,
+        seed: bytes,
+        source: pd.Series | None = None,
+        namespace: str | None = None,
+        deterministic: bool = False,
+    ) -> dict[str, pd.Series]:
+        """Sample n bundle tuples, then explode into one Series per output_column.
+
+        Per S8 spec §3b: the index selection is IDENTICAL to `sample`
+        (deterministic: per-row `derive_index` over the canonicalized source,
+        with null preservation; non-deterministic: `default_rng`). The only
+        bundle-specific work is splitting each selected tuple across the
+        pool's `output_columns`. This keeps a composite's determinism path
+        byte-for-byte aligned with the scalar sampler (same `derive_index` +
+        `_canonicalize_source`), which the cross-sprint coherence contract needs.
+        """
+        cols = pool.output_columns
+        if not cols:
+            raise GenerationError(
+                code="bundle_missing_output_columns",
+                message="sample_bundle requires a BundlePool with non-empty output_columns.",
+            )
+
+        if deterministic:
+            if source is None or namespace is None:
+                raise GenerationError(
+                    code="deterministic_requires_source_and_namespace",
+                    message=(
+                        "deterministic=True requires both `source` and `namespace`; "
+                        f"got source={'set' if source is not None else 'None'}, "
+                        f"namespace={namespace!r}."
+                    ),
+                )
+            if len(source) != n:
+                raise GenerationError(
+                    code="source_length_mismatch",
+                    message=(
+                        f"sample_bundle deterministic called with source length "
+                        f"{len(source)} but n={n}; they must match."
+                    ),
+                )
+            per_col: dict[str, list[Any]] = {c: [] for c in cols}
+            is_null = source.isna()
+            for i in range(n):
+                if is_null.iloc[i]:
+                    for c in cols:
+                        per_col[c].append(pd.NA)
+                    continue
+                canonical = _canonicalize_source(source.iloc[i])
+                idx = derive_index(
+                    seed=seed,
+                    namespace=namespace,
+                    source=canonical,
+                    pool_size=pool.size,
+                )
+                bundle = pool.values[idx]
+                for j, c in enumerate(cols):
+                    per_col[c].append(bundle[j])
+            return {c: pd.Series(per_col[c]) for c in cols}
+
+        # Non-deterministic: with-replacement by default; UNIQUE without.
+        rng = np.random.default_rng(_seed_bytes_to_int(seed))
+        if mode is CardinalityMode.UNIQUE:
+            if n > pool.size:
+                raise GenerationError(
+                    code="uniqueness_impossible",
+                    message=(
+                        f"UNIQUE-mode bundle sample of size {n} from pool of size "
+                        f"{pool.size}: cannot draw without replacement."
+                    ),
+                )
+            indices = rng.permutation(pool.size)[:n]
+        else:
+            indices = rng.integers(0, pool.size, size=n)
+        per_col = {c: [] for c in cols}
+        for idx in indices:
+            bundle = pool.values[idx]
+            for j, c in enumerate(cols):
+                per_col[c].append(bundle[j])
+        return {c: pd.Series(per_col[c]) for c in cols}

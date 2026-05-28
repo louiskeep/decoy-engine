@@ -325,6 +325,15 @@ module = [
     "decoy_engine.generation.pool._sampler",
     "decoy_engine.generation.pool._validate",
     "decoy_engine.generation.pool._value_pool",
+    # engine-v2 S8 (Composite Generators). Spec:
+    # docs/v2/sprints/engine-v2/sprint-08-composite-generators.md in decoy-platform.
+    # Per best-practices §5.4 + S8 spec §1.
+    "decoy_engine.generation.composite",
+    "decoy_engine.generation.composite._bundle_pool",
+    "decoy_engine.generation.composite._city_state_zip",
+    "decoy_engine.generation.composite._errors",
+    "decoy_engine.generation.composite._generator",
+    "decoy_engine.generation.composite._name_email",
 ]
 disallow_any_generics = true
 disallow_subclassing_any = true
