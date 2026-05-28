@@ -106,6 +106,11 @@ from decoy_engine.graph import (
 )
 from decoy_engine.license import LicenseVerifier
 from decoy_engine.masker import Masker
+from decoy_engine.plan.validate import (
+    PlanCheckError,
+    PlanValidationResult,
+    validate_plan,
+)
 from decoy_engine.providers import (
     load_custom_providers,
     register_faker_list_provider,
@@ -255,6 +260,8 @@ __all__ = [
     "PandasExecutionAdapter",
     "PermanentError",
     "PipelineValidationError",
+    "PlanCheckError",
+    "PlanValidationResult",
     "PoolAdapter",
     "PoolBuilder",
     "PoolCache",
@@ -315,4 +322,5 @@ __all__ = [
     "validate_config",
     "validate_graph",
     "validate_graph_full",
+    "validate_plan",
 ]

@@ -166,6 +166,10 @@ def test_all_lists_every_public_name():
         "PandasExecutionAdapter",
         "StrategyError",
         "get_default_executor",
+        # engine-v2 S10 (Validator: compile consolidator).
+        "PlanCheckError",
+        "PlanValidationResult",
+        "validate_plan",
     }
     assert set(decoy_engine.__all__) == expected
 

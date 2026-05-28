@@ -265,6 +265,10 @@ module = [
     "decoy_engine.plan._checks",
     "decoy_engine.plan._compile",
     "decoy_engine.plan._serialize",
+    # engine-v2 S10 (Validator: compile consolidator). Spec:
+    # docs/v2/sprints/engine-v2/sprint-10-validator.md in decoy-platform.
+    "decoy_engine.plan.validate",
+    "decoy_engine.plan.validate._consolidator",
     # engine-v2 S2 (Relationship Coordinator + Namespace). Spec:
     # docs/v2/sprints/engine-v2/sprint-02-relationship-coordinator-and-namespace.md
     # in decoy-platform. Per best-practices §5.4 (resolution of S2 M4):
