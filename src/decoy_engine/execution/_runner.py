@@ -63,8 +63,15 @@ def build_work_list(plan: Plan, registry: ProviderRegistry) -> list[WorkNode]:
     for table, table_seed in plan.seed_envelope.per_table:
         composite_groups: dict[_NodeKey, list[ColumnSeed]] = {}
         for col_name, col_seed in table_seed.per_column:
-            caps = registry.get_capabilities(col_seed.provider)
-            if caps.backend_type == "composite":
+            # No-backend strategies (redact/truncate/passthrough/...) carry a
+            # provider that is not a registry backend; only registry-bound
+            # providers can be composites, so guard the capability lookup.
+            caps = (
+                registry.get_capabilities(col_seed.provider)
+                if registry.has(col_seed.provider)
+                else None
+            )
+            if caps is not None and caps.backend_type == "composite":
                 group_cols = tuple(sorted({col_name, *col_seed.coherent_with}))
                 composite_groups.setdefault((table, group_cols), []).append(col_seed)
             else:

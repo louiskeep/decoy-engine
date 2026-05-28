@@ -1,29 +1,57 @@
 """engine-v2 S9 execution adapter package.
 
 The boundary between planning and execution: `ExecutionAdapter.run(plan, source)
--> ExecutionResult`. The first concrete adapter is the pandas adapter.
+-> ExecutionResult`. The first concrete adapter is `PandasExecutionAdapter`.
 
-Slice 1 (landed): the runner core -- `build_work_list` (enumerates maskable
-units from the seed envelope, the authoritative work list) + `order_work`
-(FK + R17 composite-before-child topological ordering) + the execution error
-hierarchy.
+Public API:
 
-Later slices add: the ExecutionAdapter protocol + ExecutionResult, the concrete
-PandasExecutionAdapter, the 11 baseline strategies re-keyed onto S3/S5, and the
-Faker / FPE per-strategy parallelism.
+    from decoy_engine.execution import (
+        ExecutionAdapter,
+        PandasExecutionAdapter,
+        ExecutionResult,
+        ExecutionEvent,
+        ExecutionError,
+        StrategyError,
+        get_default_executor,
+    )
+
+Landed so far: the runner core (`build_work_list` from the seed envelope +
+`order_work` FK/R17 ordering), the Arrow boundary + `PandasExecutionAdapter`,
+and the three no-backend strategies (passthrough, redact, truncate). Later
+slices add the backend-keyed strategies (faker/hash/date_shift/bucketize/
+categorical/shuffle/formula/fpe) re-keyed onto S3/S5, composite routing, orphan
+policy, and the Faker/FPE per-strategy parallelism.
 
 Spec: docs/v2/sprints/engine-v2/sprint-09-execution-adapter-pandas.md in decoy-platform.
 """
 
 from __future__ import annotations
 
+from decoy_engine.execution._adapter import (
+    ExecutionAdapter,
+    ExecutionResult,
+    StrategyContext,
+    StrategyHandler,
+)
 from decoy_engine.execution._errors import ExecutionError, StrategyError
+from decoy_engine.execution._events import ExecutionEvent
+from decoy_engine.execution._pandas_adapter import (
+    PandasExecutionAdapter,
+    get_default_executor,
+)
 from decoy_engine.execution._runner import WorkNode, build_work_list, order_work
 
 __all__ = [
+    "ExecutionAdapter",
     "ExecutionError",
+    "ExecutionEvent",
+    "ExecutionResult",
+    "PandasExecutionAdapter",
+    "StrategyContext",
     "StrategyError",
+    "StrategyHandler",
     "WorkNode",
     "build_work_list",
+    "get_default_executor",
     "order_work",
 ]

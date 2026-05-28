@@ -340,8 +340,15 @@ module = [
     # Per best-practices §5.4 + S9 spec §Done state. Slice 1: runner core; later
     # slices add the adapter + strategies modules.
     "decoy_engine.execution",
+    "decoy_engine.execution._adapter",
     "decoy_engine.execution._errors",
+    "decoy_engine.execution._events",
+    "decoy_engine.execution._pandas_adapter",
     "decoy_engine.execution._runner",
+    "decoy_engine.execution._strategies",
+    "decoy_engine.execution._strategies._passthrough",
+    "decoy_engine.execution._strategies._redact",
+    "decoy_engine.execution._strategies._truncate",
 ]
 disallow_any_generics = true
 disallow_subclassing_any = true
