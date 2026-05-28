@@ -335,6 +335,13 @@ module = [
     "decoy_engine.generation.composite._generator",
     "decoy_engine.generation.composite._name_email",
     "decoy_engine.generation.composite._validate",
+    # engine-v2 S9 (Execution Adapter, pandas). Spec:
+    # docs/v2/sprints/engine-v2/sprint-09-execution-adapter-pandas.md in decoy-platform.
+    # Per best-practices §5.4 + S9 spec §Done state. Slice 1: runner core; later
+    # slices add the adapter + strategies modules.
+    "decoy_engine.execution",
+    "decoy_engine.execution._errors",
+    "decoy_engine.execution._runner",
 ]
 disallow_any_generics = true
 disallow_subclassing_any = true
