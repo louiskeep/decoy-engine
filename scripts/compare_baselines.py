@@ -120,6 +120,16 @@ def build_report(old: dict[str, Any], new: dict[str, Any]) -> tuple[str, list[st
             lines.append(f"- {strat} >= {threshold:g}x @ medium: FAIL (correctness)")
             continue
         before = old_p50.get((strat, "medium"))
+        if before is None:
+            # No pre-rewrite number to compare against = the gate cannot be
+            # PROVEN. That is a hard failure, not a pass-by-default: a green CI
+            # run must mean "the ratio was computed and cleared the bar," never
+            # "we had nothing to divide by." (Also avoids _ratio(None, ...).)
+            failures.append(
+                f"GATE FAIL: {strat}/medium has no pre-rewrite baseline cell to compare against"
+            )
+            lines.append(f"- {strat} >= {threshold:g}x @ medium: FAIL (no pre-rewrite cell)")
+            continue
         ratio = _ratio(before, float(cell.get("polars", {}).get("p50_ms", 0.0)))
         verdict = "PASS" if (ratio is not None and ratio >= threshold) else "FAIL"
         if verdict == "FAIL":
@@ -130,6 +140,7 @@ def build_report(old: dict[str, Any], new: dict[str, Any]) -> tuple[str, list[st
 
 
 def _find(new: dict[str, Any], strategy: str, tier: str) -> dict[str, Any] | None:
+    cell: dict[str, Any]
     for cell in new.get("results", []):
         if cell["strategy"] == strategy and cell["tier"] == tier:
             return cell
