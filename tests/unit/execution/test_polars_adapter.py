@@ -221,6 +221,50 @@ class TestFallbackParity:
         res = _polars_run(plan, {"people": src})
         assert res.outputs["people"].to_pydict() == _pandas_outputs(plan, {"people": src})["people"]
 
+    def test_exotic_dtype_round_trip_matches_pandas(self) -> None:
+        # The other parity fixtures only exercise utf8/int64/float64/bool. The
+        # pa->pl->pa ingest round-trip can drift the ARROW TYPE of large_string,
+        # dictionary, large_list, large_binary, and time64 (Polars 1.x widens
+        # them on `from_arrow`/`to_arrow`), but it must not drift the LOGICAL
+        # VALUES the pandas oracle masks or emits. This locks that: the adapter's
+        # `outputs[t].to_pydict()` stays identical to a direct pandas run across
+        # the drifting dtypes (Dennis S11 review, the round-trip parity gate).
+        import datetime
+        import decimal
+
+        src = pa.table(
+            {
+                "ls": pa.array(["alpha", "beta", None], type=pa.large_string()),
+                "dct": pa.array(["x", "y", "x"], type=pa.dictionary(pa.int32(), pa.string())),
+                "ts": pa.array(
+                    [datetime.datetime(2020, 1, 1, 12, 0)] * 3,
+                    type=pa.timestamp("us", tz="America/New_York"),
+                ),
+                "dec": pa.array(
+                    [decimal.Decimal("1.50"), decimal.Decimal("2.25"), None],
+                    type=pa.decimal128(10, 2),
+                ),
+            }
+        )
+        plan = _plan(
+            [
+                (
+                    "t",
+                    TableSeed(
+                        per_column=(
+                            ("ls", _col("redact")),
+                            ("dct", _col("passthrough")),
+                            ("ts", _col("passthrough")),
+                            ("dec", _col("passthrough")),
+                        ),
+                        per_group=(),
+                    ),
+                )
+            ]
+        )
+        res = _polars_run(plan, {"t": src})
+        assert res.outputs["t"].to_pydict() == _pandas_outputs(plan, {"t": src})["t"]
+
     def test_fpe_backend_strategy_matches_pandas(self) -> None:
         src = pa.table({"acct": [f"{i:05d}" for i in range(50)]})
         plan = _plan([("t", TableSeed(per_column=(("acct", _fpe_col()),), per_group=()))])
