@@ -20,6 +20,7 @@ from decoy_engine.graph.ops import (
     derive,
     drop_column,
     filter_op,
+    join,
     limit,
     select_column,
     sort,
@@ -199,3 +200,45 @@ def test_derive_parity_columns_preserved(standard_pandas, standard_polars):
     pl_out = derive.apply([standard_polars], cfg, ctx=None)
     assert set(pd_out.columns) == set(_norm(pl_out).columns)
     assert "double_value" in pd_out.columns
+
+
+# -------- engine-v2 S12 graph-op parity gate (D-S12-A) ----------------------
+#
+# The done-definition graph-op gate ("every core graph op has a green parity
+# test") is satisfied AGAINST THE V1 GRAPH ENGINE under D-S12-A (the v2 execution
+# adapter does not run these ops). filter / sort / dedupe / derive each have a
+# real polars path and a green pandas-vs-polars parity test above. The two
+# remaining core-six items are gaps recorded here as S13 readiness deferrals,
+# NOT silently absent:
+#
+#   - join: NATIVE_ENGINE='pandas' (the runner materializes inputs to pandas at
+#     the join boundary); there is no polars-native join path. Deferred; the
+#     parity test is xfail below.
+#   - aggregate: there is NO v2 aggregate graph op (the only groupby in the v2
+#     path is S10's pandas-internal quality-summary scan, which is not
+#     substrate-switched). The gate item is N/A for v2 (a phantom gate, the kind
+#     D-S12 exists to settle); documented by test_aggregate_op_absent below.
+
+
+@pytest.mark.xfail(
+    reason="join is pandas-native (NATIVE_ENGINE='pandas'); polars-native join "
+    "deferred per D-S12-A and recorded as an S13 readiness deferral",
+    strict=False,
+)
+def test_join_polars_parity_deferred():
+    left = pl.DataFrame({"id": [1, 2], "v": [10, 20]})
+    right = pl.DataFrame({"cid": [1, 2], "w": [100, 200]})
+    cfg = {"joins": [{"left_on": ["id"], "right_on": ["cid"], "join_type": "inner"}]}
+    out = join.apply([left, right], cfg, ctx=None)
+    # The gate this documents: join would have to run polars-native to be parity-
+    # testable against pandas. It does not (it has no polars branch), so this
+    # assertion is expected to fail until the deferral is closed.
+    assert isinstance(out, pl.DataFrame)
+
+
+def test_aggregate_op_absent():
+    # No v2 aggregate graph op exists; the gate item is N/A (phantom gate). If a
+    # future op adds one, this test fails and forces a parity entry to be written.
+    import decoy_engine.graph.ops as ops_pkg
+
+    assert not hasattr(ops_pkg, "aggregate")

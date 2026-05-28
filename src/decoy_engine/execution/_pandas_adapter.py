@@ -37,7 +37,12 @@ from typing import TYPE_CHECKING
 import pandas as pd
 import pyarrow as pa
 
-from decoy_engine.execution._adapter import ExecutionResult, StrategyContext, StrategyHandler
+from decoy_engine.execution._adapter import (
+    ExecutionAdapter,
+    ExecutionResult,
+    StrategyContext,
+    StrategyHandler,
+)
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._runner import WorkNode, build_work_list, order_work
 from decoy_engine.execution._strategies import SCALAR_HANDLERS
@@ -357,17 +362,27 @@ class PandasExecutionAdapter:
         return remap
 
 
-_DEFAULT_EXECUTOR: PandasExecutionAdapter | None = None
+_DEFAULT_EXECUTORS: dict[str, ExecutionAdapter] = {}
 
 
-def get_default_executor() -> PandasExecutionAdapter:
-    """Return the module-level default pandas executor singleton."""
-    global _DEFAULT_EXECUTOR
-    if _DEFAULT_EXECUTOR is None:
-        _DEFAULT_EXECUTOR = PandasExecutionAdapter()
-    return _DEFAULT_EXECUTOR
+def get_default_executor() -> ExecutionAdapter:
+    """Return the cached default execution adapter for the current substrate.
+
+    S12 (M2): the engine reads its own DECOY_SUBSTRATE contract here and resolves
+    the adapter via `select_execution_adapter`, so a caller (the platform job
+    runner) routes a full job through the selected substrate by calling this; it
+    does not re-implement substrate selection (best-practices section 3.3). One
+    cached instance per substrate value (the singleton holds for a fixed env).
+    """
+    from decoy_engine.execution._substrate import resolve_substrate, select_execution_adapter
+
+    substrate = resolve_substrate()
+    cached = _DEFAULT_EXECUTORS.get(substrate)
+    if cached is None:
+        cached = select_execution_adapter()
+        _DEFAULT_EXECUTORS[substrate] = cached
+    return cached
 
 
 def _reset_default_executor_for_tests() -> None:
-    global _DEFAULT_EXECUTOR
-    _DEFAULT_EXECUTOR = None
+    _DEFAULT_EXECUTORS.clear()
