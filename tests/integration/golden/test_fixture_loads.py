@@ -213,3 +213,34 @@ class TestNullableFkSpot:
         assert set(non_null_reviewers) <= set(employees["employee_id"]), (
             "nullable_fk fixture: non-null reviewer_id values must resolve to a real employee"
         )
+
+
+@pytest.mark.golden
+class TestCompositeCoherenceSpot:
+    """engine-v2 S9 carry-in M2: source-side invariants of the composite_coherence
+    fixture (the UNMASKED data). The POST-mask version is the composite_coherence/
+    golden invariant exercised through PandasExecutionAdapter. This spot-check
+    needs no execution path; it matches the TestCompositeKeySpot / TestOrphanFkSpot
+    pattern every other relationally-interesting fixture has."""
+
+    def test_people_email_localpart_is_first_dot_last(self) -> None:
+        d = GOLDEN_ROOT / "composite_coherence"
+        people = pd.read_csv(d / "people.csv", dtype=str)
+        for _, row in people.iterrows():
+            local = str(row["email"]).split("@", 1)[0]
+            assert local == f"{row['first_name']}.{row['last_name']}".lower(), (
+                "composite_coherence people.csv: email local-part must be first.last"
+            )
+
+    def test_locations_triples_well_formed(self) -> None:
+        d = GOLDEN_ROOT / "composite_coherence"
+        locations = pd.read_csv(d / "locations.csv", dtype=str)
+        for _, row in locations.iterrows():
+            state = str(row["state"])
+            zip_code = str(row["zip"])
+            assert len(state) == 2 and state.isalpha() and state.isupper(), (
+                f"composite_coherence locations.csv: malformed state {state!r}"
+            )
+            assert len(zip_code) == 5 and zip_code.isdigit(), (
+                f"composite_coherence locations.csv: malformed zip {zip_code!r}"
+            )
