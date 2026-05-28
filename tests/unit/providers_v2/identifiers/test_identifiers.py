@@ -9,7 +9,10 @@ enforcement (M-NEW1 resolution).
 from __future__ import annotations
 
 import re
+import subprocess
+import sys
 
+import numpy as np
 import pytest
 
 from decoy_engine.determinism import derive_value
@@ -19,6 +22,7 @@ from decoy_engine.providers_v2.identifiers import (
     EinAdapter,
     EinDomain,
     EinValidator,
+    IdentifierError,
     MrnAdapter,
     MrnDomain,
     MrnValidator,
@@ -35,6 +39,7 @@ from decoy_engine.providers_v2.identifiers import (
 
 _SEED = b"\x00\x00\x00\x00\x00\x00\x00\x2a"  # 42
 _NS = "customer_identity"
+_SEED_HEX = _SEED.hex()  # used by subprocess cross-process tests
 
 # 5 (adapter, domain, validator, provider_name, format_regex) tuples
 _IDENTIFIERS = [
@@ -85,8 +90,8 @@ class TestEinPrefixList:
 
 
 class TestNpiLuhnCheck:
-    def test_1k_samples_pass_luhn(self) -> None:
-        for _ in range(1000):
+    def test_10k_samples_pass_luhn(self) -> None:
+        for _ in range(10_000):
             npi = NpiAdapter().generate(
                 "synthetic_npi",
                 spec=ProviderSpec(locale="en_US", deterministic=False, namespace=None, seed=None),
@@ -164,22 +169,17 @@ class TestCanonicalizationParity:
         out_hand = derive_value(seed=_SEED, namespace=_NS, source=canonical, domain=domain_cls())
         assert out_adapter == out_hand
 
-    def test_canonical_int_repeatable(
+    def test_canonical_int_parity_python_and_numpy(
         self, adapter_cls, domain_cls, validator_cls, provider, regex
     ) -> None:
-        """Same Python int produces the same canonical bytes (int branch).
+        """Python int and numpy.int64 canonicalize identically via numbers.Integral.
 
-        NOTE: the S6 spec §Tests bullet includes a parity check
-        `_canonicalize_source(42) == _canonicalize_source(np.int64(42))`.
-        Currently the shipped S5 helper at `decoy_engine.generation.pool
-        ._canonicalize` dispatches `isinstance(value, int)` which is False
-        for numpy.int64 (subclass of numpy.signedinteger, not Python int),
-        so numpy ints fall to the str fallback and the parity does NOT
-        hold. Flagged for S5 envelope follow-up (R3 SEED_PROTOCOL_VERSION
-        bump conversation per S6 spec §3.5). This test asserts the weaker
-        Python-int repeatability contract instead.
+        The S5 F-series corrections replaced the isinstance(value, int) dispatch
+        with isinstance(value, numbers.Integral), which catches numpy integer
+        scalars (pd.Series.iloc[i] returns numpy.int64, not Python int). This
+        test asserts the full parity contract per S6 spec §Tests.
         """
-        assert _canonicalize_source(42) == _canonicalize_source(42)
+        assert _canonicalize_source(42) == _canonicalize_source(np.int64(42))
 
 
 @pytest.mark.parametrize(
@@ -238,8 +238,120 @@ class TestRegistrySwapPoolableEnforcement:
 
 
 class TestUnsupportedLocale:
+    """M4 from S6 review: locale gate test for all 5 identifiers."""
+
     def test_ssn_non_en_us_raises(self) -> None:
         spec = ProviderSpec(locale="fr_FR", deterministic=False, namespace=None, seed=None)
         with pytest.raises(ProviderError) as excinfo:
             SsnAdapter().generate("synthetic_ssn", spec=spec)
         assert excinfo.value.code == "unsupported_locale"
+
+    def test_ein_non_en_us_raises(self) -> None:
+        spec = ProviderSpec(locale="fr_FR", deterministic=False, namespace=None, seed=None)
+        with pytest.raises(ProviderError) as excinfo:
+            EinAdapter().generate("synthetic_ein", spec=spec)
+        assert excinfo.value.code == "unsupported_locale"
+
+    def test_npi_non_en_us_raises(self) -> None:
+        spec = ProviderSpec(locale="fr_FR", deterministic=False, namespace=None, seed=None)
+        with pytest.raises(ProviderError) as excinfo:
+            NpiAdapter().generate("synthetic_npi", spec=spec)
+        assert excinfo.value.code == "unsupported_locale"
+
+    def test_ndc_non_en_us_raises(self) -> None:
+        spec = ProviderSpec(locale="fr_FR", deterministic=False, namespace=None, seed=None)
+        with pytest.raises(ProviderError) as excinfo:
+            NdcAdapter().generate("synthetic_ndc", spec=spec)
+        assert excinfo.value.code == "unsupported_locale"
+
+    def test_mrn_non_en_us_passes(self) -> None:
+        """MRN is locale-agnostic (per-site format; no SSA-style restriction).
+
+        supported_locales=('en_US',) in capability_matrix is an advisory
+        declaration; MRN's generate_random() intentionally ignores locale.
+        Non-en_US inputs produce valid MRNs without raising.
+        """
+        spec = ProviderSpec(locale="fr_FR", deterministic=False, namespace=None, seed=None)
+        out = MrnAdapter().generate("synthetic_mrn", spec=spec)
+        assert MrnValidator.is_valid(out)
+
+
+class TestCrossProcessStability:
+    """H2 from S6 review: subprocess and parent produce byte-identical outputs for fixed seed."""
+
+    @pytest.mark.parametrize(
+        ("adapter_name", "provider"),
+        [
+            ("SsnAdapter", "synthetic_ssn"),
+            ("EinAdapter", "synthetic_ein"),
+            ("NpiAdapter", "synthetic_npi"),
+            ("NdcAdapter", "synthetic_ndc"),
+            ("MrnAdapter", "synthetic_mrn"),
+        ],
+    )
+    def test_subprocess_matches_inprocess(self, adapter_name: str, provider: str) -> None:
+        _adapter_cls_map = {
+            "SsnAdapter": SsnAdapter,
+            "EinAdapter": EinAdapter,
+            "NpiAdapter": NpiAdapter,
+            "NdcAdapter": NdcAdapter,
+            "MrnAdapter": MrnAdapter,
+        }
+        spec = ProviderSpec(locale="en_US", deterministic=True, namespace=_NS, seed=_SEED)
+        expected = _adapter_cls_map[adapter_name]().generate(
+            provider, spec=spec, source_value=42
+        )
+        code = (
+            f"from decoy_engine.providers_v2.identifiers import {adapter_name}; "
+            f"from decoy_engine.providers_v2 import ProviderSpec; "
+            f"spec = ProviderSpec(locale='en_US', deterministic=True, "
+            f"namespace={_NS!r}, seed=bytes.fromhex({_SEED_HEX!r})); "
+            f"print({adapter_name}().generate({provider!r}, spec=spec, source_value=42))"
+        )
+        result = subprocess.run(  # noqa: S603
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        assert result.stdout.strip() == expected
+
+
+class TestNoSourceLeak:
+    """H3 from S6 review: deterministic output must never equal source value.
+
+    Tests 100,000 distinct integer source values per identifier. Any failure
+    indicates a logic bug (e.g. the adapter returned source_value directly
+    instead of routing through derive_value + domain).
+    """
+
+    @pytest.mark.parametrize(
+        ("adapter_cls", "provider"),
+        [
+            (SsnAdapter, "synthetic_ssn"),
+            (EinAdapter, "synthetic_ein"),
+            (NpiAdapter, "synthetic_npi"),
+            (NdcAdapter, "synthetic_ndc"),
+            (MrnAdapter, "synthetic_mrn"),
+        ],
+    )
+    def test_no_source_leak_100k_int_source(self, adapter_cls: type, provider: str) -> None:
+        spec = ProviderSpec(locale="en_US", deterministic=True, namespace=_NS, seed=_SEED)
+        blocklist_exhausted = 0
+        for i in range(100_000):
+            try:
+                out = adapter_cls().generate(provider, spec=spec, source_value=i)
+            except IdentifierError as exc:
+                if exc.code == "blocklist_exhausted":
+                    # SsnDomain's 4-offset rehash can exhaust (~1.5e-4 per row).
+                    # This is the S6 H1 forward risk: S9 must handle IdentifierError
+                    # at execution time (see dennis-engine-v2-s6 review, Session 24).
+                    blocklist_exhausted += 1
+                    continue
+                raise
+            assert out != str(i), f"{provider}: output equals str(source) at i={i}"
+        # Sanity-check the exhaustion rate stays within the documented ~1.5e-4 bound.
+        assert blocklist_exhausted < 500, (
+            f"{provider}: {blocklist_exhausted}/100000 blocklist_exhausted — "
+            "rate far exceeds expected ~15/100000; blocklist or domain logic is buggy."
+        )

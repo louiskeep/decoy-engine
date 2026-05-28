@@ -146,8 +146,16 @@ class SsnAdapter:
                 canonical = source_value
             else:
                 canonical = _canonicalize_source(source_value)
-            assert spec.seed is not None  # noqa: S101 -- enforced by ProviderSpec __post_init__
-            assert spec.namespace is not None  # noqa: S101
+            if spec.seed is None:
+                raise ProviderError(
+                    code="missing_seed",
+                    message="SsnAdapter: deterministic mode requires spec.seed.",
+                )
+            if spec.namespace is None:
+                raise ProviderError(
+                    code="missing_namespace",
+                    message="SsnAdapter: deterministic mode requires spec.namespace.",
+                )
             return derive_value(
                 seed=spec.seed,
                 namespace=spec.namespace,

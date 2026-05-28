@@ -118,8 +118,16 @@ class MrnAdapter:
                 if isinstance(source_value, bytes)
                 else _canonicalize_source(source_value)
             )
-            assert spec.seed is not None  # noqa: S101
-            assert spec.namespace is not None  # noqa: S101
+            if spec.seed is None:
+                raise ProviderError(
+                    code="missing_seed",
+                    message="MrnAdapter: deterministic mode requires spec.seed.",
+                )
+            if spec.namespace is None:
+                raise ProviderError(
+                    code="missing_namespace",
+                    message="MrnAdapter: deterministic mode requires spec.namespace.",
+                )
             return derive_value(
                 seed=spec.seed,
                 namespace=spec.namespace,

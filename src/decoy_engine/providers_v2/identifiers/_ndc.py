@@ -75,7 +75,8 @@ class NdcDomain:
             if isinstance(raw_layout, list | tuple) and len(raw_layout) == 3:
                 candidate = tuple(int(x) for x in raw_layout)
                 if candidate in _VALID_LAYOUTS:
-                    layout = candidate
+                    # Reconstruct as 3-tuple literal so mypy infers tuple[int, int, int].
+                    layout = (candidate[0], candidate[1], candidate[2])
         labeler_d, product_d, package_d = layout
         labeler = int.from_bytes(b[0:4], "big") % (10**labeler_d)
         product = int.from_bytes(b[4:8], "big") % (10**product_d)
@@ -125,8 +126,16 @@ class NdcAdapter:
                 if isinstance(source_value, bytes)
                 else _canonicalize_source(source_value)
             )
-            assert spec.seed is not None  # noqa: S101
-            assert spec.namespace is not None  # noqa: S101
+            if spec.seed is None:
+                raise ProviderError(
+                    code="missing_seed",
+                    message="NdcAdapter: deterministic mode requires spec.seed.",
+                )
+            if spec.namespace is None:
+                raise ProviderError(
+                    code="missing_namespace",
+                    message="NdcAdapter: deterministic mode requires spec.namespace.",
+                )
             return derive_value(
                 seed=spec.seed,
                 namespace=spec.namespace,
