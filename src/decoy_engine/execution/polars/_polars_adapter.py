@@ -53,11 +53,10 @@ if TYPE_CHECKING:
     from decoy_engine.providers_v2 import ProviderRegistry
     from decoy_engine.relationships import NamespaceRegistry, RelationshipGraph
 
-# Strategies with a polars-native implementation. Grows per migration band; at
-# S12 cheap-band close this holds the four cheap-band strategies.
-_POLARS_NATIVE_STRATEGIES: frozenset[str] = frozenset(
-    {"passthrough", "redact", "truncate", "shuffle"}
-)
+# Strategies with a polars-native implementation: exactly the keys of the
+# handler registry, so the two cannot drift. Grows per migration band as S12
+# adds handlers (cheap band + hash so far).
+_POLARS_NATIVE_STRATEGIES: frozenset[str] = frozenset(POLARS_SCALAR_HANDLERS)
 
 
 class PolarsExecutionAdapter:

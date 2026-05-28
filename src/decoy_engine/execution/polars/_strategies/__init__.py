@@ -17,6 +17,7 @@ from typing import Protocol
 import polars as pl
 
 from decoy_engine.execution._adapter import StrategyContext
+from decoy_engine.execution.polars._strategies._hash import PolarsHashStrategyHandler
 from decoy_engine.execution.polars._strategies._passthrough import PolarsPassthroughHandler
 from decoy_engine.execution.polars._strategies._redact import PolarsRedactHandler
 from decoy_engine.execution.polars._strategies._shuffle import PolarsShuffleStrategyHandler
@@ -48,11 +49,13 @@ POLARS_SCALAR_HANDLERS: dict[str, PolarsStrategyHandler] = {
         PolarsRedactHandler(),
         PolarsTruncateHandler(),
         PolarsShuffleStrategyHandler(),
+        PolarsHashStrategyHandler(),
     )
 }
 
 __all__ = [
     "POLARS_SCALAR_HANDLERS",
+    "PolarsHashStrategyHandler",
     "PolarsPassthroughHandler",
     "PolarsRedactHandler",
     "PolarsShuffleStrategyHandler",

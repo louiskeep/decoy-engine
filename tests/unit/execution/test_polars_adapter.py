@@ -190,21 +190,12 @@ class TestPolarsAdapterConformance:
         assert adapter.adapter_name == "polars"
         assert adapter.adapter_version == pl.__version__
 
-    def test_supports_cheap_band_native_not_others(self) -> None:
-        # S12 cheap-band: passthrough/redact/truncate/shuffle are polars-native;
-        # the medium/expensive bands have not migrated yet.
+    def test_supports_migrated_not_others(self) -> None:
+        # S12 migrates strategies band by band; cheap band + hash so far.
         adapter = PolarsExecutionAdapter()
-        for native in ("passthrough", "redact", "truncate", "shuffle"):
+        for native in ("passthrough", "redact", "truncate", "shuffle", "hash"):
             assert adapter.supports_strategy(native) is True
-        for not_yet in (
-            "fpe",
-            "hash",
-            "categorical",
-            "formula",
-            "date_shift",
-            "bucketize",
-            "faker",
-        ):
+        for not_yet in ("fpe", "categorical", "formula", "date_shift", "bucketize", "faker"):
             assert adapter.supports_strategy(not_yet) is False
 
     def test_shutdown_idempotent(self) -> None:

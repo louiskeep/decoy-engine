@@ -132,6 +132,29 @@ _CASES: list[tuple[str, Any, dict[str, pa.Table]]] = [
         _plan("t", (("c", _col("redact")),)),
         {"t": pa.table({"c": _MEDIUM})},
     ),
+    (
+        "hash-string-with-nulls",
+        _plan("t", (("c", _col("hash", namespace="h_ns")),)),
+        {"t": pa.table({"c": _SMALL})},
+    ),
+    (
+        "hash-truncated",
+        _plan("t", (("c", _col("hash", namespace="h_ns", provider_config=(("truncate", 8),))),)),
+        {"t": pa.table({"c": _SMALL})},
+    ),
+    (
+        # Null-free int column: to_pandas keeps int64 (an int64+null column would
+        # widen to float64 on the pandas side and hard-error in canonicalization,
+        # a pandas-oracle limitation, not a substrate divergence).
+        "hash-int-column",
+        _plan("t", (("c", _col("hash", namespace="h_ns")),)),
+        {"t": pa.table({"c": pa.array([1, 22, 333, 4444, 5], type=pa.int64())})},
+    ),
+    (
+        "hash-medium",
+        _plan("t", (("c", _col("hash", namespace="h_ns")),)),
+        {"t": pa.table({"c": _MEDIUM})},
+    ),
 ]
 
 
