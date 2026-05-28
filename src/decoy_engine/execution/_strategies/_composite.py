@@ -80,6 +80,15 @@ class CompositeHandler:
             spec, len(df), source=source, deterministic=deterministic
         )
         for out_col, series in bundle.items():
-            if out_col in df.columns:
-                df[out_col] = list(series)
+            if out_col not in df.columns:
+                # A composite that cannot write a declared output column is a
+                # wiring error, not a silent partial-write (Dennis slice-2h M1).
+                raise ExecutionError(
+                    code="composite_output_column_missing",
+                    message=(
+                        f"composite {node.provider!r} produced output column {out_col!r} "
+                        f"which is not in table {node.table!r}; columns={node.columns}."
+                    ),
+                )
+            df[out_col] = list(series)
         return df, []

@@ -51,7 +51,7 @@ def _plan(col_name: str, seed: ColumnSeed) -> Any:
 
 
 def _run(plan: Any, table: pa.Table) -> ExecutionResult:
-    return PandasExecutionAdapter().run(
+    return PandasExecutionAdapter().run_single(
         plan, table, registry=_REG, relationship_graph=_GRAPH, namespace_registry=_NS
     )
 
@@ -110,3 +110,14 @@ class TestCategorical:
         with pytest.raises(ExecutionError) as exc:
             _run(_plan("grade", _col("categorical", namespace="g", deterministic=True)), src)
         assert exc.value.code == "categorical_requires_categories"
+
+    def test_non_deterministic_is_unseeded(self) -> None:
+        # M2: non-deterministic categorical is UNSEEDED (matches faker + shuffle),
+        # so two runs with the same job seed differ. Many rows make this robust.
+        src = pa.table({"grade": ["x"] * 200})
+        seed = _col(
+            "categorical", deterministic=False, provider_config=(("categories", list("ABCD")),)
+        )
+        out1 = _run(_plan("grade", seed), src).output.column("grade").to_pylist()
+        out2 = _run(_plan("grade", seed), src).output.column("grade").to_pylist()
+        assert out1 != out2

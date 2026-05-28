@@ -49,7 +49,7 @@ def _plan(col_name: str, seed: ColumnSeed) -> Any:
 
 
 def _run(plan: Any, table: pa.Table) -> ExecutionResult:
-    return PandasExecutionAdapter().run(
+    return PandasExecutionAdapter().run_single(
         plan, table, registry=_REG, relationship_graph=_GRAPH, namespace_registry=_NS
     )
 

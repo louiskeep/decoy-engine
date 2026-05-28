@@ -15,13 +15,14 @@ handler (later slice) writes multiple columns.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
 import pandas as pd
 import pyarrow as pa
 
+from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.instrumentation.timing import StrategyTimingRecord
 
@@ -34,13 +35,33 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class ExecutionResult:
-    """The output of `ExecutionAdapter.run(...)` (S9 spec §2)."""
+    """The output of `ExecutionAdapter.run(...)` (S9 spec §2).
 
-    output: pa.Table
+    `outputs` maps table name -> masked `pa.Table`. A multi-table job (FK
+    parent + child masked in one run) carries one entry per table; a
+    single-table job carries one. `output` is a convenience accessor for the
+    single-table case (it raises rather than guess when the result is
+    multi-table; per the slice-2h contract widening, PQ-S9-C).
+    """
+
+    outputs: dict[str, pa.Table]
     timings: tuple[StrategyTimingRecord, ...] = ()
     boundary_conversion_ms: float = 0.0
     warnings: tuple[QualityWarning, ...] = ()
     quality_metrics: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def output(self) -> pa.Table:
+        """The single masked table. Raises if the result holds 0 or >1 tables."""
+        if len(self.outputs) != 1:
+            raise ExecutionError(
+                code="multi_table_result_has_no_single_output",
+                message=(
+                    f"ExecutionResult holds {len(self.outputs)} tables "
+                    f"({sorted(self.outputs)}); use .outputs[table] for a multi-table job."
+                ),
+            )
+        return next(iter(self.outputs.values()))
 
 
 @dataclass(frozen=True)
@@ -84,7 +105,7 @@ class ExecutionAdapter(Protocol):
     def run(
         self,
         plan: Plan,
-        source: pa.Table,
+        sources: Mapping[str, pa.Table],
         *,
         registry: ProviderRegistry,
         pool_cache: PoolCache | None = None,

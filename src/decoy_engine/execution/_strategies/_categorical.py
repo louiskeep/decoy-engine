@@ -4,8 +4,10 @@ Re-keyed onto S3/S5 (S9 spec §4 row 8): the replacement set is a pool of
 `provider_config["categories"]`; deterministic mode maps each source value to a
 category via `derive_index(job_seed, namespace, _canonicalize_source(value),
 pool_size=len(categories))` (same source -> same category within a namespace).
-Non-deterministic mode picks uniformly via a seeded rng. Null positions
-preserved.
+Non-deterministic mode picks uniformly via an UNSEEDED rng -- two non-deterministic
+runs differ. This matches the faker + shuffle handlers so "non-deterministic"
+means one thing across the strategy set (Dennis slice-2h M2); seed reproducibility
+is the deterministic path's job. Null positions preserved.
 
 (V1's weighted / null_probability sampling is not carried into the S9 baseline;
 the S9 contract is the derive_index uniform remap. Weighted remap is a V2+
@@ -69,7 +71,7 @@ class CategoricalStrategyHandler:
                 )
                 out.append(categories[idx])
         else:
-            rng = np.random.default_rng(int.from_bytes(ctx.job_seed, "big"))
+            rng = np.random.default_rng()  # unseeded: non-deterministic contract (M2)
             picks = rng.integers(0, len(categories), n)
             out = [None if na_mask[i] else categories[int(picks[i])] for i in range(n)]
 

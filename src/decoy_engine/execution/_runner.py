@@ -126,8 +126,19 @@ def order_work(work: list[WorkNode], relationship_graph: RelationshipGraph) -> l
     for edge in relationship_graph.edges:
         parent_k = (edge.parent_table, edge.parent_columns)
         child_k = (edge.child_table, edge.child_columns)
-        if parent_k in by_key and child_k in by_key:
+        if child_k not in by_key:
+            continue
+        if parent_k in by_key:
             deps[child_k].add(parent_k)
+        else:
+            # Composite-key FK: the parent tuple is not a single work node; its
+            # columns mask as individual scalar nodes. The composite-FK child
+            # node waits on each parent column node so the parent key mapping is
+            # fully masked before the child resolves against it.
+            for pcol in edge.parent_columns:
+                pcol_k = (edge.parent_table, (pcol,))
+                if pcol_k in by_key:
+                    deps[child_k].add(pcol_k)
 
     # R17: a composite output column that is also a FK parent. The FK child waits
     # on the whole composite bundle node, not a per-column node.

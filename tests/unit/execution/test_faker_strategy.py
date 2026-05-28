@@ -46,7 +46,7 @@ def _faker_plan(*, deterministic: bool, pool_size: int = 256) -> Any:
 
 
 def _run(plan: Any, table: pa.Table) -> ExecutionResult:
-    return PandasExecutionAdapter().run(
+    return PandasExecutionAdapter().run_single(
         plan, table, registry=_REG, relationship_graph=_GRAPH, namespace_registry=_NS
     )
 

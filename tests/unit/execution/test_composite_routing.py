@@ -12,8 +12,9 @@ from types import SimpleNamespace
 from typing import Any
 
 import pyarrow as pa
+import pytest
 
-from decoy_engine.execution import ExecutionResult, PandasExecutionAdapter
+from decoy_engine.execution import ExecutionError, ExecutionResult, PandasExecutionAdapter
 from decoy_engine.generation.composite import load_locality_table
 from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
 from decoy_engine.providers_v2 import get_default_registry
@@ -56,7 +57,7 @@ def _plan(table: str, per_column: tuple[tuple[str, ColumnSeed], ...]) -> Any:
 
 
 def _run(plan: Any, table: pa.Table, ns_registry: NamespaceRegistry) -> ExecutionResult:
-    return PandasExecutionAdapter().run(
+    return PandasExecutionAdapter().run_single(
         plan, table, registry=_REG, relationship_graph=_GRAPH, namespace_registry=ns_registry
     )
 
@@ -110,3 +111,14 @@ class TestCompositeCityStateZipRouting:
         out = _run(plan, src, ns).output.to_pydict()
         triples = list(zip(out["city"], out["state"], out["zip"], strict=True))
         assert all(t in table_set for t in triples)
+
+
+class TestCompositeOutputColumnMissing:
+    def test_missing_output_column_raises(self) -> None:
+        # M1: a composite whose bundle includes a column absent from the source
+        # frame must raise, not silently drop it. Source omits last_name.
+        plan, ns = _name_email_setup()
+        src = pa.table({"first_name": ["X"], "email": ["a@b.com"]})
+        with pytest.raises(ExecutionError) as exc:
+            _run(plan, src, ns)
+        assert exc.value.code == "composite_output_column_missing"

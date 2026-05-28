@@ -354,6 +354,7 @@ module = [
     "decoy_engine.execution._strategies._formula",
     "decoy_engine.execution._strategies._fpe",
     "decoy_engine.execution._strategies._hash",
+    "decoy_engine.execution._strategies._orphan",
     "decoy_engine.execution._strategies._passthrough",
     "decoy_engine.execution._strategies._redact",
     "decoy_engine.execution._strategies._shuffle",
