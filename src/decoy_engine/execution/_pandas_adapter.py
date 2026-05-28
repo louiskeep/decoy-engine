@@ -21,6 +21,7 @@ The run loop:
 
 from __future__ import annotations
 
+import numbers
 import time
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING
@@ -47,6 +48,21 @@ if TYPE_CHECKING:
 
 _NodeKey = tuple[str, tuple[str, ...]]
 _KeyTuple = tuple[object, ...]
+
+
+def _fk_key_value(value: object) -> object:
+    """Normalize one FK key component so equal logical keys match across the
+    int/float dtype split pandas introduces (an int64 parent column vs a
+    float64-because-null child column read by `to_pandas()`). Numpy integers and
+    whole-number floats collapse to a Python int; everything else passes through
+    (Dennis slice-2h F2). Nulls never reach here -- they are filtered upstream."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, numbers.Integral):
+        return int(value)
+    if isinstance(value, float):
+        return int(value) if value.is_integer() else value
+    return value
 
 
 class PandasExecutionAdapter:
@@ -232,7 +248,7 @@ class PandasExecutionAdapter:
             if any(bool(na.iloc[i]) for na in col_na):
                 child_keys.append(None)  # null FK: preserved, never an orphan
             else:
-                child_keys.append(tuple(v.iloc[i] for v in col_vals))
+                child_keys.append(tuple(_fk_key_value(v.iloc[i]) for v in col_vals))
 
         remap_fn = self._make_remap_fn(edge, node_by_key, ctx)
         masked_keys, warnings = resolve_fk_keys(child_keys, parent_map, edge, remap_fn=remap_fn)
@@ -270,9 +286,10 @@ class PandasExecutionAdapter:
         n = len(masked_frame)
         out: dict[_KeyTuple, _KeyTuple] = {}
         for i in range(n):
-            src_t = tuple(s.iloc[i] for s in src_series)
-            if any(pd.isna(x) for x in src_t):
+            raw = [s.iloc[i] for s in src_series]
+            if any(pd.isna(x) for x in raw):
                 continue  # parent key with a null component cannot be referenced
+            src_t = tuple(_fk_key_value(x) for x in raw)
             out[src_t] = tuple(s.iloc[i] for s in masked_series)
         parent_map_cache[cache_key] = out
         return out

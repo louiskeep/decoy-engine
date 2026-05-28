@@ -19,7 +19,7 @@ from decoy_engine.execution import ExecutionError, PandasExecutionAdapter
 from decoy_engine.plan._types import ColumnSeed, GroupSeed, SeedEnvelope, TableSeed
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge, RelationshipGraph
-from decoy_engine.relationships._namespace import NamespaceRegistry
+from decoy_engine.relationships._namespace import NamespaceBinding, NamespaceRegistry
 
 _REG = get_default_registry()
 _NS = NamespaceRegistry(bindings=())
@@ -250,3 +250,128 @@ class TestMultiTableContract:
         with pytest.raises(ExecutionError) as exc:
             _ = res.output
         assert exc.value.code == "multi_table_result_has_no_single_output"
+
+
+# --------------------------------------------------------------------------
+# F2 (Dennis verify): integer FK whose child column has a null -> pandas upcasts
+# the child to float64 while the parent stays int64. The non-null child rows
+# must still resolve (not silently orphan). _fk_key_value normalizes both sides.
+# --------------------------------------------------------------------------
+
+
+class TestIntegerFkDtypeCoercion:
+    def test_int_parent_float_child_still_resolves(self) -> None:
+        sources = {
+            "customers": pa.table({"customer_id": [1, 2, 3]}),  # int64, no null
+            "orders": pa.table({"customer_id": [1, None, 2]}),  # null -> float64 upcast
+        }
+        res = _run(_single_fk_plan(), sources, _single_fk_graph(OrphanPolicy.PRESERVE))
+        parent = res.outputs["customers"].column("customer_id").to_pylist()
+        child = res.outputs["orders"].column("customer_id").to_pylist()
+        pmap = {1: parent[0], 2: parent[1], 3: parent[2]}
+        assert child[0] == pmap[1]  # int 1 (parent) matches float 1.0 (child)
+        assert child[1] is None  # null preserved
+        assert child[2] == pmap[2]
+        assert res.warnings == ()  # nothing orphaned by a dtype mismatch
+
+
+# --------------------------------------------------------------------------
+# F1 (Dennis verify, highest-priority slice-3 item): R17 composite-as-FK-parent
+# RUNTIME. A composite OUTPUT column (people.email) is a FK parent referenced by
+# a child (logins.email). The composite must mask first (R17 ordering), record
+# its parent map, and the child resolves against the masked composite output.
+# --------------------------------------------------------------------------
+
+_NE_COLS = ("email", "first_name", "last_name")
+
+
+def _composite_col(coherent_with: tuple[str, ...]) -> ColumnSeed:
+    return ColumnSeed(
+        namespace=None,
+        strategy="<composite>",
+        provider="composite_name_email",
+        backend_type="faker",
+        backend_version="v",
+        cardinality_mode="reuse",
+        deterministic=True,
+        provider_config=(),
+        coherent_with=coherent_with,
+    )
+
+
+def _r17_plan() -> Any:
+    people = TableSeed(
+        per_column=(
+            ("first_name", _composite_col(("last_name", "email"))),
+            ("last_name", _composite_col(("first_name", "email"))),
+            ("email", _composite_col(("first_name", "last_name"))),
+        ),
+        per_group=(),
+    )
+    logins = TableSeed(per_column=(("email", _hash_col("login_ns")),), per_group=())
+    return SimpleNamespace(
+        seed_envelope=SeedEnvelope(
+            job_seed=_SEED,
+            per_table=(("people", people), ("logins", logins)),
+        )
+    )
+
+
+def _r17_graph(policy: OrphanPolicy) -> RelationshipGraph:
+    edge = RelationshipEdge(
+        parent_table="people",
+        parent_columns=("email",),
+        child_table="logins",
+        child_columns=("email",),
+        namespace="login_ns",
+        orphan_policy=policy,
+    )
+    return RelationshipGraph(edges=(edge,), ordering=())
+
+
+def _r17_ns() -> NamespaceRegistry:
+    # The composite whole-tuple binding the composite handler resolves.
+    group = tuple(sorted(_NE_COLS))
+    return NamespaceRegistry(
+        bindings=(NamespaceBinding(namespace="ne_ns", declared_by=(("people", group),)),)
+    )
+
+
+def _run_r17(plan: Any, sources: dict[str, pa.Table], graph: RelationshipGraph) -> Any:
+    return PandasExecutionAdapter().run(
+        plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_r17_ns()
+    )
+
+
+class TestR17CompositeAsFkParent:
+    def test_child_resolves_against_masked_composite_output(self) -> None:
+        sources = {
+            "people": pa.table(
+                {
+                    "first_name": ["Anna", "Bob"],
+                    "last_name": ["Lee", "Kim"],
+                    "email": ["anna@x.com", "bob@y.com"],
+                }
+            ),
+            "logins": pa.table({"email": ["anna@x.com", "ghost@z.com"]}),
+        }
+        res = _run_r17(_r17_plan(), sources, _r17_graph(OrphanPolicy.PRESERVE))
+        people_email = res.outputs["people"].column("email").to_pylist()
+        login_email = res.outputs["logins"].column("email").to_pylist()
+        # The composite actually masked the parent email (R17: composite ran first).
+        assert people_email[0] != "anna@x.com"
+        # The non-orphan child resolves to the masked composite output column.
+        assert login_email[0] == people_email[0]
+        # The orphan is preserved per policy.
+        assert login_email[1] == "ghost@z.com"
+
+    def test_orphan_policy_applies_on_top_of_r17(self) -> None:
+        sources = {
+            "people": pa.table(
+                {"first_name": ["Anna"], "last_name": ["Lee"], "email": ["anna@x.com"]}
+            ),
+            "logins": pa.table({"email": ["ghost@z.com"]}),  # orphan only
+        }
+        with pytest.raises(ExecutionError) as exc:
+            _run_r17(_r17_plan(), sources, _r17_graph(OrphanPolicy.FAIL))
+        assert exc.value.code == "orphan_fk_violation"
