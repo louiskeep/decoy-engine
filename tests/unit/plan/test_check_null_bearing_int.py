@@ -58,7 +58,9 @@ def _config(strategy: str, *, column: str = "c") -> dict[str, Any]:
 
 class TestNullBearingIntCompileCheck:
     @pytest.mark.parametrize("strategy", ["truncate", "hash", "categorical"])
-    @pytest.mark.parametrize("dtype", ["int64", "int64[pyarrow]", "Int64", "integer", "bigint"])
+    @pytest.mark.parametrize(
+        "dtype", ["int64", "int64[pyarrow]", "Int64", "integer", "bigint", "intp", "uintp"]
+    )
     def test_rejects_null_bearing_int(self, strategy: str, dtype: str) -> None:
         profile = _profile(_col("c", dtype=dtype, null_count=2))
         with pytest.raises(PlanCompileError) as exc:

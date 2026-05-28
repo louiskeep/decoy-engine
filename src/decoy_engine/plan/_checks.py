@@ -42,7 +42,7 @@ def _is_integer_dtype(dtype: str) -> bool:
     boolean are excluded.
     """
     base = dtype.lower().split("[", 1)[0].strip()
-    if base in {"integer", "bigint", "smallint", "tinyint", "int"}:
+    if base in {"integer", "bigint", "smallint", "tinyint", "int", "intp", "uintp"}:
         return True
     return bool(re.fullmatch(r"u?int(8|16|32|64)?", base))
 
