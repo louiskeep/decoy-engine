@@ -346,6 +346,7 @@ module = [
     "decoy_engine.execution._pandas_adapter",
     "decoy_engine.execution._runner",
     "decoy_engine.execution._strategies",
+    "decoy_engine.execution._strategies._composite",
     "decoy_engine.execution._strategies._faker",
     "decoy_engine.execution._strategies._passthrough",
     "decoy_engine.execution._strategies._redact",

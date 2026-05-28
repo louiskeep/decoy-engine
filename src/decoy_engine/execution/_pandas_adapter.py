@@ -27,6 +27,7 @@ from decoy_engine.execution._adapter import ExecutionResult, StrategyContext
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._runner import build_work_list, order_work
 from decoy_engine.execution._strategies import SCALAR_HANDLERS
+from decoy_engine.execution._strategies._composite import CompositeHandler
 from decoy_engine.generation.pool._cache import PoolCache
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.instrumentation.timing import TimingCollector, timed_strategy, use_collector
@@ -47,6 +48,7 @@ class PandasExecutionAdapter:
     def __init__(self, *, max_workers: int = 4, fpe_chunk_count: int = 4) -> None:
         self._max_workers = max_workers
         self._fpe_chunk_count = fpe_chunk_count
+        self._composite_handler = CompositeHandler()
 
     def supports_strategy(self, strategy_name: str) -> bool:
         return strategy_name in SCALAR_HANDLERS
@@ -85,13 +87,17 @@ class PandasExecutionAdapter:
         collector = TimingCollector()
         with use_collector(collector):
             for node in ordered:
+                if node.kind == "composite":
+                    with timed_strategy("composite", ",".join(node.columns)):
+                        df, node_warnings = self._composite_handler.run(df, node, ctx)
+                    warnings.extend(node_warnings)
+                    continue
                 if node.kind != "scalar":
                     raise ExecutionError(
                         code="unsupported_strategy",
                         message=(
                             f"node kind {node.kind!r} (columns={node.columns}) is not "
-                            "handled yet; composite + backend-keyed routing lands in a "
-                            "later S9 slice."
+                            "handled yet; composite-FK group routing lands in a later S9 slice."
                         ),
                     )
                 handler = SCALAR_HANDLERS.get(node.strategy)
