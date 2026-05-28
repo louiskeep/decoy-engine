@@ -162,8 +162,10 @@ class PoolSampler:
     ) -> pd.Series:
         """MATCH or SCALE cardinality mode.
 
-        Picks `target_distinct = source.nunique() * scale` pool values,
-        then maps each source value to one of them stably.
+        Picks `target_distinct = source.nunique() * scale` pool values, then
+        maps each distinct source value to one of them. The mapping is keyed
+        to the sorted distinct-value set (NF3), so it is independent of source
+        row order and reproducible across processes.
         """
         if source is None:
             raise GenerationError(
@@ -185,10 +187,15 @@ class PoolSampler:
         # Pick target_distinct distinct pool values.
         chosen_indices = rng.permutation(pool.size)[:target_distinct]
         chosen_pool_values = pool.values[chosen_indices]
-        # Map source distinct values -> chosen pool values (round-robin / stable).
-        source_uniques = list(source.dropna().unique())
-        # Map source uniques -> chosen pool values. If we have fewer
-        # chosen values than source uniques (scale<1), round-robin them.
+        # NF3: order the distinct source values canonically (sorted) rather
+        # than by row-appearance order. The prior `list(...unique())` keyed the
+        # source-value -> pool-value mapping on the order rows happened to
+        # arrive, so the same column in a different row order produced a
+        # different mapping (the mapping was not a function of the data). Sorting
+        # makes it a pure function of the distinct-value SET, stable across row
+        # orderings and across processes. If there are fewer chosen pool values
+        # than source uniques (scale < 1), the round-robin reuses them.
+        source_uniques = sorted(source.dropna().unique())
         value_map = {
             src_val: chosen_pool_values[i % target_distinct]
             for i, src_val in enumerate(source_uniques)

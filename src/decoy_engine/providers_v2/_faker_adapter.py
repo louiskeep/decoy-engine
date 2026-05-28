@@ -198,6 +198,14 @@ class FakerAdapter:
                     "wrap this adapter in PoolAdapter (S5)."
                 ),
             )
+        # S5 F2: when the caller supplies a seed (PoolBuilder passes the
+        # derived pool_seed), seed this locale's Faker instance so the batch
+        # is reproducible across processes. `seed_instance` is per-instance
+        # (not the global `Faker.seed`, which is a footgun under parallelism).
+        # Convention: 8-byte big-endian seed -> uint64. seed=None stays
+        # non-deterministic, preserving the S4 random-by-default contract.
+        if spec.seed is not None:
+            self._faker(spec.locale).seed_instance(int.from_bytes(spec.seed, "big"))
         return [self._faker_call(provider, spec) for _ in range(count)]
 
     def capability_matrix(self, provider: str) -> CapabilityMatrix:

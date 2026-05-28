@@ -106,11 +106,12 @@ def _minimal_config(seed: int = 42) -> dict:
 
 
 class TestSeedProtocolVersionStamp:
-    """S3 §5: every shipped plan has `seed_protocol_version == 1`."""
+    """S3 stamped v1; the F-series corrections bump every shipped plan to
+    `seed_protocol_version == 2`."""
 
-    def test_plan_stamps_v1(self) -> None:
+    def test_plan_stamps_v2(self) -> None:
         plan = compile_plan(_minimal_config(), _minimal_profile(), decoy_engine_version="0.1.0")
-        assert plan.seed_protocol_version == 1
+        assert plan.seed_protocol_version == 2
 
 
 class TestJobSeedBytesShape:

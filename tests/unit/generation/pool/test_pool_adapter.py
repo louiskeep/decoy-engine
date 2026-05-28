@@ -100,6 +100,71 @@ class TestDeterministicGenerate:
         assert excinfo.value.code == "deterministic_requires_source_value"
 
 
+class TestCacheBeforeBuild:
+    """F1: the cache is consulted (via PoolBuilder.identity_for) BEFORE
+    building, so N identical-spec deterministic generates build exactly one
+    pool. The prior code built first and discarded the result on a cache hit,
+    so every deterministic generate paid a full rebuild and the >90%
+    cache-hit performance gate was structurally unreachable."""
+
+    def test_repeated_generate_builds_pool_once(self) -> None:
+        registry = get_default_registry()
+        builder = PoolBuilder(registry)
+        calls = {"n": 0}
+        real_build = builder.build
+
+        def counting_build(*args: object, **kwargs: object) -> object:
+            calls["n"] += 1
+            return real_build(*args, **kwargs)  # type: ignore[arg-type]
+
+        builder.build = counting_build  # type: ignore[method-assign]
+        adapter = PoolAdapter(
+            wrapped=registry.get_adapter("person_email"),
+            builder=builder,
+            cache=PoolCache(max_bytes=10_000_000),
+        )
+        spec = ProviderSpec(
+            locale="en_US",
+            deterministic=True,
+            namespace="customer_identity",
+            seed=b"\x00\x00\x00\x00\x00\x00\x00\x2a",
+        )
+        for _ in range(10):
+            adapter.generate("person_email", spec=spec, source_value=b"alice@example.com")
+        assert calls["n"] == 1
+
+    def test_identity_for_matches_built_pool_identity(self) -> None:
+        """The cheap identity_for path must produce the same tuple as the
+        built pool's identity, or the cache lookup would always miss."""
+        builder = PoolBuilder(get_default_registry())
+        seed = b"\x00\x00\x00\x00\x00\x00\x00\x2a"
+        identity = builder.identity_for(
+            "person_email", size=64, job_seed=seed, locale="en_US", namespace="ns"
+        )
+        pool = builder.build("person_email", size=64, job_seed=seed, locale="en_US", namespace="ns")
+        assert identity == pool.identity
+
+    def test_pool_size_from_extra_reaches_build(self) -> None:
+        """NF4: pool_size carried in ProviderSpec.extra drives the built pool
+        size (the prior code hardcoded size=10_000, so the knob was dead) and
+        does not leak into the Faker call as a stray kwarg."""
+        registry = get_default_registry()
+        adapter = PoolAdapter(
+            wrapped=registry.get_adapter("person_email"),
+            builder=PoolBuilder(registry),
+            cache=PoolCache(max_bytes=50_000_000),
+        )
+        spec = ProviderSpec(
+            locale="en_US",
+            deterministic=True,
+            namespace="customer_identity",
+            seed=b"\x00\x00\x00\x00\x00\x00\x00\x2a",
+            extra={"pool_size": 128},
+        )
+        pool = adapter._build_or_get_pool("person_email", spec)
+        assert pool.size == 128
+
+
 class TestNonDeterministicDelegation:
     def test_non_deterministic_generate_delegates_to_wrapped(self) -> None:
         """Non-deterministic generate bypasses the pool, calls wrapped."""

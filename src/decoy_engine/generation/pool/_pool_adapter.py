@@ -53,12 +53,17 @@ class PoolAdapter:
         self,
         provider: str,
         spec: ProviderSpec,
-        size: int = 10_000,
     ) -> Any:
-        """Cache-checked pool fetch.
+        """Cache-checked pool fetch: identity first, build only on a miss.
 
         Per S5 spec §3.1: pool seed derives from job seed + namespace +
         config hash. Cache key is the ValuePool.identity tuple.
+
+        S5 F1: derive the identity via `PoolBuilder.identity_for(...)` and
+        consult the cache BEFORE building. The prior code built first and
+        discarded the result on a cache hit, so every deterministic generate
+        paid a full pool rebuild and the cache-hit performance gate was
+        structurally unreachable.
         """
         if spec.seed is None:
             raise GenerationError(
@@ -68,28 +73,32 @@ class PoolAdapter:
                     "to be set (the job seed bytes); got None."
                 ),
             )
-        # We need to derive the cache identity. The builder does this
-        # internally during build; for cache lookup we replicate the
-        # derivation here. To avoid duplication, we just build (which
-        # is cheap on cache hit because we check the cache after deriving
-        # identity).
-        # Strategy: build first to a temp ValuePool, then look up; if hit,
-        # discard the build. This is a stub-grade approach for S5; S9
-        # routing can prefetch + check identity before building.
-        # Actually: the builder is deterministic given the same inputs;
-        # so the safer pattern is to call the builder once and let the
-        # cache short-circuit via put-after-get.
+        # NF4: `pool_size` is a capacity knob carried in spec.extra. It drives
+        # the pool size and is kept out of the value-generation config, which
+        # the builder both hashes into the identity and forwards as Faker
+        # kwargs (a stray `pool_size=` kwarg would break the Faker call). The
+        # prior code hardcoded size=10_000, so the config knob was dead.
+        build_config = {k: v for k, v in spec.extra.items() if k != "pool_size"}
+        size = int(spec.extra.get("pool_size", 10_000))
+        identity = self._builder.identity_for(
+            provider,
+            size=size,
+            job_seed=spec.seed,
+            locale=spec.locale,
+            config=build_config,
+            namespace=spec.namespace,
+        )
+        cached = self._cache.get(identity)
+        if cached is not None:
+            return cached
         pool = self._builder.build(
             provider=provider,
             size=size,
             job_seed=spec.seed,
             locale=spec.locale,
-            config=spec.extra,
+            config=build_config,
             namespace=spec.namespace,
         )
-        cached = self._cache.get(pool.identity)
-        if cached is not None:
-            return cached
         self._cache.put(pool)
         return pool
 

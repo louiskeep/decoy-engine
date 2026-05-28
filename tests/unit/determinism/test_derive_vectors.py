@@ -1,4 +1,4 @@
-"""Static reference-vector test for the v1 envelope (H2 resolution).
+"""Static reference-vector test for the v2 envelope (H2 resolution).
 
 This is the across-engine-versions axis of the done-definition.md
 determinism gate. Pin specific 32-byte outputs for fixed inputs; any
@@ -6,9 +6,12 @@ unintentional envelope change (HKDF salt typo, length-prefix off-by-one,
 version byte not mixed in, byte-order flip) breaks this test.
 
 Intentional shifts require bumping SEED_PROTOCOL_VERSION and updating
-the reference vector in the same PR.
+the reference vector in the same PR. The v1 -> v2 bump (F-series
+corrections) did exactly that: the version byte mixed into the HMAC input
+went 0x01 -> 0x02, so every derive output changed, and the pinned vector
+below was regenerated in the same change.
 
-The vector below is hand-computed against the v1 envelope; derivation
+The vector below is recomputed against the v2 envelope; derivation
 steps are in the comment block so a reviewer can recompute without
 running the engine. Wired into the `golden` pytest marker so the CI
 golden-fixture workflow gates the determinism path on every PR.
@@ -30,7 +33,7 @@ from decoy_engine.determinism import SEED_PROTOCOL_VERSION, derive
 #   HMAC_key   = HKDF-Expand(PRK, info=namespace.encode(), length=32)
 #                (equivalent to one round of HMAC-SHA256 since 32 == HashLen)
 #   HMAC_input = (
-#       bytes([SEED_PROTOCOL_VERSION])              # 0x01
+#       bytes([SEED_PROTOCOL_VERSION])              # 0x02 (v2 envelope)
 #       + len(namespace).to_bytes(4, "big")         # b"\x00\x00\x00\x14" (20)
 #       + namespace.encode("utf-8")                 # 20 bytes
 #       + len(source).to_bytes(4, "big")            # b"\x00\x00\x00\x11" (17)
@@ -38,12 +41,12 @@ from decoy_engine.determinism import SEED_PROTOCOL_VERSION, derive
 #   )
 #   expected   = HMAC-SHA256(HMAC_key, HMAC_input)  # 32 bytes
 #
-# This vector is the contract pin. Computed during S3 implementation by
+# This vector is the contract pin. Recomputed at the v1 -> v2 bump by
 # running `derive(b"\x00" * 8, "audit-test-namespace", b"audit-test-source")`
-# under SEED_PROTOCOL_VERSION=1 and committing the resulting hex below.
+# under SEED_PROTOCOL_VERSION=2 and committing the resulting hex below.
 #
-# Computed value (run once at S3 implementation; pinned thereafter):
-EXPECTED_HEX_V1 = "895b22e3bc244e8dcd7c2c6ed2712ceda397bc159c328b55295e56593a6c8942"
+# Computed value (regenerated at the F-series v2 bump; pinned thereafter):
+EXPECTED_HEX_V2 = "75949b6353163490c6319d39098444ecfe1fe39ea903f60723c019c9eb41b29c"
 
 _SEED = b"\x00" * 8
 _NS = "audit-test-namespace"
@@ -51,21 +54,21 @@ _SRC = b"audit-test-source"
 
 
 @pytest.mark.golden
-class TestDeriveReferenceVectorV1:
-    def test_seed_protocol_version_is_one(self) -> None:
+class TestDeriveReferenceVectorV2:
+    def test_seed_protocol_version_is_two(self) -> None:
         """Guard: if someone bumps SEED_PROTOCOL_VERSION without updating
         the reference vector, both this assertion AND the next one fire
         together. Catches half-finished bumps."""
-        assert SEED_PROTOCOL_VERSION == 1
+        assert SEED_PROTOCOL_VERSION == 2
 
-    def test_v1_envelope_matches_reference_vector(self) -> None:
+    def test_v2_envelope_matches_reference_vector(self) -> None:
         """The contract pin. Any unintentional envelope change breaks
         this test. Intentional shifts require a SEED_PROTOCOL_VERSION
         bump in the same PR."""
         actual = derive(_SEED, _NS, _SRC).hex()
-        assert actual == EXPECTED_HEX_V1, (
-            f"v1 envelope drift: expected {EXPECTED_HEX_V1}, got {actual}. "
+        assert actual == EXPECTED_HEX_V2, (
+            f"v2 envelope drift: expected {EXPECTED_HEX_V2}, got {actual}. "
             "Either the envelope shape changed (HKDF salt, length-prefix, "
             "version byte, byte-order) or SEED_PROTOCOL_VERSION needs bumping "
-            "with a same-PR update to EXPECTED_HEX_V1."
+            "with a same-PR update to EXPECTED_HEX_V2."
         )

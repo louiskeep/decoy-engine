@@ -3,13 +3,18 @@
 **LOAD-BEARING:** the per-dtype rules below are part of the determinism
 envelope per cross-sprint contracts risk R3. Any change is a
 `SEED_PROTOCOL_VERSION` bump conversation, not a per-sprint decision.
+The integer encoding changed under the v1 -> v2 bump (F-series
+corrections): it was a fixed 8-byte two's-complement form that (a)
+overflowed for |value| >= 2**63 and (b) missed `numpy.integer` scalars
+(`pd.Series.iloc[i]` returns them), silently routing them through the
+str fallback so `42` and `numpy.int64(42)` canonicalized differently.
 
-Per-dtype rules (S5 spec §5.1):
+Per-dtype rules (S5 spec §5.1, v2 envelope):
 
 | dtype family | canonical encoding |
 |--------------|--------------------|
 | str / object | UTF-8 with Unicode NFC normalization |
-| int (any width) | 8-byte big-endian two's complement |
+| int (any width, incl. numpy) | length-prefixed minimal two's complement |
 | bool | b"\\x00" / b"\\x01" |
 | datetime (tz-aware) | ISO 8601 UTC with "Z" suffix, UTF-8 |
 | datetime (tz-naive) | HARD ERROR (timezone_naive_datetime) |
@@ -27,12 +32,28 @@ rule into the determinism envelope.
 
 from __future__ import annotations
 
+import numbers
 import unicodedata
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
 from decoy_engine.generation.pool._errors import GenerationError
+
+
+def _encode_int(n: int) -> bytes:
+    """Length-prefixed minimal-width two's-complement big-endian encoding.
+
+    Source pattern: ASN.1 DER INTEGER (X.690 §8.3) encodes integers as the
+    minimal number of two's-complement big-endian octets. We frame those
+    octets with a 4-byte big-endian length so the encoding is injective and
+    unambiguous for arbitrary magnitude (Python ints are unbounded; numpy
+    integer scalars coerce losslessly via `int()`). This replaces the prior
+    fixed 8-byte form, which raised OverflowError for |value| >= 2**63.
+    """
+    nbytes = (n.bit_length() + 8) // 8  # +8 leaves room for the sign bit; >=1
+    body = n.to_bytes(nbytes, "big", signed=True)
+    return len(body).to_bytes(4, "big") + body
 
 
 def _canonicalize_source(value: Any) -> bytes:
@@ -56,8 +77,12 @@ def _canonicalize_source(value: Any) -> bytes:
         )
     if isinstance(value, bool):
         return b"\x01" if value else b"\x00"
-    if isinstance(value, int):
-        return int(value).to_bytes(8, "big", signed=True)
+    # `numbers.Integral` catches Python int AND numpy integer scalars
+    # (numpy registers its int types with the ABC), so `pd.Series.iloc[i]`
+    # numpy scalars take the int path instead of the str fallback. `int()`
+    # coerces losslessly and gives unbounded magnitude.
+    if isinstance(value, numbers.Integral):
+        return _encode_int(int(value))
     if isinstance(value, float):
         raise GenerationError(
             code="float_canonicalization_unsupported",

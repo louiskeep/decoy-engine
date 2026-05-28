@@ -73,6 +73,33 @@ class PoolBuilder:
     def __init__(self, registry: ProviderRegistry) -> None:
         self._registry = registry
 
+    def identity_for(
+        self,
+        provider: str,
+        *,
+        size: int,
+        job_seed: bytes,
+        locale: str | None = None,
+        config: dict[str, Any] | None = None,
+        namespace: str | None = None,
+    ) -> tuple[str, str, str, bytes, int]:
+        """Compute the cache identity for a pool WITHOUT building it.
+
+        Byte-identical to `build(...).identity` for the same inputs, but
+        cheap (no generate_batch call). PoolAdapter calls this to consult
+        the cache before paying for a build (S5 F1): the prior code built
+        first and discarded the result on a cache hit, so every
+        deterministic generate paid a full rebuild and the >90% cache-hit
+        performance gate was structurally unreachable. The derivation reuses
+        the same `_config_hash` + `_derive_pool_seed` helpers `build` uses,
+        and the field order matches `ValuePool.identity`, so the two cannot
+        drift.
+        """
+        effective_locale = locale or "default"
+        cfg_hash = _config_hash(config)
+        pool_seed = _derive_pool_seed(job_seed, provider, effective_locale, namespace, cfg_hash)
+        return (provider, effective_locale, cfg_hash, pool_seed, size)
+
     def build(
         self,
         provider: str,
@@ -113,13 +140,20 @@ class PoolBuilder:
         cfg_hash = _config_hash(config)
         pool_seed = _derive_pool_seed(job_seed, provider, effective_locale, namespace, cfg_hash)
 
-        # Build-time ProviderSpec is always non-deterministic (PO call).
-        # Determinism enters at sample-time via derive_index.
+        # Build-time ProviderSpec is non-deterministic in the cardinality
+        # sense (determinism for the column enters at sample-time via
+        # derive_index), but it now carries `seed=pool_seed` so the adapter
+        # can seed its RNG for build-time reproducibility (S5 F2). Without
+        # this the pool_seed only entered the cache identity while the
+        # underlying Faker batch stayed unseeded: two builds of the same
+        # identity produced different values, making the identity a lie.
+        # `deterministic=False` keeps the S4 contract (seeding is opt-in via
+        # a non-None seed, not the cardinality-determinism axis).
         spec = ProviderSpec(
             locale=locale,
             deterministic=False,
             namespace=None,
-            seed=None,
+            seed=pool_seed,
             extra=dict(config or {}),
         )
 

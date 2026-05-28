@@ -11,7 +11,7 @@ The envelope (per spec §2):
     HMAC_key   = HKDF-SHA256(IKM=seed, salt=b"decoy-engine/determinism/v1",
                              info=namespace.encode("utf-8"), length=32)
     HMAC_input = (
-        bytes([SEED_PROTOCOL_VERSION])               # 1 byte; 0x01 today
+        bytes([SEED_PROTOCOL_VERSION])               # 1 byte; 0x02 today
         + len(namespace).to_bytes(4, "big") + namespace.encode("utf-8")
         + len(source).to_bytes(4, "big") + source
     )
@@ -50,7 +50,14 @@ from decoy_engine.determinism._hkdf import hkdf_sha256
 # The version byte mixed into every HMAC input. Bumping it requires a
 # release-notes line per done-definition.md; manifests with an older
 # version cannot be reproduced by post-bump builds.
-SEED_PROTOCOL_VERSION: int = 1
+#
+# v1 -> v2 (F-series corrections, pre-GA): a coordinated bump covering the
+# three deterministic-output-shifting fixes that landed together: Faker pool
+# builds are now seeded (S5 F2), and the canonicalize integer encoding moved
+# to a length-prefixed arbitrary-magnitude form covering numpy scalars (S5
+# NF1/NF2). No manifests exist in the wild (pre-GA), so v1 marks the
+# pre-correction era and v2 is the corrected baseline.
+SEED_PROTOCOL_VERSION: int = 2
 
 _SALT = b"decoy-engine/determinism/v1"
 _SEED_LENGTH = 8  # exactly 8 bytes; raises on any other length
@@ -101,7 +108,7 @@ def derive(seed: bytes, namespace: str, source: bytes) -> bytes:
             ints, etc.
 
     Returns:
-        32 bytes of stable derived material under `SEED_PROTOCOL_VERSION=1`.
+        32 bytes of stable derived material under `SEED_PROTOCOL_VERSION=2`.
 
     Raises:
         DeterminismError on invalid inputs (seed wrong length, empty namespace).

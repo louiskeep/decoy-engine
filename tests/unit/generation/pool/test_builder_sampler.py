@@ -55,6 +55,36 @@ class TestPoolBuilder:
         # Different pool_seeds: identity tuples differ on the seed field.
         assert pool_a.seed != pool_b.seed
 
+    def test_same_identity_two_builders_byte_identical_values(self) -> None:
+        """F2: the Faker batch is now seeded from the derived pool_seed, so two
+        independent builders building the same identity produce byte-identical
+        pool values. Before F2 the Faker batch was unseeded: the pool_seed only
+        entered the cache identity while the values were random per build, so
+        the identity was a lie (and the same-process byte-identical test only
+        passed because the broken in-process cache returned the first build)."""
+        p1 = PoolBuilder(get_default_registry()).build(
+            "person_email", size=50, job_seed=_SEED, namespace="ns"
+        )
+        p2 = PoolBuilder(get_default_registry()).build(
+            "person_email", size=50, job_seed=_SEED, namespace="ns"
+        )
+        assert p1.identity == p2.identity
+        assert list(p1.values) == list(p2.values)
+
+    def test_different_seed_changes_values(self) -> None:
+        """Sanity: seeding is real, not a no-op. A different job seed yields a
+        different (seeded) pool."""
+        p1 = _builder().build("person_email", size=50, job_seed=b"\x00" * 8, namespace="ns")
+        p2 = _builder().build("person_email", size=50, job_seed=b"\x01" * 8, namespace="ns")
+        assert list(p1.values) != list(p2.values)
+
+    def test_identity_for_matches_build_identity(self) -> None:
+        """F1 support: the cheap identity_for path equals build(...).identity."""
+        builder = PoolBuilder(get_default_registry())
+        ident = builder.identity_for("person_email", size=20, job_seed=_SEED, namespace="ns")
+        pool = builder.build("person_email", size=20, job_seed=_SEED, namespace="ns")
+        assert ident == pool.identity
+
 
 class TestPoolSamplerDeterministic:
     def test_same_inputs_produce_same_output(self) -> None:
@@ -181,6 +211,25 @@ class TestPoolSamplerNonDeterministic:
         out_a = sampler.sample(pool, n=10, mode=CardinalityMode.REUSE, seed=_SEED)
         out_b = sampler.sample(pool, n=10, mode=CardinalityMode.REUSE, seed=_SEED)
         assert out_a.tolist() == out_b.tolist()
+
+    def test_match_cardinality_mapping_is_row_order_independent(self) -> None:
+        """NF3: the source-value -> pool-value mapping is keyed to the sorted
+        distinct-value set, so reordering source rows yields the same mapping.
+        The prior code keyed on first-appearance order, so the same column in a
+        different row order produced a different mapping."""
+        builder = _builder()
+        sampler = PoolSampler()
+        pool = builder.build("person_email", size=100, job_seed=_SEED)
+        src1 = pd.Series(["a", "b", "c", "a", "b"])
+        src2 = pd.Series(["c", "b", "a", "b", "a"])  # same set, shuffled
+        out1 = sampler.sample(
+            pool, n=5, mode=CardinalityMode.MATCH_SOURCE_CARDINALITY, seed=_SEED, source=src1
+        )
+        out2 = sampler.sample(
+            pool, n=5, mode=CardinalityMode.MATCH_SOURCE_CARDINALITY, seed=_SEED, source=src2
+        )
+        # Each distinct source value maps to the same pool value in both runs.
+        assert dict(zip(src1, out1, strict=True)) == dict(zip(src2, out2, strict=True))
 
 
 class TestCardinalityEnum:
