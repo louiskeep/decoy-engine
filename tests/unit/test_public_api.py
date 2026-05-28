@@ -158,6 +158,14 @@ def test_all_lists_every_public_name():
         "SsnAdapter",
         "SsnDomain",
         "SsnValidator",
+        # engine-v2 S9 (Execution Adapter, pandas).
+        "ExecutionAdapter",
+        "ExecutionError",
+        "ExecutionEvent",
+        "ExecutionResult",
+        "PandasExecutionAdapter",
+        "StrategyError",
+        "get_default_executor",
     }
     assert set(decoy_engine.__all__) == expected
 
