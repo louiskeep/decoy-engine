@@ -22,9 +22,11 @@ from decoy_engine.execution import (
     ExecutionError,
     PandasExecutionAdapter,
     PolarsExecutionAdapter,
+    get_default_executor,
     resolve_substrate,
     select_execution_adapter,
 )
+from decoy_engine.execution._pandas_adapter import _reset_default_executor_for_tests
 from decoy_engine.execution.polars import (
     ConversionBoundary,
     read_source_polars,
@@ -386,9 +388,49 @@ class TestFallbackParity:
         assert "fk_resolution" in str(exc.value)
 
 
+class TestEndToEndRouting:
+    """S12 M2: DECOY_SUBSTRATE, consumed at get_default_executor(), must route a
+    FULL job through the selected substrate, not merely construct the adapter."""
+
+    def _two_table_job(self) -> tuple[Any, dict[str, pa.Table]]:
+        sources = {"a": pa.table({"x": ["p", "q"]}), "b": pa.table({"y": ["r", "s"]})}
+        plan = _plan(
+            [
+                ("a", TableSeed(per_column=(("x", _col("redact")),), per_group=())),
+                ("b", TableSeed(per_column=(("y", _col("redact")),), per_group=())),
+            ]
+        )
+        return plan, sources
+
+    def test_polars_substrate_routes_full_job(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("DECOY_SUBSTRATE", "polars")
+        _reset_default_executor_for_tests()
+        adapter = get_default_executor()
+        assert isinstance(adapter, PolarsExecutionAdapter)
+        plan, sources = self._two_table_job()
+        res = adapter.run(
+            plan, sources, registry=_REG, relationship_graph=_GRAPH, namespace_registry=_NS
+        )
+        # the full job actually ran on polars (not just constructed the adapter)
+        assert res.quality_metrics["executed_substrate"] == {"redact": "polars"}
+        assert res.outputs["a"].column("x").to_pylist() == ["REDACTED", "REDACTED"]
+
+    def test_pandas_substrate_routes_full_job(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("DECOY_SUBSTRATE", "pandas")
+        _reset_default_executor_for_tests()
+        adapter = get_default_executor()
+        assert isinstance(adapter, PandasExecutionAdapter)
+        plan, sources = self._two_table_job()
+        res = adapter.run(
+            plan, sources, registry=_REG, relationship_graph=_GRAPH, namespace_registry=_NS
+        )
+        assert res.outputs["b"].column("y").to_pylist() == ["REDACTED", "REDACTED"]
+
+
 class TestSubstrateSelector:
     def test_default_is_pandas(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("DECOY_SUBSTRATE", raising=False)
+        _reset_default_executor_for_tests()
         assert resolve_substrate() == "pandas"
         assert isinstance(select_execution_adapter(), PandasExecutionAdapter)
 
