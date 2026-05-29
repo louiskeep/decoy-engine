@@ -300,6 +300,9 @@ class TestNoProfileMode:
         assert plan.plan_compile.checks_skipped == (
             "basic_uniqueness_pre_flight",
             "pool_capacity_pre_flight",
+            # B1 (S13): row 10 is profile-dependent, so it is skipped under
+            # no_profile too (the execution-time guard backstops it).
+            "null_bearing_int_unsupported",
         )
 
     def test_profile_mode_leaves_checks_skipped_empty(self) -> None:
