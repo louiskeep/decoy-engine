@@ -147,15 +147,11 @@ class TestGenerationOpSpine:
         vals = generate_tables(cfg)["customers"].column("acct").to_pylist()
         assert vals == ["ACCT-0001", "ACCT-0002", "ACCT-0003"]
 
-    def test_unsupported_generator_type_raises(self):
-        # `formula` is in the closed Literal (so it passes validation) but is not yet
-        # implemented in this sub-commit of S6-ENG-2. The next sub-commit lands formula
-        # and removes this test + the runtime ValueError (Literal then enforces alone).
-        cfg = _generate_config()
-        cfg["tables"][0]["generate_columns"][0] = {"name": "x", "type": "formula"}
-        cfg = PipelineConfig.model_validate(cfg).model_dump()
-        with pytest.raises(ValueError, match="S6-ENG-2"):
-            generate_tables(cfg)
+    # The runtime "not yet implemented" ValueError is gone (all four generators
+    # land in S6-ENG-2). The closed Literal on GenerateColumnConfig.type now
+    # enforces the supported set at validation; the dispatch's defensive `else`
+    # only fires on a bypass (an unvalidated dict), which is a programmer error
+    # not worth a happy-path test.
 
 
 # ----------------------------------------------------------------------------
@@ -285,3 +281,42 @@ class TestFakerParityV1:
             "null_probability": 0.3,
         }
         assert _v2_run(col, 20) == _v1_run(col, 20)
+
+
+class TestFormulaParityV1:
+    """Reading B: v2 ``formula`` is byte-identical to V1 ``_generate_formula_column``
+    + V1 ``generate_column`` null injection under fixed seed. V1's inline path is
+    delegated to (pragmatic parity for the generic expression-eval machinery);
+    references-deferred and empty-formula paths return ``[None] * n`` as V1 does."""
+
+    def test_numeric_expression(self):
+        # Inline path: a deterministic per-row Python expression.
+        col = {"name": "twice", "type": "formula", "formula": "i * 2"}
+        assert _v2_run(col, 5) == _v1_run(col, 5)
+
+    def test_inline_with_random(self):
+        # Inline path: random.randint(1, 100) is row-seeded via local_seed.
+        col = {
+            "name": "rand",
+            "type": "formula",
+            "formula": "random.randint(1, 100)",
+        }
+        assert _v2_run(col, 10) == _v1_run(col, 10)
+
+    def test_references_defers_to_post_pass(self):
+        # V1 returns [None]*n for the per-column phase when `references` is set
+        # (DataGenerator._process_referenced_formulas fills them later); v2 mirrors
+        # the placeholder behavior. The v2 post-pass machinery is a later sprint.
+        col = {
+            "name": "greet",
+            "type": "formula",
+            "formula": "f'Hello {name}'",
+            "references": ["name"],
+        }
+        assert _v2_run(col, 5) == _v1_run(col, 5)
+        assert _v2_run(col, 5) == [None] * 5
+
+    def test_empty_formula_returns_nulls(self):
+        col = {"name": "x", "type": "formula", "formula": ""}
+        assert _v2_run(col, 5) == _v1_run(col, 5)
+        assert _v2_run(col, 5) == [None] * 5

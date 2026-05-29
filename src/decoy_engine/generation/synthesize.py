@@ -70,10 +70,14 @@ def _generate_column(
         values = _categorical(col, n, seed, derive_key)
     elif kind == "faker":
         values = _faker(col, n, seed, derive_key)
+    elif kind == "formula":
+        values = _formula(col, n, seed, derive_key)
     else:
+        # The Literal on GenerateColumnConfig.type rejects anything outside this set
+        # at validation; this branch is the defensive fallback for callers that
+        # bypass validation (e.g. an unvalidated dict).
         raise ValueError(
-            f"generate column {col.get('name')!r}: generator type {kind!r} is not "
-            f"yet implemented in this S6-ENG-2 sub-commit (formula lands next)."
+            f"generate column {col.get('name')!r}: unexpected generator type {kind!r}"
         )
     return _apply_null_probability(values, col, seed, derive_key)
 
@@ -187,3 +191,40 @@ def _apply_null_probability(
         if random.random() < null_prob:
             out[i] = None
     return out
+
+
+def _formula(
+    col: dict[str, Any], n: int, seed: int, derive_key: Any = None
+) -> list[Any]:
+    """Python-expression-driven values, parity-frozen vs V1
+    ``_generate_formula_column`` (``columns.py:974+``).
+
+    V1's structure (mirrored here):
+      - empty ``formula`` -> warn + None series (we just return Nones).
+      - ``references: [...]`` set -> DEFER to V1's post-pass
+        (``DataGenerator._process_referenced_formulas``); the per-column generator
+        returns ``[None] * n`` placeholders. v2 returns the same placeholders;
+        cross-column-reference formulas land in a later sprint (alongside the
+        v2 post-pass plumbing).
+      - else (inline path) -> per-row safe_eval with row-seeded ``random`` /
+        ``faker`` scope.
+
+    For the inline path we DELEGATE to V1 ``ColumnGenerator._eval_formula_inline``
+    (Reading B: pragmatic guaranteed parity; the eval scope is generic Python
+    expression machinery + Faker helpers, not v1-specific). A v2-native rewrite
+    that lifts the eval scope into ``generation/`` can land alongside S9 v1
+    removal. The delegation is the ENG-2 commit-1 of formula; it does not block
+    ENG-2's Reading-B exit gate (parity tests are byte-identical).
+    """
+    formula = col.get("formula") or ""
+    references = col.get("references") or []
+    if not formula or references:
+        # V1: warn or defer -- both return a None series of length n.
+        return [None] * n
+    from decoy_engine.generators.columns import ColumnGenerator
+
+    cg = ColumnGenerator(seed=seed, derive_key=derive_key)
+    series = cg._eval_formula_inline(
+        n, formula, col.get("name", "unnamed_column"), col
+    )
+    return series.tolist()
