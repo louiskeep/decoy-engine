@@ -1,9 +1,14 @@
 """DECOY_SUBSTRATE flag + execution-adapter selection (engine-v2 S11).
 
 The flag picks which `ExecutionAdapter` the runner instantiates. Per PQ6
-(PO-ratified 2026-05-28) the default is `pandas` through S12 and flips to
-`polars` at S13 close, once all 11 strategies are polars-native and parity-green.
-The flag mechanism ships in S11; the DEFAULT does not flip until S13.
+(PO-ratified 2026-05-28) the default was `pandas` through S12 and FLIPPED to
+`polars` at S13 close, once all 11 strategies were polars-native and parity-green.
+The flag mechanism shipped in S11; the DEFAULT flipped at S13 (this module).
+
+The flip changes ONLY this default. FK + composite jobs are not yet polars-native
+(deferred V2+), so the polars adapter keeps `fallback_to_pandas=True` and routes
+them through the pandas oracle (byte-for-byte identical, recorded as such, not a
+silent downgrade). See `polars/_polars_adapter.py` for that disposition.
 """
 
 from __future__ import annotations
@@ -17,7 +22,7 @@ if TYPE_CHECKING:
     from decoy_engine.execution._adapter import ExecutionAdapter
 
 VALID_SUBSTRATES = ("pandas", "polars")
-_DEFAULT_SUBSTRATE = "pandas"
+_DEFAULT_SUBSTRATE = "polars"
 
 
 def resolve_substrate() -> str:

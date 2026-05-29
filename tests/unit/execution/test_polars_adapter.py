@@ -428,11 +428,14 @@ class TestEndToEndRouting:
 
 
 class TestSubstrateSelector:
-    def test_default_is_pandas(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_default_is_polars(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # S13 flip (PQ6): with DECOY_SUBSTRATE unset the engine defaults to polars.
+        # (Explicit DECOY_SUBSTRATE=pandas still selects the pandas adapter; see
+        # test_pandas_substrate_routes_full_job.)
         monkeypatch.delenv("DECOY_SUBSTRATE", raising=False)
         _reset_default_executor_for_tests()
-        assert resolve_substrate() == "pandas"
-        assert isinstance(select_execution_adapter(), PandasExecutionAdapter)
+        assert resolve_substrate() == "polars"
+        assert isinstance(select_execution_adapter(), PolarsExecutionAdapter)
 
     def test_polars_selected(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("DECOY_SUBSTRATE", "polars")
