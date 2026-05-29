@@ -103,7 +103,11 @@ class GenerateColumnConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     name: str
-    type: str
+    # The closed set of generators v2 supports. Reading B: this mirrors V1
+    # ColumnGenerator.generators (faker/sequence/categorical/formula); `reference`
+    # is the FK path (S6-ENG-3, mint-a-pool), and `distribution` is V2+/fast-follow.
+    # Tightened from a free-form `str` per Dennis S6-ENG-1 gate finding LOW-1.
+    type: Literal["faker", "sequence", "categorical", "formula"]
 
 
 class TableConfig(BaseModel):
