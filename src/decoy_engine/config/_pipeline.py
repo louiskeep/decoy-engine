@@ -79,3 +79,67 @@ class PipelineConfig(BaseModel):
                     "generate mode tables must use generate_columns, not mask columns"
                 )
         return self
+
+    @model_validator(mode="after")
+    def _reference_graph_valid(self) -> "PipelineConfig":
+        """In generate mode: every ``reference_table`` named on a generate column must
+        resolve to a generate-mode table in this config; every ``reference_column``
+        must exist on that parent; the reference graph must be acyclic so the engine
+        can topo-sort parent-then-child generation. Mirrors a SQL DDL FK contract
+        (referenced parents must exist, no cycles)."""
+        if self.mode != "generate":
+            return self
+        by_name = {t.name: t for t in self.tables}
+        # Build dep graph: table_name -> set of parent table names referenced by
+        # any of its `reference`-typed generate columns.
+        deps: dict[str, set[str]] = {}
+        for table in self.tables:
+            d: set[str] = set()
+            for col in table.generate_columns:
+                if col.type != "reference":
+                    continue
+                extras = col.model_extra or {}
+                ref_table = extras.get("reference_table")
+                ref_column = extras.get("reference_column")
+                if ref_table not in by_name:
+                    raise ValueError(
+                        f"table {table.name!r}: reference column {col.name!r} "
+                        f"points to unknown table {ref_table!r}"
+                    )
+                parent = by_name[ref_table]
+                if not parent.generate_columns:
+                    raise ValueError(
+                        f"table {table.name!r}: reference column {col.name!r} "
+                        f"points to mask-mode table {ref_table!r}; a reference "
+                        f"requires a generate-mode parent"
+                    )
+                parent_cols = {c.name for c in parent.generate_columns}
+                if ref_column not in parent_cols:
+                    raise ValueError(
+                        f"table {table.name!r}: reference column {col.name!r} "
+                        f"points to {ref_table}.{ref_column!r}, but "
+                        f"{ref_table!r} declares no such generate_column"
+                    )
+                d.add(ref_table)
+            deps[table.name] = d
+        # Detect cycles via DFS three-color marking.
+        WHITE, GRAY, BLACK = 0, 1, 2
+        state = {n: WHITE for n in deps}
+
+        def dfs(n: str, path: list[str]) -> None:
+            if state[n] == GRAY:
+                cycle = path[path.index(n) :] + [n]
+                raise ValueError(
+                    f"reference cycle in generate config: {' -> '.join(cycle)}"
+                )
+            if state[n] == BLACK:
+                return
+            state[n] = GRAY
+            for parent_name in deps[n]:
+                dfs(parent_name, path + [n])
+            state[n] = BLACK
+
+        for n in list(deps):
+            if state[n] == WHITE:
+                dfs(n, [])
+        return self

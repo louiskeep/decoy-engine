@@ -45,24 +45,73 @@ def generate_tables(
     + ``build_v2_target_node_runs`` path the mask spine uses.
     """
     seed = int((config.get("global_settings") or {}).get("seed", _DEFAULT_SEED))
+    tables_list = config.get("tables") or []
+    # Generate tables only (mask tables are skipped). Key by name + build the dep
+    # graph so a `reference` column can read its already-generated parent's pool.
+    generate_by_name = {
+        t["name"]: t for t in tables_list if t.get("generate_columns")
+    }
+    deps: dict[str, set[str]] = {}
+    for name, t in generate_by_name.items():
+        d: set[str] = set()
+        for col in t["generate_columns"]:
+            if col.get("type") == "reference":
+                d.add(col["reference_table"])
+        deps[name] = d
+    # Topo-sort parents-before-children (PipelineConfig._reference_graph_valid
+    # already pinned this acyclic + every reference_table resolves to a generate
+    # table). V1 iterates in declared order + warns on missing deps; v2 is
+    # stricter without breaking parity for already-orderable configs.
+    ordered = _topo_sort(deps)
+    pools: dict[str, pa.Table] = {}
     out: dict[str, pa.Table] = {}
-    for table in config.get("tables") or []:
-        gcols = table.get("generate_columns") or []
-        if not gcols:
-            continue  # a mask table; not this op's concern
+    for name in ordered:
+        table = generate_by_name[name]
+        gcols = table["generate_columns"]
         n = int(table.get("row_count") or 0)
         data = {
-            col["name"]: _generate_column(col, n, seed, derive_key) for col in gcols
+            col["name"]: _generate_column(col, n, seed, derive_key, pools)
+            for col in gcols
         }
-        out[table["name"]] = pa.table(data)
+        tbl = pa.table(data)
+        pools[name] = tbl
+        out[name] = tbl
     return out
 
 
+def _topo_sort(deps: dict[str, set[str]]) -> list[str]:
+    """DFS post-order over the reference dep graph. The PipelineConfig validator
+    already pinned the graph acyclic, so this is order-only; missing nodes (e.g.
+    a parent referenced by name that is not in deps) are tolerated -- the
+    validator would have caught a genuinely missing parent before we got here."""
+    result: list[str] = []
+    visited: set[str] = set()
+
+    def dfs(n: str) -> None:
+        if n in visited or n not in deps:
+            return
+        visited.add(n)
+        for parent in deps.get(n, ()):
+            dfs(parent)
+        result.append(n)
+
+    for n in deps:
+        dfs(n)
+    return result
+
+
 def _generate_column(
-    col: dict[str, Any], n: int, seed: int, derive_key: Any = None
+    col: dict[str, Any],
+    n: int,
+    seed: int,
+    derive_key: Any = None,
+    pools: dict[str, pa.Table] | None = None,
 ) -> list[Any]:
     """Dispatch a generate column to its generator by ``type`` (mirrors V1
-    ``ColumnGenerator.generators``)."""
+    ``ColumnGenerator.generators``), then apply the V1 ``null_probability``
+    post-process (V1 ``generate_column`` lines 174-187) so the same fraction of
+    rows is nulled at byte-identical row positions. ``pools`` carries already-
+    generated parent tables for ``reference`` columns (S6-ENG-3 mint-a-pool)."""
     kind = col.get("type")
     if kind == "sequence":
         values: list[Any] = _sequence(col, n)
@@ -72,6 +121,8 @@ def _generate_column(
         values = _faker(col, n, seed, derive_key)
     elif kind == "formula":
         values = _formula(col, n, seed, derive_key)
+    elif kind == "reference":
+        values = _reference(col, n, seed, derive_key, pools or {})
     else:
         # The Literal on GenerateColumnConfig.type rejects anything outside this set
         # at validation; this branch is the defensive fallback for callers that
@@ -228,3 +279,86 @@ def _formula(
         n, formula, col.get("name", "unnamed_column"), col
     )
     return series.tolist()
+
+
+def _reference(
+    col: dict[str, Any],
+    n: int,
+    seed: int,
+    derive_key: Any = None,
+    pools: dict[str, pa.Table] | None = None,
+) -> list[Any]:
+    """FK / mint-a-pool: sample values from a parent table's already-generated key
+    column. Parity-frozen vs V1 ``_generate_reference_column`` (``columns.py:758-865``).
+
+    Pattern (mirror V1):
+      - Read parent values from ``pools[reference_table].column(reference_column)``.
+      - INSERTION-ORDER unique + dropna (V1 uses pandas ``Series.dropna().unique()``,
+        which is insertion-order; a naive ``set()`` would break parity).
+      - Empty parent pool -> ``[None] * n`` (V1 warns + returns Nones).
+      - Reseed ``random`` from the per-column seed (V1's exact pattern -- the
+        ``categorical`` generator does the same).
+      - Dispatch by ``distribution``: ``random`` (random.choice), ``sequential``
+        (parent_vals[i % len]), ``weighted`` (random.choices with weights;
+        size-mismatch falls back to None for uniform). Unknown -> random
+        (V1 warns; the v2 falls through silently, values match).
+      - Optional cardinality repair via V1 ``_apply_cardinality_bounds`` (~150 LoC
+        repair algorithm) -- DELEGATED to V1 the same way ``_formula`` delegates
+        ``_eval_formula_inline``: Reading B pragmatic guaranteed parity; the
+        repair is generic set-cover-like logic, not v1-specific; v2-native rewrite
+        lifts at S9 alongside v1 removal.
+
+    The PipelineConfig ``_reference_graph_valid`` validator + topo-sort in
+    ``generate_tables`` guarantee the parent is in ``pools`` by the time we get
+    here; this function does not re-check existence.
+    """
+    pools = pools or {}
+    ref_table = col["reference_table"]
+    ref_column = col["reference_column"]
+    distribution = col.get("distribution", "random")
+    min_per = int(col.get("min_per_parent") or 0)
+    max_per = int(col.get("max_per_parent") or 0)
+
+    parent_tbl = pools[ref_table]
+    raw_vals = parent_tbl.column(ref_column).to_pylist()
+    # Insertion-order unique + drop None, matching V1 `dropna().unique()` on a
+    # pandas Series. A naive set() would lose order -> different random.choice
+    # output for the same seed.
+    seen: set = set()
+    ref_vals: list[Any] = []
+    for v in raw_vals:
+        if v is None or v in seen:
+            continue
+        seen.add(v)
+        ref_vals.append(v)
+
+    if not ref_vals:
+        return [None] * n
+
+    col_seed = synthetic_column_seed(
+        derive_key=derive_key, column_config=col, fallback_seed=seed
+    )
+    random.seed(col_seed)
+
+    values: list[Any] = []
+    for i in range(n):
+        if distribution == "random":
+            values.append(random.choice(ref_vals))
+        elif distribution == "sequential":
+            values.append(ref_vals[i % len(ref_vals)])
+        elif distribution == "weighted":
+            weights = col.get("weights")
+            if not weights or len(weights) != len(ref_vals):
+                weights = None  # V1: size-mismatch -> uniform
+            values.append(random.choices(ref_vals, weights=weights, k=1)[0])
+        else:
+            # V1 unknown -> warn + random; the v2 falls through silently (parity
+            # in values, not in log lines).
+            values.append(random.choice(ref_vals))
+
+    if min_per > 0 or max_per > 0:
+        from decoy_engine.generators.columns import ColumnGenerator
+
+        cg = ColumnGenerator(seed=seed, derive_key=derive_key)
+        values = cg._apply_cardinality_bounds(values, ref_vals, min_per, max_per)
+    return values

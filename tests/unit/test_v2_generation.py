@@ -320,3 +320,285 @@ class TestFormulaParityV1:
         col = {"name": "x", "type": "formula", "formula": ""}
         assert _v2_run(col, 5) == _v1_run(col, 5)
         assert _v2_run(col, 5) == [None] * 5
+
+
+# ----------------------------------------------------------------------------
+# Multi-table parity helpers (S6-ENG-3: reference / mint-a-pool)
+# ----------------------------------------------------------------------------
+
+
+def _v1_run_multi(tables_cfg: list[dict], seed: int = 42) -> dict[str, dict]:
+    """Run V1 ``ColumnGenerator`` across multiple tables in declared order,
+    accumulating a ``reference_data`` dict the same way ``DataGenerator._generate_table``
+    does, but in-memory (no CSV writes). Returns ``{table: {col: values_list}}``.
+
+    Used by TestReferenceParityV1 as the parity oracle for cross-table FK
+    (mint-a-pool) generation."""
+    import pandas as pd
+
+    from decoy_engine.generators.columns import ColumnGenerator
+
+    cg = ColumnGenerator(seed=seed, derive_key=None)
+    reference_data: dict[str, "pd.DataFrame"] = {}
+    out: dict[str, dict] = {}
+    for table in tables_cfg:
+        name = table["name"]
+        n = table["row_count"]
+        df = pd.DataFrame()
+        for col in table["generate_columns"]:
+            series = cg.generate_column(n, col, name, reference_data)
+            df[col["name"]] = series
+        reference_data[name] = df
+        out[name] = {c: df[c].tolist() for c in df.columns}
+    return out
+
+
+def _v2_run_multi(tables_cfg: list[dict], seed: int = 42) -> dict[str, dict]:
+    """Run v2 ``generate_tables`` against a multi-table generate config; returns
+    ``{table: {col: values_list}}`` for parity comparison vs ``_v1_run_multi``."""
+    cfg = {
+        "version": 1,
+        "mode": "generate",
+        "global_settings": {"seed": seed},
+        "sources": {},
+        "tables": tables_cfg,
+        "targets": {
+            t["name"]: {"type": "file", "format": "csv", "path": "o.csv"}
+            for t in tables_cfg
+        },
+    }
+    cfg = PipelineConfig.model_validate(cfg).model_dump()
+    result = generate_tables(cfg)
+    return {
+        name: {c: tbl.column(c).to_pylist() for c in tbl.column_names}
+        for name, tbl in result.items()
+    }
+
+
+class TestReferenceParityV1:
+    """Reading B: v2 ``reference`` is byte-identical to V1 ``_generate_reference_column``
+    + the V1 ``generate_column`` null_probability post-process across multi-table
+    generation under fixed seed (``derive_key=None``)."""
+
+    def _customers_then_orders(self, distribution: str, child_n: int = 10, **child_extras) -> list[dict]:
+        parent = {
+            "name": "customers",
+            "row_count": 5,
+            "generate_columns": [
+                {"name": "id", "type": "sequence", "start": 1, "step": 1}
+            ],
+        }
+        child_col: dict = {
+            "name": "customer_id",
+            "type": "reference",
+            "reference_table": "customers",
+            "reference_column": "id",
+            "distribution": distribution,
+        }
+        child_col.update(child_extras)
+        child = {
+            "name": "orders",
+            "row_count": child_n,
+            "generate_columns": [
+                {"name": "order_id", "type": "sequence", "start": 100, "step": 1},
+                child_col,
+            ],
+        }
+        return [parent, child]
+
+    def test_random_distribution(self):
+        tables = self._customers_then_orders("random")
+        v2 = _v2_run_multi(tables)
+        v1 = _v1_run_multi(tables)
+        assert v2 == v1
+        # Orphan-freeness: every child customer_id is one of the parent's ids.
+        parents = set(v2["customers"]["id"])
+        assert all(c in parents for c in v2["orders"]["customer_id"])
+
+    def test_sequential_distribution(self):
+        tables = self._customers_then_orders("sequential")
+        assert _v2_run_multi(tables) == _v1_run_multi(tables)
+
+    def test_weighted_distribution(self):
+        tables = self._customers_then_orders(
+            "weighted", weights=[5, 1, 1, 1, 1]
+        )
+        assert _v2_run_multi(tables) == _v1_run_multi(tables)
+
+    def test_min_per_parent(self):
+        tables = self._customers_then_orders(
+            "random", child_n=20, min_per_parent=2
+        )
+        assert _v2_run_multi(tables) == _v1_run_multi(tables)
+
+    def test_max_per_parent(self):
+        tables = self._customers_then_orders(
+            "random", child_n=20, max_per_parent=5
+        )
+        assert _v2_run_multi(tables) == _v1_run_multi(tables)
+
+    def test_empty_parent_pool(self):
+        # 0-row parent -> child reference column is [None]*n.
+        parent = {
+            "name": "customers",
+            "row_count": 0,
+            "generate_columns": [
+                {"name": "id", "type": "sequence", "start": 1, "step": 1}
+            ],
+        }
+        child = {
+            "name": "orders",
+            "row_count": 5,
+            "generate_columns": [
+                {
+                    "name": "customer_id",
+                    "type": "reference",
+                    "reference_table": "customers",
+                    "reference_column": "id",
+                    "distribution": "random",
+                }
+            ],
+        }
+        tables = [parent, child]
+        v2 = _v2_run_multi(tables)
+        assert v2 == _v1_run_multi(tables)
+        assert v2["orders"]["customer_id"] == [None] * 5
+
+    def test_null_probability_on_reference(self):
+        tables = self._customers_then_orders(
+            "random", child_n=20, null_probability=0.3
+        )
+        # Parity covers the per-row reference value AND the null/non-null positions.
+        assert _v2_run_multi(tables) == _v1_run_multi(tables)
+
+    def test_repeatability(self):
+        # Same config + same seed across two runs -> byte-identical output.
+        tables = self._customers_then_orders("random")
+        assert _v2_run_multi(tables) == _v2_run_multi(tables)
+
+    def test_many_to_many_junction(self):
+        # m:n via a junction table with TWO reference columns.
+        users = {
+            "name": "users",
+            "row_count": 3,
+            "generate_columns": [
+                {"name": "id", "type": "sequence", "start": 1, "step": 1}
+            ],
+        }
+        groups = {
+            "name": "groups",
+            "row_count": 4,
+            "generate_columns": [
+                {"name": "id", "type": "sequence", "start": 100, "step": 1}
+            ],
+        }
+        membership = {
+            "name": "memberships",
+            "row_count": 10,
+            "generate_columns": [
+                {
+                    "name": "user_id",
+                    "type": "reference",
+                    "reference_table": "users",
+                    "reference_column": "id",
+                    "distribution": "random",
+                },
+                {
+                    "name": "group_id",
+                    "type": "reference",
+                    "reference_table": "groups",
+                    "reference_column": "id",
+                    "distribution": "random",
+                },
+            ],
+        }
+        tables = [users, groups, membership]
+        assert _v2_run_multi(tables) == _v1_run_multi(tables)
+
+
+class TestReferenceConfigValidation:
+    """v2-specific validation behaviors (not parity-tested): the contract enforces
+    a reference graph that's resolvable + acyclic + properly declared at validation
+    time. V1 was permissive (placeholder strings); the v2 fails fast at validate."""
+
+    def _two_table_cfg(self, **child_extras) -> dict:
+        child_col: dict = {
+            "name": "customer_id",
+            "type": "reference",
+            "reference_table": "customers",
+            "reference_column": "id",
+            "distribution": "random",
+        }
+        child_col.update(child_extras)
+        return {
+            "version": 1,
+            "mode": "generate",
+            "global_settings": {"seed": 42},
+            "sources": {},
+            "tables": [
+                {
+                    "name": "customers",
+                    "row_count": 5,
+                    "generate_columns": [
+                        {"name": "id", "type": "sequence", "start": 1, "step": 1}
+                    ],
+                },
+                {
+                    "name": "orders",
+                    "row_count": 10,
+                    "generate_columns": [child_col],
+                },
+            ],
+            "targets": {
+                "customers": {"type": "file", "format": "csv", "path": "c.csv"},
+                "orders": {"type": "file", "format": "csv", "path": "o.csv"},
+            },
+        }
+
+    def test_reference_requires_reference_table(self):
+        cfg = self._two_table_cfg()
+        del cfg["tables"][1]["generate_columns"][0]["reference_table"]
+        with pytest.raises(ValidationError, match="reference_table"):
+            PipelineConfig.model_validate(cfg)
+
+    def test_reference_requires_reference_column(self):
+        cfg = self._two_table_cfg()
+        del cfg["tables"][1]["generate_columns"][0]["reference_column"]
+        with pytest.raises(ValidationError, match="reference_column"):
+            PipelineConfig.model_validate(cfg)
+
+    def test_unknown_reference_table_rejected(self):
+        cfg = self._two_table_cfg(reference_table="does_not_exist")
+        with pytest.raises(ValidationError, match="unknown table"):
+            PipelineConfig.model_validate(cfg)
+
+    def test_unknown_reference_column_rejected(self):
+        cfg = self._two_table_cfg(reference_column="not_a_column")
+        with pytest.raises(ValidationError, match="declares no such generate_column"):
+            PipelineConfig.model_validate(cfg)
+
+    def test_cycle_rejected(self):
+        # customers.parent_id -> orders.id; orders.customer_id -> customers.id => cycle.
+        cfg = self._two_table_cfg()
+        cfg["tables"][0]["generate_columns"].append(
+            {
+                "name": "parent_id",
+                "type": "reference",
+                "reference_table": "orders",
+                "reference_column": "customer_id",
+                "distribution": "random",
+            }
+        )
+        with pytest.raises(ValidationError, match="reference cycle"):
+            PipelineConfig.model_validate(cfg)
+
+    def test_topo_sort_handles_declared_order_reverse(self):
+        # Declare child BEFORE parent. v2's topo-sort generates parent first;
+        # the result should still be a valid orphan-free child set.
+        cfg = self._two_table_cfg()
+        cfg["tables"] = list(reversed(cfg["tables"]))  # orders first, customers second
+        validated = PipelineConfig.model_validate(cfg).model_dump()
+        result = generate_tables(validated)
+        parents = set(result["customers"].column("id").to_pylist())
+        children = result["orders"].column("customer_id").to_pylist()
+        assert all(c in parents for c in children)

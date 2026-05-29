@@ -104,10 +104,29 @@ class GenerateColumnConfig(BaseModel):
 
     name: str
     # The closed set of generators v2 supports. Reading B: this mirrors V1
-    # ColumnGenerator.generators (faker/sequence/categorical/formula); `reference`
-    # is the FK path (S6-ENG-3, mint-a-pool), and `distribution` is V2+/fast-follow.
-    # Tightened from a free-form `str` per Dennis S6-ENG-1 gate finding LOW-1.
-    type: Literal["faker", "sequence", "categorical", "formula"]
+    # ColumnGenerator.generators (faker/sequence/categorical/formula/reference).
+    # `distribution` is V2+/fast-follow (column-replacer arity); `reference` lands
+    # in S6-ENG-3 as the column-level mint-a-pool FK path.
+    type: Literal["faker", "sequence", "categorical", "formula", "reference"]
+
+    @model_validator(mode="after")
+    def _reference_params_required(self) -> "GenerateColumnConfig":
+        """A ``reference`` column must declare its parent: ``reference_table`` +
+        ``reference_column``. Mirrors V1 ``_generate_reference_column`` (which
+        returns placeholder strings when missing -- v2 catches it at validation
+        instead, so the FE/operator sees the error up front)."""
+        if self.type != "reference":
+            return self
+        extras = self.model_extra or {}
+        if not extras.get("reference_table"):
+            raise ValueError(
+                f"reference column {self.name!r} requires `reference_table`"
+            )
+        if not extras.get("reference_column"):
+            raise ValueError(
+                f"reference column {self.name!r} requires `reference_column`"
+            )
+        return self
 
 
 class TableConfig(BaseModel):
