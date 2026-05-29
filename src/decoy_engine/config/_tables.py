@@ -30,7 +30,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 CardinalityModeLiteral = Literal[
     "reuse",
@@ -83,10 +83,70 @@ class ColumnConfig(BaseModel):
     pool_size: int | None = None
 
 
+class GenerateColumnConfig(BaseModel):
+    """A synthesis (generation) column declaration (S6).
+
+    Mirrors V1's generate column shape (decoy_engine.generators.columns): ``type``
+    selects the generator (``faker`` / ``sequence`` / ``categorical`` / ``formula`` --
+    the V1 ``ColumnGenerator.generators`` keys), and the per-type params
+    (``faker_type``, ``start``, ``step``, ``values``, ``expr``, ...) ride FLAT on
+    the column, exactly as V1 reads them (``column_config.get("faker_type")``).
+    ``extra="allow"`` carries those flat params so the front-end emit and the V1
+    parity oracle line up (Reading B). S6-ENG-1 ships the spine + ``sequence``;
+    S6-ENG-2 adds the remaining parity-frozen generators.
+
+    NOTE (Dennis S6-ENG-1 gate, Q-S6-1): ``extra="allow"`` here is the deliberate
+    mirror-V1-flat choice over a stricter nested ``config: dict`` under
+    ``extra="forbid"`` -- flagged for the gate.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    name: str
+    type: str
+
+
 class TableConfig(BaseModel):
-    """Per-table column-list declaration."""
+    """Per-table declaration.
+
+    A table is EITHER a MASK table (``columns`` of mask ColumnConfig, fed by a
+    source) OR a GENERATE table (``generate_columns`` + ``row_count``, no source),
+    enforced by the validator below. ``columns`` was ``min_length=1``; it is now
+    validated CONDITIONALLY so a generate table can omit it. The mask path is
+    unchanged when no generation fields are set.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     name: str
-    columns: list[ColumnConfig] = Field(min_length=1)
+    columns: list[ColumnConfig] = Field(default_factory=list)
+    # Generation (S6): row_count is V1's per-table `rows`; generate_columns are the
+    # synthesis column specs. Both unset => a mask table.
+    row_count: int | None = None
+    generate_columns: list[GenerateColumnConfig] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _mask_xor_generate(self) -> "TableConfig":
+        if self.generate_columns:
+            if self.columns:
+                raise ValueError(
+                    f"table {self.name!r}: a generate table (generate_columns) must "
+                    f"not also declare mask columns"
+                )
+            if self.row_count is None or self.row_count < 0:
+                raise ValueError(
+                    f"table {self.name!r}: a generate table requires a non-negative "
+                    f"row_count"
+                )
+        else:
+            if not self.columns:
+                raise ValueError(
+                    f"table {self.name!r}: a mask table requires at least one column "
+                    f"(or use generate_columns + row_count to generate)"
+                )
+            if self.row_count is not None:
+                raise ValueError(
+                    f"table {self.name!r}: row_count is only valid on a generate table "
+                    f"(with generate_columns)"
+                )
+        return self
