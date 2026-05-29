@@ -30,7 +30,9 @@ _DEFAULT_SEED = 42
 
 
 def generate_tables(
-    config: dict[str, Any], derive_key: Any = None
+    config: dict[str, Any],
+    derive_key: Any = None,
+    instance_default_locale: str | None = None,
 ) -> dict[str, pa.Table]:
     """Build one Arrow table per generate table in ``config``.
 
@@ -70,7 +72,9 @@ def generate_tables(
         gcols = table["generate_columns"]
         n = int(table.get("row_count") or 0)
         data = {
-            col["name"]: _generate_column(col, n, seed, derive_key, pools)
+            col["name"]: _generate_column(
+                col, n, seed, derive_key, pools, instance_default_locale
+            )
             for col in gcols
         }
         tbl = pa.table(data)
@@ -106,19 +110,23 @@ def _generate_column(
     seed: int,
     derive_key: Any = None,
     pools: dict[str, pa.Table] | None = None,
+    instance_default_locale: str | None = None,
 ) -> list[Any]:
     """Dispatch a generate column to its generator by ``type`` (mirrors V1
     ``ColumnGenerator.generators``), then apply the V1 ``null_probability``
     post-process (V1 ``generate_column`` lines 174-187) so the same fraction of
     rows is nulled at byte-identical row positions. ``pools`` carries already-
-    generated parent tables for ``reference`` columns (S6-ENG-3 mint-a-pool)."""
+    generated parent tables for ``reference`` columns (S6-ENG-3 mint-a-pool).
+    ``instance_default_locale`` (S6-ENG-4 M1) flows the platform's
+    ``AppSettings.default_faker_locale`` into the shared-Faker path for the
+    no-per-column-locale branch of ``_faker``, mirroring V1 ``ColumnGenerator``."""
     kind = col.get("type")
     if kind == "sequence":
         values: list[Any] = _sequence(col, n)
     elif kind == "categorical":
         values = _categorical(col, n, seed, derive_key)
     elif kind == "faker":
-        values = _faker(col, n, seed, derive_key)
+        values = _faker(col, n, seed, derive_key, instance_default_locale)
     elif kind == "formula":
         values = _formula(col, n, seed, derive_key)
     elif kind == "reference":
@@ -178,7 +186,11 @@ def _categorical(
 
 
 def _faker(
-    col: dict[str, Any], n: int, seed: int, derive_key: Any = None
+    col: dict[str, Any],
+    n: int,
+    seed: int,
+    derive_key: Any = None,
+    instance_default_locale: str | None = None,
 ) -> list[Any]:
     """Faker-driven values, parity-frozen vs V1 ``_generate_faker_column``
     (``columns.py:205-276``).
@@ -198,6 +210,12 @@ def _faker(
     locale = col.get("locale")
     if locale:
         faker_inst = make_faker(locale)
+    elif instance_default_locale:
+        # S6-ENG-4 M1: when no per-column locale, fall through to the platform's
+        # instance default locale (mirrors V1 `ColumnGenerator.__init__` lines
+        # 68-72 which uses `make_faker(instance_default_locale)` for `self.faker`).
+        faker_inst = make_faker(instance_default_locale)
+        faker_inst.seed_instance(seed)
     else:
         faker_inst = Faker()
         faker_inst.seed_instance(seed)

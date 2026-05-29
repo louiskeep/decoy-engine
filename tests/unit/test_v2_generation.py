@@ -164,18 +164,36 @@ class TestGenerationOpSpine:
 # determinism tests; ENG-2 pins seed-only-path V1 equivalence.
 
 
-def _v1_run(col: dict, n: int, seed: int = 42) -> list:
+def _v1_run(
+    col: dict,
+    n: int,
+    seed: int = 42,
+    derive_key=None,
+    instance_default_locale: str | None = None,
+) -> list:
     """Run V1 ``ColumnGenerator.generate_column`` (the public entry, including the
     ``null_probability`` post-process) against a single v2-shape column dict and
     return the values list -- the parity oracle covers BOTH the generator output
-    AND the null injection."""
+    AND the null injection. ``derive_key`` + ``instance_default_locale`` default to
+    None so the 16 existing ENG-2/3 callers stay byte-identical; ENG-4 cells pass
+    them explicitly."""
     from decoy_engine.generators.columns import ColumnGenerator
 
-    cg = ColumnGenerator(seed=seed, derive_key=None)
+    cg = ColumnGenerator(
+        seed=seed,
+        derive_key=derive_key,
+        instance_default_locale=instance_default_locale,
+    )
     return cg.generate_column(n, col, "t", {}).tolist()
 
 
-def _v2_run(col: dict, n: int, seed: int = 42) -> list:
+def _v2_run(
+    col: dict,
+    n: int,
+    seed: int = 42,
+    derive_key=None,
+    instance_default_locale: str | None = None,
+) -> list:
     """Run v2 ``generate_tables`` on a single-column generate config and return the
     values list for that column."""
     cfg = {
@@ -187,7 +205,13 @@ def _v2_run(col: dict, n: int, seed: int = 42) -> list:
         "targets": {"t": {"type": "file", "format": "csv", "path": "o.csv"}},
     }
     cfg = PipelineConfig.model_validate(cfg).model_dump()
-    return generate_tables(cfg)["t"].column(col["name"]).to_pylist()
+    return (
+        generate_tables(
+            cfg, derive_key=derive_key, instance_default_locale=instance_default_locale
+        )["t"]
+        .column(col["name"])
+        .to_pylist()
+    )
 
 
 class TestSequenceParityV1:
@@ -327,18 +351,17 @@ class TestFormulaParityV1:
 # ----------------------------------------------------------------------------
 
 
-def _v1_run_multi(tables_cfg: list[dict], seed: int = 42) -> dict[str, dict]:
+def _v1_run_multi(
+    tables_cfg: list[dict], seed: int = 42, derive_key=None
+) -> dict[str, dict]:
     """Run V1 ``ColumnGenerator`` across multiple tables in declared order,
     accumulating a ``reference_data`` dict the same way ``DataGenerator._generate_table``
-    does, but in-memory (no CSV writes). Returns ``{table: {col: values_list}}``.
-
-    Used by TestReferenceParityV1 as the parity oracle for cross-table FK
-    (mint-a-pool) generation."""
+    does, but in-memory (no CSV writes). Returns ``{table: {col: values_list}}``."""
     import pandas as pd
 
     from decoy_engine.generators.columns import ColumnGenerator
 
-    cg = ColumnGenerator(seed=seed, derive_key=None)
+    cg = ColumnGenerator(seed=seed, derive_key=derive_key)
     reference_data: dict[str, "pd.DataFrame"] = {}
     out: dict[str, dict] = {}
     for table in tables_cfg:
@@ -353,7 +376,9 @@ def _v1_run_multi(tables_cfg: list[dict], seed: int = 42) -> dict[str, dict]:
     return out
 
 
-def _v2_run_multi(tables_cfg: list[dict], seed: int = 42) -> dict[str, dict]:
+def _v2_run_multi(
+    tables_cfg: list[dict], seed: int = 42, derive_key=None
+) -> dict[str, dict]:
     """Run v2 ``generate_tables`` against a multi-table generate config; returns
     ``{table: {col: values_list}}`` for parity comparison vs ``_v1_run_multi``."""
     cfg = {
@@ -368,7 +393,7 @@ def _v2_run_multi(tables_cfg: list[dict], seed: int = 42) -> dict[str, dict]:
         },
     }
     cfg = PipelineConfig.model_validate(cfg).model_dump()
-    result = generate_tables(cfg)
+    result = generate_tables(cfg, derive_key=derive_key)
     return {
         name: {c: tbl.column(c).to_pylist() for c in tbl.column_names}
         for name, tbl in result.items()
@@ -602,3 +627,242 @@ class TestReferenceConfigValidation:
         parents = set(result["customers"].column("id").to_pylist())
         children = result["orders"].column("customer_id").to_pylist()
         assert all(c in parents for c in children)
+
+
+# ----------------------------------------------------------------------------
+# S6-ENG-4: derive-key envelope + the three M-non-blockers from the ENG-2 gate
+# ----------------------------------------------------------------------------
+
+
+def _fake_key(info: str) -> bytes:
+    """Deterministic in-engine fake derive_key for the ENG-4 cells (Q-S6-4-1).
+    A real `pipeline_derive_key` is platform-bound; the engine tests use a fake
+    that returns enough bytes (32) and is itself deterministic."""
+    import hashlib
+
+    return hashlib.sha256(info.encode("utf-8")).digest()
+
+
+def _fake_key_alt(info: str) -> bytes:
+    """Second fake derive_key with different bytes per info -- used to assert
+    cross-key rolling (different keys -> different output)."""
+    import hashlib
+
+    return hashlib.sha256(("alt-" + info).encode("utf-8")).digest()
+
+
+class TestDeriveKeyParity:
+    """Reading B keyed path: same key + same column -> same bytes across runs;
+    different keys -> different bytes; the seed is ignored under a key (V1
+    ``ColumnGenerator(derive_key=...)`` semantics)."""
+
+    def test_keyed_faker_parity(self):
+        col = {"name": "fn", "type": "faker", "faker_type": "first_name"}
+        assert _v2_run(col, 10, derive_key=_fake_key) == _v1_run(
+            col, 10, derive_key=_fake_key
+        )
+
+    def test_keyed_sequence_unchanged(self):
+        # sequence does not use synthetic_column_seed; derive_key cannot change its
+        # output. Parity should hold AND output should be identical to the keyless run.
+        col = {"name": "id", "type": "sequence", "start": 1, "step": 1}
+        keyed = _v2_run(col, 5, derive_key=_fake_key)
+        keyless = _v2_run(col, 5)
+        assert keyed == keyless == _v1_run(col, 5, derive_key=_fake_key)
+
+    def test_keyed_categorical_parity(self):
+        col = {
+            "name": "t",
+            "type": "categorical",
+            "categories": ["A", "B", "C"],
+            "weights": [10, 1, 1],
+        }
+        assert _v2_run(col, 20, derive_key=_fake_key) == _v1_run(
+            col, 20, derive_key=_fake_key
+        )
+
+    def test_keyed_formula_parity(self):
+        col = {"name": "twice", "type": "formula", "formula": "i * 2"}
+        assert _v2_run(col, 5, derive_key=_fake_key) == _v1_run(
+            col, 5, derive_key=_fake_key
+        )
+
+    def test_keyed_reference_parity(self):
+        tables = [
+            {
+                "name": "customers",
+                "row_count": 5,
+                "generate_columns": [
+                    {"name": "id", "type": "sequence", "start": 1, "step": 1}
+                ],
+            },
+            {
+                "name": "orders",
+                "row_count": 10,
+                "generate_columns": [
+                    {
+                        "name": "customer_id",
+                        "type": "reference",
+                        "reference_table": "customers",
+                        "reference_column": "id",
+                        "distribution": "random",
+                    }
+                ],
+            },
+        ]
+        assert _v2_run_multi(tables, derive_key=_fake_key) == _v1_run_multi(
+            tables, derive_key=_fake_key
+        )
+
+    def test_cross_run_stability(self):
+        # Same key + same column -> same bytes across two runs.
+        col = {"name": "fn", "type": "faker", "faker_type": "first_name"}
+        assert _v2_run(col, 10, derive_key=_fake_key) == _v2_run(
+            col, 10, derive_key=_fake_key
+        )
+
+    def test_different_keys_roll_output(self):
+        # Different derive_keys -> different output (column-level rolling).
+        col = {"name": "fn", "type": "faker", "faker_type": "first_name"}
+        a = _v2_run(col, 10, derive_key=_fake_key)
+        b = _v2_run(col, 10, derive_key=_fake_key_alt)
+        assert a != b
+
+    def test_seed_ignored_when_keyed(self):
+        # Same key + DIFFERENT seeds -> same output (the key dominates).
+        col = {"name": "fn", "type": "faker", "faker_type": "first_name"}
+        a = _v2_run(col, 10, seed=42, derive_key=_fake_key)
+        b = _v2_run(col, 10, seed=99, derive_key=_fake_key)
+        assert a == b
+
+
+class TestInstanceDefaultLocale:
+    """M1: ``instance_default_locale`` flows through to the no-per-column-locale
+    branch of ``_faker`` so the platform's ``AppSettings.default_faker_locale``
+    affects the shared Faker instance (V1 ``ColumnGenerator`` lines 68-72)."""
+
+    def test_default_locale_threaded_to_faker(self):
+        col = {"name": "city", "type": "faker", "faker_type": "city"}
+        assert _v2_run(
+            col, 10, instance_default_locale="en_GB"
+        ) == _v1_run(col, 10, instance_default_locale="en_GB")
+
+    def test_per_column_locale_overrides_instance_default(self):
+        # When the column sets its own `locale`, it wins; the instance default
+        # is irrelevant for that column.
+        col = {
+            "name": "city",
+            "type": "faker",
+            "faker_type": "city",
+            "locale": "de_DE",
+        }
+        with_instance = _v2_run(col, 5, instance_default_locale="en_GB")
+        without_instance = _v2_run(col, 5, instance_default_locale=None)
+        assert with_instance == without_instance == _v1_run(
+            col, 5, instance_default_locale="en_GB"
+        )
+
+
+class TestLegacyColumnNameSeed:
+    """M2: V1's pre-R3.10 column-name path (``_legacy_column_name_seed: true``) stays
+    V1-aligned through ``synthetic_column_seed``. Default path (R3.10) fingerprints
+    strategy/config so column renames are stable in unkeyed runs."""
+
+    def test_legacy_seed_opt_back_parity(self):
+        col = {
+            "name": "fn",
+            "type": "faker",
+            "faker_type": "first_name",
+            "_legacy_column_name_seed": True,
+        }
+        assert _v2_run(col, 10) == _v1_run(col, 10)
+
+    def test_default_rename_stable(self):
+        # Default R3.10 path: same strategy/config but a different `name` -> same
+        # seed -> same output (rename-stable in the unkeyed seed path).
+        col_a = {"name": "alpha", "type": "faker", "faker_type": "first_name"}
+        col_b = {"name": "beta", "type": "faker", "faker_type": "first_name"}
+        assert _v2_run(col_a, 10) == _v2_run(col_b, 10)
+        # And both match V1's R3.10 output (which is also rename-stable).
+        assert _v2_run(col_a, 10) == _v1_run(col_a, 10)
+
+
+class TestDeterminismFresh:
+    """M3: ``determinism: "fresh"`` rolls per run (the column-seed comes from
+    os.urandom). Within a run the column is internally consistent; across runs the
+    output differs. No V1 parity oracle here (the whole point is non-determinism)."""
+
+    def test_fresh_rolls_across_runs(self):
+        col = {
+            "name": "fn",
+            "type": "faker",
+            "faker_type": "first_name",
+            "determinism": "fresh",
+        }
+        a = _v2_run(col, 10)
+        b = _v2_run(col, 10)
+        # Two independent runs SHOULD differ. Collision rate ~0 over 10 rows.
+        assert any(x != y for x, y in zip(a, b))
+
+    def test_fresh_consistent_within_run(self):
+        # Within ONE call, n=10 rows are generated -- they are the output of a
+        # single column-seed instance, so they are internally well-formed (no
+        # crash, the right shape).
+        col = {
+            "name": "fn",
+            "type": "faker",
+            "faker_type": "first_name",
+            "determinism": "fresh",
+        }
+        out = _v2_run(col, 10)
+        assert len(out) == 10
+        assert all(isinstance(x, str) for x in out)
+
+
+class TestReferenceEdgeCases:
+    """L3 + L4 from the ENG-3 gate: edge cases the ENG-3 parity cells missed --
+    weights size-mismatch fallback + unknown-distribution fall-through to random."""
+
+    def _two_table(self, child_col: dict) -> list[dict]:
+        return [
+            {
+                "name": "customers",
+                "row_count": 5,
+                "generate_columns": [
+                    {"name": "id", "type": "sequence", "start": 1, "step": 1}
+                ],
+            },
+            {
+                "name": "orders",
+                "row_count": 10,
+                "generate_columns": [child_col],
+            },
+        ]
+
+    def test_weighted_size_mismatch_falls_back_to_uniform(self):
+        # parent pool has 5 unique values; weights has only 3 -> V1 sets weights
+        # to None (uniform). v2 mirrors.
+        child = {
+            "name": "customer_id",
+            "type": "reference",
+            "reference_table": "customers",
+            "reference_column": "id",
+            "distribution": "weighted",
+            "weights": [1, 1, 1],  # wrong size
+        }
+        assert _v2_run_multi(self._two_table(child)) == _v1_run_multi(
+            self._two_table(child)
+        )
+
+    def test_unknown_distribution_falls_through_to_random(self):
+        # V1 warns + uses random; v2 silently uses random. Parity in values.
+        child = {
+            "name": "customer_id",
+            "type": "reference",
+            "reference_table": "customers",
+            "reference_column": "id",
+            "distribution": "not_a_real_distribution",
+        }
+        assert _v2_run_multi(self._two_table(child)) == _v1_run_multi(
+            self._two_table(child)
+        )
