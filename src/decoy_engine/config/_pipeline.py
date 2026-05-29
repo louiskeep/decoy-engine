@@ -7,6 +7,8 @@ Per advisory axis-by-axis ratification:
 - `tables: list[TableConfig]` required, non-empty
 - `relationships: list[RelationshipConfig]` (empty list OK for single-table pipelines)
 - `targets: dict[str, TargetDescriptor]` required (axis 6: explicit targets analogous to sources)
+- `namespaces: dict[str, NamespaceConfig]` optional (the engine reads a top-level
+  `namespaces` block via `config.get("namespaces", {})`; empty default is fine)
 
 `extra="forbid"` at every model rejects unknown keys + V1 graph-mode
 keys (`nodes`, `edges`, `mode: graph`) per axis 6 (no V1 compat).
@@ -19,6 +21,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from decoy_engine.config._global_settings import GlobalSettings
+from decoy_engine.config._namespaces import NamespaceConfig
 from decoy_engine.config._relationships import RelationshipConfig
 from decoy_engine.config._sources import SourceDescriptor
 from decoy_engine.config._tables import TableConfig
@@ -45,3 +48,4 @@ class PipelineConfig(BaseModel):
     tables: list[TableConfig] = Field(min_length=1)
     relationships: list[RelationshipConfig] = Field(default_factory=list)
     targets: dict[str, TargetDescriptor] = Field(min_length=1)
+    namespaces: dict[str, NamespaceConfig] = Field(default_factory=dict)

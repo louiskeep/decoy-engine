@@ -10,6 +10,9 @@ Public API (the contract CLI and platform code depend on):
     TelemetryClient   Protocol for optional telemetry sinks
     SchemaInspector   connector schema introspection (stub, Phase 2)
     LicenseVerifier   license verification (stub)
+    PipelineConfig    strict pipeline-config schema; validate once at the choke-point
+                      (PipelineConfig.model_validate(yaml).model_dump()) then hand the
+                      dict to compile_plan / profile_source (decoy_engine.config)
 
 Public exceptions (also in decoy_engine.errors):
     DecoyError, ConfigError, PipelineValidationError,
@@ -21,6 +24,7 @@ Anything not listed in __all__ -- and anything under decoy_engine.internal --
 is private and may change without a version bump.
 """
 
+from decoy_engine.config import PipelineConfig
 from decoy_engine.context import (
     ExecutionContext,
     Logger,
@@ -271,6 +275,7 @@ __all__ = [
     "OrphanPolicy",
     "PandasExecutionAdapter",
     "PermanentError",
+    "PipelineConfig",
     "PipelineValidationError",
     "PlanCheckError",
     "PlanValidationResult",

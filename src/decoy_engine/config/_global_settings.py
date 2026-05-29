@@ -7,6 +7,8 @@ choice).
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict
 
 
@@ -16,10 +18,13 @@ class GlobalSettings(BaseModel):
     `seed` is the job-level seed material (S1 stub derivation; S3 swaps
     in real HMAC-keyed material). `post_validation` opts the pipeline
     into post-mask invariant checks per the operating model §Validation
-    requirements.
+    requirements. `on_pool_exhaustion` drives the planner's pool-capacity
+    pre-flight (read via `global_settings.get("on_pool_exhaustion")` in
+    plan-compile); default `scale_up` matches the engine default.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     seed: int
     post_validation: bool = False
+    on_pool_exhaustion: Literal["fail", "scale_up", "fall_back"] = "scale_up"
