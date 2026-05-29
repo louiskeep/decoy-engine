@@ -109,7 +109,9 @@ class TestDtypeReporting:
             sample_rows=None,
             rng=_rng(),
         )
-        assert profile.columns[0].dtype == "object"
+        # pandas 3.0+ with infer_string=True reports StringDtype as "string"
+        # rather than "object"; accept both.
+        assert profile.columns[0].dtype in ("object", "string")
 
 
 class TestPkAndFkPropagation:

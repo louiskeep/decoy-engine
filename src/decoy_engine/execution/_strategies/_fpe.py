@@ -85,7 +85,9 @@ class FpeStrategyHandler:
         out: list[object] = [None] * len(source)
         for offset, position in enumerate(non_na_positions):
             out[int(position)] = encrypted[offset]
-        df[column] = out
+        # Force object dtype so Python None is preserved as None, not converted
+        # to pd.NA by pandas 3.0+ StringDtype columns on assignment.
+        df[column] = pd.array(out, dtype=object)
         return df, []
 
     def _encrypt_values(self, values: list[str], encrypt_one: Callable[[str], str]) -> list[str]:
