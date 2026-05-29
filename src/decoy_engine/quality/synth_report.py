@@ -76,6 +76,7 @@ The acceptance criteria (from the sprint plan):
 from __future__ import annotations
 
 import hashlib
+import importlib
 from typing import Any
 
 import numpy as np
@@ -401,7 +402,7 @@ def compute_attack_metrics(
         return _attacks_unavailable("not_enabled_by_caller", extras_module)
 
     try:
-        attacks_pkg = __import__(extras_module)
+        attacks_pkg = importlib.import_module(extras_module)
     except ImportError:
         return _attacks_unavailable("extras_not_installed", extras_module)
 
