@@ -43,6 +43,7 @@ from decoy_engine.determinism import SEED_PROTOCOL_VERSION
 from decoy_engine.plan._checks import (
     check_basic_uniqueness_pre_flight,
     check_composite_columns_length_match,
+    check_null_bearing_int_unsupported,
     check_unknown_provider,
 )
 from decoy_engine.plan._errors import PlanCompileError
@@ -164,6 +165,9 @@ def compile_plan(
         checks_skipped: tuple[str, ...] = (
             "basic_uniqueness_pre_flight",
             "pool_capacity_pre_flight",
+            # Row 10 (B1, S13): profile-dependent, so skipped here; the
+            # execution-time guard rejects the same input on both adapters.
+            "null_bearing_int_unsupported",
         )
     else:
         check_basic_uniqueness_pre_flight(config, profile)
@@ -171,6 +175,11 @@ def compile_plan(
             config, profile, on_pool_exhaustion=on_pool_exhaustion
         )
         deterministic_namespace_completeness(config)
+        # Row 10 (B1, S13): reject integer + null-bearing columns under
+        # truncate/hash/categorical. Profile-dependent (dtype + null_count), so it
+        # runs here and is skipped under no_profile (the execution-time guard backs
+        # it up there).
+        check_null_bearing_int_unsupported(config, profile)
         checks_passed = (
             "namespace_ambiguity",
             "unknown_provider",
@@ -181,6 +190,7 @@ def compile_plan(
             "pool_capacity_pre_flight",
             "composite_wiring_consistent",
             "deterministic_namespace_completeness",
+            "null_bearing_int_unsupported",
         )
         checks_skipped = ()
 

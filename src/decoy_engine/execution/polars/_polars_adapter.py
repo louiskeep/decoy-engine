@@ -19,12 +19,23 @@ Dispatch (S12):
 `_POLARS_NATIVE_STRATEGIES` grows one migration band at a time; a strategy is
 native once it is both in that set and in `POLARS_SCALAR_HANDLERS`.
 
-`fallback_to_pandas` is a MIGRATION-WINDOW mechanism only (PQ6, PO-ratified
-2026-05-28): True through S12 so a polars job completes via the oracle for any
-not-yet-native node. At S13 close the flag is REMOVED and a non-native job is a
-hard ExecutionError, not a silent route-through pandas (cross-sprint contracts
-non-negotiable on silent downgrades). Pandas is the parity oracle, not a
-maintained customer fallback.
+`fallback_to_pandas` (PQ6, PO-ratified 2026-05-28; flip scope dispositioned by
+Dennis S55, 2026-05-28): True by default so a polars job completes via the oracle
+for any not-yet-native node. FK resolution and composite bundles are NOT
+polars-native at V1 ship (FK-loop vectorization is deferred V2+), so they execute
+via the oracle on the default substrate. This is NOT a silent downgrade: the
+oracle returns byte-for-byte identical output (the pa->pl->pa round-trip is
+lossless) AND records the per-strategy substrate of record as "pandas" in
+`quality_metrics["executed_substrate"]`.
+
+The S13 polars-default flip changes ONLY `_DEFAULT_SUBSTRATE` -> "polars"; this
+flag stays True. The flag is REMOVED (and a non-native job becomes a hard
+ExecutionError) only at the post-GA engine release that lands native FK +
+composite, NOT at S13 close: removing it earlier would hard-error every FK and
+composite job on the default substrate. When `fallback_to_pandas` is EXPLICITLY
+set False, a non-native job hard-errors rather than routing through pandas
+(cross-sprint contracts non-negotiable on silent downgrades). Pandas is the
+parity oracle, not a maintained customer fallback.
 """
 
 from __future__ import annotations
@@ -38,6 +49,7 @@ import pyarrow as pa
 
 from decoy_engine.execution._adapter import ExecutionResult, StrategyContext
 from decoy_engine.execution._errors import ExecutionError
+from decoy_engine.execution._guards import reject_null_bearing_int
 from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
 from decoy_engine.execution._runner import build_work_list, order_work
 from decoy_engine.execution.polars._conversion_boundary import ConversionBoundary
@@ -101,6 +113,11 @@ class PolarsExecutionAdapter:
         relationship_graph: RelationshipGraph,
         namespace_registry: NamespaceRegistry,
     ) -> ExecutionResult:
+        # B1 (S13): reject integer + null-bearing columns under truncate/hash/
+        # categorical on the Arrow sources, identically to the pandas adapter, so
+        # the polars-native path does not silently accept input the oracle rejects.
+        # FK children are exempt (resolved via the edge, not masked).
+        reject_null_bearing_int(plan, sources, registry, relationship_graph)
         work = order_work(build_work_list(plan, registry), relationship_graph)
         if self._is_fully_polars_native(work, relationship_graph):
             return self._run_polars_native(

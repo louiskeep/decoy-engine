@@ -44,6 +44,7 @@ from decoy_engine.execution._adapter import (
     StrategyHandler,
 )
 from decoy_engine.execution._errors import ExecutionError
+from decoy_engine.execution._guards import reject_null_bearing_int
 from decoy_engine.execution._runner import WorkNode, build_work_list, order_work
 from decoy_engine.execution._strategies import SCALAR_HANDLERS
 from decoy_engine.execution._strategies._composite import CompositeHandler
@@ -145,6 +146,12 @@ class PandasExecutionAdapter:
         relationship_graph: RelationshipGraph,
         namespace_registry: NamespaceRegistry,
     ) -> ExecutionResult:
+        # B1 (S13): reject integer + null-bearing columns under truncate/hash/
+        # categorical on the Arrow sources, before to_pandas widens int+null to
+        # float. Backstops the plan-compile check for the no_profile path; both
+        # adapters reject identically (no silent cross-substrate divergence). FK
+        # children are exempt (resolved via the edge, not masked).
+        reject_null_bearing_int(plan, sources, registry, relationship_graph)
         t0 = time.perf_counter()
         frames: dict[str, pd.DataFrame] = {t: tbl.to_pandas() for t, tbl in sources.items()}
         conversion_ms = (time.perf_counter() - t0) * 1000.0

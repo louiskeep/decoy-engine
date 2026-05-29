@@ -8,7 +8,7 @@ For each (strategy, tier) cell:
 - Collects wall-clock per iteration + RSS delta + CPU sample.
 - Aggregates: count, p50_ms, p95_ms, mean_ms, max_ms, peak_delta_kb,
   cpu_percent_sample, error.
-- Writes the matrix to ``tests/perf_fixtures/pandas-baseline.json``.
+- Writes the matrix to ``tests/perf_fixtures/pandas-baseline-pre-rewrite.json``.
 
 Usage::
 
@@ -58,7 +58,7 @@ from perf_fixtures.strategy_rules import (  # noqa: E402
     skipped_cells,
 )
 
-_BASELINE_JSON = _REPO_ROOT / "tests" / "perf_fixtures" / "pandas-baseline.json"
+_BASELINE_JSON = _REPO_ROOT / "tests" / "perf_fixtures" / "pandas-baseline-pre-rewrite.json"
 
 # Quiet the engine logger so the harness output is readable. The
 # strategy modules log INFO per masking-rule application; at 100k rows

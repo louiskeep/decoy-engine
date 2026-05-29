@@ -18,7 +18,7 @@ from .strategy_rules import included_cells, skipped_cells
 
 pytestmark = pytest.mark.perf
 
-_BASELINE_PATH = Path(__file__).resolve().parent / "pandas-baseline.json"
+_BASELINE_PATH = Path(__file__).resolve().parent / "pandas-baseline-pre-rewrite.json"
 
 
 def _load_baseline() -> dict:

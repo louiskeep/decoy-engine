@@ -35,3 +35,11 @@ The v2 parity gate is **value-level**: `assert_frames_semantically_equal` compar
 | v3 | deterministic `shuffle` permutation | `numpy.random.default_rng(seed).permutation` | SAME shared primitive (container-only migration) | No divergence: the permutation primitive is shared, so the permuted values are byte-identical for a given seed. |
 
 Non-deterministic strategies (unseeded `shuffle`, etc.) are NOT in the parity set: their output varies per run by design, so a cross-adapter equality assertion is meaningless. Parity fixtures use deterministic mode.
+
+### v2 output-FILE-bytes drift (S11 review M1; S13 disposition)
+
+The value-level parity above covers in-memory `outputs`. The platform evidence manifest, however, hashes the WRITTEN output-file bytes (`decoy-platform/api/evidence/assembly.py`). Polars 1.x widens five Arrow types on `from_arrow`/`to_arrow` (`large_string`, `large_binary`, `large_list`, `dictionary<uint32,..>`, `time64[ns]`), so a file written by the polars writer can carry a different parquet/IPC schema than the pandas-path file for the SAME logical data, and the manifest hash therefore differs across substrates for those types.
+
+**Disposition (S13 M1): ACCEPT and document** (Dennis-confirmed Session 52; final PO sign-off on the readiness report). Rationale (the load-bearing framing is WITHIN-substrate reproducibility, not substrate count): the evidence manifest's `outputs[].hash` is the tamper-evident byte-hash of the file THIS run produced, not a cross-substrate logical-equality digest, and the R3 contract has no cross-run/cross-substrate invariance clause. Within-substrate reproducibility holds (the polars writer is deterministic for a given input). The polars-default flip lands PRE-GA, so every customer-held manifest is polars-written: there is no pandas-era production manifest to reproduce or compare against, and the only pandas-written files exist transiently during the migration window. The drift is bounded to parquet/IPC (CSV has no Arrow-type encoding); logical data is identical in all cases, only Arrow type width differs. Normalize-at-write in `write_target_polars` is a correct V2+ hardening, not a ship gate.
+
+This disposition is recorded in the S13 release-readiness report's known-limitations section (the canonical ship-decision home); this doc is the accepted-differences cross-reference.

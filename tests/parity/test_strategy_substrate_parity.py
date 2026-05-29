@@ -20,7 +20,7 @@ from typing import Any
 import pyarrow as pa
 import pytest
 
-from decoy_engine.execution import PandasExecutionAdapter, PolarsExecutionAdapter
+from decoy_engine.execution import ExecutionError, PandasExecutionAdapter, PolarsExecutionAdapter
 from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge, RelationshipGraph
@@ -295,16 +295,16 @@ def test_strategy_parity(plan: Any, sources: dict[str, pa.Table]) -> None:
 #     output under polars. At S13 (polars default, fallback removed) this becomes
 #     the shipped behavior.
 #
-# These are pinned here per SEMANTIC_DIFFERENCES.md step 3 ("add a parametric
-# parity test that asserts the divergence explicitly so a future change can't
-# silently cross the line"). They are NOT in the green `_CASES` set because they
-# do NOT satisfy the migration gate; they are a recorded S12-review BLOCKER (the
-# pandas-oracle parity claim is false on this input class). When the divergence is
-# resolved (canonicalize the polars-native int path to match the pandas oracle, or
-# scope it out with a validation guard), flip these to the green parity set.
+# B1 RESOLVED (PO-settled 2026-05-28): reject at validation. The divergence is
+# scoped out by rejecting this input class on BOTH substrates (the plan-compile
+# check `null_bearing_int_unsupported` + the execution-time guard
+# `reject_null_bearing_int`). So these cases are no longer xfail-divergence: each
+# now asserts BOTH adapters raise the SAME typed ExecutionError, identically. The
+# divergence can never silently cross the line because neither substrate produces
+# output for it. Consistent with the S5 float-canonicalization hard error.
 # --------------------------------------------------------------------------
 
-_INT_NULL_DIVERGENCE: list[tuple[str, Any, dict[str, pa.Table]]] = [
+_INT_NULL_REJECTED: list[tuple[str, Any, dict[str, pa.Table]]] = [
     (
         "truncate-int-null-VALUE-DIVERGENCE",
         _plan("t", (("c", _col("truncate", provider_config=(("length", 4),))),)),
@@ -336,24 +336,27 @@ _INT_NULL_DIVERGENCE: list[tuple[str, Any, dict[str, pa.Table]]] = [
 ]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="DENNIS S12 review BLOCKER B1: null-bearing int source diverges across "
-    "substrates (pandas widens int64+null to float64; polars keeps int64). The "
-    "pandas-oracle parity claim is false on this input class. Resolve before the "
-    "S13 polars default flip; flip this to the green parity set when fixed.",
-)
 @pytest.mark.parametrize(
     "plan,sources",
-    [(c[1], c[2]) for c in _INT_NULL_DIVERGENCE],
-    ids=[c[0] for c in _INT_NULL_DIVERGENCE],
+    [(c[1], c[2]) for c in _INT_NULL_REJECTED],
+    ids=[c[0] for c in _INT_NULL_REJECTED],
 )
-def test_strategy_parity_int_null_divergence(plan: Any, sources: dict[str, pa.Table]) -> None:
-    # Mirrors test_strategy_parity but xfail-strict: pandas may raise (hash /
-    # categorical) or produce different values (truncate). Both are caught here so
-    # the divergence is documented, not silently shipped.
-    pandas_out, polars_out = _both(plan, sources)
-    assert_frames_semantically_equal(pandas_out, polars_out)
+def test_strategy_int_null_rejected_both_substrates(
+    plan: Any, sources: dict[str, pa.Table]
+) -> None:
+    # B1 (S13): both adapters reject this input class identically (same typed
+    # error), so neither silently diverges. No xfail: the rejection is the
+    # contract, asserted on both substrates.
+    for adapter in (PandasExecutionAdapter(), PolarsExecutionAdapter()):
+        with pytest.raises(ExecutionError) as exc:
+            adapter.run(
+                plan,
+                sources,
+                registry=_REG,
+                relationship_graph=_GRAPH,
+                namespace_registry=_NS,
+            )
+        assert exc.value.code == "null_bearing_int_unsupported"
 
 
 # --------------------------------------------------------------------------

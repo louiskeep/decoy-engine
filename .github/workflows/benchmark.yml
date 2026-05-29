@@ -133,3 +133,59 @@ jobs:
         run: |
           echo "Benchmark step exited ${{ steps.bench.outputs.exit_code }} — failing the job."
           exit 1
+
+  # engine-v2 re-baseline matrix (S13). Runs the 11-strategy x 2-tier x
+  # 2-substrate matrix on the standardized runner so the Faker >=10x / FPE >=2x
+  # ship gates are measured without machine-variance noise. The baseline JSON +
+  # the Performance Gate report are uploaded as artifacts; the JSON is the
+  # canonical engine-v2-baseline.json the readiness report consumes (download it
+  # from this run and commit it; a local dev-box run is indicative only).
+  engine-v2-baseline:
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && github.event.label.name == 'run-bench')
+
+    runs-on: ubuntu-latest
+    # Generous: faker/fpe at the 100k medium tier are the slow cells; the runner
+    # clamps iterations for slow cells but the medium matrix still dominates.
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run engine-v2 re-baseline matrix (pandas + polars, small + medium)
+        run: |
+          mkdir -p bench-output
+          python scripts/run_engine_v2_baseline.py \
+            --tier small --tier medium \
+            --env-note ci-ubuntu-latest-py311 \
+            --out bench-output/engine-v2-baseline.json
+
+      - name: Generate Performance Gate report
+        # compare_baselines exits non-zero on a HARD gate failure (Faker < 10x,
+        # FPE < 2x when evaluable, or a correctness failure), which fails the job
+        # red. Cheap-band regressions are warnings, not failures.
+        run: |
+          python scripts/compare_baselines.py \
+            --old tests/perf_fixtures/pandas-baseline-pre-rewrite.json \
+            --new bench-output/engine-v2-baseline.json \
+            --output bench-output/engine-v2-perf-gate.md
+
+      - name: Upload baseline + Performance Gate report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-v2-baseline
+          path: bench-output/
