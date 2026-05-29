@@ -179,7 +179,7 @@ jobs:
         # red. Cheap-band regressions are warnings, not failures.
         run: |
           python scripts/compare_baselines.py \
-            --old tests/perf_fixtures/pandas-baseline.json \
+            --old tests/perf_fixtures/pandas-baseline-pre-rewrite.json \
             --new bench-output/engine-v2-baseline.json \
             --output bench-output/engine-v2-perf-gate.md
 

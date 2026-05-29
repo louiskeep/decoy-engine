@@ -1,6 +1,6 @@
 """PERF.BASE.3: reproducibility test for the baseline harness.
 
-The committed ``pandas-baseline.json`` is a one-shot artifact -- we
+The committed ``pandas-baseline-pre-rewrite.json`` is a one-shot artifact -- we
 don't regenerate it in CI. But the harness itself must be
 deterministic enough that re-running on the same machine produces
 numbers within a tolerable variance band; otherwise the post-substrate
