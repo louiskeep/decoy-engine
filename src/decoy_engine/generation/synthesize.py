@@ -21,8 +21,10 @@ import random
 from typing import Any
 
 import pyarrow as pa
+from faker import Faker
 
 from decoy_engine.generators.derivation import synthetic_column_seed
+from decoy_engine.internal.faker_setup import get_faker_providers, make_faker
 
 _DEFAULT_SEED = 42
 
@@ -63,14 +65,17 @@ def _generate_column(
     ``ColumnGenerator.generators``)."""
     kind = col.get("type")
     if kind == "sequence":
-        return _sequence(col, n)
-    if kind == "categorical":
-        return _categorical(col, n, seed, derive_key)
-    raise ValueError(
-        f"generate column {col.get('name')!r}: generator type {kind!r} is not yet "
-        f"implemented in this S6-ENG-2 sub-commit (faker / formula land in the next "
-        f"sub-commits of S6-ENG-2)."
-    )
+        values: list[Any] = _sequence(col, n)
+    elif kind == "categorical":
+        values = _categorical(col, n, seed, derive_key)
+    elif kind == "faker":
+        values = _faker(col, n, seed, derive_key)
+    else:
+        raise ValueError(
+            f"generate column {col.get('name')!r}: generator type {kind!r} is not "
+            f"yet implemented in this S6-ENG-2 sub-commit (formula lands next)."
+        )
+    return _apply_null_probability(values, col, seed, derive_key)
 
 
 def _sequence(col: dict[str, Any], n: int) -> list[str]:
@@ -115,3 +120,70 @@ def _categorical(
     )
     random.seed(col_seed)
     return random.choices(cats, weights=weights, k=n)
+
+
+def _faker(
+    col: dict[str, Any], n: int, seed: int, derive_key: Any = None
+) -> list[Any]:
+    """Faker-driven values, parity-frozen vs V1 ``_generate_faker_column``
+    (``columns.py:205-276``).
+
+    Pattern (mirror V1): pick the Faker instance (fresh per-locale when ``locale``
+    is set, otherwise a shared instance), look up the provider by ``faker_type``
+    (default ``"word"``, fall back to ``"word"`` for unknown types), then per row
+    seed ``random`` AND ``faker_inst.seed_instance`` with ``col_seed + i`` and call
+    ``provider_func(**faker_kwargs)``. The per-row seed_instance override means the
+    initial instance seed does not affect output -- parity holds independent of how
+    the instance was constructed.
+
+    ``faker_kwargs`` is optional; non-dict values are dropped (matches V1's silent
+    drop, ``columns.py:253-259``).
+    """
+    faker_type = col.get("faker_type", "word")
+    locale = col.get("locale")
+    if locale:
+        faker_inst = make_faker(locale)
+    else:
+        faker_inst = Faker()
+        faker_inst.seed_instance(seed)
+    providers = get_faker_providers(faker_inst)
+    provider_func = providers.get(faker_type) or providers["word"]
+    raw_kwargs = col.get("faker_kwargs") or {}
+    faker_kwargs = raw_kwargs if isinstance(raw_kwargs, dict) else {}
+    col_seed = synthetic_column_seed(
+        derive_key=derive_key, column_config=col, fallback_seed=seed
+    )
+    out: list[Any] = []
+    for i in range(n):
+        row_seed = col_seed + i
+        random.seed(row_seed)
+        faker_inst.seed_instance(row_seed)
+        out.append(provider_func(**faker_kwargs))
+    return out
+
+
+def _apply_null_probability(
+    values: list[Any], col: dict[str, Any], seed: int, derive_key: Any = None
+) -> list[Any]:
+    """Apply V1's ``null_probability`` post-process (``columns.py:174-187``): per-row
+    seeded coin-flip; same column + same row -> same null/non-null decision across
+    runs. No-op when ``null_probability`` is unset or 0. Used uniformly by every
+    generator (V1 applies it generically in ``generate_column``)."""
+    null_prob = float(col.get("null_probability") or 0.0)
+    if null_prob <= 0:
+        return values
+    # V1 calls `_column_seed(column_name)` WITHOUT the column_config for the null
+    # injection (columns.py:183), so the seed is computed against just the name --
+    # different from the generator's full-config seed because synthetic_column_seed
+    # fingerprints strategy/config. Mirror V1's null-injection seed exactly so the
+    # null/non-null row positions are byte-identical under the same seed.
+    null_seed_cfg: dict[str, Any] = {"name": col["name"]}
+    col_seed = synthetic_column_seed(
+        derive_key=derive_key, column_config=null_seed_cfg, fallback_seed=seed
+    )
+    out = list(values)
+    for i in range(len(out)):
+        random.seed(col_seed + i)
+        if random.random() < null_prob:
+            out[i] = None
+    return out

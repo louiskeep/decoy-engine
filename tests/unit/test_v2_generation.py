@@ -148,11 +148,11 @@ class TestGenerationOpSpine:
         assert vals == ["ACCT-0001", "ACCT-0002", "ACCT-0003"]
 
     def test_unsupported_generator_type_raises(self):
-        # `faker` is in the closed Literal (so it passes validation) but is not yet
-        # implemented in this sub-commit of S6-ENG-2. Later sub-commits make this
-        # unreachable; the test is updated then.
+        # `formula` is in the closed Literal (so it passes validation) but is not yet
+        # implemented in this sub-commit of S6-ENG-2. The next sub-commit lands formula
+        # and removes this test + the runtime ValueError (Literal then enforces alone).
         cfg = _generate_config()
-        cfg["tables"][0]["generate_columns"][0] = {"name": "x", "type": "faker"}
+        cfg["tables"][0]["generate_columns"][0] = {"name": "x", "type": "formula"}
         cfg = PipelineConfig.model_validate(cfg).model_dump()
         with pytest.raises(ValueError, match="S6-ENG-2"):
             generate_tables(cfg)
@@ -169,13 +169,14 @@ class TestGenerationOpSpine:
 
 
 def _v1_run(col: dict, n: int, seed: int = 42) -> list:
-    """Run V1 ``ColumnGenerator`` against a single v2-shape column dict and return
-    the values list (the parity oracle)."""
+    """Run V1 ``ColumnGenerator.generate_column`` (the public entry, including the
+    ``null_probability`` post-process) against a single v2-shape column dict and
+    return the values list -- the parity oracle covers BOTH the generator output
+    AND the null injection."""
     from decoy_engine.generators.columns import ColumnGenerator
 
     cg = ColumnGenerator(seed=seed, derive_key=None)
-    method = cg.generators[col["type"]]
-    return method(n, col, "t", {}).tolist()
+    return cg.generate_column(n, col, "t", {}).tolist()
 
 
 def _v2_run(col: dict, n: int, seed: int = 42) -> list:
@@ -244,3 +245,43 @@ class TestCategoricalParityV1:
         # the v2 helper carries the same default (mirror V1).
         col = {"name": "x", "type": "categorical"}
         assert _v2_run(col, 5) == _v1_run(col, 5)
+
+
+class TestFakerParityV1:
+    """Reading B: v2 ``faker`` is byte-identical to V1 ``_generate_faker_column`` +
+    the V1 ``generate_column`` null_probability post-process under fixed seed."""
+
+    def test_provider_no_kwargs(self):
+        col = {"name": "fn", "type": "faker", "faker_type": "first_name"}
+        assert _v2_run(col, 10) == _v1_run(col, 10)
+
+    def test_provider_with_kwargs(self):
+        # `pyint` with min / max via faker_kwargs.
+        col = {
+            "name": "n",
+            "type": "faker",
+            "faker_type": "pyint",
+            "faker_kwargs": {"min_value": 0, "max_value": 100},
+        }
+        assert _v2_run(col, 10) == _v1_run(col, 10)
+
+    def test_unknown_faker_type_falls_back_to_word(self):
+        # V1: unknown faker_type silently falls back to providers["word"]
+        # (columns.py:246-247). The v2 mirrors the silent fallback.
+        col = {
+            "name": "x",
+            "type": "faker",
+            "faker_type": "this_provider_does_not_exist",
+        }
+        assert _v2_run(col, 5) == _v1_run(col, 5)
+
+    def test_null_injection(self):
+        # null_probability is V1's generic post-process; parity covers both the
+        # per-row faker value AND the null/non-null row positions.
+        col = {
+            "name": "fn",
+            "type": "faker",
+            "faker_type": "first_name",
+            "null_probability": 0.3,
+        }
+        assert _v2_run(col, 20) == _v1_run(col, 20)
