@@ -16,6 +16,7 @@ gate. The lift is wall-clock, not output.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 
@@ -74,7 +75,11 @@ class FpeStrategyHandler:
         source = df[column]
         na_mask = source.isna().to_numpy()
         non_na_positions = np.where(~na_mask)[0]
-        non_na_values = [str(source.iloc[int(i)]) for i in non_na_positions]
+        # Vectorized non-null materialization: numpy boolean-select (C-level) then
+        # str() each, NOT a per-row pandas `.iloc[int(i)]` scalar-access loop (that
+        # paid O(n) pandas-indexing overhead V1's C-level astype never did; Dennis
+        # S13 FPE-port finding). str() semantics + order are preserved exactly.
+        non_na_values = [str(v) for v in source.to_numpy(dtype=object)[~na_mask]]
         encrypted = self._encrypt_values(non_na_values, encrypt_one)
 
         out: list[object] = [None] * len(source)
@@ -84,13 +89,17 @@ class FpeStrategyHandler:
         return df, []
 
     def _encrypt_values(self, values: list[str], encrypt_one: Callable[[str], str]) -> list[str]:
-        if self._chunk_count <= 1 or len(values) < self._chunk_count:
+        # Cap workers at the actual CPU count: the Feistel orchestration is
+        # GIL-bound pure Python (only the stdlib-HMAC digest releases the GIL), so
+        # spawning more threads than cores adds contention + overhead without
+        # parallelism (net-negative on a 2-vCPU CI runner). Output is identical for
+        # any worker count (each value's encryption is independent + deterministic),
+        # so this is wall-clock only -- the byte-identical parity gate is unaffected.
+        workers = min(self._chunk_count, os.cpu_count() or 1)
+        if workers <= 1 or len(values) < workers:
             return [encrypt_one(v) for v in values]
-        chunks = [
-            list(chunk)
-            for chunk in np.array_split(np.array(values, dtype=object), self._chunk_count)
-        ]
-        with ThreadPoolExecutor(max_workers=self._chunk_count) as executor:
+        chunks = [list(chunk) for chunk in np.array_split(np.array(values, dtype=object), workers)]
+        with ThreadPoolExecutor(max_workers=workers) as executor:
             chunk_results = list(
                 executor.map(lambda chunk: [encrypt_one(v) for v in chunk], chunks)
             )
