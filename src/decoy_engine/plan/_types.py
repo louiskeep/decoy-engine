@@ -66,7 +66,10 @@ class ColumnSeed:
 
     namespace: str | None
     strategy: str
-    provider: str
+    # `provider` is required for generator strategies (faker); scalar transforms
+    # (hash/redact/truncate/...) have no provider and read their settings from
+    # `provider_config`. None for those (D4: require a provider only for faker).
+    provider: str | None
     backend_type: BackendType
     backend_version: str
     cardinality_mode: CardinalityMode

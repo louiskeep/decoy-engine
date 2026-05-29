@@ -441,19 +441,31 @@ def _build_seed_envelope(
                     continue
                 strategy = col_entry.get("strategy")
                 provider = col_entry.get("provider")
-                if not col_name or not strategy or not provider:
+                # D4: a generator strategy (faker) needs a provider to produce values;
+                # scalar transforms (hash/redact/truncate/bucketize/date_shift/fpe/
+                # categorical/shuffle/passthrough) have no provider and read their
+                # settings from provider_config. Drop a column only if it lacks a
+                # name/strategy, or is a faker column with no provider (it cannot
+                # generate). A provider-less scalar column now correctly produces a work
+                # node and gets masked (previously it was silently dropped -> unmasked).
+                if not col_name or not strategy:
                     continue
-                # H1: consult registry for backend_type + backend_version.
-                # User-supplied YAML fields are ignored for the stamp; if
-                # they contradict the registry, emit a warning.
-                try:
-                    reg_caps = registry.get_capabilities(provider)
-                except _ProviderError:
-                    # check_unknown_provider should have caught this earlier
-                    # in compile_plan; defensively fall back to the legacy
-                    # behavior here so a bug in the check-runner doesn't
-                    # crash the planner.
-                    reg_caps = None
+                if strategy == "faker" and not provider:
+                    continue
+                # H1: consult registry for backend_type + backend_version (faker only;
+                # scalar columns have no provider, so reg_caps stays None -> fallback
+                # stamp). User-supplied YAML fields are ignored for the stamp; if they
+                # contradict the registry, emit a warning.
+                reg_caps = None
+                if provider:
+                    try:
+                        reg_caps = registry.get_capabilities(provider)
+                    except _ProviderError:
+                        # check_unknown_provider should have caught this earlier
+                        # in compile_plan; defensively fall back to the legacy
+                        # behavior here so a bug in the check-runner doesn't
+                        # crash the planner.
+                        reg_caps = None
                 if reg_caps is not None:
                     backend_type = reg_caps.backend_type
                     backend_version = reg_caps.backend_version

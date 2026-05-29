@@ -43,7 +43,7 @@ class WorkNode:
     columns: tuple[str, ...]
     kind: str  # "scalar" | "composite" | "composite_fk_group"
     strategy: str
-    provider: str
+    provider: str | None  # None for scalar transforms (hash/redact/...); see ColumnSeed
     plan_slice: ColumnSeed | GroupSeed
 
     @property
@@ -63,12 +63,13 @@ def build_work_list(plan: Plan, registry: ProviderRegistry) -> list[WorkNode]:
     for table, table_seed in plan.seed_envelope.per_table:
         composite_groups: dict[_NodeKey, list[ColumnSeed]] = {}
         for col_name, col_seed in table_seed.per_column:
-            # No-backend strategies (redact/truncate/passthrough/...) carry a
-            # provider that is not a registry backend; only registry-bound
-            # providers can be composites, so guard the capability lookup.
+            # Scalar transform strategies (hash/redact/truncate/passthrough/...) carry
+            # NO provider (None) and read their settings from provider_config; only
+            # registry-bound providers can be composites, so guard the capability lookup
+            # (null-guard before registry.has, which expects a provider string).
             caps = (
                 registry.get_capabilities(col_seed.provider)
-                if registry.has(col_seed.provider)
+                if col_seed.provider and registry.has(col_seed.provider)
                 else None
             )
             if caps is not None and caps.backend_type == "composite":
