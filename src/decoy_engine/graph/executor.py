@@ -230,13 +230,19 @@ def _execute_graph(
                     )
                 else:
                     rows_out = cache.write_stream(nid, op_result, engine)
+                    # A target/sink op consumes its input rows, writes them out, then
+                    # emits an empty table downstream (rows_out=0). Report the rows it
+                    # WROTE (its input count) so the node record + the narrative log read
+                    # the true output count instead of the sink's empty passthrough
+                    # ("N -> 0"). Non-target ops report their real output rows.
+                    reported_rows = rows_in_total if kind.startswith("target.") else rows_out
                     elapsed_ms = int((time.monotonic() - t0) * 1000)
                     memory_delta_kb = max(0, rss_kb() - rss_before)
                     state.records.append(
                         make_node_ok_record(
                             nid,
                             kind,
-                            rows_out,
+                            reported_rows,
                             elapsed_ms,
                             ctx._exports.get(nid),
                             memory_delta_kb=memory_delta_kb,
@@ -247,7 +253,7 @@ def _execute_graph(
                         step_name,
                         descriptor,
                         rows_in_total,
-                        rows_out,
+                        reported_rows,
                         elapsed_ms,
                     )
             except FlagPauseSignal:
