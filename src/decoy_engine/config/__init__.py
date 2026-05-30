@@ -12,8 +12,10 @@ Per the PO-ratified six axes (advisory 2026-05-27):
 - Closed-Literal pins on `orphan_policy` (preserve | remap | warn | fail)
   and source/target `format` (csv | parquet).
 - Single pipeline per file (no `pipelines: [...]` top-level).
-- File-only `SourceDescriptor` / `TargetDescriptor` discriminated unions
-  in V1; S3 / GCS / SFTP variants land in V2+.
+- `SourceDescriptor` discriminated union supports `file` + `s3` + `gcs`
+  variants in V1 (S14-CLOUD-SRC-S3GCS, 2026-05-30); `TargetDescriptor`
+  is still `file`-only and grows the cloud variants in S15. SFTP rides
+  S18; DB rides V2.1.
 - Inline declarations only (no separate `pools:` or top-level
   `namespaces:` registry blocks; planner builds those from column-level
   declarations).
@@ -43,7 +45,12 @@ from decoy_engine.config._relationships import (
     RelationshipConfig,
     RelationshipEnd,
 )
-from decoy_engine.config._sources import FileSource, SourceDescriptor
+from decoy_engine.config._sources import (
+    FileSource,
+    GCSSource,
+    S3Source,
+    SourceDescriptor,
+)
 from decoy_engine.config._tables import ColumnConfig, TableConfig
 from decoy_engine.config._targets import FileTarget, TargetDescriptor
 
@@ -51,6 +58,7 @@ __all__ = [
     "ColumnConfig",
     "FileSource",
     "FileTarget",
+    "GCSSource",
     "GlobalSettings",
     "NamespaceConfig",
     "OrphanPolicyLiteral",
@@ -58,6 +66,7 @@ __all__ = [
     "PipelineConfigError",
     "RelationshipConfig",
     "RelationshipEnd",
+    "S3Source",
     "SourceDescriptor",
     "TableConfig",
     "TargetDescriptor",

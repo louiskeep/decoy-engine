@@ -30,6 +30,15 @@ dependencies = [
     # against the 1.x I/O API, so cap below 2.0 until a 2.x validation pass.
     "polars>=1.0,<2.0",
     "duckdb>=0.10.0",
+    # S14-CLOUD-SRC-S3GCS (2026-05-30): cloud sources are R1 marketed scope
+    # (decoy_release_1_scope memory). boto3 was previously transitive via
+    # moto[s3] in [dev] and platform-side; the engine's _load_s3_source +
+    # platform's _fetch_s3_to_bytesio import it at function-call time, so
+    # the production Compose image needs it declared. google-cloud-storage
+    # ships alongside; the gcs extra below stays as a backwards-compat
+    # marker. Dennis S14 gate B1 (2026-05-30): pyproject promote.
+    "boto3>=1.26",
+    "google-cloud-storage>=2.0",
 ]
 
 [project.optional-dependencies]
@@ -62,13 +71,14 @@ docs = [
     # Pygments treats `mermaid` as an unknown lexer and -W fails the build.
     "sphinxcontrib-mermaid>=0.9",
 ]
-# First-party cloud-storage connectors as optional extras. S3 is covered
-# by `boto3`, which is already a transitive dep via `moto[s3]` in `[dev]`
-# and via the platform's runtime requirements. GCS and SFTP have heavier
-# dependency footprints (google-cloud-storage pulls grpcio; paramiko
-# pulls cryptography) so they stay opt-in for installs that don't need
-# them, e.g. an S3-only customer.
-gcs = ["google-cloud-storage>=2.0"]
+# First-party cloud-storage connector extras. S14-CLOUD-SRC-S3GCS
+# promoted boto3 + google-cloud-storage to [project] dependencies (above)
+# because R1 marketed scope includes cloud object storage and the
+# extras-only model broke the production Compose image (Dennis S14 gate
+# B1). The `gcs` extra below is now a no-op backwards-compat marker
+# (already pulled by the base install); kept so existing `pip install -e .[gcs]`
+# invocations still work. SFTP remains an opt-in extra pending S18.
+gcs = []
 sftp = ["paramiko>=3.0"]
 
 [tool.hatch.build.targets.wheel]
