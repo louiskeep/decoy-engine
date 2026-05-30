@@ -1,79 +1,73 @@
-"""Tests for the public validate_config() function."""
+"""Tests for the public validate_config() function.
+
+S9: V1 mask + V1 generate config shapes are no longer validated by
+``validate_config``. The V1 validators (``MaskerConfigValidator`` +
+``GeneratorConfigValidator``) were deleted with the V1 Masker / DataGenerator
+paths. ``validate_config`` now only accepts ``version: 1`` PipelineConfig
+shapes (the v2 substrate); V1 shapes raise PipelineValidationError pointing
+at the v2 path. Cells that previously asserted V1 dicts validated successfully
+were removed; the loading-error cells (file-not-found, malformed YAML, etc.)
+remain because they're shape-agnostic.
+"""
 
 from pathlib import Path
 
 import pytest
-import yaml
 
 from decoy_engine import ConfigError, PipelineValidationError, validate_config
 
 
-def _valid_mask_config(input_path: str = "in.csv", output_path: str = "out.csv") -> dict:
+def _valid_v2_pipeline_config() -> dict:
     return {
+        "version": 1,
         "global_settings": {"seed": 42},
-        "input": {
-            "type": "csv",
-            "path": input_path,
-            "csv_options": {"delimiter": ",", "encoding": "utf-8"},
+        "sources": {
+            "customers": {"type": "file", "format": "csv", "path": "uploads/customers.csv"},
         },
-        "output": {
-            "type": "csv",
-            "path": output_path,
-            "csv_options": {"delimiter": ",", "encoding": "utf-8"},
-        },
-        "masking_rules": [
-            {"column": "name", "type": "faker", "faker_type": "name"},
-            {"column": "id", "type": "passthrough"},
-        ],
-    }
-
-
-def _valid_generate_config() -> dict:
-    return {
-        "generator_settings": {"seed": 42, "output_directory": "data/generated/"},
         "tables": [
             {
                 "name": "customers",
-                "row_count": 100,
                 "columns": [
-                    {"name": "id", "type": "sequence", "start": 1},
-                    {"name": "name", "type": "faker", "faker_type": "name"},
+                    {
+                        "name": "email",
+                        "strategy": "faker",
+                        "provider": "person_email",
+                        "namespace": "cust_ns",
+                        "deterministic": True,
+                    }
                 ],
             }
         ],
+        "targets": {
+            "customers": {"type": "file", "format": "csv", "path": "out/customers.csv"},
+        },
+        "namespaces": {"cust_ns": {"declared_by": ["customers.email"]}},
     }
 
 
 class TestValidConfigs:
-    def test_valid_mask_dict_passes(self):
-        validate_config(_valid_mask_config())
-
-    def test_valid_generate_dict_passes(self):
-        validate_config(_valid_generate_config())
-
-    def test_valid_mask_yaml_file_passes(self, tmp_path: Path):
-        path = tmp_path / "config.yaml"
-        path.write_text(yaml.dump(_valid_mask_config()))
-        validate_config(path)
-        validate_config(str(path))
+    def test_valid_v2_pipeline_dict_passes(self):
+        validate_config(_valid_v2_pipeline_config())
 
 
 class TestInvalidConfigs:
-    def test_missing_input_raises(self):
-        config = _valid_mask_config()
-        del config["input"]
-        with pytest.raises(PipelineValidationError):
-            validate_config(config)
+    def test_v1_mask_shape_rejected_with_typed_message(self):
+        v1_mask = {
+            "global_settings": {"seed": 42},
+            "input": {"type": "csv", "path": "in.csv"},
+            "output": {"type": "csv", "path": "out.csv"},
+            "masking_rules": [{"column": "name", "type": "passthrough"}],
+        }
+        with pytest.raises(PipelineValidationError, match="no longer validated"):
+            validate_config(v1_mask)
 
-    def test_missing_masking_rules_and_tables_raises(self):
-        with pytest.raises(PipelineValidationError, match="Cannot determine"):
-            validate_config({"input": {}, "output": {}})
-
-    def test_unknown_strategy_raises(self):
-        config = _valid_mask_config()
-        config["masking_rules"][0]["type"] = "not_a_real_strategy"
-        with pytest.raises(PipelineValidationError):
-            validate_config(config)
+    def test_v1_generate_shape_rejected_with_typed_message(self):
+        v1_generate = {
+            "generator_settings": {"seed": 42, "output_directory": "out/"},
+            "tables": [{"name": "customers", "row_count": 100, "columns": []}],
+        }
+        with pytest.raises(PipelineValidationError, match="no longer validated"):
+            validate_config(v1_generate)
 
 
 class TestLoadingErrors:

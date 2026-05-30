@@ -1,10 +1,13 @@
 """
 Data generation module for the decoy_engine package.
-Provides functionality for generating synthetic data with referential integrity.
+
+S9: the V1 ``DataGenerator`` + ``RelationshipHandler`` entry points were
+removed from the public surface and the underlying modules deleted.
+``ColumnGenerator`` stays: V2 ``generation.synthesize`` delegates to it for
+parity-frozen formula + cardinality bounds (Reading B pragmatic parity), and
+``graph/ops/generate_op`` uses it for the graph-mode generate node.
 """
 
 from decoy_engine.generators.columns import ColumnGenerator
-from decoy_engine.generators.generator import DataGenerator
-from decoy_engine.generators.relationships import RelationshipHandler
 
-__all__ = ["ColumnGenerator", "DataGenerator", "RelationshipHandler"]
+__all__ = ["ColumnGenerator"]

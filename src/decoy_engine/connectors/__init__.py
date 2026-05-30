@@ -1,24 +1,16 @@
-"""Connectors package: legacy I/O handlers plus SDK-based file connectors.
+"""Connectors package: SDK-based streaming connectors only.
 
-Two abstractions live here:
+S9 deleted the legacy V1 path-based ``IOHandler`` family (``CSVHandler``,
+``FixedWidthHandler``, ``DBHandler``, ``create_io_handler``). The platform
+mask + generate paths now run through the V2 ``ExecutionAdapter`` +
+``generation.synthesize``, both of which read sources as Arrow + write
+outputs via the V2 source/target resolvers (``api.jobs.v2_config``).
 
-* `IOHandler` and its subclasses (`CSVHandler`, `FixedWidthHandler`,
-  `DBHandler`) are the legacy path-based interface that powers the
-  classic Masker / DataGenerator flow. Path in, DataFrame out.
-* `S3FileSource`, `S3FileSink`, and friends are the new SDK-based
-  streaming connectors built on `decoy_engine.sdk.FileSource` /
-  `FileSink`. List + open + write semantics; no DataFrame conversion at
-  the connector layer.
-
-The two abstractions coexist on purpose. Sprint G connectors do not
-need to participate in the IOHandler factory; they are loaded through
-the connector SDK entry-point mechanism instead.
+What survives is the SDK family: ``S3FileSource`` / ``S3FileSink`` (plus the
+optional GCS + SFTP installs). List + open + write semantics; no DataFrame
+conversion at the connector layer.
 """
 
-from decoy_engine.connectors.base import IOHandler
-from decoy_engine.connectors.csv_connector import CSVHandler
-from decoy_engine.connectors.factory import create_io_handler
-from decoy_engine.connectors.fixed_width import FixedWidthHandler
 from decoy_engine.connectors.s3 import S3Config, S3FileSink, S3FileSource
 
 # GCS and SFTP connectors are optional installs (`decoy-engine[gcs]` and
@@ -36,13 +28,9 @@ except ImportError:
     SFTPConfig = SFTPFileSink = SFTPFileSource = None  # type: ignore[assignment]
 
 __all__ = [
-    "CSVHandler",
-    "FixedWidthHandler",
     "GCSConfig",
     "GCSFileSink",
     "GCSFileSource",
-    # Legacy IOHandler family.
-    "IOHandler",
     # SDK-based file connectors (Sprint G).
     "S3Config",
     "S3FileSink",
@@ -50,5 +38,4 @@ __all__ = [
     "SFTPConfig",
     "SFTPFileSink",
     "SFTPFileSource",
-    "create_io_handler",
 ]
