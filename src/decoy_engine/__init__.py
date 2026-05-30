@@ -111,15 +111,6 @@ from decoy_engine.generation.pool import (
     ValuePool,
     get_default_pool_cache,
 )
-from decoy_engine.graph import (
-    PreviewResult,
-    RunResult,
-    normalize_config,
-    preview_graph,
-    run_graph,
-    validate_graph,
-    validate_graph_full,
-)
 from decoy_engine.license import LicenseVerifier
 from decoy_engine.plan.validate import (
     PlanCheckError,
@@ -294,7 +285,6 @@ __all__ = [
     "PoolCapacityError",
     "PoolSampler",
     "PostValidationRunner",
-    "PreviewResult",
     "ProviderError",
     "ProviderRegistry",
     "ProviderSpec",
@@ -303,7 +293,6 @@ __all__ = [
     "RelationshipEdge",
     "RelationshipGraph",
     "RiskFlag",
-    "RunResult",
     "SchemaInspector",
     "SentinelFlag",
     "SsnAdapter",
@@ -337,18 +326,13 @@ __all__ = [
     "get_default_registry",
     "load_custom_providers",
     "make_key_resolver",
-    "normalize_config",
-    "preview_graph",
     "recommend",
     "register_faker_list_provider",
     "register_faker_provider",
     "register_faker_provider_v2",
     "run_discovery_sql",
-    "run_graph",
     "run_storm",
     "unregister_faker_provider",
     "validate_config",
-    "validate_graph",
-    "validate_graph_full",
     "validate_plan",
 ]

@@ -19,9 +19,14 @@
 # Multi-line additions (design notes, deferral rationale) follow.
 
 modules:
-  - path: src/decoy_engine/transforms/hash.py
-    pattern: HMAC-SHA256 with HKDF-SHA256 key derivation
-    source: HMAC RFC 2104; HKDF RFC 5869
+  # S22-CL-V1GRAPHRUNNER (2026-05-30): removed transforms/hash.py +
+  # transforms/faker_based.py + transforms/format_preservation.py from
+  # the registry. Those V1 transform modules were deleted alongside the
+  # V1 graph runner. The V2 strategy handlers in
+  # execution/_strategies/_hash.py + _faker.py implement the same
+  # patterns (HMAC-SHA256 + HKDF + Faker seeded) directly; their
+  # docstrings cite the patterns. Adding registry entries for the V2
+  # strategy modules is V2.1 follow-up.
 
   - path: src/decoy_engine/transforms/fpe.py
     pattern: Type-II Feistel + HMAC-SHA256
@@ -30,14 +35,6 @@ modules:
   - path: src/decoy_engine/transforms/date_shift.py
     pattern: HMAC-SHA256-keyed deterministic offset
     source: HMAC RFC 2104
-
-  - path: src/decoy_engine/transforms/faker_based.py
-    pattern: Faker seeded deterministic generation
-    source: joke2k/faker (MIT)
-
-  - path: src/decoy_engine/transforms/format_preservation.py
-    pattern: strptime/strftime format inference
-    source: CPython datetime stdlib
 
   - path: src/decoy_engine/forecast/recommender.py
     pattern: SDV HMA1 multi-table fidelity scoring

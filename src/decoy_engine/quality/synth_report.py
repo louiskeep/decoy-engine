@@ -401,7 +401,9 @@ def compute_attack_metrics(
         return _attacks_unavailable("not_enabled_by_caller", extras_module)
 
     try:
-        attacks_pkg = __import__(extras_module)
+        import importlib
+
+        attacks_pkg = importlib.import_module(extras_module)
     except ImportError:
         return _attacks_unavailable("extras_not_installed", extras_module)
 

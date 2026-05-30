@@ -1,30 +1,28 @@
-"""
-Masking strategies module for the decoy_engine package.
-Provides various strategies for masking sensitive data.
+"""V1-reused-by-V2 transform implementations (slim 3-file leaf package).
+
+S22-CL-V1GRAPHRUNNER (2026-05-30): all V1-only transform strategies were
+deleted (apply_context, bucketize, categorical, factory, faker_based,
+format_preservation, hash, passthrough, redact, reference, registry,
+shuffle, truncate). The three files that remain are V2-LOAD-BEARING --
+the V2 strategy handlers in ``execution/_strategies/_date_shift.py``,
+``_formula.py``, and ``_fpe.py`` import from them per best-practices
+§6.2 ("use established methodology; we do not roll our own"). The V2
+docstrings explicitly cite the reuse.
+
+The package's __init__.py is intentionally minimal: only the
+``BaseMaskingStrategy`` ABC is re-exported because the three kept
+strategies depend on it. The V1 ``StrategyManager`` / ``create_strategy``
+registry was deleted alongside the V1 graph runner; V2 strategy
+dispatch lives in ``execution/_adapter.py``.
+
+A future sprint may move these three files to
+``execution/_strategies/_reused_v1/`` to fully retire the ``transforms``
+namespace. Deferred because the move is structural churn without
+behavioral change, and the V2 strategy import paths would shift.
 """
 
 from decoy_engine.transforms.base import BaseMaskingStrategy
-from decoy_engine.transforms.categorical import CategoricalStrategy
-from decoy_engine.transforms.date_shift import DateShiftStrategy
-from decoy_engine.transforms.factory import create_strategy
-from decoy_engine.transforms.faker_based import FakerStrategy
-from decoy_engine.transforms.fpe import FPEStrategy
-from decoy_engine.transforms.hash import HashStrategy
-from decoy_engine.transforms.passthrough import PassthroughStrategy
-from decoy_engine.transforms.redact import RedactStrategy
-from decoy_engine.transforms.registry import StrategyManager
-from decoy_engine.transforms.shuffle import ShuffleStrategy
 
 __all__ = [
     "BaseMaskingStrategy",
-    "CategoricalStrategy",
-    "DateShiftStrategy",
-    "FPEStrategy",
-    "FakerStrategy",
-    "HashStrategy",
-    "PassthroughStrategy",
-    "RedactStrategy",
-    "ShuffleStrategy",
-    "StrategyManager",
-    "create_strategy",
 ]
