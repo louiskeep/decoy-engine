@@ -339,3 +339,46 @@ class TestApplyTransformsInOrder:
     def test_empty_ops_list_returns_df_unchanged(self, _sample_df):
         out = apply_transforms(_sample_df, [])
         assert out.equals(_sample_df)
+
+
+# ---------------------------------------------------------------------
+# S17 Phase B (Dennis S17 gate MEDIUM finding): compile-time cross-check.
+# Reject configs that drop_column a column that ALSO has a mask strategy.
+# ---------------------------------------------------------------------
+
+
+class TestDropColumnMaskCrossCheck:
+    def test_rejects_drop_column_for_masked_column(self):
+        """A table with both `drop_column: [ssn]` AND mask `columns: [{name: ssn, ...}]`
+        is rejected at PipelineConfig.model_validate. The previous behavior
+        would fall through to a `v2_runner_unexpected_error` mid-strategy
+        when the column was missing; this catches it at the choke-point."""
+        cfg = _base_config_with_transforms([
+            {"op": "drop_column", "columns": ["c"]},  # `c` is the table's mask column
+        ])
+        with pytest.raises(Exception) as exc:
+            PipelineConfig.model_validate(cfg)
+        assert "drop_column" in str(exc.value).lower()
+        assert "c" in str(exc.value)
+
+    def test_accepts_drop_column_for_unmasked_column(self):
+        """Dropping a column that is NOT in the mask columns list is fine --
+        the table just emits without that column. The cross-check only fires
+        on overlap."""
+        cfg = _base_config_with_transforms([
+            {"op": "drop_column", "columns": ["unrelated_column"]},
+        ])
+        # No exception -> the validator accepted it (drop_column on a
+        # non-mask column is the intended use).
+        PipelineConfig.model_validate(cfg)
+
+    def test_rejects_multi_column_drop_with_one_overlap(self):
+        """If drop_column lists multiple columns AND one of them overlaps a
+        mask column, the reject names ALL overlapping columns (sorted)."""
+        cfg = _base_config_with_transforms([
+            {"op": "drop_column", "columns": ["a", "c", "b"]},  # c is the mask col
+        ])
+        with pytest.raises(Exception) as exc:
+            PipelineConfig.model_validate(cfg)
+        # Reject names the conflict (sorted).
+        assert "'c'" in str(exc.value) or "[c]" in str(exc.value) or "['c']" in str(exc.value)

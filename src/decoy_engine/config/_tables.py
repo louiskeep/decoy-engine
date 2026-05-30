@@ -180,4 +180,26 @@ class TableConfig(BaseModel):
                     f"table {self.name!r}: row_count is only valid on a generate table "
                     f"(with generate_columns)"
                 )
+        # S17 Phase B (Dennis S17 gate MEDIUM finding, 2026-05-30): cross-check
+        # drop_column transforms against the table's mask columns. A user who
+        # writes `drop_column: [ssn]` while ALSO declaring a mask strategy on
+        # `ssn` would otherwise see a generic `v2_runner_unexpected_error`
+        # mid-strategy when the column is missing. Catch it at the choke-point
+        # with a typed reason naming the affected column + strategy.
+        if self.transforms and self.columns:
+            from decoy_engine.config._transforms import DropColumnOp
+
+            mask_col_names = {c.name for c in self.columns}
+            for op in self.transforms:
+                if isinstance(op, DropColumnOp):
+                    conflicts = mask_col_names & set(op.columns)
+                    if conflicts:
+                        sorted_conflicts = sorted(conflicts)
+                        raise ValueError(
+                            f"table {self.name!r}: drop_column transform drops columns "
+                            f"{sorted_conflicts} that also have mask strategies declared. "
+                            f"Either drop the columns OR mask them, not both -- mask "
+                            f"strategies run AFTER transforms, so the strategy would land "
+                            f"on a missing column and fail mid-run."
+                        )
         return self
