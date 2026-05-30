@@ -57,14 +57,28 @@ from decoy_engine.config._targets import (
     S3Target,
     TargetDescriptor,
 )
+from decoy_engine.config._transforms import (
+    DedupeOp,
+    DeriveOp,
+    DropColumnOp,
+    FilterOp,
+    LimitOp,
+    SortOp,
+    TransformOp,
+)
 
 __all__ = [
     "ColumnConfig",
+    "DedupeOp",
+    "DeriveOp",
+    "DropColumnOp",
     "FileSource",
     "FileTarget",
+    "FilterOp",
     "GCSSource",
     "GCSTarget",
     "GlobalSettings",
+    "LimitOp",
     "NamespaceConfig",
     "OrphanPolicyLiteral",
     "PipelineConfig",
@@ -73,8 +87,10 @@ __all__ = [
     "RelationshipEnd",
     "S3Source",
     "S3Target",
+    "SortOp",
     "SourceDescriptor",
     "TableConfig",
     "TargetDescriptor",
+    "TransformOp",
     "override_sources",
 ]

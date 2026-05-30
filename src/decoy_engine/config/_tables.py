@@ -32,6 +32,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from decoy_engine.config._transforms import TransformOp
+
 CardinalityModeLiteral = Literal[
     "reuse",
     "unique",
@@ -147,6 +149,12 @@ class TableConfig(BaseModel):
     # synthesis column specs. Both unset => a mask table.
     row_count: int | None = None
     generate_columns: list[GenerateColumnConfig] = Field(default_factory=list)
+    # S17-TX-NARROW (2026-05-30): the narrow transform surface (Endpoint A
+    # locked). Six ops execute between source-read and the strategy loop in
+    # the mask path. Empty by default. Generate tables MAY also carry
+    # transforms (they apply post-synthesis); current S17 scope wires only
+    # the mask side (Phase B + a follow-up enables generate-side transforms).
+    transforms: list[TransformOp] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _mask_xor_generate(self) -> "TableConfig":
