@@ -97,17 +97,21 @@ def profile_source(
 def _load_source(source_descriptor: dict[str, Any]) -> pd.DataFrame:
     """Dispatch on `type` + `format` to the per-source-type reader.
 
-    V1 supports `type: "file"` with `format: csv | parquet` only. The
-    Pydantic adapter has already rejected other types at validation
-    time; this NotImplementedError is defensive (e.g., a caller that
-    skipped the adapter would land here).
+    V1 supports `type: "file" | "s3" | "gcs"`. S14-CLOUD-SRC-S3GCS added the
+    cloud variants. The Pydantic adapter has already rejected other types at
+    validation time; this NotImplementedError is defensive (e.g., a caller that
+    skipped the adapter would land here). SFTP rides S18; DB rides V2.1.
     """
     src_type = source_descriptor.get("type")
     if src_type == "file":
         return _load_file_source(source_descriptor)
+    if src_type == "s3":
+        return _load_s3_source(source_descriptor)
+    if src_type == "gcs":
+        return _load_gcs_source(source_descriptor)
     raise NotImplementedError(
         f"profile_source: unsupported source type {src_type!r}. "
-        "V1 supports only `type: file`; S3/GCS/SFTP variants are V2+."
+        "Supported types: file, s3, gcs (S18 adds sftp; V2.1 adds db)."
     )
 
 
@@ -122,6 +126,85 @@ def _load_file_source(source_descriptor: dict[str, Any]) -> pd.DataFrame:
         return pd.read_parquet(path)
     raise NotImplementedError(
         f"profile_source: unsupported file format {fmt!r}. V1 supports csv | parquet only."
+    )
+
+
+def _load_s3_source(source_descriptor: dict[str, Any]) -> pd.DataFrame:
+    """Read an S3 object into a DataFrame. The engine never sees raw secrets:
+    `credentials_ref` is opaque and ignored here (the platform resolves it before
+    the descriptor reaches the engine, or the SDK walks its default credential
+    chain). `endpoint_url` is supported for S3-compatible services (MinIO, R2)
+    and moto-S3 in CI.
+
+    Pattern lessons applied from QA Q1, Q3, Q4, Q10 (legacy DB connector):
+    - The boto3 client is constructed inside a function call (no shared global).
+    - The object is fetched once + held in BytesIO for the pandas reader.
+    - No string-interpolated query fragments (boto3's get_object is parameterized).
+    - SDK exceptions surface as the SDK's own typed errors; this layer adds
+      no `str(e)` cell-value leakage into log messages.
+    """
+    import io
+
+    import boto3
+
+    fmt = source_descriptor.get("format")
+    bucket = source_descriptor.get("bucket")
+    key = source_descriptor.get("key")
+    if not isinstance(bucket, str) or not bucket:
+        raise ValueError(f"profile_source: s3 source missing bucket, got {bucket!r}")
+    if not isinstance(key, str) or not key:
+        raise ValueError(f"profile_source: s3 source missing key, got {key!r}")
+
+    client_kwargs: dict[str, Any] = {}
+    region = source_descriptor.get("region")
+    if isinstance(region, str) and region:
+        client_kwargs["region_name"] = region
+    endpoint_url = source_descriptor.get("endpoint_url")
+    if isinstance(endpoint_url, str) and endpoint_url:
+        client_kwargs["endpoint_url"] = endpoint_url
+
+    client = boto3.client("s3", **client_kwargs)
+    response = client.get_object(Bucket=bucket, Key=key)
+    body = io.BytesIO(response["Body"].read())
+
+    if fmt == "csv":
+        return pd.read_csv(body)
+    if fmt == "parquet":
+        return pd.read_parquet(body)
+    raise NotImplementedError(
+        f"profile_source: unsupported s3 format {fmt!r}. V1 supports csv | parquet only."
+    )
+
+
+def _load_gcs_source(source_descriptor: dict[str, Any]) -> pd.DataFrame:
+    """Read a GCS object into a DataFrame. Mirror of `_load_s3_source` with GCS
+    semantics. The engine never sees raw secrets; `credentials_ref` is opaque
+    and the SDK uses Application Default Credentials when not set.
+    """
+    import io
+
+    from google.cloud import storage
+
+    fmt = source_descriptor.get("format")
+    bucket_name = source_descriptor.get("bucket")
+    object_name = source_descriptor.get("object")
+    if not isinstance(bucket_name, str) or not bucket_name:
+        raise ValueError(f"profile_source: gcs source missing bucket, got {bucket_name!r}")
+    if not isinstance(object_name, str) or not object_name:
+        raise ValueError(f"profile_source: gcs source missing object, got {object_name!r}")
+
+    client = storage.Client()
+    bucket = client.bucket(bucket_name)
+    blob = bucket.blob(object_name)
+    data = blob.download_as_bytes()
+    body = io.BytesIO(data)
+
+    if fmt == "csv":
+        return pd.read_csv(body)
+    if fmt == "parquet":
+        return pd.read_parquet(body)
+    raise NotImplementedError(
+        f"profile_source: unsupported gcs format {fmt!r}. V1 supports csv | parquet only."
     )
 
 
