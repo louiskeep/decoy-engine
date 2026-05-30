@@ -3,16 +3,19 @@
 decoy_engine -- data masking and synthetic generation library.
 
 Public API (the contract CLI and platform code depend on):
-    Masker            orchestrate a masking pipeline from a YAML config
-    DataGenerator     generate synthetic data with referential integrity
+    PipelineConfig    strict pipeline-config schema; validate once at the choke-point
+                      (PipelineConfig.model_validate(yaml).model_dump()) then hand the
+                      dict to compile_plan / profile_source (decoy_engine.config)
     ExecutionContext  caller-provided runtime context (logger + telemetry)
     Logger            Protocol satisfied by stdlib loggers and Rich/DB-backed loggers
     TelemetryClient   Protocol for optional telemetry sinks
     SchemaInspector   connector schema introspection (stub, Phase 2)
     LicenseVerifier   license verification (stub)
-    PipelineConfig    strict pipeline-config schema; validate once at the choke-point
-                      (PipelineConfig.model_validate(yaml).model_dump()) then hand the
-                      dict to compile_plan / profile_source (decoy_engine.config)
+    run_graph / preview_graph / validate_graph_full / normalize_config:
+                      graph-mode entrypoints (the per-node graph still runs through
+                      the v1 op surface; Masker / DataGenerator entry points were
+                      removed in S9 as the platform mask + generate paths now go
+                      through the v2 ExecutionAdapter directly).
 
 Public exceptions (also in decoy_engine.errors):
     DecoyError, ConfigError, PipelineValidationError,
@@ -22,6 +25,16 @@ Public exceptions (also in decoy_engine.errors):
 
 Anything not listed in __all__ -- and anything under decoy_engine.internal --
 is private and may change without a version bump.
+
+S9 NOTE: ``Masker`` and ``DataGenerator`` were removed from the public surface
+in S9. The platform mask + generate paths now run exclusively through the v2
+``ExecutionAdapter`` (mask) and ``generation.synthesize.generate_tables``
+(generate) -- see ``api/jobs/v2_runner.py`` for the platform-side spine. The
+underlying modules (``decoy_engine.masker``, ``decoy_engine.generators.generator``)
+remain on disk for graph/op internal use but are no longer re-exported; any
+external import of ``from decoy_engine import Masker`` / ``DataGenerator`` now
+fails fast. This is the breaking public-API change ratified under the
+``decoy_v2_clean_break`` PO directive.
 """
 
 from decoy_engine.config import PipelineConfig
@@ -98,7 +111,6 @@ from decoy_engine.generation.pool import (
     ValuePool,
     get_default_pool_cache,
 )
-from decoy_engine.generators import DataGenerator
 from decoy_engine.graph import (
     PreviewResult,
     RunResult,
@@ -109,7 +121,6 @@ from decoy_engine.graph import (
     validate_graph_full,
 )
 from decoy_engine.license import LicenseVerifier
-from decoy_engine.masker import Masker
 from decoy_engine.plan.validate import (
     PlanCheckError,
     PlanValidationResult,
@@ -225,7 +236,6 @@ __all__ = [
     "ConnectorAuthError",
     "ConnectorConfig",
     "ConnectorError",
-    "DataGenerator",
     "DecoyError",
     "DetectorMatch",
     "DeterminismError",
@@ -258,7 +268,6 @@ __all__ = [
     "LicenseExpiredError",
     "LicenseVerifier",
     "Logger",
-    "Masker",
     "MrnAdapter",
     "MrnDomain",
     "MrnValidator",

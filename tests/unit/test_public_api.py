@@ -35,8 +35,12 @@ def test_all_lists_every_public_name():
         "CompositeGenerator",
         "composite_city_state_zip",
         "composite_name_email",
-        "Masker",
-        "DataGenerator",
+        # engine-v2 S1 (Pipeline config schema, the validation choke-point).
+        "PipelineConfig",
+        # S9: Masker + DataGenerator removed from the public surface. The
+        # platform mask + generate paths run through the v2 ExecutionAdapter +
+        # generation.synthesize directly; graph-mode keeps the run_graph /
+        # preview_graph / validate_graph_full / normalize_config exports.
         "ExecutionContext",
         "Logger",
         "StructuredEvents",
