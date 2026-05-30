@@ -52,5 +52,9 @@ class ShuffleStrategyHandler:
         out: list[object] = [None] * len(source)
         for offset, position in enumerate(non_na_positions):
             out[int(position)] = permuted[offset]
-        df[column] = out
+        # Q13 fix (S11 gate, 2026-05-30): wrap the list[object] in an explicit
+        # object-dtype Series so the column assignment does not let pandas
+        # re-infer float64 from int + None mixes (the V1 anti-pattern QA Q13
+        # surfaced and the rev 2 plan's "verified-fixed" triage missed).
+        df[column] = pd.Series(out, dtype=object, index=df.index)
         return df, []

@@ -287,28 +287,15 @@ class TestV2BehaviorRegressionPinsS11:
             coherent_with=(),
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "Q13 carries forward on V2 _shuffle.py despite Dennis rev 2 plan's "
-            "'verified-fixed on V2' triage. `_shuffle.py:55` does "
-            "`df[column] = out` where out is a list[object] of ints + None; "
-            "pandas re-infers float64 on assignment when nulls mix with ints, "
-            "reproducing the V1 anti-pattern (QA report Q13). Fix is a one-line "
-            "wrap: `df[column] = pd.Series(out, dtype=object, index=df.index)` "
-            "or equivalent. Escalated to Dennis for triage on 2026-05-30; "
-            "carrying to S21-QA-FIXES (or earlier if Dennis re-scopes). When "
-            "the fix lands the xfail flips to expected-pass."
-        ),
-    )
     def test_v2_shuffle_preserves_or_uses_object_dtype(self):
         """Q13 regression pin: V2 shuffle output dtype is object (or the input
         nullable dtype) -- never silent float64 promotion. The V1 carrier was
         `transforms/shuffle.py` which set `shuffled[na_mask] = None` against
         `dtype=column.dtype`, promoting int64 to float64. V2
-        `execution/_strategies/_shuffle.py` was supposed to fix this via
-        `list[object]` output, but `df[column] = out` re-infers dtype on
-        assignment, so the V1 bug carries forward in V2 today.
+        `execution/_strategies/_shuffle.py` now wraps the `list[object]` in
+        `pd.Series(..., dtype=object, index=df.index)` so the assignment does
+        not let pandas re-infer the dtype (Q13 hotfix landed 2026-05-30 per
+        Dennis S11 gate Option C).
         """
         import pandas as pd
 
