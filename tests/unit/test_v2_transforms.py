@@ -287,6 +287,54 @@ class TestApplyDerive:
         assert exc.value.code == "derive_expression_error"
 
 
+class TestExpressionScopeClamp:
+    """Q16 + Dennis C1 regression: @var-style scope escapes must not
+    execute side-effecting calls even with engine='numexpr'. pandas's
+    @var resolver walks the caller's locals + globals BEFORE engine
+    dispatch; the local_dict={} + global_dict={} pass in _apply_filter /
+    _apply_derive clamps that walk to an empty scope.
+
+    The payload exploits the module-top `pd` import (via @pd.compat.os);
+    other reachable targets at the same depth would include any module
+    imported in execution/_transforms.py.
+    """
+
+    _ESCAPE_EXPR = 'a + @pd.compat.os.system("echo DENNIS_C1_REGRESSION 1>&2")'
+
+    def test_filter_blocks_at_var_escape(self):
+        import pandas as pd
+        df = pd.DataFrame({"a": [1, 2, 3]})
+        with pytest.raises(TransformError) as exc:
+            apply_transform(df, FilterOp(op="filter", expression=self._ESCAPE_EXPR))
+        # The escape must NOT have executed -- TransformError fires
+        # because the @var resolution is now blocked.
+        assert exc.value.code == "filter_expression_error"
+
+    def test_derive_blocks_at_var_escape(self):
+        import pandas as pd
+        df = pd.DataFrame({"a": [1, 2, 3]})
+        with pytest.raises(TransformError) as exc:
+            apply_transform(
+                df,
+                DeriveOp(op="derive", column="b", expression=self._ESCAPE_EXPR),
+            )
+        assert exc.value.code == "derive_expression_error"
+
+    def test_filter_legitimate_column_reference_still_works(self):
+        """Column references resolve through DataFrame's column scope,
+        not local_dict / global_dict, so the clamp does not break them."""
+        import pandas as pd
+        df = pd.DataFrame({"age": [10, 20, 30]})
+        out = apply_transform(df, FilterOp(op="filter", expression="age >= 20"))
+        assert out["age"].tolist() == [20, 30]
+
+    def test_derive_legitimate_arithmetic_still_works(self):
+        import pandas as pd
+        df = pd.DataFrame({"a": [1, 2, 3]})
+        out = apply_transform(df, DeriveOp(op="derive", column="b", expression="a * 2"))
+        assert out["b"].tolist() == [2, 4, 6]
+
+
 class TestApplyDropColumn:
     def test_drops_named_columns(self, _sample_df):
         out = apply_transform(

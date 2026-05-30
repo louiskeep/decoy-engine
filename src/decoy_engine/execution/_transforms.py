@@ -7,17 +7,26 @@ iterates in declared order. Called by the mask path's
 PandasExecutionAdapter between source-read and the strategy loop.
 
 Pandas semantics for expression evaluation: pandas ``DataFrame.eval``
-defaults to ``engine="numexpr"`` only when numexpr is installed. If
-numexpr is absent, pandas silently falls back to ``engine="python"``
-which uses Python's ``eval()`` with a restricted but ESCAPABLE namespace
-(``@var`` injection can reach builtins via ``@__import__('os')...``).
-We therefore pin the engine to ``numexpr`` explicitly here; numexpr is
-a hard runtime dependency (declared in ``pyproject.toml``) so the
-fallback never trips.
+resolves ``@var``-style references BEFORE engine dispatch by walking the
+caller's locals + globals (`_replace_locals` in pandas internals). The
+numexpr engine pin does NOT prevent that scope-walk; a malicious
+expression like ``a + @pd.compat.os.system('touch /tmp/pwned')`` will
+execute the side-effecting call even with ``engine='numexpr'`` because
+``@pd`` resolves to the module-top ``pd`` import in this file's globals.
 
-Reference: pandas DataFrame.eval docs (engine parameter) +
-QA finding Q16 (2026-05-30) which flagged the silent Python-engine
-fallback as a code-execution vector for user-supplied expressions.
+We therefore (1) pin ``engine='numexpr'`` to keep perf characteristics
+predictable and to raise ``ImportError`` (mapped to ``numexpr_required``)
+when the dep is missing, and (2) pass ``local_dict={}`` + ``global_dict={}``
+explicitly to clamp the eval scope to the DataFrame's columns. Column
+references resolve through pandas's column-scope path, NOT through
+locals/globals, so legitimate expressions like ``age >= 18`` still work.
+This closes Dennis C1 (2026-05-30 gate review).
+
+References:
+- pandas DataFrame.eval docs (local_dict / global_dict parameters)
+- QA finding Q16 (2026-05-30) flagged the Python-engine fallback as a
+  code-execution vector; Dennis C1 ruled the numexpr pin alone does
+  not address it because @var resolution is engine-independent.
 
 Compile-time validators in ``apply_transforms`` reject:
 - ``derive.column`` already present (would silently overwrite)
@@ -58,9 +67,11 @@ class TransformError(Exception):
 
 def _apply_filter(df: pd.DataFrame, op: FilterOp) -> pd.DataFrame:
     try:
-        # Q16 fix: pin engine to numexpr so the Python-engine fallback
-        # (which allows @var-style builtin escapes) cannot trip silently.
-        mask = df.eval(op.expression, engine="numexpr")
+        # Q16 + Dennis C1 fix: pin engine to numexpr AND clamp the eval
+        # scope to the DataFrame's columns. The local_dict/global_dict
+        # empties block @var-style scope walks that would otherwise reach
+        # module-top imports (e.g. `@pd.compat.os.system(...)`).
+        mask = df.eval(op.expression, engine="numexpr", local_dict={}, global_dict={})
     except ImportError as exc:
         raise TransformError(
             code="numexpr_required",
@@ -129,8 +140,8 @@ def _apply_derive(df: pd.DataFrame, op: DeriveOp) -> pd.DataFrame:
             ),
         )
     try:
-        # Q16 fix: pin engine to numexpr (see _apply_filter for rationale).
-        result = df.eval(op.expression, engine="numexpr")
+        # Q16 + Dennis C1 fix: see _apply_filter for the full rationale.
+        result = df.eval(op.expression, engine="numexpr", local_dict={}, global_dict={})
     except ImportError as exc:
         raise TransformError(
             code="numexpr_required",
