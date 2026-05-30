@@ -276,14 +276,24 @@ class PandasExecutionAdapter:
         child_cols = edge.child_columns
         n = len(child_frame)
 
-        col_vals = [child_frame[c] for c in child_cols]
-        col_na = [child_frame[c].isna() for c in child_cols]
+        # S21 Q7 fix (2026-05-30): batch-materialize each child column to a
+        # plain Python list once + compute the row-level null mask once. The
+        # prior implementation called `v.iloc[i]` for every (row, column)
+        # pair, paying pandas scalar-unboxing overhead O(n*k) times. For a
+        # 1M-row child table with a 3-column FK that was ~3M `.iloc[i]`
+        # calls. QA Q7 + ISO/IEC 25010 §5.2.2 (performance efficiency).
+        col_vals_lists = [child_frame[c].tolist() for c in child_cols]
+        na_array = (
+            child_frame[list(child_cols)].isna().any(axis=1).to_numpy()
+            if len(child_cols) > 1
+            else child_frame[child_cols[0]].isna().to_numpy()
+        )
         child_keys: list[_KeyTuple | None] = []
         for i in range(n):
-            if any(bool(na.iloc[i]) for na in col_na):
+            if na_array[i]:
                 child_keys.append(None)  # null FK: preserved, never an orphan
             else:
-                child_keys.append(tuple(_fk_key_value(v.iloc[i]) for v in col_vals))
+                child_keys.append(tuple(_fk_key_value(col[i]) for col in col_vals_lists))
 
         remap_fn = self._make_remap_fn(edge, node_by_key, ctx)
         masked_keys, warnings = resolve_fk_keys(child_keys, parent_map, edge, remap_fn=remap_fn)
@@ -319,13 +329,21 @@ class PandasExecutionAdapter:
         src_series = [source_snapshots.get((ptable, c), masked_frame[c]) for c in pcols]
         masked_series = [masked_frame[c] for c in pcols]
         n = len(masked_frame)
+        # S21 Q7 fix (2026-05-30): batch-materialize src + masked series to
+        # plain Python lists once. The prior implementation called
+        # `s.iloc[i]` for every (row, column) pair on BOTH src and masked
+        # sides, paying pandas scalar-unboxing overhead O(n*2k) times. On a
+        # 1M-row parent table with a 3-column FK that was ~6M `.iloc[i]`
+        # calls. QA Q7 + ISO/IEC 25010 §5.2.2 (performance efficiency).
+        src_lists = [s.tolist() for s in src_series]
+        masked_lists = [s.tolist() for s in masked_series]
         out: dict[_KeyTuple, _KeyTuple] = {}
         for i in range(n):
-            raw = [s.iloc[i] for s in src_series]
+            raw = [col[i] for col in src_lists]
             if any(pd.isna(x) for x in raw):
                 continue  # parent key with a null component cannot be referenced
             src_t = tuple(_fk_key_value(x) for x in raw)
-            out[src_t] = tuple(s.iloc[i] for s in masked_series)
+            out[src_t] = tuple(col[i] for col in masked_lists)
         parent_map_cache[cache_key] = out
         return out
 

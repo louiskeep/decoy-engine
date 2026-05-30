@@ -336,19 +336,27 @@ class ExecutionContext:
 
 
 def _hkdf_sha256(master: bytes, info: str, length: int = 32) -> bytes:
-    """HKDF-SHA256(master, info) -> `length` bytes (max 32 in this impl).
+    """HKDF-SHA256(master, info) -> `length` bytes.
 
-    Stdlib-only implementation so the engine doesn't pull `cryptography`
-    just for keyed determinism. Empty-salt HKDF: PRK = HMAC(zero, master);
-    OKM = HMAC(PRK, info || 0x01)[:length]. One expansion round is enough
-    while length <= hash output (32 for SHA-256).
+    S21 Q11 fix (2026-05-30): routes through the canonical RFC 5869
+    implementation at `decoy_engine.determinism._hkdf.hkdf_sha256`. The
+    previous local implementation was a one-round shortcut with a zero
+    salt + a `length <= 32` guard; QA Q11 flagged it as a second,
+    divergent HKDF implementation that would silently truncate at the
+    wrong boundary if a future author passed `length=33`. The canonical
+    version supports multi-round expansion up to `255 * 32` per the RFC
+    and is the same byte stream for the existing `length <= 32` call
+    sites (verified by reference-vector unit tests in
+    `tests/unit/test_hkdf.py`).
     """
-    if length > 32:
-        raise ValueError("length must be <= 32 (single HKDF-Expand round)")
-    salt = b"\x00" * 32
-    prk = hmac.new(salt, master, hashlib.sha256).digest()
-    okm = hmac.new(prk, info.encode("utf-8") + b"\x01", hashlib.sha256).digest()
-    return okm[:length]
+    from decoy_engine.determinism._hkdf import hkdf_sha256
+
+    return hkdf_sha256(
+        ikm=master,
+        salt=b"\x00" * 32,
+        info=info.encode("utf-8"),
+        length=length,
+    )
 
 
 def make_key_resolver(
