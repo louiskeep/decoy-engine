@@ -7,13 +7,17 @@ iterates in declared order. Called by the mask path's
 PandasExecutionAdapter between source-read and the strategy loop.
 
 Pandas semantics for expression evaluation: pandas ``DataFrame.eval``
-uses NumPy's expression engine, NOT CPython ``eval``. The security
-profile is bounded by the supported operators (arithmetic + comparison
-+ logical) and the column scope; no module imports, no attribute
-access on Python objects. The pandas docstring notes the engine's
-sandbox boundary; we rely on it instead of `safe_eval` here because
-the column-reference style (`age >= 18`) is more natural than the
-generic-locals style of safe_eval.
+defaults to ``engine="numexpr"`` only when numexpr is installed. If
+numexpr is absent, pandas silently falls back to ``engine="python"``
+which uses Python's ``eval()`` with a restricted but ESCAPABLE namespace
+(``@var`` injection can reach builtins via ``@__import__('os')...``).
+We therefore pin the engine to ``numexpr`` explicitly here; numexpr is
+a hard runtime dependency (declared in ``pyproject.toml``) so the
+fallback never trips.
+
+Reference: pandas DataFrame.eval docs (engine parameter) +
+QA finding Q16 (2026-05-30) which flagged the silent Python-engine
+fallback as a code-execution vector for user-supplied expressions.
 
 Compile-time validators in ``apply_transforms`` reject:
 - ``derive.column`` already present (would silently overwrite)
@@ -54,7 +58,17 @@ class TransformError(Exception):
 
 def _apply_filter(df: pd.DataFrame, op: FilterOp) -> pd.DataFrame:
     try:
-        mask = df.eval(op.expression)
+        # Q16 fix: pin engine to numexpr so the Python-engine fallback
+        # (which allows @var-style builtin escapes) cannot trip silently.
+        mask = df.eval(op.expression, engine="numexpr")
+    except ImportError as exc:
+        raise TransformError(
+            code="numexpr_required",
+            message=(
+                "transforms require numexpr; install it with: "
+                "pip install numexpr"
+            ),
+        ) from exc
     except Exception as exc:
         raise TransformError(
             code="filter_expression_error",
@@ -115,7 +129,16 @@ def _apply_derive(df: pd.DataFrame, op: DeriveOp) -> pd.DataFrame:
             ),
         )
     try:
-        result = df.eval(op.expression)
+        # Q16 fix: pin engine to numexpr (see _apply_filter for rationale).
+        result = df.eval(op.expression, engine="numexpr")
+    except ImportError as exc:
+        raise TransformError(
+            code="numexpr_required",
+            message=(
+                "transforms require numexpr; install it with: "
+                "pip install numexpr"
+            ),
+        ) from exc
     except Exception as exc:
         raise TransformError(
             code="derive_expression_error",
@@ -124,9 +147,10 @@ def _apply_derive(df: pd.DataFrame, op: DeriveOp) -> pd.DataFrame:
                 f"{type(exc).__name__}"
             ),
         ) from exc
-    out = df.copy()
-    out[op.column] = result
-    return out
+    # Q21 fix: df.assign() avoids the df.copy() full materialization; pandas
+    # internally shares column references for unmodified columns. At 1M rows
+    # x 50 columns this is ~200-400 MB savings per derive op.
+    return df.assign(**{op.column: result})
 
 
 def _apply_drop_column(df: pd.DataFrame, op: DropColumnOp) -> pd.DataFrame:

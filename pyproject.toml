@@ -39,6 +39,11 @@ dependencies = [
     # marker. Dennis S14 gate B1 (2026-05-30): pyproject promote.
     "boto3>=1.26",
     "google-cloud-storage>=2.0",
+    # QA Q16 (2026-05-30): execution/_transforms.py pins df.eval to engine=numexpr
+    # so the Python-engine fallback (which can expose @var-based builtin escapes
+    # for user-supplied filter / derive expressions) cannot trip silently.
+    # numexpr is a hard runtime dependency, not optional.
+    "numexpr>=2.8",
 ]
 
 [project.optional-dependencies]

@@ -381,27 +381,36 @@ _ADDRESS_RE = re.compile(
 # the regex shape; for date detectors it's a strptime format string the
 # date_shift strategy can pass directly to dt.strftime().
 
+
+def _variant(label: str) -> tuple[str, "re.Pattern[str]"]:
+    """F-8 fix: derive the compiled regex from the label so the two cannot
+    drift. Used by the regex-style variants where ``label == regex_source``.
+    The date variants below intentionally pass an independent label
+    (a strptime format string) so they cannot use this helper."""
+    return label, re.compile(label)
+
+
 _SSN_VARIANTS = [
-    (r"\d{3}-\d{2}-\d{4}", re.compile(r"\d{3}-\d{2}-\d{4}")),
-    (r"\d{9}", re.compile(r"\d{9}")),
+    _variant(r"\d{3}-\d{2}-\d{4}"),
+    _variant(r"\d{9}"),
 ]
 
 _US_PHONE_VARIANTS = [
     # NB: most distinctive shapes first so e.g. "(NNN) NNN-NNNN" doesn't
     # leak into the bare-dash bucket.
-    (r"\(\d{3}\) \d{3}-\d{4}", re.compile(r"\(\d{3}\) \d{3}-\d{4}")),
-    (r"\(\d{3}\)\d{3}-\d{4}", re.compile(r"\(\d{3}\)\d{3}-\d{4}")),
-    (r"\d{3}-\d{3}-\d{4}", re.compile(r"\d{3}-\d{3}-\d{4}")),
-    (r"\d{3}\.\d{3}\.\d{4}", re.compile(r"\d{3}\.\d{3}\.\d{4}")),
-    (r"\d{3} \d{3} \d{4}", re.compile(r"\d{3} \d{3} \d{4}")),
-    (r"\+1 \d{3} \d{3} \d{4}", re.compile(r"\+1 \d{3} \d{3} \d{4}")),
-    (r"\+1-\d{3}-\d{3}-\d{4}", re.compile(r"\+1-\d{3}-\d{3}-\d{4}")),
-    (r"\d{10}", re.compile(r"\d{10}")),
+    _variant(r"\(\d{3}\) \d{3}-\d{4}"),
+    _variant(r"\(\d{3}\)\d{3}-\d{4}"),
+    _variant(r"\d{3}-\d{3}-\d{4}"),
+    _variant(r"\d{3}\.\d{3}\.\d{4}"),
+    _variant(r"\d{3} \d{3} \d{4}"),
+    _variant(r"\+1 \d{3} \d{3} \d{4}"),
+    _variant(r"\+1-\d{3}-\d{3}-\d{4}"),
+    _variant(r"\d{10}"),
 ]
 
 _US_ZIP_VARIANTS = [
-    (r"\d{5}-\d{4}", re.compile(r"\d{5}-\d{4}")),
-    (r"\d{5}", re.compile(r"\d{5}")),
+    _variant(r"\d{5}-\d{4}"),
+    _variant(r"\d{5}"),
 ]
 
 # Date detectors map directly to strptime — the format_pattern label is
@@ -426,17 +435,17 @@ _EU_DATE_VARIANTS = [
 ]
 
 _PAN_VARIANTS = [
-    (r"\d{4} \d{4} \d{4} \d{4}", re.compile(r"\d{4} \d{4} \d{4} \d{4}")),
-    (r"\d{4}-\d{4}-\d{4}-\d{4}", re.compile(r"\d{4}-\d{4}-\d{4}-\d{4}")),
-    (r"\d{16}", re.compile(r"\d{16}")),
-    (r"\d{15}", re.compile(r"\d{15}")),  # Amex
-    (r"\d{14}", re.compile(r"\d{14}")),  # Diners
+    _variant(r"\d{4} \d{4} \d{4} \d{4}"),
+    _variant(r"\d{4}-\d{4}-\d{4}-\d{4}"),
+    _variant(r"\d{16}"),
+    _variant(r"\d{15}"),  # Amex
+    _variant(r"\d{14}"),  # Diners
 ]
 
 _ICD10_VARIANTS = [
-    (r"[A-Z]\d{2}\.[A-Z0-9]{1,4}", re.compile(r"[A-Z]\d{2}\.[A-Z0-9]{1,4}")),
-    (r"[A-Z]\d{2}", re.compile(r"[A-Z]\d{2}")),
-    (r"[A-Z]\d{2}[A-Z0-9]{1,4}", re.compile(r"[A-Z]\d{2}[A-Z0-9]{1,4}")),
+    _variant(r"[A-Z]\d{2}\.[A-Z0-9]{1,4}"),
+    _variant(r"[A-Z]\d{2}"),
+    _variant(r"[A-Z]\d{2}[A-Z0-9]{1,4}"),
 ]
 
 

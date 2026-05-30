@@ -179,10 +179,12 @@ def _compute_k_anonymity(
                 if len(sub) == 0:
                     continue
                 k = int(sub.groupby(list(combo), dropna=False).size().min())
-            except Exception:
-                # Defensive: an unhashable column value (rare — dict /
-                # list cells from JSON-typed sources) would blow up the
-                # groupby. Skip silently rather than 500 the scan.
+            except (TypeError, ValueError):
+                # F-6 fix: narrow to the known-safe categories. Unhashable
+                # column value (dict / list cells from JSON-typed sources)
+                # raises TypeError; pandas internal coercion edge cases
+                # raise ValueError. Skip silently. MemoryError + other
+                # exceptions propagate so they are not silently swallowed.
                 continue
             if best_k is None or k < best_k:
                 best_k = k
@@ -196,14 +198,31 @@ def _compute_k_anonymity(
 # ── per-column profiler ───────────────────────────────────────────────────────
 
 
+def _is_null_like(val: Any) -> bool:
+    """Catch every NA-shaped value across pandas dtypes.
+
+    F-3 fix: ``pd.NA`` (used by ``Int64`` / ``StringDtype`` / ``BooleanDtype``)
+    is not ``None`` and not a ``float``, so the previous
+    ``val is None or (isinstance(val, float) and pd.isna(val))`` check
+    missed it and rendered ``<NA>`` literally in the UI. ``pd.isna(pd.NA)``
+    returns ``True``; ``pd.isna("hello")`` returns ``False``. The
+    try/except guards unhashable / user-defined NA-like objects.
+    """
+    if val is None:
+        return True
+    try:
+        return bool(pd.isna(val))
+    except (TypeError, ValueError):
+        return False
+
+
 def _top_values(series: pd.Series, total_rows: int, n: int = 5) -> list[TopValue]:
     vc = series.value_counts(dropna=False).head(n)
     out: list[TopValue] = []
     for val, cnt in vc.items():
-        is_na = val is None or (isinstance(val, float) and pd.isna(val))
         out.append(
             TopValue(
-                value="(null)" if is_na else str(val),
+                value="(null)" if _is_null_like(val) else str(val),
                 count=int(cnt),
                 pct=round(cnt / total_rows * 100, 1) if total_rows > 0 else 0.0,
             )
@@ -261,41 +280,31 @@ def _classify_alphabet(series: pd.Series) -> str | None:
     36 for alphanum). Sampling is capped at 200 values; the dominant
     class wins when >=80% of samples land in the same bucket.
     """
-    non_null = series.dropna()
+    # F-4 fix: vectorized regex tests replace the O(rows * chars) Python
+    # double loop. ``str.fullmatch`` runs in pandas/numpy native code and
+    # is ~50x faster on wide tables.
+    non_null = series.dropna().astype(str).str.strip()
+    non_null = non_null[non_null != ""]
     if len(non_null) == 0:
         return None
     if len(non_null) > _B2_ALPHABET_SAMPLE:
-        non_null = non_null.head(_B2_ALPHABET_SAMPLE)
-    counts = {"digits": 0, "alpha": 0, "alphanum": 0, "mixed": 0}
-    total = 0
-    for v in non_null.astype(str):
-        s = v.strip()
-        if not s:
-            continue
-        total += 1
-        has_digit = False
-        has_alpha = False
-        has_other = False
-        for c in s:
-            if c.isdigit():
-                has_digit = True
-            elif c.isalpha():
-                has_alpha = True
-            else:
-                has_other = True
-                break
-        if has_other:
-            counts["mixed"] += 1
-        elif has_digit and has_alpha:
-            counts["alphanum"] += 1
-        elif has_digit:
-            counts["digits"] += 1
-        elif has_alpha:
-            counts["alpha"] += 1
-        else:
-            counts["mixed"] += 1
-    if total == 0:
-        return None
+        non_null = non_null.iloc[:_B2_ALPHABET_SAMPLE]
+    total = len(non_null)
+    is_digits = non_null.str.fullmatch(r"\d+").fillna(False)
+    is_alpha = non_null.str.fullmatch(r"[A-Za-z]+").fillna(False)
+    is_alphanum = non_null.str.fullmatch(r"[A-Za-z0-9]+").fillna(False)
+    n_digits = int(is_digits.sum())
+    n_alpha = int(is_alpha.sum())
+    # alphanum bucket excludes strings already classified as pure digits / pure
+    # alpha so the counts are disjoint (matches the prior loop's semantics).
+    n_alphanum = int((is_alphanum & ~is_digits & ~is_alpha).sum())
+    n_mixed = total - n_digits - n_alpha - n_alphanum
+    counts = {
+        "digits": n_digits,
+        "alpha": n_alpha,
+        "alphanum": n_alphanum,
+        "mixed": n_mixed,
+    }
     winner = max(counts.items(), key=lambda kv: kv[1])
     if winner[1] / total < 0.8:
         return "mixed"
@@ -437,35 +446,36 @@ def _detect_casing(series: pd.Series) -> str | None:
     or 'mixed' as a low-confidence fallback, or None when the column has
     no string-shaped values worth classifying.
     """
+    # F-4 fix: vectorized casing tests. pandas Series.str.is{upper,lower,title}
+    # run in native code; the prior per-row + per-char Python loop dominated
+    # _profile_column wall-time for wide string tables.
     if len(series) == 0:
         return None
-    non_null = series.dropna()
+    non_null = series.dropna().astype(str).str.strip()
+    non_null = non_null[non_null != ""]
     if len(non_null) == 0:
         return None
     if len(non_null) > 200:
-        non_null = non_null.head(200)
-    counts: dict[str, int] = {}
-    total = 0
-    for v in non_null.astype(str):
-        s = v.strip()
-        if not s:
-            continue
-        total += 1
-        # digits_only first — most columns of pure-numeric strings are
-        # IDs, ZIPs, phones, etc. where preserving "no casing" matters.
-        if not any(c.isalpha() for c in s):
-            label = "digits_only"
-        elif s.isupper():
-            label = "upper"
-        elif s.islower():
-            label = "lower"
-        elif s.istitle():
-            label = "title"
-        else:
-            label = "mixed"
-        counts[label] = counts.get(label, 0) + 1
-    if total == 0:
-        return None
+        non_null = non_null.iloc[:200]
+    total = len(non_null)
+    has_alpha = non_null.str.contains(r"[A-Za-z]", regex=True).fillna(False)
+    is_upper = non_null.str.isupper().fillna(False) & has_alpha
+    is_lower = non_null.str.islower().fillna(False) & has_alpha
+    # istitle() ignores all-digit strings (returns False), which is what we want
+    is_title = non_null.str.istitle().fillna(False) & has_alpha & ~is_upper & ~is_lower
+    is_digits_only = ~has_alpha
+    n_upper = int(is_upper.sum())
+    n_lower = int(is_lower.sum())
+    n_title = int(is_title.sum())
+    n_digits = int(is_digits_only.sum())
+    n_mixed = total - n_upper - n_lower - n_title - n_digits
+    counts = {
+        "upper": n_upper,
+        "lower": n_lower,
+        "title": n_title,
+        "digits_only": n_digits,
+        "mixed": n_mixed,
+    }
     winner = max(counts.items(), key=lambda kv: kv[1])
     if winner[1] / total < 0.5:
         return "mixed"
@@ -735,10 +745,16 @@ def _profile_column(
                 message=".*Could not infer format.*",
                 category=UserWarning,
             )
-            coerced_sample = pd.to_datetime(non_null.head(sample_size), errors="coerce")
-            parse_rate = coerced_sample.notna().sum() / sample_size if sample_size else 0
+            # F-9 fix: coerce the full series once and slice the head for
+            # parse_rate. Previously the sample was discarded and the full
+            # series re-coerced when parse_rate >= 0.7 (2x dateutil work).
+            all_coerced = pd.to_datetime(non_null, errors="coerce")
+            parse_rate = (
+                all_coerced.head(sample_size).notna().sum() / sample_size
+                if sample_size
+                else 0
+            )
             if parse_rate >= 0.7:
-                all_coerced = pd.to_datetime(non_null, errors="coerce")
                 valid = all_coerced.dropna()
                 invalid_mask = all_coerced.isna()
                 if len(valid) > 0:
@@ -842,6 +858,19 @@ def run_storm(
             + (f", extra_name_hints={extras_count}" if extras_count else "")
             + ")"
         )
+    # F-1 fix: actually apply the sampling parameters. The previous code
+    # accepted them and reported them on StormProfile, but the profiler
+    # always scanned the entire DataFrame. For a 5M-row table with
+    # sample_row_cap=50_000 this was a 100x silent perf-contract violation.
+    # Use a fixed random_state so the sample is reproducible across runs.
+    if (
+        sample_strategy != "full"
+        and sample_row_cap is not None
+        and sample_row_cap > 0
+        and len(df) > sample_row_cap
+    ):
+        df = df.sample(n=sample_row_cap, random_state=42).reset_index(drop=True)
+
     # Install per-scan extras for the lifetime of this call. The
     # context manager is a no-op when extras is None or empty.
     from decoy_engine.storm.detectors import name_hint_extras
@@ -867,14 +896,20 @@ def _run_storm_inner(
     """The original run_storm body. Split out so run_storm() can wrap
     it in the name_hint_extras() context manager without indenting
     the whole 200-line block one level deeper."""
+    # F-10 fix: initialize accumulators outside the try so the post-except
+    # log lines (currently guaranteed-unreachable because except always
+    # re-raises) cannot become NameErrors if a future "continue on error"
+    # mode swallows the exception.
+    total = len(df)
+    fields: list = []
+    detector_hits: dict[str, int] = {}
+    pii_count = 0
+    reid_score = 0.0
+    profile: StormProfile | None = None
     try:
-        total = len(df)
-        fields: list = []
         # Tally detector hits as columns are profiled so we can emit
         # a one-line summary of which detectors fired -- saves the
         # operator from manually counting in the field table.
-        detector_hits: dict[str, int] = {}
-        pii_count = 0
         for col in df.columns:
             f = _profile_column(df[col], total, custom_detectors)
             fields.append(f)
@@ -958,4 +993,5 @@ def _run_storm_inner(
         rows_in=total,
         rows_out=len(fields),
     )
+    assert profile is not None  # try block sets it before exiting normally
     return profile

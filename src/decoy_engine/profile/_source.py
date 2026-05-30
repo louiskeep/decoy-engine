@@ -57,6 +57,19 @@ def profile_source(
     """
     from decoy_engine import __version__ as engine_version
 
+    # Q15 fix (Option B, defensive fallback): if the caller did not pass
+    # seed=, fall back to the config's global_settings.seed before
+    # surrendering to OS entropy. Some platform callers set the seed in
+    # cfg["global_settings"]["seed"] and forget the kwarg; without this
+    # fallback the profile RNG was non-deterministic for any table
+    # exceeding sample_rows, silently breaking the "same seed -> same
+    # output" invariant. The fix at the call site (Option A) is also
+    # applied in platform v2_runner.py; both belt + suspenders.
+    if seed is None:
+        config_seed = (config.get("global_settings") or {}).get("seed")
+        if isinstance(config_seed, int):
+            seed = config_seed
+
     rng = random.Random(seed) if seed is not None else random.Random()
 
     relationships_config = config.get("relationships", []) or []
@@ -165,7 +178,12 @@ def _load_s3_source(source_descriptor: dict[str, Any]) -> pd.DataFrame:
 
     client = boto3.client("s3", **client_kwargs)
     response = client.get_object(Bucket=bucket, Key=key)
-    body = io.BytesIO(response["Body"].read())
+    # Q17 fix: StreamingBody backs an HTTP connection; .read() drains the
+    # body but does not close the underlying socket. Closing explicitly
+    # returns the connection to urllib3's pool. Without this, a multi-S3-
+    # source pipeline can exhaust the 10-connection default and stall.
+    with response["Body"] as stream:
+        body = io.BytesIO(stream.read())
 
     if fmt == "csv":
         return pd.read_csv(body)
@@ -193,10 +211,14 @@ def _load_gcs_source(source_descriptor: dict[str, Any]) -> pd.DataFrame:
     if not isinstance(object_name, str) or not object_name:
         raise ValueError(f"profile_source: gcs source missing object, got {object_name!r}")
 
-    client = storage.Client()
-    bucket = client.bucket(bucket_name)
-    blob = bucket.blob(object_name)
-    data = blob.download_as_bytes()
+    # Q18 fix: storage.Client holds an internal HTTP transport; close it
+    # so the connection is released rather than waiting for GC. Multi-
+    # source pipelines that share a single resource pool accumulate idle
+    # transports across runs without the explicit close.
+    with storage.Client() as client:
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(object_name)
+        data = blob.download_as_bytes()
     body = io.BytesIO(data)
 
     if fmt == "csv":
