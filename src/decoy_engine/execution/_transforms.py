@@ -7,13 +7,26 @@ iterates in declared order. Called by the mask path's
 PandasExecutionAdapter between source-read and the strategy loop.
 
 Pandas semantics for expression evaluation: pandas ``DataFrame.eval``
-uses NumPy's expression engine, NOT CPython ``eval``. The security
-profile is bounded by the supported operators (arithmetic + comparison
-+ logical) and the column scope; no module imports, no attribute
-access on Python objects. The pandas docstring notes the engine's
-sandbox boundary; we rely on it instead of `safe_eval` here because
-the column-reference style (`age >= 18`) is more natural than the
-generic-locals style of safe_eval.
+resolves ``@var``-style references BEFORE engine dispatch by walking the
+caller's locals + globals (`_replace_locals` in pandas internals). The
+numexpr engine pin does NOT prevent that scope-walk; a malicious
+expression like ``a + @pd.compat.os.system('touch /tmp/pwned')`` will
+execute the side-effecting call even with ``engine='numexpr'`` because
+``@pd`` resolves to the module-top ``pd`` import in this file's globals.
+
+We therefore (1) pin ``engine='numexpr'`` to keep perf characteristics
+predictable and to raise ``ImportError`` (mapped to ``numexpr_required``)
+when the dep is missing, and (2) pass ``local_dict={}`` + ``global_dict={}``
+explicitly to clamp the eval scope to the DataFrame's columns. Column
+references resolve through pandas's column-scope path, NOT through
+locals/globals, so legitimate expressions like ``age >= 18`` still work.
+This closes Dennis C1 (2026-05-30 gate review).
+
+References:
+- pandas DataFrame.eval docs (local_dict / global_dict parameters)
+- QA finding Q16 (2026-05-30) flagged the Python-engine fallback as a
+  code-execution vector; Dennis C1 ruled the numexpr pin alone does
+  not address it because @var resolution is engine-independent.
 
 Compile-time validators in ``apply_transforms`` reject:
 - ``derive.column`` already present (would silently overwrite)
@@ -54,7 +67,19 @@ class TransformError(Exception):
 
 def _apply_filter(df: pd.DataFrame, op: FilterOp) -> pd.DataFrame:
     try:
-        mask = df.eval(op.expression)
+        # Q16 + Dennis C1 fix: pin engine to numexpr AND clamp the eval
+        # scope to the DataFrame's columns. The local_dict/global_dict
+        # empties block @var-style scope walks that would otherwise reach
+        # module-top imports (e.g. `@pd.compat.os.system(...)`).
+        mask = df.eval(op.expression, engine="numexpr", local_dict={}, global_dict={})
+    except ImportError as exc:
+        raise TransformError(
+            code="numexpr_required",
+            message=(
+                "transforms require numexpr; install it with: "
+                "pip install numexpr"
+            ),
+        ) from exc
     except Exception as exc:
         raise TransformError(
             code="filter_expression_error",
@@ -115,7 +140,16 @@ def _apply_derive(df: pd.DataFrame, op: DeriveOp) -> pd.DataFrame:
             ),
         )
     try:
-        result = df.eval(op.expression)
+        # Q16 + Dennis C1 fix: see _apply_filter for the full rationale.
+        result = df.eval(op.expression, engine="numexpr", local_dict={}, global_dict={})
+    except ImportError as exc:
+        raise TransformError(
+            code="numexpr_required",
+            message=(
+                "transforms require numexpr; install it with: "
+                "pip install numexpr"
+            ),
+        ) from exc
     except Exception as exc:
         raise TransformError(
             code="derive_expression_error",
@@ -124,9 +158,10 @@ def _apply_derive(df: pd.DataFrame, op: DeriveOp) -> pd.DataFrame:
                 f"{type(exc).__name__}"
             ),
         ) from exc
-    out = df.copy()
-    out[op.column] = result
-    return out
+    # Q21 fix: df.assign() avoids the df.copy() full materialization; pandas
+    # internally shares column references for unmodified columns. At 1M rows
+    # x 50 columns this is ~200-400 MB savings per derive op.
+    return df.assign(**{op.column: result})
 
 
 def _apply_drop_column(df: pd.DataFrame, op: DropColumnOp) -> pd.DataFrame:

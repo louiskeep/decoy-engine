@@ -13,11 +13,21 @@ FK-aware generation (mint-a-pool); S6-ENG-4 the seed / derive-key determinism en
 Parity seeding uses V1's ``synthetic_column_seed`` (``decoy_engine.generators.derivation``)
 directly so the per-column seed is byte-identical to V1 ``ColumnGenerator._column_seed``
 under the same ``derive_key`` (always ``None`` in ENG-2; ENG-4 wires the real key).
+
+Thread-safety: all explicit RNG use here is instance-local (``random.Random(seed)``)
+so two ``generate_tables`` calls in different threads do not corrupt each other's
+draws. ``random.Random(s)`` produces the same sequence as ``random.seed(s)``, so
+V1 byte-parity is preserved. The Faker dependency is the one residual hazard --
+``faker.Faker.seed_instance`` calls module-level ``random.seed`` internally, and
+some Faker providers fall back to module-level ``random.random`` -- so concurrent
+Faker-driven generation across threads is still not safe today (a process-level
+lock around the Faker call site is the cleanest fix; deferred to V2.1).
 """
 
 from __future__ import annotations
 
 import random
+import threading
 from typing import Any
 
 import pyarrow as pa
@@ -27,6 +37,22 @@ from decoy_engine.generators.derivation import synthetic_column_seed
 from decoy_engine.internal.faker_setup import get_faker_providers, make_faker
 
 _DEFAULT_SEED = 42
+
+# F-5 fix: Faker() construction loads locale data + registers ~200 providers
+# (50-200ms per construction). The instance is re-seeded per call via
+# `seed_instance`, so caching one shared no-locale instance is safe + cheap.
+# Concurrency caveat: see module docstring (Faker is the residual thread-hazard).
+_DEFAULT_FAKER: Faker | None = None
+_DEFAULT_FAKER_LOCK = threading.Lock()
+
+
+def _get_default_faker() -> Faker:
+    global _DEFAULT_FAKER
+    if _DEFAULT_FAKER is None:
+        with _DEFAULT_FAKER_LOCK:
+            if _DEFAULT_FAKER is None:
+                _DEFAULT_FAKER = Faker()
+    return _DEFAULT_FAKER
 
 
 def generate_tables(
@@ -58,7 +84,18 @@ def generate_tables(
         d: set[str] = set()
         for col in t["generate_columns"]:
             if col.get("type") == "reference":
-                d.add(col["reference_table"])
+                ref = col["reference_table"]
+                # F-7 fix: validate reference_table resolves to a generate table.
+                # PipelineConfig._reference_graph_valid catches this at validation
+                # time, but generate_tables is documented to accept unvalidated
+                # dicts (V1-parity callers). Surface a typed error here instead
+                # of a downstream KeyError from `pools[ref_table]` in `_reference`.
+                if ref not in generate_by_name:
+                    raise ValueError(
+                        f"table {name!r} column {col.get('name')!r}: "
+                        f"reference_table {ref!r} is not a generate table"
+                    )
+                d.add(ref)
         deps[name] = d
     # Topo-sort parents-before-children (PipelineConfig._reference_graph_valid
     # already pinned this acyclic + every reference_table resolves to a generate
@@ -181,8 +218,10 @@ def _categorical(
     col_seed = synthetic_column_seed(
         derive_key=derive_key, column_config=col, fallback_seed=seed
     )
-    random.seed(col_seed)
-    return random.choices(cats, weights=weights, k=n)
+    # Instance-local Random: parity-preserving (same Mersenne Twister state
+    # initialization as random.seed); thread-safe (no module-global mutation).
+    rng = random.Random(col_seed)
+    return rng.choices(cats, weights=weights, k=n)
 
 
 def _faker(
@@ -217,7 +256,9 @@ def _faker(
         faker_inst = make_faker(instance_default_locale)
         faker_inst.seed_instance(seed)
     else:
-        faker_inst = Faker()
+        # F-5 fix: cache the no-locale instance at module level. Per-row
+        # seed_instance below overrides the initial seed, so sharing is safe.
+        faker_inst = _get_default_faker()
         faker_inst.seed_instance(seed)
     providers = get_faker_providers(faker_inst)
     provider_func = providers.get(faker_type) or providers["word"]
@@ -229,7 +270,8 @@ def _faker(
     out: list[Any] = []
     for i in range(n):
         row_seed = col_seed + i
-        random.seed(row_seed)
+        # faker_inst.seed_instance still mutates module-global random.seed
+        # internally (Faker library limitation); see module docstring.
         faker_inst.seed_instance(row_seed)
         out.append(provider_func(**faker_kwargs))
     return out
@@ -255,9 +297,12 @@ def _apply_null_probability(
         derive_key=derive_key, column_config=null_seed_cfg, fallback_seed=seed
     )
     out = list(values)
+    # Per-row reseed preserves V1 byte-parity (V1 reseeds the global RNG per
+    # row at columns.py:183). Switched to instance-local Random so the
+    # mutation no longer leaks to module-global state. F6 fix.
     for i in range(len(out)):
-        random.seed(col_seed + i)
-        if random.random() < null_prob:
+        rng = random.Random(col_seed + i)
+        if rng.random() < null_prob:
             out[i] = None
     return out
 
@@ -356,23 +401,24 @@ def _reference(
     col_seed = synthetic_column_seed(
         derive_key=derive_key, column_config=col, fallback_seed=seed
     )
-    random.seed(col_seed)
+    # Instance-local Random: parity-preserving, thread-safe (F1 fix).
+    rng = random.Random(col_seed)
 
     values: list[Any] = []
     for i in range(n):
         if distribution == "random":
-            values.append(random.choice(ref_vals))
+            values.append(rng.choice(ref_vals))
         elif distribution == "sequential":
             values.append(ref_vals[i % len(ref_vals)])
         elif distribution == "weighted":
             weights = col.get("weights")
             if not weights or len(weights) != len(ref_vals):
                 weights = None  # V1: size-mismatch -> uniform
-            values.append(random.choices(ref_vals, weights=weights, k=1)[0])
+            values.append(rng.choices(ref_vals, weights=weights, k=1)[0])
         else:
             # V1 unknown -> warn + random; the v2 falls through silently (parity
             # in values, not in log lines).
-            values.append(random.choice(ref_vals))
+            values.append(rng.choice(ref_vals))
 
     if min_per > 0 or max_per > 0:
         from decoy_engine.generators.columns import ColumnGenerator

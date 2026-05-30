@@ -251,6 +251,15 @@ class TestCloudSourceEndToEnd:
             def bucket(self, name):
                 return _FakeBucket()
 
+            # Q18 fix: production storage.Client supports the context-manager
+            # protocol; the mock must too so the with-block in _load_gcs_source
+            # exercises the realistic close path.
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
         monkeypatch.setattr(
             "google.cloud.storage.Client", lambda *a, **kw: _FakeClient()
         )

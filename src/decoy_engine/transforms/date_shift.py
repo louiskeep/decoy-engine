@@ -58,15 +58,42 @@ def _parse_date(val: str, date_format: str | None) -> datetime | None:
 
 
 def _detect_format(series: pd.Series) -> str | None:
-    sample = series.dropna().astype(str).head(20)
+    """Pick the date format that parses every value in the sample.
+
+    F9 fix: bumped the sample from 20 -> 200 rows. 20 was demonstrably too
+    small for mixed-format columns coming out of legacy ETL pipelines: if
+    the first 20 happen to share one format but the rest are different,
+    the wrong format is locked in and downstream rows silently pass
+    through unshifted.
+
+    When more than one format parses the entire sample, we emit a warning
+    rather than tie-breaking silently. ``_shift_for_value_*`` handles
+    unparseable rows by leaving them unchanged, so a wrong winner here
+    is a silent shift miss, not a crash.
+    """
+    sample = series.dropna().astype(str).head(min(200, len(series)))
+    candidates: list[str] = []
     for fmt in _COMMON_FORMATS:
-        try:
-            for v in sample:
+        ok = True
+        for v in sample:
+            try:
                 datetime.strptime(v.strip(), fmt)
-            return fmt
-        except ValueError:
-            continue
-    return None
+            except ValueError:
+                ok = False
+                break
+        if ok:
+            candidates.append(fmt)
+    if not candidates:
+        return None
+    if len(candidates) > 1:
+        import warnings as _warnings
+        _warnings.warn(
+            "date_shift._detect_format: column matches multiple formats "
+            f"{candidates!r}; using the first ({candidates[0]!r}). Configure "
+            "date_format explicitly to remove ambiguity.",
+            stacklevel=2,
+        )
+    return candidates[0]
 
 
 def _shift_for_value_md5(val: str, min_days: int, max_days: int) -> int:

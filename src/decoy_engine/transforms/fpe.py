@@ -42,6 +42,16 @@ _CHARSETS: dict[str, str] = {
     "ALPHANUM": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
 }
 
+# F5 fix: pre-computed {char: index} lookup per charset so _encode is O(n)
+# per string instead of O(n * r) (where r = |charset|). For 1M rows of 9-digit
+# values over ALPHANUM (r=62), this drops the inner loop from 558M operations
+# to 9M. Keyed on the charset STRING (not the name) so _fpe_pure can look
+# up without a reverse mapping.
+_CHARSET_INDEX: dict[str, dict[str, int]] = {
+    chars: {ch: i for i, ch in enumerate(chars)}
+    for chars in _CHARSETS.values()
+}
+
 _ROUNDS = 8  # Feistel rounds; 8 gives good pseudorandomness with negligible overhead
 
 
@@ -72,12 +82,22 @@ def _feistel(key: bytes, tweak: bytes, x: int, u_mod: int, v_mod: int) -> int:
     return A * v_mod + B
 
 
-def _encode(s: str, charset: str) -> int:
-    """Encode a string over `charset` as a base-r integer."""
+def _encode(s: str, charset: str, char_to_idx: dict[str, int] | None = None) -> int:
+    """Encode a string over `charset` as a base-r integer.
+
+    F5 fix: when ``char_to_idx`` is provided (the pre-computed {char: index}
+    lookup), use it for O(1) character indexing. Falls back to O(r)
+    ``charset.index`` when not provided, preserving the original signature
+    for any out-of-tree caller.
+    """
     r = len(charset)
     x = 0
-    for ch in s:
-        x = x * r + charset.index(ch)
+    if char_to_idx is None:
+        for ch in s:
+            x = x * r + charset.index(ch)
+    else:
+        for ch in s:
+            x = x * r + char_to_idx[ch]
     return x
 
 
@@ -245,7 +265,14 @@ class FPEStrategy(BaseMaskingStrategy):
         u_mod = len(charset) ** u
         v_mod = len(charset) ** v
 
-        x = _encode(s, charset)
+        # F5 fix: pre-computed {char: index} lookup (build once per charset
+        # at module load) replaces O(r) charset.index() per character.
+        # Falls back to a per-call dict for any custom charset that's not
+        # in the standard registry (still O(n) instead of O(n*r)).
+        char_to_idx = _CHARSET_INDEX.get(charset)
+        if char_to_idx is None:
+            char_to_idx = {ch: i for i, ch in enumerate(charset)}
+        x = _encode(s, charset, char_to_idx)
         y = _feistel(key, tweak, x, u_mod, v_mod)
         result = _decode(y, charset, n)
 
