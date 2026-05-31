@@ -22,3 +22,15 @@ The `clinical_notes_e2e.txt` test cell asserts byte-for-byte parity.
 
 Default set: every detector in `_SPAN_DETECTORS`. The fixture exercises
 email + ssn + us_phone + pan + npi + icd10 + iban + url.
+
+## Known quirk: trailing whitespace on the IBAN line
+
+Line 6 of `clinical_notes_output.txt` reads
+`Wire payment IBAN [REDACTED]sent.` The IBAN regex
+(`_IBAN_RE = re.compile(r"[A-Z]{2}\d{2}[\sA-Z0-9]{11,34}")`) consumes
+the trailing space before "sent" because `\s` is part of the BBAN
+charset (IBANs are commonly grouped in 4s with spaces). The match,
+including the trailing space, is replaced with the token. This is
+column-level detector behavior, not a text_redact bug; if it becomes
+operator-facing noise, tighten `_IBAN_RE` upstream and re-baseline this
+file together with the column-level detector tests.

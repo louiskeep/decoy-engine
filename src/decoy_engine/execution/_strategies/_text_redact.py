@@ -10,7 +10,10 @@ Config (`provider_config`):
                                   None = every built-in span detector.
     token       str               Replacement token. Default "[REDACTED]".
     label_token bool              If True, emit "[REDACTED:<detector_id>]"
-                                  instead of `token`.
+                                  instead of `token`. When `label_token`
+                                  is True, the `token` value is ignored
+                                  (the per-detector label takes
+                                  precedence).
 
 The token is treated as a string literal: regex metacharacters in it are
 NOT interpreted. Non-string tokens fall back to passthrough (the cell is
