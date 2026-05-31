@@ -56,6 +56,14 @@ class PipelineConfig(BaseModel):
     relationships: list[RelationshipConfig] = Field(default_factory=list)
     targets: dict[str, TargetDescriptor] = Field(min_length=1)
     namespaces: dict[str, NamespaceConfig] = Field(default_factory=dict)
+    # Reframe-A (2026-05-31): per-pipeline opt-in for the Storm post-mask
+    # check. When True, the platform runner fires the storm.postmask hook
+    # after a successful mask job + persists the JobStormReport row. The
+    # engine validates the shape; the engine does NOT consume the value at
+    # run time -- the platform runner reads it. Default False so existing
+    # pipelines are unchanged (run_storm omitted -> False; no new behavior).
+    # Per PO lock 2026-05-30 docs/audit/po-decisions-storm-reframe-2026-05-30.md.
+    run_storm: bool = False
 
     @model_validator(mode="after")
     def _mode_consistency(self) -> "PipelineConfig":
