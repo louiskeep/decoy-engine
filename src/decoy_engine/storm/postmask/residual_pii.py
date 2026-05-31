@@ -54,6 +54,16 @@ _DESTROYS_PATTERN: frozenset[str] = frozenset({
     "bucketize",
 })
 
+# Dennis M12 fix (2026-06-01): strategies that explicitly leave the
+# column untouched. A detector hit on these is expected -- the user
+# deliberately marked the column as a passthrough -- so it's classified
+# 'info' (a confirmation), not 'warning'. Without this, every
+# passthrough column that matched any detector emitted a false-positive
+# residual-PII warning.
+_NO_OP_BY_DESIGN: frozenset[str] = frozenset({
+    "passthrough",
+})
+
 
 def check_residual_pii(
     output_frames: dict[str, pd.DataFrame],
@@ -128,6 +138,15 @@ def _classify(detector_id: str, configured: str | None) -> tuple[str, str]:
             "warning",
             f"column matched {detector_id!r} but was not configured to be "
             "masked. Verify whether this column should be sensitive.",
+        )
+    if configured in _NO_OP_BY_DESIGN:
+        # Dennis M12 fix: passthrough is an explicit operator decision
+        # to leave the column unchanged. A detector hit is expected.
+        return (
+            "info",
+            f"column matched {detector_id!r}; the configured strategy "
+            f"{configured!r} is a no-op by design, so the value survives "
+            "unchanged.",
         )
     if configured in _PRODUCES_PII_LIKE_VALUES:
         return (

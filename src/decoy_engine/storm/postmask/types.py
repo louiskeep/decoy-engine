@@ -128,3 +128,9 @@ class StormPostMaskReport:
     # produces a report row so the FE can show "Storm pass failed:
     # ModuleNotFoundError" rather than silently dropping.
     pass_failed_with: str | None = None
+    # Dennis M23 fix (2026-06-01): the JobStormReport row carries
+    # generated_at + the FE typings expect it on the payload too, but
+    # the engine never emitted the field. Set by run_storm_post_mask
+    # at the moment it tallies counters; ISO-8601 string. Keep
+    # optional so legacy payloads deserialize cleanly.
+    generated_at: str | None = None
