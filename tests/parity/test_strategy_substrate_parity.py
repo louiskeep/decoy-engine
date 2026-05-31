@@ -269,6 +269,29 @@ _CASES: list[tuple[str, Any, dict[str, pa.Table]]] = [
         _plan("t", (("c", _col("formula", provider_config=(("formula", "f'USER-{value}'"),))),)),
         {"t": pa.table({"c": ["alpha", "beta", "gamma"]})},
     ),
+    # MG-2 (2026-05-31): text_redact rides the PandasStrategyPort on the
+    # polars side, so substrate parity is guaranteed by construction. The
+    # parity case locks the wiring against a future polars-native impl.
+    (
+        "text_redact-default-token",
+        _plan("t", (("c", _col("text_redact")),)),
+        {"t": pa.table(
+            {"c": [
+                "Contact alice@example.com please.",
+                None,
+                "SSN 123-45-6789 on file.",
+                "Just prose, no PII.",
+            ]}
+        )},
+    ),
+    (
+        "text_redact-label-token",
+        _plan(
+            "t",
+            (("c", _col("text_redact", provider_config=(("label_token", True),))),),
+        ),
+        {"t": pa.table({"c": ["alice@example.com and 123-45-6789"]})},
+    ),
 ]
 
 

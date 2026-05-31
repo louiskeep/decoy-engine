@@ -22,6 +22,7 @@ from decoy_engine.execution._strategies._date_shift import DateShiftStrategyHand
 from decoy_engine.execution._strategies._faker import FakerStrategyHandler
 from decoy_engine.execution._strategies._formula import FormulaStrategyHandler
 from decoy_engine.execution._strategies._fpe import FpeStrategyHandler
+from decoy_engine.execution._strategies._text_redact import TextRedactHandler
 from decoy_engine.execution.polars._strategies._categorical import PolarsCategoricalStrategyHandler
 from decoy_engine.execution.polars._strategies._hash import PolarsHashStrategyHandler
 from decoy_engine.execution.polars._strategies._pandas_port import PandasStrategyPort
@@ -75,6 +76,11 @@ POLARS_SCALAR_HANDLERS: dict[str, PolarsStrategyHandler] = {
         # is the parity-safe migration that satisfies the migration gate.
         PandasStrategyPort(FakerStrategyHandler()),
         PandasStrategyPort(FormulaStrategyHandler()),
+        # text_redact (MG-2, 2026-05-31): regex-iterating span splice runs on
+        # plain Python strings; no native Polars expression equivalent in V1.
+        # The PandasStrategyPort wrapper gives byte-identical parity by
+        # construction (same handler, just converted frame).
+        PandasStrategyPort(TextRedactHandler()),
     )
 }
 

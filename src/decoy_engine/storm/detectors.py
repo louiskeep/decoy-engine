@@ -1144,3 +1144,122 @@ def hits_custom_name_hint(spec: CustomDetectorSpec, col_name: str) -> bool:
     """Public accessor used by the profiler to log name-hint trail rows for
     custom detectors. Mirrors `hits_name_hint` for built-ins."""
     return _hits_custom_name_hint(spec, col_name)
+
+
+# ── iter_spans: in-text PII span extraction (MG-2, 2026-05-31) ────────────────
+#
+# Surfaces the existing detector regexes under a span-iterating contract so
+# the `text_redact` masking strategy (and future text-aware strategies) can
+# replace PII spans inside free-text columns without rebuilding the regex
+# catalog. Additive only: no existing detector behavior changes.
+#
+# Public surface:
+#   - `Span` dataclass (detector_id, start, end, matched_text)
+#   - `iter_spans(text, detector_ids=None, *, custom=None) -> list[Span]`
+#
+# Overlap policy: leftmost-then-longest. Sort by (start, -length) and keep
+# the first span; drop any subsequent span whose [start, end) overlaps a
+# kept span. Priority-based resolution (e.g. SSN beats person_name) is a
+# fast-follow if customers ask.
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class Span:
+    """A non-overlapping PII span inside a text cell.
+
+    `detector_id` matches the keys in `_SPAN_DETECTORS` (``"email"``,
+    ``"ssn"``, ``"us_phone"``, ``"pan"``, ``"npi"``, ``"icd10"``,
+    ``"iban"``, etc).
+    """
+
+    detector_id: str
+    start: int
+    end: int
+    matched_text: str
+
+
+# Map from detector_id to (compiled_regex, optional_validator). Validators
+# are the same per-value functions that `_evaluate` already calls; reusing
+# them here keeps the column-level + span-level detector behavior in sync.
+# Mirrors the existing module-level `_*_RE` constants.
+#
+# `person_name` / `address` / name-hint-only detectors (license_num,
+# health_plan_id, device_id, biometric_id, vehicle_id, mrn) are intentionally
+# OMITTED: their regexes are too loose to use without a column-name signal
+# (per the existing docstrings on each). The text_redact contract is "find
+# unambiguous PII inside free text" — adding name-hint-only detectors here
+# would shred legitimate prose. Customers needing those detectors in text
+# pass them via the `custom` kwarg with a tighter pattern.
+_SPAN_DETECTORS: "dict[str, tuple[re.Pattern[str], Callable[[str], bool] | None]]" = {
+    "email": (_EMAIL_RE, None),
+    "ssn": (_SSN_RE, None),
+    "us_phone": (_US_PHONE_RE, None),
+    "us_zip": (_US_ZIP_RE, None),
+    "pan": (_PAN_RE, _luhn_valid),
+    "iban": (_IBAN_RE, _iban_valid),
+    "ipv4": (_IPV4_RE, _ipv4_valid),
+    "icd10": (_ICD10_RE, _icd10_valid),
+    "npi": (_NPI_RE, _npi_valid),
+    "url": (_URL_RE, None),
+}
+
+
+def iter_spans(
+    text: str,
+    detector_ids: "list[str] | None" = None,
+    *,
+    custom: "list[dict] | None" = None,
+) -> "list[Span]":
+    """Yield non-overlapping PII spans found in ``text``.
+
+    ``detector_ids`` selects which built-in detectors run; ``None`` runs every
+    detector in `_SPAN_DETECTORS`. Unknown detector ids are silently skipped
+    (matches the platform's per-tenant detector-overrides shape, where the
+    same id might be present on one tenant and absent on another).
+
+    ``custom`` is an optional list of one-shot detector specs of shape
+    ``{"detector_id": str, "pattern": re.Pattern, "validator": callable | None}``.
+    Custom detectors run after the built-ins and are subject to the same
+    overlap dedupe.
+
+    Returns spans sorted by ``.start``, with overlaps resolved by keeping
+    the leftmost-then-longest match.
+    """
+    if not isinstance(text, str) or not text:
+        return []
+    if detector_ids is None:
+        detector_ids = list(_SPAN_DETECTORS.keys())
+
+    raw_spans: list[Span] = []
+    for det_id in detector_ids:
+        entry = _SPAN_DETECTORS.get(det_id)
+        if entry is None:
+            continue
+        regex, validator = entry
+        for m in regex.finditer(text):
+            matched = m.group(0)
+            if validator is not None and not validator(matched):
+                continue
+            raw_spans.append(Span(det_id, m.start(), m.end(), matched))
+
+    for spec in custom or []:
+        pattern = spec["pattern"]
+        validator = spec.get("validator")
+        det_id = spec["detector_id"]
+        for m in pattern.finditer(text):
+            matched = m.group(0)
+            if validator is not None and not validator(matched):
+                continue
+            raw_spans.append(Span(det_id, m.start(), m.end(), matched))
+
+    raw_spans.sort(key=lambda s: (s.start, -(s.end - s.start)))
+    out: list[Span] = []
+    last_end = -1
+    for s in raw_spans:
+        if s.start >= last_end:
+            out.append(s)
+            last_end = s.end
+
+    return out

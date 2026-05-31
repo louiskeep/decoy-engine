@@ -83,6 +83,10 @@ TECHNIQUE_CLASS_BY_STRATEGY: dict[str, TechniqueClass] = {
     "formula": "pseudonymisation",
     "faker": "synthetic",
     "categorical": "synthetic",
+    # text_redact (MG-2, 2026-05-31): replaces matched PII spans inside
+    # free-text with a fixed token; the original span is not recoverable.
+    # Anonymisation, same class as `redact` (which replaces the whole cell).
+    "text_redact": "anonymisation",
 }
 
 
