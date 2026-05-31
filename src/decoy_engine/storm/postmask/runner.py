@@ -149,6 +149,11 @@ def run_storm_post_mask(
         elif sev == "error":
             error_count += 1
 
+    # Dennis M23 fix (2026-06-01): stamp generated_at at report
+    # construction so the JobStormReport row column + the engine
+    # payload agree. Module-level import would force a stdlib pull at
+    # every engine import; local for now.
+    from datetime import datetime, timezone
     report = StormPostMaskReport(
         schema_version=SCHEMA_VERSION,
         residual_pii=residual_pii,
@@ -159,6 +164,7 @@ def run_storm_post_mask(
         fail_count=fail_count,
         error_count=error_count,
         pass_failed_with=pass_failed_with,
+        generated_at=datetime.now(timezone.utc).isoformat(),
     )
     return _report_to_dict(report)
 
@@ -172,6 +178,7 @@ def _report_to_dict(report: StormPostMaskReport) -> dict[str, Any]:
     """
     return {
         "schema_version": report.schema_version,
+        "generated_at": report.generated_at,
         "residual_pii": [asdict(f) for f in report.residual_pii],
         "fk_preservation": [asdict(f) for f in report.fk_preservation],
         "policy_validation": [asdict(f) for f in report.policy_validation],

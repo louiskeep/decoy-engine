@@ -103,16 +103,59 @@ def _check_one_column(
     src_distinct = int(src_col.nunique(dropna=True))
     out_distinct = int(out_col.nunique(dropna=True))
 
+    # Dennis M13 fix (2026-06-01): row-count mismatch is its own
+    # finding -- the comparison below assumes aligned indexes, and a
+    # row that was dropped during masking becomes invisible to the
+    # bytes-identical check. Without this guard a strategy that
+    # legitimately dropped rows could surface as "output differs from
+    # source as expected" alongside FAIL findings for byte-identical
+    # columns, hiding the drop entirely.
+    if len(src_col) != len(out_col):
+        return PolicyValidationFinding(
+            table=table,
+            column=column,
+            strategy=strategy,
+            severity="warning",
+            source_distinct=src_distinct,
+            output_distinct=out_distinct,
+            bytes_identical=False,
+            message=(
+                f"row count mismatch: source has {len(src_col)} rows, "
+                f"output has {len(out_col)} rows. The mask may have "
+                "dropped rows or duplicated them; investigate before "
+                "trusting downstream joins."
+            ),
+        )
+
     # Equality check has to be careful about ordering + dtype. We compare
     # element-wise after coercing both to object so dtype changes don't
     # mask actual value preservation. Frame index is assumed aligned.
+    # Dennis M11 fix (2026-06-01): a comparison failure (ArrowDtype
+    # mismatch, etc) previously fell through to bytes_identical=False
+    # + severity='info' "output differs as expected", which is a false
+    # clean bill of health for a check that couldn't actually run.
+    # Surface the failure as severity='error' so the operator knows
+    # the validation didn't conclude.
     try:
         bytes_identical = bool(
             len(src_col) == len(out_col)
             and src_col.astype(object).equals(out_col.astype(object))
         )
-    except Exception:
-        bytes_identical = False
+    except Exception as exc:  # noqa: BLE001
+        return PolicyValidationFinding(
+            table=table,
+            column=column,
+            strategy=strategy,
+            severity="error",
+            source_distinct=src_distinct,
+            output_distinct=out_distinct,
+            bytes_identical=False,
+            message=(
+                f"could not compare source vs output for column "
+                f"{column!r}: {type(exc).__name__} (see job log). "
+                "Policy validation did not conclude for this column."
+            ),
+        )
 
     if strategy in _NO_OP_BY_DESIGN:
         return PolicyValidationFinding(
