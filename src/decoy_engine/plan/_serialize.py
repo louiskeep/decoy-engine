@@ -98,6 +98,12 @@ def _column_seed_to_dict(cs: ColumnSeed) -> dict[str, Any]:
         out["provider_config"] = dict(cs.provider_config)
     if cs.coherent_with:
         out["coherent_with"] = list(cs.coherent_with)
+    # MG-1 S1 (2026-06-01): emit the GDPR technique class onto the
+    # plan manifest so the operator can audit which columns map to
+    # which class (pseudonymisation / anonymisation / synthetic /
+    # passthrough). Omit when unset so legacy plans round-trip.
+    if cs.technique_class is not None:
+        out["technique_class"] = cs.technique_class
     return out
 
 
@@ -194,6 +200,9 @@ def _column_seed_from_dict(data: dict[str, Any]) -> ColumnSeed:
         deterministic=bool(data.get("deterministic", False)),
         provider_config=tuple(sorted(provider_config_raw.items())),
         coherent_with=tuple(coherent_with_raw),
+        # MG-1 S1 (2026-06-01): legacy plans without the field
+        # deserialize as None; new plans round-trip the class.
+        technique_class=data.get("technique_class"),
     )
 
 

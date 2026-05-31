@@ -76,6 +76,14 @@ class ColumnSeed:
     deterministic: bool = False
     provider_config: tuple[tuple[str, Any], ...] = field(default_factory=tuple)
     coherent_with: tuple[str, ...] = field(default_factory=tuple)
+    # MG-1 S1 (2026-06-01): GDPR-aware technique classification.
+    # Drives the FE strategy-picker badge ("Pseudonymisation" /
+    # "Anonymisation" / "Synthetic" / "Passthrough"). Set by
+    # plan-compile from the central TECHNIQUE_CLASS_BY_STRATEGY map
+    # (decoy_engine.execution._technique_class). None means
+    # "unclassified" -- the FE renders a needs-review badge so a
+    # newly-added strategy can't ship without an explicit label.
+    technique_class: str | None = None
 
 
 @dataclass(frozen=True)
