@@ -130,22 +130,33 @@ def get_default_registry() -> ProviderRegistry:
         # reference the lookup.
         from decoy_engine.providers_v2._faker_adapter import FakerAdapter
         from decoy_engine.providers_v2.identifiers import (
+            CusipAdapter,
             EinAdapter,
+            IbanAdapter,
+            Icd10Adapter,
             MrnAdapter,
             NdcAdapter,
             NpiAdapter,
+            PanAdapter,
             SsnAdapter,
         )
 
         # 19 Faker-bound entries from the catalog.
         faker_catalog = get_default_catalog()
-        # 5 DecoyNative entries built from each adapter's capability_matrix().
+        # 9 DecoyNative entries (S6 baseline + MG-1 S4 additions).
+        # MG-1 S4 added pan/icd10/iban/cusip; existing ssn/ein/npi/ndc/mrn
+        # shipped in engine-v2 S6.
         decoy_native_adapters: dict[str, BackendAdapter] = {
             "synthetic_ssn": SsnAdapter(),
             "synthetic_ein": EinAdapter(),
             "synthetic_npi": NpiAdapter(),
             "synthetic_ndc": NdcAdapter(),
             "synthetic_mrn": MrnAdapter(),
+            # MG-1 S4 additions (2026-06-01).
+            "synthetic_pan": PanAdapter(),
+            "synthetic_icd10": Icd10Adapter(),
+            "synthetic_iban": IbanAdapter(),
+            "synthetic_cusip": CusipAdapter(),
         }
         decoy_native_caps = {
             name: adapter.capability_matrix(name) for name, adapter in decoy_native_adapters.items()
