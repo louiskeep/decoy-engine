@@ -81,6 +81,14 @@ def run_storm_post_mask(
 
     # Each check runs in its own try/except so one bad check doesn't
     # kill the pass. Failures are recorded as error-severity findings.
+    # Dennis H3 fix (2026-06-01): the exception message previously
+    # included `{exc}` which surfaced raw exception text into the
+    # report payload + the FE Storm tab. An OSError on a missing path
+    # could leak `/home/user/.ssh/...`; a KeyError could expose a
+    # column name an operator didn't expect to see in a UI-rendered
+    # report. The typed name (`{type(exc).__name__}`) is sufficient
+    # for the operator to find the underlying error in the job log,
+    # where the full exception text already lives at the catch site.
     try:
         residual_pii = check_residual_pii(output_frames, config)
     except Exception as exc:  # noqa: BLE001 -- intentional catch-all per best-effort
@@ -91,7 +99,7 @@ def run_storm_post_mask(
                 detector_id="",
                 match_rate=0.0,
                 severity="error",
-                message=f"residual_pii check raised {type(exc).__name__}: {exc}",
+                message=f"residual_pii check raised {type(exc).__name__} (see job log for details)",
             )
         ]
 
@@ -108,7 +116,7 @@ def run_storm_post_mask(
                 orphan_count=0,
                 total_child_rows=0,
                 orphan_rate=0.0,
-                message=f"fk_preservation check raised {type(exc).__name__}: {exc}",
+                message=f"fk_preservation check raised {type(exc).__name__} (see job log for details)",
             )
         ]
 
@@ -121,7 +129,7 @@ def run_storm_post_mask(
                 column="",
                 strategy="",
                 severity="error",
-                message=f"policy_validation check raised {type(exc).__name__}: {exc}",
+                message=f"policy_validation check raised {type(exc).__name__} (see job log for details)",
             )
         ]
 

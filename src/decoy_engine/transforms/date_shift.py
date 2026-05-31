@@ -206,14 +206,34 @@ class DateShiftStrategy(BaseMaskingStrategy):
     def _column_key(self, column_name: str) -> bytes | None:
         """Derive the mask subkey via the caller-supplied resolver. Same as
         HashStrategy._column_key — instance-master-only, no per-column
-        tagging. ``column_name`` is kept for log context only."""
+        tagging. ``column_name`` is kept for log context only.
+
+        Dennis H2 fix (2026-06-01): previously a derive_key failure
+        silently fell through to the seed-only legacy MD5 path,
+        producing date_shift output that was no longer recoverable
+        from the master key + not byte-identical to a re-run with the
+        master key. The degradation was invisible to the operator
+        (only a WARNING log). Now: derive_key failures RAISE so the
+        job fails explicitly + the operator gets a typed error.
+        derive_key=None (legacy seed-only configs that explicitly
+        opted out of the master key) still returns None as before;
+        that's an explicit opt-out, not a silent degradation. Mirrors
+        the same fix applied to FPE._column_key (QA F1).
+        """
         if self.derive_key is None:
             return None
         try:
             return self.derive_key("mask")
         except Exception as exc:
-            self.logger.warning(f"derive_key failed for 'mask' ({exc}); falling back to legacy MD5")
-            return None
+            self.logger.error(
+                f"DateShift: derive_key failed for 'mask' ({type(exc).__name__}: {exc}). "
+                "Refusing to silently degrade to seed-only MD5."
+            )
+            raise RuntimeError(
+                f"DateShift column key derivation failed: {type(exc).__name__}. "
+                "Refusing to silently degrade to seed-only MD5; "
+                "fix the master key infrastructure + re-run the job."
+            ) from exc
 
     def validate_rule(self, rule: dict[str, Any]) -> None:
         if "column" not in rule:
