@@ -40,6 +40,7 @@ from typing import Any
 # (coordinated Faker-seeding + canonicalize-integer fixes). Bumping
 # requires a release-notes line per done-definition.md.
 from decoy_engine.determinism import SEED_PROTOCOL_VERSION
+from decoy_engine.execution._technique_class import technique_class_for
 from decoy_engine.plan._checks import (
     check_basic_uniqueness_pre_flight,
     check_composite_columns_length_match,
@@ -547,6 +548,10 @@ def _build_seed_envelope(
                             deterministic=deterministic,
                             provider_config=provider_config,
                             coherent_with=coherent_with,
+                            # MG-1 S1 (2026-06-01): GDPR technique class from
+                            # the central registry; None when the strategy
+                            # has not been classified.
+                            technique_class=technique_class_for(strategy),
                         ),
                     )
                 )
