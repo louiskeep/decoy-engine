@@ -68,11 +68,9 @@ def test_all_lists_every_public_name():
         "run_discovery_sql",
         "DiscoveryResult",
         "DiscoverySqlError",
-        "recommend",
-        "ForecastReport",
-        "DisguiseRecommendation",
-        "FieldRecommendation",
-        "RiskFlag",
+        # Reframe-C 2026-05-31: decoy_engine.forecast deleted; the 5
+        # recommend / ForecastReport / DisguiseRecommendation /
+        # FieldRecommendation / RiskFlag symbols are no longer exported.
         "DecoyError",
         "ConfigError",
         "PipelineValidationError",
