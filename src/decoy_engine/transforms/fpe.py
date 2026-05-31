@@ -282,11 +282,30 @@ class FPEStrategy(BaseMaskingStrategy):
         return result
 
     def _column_key(self, column_name: str) -> bytes | None:
-        """Derive the mask sub-key from the master key resolver (same pattern as HashStrategy)."""
+        """Derive the mask sub-key from the master key resolver (same pattern as HashStrategy).
+
+        QA 2026-05-31 F1 (HIGH) closure: previously a derive_key failure
+        silently fell through to the seed-only legacy FPE path, producing
+        masked output that was no longer recoverable from the master key
+        + not byte-identical to a re-run with the master key. The
+        degradation was invisible to the operator (only a WARNING log).
+        Now: derive_key failures RAISE so the job fails explicitly + the
+        operator gets a typed error in the manifest. derive_key=None
+        (legacy seed-only configs that explicitly opted out of the
+        master key) still returns None as before; that's an explicit
+        opt-out, not a silent degradation.
+        """
         if self.derive_key is None:
             return None
         try:
             return self.derive_key("mask")
         except Exception as exc:
-            self.logger.warning(f"derive_key failed for 'mask' ({exc}); falling back to legacy FPE")
-            return None
+            self.logger.error(
+                f"FPE: derive_key failed for 'mask' ({type(exc).__name__}: {exc}). "
+                "Refusing to silently degrade to seed-only encryption."
+            )
+            raise RuntimeError(
+                f"FPE column key derivation failed: {type(exc).__name__}. "
+                "Refusing to silently degrade to seed-only encryption; "
+                "fix the master key infrastructure + re-run the job."
+            ) from exc

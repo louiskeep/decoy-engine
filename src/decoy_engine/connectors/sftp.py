@@ -110,12 +110,25 @@ def _open_sftp(config: SFTPConfig):
     import paramiko
 
     try:
+        import os
+
         client = paramiko.SSHClient()
-        # AutoAddPolicy: trust-on-first-use. The customer running this
-        # in production should pre-populate known_hosts and set a stricter
-        # policy via paramiko configuration; the SDK default just makes
-        # first-run smoke tests work.
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())  # noqa: S507 -- trust-on-first-use is the documented SDK default; customers configure stricter policies via paramiko config in production. See connector docs.
+        # QA 2026-05-31 session2 F5 (MEDIUM) closure: strict host-key
+        # verification by default. The prior AutoAddPolicy silently
+        # accepted ANY host key on first connection, making SFTP
+        # imports MITM-able. Same fix shape applied to the platform-
+        # side _sftp_connect in api/cloud/reader.py (S16b F2).
+        #
+        # RejectPolicy + load known_hosts from $DECOY_SFTP_KNOWN_HOSTS
+        # (default ~/.ssh/known_hosts). Customers configure the SFTP
+        # server's host key on initial setup; standard SSH practice.
+        client.set_missing_host_key_policy(paramiko.RejectPolicy())
+        known_hosts_path = os.environ.get(
+            "DECOY_SFTP_KNOWN_HOSTS",
+            os.path.expanduser("~/.ssh/known_hosts"),
+        )
+        if os.path.exists(known_hosts_path):
+            client.load_host_keys(known_hosts_path)
 
         connect_kwargs: dict = {
             "hostname": config.host,
@@ -185,8 +198,38 @@ class _SFTPMixin:
         self._sftp = None
 
     def _connect(self):
-        if self._sftp is None:
-            self._client, self._sftp = _open_sftp(self.config)
+        """Open or reuse an SFTP session, probing for liveness on reuse.
+
+        QA 2026-05-31 session2 F2 (HIGH) closure: previously this
+        returned the cached ``self._sftp`` without checking liveness.
+        After a mid-operation SSH disconnect the cached object is
+        non-None but the underlying paramiko channel is dead; the next
+        op raises SSHException, the retry loop calls _connect() again,
+        gets the same stale object, and the same exception fires
+        forever. The fix is to probe for a live session before
+        trusting the cached object + reconnect on a dead probe.
+        """
+        if self._sftp is not None:
+            try:
+                # Zero-cost probe: stat the SFTP server root. A dead
+                # session raises immediately + we fall through to
+                # reconnect. A live session returns quickly.
+                self._sftp.stat(".")
+                return self._sftp
+            except Exception:
+                # Stale session; tear down + reconnect below.
+                try:
+                    self._sftp.close()
+                except Exception:
+                    pass
+                try:
+                    if self._client is not None:
+                        self._client.close()
+                except Exception:
+                    pass
+                self._sftp = None
+                self._client = None
+        self._client, self._sftp = _open_sftp(self.config)
         return self._sftp
 
     def close(self) -> None:

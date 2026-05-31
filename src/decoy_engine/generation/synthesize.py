@@ -300,8 +300,17 @@ def _apply_null_probability(
     # Per-row reseed preserves V1 byte-parity (V1 reseeds the global RNG per
     # row at columns.py:183). Switched to instance-local Random so the
     # mutation no longer leaks to module-global state. F6 fix.
+    #
+    # QA 2026-05-31 session2 F3 (HIGH perf) closure: allocate the Random
+    # ONCE + reseed in place each row. Previously we allocated a new
+    # random.Random(col_seed + i) per row; each allocation initializes
+    # the 624-word Mersenne Twister state (~2.5 KB write), adding ~3-5x
+    # overhead on large tables. rng.seed(s) on a reused instance runs
+    # the same mt_init_genrand(s) so the first draw is byte-identical
+    # to a fresh Random(s) -- V1 byte-parity preserved.
+    rng = random.Random()
     for i in range(len(out)):
-        rng = random.Random(col_seed + i)
+        rng.seed(col_seed + i)
         if rng.random() < null_prob:
             out[i] = None
     return out

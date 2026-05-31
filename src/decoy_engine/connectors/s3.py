@@ -79,12 +79,25 @@ def _wrap_client_error(exc: Exception) -> Exception:
     """Translate a botocore ClientError into a typed SDK error.
 
     Permanent codes (bucket/key missing, auth) raise `PermanentError`.
-    Everything else is treated as transient and the engine retries.
-    """
-    from botocore.exceptions import ClientError, EndpointConnectionError
+    Transient network conditions (endpoint unreachable, connect timeout,
+    read timeout) raise `TransientError` so the engine retries.
 
-    if isinstance(exc, EndpointConnectionError):
-        return TransientError(f"S3 endpoint unreachable: {exc}")
+    QA 2026-05-31 session2 F1 (HIGH) closure: ConnectTimeoutError +
+    ReadTimeoutError are subclasses of BotoCoreError -- NOT
+    EndpointConnectionError or ClientError -- so the prior code
+    classified them as ``PermanentError`` and immediately aborted jobs
+    that could have succeeded on retry. Now they fall through the
+    transient branch.
+    """
+    from botocore.exceptions import (
+        ClientError,
+        ConnectTimeoutError,
+        EndpointConnectionError,
+        ReadTimeoutError,
+    )
+
+    if isinstance(exc, (EndpointConnectionError, ConnectTimeoutError, ReadTimeoutError)):
+        return TransientError(f"S3 transient connection error: {exc}")
     if isinstance(exc, ClientError):
         code = exc.response.get("Error", {}).get("Code", "")
         if code in _PERMANENT_S3_ERROR_CODES:
