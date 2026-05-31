@@ -118,6 +118,13 @@ class _FakeSSHClient:
     def set_missing_host_key_policy(self, policy):
         return None
 
+    def load_host_keys(self, path):
+        # QA 2026-05-31 session2 F5: real SSHClient supports this; the
+        # production code only calls it when the known_hosts file
+        # exists, so for tests we'd never reach this unless the test
+        # env has a real known_hosts in HOME -- still safe to stub.
+        return None
+
     def connect(self, **kwargs):
         self.connect_kwargs = kwargs
         self.connected = True
