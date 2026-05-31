@@ -1,0 +1,10 @@
+Patient seen today for follow-up. Contact email patient@example.com.
+SSN on file: 123-45-6789. Provider phone (212) 555-1234.
+Provider NPI 1234567893 reviewed labs and EHR.
+Diagnosis J18.9 (pneumonia, unspecified) confirmed.
+Billing card on file 4111 1111 1111 1111 valid through next year.
+Wire payment IBAN GB82WEST12345698765432 sent.
+Discharge instructions delivered. Follow-up scheduled.
+See referral packet at https://hospital.example.com/refer/12345 for details.
+Second contact email backup@example.com on file.
+No real PHI in this file; all identifiers are faker-generated.

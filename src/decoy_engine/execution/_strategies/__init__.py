@@ -20,6 +20,7 @@ from decoy_engine.execution._strategies._hash import HashStrategyHandler
 from decoy_engine.execution._strategies._passthrough import PassthroughHandler
 from decoy_engine.execution._strategies._redact import RedactHandler
 from decoy_engine.execution._strategies._shuffle import ShuffleStrategyHandler
+from decoy_engine.execution._strategies._text_redact import TextRedactHandler
 from decoy_engine.execution._strategies._truncate import TruncateHandler
 
 SCALAR_HANDLERS: dict[str, StrategyHandler] = {
@@ -36,6 +37,7 @@ SCALAR_HANDLERS: dict[str, StrategyHandler] = {
         DateShiftStrategyHandler(),
         FormulaStrategyHandler(),
         FpeStrategyHandler(),
+        TextRedactHandler(),
     )
 }
 
@@ -51,5 +53,6 @@ __all__ = [
     "PassthroughHandler",
     "RedactHandler",
     "ShuffleStrategyHandler",
+    "TextRedactHandler",
     "TruncateHandler",
 ]
