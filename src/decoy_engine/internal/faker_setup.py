@@ -23,6 +23,7 @@ import inspect as _inspect
 import json
 import logging
 import os
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -41,6 +42,16 @@ _CUSTOM_FAKER_PROVIDERS: dict[str, Callable[[Faker], Any]] = {}
 # backed providers expose their pool to the FK channel.
 _CUSTOM_FAKER_PROVIDER_VALUES: dict[str, list[Any]] = {}
 
+# QA-internal-synth-providers F1 (2026-06-01, CRITICAL determinism):
+# protects the two registry dicts from concurrent reader/writer races.
+# Pre-fix the platform's `sync_db_custom_faker_providers` bulk-unregistered
+# every DB-backed provider before re-registering the active set; a
+# concurrent masking job calling get_faker_providers saw zero DB-backed
+# providers during the window. Now writers go through
+# `atomic_swap_db_providers` (whole swap under one lock acquisition) and
+# readers in `get_faker_providers` snapshot the dict under the same lock.
+_PROVIDER_LOCK = threading.Lock()
+
 
 # ── Public-API implementations (re-exported via decoy_engine.providers) ──
 
@@ -58,29 +69,33 @@ def register_faker_provider(name: str, fn: Callable[[Faker], Any]) -> None:
         raise ValueError("custom faker provider name must be a non-empty string")
     if not callable(fn):
         raise TypeError("custom faker provider fn must be callable")
-    _CUSTOM_FAKER_PROVIDERS[name] = fn
+    with _PROVIDER_LOCK:
+        _CUSTOM_FAKER_PROVIDERS[name] = fn
 
 
 def unregister_faker_provider(name: str) -> None:
     """Remove a previously registered custom provider. No-op if the name was
     never registered. Mostly useful in tests."""
-    _CUSTOM_FAKER_PROVIDERS.pop(name, None)
-    _CUSTOM_FAKER_PROVIDER_VALUES.pop(name, None)
+    with _PROVIDER_LOCK:
+        _CUSTOM_FAKER_PROVIDERS.pop(name, None)
+        _CUSTOM_FAKER_PROVIDER_VALUES.pop(name, None)
 
 
 def get_custom_faker_provider_values(name: str) -> list[Any] | None:
     """Return the raw values list backing a list-backed custom provider,
     or None when the name isn't registered as a list provider."""
-    values = _CUSTOM_FAKER_PROVIDER_VALUES.get(name)
-    if values is None:
-        return None
-    return list(values)
+    with _PROVIDER_LOCK:
+        values = _CUSTOM_FAKER_PROVIDER_VALUES.get(name)
+        if values is None:
+            return None
+        return list(values)
 
 
 def list_custom_faker_list_providers() -> list[str]:
     """Return names of all list-backed custom providers currently
     registered, sorted."""
-    return sorted(_CUSTOM_FAKER_PROVIDER_VALUES.keys())
+    with _PROVIDER_LOCK:
+        return sorted(_CUSTOM_FAKER_PROVIDER_VALUES.keys())
 
 
 def register_faker_list_provider(name: str, values: list[str]) -> None:
@@ -91,6 +106,51 @@ def register_faker_list_provider(name: str, values: list[str]) -> None:
     if not frozen:
         raise ValueError("custom faker provider values must not be empty")
     _register_list_provider(name, frozen)
+
+
+def atomic_swap_db_providers(
+    *,
+    unregister: set[str],
+    new_fn_map: dict[str, Callable[[Faker], Any]],
+    new_val_map: dict[str, list[Any]],
+) -> None:
+    """Atomically replace a set of DB-backed custom providers.
+
+    QA-internal-synth-providers F1 + F4 (2026-06-01, CRITICAL + HIGH):
+    the previous platform-side `sync_db_custom_faker_providers` flow
+    bulk-unregistered then re-registered providers one at a time. A
+    concurrent masking job that called `get_faker_providers` during
+    that window saw zero DB-backed providers; `faker_type:
+    <custom_provider>` columns then failed with "Unknown faker_type"
+    or silently fell back to a default. A corrupted row mid-loop also
+    aborted the whole sync, leaving the registry partially unregistered.
+
+    This helper closes both findings with one structural change: the
+    caller builds the new (name -> fn) + (name -> values) maps in
+    isolation (per-row errors caught + logged), then this function
+    performs a single locked swap. Readers (`get_faker_providers`)
+    take the same lock so they always see either the prior state or
+    the new state, never the in-between.
+
+    Args:
+        unregister: names to remove first (caller-supplied; typically
+            every DB row's `provider_name`, including soft-deleted ones).
+        new_fn_map: name -> callable to register.
+        new_val_map: name -> raw values list (for the FK pool resolver).
+
+    Closure-only providers (registered via `register_faker_provider`
+    without a backing values list) are NOT affected by this helper.
+    Only DB-backed list providers should be passed here.
+    """
+    with _PROVIDER_LOCK:
+        for name in unregister:
+            _CUSTOM_FAKER_PROVIDERS.pop(name, None)
+            _CUSTOM_FAKER_PROVIDER_VALUES.pop(name, None)
+        _CUSTOM_FAKER_PROVIDERS.update(new_fn_map)
+        for name, values in new_val_map.items():
+            # Snapshot at registration time so post-swap caller-side
+            # mutation cannot affect generation behaviour.
+            _CUSTOM_FAKER_PROVIDER_VALUES[name] = list(values)
 
 
 def load_custom_providers(
@@ -189,14 +249,19 @@ def _register_list_provider(provider_name: str, values: list[str]) -> None:
     caller's list don't affect generation behaviour. Also populates
     _CUSTOM_FAKER_PROVIDER_VALUES so the FK pool resolver can read the
     values list directly via parent: {custom_provider: <name>}.
+
+    QA-internal-synth-providers F1 (2026-06-01): both registry writes
+    happen under one lock acquisition so concurrent readers always see
+    fn + values together or neither, never a partial pair.
     """
     frozen = list(values)
-    _CUSTOM_FAKER_PROVIDER_VALUES[provider_name] = list(frozen)
 
     def _provider(fake: Faker) -> str:
         return str(fake.random.choice(frozen))
 
-    register_faker_provider(provider_name, _provider)
+    with _PROVIDER_LOCK:
+        _CUSTOM_FAKER_PROVIDER_VALUES[provider_name] = list(frozen)
+        _CUSTOM_FAKER_PROVIDERS[provider_name] = _provider
 
 
 # ── Faker reflection: providers exposed to the engine's masking surface ──
@@ -355,7 +420,14 @@ def get_faker_providers(faker_instance: Faker) -> dict[str, Callable[..., Any]]:
     # Custom providers wrap the seeded ``fake`` instance so user-supplied
     # functions can call any Faker method and inherit the per-value seed.
     # Override built-ins on name collision -- last registration wins.
-    for name, fn in _CUSTOM_FAKER_PROVIDERS.items():
+    # QA-internal-synth-providers F1 (2026-06-01): snapshot the registry
+    # under _PROVIDER_LOCK so concurrent atomic_swap_db_providers calls
+    # never produce a partial view. Iterate the snapshot outside the
+    # lock so registration-time side effects (none today, but future-
+    # proofing) can't deadlock.
+    with _PROVIDER_LOCK:
+        custom_snapshot = list(_CUSTOM_FAKER_PROVIDERS.items())
+    for name, fn in custom_snapshot:
         providers[name] = lambda fn=fn, fake=fake: fn(fake)
 
     return providers
