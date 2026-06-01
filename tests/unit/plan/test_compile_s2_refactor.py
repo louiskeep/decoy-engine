@@ -453,11 +453,13 @@ class TestWalksGenF5BuildRelationshipsUsesPassedLookup:
             profiled_at=__import__("datetime").datetime(2026, 6, 1),
             decoy_engine_version="0.1.0",
         )
-        # Pass a lookup that says "fail" for (a, [id]). The config's
-        # relationships block is empty, so the OLD reparse path would
-        # have used the "preserve" fallback. With F5 the lookup wins.
+        # Pass a lookup that says "fail" for (a, [id]) -> (b, [a_id]).
+        # The config's relationships block is empty, so the OLD reparse
+        # path would have used the "preserve" fallback. With F5 the
+        # lookup wins. S13-rebaseline P1 (2026-06-01): key shape now
+        # includes child end.
         config: dict = {"global_settings": {"seed": 1}, "relationships": []}
-        lookup = {("a", ("id",)): "fail"}
+        lookup = {("a", ("id",), "b", ("a_id",)): "fail"}
         out = _build_relationships(
             config, profile, orphan_policy_lookup=lookup
         )

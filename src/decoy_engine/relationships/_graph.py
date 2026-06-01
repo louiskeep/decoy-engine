@@ -131,7 +131,9 @@ def build_relationship_graph(
     relationships: tuple[Relationship, ...],
     *,
     namespace_registry: NamespaceRegistry,
-    orphan_policy_lookup: dict[tuple[str, tuple[str, ...]], OrphanPolicy],
+    orphan_policy_lookup: dict[
+        tuple[str, tuple[str, ...], str, tuple[str, ...]], OrphanPolicy
+    ],
 ) -> RelationshipGraph:
     """Build a `RelationshipGraph` from profile relationships + planner inputs.
 
@@ -145,8 +147,11 @@ def build_relationship_graph(
     - `orphan_policy_lookup`: resolved by
       `check_orphan_fk_policy_completeness` (which validates the config
       side of the contract first) and keyed by
-      `(parent_table, parent_columns)`. Every relationship key must be
-      present in this lookup; the check is responsible for populating it.
+      `(parent_table, parent_columns, child_table, child_columns)`.
+      Every relationship key must be present in this lookup; the check
+      is responsible for populating it. The 4-tuple key (S13-rebaseline
+      P1, 2026-06-01) lets same-parent-different-child relationships
+      declare different orphan policies without colliding.
 
     Raises:
 
@@ -189,8 +194,13 @@ def build_relationship_graph(
     edges: list[RelationshipEdge] = []
     for rel in relationships:
         namespace = namespace_registry.for_relationship(rel)
-        parent_key = (rel.parent_table, rel.parent_columns)
-        if parent_key not in orphan_policy_lookup:
+        rel_key = (
+            rel.parent_table,
+            rel.parent_columns,
+            rel.child_table,
+            rel.child_columns,
+        )
+        if rel_key not in orphan_policy_lookup:
             # Should not happen: check_orphan_fk_policy_completeness must
             # run before this function and must populate every key. If we
             # land here, it's a wiring bug in compile_plan, not user input.
@@ -214,7 +224,7 @@ def build_relationship_graph(
                 child_table=rel.child_table,
                 child_columns=rel.child_columns,
                 namespace=namespace,
-                orphan_policy=orphan_policy_lookup[parent_key],
+                orphan_policy=orphan_policy_lookup[rel_key],
             )
         )
 
@@ -285,14 +295,18 @@ def build_relationship_graph(
 def check_orphan_fk_policy_completeness(
     config: dict[str, Any],
     relationships: tuple[Relationship, ...],
-) -> dict[tuple[str, tuple[str, ...]], OrphanPolicy]:
+) -> dict[tuple[str, tuple[str, ...], str, tuple[str, ...]], OrphanPolicy]:
     """Validate that the config declares `orphan_policy` for every relationship.
 
     Per S2 §3 (resolution of TODO 4): no default; every relationship must
     explicitly name its orphan-handling policy. Returns a lookup keyed
-    by `(parent_table, parent_columns)` -> `OrphanPolicy` so
-    `build_relationship_graph` can populate every `RelationshipEdge`
-    without re-reading the config.
+    by `(parent_table, parent_columns, child_table, child_columns)` ->
+    `OrphanPolicy` so `build_relationship_graph` can populate every
+    `RelationshipEdge` without re-reading the config. The 4-tuple key
+    (S13-rebaseline P1, 2026-06-01) allows same-parent-different-child
+    relationships to declare different orphan policies; pre-fix the
+    2-tuple key collapsed them and rejected the legitimate pattern as a
+    duplicate.
 
     Raises:
 
@@ -305,10 +319,22 @@ def check_orphan_fk_policy_completeness(
 
     Compile-check ownership table row #6 (per S1 spec).
     """
-    # Build the lookup from the config side: (parent_table, parent_columns)
-    # -> orphan_policy string. Reject invalid values immediately so the
-    # error names the offending entry's exact location.
-    config_lookup: dict[tuple[str, tuple[str, ...]], str] = {}
+    # Build the lookup from the config side: each (parent, child) pair
+    # maps to one orphan_policy string. Reject invalid values immediately
+    # so the error names the offending entry's exact location.
+    #
+    # S13-rebaseline P1 BLOCKER fix (2026-06-01): key is now
+    # (parent_table, parent_cols, child_table, child_cols) so two
+    # legitimate FKs from the same parent to different children with
+    # different orphan policies are not falsely flagged as duplicates.
+    # The nullable_fk golden invariant exercises this: an `employees`
+    # table is the parent of two `reviews` FKs (employee_id +
+    # reviewer_id) with different policies. Pre-fix the (parent_only)
+    # dedup key rejected the second entry as a merge conflict; the
+    # legitimate pattern was unbuildable.
+    config_lookup: dict[
+        tuple[str, tuple[str, ...], str, tuple[str, ...]], str
+    ] = {}
     config_relationships = config.get("relationships", [])
     if isinstance(config_relationships, list):
         for idx, entry in enumerate(config_relationships):
@@ -347,31 +373,69 @@ def check_orphan_fk_policy_completeness(
                         "four valid values: 'preserve', 'remap', 'warn', 'fail'."
                     ),
                 )
-            # QA-8 F3 (2026-06-01): detect duplicate-key conflict. A
-            # second entry for the same (parent_table, parent_cols)
-            # with a different orphan_policy used to silently overwrite
-            # the first; the operator never saw the conflict and the
-            # winning policy was last-declared. A merge-conflict
-            # resolution tool could produce this shape. Same-policy
-            # duplicates are tolerated (no information loss).
-            key = (parent_table, tuple(parent_cols))
-            if key in config_lookup and config_lookup[key] != policy:
-                raise PlanCompileError(
-                    code="orphan_fk_policy_duplicate",
-                    path=f"relationships[{idx}]",
-                    message=(
-                        f"Relationship for parent {parent_table}.{parent_cols} "
-                        f"declares orphan_policy={policy!r} but a previous "
-                        f"entry declared {config_lookup[key]!r}. Remove the "
-                        "duplicate entry."
-                    ),
-                )
-            config_lookup[key] = policy
+            # Read children to build per-(parent, child) keys. Two
+            # schema shapes are accepted (both historical):
+            #   - `"child": {"table": ..., "columns": [...]}`     (singular)
+            #   - `"children": [{"table": ..., ...}, ...]`        (plural)
+            # A single config entry may declare multiple children that
+            # share one policy; each child becomes its own key.
+            children_raw: list[Any]
+            singular = entry.get("child")
+            if isinstance(singular, dict):
+                children_raw = [singular]
+            else:
+                plural = entry.get("children", [])
+                children_raw = plural if isinstance(plural, list) else []
+            for child in children_raw:
+                if not isinstance(child, dict):
+                    continue
+                child_table = child.get("table")
+                child_cols = child.get("columns")
+                if not (
+                    isinstance(child_table, str)
+                    and isinstance(child_cols, list)
+                    and all(isinstance(c, str) for c in child_cols)
+                ):
+                    continue
+                # QA-8 F3 (2026-06-01, S13-rebaseline fix): detect duplicate-
+                # key conflict. A second entry for the same
+                # (parent_table, parent_cols, child_table, child_cols)
+                # with a different orphan_policy used to silently
+                # overwrite the first; the operator never saw the conflict
+                # and the winning policy was last-declared. A merge-
+                # conflict resolution tool could produce this shape.
+                # Same-policy duplicates are tolerated (no information
+                # loss). LEGITIMATE same-parent-different-child entries
+                # with different policies are NOT a duplicate because
+                # the key now includes the child end.
+                key = (parent_table, tuple(parent_cols), child_table, tuple(child_cols))
+                if key in config_lookup and config_lookup[key] != policy:
+                    raise PlanCompileError(
+                        code="orphan_fk_policy_duplicate",
+                        path=f"relationships[{idx}]",
+                        message=(
+                            f"Relationship for parent {parent_table}.{parent_cols} "
+                            f"-> child {child_table}.{child_cols} "
+                            f"declares orphan_policy={policy!r} but a previous "
+                            f"entry declared {config_lookup[key]!r}. Remove the "
+                            "duplicate entry."
+                        ),
+                    )
+                config_lookup[key] = policy
 
     # Now check every profile relationship has a matching config entry.
-    lookup: dict[tuple[str, tuple[str, ...]], OrphanPolicy] = {}
+    # Lookup key is now per-(parent, child) so different children of the
+    # same parent can carry different policies.
+    lookup: dict[
+        tuple[str, tuple[str, ...], str, tuple[str, ...]], OrphanPolicy
+    ] = {}
     for rel in relationships:
-        key = (rel.parent_table, rel.parent_columns)
+        key = (
+            rel.parent_table,
+            rel.parent_columns,
+            rel.child_table,
+            rel.child_columns,
+        )
         if key not in config_lookup:
             raise PlanCompileError(
                 code="orphan_fk_policy_missing",

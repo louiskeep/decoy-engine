@@ -28,13 +28,22 @@ from decoy_engine import (
 
 def test_all_lists_every_public_name():
     expected = {
-        # engine-v2 S8 composite generators
+        # engine-v2 S8 composite generators + S13-rebaseline additions
         "BundlePool",
         "CompositeAdapter",
+        "CompositeAddress",
+        "CompositeCustom",
         "CompositeError",
         "CompositeGenerator",
+        "CompositePerson",
+        "CompositeProvider",
+        "atomic_swap_db_providers",
+        "composite_address",
         "composite_city_state_zip",
+        "composite_custom",
         "composite_name_email",
+        "composite_person",
+        "composite_provider",
         # engine-v2 S1 (Pipeline config schema, the validation choke-point).
         "PipelineConfig",
         # S9: Masker + DataGenerator removed from the public surface. The

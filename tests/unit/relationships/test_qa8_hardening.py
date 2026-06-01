@@ -52,8 +52,11 @@ def _ns_registry_for(rels: list[Relationship]) -> NamespaceRegistry:
 
 
 def _orphan_lookup_for(rels: list[Relationship]) -> dict:
+    # S13-rebaseline P1 (2026-06-01): lookup key now includes the child
+    # end so per-(parent, child) policies are honored.
     return {
-        (r.parent_table, r.parent_columns): OrphanPolicy.PRESERVE for r in rels
+        (r.parent_table, r.parent_columns, r.child_table, r.child_columns): OrphanPolicy.PRESERVE
+        for r in rels
     }
 
 
@@ -173,4 +176,6 @@ class TestQA8F3OrphanPolicyDuplicate:
         }
         # No raise.
         lookup = check_orphan_fk_policy_completeness(config, rels)
-        assert ("parent", ("id",)) in lookup
+        # S13-rebaseline P1 (2026-06-01): lookup key shape now includes
+        # child end.
+        assert ("parent", ("id",), "child", ("fk",)) in lookup

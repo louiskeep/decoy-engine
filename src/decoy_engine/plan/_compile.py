@@ -323,28 +323,36 @@ def _build_relationships(
     config: dict[str, Any],
     profile: Profile,
     *,
-    orphan_policy_lookup: dict[tuple[str, tuple[str, ...]], str] | None = None,
+    orphan_policy_lookup: dict[
+        tuple[str, tuple[str, ...], str, tuple[str, ...]], str
+    ] | None = None,
 ) -> tuple[PlanRelationship, ...]:
     """Convert profile.relationships into Plan-side PlanRelationship tuples,
     pulling orphan_policy from the config when available.
 
     QA walks/generators F5 (2026-06-01, MEDIUM design): the orphan-policy
-    lookup is now passed in from compile_plan, where it was already
-    produced by check_orphan_fk_policy_completeness. Pre-fix this
-    function re-parsed config.relationships independently; the two
-    parses could drift, producing a Plan whose stamped policy
-    disagreed with what the completeness check had validated. Single
-    source of truth: check_orphan_fk_policy_completeness owns the
-    parse; _build_relationships consumes the lookup.
+    lookup is passed in from compile_plan, where it was produced by
+    check_orphan_fk_policy_completeness. Pre-fix this function re-parsed
+    config.relationships independently; the two parses could drift.
+    Single source of truth: check_orphan_fk_policy_completeness owns
+    the parse; _build_relationships consumes the lookup.
+
+    S13-rebaseline P1 (2026-06-01, BLOCKER fix): lookup key now
+    includes child_table + child_cols so per-(parent, child) policies
+    are honored. Pre-fix the lookup was per-parent only, which
+    silently collapsed two children of the same parent with different
+    policies into one (last-wins). The PlanRelationship schema carries
+    one policy per entry, so different policies for different children
+    now produce SEPARATE PlanRelationship entries grouped by
+    (parent, policy).
 
     The fallback (orphan_policy_lookup=None) preserves the original
-    parse logic so callers outside compile_plan still work; this is
-    used by older tests that build Plans without running the full
-    compile pipeline.
+    parse logic so callers outside compile_plan still work.
     """
     if orphan_policy_lookup is None:
         # Fallback: reparse config.relationships (preserves pre-fix
-        # behavior for callers that bypass compile_plan).
+        # behavior for callers that bypass compile_plan). Builds the
+        # same per-(parent, child) key as check_orphan_fk_policy_completeness.
         orphan_policy_lookup = {}
         config_relationships = config.get("relationships", [])
         if isinstance(config_relationships, list):
@@ -357,46 +365,71 @@ def _build_relationships(
                     continue
                 parent_table = parent.get("table")
                 parent_cols = parent.get("columns")
-                if (
+                if not (
                     isinstance(parent_table, str)
                     and isinstance(parent_cols, list)
                     and all(isinstance(c, str) for c in parent_cols)
                 ):
-                    orphan_policy_lookup[(parent_table, tuple(parent_cols))] = policy
+                    continue
+                # Accept both `child:` (singular dict) and `children:`
+                # (list of dicts) schemas; same fallback contract as
+                # check_orphan_fk_policy_completeness.
+                children: list[Any]
+                singular = entry.get("child")
+                if isinstance(singular, dict):
+                    children = [singular]
+                else:
+                    plural = entry.get("children", [])
+                    children = plural if isinstance(plural, list) else []
+                for child in children:
+                    if not isinstance(child, dict):
+                        continue
+                    child_table = child.get("table")
+                    child_cols = child.get("columns")
+                    if (
+                        isinstance(child_table, str)
+                        and isinstance(child_cols, list)
+                        and all(isinstance(c, str) for c in child_cols)
+                    ):
+                        orphan_policy_lookup[
+                            (parent_table, tuple(parent_cols), child_table, tuple(child_cols))
+                        ] = policy
 
-    # Group profile.relationships by (parent_table, parent_columns) so
-    # multiple children of the same parent collapse into one
-    # PlanRelationship entry.
+    def _normalised_policy(value: Any) -> str:
+        """Read the lookup result and produce a string literal that
+        PlanRelationship.orphan_policy accepts. Handles OrphanPolicy
+        enums (the check_orphan_fk_policy_completeness output shape)
+        + falls back to 'preserve' for invalid values."""
+        if hasattr(value, "value"):
+            value = value.value
+        if value not in ("preserve", "remap", "warn", "fail"):
+            return "preserve"
+        return value
+
+    # Group profile.relationships by (parent_table, parent_cols, policy)
+    # so children with the same parent + same policy collapse into one
+    # PlanRelationship entry, but different-policy children of the same
+    # parent become SEPARATE entries (necessary post-S13-rebaseline-P1).
     grouped: dict[
-        tuple[str, tuple[str, ...]],
+        tuple[str, tuple[str, ...], str],
         list[tuple[str, tuple[str, ...], str | None]],
     ] = {}
     for rel in profile.relationships:
-        key = (rel.parent_table, rel.parent_columns)
+        per_rel_policy = _normalised_policy(
+            orphan_policy_lookup.get(
+                (rel.parent_table, rel.parent_columns, rel.child_table, rel.child_columns),
+                "preserve",
+            )
+        )
+        key = (rel.parent_table, rel.parent_columns, per_rel_policy)
         grouped.setdefault(key, []).append((rel.child_table, rel.child_columns, rel.namespace))
 
     out: list[PlanRelationship] = []
-    for (parent_table, parent_cols), children in sorted(grouped.items()):
+    for (parent_table, parent_cols, policy), children in sorted(grouped.items()):
         # All children of the same parent share a namespace if any do
         # (S2 enforces this at build_namespace_registry time; for S1 we
         # take the first non-None we see).
         namespace = next((ns for (_, _, ns) in children if ns is not None), None)
-        # orphan_policy: lookup in config; fall back to "preserve" only
-        # when the relationship is not declared in the config (S2's
-        # orphan_fk_policy_completeness check then catches the omission
-        # at the config layer). S1 doesn't ship that check yet.
-        policy = orphan_policy_lookup.get((parent_table, parent_cols), "preserve")
-        # QA walks/generators F5 (2026-06-01): the lookup may now arrive
-        # from check_orphan_fk_policy_completeness with OrphanPolicy
-        # enum values rather than plain strings. Normalise to string so
-        # the Literal[...]-typed PlanRelationship below accepts it.
-        if hasattr(policy, "value"):
-            policy = policy.value
-        # Type the policy as the literal we accept.
-        if policy not in ("preserve", "remap", "warn", "fail"):
-            # Defensive: invalid policy in config gets caught here. S2 row 6
-            # ships the proper compile error; S1 just normalizes.
-            policy = "preserve"
         out.append(
             PlanRelationship(
                 parent=PlanRelationshipEnd(table=parent_table, columns=parent_cols),

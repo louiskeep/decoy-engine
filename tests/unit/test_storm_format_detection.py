@@ -74,7 +74,12 @@ class TestUSZIPFormatVariants:
         s = pd.Series(["10001", "90210", "60601", "77001"])
         m = detect_us_zip(s, "zip")
         assert m is not None
-        assert m.format_pattern == r"\d{5}"
+        # S13-rebaseline P1 (2026-06-01): detector emits a word-boundary-
+        # aware variant of the 5-digit ZIP pattern so the regex won't
+        # match inside a longer numeric token (e.g. a SSN) or as the
+        # leading digits of a ZIP+4. Lookbehind/lookahead block adjacent
+        # word chars and adjacent ".N" decimal continuations.
+        assert m.format_pattern == r"(?<!\w)\d{5}(?!\w)(?!\.\d)"
 
     def test_nine_digit_dominates(self):
         s = pd.Series(["10001-1234", "90210-5678", "60601-9999"])
