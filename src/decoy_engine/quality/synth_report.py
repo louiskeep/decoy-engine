@@ -498,14 +498,105 @@ def assemble_synth_report(
             "NOT mean the synth survived an attack; it means no "
             "attack was attempted."
         )
+    # QA-10 P1 severity-field plumbing (2026-06-01, PO Q1 lock per
+    # qa-10-quality-report-hardening.md): the overall report severity
+    # is the max-band across sub-reports. Ordering:
+    #   ok < info < low < medium < high < critical
+    # "info" routes things-that-did-not-run (attacks unavailable;
+    # under-sample TVD per P2 F5) so they surface but do not escalate
+    # the report's overall severity to medium. "critical" is reserved
+    # for fail-open signals only the DCR-zero-distance path triggers
+    # today (P3 F10 closure).
+    overall_severity = _max_band(
+        new_row_synthesis,
+        dcr,
+        attacks,
+        attack_actually_attempted=_attack_actually_attempted,
+    )
     return {
         "schema_version": SYNTH_REPORT_SCHEMA_VERSION,
         "job_id": job_id,
         "new_row_synthesis": new_row_synthesis,
         "dcr": dcr,
         "attacks": attacks,
+        "severity": overall_severity,
         "disclaimers": disclaimers,
     }
+
+
+# QA-10 P1 severity-field plumbing helpers (2026-06-01) ────────────────
+
+
+# Ordering of the report's severity band. Lower index = less severe.
+# Index in this tuple IS the comparable rank.
+_SEVERITY_BANDS = ("ok", "info", "low", "medium", "high", "critical")
+
+
+def _band_rank(band: str | None) -> int:
+    """Numerical rank of a severity band. Unknown values map to 'info'
+    (do not escalate, but surface to the operator)."""
+    if band in _SEVERITY_BANDS:
+        return _SEVERITY_BANDS.index(band)
+    return _SEVERITY_BANDS.index("info")
+
+
+def _max_band(
+    new_row_synthesis: dict[str, Any] | None,
+    dcr: dict[str, Any] | None,
+    attacks: dict[str, Any] | None,
+    *,
+    attack_actually_attempted: bool,
+) -> str:
+    """Compute the report's overall severity as the max-band across
+    sub-reports.
+
+    Inputs:
+      - new_row_synthesis.band (set by `compute_new_row_synthesis`):
+        "low" / "medium" / "high" depending on fraction_new.
+      - dcr: severity routing is "ok" when median > 0 + comparison
+        clean; "critical" when DCR median == 0 (a synth row exactly
+        copied a source row).
+      - attacks: "ok" when an attack ran + survived; "info" when no
+        attack ran (the _attacks_unavailable shape).
+
+    Empty inputs (everything None) route to "info" since nothing
+    actually ran."""
+    ranks = []
+
+    if isinstance(new_row_synthesis, dict):
+        band = new_row_synthesis.get("band")
+        if band is not None:
+            ranks.append(_band_rank(band))
+
+    if isinstance(dcr, dict):
+        # DCR-zero-distance is the critical signal: a synth row equals
+        # a source row exactly. compute_dcr surfaces this either as
+        # `synth_to_source.median == 0` or as an explicit `band:
+        # "critical"` field once P3 F10 closure ships. Pre-P3 we read
+        # the median directly.
+        synth_to_source = dcr.get("synth_to_source") if isinstance(dcr.get("synth_to_source"), dict) else None
+        if synth_to_source is not None:
+            median = synth_to_source.get("median")
+            if isinstance(median, (int, float)) and median == 0:
+                ranks.append(_band_rank("critical"))
+            else:
+                ranks.append(_band_rank("ok"))
+        # Also accept an explicit band field if the caller set one.
+        if isinstance(dcr.get("band"), str):
+            ranks.append(_band_rank(dcr["band"]))
+
+    if attacks is not None:
+        if attack_actually_attempted:
+            # Attack ran. Read the band; default ok if absent.
+            ranks.append(_band_rank(attacks.get("band", "ok")))
+        else:
+            # Attack did not run; info-band so the operator sees the
+            # gap but the overall severity does not escalate.
+            ranks.append(_band_rank("info"))
+
+    if not ranks:
+        return "info"
+    return _SEVERITY_BANDS[max(ranks)]
 
 
 # ── helpers ────────────────────────────────────────────────────────────────
