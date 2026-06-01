@@ -98,8 +98,15 @@ def _check_one_column(
             ),
         )
 
-    src_col = src_df[column]
-    out_col = out_df[column]
+    # QA-4 F6 (2026-06-01): reset_index on the source + output frames
+    # before pulling the column. The src_col.astype(object).equals(...)
+    # comparison below is index-aware; if the caller hands in frames
+    # whose indexes differ (e.g. one was filtered by `.loc[mask]` while
+    # the other is fresh) the equals() returns False even when the
+    # row values match. Pre-fix the docstring said "frame index is
+    # assumed aligned" but no caller enforced it.
+    src_col = src_df[column].reset_index(drop=True)
+    out_col = out_df[column].reset_index(drop=True)
     src_distinct = int(src_col.nunique(dropna=True))
     out_distinct = int(out_col.nunique(dropna=True))
 

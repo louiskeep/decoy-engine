@@ -48,9 +48,14 @@ _PRODUCES_PII_LIKE_VALUES: frozenset[str] = frozenset({
 
 # Strategies that DESTROY detector patterns. A surviving hit on a column
 # masked with one of these is a fail (the mask did not work).
+# QA-4 F1 (2026-06-01): text_redact was missing from this set.
+# text_redact replaces matched PII spans with a fixed token; any
+# detector still hitting after text_redact ran is a failure of the
+# detector coverage and must surface as 'fail' (not 'warning').
 _DESTROYS_PATTERN: frozenset[str] = frozenset({
     "hash",
     "redact",
+    "text_redact",
     "bucketize",
 })
 

@@ -45,6 +45,40 @@ class TestRunStormPostMask:
         with pytest.raises(TypeError):
             run_storm_post_mask({}, {}, config="not a dict")  # type: ignore[arg-type]
 
+    def test_text_redact_residual_pii_classified_as_fail(self):
+        """QA-4 F1 (2026-06-01): text_redact must be in
+        _DESTROYS_PATTERN. A column configured with text_redact whose
+        output still matches a detector is a FAIL (the mask didn't
+        destroy the pattern), not a WARNING. Pre-fix the strategy was
+        absent from the set and surviving spans surfaced as
+        severity='warning' instead, downgrading a real mask failure."""
+        # 100 rows of email content; the mask is configured as
+        # text_redact but the output still has all the emails (mask
+        # "didn't fire").
+        emails = [f"user{i}@example.com" for i in range(100)]
+        src = pd.DataFrame({"note": emails})
+        out = pd.DataFrame({"note": emails})
+        config = {
+            "tables": [{
+                "name": "users",
+                "columns": [{"name": "note", "strategy": "text_redact"}],
+            }],
+        }
+        report = run_storm_post_mask(
+            source_frames={"users": src},
+            output_frames={"users": out},
+            config=config,
+        )
+        # The residual_pii check must produce at least one fail finding
+        # tagged with strategy='text_redact'.
+        fail_findings = [
+            f for f in report["residual_pii"] if f["severity"] == "fail"
+        ]
+        assert len(fail_findings) >= 1
+        assert any(
+            f["configured_strategy"] == "text_redact" for f in fail_findings
+        )
+
     def test_policy_validation_catches_noop_mask(self):
         """The configured strategy is 'hash' but the output is identical
         to the source. Should produce a fail-severity finding."""
