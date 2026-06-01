@@ -113,18 +113,33 @@ def synthetic_column_seed(
         and column_config is not None
         and column_config.get("_legacy_column_name_seed")
     ):
+        # QA-1 M18 (2026-06-01): raise on derive_key failure instead of
+        # silently falling through to the unkeyed path. Same
+        # crypto-degradation pattern as the FPE / DateShift fixes; an
+        # operator who configured a pipeline key would NOT expect the
+        # column to silently switch to seed-only mode if the key
+        # resolver hiccups.
         try:
             return _bytes_to_seed(derive_key(f"col:{column_config.get('name', 'unnamed')}"))
-        except Exception:
-            pass  # fall through to fingerprint-based path
+        except Exception as exc:
+            raise RuntimeError(
+                f"synthetic_column_seed: derive_key failed for legacy "
+                f"column-name path (column={column_config.get('name', 'unnamed')!r}): "
+                f"{type(exc).__name__}"
+            ) from exc
 
     fingerprint = strategy_config_fingerprint(column_config or {})
 
     if derive_key is not None:
+        # QA-1 M18 (2026-06-01): raise on derive_key failure.
         try:
             return _bytes_to_seed(derive_key(f"gen:{fingerprint}"))
-        except Exception:
-            pass
+        except Exception as exc:
+            raise RuntimeError(
+                f"synthetic_column_seed: derive_key failed for "
+                f"fingerprint-based path (fingerprint={fingerprint!r}): "
+                f"{type(exc).__name__}"
+            ) from exc
 
     # Non-crypto use: MD5 is just a fast deterministic 16-byte digest
     # mixed into the fallback seed for reproducibility across runs.

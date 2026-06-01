@@ -36,6 +36,7 @@ class ColumnGenerator:
         logger=None,
         derive_key=None,
         instance_default_locale: str | None = None,
+        reference_date: pd.Timestamp | None = None,
     ):
         """
         Initialize with a seed for deterministic behavior
@@ -55,11 +56,27 @@ class ColumnGenerator:
                 values come from this locale instead of the library default
                 (en_US). Platform passes the operator's chosen value from
                 AppSettings.default_faker_locale here.
+            reference_date: Optional pd.Timestamp; if None, snapshots
+                ``pd.Timestamp.utcnow()`` once at construction. Bound into
+                the formula scope as the source of ``now / today /
+                days_from_now / months_from_now / years_from_now``. QA-1 H7
+                (2026-06-01) replaces the per-call wall-clock read so the
+                same formula returns the same value across runs (mod the
+                same reference_date).
         """
         self.seed = seed
         self.derive_key = derive_key
         self.instance_default_locale = instance_default_locale
-        random.seed(self.seed)
+        # QA-1 H6 (2026-06-01): instance-local RNG replaces module-global
+        # `random.seed`. Pre-fix two ColumnGenerators in the same process
+        # corrupted each other's state, and any caller of `random.*`
+        # outside this class saw side effects from generator construction.
+        self._rng = random.Random(self.seed)
+        # QA-1 H7 (2026-06-01): snapshot the reference date once so
+        # formula helpers (now/today/days_from_now/...) return
+        # consistent output across runs of the same column on
+        # different calendar days.
+        self._reference_date = reference_date if reference_date is not None else pd.Timestamp.utcnow()
 
         # Initialize faker. When an instance-wide default locale is set,
         # bind the shared Faker to that locale so the "no column-level
@@ -180,10 +197,16 @@ class ColumnGenerator:
             # Per-row seeding off the column-seed (HKDF-derived when keyed,
             # `seed + hash(name)` otherwise). Same column + same row ->
             # same null/non-null decision across runs.
-            column_seed = self._column_seed(column_name)
+            # QA-1 H6 + M17 (2026-06-01): pass column_config through so
+            # two columns with different configs do not share a null
+            # mask; use a fresh Random instance per call to avoid
+            # mutating self._rng's state (which other generator calls
+            # may depend on).
+            column_seed = self._column_seed(column_name, column_config)
+            null_rng = random.Random()
             for i in range(num_rows):
-                random.seed(column_seed + i)
-                if random.random() < null_probability:
+                null_rng.seed(column_seed + i)
+                if null_rng.random() < null_probability:
                     result.iloc[i] = None
 
         # Log generation time
@@ -267,9 +290,16 @@ class ColumnGenerator:
         column_name = column_config.get("name", "unnamed_column")
         column_seed = self._column_seed(column_name, column_config)
         values = []
+        # QA-1 H6 (2026-06-01): use a column-scoped Random instance so the
+        # per-row re-seed does not pollute self._rng or module-global.
+        # Faker.seed_instance still mutates module-level random.seed
+        # internally (Faker library limitation; QA-7 F1 added the
+        # cross-thread lock for that). Within a single ColumnGenerator
+        # call we accept the within-call serialization.
+        row_rng = random.Random()
         for i in range(num_rows):
             row_seed = column_seed + i
-            random.seed(row_seed)
+            row_rng.seed(row_seed)
             faker_inst.seed_instance(row_seed)
             values.append(provider_func(**faker_kwargs))
 
@@ -348,8 +378,13 @@ class ColumnGenerator:
         # generation calls -- order-dependence is a footgun). Honors
         # `determinism: fresh` for columns the user wants rolling per run.
         column_name = column_config.get("name", "unnamed_column")
-        random.seed(self._column_seed(column_name, column_config))
-        values = random.choices(categories, weights=weights, k=num_rows)
+        # QA-1 H6 (2026-06-01): column-scoped Random instance replaces
+        # module-global random.seed + random.choices. The fresh instance
+        # is seeded byte-identically to the V1 pattern (random.Random(s)
+        # produces the same sequence as random.seed(s) followed by
+        # module-level draws).
+        cat_rng = random.Random(self._column_seed(column_name, column_config))
+        values = cat_rng.choices(categories, weights=weights, k=num_rows)
         return pd.Series(values)
 
     def _generate_distribution_column(
@@ -790,22 +825,26 @@ class ColumnGenerator:
             f"Generating reference column referencing {reference_table}.{reference_column}"
         )
 
-        # Check if reference table exists
+        # QA-1 M19 (2026-06-01): raise typed errors instead of returning
+        # sentinel strings. Pre-fix a missing reference_table produced
+        # ["REF_TABLE_NOT_FOUND_0", "REF_TABLE_NOT_FOUND_1", ...] as
+        # valid-looking masked output; an operator who didn't check
+        # warnings would never notice the misconfiguration.
         if reference_table not in reference_data:
-            self.logger.warning(
-                f"Reference table '{reference_table}' not found. Returning placeholder values."
+            raise ValueError(
+                f"reference_table {reference_table!r} not in reference_data; "
+                f"available tables: {sorted(reference_data.keys())!r}"
             )
-            return pd.Series([f"REF_TABLE_NOT_FOUND_{i}" for i in range(num_rows)])
 
         # Get reference DataFrame
         ref_df = reference_data[reference_table]
 
-        # Check if reference column exists
         if reference_column not in ref_df.columns:
-            self.logger.warning(
-                f"Reference column '{reference_column}' not found in table '{reference_table}'. Returning placeholder values."
+            raise ValueError(
+                f"reference_column {reference_column!r} not in table "
+                f"{reference_table!r}; available columns: "
+                f"{sorted(ref_df.columns.tolist())!r}"
             )
-            return pd.Series([f"REF_COLUMN_NOT_FOUND_{i}" for i in range(num_rows)])
 
         # Get reference values
         ref_values = ref_df[reference_column].dropna().unique().tolist()
@@ -822,7 +861,10 @@ class ColumnGenerator:
         # the top of _generate_categorical_column. Otherwise output
         # depends on the order of column generation calls.
         column_name = column_config.get("name", "unnamed_column")
-        random.seed(self._column_seed(column_name, column_config))
+        # QA-1 H6 (2026-06-01): column-scoped Random instance replaces
+        # module-global random.seed. ref_rng below is byte-identical to
+        # the V1 module-global pattern.
+        ref_rng = random.Random(self._column_seed(column_name, column_config))
 
         # Generate references based on distribution type
         values = []
@@ -830,7 +872,7 @@ class ColumnGenerator:
             # Note: null_probability is now handled at the column level
             if distribution == "random":
                 # Random selection with replacement
-                values.append(random.choice(ref_values))
+                values.append(ref_rng.choice(ref_values))
 
             elif distribution == "sequential":
                 # Cycle through values sequentially
@@ -842,11 +884,11 @@ class ColumnGenerator:
                 if not weights or len(weights) != len(ref_values):
                     # Default to equal weights
                     weights = None
-                values.append(random.choices(ref_values, weights=weights, k=1)[0])
+                values.append(ref_rng.choices(ref_values, weights=weights, k=1)[0])
 
             else:
                 self.logger.warning(f"Unknown distribution type: {distribution}, using random")
-                values.append(random.choice(ref_values))
+                values.append(ref_rng.choice(ref_values))
 
         # Cardinality repair. When bounds are set, post-process the
         # value list to satisfy per-parent min + max. Note that this
@@ -855,11 +897,16 @@ class ColumnGenerator:
         # are inherently a global constraint; combine them with random
         # or weighted when ordering doesn't matter.
         if min_per_parent > 0 or max_per_parent > 0:
+            # QA-1 H6 (2026-06-01): pass the column-scoped Random
+            # instance through so the repair's shuffle / choices are
+            # deterministic under self._column_seed without touching
+            # module-global random.
             values = self._apply_cardinality_bounds(
                 values,
                 ref_values,
                 min_per_parent,
                 max_per_parent,
+                rng=ref_rng,
             )
 
         return pd.Series(values)
@@ -870,6 +917,7 @@ class ColumnGenerator:
         ref_values: list,
         min_per_parent: int,
         max_per_parent: int,
+        rng: random.Random,
     ) -> list:
         """Repair a generated value list to honor per-parent cardinality bounds.
 
@@ -905,7 +953,7 @@ class ColumnGenerator:
             if counts[pv] > max_eff:
                 excess = counts[pv] - max_eff
                 indices = [i for i, v in enumerate(values) if v == pv]
-                random.shuffle(indices)
+                rng.shuffle(indices)
                 free_slots.extend(indices[:excess])
                 counts[pv] = max_eff
 
@@ -926,9 +974,9 @@ class ColumnGenerator:
                 if surplus <= 0:
                     continue
                 candidates = [i for i, v in enumerate(values) if v == pv and i not in already_free]
-                random.shuffle(candidates)
+                rng.shuffle(candidates)
                 donor_indices.extend(candidates[:surplus])
-            random.shuffle(donor_indices)
+            rng.shuffle(donor_indices)
             taken = donor_indices[:needed]
             for i in taken:
                 counts[values[i]] -= 1
@@ -961,11 +1009,11 @@ class ColumnGenerator:
                     f"over-filling proportionally for {remaining} rows."
                 )
                 eligible = ref_values
-            queue.extend(random.choices(eligible, k=remaining))
+            queue.extend(rng.choices(eligible, k=remaining))
 
         # 5. Apply replacements in shuffled order so the repair doesn't
         #    bias position.
-        random.shuffle(queue)
+        rng.shuffle(queue)
         for slot, replacement in zip(free_slots, queue, strict=False):
             values[slot] = replacement
 
@@ -1052,12 +1100,18 @@ class ColumnGenerator:
 
         column_seed = self._column_seed(col_name)
         values: list = []
+        # QA-1 H6 + M21 (2026-06-01): per-row Random instance feeds
+        # _formula_scope; module-global random no longer used by formula
+        # eval. faker.seed_instance still serializes module-level state
+        # internally (Faker library limitation; see synthesize.py
+        # _FAKER_CALL_LOCK).
+        row_rng = random.Random()
         for i in range(len(out)):
             local_seed = column_seed + i
-            random.seed(local_seed)
+            row_rng.seed(local_seed)
             self.faker.seed_instance(local_seed)
 
-            scope = self._formula_scope(local_seed)
+            scope = self._formula_scope(local_seed, rng=row_rng)
             scope["i"] = i
             scope["index"] = i
             for ref in references:
@@ -1102,12 +1156,16 @@ class ColumnGenerator:
         Cross-column refs aren't reachable here -- that's the post-pass."""
         column_seed = self._column_seed(column_name, column_config)
         values = []
+        # QA-1 H6 + M21 (2026-06-01): per-row Random instance feeds
+        # _formula_scope. See _evaluate_referenced_formula_column for
+        # the rationale.
+        row_rng = random.Random()
         for i in range(num_rows):
             local_seed = column_seed + i
-            random.seed(local_seed)
+            row_rng.seed(local_seed)
             self.faker.seed_instance(local_seed)
 
-            scope = self._formula_scope(local_seed)
+            scope = self._formula_scope(local_seed, rng=row_rng)
             scope["i"] = i
             scope["index"] = i
 
@@ -1126,18 +1184,39 @@ class ColumnGenerator:
 
         return pd.Series(values)
 
-    def _formula_scope(self, local_seed: int) -> dict[str, Any]:
+    def _formula_scope(
+        self, local_seed: int, rng: random.Random | None = None
+    ) -> dict[str, Any]:
         """Build the names available inside a formula eval. Shared between
         the inline path here and the post-pass in
         ``DataGenerator._process_referenced_formulas`` so users get the
         same vocabulary regardless of whether their formula reads other
         columns. Per-row seed is captured into the closure so RNG calls
-        within the eval stay deterministic."""
+        within the eval stay deterministic.
+
+        QA-1 M21 (2026-06-01): ``random``/``randint``/``choice`` bind to
+        the passed-in ``rng`` instance instead of module-level
+        ``random``. Pre-fix two formula columns in the same job shared
+        module-global random state and column B's output depended on
+        column A's execution order. With a per-row rng, column B's
+        sequence is a pure function of (column_seed, row_index).
+        Backwards-compatible: when ``rng`` is None, falls back to the
+        module-global pattern for any caller that hasn't migrated yet.
+
+        QA-1 H7 (2026-06-01): ``now``/``today``/``days_from_now``/
+        ``months_from_now``/``years_from_now`` now read
+        ``self._reference_date`` (snapshotted at construction time)
+        instead of ``pd.Timestamp.now()`` per call. The same formula
+        run on two different calendar days against the same generator
+        returns identical output.
+        """
+        _rng = rng if rng is not None else random
+        ref_date = self._reference_date
         return {
-            # RNG (already reseeded by the caller before each row)
-            "random": random.random,
-            "randint": lambda a, b: random.randint(a, b),
-            "choice": lambda lst: random.choice(lst),
+            # RNG bound to the per-row instance (M21).
+            "random": _rng.random,
+            "randint": lambda a, b: _rng.randint(a, b),
+            "choice": lambda lst: _rng.choice(lst),
             # Numeric / string utilities
             "round": round,
             "min": min,
@@ -1156,16 +1235,17 @@ class ColumnGenerator:
             "past_date": self.faker.past_date,
             "date_of_birth": self.faker.date_of_birth,
             "time": lambda: self.faker.time(),
-            "now": lambda fmt="%Y-%m-%d": pd.Timestamp.now().strftime(fmt),
-            "today": lambda fmt="%Y-%m-%d": pd.Timestamp.today().strftime(fmt),
-            "days_from_now": lambda days: (pd.Timestamp.now() + pd.Timedelta(days=days)).strftime(
+            # Wall-clock helpers bound to reference_date (H7).
+            "now": lambda fmt="%Y-%m-%d": ref_date.strftime(fmt),
+            "today": lambda fmt="%Y-%m-%d": ref_date.strftime(fmt),
+            "days_from_now": lambda days: (ref_date + pd.Timedelta(days=days)).strftime(
                 "%Y-%m-%d"
             ),
             "months_from_now": lambda months: (
-                pd.Timestamp.now() + pd.DateOffset(months=months)
+                ref_date + pd.DateOffset(months=months)
             ).strftime("%Y-%m-%d"),
             "years_from_now": lambda years: (
-                pd.Timestamp.now() + pd.DateOffset(years=years)
+                ref_date + pd.DateOffset(years=years)
             ).strftime("%Y-%m-%d"),
             "format_date": lambda date_obj, fmt="%Y-%m-%d": (
                 date_obj.strftime(fmt) if hasattr(date_obj, "strftime") else str(date_obj)

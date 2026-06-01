@@ -329,14 +329,14 @@ def _apply_null_probability(
     null_prob = float(col.get("null_probability") or 0.0)
     if null_prob <= 0:
         return values
-    # V1 calls `_column_seed(column_name)` WITHOUT the column_config for the null
-    # injection (columns.py:183), so the seed is computed against just the name --
-    # different from the generator's full-config seed because synthetic_column_seed
-    # fingerprints strategy/config. Mirror V1's null-injection seed exactly so the
-    # null/non-null row positions are byte-identical under the same seed.
-    null_seed_cfg: dict[str, Any] = {"name": col["name"]}
+    # QA-1 M17 (2026-06-01): pass the FULL column_config to
+    # synthetic_column_seed so two columns with different strategies +
+    # the same name no longer share a null mask. Pre-fix this used
+    # only `{"name": col["name"]}` to mirror V1; V1 has been
+    # updated to also pass column_config (qa-1 step 3) so V1 and V2
+    # stay byte-identical AND the null-mask collision is closed.
     col_seed = synthetic_column_seed(
-        derive_key=derive_key, column_config=null_seed_cfg, fallback_seed=seed
+        derive_key=derive_key, column_config=col, fallback_seed=seed
     )
     out = list(values)
     # Per-row reseed preserves V1 byte-parity (V1 reseeds the global RNG per
@@ -489,6 +489,12 @@ def _reference(
     if min_per > 0 or max_per > 0:
         from decoy_engine.generators.columns import ColumnGenerator
 
+        # QA-1 H6 carry (2026-06-01): pass the column-scoped rng so the
+        # repair's shuffle/choices stay deterministic without touching
+        # module-global random. The local `rng` above is column-scoped
+        # via col_seed.
         cg = ColumnGenerator(seed=seed, derive_key=derive_key)
-        values = cg._apply_cardinality_bounds(values, ref_vals, min_per, max_per)
+        values = cg._apply_cardinality_bounds(
+            values, ref_vals, min_per, max_per, rng=rng,
+        )
     return values
