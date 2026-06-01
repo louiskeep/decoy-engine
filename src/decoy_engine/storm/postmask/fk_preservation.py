@@ -271,9 +271,37 @@ def _check_composite_fk(
             message="no non-null FK tuples in child table; nothing to check.",
         )
 
-    parent_tuples = set(map(tuple, parent_tuples_df.itertuples(index=False, name=None)))
-    child_tuple_iter = child_tuples_df.itertuples(index=False, name=None)
-    orphan_count = sum(1 for t in child_tuple_iter if tuple(t) not in parent_tuples)
+    # QA-4 F3 (2026-06-01): MultiIndex.isin replaces the
+    # itertuples + set-membership loop. Pre-fix the pure-Python
+    # iteration scaled at O(rows) of Python-level work per child
+    # tuple; for child tables >100k rows this dominated the post-mask
+    # report time. MultiIndex.isin runs vectorized in pandas/numpy.
+    # QA-4 F8 (2026-06-01): size-cap warning. A 10M-row UUID-keyed
+    # parent table builds a ~900MB Python set under the old itertuples
+    # path. MultiIndex.isin is also O(rows) memory; we cap the parent
+    # at 10M rows and emit a warning rather than OOM the worker.
+    _PARENT_TUPLE_CAP = 10_000_000
+    if len(parent_tuples_df) > _PARENT_TUPLE_CAP:
+        return FKPreservationFinding(
+            parent_table=parent_table,
+            parent_column=parent_col_label,
+            child_table=child_table,
+            child_column=child_col_label,
+            severity="warning",
+            orphan_count=0,
+            total_child_rows=total_child,
+            orphan_rate=0.0,
+            namespace=namespace,
+            message=(
+                f"parent table {parent_table!r} has {len(parent_tuples_df)} rows, "
+                f"above the {_PARENT_TUPLE_CAP}-row cap for composite FK orphan "
+                "detection. Skipping orphan count; use a sample-based audit "
+                "for tables this large."
+            ),
+        )
+    parent_mi = pd.MultiIndex.from_frame(parent_tuples_df)
+    child_mi = pd.MultiIndex.from_frame(child_tuples_df)
+    orphan_count = int((~child_mi.isin(parent_mi)).sum())
     orphan_rate = orphan_count / total_child
 
     # Same severity rules as _check_one_fk.

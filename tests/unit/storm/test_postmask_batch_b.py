@@ -163,6 +163,38 @@ class TestPolicyValidationComparisonFailure:
         assert len(findings) == 1
         assert findings[0].severity == "info"
 
+    def test_comparison_exception_actually_emits_error_severity(self, monkeypatch):
+        """QA-4 F4 (2026-06-01): the M11 regression cell above admits
+        it skips the exception path. This cell actually exercises it:
+        monkeypatch pd.Series.equals to raise; assert the finding
+        comes back with severity='error', not 'info'."""
+        src = pd.DataFrame({"col_a": [1, 2, 3]})
+        out = pd.DataFrame({"col_a": [1, 2, 3]})
+
+        # Monkeypatch the equals call so the comparison block raises.
+        original_equals = pd.Series.equals
+
+        def _exploding_equals(self, other):
+            raise TypeError("simulated ArrowDtype mismatch")
+
+        monkeypatch.setattr(pd.Series, "equals", _exploding_equals)
+
+        cfg = {
+            "tables": [{
+                "name": "t",
+                "columns": [{"name": "col_a", "strategy": "hash"}],
+            }]
+        }
+        findings = check_policy_validation({"t": src}, {"t": out}, cfg)
+        # Restore for any test isolation issues.
+        monkeypatch.setattr(pd.Series, "equals", original_equals)
+
+        assert len(findings) == 1
+        assert findings[0].severity == "error", (
+            "comparison exception must surface as error, not silently "
+            "fall through to info"
+        )
+
     def test_row_count_mismatch_emits_warning(self):
         """M13: dropped rows are no longer invisible."""
         src = pd.DataFrame({"col_a": [1, 2, 3, 4, 5]})
