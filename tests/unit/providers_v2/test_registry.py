@@ -26,12 +26,21 @@ class TestDefaultRegistry:
     def test_has_unknown_provider_false(self) -> None:
         assert get_default_registry().has("not_a_real_provider") is False
 
-    def test_known_providers_returns_frozenset_of_26(self) -> None:
-        """19 Faker + 5 DecoyNative (S6) + 2 composite (S8) = 26. Mimesis adds
-        more only when installed AND adopted (empty by default)."""
+    def test_known_providers_returns_frozenset_of_34(self) -> None:
+        """19 Faker + 5 DecoyNative (S6) + 2 composite (S8) + 4 MG-1 S4
+        domain providers (PAN/ICD-10/IBAN/CUSIP) + 4 MG-4 composites
+        (person/address/provider/custom) = 34. Mimesis adds more only
+        when installed AND adopted (empty by default).
+
+        Drift guard: the canonical canary cell is
+        `test_documented_allowlist_matches_registry` (MG-8 Step 5);
+        this count cell remains as a fast sanity check + as a load-
+        bearing assertion for the per-fixture stub tests that key off
+        an exact count.
+        """
         known = get_default_registry().known_providers()
         assert isinstance(known, frozenset)
-        assert len(known) == 26
+        assert len(known) == 34
 
     def test_get_adapter_for_unknown_raises(self) -> None:
         with pytest.raises(ProviderError) as excinfo:
@@ -41,6 +50,83 @@ class TestDefaultRegistry:
     def test_get_capabilities_for_known_returns_capmat(self) -> None:
         cap = get_default_registry().get_capabilities("person_email")
         assert cap.provider == "person_email"
+
+
+# MG-8 Step 5 (2026-05-31): single canonical canary cell.
+#
+# The 4 downstream allowlist tests (this file's per-count cell +
+# `test_capability_matrix.py::test_full_registry_has_34_entries` +
+# `mimesis/test_optional_dep.py::test_default_registry_has_34_providers` +
+# `plan/test_registry_stub.py::test_registry_contains_exactly_documented_names`)
+# are load-bearing on an exact count or an exact set, but they fail
+# AFTER the contract drifts. This cell catches the drift at the source
+# by diff-checking the documented allowlist against the live registry.
+# A new strategy or provider registration MUST update DOCUMENTED_PROVIDERS
+# here AND the 4 downstream cells in lockstep.
+
+_DOCUMENTED_PROVIDERS: frozenset[str] = frozenset(
+    {
+        # S1 stub names (20 preserved verbatim).
+        "synthetic_ssn",
+        "synthetic_ein",
+        "synthetic_account_number",
+        "person_name",
+        "person_first_name",
+        "person_last_name",
+        "person_email",
+        "person_phone",
+        "person_dob",
+        "address_street",
+        "address_city",
+        "address_state",
+        "address_zip",
+        "address_full",
+        "synthetic_member_id",
+        "synthetic_plan_id",
+        "lorem_text",
+        "uuid",
+        "random_int_range",
+        "random_choice",
+        # S4 additions (4 per spec §6).
+        "synthetic_npi",
+        "synthetic_ndc",
+        "synthetic_mrn",
+        "person_full_name",
+        # S8 composite generators (2).
+        "composite_name_email",
+        "composite_city_state_zip",
+        # MG-1 S4 domain providers (4).
+        "synthetic_pan",
+        "synthetic_icd10",
+        "synthetic_iban",
+        "synthetic_cusip",
+        # MG-4 composites (4).
+        "composite_person",
+        "composite_address",
+        "composite_provider",
+        "composite_custom",
+    }
+)
+
+
+def test_documented_allowlist_matches_registry() -> None:
+    """MG-8 Step 5 canary cell.
+
+    Every registered provider must have a documented-name entry.
+    A new strategy or provider registration must be added to
+    `_DOCUMENTED_PROVIDERS` in lockstep. This cell catches the drift
+    at the source instead of letting it cascade through 4 downstream
+    fixture tests.
+    """
+    actual = get_default_registry().known_providers()
+    missing_from_docs = actual - _DOCUMENTED_PROVIDERS
+    stale_in_docs = _DOCUMENTED_PROVIDERS - actual
+    assert not missing_from_docs, (
+        f"registry has providers without doc entries: {sorted(missing_from_docs)}"
+    )
+    assert not stale_in_docs, (
+        f"doc entries point to non-existent providers: {sorted(stale_in_docs)}"
+    )
 
 
 class _FakeAdapter:

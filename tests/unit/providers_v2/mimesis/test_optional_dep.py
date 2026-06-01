@@ -17,9 +17,10 @@ from decoy_engine.providers_v2 import get_default_registry
 
 
 class TestDefaultRegistryShape:
-    def test_default_registry_has_26_providers(self) -> None:
-        # 19 Faker + 5 DecoyNative (S6) + 2 composite (S8) = 26; 0 mimesis.
-        assert len(get_default_registry().known_providers()) == 26
+    def test_default_registry_has_34_providers(self) -> None:
+        # 19 Faker + 5 DecoyNative (S6) + 2 composite (S8) + 4 MG-1 S4
+        # domain providers + 4 MG-4 composites = 34; 0 mimesis.
+        assert len(get_default_registry().known_providers()) == 34
 
     def test_no_provider_is_mimesis_bound_by_default(self) -> None:
         reg = get_default_registry()
@@ -31,7 +32,7 @@ class TestDefaultRegistryShape:
 # Subprocess that simulates Mimesis being absent via a meta-path finder that
 # raises ModuleNotFoundError for `mimesis`, then checks (a) importing the
 # mimesis package raises the documented install message and (b) the default
-# registry still builds to 26 providers (incl. 2 composites) without importing
+# registry still builds to 34 providers (incl. 6 composites) without importing
 # the mimesis package.
 _ABSENT_SCRIPT = """
 import sys, json
@@ -71,5 +72,6 @@ class TestMimesisAbsent:
         result = json.loads(proc.stdout.strip())
         assert result["import_raised"] is True, "mimesis package import should raise when absent"
         assert result["has_install_msg"] is True, "ImportError should name the [mimesis] extra"
-        # 26 = 19 Faker + 5 DecoyNative + 2 composite; mimesis adds 0 when absent.
-        assert result["registry_size"] == 26, "registry stays 26 (no mimesis) when absent"
+        # 34 = 19 Faker + 5 DecoyNative + 2 composite + 4 MG-1 S4 + 4 MG-4 composites;
+        # mimesis adds 0 when absent.
+        assert result["registry_size"] == 34, "registry stays 34 (no mimesis) when absent"
