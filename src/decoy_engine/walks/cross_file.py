@@ -212,13 +212,23 @@ def _pk_table_for_id_column(column_name: str, table_names: set[str]) -> str | No
         return None
     candidates = {stem, stem + "s"}
 
+    # QA walks/generators F2 (2026-06-01, CRITICAL determinism):
+    # iterate in sorted order. `table_names` arrives as a set[str],
+    # whose iteration order depends on PYTHONHASHSEED (re-randomised on
+    # every process start unless pinned). When two tables both match
+    # the stem (e.g. `customers` + `customer_archive`), whichever the
+    # set yielded first won; that varied across processes + restarts
+    # and corrupted the `run_cross_file_walk` result + hazard UI.
+    # Centralising the sort here means callers can pass any iterable.
+    sorted_tables = sorted(table_names)
+
     # Exact match first.
-    for t in table_names:
+    for t in sorted_tables:
         if t.lower() in candidates:
             return t
     # Suffix match: a table named like ``acme_csv_customers`` carries the
     # ``customers`` (or ``customer``) stem on its trailing segment.
-    for t in table_names:
+    for t in sorted_tables:
         lower = t.lower()
         if any(lower.endswith(c) or lower.endswith("_" + c) for c in candidates):
             return t

@@ -373,3 +373,73 @@ def test_profiles_round_trip_through_dict_unchanged():
     # One table, zero edges (no FK pairing), summary still computed.
     assert result.snapshot_summary["table_count"] == 1
     assert result.edges == ()
+
+
+# QA walks/generators F2 (2026-06-01, CRITICAL determinism) ───────────────
+
+
+def test_walks_gen_f2_pk_tie_break_stable_under_set_iteration_order():
+    """F2 contract: when two tables both match the stem heuristic
+    (`customers` + `customer_archive`), the tie-break must pick the
+    same winner on every process. Pre-fix the loser-vs-winner choice
+    came from set[str] iteration, which depends on PYTHONHASHSEED and
+    re-randomises on every process start.
+
+    The internal helper sorts its input before iterating; this cell
+    pins the public-surface stability by simulating two equally
+    qualified PK owners and asserting the resolution is the same
+    string on every call.
+    """
+    snap = storm_profiles_to_snapshot(
+        [
+            _profile(
+                "customers.csv",
+                [
+                    _fs("customer_id", is_likely_unique=True, unique_rate=1.0),
+                ],
+            ),
+            _profile(
+                "customer_archive.csv",
+                [
+                    _fs("customer_id", is_likely_unique=True, unique_rate=1.0),
+                ],
+            ),
+            _profile(
+                "orders.csv",
+                [
+                    _fs("order_id", is_likely_unique=True, unique_rate=1.0),
+                    _fs("customer_id"),
+                ],
+            ),
+        ]
+    )
+    edges_a = infer_cross_file_edges(snap)
+    edges_b = infer_cross_file_edges(snap)
+    edges_c = infer_cross_file_edges(snap)
+    assert edges_a == edges_b == edges_c, (
+        "QA walks/generators F2: tie-break must yield identical edges "
+        "across calls within the same process. Drift indicates set "
+        "iteration order leaked through."
+    )
+
+
+def test_walks_gen_f2_pk_helper_iterates_in_sorted_order():
+    """Direct unit-level pin on the private helper. The function
+    accepts a set or any iterable; output must be identical regardless
+    of construction order."""
+    from decoy_engine.walks.cross_file import _pk_table_for_id_column
+
+    a = _pk_table_for_id_column(
+        "customer_id", {"customer_archive", "customers", "zeta"}
+    )
+    b = _pk_table_for_id_column(
+        "customer_id", {"zeta", "customers", "customer_archive"}
+    )
+    c = _pk_table_for_id_column(
+        "customer_id", ["zeta", "customer_archive", "customers"]
+    )
+    assert a == b == c, (
+        f"QA walks/generators F2: _pk_table_for_id_column returned "
+        f"{a!r} vs {b!r} vs {c!r}; iteration order leaked through."
+    )
+    assert a == "customers"
