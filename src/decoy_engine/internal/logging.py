@@ -4,6 +4,7 @@ Logging utilities for the decoy_engine package.
 
 import logging
 import os
+import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
@@ -138,6 +139,15 @@ def _configure_logger(logger, config: dict[str, Any]):
 class ProgressLogger:
     """
     Helper class for logging progress with percentage and ETA.
+
+    QA-internal-synth-providers F13 (2026-06-01, NIT design):
+    not thread-safe. `self.current += increment` is read-modify-write
+    against a shared mutable counter; if callers ever drive
+    ProgressLogger from multiple threads (the masking pipeline may
+    parallelise per-column work in the future), updates can be
+    silently lost. Today every in-tree caller is single-threaded so
+    the lock is deferred; revisit before any multi-threaded driver
+    is wired in.
     """
 
     def __init__(self, logger, total: int, message: str = "Progress"):
@@ -159,8 +169,6 @@ class ProgressLogger:
         """
         Start the progress tracking
         """
-        import time
-
         self.start_time = time.time()
         self.logger.info(f"{self.message}: Starting processing of {self.total:,} items")
 
@@ -171,8 +179,8 @@ class ProgressLogger:
         Args:
             increment: Number of items processed since last update
         """
-        import time
-
+        # Note: self.current += increment is read-modify-write; see
+        # class docstring re: thread-safety.
         self.current += increment
 
         if self.total > 0:
@@ -221,8 +229,6 @@ class ProgressLogger:
         """
         Mark the progress as complete
         """
-        import time
-
         elapsed_time = time.time() - self.start_time if self.start_time else 0
 
         if elapsed_time > 0:

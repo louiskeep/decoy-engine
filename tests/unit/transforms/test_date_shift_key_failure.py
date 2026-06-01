@@ -125,3 +125,46 @@ class TestQaInternalF5NullRowsSkipHmac:
         assert len(result) == 4
         for v in result:
             assert v is None or pd.isna(v)
+
+
+# QA-internal-synth-providers F9 (2026-06-01, LOW correctness) ─────────
+
+
+class TestQaInternalF9ValidateRuleRangeBounds:
+    """F9 contract: validate_rule rejects non-int min_days / max_days
+    with a clear ValueError that names the offending field. Pre-fix
+    a YAML typo ('min_days: "abc"') passed validate_rule + later
+    raised a bare ValueError from int('abc') deep inside apply()."""
+
+    def test_validate_rule_rejects_non_int_min_days(self):
+        from decoy_engine.transforms.date_shift import DateShiftStrategy
+
+        strategy = DateShiftStrategy(seed=42, derive_key=None)
+        with pytest.raises(ValueError, match=r"min_days.*integer"):
+            strategy.validate_rule({"column": "dob", "min_days": "abc"})
+
+    def test_validate_rule_rejects_non_int_max_days(self):
+        from decoy_engine.transforms.date_shift import DateShiftStrategy
+
+        strategy = DateShiftStrategy(seed=42, derive_key=None)
+        with pytest.raises(ValueError, match=r"max_days.*integer"):
+            strategy.validate_rule({"column": "dob", "min_days": -30, "max_days": "xyz"})
+
+    def test_validate_rule_accepts_valid_int_or_int_coercible(self):
+        """Accept ints + int-coercible strings ('30') because YAML
+        coerces some quoted numbers and we want to be forgiving."""
+        from decoy_engine.transforms.date_shift import DateShiftStrategy
+
+        strategy = DateShiftStrategy(seed=42, derive_key=None)
+        # Plain int.
+        strategy.validate_rule({"column": "dob", "min_days": -30, "max_days": 30})
+        # Int-coercible string.
+        strategy.validate_rule({"column": "dob", "min_days": "-30", "max_days": "30"})
+
+    def test_validate_rule_accepts_omitted_bounds(self):
+        """min_days / max_days are optional; validate_rule should
+        accept rules without them."""
+        from decoy_engine.transforms.date_shift import DateShiftStrategy
+
+        strategy = DateShiftStrategy(seed=42, derive_key=None)
+        strategy.validate_rule({"column": "dob"})
