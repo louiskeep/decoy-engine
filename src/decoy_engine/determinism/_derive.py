@@ -87,6 +87,73 @@ class DeterminismError(Exception):
         super().__init__(f"{code}: {message}" if message else code)
 
 
+@dataclass(frozen=True)
+class DeriveContext:
+    """Pre-computed per-(seed, namespace) state. Amortises HKDF cost.
+
+    QA-10 F4 (2026-06-01): the scalar `derive(seed, namespace, source)`
+    function recomputes the HKDF key on every call. `hmac_key` depends
+    only on `(seed, namespace)` -- constant for every row in a column.
+    At 1M rows per column the wasted HKDF work is two HMAC-SHA256
+    invocations per row (~0.5s/column on a modern core; ~25s for a
+    50-column masked table).
+
+    DeriveContext pre-computes the key once via
+    `DeriveContext.for_column(seed, namespace)` and exposes
+    `ctx.derive_source(namespace, source)` for the per-row HMAC.
+    Strategy adapters that process a column instantiate the context
+    once + call derive_source per row.
+
+    The scalar `derive(...)` function stays unchanged for back-compat.
+
+    Output is byte-identical to `derive(seed, namespace, source)` for
+    the same inputs.
+    """
+
+    _hmac_key: bytes
+
+    @classmethod
+    def for_column(cls, seed: bytes, namespace: str) -> "DeriveContext":
+        """Build a context for one (seed, namespace) pair.
+
+        Validates seed length + namespace emptiness the same way the
+        scalar `derive(...)` does. Construction cost is the same as
+        one HKDF-SHA256 call (2x HMAC-SHA256 invocations).
+        """
+        if len(seed) != _SEED_LENGTH:
+            raise DeterminismError(
+                code="seed_wrong_length",
+                message=f"seed must be exactly {_SEED_LENGTH} bytes; got {len(seed)}",
+            )
+        if not namespace:
+            raise DeterminismError(
+                code="namespace_empty", message="namespace must be non-empty"
+            )
+        key = hkdf_sha256(
+            ikm=seed, salt=_SALT, info=namespace.encode("utf-8"), length=32
+        )
+        return cls(_hmac_key=key)
+
+    def derive_source(self, namespace: str, source: bytes) -> bytes:
+        """Per-row HMAC. Same output as `derive(seed, namespace, source)`
+        for the same (seed, namespace) that built this context.
+
+        The `namespace` arg is required (not derived from the context)
+        because the HMAC input includes it in length-prefixed form;
+        callers MUST pass the same namespace used in `for_column` or
+        the output diverges from `derive(...)`.
+        """
+        namespace_bytes = namespace.encode("utf-8")
+        hmac_input = (
+            bytes([SEED_PROTOCOL_VERSION])
+            + len(namespace_bytes).to_bytes(4, "big")
+            + namespace_bytes
+            + len(source).to_bytes(4, "big")
+            + source
+        )
+        return hmac.new(self._hmac_key, hmac_input, hashlib.sha256).digest()
+
+
 def derive(seed: bytes, namespace: str, source: bytes) -> bytes:
     """Return the 32-byte HMAC-SHA256 output for `(seed, namespace, source)`.
 

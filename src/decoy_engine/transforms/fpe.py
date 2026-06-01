@@ -254,9 +254,18 @@ class FPEStrategy(BaseMaskingStrategy):
             return s
 
         if n == 1:
-            # Degenerate single-character case: keyed modular shift
+            # Degenerate single-character case: keyed modular shift.
+            # QA-10 F2 (2026-06-01): F depends on (key, tweak) only,
+            # NOT on the source character. Pre-fix `msg` included
+            # `s.encode()` which made F vary per character; the output
+            # `charset[(idx + F_i) % r]` could then collide for distinct
+            # source characters (probability ~1/r per key). Post-fix F
+            # is the same for every character in the charset, making the
+            # function a uniform rotation of the alphabet, which is
+            # trivially bijective. Format-preserving deduplication is
+            # restored for single-character FK columns.
             idx = charset.index(s[0])
-            msg = b"fpe-single\xff" + tweak + b"\xff" + s.encode()
+            msg = b"fpe-single\xff" + tweak
             F = int.from_bytes(hmac.new(key, msg, hashlib.sha256).digest(), "big")
             return charset[(idx + F) % len(charset)]
 

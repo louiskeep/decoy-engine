@@ -79,3 +79,56 @@ class TestFpe:
         with pytest.raises(ExecutionError) as exc:
             FpeStrategyHandler().run(df, "acct", _fpe_col(namespace=None), _ctx())
         assert exc.value.code == "fpe_requires_namespace"
+
+
+class TestQa10F2SingleCharBijection:
+    """QA-10 F2 (2026-06-01, HIGH): the single-character _fpe_pure
+    path is a bijection. Pre-fix `s.encode()` was part of the HMAC
+    input which made F vary per source character; the modular shift
+    `charset[(idx + F_i) % r]` could then collide for distinct source
+    characters (probability ~1/r per random key). Post-fix F depends
+    only on (key, tweak); the function is a uniform rotation of the
+    alphabet (trivially bijective)."""
+
+    def test_single_char_all_digits_distinct(self):
+        from decoy_engine.transforms.fpe import FPEStrategy
+
+        strategy = FPEStrategy(seed=42)
+        charset = "0123456789"
+        key = b"\x00" * 32
+        tweak = b"col"
+        outputs = [
+            strategy._fpe_pure(d, key, charset, tweak, False) for d in charset
+        ]
+        assert len(set(outputs)) == 10, (
+            f"QA-10 F2 single-char bijection violated: {outputs}"
+        )
+        for o in outputs:
+            assert o in charset
+
+    def test_single_char_alphanumeric_charset_bijection(self):
+        from decoy_engine.transforms.fpe import FPEStrategy
+
+        strategy = FPEStrategy(seed=42)
+        charset = "abcdefghijklmnopqrstuvwxyz"
+        key = b"\x42" * 32
+        tweak = b"name-col"
+        outputs = [
+            strategy._fpe_pure(c, key, charset, tweak, False) for c in charset
+        ]
+        assert len(set(outputs)) == 26, (
+            f"QA-10 F2 single-char bijection violated on a-z: {outputs}"
+        )
+
+    def test_single_char_deterministic_same_key_same_output(self):
+        """Bijection is a deterministic rotation; same key + tweak +
+        char must always produce the same output."""
+        from decoy_engine.transforms.fpe import FPEStrategy
+
+        strategy = FPEStrategy(seed=42)
+        charset = "0123456789"
+        key = b"\x00" * 32
+        tweak = b"col"
+        out_a = strategy._fpe_pure("5", key, charset, tweak, False)
+        out_b = strategy._fpe_pure("5", key, charset, tweak, False)
+        assert out_a == out_b
