@@ -143,12 +143,12 @@ class TestQA8F3OrphanPolicyDuplicate:
             "relationships": [
                 {
                     "parent": {"table": "parent", "columns": ["id"]},
-                    "child": {"table": "child", "columns": ["fk"]},
+                    "children": [{"table": "child", "columns": ["fk"]}],
                     "orphan_policy": "preserve",
                 },
                 {
                     "parent": {"table": "parent", "columns": ["id"]},
-                    "child": {"table": "child", "columns": ["fk"]},
+                    "children": [{"table": "child", "columns": ["fk"]}],
                     "orphan_policy": "fail",  # different policy on same key
                 },
             ],
@@ -164,12 +164,12 @@ class TestQA8F3OrphanPolicyDuplicate:
             "relationships": [
                 {
                     "parent": {"table": "parent", "columns": ["id"]},
-                    "child": {"table": "child", "columns": ["fk"]},
+                    "children": [{"table": "child", "columns": ["fk"]}],
                     "orphan_policy": "preserve",
                 },
                 {
                     "parent": {"table": "parent", "columns": ["id"]},
-                    "child": {"table": "child", "columns": ["fk"]},
+                    "children": [{"table": "child", "columns": ["fk"]}],
                     "orphan_policy": "preserve",  # same policy
                 },
             ],

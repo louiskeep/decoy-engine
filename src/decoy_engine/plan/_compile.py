@@ -371,16 +371,9 @@ def _build_relationships(
                     and all(isinstance(c, str) for c in parent_cols)
                 ):
                     continue
-                # Accept both `child:` (singular dict) and `children:`
-                # (list of dicts) schemas; same fallback contract as
-                # check_orphan_fk_policy_completeness.
-                children: list[Any]
-                singular = entry.get("child")
-                if isinstance(singular, dict):
-                    children = [singular]
-                else:
-                    plural = entry.get("children", [])
-                    children = plural if isinstance(plural, list) else []
+                children = entry.get("children", [])
+                if not isinstance(children, list):
+                    continue
                 for child in children:
                     if not isinstance(child, dict):
                         continue

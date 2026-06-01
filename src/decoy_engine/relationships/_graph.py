@@ -373,20 +373,15 @@ def check_orphan_fk_policy_completeness(
                         "four valid values: 'preserve', 'remap', 'warn', 'fail'."
                     ),
                 )
-            # Read children to build per-(parent, child) keys. Two
-            # schema shapes are accepted (both historical):
-            #   - `"child": {"table": ..., "columns": [...]}`     (singular)
-            #   - `"children": [{"table": ..., ...}, ...]`        (plural)
-            # A single config entry may declare multiple children that
-            # share one policy; each child becomes its own key.
-            children_raw: list[Any]
-            singular = entry.get("child")
-            if isinstance(singular, dict):
-                children_raw = [singular]
-            else:
-                plural = entry.get("children", [])
-                children_raw = plural if isinstance(plural, list) else []
-            for child in children_raw:
+            # Read the children list to build per-(parent, child) keys.
+            # The canonical config schema declares `children:` as a list
+            # of child ends (enforced by config/_relationships.py:Field
+            # min_length=1 with extra="forbid"); each child becomes its
+            # own key, optionally sharing a policy with siblings.
+            children = entry.get("children", [])
+            if not isinstance(children, list):
+                continue
+            for child in children:
                 if not isinstance(child, dict):
                     continue
                 child_table = child.get("table")
