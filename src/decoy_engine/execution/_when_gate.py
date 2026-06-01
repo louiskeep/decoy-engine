@@ -82,12 +82,18 @@ def _eval_predicate(
             ),
         ) from exc
     except Exception as exc:
+        # L2 close (Dennis MG-3 gate, 2026-05-31): keep the original
+        # exception chained via `from exc` so engineers can recover the
+        # numexpr-internal type from the traceback, but only surface
+        # the typed code + the offending expression to the operator-
+        # facing message. The internal class name (e.g.
+        # NumExpr2.NumExprError) leaks implementation detail.
         raise StrategyError(
             code="when_expression_error",
             strategy=strategy,
             message=(
-                f"when expression {expression!r} failed: "
-                f"{type(exc).__name__}: {exc}"
+                f"when expression {expression!r} failed to evaluate; "
+                "check column names + comparison syntax"
             ),
         ) from exc
 

@@ -161,34 +161,90 @@ class TestErrorHandling:
 
 
 class TestCompileTimeRejection:
+    """Dennis MG-3 gate M1 close (2026-05-31): the original cell
+    reimplemented the validator inline (circular). This cell now
+    drives the real `compile_plan` path with a minimal Profile +
+    config dict and asserts the typed error code surfaces."""
+
     def test_when_combined_with_coherent_with_rejected_at_compile(self):
-        # Compile-side rejection is in plan/_compile.py; this cell
-        # locks the typed error code reaches the operator. End-to-end
-        # coverage rides in the integration suite.
-        from decoy_engine.plan._compile import PlanCompileError
+        from datetime import datetime
 
-        with pytest.raises(PlanCompileError) as exc:
-            _check_when_with_coherent_raises_directly()
-
-        assert exc.value.code == "when_with_coherent_with_unsupported"
-
-
-def _check_when_with_coherent_raises_directly():
-    """Direct exercise of the validator path. The compile-time path
-    in `plan/_compile.py` raises `PlanCompileError` with the
-    when_with_coherent_with_unsupported code when a column carries
-    both `when` and `coherent_with`. We mirror the small fragment of
-    that logic here rather than spinning up a full pipeline config
-    to keep the unit cell focused. The plan-compile integration is
-    locked separately in tests/integration/test_when_e2e.py.
-    """
-    from decoy_engine.plan._compile import PlanCompileError
-
-    coherent_with = ("other_col",)
-    when = "flag == 1"
-    if when is not None and coherent_with:
-        raise PlanCompileError(
-            code="when_with_coherent_with_unsupported",
-            path="tables.t.columns.c.when",
-            message="forbidden combo",
+        from decoy_engine.plan import PlanCompileError, compile_plan
+        from decoy_engine.profile import (
+            ColumnProfile,
+            Profile,
+            TableProfile,
         )
+
+        # Two columns, both opting into coherent_with each other AND
+        # one carries a when expression. The compile path must reject
+        # with when_with_coherent_with_unsupported BEFORE the seed
+        # envelope materializes.
+        profile = Profile(
+            schema_version=1,
+            tables=(
+                TableProfile(
+                    name="t",
+                    row_count=10,
+                    columns=(
+                        ColumnProfile(
+                            name="a",
+                            dtype="object",
+                            row_count=10,
+                            null_count=0,
+                            distinct_count=10,
+                            sampled=False,
+                            is_candidate_key_sampled=False,
+                            declared_pk=False,
+                            is_fk=False,
+                            fk_target=None,
+                            pii_class=None,
+                        ),
+                        ColumnProfile(
+                            name="b",
+                            dtype="object",
+                            row_count=10,
+                            null_count=0,
+                            distinct_count=10,
+                            sampled=False,
+                            is_candidate_key_sampled=False,
+                            declared_pk=False,
+                            is_fk=False,
+                            fk_target=None,
+                            pii_class=None,
+                        ),
+                    ),
+                ),
+            ),
+            relationships=(),
+            profiled_at=datetime(2026, 5, 31, 0, 0, 0),
+            decoy_engine_version="0.1.0",
+        )
+        config = {
+            "global_settings": {"seed": 42},
+            "tables": [
+                {
+                    "name": "t",
+                    "columns": [
+                        {
+                            "name": "a",
+                            "strategy": "redact",
+                            "cardinality_mode": "reuse",
+                            "when": "flag == 1",
+                            "coherent_with": ["b"],
+                        },
+                        {
+                            "name": "b",
+                            "strategy": "redact",
+                            "cardinality_mode": "reuse",
+                            "coherent_with": ["a"],
+                        },
+                    ],
+                }
+            ],
+            "relationships": [],
+            "namespaces": {},
+        }
+        with pytest.raises(PlanCompileError) as exc:
+            compile_plan(config, profile, decoy_engine_version="0.1.0")
+        assert exc.value.code == "when_with_coherent_with_unsupported"
