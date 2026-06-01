@@ -80,6 +80,26 @@ class TestCdfBuilder:
         with pytest.raises(StrategyError, match="nonpositive"):
             _build_cdf([0.0, 0.0, 0.0])
 
+    def test_weight_below_resolution_raises(self):
+        """QA-3 F9 (2026-05-31): a weight that does not move the CDF
+        threshold (because it's tinier than the float-precision step
+        of running / total * resolution) used to silently drop the
+        category. Now raises so the operator knows their weight is
+        too small. In practice this only happens at extreme values
+        (~1e-20) due to floating-point precision of the float64
+        running sum; the original finding overstated the threshold
+        at 1e-6."""
+        with pytest.raises(StrategyError, match="below_resolution|below the CDF"):
+            _build_cdf([1.0, 1e-20, 1.0])
+
+    def test_weight_just_above_resolution_passes(self):
+        """A weight at ~1e-6 of the total moves the CDF by one slot
+        and passes the new guard. Cited in the F9 audit but not
+        actually broken: float64 precision means 1e-6 still moves the
+        threshold."""
+        cdf = _build_cdf([1.0, 2.0e-6, 1.0])
+        assert cdf[1] > cdf[0]  # middle category has at least one slot
+
 
 # ── V1 byte identity (no weights) ─────────────────────────────────
 
