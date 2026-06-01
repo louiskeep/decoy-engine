@@ -11,7 +11,7 @@ The envelope (per spec §2):
     HMAC_key   = HKDF-SHA256(IKM=seed, salt=b"decoy-engine/determinism/v1",
                              info=namespace.encode("utf-8"), length=32)
     HMAC_input = (
-        bytes([SEED_PROTOCOL_VERSION])               # 1 byte; 0x03 today
+        bytes([SEED_PROTOCOL_VERSION])               # 1 byte; 0x04 today
         + len(namespace).to_bytes(4, "big") + namespace.encode("utf-8")
         + len(source).to_bytes(4, "big") + source
     )
@@ -68,7 +68,16 @@ from decoy_engine.determinism._hkdf import hkdf_sha256
 # random produce different floats for the same integer seed. This
 # changes byte-output for any pipeline with null_probability > 0.
 # Pre-GA, no manifests to break (PO Q-F3=b 2026-06-01 confirmed).
-SEED_PROTOCOL_VERSION: int = 3
+#
+# Formula-hash migration (2026-06-01, PO confirmed): bump to v4. The
+# formula sandbox `hash()` function swapped from the legacy
+# deterministic_hash (SHA256(value + str(seed))) to HMAC-SHA256
+# keyed by the per-row local_seed (_formula_hash_keyed in
+# generators/columns.py). The per-row output bytes change for any
+# pipeline that uses `hash(col)` inside a formula column. The
+# legacy primitive is still callable via the public surface but
+# emits a DeprecationWarning (QA-internal F12, 2026-06-01).
+SEED_PROTOCOL_VERSION: int = 4
 
 _SALT = b"decoy-engine/determinism/v1"
 _SEED_LENGTH = 8  # exactly 8 bytes; raises on any other length
@@ -186,7 +195,7 @@ def derive(seed: bytes, namespace: str, source: bytes) -> bytes:
             ints, etc.
 
     Returns:
-        32 bytes of stable derived material under `SEED_PROTOCOL_VERSION=3`.
+        32 bytes of stable derived material under `SEED_PROTOCOL_VERSION=4`.
 
     Raises:
         DeterminismError on invalid inputs (seed wrong length, empty namespace).

@@ -92,15 +92,16 @@ class TestDeriveValidation:
 
 
 class TestSeedProtocolVersion:
-    def test_constant_is_three(self) -> None:
+    def test_constant_is_four(self) -> None:
         """S3 shipped SEED_PROTOCOL_VERSION = 1; F-series corrections
-        bumped to 2 (coordinated Faker-seeding + canonicalize-integer
-        fixes). QA walks/generators F3 (2026-06-01, PO Q-F3=b) bumps
-        to 3: null-injection in generators/columns.py swapped from
-        per-row Python random.Random reseeding to one-shot
-        numpy.random.default_rng vectorised draw. The null PATTERN
-        changes byte-for-byte while the null FRACTION is preserved."""
-        assert SEED_PROTOCOL_VERSION == 3
+        bumped to 2; QA walks/gen F3 vectorised null-injection bumped
+        to 3 (2026-06-01); formula-hash migration to keyed primitive
+        bumps to 4 (2026-06-01): the formula sandbox `hash()` function
+        swapped from the legacy deterministic_hash SHA256(value+seed)
+        to HMAC-SHA256 keyed by the per-row local_seed, changing the
+        per-row output bytes for any pipeline using `hash(col)` in a
+        formula column."""
+        assert SEED_PROTOCOL_VERSION == 4
 
 
 class TestDeriveIndex:

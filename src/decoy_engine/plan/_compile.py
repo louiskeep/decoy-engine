@@ -40,8 +40,10 @@ from typing import Any
 # (coordinated Faker-seeding + canonicalize-integer fixes); QA walks/gen
 # F3 (2026-06-01, PO Q-F3=b) bumped to 3 for the vectorised null-injection
 # RNG-family swap (numpy.default_rng vs Python random.Random change the
-# null pattern byte-for-byte). Bumping requires a release-notes line per
-# done-definition.md.
+# null pattern byte-for-byte); formula-hash migration (2026-06-01) bumped
+# to 4: the formula sandbox `hash()` function swapped from legacy
+# deterministic_hash to keyed HMAC-SHA256 via _formula_hash_keyed. Bumping
+# requires a release-notes line per done-definition.md.
 from decoy_engine.determinism import SEED_PROTOCOL_VERSION
 from decoy_engine.execution._distribution_behavior import distribution_behavior_for
 from decoy_engine.execution._technique_class import technique_class_for
