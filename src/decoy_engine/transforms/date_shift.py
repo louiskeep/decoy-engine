@@ -251,3 +251,19 @@ class DateShiftStrategy(BaseMaskingStrategy):
     def validate_rule(self, rule: dict[str, Any]) -> None:
         if "column" not in rule:
             raise ValueError("date_shift rule is missing 'column' field")
+        # QA-internal-synth-providers F9 (2026-06-01, LOW correctness):
+        # range bounds must be coercible to int. Pre-fix a YAML typo
+        # (`min_days: "abc"`) passed validate_rule + raised a bare
+        # ValueError from int("abc") inside apply, with the traceback
+        # pointing into transforms internals rather than at the bad
+        # rule field.
+        for key in ("min_days", "max_days"):
+            val = rule.get(key)
+            if val is not None:
+                try:
+                    int(val)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        f"date_shift rule {key!r} must be an integer, "
+                        f"got {val!r} ({type(val).__name__})"
+                    ) from exc

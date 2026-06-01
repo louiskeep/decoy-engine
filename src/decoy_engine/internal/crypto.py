@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import warnings
 from typing import Any
 
 
@@ -18,7 +19,20 @@ def deterministic_hash(value: Any, seed: int = 0) -> str | None:
     """Legacy SHA256(value + seed) hash. Kept for backwards compatibility
     when no master key is configured. Prefer :func:`hmac_hex` (keyed) for
     any new code path so output is per-tenant and not derivable from the
-    value alone."""
+    value alone.
+
+    QA-internal-synth-providers F12 (2026-06-01, LOW security):
+    emits a DeprecationWarning so accidental callers (e.g. a new
+    masking strategy copied from an older one) surface in CI tools
+    that treat warnings as errors. The docstring already said
+    "Prefer hmac_hex"; this makes the deprecation machine-readable.
+    """
+    warnings.warn(
+        "deterministic_hash uses SHA256(value+seed) which is reversible "
+        "given the seed. Use hmac_hex for all new code.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     if value is None:
         return None
     value_str = f"{value}{seed}"
