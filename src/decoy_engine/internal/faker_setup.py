@@ -440,11 +440,23 @@ def make_faker(locale: str | list[str] | None = None) -> Faker:
     locale. Invalid locales fall back to `en_US` so a single bad pipeline
     rule doesn't poison the run.
 
+    QA-internal-synth-providers F7 (2026-06-01, MEDIUM correctness):
+    a typo like `faker_locale: de_AT` no longer silently produces en_US
+    output; the fallback now logs a warning so an operator who picked
+    the locale on purpose can see that their request was ignored.
+    Names, addresses, and phone numbers from a wrong-locale Faker can
+    fail downstream format validations + break anonymization contracts
+    that rely on locale-appropriate output.
+
     Caller is responsible for seeding the returned instance via
     `seed_instance(...)` for deterministic output."""
     if not locale:
         return Faker()
     try:
         return Faker(locale)
-    except (AttributeError, ValueError, TypeError):
+    except (AttributeError, ValueError, TypeError) as exc:
+        _log.warning(
+            "make_faker: locale %r is invalid (%s: %s); falling back to en_US",
+            locale, type(exc).__name__, exc,
+        )
         return Faker()

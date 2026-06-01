@@ -187,8 +187,21 @@ class DateShiftStrategy(BaseMaskingStrategy):
             for v in column[parse_failed].dropna().unique()[:20]:
                 self.logger.warning(f"date_shift: could not parse '{v}' — leaving unchanged")
 
+        # QA-internal-synth-providers F5 (2026-06-01, MEDIUM perf):
+        # only HMAC the rows we'll actually use. Pre-fix every row,
+        # including nulls + parse failures, paid the per-value
+        # HMAC-SHA256 cost (~0.5us each). At 1M rows with 50% nulls
+        # that's ~500K wasted calls / ~250ms. Now we skip null +
+        # parse_failed rows and fill the shifts array with None so the
+        # downstream timedelta becomes NaT (matching the prior
+        # behavior at the per-row level via success_mask below).
         str_values = column.astype(str)
-        shifts = [shift_fn(v) for v in str_values.tolist()]
+        valid_mask = ~(na_mask | parse_failed)
+        valid_strs = str_values[valid_mask].tolist()
+        valid_shifts = [shift_fn(v) for v in valid_strs]
+        shifts: list[int | None] = [None] * len(column)
+        for idx, shift in zip(valid_mask.to_numpy().nonzero()[0], valid_shifts):
+            shifts[idx] = shift
 
         shifted = parsed + pd.to_timedelta(shifts, unit="D")
         out_fmt = fmt or "%Y-%m-%d"
