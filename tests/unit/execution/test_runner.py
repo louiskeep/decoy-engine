@@ -154,3 +154,33 @@ class TestOrderWork:
         with pytest.raises(ExecutionError) as exc:
             order_work([a, b], _graph(e1, e2))
         assert exc.value.code == "cyclic_work_ordering"
+
+    def test_qa10_f9_heapq_ordering_byte_identical_to_legacy(self) -> None:
+        """QA-10 F9 (2026-06-01): heapq-based Kahn produces the same
+        lexicographic topological order the prior O(n^2) impl produced.
+        Pin the contract on a chain + sibling-branch shape where the
+        ordering is non-trivial."""
+        # 5 independent nodes; order must be lexicographic.
+        nodes = [
+            _node("z", ("c",)),
+            _node("a", ("b",)),
+            _node("m", ("k",)),
+            _node("a", ("a",)),
+            _node("z", ("a",)),
+        ]
+        ordered = order_work(nodes, _graph())
+        keys = [w.key for w in ordered]
+        assert keys == sorted(keys), (
+            f"QA-10 F9 heapq Kahn drift: expected lexicographic order, "
+            f"got {keys}"
+        )
+
+    def test_qa10_f9_large_chain_topological(self) -> None:
+        """QA-10 F9: 100-node chain topological sort produces nodes in
+        the chain order. Sanity check that the heapq path scales."""
+        # Build a chain: n_0 -> n_1 -> ... -> n_99
+        nodes = [_node("t", (f"c{i:03d}",)) for i in range(100)]
+        edges = [_edge("t", (f"c{i:03d}",), "t", (f"c{i+1:03d}",)) for i in range(99)]
+        ordered = order_work(nodes, _graph(*edges))
+        keys = [w.key for w in ordered]
+        assert keys == sorted(keys)

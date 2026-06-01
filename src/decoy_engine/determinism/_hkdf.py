@@ -33,15 +33,28 @@ def hkdf_extract(salt: bytes, ikm: bytes) -> bytes:
     """RFC 5869 §2.2: PRK = HMAC-SHA256(salt, IKM).
 
     Args:
-        salt: optional salt value (a non-secret random value). RFC 5869
-            allows a zero-length salt (treated as `HashLen` zero bytes);
-            the caller is responsible for passing a context-specific salt
-            in normal use.
+        salt: required NON-EMPTY salt value (a non-secret random value).
+            RFC 5869 §2.2 allows an empty salt (treated as `HashLen`
+            zero bytes), but an empty salt produces a weaker PRK than
+            any application-specific context string. QA-10 F12 closure
+            (2026-06-01) rejects empty salts so a quietly-failed salt
+            generation step does not silently degrade to the all-zero
+            fallback. Callers that genuinely want the all-zero salt
+            must pass `b"\\x00" * 32` explicitly.
         ikm: input keying material (the master seed).
 
     Returns:
         32-byte pseudo-random key (PRK) suitable for input to hkdf_expand.
+
+    Raises:
+        ValueError: if `salt` is empty (QA-10 F12, 2026-06-01).
     """
+    if not salt:
+        raise ValueError(
+            "hkdf_extract: salt must be non-empty. Pass an application-"
+            "specific context string. If you genuinely want the RFC 5869 "
+            "§2.2 all-zero default, pass b'\\x00' * 32 explicitly."
+        )
     return hmac.new(salt, ikm, hashlib.sha256).digest()
 
 
