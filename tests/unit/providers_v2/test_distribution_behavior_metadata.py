@@ -66,6 +66,20 @@ class TestCategoricalDynamicResolution:
         cfg = (("weights", []),)
         assert distribution_behavior_for("categorical", cfg) == "destroys_frequency"
 
+    def test_categorical_from_profile_integer_one_preserves_all(self):
+        """QA-3 F15 (2026-05-31): `from_profile: 1` in YAML parses as
+        the integer 1, not Python True. Pre-fix the `is True` check
+        rejected the explicit-int form and the column got the wrong
+        destroys_frequency badge. Post-fix both forms are accepted."""
+        cfg = (("from_profile", 1),)
+        assert distribution_behavior_for("categorical", cfg) == "preserves_all"
+
+    def test_categorical_from_profile_integer_zero_destroys_frequency(self):
+        """`from_profile: 0` is the explicit-off case; should not flip
+        the badge to preserves_all."""
+        cfg = (("from_profile", 0),)
+        assert distribution_behavior_for("categorical", cfg) == "destroys_frequency"
+
 
 class TestUnknownStrategy:
     def test_unknown_strategy_returns_none(self):

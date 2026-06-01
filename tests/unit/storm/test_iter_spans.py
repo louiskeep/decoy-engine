@@ -64,6 +64,43 @@ class TestSingleDetectorHits:
         assert phones[0].matched_text == "(212) 555-1234"
 
 
+# ── QA-3 F6: us_zip lookbehind/ahead -----------------------------------
+
+
+class TestUsZipWordBoundary:
+    """QA-3 F6 (2026-05-31): the us_zip detector over-fired on 5-digit
+    substrings embedded in larger numeric tokens (doses, weights).
+    Pre-fix `\\d{5}` matched as a substring; post-fix `\\b\\d{5}\\b`
+    requires word boundaries on both sides."""
+
+    def test_us_zip_rejects_5digit_in_dose(self):
+        spans = iter_spans("Tablet dose: 12345mg twice daily.", ["us_zip"])
+        zips = [s for s in spans if s.detector_id == "us_zip"]
+        assert zips == []
+
+    def test_us_zip_rejects_5digit_in_weight(self):
+        spans = iter_spans("Weight reading 12345.6 kg", ["us_zip"])
+        zips = [s for s in spans if s.detector_id == "us_zip"]
+        assert zips == []
+
+    def test_us_zip_rejects_5digit_in_larger_number(self):
+        spans = iter_spans("Account 1234567 reference", ["us_zip"])
+        zips = [s for s in spans if s.detector_id == "us_zip"]
+        assert zips == []
+
+    def test_us_zip_accepts_standalone_5digit(self):
+        spans = iter_spans("ZIP 90210 home", ["us_zip"])
+        zips = [s for s in spans if s.detector_id == "us_zip"]
+        assert len(zips) == 1
+        assert zips[0].matched_text == "90210"
+
+    def test_us_zip_accepts_5plus4_extension(self):
+        spans = iter_spans("ZIP 90210-1234 expanded", ["us_zip"])
+        zips = [s for s in spans if s.detector_id == "us_zip"]
+        assert len(zips) == 1
+        assert zips[0].matched_text == "90210-1234"
+
+
 # ── validator gating ──────────────────────────────────────────────────
 
 

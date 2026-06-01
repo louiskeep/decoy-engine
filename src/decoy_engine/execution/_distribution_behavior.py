@@ -106,7 +106,15 @@ def distribution_behavior_for(
         return None
     if strategy == "categorical":
         cfg = dict(provider_config or ())
-        if cfg.get("from_profile") is True:
+        # QA-3 F15 (2026-05-31): accept either Python True or the
+        # integer 1 (PyYAML normalizes `yes` / `true` to bool True,
+        # but an explicit `from_profile: 1` in YAML parses as int 1
+        # and would have fallen through to `destroys_frequency`).
+        # Metadata-only impact (the masking strategy itself is
+        # unaffected) but the Storm preservation badge would have
+        # been wrong.
+        from_profile = cfg.get("from_profile")
+        if from_profile is True or from_profile == 1:
             return "preserves_all"
         weights = cfg.get("weights")
         if isinstance(weights, (list, tuple)) and len(weights) > 0:
