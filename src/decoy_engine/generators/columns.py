@@ -5,6 +5,7 @@ Provides various strategies for generating synthetic column data.
 
 import random
 import time
+import warnings
 from typing import Any
 
 import numpy as np
@@ -22,6 +23,25 @@ from decoy_engine.internal.faker_setup import (
     get_faker_providers,
     make_faker,
 )
+
+
+def _formula_hash_legacy(value: str, seed: int) -> str:
+    """Formula-sandbox shim around deterministic_hash.
+
+    QA-internal-synth-providers F12 follow-on (Dennis pass-7 M1,
+    2026-06-01): swallows the DeprecationWarning that
+    deterministic_hash now emits so a per-row formula column doesn't
+    spam logs or break CI under -W error::DeprecationWarning. The
+    formula sandbox is a known-legacy callsite; migrating it to a
+    keyed primitive (hmac_hex via derive) requires routing the
+    namespace/job_seed into the sandbox + is tracked as a follow-on.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        out = deterministic_hash(value, seed)
+    # deterministic_hash returns None only for value=None, but the
+    # caller always wraps in str(), so out is always a str here.
+    return out[:8] if out else ""
 
 
 class ColumnGenerator:
@@ -1282,7 +1302,17 @@ class ColumnGenerator:
             "str": str,
             "int": int,
             "float": float,
-            "hash": lambda x: deterministic_hash(str(x), local_seed)[:8],
+            # QA-internal-synth-providers F12 follow-on (Dennis pass-7 M1,
+            # 2026-06-01): suppress the DeprecationWarning that
+            # deterministic_hash now emits. The formula sandbox is a
+            # known-legacy callsite invoked per-row; without this
+            # suppression a 10k-row formula column with `hash(col)`
+            # spams 10k warning lines + breaks any CI running with
+            # -W error::DeprecationWarning. Migration to a keyed
+            # primitive (e.g. hmac_hex via derive) is the proper fix
+            # but requires routing the namespace/job_seed into the
+            # formula sandbox; tracked as a follow-on.
+            "hash": lambda x: _formula_hash_legacy(str(x), local_seed),
             # Faker date helpers
             "date_between": self.faker.date_between,
             "date_this_decade": self.faker.date_this_decade,
