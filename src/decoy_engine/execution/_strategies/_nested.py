@@ -16,6 +16,13 @@ QualityWarning and pass through unchanged. Cells with no match for
 the target path are left as-is (no warning -- a sparse path is a
 valid use case).
 
+Round-trip note (QA-3 F8, 2026-05-31): the cell is parsed via
+`json.loads` and re-serialized via `json.dumps`. JSON serialization
+canonicalizes whitespace, escapes, and key ordering, so the masked
+cell is not byte-for-byte identical to the input even when the
+target leaf is unchanged. Operators relying on byte-stable input
+should mask upstream of any JSON normalization.
+
 Config (`provider_config`):
     target          str             JSONPath expression locating the
                                     leaves to mask. Required.
@@ -42,6 +49,7 @@ import pandas as pd
 
 from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
 from decoy_engine.execution._errors import StrategyError
+from decoy_engine.execution._technique_class import technique_class_for
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._types import ColumnSeed
 
@@ -138,13 +146,26 @@ class NestedStrategyHandler:
         else:
             col = col.copy()
 
+        # QA-3 F2 (2026-05-31): positional enumeration replaces the
+        # index-keyed dict. Pre-fix, this strategy iterated `col.index`
+        # and keyed per_row_state on `row_idx`. On a DataFrame with
+        # duplicate indexes (which is legal pandas and can arise from
+        # `pd.concat` without reset_index), `col.at[row_idx]` returns a
+        # SERIES of all matching rows -- not a single cell -- breaking
+        # the parse step. And a dict keyed on row_idx only retains ONE
+        # state entry per duplicate, silently dropping the others.
+        # Positional iteration over `col.iloc[i]` removes both failure
+        # modes: each row is visited exactly once, and the cursor /
+        # writeback is position-indexed.
+        col_values = col.to_list()
+
         warnings: list[QualityWarning] = []
         leaf_values: list[Any] = []
-        # Per-row: (parsed_object, list[jsonpath_match])
-        per_row_state: dict[Any, tuple[Any, list]] = {}
+        # Per-position: (parsed_object, list[jsonpath_match]). Position
+        # is the row's 0-indexed offset in the column, not its label.
+        per_position_state: dict[int, tuple[Any, list]] = {}
 
-        for row_idx in col.index:
-            cell = col.at[row_idx]
+        for pos, cell in enumerate(col_values):
             if pd.isna(cell):
                 continue
             try:
@@ -155,14 +176,14 @@ class NestedStrategyHandler:
                         code="nested_cell_json_parse_error",
                         provider="nested",
                         column=column,
-                        detail={"row_idx": str(row_idx)},
+                        detail={"row_pos": str(pos)},
                     )
                 )
                 continue
             matches = jsonpath_expr.find(parsed)
             if not matches:
                 continue
-            per_row_state[row_idx] = (parsed, list(matches))
+            per_position_state[pos] = (parsed, list(matches))
             for m in matches:
                 leaf_values.append(m.value)
 
@@ -176,6 +197,12 @@ class NestedStrategyHandler:
             child_provider_config = tuple(sorted(child_strategy_config.items()))
         else:
             child_provider_config = ()
+        # QA-3 F7 (2026-05-31): resolve the CHILD's technique class. The
+        # parent's `technique_class` is None for nested (intentionally;
+        # see _technique_class.py), so inheriting it would always leave
+        # the child seed unclassified. The child should report the
+        # class of the strategy it actually runs (e.g. redact ->
+        # anonymisation).
         child_seed = ColumnSeed(
             namespace=plan.namespace,
             strategy=child_strategy_name,
@@ -186,7 +213,7 @@ class NestedStrategyHandler:
             deterministic=plan.deterministic,
             provider_config=child_provider_config,
             coherent_with=plan.coherent_with,
-            technique_class=plan.technique_class,
+            technique_class=technique_class_for(child_strategy_name),
             when=None,
         )
 
@@ -200,14 +227,16 @@ class NestedStrategyHandler:
         new_leaf_values = temp_df[temp_col].tolist()
 
         # Writeback: walk matches in the same order leaves were
-        # collected, replace each, re-serialize the cell.
+        # collected, replace each, re-serialize the cell. Positional
+        # writeback (QA-3 F2) means we reassemble the column from
+        # `col_values` rather than mutating by index label.
         cursor = 0
-        for row_idx, (parsed, matches) in per_row_state.items():
+        for pos, (parsed, matches) in per_position_state.items():
             for m in matches:
                 new_value = new_leaf_values[cursor]
                 cursor += 1
                 m.full_path.update(parsed, new_value)
-            col.at[row_idx] = json.dumps(parsed)
+            col_values[pos] = json.dumps(parsed)
 
-        df[column] = col
+        df[column] = pd.Series(col_values, index=df.index, dtype=object)
         return df, warnings

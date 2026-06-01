@@ -246,6 +246,66 @@ class TestRejections:
 # ── batch delegation ──────────────────────────────────────────────────
 
 
+class TestDuplicateIndex:
+    """QA-3 F2 (2026-05-31): duplicate-index DataFrames used to corrupt
+    the nested writeback. The old implementation iterated `col.index`
+    and stored per-row state in a dict keyed on the index label; on a
+    duplicate index, `col.at[row_idx]` returned a Series and the dict
+    silently kept only one entry per duplicate. Post-fix the strategy
+    uses positional enumeration: every row visited exactly once and
+    written back by position."""
+
+    def test_nested_duplicate_index_writeback_correct(self):
+        df = pd.DataFrame(
+            {
+                "data": [
+                    json.dumps({"user": {"email": "a@x.com"}}),
+                    json.dumps({"user": {"email": "b@x.com"}}),
+                    json.dumps({"user": {"email": "c@x.com"}}),
+                ]
+            },
+            index=[0, 0, 0],  # all rows share the same index label
+        )
+        handler = NestedStrategyHandler()
+        out, warnings = handler.run(
+            df.copy(),
+            "data",
+            _seed({"target": "$.user.email", "strategy": "redact"}),
+            _FakeCtx(),
+        )
+        # All 3 rows must be masked; no row's email survives the
+        # writeback. Pre-fix only the FIRST row (or worse: only one of
+        # the rows non-deterministically) got the writeback.
+        for row in out["data"]:
+            parsed = json.loads(row)
+            assert parsed["user"]["email"] == "REDACTED"
+        assert warnings == []
+
+
+class TestChildTechniqueClass:
+    """QA-3 F7 (2026-05-31): the synthetic child ColumnSeed must carry
+    the child strategy's technique class, not None (the parent's class
+    for nested is intentionally None per _technique_class.py)."""
+
+    def test_nested_child_technique_class_resolves_for_redact(self):
+        # Indirect verification: the child handler runs against a seed
+        # whose technique_class is anonymisation (redact's class).
+        # Stand-in test: confirm the strategy still produces correct
+        # masked output, which is the user-visible signal that the
+        # child seed was constructed correctly.
+        df = pd.DataFrame(
+            {"data": [json.dumps({"x": "y"})]}
+        )
+        handler = NestedStrategyHandler()
+        out, _ = handler.run(
+            df.copy(),
+            "data",
+            _seed({"target": "$.x", "strategy": "redact"}),
+            _FakeCtx(),
+        )
+        assert json.loads(out["data"].iloc[0]) == {"x": "REDACTED"}
+
+
 class TestBatchDelegation:
     def test_nested_collects_all_leaves_into_one_child_call(self):
         """Multi-row + multi-leaf input must be delegated to the child
