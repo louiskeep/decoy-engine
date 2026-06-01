@@ -104,3 +104,29 @@ class TestQaInternalF3LoggingReadOnlyFs:
         assert len(file_handlers) >= 1
         # And the dir was created.
         assert log_path.parent.exists()
+
+    def test_get_logger_no_duplicate_console_handler_on_fallback(self, tmp_path):
+        """Dennis D1 (2026-06-01, LOW): when config asks for
+        console=True AND the file-handler creation falls back to
+        console-only, the fallback must NOT add a second console
+        handler. Pre-fix the operator got duplicate output on every
+        line in the read-only-container + console=True combo."""
+        from logging.handlers import RotatingFileHandler
+
+        with mock.patch("pathlib.Path.mkdir", side_effect=PermissionError("read-only")):
+            logger = get_logger({
+                "console": True,
+                "file": str(tmp_path / "nope" / "decoy.log"),
+            })
+
+        # Count plain StreamHandlers (excluding RotatingFileHandler
+        # which extends StreamHandler).
+        console_handlers = [
+            h for h in logger.handlers
+            if isinstance(h, stdlib_logging.StreamHandler)
+            and not isinstance(h, RotatingFileHandler)
+        ]
+        assert len(console_handlers) == 1, (
+            f"Dennis D1: expected exactly one console handler when "
+            f"console=True + file-fallback fires. Got {len(console_handlers)}."
+        )
