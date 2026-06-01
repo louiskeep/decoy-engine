@@ -284,6 +284,39 @@ class TestWalksGenF1ReferencePoolSortedDeterminism:
         )
 
 
+class TestDennisPass7M1FormulaHashNoWarningLeak:
+    """Dennis pass-7 M1 (2026-06-01): the formula sandbox `hash(col)`
+    function must not leak DeprecationWarning per-row. F12 added a
+    DeprecationWarning to deterministic_hash; without the
+    _formula_hash_legacy shim the warning would fire once per row
+    + spam logs + break CI under -W error::DeprecationWarning."""
+
+    def test_formula_hash_does_not_emit_deprecation_warning_per_row(self):
+        import warnings
+
+        col = {
+            "name": "hashed",
+            "type": "formula",
+            "formula": "hash(row_index)",
+        }
+        cg = ColumnGenerator(seed=42)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", DeprecationWarning)
+            result = cg.generate_column(50, col, "t", {})
+        depr_warnings = [
+            w for w in caught
+            if issubclass(w.category, DeprecationWarning)
+            and "deterministic_hash" in str(w.message)
+        ]
+        assert depr_warnings == [], (
+            f"Dennis pass-7 M1: formula sandbox `hash` leaked "
+            f"{len(depr_warnings)} DeprecationWarning(s). The "
+            f"_formula_hash_legacy shim should suppress them."
+        )
+        # Sanity: the formula actually produced output.
+        assert len(result) == 50
+
+
 class TestWalksGenF7DistributionDatetimeYear9999:
     """QA walks/generators F7 (2026-06-01, MEDIUM correctness):
     `_generate_distribution_datetime` does not crash on source rows
