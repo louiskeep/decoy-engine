@@ -181,15 +181,32 @@ def run_with_when_gate_polars(
         return frame, []
 
     mask_pl = pl.Series("_when_mask", mask.to_numpy(), dtype=pl.Boolean)
-    sub_frame = frame.filter(mask_pl)
+    # QA-3 F13 (2026-05-31): carry an explicit positional anchor through
+    # the subset so the writeback survives a handler that reorders /
+    # sorts rows internally. Pre-fix the writeback used
+    # `sub_pdf[column].values` (a positional, zero-indexed read), which
+    # is label-aligned to mask-true rows only IFF the handler preserved
+    # the subset's row order. No current polars handler sorts; this is
+    # a contract tightening to prevent a future handler from silently
+    # misaligning the writeback. The anchor column is stripped before
+    # the writeback so it never leaks into the masked frame.
+    anchor_col = "_decoy_when_row_pos"
+    positions = pl.Series(anchor_col, range(frame.height), dtype=pl.Int64)
+    frame_with_anchor = frame.with_columns(positions)
+    sub_frame = frame_with_anchor.filter(mask_pl)
     sub_frame, warnings = handler.run(sub_frame, column, plan, ctx)
 
     # Stitch via pandas. The eval already paid a `.to_pandas()` on the
-    # full frame; we reuse `pdf` and the matched-row mask to write back
-    # the masked subset's column. Then convert back to polars and patch
-    # only the changed column into the original frame so dtypes that
-    # the polars frame carried at run-time (e.g. categorical) survive.
+    # full frame; we reuse `pdf` and write back to the rows the anchor
+    # column says we filtered to. The anchor is the original positional
+    # index; even if the handler reordered rows, `set_index` re-aligns
+    # the masked values to the destination rows correctly.
     sub_pdf = sub_frame.to_pandas()
-    pdf.loc[mask, column] = sub_pdf[column].values
+    # Drop the anchor from the surface that gets returned to the caller
+    # but keep it in sub_pdf to drive label-aligned assignment.
+    pdf.iloc[
+        sub_pdf[anchor_col].to_numpy(),
+        pdf.columns.get_loc(column),
+    ] = sub_pdf[column].to_numpy()
     masked_col = pl.from_pandas(pdf[[column]]).get_column(column)
     return frame.with_columns(masked_col), warnings
