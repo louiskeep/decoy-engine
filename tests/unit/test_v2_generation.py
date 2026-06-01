@@ -306,16 +306,41 @@ class TestFakerParityV1:
         }
         assert _v2_run(col, 5) == _v1_run(col, 5)
 
-    def test_null_injection(self):
-        # null_probability is V1's generic post-process; parity covers both the
-        # per-row faker value AND the null/non-null row positions.
+    def test_null_injection_fraction_converges(self):
+        """QA walks/generators F3 / PO Q-F3=b (2026-06-01): the null
+        injection path is now vectorised through numpy.random.default_rng
+        instead of per-row Python random.Random reseeding.
+
+        SEED_PROTOCOL_VERSION bumped from 2 to 3 in the same PR so the
+        null PATTERN changes byte-for-byte from the pre-fix shape; the
+        prior V1+V2 byte-parity assertion was the byte-identical-contract
+        that Q-F3=b explicitly broke. Pre-GA, no manifests to break.
+
+        Post-fix contract: the null FRACTION converges to
+        null_probability + non-null rows still draw from the correct
+        faker provider. Bytes are no longer compared against V1."""
         col = {
             "name": "fn",
             "type": "faker",
             "faker_type": "first_name",
             "null_probability": 0.3,
         }
-        assert _v2_run(col, 20) == _v1_run(col, 20)
+        out = _v2_run(col, 500)
+        # pd.NA != None in list comparison; count via pd.isna over the array.
+        import pandas as pd
+        nulls = sum(1 for v in out if pd.isna(v) if v is not None or True)
+        # The fraction converges to 0.3 with reasonable variance at n=500.
+        # Wide bound (0.2-0.4) absorbs the n=500 binomial variance + leaves
+        # headroom for a future RNG family swap that preserves the FRACTION
+        # contract while changing bytes again.
+        assert 0.2 <= nulls / 500 <= 0.4, (
+            f"QA walks/generators F3: null FRACTION should converge to "
+            f"null_probability=0.3 at n=500; got {nulls}/{500} = "
+            f"{nulls/500:.3f}."
+        )
+        # Non-null rows must be strings (faker first_name output).
+        non_null = [v for v in out if not pd.isna(v)]
+        assert all(isinstance(v, str) for v in non_null)
 
 
 class TestQA7Coverage:
@@ -615,12 +640,26 @@ class TestReferenceParityV1:
         assert v2 == _v1_run_multi(tables)
         assert v2["orders"]["customer_id"] == [None] * 5
 
-    def test_null_probability_on_reference(self):
+    def test_null_probability_on_reference_fraction_converges(self):
+        """QA walks/generators F3 / PO Q-F3=b (2026-06-01): null
+        injection on a reference column no longer asserts byte parity
+        against V1. The vectorised numpy.default_rng path changes the
+        null PATTERN; the null FRACTION still converges to
+        null_probability. See test_null_injection_fraction_converges
+        for the rationale; this cell pins the same contract on the
+        multi-table reference path."""
+        import pandas as pd
         tables = self._customers_then_orders(
-            "random", child_n=20, null_probability=0.3
+            "random", child_n=500, null_probability=0.3
         )
-        # Parity covers the per-row reference value AND the null/non-null positions.
-        assert _v2_run_multi(tables) == _v1_run_multi(tables)
+        result = _v2_run_multi(tables)
+        col = result["orders"]["customer_id"]
+        nulls = sum(1 for v in col if pd.isna(v))
+        assert 0.2 <= nulls / 500 <= 0.4, (
+            f"QA walks/generators F3: null FRACTION should converge to "
+            f"null_probability=0.3 at n=500; got {nulls}/{500} = "
+            f"{nulls/500:.3f}."
+        )
 
     def test_repeatability(self):
         # Same config + same seed across two runs -> byte-identical output.

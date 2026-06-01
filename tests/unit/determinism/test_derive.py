@@ -92,10 +92,15 @@ class TestDeriveValidation:
 
 
 class TestSeedProtocolVersion:
-    def test_constant_is_two(self) -> None:
-        """S3 shipped SEED_PROTOCOL_VERSION = 1; the F-series corrections bump
-        to 2 (coordinated Faker-seeding + canonicalize-integer fixes)."""
-        assert SEED_PROTOCOL_VERSION == 2
+    def test_constant_is_three(self) -> None:
+        """S3 shipped SEED_PROTOCOL_VERSION = 1; F-series corrections
+        bumped to 2 (coordinated Faker-seeding + canonicalize-integer
+        fixes). QA walks/generators F3 (2026-06-01, PO Q-F3=b) bumps
+        to 3: null-injection in generators/columns.py swapped from
+        per-row Python random.Random reseeding to one-shot
+        numpy.random.default_rng vectorised draw. The null PATTERN
+        changes byte-for-byte while the null FRACTION is preserved."""
+        assert SEED_PROTOCOL_VERSION == 3
 
 
 class TestDeriveIndex:

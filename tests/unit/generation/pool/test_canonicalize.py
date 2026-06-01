@@ -38,7 +38,8 @@ class TestStringNFC:
 
 
 class TestInteger:
-    """v2 envelope (F-series NF1/NF2): length-prefixed minimal-width two's
+    """Current envelope (stabilised at v2 F-series NF1/NF2; unchanged
+    through v3): length-prefixed minimal-width two's
     complement big-endian (4-byte length prefix + minimal body). Replaces the
     fixed 8-byte form, which overflowed for |value| >= 2**63 and missed numpy
     integer scalars."""

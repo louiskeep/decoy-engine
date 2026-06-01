@@ -227,20 +227,43 @@ class ColumnGenerator:
                 f"Applying null probability {null_probability} to column '{column_name}'"
             )
 
-            # Per-row seeding off the column-seed (HKDF-derived when keyed,
-            # `seed + hash(name)` otherwise). Same column + same row ->
-            # same null/non-null decision across runs.
-            # QA-1 H6 + M17 (2026-06-01): pass column_config through so
-            # two columns with different configs do not share a null
-            # mask; use a fresh Random instance per call to avoid
-            # mutating self._rng's state (which other generator calls
-            # may depend on).
+            # QA walks/generators F3 (2026-06-01, HIGH correctness +
+            # perf, Q-F3=b): vectorised null injection via
+            # numpy.random.default_rng. Closes two pre-fix issues:
+            #
+            #   (A) Correctness/dtype: pre-fix `result.iloc[i] = None`
+            #   on an int64 Series triggered in-place dtype promotion
+            #   to float64 (since int64 cannot hold NaN). Downstream
+            #   schema validators + masking strategies expecting int64
+            #   then received float64. Post-fix we promote int columns
+            #   to pandas nullable Int64 BEFORE applying nulls so the
+            #   integer dtype survives.
+            #
+            #   (B) Perf: pre-fix ran num_rows reseed calls (each a
+            #   full Mersenne Twister state reset, ~us each) + num_rows
+            #   pandas scalar setters. At 100K rows + p=0.1 that's
+            #   ~100ms of pure seeding overhead inside the innermost
+            #   generation loop. Post-fix is one RNG construct + one
+            #   vectorised draw + one boolean mask write.
+            #
+            # BREAKING (PO Q-F3=b, 2026-06-01): numpy.default_rng and
+            # Python random.Random produce different floats for the
+            # same integer seed, so the null PATTERN (which specific
+            # rows are nulled) differs from pre-fix. The null FRACTION
+            # converges to null_probability either way. This is a
+            # controlled determinism bump; SEED_PROTOCOL_VERSION
+            # bumped in determinism/_derive.py to 3.
             column_seed = self._column_seed(column_name, column_config)
-            null_rng = random.Random()
-            for i in range(num_rows):
-                null_rng.seed(column_seed + i)
-                if null_rng.random() < null_probability:
-                    result.iloc[i] = None
+            null_rng = np.random.default_rng(column_seed)
+            null_mask = null_rng.random(num_rows) < null_probability
+            if null_mask.any():
+                # Promote integer dtypes to pandas nullable Int64 so
+                # the integer column survives null assignment without
+                # upcasting to float64.
+                if pd.api.types.is_integer_dtype(result):
+                    result = result.astype("Int64")
+                # boolean indexing assignment is vectorised + dtype-aware.
+                result = result.mask(null_mask, other=pd.NA)
 
         # Log generation time
         generation_time = time.perf_counter() - start_time

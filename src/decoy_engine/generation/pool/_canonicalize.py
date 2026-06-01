@@ -9,7 +9,7 @@ overflowed for |value| >= 2**63 and (b) missed `numpy.integer` scalars
 (`pd.Series.iloc[i]` returns them), silently routing them through the
 str fallback so `42` and `numpy.int64(42)` canonicalized differently.
 
-Per-dtype rules (S5 spec §5.1, v2 envelope):
+Per-dtype rules (S5 spec §5.1, stabilised at v2; unchanged through v3):
 
 | dtype family | canonical encoding |
 |--------------|--------------------|

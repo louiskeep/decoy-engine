@@ -37,8 +37,11 @@ from typing import Any
 # S1's plan_version is 1. SEED_PROTOCOL_VERSION imported from the
 # determinism module: S1 stamped 0 (placeholder); S3 stamped 1 (first
 # real envelope per the v1 contract); the F-series corrections bumped to 2
-# (coordinated Faker-seeding + canonicalize-integer fixes). Bumping
-# requires a release-notes line per done-definition.md.
+# (coordinated Faker-seeding + canonicalize-integer fixes); QA walks/gen
+# F3 (2026-06-01, PO Q-F3=b) bumped to 3 for the vectorised null-injection
+# RNG-family swap (numpy.default_rng vs Python random.Random change the
+# null pattern byte-for-byte). Bumping requires a release-notes line per
+# done-definition.md.
 from decoy_engine.determinism import SEED_PROTOCOL_VERSION
 from decoy_engine.execution._distribution_behavior import distribution_behavior_for
 from decoy_engine.execution._technique_class import technique_class_for

@@ -284,6 +284,88 @@ class TestWalksGenF1ReferencePoolSortedDeterminism:
         )
 
 
+class TestQaWalksGenF3VectorisedNullInjection:
+    """QA walks/generators F3 / PO Q-F3=b (2026-06-01, HIGH
+    correctness + perf): null injection is now vectorised through
+    numpy.random.default_rng + uses pandas nullable Int64 for integer
+    columns so the source dtype survives null assignment.
+
+    Two issues closed:
+      (A) Pre-fix `result.iloc[i] = None` on int64 promoted in-place
+          to float64. Downstream schema validators + masking strategies
+          expecting int64 then received float64.
+      (B) Pre-fix N reseed calls + N pandas scalar setters per column
+          inside the innermost generation loop. At 100K rows + p=0.1
+          that was ~100ms of pure seeding overhead. Now: one RNG
+          construct + one vectorised draw.
+
+    SEED_PROTOCOL_VERSION bumped 2 -> 3 in the same change because
+    numpy.default_rng + Python random.Random produce different floats
+    for the same integer seed; the null PATTERN changes byte-for-byte.
+    Null FRACTION still converges to null_probability."""
+
+    def test_int_column_dtype_survives_null_injection(self):
+        """Audit scenario: formula `randint(1, 100)` returns int64;
+        pre-fix the first null assign upcast to float64 in-place +
+        downstream schema validators expecting int64 received float64.
+        Post-fix the F3 path detects int dtype + promotes to pandas
+        nullable Int64 BEFORE applying the null mask."""
+        import pandas as pd
+
+        col = {
+            "name": "x",
+            "type": "formula",
+            "formula": "randint(1, 100)",
+            "null_probability": 0.3,
+        }
+        cg = ColumnGenerator(seed=42)
+        result = cg.generate_column(200, col, "t", {})
+        assert pd.api.types.is_integer_dtype(result), (
+            f"QA walks/generators F3: int column dtype must survive null "
+            f"injection. Got dtype {result.dtype}."
+        )
+        # And actually contains nulls.
+        assert result.isna().sum() > 0
+        # Specifically the nullable Int64 (NOT plain int64 which can't
+        # hold NaN, NOT float64 from the upcast bug, NOT object).
+        assert str(result.dtype) == "Int64"
+
+    def test_null_fraction_converges_to_null_probability(self):
+        col = {
+            "name": "x",
+            "type": "formula",
+            "formula": "randint(1, 100)",
+            "null_probability": 0.5,
+        }
+        cg = ColumnGenerator(seed=42)
+        result = cg.generate_column(1000, col, "t", {})
+        null_count = result.isna().sum()
+        # Wide bound for n=1000 binomial variance + headroom for future
+        # RNG family swaps that preserve the FRACTION contract.
+        assert 0.4 <= null_count / 1000 <= 0.6, (
+            f"QA walks/generators F3: null fraction should converge to "
+            f"null_probability=0.5; got {null_count}/{1000} = "
+            f"{null_count/1000:.3f}"
+        )
+
+    def test_deterministic_null_pattern_same_seed_same_pattern(self):
+        """Bytes change between V1 and V2 (the breaking part of F3) but
+        within V2: same column_seed -> same null mask. Pin the new
+        determinism contract."""
+        col = {
+            "name": "x",
+            "type": "formula",
+            "formula": "randint(1, 100)",
+            "null_probability": 0.3,
+        }
+        cg_a = ColumnGenerator(seed=42)
+        result_a = cg_a.generate_column(100, col, "t", {})
+        cg_b = ColumnGenerator(seed=42)
+        result_b = cg_b.generate_column(100, col, "t", {})
+        # Same seed -> same null positions.
+        assert (result_a.isna() == result_b.isna()).all()
+
+
 class TestDennisPass7M1FormulaHashNoWarningLeak:
     """Dennis pass-7 M1 (2026-06-01): the formula sandbox `hash(col)`
     function must not leak DeprecationWarning per-row. F12 added a
