@@ -97,7 +97,12 @@ def _eval_predicate(
             ),
         ) from exc
 
-    if not isinstance(mask, pd.Series) or mask.dtype != bool:
+    # QA-3 F4 (2026-05-31): accept pandas nullable BooleanDtype too.
+    # The pre-fix check `mask.dtype != bool` rejected `pd.BooleanDtype()`
+    # which arises naturally from Arrow-backed columns and from any
+    # boolean expression over a column with NaN. `is_bool_dtype` covers
+    # both numpy bool and pandas nullable BooleanDtype.
+    if not isinstance(mask, pd.Series) or not pd.api.types.is_bool_dtype(mask.dtype):
         raise StrategyError(
             code="when_expression_not_boolean",
             strategy=strategy,

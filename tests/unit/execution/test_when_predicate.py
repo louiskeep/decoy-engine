@@ -156,6 +156,33 @@ class TestErrorHandling:
             )
         assert exc.value.code == "when_expression_not_boolean"
 
+    def test_when_gate_accepts_nullable_boolean_mask(self):
+        """QA-3 F4 (2026-05-31): pandas' nullable BooleanDtype produces
+        masks with dtype `boolean` (not numpy `bool`). The pre-fix
+        equality check `mask.dtype != bool` rejected these, which
+        surfaced as a false `when_expression_not_boolean` error for
+        Arrow-backed columns or any boolean expression over a column
+        with NaN. `pd.api.types.is_bool_dtype` accepts both."""
+        # A column with NaN forces pandas to use nullable BooleanDtype
+        # for comparisons that include the NaN row.
+        df = pd.DataFrame(
+            {
+                "v": ["a", "b", "c"],
+                "n": pd.array([1, 2, None], dtype="Int64"),
+            }
+        )
+        out, _ = run_with_when_gate(
+            RedactHandler(),
+            df,
+            "v",
+            _seed(when="n == 1"),  # produces nullable Boolean mask
+            _FakeCtx(),
+        )
+        # First row matched and was redacted; second row not matched.
+        # The NaN-mask row also not matched (None != 1).
+        assert out["v"].iloc[0] == "REDACTED"
+        assert out["v"].iloc[1] == "b"
+
 
 # ── compile-time rejection ───────────────────────────────────────────
 
