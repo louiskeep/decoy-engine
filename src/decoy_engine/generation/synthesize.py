@@ -489,6 +489,12 @@ def _reference(
     if min_per > 0 or max_per > 0:
         from decoy_engine.generators.columns import ColumnGenerator
 
+        # QA-1 H6 carry (2026-06-01): pass the column-scoped rng so the
+        # repair's shuffle/choices stay deterministic without touching
+        # module-global random. The local `rng` above is column-scoped
+        # via col_seed.
         cg = ColumnGenerator(seed=seed, derive_key=derive_key)
-        values = cg._apply_cardinality_bounds(values, ref_vals, min_per, max_per)
+        values = cg._apply_cardinality_bounds(
+            values, ref_vals, min_per, max_per, rng=rng,
+        )
     return values

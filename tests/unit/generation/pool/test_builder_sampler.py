@@ -219,6 +219,26 @@ class TestPoolSamplerNonDeterministic:
             )
         assert excinfo.value.code == "deterministic_mode_unsupported_cardinality"
 
+    def test_qa1_h9_sample_bundle_unique_plus_deterministic_raises(self) -> None:
+        """QA-1 H9 (Dennis gate carry, 2026-06-01): the same UNIQUE +
+        deterministic rejection must apply on the bundle sampling path
+        too. Pre-fix sample_bundle had the same fall-through bug."""
+        from decoy_engine.generation.composite import composite_city_state_zip
+        from decoy_engine.providers_v2 import ProviderSpec
+
+        sampler = PoolSampler()
+        pool = composite_city_state_zip(coherent_namespace="loc").build_pool(
+            ProviderSpec(locale="en_US", deterministic=False, namespace=None, seed=_SEED)
+        )
+        source = pd.Series(["a", "b", "c"])
+        with pytest.raises(GenerationError) as excinfo:
+            sampler.sample_bundle(
+                pool, n=3, mode=CardinalityMode.UNIQUE, seed=_SEED,
+                source=source, namespace="loc",
+                deterministic=True,
+            )
+        assert excinfo.value.code == "deterministic_mode_unsupported_cardinality"
+
     def test_seed_stability_same_seed_same_output(self) -> None:
         """NEP-19 contract: np.random.default_rng(seed) is reproducible."""
         builder = _builder()

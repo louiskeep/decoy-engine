@@ -917,7 +917,7 @@ class ColumnGenerator:
         ref_values: list,
         min_per_parent: int,
         max_per_parent: int,
-        rng: random.Random | None = None,
+        rng: random.Random,
     ) -> list:
         """Repair a generated value list to honor per-parent cardinality bounds.
 
@@ -953,7 +953,7 @@ class ColumnGenerator:
             if counts[pv] > max_eff:
                 excess = counts[pv] - max_eff
                 indices = [i for i, v in enumerate(values) if v == pv]
-                (rng or random).shuffle(indices)
+                rng.shuffle(indices)
                 free_slots.extend(indices[:excess])
                 counts[pv] = max_eff
 
@@ -974,9 +974,9 @@ class ColumnGenerator:
                 if surplus <= 0:
                     continue
                 candidates = [i for i, v in enumerate(values) if v == pv and i not in already_free]
-                (rng or random).shuffle(candidates)
+                rng.shuffle(candidates)
                 donor_indices.extend(candidates[:surplus])
-            (rng or random).shuffle(donor_indices)
+            rng.shuffle(donor_indices)
             taken = donor_indices[:needed]
             for i in taken:
                 counts[values[i]] -= 1
@@ -1009,11 +1009,11 @@ class ColumnGenerator:
                     f"over-filling proportionally for {remaining} rows."
                 )
                 eligible = ref_values
-            queue.extend((rng or random).choices(eligible, k=remaining))
+            queue.extend(rng.choices(eligible, k=remaining))
 
         # 5. Apply replacements in shuffled order so the repair doesn't
         #    bias position.
-        (rng or random).shuffle(queue)
+        rng.shuffle(queue)
         for slot, replacement in zip(free_slots, queue, strict=False):
             values[slot] = replacement
 
