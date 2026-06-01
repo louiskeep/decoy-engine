@@ -34,6 +34,7 @@ What's public here:
 from __future__ import annotations
 
 from decoy_engine.internal.faker_setup import (
+    atomic_swap_db_providers,
     get_custom_faker_provider_values,
     list_custom_faker_list_providers,
     load_custom_providers,
@@ -43,6 +44,7 @@ from decoy_engine.internal.faker_setup import (
 )
 
 __all__ = [
+    "atomic_swap_db_providers",
     "get_custom_faker_provider_values",
     "list_custom_faker_list_providers",
     "load_custom_providers",

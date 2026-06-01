@@ -11,11 +11,15 @@ Public API (the contract CLI and platform code depend on):
     TelemetryClient   Protocol for optional telemetry sinks
     SchemaInspector   connector schema introspection (stub, Phase 2)
     LicenseVerifier   license verification (stub)
-    run_graph / preview_graph / validate_graph_full / normalize_config:
-                      graph-mode entrypoints (the per-node graph still runs through
-                      the v1 op surface; Masker / DataGenerator entry points were
-                      removed in S9 as the platform mask + generate paths now go
-                      through the v2 ExecutionAdapter directly).
+    compile_plan      compile a validated config + Profile into a frozen Plan
+                      (decoy_engine.plan)
+    ExecutionAdapter / PandasExecutionAdapter / PolarsExecutionAdapter /
+    select_execution_adapter / get_default_executor:
+                      the plan-to-data execution boundary; the Polars adapter is
+                      the default substrate. The caller runs
+                      `select_execution_adapter().run(plan, source) -> ExecutionResult`.
+    generate_tables   (decoy_engine.generation.synthesize) table-from-schema
+                      synthesis for generate-mode configs.
 
 Public exceptions (also in decoy_engine.errors):
     DecoyError, ConfigError, PipelineValidationError,
@@ -26,15 +30,18 @@ Public exceptions (also in decoy_engine.errors):
 Anything not listed in __all__ -- and anything under decoy_engine.internal --
 is private and may change without a version bump.
 
-S9 NOTE: ``Masker`` and ``DataGenerator`` were removed from the public surface
-in S9. The platform mask + generate paths now run exclusively through the v2
-``ExecutionAdapter`` (mask) and ``generation.synthesize.generate_tables``
-(generate) -- see ``api/jobs/v2_runner.py`` for the platform-side spine. The
-underlying modules (``decoy_engine.masker``, ``decoy_engine.generators.generator``)
-remain on disk for graph/op internal use but are no longer re-exported; any
-external import of ``from decoy_engine import Masker`` / ``DataGenerator`` now
-fails fast. This is the breaking public-API change ratified under the
-``decoy_v2_clean_break`` PO directive.
+V2 NOTE: the V1 public surface (``Masker``, ``DataGenerator``, ``run_graph`` /
+``preview_graph`` / ``validate_graph*``) and the V1 graph runner were removed
+under the ``decoy_v2_clean_break`` PO directive (the final V1 graph-runner and
+V1-only transform deletion landed in S22, 2026-05-30). The engine is now
+plan-first: a caller validates a ``PipelineConfig`` at the choke-point, profiles
+the source, calls ``compile_plan`` to produce a frozen ``Plan``, and hands the
+plan to an ``ExecutionAdapter`` (Polars by default) for a MASK job, or to
+``generation.synthesize.generate_tables`` for a GENERATE job. See
+``api/jobs/v2_runner.py`` for the platform-side spine and
+``tests/integration/golden/test_execution_e2e.py`` for the canonical end-to-end
+call shape. Any external import of ``Masker`` / ``DataGenerator`` / ``run_graph``
+now fails fast.
 """
 
 from decoy_engine.config import PipelineConfig
@@ -119,6 +126,7 @@ from decoy_engine.plan.validate import (
     validate_plan,
 )
 from decoy_engine.providers import (
+    atomic_swap_db_providers,
     load_custom_providers,
     register_faker_list_provider,
     register_faker_provider,
@@ -309,6 +317,7 @@ __all__ = [
     "ValidationResult",
     "ValuePool",
     "WriteResult",
+    "atomic_swap_db_providers",
     "build_namespace_registry",
     "build_relationship_graph",
     "check_orphan_fk_policy_completeness",
