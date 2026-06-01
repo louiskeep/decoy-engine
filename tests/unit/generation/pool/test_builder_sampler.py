@@ -203,6 +203,22 @@ class TestPoolSamplerNonDeterministic:
             sampler.sample(pool, n=20, mode=CardinalityMode.UNIQUE, seed=_SEED)
         assert excinfo.value.code == "uniqueness_impossible"
 
+    def test_qa1_h9_unique_plus_deterministic_raises(self) -> None:
+        """QA-1 H9 (2026-06-01): mode=UNIQUE + deterministic=True must
+        raise the typed GenerationError. Pre-fix the combo silently
+        fell through to deterministic mode (REUSE semantics)."""
+        builder = _builder()
+        sampler = PoolSampler()
+        pool = builder.build("person_email", size=50, job_seed=_SEED)
+        source = pd.Series(["a", "b", "c", "d", "e"])
+        with pytest.raises(GenerationError) as excinfo:
+            sampler.sample(
+                pool, n=5, mode=CardinalityMode.UNIQUE, seed=_SEED,
+                source=source, namespace="ns",
+                deterministic=True,
+            )
+        assert excinfo.value.code == "deterministic_mode_unsupported_cardinality"
+
     def test_seed_stability_same_seed_same_output(self) -> None:
         """NEP-19 contract: np.random.default_rng(seed) is reproducible."""
         builder = _builder()

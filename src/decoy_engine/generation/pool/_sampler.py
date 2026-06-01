@@ -78,6 +78,15 @@ class PoolSampler:
         Raises:
             GenerationError(code='deterministic_requires_source_and_namespace')
                 if deterministic=True with source or namespace missing.
+            GenerationError(code='deterministic_mode_unsupported_cardinality')
+                if deterministic=True with mode=UNIQUE (QA-1 H9, 2026-06-01).
+                The deterministic path keys output on source row identity,
+                which means N source rows with the same value get the same
+                output value; that's incompatible with UNIQUE which
+                requires N distinct outputs. mode=MATCH_SOURCE_CARDINALITY
+                with deterministic=True returns REUSE semantics (until a
+                future sprint adds a deterministic-source-cardinality
+                mode).
             GenerationError(code='uniqueness_impossible') if UNIQUE and n > pool.size.
         """
         if deterministic:
@@ -88,6 +97,20 @@ class PoolSampler:
                         "deterministic=True requires both `source` and `namespace`; "
                         f"got source={'set' if source is not None else 'None'}, "
                         f"namespace={namespace!r}."
+                    ),
+                )
+            # QA-1 H9 (2026-06-01): reject the impossible combo. Pre-fix
+            # this branch fell through to _deterministic which produces
+            # REUSE semantics (silently ignoring the UNIQUE constraint).
+            if mode is CardinalityMode.UNIQUE:
+                raise GenerationError(
+                    code="deterministic_mode_unsupported_cardinality",
+                    message=(
+                        "deterministic=True is incompatible with mode=UNIQUE: "
+                        "the deterministic path keys output on source row identity, "
+                        "so identical source values map to identical outputs (which "
+                        "violates UNIQUE). Use deterministic=True with mode=REUSE, "
+                        "or mode=UNIQUE with deterministic=False."
                     ),
                 )
             return self._deterministic(pool, n, source, seed, namespace)
@@ -259,6 +282,16 @@ class PoolSampler:
                         "deterministic=True requires both `source` and `namespace`; "
                         f"got source={'set' if source is not None else 'None'}, "
                         f"namespace={namespace!r}."
+                    ),
+                )
+            # QA-1 H9 (2026-06-01): reject UNIQUE + deterministic on the
+            # bundle path too. See `sample()` for rationale.
+            if mode is CardinalityMode.UNIQUE:
+                raise GenerationError(
+                    code="deterministic_mode_unsupported_cardinality",
+                    message=(
+                        "sample_bundle: deterministic=True is incompatible with "
+                        "mode=UNIQUE. Same constraint as the scalar sample() path."
                     ),
                 )
             if len(source) != n:
