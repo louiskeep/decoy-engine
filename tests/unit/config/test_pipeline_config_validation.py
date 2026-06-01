@@ -397,3 +397,97 @@ class TestSliceOneAcceptance:
         profile = profile_source(cfg, seed=42)
         plan = compile_plan(cfg, profile, decoy_engine_version="0.1.0")
         assert isinstance(plan, Plan)
+
+
+class TestQaWalksGenF6GenerateColumnConfigTypeParams:
+    """QA walks/generators F6 (2026-06-01, MEDIUM correctness / PO
+    Q-F6=no-users): every non-reference generator type must declare
+    its required params at PipelineConfig validation time. Pre-fix a
+    YAML typo (`fker_type: email`) passed validation silently because
+    `extra="allow"` carried any key through; V1 + V2 then fell back to
+    the `word` generator at generation time + produced wrong output
+    with no operator-visible error.
+
+    Per PO Q-F6=no-users: no in-the-wild manifests rely on the soft-
+    fail behavior, so the validator raises hard. No deprecation
+    migration route."""
+
+    def _wrap(self, col: dict) -> dict:
+        return {
+            "version": 1,
+            "mode": "generate",
+            "global_settings": {"seed": 42},
+            "sources": {},
+            "tables": [{"name": "t", "row_count": 5, "generate_columns": [col]}],
+            "targets": {"t": {"type": "file", "format": "csv", "path": "o.csv"}},
+        }
+
+    def test_faker_missing_faker_type_raises(self):
+        cfg = self._wrap({"name": "fk", "type": "faker"})
+        with pytest.raises(ValidationError, match="faker column 'fk' requires `faker_type`"):
+            PipelineConfig.model_validate(cfg)
+
+    def test_faker_with_typo_raises(self):
+        """The audit-named scenario: `fker_type` instead of `faker_type`.
+        Pre-fix passed validation + fell back to V1 word generator at
+        generation time."""
+        cfg = self._wrap({"name": "fk", "type": "faker", "fker_type": "email"})
+        with pytest.raises(ValidationError, match="faker column 'fk' requires `faker_type`"):
+            PipelineConfig.model_validate(cfg)
+
+    def test_sequence_missing_start_raises(self):
+        cfg = self._wrap({"name": "id", "type": "sequence", "step": 1})
+        with pytest.raises(ValidationError, match="sequence column 'id' requires `start`"):
+            PipelineConfig.model_validate(cfg)
+
+    def test_categorical_missing_categories_raises(self):
+        cfg = self._wrap({"name": "dept", "type": "categorical"})
+        with pytest.raises(ValidationError, match="categorical column 'dept' requires `categories`"):
+            PipelineConfig.model_validate(cfg)
+
+    def test_categorical_empty_categories_raises(self):
+        cfg = self._wrap({"name": "dept", "type": "categorical", "categories": []})
+        with pytest.raises(ValidationError, match="categorical column 'dept' requires `categories`"):
+            PipelineConfig.model_validate(cfg)
+
+    def test_formula_missing_formula_raises(self):
+        cfg = self._wrap({"name": "x", "type": "formula"})
+        with pytest.raises(ValidationError, match="formula column 'x' requires `formula`"):
+            PipelineConfig.model_validate(cfg)
+
+    def test_formula_empty_string_raises(self):
+        cfg = self._wrap({"name": "x", "type": "formula", "formula": ""})
+        with pytest.raises(ValidationError, match="formula column 'x' requires `formula`"):
+            PipelineConfig.model_validate(cfg)
+
+    def test_reference_validator_unchanged_still_raises_on_missing_table(self):
+        """Existing _reference_params_required validator still works
+        alongside the new _type_params_present validator."""
+        cfg = self._wrap({
+            "name": "fk",
+            "type": "reference",
+            "reference_column": "id",
+        })
+        with pytest.raises(ValidationError, match="reference column 'fk' requires `reference_table`"):
+            PipelineConfig.model_validate(cfg)
+
+    def test_faker_with_unrelated_extra_still_validates(self):
+        """`extra="allow"` stays in place (Dennis S6-ENG-1 gate
+        Q-S6-1 lock). Unrelated extras like custom markers must still
+        pass through. F6 catches MISSING-required-params, not
+        UNKNOWN-extras."""
+        cfg = self._wrap({
+            "name": "fk",
+            "type": "faker",
+            "faker_type": "email",
+            "custom_marker": "team-alpha",
+        })
+        validated = PipelineConfig.model_validate(cfg)
+        col_dump = validated.model_dump()["tables"][0]["generate_columns"][0]
+        assert col_dump.get("custom_marker") == "team-alpha"
+
+    def test_sequence_with_explicit_start_zero_validates(self):
+        """`start: 0` is a legitimate sequence start; the `is None`
+        check (not falsy check) accepts it."""
+        cfg = self._wrap({"name": "i", "type": "sequence", "start": 0})
+        PipelineConfig.model_validate(cfg)  # must not raise

@@ -262,11 +262,20 @@ class TestCategoricalParityV1:
         }
         assert _v2_run(col, 15) == _v1_run(col, 15)
 
-    def test_default_categories(self):
-        # V1 default when `categories` omitted is ["Category A", "Category B"];
-        # the v2 helper carries the same default (mirror V1).
+    def test_categorical_requires_categories_at_validation_time(self):
+        """QA walks/generators F6 (2026-06-01, MEDIUM correctness / PO
+        Q-F6=no-users): categorical columns without an explicit
+        `categories` field now reject at PipelineConfig validation time.
+
+        Pre-fix V1 silently fell back to ['Category A', 'Category B'] at
+        generation time + this test asserted byte-parity with that
+        fallback (the V1 audit's soft-fail-via-typo semantic). Post-fix
+        the validation layer catches the missing param up front so the
+        operator sees the error at submit time, not as suspicious output
+        rows downstream."""
         col = {"name": "x", "type": "categorical"}
-        assert _v2_run(col, 5) == _v1_run(col, 5)
+        with pytest.raises(ValidationError, match="categorical column 'x' requires `categories`"):
+            _v2_run(col, 5)
 
 
 class TestFakerParityV1:
@@ -451,10 +460,16 @@ class TestFormulaParityV1:
         assert _v2_run(col, 5) == _v1_run(col, 5)
         assert _v2_run(col, 5) == [None] * 5
 
-    def test_empty_formula_returns_nulls(self):
+    def test_empty_formula_rejected_at_validation_time(self):
+        """QA walks/generators F6 (2026-06-01, MEDIUM correctness / PO
+        Q-F6=no-users): a formula column with an empty-string formula
+        is now rejected at PipelineConfig validation time. Pre-fix V1
+        + V2 silently produced nulls; the operator never saw the bad
+        config until they noticed an all-null output column. Post-fix
+        the validator catches the empty formula up front."""
         col = {"name": "x", "type": "formula", "formula": ""}
-        assert _v2_run(col, 5) == _v1_run(col, 5)
-        assert _v2_run(col, 5) == [None] * 5
+        with pytest.raises(ValidationError, match="formula column 'x' requires `formula`"):
+            _v2_run(col, 5)
 
 
 # ----------------------------------------------------------------------------
