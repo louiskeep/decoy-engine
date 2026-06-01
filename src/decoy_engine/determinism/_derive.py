@@ -11,7 +11,7 @@ The envelope (per spec §2):
     HMAC_key   = HKDF-SHA256(IKM=seed, salt=b"decoy-engine/determinism/v1",
                              info=namespace.encode("utf-8"), length=32)
     HMAC_input = (
-        bytes([SEED_PROTOCOL_VERSION])               # 1 byte; 0x02 today
+        bytes([SEED_PROTOCOL_VERSION])               # 1 byte; 0x03 today
         + len(namespace).to_bytes(4, "big") + namespace.encode("utf-8")
         + len(source).to_bytes(4, "big") + source
     )
@@ -57,7 +57,18 @@ from decoy_engine.determinism._hkdf import hkdf_sha256
 # to a length-prefixed arbitrary-magnitude form covering numpy scalars (S5
 # NF1/NF2). No manifests exist in the wild (pre-GA), so v1 marks the
 # pre-correction era and v2 is the corrected baseline.
-SEED_PROTOCOL_VERSION: int = 2
+#
+# QA walks/generators F3 (2026-06-01, HIGH correctness + perf, PO
+# Q-F3=b): bump to v3. The null-injection path in
+# generators/columns.py::generate_column swapped from
+# Python random.Random(column_seed + i) per-row to
+# numpy.random.default_rng(column_seed).random(num_rows). The null
+# FRACTION still converges to null_probability, but the null PATTERN
+# (which specific rows are nulled) differs because numpy and Python
+# random produce different floats for the same integer seed. This
+# changes byte-output for any pipeline with null_probability > 0.
+# Pre-GA, no manifests to break (PO Q-F3=b 2026-06-01 confirmed).
+SEED_PROTOCOL_VERSION: int = 3
 
 _SALT = b"decoy-engine/determinism/v1"
 _SEED_LENGTH = 8  # exactly 8 bytes; raises on any other length
@@ -175,7 +186,7 @@ def derive(seed: bytes, namespace: str, source: bytes) -> bytes:
             ints, etc.
 
     Returns:
-        32 bytes of stable derived material under `SEED_PROTOCOL_VERSION=2`.
+        32 bytes of stable derived material under `SEED_PROTOCOL_VERSION=3`.
 
     Raises:
         DeterminismError on invalid inputs (seed wrong length, empty namespace).
