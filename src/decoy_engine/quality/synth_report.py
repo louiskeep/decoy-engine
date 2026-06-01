@@ -512,7 +512,14 @@ def _row_hash_iter(df: pd.DataFrame, cols: list[str]):
         # hash strategy) avoids "ab|c" / "a|bc" collisions on
         # adjacent string fields.
         composite = "\x1f".join(str(v) for v in row)
-        yield hashlib.sha1(composite.encode("utf-8")).hexdigest()
+        # QA-10 F3 (2026-06-01, HIGH): pass usedforsecurity=False so
+        # this call does not raise on FIPS-hardened OpenSSL builds.
+        # Python 3.9+ requires the flag for SHA-1 in FIPS mode.
+        # The hash here is a row-fingerprint collision-detector, not a
+        # cryptographic primitive; SHA-1's preimage strength is
+        # irrelevant. Healthcare + federal deployments (NPI / ICD-10 /
+        # NDC providers) commonly run FIPS hosts.
+        yield hashlib.sha1(composite.encode("utf-8"), usedforsecurity=False).hexdigest()  # noqa: S324
 
 
 def _band_for(fraction: float) -> str:
