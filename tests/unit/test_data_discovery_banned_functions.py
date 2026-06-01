@@ -48,23 +48,16 @@ def test_quoted_path_in_from_clause_rejected_double_quote() -> None:
         _validate_select_only('SELECT * FROM "/etc/passwd"')
 
 
-def test_column_named_read_csv_is_not_false_positive() -> None:
-    """A SELECT projection that aliases a column literal `read_csv` is
-    NOT a function call and must pass the validator. Word-boundary
-    anchoring on the denylist prevents the false positive."""
-    # The column reference `staged_view.read_csv` is identifier shape;
-    # `read_csv` appears at the start of word but it's followed by a
-    # space + FROM, not a paren. The regex still matches `\bread_csv\b`
-    # though. So strictly, the validator rejects this too.
-    # The realistic negative case is via aliasing where the name is
-    # in the AS clause:
+def test_column_alias_named_read_csv_conservatively_rejected() -> None:
+    """A SELECT projection that aliases a column to the identifier
+    `read_csv` is conservatively REJECTED by the denylist (the regex
+    matches the function name without requiring a paren after).
+
+    This is the documented false-positive cost of the cheap regex
+    denylist (per the spec's pitfalls section). We pin the
+    conservative behavior: better to reject + force the user to
+    rename their alias than risk a function-call bypass."""
     sql = "SELECT user_id AS read_csv FROM staged_view"
-    # \bread_csv\b matches this. The negative-guard test from spec is
-    # checking that the FUNCTION CALL shape is the dangerous one; a
-    # mere identifier match is a known false-positive cost of the
-    # cheap regex denylist. We pin this as the EXPECTED conservative
-    # behavior: better to reject + force the user to rename their
-    # alias than allow a function-call bypass.
     with pytest.raises(DiscoverySqlError):
         _validate_select_only(sql)
 
