@@ -33,6 +33,7 @@ the cited S9 execution-ordering use case.
 
 from __future__ import annotations
 
+import heapq
 from collections import defaultdict
 from dataclasses import dataclass
 from enum import Enum
@@ -248,16 +249,23 @@ def build_relationship_graph(
         out_edges[parent_node].append(child_node)
         indegree[child_node] += 1
 
-    queue = sorted(n for n, d in indegree.items() if d == 0)
+    # QA-8 F1 (2026-06-01): heapq min-heap replaces the list-based
+    # Kahn queue. Pre-fix the queue used `queue.pop(0)` (O(n) per
+    # iteration) + `queue.sort()` (O(n log n) per insert), yielding
+    # O(n^2 log n) worst-case at large pipeline scales (500+ tables).
+    # heapq.heappush + heappop is O(log n); same overall ordering
+    # because both produce the lexicographically-smallest topological
+    # order. Tuples are sortable directly so no key= needed.
+    queue: list[tuple[str, tuple[str, ...]]] = [n for n, d in indegree.items() if d == 0]
+    heapq.heapify(queue)
     ordered: list[tuple[str, tuple[str, ...]]] = []
     while queue:
-        node = queue.pop(0)
+        node = heapq.heappop(queue)
         ordered.append(node)
         for nxt in sorted(out_edges[node]):
             indegree[nxt] -= 1
             if indegree[nxt] == 0:
-                queue.append(nxt)
-        queue.sort()
+                heapq.heappush(queue, nxt)
 
     if len(ordered) != len(nodes):
         cycle_nodes = sorted(n for n, d in indegree.items() if d > 0)
@@ -339,7 +347,26 @@ def check_orphan_fk_policy_completeness(
                         "four valid values: 'preserve', 'remap', 'warn', 'fail'."
                     ),
                 )
-            config_lookup[(parent_table, tuple(parent_cols))] = policy
+            # QA-8 F3 (2026-06-01): detect duplicate-key conflict. A
+            # second entry for the same (parent_table, parent_cols)
+            # with a different orphan_policy used to silently overwrite
+            # the first; the operator never saw the conflict and the
+            # winning policy was last-declared. A merge-conflict
+            # resolution tool could produce this shape. Same-policy
+            # duplicates are tolerated (no information loss).
+            key = (parent_table, tuple(parent_cols))
+            if key in config_lookup and config_lookup[key] != policy:
+                raise PlanCompileError(
+                    code="orphan_fk_policy_duplicate",
+                    path=f"relationships[{idx}]",
+                    message=(
+                        f"Relationship for parent {parent_table}.{parent_cols} "
+                        f"declares orphan_policy={policy!r} but a previous "
+                        f"entry declared {config_lookup[key]!r}. Remove the "
+                        "duplicate entry."
+                    ),
+                )
+            config_lookup[key] = policy
 
     # Now check every profile relationship has a matching config entry.
     lookup: dict[tuple[str, tuple[str, ...]], OrphanPolicy] = {}
