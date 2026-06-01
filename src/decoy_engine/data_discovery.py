@@ -55,9 +55,23 @@ _BANNED = (
     r"\b(INSERT|UPDATE|DELETE|MERGE|REPLACE|TRUNCATE|"
     r"CREATE|ALTER|DROP|ATTACH|DETACH|COPY|EXPORT|IMPORT|"
     r"PRAGMA|INSTALL|LOAD|SET|RESET|CHECKPOINT|VACUUM|CALL|"
-    r"BEGIN|COMMIT|ROLLBACK)\b"
+    r"BEGIN|COMMIT|ROLLBACK|"
+    # QA-2 (2026-05-31): DuckDB file-reading table functions. The
+    # discovery surface is supposed to project from the registered
+    # staged-Parquet view only; allowing read_csv('/etc/passwd')
+    # turns the discovery helper into an arbitrary-file-read
+    # surface. Source: docs/audit/dennis-qa-triage-2026-05-31.md M20.
+    # Out of scope: DuckDB extension functions (httpfs, iceberg_scan)
+    # not installed in V1 deployments; add when those land.
+    r"read_csv|read_csv_auto|read_parquet|read_json|read_ndjson)\b"
 )
 _BANNED_RE = re.compile(_BANNED, re.IGNORECASE)
+
+# QA-2 (2026-05-31): DuckDB accepts FROM '/path/to/file' as a table
+# reference (auto-detects format). The function-call denylist above
+# does not catch this shape; reject quoted-path leading-FROM
+# explicitly. Source: docs/audit/dennis-qa-triage-2026-05-31.md M20.
+_QUOTED_PATH_FROM_RE = re.compile(r"\bFROM\s+['\"]", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -81,9 +95,16 @@ def _strip_comments(sql: str) -> str:
 def _validate_select_only(sql: str) -> None:
     """Reject anything that isn't a single read-only statement.
 
-    Two checks: leading-keyword whitelist + banned-keyword scan. We
-    also reject multi-statement input (`;` followed by more SQL) so a
-    user can't sneak ``SELECT 1; DROP TABLE x`` past the leader check.
+    Three checks: leading-keyword whitelist + banned-keyword scan +
+    quoted-path-FROM scan. The quoted-path scan (QA-2, 2026-05-31)
+    closes a DuckDB-specific gap where ``FROM '/path/to/file'`` would
+    bypass the banned-keyword scan and read arbitrary files. The
+    banned-keyword scan also rejects DuckDB file-reading table
+    functions (`read_csv`, `read_csv_auto`, `read_parquet`,
+    `read_json`, `read_ndjson`).
+
+    Source: QA-2 (2026-05-31); QA-triage M20
+    (`docs/audit/dennis-qa-triage-2026-05-31.md`).
     """
     cleaned = _strip_comments(sql)
     if not cleaned:
@@ -107,6 +128,11 @@ def _validate_select_only(sql: str) -> None:
     if match:
         raise DiscoverySqlError(
             f"Keyword '{match.group(0).upper()}' is not allowed in discovery queries."
+        )
+    if _QUOTED_PATH_FROM_RE.search(body):
+        raise DiscoverySqlError(
+            "FROM clause must reference an identifier or registered view, "
+            "not a quoted path."
         )
 
 
