@@ -183,8 +183,35 @@ class NestedStrategyHandler:
             matches = jsonpath_expr.find(parsed)
             if not matches:
                 continue
-            per_position_state[pos] = (parsed, list(matches))
-            for m in matches:
+            # QA-3 F14 (2026-05-31, security): detect prefix-overlap
+            # among matches. Recursive (`$..ssn`) or wildcard (`$.*.name`)
+            # JSONPaths on structurally-nested matches can produce
+            # results where one match's path is a prefix of another's.
+            # If we then call `m.full_path.update(parsed, new_value)`
+            # in match-order, an earlier write into an outer container
+            # can erase a later write into its nested child (or vice
+            # versa) -- the leaf is silently NOT masked.
+            # Fix: sort matches deepest-first by path depth before
+            # writeback. This makes the ordering deterministic and the
+            # outer container's masked value always reflects the last
+            # write. We also emit a typed QualityWarning so operators
+            # auditing the Storm report can see the path was ambiguous.
+            ordered_matches = _order_matches_deepest_first(matches)
+            if _has_prefix_overlap(ordered_matches):
+                warnings.append(
+                    QualityWarning(
+                        code="nested_jsonpath_path_overlap",
+                        provider="nested",
+                        column=column,
+                        detail={
+                            "row_pos": str(pos),
+                            "target": target_path,
+                            "match_count": str(len(ordered_matches)),
+                        },
+                    )
+                )
+            per_position_state[pos] = (parsed, ordered_matches)
+            for m in ordered_matches:
                 leaf_values.append(m.value)
 
         if not leaf_values:
@@ -240,3 +267,58 @@ class NestedStrategyHandler:
 
         df[column] = pd.Series(col_values, index=df.index, dtype=object)
         return df, warnings
+
+
+def _path_segments(match: Any) -> tuple[str, ...]:
+    """Return the dotted segments of a jsonpath_ng match's full_path.
+
+    `match.full_path` is a chain of Fields / Index / Slice nodes; its
+    `str` representation yields a dotted expression like `user.name`
+    or `(user.email)` (recursive-descent compound paths wrap in
+    parens). We strip the wrapping parens before splitting on `.` so
+    that `(user.email)` -> ("user", "email") aligns with the bare
+    `user` segment from the recursive root match for prefix-overlap
+    detection.
+    """
+    raw = str(match.full_path).strip()
+    # Strip a single outer paren wrapper if present (jsonpath_ng emits
+    # these for compound recursive paths). Inner parens, if any,
+    # remain inside the segment.
+    if raw.startswith("(") and raw.endswith(")"):
+        raw = raw[1:-1]
+    return tuple(raw.split("."))
+
+
+def _order_matches_deepest_first(matches: list) -> list:
+    """Return matches sorted by path depth descending.
+
+    QA-3 F14 (2026-05-31): when the JSONPath produces overlapping
+    matches (one path is a prefix of another), `jsonpath_ng.update`
+    in original order can silently lose the inner write. Sorting
+    deepest-first makes the outer container's masked value the LAST
+    write, so the final cell reflects the parent's masking; this is
+    deterministic and matches the operator's intuition for a
+    recursive selector (`$..*` -> mask the root, then nothing else
+    matters; the inner-leaf writes are discarded by the parent write).
+    """
+    return sorted(matches, key=lambda m: -len(_path_segments(m)))
+
+
+def _has_prefix_overlap(ordered_matches: list) -> bool:
+    """Return True if any match's path is a strict prefix of another.
+
+    The list is expected to be deepest-first; under that order a
+    prefix-overlap means some pair (deeper, shallower) where shallower
+    is a strict prefix of deeper. We do an O(n^2) scan; n is at most
+    the number of matches in a single cell (typically <50), and the
+    function only runs when matches are non-empty.
+    """
+    seg_lists = [_path_segments(m) for m in ordered_matches]
+    n = len(seg_lists)
+    for i in range(n):
+        deeper = seg_lists[i]
+        for j in range(i + 1, n):
+            shallower = seg_lists[j]
+            if len(shallower) < len(deeper) and deeper[: len(shallower)] == shallower:
+                return True
+    return False
