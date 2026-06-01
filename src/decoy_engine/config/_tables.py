@@ -130,6 +130,43 @@ class GenerateColumnConfig(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def _type_params_present(self) -> "GenerateColumnConfig":
+        """QA walks/generators F6 (2026-06-01, MEDIUM correctness / PO
+        Q-F6=no-users): every non-reference generator type now requires
+        the params V1's ColumnGenerator reads at generation time. Pre-
+        fix a YAML typo like ``fker_type: email`` passed validation
+        silently because ``extra="allow"`` carried any key through; V1
+        then fell back to the ``word`` generator at generation time +
+        produced word output instead of the email the operator asked
+        for. Silent semantic failure.
+
+        Per PO answer 2026-06-01 (Q-F6=no-users): no in-the-wild
+        manifests rely on the soft-fail behavior, so ship the hard-
+        error variant directly. No deprecation-warning migration route.
+
+        The validator is ADDITIVE: ``extra="allow"`` stays in place (per
+        Dennis S6-ENG-1 gate Q-S6-1 ordering) so unrelated extras still
+        pass through. Only missing-required-params are caught."""
+        extras = self.model_extra or {}
+        if self.type == "faker" and not extras.get("faker_type"):
+            raise ValueError(
+                f"faker column {self.name!r} requires `faker_type`"
+            )
+        if self.type == "sequence" and extras.get("start") is None:
+            raise ValueError(
+                f"sequence column {self.name!r} requires `start`"
+            )
+        if self.type == "categorical" and not extras.get("categories"):
+            raise ValueError(
+                f"categorical column {self.name!r} requires `categories`"
+            )
+        if self.type == "formula" and not extras.get("formula"):
+            raise ValueError(
+                f"formula column {self.name!r} requires `formula`"
+            )
+        return self
+
 
 class TableConfig(BaseModel):
     """Per-table declaration.
