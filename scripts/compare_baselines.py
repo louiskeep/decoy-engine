@@ -1,23 +1,24 @@
-"""Compare the pre-rewrite baseline against the engine-v2 baseline (S13).
+"""Compare engine-v2 baseline against a pre-rewrite baseline if one is supplied.
 
-Reads the pre-rewrite baseline (`pandas-baseline-pre-rewrite.json`, V1 transforms)
-and the engine-v2 baseline (`engine-v2-baseline.json`, the v2 adapter on both
-substrates), matches cells by (strategy, tier), and emits the readiness-report
-Performance Gate section as markdown.
+Reads the engine-v2 baseline (`engine-v2-baseline.json`, the v2 adapter on both
+substrates) and, OPTIONALLY, a pre-rewrite baseline (`pandas-baseline-pre-rewrite.json`,
+V1 transforms). When the pre-rewrite baseline is supplied it emits the full
+relative-comparison Performance Gate report. When absent (post-V1-cleanup; see
+engine commit b9b73e1 deleting the V1 graph runner), it emits an absolute-only
+report covering correctness + FPE throughput + per-cell summary, with the
+pre-rewrite columns marked n/a.
 
 Gate logic (done-definition.md / S13 section 2.2):
 - Performance is counted ONLY where the cell's Correctness Gate passed (a faster
   engine that broke correctness does not count).
 - Faker cell improves >= 10x at medium tier (engine-v2 shipped substrate vs
-  pre-rewrite).
+  pre-rewrite). NOT EVALUABLE without --old; the 2026-05-28 canonical run measured
+  294.55x and is cited in the readiness report as historical evidence.
 - FPE cell sustains >= 15,000 rows/sec at medium tier on the shipped substrate
-  (polars). Re-barred from ">= 2x vs pre-rewrite" (S13): the relative gate was
-  dominated by irreducible HMAC-Feistel crypto cost (1 HKDF derive + 8 HMAC-SHA256
-  rounds/value) that neither substrate avoids, not the chunked parallelism S9
-  owned. See build_report for the rationale + headroom.
+  (polars). Absolute throughput gate, always evaluable regardless of --old.
 - No cell regresses > 5% vs pre-rewrite without a documented waiver (the rewrite-era
   band is widened per testing-and-risks.md; cheap-band boundary-cost regressions
-  are expected and waived in the readiness report).
+  are expected and waived in the readiness report). Skipped without --old.
 
 The shipped substrate is polars (PQ6), so the vs-pre-rewrite ratio is computed on
 the polars number; the pandas-engine-v2 and polars-vs-pandas numbers are reported
@@ -25,8 +26,14 @@ alongside for context. Exits non-zero if a hard gate fails, so CI can enforce.
 
 Usage::
 
+    # Standard: absolute-only mode (post-V1-cleanup default)
     python scripts/compare_baselines.py \
-        --old tests/perf_fixtures/pandas-baseline-pre-rewrite.json \
+        --new tests/perf_fixtures/engine-v2-baseline.json \
+        --output docs/v2/perf/engine-v2-release-readiness-perf.md
+
+    # Optional: relative-comparison mode when a pre-rewrite baseline is supplied
+    python scripts/compare_baselines.py \
+        --old <pre-rewrite baseline JSON path> \
         --new tests/perf_fixtures/engine-v2-baseline.json \
         --output docs/v2/perf/engine-v2-release-readiness-perf.md
 """
@@ -83,7 +90,9 @@ def _throughput(cell: dict[str, Any]) -> float | None:
     return rows / (pol_p50 / 1000.0)
 
 
-def build_report(old: dict[str, Any], new: dict[str, Any]) -> tuple[str, list[str], list[str]]:
+def build_report(
+    old: dict[str, Any] | None, new: dict[str, Any]
+) -> tuple[str, list[str], list[str]]:
     """Return (markdown, hard_failures, warnings).
 
     hard_failures (exit non-zero): a correctness-failed cell, or a headline ratio
@@ -91,14 +100,19 @@ def build_report(old: dict[str, Any], new: dict[str, Any]) -> tuple[str, list[st
     per-cell regressions vs pre-rewrite (waiver-candidates the readiness report
     dispositions per the rewrite-era band) and gates that are not yet evaluable
     because the engine-v2 baseline lacks that cell (e.g. a small-only local run).
+
+    When ``old`` is None (post-V1-cleanup default), the pre-rewrite columns and
+    the Faker relative-speedup gate are reported as n/a / NOT EVALUABLE. The
+    absolute FPE throughput gate + correctness gate stay live.
     """
-    old_p50 = _index_old(old)
+    old_p50 = _index_old(old) if old is not None else {}
     lines: list[str] = []
     failures: list[str] = []
     warnings: list[str] = []
     env = new.get("meta", {}).get("environment", "unknown")
 
-    lines.append("## Performance Gate (engine-v2 vs pre-rewrite)\n")
+    header_suffix = "" if old is not None else " (absolute-only; no pre-rewrite baseline supplied)"
+    lines.append(f"## Performance Gate (engine-v2 vs pre-rewrite){header_suffix}\n")
     lines.append(f"Environment: `{env}`. Performance counted only where Correctness Gate = PASS.\n")
     lines.append(
         "| strategy | tier | correctness | pre-rewrite p50 (ms) | v2 pandas p50 | "
@@ -124,8 +138,11 @@ def build_report(old: dict[str, Any], new: dict[str, Any]) -> tuple[str, list[st
         # Regression check (shipped substrate vs pre-rewrite), counted only on PASS.
         # Waiver-candidate, NOT a hard fail: cheap-band cells regress on the v2
         # adapter's Arrow-boundary cost (expected per the substrate-decision doc);
-        # the readiness report dispositions each per the rewrite-era band.
-        if gate == "PASS" and before is not None and pol_p50 > before * 1.05:
+        # the readiness report dispositions each per the rewrite-era band. Zero-
+        # guard the percentage compute: a zero or sub-zero `before` would crash
+        # the format string (Dennis pass-9 LOW; before-fix the script raised
+        # ZeroDivisionError on any cell whose pre-rewrite p50 had been captured as 0).
+        if gate == "PASS" and before is not None and before > 0 and pol_p50 > before * 1.05:
             warnings.append(
                 f"regression (waiver-candidate): {strat}/{tier} polars {pol_p50:.2f}ms "
                 f"> pre-rewrite {before:.2f}ms (+{(pol_p50 / before - 1) * 100:.0f}%)"
@@ -136,7 +153,10 @@ def build_report(old: dict[str, Any], new: dict[str, Any]) -> tuple[str, list[st
 
     # Faker: relative speedup vs the pre-rewrite baseline (>= 10x). Pool-backed
     # generation (S5/S7/S9) dwarfs the pre-rewrite per-row Faker calls, so a
-    # multiplier is the right shape here.
+    # multiplier is the right shape here. NOT EVALUABLE without --old (the
+    # pre-rewrite baseline was deleted in engine commit b9b73e1 alongside the V1
+    # graph runner; the 2026-05-28 canonical run measured 294.55x and is cited
+    # in the readiness report as historical evidence).
     faker = _find(new, "faker", "medium")
     if faker is None:
         warnings.append("gate not evaluable: faker/medium cell missing (run medium tier on CI)")
@@ -144,6 +164,16 @@ def build_report(old: dict[str, Any], new: dict[str, Any]) -> tuple[str, list[st
     elif faker.get("correctness_gate") != "PASS":
         failures.append("GATE FAIL: faker/medium correctness != PASS")
         lines.append("- faker >= 10x @ medium: FAIL (correctness)")
+    elif old is None:
+        warnings.append(
+            "gate not evaluable: faker/medium 10x relative gate requires --old; "
+            "post-V1-cleanup the pre-rewrite baseline file no longer exists. "
+            "Historical 2026-05-28 CI measurement: 294.55x (cited in readiness report)."
+        )
+        lines.append(
+            "- faker >= 10x @ medium: NOT EVALUABLE (no pre-rewrite baseline; "
+            "historical 294.55x cited in readiness report)"
+        )
     else:
         before = old_p50.get(("faker", "medium"))
         if before is None:
@@ -200,12 +230,20 @@ def _find(new: dict[str, Any], strategy: str, tier: str) -> dict[str, Any] | Non
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="compare-baselines")
-    parser.add_argument("--old", type=Path, required=True, help="pre-rewrite baseline JSON")
+    parser.add_argument(
+        "--old",
+        type=Path,
+        default=None,
+        help=(
+            "pre-rewrite baseline JSON (optional; absent post-V1-cleanup, "
+            "see engine commit b9b73e1)"
+        ),
+    )
     parser.add_argument("--new", type=Path, required=True, help="engine-v2 baseline JSON")
     parser.add_argument("--output", type=Path, default=None, help="markdown output path")
     args = parser.parse_args(argv)
 
-    old = json.loads(args.old.read_text(encoding="utf-8"))
+    old = json.loads(args.old.read_text(encoding="utf-8")) if args.old is not None else None
     new = json.loads(args.new.read_text(encoding="utf-8"))
     report, failures, warnings = build_report(old, new)
 
