@@ -108,6 +108,9 @@ def _column_seed_to_dict(cs: ColumnSeed) -> dict[str, Any]:
     # set; legacy plans omit the field and round-trip unchanged.
     if cs.when is not None:
         out["when"] = cs.when
+    # MG-6 D1 (2026-05-31): same round-trip pattern as technique_class.
+    if cs.distribution_behavior is not None:
+        out["distribution_behavior"] = cs.distribution_behavior
     return out
 
 
@@ -210,6 +213,8 @@ def _column_seed_from_dict(data: dict[str, Any]) -> ColumnSeed:
         # MG-3 / M3 (2026-05-31): same round-trip pattern as the
         # technique class; legacy plans default to None.
         when=data.get("when"),
+        # MG-6 D1 (2026-05-31): same pattern.
+        distribution_behavior=data.get("distribution_behavior"),
     )
 
 

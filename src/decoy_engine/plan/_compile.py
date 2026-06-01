@@ -40,6 +40,7 @@ from typing import Any
 # (coordinated Faker-seeding + canonicalize-integer fixes). Bumping
 # requires a release-notes line per done-definition.md.
 from decoy_engine.determinism import SEED_PROTOCOL_VERSION
+from decoy_engine.execution._distribution_behavior import distribution_behavior_for
 from decoy_engine.execution._technique_class import technique_class_for
 from decoy_engine.plan._checks import (
     check_basic_uniqueness_pre_flight,
@@ -403,15 +404,43 @@ def _normalize_job_seed(config: dict[str, Any]) -> bytes:
     happens exactly once at the pipeline-config adapter boundary. The
     rest of the engine consumes `bytes` only.
 
+    Default + missing-key handling: when `global_settings.seed` is
+    absent OR explicitly set to None, the seed defaults to 0. Any
+    other non-numeric value (a string that does not parse as an int,
+    a bool, a dict, a list) raises `seed_not_numeric` instead of
+    silently falling back to 0. The pre-MG-6 fallback masked
+    misconfigurations: two pipelines with intentionally different
+    (but malformed) seeds compiled to byte-identical plans.
+
     Raises:
-        PlanCompileError(code='seed_overflow') if the int does not fit
-        in unsigned 64-bit (the size of the bytes form).
+        PlanCompileError(code='seed_not_numeric') when the seed is
+            present but cannot be coerced to int.
+        PlanCompileError(code='seed_overflow') when the int does not
+            fit in unsigned 64-bit (the size of the bytes form).
     """
-    job_seed_raw = config.get("global_settings", {}).get("seed", 0)
-    try:
-        seed_int = int(job_seed_raw)
-    except (TypeError, ValueError):
+    global_settings = config.get("global_settings", {}) or {}
+    if "seed" not in global_settings:
         seed_int = 0
+    else:
+        job_seed_raw = global_settings.get("seed")
+        if job_seed_raw is None:
+            seed_int = 0
+        else:
+            try:
+                seed_int = int(job_seed_raw)
+            except (TypeError, ValueError) as exc:
+                raise PlanCompileError(
+                    code="seed_not_numeric",
+                    path="global_settings.seed",
+                    message=(
+                        f"seed must be numeric (int or int-coercible); got "
+                        f"{type(job_seed_raw).__name__} {job_seed_raw!r}. "
+                        "Two pipelines with intentionally different malformed "
+                        "seeds previously compiled to byte-identical plans; "
+                        "this rejection (Dennis QA triage 2026-05-31 / engine "
+                        "session 2 F7) makes such configs fail loud."
+                    ),
+                ) from exc
     if not 0 <= seed_int < (1 << 64):
         raise PlanCompileError(
             code="seed_overflow",
@@ -617,6 +646,15 @@ def _build_seed_envelope(
                             # has not been classified.
                             technique_class=technique_class_for(strategy),
                             when=when,
+                            # MG-6 D1 (2026-05-31): distribution-behavior
+                            # classification. Resolves dynamically for the
+                            # categorical case (preserves_all when weights/
+                            # from_profile set, destroys_frequency otherwise).
+                            # nested resolves to "inherits"; the manifest
+                            # layer substitutes the child's behavior.
+                            distribution_behavior=distribution_behavior_for(
+                                strategy, provider_config
+                            ),
                         ),
                     )
                 )

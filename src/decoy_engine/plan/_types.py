@@ -94,6 +94,17 @@ class ColumnSeed:
     # legacy "always run" behavior (byte-identical for any plan that
     # doesn't set the field).
     when: str | None = None
+    # MG-6 D1 (2026-05-31): distribution-behavior classification.
+    # Sibling of `technique_class`; drives the FE drift-badge
+    # threshold logic in MG-6 D2 (low drift on a preserves_all
+    # column is success; low drift on a destroys_frequency column
+    # is a problem). Set by plan-compile from the central
+    # distribution_behavior_for() resolver which handles the
+    # dynamic categorical case (preserves_all when weights/
+    # from_profile is set, destroys_frequency otherwise). For
+    # `nested`, this field carries the sentinel "inherits" and
+    # the manifest layer substitutes the child's value.
+    distribution_behavior: str | None = None
 
 
 @dataclass(frozen=True)
