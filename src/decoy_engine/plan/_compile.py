@@ -407,10 +407,12 @@ def _normalize_job_seed(config: dict[str, Any]) -> bytes:
     Default + missing-key handling: when `global_settings.seed` is
     absent OR explicitly set to None, the seed defaults to 0. Any
     other non-numeric value (a string that does not parse as an int,
-    a bool, a dict, a list) raises `seed_not_numeric` instead of
-    silently falling back to 0. The pre-MG-6 fallback masked
-    misconfigurations: two pipelines with intentionally different
-    (but malformed) seeds compiled to byte-identical plans.
+    a bool, a float, a dict, a list) raises `seed_not_numeric` instead
+    of silently coercing to a plausible int. The bool + float guards
+    (QA-3 F1, 2026-05-31) block PyYAML's `seed: true/yes/no` (parsed
+    as Python bool, `int(True) = 1`) and `seed: 1.5` (`int(1.5) = 1`,
+    silent truncation) which had passed the pre-QA-3 `int()` coercion
+    silently.
 
     Raises:
         PlanCompileError(code='seed_not_numeric') when the seed is
@@ -426,6 +428,33 @@ def _normalize_job_seed(config: dict[str, Any]) -> bytes:
         if job_seed_raw is None:
             seed_int = 0
         else:
+            # QA-3 F1 (2026-05-31): bool + float guards. Python evaluates
+            # `int(True) = 1` and `int(False) = 0`, and `int(1.5) = 1`,
+            # so without these guards PyYAML's `seed: yes/no/true/false`
+            # and `seed: 1.5` silently coerced to plausible integers.
+            # Two pipelines with intentionally different malformed seeds
+            # would compile to byte-identical plans.
+            if isinstance(job_seed_raw, bool):
+                raise PlanCompileError(
+                    code="seed_not_numeric",
+                    path="global_settings.seed",
+                    message=(
+                        f"seed must be an integer; got bool {job_seed_raw!r}. "
+                        "If your YAML has `seed: true` or `seed: yes`, PyYAML "
+                        "parses it as a Python bool, not an int. Use an "
+                        "explicit integer like `seed: 1` instead."
+                    ),
+                )
+            if isinstance(job_seed_raw, float):
+                raise PlanCompileError(
+                    code="seed_not_numeric",
+                    path="global_settings.seed",
+                    message=(
+                        f"seed must be an integer; got float {job_seed_raw!r}. "
+                        "A float seed would silently truncate to the integer "
+                        "part. Use an explicit integer instead."
+                    ),
+                )
             try:
                 seed_int = int(job_seed_raw)
             except (TypeError, ValueError) as exc:
@@ -434,11 +463,7 @@ def _normalize_job_seed(config: dict[str, Any]) -> bytes:
                     path="global_settings.seed",
                     message=(
                         f"seed must be numeric (int or int-coercible); got "
-                        f"{type(job_seed_raw).__name__} {job_seed_raw!r}. "
-                        "Two pipelines with intentionally different malformed "
-                        "seeds previously compiled to byte-identical plans; "
-                        "this rejection (Dennis QA triage 2026-05-31 / engine "
-                        "session 2 F7) makes such configs fail loud."
+                        f"{type(job_seed_raw).__name__} {job_seed_raw!r}."
                     ),
                 ) from exc
     if not 0 <= seed_int < (1 << 64):

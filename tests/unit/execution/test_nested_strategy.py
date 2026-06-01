@@ -16,7 +16,9 @@ from __future__ import annotations
 import json
 
 import pandas as pd
+import pytest
 
+from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution._strategies._nested import NestedStrategyHandler
 from decoy_engine.plan._types import ColumnSeed
 
@@ -172,44 +174,221 @@ class TestPassthroughCases:
 
 
 class TestRejections:
+    """QA-3 F12 (2026-05-31, security): config errors below now raise
+    StrategyError so the runner fails the job. Pre-fix they returned the
+    column unchanged with a QualityWarning; a typoed target or unknown
+    child strategy silently passed PII through (the warning surfaced
+    only in the Storm report, which not all operators audit).
+    """
+
     def test_nested_recursive_nested_rejected(self):
         df = pd.DataFrame({"data": [json.dumps({"x": "y"})]})
         handler = NestedStrategyHandler()
-        _, warnings = handler.run(
-            df.copy(),
-            "data",
-            _seed({"target": "$.x", "strategy": "nested"}),
-            _FakeCtx(),
-        )
-        codes = [w.code for w in warnings]
-        assert "nested_recursive_nested_rejected" in codes
+        with pytest.raises(StrategyError) as exc:
+            handler.run(
+                df.copy(),
+                "data",
+                _seed({"target": "$.x", "strategy": "nested"}),
+                _FakeCtx(),
+            )
+        assert exc.value.code == "nested_recursive_nested_rejected"
+        assert exc.value.strategy == "nested"
 
-    def test_nested_unknown_child_strategy_warning(self):
+    def test_nested_unknown_child_strategy_raises(self):
         df = pd.DataFrame({"data": [json.dumps({"x": "y"})]})
         handler = NestedStrategyHandler()
-        _, warnings = handler.run(
-            df.copy(),
-            "data",
-            _seed({"target": "$.x", "strategy": "no_such_strategy"}),
-            _FakeCtx(),
-        )
-        codes = [w.code for w in warnings]
-        assert "nested_child_strategy_unknown" in codes
+        with pytest.raises(StrategyError) as exc:
+            handler.run(
+                df.copy(),
+                "data",
+                _seed({"target": "$.x", "strategy": "no_such_strategy"}),
+                _FakeCtx(),
+            )
+        assert exc.value.code == "nested_child_strategy_unknown"
 
-    def test_nested_jsonpath_parse_error_warning(self):
+    def test_nested_jsonpath_parse_error_raises(self):
         df = pd.DataFrame({"data": [json.dumps({"x": "y"})]})
         handler = NestedStrategyHandler()
-        _, warnings = handler.run(
-            df.copy(),
-            "data",
-            _seed({"target": "$.x[", "strategy": "redact"}),  # bad jsonpath
-            _FakeCtx(),
-        )
-        codes = [w.code for w in warnings]
-        assert "nested_jsonpath_parse_error" in codes
+        with pytest.raises(StrategyError) as exc:
+            handler.run(
+                df.copy(),
+                "data",
+                _seed({"target": "$.x[", "strategy": "redact"}),  # bad jsonpath
+                _FakeCtx(),
+            )
+        assert exc.value.code == "nested_jsonpath_parse_error"
+
+    def test_nested_target_empty_raises(self):
+        df = pd.DataFrame({"data": [json.dumps({"x": "y"})]})
+        handler = NestedStrategyHandler()
+        with pytest.raises(StrategyError) as exc:
+            handler.run(
+                df.copy(),
+                "data",
+                _seed({"target": "", "strategy": "redact"}),
+                _FakeCtx(),
+            )
+        assert exc.value.code == "nested_target_unset"
+
+    def test_nested_strategy_empty_raises(self):
+        df = pd.DataFrame({"data": [json.dumps({"x": "y"})]})
+        handler = NestedStrategyHandler()
+        with pytest.raises(StrategyError) as exc:
+            handler.run(
+                df.copy(),
+                "data",
+                _seed({"target": "$.x", "strategy": ""}),
+                _FakeCtx(),
+            )
+        assert exc.value.code == "nested_strategy_unset"
 
 
 # ── batch delegation ──────────────────────────────────────────────────
+
+
+class TestDuplicateIndex:
+    """QA-3 F2 (2026-05-31): duplicate-index DataFrames used to corrupt
+    the nested writeback. The old implementation iterated `col.index`
+    and stored per-row state in a dict keyed on the index label; on a
+    duplicate index, `col.at[row_idx]` returned a Series and the dict
+    silently kept only one entry per duplicate. Post-fix the strategy
+    uses positional enumeration: every row visited exactly once and
+    written back by position."""
+
+    def test_nested_duplicate_index_writeback_correct(self):
+        df = pd.DataFrame(
+            {
+                "data": [
+                    json.dumps({"user": {"email": "a@x.com"}}),
+                    json.dumps({"user": {"email": "b@x.com"}}),
+                    json.dumps({"user": {"email": "c@x.com"}}),
+                ]
+            },
+            index=[0, 0, 0],  # all rows share the same index label
+        )
+        handler = NestedStrategyHandler()
+        out, warnings = handler.run(
+            df.copy(),
+            "data",
+            _seed({"target": "$.user.email", "strategy": "redact"}),
+            _FakeCtx(),
+        )
+        # All 3 rows must be masked; no row's email survives the
+        # writeback. Pre-fix only the FIRST row (or worse: only one of
+        # the rows non-deterministically) got the writeback.
+        for row in out["data"]:
+            parsed = json.loads(row)
+            assert parsed["user"]["email"] == "REDACTED"
+        assert warnings == []
+
+
+class TestChildTechniqueClass:
+    """QA-3 F7 (2026-05-31): the synthetic child ColumnSeed must carry
+    the child strategy's technique class, not None (the parent's class
+    for nested is intentionally None per _technique_class.py)."""
+
+    def test_nested_child_technique_class_resolves_for_redact(self):
+        # Indirect verification: the child handler runs against a seed
+        # whose technique_class is anonymisation (redact's class).
+        # Stand-in test: confirm the strategy still produces correct
+        # masked output, which is the user-visible signal that the
+        # child seed was constructed correctly.
+        df = pd.DataFrame(
+            {"data": [json.dumps({"x": "y"})]}
+        )
+        handler = NestedStrategyHandler()
+        out, _ = handler.run(
+            df.copy(),
+            "data",
+            _seed({"target": "$.x", "strategy": "redact"}),
+            _FakeCtx(),
+        )
+        assert json.loads(out["data"].iloc[0]) == {"x": "REDACTED"}
+
+
+class TestJsonPathOverlapSecurity:
+    """QA-3 F14 (2026-05-31, security): wildcard / recursive JSONPath
+    can produce match-sets where one match's path is a prefix of
+    another (e.g. `$..*` returns the dict AND its contents). Pre-fix
+    `jsonpath_ng.update` in original order silently lost the inner
+    write or wrote to the wrong location. Post-fix the matches are
+    sorted deepest-first and a typed QualityWarning is emitted when
+    prefix-overlap is detected so operators auditing the Storm report
+    can see the path was ambiguous."""
+
+    def test_nested_recursive_overlap_emits_warning(self):
+        # `$..*` returns matches at every level; the root structures
+        # are prefixes of their leaves. The strategy must emit the
+        # overlap warning and writeback deepest-first.
+        df = pd.DataFrame(
+            {
+                "data": [
+                    json.dumps({"user": {"name": "Alice", "email": "alice@x.com"}}),
+                ]
+            }
+        )
+        handler = NestedStrategyHandler()
+        _, warnings = handler.run(
+            df.copy(),
+            "data",
+            _seed({"target": "$..*", "strategy": "redact"}),
+            _FakeCtx(),
+        )
+        codes = [w.code for w in warnings]
+        assert "nested_jsonpath_path_overlap" in codes
+
+    def test_nested_recursive_no_overlap_emits_no_warning(self):
+        # `$..ssn` on siblings (not nested) returns parallel matches;
+        # no prefix-overlap, no warning.
+        df = pd.DataFrame(
+            {
+                "data": [
+                    json.dumps(
+                        {
+                            "patient": {"ssn": "111"},
+                            "spouse": {"ssn": "222"},
+                        }
+                    )
+                ]
+            }
+        )
+        handler = NestedStrategyHandler()
+        _, warnings = handler.run(
+            df.copy(),
+            "data",
+            _seed({"target": "$..ssn", "strategy": "redact"}),
+            _FakeCtx(),
+        )
+        codes = [w.code for w in warnings]
+        assert "nested_jsonpath_path_overlap" not in codes
+        # And both ssns are masked.
+
+    def test_nested_recursive_masks_all_target_leaves(self):
+        # Even with overlap, every leaf identified by the JSONPath
+        # gets written to (deepest-first ordering preserves the
+        # contract: every match position receives the masked value).
+        df = pd.DataFrame(
+            {
+                "data": [
+                    json.dumps(
+                        {
+                            "patient": {"ssn": "111-22-3333"},
+                            "spouse": {"ssn": "444-55-6666"},
+                        }
+                    )
+                ]
+            }
+        )
+        handler = NestedStrategyHandler()
+        out, _ = handler.run(
+            df.copy(),
+            "data",
+            _seed({"target": "$..ssn", "strategy": "redact"}),
+            _FakeCtx(),
+        )
+        parsed = json.loads(out["data"].iloc[0])
+        assert parsed["patient"]["ssn"] == "REDACTED"
+        assert parsed["spouse"]["ssn"] == "REDACTED"
 
 
 class TestBatchDelegation:

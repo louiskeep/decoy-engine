@@ -299,8 +299,16 @@ _SSN_RE = re.compile(r"(?!000|666|9\d{2})\d{3}-?(?!00)\d{2}-?(?!0000)\d{4}")
 # US phone — 10 digits with common separators, optional +1 country code.
 _US_PHONE_RE = re.compile(r"(?:\+?1[\s.-]?)?\(?[2-9]\d{2}\)?[\s.-]?[2-9]\d{2}[\s.-]?\d{4}")
 
-# US ZIP — 5 digits, optional -#### extension.
-_US_ZIP_RE = re.compile(r"\d{5}(?:-\d{4})?")
+# US ZIP -- 5 digits, optional -#### extension.
+# QA-3 F6 (2026-05-31): non-word lookbehind + lookahead reject 5-digit
+# numbers inside larger numeric tokens like "12345mg" or
+# "weight: 12345.6" (a dose or weight reading). Pre-fix `\d{5}` matched
+# as a substring, so any 5-digit block in a dose/measurement column
+# over-fired the us_zip detector and the column got pulled into the
+# PII span set. `\b` alone is insufficient because `.` is a non-word
+# character, so "12345.6" still satisfies \b at the boundary; the
+# extra (?!\.\d) lookahead rejects the decimal-number case.
+_US_ZIP_RE = re.compile(r"(?<!\w)\d{5}(?:-\d{4})?(?!\w)(?!\.\d)")
 
 # Date formats — strict patterns; the profiler also has pandas' to_datetime
 # fuzzy parser as a backstop. These are for *format signal* only.
@@ -410,7 +418,11 @@ _US_PHONE_VARIANTS = [
 
 _US_ZIP_VARIANTS = [
     _variant(r"\d{5}-\d{4}"),
-    _variant(r"\d{5}"),
+    # QA-3 F6 (2026-05-31): the bare 5-digit variant gets the same
+    # non-word boundary protection as the iter_spans pattern; otherwise
+    # the format-variant rate calculation accepts any 5-digit substring
+    # in a measurement column as a us_zip match.
+    _variant(r"(?<!\w)\d{5}(?!\w)(?!\.\d)"),
 ]
 
 # Date detectors map directly to strptime — the format_pattern label is

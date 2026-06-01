@@ -16,6 +16,13 @@ QualityWarning and pass through unchanged. Cells with no match for
 the target path are left as-is (no warning -- a sparse path is a
 valid use case).
 
+Round-trip note (QA-3 F8, 2026-05-31): the cell is parsed via
+`json.loads` and re-serialized via `json.dumps`. JSON serialization
+canonicalizes whitespace, escapes, and key ordering, so the masked
+cell is not byte-for-byte identical to the input even when the
+target leaf is unchanged. Operators relying on byte-stable input
+should mask upstream of any JSON normalization.
+
 Config (`provider_config`):
     target          str             JSONPath expression locating the
                                     leaves to mask. Required.
@@ -41,6 +48,8 @@ import jsonpath_ng
 import pandas as pd
 
 from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
+from decoy_engine.execution._errors import StrategyError
+from decoy_engine.execution._technique_class import technique_class_for
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._types import ColumnSeed
 
@@ -67,54 +76,69 @@ class NestedStrategyHandler:
         child_strategy_name = cfg.get("strategy")
         child_strategy_config = cfg.get("strategy_config") or {}
 
+        # QA-3 F12 (2026-05-31, security): config errors below promote to
+        # StrategyError so the runner fails the job. Pre-fix they returned
+        # df UNCHANGED with a QualityWarning -- a misconfigured target
+        # (e.g. `$.patient_name` typoed as `$.patientName`, or a child
+        # strategy name typo) silently passed PII through. The warning
+        # surfaced only in the Storm report, not at job failure, and
+        # operators who don't audit Storm output had no signal.
+        # Sparse-path passthrough (some cells have matches, some don't)
+        # stays a non-error case per spec; that branch is handled below
+        # by the "if not leaf_values" early-return without raising.
         if not isinstance(target_path, str) or not target_path:
-            return df, [
-                QualityWarning(
-                    code="nested_target_unset",
-                    provider="nested",
-                    column=column,
-                )
-            ]
+            raise StrategyError(
+                code="nested_target_unset",
+                strategy="nested",
+                message=(
+                    f"nested target is required and must be a non-empty string "
+                    f"(column={column!r}). Pre-fix this returned the column "
+                    "unchanged with a QualityWarning; misconfigured targets "
+                    "silently passed PII through."
+                ),
+            )
         if not isinstance(child_strategy_name, str) or not child_strategy_name:
-            return df, [
-                QualityWarning(
-                    code="nested_strategy_unset",
-                    provider="nested",
-                    column=column,
-                )
-            ]
+            raise StrategyError(
+                code="nested_strategy_unset",
+                strategy="nested",
+                message=(
+                    f"nested child strategy is required and must be a non-empty "
+                    f"string (column={column!r})."
+                ),
+            )
 
         if child_strategy_name == "nested":
-            return df, [
-                QualityWarning(
-                    code="nested_recursive_nested_rejected",
-                    provider="nested",
-                    column=column,
-                )
-            ]
+            raise StrategyError(
+                code="nested_recursive_nested_rejected",
+                strategy="nested",
+                message=(
+                    f"nested cannot wrap itself recursively (column={column!r})."
+                ),
+            )
 
         child_handler = SCALAR_HANDLERS.get(child_strategy_name)
         if child_handler is None:
-            return df, [
-                QualityWarning(
-                    code="nested_child_strategy_unknown",
-                    provider="nested",
-                    column=column,
-                    detail={"child_strategy": child_strategy_name},
-                )
-            ]
+            raise StrategyError(
+                code="nested_child_strategy_unknown",
+                strategy="nested",
+                message=(
+                    f"nested child strategy {child_strategy_name!r} is not a "
+                    f"registered SCALAR_HANDLERS key (column={column!r}). "
+                    "A typo here silently dropped PII pre-fix."
+                ),
+            )
 
         try:
             jsonpath_expr = jsonpath_ng.parse(target_path)
         except Exception as exc:
-            return df, [
-                QualityWarning(
-                    code="nested_jsonpath_parse_error",
-                    provider="nested",
-                    column=column,
-                    detail={"target": target_path, "error": str(exc)},
-                )
-            ]
+            raise StrategyError(
+                code="nested_jsonpath_parse_error",
+                strategy="nested",
+                message=(
+                    f"nested target {target_path!r} is not a valid JSONPath "
+                    f"expression (column={column!r}): {exc}"
+                ),
+            ) from exc
 
         col = df[column]
         if pd.api.types.is_extension_array_dtype(col.dtype):
@@ -122,13 +146,26 @@ class NestedStrategyHandler:
         else:
             col = col.copy()
 
+        # QA-3 F2 (2026-05-31): positional enumeration replaces the
+        # index-keyed dict. Pre-fix, this strategy iterated `col.index`
+        # and keyed per_row_state on `row_idx`. On a DataFrame with
+        # duplicate indexes (which is legal pandas and can arise from
+        # `pd.concat` without reset_index), `col.at[row_idx]` returns a
+        # SERIES of all matching rows -- not a single cell -- breaking
+        # the parse step. And a dict keyed on row_idx only retains ONE
+        # state entry per duplicate, silently dropping the others.
+        # Positional iteration over `col.iloc[i]` removes both failure
+        # modes: each row is visited exactly once, and the cursor /
+        # writeback is position-indexed.
+        col_values = col.to_list()
+
         warnings: list[QualityWarning] = []
         leaf_values: list[Any] = []
-        # Per-row: (parsed_object, list[jsonpath_match])
-        per_row_state: dict[Any, tuple[Any, list]] = {}
+        # Per-position: (parsed_object, list[jsonpath_match]). Position
+        # is the row's 0-indexed offset in the column, not its label.
+        per_position_state: dict[int, tuple[Any, list]] = {}
 
-        for row_idx in col.index:
-            cell = col.at[row_idx]
+        for pos, cell in enumerate(col_values):
             if pd.isna(cell):
                 continue
             try:
@@ -139,15 +176,42 @@ class NestedStrategyHandler:
                         code="nested_cell_json_parse_error",
                         provider="nested",
                         column=column,
-                        detail={"row_idx": str(row_idx)},
+                        detail={"row_pos": str(pos)},
                     )
                 )
                 continue
             matches = jsonpath_expr.find(parsed)
             if not matches:
                 continue
-            per_row_state[row_idx] = (parsed, list(matches))
-            for m in matches:
+            # QA-3 F14 (2026-05-31, security): detect prefix-overlap
+            # among matches. Recursive (`$..ssn`) or wildcard (`$.*.name`)
+            # JSONPaths on structurally-nested matches can produce
+            # results where one match's path is a prefix of another's.
+            # If we then call `m.full_path.update(parsed, new_value)`
+            # in match-order, an earlier write into an outer container
+            # can erase a later write into its nested child (or vice
+            # versa) -- the leaf is silently NOT masked.
+            # Fix: sort matches deepest-first by path depth before
+            # writeback. This makes the ordering deterministic and the
+            # outer container's masked value always reflects the last
+            # write. We also emit a typed QualityWarning so operators
+            # auditing the Storm report can see the path was ambiguous.
+            ordered_matches = _order_matches_deepest_first(matches)
+            if _has_prefix_overlap(ordered_matches):
+                warnings.append(
+                    QualityWarning(
+                        code="nested_jsonpath_path_overlap",
+                        provider="nested",
+                        column=column,
+                        detail={
+                            "row_pos": str(pos),
+                            "target": target_path,
+                            "match_count": str(len(ordered_matches)),
+                        },
+                    )
+                )
+            per_position_state[pos] = (parsed, ordered_matches)
+            for m in ordered_matches:
                 leaf_values.append(m.value)
 
         if not leaf_values:
@@ -160,6 +224,12 @@ class NestedStrategyHandler:
             child_provider_config = tuple(sorted(child_strategy_config.items()))
         else:
             child_provider_config = ()
+        # QA-3 F7 (2026-05-31): resolve the CHILD's technique class. The
+        # parent's `technique_class` is None for nested (intentionally;
+        # see _technique_class.py), so inheriting it would always leave
+        # the child seed unclassified. The child should report the
+        # class of the strategy it actually runs (e.g. redact ->
+        # anonymisation).
         child_seed = ColumnSeed(
             namespace=plan.namespace,
             strategy=child_strategy_name,
@@ -170,7 +240,7 @@ class NestedStrategyHandler:
             deterministic=plan.deterministic,
             provider_config=child_provider_config,
             coherent_with=plan.coherent_with,
-            technique_class=plan.technique_class,
+            technique_class=technique_class_for(child_strategy_name),
             when=None,
         )
 
@@ -184,14 +254,71 @@ class NestedStrategyHandler:
         new_leaf_values = temp_df[temp_col].tolist()
 
         # Writeback: walk matches in the same order leaves were
-        # collected, replace each, re-serialize the cell.
+        # collected, replace each, re-serialize the cell. Positional
+        # writeback (QA-3 F2) means we reassemble the column from
+        # `col_values` rather than mutating by index label.
         cursor = 0
-        for row_idx, (parsed, matches) in per_row_state.items():
+        for pos, (parsed, matches) in per_position_state.items():
             for m in matches:
                 new_value = new_leaf_values[cursor]
                 cursor += 1
                 m.full_path.update(parsed, new_value)
-            col.at[row_idx] = json.dumps(parsed)
+            col_values[pos] = json.dumps(parsed)
 
-        df[column] = col
+        df[column] = pd.Series(col_values, index=df.index, dtype=object)
         return df, warnings
+
+
+def _path_segments(match: Any) -> tuple[str, ...]:
+    """Return the dotted segments of a jsonpath_ng match's full_path.
+
+    `match.full_path` is a chain of Fields / Index / Slice nodes; its
+    `str` representation yields a dotted expression like `user.name`
+    or `(user.email)` (recursive-descent compound paths wrap in
+    parens). We strip the wrapping parens before splitting on `.` so
+    that `(user.email)` -> ("user", "email") aligns with the bare
+    `user` segment from the recursive root match for prefix-overlap
+    detection.
+    """
+    raw = str(match.full_path).strip()
+    # Strip a single outer paren wrapper if present (jsonpath_ng emits
+    # these for compound recursive paths). Inner parens, if any,
+    # remain inside the segment.
+    if raw.startswith("(") and raw.endswith(")"):
+        raw = raw[1:-1]
+    return tuple(raw.split("."))
+
+
+def _order_matches_deepest_first(matches: list) -> list:
+    """Return matches sorted by path depth descending.
+
+    QA-3 F14 (2026-05-31): when the JSONPath produces overlapping
+    matches (one path is a prefix of another), `jsonpath_ng.update`
+    in original order can silently lose the inner write. Sorting
+    deepest-first makes the outer container's masked value the LAST
+    write, so the final cell reflects the parent's masking; this is
+    deterministic and matches the operator's intuition for a
+    recursive selector (`$..*` -> mask the root, then nothing else
+    matters; the inner-leaf writes are discarded by the parent write).
+    """
+    return sorted(matches, key=lambda m: -len(_path_segments(m)))
+
+
+def _has_prefix_overlap(ordered_matches: list) -> bool:
+    """Return True if any match's path is a strict prefix of another.
+
+    The list is expected to be deepest-first; under that order a
+    prefix-overlap means some pair (deeper, shallower) where shallower
+    is a strict prefix of deeper. We do an O(n^2) scan; n is at most
+    the number of matches in a single cell (typically <50), and the
+    function only runs when matches are non-empty.
+    """
+    seg_lists = [_path_segments(m) for m in ordered_matches]
+    n = len(seg_lists)
+    for i in range(n):
+        deeper = seg_lists[i]
+        for j in range(i + 1, n):
+            shallower = seg_lists[j]
+            if len(shallower) < len(deeper) and deeper[: len(shallower)] == shallower:
+                return True
+    return False

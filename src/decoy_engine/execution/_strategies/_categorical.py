@@ -62,7 +62,8 @@ def _build_cdf(weights: list[float]) -> list[int]:
         )
     cdf: list[int] = []
     running = 0.0
-    for w in weights:
+    prev_threshold = 0
+    for i, w in enumerate(weights):
         if w < 0:
             raise StrategyError(
                 code="categorical_weights_negative",
@@ -71,7 +72,29 @@ def _build_cdf(weights: list[float]) -> list[int]:
             )
         running += w
         # Round the cumulative threshold so weights distribute evenly.
-        cdf.append(int(running / total * _WEIGHTED_CDF_RES))
+        threshold = int(running / total * _WEIGHTED_CDF_RES)
+        # QA-3 F9 (2026-05-31): reject weights that round down to a
+        # zero-width CDF slot. The bisect_right lookup over a CDF with
+        # zero-width slots silently never selects that category, so a
+        # weight smaller than 1 / _WEIGHTED_CDF_RES of the total
+        # contributed nothing to the output even though the operator
+        # asked for it. Fail loud at compile so the operator knows the
+        # weight is below the CDF resolution; the alternative -- bump
+        # _WEIGHTED_CDF_RES -- breaks determinism for existing plans.
+        if w > 0 and threshold == prev_threshold:
+            raise StrategyError(
+                code="categorical_weight_below_resolution",
+                strategy="categorical",
+                message=(
+                    f"categorical weight {w!r} at index {i} is below the CDF "
+                    f"resolution (1 / {_WEIGHTED_CDF_RES} of total). The "
+                    "category would never be selected. Either remove the "
+                    "category or use weights >= "
+                    f"{1.0 / _WEIGHTED_CDF_RES * total:.2e}."
+                ),
+            )
+        prev_threshold = threshold
+        cdf.append(threshold)
     # Last entry always lands at the resolution to absorb rounding drift.
     cdf[-1] = _WEIGHTED_CDF_RES
     return cdf

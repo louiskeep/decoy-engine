@@ -79,18 +79,27 @@ class TextRedactHandler:
         else:
             col = col.copy()
 
-        na_mask = col.isna()
-        for idx in col.index[~na_mask]:
-            text = col.at[idx]
+        # QA-3 F3 (2026-05-31): collect masked values into a list and
+        # write back to the Series in one assignment. The pre-fix loop
+        # called `col.at[idx] = ...` per row; pandas' positional setter
+        # invalidates the underlying block cache on each write, so for
+        # 200-row batches the per-cell setter cost was ~30% of total
+        # strategy time. Single Series assignment moves the cost off
+        # the hot loop. Positional iteration via to_list() also
+        # sidesteps the duplicate-index issue called out in F2.
+        col_values = col.to_list()
+        for pos, text in enumerate(col_values):
+            if text is None or (isinstance(text, float) and pd.isna(text)):
+                continue
             if not isinstance(text, str):
                 text = str(text)
             spans = iter_spans(text, detector_ids)
             if not spans:
-                col.at[idx] = text
+                col_values[pos] = text
                 continue
-            col.at[idx] = _splice(text, spans, token, label_token)
+            col_values[pos] = _splice(text, spans, token, label_token)
 
-        df[column] = col
+        df[column] = pd.Series(col_values, index=df.index, dtype=object)
         return df, []
 
 

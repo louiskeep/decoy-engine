@@ -89,18 +89,23 @@ class CompositeHandler:
             # and let CompositeCustom.__init__ raise on a malformed
             # bundle (the typed CompositeError surfaces to the runner).
             cfg = dict(col_seed.provider_config)
-            bundle = cfg.get("bundle") or []
-            if not isinstance(bundle, list):
+            # QA-3 F10 (2026-05-31): renamed from `bundle` to
+            # `bundle_decl` to disambiguate from the generated
+            # output bundle below (line 121). The two values are
+            # different shapes (declaration list vs generated dict)
+            # and the shadow was a readability hazard.
+            bundle_decl = cfg.get("bundle") or []
+            if not isinstance(bundle_decl, list):
                 raise ExecutionError(
                     code="composite_custom_bundle_shape",
                     message=(
                         f"composite_custom on {node.columns}: provider_config['bundle'] "
-                        f"must be a list, got {type(bundle).__name__}."
+                        f"must be a list, got {type(bundle_decl).__name__}."
                     ),
                 )
             generator = composite_custom(
                 coherent_namespace=coherent_namespace,
-                bundle=bundle,
+                bundle=bundle_decl,
                 registry=ctx.registry,
             )
         else:
