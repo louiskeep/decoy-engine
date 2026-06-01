@@ -244,6 +244,50 @@ class TestSFTPSourceBehavior:
         with pytest.raises(PermanentError):
             source.head("does-not-exist.bin")
 
+    def test_qa7_f4_bad_host_key_is_permanent(self):
+        """QA-7 F4 (2026-06-01): BadHostKeyException (MITM signal)
+        must classify as PermanentError. Pre-fix it fell through to
+        the generic SSHException branch and was retried -- amplifying
+        MITM exposure time + burning the retry budget."""
+        import paramiko
+
+        from decoy_engine.connectors.sftp import _wrap_sftp_error
+        from decoy_engine.sdk import PermanentError as _Permanent
+
+        # Construct a minimal BadHostKeyException.
+        try:
+            exc = paramiko.BadHostKeyException(
+                "sftp.example.com",
+                paramiko.RSAKey.generate(1024),
+                paramiko.RSAKey.generate(1024),
+            )
+        except Exception:
+            # Some paramiko versions need a different signature; use
+            # a generic stand-in if generation fails.
+            class _FakeBadHostKey(paramiko.BadHostKeyException):
+                def __init__(self):
+                    pass
+            exc = _FakeBadHostKey()
+        wrapped = _wrap_sftp_error(exc)
+        assert isinstance(wrapped, _Permanent), (
+            "BadHostKeyException must classify as PermanentError, not "
+            "TransientError (MITM signal should not be retried)"
+        )
+
+    def test_qa7_f4_bad_auth_type_is_permanent(self):
+        """QA-7 F4: BadAuthenticationType (server rejects the auth
+        method) must classify as PermanentError. Retrying the same
+        rejected auth method against the same server will fail the
+        same way."""
+        import paramiko
+
+        from decoy_engine.connectors.sftp import _wrap_sftp_error
+        from decoy_engine.sdk import PermanentError as _Permanent
+
+        exc = paramiko.BadAuthenticationType("auth rejected", ["publickey"])
+        wrapped = _wrap_sftp_error(exc)
+        assert isinstance(wrapped, _Permanent)
+
     def test_open_streams_full_body(self, sftp_config, patched_paramiko, remote_fs):
         body = b"streaming-sftp-body " * 200
         remote_fs["streamed.bin"] = body

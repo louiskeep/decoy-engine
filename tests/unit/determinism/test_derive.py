@@ -120,9 +120,17 @@ class TestDeriveIndex:
         assert excinfo.value.code == "pool_size_overflow"
 
     def test_zero_pool_size_raises(self) -> None:
+        # QA-7 F11 (2026-06-01): code renamed from pool_size_overflow
+        # to pool_size_invalid since a zero/negative pool is an
+        # underflow / invalid input, not an overflow.
         with pytest.raises(DeterminismError) as excinfo:
             derive_index(_SEED, _NS, b"src", pool_size=0)
-        assert excinfo.value.code == "pool_size_overflow"
+        assert excinfo.value.code == "pool_size_invalid"
+
+    def test_negative_pool_size_raises_invalid(self) -> None:
+        with pytest.raises(DeterminismError) as excinfo:
+            derive_index(_SEED, _NS, b"src", pool_size=-5)
+        assert excinfo.value.code == "pool_size_invalid"
 
     def test_distribution_approximately_uniform(self) -> None:
         """Sanity: 10_000 distinct sources distribute approximately

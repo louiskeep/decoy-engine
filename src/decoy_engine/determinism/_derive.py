@@ -154,9 +154,13 @@ def derive_index(seed: bytes, namespace: str, source: bytes, *, pool_size: int) 
             code="pool_size_overflow",
             message=f"pool_size {pool_size} exceeds maximum {_POOL_SIZE_MAX}",
         )
+    # QA-7 F11 (2026-06-01): distinct code for the underflow case. A
+    # zero or negative pool size is not an overflow -- callers
+    # catching DeterminismError and inspecting `e.code` would
+    # misclassify. The message stays similar; only the code shifts.
     if pool_size < 1:
         raise DeterminismError(
-            code="pool_size_overflow",
+            code="pool_size_invalid",
             message=f"pool_size must be >= 1; got {pool_size}",
         )
     raw = derive(seed, namespace, source)
