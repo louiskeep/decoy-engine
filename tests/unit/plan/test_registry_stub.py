@@ -18,7 +18,14 @@ from decoy_engine.providers_v2 import get_default_registry
 
 
 def test_registry_contains_exactly_documented_names() -> None:
-    """Exact pinned set: 24 names. Any catalog change is a discrete diff."""
+    """Exact pinned set: 34 names. Any catalog change is a discrete diff.
+
+    Drift guard: the canonical canary cell is
+    `test_documented_allowlist_matches_registry` in
+    `tests/unit/providers_v2/test_registry.py` (MG-8 Step 5). When
+    a new provider lands, both cells update in lockstep; the canary
+    fails first as the early signal.
+    """
     expected = frozenset(
         {
             # S1 stub names (20 preserved verbatim)
@@ -50,6 +57,16 @@ def test_registry_contains_exactly_documented_names() -> None:
             # S8 composite generators (2)
             "composite_name_email",
             "composite_city_state_zip",
+            # MG-1 S4 domain providers (4; PAN/ICD-10/IBAN/CUSIP)
+            "synthetic_pan",
+            "synthetic_icd10",
+            "synthetic_iban",
+            "synthetic_cusip",
+            # MG-4 composites (4; person/address/provider/custom)
+            "composite_person",
+            "composite_address",
+            "composite_provider",
+            "composite_custom",
         }
     )
     assert expected == get_default_registry().known_providers()

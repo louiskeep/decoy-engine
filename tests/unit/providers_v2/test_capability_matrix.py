@@ -18,10 +18,15 @@ class TestPerCatalogEntry:
         catalog is now 19; full registry is 24."""
         assert len(get_default_catalog()) == 19
 
-    def test_full_registry_has_26_entries(self) -> None:
-        """Full registry: 19 Faker + 5 DecoyNative (S6) + 2 composite (S8) = 26."""
+    def test_full_registry_has_34_entries(self) -> None:
+        """Full registry: 19 Faker + 5 DecoyNative (S6) + 2 composite
+        (S8) + 4 MG-1 S4 domain providers + 4 MG-4 composites = 34.
+
+        Drift guard: this count cell mirrors the canary cell at
+        `test_documented_allowlist_matches_registry` (MG-8 Step 5).
+        A new provider registration updates both in lockstep."""
         registry = get_default_registry()
-        assert len(registry.known_providers()) == 26
+        assert len(registry.known_providers()) == 34
 
     def test_all_entries_validate_at_import(self) -> None:
         """Pydantic raises at construction if any field is missing/mistyped.
