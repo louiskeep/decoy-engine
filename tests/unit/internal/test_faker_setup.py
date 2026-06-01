@@ -141,12 +141,21 @@ class TestQaInternalF1AtomicSwap:
         new_vals = {f"new_{i}": [f"new_{i}-v1"] for i in range(5)}
 
         counts_seen: list[int] = []
+        reader_errors: list[BaseException] = []
         stop_reader = threading.Event()
         fake = Faker()
 
         def reader_loop() -> None:
+            # Dennis NIT-1: capture exceptions so a lock regression that
+            # tears the dict mid-iteration (RuntimeError: dictionary
+            # changed size during iteration) surfaces as an assertion
+            # failure instead of a silently-dead thread.
             while not stop_reader.is_set():
-                providers = get_faker_providers(fake)
+                try:
+                    providers = get_faker_providers(fake)
+                except BaseException as exc:
+                    reader_errors.append(exc)
+                    return
                 custom_count = sum(
                     1 for n in providers if n.startswith("baseline_") or n.startswith("new_")
                 )
@@ -173,6 +182,15 @@ class TestQaInternalF1AtomicSwap:
         time.sleep(0.05)
         stop_reader.set()
         reader.join()
+
+        # Dennis NIT-1: a silently-dead reader thread would otherwise
+        # pass the bad_counts assertion vacuously. Surface any exception
+        # the reader caught.
+        assert not reader_errors, (
+            f"QA-internal F1: reader thread crashed during concurrent "
+            f"swap probe (lock contract regression suspected): "
+            f"{type(reader_errors[0]).__name__}: {reader_errors[0]}"
+        )
 
         # Contract: every observed count is either 5 (baseline state)
         # or 5 (new state). The 0 in-between window must never appear.
