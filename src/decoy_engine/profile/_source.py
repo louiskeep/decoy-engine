@@ -23,7 +23,8 @@ uses `random.Random(seed)`.
 from __future__ import annotations
 
 import random
-from datetime import datetime
+import warnings
+from datetime import datetime, timezone
 from typing import Any
 
 import pandas as pd
@@ -70,6 +71,21 @@ def profile_source(
         if isinstance(config_seed, int):
             seed = config_seed
 
+    # QA-7 F3 (2026-06-01): warn loud when seed is still None after
+    # the Q15 fallback. The reservoir sampling becomes
+    # non-deterministic, which transitively makes plan compilation
+    # non-deterministic (sampled distinct counts drive cardinality
+    # mode decisions, which drive masking output). The v2_runner
+    # path always passes an explicit seed; this warning catches
+    # any future regression at the call site.
+    if seed is None:
+        warnings.warn(
+            "profile_source called without a seed: reservoir sampling "
+            "will be non-deterministic. Pass seed= explicitly OR set "
+            "global_settings.seed in config for reproducible profiles.",
+            stacklevel=2,
+        )
+
     rng = random.Random(seed) if seed is not None else random.Random()
 
     relationships_config = config.get("relationships", []) or []
@@ -96,7 +112,10 @@ def profile_source(
         schema_version=1,
         tables=tuple(tables),
         relationships=relationships,
-        profiled_at=datetime.now(),
+        # QA-7 F10 (2026-06-01): UTC-aware timestamp. Pre-fix the
+        # naive local-time datetime made cross-machine timestamp
+        # comparisons meaningless (e.g. UTC worker vs Eastern dev box).
+        profiled_at=datetime.now(timezone.utc),
         decoy_engine_version=engine_version,
         profile_seed=seed,
     )
@@ -159,6 +178,13 @@ def _load_s3_source(source_descriptor: dict[str, Any]) -> pd.DataFrame:
     import io
 
     import boto3
+    from botocore.config import Config as BotoConfig
+    from botocore.exceptions import (
+        ClientError,
+        ConnectTimeoutError,
+        EndpointConnectionError,
+        ReadTimeoutError,
+    )
 
     fmt = source_descriptor.get("format")
     bucket = source_descriptor.get("bucket")
@@ -176,8 +202,34 @@ def _load_s3_source(source_descriptor: dict[str, Any]) -> pd.DataFrame:
     if isinstance(endpoint_url, str) and endpoint_url:
         client_kwargs["endpoint_url"] = endpoint_url
 
+    # QA-7 F2 (2026-06-01): connect + read timeouts so a misconfigured
+    # endpoint URL or routing black hole does not hang the worker
+    # indefinitely. Mirrors the S3FileSource connector's BotoConfig at
+    # connectors/s3.py:150-157.
+    client_kwargs["config"] = BotoConfig(
+        connect_timeout=5,
+        read_timeout=60,
+        retries={"max_attempts": 1, "mode": "standard"},
+    )
     client = boto3.client("s3", **client_kwargs)
-    response = client.get_object(Bucket=bucket, Key=key)
+    try:
+        response = client.get_object(Bucket=bucket, Key=key)
+    except (EndpointConnectionError, ConnectTimeoutError, ReadTimeoutError) as exc:
+        # QA-7 F2: wrap network-class errors so the raw exception
+        # string (which may contain endpoint URLs or partial
+        # credentials in some botocore versions) does not propagate
+        # into job logs / manifest entries.
+        raise RuntimeError(
+            f"profile_source s3: transient network error ({type(exc).__name__})"
+        ) from exc
+    except ClientError as exc:
+        # QA-7 F2: wrap auth + permission errors so the error CODE
+        # (NoSuchKey, AccessDenied, etc.) surfaces but the raw
+        # request metadata + access key ID stays out of the log.
+        code = exc.response.get("Error", {}).get("Code", "Unknown")
+        raise RuntimeError(
+            f"profile_source s3: client error {code}"
+        ) from exc
     # Q17 fix: StreamingBody backs an HTTP connection; .read() drains the
     # body but does not close the underlying socket. Closing explicitly
     # returns the connection to urllib3's pool. Without this, a multi-S3-

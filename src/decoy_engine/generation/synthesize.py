@@ -17,11 +17,12 @@ under the same ``derive_key`` (always ``None`` in ENG-2; ENG-4 wires the real ke
 Thread-safety: all explicit RNG use here is instance-local (``random.Random(seed)``)
 so two ``generate_tables`` calls in different threads do not corrupt each other's
 draws. ``random.Random(s)`` produces the same sequence as ``random.seed(s)``, so
-V1 byte-parity is preserved. The Faker dependency is the one residual hazard --
-``faker.Faker.seed_instance`` calls module-level ``random.seed`` internally, and
-some Faker providers fall back to module-level ``random.random`` -- so concurrent
-Faker-driven generation across threads is still not safe today (a process-level
-lock around the Faker call site is the cleanest fix; deferred to V2.1).
+V1 byte-parity is preserved. The Faker dependency mutates module-level
+``random`` state via ``seed_instance`` (Faker library limitation): QA-7 F1
+(2026-06-01) added an intra-process lock (``_FAKER_CALL_LOCK``) around the
+seed_instance + provider_func call so concurrent generate_tables calls cannot
+corrupt each other's seed state. V2.1 throughput optimization: replace the
+shared cached instance with a per-call fresh Faker to remove the lock entirely.
 """
 
 from __future__ import annotations
@@ -36,14 +37,36 @@ from faker import Faker
 from decoy_engine.generators.derivation import synthetic_column_seed
 from decoy_engine.internal.faker_setup import get_faker_providers, make_faker
 
-_DEFAULT_SEED = 42
+# QA-7 F5 (2026-06-01): seed default aligned with plan compiler's
+# _normalize_job_seed default (0). Pre-fix _DEFAULT_SEED = 42 diverged
+# from plan/_compile.py which defaults to 0 when global_settings.seed
+# is absent. Same config, different effective seeds for generate vs
+# mask. The number 42 was historical; zero is what the rest of the
+# determinism layer assumes.
+_DEFAULT_SEED = 0
 
 # F-5 fix: Faker() construction loads locale data + registers ~200 providers
 # (50-200ms per construction). The instance is re-seeded per call via
 # `seed_instance`, so caching one shared no-locale instance is safe + cheap.
-# Concurrency caveat: see module docstring (Faker is the residual thread-hazard).
 _DEFAULT_FAKER: Faker | None = None
 _DEFAULT_FAKER_LOCK = threading.Lock()
+
+# QA-7 F1 (2026-06-01, CRITICAL determinism): Faker.seed_instance() mutates
+# module-level `random` state internally (Faker library limitation, all
+# versions through 2026). Two concurrent generate_tables calls sharing the
+# `_DEFAULT_FAKER` singleton (or any cached locale instance) will clobber
+# each other's seed between seed_instance + provider_func: thread A seeds,
+# then thread B seeds before thread A draws, and thread A's row is now
+# derived from B's seed. Violates the same-seed -> same-output contract.
+#
+# Fix: serialize the seed_instance + provider_func pair across threads
+# with a process-level lock. Acceptable throughput cost for V1 (single-
+# worker generation); a per-call fresh Faker instance is the throughput-
+# friendly alternative scoped for V2.1 when concurrent generation lands.
+# Intra-process scope: serializes threads within a single Python process;
+# does NOT serialize across separate worker processes (each has its own
+# Faker singleton + own random state, no cross-process interference).
+_FAKER_CALL_LOCK = threading.Lock()
 
 
 def _get_default_faker() -> Faker:
@@ -72,7 +95,17 @@ def generate_tables(
     The platform run path (S6-PLT) writes these through the same ``write_v2_outputs``
     + ``build_v2_target_node_runs`` path the mask spine uses.
     """
-    seed = int((config.get("global_settings") or {}).get("seed", _DEFAULT_SEED))
+    # QA-7 F8 (2026-06-01): typed error for non-numeric seed. Pre-fix
+    # int("abc") leaked a bare ValueError with cryptic message; matches
+    # the plan compiler's behavior post-QA-3 F1.
+    raw_seed = (config.get("global_settings") or {}).get("seed", _DEFAULT_SEED)
+    try:
+        seed = int(raw_seed)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"generate_tables: global_settings.seed must be an integer; "
+            f"got {type(raw_seed).__name__} {raw_seed!r}"
+        ) from exc
     tables_list = config.get("tables") or []
     # Generate tables only (mask tables are skipped). Key by name + build the dep
     # graph so a `reference` column can read its already-generated parent's pool.
@@ -249,17 +282,18 @@ def _faker(
     locale = col.get("locale")
     if locale:
         faker_inst = make_faker(locale)
+        pre_seed: int | None = None
     elif instance_default_locale:
         # S6-ENG-4 M1: when no per-column locale, fall through to the platform's
         # instance default locale (mirrors V1 `ColumnGenerator.__init__` lines
         # 68-72 which uses `make_faker(instance_default_locale)` for `self.faker`).
         faker_inst = make_faker(instance_default_locale)
-        faker_inst.seed_instance(seed)
+        pre_seed = seed
     else:
         # F-5 fix: cache the no-locale instance at module level. Per-row
         # seed_instance below overrides the initial seed, so sharing is safe.
         faker_inst = _get_default_faker()
-        faker_inst.seed_instance(seed)
+        pre_seed = seed
     providers = get_faker_providers(faker_inst)
     provider_func = providers.get(faker_type) or providers["word"]
     raw_kwargs = col.get("faker_kwargs") or {}
@@ -268,12 +302,20 @@ def _faker(
         derive_key=derive_key, column_config=col, fallback_seed=seed
     )
     out: list[Any] = []
-    for i in range(n):
-        row_seed = col_seed + i
-        # faker_inst.seed_instance still mutates module-global random.seed
-        # internally (Faker library limitation); see module docstring.
-        faker_inst.seed_instance(row_seed)
-        out.append(provider_func(**faker_kwargs))
+    # QA-7 F1 + C1 (2026-06-01): both seed_instance call sites are in
+    # the critical section. The pre-loop seed_instance(seed) used to
+    # live OUTSIDE the lock (Dennis QA-7 gate carry C1) which left a
+    # window where thread B's pre-seed could race thread A's row-seed.
+    # Now the pre-seed + per-row seeds + provider_func calls are all
+    # inside one lock acquisition; different-seed concurrency is also
+    # safe.
+    with _FAKER_CALL_LOCK:
+        if pre_seed is not None:
+            faker_inst.seed_instance(pre_seed)
+        for i in range(n):
+            row_seed = col_seed + i
+            faker_inst.seed_instance(row_seed)
+            out.append(provider_func(**faker_kwargs))
     return out
 
 
@@ -341,8 +383,23 @@ def _formula(
     """
     formula = col.get("formula") or ""
     references = col.get("references") or []
-    if not formula or references:
-        # V1: warn or defer -- both return a None series of length n.
+    if not formula:
+        return [None] * n
+    if references:
+        # QA-7 F7 (2026-06-01): emit a warning when references is set.
+        # Pre-fix the cross-column-reference path silently returned
+        # all-None placeholders with no signal to the operator. The
+        # column landed in the output as nulls + no warning anywhere.
+        # The V2 post-pass for cross-column formulas lands in a later
+        # sprint; until then warn loud.
+        import warnings
+        warnings.warn(
+            f"column {col.get('name', 'unnamed_column')!r}: formula with "
+            f"`references` is not yet supported in v2 generation "
+            f"(cross-column formulas land in a later sprint). Returning "
+            "nulls for this column.",
+            stacklevel=4,
+        )
         return [None] * n
     from decoy_engine.generators.columns import ColumnGenerator
 

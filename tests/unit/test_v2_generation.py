@@ -9,6 +9,8 @@ mask XOR generate).
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from pydantic import ValidationError
 
@@ -305,6 +307,115 @@ class TestFakerParityV1:
             "null_probability": 0.3,
         }
         assert _v2_run(col, 20) == _v1_run(col, 20)
+
+
+class TestQA7Coverage:
+    """QA-7 (2026-06-01): regression cells for the connectors / generation /
+    profile audit. F1 thread safety, F5 default seed alignment, F7 references
+    warning, F8 seed cast error message."""
+
+    def test_qa7_f1_concurrent_faker_calls_deterministic(self):
+        """F1 CRITICAL: concurrent generate_tables() calls must produce
+        byte-identical output across runs. Pre-fix the shared Faker
+        singleton's seed_instance mutated module-level random state
+        between threads. Post-fix the _FAKER_CALL_LOCK serializes the
+        seed_instance + provider_func pair."""
+        import threading
+
+        col = {"name": "fn", "type": "faker", "faker_type": "first_name"}
+        cfg = {
+            "version": 1,
+            "mode": "generate",
+            "global_settings": {"seed": 42},
+            "sources": {},
+            "tables": [{
+                "name": "t",
+                "row_count": 50,
+                "generate_columns": [col],
+            }],
+        }
+        results: list[Any] = []
+        results_lock = threading.Lock()
+
+        def _worker():
+            out = generate_tables(cfg)
+            with results_lock:
+                results.append(out["t"].to_pydict()["fn"])
+
+        # 4 threads x 5 reps each; assert ALL 20 outputs are byte-identical.
+        threads = [threading.Thread(target=_worker) for _ in range(20)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        first = results[0]
+        for i, r in enumerate(results[1:], start=1):
+            assert r == first, (
+                f"thread {i} produced different output than thread 0; "
+                "Faker singleton thread-safety regressed"
+            )
+
+    def test_qa7_f5_default_seed_is_zero(self):
+        """F5: _DEFAULT_SEED must equal 0 to match plan/_compile.py
+        defaults. Pre-fix it was 42 (Python's "didn't think about it"
+        convention); same-config-different-effective-seed bug between
+        generate + mask."""
+        from decoy_engine.generation.synthesize import _DEFAULT_SEED
+        assert _DEFAULT_SEED == 0
+
+    def test_qa7_f7_references_emits_warning(self):
+        """F7: a formula column with references set must emit a
+        UserWarning + return all-None placeholders. Pre-fix the path
+        was silent + the operator only discovered the all-None column
+        downstream."""
+        import warnings as _warnings
+
+        col = {
+            "name": "greet",
+            "type": "formula",
+            "formula": "f'Hello {name}'",
+            "references": ["name"],
+        }
+        cfg = {
+            "version": 1,
+            "mode": "generate",
+            "global_settings": {"seed": 42},
+            "sources": {},
+            "tables": [{
+                "name": "t",
+                "row_count": 5,
+                "generate_columns": [col],
+            }],
+        }
+        with _warnings.catch_warnings(record=True) as w:
+            _warnings.simplefilter("always")
+            generate_tables(cfg)
+        # At least one UserWarning naming `references` must surface.
+        assert any(
+            issubclass(warn.category, UserWarning)
+            and "references" in str(warn.message).lower()
+            for warn in w
+        )
+
+    def test_qa7_f8_non_numeric_seed_raises_typed_error(self):
+        """F8: int(non-numeric) used to leak a bare ValueError with
+        cryptic message. Now wrapped + named."""
+        cfg = {
+            "version": 1,
+            "mode": "generate",
+            "global_settings": {"seed": "not-a-number"},
+            "sources": {},
+            "tables": [{
+                "name": "t",
+                "row_count": 5,
+                "generate_columns": [{
+                    "name": "id", "type": "sequence", "start": 1, "step": 1,
+                }],
+            }],
+        }
+        with pytest.raises(ValueError) as exc:
+            generate_tables(cfg)
+        assert "global_settings.seed" in str(exc.value)
 
 
 class TestFormulaParityV1:

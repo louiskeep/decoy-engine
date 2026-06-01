@@ -19,7 +19,7 @@ from __future__ import annotations
 import io
 import stat as stat_lib
 from collections.abc import Iterator
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import ClassVar
 
 from pydantic import Field, SecretStr, model_validator
@@ -57,14 +57,30 @@ def _wrap_sftp_error(exc: Exception) -> Exception:
     """
     import paramiko
 
+    # QA-7 F4 (2026-06-01): the more-specific permanent classes must
+    # match BEFORE the generic SSHException check (BadHostKeyException
+    # is a subclass of SSHException). Pre-fix BadHostKey (MITM
+    # indicator) and BadAuthenticationType (permanent auth failure)
+    # were mapped to TransientError because the SSHException base
+    # caught them first. The engine then retried -- amplifying MITM
+    # exposure time + burning the retry budget on guaranteed-to-fail
+    # auth attempts.
+    if isinstance(exc, paramiko.BadHostKeyException):
+        return PermanentError(
+            f"SFTP host key mismatch (possible MITM): {type(exc).__name__}"
+        )
+    if isinstance(exc, paramiko.BadAuthenticationType):
+        return PermanentError(
+            f"SFTP auth method rejected by server: {type(exc).__name__}"
+        )
     if isinstance(exc, paramiko.AuthenticationException):
-        return PermanentError(f"SFTP auth failed: {exc}")
+        return PermanentError(f"SFTP auth failed: {type(exc).__name__}")
     if isinstance(exc, paramiko.SSHException):
-        # SSHException covers connection-level failures (host key, kex,
-        # disconnect). Treat as transient so the engine retries; if it
-        # is actually permanent (config wrong), retry will fail the same
-        # way and the user sees the underlying error.
-        return TransientError(f"SFTP protocol error: {exc}")
+        # SSHException covers connection-level failures (kex,
+        # disconnect, channel-level transient). Treat as transient so
+        # the engine retries; the permanent-fail subclasses are
+        # already handled above.
+        return TransientError(f"SFTP protocol error: {type(exc).__name__}")
     if isinstance(exc, FileNotFoundError) or "No such file" in str(exc):
         return PermanentError(f"SFTP path not found: {exc}")
     if isinstance(exc, PermissionError):
@@ -280,7 +296,7 @@ class SFTPFileSource(_SFTPMixin, FileSource[SFTPConfig]):
                     size=entry.st_size,
                     content_type=None,  # SFTP does not surface content type.
                     modified=(
-                        datetime.fromtimestamp(entry.st_mtime).isoformat()
+                        datetime.fromtimestamp(entry.st_mtime, tz=timezone.utc).isoformat()
                         if entry.st_mtime is not None
                         else None
                     ),
@@ -300,7 +316,7 @@ class SFTPFileSource(_SFTPMixin, FileSource[SFTPConfig]):
             size=attrs.st_size,
             content_type=None,
             modified=(
-                datetime.fromtimestamp(attrs.st_mtime).isoformat()
+                datetime.fromtimestamp(attrs.st_mtime, tz=timezone.utc).isoformat()
                 if attrs.st_mtime is not None
                 else None
             ),
