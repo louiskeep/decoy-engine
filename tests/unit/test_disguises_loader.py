@@ -149,11 +149,76 @@ class TestLoaderHandlesTempDirectory:
         ds = load_disguises(tmp_path)
         assert len(ds) == 1 and ds[0].id == "tmp"
 
-    def test_malformed_yaml_raises(self, tmp_path):
+    def test_malformed_yaml_skipped_with_log(self, tmp_path, caplog):
+        """QA-internal-synth-providers F8 (2026-06-01, MEDIUM correctness):
+        a schema-invalid file (missing required pydantic fields) is now
+        skipped + logged instead of raising. Pre-fix a single bad file
+        aborted the whole bundle load; every file sorted after the bad
+        one was never loaded.
+
+        The bad file produces an ERROR log line for operator visibility;
+        load_disguises returns the empty list (only file in dir was bad).
+        """
         (tmp_path / "bad.yaml").write_text(
             "id: bad\nname: B\n", encoding="utf-8"
-        )  # missing required fields
-        from pydantic import ValidationError
+        )  # missing required fields (triggers, field_rules)
 
-        with pytest.raises(ValidationError):
-            load_disguises(tmp_path)
+        with caplog.at_level("ERROR", logger="decoy_engine.disguises.loader"):
+            result = load_disguises(tmp_path)
+
+        assert result == []
+        assert any(
+            "schema validation failed" in rec.message and "bad.yaml" in rec.message
+            for rec in caplog.records
+        )
+
+    def test_yaml_parse_error_skipped_others_still_load(self, tmp_path, caplog):
+        """F8: a YAML syntax error in one file does not abort the load;
+        siblings still get loaded. This is the freeze-blocker scenario
+        the audit named: a single malformed file silently dropping the
+        whole bundle catalogue."""
+        # Good file (matches the temp loader fixture above).
+        good = yaml.safe_dump(
+            {
+                "id": "good_one",
+                "name": "Good",
+                "summary": "test",
+                "triggers": {"any_detectors": ["email"], "min_score": 0.3},
+                "field_rules": [
+                    {"detectors": ["email"], "mask": "faker", "params": {"faker_type": "email"}}
+                ],
+            }
+        )
+        (tmp_path / "01_good.yaml").write_text(good, encoding="utf-8")
+        # Bad YAML syntax.
+        (tmp_path / "02_bad.yaml").write_text(
+            "this is: not: valid: yaml: at: all", encoding="utf-8"
+        )
+        # Another good file sorted AFTER the bad one (this is the bug
+        # the audit names: pre-fix every file sorted after 02_bad was
+        # never loaded).
+        another_good = yaml.safe_dump(
+            {
+                "id": "good_two",
+                "name": "GoodTwo",
+                "summary": "test",
+                "triggers": {"any_detectors": ["phone"], "min_score": 0.3},
+                "field_rules": [
+                    {"detectors": ["phone"], "mask": "faker", "params": {"faker_type": "phone_number"}}
+                ],
+            }
+        )
+        (tmp_path / "03_good_two.yaml").write_text(another_good, encoding="utf-8")
+
+        with caplog.at_level("ERROR", logger="decoy_engine.disguises.loader"):
+            result = load_disguises(tmp_path)
+
+        loaded_ids = {d.id for d in result}
+        assert loaded_ids == {"good_one", "good_two"}, (
+            f"F8: expected both good files to load past the bad one. "
+            f"Got {sorted(loaded_ids)}."
+        )
+        # And we still get the ERROR log for visibility.
+        assert any(
+            "02_bad.yaml" in rec.message for rec in caplog.records
+        )
