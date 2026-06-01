@@ -91,6 +91,15 @@ class ColumnGenerator:
         # Get all available faker providers
         self.faker_providers = get_faker_providers(self.faker)
 
+        # QA walks/generators F8 (2026-06-01, LOW perf): cache per-locale
+        # Faker instances + provider dicts. Pre-fix every column with a
+        # column-level locale rebuilt a Faker + rescanned providers on
+        # every call. A 30-column table all using `locale: en_GB`
+        # produced 30 separate Faker objects + 30 provider scans
+        # (~1-5ms each per locale). Cache scope is the generator
+        # lifetime; single-threaded so no lock needed.
+        self._locale_fakers: dict[str, tuple[Faker, dict]] = {}
+
         # Use provided logger or create a default one
         if logger:
             self.logger = logger
@@ -261,8 +270,15 @@ class ColumnGenerator:
         # them -- falling back to the default-locale provider would silently
         # leak en_US output.
         if locale:
-            faker_inst = make_faker(locale)
-            providers = get_faker_providers(faker_inst)
+            # QA walks/generators F8 (2026-06-01, LOW perf): cache hit.
+            # See ColumnGenerator.__init__ for cache lifetime.
+            cached = self._locale_fakers.get(locale)
+            if cached is None:
+                faker_inst = make_faker(locale)
+                providers = get_faker_providers(faker_inst)
+                self._locale_fakers[locale] = (faker_inst, providers)
+            else:
+                faker_inst, providers = cached
         else:
             faker_inst = self.faker
             providers = self.faker_providers
@@ -775,9 +791,29 @@ class ColumnGenerator:
         # [ts_min, ts_max]. Vectorized via nanosecond integer math
         # so the uniform draw is one numpy call.
         years_arr = np.asarray([years[i] for i in chosen_idx], dtype=np.int64)
+        # QA walks/generators F7 (2026-06-01, MEDIUM correctness): cap
+        # years_arr to ts_max.year so neither year_starts nor year_ends
+        # construction trips OutOfBoundsDatetime at the active
+        # pd.to_datetime precision (nanosecond by default; max year
+        # 2262). Pre-fix any year_bins entry beyond the active
+        # precision crashed the entire distribution sampler. The
+        # nanosecond clip on hi_ns/lo_ns below already bounds the
+        # per-row output to [ts_min, ts_max], so capping the
+        # intermediate year is safe: every row that picked a beyond-
+        # max bin now lands at ts_max.year (which the downstream clip
+        # would have produced anyway). The audit's documented endpoint
+        # cap at 9999 still applies for snapshots that use the wider
+        # datetime64[s] precision where ts_max can reach year 9999.
+        ts_max_year = int(ts_max.year)
+        years_arr = np.minimum(years_arr, ts_max_year)
         # Build per-row year-start + year-end timestamps.
         year_starts = pd.to_datetime([f"{y}-01-01" for y in years_arr])
-        year_ends = pd.to_datetime([f"{y + 1}-01-01" for y in years_arr])  # exclusive
+        year_ends = pd.to_datetime(
+            [
+                "9999-12-31" if y >= 9999 else f"{y + 1}-01-01"
+                for y in years_arr
+            ]
+        )  # exclusive
         # Clip to the snapshot's actual min/max.
         lo_ns = np.maximum(year_starts.view("int64"), ts_min.value)
         hi_ns = np.minimum(year_ends.view("int64"), ts_max.value)

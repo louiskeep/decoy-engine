@@ -210,7 +210,9 @@ def compile_plan(
     # from the relationship_graph (S2 §4 wiring); namespaces still build
     # from config because the YAML shape carries seed material the
     # registry doesn't yet track (S3 promotes this).
-    relationships = _build_relationships(config, profile)
+    relationships = _build_relationships(
+        config, profile, orphan_policy_lookup=orphan_policy_lookup
+    )
     namespaces = _build_namespaces(config)
     ordering = tuple(OrderingNode(table=t, columns=c) for (t, c) in relationship_graph.ordering)
     seed_envelope, stamp_warnings = _build_seed_envelope(config, profile)
@@ -294,39 +296,68 @@ def _hash_config(config: dict[str, Any]) -> str:
     same hash regardless of key insertion order or source/target binding.
     """
     semantic_config = {k: v for k, v in config.items() if k not in ("sources", "targets")}
+    # QA walks/generators F9 (2026-06-01, LOW correctness): no
+    # default=str. Pre-fix json.dumps silently called str() on any
+    # non-JSON-native value (datetime, UUID, dataclass), so two
+    # semantically different values that str-format identically
+    # produced the same hash. In practice configs arrive via
+    # yaml.safe_load (JSON-native only) so the bug never triggered,
+    # but the silent coercion would have hidden any future code path
+    # that fed non-native types into the planner. Now any such value
+    # raises TypeError at plan-compile time.
     canonical = json.dumps(
         semantic_config,
         sort_keys=True,
         ensure_ascii=True,
         separators=(",", ":"),
-        default=str,
     ).encode("utf-8")
     return hashlib.sha256(canonical).hexdigest()
 
 
-def _build_relationships(config: dict[str, Any], profile: Profile) -> tuple[PlanRelationship, ...]:
+def _build_relationships(
+    config: dict[str, Any],
+    profile: Profile,
+    *,
+    orphan_policy_lookup: dict[tuple[str, tuple[str, ...]], str] | None = None,
+) -> tuple[PlanRelationship, ...]:
     """Convert profile.relationships into Plan-side PlanRelationship tuples,
     pulling orphan_policy from the config when available.
+
+    QA walks/generators F5 (2026-06-01, MEDIUM design): the orphan-policy
+    lookup is now passed in from compile_plan, where it was already
+    produced by check_orphan_fk_policy_completeness. Pre-fix this
+    function re-parsed config.relationships independently; the two
+    parses could drift, producing a Plan whose stamped policy
+    disagreed with what the completeness check had validated. Single
+    source of truth: check_orphan_fk_policy_completeness owns the
+    parse; _build_relationships consumes the lookup.
+
+    The fallback (orphan_policy_lookup=None) preserves the original
+    parse logic so callers outside compile_plan still work; this is
+    used by older tests that build Plans without running the full
+    compile pipeline.
     """
-    # Build (parent_table, parent_columns) -> orphan_policy from config.
-    orphan_policy_lookup: dict[tuple[str, tuple[str, ...]], str] = {}
-    config_relationships = config.get("relationships", [])
-    if isinstance(config_relationships, list):
-        for entry in config_relationships:
-            if not isinstance(entry, dict):
-                continue
-            parent = entry.get("parent")
-            policy = entry.get("orphan_policy")
-            if not isinstance(parent, dict) or not policy:
-                continue
-            parent_table = parent.get("table")
-            parent_cols = parent.get("columns")
-            if (
-                isinstance(parent_table, str)
-                and isinstance(parent_cols, list)
-                and all(isinstance(c, str) for c in parent_cols)
-            ):
-                orphan_policy_lookup[(parent_table, tuple(parent_cols))] = policy
+    if orphan_policy_lookup is None:
+        # Fallback: reparse config.relationships (preserves pre-fix
+        # behavior for callers that bypass compile_plan).
+        orphan_policy_lookup = {}
+        config_relationships = config.get("relationships", [])
+        if isinstance(config_relationships, list):
+            for entry in config_relationships:
+                if not isinstance(entry, dict):
+                    continue
+                parent = entry.get("parent")
+                policy = entry.get("orphan_policy")
+                if not isinstance(parent, dict) or not policy:
+                    continue
+                parent_table = parent.get("table")
+                parent_cols = parent.get("columns")
+                if (
+                    isinstance(parent_table, str)
+                    and isinstance(parent_cols, list)
+                    and all(isinstance(c, str) for c in parent_cols)
+                ):
+                    orphan_policy_lookup[(parent_table, tuple(parent_cols))] = policy
 
     # Group profile.relationships by (parent_table, parent_columns) so
     # multiple children of the same parent collapse into one
@@ -350,6 +381,12 @@ def _build_relationships(config: dict[str, Any], profile: Profile) -> tuple[Plan
         # orphan_fk_policy_completeness check then catches the omission
         # at the config layer). S1 doesn't ship that check yet.
         policy = orphan_policy_lookup.get((parent_table, parent_cols), "preserve")
+        # QA walks/generators F5 (2026-06-01): the lookup may now arrive
+        # from check_orphan_fk_policy_completeness with OrphanPolicy
+        # enum values rather than plain strings. Normalise to string so
+        # the Literal[...]-typed PlanRelationship below accepts it.
+        if hasattr(policy, "value"):
+            policy = policy.value
         # Type the policy as the literal we accept.
         if policy not in ("preserve", "remap", "warn", "fail"):
             # Defensive: invalid policy in config gets caught here. S2 row 6

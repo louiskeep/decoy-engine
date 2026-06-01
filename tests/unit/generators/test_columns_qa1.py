@@ -282,3 +282,104 @@ class TestWalksGenF1ReferencePoolSortedDeterminism:
             "datetime pool must yield byte-identical FK output across "
             "different ref_df orderings via the str-fallback path."
         )
+
+
+class TestWalksGenF7DistributionDatetimeYear9999:
+    """QA walks/generators F7 (2026-06-01, MEDIUM correctness):
+    `_generate_distribution_datetime` does not crash on source rows
+    with year 9999. Pre-fix `y + 1` produced the literal `10000-01-01`
+    string; `pd.Timestamp("10000-01-01")` raises OutOfBoundsDatetime.
+    Post-fix the exclusive year-end is capped at 9999-12-31 for the
+    year-9999 row only; the snapshot maximum (ts_max) clip below still
+    bounds the per-row window."""
+
+    def test_beyond_ts_max_year_bin_does_not_raise(self):
+        """A snapshot with a year_bins entry beyond ts_max (a malformed
+        but parseable snapshot) must not crash with OutOfBoundsDatetime.
+        Pre-fix the intermediate year_starts construction crashed for
+        any year beyond the active datetime precision. Post-fix
+        years_arr is capped at ts_max.year so the per-row clip never
+        sees the out-of-range year string."""
+        snapshot = {
+            "kind": "datetime",
+            "min": "2026-01-01T00:00:00",
+            "max": "2026-12-31T23:59:59",
+            "year_bins": [
+                {"year": 2026, "count": 100},
+                # Beyond ts_max (and beyond ns precision): pre-fix
+                # this killed the entire distribution sampler.
+                {"year": 9999, "count": 50},
+            ],
+        }
+        col = {
+            "name": "ts",
+            "type": "distribution",
+            "snapshot": snapshot,
+        }
+        cg = ColumnGenerator(seed=42)
+        # Must not raise OutOfBoundsDatetime.
+        result = cg.generate_column(150, col, "t", {})
+        assert len(result) == 150
+        # Every output must land within [ts_min, ts_max] because the
+        # nanosecond clip caps everything at ts_max.
+        years = pd.to_datetime(result).dt.year
+        assert years.max() <= 2026, (
+            f"QA walks/generators F7: capped years_arr should keep "
+            f"output <= ts_max.year=2026. Got max year {years.max()}."
+        )
+
+
+class TestWalksGenF8LocaleFakerCache:
+    """QA walks/generators F8 (2026-06-01, LOW perf):
+    `_generate_faker_column` caches per-locale Faker instances in
+    `self._locale_fakers`. Pre-fix a 30-column table with the same
+    `locale: en_GB` rebuilt 30 separate Faker instances + ran 30
+    provider scans. Post-fix the locale Faker is built once per
+    generator lifetime."""
+
+    def test_locale_faker_cache_initialized_on_construction(self):
+        cg = ColumnGenerator(seed=42)
+        assert hasattr(cg, "_locale_fakers")
+        assert isinstance(cg._locale_fakers, dict)
+        assert cg._locale_fakers == {}, "Cache must start empty"
+
+    def test_locale_faker_cache_populated_on_first_use(self):
+        cg = ColumnGenerator(seed=42)
+        col = {
+            "name": "city",
+            "type": "faker",
+            "faker_type": "city",
+            "locale": "en_GB",
+        }
+        # First call: cache miss, populates the cache.
+        cg.generate_column(5, col, "t", {}).tolist()
+        assert "en_GB" in cg._locale_fakers
+        assert len(cg._locale_fakers) == 1
+
+        # Second call with same locale: cache hit; no new entry.
+        cg.generate_column(5, col, "t", {}).tolist()
+        assert len(cg._locale_fakers) == 1
+
+        # Third call with different locale: cache miss again.
+        col_de = {
+            "name": "city2",
+            "type": "faker",
+            "faker_type": "city",
+            "locale": "de_DE",
+        }
+        cg.generate_column(5, col_de, "t", {}).tolist()
+        assert "de_DE" in cg._locale_fakers
+        assert len(cg._locale_fakers) == 2
+
+    def test_locale_faker_cache_does_not_break_no_locale_path(self):
+        """The no-locale path still uses self.faker; the cache is
+        only consulted when locale is set."""
+        cg = ColumnGenerator(seed=42)
+        col = {
+            "name": "city",
+            "type": "faker",
+            "faker_type": "city",
+        }
+        cg.generate_column(5, col, "t", {}).tolist()
+        # No locale passed -> cache stays empty.
+        assert cg._locale_fakers == {}

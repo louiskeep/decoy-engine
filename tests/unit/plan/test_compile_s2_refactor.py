@@ -389,3 +389,118 @@ class TestS2WiringInvariants:
         with pytest.raises(PlanCompileError) as excinfo:
             compile_plan(config, profile, decoy_engine_version="0.1.0")
         assert excinfo.value.code == "fk_cycle"
+
+
+class TestWalksGenF9HashConfigRaisesOnNonJsonNative:
+    """QA walks/generators F9 (2026-06-01, LOW correctness):
+    _hash_config no longer uses `default=str` in json.dumps. Pre-fix
+    any non-JSON-native value (datetime, UUID, dataclass) was silently
+    coerced to its str() repr, so two semantically different values
+    that str-format identically produced the same config hash. Post-
+    fix TypeError surfaces at plan-compile time."""
+
+    def test_hash_config_raises_typeerror_on_datetime_in_config(self):
+        from datetime import datetime as _dt
+
+        from decoy_engine.plan._compile import _hash_config
+
+        config_with_datetime = {
+            "global_settings": {"seed": 1, "started_at": _dt(2026, 6, 1, 0, 0)},
+        }
+        with pytest.raises(TypeError):
+            _hash_config(config_with_datetime)
+
+    def test_hash_config_accepts_json_native_values(self):
+        from decoy_engine.plan._compile import _hash_config
+
+        config = {
+            "global_settings": {"seed": 1, "name": "test"},
+            "tables": [{"name": "t", "row_count": 5}],
+        }
+        # Must not raise; produces a deterministic hex digest.
+        out = _hash_config(config)
+        assert isinstance(out, str)
+        assert len(out) == 64  # sha256 hex
+
+
+class TestWalksGenF5BuildRelationshipsUsesPassedLookup:
+    """QA walks/generators F5 (2026-06-01, MEDIUM design):
+    _build_relationships consumes the orphan_policy_lookup that
+    compile_plan already computed via check_orphan_fk_policy_completeness.
+    Pre-fix the parse was duplicated; drift between the two parse paths
+    could silently produce a Plan whose stamped policy disagreed with
+    what the completeness check validated."""
+
+    def test_build_relationships_uses_explicit_lookup_over_reparse(self):
+        """When orphan_policy_lookup is passed explicitly, the function
+        uses it directly; the config.relationships block is never
+        re-parsed by _build_relationships."""
+        from decoy_engine.plan._compile import _build_relationships
+        from decoy_engine.profile import Profile
+        from decoy_engine.profile._types import Relationship
+
+        rel = Relationship(
+            parent_table="a",
+            parent_columns=("id",),
+            child_table="b",
+            child_columns=("a_id",),
+            namespace=None,
+        )
+        profile = Profile(
+            schema_version=1,
+            tables=(),
+            relationships=(rel,),
+            profiled_at=__import__("datetime").datetime(2026, 6, 1),
+            decoy_engine_version="0.1.0",
+        )
+        # Pass a lookup that says "fail" for (a, [id]). The config's
+        # relationships block is empty, so the OLD reparse path would
+        # have used the "preserve" fallback. With F5 the lookup wins.
+        config: dict = {"global_settings": {"seed": 1}, "relationships": []}
+        lookup = {("a", ("id",)): "fail"}
+        out = _build_relationships(
+            config, profile, orphan_policy_lookup=lookup
+        )
+        assert len(out) == 1
+        assert out[0].orphan_policy == "fail", (
+            "QA walks/generators F5: _build_relationships must use the "
+            "passed lookup, not re-parse config.relationships."
+        )
+
+    def test_build_relationships_falls_back_to_reparse_when_lookup_none(self):
+        """Backwards-compat: callers that bypass compile_plan can still
+        pass None (or omit the kwarg) and get the original parse path.
+        The single in-tree caller (compile_plan) always passes the
+        explicit lookup; this fallback is a defensive safety net."""
+        from decoy_engine.plan._compile import _build_relationships
+        from decoy_engine.profile import Profile
+        from decoy_engine.profile._types import Relationship
+
+        rel = Relationship(
+            parent_table="a",
+            parent_columns=("id",),
+            child_table="b",
+            child_columns=("a_id",),
+            namespace=None,
+        )
+        profile = Profile(
+            schema_version=1,
+            tables=(),
+            relationships=(rel,),
+            profiled_at=__import__("datetime").datetime(2026, 6, 1),
+            decoy_engine_version="0.1.0",
+        )
+        config = {
+            "global_settings": {"seed": 1},
+            "relationships": [
+                {
+                    "parent": {"table": "a", "columns": ["id"]},
+                    "children": [{"table": "b", "columns": ["a_id"]}],
+                    "orphan_policy": "fail",
+                }
+            ],
+        }
+        # No lookup passed: original parse path produces "fail".
+        out = _build_relationships(config, profile)
+        assert len(out) == 1
+        assert out[0].orphan_policy == "fail"
