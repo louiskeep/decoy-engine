@@ -82,10 +82,20 @@ class TestRFC5869VectorA2:
 
 
 class TestRFC5869VectorA3:
-    """Test Case 3: Test with SHA-256 and zero-length salt/info."""
+    """Test Case 3: SHA-256 with zero-length salt/info.
+
+    QA-10 F12 (2026-06-01) closure: `hkdf_extract` now rejects EMPTY
+    salts to defend against accidental degradation. RFC 5869 §2.2
+    documents the equivalence between empty-salt and a 32-zero-byte
+    salt; callers that genuinely want the RFC 5869 §A.3 default must
+    pass `b"\\x00" * 32` explicitly. This cell uses the explicit
+    zero-byte salt + asserts the RFC A.3 vector is reproduced from
+    that input, locking the equivalence.
+    """
 
     IKM = bytes.fromhex("0b" * 22)
-    SALT = b""
+    # QA-10 F12: explicit zero-byte salt instead of empty bytes.
+    SALT_EQUIV = b"\x00" * 32
     INFO = b""
     L = 42
     PRK = bytes.fromhex("19ef24a32c717b167f33a91d6f648bdf96596776afdb6377ac434c1c293ccb04")
@@ -94,13 +104,21 @@ class TestRFC5869VectorA3:
     )
 
     def test_extract(self) -> None:
-        assert hkdf_extract(self.SALT, self.IKM) == self.PRK
+        # RFC 5869 §2.2: empty-salt is equivalent to HashLen zero bytes.
+        # QA-10 F12 makes us pass the equivalent explicitly.
+        assert hkdf_extract(self.SALT_EQUIV, self.IKM) == self.PRK
 
     def test_expand(self) -> None:
         assert hkdf_expand(self.PRK, self.INFO, self.L) == self.OKM
 
     def test_oneshot(self) -> None:
-        assert hkdf_sha256(self.IKM, self.SALT, self.INFO, self.L) == self.OKM
+        assert hkdf_sha256(self.IKM, self.SALT_EQUIV, self.INFO, self.L) == self.OKM
+
+    def test_empty_salt_rejected_by_extract(self) -> None:
+        """QA-10 F12: passing literal empty bytes raises ValueError
+        with a hint about the explicit-zero-byte workaround."""
+        with pytest.raises(ValueError, match="salt must be non-empty"):
+            hkdf_extract(b"", self.IKM)
 
 
 class TestHkdfBounds:

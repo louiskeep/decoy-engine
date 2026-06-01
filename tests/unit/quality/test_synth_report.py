@@ -234,6 +234,48 @@ class TestExports:
         assert hasattr(quality, "SYNTH_REPORT_SCHEMA_VERSION")
 
 
+class TestQa10F13AttacksDisclaimer:
+    """QA-10 F13 (2026-06-01, NIT): the "no attack was attempted"
+    disclaimer is omitted from the disclaimers list when attacks were
+    actually run. Pre-fix that line was hardcoded into every report,
+    telling operators no attack was attempted even when attack results
+    were sitting in the same payload."""
+
+    def test_attacks_none_includes_skipped_disclaimer(self):
+        """When attacks is None (default; nothing ran), the disclaimer
+        documenting the off-by-default posture must be present."""
+        report = assemble_synth_report(new_row_synthesis=None, attacks=None)
+        joined = " ".join(report["disclaimers"])
+        assert "no attack was attempted" in joined
+
+    def test_attacks_present_drops_skipped_disclaimer(self):
+        """When attacks IS supplied to the report builder, the
+        misleading 'no attack was attempted' line must NOT appear."""
+        attack_block = {"mia": {"attempted": True, "outcome": "low_risk"}}
+        report = assemble_synth_report(
+            new_row_synthesis=None,
+            attacks=attack_block,
+        )
+        joined = " ".join(report["disclaimers"])
+        assert "no attack was attempted" not in joined
+
+    def test_unconditional_disclaimers_always_present(self):
+        """The DCR-not-a-privacy-guarantee + no-DP-claim +
+        high-fidelity-is-not-privacy disclaimers are unconditional
+        and must remain regardless of attack presence."""
+        for attacks in (None, {"mia": {"attempted": True}}):
+            report = assemble_synth_report(
+                new_row_synthesis=None,
+                attacks=attacks,
+            )
+            joined = " ".join(report["disclaimers"])
+            assert "DCR" in joined
+            assert (
+                "differential" in joined.lower()
+                or "no differential-privacy" in joined.lower()
+            )
+
+
 class TestQa10F3FipsSha1:
     """QA-10 F3 (2026-06-01, HIGH): row-hash uses
     hashlib.sha1(..., usedforsecurity=False) so it does NOT raise on

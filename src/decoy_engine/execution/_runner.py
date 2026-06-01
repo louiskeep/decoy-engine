@@ -19,6 +19,7 @@ PandasExecutionAdapter (later slice) consumes them.
 
 from __future__ import annotations
 
+import heapq
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -160,19 +161,48 @@ def _kahn_sorted(
     by_key: dict[_NodeKey, WorkNode], deps: dict[_NodeKey, set[_NodeKey]]
 ) -> list[WorkNode]:
     """Deterministic topological sort: at each step take the sorted-smallest node
-    whose dependencies are all placed. Total order, byte-stable across runs."""
+    whose dependencies are all placed. Total order, byte-stable across runs.
+
+    QA-10 F9 (2026-06-01): heapq-based Kahn replaces the prior O(n^2)
+    "scan all keys + sort the ready set" loop. Pre-fix every
+    topological step did a full `sorted(k for k in keys if ...)`,
+    yielding O(n^2 log n) total work. Post-fix maintains a min-heap
+    of ready nodes + an indegree counter; each node is pushed/popped
+    once for O((n+e) log n) total. Output is byte-identical to the
+    prior implementation (both yield the lexicographically smallest
+    topological order). Same fix shape as QA-8 F1 closure on the
+    relationship-graph builder.
+    """
     keys = set(by_key)
+    if not keys:
+        return []
+    # Build reverse adjacency + indegree counter so each placement
+    # only revisits the children of the just-placed node, not the
+    # full key set.
+    rev: dict[_NodeKey, set[_NodeKey]] = defaultdict(set)
+    indegree: dict[_NodeKey, int] = {k: 0 for k in keys}
+    for child, parents in deps.items():
+        if child not in keys:
+            continue
+        for parent in parents:
+            if parent not in keys:
+                continue
+            rev[parent].add(child)
+            indegree[child] += 1
+    ready_heap: list[_NodeKey] = [k for k in keys if indegree[k] == 0]
+    heapq.heapify(ready_heap)
     placed: list[_NodeKey] = []
-    placed_set: set[_NodeKey] = set()
-    while len(placed) < len(keys):
-        ready = sorted(k for k in keys if k not in placed_set and deps.get(k, set()) <= placed_set)
-        if not ready:
-            unplaced = sorted(keys - placed_set)
-            raise ExecutionError(
-                code="cyclic_work_ordering",
-                message=f"cycle in work-node dependencies; unresolved: {unplaced!r}",
-            )
-        nxt = ready[0]
+    while ready_heap:
+        nxt = heapq.heappop(ready_heap)
         placed.append(nxt)
-        placed_set.add(nxt)
+        for child in sorted(rev[nxt]):
+            indegree[child] -= 1
+            if indegree[child] == 0:
+                heapq.heappush(ready_heap, child)
+    if len(placed) < len(keys):
+        unplaced = sorted(k for k in keys if indegree[k] > 0)
+        raise ExecutionError(
+            code="cyclic_work_ordering",
+            message=f"cycle in work-node dependencies; unresolved: {unplaced!r}",
+        )
     return [by_key[k] for k in placed]
