@@ -63,3 +63,58 @@ class TestMaskGlobals:
     def test_value_local_passes_through(self):
         result = safe_eval("value.upper()", MASK_GLOBALS, {"value": "hello"})
         assert result == "HELLO"
+
+
+class TestQA1MakeMaskGlobals:
+    """QA-1 M21 (2026-06-01): the make_mask_globals factory returns a
+    MASK_GLOBALS scope with RNG bindings targeting an isolated Random
+    instance, so two formula strategies in the same job no longer
+    share module-global RNG state."""
+
+    def test_make_mask_globals_returns_isolated_rng(self):
+        import random
+
+        from decoy_engine.expressions import make_mask_globals, safe_eval
+
+        rng_a = random.Random(42)
+        rng_b = random.Random(42)
+        scope_a = make_mask_globals(rng_a)
+        scope_b = make_mask_globals(rng_b)
+        # Same seed -> same sequence even though each scope has its
+        # own Random instance.
+        a1 = safe_eval("randint(1, 1000)", scope_a, {})
+        b1 = safe_eval("randint(1, 1000)", scope_b, {})
+        assert a1 == b1
+
+    def test_make_mask_globals_isolation_from_module_global(self):
+        import random
+
+        from decoy_engine.expressions import make_mask_globals, safe_eval
+
+        # Pollute module-global random state.
+        random.seed(999)
+        for _ in range(100):
+            random.random()
+        # The factory's rng must NOT inherit from module-global state.
+        # Running the same seed twice should produce byte-identical output
+        # regardless of what module-global random looks like.
+        rng_a = random.Random(42)
+        scope_a = make_mask_globals(rng_a)
+        val_a = safe_eval("randint(1, 100)", scope_a, {})
+        random.seed(12345)  # more pollution
+        rng_b = random.Random(42)
+        scope_b = make_mask_globals(rng_b)
+        val_b = safe_eval("randint(1, 100)", scope_b, {})
+        assert val_a == val_b
+
+    def test_make_mask_globals_preserves_non_rng_bindings(self):
+        import random
+
+        from decoy_engine.expressions import make_mask_globals, safe_eval
+
+        rng = random.Random(42)
+        scope = make_mask_globals(rng)
+        # Non-RNG bindings still present.
+        assert safe_eval("len('abc')", scope, {}) == 3
+        assert safe_eval("abs(-5)", scope, {}) == 5
+        assert safe_eval("re.search(r'\\d+', 'a42').group()", scope, {}) == "42"
