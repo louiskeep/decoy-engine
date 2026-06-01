@@ -728,6 +728,82 @@ class TestReferenceConfigValidation:
         with pytest.raises(ValidationError, match="reference cycle"):
             PipelineConfig.model_validate(cfg)
 
+    def test_walks_gen_f4_deep_chain_does_not_recursionerror(self):
+        """QA walks/generators F4 (2026-06-01, HIGH reliability): a
+        chain of 1500 generate-mode tables (t0 -> t1 -> ... -> t1499)
+        must validate without raising Python's RecursionError. Pre-fix
+        the recursive DFS in _reference_graph_valid hit the default
+        1000-frame stack limit; iterative DFS lifts the cap."""
+        depth = 1500
+        tables = [
+            {
+                "name": f"t{i:04d}",
+                "row_count": 1,
+                "generate_columns": [
+                    {"name": "id", "type": "sequence", "start": 1, "step": 1},
+                    *(
+                        [
+                            {
+                                "name": "parent_id",
+                                "type": "reference",
+                                "reference_table": f"t{i-1:04d}",
+                                "reference_column": "id",
+                                "distribution": "random",
+                            }
+                        ]
+                        if i > 0
+                        else []
+                    ),
+                ],
+            }
+            for i in range(depth)
+        ]
+        targets = {f"t{i:04d}": {"type": "file", "format": "csv", "path": f"t{i}.csv"} for i in range(depth)}
+        cfg = {
+            "version": 1,
+            "mode": "generate",
+            "global_settings": {"seed": 42},
+            "sources": {},
+            "tables": tables,
+            "targets": targets,
+        }
+        # Must not raise RecursionError. Validation passes (no cycle).
+        PipelineConfig.model_validate(cfg)
+
+    def test_walks_gen_f4_deep_cycle_detected_without_recursionerror(self):
+        """F4 sister-site: a 1200-deep cycle (t0 -> t1 -> ... -> t1199
+        -> t0) must produce the same ValueError(reference cycle) the
+        recursive path did, without RecursionError."""
+        depth = 1200
+        tables = [
+            {
+                "name": f"t{i:04d}",
+                "row_count": 1,
+                "generate_columns": [
+                    {"name": "id", "type": "sequence", "start": 1, "step": 1},
+                    {
+                        "name": "next_id",
+                        "type": "reference",
+                        "reference_table": f"t{(i + 1) % depth:04d}",
+                        "reference_column": "id",
+                        "distribution": "random",
+                    },
+                ],
+            }
+            for i in range(depth)
+        ]
+        targets = {f"t{i:04d}": {"type": "file", "format": "csv", "path": f"t{i}.csv"} for i in range(depth)}
+        cfg = {
+            "version": 1,
+            "mode": "generate",
+            "global_settings": {"seed": 42},
+            "sources": {},
+            "tables": tables,
+            "targets": targets,
+        }
+        with pytest.raises(ValidationError, match="reference cycle"):
+            PipelineConfig.model_validate(cfg)
+
     def test_topo_sort_handles_declared_order_reverse(self):
         # Declare child BEFORE parent. v2's topo-sort generates parent first;
         # the result should still be a valid orphan-free child set.

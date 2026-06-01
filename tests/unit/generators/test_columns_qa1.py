@@ -227,3 +227,58 @@ class TestWalksGenF1ReferencePoolSortedDeterminism:
         cg2 = ColumnGenerator(seed=42)
         out_b = cg2.generate_column(20, col, "child", ref_b).tolist()
         assert out_a == out_b
+
+    def test_walks_gen_f1_c1_mixed_type_pool_uses_str_fallback(self):
+        """QA walks/generators F1 carry-1 (2026-06-01, MEDIUM):
+        exercise the `except TypeError` fallback path. Mixed-type
+        pools (int + str) trip Python's uniform-type sort and fall
+        through to `sorted(..., key=str)`. Output must still be
+        deterministic + identical across two ref_df orderings."""
+        col = {
+            "name": "fk",
+            "type": "reference",
+            "reference_table": "parent",
+            "reference_column": "mixed",
+        }
+        ref_a = {"parent": pd.DataFrame({"mixed": [42, "alpha", 7, "beta", 3]})}
+        ref_b = {"parent": pd.DataFrame({"mixed": ["beta", 7, 3, "alpha", 42]})}
+
+        cg = ColumnGenerator(seed=42)
+        out_a = cg.generate_column(20, col, "child", ref_a).tolist()
+        cg2 = ColumnGenerator(seed=42)
+        out_b = cg2.generate_column(20, col, "child", ref_b).tolist()
+        assert out_a == out_b, (
+            "QA walks/generators F1-c1: mixed-type pool must yield "
+            "byte-identical FK output across different ref_df orderings."
+        )
+
+    def test_walks_gen_f1_c3_mixed_tz_datetime_pool_through_str_fallback(self):
+        """QA walks/generators F1 carry-3 (2026-06-01, LOW):
+        Mixed tz-aware + tz-naive datetimes in the pool. pandas raises
+        TypeError comparing tz-aware to tz-naive Timestamps, which
+        trips the str-fallback path. The fallback sorts by string
+        repr (stable + deterministic) so the FK output is byte-stable
+        across pool orderings."""
+        ts_naive_a = pd.Timestamp("2026-01-01")
+        ts_naive_b = pd.Timestamp("2026-03-15")
+        ts_aware_a = pd.Timestamp("2026-02-01", tz="UTC")
+        ts_aware_b = pd.Timestamp("2026-04-15", tz="UTC")
+
+        col = {
+            "name": "fk",
+            "type": "reference",
+            "reference_table": "parent",
+            "reference_column": "ts",
+        }
+        ref_a = {"parent": pd.DataFrame({"ts": [ts_naive_a, ts_aware_a, ts_naive_b, ts_aware_b]})}
+        ref_b = {"parent": pd.DataFrame({"ts": [ts_aware_b, ts_naive_a, ts_aware_a, ts_naive_b]})}
+
+        cg = ColumnGenerator(seed=42)
+        out_a = cg.generate_column(20, col, "child", ref_a).tolist()
+        cg2 = ColumnGenerator(seed=42)
+        out_b = cg2.generate_column(20, col, "child", ref_b).tolist()
+        assert out_a == out_b, (
+            "QA walks/generators F1-c3: mixed tz-aware + tz-naive "
+            "datetime pool must yield byte-identical FK output across "
+            "different ref_df orderings via the str-fallback path."
+        )

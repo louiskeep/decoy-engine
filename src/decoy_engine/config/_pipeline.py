@@ -131,23 +131,45 @@ class PipelineConfig(BaseModel):
                 d.add(ref_table)
             deps[table.name] = d
         # Detect cycles via DFS three-color marking.
+        # QA walks/generators F4 (2026-06-01, HIGH reliability): iterative
+        # DFS with an explicit stack mirrors the rewrite in
+        # `walks/hazards.py::_detect_cycles`. Pre-fix a chain of >1000
+        # tables (or any cycle of depth >1000) raised Python's default
+        # RecursionError at config-load time. Pipeline configs that
+        # large are uncommon, but config validation must never fail
+        # for stack-depth reasons. Iterative DFS produces identical
+        # cycle-detection semantics.
         WHITE, GRAY, BLACK = 0, 1, 2
         state = {n: WHITE for n in deps}
 
-        def dfs(n: str, path: list[str]) -> None:
-            if state[n] == GRAY:
-                cycle = path[path.index(n) :] + [n]
-                raise ValueError(
-                    f"reference cycle in generate config: {' -> '.join(cycle)}"
-                )
-            if state[n] == BLACK:
-                return
-            state[n] = GRAY
-            for parent_name in deps[n]:
-                dfs(parent_name, path + [n])
-            state[n] = BLACK
+        for start in list(deps):
+            if state[start] != WHITE:
+                continue
+            stack: list[tuple[str, "Iterator[str]"]] = []
+            path: list[str] = []
 
-        for n in list(deps):
-            if state[n] == WHITE:
-                dfs(n, [])
+            state[start] = GRAY
+            path.append(start)
+            stack.append((start, iter(deps[start])))
+
+            while stack:
+                n, parents_iter = stack[-1]
+                try:
+                    parent_name = next(parents_iter)
+                except StopIteration:
+                    stack.pop()
+                    path.pop()
+                    state[n] = BLACK
+                    continue
+                ps = state.get(parent_name, WHITE)
+                if ps == GRAY:
+                    idx = path.index(parent_name)
+                    cycle = path[idx:] + [parent_name]
+                    raise ValueError(
+                        f"reference cycle in generate config: {' -> '.join(cycle)}"
+                    )
+                if ps == WHITE:
+                    state[parent_name] = GRAY
+                    path.append(parent_name)
+                    stack.append((parent_name, iter(deps.get(parent_name, ()))))
         return self
