@@ -85,7 +85,14 @@ def _apply_filter(df: pd.DataFrame, op: FilterOp) -> pd.DataFrame:
             code="filter_expression_error",
             message=f"filter expression {op.expression!r} failed: {type(exc).__name__}",
         ) from exc
-    if not isinstance(mask, pd.Series) or mask.dtype != bool:
+    # QA-10 F8 (2026-06-01): accept pandas nullable BooleanDtype too.
+    # The pre-fix equality check `mask.dtype != bool` rejected
+    # `pd.BooleanDtype()` which arises naturally from numexpr eval over
+    # nullable-integer or nullable-boolean columns (the default Arrow ->
+    # pandas conversion). `pd.api.types.is_bool_dtype` accepts both
+    # numpy bool and pandas nullable BooleanDtype. Same fix shape as
+    # QA-3 F4 closure on the masking-side `when_gate`.
+    if not isinstance(mask, pd.Series) or not pd.api.types.is_bool_dtype(mask.dtype):
         raise TransformError(
             code="filter_expression_not_boolean",
             message=(

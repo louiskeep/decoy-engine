@@ -430,3 +430,37 @@ class TestDropColumnMaskCrossCheck:
             PipelineConfig.model_validate(cfg)
         # Reject names the conflict (sorted).
         assert "'c'" in str(exc.value) or "[c]" in str(exc.value) or "['c']" in str(exc.value)
+
+
+class TestQa10F8FilterBooleanDtype:
+    """QA-10 F8 (2026-06-01): filter accepts pandas nullable
+    BooleanDtype masks. Pre-fix the equality check `mask.dtype != bool`
+    rejected `pd.BooleanDtype()` which arises naturally from any
+    pd.eval over nullable-integer or nullable-boolean columns (the
+    default Arrow -> pandas conversion). Same fix shape as QA-3 F4
+    closure on the masking-side `when_gate`."""
+
+    def test_filter_accepts_nullable_boolean_mask(self):
+        # A column with nullable Int64 forces pd.eval to produce a
+        # BooleanDtype mask on the comparison expression.
+        df = pd.DataFrame(
+            {
+                "v": ["a", "b", "c"],
+                "n": pd.array([1, 2, None], dtype="Int64"),
+            }
+        )
+        op = FilterOp(op="filter", expression="n == 1")
+        out = apply_transform(df, op)
+        # Row 0 matched (n == 1); rows 1, 2 dropped.
+        assert len(out) == 1
+        assert out["v"].iloc[0] == "a"
+
+    def test_filter_still_rejects_non_boolean_dtype(self):
+        # Sanity: a numeric expression that returns an Int64 series
+        # is still rejected; the F8 fix relaxes the check to bool-like,
+        # not to "any series."
+        df = pd.DataFrame({"v": ["a", "b"], "n": [1, 2]})
+        op = FilterOp(op="filter", expression="n + 1")
+        with pytest.raises(TransformError) as exc:
+            apply_transform(df, op)
+        assert exc.value.code == "filter_expression_not_boolean"

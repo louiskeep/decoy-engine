@@ -232,3 +232,42 @@ class TestExports:
         assert hasattr(quality, "compute_new_row_synthesis")
         assert hasattr(quality, "assemble_synth_report")
         assert hasattr(quality, "SYNTH_REPORT_SCHEMA_VERSION")
+
+
+class TestQa10F3FipsSha1:
+    """QA-10 F3 (2026-06-01, HIGH): row-hash uses
+    hashlib.sha1(..., usedforsecurity=False) so it does NOT raise on
+    FIPS-hardened OpenSSL hosts. Pre-fix the bare sha1 call raised
+    ValueError: unsupported on FIPS mode; healthcare + federal
+    deployments (the named target market) commonly run FIPS hosts.
+
+    Locks the contract by exercising the row-hash iterator
+    indirectly via compute_new_row_synthesis on a tiny frame; the
+    function would have raised pre-fix on a FIPS host. The cell here
+    confirms the call shape compiles + executes; the FIPS-host
+    integration confirmation lives in pilot smoke-test scope."""
+
+    def test_compute_new_row_synthesis_runs_clean_with_usedforsecurity_flag(self):
+        # Sanity: the function runs end-to-end. The sha1 call now
+        # includes usedforsecurity=False per F3 fix.
+        source = pd.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
+        synth = pd.DataFrame({"a": [1, 2, 99], "b": ["x", "y", "new"]})
+        nrs = compute_new_row_synthesis(source, synth)
+        assert nrs is not None
+        # 2 matched, 1 new.
+        assert nrs["matched_rows"] == 2
+        assert nrs["new_rows"] == 1
+
+    def test_row_hash_iter_call_signature_passes_usedforsecurity(self):
+        """QA-10 F3: introspect the _row_hash_iter source to verify
+        the usedforsecurity=False argument is present. Defends against
+        a future regression that strips the flag."""
+        import inspect
+
+        from decoy_engine.quality import synth_report
+
+        src = inspect.getsource(synth_report._row_hash_iter)
+        assert "usedforsecurity=False" in src, (
+            "QA-10 F3 fix regressed: hashlib.sha1 call no longer has "
+            "usedforsecurity=False; FIPS hosts will raise."
+        )
