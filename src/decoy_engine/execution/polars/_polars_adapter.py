@@ -52,6 +52,7 @@ from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._guards import reject_null_bearing_int
 from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
 from decoy_engine.execution._runner import build_work_list, order_work
+from decoy_engine.execution._when_gate import run_with_when_gate_polars
 from decoy_engine.execution.polars._conversion_boundary import ConversionBoundary
 from decoy_engine.execution.polars._strategies import POLARS_SCALAR_HANDLERS
 from decoy_engine.generation.pool._cache import PoolCache
@@ -210,8 +211,11 @@ class PolarsExecutionAdapter:
                     )
                 handler = self._polars_handlers[node.strategy]
                 with timed_strategy(node.strategy, ",".join(node.columns)):
-                    frames[node.table], node_warnings = handler.run(
-                        frames[node.table], node.columns[0], plan_slice, ctx
+                    # MG-3 / M3 (2026-05-31): same when_gate semantics as
+                    # the pandas adapter. No-op when plan_slice.when is
+                    # None.
+                    frames[node.table], node_warnings = run_with_when_gate_polars(
+                        handler, frames[node.table], node.columns[0], plan_slice, ctx
                     )
                 warnings.extend(node_warnings)
 

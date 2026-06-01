@@ -84,6 +84,16 @@ class ColumnSeed:
     # "unclassified" -- the FE renders a needs-review badge so a
     # newly-added strategy can't ship without an explicit label.
     technique_class: str | None = None
+    # MG-3 / M3 (2026-05-31): conditional masking. When set, the
+    # runner evaluates the expression via numexpr (df.eval) against
+    # the column's frame; the strategy runs ONLY on rows where the
+    # predicate is True, and rows where it is False passthrough
+    # untouched. Expression scope is locked to the per-column scope-
+    # clamp pattern (local_dict={}, global_dict={}) carried forward
+    # from the Dennis C1 patch on _transforms.py. None preserves the
+    # legacy "always run" behavior (byte-identical for any plan that
+    # doesn't set the field).
+    when: str | None = None
 
 
 @dataclass(frozen=True)

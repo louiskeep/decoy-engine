@@ -535,6 +535,25 @@ def _build_seed_envelope(
                     provider_config = tuple()
                 coherent_with_raw = col_entry.get("coherent_with", []) or []
                 coherent_with = tuple(c for c in coherent_with_raw if isinstance(c, str))
+                # MG-3 / M3 (2026-05-31): optional per-row gate
+                # expression. Reject when: combined with coherent_with
+                # at compile time -- composite generators write the
+                # bundle, not the column, so per-column row gating is
+                # ill-defined for the coherent set (spec §Pitfalls).
+                when_raw = col_entry.get("when")
+                when = when_raw if isinstance(when_raw, str) and when_raw.strip() else None
+                if when is not None and coherent_with:
+                    raise PlanCompileError(
+                        code="when_with_coherent_with_unsupported",
+                        path=f"tables.{table_profile.name}.columns.{col_name}.when",
+                        message=(
+                            f"Column {table_profile.name}.{col_name}: `when:` is "
+                            "not supported on columns participating in "
+                            "`coherent_with`; the composite generator writes the "
+                            "bundle, not the column. Drop `when:` here or move "
+                            "the column off the coherent set."
+                        ),
+                    )
                 per_column.append(
                     (
                         col_name,
@@ -552,6 +571,7 @@ def _build_seed_envelope(
                             # the central registry; None when the strategy
                             # has not been classified.
                             technique_class=technique_class_for(strategy),
+                            when=when,
                         ),
                     )
                 )

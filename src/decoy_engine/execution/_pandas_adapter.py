@@ -48,6 +48,7 @@ from decoy_engine.execution._guards import reject_null_bearing_int
 from decoy_engine.execution._runner import WorkNode, build_work_list, order_work
 from decoy_engine.execution._strategies import SCALAR_HANDLERS
 from decoy_engine.execution._strategies._composite import CompositeHandler
+from decoy_engine.execution._when_gate import run_with_when_gate
 from decoy_engine.execution._strategies._fpe import FpeStrategyHandler
 from decoy_engine.execution._strategies._orphan import resolve_fk_keys
 from decoy_engine.generation.pool._cache import PoolCache
@@ -241,8 +242,14 @@ class PandasExecutionAdapter:
                         message=f"scalar node {node.columns} has a non-ColumnSeed plan slice.",
                     )
                 with timed_strategy(node.strategy, ",".join(node.columns)):
-                    frames[node.table], node_warnings = handler.run(
-                        df, node.columns[0], plan_slice, ctx
+                    # MG-3 / M3 (2026-05-31): the when_gate is a no-op
+                    # when plan_slice.when is None (byte-identical to
+                    # calling handler.run() directly). When set, it
+                    # evaluates the predicate via numexpr (scope-clamped
+                    # per Dennis C1) and routes only matching rows
+                    # through the handler.
+                    frames[node.table], node_warnings = run_with_when_gate(
+                        handler, df, node.columns[0], plan_slice, ctx
                     )
                 warnings.extend(node_warnings)
 
