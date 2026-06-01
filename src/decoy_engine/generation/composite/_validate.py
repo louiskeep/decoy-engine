@@ -29,19 +29,32 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from decoy_engine.generation.composite._address import CompositeAddress
 from decoy_engine.generation.composite._city_state_zip import CompositeCityStateZip
 from decoy_engine.generation.composite._name_email import CompositeNameEmail
+from decoy_engine.generation.composite._person import CompositePerson
+from decoy_engine.generation.composite._provider import CompositeProvider
 from decoy_engine.plan._errors import PlanCompileError
 
 if TYPE_CHECKING:
     from decoy_engine.relationships._namespace import NamespaceRegistry
 
 # composite_name -> its canonical output_columns, sorted (the form the coherent
-# group is compared against).
+# group is compared against). MG-4 (2026-05-31) adds person / address /
+# provider with fixed output_columns; composite_custom is handled separately
+# because its outputs are config-defined.
 _COMPOSITE_OUTPUT_COLUMNS: dict[str, tuple[str, ...]] = {
     CompositeNameEmail.composite_name: tuple(sorted(CompositeNameEmail.output_columns)),
     CompositeCityStateZip.composite_name: tuple(sorted(CompositeCityStateZip.output_columns)),
+    CompositePerson.composite_name: tuple(sorted(CompositePerson.output_columns)),
+    CompositeAddress.composite_name: tuple(sorted(CompositeAddress.output_columns)),
+    CompositeProvider.composite_name: tuple(sorted(CompositeProvider.output_columns)),
 }
+
+# composite_custom is variable-length; its output_columns are the coherent
+# group itself (declared in the YAML). The wiring check skips the
+# group-vs-output-columns equality check for this composite.
+_VARIABLE_OUTPUT_COMPOSITES: frozenset[str] = frozenset({"composite_custom"})
 
 
 def composite_wiring_consistent(config: dict[str, Any], registry: NamespaceRegistry) -> None:
@@ -91,26 +104,33 @@ def composite_wiring_consistent(config: dict[str, Any], registry: NamespaceRegis
             provider = next(iter(providers))
 
             # 3. Provider is a known composite whose output_columns match the group.
-            if provider not in _COMPOSITE_OUTPUT_COLUMNS:
+            #    composite_custom (MG-4) is variable-length: its output_columns
+            #    ARE the coherent group, so the group-vs-output-columns check
+            #    is skipped for it.
+            known_composites = sorted(
+                set(_COMPOSITE_OUTPUT_COLUMNS) | set(_VARIABLE_OUTPUT_COMPOSITES)
+            )
+            if provider not in _COMPOSITE_OUTPUT_COLUMNS and provider not in _VARIABLE_OUTPUT_COMPOSITES:
                 raise PlanCompileError(
                     code="composite_wiring_inconsistent",
                     path=f"tables.{table_name}.columns.{col_name}.provider",
                     message=(
                         f"Column {table_name}.{col_name} declares coherent_with but its "
                         f"provider {provider!r} is not a composite generator "
-                        f"({sorted(_COMPOSITE_OUTPUT_COLUMNS)!r})."
+                        f"({known_composites!r})."
                     ),
                 )
-            expected = _COMPOSITE_OUTPUT_COLUMNS[provider]
-            if expected != group:
-                raise PlanCompileError(
-                    code="composite_wiring_inconsistent",
-                    path=path,
-                    message=(
-                        f"Composite {provider!r} writes columns {expected!r} but the "
-                        f"coherent group in {table_name!r} is {group!r}; they must match."
-                    ),
-                )
+            if provider in _COMPOSITE_OUTPUT_COLUMNS:
+                expected = _COMPOSITE_OUTPUT_COLUMNS[provider]
+                if expected != group:
+                    raise PlanCompileError(
+                        code="composite_wiring_inconsistent",
+                        path=path,
+                        message=(
+                            f"Composite {provider!r} writes columns {expected!r} but the "
+                            f"coherent group in {table_name!r} is {group!r}; they must match."
+                        ),
+                    )
 
             # 4. The registry binds the whole (table, sorted(group)) tuple.
             if registry.for_column(table_name, group) is None:
