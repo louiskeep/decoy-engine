@@ -11,4 +11,4 @@ Start with the central documentation hub:
 
 **New here?** Start with [New Developer Onboarding](../decoy-platform/docs/guides/new-developer-onboarding.md) in `decoy-platform` -- it covers the four-repo family, clone layout, Docker quickstart, and where engine code lives.
 
-Legacy engine README content was moved to [engine README archive](../decoy-platform/docs/backlog/v2/legacy-guides/engine-readme-legacy.md).
+Legacy engine README content was moved to [engine README archive](../decoy-platform/docs/archive/v2-superseded/backlog-v2/legacy-guides/engine-readme-legacy.md).
