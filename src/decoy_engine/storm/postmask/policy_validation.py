@@ -136,7 +136,8 @@ def _check_one_column(
 
     # Equality check has to be careful about ordering + dtype. We compare
     # element-wise after coercing both to object so dtype changes don't
-    # mask actual value preservation. Frame index is assumed aligned.
+    # mask actual value preservation. Frame index is enforced aligned
+    # by the reset_index above (QA-4 F6, 2026-06-01).
     # Dennis M11 fix (2026-06-01): a comparison failure (ArrowDtype
     # mismatch, etc) previously fell through to bytes_identical=False
     # + severity='info' "output differs as expected", which is a false
