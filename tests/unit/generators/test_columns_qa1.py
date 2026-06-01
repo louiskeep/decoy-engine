@@ -177,3 +177,53 @@ class TestQA1M21FormulaRngIsolation:
         assert out_a_then_b_a == out_b_then_a_a
         # Same for B.
         assert out_a_then_b_b == out_b_then_a_b
+
+
+class TestWalksGenF1ReferencePoolSortedDeterminism:
+    """QA walks/generators F1 (2026-06-01, CRITICAL determinism):
+    `_generate_reference_column` sorts the unique-values pool before
+    sampling. Pre-fix the pool order came from
+    `Series.dropna().unique().tolist()` which yields values in
+    first-occurrence order. DB reads without ORDER BY produce
+    undefined row order; the same seed could yield different FK
+    assignments across runs."""
+
+    def test_same_seed_different_ref_row_order_byte_identical(self):
+        col = {
+            "name": "fk",
+            "type": "reference",
+            "reference_table": "parent",
+            "reference_column": "id",
+        }
+        ref_a = {"parent": pd.DataFrame({"id": [10, 20, 30, 40, 50]})}
+        # Same values, different row order: pre-fix this produced a
+        # different FK assignment under the same seed.
+        ref_b = {"parent": pd.DataFrame({"id": [50, 30, 10, 40, 20]})}
+
+        cg = ColumnGenerator(seed=42)
+        out_a = cg.generate_column(50, col, "child", ref_a).tolist()
+
+        cg2 = ColumnGenerator(seed=42)
+        out_b = cg2.generate_column(50, col, "child", ref_b).tolist()
+
+        assert out_a == out_b, (
+            "QA walks/generators F1: FK assignment must be independent "
+            f"of ref_df row order. Got {out_a[:10]}... vs {out_b[:10]}..."
+        )
+
+    def test_pool_with_string_values_sorted(self):
+        """Mixed/string pools sort via the string fallback path."""
+        col = {
+            "name": "fk",
+            "type": "reference",
+            "reference_table": "parent",
+            "reference_column": "code",
+        }
+        ref_a = {"parent": pd.DataFrame({"code": ["alpha", "beta", "gamma"]})}
+        ref_b = {"parent": pd.DataFrame({"code": ["gamma", "alpha", "beta"]})}
+
+        cg = ColumnGenerator(seed=42)
+        out_a = cg.generate_column(20, col, "child", ref_a).tolist()
+        cg2 = ColumnGenerator(seed=42)
+        out_b = cg2.generate_column(20, col, "child", ref_b).tolist()
+        assert out_a == out_b

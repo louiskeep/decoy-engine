@@ -846,8 +846,20 @@ class ColumnGenerator:
                 f"{sorted(ref_df.columns.tolist())!r}"
             )
 
-        # Get reference values
-        ref_values = ref_df[reference_column].dropna().unique().tolist()
+        # QA walks/generators F1 (2026-06-01, CRITICAL determinism):
+        # sort the pool. pd.Series.unique() returns values in
+        # first-occurrence order; DB reads without ORDER BY return rows
+        # in undefined order that varies by server restart + page cache
+        # state + query plan. The ref_rng below is seeded deterministically
+        # from _column_seed, so the SAME RNG seed + a DIFFERENT pool
+        # order produced DIFFERENT FK assignments. Sorting the pool here
+        # makes FK assignment independent of ref_df row order. Try
+        # uniform-type sort first; fall back to str-key for mixed pools.
+        raw_pool = ref_df[reference_column].dropna().unique().tolist()
+        try:
+            ref_values = sorted(raw_pool)
+        except TypeError:
+            ref_values = sorted(raw_pool, key=str)
 
         if not ref_values:
             self.logger.warning(
