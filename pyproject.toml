@@ -44,6 +44,13 @@ dependencies = [
     # for user-supplied filter / derive expressions) cannot trip silently.
     # numexpr is a hard runtime dependency, not optional.
     "numexpr>=2.8",
+    # MG-3 / M2 (2026-05-31): the `nested` masking strategy walks each cell
+    # as JSON and applies a child strategy to leaf values located by
+    # JSONPath. jsonpath-ng (MIT) is the established, maintained
+    # implementation; matches our posture for numexpr / polars (do not roll
+    # our own parser). Required at import time of the nested strategy
+    # module; absent imports fall back to a typed runtime error.
+    "jsonpath-ng>=1.6",
 ]
 
 [project.optional-dependencies]

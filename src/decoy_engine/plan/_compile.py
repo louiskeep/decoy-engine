@@ -127,6 +127,12 @@ def compile_plan(
     namespace_registry = build_namespace_registry(config, profile)
     check_unknown_provider(config)
     check_composite_columns_length_match(profile)
+    # MG-3 / M3 (2026-05-31): reject when + coherent_with combo early,
+    # before composite-wiring checks. A column carrying both fields is
+    # ill-defined (composite generators write the bundle, not the
+    # column), so the operator should see the typed when_with_coherent_
+    # with_unsupported error rather than a composite-wiring follow-on.
+    _check_when_with_coherent_with(config)
     # Row 8 (S8): composite wiring. Structural (config + registry), so it runs
     # in both --no-profile and full modes, like row 9.
     composite_wiring_consistent(config, namespace_registry)
@@ -229,6 +235,45 @@ def compile_plan(
 # ---------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------
+
+
+def _check_when_with_coherent_with(config: dict[str, Any]) -> None:
+    """MG-3 / M3 (2026-05-31): reject `when` + `coherent_with` combo
+    at compile time with a typed error code.
+
+    The composite generator writes the bundle, not the column. A
+    per-column row gate on a coherent_with column is ill-defined:
+    skipping the row on one column but not its siblings would
+    desynchronize the bundle. The operator sees the typed error and
+    can either drop `when` or move the column off the coherent set.
+    """
+    tables = config.get("tables", []) or []
+    for table in tables:
+        table_name = table.get("name", "?") if isinstance(table, dict) else "?"
+        columns = (table or {}).get("columns", []) if isinstance(table, dict) else []
+        for col in columns or []:
+            if not isinstance(col, dict):
+                continue
+            col_name = col.get("name", "?")
+            when = col.get("when")
+            coherent_with = col.get("coherent_with") or []
+            if (
+                isinstance(when, str)
+                and when.strip()
+                and isinstance(coherent_with, (list, tuple))
+                and len(coherent_with) > 0
+            ):
+                raise PlanCompileError(
+                    code="when_with_coherent_with_unsupported",
+                    path=f"tables.{table_name}.columns.{col_name}.when",
+                    message=(
+                        f"Column {table_name}.{col_name}: `when:` is not "
+                        "supported on columns participating in "
+                        "`coherent_with`; the composite generator writes "
+                        "the bundle, not the column. Drop `when:` here or "
+                        "move the column off the coherent set."
+                    ),
+                )
 
 
 def _hash_config(config: dict[str, Any]) -> str:
@@ -535,6 +580,25 @@ def _build_seed_envelope(
                     provider_config = tuple()
                 coherent_with_raw = col_entry.get("coherent_with", []) or []
                 coherent_with = tuple(c for c in coherent_with_raw if isinstance(c, str))
+                # MG-3 / M3 (2026-05-31): optional per-row gate
+                # expression. Reject when: combined with coherent_with
+                # at compile time -- composite generators write the
+                # bundle, not the column, so per-column row gating is
+                # ill-defined for the coherent set (spec §Pitfalls).
+                when_raw = col_entry.get("when")
+                when = when_raw if isinstance(when_raw, str) and when_raw.strip() else None
+                if when is not None and coherent_with:
+                    raise PlanCompileError(
+                        code="when_with_coherent_with_unsupported",
+                        path=f"tables.{table_profile.name}.columns.{col_name}.when",
+                        message=(
+                            f"Column {table_profile.name}.{col_name}: `when:` is "
+                            "not supported on columns participating in "
+                            "`coherent_with`; the composite generator writes the "
+                            "bundle, not the column. Drop `when:` here or move "
+                            "the column off the coherent set."
+                        ),
+                    )
                 per_column.append(
                     (
                         col_name,
@@ -552,6 +616,7 @@ def _build_seed_envelope(
                             # the central registry; None when the strategy
                             # has not been classified.
                             technique_class=technique_class_for(strategy),
+                            when=when,
                         ),
                     )
                 )

@@ -104,6 +104,10 @@ def _column_seed_to_dict(cs: ColumnSeed) -> dict[str, Any]:
     # passthrough). Omit when unset so legacy plans round-trip.
     if cs.technique_class is not None:
         out["technique_class"] = cs.technique_class
+    # MG-3 / M3 (2026-05-31): emit when: onto the manifest only when
+    # set; legacy plans omit the field and round-trip unchanged.
+    if cs.when is not None:
+        out["when"] = cs.when
     return out
 
 
@@ -203,6 +207,9 @@ def _column_seed_from_dict(data: dict[str, Any]) -> ColumnSeed:
         # MG-1 S1 (2026-06-01): legacy plans without the field
         # deserialize as None; new plans round-trip the class.
         technique_class=data.get("technique_class"),
+        # MG-3 / M3 (2026-05-31): same round-trip pattern as the
+        # technique class; legacy plans default to None.
+        when=data.get("when"),
     )
 
 

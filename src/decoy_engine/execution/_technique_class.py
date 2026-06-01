@@ -87,6 +87,12 @@ TECHNIQUE_CLASS_BY_STRATEGY: dict[str, TechniqueClass] = {
     # free-text with a fixed token; the original span is not recoverable.
     # Anonymisation, same class as `redact` (which replaces the whole cell).
     "text_redact": "anonymisation",
+    # `nested` (MG-3 M2, 2026-05-31) is intentionally absent. It is a
+    # wrapper -- its GDPR posture is the child strategy's posture, not
+    # its own. Until the FE surfaces the child-strategy badge for
+    # nested columns, technique_class_for("nested") returns None and
+    # the operator sees the unclassified badge as a prompt to inspect
+    # the child config. Tracked in the MG-1.5-FE-pickers follow-up.
 }
 
 

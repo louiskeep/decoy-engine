@@ -292,6 +292,71 @@ _CASES: list[tuple[str, Any, dict[str, pa.Table]]] = [
         ),
         {"t": pa.table({"c": ["alice@example.com and 123-45-6789"]})},
     ),
+    # MG-3 / M3 (2026-05-31): conditional `when:` gate. The polars
+    # adapter converts to pandas just for the predicate eval, then
+    # writes back; the pandas adapter evaluates natively. Byte-
+    # identical output by construction.
+    (
+        "when_byte_identical_pandas_vs_polars_port",
+        _plan(
+            "t",
+            (
+                (
+                    "v",
+                    ColumnSeed(
+                        namespace=None,
+                        strategy="redact",
+                        provider="x_nobackend",
+                        backend_type="faker",
+                        backend_version="v",
+                        cardinality_mode="reuse",
+                        deterministic=False,
+                        provider_config=(),
+                        coherent_with=(),
+                        when="flag == 1",
+                    ),
+                ),
+            ),
+        ),
+        {
+            "t": pa.table(
+                {
+                    "v": ["a", "b", "c", "d"],
+                    "flag": pa.array([0, 1, 1, 0], type=pa.int64()),
+                }
+            )
+        },
+    ),
+    # MG-3 / M2 (2026-05-31): nested rides PandasStrategyPort on the
+    # polars side. Parity by construction.
+    (
+        "nested_redact_byte_identical_pandas_vs_polars_port",
+        _plan(
+            "t",
+            (
+                (
+                    "data",
+                    _col(
+                        "nested",
+                        provider_config=(
+                            ("strategy", "redact"),
+                            ("target", "$.user.email"),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        {
+            "t": pa.table(
+                {
+                    "data": [
+                        '{"user": {"name": "Alice", "email": "alice@x.com"}}',
+                        '{"user": {"name": "Bob", "email": "bob@x.com"}}',
+                    ]
+                }
+            )
+        },
+    ),
 ]
 
 

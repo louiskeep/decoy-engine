@@ -17,17 +17,27 @@ from decoy_engine.execution._strategies import SCALAR_HANDLERS
 
 
 class TestTechniqueClassRegistry:
+    # Wrappers (MG-3 / M2): strategies whose GDPR posture is the CHILD
+    # strategy's, not their own. Intentionally left out of the
+    # TECHNIQUE_CLASS_BY_STRATEGY map so the FE renders the child's
+    # badge for the column. Surfacing the child's class on the wrapper
+    # row is the MG-1.5-FE-pickers follow-up.
+    _WRAPPER_STRATEGIES = frozenset({"nested"})
+
     def test_every_shipped_strategy_is_classified(self):
-        """Every entry in SCALAR_HANDLERS has a TECHNIQUE_CLASS_BY_STRATEGY
-        entry. Without this, a new strategy ships unclassified + the FE
-        renders the needs-review badge in production."""
+        """Every entry in SCALAR_HANDLERS that is NOT a wrapper has a
+        TECHNIQUE_CLASS_BY_STRATEGY entry. Without this, a new
+        strategy ships unclassified + the FE renders the needs-review
+        badge in production."""
         unclassified = sorted(
             name for name in SCALAR_HANDLERS
             if name not in TECHNIQUE_CLASS_BY_STRATEGY
+            and name not in self._WRAPPER_STRATEGIES
         )
         assert unclassified == [], (
             f"Strategies missing a technique class: {unclassified}. "
-            "Add an entry to TECHNIQUE_CLASS_BY_STRATEGY before merge."
+            "Add an entry to TECHNIQUE_CLASS_BY_STRATEGY before merge, "
+            "or add the strategy to _WRAPPER_STRATEGIES if it is a wrapper."
         )
 
     @pytest.mark.parametrize("strategy,expected", [
