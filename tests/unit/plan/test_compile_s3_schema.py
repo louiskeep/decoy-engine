@@ -6,9 +6,10 @@ re-types `SeedEnvelope.job_seed` from `int` to `bytes`. These tests pin:
 
 - The dataclass shapes after the delta
 - The seed_overflow PlanCompileError at the pipeline-config boundary
-- The SEED_PROTOCOL_VERSION=3 stamp on every emitted plan (was 1
+- The SEED_PROTOCOL_VERSION=4 stamp on every emitted plan (was 1
   at S3 ship; F-series bumped to 2; QA walks/gen F3 PO Q-F3=b 2026-06-01
-  bumped to 3 for the vectorised null-injection RNG-family swap)
+  bumped to 3 for the vectorised null-injection RNG-family swap;
+  formula-hash migration to keyed HMAC-SHA256 2026-06-01 bumped to 4)
 - End-to-end derive_value wiring with the plan's bytes-typed job_seed
 """
 
@@ -109,13 +110,14 @@ def _minimal_config(seed: int = 42) -> dict:
 
 class TestSeedProtocolVersionStamp:
     """S3 stamped v1; F-series corrections bumped to v2; QA walks/gen
-    F3 PO Q-F3=b (2026-06-01) bumps to v3 for the vectorised null-
-    injection RNG-family swap. Every shipped plan now stamps
-    `seed_protocol_version == 3`."""
+    F3 PO Q-F3=b (2026-06-01) bumped to v3 for the vectorised null-
+    injection RNG-family swap; formula-hash migration to keyed
+    HMAC-SHA256 (2026-06-01) bumps to v4. Every shipped plan now
+    stamps `seed_protocol_version == 4`."""
 
-    def test_plan_stamps_v3(self) -> None:
+    def test_plan_stamps_v4(self) -> None:
         plan = compile_plan(_minimal_config(), _minimal_profile(), decoy_engine_version="0.1.0")
-        assert plan.seed_protocol_version == 3
+        assert plan.seed_protocol_version == 4
 
 
 class TestJobSeedBytesShape:

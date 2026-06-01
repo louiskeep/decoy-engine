@@ -5,7 +5,6 @@ Provides various strategies for generating synthetic column data.
 
 import random
 import time
-import warnings
 from typing import Any
 
 import numpy as np
@@ -17,7 +16,7 @@ from decoy_engine.generators.derivation import (
     synthetic_column_seed,
 )
 from decoy_engine.internal.crypto import (
-    deterministic_hash,
+    hmac_hex,
 )
 from decoy_engine.internal.faker_setup import (
     get_faker_providers,
@@ -25,23 +24,31 @@ from decoy_engine.internal.faker_setup import (
 )
 
 
-def _formula_hash_legacy(value: str, seed: int) -> str:
-    """Formula-sandbox shim around deterministic_hash.
+def _formula_hash_keyed(value: str, local_seed: int) -> str:
+    """Formula-sandbox keyed hash. Replaces the legacy SHA256(value + seed)
+    path with HMAC-SHA256(key, value) where the key is derived from
+    `local_seed`.
 
-    QA-internal-synth-providers F12 follow-on (Dennis pass-7 M1,
-    2026-06-01): swallows the DeprecationWarning that
-    deterministic_hash now emits so a per-row formula column doesn't
-    spam logs or break CI under -W error::DeprecationWarning. The
-    formula sandbox is a known-legacy callsite; migrating it to a
-    keyed primitive (hmac_hex via derive) requires routing the
-    namespace/job_seed into the sandbox + is tracked as a follow-on.
+    Carry from QA-internal-synth-providers F12 (PO 2026-06-01 follow-on
+    to the M1 shim): the legacy `deterministic_hash` was reversible given
+    a known (value, hash) pair plus the seed. New code paths must use
+    keyed primitives (HMAC-SHA256 via `internal.crypto.hmac_hex`).
+
+    SEED_PROTOCOL_VERSION 3 -> 4 in the same change because the per-
+    row byte output of `hash(col)` formulas changes (HMAC vs raw
+    SHA256). Pre-GA, no manifests to break (PO confirmed).
+
+    `local_seed` is the int the existing formula sandbox already builds
+    as `column_seed + row_index` so this swap is wire-compatible with
+    the prior interface; only the output bytes change.
     """
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        out = deterministic_hash(value, seed)
-    # deterministic_hash returns None only for value=None, but the
-    # caller always wraps in str(), so out is always a str here.
-    return out[:8] if out else ""
+    # 8-byte key derived from the local_seed via modular wrap. Stable
+    # across runs (same int -> same key). Repeated 4x to fill a 32-byte
+    # buffer (HMAC-SHA256's natural block size); RFC 2104 accepts any
+    # key length but >= block-size is preferred + collision-free for
+    # the per-row keying purpose.
+    seed_bytes = (local_seed & ((1 << 64) - 1)).to_bytes(8, "big")
+    return hmac_hex(seed_bytes * 4, value)[:8]
 
 
 class ColumnGenerator:
@@ -1325,17 +1332,13 @@ class ColumnGenerator:
             "str": str,
             "int": int,
             "float": float,
-            # QA-internal-synth-providers F12 follow-on (Dennis pass-7 M1,
-            # 2026-06-01): suppress the DeprecationWarning that
-            # deterministic_hash now emits. The formula sandbox is a
-            # known-legacy callsite invoked per-row; without this
-            # suppression a 10k-row formula column with `hash(col)`
-            # spams 10k warning lines + breaks any CI running with
-            # -W error::DeprecationWarning. Migration to a keyed
-            # primitive (e.g. hmac_hex via derive) is the proper fix
-            # but requires routing the namespace/job_seed into the
-            # formula sandbox; tracked as a follow-on.
-            "hash": lambda x: _formula_hash_legacy(str(x), local_seed),
+            # Formula-hash migration (PO Q-formula-hash 2026-06-01):
+            # hash() in the formula sandbox now uses HMAC-SHA256 keyed
+            # by the per-row local_seed (see _formula_hash_keyed at
+            # module top). Replaces the M1 shim around the legacy
+            # deterministic_hash. SEED_PROTOCOL_VERSION 3 -> 4 in the
+            # same change because per-row output bytes differ.
+            "hash": lambda x: _formula_hash_keyed(str(x), local_seed),
             # Faker date helpers
             "date_between": self.faker.date_between,
             "date_this_decade": self.faker.date_this_decade,

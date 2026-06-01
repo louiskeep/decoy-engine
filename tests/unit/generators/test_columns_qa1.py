@@ -366,20 +366,29 @@ class TestQaWalksGenF3VectorisedNullInjection:
         assert (result_a.isna() == result_b.isna()).all()
 
 
-class TestDennisPass7M1FormulaHashNoWarningLeak:
-    """Dennis pass-7 M1 (2026-06-01): the formula sandbox `hash(col)`
-    function must not leak DeprecationWarning per-row. F12 added a
-    DeprecationWarning to deterministic_hash; without the
-    _formula_hash_legacy shim the warning would fire once per row
-    + spam logs + break CI under -W error::DeprecationWarning."""
+class TestFormulaHashKeyedMigration:
+    """Formula-hash migration (2026-06-01, PO confirmed): the formula
+    sandbox `hash()` function now uses HMAC-SHA256 keyed by the per-row
+    local_seed (_formula_hash_keyed), not the legacy
+    deterministic_hash. SEED_PROTOCOL_VERSION bumped 3 -> 4 in the
+    same change.
+
+    Per-row output bytes change vs the pre-migration shape (HMAC vs
+    raw SHA256). Same input + same seed within v4 still yields the
+    same output (determinism preserved within the protocol version)."""
 
     def test_formula_hash_does_not_emit_deprecation_warning_per_row(self):
+        """Carry from Dennis pass-7 M1: the formula sandbox must not
+        leak DeprecationWarning per-row. Pre-migration this was a real
+        problem because the sandbox called deterministic_hash. Post-
+        migration the call goes through hmac_hex (no warning emitter)
+        so the contract holds for free."""
         import warnings
 
         col = {
             "name": "hashed",
             "type": "formula",
-            "formula": "hash(row_index)",
+            "formula": "hash(i)",
         }
         cg = ColumnGenerator(seed=42)
         with warnings.catch_warnings(record=True) as caught:
@@ -388,15 +397,50 @@ class TestDennisPass7M1FormulaHashNoWarningLeak:
         depr_warnings = [
             w for w in caught
             if issubclass(w.category, DeprecationWarning)
-            and "deterministic_hash" in str(w.message)
         ]
         assert depr_warnings == [], (
-            f"Dennis pass-7 M1: formula sandbox `hash` leaked "
-            f"{len(depr_warnings)} DeprecationWarning(s). The "
-            f"_formula_hash_legacy shim should suppress them."
+            f"Formula-hash migration: sandbox `hash` leaked "
+            f"{len(depr_warnings)} DeprecationWarning(s); migration "
+            f"to keyed primitive should remove all such emissions."
         )
-        # Sanity: the formula actually produced output.
         assert len(result) == 50
+
+    def test_formula_hash_output_is_8_hex_chars(self):
+        """Output contract: 8-char hex string per row (unchanged from
+        pre-migration; only the underlying bytes differ)."""
+        col = {
+            "name": "h",
+            "type": "formula",
+            "formula": "hash(i)",
+        }
+        cg = ColumnGenerator(seed=42)
+        result = cg.generate_column(10, col, "t", {})
+        for v in result:
+            assert isinstance(v, str)
+            assert len(v) == 8
+            int(v, 16)  # parseable as hex
+
+    def test_formula_hash_deterministic_same_seed_same_output(self):
+        """Within a single SEED_PROTOCOL_VERSION + same seed input,
+        the hash output is identical across runs."""
+        col = {
+            "name": "h",
+            "type": "formula",
+            "formula": "hash(i)",
+        }
+        out_a = ColumnGenerator(seed=42).generate_column(10, col, "t", {}).tolist()
+        out_b = ColumnGenerator(seed=42).generate_column(10, col, "t", {}).tolist()
+        assert out_a == out_b
+
+    def test_formula_hash_different_seeds_diverge(self):
+        col = {
+            "name": "h",
+            "type": "formula",
+            "formula": "hash(i)",
+        }
+        out_a = ColumnGenerator(seed=42).generate_column(10, col, "t", {}).tolist()
+        out_b = ColumnGenerator(seed=99).generate_column(10, col, "t", {}).tolist()
+        assert out_a != out_b
 
 
 class TestWalksGenF7DistributionDatetimeYear9999:
