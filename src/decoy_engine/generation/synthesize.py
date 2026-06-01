@@ -19,7 +19,7 @@ so two ``generate_tables`` calls in different threads do not corrupt each other'
 draws. ``random.Random(s)`` produces the same sequence as ``random.seed(s)``, so
 V1 byte-parity is preserved. The Faker dependency mutates module-level
 ``random`` state via ``seed_instance`` (Faker library limitation): QA-7 F1
-(2026-06-01) added a process-level lock (``_FAKER_CALL_LOCK``) around the
+(2026-06-01) added an intra-process lock (``_FAKER_CALL_LOCK``) around the
 seed_instance + provider_func call so concurrent generate_tables calls cannot
 corrupt each other's seed state. V2.1 throughput optimization: replace the
 shared cached instance with a per-call fresh Faker to remove the lock entirely.
@@ -63,6 +63,9 @@ _DEFAULT_FAKER_LOCK = threading.Lock()
 # with a process-level lock. Acceptable throughput cost for V1 (single-
 # worker generation); a per-call fresh Faker instance is the throughput-
 # friendly alternative scoped for V2.1 when concurrent generation lands.
+# Intra-process scope: serializes threads within a single Python process;
+# does NOT serialize across separate worker processes (each has its own
+# Faker singleton + own random state, no cross-process interference).
 _FAKER_CALL_LOCK = threading.Lock()
 
 
@@ -279,17 +282,18 @@ def _faker(
     locale = col.get("locale")
     if locale:
         faker_inst = make_faker(locale)
+        pre_seed: int | None = None
     elif instance_default_locale:
         # S6-ENG-4 M1: when no per-column locale, fall through to the platform's
         # instance default locale (mirrors V1 `ColumnGenerator.__init__` lines
         # 68-72 which uses `make_faker(instance_default_locale)` for `self.faker`).
         faker_inst = make_faker(instance_default_locale)
-        faker_inst.seed_instance(seed)
+        pre_seed = seed
     else:
         # F-5 fix: cache the no-locale instance at module level. Per-row
         # seed_instance below overrides the initial seed, so sharing is safe.
         faker_inst = _get_default_faker()
-        faker_inst.seed_instance(seed)
+        pre_seed = seed
     providers = get_faker_providers(faker_inst)
     provider_func = providers.get(faker_type) or providers["word"]
     raw_kwargs = col.get("faker_kwargs") or {}
@@ -298,12 +302,16 @@ def _faker(
         derive_key=derive_key, column_config=col, fallback_seed=seed
     )
     out: list[Any] = []
-    # QA-7 F1 (2026-06-01): the seed_instance + provider_func pair is
-    # critical-section across threads (Faker library mutates module
-    # random.seed under the hood). Lock outside the loop -- the per-row
-    # work is already serialized inside this call; the lock only
-    # synchronizes across CONCURRENT _faker() calls in other threads.
+    # QA-7 F1 + C1 (2026-06-01): both seed_instance call sites are in
+    # the critical section. The pre-loop seed_instance(seed) used to
+    # live OUTSIDE the lock (Dennis QA-7 gate carry C1) which left a
+    # window where thread B's pre-seed could race thread A's row-seed.
+    # Now the pre-seed + per-row seeds + provider_func calls are all
+    # inside one lock acquisition; different-seed concurrency is also
+    # safe.
     with _FAKER_CALL_LOCK:
+        if pre_seed is not None:
+            faker_inst.seed_instance(pre_seed)
         for i in range(n):
             row_seed = col_seed + i
             faker_inst.seed_instance(row_seed)
