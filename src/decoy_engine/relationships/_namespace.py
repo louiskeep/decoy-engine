@@ -28,7 +28,7 @@ in the seed envelope, not the registry.
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from decoy_engine.plan._errors import PlanCompileError
@@ -78,9 +78,36 @@ class NamespaceRegistry:
     Frozen by construction; rebuilt by `build_namespace_registry` on every
     compile. The `bindings` tuple is sorted by namespace name for
     deterministic iteration; query methods do not depend on order.
+
+    QA-8 F2 (2026-06-01): `_index` is a pre-computed reverse dict
+    populated by `build_namespace_registry`. Pre-fix `for_column`
+    iterated `bindings` and then `declared_by` for each call -- O(B*K)
+    per lookup, called once per deterministic column at compile time.
+    The pre-computed dict makes every lookup O(1). The bindings tuple
+    is still the canonical source of truth for serialization +
+    deterministic iteration.
     """
 
     bindings: tuple[NamespaceBinding, ...]
+    # Lazy-default to empty so older callers constructing
+    # NamespaceRegistry(bindings=...) without _index still work; the
+    # post-init below populates from bindings if _index is empty.
+    _index: dict[tuple[str, tuple[str, ...]], str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # QA-8 F2: rebuild the index if the caller did not supply one.
+        # Direct construction from tests or legacy callsites that pass
+        # only `bindings` gets the same fast lookups without a code
+        # change on their side.
+        if not self._index:
+            built = {
+                bound: binding.namespace
+                for binding in self.bindings
+                for bound in binding.declared_by
+            }
+            # _index is technically frozen; bypass dataclass setattr
+            # the same way the dataclass init does.
+            object.__setattr__(self, "_index", built)
 
     def for_column(self, table: str, columns: tuple[str, ...]) -> str | None:
         """Return the namespace bound to `(table, columns)`, or None if unbound.
@@ -91,11 +118,7 @@ class NamespaceRegistry:
         binding). Plain columns with no namespace declaration get None
         and stay namespace-less in the plan.
         """
-        for binding in self.bindings:
-            for bound_table, bound_cols in binding.declared_by:
-                if bound_table == table and bound_cols == columns:
-                    return binding.namespace
-        return None
+        return self._index.get((table, columns))
 
     def for_relationship(self, relationship: Relationship) -> str:
         """Resolve the namespace for a FK Relationship; raises if unresolvable.

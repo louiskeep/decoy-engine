@@ -144,6 +144,16 @@ def emit_step(
         # / node_id kwargs. Fall back to the original signature so a
         # forward-compatible call site still works against older
         # platform versions.
+        # QA-8 F4 (2026-06-01): DEBUG-log the signature mismatch so
+        # an operator running with --debug can see node_id is being
+        # dropped (the canvas deep-link silently stops working
+        # otherwise). The fallback itself is intentional for
+        # forward-compatibility; the log just makes it visible.
+        import logging
+        logging.getLogger(__name__).debug(
+            "emit_step: step() rejected new kwargs (node_id / error_class); "
+            "falling back to 3-kwarg form. Check engine/platform version alignment.",
+        )
         try:
             fn(name, status=status, rows_in=rows_in, rows_out=rows_out)
         except Exception:
