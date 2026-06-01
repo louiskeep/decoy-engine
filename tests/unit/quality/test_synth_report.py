@@ -345,3 +345,79 @@ class TestQa10F3FipsSha1:
             "QA-10 F3 fix regressed: hashlib.sha1 call no longer has "
             "usedforsecurity=False; FIPS hosts will raise."
         )
+
+
+class TestQa10P1SeverityFieldPlumbing:
+    """QA-10 P1 (2026-06-01, PO-locked spec at
+    docs/v2/sprints/qa-carries/qa-10-quality-report-hardening.md):
+    overall report severity is the max-band across sub-reports.
+
+    Ordering: ok < info < low < medium < high < critical. Empty reports
+    route to 'info' (nothing ran). DCR median == 0 routes to 'critical'.
+    The 'info' band is the no-escalation route for opt-out / unavailable
+    sub-reports + (post-P2) under-sample TVD."""
+
+    def test_empty_report_severity_is_info(self):
+        r = assemble_synth_report(new_row_synthesis=None)
+        assert r["severity"] == "info"
+
+    def test_new_row_synthesis_low_band_severity_is_low(self):
+        r = assemble_synth_report(
+            new_row_synthesis={"fraction_new": 0.05, "band": "low"},
+        )
+        assert r["severity"] == "low"
+
+    def test_new_row_synthesis_high_band_severity_is_high(self):
+        r = assemble_synth_report(
+            new_row_synthesis={"fraction_new": 0.95, "band": "high"},
+        )
+        assert r["severity"] == "high"
+
+    def test_dcr_zero_distance_routes_to_critical(self):
+        """DCR median == 0 = at least one synth row is verbatim source.
+        This is the 'fail open' band that must surface to the operator
+        regardless of other sub-reports."""
+        r = assemble_synth_report(
+            new_row_synthesis={"fraction_new": 0.05, "band": "low"},
+            dcr={"synth_to_source": {"median": 0}},
+        )
+        assert r["severity"] == "critical"
+
+    def test_dcr_positive_distance_does_not_escalate(self):
+        r = assemble_synth_report(
+            new_row_synthesis={"fraction_new": 0.05, "band": "low"},
+            dcr={"synth_to_source": {"median": 0.42}},
+        )
+        assert r["severity"] == "low"
+
+    def test_attacks_unavailable_routes_to_info(self):
+        """The _attacks_unavailable shape (available=False) is the
+        platform default. Should surface as info, not escalate the
+        overall severity."""
+        r = assemble_synth_report(
+            new_row_synthesis={"fraction_new": 0.05, "band": "low"},
+            attacks={"available": False, "reason": "not_enabled_by_caller"},
+        )
+        assert r["severity"] == "low"  # low > info; new_row_synthesis wins
+
+    def test_attacks_ran_with_high_band_escalates(self):
+        r = assemble_synth_report(
+            new_row_synthesis={"fraction_new": 0.05, "band": "low"},
+            attacks={"available": True, "band": "high", "mia": {"attempted": True}},
+        )
+        assert r["severity"] == "high"
+
+    def test_band_ordering_max_wins(self):
+        """When multiple sub-reports have bands, the max wins."""
+        r = assemble_synth_report(
+            new_row_synthesis={"fraction_new": 0.5, "band": "medium"},
+            dcr={"synth_to_source": {"median": 0.42}},  # ok
+            attacks={"available": True, "band": "high"},  # high beats medium
+        )
+        assert r["severity"] == "high"
+
+    def test_severity_field_in_returned_dict(self):
+        """Smoke: every assembled report carries a 'severity' field."""
+        r = assemble_synth_report(new_row_synthesis=None)
+        assert "severity" in r
+        assert isinstance(r["severity"], str)
