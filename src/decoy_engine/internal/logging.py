@@ -88,24 +88,40 @@ def _configure_logger(logger, config: dict[str, Any]):
         console_handler.setFormatter(formatter)
         logger.addHandler(console_handler)
 
-    # File handler - default to a log file if not specified
+    # File handler - default to a log file if not specified.
+    # QA-internal-synth-providers F3 (2026-06-01, HIGH reliability):
+    # the whole file-handler creation now lives behind a try/except.
+    # Pre-fix Docker/K8s pods with a read-only filesystem crashed at
+    # logger configuration time: mkdir raised PermissionError on a
+    # read-only fs, killing the whole process before any masking work
+    # ran. Honour explicit opt-out (`file: null` / empty string)
+    # AND degrade gracefully on OSError/PermissionError, falling back
+    # to console-only logging with a warning.
     log_file = config.get("file", "logs/decoy_engine.log")
+    if log_file:
+        try:
+            log_dir = os.path.dirname(log_file)
+            if log_dir:
+                Path(log_dir).mkdir(parents=True, exist_ok=True)
+            max_size_mb = config.get("max_size_mb", 10)
+            backup_count = config.get("backup_count", 5)
+            file_handler = RotatingFileHandler(
+                log_file, maxBytes=max_size_mb * 1024 * 1024, backupCount=backup_count
+            )
+            file_handler.setFormatter(formatter)
+            logger.addHandler(file_handler)
+        except (OSError, PermissionError) as exc:
+            # Read-only or unwritable fs (common on container deploys).
+            # Promote console logging so the operator still sees output.
+            console_fallback = logging.StreamHandler()
+            console_fallback.setFormatter(formatter)
+            logger.addHandler(console_fallback)
+            logger.warning(
+                "Could not open log file %s (%s); using console-only logging",
+                log_file, exc,
+            )
 
-    # Create directory if it doesn't exist
-    log_dir = os.path.dirname(log_file)
-    if log_dir:
-        Path(log_dir).mkdir(parents=True, exist_ok=True)
-
-    # Set up rotating file handler with max size and backup count
-    max_size_mb = config.get("max_size_mb", 10)
-    backup_count = config.get("backup_count", 5)
-    file_handler = RotatingFileHandler(
-        log_file, maxBytes=max_size_mb * 1024 * 1024, backupCount=backup_count
-    )
-    file_handler.setFormatter(formatter)
-    logger.addHandler(file_handler)
-
-    # Only log this to file, not to console
+    # Only log this to file, not to console (unless the F3 fallback above kicked in).
     logger.info("Logging initialized")
 
 

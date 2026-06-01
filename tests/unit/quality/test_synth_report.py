@@ -235,23 +235,55 @@ class TestExports:
 
 
 class TestQa10F13AttacksDisclaimer:
-    """QA-10 F13 (2026-06-01, NIT): the "no attack was attempted"
-    disclaimer is omitted from the disclaimers list when attacks were
-    actually run. Pre-fix that line was hardcoded into every report,
-    telling operators no attack was attempted even when attack results
-    were sitting in the same payload."""
+    """QA-10 F13 (2026-06-01, NIT, refined 2026-06-01): the
+    "no attack was attempted" disclaimer is omitted ONLY when an
+    attack was actually attempted. Pre-fix that line was hardcoded
+    into every report.
+
+    Subtle: the platform hook always passes a dict (the
+    `_attacks_unavailable` shape when `enable_attacks=False`), so the
+    omit-when-not-None check would have hidden the disclaimer in every
+    production report. The corrected check looks at
+    `attacks.get("available")`; the unavailable shape has
+    `available=False` and still earns the disclaimer."""
 
     def test_attacks_none_includes_skipped_disclaimer(self):
-        """When attacks is None (default; nothing ran), the disclaimer
-        documenting the off-by-default posture must be present."""
+        """When attacks is None (legacy callers; nothing supplied),
+        the disclaimer must be present."""
         report = assemble_synth_report(new_row_synthesis=None, attacks=None)
         joined = " ".join(report["disclaimers"])
         assert "no attack was attempted" in joined
 
-    def test_attacks_present_drops_skipped_disclaimer(self):
-        """When attacks IS supplied to the report builder, the
-        misleading 'no attack was attempted' line must NOT appear."""
-        attack_block = {"mia": {"attempted": True, "outcome": "low_risk"}}
+    def test_attacks_unavailable_shape_includes_skipped_disclaimer(self):
+        """When attacks is the _attacks_unavailable shape
+        (`available=False`), no actual attack ran. Disclaimer present.
+        This is the platform hook's default behaviour."""
+        unavailable = {
+            "metric": "attack_based_metrics",
+            "available": False,
+            "reason": "not_enabled_by_caller",
+            "extras_module": "decoy_engine_privacy_attacks",
+        }
+        report = assemble_synth_report(
+            new_row_synthesis=None,
+            attacks=unavailable,
+        )
+        joined = " ".join(report["disclaimers"])
+        assert "no attack was attempted" in joined, (
+            "QA-10 F13 refined: an _attacks_unavailable block still "
+            "means no attack ran; the disclaimer must remain."
+        )
+
+    def test_attacks_present_and_available_drops_skipped_disclaimer(self):
+        """When attacks IS supplied AND `available` is anything other
+        than False (an actual attack ran), the disclaimer is omitted.
+        Available=True is the explicit form; absence of the key is
+        treated permissively as available."""
+        attack_block = {
+            "metric": "attack_based_metrics",
+            "available": True,
+            "mia": {"attempted": True, "outcome": "low_risk"},
+        }
         report = assemble_synth_report(
             new_row_synthesis=None,
             attacks=attack_block,
@@ -263,7 +295,7 @@ class TestQa10F13AttacksDisclaimer:
         """The DCR-not-a-privacy-guarantee + no-DP-claim +
         high-fidelity-is-not-privacy disclaimers are unconditional
         and must remain regardless of attack presence."""
-        for attacks in (None, {"mia": {"attempted": True}}):
+        for attacks in (None, {"available": True, "mia": {"attempted": True}}):
             report = assemble_synth_report(
                 new_row_synthesis=None,
                 attacks=attacks,

@@ -477,7 +477,19 @@ def assemble_synth_report(
         "verbatim, which may re-identify individuals. Use this "
         "report ALONGSIDE the QualityReport, not as a substitute.",
     ]
-    if attacks is None:
+    # QA-10 F13 refined (2026-06-01): the disclaimer applies when no
+    # attack actually ran. That includes BOTH attacks=None AND the
+    # _attacks_unavailable shape (available=False) that the platform
+    # hook supplies by default. Pre-refinement the check was just
+    # `attacks is None`; the platform hook always passes a dict so the
+    # disclaimer dropped from every production report, contradicting
+    # the intent. Now we keep the disclaimer whenever no attack ran.
+    _attack_actually_attempted = (
+        attacks is not None
+        and isinstance(attacks, dict)
+        and attacks.get("available") is not False
+    )
+    if not _attack_actually_attempted:
         disclaimers.append(
             "Attack-based metrics (Membership Inference, shadow-model) "
             "are OFF by default and only run when the operator "
