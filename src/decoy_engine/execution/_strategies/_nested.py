@@ -41,6 +41,7 @@ import jsonpath_ng
 import pandas as pd
 
 from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
+from decoy_engine.execution._errors import StrategyError
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._types import ColumnSeed
 
@@ -67,54 +68,69 @@ class NestedStrategyHandler:
         child_strategy_name = cfg.get("strategy")
         child_strategy_config = cfg.get("strategy_config") or {}
 
+        # QA-3 F12 (2026-05-31, security): config errors below promote to
+        # StrategyError so the runner fails the job. Pre-fix they returned
+        # df UNCHANGED with a QualityWarning -- a misconfigured target
+        # (e.g. `$.patient_name` typoed as `$.patientName`, or a child
+        # strategy name typo) silently passed PII through. The warning
+        # surfaced only in the Storm report, not at job failure, and
+        # operators who don't audit Storm output had no signal.
+        # Sparse-path passthrough (some cells have matches, some don't)
+        # stays a non-error case per spec; that branch is handled below
+        # by the "if not leaf_values" early-return without raising.
         if not isinstance(target_path, str) or not target_path:
-            return df, [
-                QualityWarning(
-                    code="nested_target_unset",
-                    provider="nested",
-                    column=column,
-                )
-            ]
+            raise StrategyError(
+                code="nested_target_unset",
+                strategy="nested",
+                message=(
+                    f"nested target is required and must be a non-empty string "
+                    f"(column={column!r}). Pre-fix this returned the column "
+                    "unchanged with a QualityWarning; misconfigured targets "
+                    "silently passed PII through."
+                ),
+            )
         if not isinstance(child_strategy_name, str) or not child_strategy_name:
-            return df, [
-                QualityWarning(
-                    code="nested_strategy_unset",
-                    provider="nested",
-                    column=column,
-                )
-            ]
+            raise StrategyError(
+                code="nested_strategy_unset",
+                strategy="nested",
+                message=(
+                    f"nested child strategy is required and must be a non-empty "
+                    f"string (column={column!r})."
+                ),
+            )
 
         if child_strategy_name == "nested":
-            return df, [
-                QualityWarning(
-                    code="nested_recursive_nested_rejected",
-                    provider="nested",
-                    column=column,
-                )
-            ]
+            raise StrategyError(
+                code="nested_recursive_nested_rejected",
+                strategy="nested",
+                message=(
+                    f"nested cannot wrap itself recursively (column={column!r})."
+                ),
+            )
 
         child_handler = SCALAR_HANDLERS.get(child_strategy_name)
         if child_handler is None:
-            return df, [
-                QualityWarning(
-                    code="nested_child_strategy_unknown",
-                    provider="nested",
-                    column=column,
-                    detail={"child_strategy": child_strategy_name},
-                )
-            ]
+            raise StrategyError(
+                code="nested_child_strategy_unknown",
+                strategy="nested",
+                message=(
+                    f"nested child strategy {child_strategy_name!r} is not a "
+                    f"registered SCALAR_HANDLERS key (column={column!r}). "
+                    "A typo here silently dropped PII pre-fix."
+                ),
+            )
 
         try:
             jsonpath_expr = jsonpath_ng.parse(target_path)
         except Exception as exc:
-            return df, [
-                QualityWarning(
-                    code="nested_jsonpath_parse_error",
-                    provider="nested",
-                    column=column,
-                    detail={"target": target_path, "error": str(exc)},
-                )
-            ]
+            raise StrategyError(
+                code="nested_jsonpath_parse_error",
+                strategy="nested",
+                message=(
+                    f"nested target {target_path!r} is not a valid JSONPath "
+                    f"expression (column={column!r}): {exc}"
+                ),
+            ) from exc
 
         col = df[column]
         if pd.api.types.is_extension_array_dtype(col.dtype):

@@ -16,7 +16,9 @@ from __future__ import annotations
 import json
 
 import pandas as pd
+import pytest
 
+from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution._strategies._nested import NestedStrategyHandler
 from decoy_engine.plan._types import ColumnSeed
 
@@ -172,41 +174,73 @@ class TestPassthroughCases:
 
 
 class TestRejections:
+    """QA-3 F12 (2026-05-31, security): config errors below now raise
+    StrategyError so the runner fails the job. Pre-fix they returned the
+    column unchanged with a QualityWarning; a typoed target or unknown
+    child strategy silently passed PII through (the warning surfaced
+    only in the Storm report, which not all operators audit).
+    """
+
     def test_nested_recursive_nested_rejected(self):
         df = pd.DataFrame({"data": [json.dumps({"x": "y"})]})
         handler = NestedStrategyHandler()
-        _, warnings = handler.run(
-            df.copy(),
-            "data",
-            _seed({"target": "$.x", "strategy": "nested"}),
-            _FakeCtx(),
-        )
-        codes = [w.code for w in warnings]
-        assert "nested_recursive_nested_rejected" in codes
+        with pytest.raises(StrategyError) as exc:
+            handler.run(
+                df.copy(),
+                "data",
+                _seed({"target": "$.x", "strategy": "nested"}),
+                _FakeCtx(),
+            )
+        assert exc.value.code == "nested_recursive_nested_rejected"
+        assert exc.value.strategy == "nested"
 
-    def test_nested_unknown_child_strategy_warning(self):
+    def test_nested_unknown_child_strategy_raises(self):
         df = pd.DataFrame({"data": [json.dumps({"x": "y"})]})
         handler = NestedStrategyHandler()
-        _, warnings = handler.run(
-            df.copy(),
-            "data",
-            _seed({"target": "$.x", "strategy": "no_such_strategy"}),
-            _FakeCtx(),
-        )
-        codes = [w.code for w in warnings]
-        assert "nested_child_strategy_unknown" in codes
+        with pytest.raises(StrategyError) as exc:
+            handler.run(
+                df.copy(),
+                "data",
+                _seed({"target": "$.x", "strategy": "no_such_strategy"}),
+                _FakeCtx(),
+            )
+        assert exc.value.code == "nested_child_strategy_unknown"
 
-    def test_nested_jsonpath_parse_error_warning(self):
+    def test_nested_jsonpath_parse_error_raises(self):
         df = pd.DataFrame({"data": [json.dumps({"x": "y"})]})
         handler = NestedStrategyHandler()
-        _, warnings = handler.run(
-            df.copy(),
-            "data",
-            _seed({"target": "$.x[", "strategy": "redact"}),  # bad jsonpath
-            _FakeCtx(),
-        )
-        codes = [w.code for w in warnings]
-        assert "nested_jsonpath_parse_error" in codes
+        with pytest.raises(StrategyError) as exc:
+            handler.run(
+                df.copy(),
+                "data",
+                _seed({"target": "$.x[", "strategy": "redact"}),  # bad jsonpath
+                _FakeCtx(),
+            )
+        assert exc.value.code == "nested_jsonpath_parse_error"
+
+    def test_nested_target_empty_raises(self):
+        df = pd.DataFrame({"data": [json.dumps({"x": "y"})]})
+        handler = NestedStrategyHandler()
+        with pytest.raises(StrategyError) as exc:
+            handler.run(
+                df.copy(),
+                "data",
+                _seed({"target": "", "strategy": "redact"}),
+                _FakeCtx(),
+            )
+        assert exc.value.code == "nested_target_unset"
+
+    def test_nested_strategy_empty_raises(self):
+        df = pd.DataFrame({"data": [json.dumps({"x": "y"})]})
+        handler = NestedStrategyHandler()
+        with pytest.raises(StrategyError) as exc:
+            handler.run(
+                df.copy(),
+                "data",
+                _seed({"target": "$.x", "strategy": ""}),
+                _FakeCtx(),
+            )
+        assert exc.value.code == "nested_strategy_unset"
 
 
 # ── batch delegation ──────────────────────────────────────────────────
