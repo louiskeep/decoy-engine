@@ -141,7 +141,7 @@ class TestNameEmail:
         # R3 (corrected): the composite keys through _canonicalize_source, which
         # normalizes python int and numpy int identically. A python-int-keyed row
         # and a numpy-int64-keyed row of the same value produce the SAME bundle.
-        # (Note: int and str-of-int do NOT match -- the v2 envelope encodes them
+        # (Note: int and str-of-int do NOT match; the canonicalise envelope encodes them
         # differently -- so the proof is the int/numpy-int equivalence, not the
         # int/str equivalence the draft spec described.)
         py = self._gen().generate_bundle(
