@@ -1,8 +1,7 @@
 """Validation result contract.
 
 A typed, multi-message validation outcome shared by engine, API, web,
-and CLI callers. Replaces the older single-`ValidationError`-raises
-pattern at the public boundary so callers can:
+and CLI callers. Lets callers:
 
   - render every problem at once (not "fix one, re-run, find the next"),
   - distinguish errors from warnings,
@@ -11,9 +10,17 @@ pattern at the public boundary so callers can:
   - diff the validator's `normalized_config` against the original
     caller-owned input.
 
-The legacy ``validate_graph(yaml) -> None`` raise-style entry point
-stays in place for backward compatibility; new code should call
-``validate_graph_full(yaml) -> ValidationResult``.
+The ``ValidationResult`` type is still load-bearing in V2 for the
+multi-error config / plan-compile diagnostic surface. The V1 graph-
+runner entry points that historically produced these results
+(``validate_graph(yaml) -> None`` raise-style and
+``validate_graph_full(yaml) -> ValidationResult`` collecting-style) were
+removed under the ``decoy_v2_clean_break`` PO directive; see
+``__init__.py`` for the current public surface (``PipelineConfig`` +
+``compile_plan`` + ``ExecutionAdapter``). V2 callers raise
+``PipelineValidationError`` or ``PlanCompileError`` at the
+choke-point and surface the multi-message detail via the structures
+defined here.
 
 Message codes
 -------------
