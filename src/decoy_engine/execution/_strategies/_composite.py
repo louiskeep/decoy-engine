@@ -19,8 +19,12 @@ from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._runner import WorkNode
 from decoy_engine.generation.composite import (
     CompositeGenerator,
+    composite_address,
     composite_city_state_zip,
+    composite_custom,
     composite_name_email,
+    composite_person,
+    composite_provider,
 )
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._types import ColumnSeed
@@ -61,6 +65,44 @@ class CompositeHandler:
             )
         elif node.provider == "composite_city_state_zip":
             generator = composite_city_state_zip(coherent_namespace=coherent_namespace)
+        elif node.provider == "composite_person":
+            # MG-4 (2026-05-31): 4-output coherent person bundle.
+            generator = composite_person(
+                coherent_namespace=coherent_namespace, registry=ctx.registry
+            )
+        elif node.provider == "composite_address":
+            # MG-4 (2026-05-31): 4-output coherent address bundle.
+            generator = composite_address(
+                coherent_namespace=coherent_namespace, registry=ctx.registry
+            )
+        elif node.provider == "composite_provider":
+            # MG-4 (2026-05-31): 3-output coherent provider bundle
+            # (NPI + provider_name + practice_address).
+            generator = composite_provider(
+                coherent_namespace=coherent_namespace, registry=ctx.registry
+            )
+        elif node.provider == "composite_custom":
+            # MG-4 (2026-05-31): generic 1-4 column bundle; the bundle
+            # declaration rides in provider_config["bundle"] as a list
+            # of {column, provider, optional config} dicts. Plan-compile
+            # has already validated the wiring; we trust the shape here
+            # and let CompositeCustom.__init__ raise on a malformed
+            # bundle (the typed CompositeError surfaces to the runner).
+            cfg = dict(col_seed.provider_config)
+            bundle = cfg.get("bundle") or []
+            if not isinstance(bundle, list):
+                raise ExecutionError(
+                    code="composite_custom_bundle_shape",
+                    message=(
+                        f"composite_custom on {node.columns}: provider_config['bundle'] "
+                        f"must be a list, got {type(bundle).__name__}."
+                    ),
+                )
+            generator = composite_custom(
+                coherent_namespace=coherent_namespace,
+                bundle=bundle,
+                registry=ctx.registry,
+            )
         else:
             raise ExecutionError(
                 code="unsupported_strategy",

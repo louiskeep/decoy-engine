@@ -28,6 +28,10 @@ if TYPE_CHECKING:
 _NAME = "composite_coherence"
 _NAME_EMAIL = "composite_name_email"
 _CITY_STATE_ZIP = "composite_city_state_zip"
+# MG-4 (2026-05-31) additions.
+_PERSON = "composite_person"
+_ADDRESS = "composite_address"
+_PROVIDER = "composite_provider"
 
 
 def run_composite_coherence(ctx: ScanContext) -> ScanOutcome:
@@ -60,6 +64,16 @@ def _audit(provider: str, out_table: pa.Table) -> CompositeCoherenceReport | Non
         return _audit_name_email(out_table)
     if provider == _CITY_STATE_ZIP:
         return _audit_city_state_zip(out_table)
+    # MG-4 (2026-05-31): per-composite audits for the 3 new fixed-output
+    # composites. composite_custom is variable-length + its coherence
+    # contract is identity-stability (not statistical), so it has no
+    # post-mask audit -- generation-time guarantees stand on their own.
+    if provider == _PERSON:
+        return _audit_person(out_table)
+    if provider == _ADDRESS:
+        return _audit_address(out_table)
+    if provider == _PROVIDER:
+        return _audit_provider(out_table)
     return None  # unknown composite: no coherence contract to audit here
 
 
@@ -98,6 +112,95 @@ def _audit_city_state_zip(out_table: pa.Table) -> CompositeCoherenceReport:
             coherent += 1
     return CompositeCoherenceReport(
         generator=_CITY_STATE_ZIP,
+        columns=cols,
+        total_rows=total,
+        coherent_rows=coherent,
+        incoherent_rows=total - coherent,
+    )
+
+
+def _audit_person(out_table: pa.Table) -> CompositeCoherenceReport:
+    """MG-4 (2026-05-31): composite_person coherence audit.
+
+    Same email-format check as composite_name_email (email local-part
+    equals "{first}.{last}" lowercased). dob has no coherence contract
+    relative to the name fields (it is an independent pool draw), so
+    it is not audited here -- the generation-time identity stability
+    is the contract.
+    """
+    cols = ("first_name", "last_name", "email", "dob")
+    firsts, lasts, emails, _dobs = (column_values(out_table, c) for c in cols)
+    total = 0
+    coherent = 0
+    for first, last, email in zip(firsts, lasts, emails, strict=False):
+        if first is None or last is None or email is None:
+            continue
+        total += 1
+        local = str(email).split("@", 1)[0]
+        if local == f"{first}.{last}".lower():
+            coherent += 1
+    return CompositeCoherenceReport(
+        generator=_PERSON,
+        columns=cols,
+        total_rows=total,
+        coherent_rows=coherent,
+        incoherent_rows=total - coherent,
+    )
+
+
+def _audit_address(out_table: pa.Table) -> CompositeCoherenceReport:
+    """MG-4 (2026-05-31): composite_address coherence audit.
+
+    The (city, state, zip) triple must be a verbatim locality-table row.
+    street_address is independent (no coherence contract) and is not
+    audited.
+    """
+    cols = ("street_address", "city", "state", "zip")
+    _streets, cities, states, zips = (column_values(out_table, c) for c in cols)
+    table = set(load_locality_table())
+    total = 0
+    coherent = 0
+    for city, state, zip_code in zip(cities, states, zips, strict=False):
+        if city is None or state is None or zip_code is None:
+            continue
+        total += 1
+        if (city, state, zip_code) in table:
+            coherent += 1
+    return CompositeCoherenceReport(
+        generator=_ADDRESS,
+        columns=cols,
+        total_rows=total,
+        coherent_rows=coherent,
+        incoherent_rows=total - coherent,
+    )
+
+
+def _audit_provider(out_table: pa.Table) -> CompositeCoherenceReport:
+    """MG-4 (2026-05-31): composite_provider coherence audit.
+
+    NPI must pass the CMS Luhn validator. provider_name is independent.
+    practice_address is a flat string; checking its city/state/zip
+    components against the locality table is a tighter contract than
+    composite_address can offer, but we skip it here to keep the audit
+    simple -- the generation-time path emits "<city>, <state> <zip>"
+    by construction, so the only way it goes out of band is a future
+    change to the joining logic; that change is a regression and the
+    composite_provider unit cells catch it.
+    """
+    from decoy_engine.storm.detectors import _npi_valid
+
+    cols = ("npi", "provider_name", "practice_address")
+    npis, _names, _addresses = (column_values(out_table, c) for c in cols)
+    total = 0
+    coherent = 0
+    for npi in npis:
+        if npi is None:
+            continue
+        total += 1
+        if _npi_valid(str(npi)):
+            coherent += 1
+    return CompositeCoherenceReport(
+        generator=_PROVIDER,
         columns=cols,
         total_rows=total,
         coherent_rows=coherent,
