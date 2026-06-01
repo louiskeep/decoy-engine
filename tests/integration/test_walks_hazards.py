@@ -354,3 +354,78 @@ def test_empty_schema_produces_no_hazards():
         declared_edges=(),
     )
     assert detect_hazards(snap) == ()
+
+
+# QA walks/generators F4 (2026-06-01, HIGH reliability) ─────────────────
+
+
+def test_walks_gen_f4_deep_chain_does_not_recursionerror():
+    """F4 contract: chain of 1500 tables A0 -> A1 -> ... -> A1499 must
+    detect no cycles AND must not raise RecursionError. Python's
+    default recursion limit is 1000; the iterative DFS rewrite lifts
+    the cap to the stack-size limit (effectively unbounded for
+    schema-shape walks)."""
+    depth = 1500
+    tables = tuple(
+        _table(
+            f"t{i:04d}",
+            [
+                _col("id", pk=True, nullable=False),
+                _col("parent_id", nullable=True) if i > 0 else _col("self_marker", nullable=True),
+            ],
+        )
+        for i in range(depth)
+    )
+    edges = tuple(
+        Edge(f"t{i:04d}", "parent_id", f"t{i-1:04d}", "id", declared=True)
+        for i in range(1, depth)
+    )
+    snap = SchemaSnapshot(
+        db_kind="postgres",
+        schema_name="public",
+        tables=tables,
+        declared_edges=edges,
+    )
+    hazards = detect_hazards(snap)
+    cir = [h for h in hazards if h.kind == "CIR"]
+    assert cir == [], (
+        f"QA walks/generators F4: 1500-deep chain has no cycles. "
+        f"Got {len(cir)} CIR hazards."
+    )
+
+
+def test_walks_gen_f4_deep_cycle_detected_without_recursionerror():
+    """F4 contract: a 1200-deep cycle (A0 -> A1 -> ... -> A1199 -> A0)
+    must be detected as exactly one CIR hazard. Pre-fix the recursive
+    DFS hit RecursionError on the back-edge insertion path."""
+    depth = 1200
+    tables = tuple(
+        _table(
+            f"t{i:04d}",
+            [
+                _col("id", pk=True, nullable=False),
+                _col("next_id", nullable=False),
+            ],
+        )
+        for i in range(depth)
+    )
+    edges = tuple(
+        Edge(f"t{i:04d}", "next_id", f"t{(i + 1) % depth:04d}", "id", declared=True)
+        for i in range(depth)
+    )
+    snap = SchemaSnapshot(
+        db_kind="postgres",
+        schema_name="public",
+        tables=tables,
+        declared_edges=edges,
+    )
+    hazards = detect_hazards(snap)
+    cir = [h for h in hazards if h.kind == "CIR"]
+    assert len(cir) == 1, (
+        f"QA walks/generators F4: 1200-deep cycle must produce exactly "
+        f"one CIR hazard. Got {len(cir)}."
+    )
+    cycle = cir[0].details["cycle"]
+    assert len(cycle) == depth
+    # Canonical cycle starts at the lexicographically smallest table.
+    assert cycle[0] == "t0000"

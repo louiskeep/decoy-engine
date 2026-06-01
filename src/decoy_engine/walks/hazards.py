@@ -26,7 +26,7 @@ to confirm.
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 
 from decoy_engine.walks.graph import ERGraph, build_er_graph
 from decoy_engine.walks.types import Column, Edge, Hazard, SchemaSnapshot
@@ -263,31 +263,55 @@ def _detect_cycles(graph: ERGraph) -> list[Hazard]:
     """Find cycles in the FK graph via DFS with white/gray/black
     coloring. Returns one Hazard per distinct cycle found.
 
-    Cycles are normalized — start from the lexicographically smallest
-    table in the cycle — so the same cycle reported via two different
-    DFS paths only appears once."""
+    Cycles are normalized: rotation starts from the lexicographically
+    smallest table in the cycle, so the same cycle reported via two
+    different DFS paths only appears once.
+
+    QA walks/generators F4 (2026-06-01, HIGH reliability): the inner
+    walk is iterative with an explicit stack rather than recursive.
+    Pre-fix a chain of >1000 tables (or any cycle of depth >1000)
+    raised Python's default RecursionError. Data-warehouse star
+    schemas with many bridge tables + large open-source schema imports
+    (OpenStreetMap, MediaWiki) can reach that depth. Iterative DFS
+    produces byte-identical cycle output (same DFS traversal order;
+    only stack management differs)."""
     WHITE, GRAY, BLACK = 0, 1, 2
     color: dict[str, int] = {t: WHITE for t in graph.adjacency}
 
     cycles: set[tuple[str, ...]] = set()
 
-    def visit(node: str, path: list[str]) -> None:
-        color[node] = GRAY
-        path.append(node)
-        for neighbor in graph.adjacency.get(node, ()):
-            if color.get(neighbor, WHITE) == GRAY:
-                # Found a back-edge — extract the cycle from path.
-                start = path.index(neighbor)
-                cycle = tuple(path[start:])
-                cycles.add(_canonical_cycle(cycle))
-            elif color.get(neighbor, WHITE) == WHITE:
-                visit(neighbor, path)
-        path.pop()
-        color[node] = BLACK
+    for start in graph.adjacency:
+        if color[start] != WHITE:
+            continue
+        # Each frame: (node, iterator-over-neighbors). path tracks the
+        # current DFS path; same data the recursive `path` parameter
+        # carried, materialised at the loop level.
+        stack: list[tuple[str, "Iterator[str]"]] = []
+        path: list[str] = []
 
-    for node in graph.adjacency:
-        if color[node] == WHITE:
-            visit(node, [])
+        color[start] = GRAY
+        path.append(start)
+        stack.append((start, iter(graph.adjacency.get(start, ()))))
+
+        while stack:
+            node, neighbors_iter = stack[-1]
+            try:
+                neighbor = next(neighbors_iter)
+            except StopIteration:
+                stack.pop()
+                path.pop()
+                color[node] = BLACK
+                continue
+            nc = color.get(neighbor, WHITE)
+            if nc == GRAY:
+                # Back-edge: extract the cycle from the current path.
+                idx = path.index(neighbor)
+                cycle = tuple(path[idx:])
+                cycles.add(_canonical_cycle(cycle))
+            elif nc == WHITE:
+                color[neighbor] = GRAY
+                path.append(neighbor)
+                stack.append((neighbor, iter(graph.adjacency.get(neighbor, ()))))
 
     hazards: list[Hazard] = []
     for cycle in sorted(cycles):

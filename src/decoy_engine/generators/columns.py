@@ -177,7 +177,11 @@ class ColumnGenerator:
         data_type = column_config.get("type", "faker")
         null_probability = column_config.get("null_probability", 0.0)
 
-        start_time = time.time()
+        # QA walks/generators F10 (2026-06-01, NIT): perf_counter is
+        # the monotonic clock; time() can move backwards on NTP resync
+        # and produces negative durations. We are measuring an interval,
+        # not a wall-clock timestamp.
+        start_time = time.perf_counter()
 
         # First, generate the base data without nulls
         if data_type in self.generators:
@@ -210,7 +214,7 @@ class ColumnGenerator:
                     result.iloc[i] = None
 
         # Log generation time
-        generation_time = time.time() - start_time
+        generation_time = time.perf_counter() - start_time
         self.logger.debug(
             f"Generated column '{column_name}' of type '{data_type}' in {generation_time:.2f} seconds"
         )
@@ -855,6 +859,11 @@ class ColumnGenerator:
         # order produced DIFFERENT FK assignments. Sorting the pool here
         # makes FK assignment independent of ref_df row order. Try
         # uniform-type sort first; fall back to str-key for mixed pools.
+        # NOTE: .dropna() is load-bearing for the sort path. NaN values
+        # break the uniform-type comparator (NaN != NaN, but sort still
+        # uses TypeError-free comparison and produces undefined order),
+        # and they would also pollute the FK pool with non-key values.
+        # Stripping nulls before sort keeps both invariants honest.
         raw_pool = ref_df[reference_column].dropna().unique().tolist()
         try:
             ref_values = sorted(raw_pool)
