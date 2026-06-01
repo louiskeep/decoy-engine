@@ -1,6 +1,6 @@
 # decoy-engine
 
-Shared Python data engine for Decoy masking, generation, graph execution, STORM, FORECAST, and connectors.
+Shared Python data engine for Decoy masking, generation, plan-compile execution, STORM, and connectors.
 
 Start with the central documentation hub:
 
