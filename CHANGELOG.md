@@ -9,6 +9,27 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed
+
+- **Repository visibility flipped to public** (2026-06-02). Aligns
+  with the OSS launch plan (memory: `OSS CLI launch` PO lock
+  2026-06-01: "publish free Apache-2.0 decoy-cli + decoy-engine on
+  PyPI"). Trigger for the flip: the `release-smoke.yml` workflow in
+  the sibling `decoy` CLI repo needs to clone the engine from
+  `git+https://github.com/louiskeep/decoy-engine@main` during the
+  pre-publish window; cross-repo `git clone` of a private repo from
+  inside a public-workflow runner fails with `could not read Username`
+  (no TTY for the auth prompt). Making the engine public unblocks
+  the cross-repo clone without introducing a PAT secret.
+- Pre-flip pre-flight (working-tree only, 2026-06-02): LICENSE +
+  NOTICE present and correct (Apache-2.0); no tracked secrets
+  (AKIA*, sk_live_, password=, api_key=, private_key=); no tracked
+  .env / credentials files; fixture CSVs are faker-generated
+  synthetic data; logs are gitignored. Git history was not scanned
+  for redacted secrets; if any historical leak surfaces post-flip,
+  `git filter-repo` + force-push + immediate credential rotation is
+  the recovery path.
+
 ### Added
 
 - OSS.3 packaging metadata: PyPI Trove classifiers (Python 3.10/3.11/3.12,
