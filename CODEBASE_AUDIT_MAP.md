@@ -1,5 +1,9 @@
 # Codebase Audit Map
 
-The active codebase audit map moved to [../decoy-platform/docs/audit/codebase-audit-map.md](../decoy-platform/docs/audit/codebase-audit-map.md).
+The engine codebase audit and remediation tracking are maintained in the commercial platform repo as internal planning artifacts.
 
-Audit remediation work is tracked in [../decoy-platform/docs/audit/remediation-roadmap.md](../decoy-platform/docs/audit/remediation-roadmap.md).
+For in-repo navigation, start with [CODEMAP.md](CODEMAP.md) (directory map + "Where Do I Find" pointer table) and [README.md](README.md) (public API entrypoints).
+
+---
+
+Full audit map and remediation roadmap live in the commercial platform repo.
