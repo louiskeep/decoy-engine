@@ -18,7 +18,8 @@ say. The test:
 Adding or removing a registered module is a single-PR change covering
 both the registry and the module docstring; CI fails if they drift.
 
-Reference: docs/v2-app-audit-findings.md, V2 sprint plan §V2.0-prep,
+Reference: decoy-platform docs/audit/from-engine/v2-app-audit-findings-2026-06-02.md
+(moved out of this repo 2026-06-02), V2 sprint plan §V2.0-prep,
 engineering-best-practices.md §6.1.
 """
 

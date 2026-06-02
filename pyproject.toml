@@ -158,7 +158,7 @@ markers = [
 # Lint + type-check + format gate land before any structural V2 refactor so
 # decomposition PRs run against the gate from day 1. Mypy starts at
 # check_untyped_defs and escalates per-subpackage as touched (resolved
-# question #2). See docs/v2-app-audit-findings.md F-AUDIT for related items.
+# question #2). See decoy-platform docs/audit/from-engine/v2-app-audit-findings-2026-06-02.md F-AUDIT for related items (moved out of this repo 2026-06-02).
 
 [tool.ruff]
 target-version = "py310"
