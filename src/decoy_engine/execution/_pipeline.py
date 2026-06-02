@@ -45,9 +45,11 @@ Out of scope for FC-1 (deferred to V2.1):
 - Generate child to mask parent FK direction. The mask parent has a
   finite pre-existing pool; resolving generate children against it
   crosses the generate `reference` generator into the mask substrate.
-  The current contract is: a generate child's `reference_table` may
-  point at a mask-kind parent IFF the parent's column exists, but the
-  resolution path is V2.1.
+  REJECTED at schema validation post-2026-06-02 (engine FC-1 QA
+  review Finding 2): `_reference_graph_valid` raises at submit time
+  when a generate column's `reference_table` points at a mask-kind
+  parent. Operators see a clear "deferred to V2.1" error up front
+  instead of a hung job at runtime.
 - Cross-substrate mixed mode. Polars falls back to pandas for FK paths
   (`_polars_adapter.py:121`); the pandas adapter is the canonical
   mixed-mode adapter for V2 ship.

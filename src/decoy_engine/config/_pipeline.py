@@ -151,7 +151,23 @@ class PipelineConfig(BaseModel):
                 if parent.generate_columns:
                     parent_cols = {c.name for c in parent.generate_columns}
                 elif parent.columns:
-                    parent_cols = {c.name for c in parent.columns}
+                    # QA finding fix (2026-06-02, engine FC-1 review
+                    # Finding 2): the generate-child -> mask-parent FK
+                    # direction is deferred to V2.1 per the engine
+                    # execution/_pipeline.py module docstring ("Generate
+                    # child to mask parent FK direction... the resolution
+                    # path is V2.1"). The synthesize pipeline raises a
+                    # plain ValueError on this case at runtime, which
+                    # the platform's typed-exception handler does not
+                    # catch -- the job hangs in `running`. Reject here
+                    # at validation time so the operator sees a clear
+                    # error at submit, not a hung job.
+                    raise ValueError(
+                        f"table {table.name!r}: reference column {col.name!r} "
+                        f"points to mask-kind table {ref_table!r}; generate-to-mask "
+                        "FK is deferred to V2.1. Use a generate parent, or wait "
+                        "for V2.1."
+                    )
                 else:
                     raise ValueError(
                         f"table {table.name!r}: reference column {col.name!r} "

@@ -1120,3 +1120,91 @@ class TestReferenceEdgeCases:
         assert _v2_run_multi(self._two_table(child)) == _v1_run_multi(
             self._two_table(child)
         )
+
+
+class TestFC1QAFindings:
+    """Engine FC-1 QA review (2026-06-02) findings 1 + 2: regression
+    pins for the two HIGH-severity fixes that landed alongside the
+    Dennis-led review-driven sweep."""
+
+    def test_topo_sort_does_not_recurse_on_deep_chains(self):
+        """Finding 1: pre-fix `_topo_sort` used recursive DFS and
+        raised RecursionError on chains >~1000 nodes. The iterative
+        rewrite must walk a 1500-node chain without recursion limit
+        problems."""
+        from decoy_engine.generation.synthesize import _topo_sort
+
+        deps = {str(i): {str(i + 1)} for i in range(1500)}
+        deps["1500"] = set()
+        result = _topo_sort(deps)
+        assert len(result) == 1501
+        # Post-order: parents emitted last; node "1500" (no parents)
+        # emitted first, node "0" (depends on chain) emitted last.
+        assert result[0] == "1500"
+        assert result[-1] == "0"
+
+    def test_generate_child_referencing_mask_parent_rejected(self):
+        """Finding 2: pre-fix `_reference_graph_valid` admitted a
+        generate-child -> mask-parent reference (the engine doc said
+        the column existence check was the only invariant). But the
+        runtime path in `synthesize.py` raises a plain `ValueError`
+        on this case, which the platform's typed-exception handler
+        does not catch -- the job hangs in `running`. Post-fix the
+        validator rejects at submit time with a clear V2.1-deferral
+        message."""
+        with pytest.raises(ValidationError) as exc_info:
+            PipelineConfig.model_validate(
+                {
+                    "version": 1,
+                    "global_settings": {"seed": 0},
+                    "sources": {
+                        "customers": {
+                            "type": "file",
+                            "format": "csv",
+                            "path": "c.csv",
+                        },
+                    },
+                    "tables": [
+                        {
+                            "name": "customers",
+                            "columns": [
+                                {
+                                    "name": "id",
+                                    "strategy": "faker",
+                                    "provider": "person_email",
+                                    "namespace": "customer_id",
+                                    "deterministic": True,
+                                },
+                            ],
+                        },
+                        {
+                            "name": "synth_orders",
+                            "row_count": 10,
+                            "generate_columns": [
+                                {
+                                    "name": "cid",
+                                    "type": "reference",
+                                    "reference_table": "customers",
+                                    "reference_column": "id",
+                                },
+                            ],
+                        },
+                    ],
+                    "targets": {
+                        "customers": {
+                            "type": "file",
+                            "format": "csv",
+                            "path": "out.csv",
+                        },
+                        "synth_orders": {
+                            "type": "file",
+                            "format": "csv",
+                            "path": "out2.csv",
+                        },
+                    },
+                    "namespaces": {
+                        "customer_id": {"declared_by": ["customers.id"]},
+                    },
+                }
+            )
+        assert "deferred to V2.1" in str(exc_info.value)
