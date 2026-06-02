@@ -3,14 +3,55 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
+# OSS.3 (2026-06-02) / Q-OSS-1 RESOLVED: distribution name stays
+# `decoy-engine`. The CLI dist renamed to `decoy-cli`; the engine
+# library dist did not.
 name = "decoy-engine"
 version = "0.1.0"
-description = "Shared data masking and synthetic generation engine for the Decoy product family"
+description = "Data masking and synthetic generation engine. Validates pipeline configs, compiles execution plans, runs masking + generate jobs against pandas / polars substrates. Used by the decoy-cli CLI and the decoy-platform commercial product."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "louiskeep" }]
+
+# PyPI Trove classifiers. OS-independent; Python 3.10/3.11/3.12;
+# topic taxonomy that library callers search for. Library-only
+# (Environment :: Other Environment, not Console).
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Intended Audience :: Information Technology",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Database",
+    "Topic :: Security",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+
+keywords = [
+    "data-masking",
+    "synthetic-data",
+    "anonymization",
+    "pii",
+    "privacy",
+    "data-generation",
+    "faker",
+    "mimesis",
+    "pandas",
+    "polars",
+    "decoy",
+]
+
 dependencies = [
     "pandas>=1.5.0",
     "pyyaml>=6.0",
@@ -92,6 +133,14 @@ docs = [
 # invocations still work. SFTP remains an opt-in extra pending S18.
 gcs = []
 sftp = ["paramiko>=3.0"]
+
+# Project URLs surfaced on the PyPI sidebar.
+[project.urls]
+Homepage = "https://github.com/louiskeep/decoy-engine"
+Repository = "https://github.com/louiskeep/decoy-engine"
+Documentation = "https://github.com/louiskeep/decoy-engine/blob/main/README.md"
+Issues = "https://github.com/louiskeep/decoy-engine/issues"
+Changelog = "https://github.com/louiskeep/decoy-engine/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/decoy_engine"]
