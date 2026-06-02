@@ -128,6 +128,7 @@ def test_all_lists_every_public_name():
         "build_namespace_registry",
         "build_relationship_graph",
         "check_orphan_fk_policy_completeness",
+        "classify_table_kinds",
         # engine-v2 S3 (Determinism Layer).
         "SEED_PROTOCOL_VERSION",
         "DeterminismError",
