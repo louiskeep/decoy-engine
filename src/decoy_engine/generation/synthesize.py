@@ -154,23 +154,42 @@ def generate_tables(
 
 
 def _topo_sort(deps: dict[str, set[str]]) -> list[str]:
-    """DFS post-order over the reference dep graph. The PipelineConfig validator
-    already pinned the graph acyclic, so this is order-only; missing nodes (e.g.
-    a parent referenced by name that is not in deps) are tolerated -- the
-    validator would have caught a genuinely missing parent before we got here."""
+    """Iterative DFS post-order over the reference dep graph. The
+    PipelineConfig validator already pinned the graph acyclic, so this
+    is order-only; missing nodes (e.g. a parent referenced by name that
+    is not in deps) are tolerated -- the validator would have caught a
+    genuinely missing parent before we got here.
+
+    QA finding fix (2026-06-02, engine FC-1 review Finding 1): the
+    prior implementation used recursive Python DFS, which hits the
+    default 1000-frame recursion limit on long reference chains
+    (>~1000 generate tables) and crashes with RecursionError at
+    runtime. The iterative DFS below uses an explicit work stack of
+    (node, parent_iterator) pairs and emits the same post-order. The
+    sibling iterative pattern in config/_pipeline.py
+    `_reference_graph_valid` was written for the same reason.
+    """
+    from collections.abc import Iterator as _IteratorRT  # noqa: F401 (runtime import for clarity)
+
     result: list[str] = []
     visited: set[str] = set()
 
-    def dfs(n: str) -> None:
-        if n in visited or n not in deps:
-            return
-        visited.add(n)
-        for parent in deps.get(n, ()):
-            dfs(parent)
-        result.append(n)
-
-    for n in deps:
-        dfs(n)
+    for start in deps:
+        if start in visited or start not in deps:
+            continue
+        stack: list[tuple[str, "_IteratorRT[str]"]] = [(start, iter(deps.get(start, ())))]
+        visited.add(start)
+        while stack:
+            node, parent_iter = stack[-1]
+            next_parent = next(parent_iter, None)
+            if next_parent is None:
+                result.append(node)
+                stack.pop()
+                continue
+            if next_parent in visited or next_parent not in deps:
+                continue
+            visited.add(next_parent)
+            stack.append((next_parent, iter(deps.get(next_parent, ()))))
     return result
 
 

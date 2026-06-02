@@ -51,6 +51,7 @@ def test_all_lists_every_public_name():
         # surface; submodule-only import was an unintentional gap.
         "compile_plan",
         "generate_tables",
+        "run_pipeline",
         "select_execution_adapter",
         # engine-v2 S1 (Pipeline config schema, the validation choke-point).
         "PipelineConfig",
@@ -127,6 +128,7 @@ def test_all_lists_every_public_name():
         "build_namespace_registry",
         "build_relationship_graph",
         "check_orphan_fk_policy_completeness",
+        "classify_table_kinds",
         # engine-v2 S3 (Determinism Layer).
         "SEED_PROTOCOL_VERSION",
         "DeterminismError",

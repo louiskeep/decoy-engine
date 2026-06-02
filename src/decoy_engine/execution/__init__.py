@@ -39,6 +39,7 @@ from decoy_engine.execution._pandas_adapter import (
     PandasExecutionAdapter,
     get_default_executor,
 )
+from decoy_engine.execution._pipeline import classify_table_kinds, run_pipeline
 from decoy_engine.execution._runner import WorkNode, build_work_list, order_work
 from decoy_engine.execution._substrate import (
     VALID_SUBSTRATES,
@@ -60,8 +61,10 @@ __all__ = [
     "StrategyHandler",
     "WorkNode",
     "build_work_list",
+    "classify_table_kinds",
     "get_default_executor",
     "order_work",
     "resolve_substrate",
+    "run_pipeline",
     "select_execution_adapter",
 ]

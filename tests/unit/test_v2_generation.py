@@ -21,7 +21,7 @@ from decoy_engine.generation.synthesize import generate_tables
 def _generate_config(row_count: int = 5) -> dict:
     return {
         "version": 1,
-        "mode": "generate",
+        
         "global_settings": {"seed": 42},
         "sources": {},
         "tables": [
@@ -63,7 +63,9 @@ def _mask_config() -> dict:
 class TestGenerateConfigContract:
     def test_generate_config_validates(self):
         cfg = PipelineConfig.model_validate(_generate_config()).model_dump()
-        assert cfg["mode"] == "generate"
+        # FC-1 (2026-06-02): top-level `mode:` discriminator dropped.
+        # Per-table kind is inferred from `generate_columns` presence.
+        assert "mode" not in cfg
         assert cfg["sources"] == {}
         assert cfg["tables"][0]["row_count"] == 5
         assert cfg["tables"][0]["generate_columns"][0]["type"] == "sequence"
@@ -86,13 +88,19 @@ class TestGenerateConfigContract:
         with pytest.raises(ValidationError):
             PipelineConfig.model_validate(cfg)
 
-    def test_generate_mode_rejects_mask_columns(self):
-        # mode generate but a table declares mask columns (no generate_columns).
+    def test_mask_kind_table_without_sources_rejected(self):
+        # FC-1 (2026-06-02): replaces test_generate_mode_rejects_mask_columns.
+        # Mixed mode is now legitimate: a config may contain mask-kind tables
+        # alongside generate-kind tables. The remaining cross-table invariant
+        # is that any mask-kind table needs a sources entry. A config with a
+        # mask-kind table BUT empty `sources:` (the shape this fixture
+        # mutates _generate_config into) is the typed reject.
         cfg = _generate_config()
         cfg["tables"][0] = {
             "name": "customers",
             "columns": [{"name": "x", "strategy": "faker"}],
         }
+        # sources is empty (inherited from _generate_config); mask table needs one.
         with pytest.raises(ValidationError):
             PipelineConfig.model_validate(cfg)
 
@@ -100,7 +108,10 @@ class TestGenerateConfigContract:
 class TestMaskContractUnchanged:
     def test_mask_config_still_validates(self):
         out = PipelineConfig.model_validate(_mask_config()).model_dump()
-        assert out["mode"] == "mask"  # default when omitted
+        # FC-1 (2026-06-02): mask is the implicit kind for any table with
+        # `columns` populated. No `mode` field anymore.
+        assert "mode" not in out
+        assert out["tables"][0]["columns"]
 
     def test_mask_mode_still_requires_sources(self):
         cfg = _mask_config()
@@ -200,7 +211,7 @@ def _v2_run(
     values list for that column."""
     cfg = {
         "version": 1,
-        "mode": "generate",
+        
         "global_settings": {"seed": seed},
         "sources": {},
         "tables": [{"name": "t", "row_count": n, "generate_columns": [col]}],
@@ -359,7 +370,7 @@ class TestQA7Coverage:
         col = {"name": "fn", "type": "faker", "faker_type": "first_name"}
         cfg = {
             "version": 1,
-            "mode": "generate",
+            
             "global_settings": {"seed": 42},
             "sources": {},
             "tables": [{
@@ -412,7 +423,7 @@ class TestQA7Coverage:
         }
         cfg = {
             "version": 1,
-            "mode": "generate",
+            
             "global_settings": {"seed": 42},
             "sources": {},
             "tables": [{
@@ -436,7 +447,7 @@ class TestQA7Coverage:
         cryptic message. Now wrapped + named."""
         cfg = {
             "version": 1,
-            "mode": "generate",
+            
             "global_settings": {"seed": "not-a-number"},
             "sources": {},
             "tables": [{
@@ -534,7 +545,7 @@ def _v2_run_multi(
     ``{table: {col: values_list}}`` for parity comparison vs ``_v1_run_multi``."""
     cfg = {
         "version": 1,
-        "mode": "generate",
+        
         "global_settings": {"seed": seed},
         "sources": {},
         "tables": tables_cfg,
@@ -722,7 +733,7 @@ class TestReferenceConfigValidation:
         child_col.update(child_extras)
         return {
             "version": 1,
-            "mode": "generate",
+            
             "global_settings": {"seed": 42},
             "sources": {},
             "tables": [
@@ -764,7 +775,9 @@ class TestReferenceConfigValidation:
 
     def test_unknown_reference_column_rejected(self):
         cfg = self._two_table_cfg(reference_column="not_a_column")
-        with pytest.raises(ValidationError, match="declares no such generate_column"):
+        # FC-1 (2026-06-02): error message generalized to "declares no
+        # such column" because mask-kind parents are now legitimate too.
+        with pytest.raises(ValidationError, match="declares no such column"):
             PipelineConfig.model_validate(cfg)
 
     def test_cycle_rejected(self):
@@ -815,7 +828,7 @@ class TestReferenceConfigValidation:
         targets = {f"t{i:04d}": {"type": "file", "format": "csv", "path": f"t{i}.csv"} for i in range(depth)}
         cfg = {
             "version": 1,
-            "mode": "generate",
+            
             "global_settings": {"seed": 42},
             "sources": {},
             "tables": tables,
@@ -849,7 +862,7 @@ class TestReferenceConfigValidation:
         targets = {f"t{i:04d}": {"type": "file", "format": "csv", "path": f"t{i}.csv"} for i in range(depth)}
         cfg = {
             "version": 1,
-            "mode": "generate",
+            
             "global_settings": {"seed": 42},
             "sources": {},
             "tables": tables,
@@ -1107,3 +1120,91 @@ class TestReferenceEdgeCases:
         assert _v2_run_multi(self._two_table(child)) == _v1_run_multi(
             self._two_table(child)
         )
+
+
+class TestFC1QAFindings:
+    """Engine FC-1 QA review (2026-06-02) findings 1 + 2: regression
+    pins for the two HIGH-severity fixes that landed alongside the
+    Dennis-led review-driven sweep."""
+
+    def test_topo_sort_does_not_recurse_on_deep_chains(self):
+        """Finding 1: pre-fix `_topo_sort` used recursive DFS and
+        raised RecursionError on chains >~1000 nodes. The iterative
+        rewrite must walk a 1500-node chain without recursion limit
+        problems."""
+        from decoy_engine.generation.synthesize import _topo_sort
+
+        deps = {str(i): {str(i + 1)} for i in range(1500)}
+        deps["1500"] = set()
+        result = _topo_sort(deps)
+        assert len(result) == 1501
+        # Post-order: parents emitted last; node "1500" (no parents)
+        # emitted first, node "0" (depends on chain) emitted last.
+        assert result[0] == "1500"
+        assert result[-1] == "0"
+
+    def test_generate_child_referencing_mask_parent_rejected(self):
+        """Finding 2: pre-fix `_reference_graph_valid` admitted a
+        generate-child -> mask-parent reference (the engine doc said
+        the column existence check was the only invariant). But the
+        runtime path in `synthesize.py` raises a plain `ValueError`
+        on this case, which the platform's typed-exception handler
+        does not catch -- the job hangs in `running`. Post-fix the
+        validator rejects at submit time with a clear V2.1-deferral
+        message."""
+        with pytest.raises(ValidationError) as exc_info:
+            PipelineConfig.model_validate(
+                {
+                    "version": 1,
+                    "global_settings": {"seed": 0},
+                    "sources": {
+                        "customers": {
+                            "type": "file",
+                            "format": "csv",
+                            "path": "c.csv",
+                        },
+                    },
+                    "tables": [
+                        {
+                            "name": "customers",
+                            "columns": [
+                                {
+                                    "name": "id",
+                                    "strategy": "faker",
+                                    "provider": "person_email",
+                                    "namespace": "customer_id",
+                                    "deterministic": True,
+                                },
+                            ],
+                        },
+                        {
+                            "name": "synth_orders",
+                            "row_count": 10,
+                            "generate_columns": [
+                                {
+                                    "name": "cid",
+                                    "type": "reference",
+                                    "reference_table": "customers",
+                                    "reference_column": "id",
+                                },
+                            ],
+                        },
+                    ],
+                    "targets": {
+                        "customers": {
+                            "type": "file",
+                            "format": "csv",
+                            "path": "out.csv",
+                        },
+                        "synth_orders": {
+                            "type": "file",
+                            "format": "csv",
+                            "path": "out2.csv",
+                        },
+                    },
+                    "namespaces": {
+                        "customer_id": {"declared_by": ["customers.id"]},
+                    },
+                }
+            )
+        assert "deferred to V2.1" in str(exc_info.value)

@@ -37,11 +37,19 @@ if TYPE_CHECKING:
 class ExecutionResult:
     """The output of `ExecutionAdapter.run(...)` (S9 spec §2).
 
-    `outputs` maps table name -> masked `pa.Table`. A multi-table job (FK
-    parent + child masked in one run) carries one entry per table; a
-    single-table job carries one. `output` is a convenience accessor for the
-    single-table case (it raises rather than guess when the result is
-    multi-table; per the slice-2h contract widening, PQ-S9-C).
+    `outputs` maps table name -> masked or generated `pa.Table`. A
+    multi-table job (FK parent + child masked in one run) carries one
+    entry per table; a single-table job carries one. `output` is a
+    convenience accessor for the single-table case (it raises rather
+    than guess when the result is multi-table; per the slice-2h
+    contract widening, PQ-S9-C).
+
+    FC-1 (2026-06-02) adds `table_kinds`: a per-table `"mask"` or
+    `"generate"` classification populated by `run_pipeline` so the
+    downstream manifest writer can stamp `kind` per node-run. PO D1
+    sub-decision 2026-06-01 (resolved per-table). Empty dict on the
+    pre-FC-1 single-kind adapter call paths (`PandasExecutionAdapter.run`
+    + `generate_tables`); `run_pipeline` populates it.
     """
 
     outputs: dict[str, pa.Table]
@@ -49,6 +57,7 @@ class ExecutionResult:
     boundary_conversion_ms: float = 0.0
     warnings: tuple[QualityWarning, ...] = ()
     quality_metrics: dict[str, Any] = field(default_factory=dict)
+    table_kinds: dict[str, str] = field(default_factory=dict)
 
     @property
     def output(self) -> pa.Table:
