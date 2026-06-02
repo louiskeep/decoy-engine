@@ -413,9 +413,10 @@ class TestQaWalksGenF6GenerateColumnConfigTypeParams:
     migration route."""
 
     def _wrap(self, col: dict) -> dict:
+        # FC-1 (2026-06-02): top-level `mode:` discriminator dropped.
+        # Per-table kind is inferred from `generate_columns` presence.
         return {
             "version": 1,
-            "mode": "generate",
             "global_settings": {"seed": 42},
             "sources": {},
             "tables": [{"name": "t", "row_count": 5, "generate_columns": [col]}],

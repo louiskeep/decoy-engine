@@ -21,7 +21,7 @@ from decoy_engine.generation.synthesize import generate_tables
 def _generate_config(row_count: int = 5) -> dict:
     return {
         "version": 1,
-        "mode": "generate",
+        
         "global_settings": {"seed": 42},
         "sources": {},
         "tables": [
@@ -63,7 +63,9 @@ def _mask_config() -> dict:
 class TestGenerateConfigContract:
     def test_generate_config_validates(self):
         cfg = PipelineConfig.model_validate(_generate_config()).model_dump()
-        assert cfg["mode"] == "generate"
+        # FC-1 (2026-06-02): top-level `mode:` discriminator dropped.
+        # Per-table kind is inferred from `generate_columns` presence.
+        assert "mode" not in cfg
         assert cfg["sources"] == {}
         assert cfg["tables"][0]["row_count"] == 5
         assert cfg["tables"][0]["generate_columns"][0]["type"] == "sequence"
@@ -86,13 +88,19 @@ class TestGenerateConfigContract:
         with pytest.raises(ValidationError):
             PipelineConfig.model_validate(cfg)
 
-    def test_generate_mode_rejects_mask_columns(self):
-        # mode generate but a table declares mask columns (no generate_columns).
+    def test_mask_kind_table_without_sources_rejected(self):
+        # FC-1 (2026-06-02): replaces test_generate_mode_rejects_mask_columns.
+        # Mixed mode is now legitimate: a config may contain mask-kind tables
+        # alongside generate-kind tables. The remaining cross-table invariant
+        # is that any mask-kind table needs a sources entry. A config with a
+        # mask-kind table BUT empty `sources:` (the shape this fixture
+        # mutates _generate_config into) is the typed reject.
         cfg = _generate_config()
         cfg["tables"][0] = {
             "name": "customers",
             "columns": [{"name": "x", "strategy": "faker"}],
         }
+        # sources is empty (inherited from _generate_config); mask table needs one.
         with pytest.raises(ValidationError):
             PipelineConfig.model_validate(cfg)
 
@@ -100,7 +108,10 @@ class TestGenerateConfigContract:
 class TestMaskContractUnchanged:
     def test_mask_config_still_validates(self):
         out = PipelineConfig.model_validate(_mask_config()).model_dump()
-        assert out["mode"] == "mask"  # default when omitted
+        # FC-1 (2026-06-02): mask is the implicit kind for any table with
+        # `columns` populated. No `mode` field anymore.
+        assert "mode" not in out
+        assert out["tables"][0]["columns"]
 
     def test_mask_mode_still_requires_sources(self):
         cfg = _mask_config()
@@ -200,7 +211,7 @@ def _v2_run(
     values list for that column."""
     cfg = {
         "version": 1,
-        "mode": "generate",
+        
         "global_settings": {"seed": seed},
         "sources": {},
         "tables": [{"name": "t", "row_count": n, "generate_columns": [col]}],
@@ -359,7 +370,7 @@ class TestQA7Coverage:
         col = {"name": "fn", "type": "faker", "faker_type": "first_name"}
         cfg = {
             "version": 1,
-            "mode": "generate",
+            
             "global_settings": {"seed": 42},
             "sources": {},
             "tables": [{
@@ -412,7 +423,7 @@ class TestQA7Coverage:
         }
         cfg = {
             "version": 1,
-            "mode": "generate",
+            
             "global_settings": {"seed": 42},
             "sources": {},
             "tables": [{
@@ -436,7 +447,7 @@ class TestQA7Coverage:
         cryptic message. Now wrapped + named."""
         cfg = {
             "version": 1,
-            "mode": "generate",
+            
             "global_settings": {"seed": "not-a-number"},
             "sources": {},
             "tables": [{
@@ -534,7 +545,7 @@ def _v2_run_multi(
     ``{table: {col: values_list}}`` for parity comparison vs ``_v1_run_multi``."""
     cfg = {
         "version": 1,
-        "mode": "generate",
+        
         "global_settings": {"seed": seed},
         "sources": {},
         "tables": tables_cfg,
@@ -722,7 +733,7 @@ class TestReferenceConfigValidation:
         child_col.update(child_extras)
         return {
             "version": 1,
-            "mode": "generate",
+            
             "global_settings": {"seed": 42},
             "sources": {},
             "tables": [
@@ -764,7 +775,9 @@ class TestReferenceConfigValidation:
 
     def test_unknown_reference_column_rejected(self):
         cfg = self._two_table_cfg(reference_column="not_a_column")
-        with pytest.raises(ValidationError, match="declares no such generate_column"):
+        # FC-1 (2026-06-02): error message generalized to "declares no
+        # such column" because mask-kind parents are now legitimate too.
+        with pytest.raises(ValidationError, match="declares no such column"):
             PipelineConfig.model_validate(cfg)
 
     def test_cycle_rejected(self):
@@ -815,7 +828,7 @@ class TestReferenceConfigValidation:
         targets = {f"t{i:04d}": {"type": "file", "format": "csv", "path": f"t{i}.csv"} for i in range(depth)}
         cfg = {
             "version": 1,
-            "mode": "generate",
+            
             "global_settings": {"seed": 42},
             "sources": {},
             "tables": tables,
@@ -849,7 +862,7 @@ class TestReferenceConfigValidation:
         targets = {f"t{i:04d}": {"type": "file", "format": "csv", "path": f"t{i}.csv"} for i in range(depth)}
         cfg = {
             "version": 1,
-            "mode": "generate",
+            
             "global_settings": {"seed": 42},
             "sources": {},
             "tables": tables,

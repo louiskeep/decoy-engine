@@ -3,15 +3,25 @@
 Per advisory axis-by-axis ratification:
 - `version: Literal[1]` (axis 6 + 3: schema version, single pipeline per file)
 - `global_settings: GlobalSettings` required (axis 6: V1 naming convention kept)
-- `sources: dict[str, SourceDescriptor]` required (axis 1=A: inline declarations)
+- `sources: dict[str, SourceDescriptor]` (axis 1=A: inline declarations;
+  empty dict permitted IFF every table is generate-kind)
 - `tables: list[TableConfig]` required, non-empty
 - `relationships: list[RelationshipConfig]` (empty list OK for single-table pipelines)
 - `targets: dict[str, TargetDescriptor]` required (axis 6: explicit targets analogous to sources)
 - `namespaces: dict[str, NamespaceConfig]` optional (the engine reads a top-level
   `namespaces` block via `config.get("namespaces", {})`; empty default is fine)
 
+FC-1 (2026-06-02) drops the top-level `mode` discriminator. Per-table
+kind is now inferred from `columns` (mask-kind) vs `generate_columns`
+(generate-kind) presence; a config that lists both kinds in `tables`
+is a legitimate mixed-mode submission. The engine `run_pipeline` entry
+sequences the two halves (generate first so its outputs become FK
+sources for the mask half).
+
 `extra="forbid"` at every model rejects unknown keys + V1 graph-mode
-keys (`nodes`, `edges`, `mode: graph`) per axis 6 (no V1 compat).
+keys (`nodes`, `edges`, `mode: graph` -- the deleted `mode` field is
+included here: a YAML that sets `mode:` is now a typed reject pointing
+at the per-table-kind shape).
 """
 
 from __future__ import annotations
@@ -43,14 +53,15 @@ class PipelineConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     version: Literal[1]
-    # S6 (generation): mask vs generate. Mask configs OMIT it (default "mask"), so
-    # existing stored configs + the run dispatch (`cfg.get("mode","mask")`) are
-    # unchanged; a generate submission sets `mode: generate`.
-    mode: Literal["mask", "generate"] = "mask"
+    # FC-1 (2026-06-02): top-level `mode` discriminator dropped. Per-table
+    # kind is inferred from `columns` (mask) vs `generate_columns` (generate)
+    # presence on each TableConfig; a config that lists both kinds is a
+    # legitimate mixed-mode submission. Pre-FC-1 the field defaulted to
+    # "mask" and gated the _mode_consistency validator; both are gone.
     global_settings: GlobalSettings
-    # Relaxed from min_length=1: a pure-generate config has NO sources. The
-    # validator below keeps MASK mode requiring at least one source, so the mask
-    # contract is unchanged.
+    # Sources may be empty IFF every table is generate-kind. The cross-table
+    # invariant validator (`_per_table_kind_consistency` below) enforces
+    # this; pure-generate, pure-mask, and mixed configs all pass.
     sources: dict[str, SourceDescriptor] = Field(default_factory=dict)
     tables: list[TableConfig] = Field(min_length=1)
     relationships: list[RelationshipConfig] = Field(default_factory=list)
@@ -66,37 +77,56 @@ class PipelineConfig(BaseModel):
     run_storm: bool = False
 
     @model_validator(mode="after")
-    def _mode_consistency(self) -> "PipelineConfig":
-        """Keep `mode` consistent with the tables + sources.
+    def _per_table_kind_consistency(self) -> "PipelineConfig":
+        """FC-1 cross-table invariants for the mixed-mode shape.
 
-        Mask mode requires a source and mask tables; generate mode requires
-        generate tables (no mask columns). This preserves the mask contract
-        (sources required) while admitting a no-source generate config.
+        Replaces the pre-FC-1 `_mode_consistency` validator. The contract:
+
+        - Every table is either mask-kind (`columns` populated) or
+          generate-kind (`generate_columns` populated). The per-table
+          XOR is enforced by `TableConfig` already.
+        - If ANY table is mask-kind, `sources` must be non-empty (each
+          mask table needs its source path to read from). The pre-FC-1
+          'mask mode requires sources' rule generalizes per-table:
+          mask tables need source entries by name; pure-generate
+          configs may omit `sources` entirely.
+        - Generate tables must declare `row_count`. The pre-FC-1
+          generate-mode rule generalizes the same way.
+
+        FC-2 carries the self-FK + multi-table FK invariants; this
+        validator only checks the kind+sources+row_count gating.
         """
-        if self.mode == "mask":
-            if not self.sources:
-                raise ValueError("mask mode requires at least one source")
-            if any(t.generate_columns for t in self.tables):
+        mask_table_names = [t.name for t in self.tables if t.columns]
+        generate_tables = [t for t in self.tables if t.generate_columns]
+        if mask_table_names and not self.sources:
+            raise ValueError(
+                "config has at least one mask-kind table "
+                f"({mask_table_names[0]!r}) but no `sources:` block; "
+                "mask tables require a declared source"
+            )
+        for table in generate_tables:
+            if not isinstance(table.row_count, int) or table.row_count < 0:
                 raise ValueError(
-                    "mask mode tables must not declare generate_columns "
-                    "(use mode: generate)"
-                )
-        else:  # generate
-            if any(t.columns for t in self.tables):
-                raise ValueError(
-                    "generate mode tables must use generate_columns, not mask columns"
+                    f"generate table {table.name!r} must declare a "
+                    "non-negative integer `row_count`"
                 )
         return self
 
     @model_validator(mode="after")
     def _reference_graph_valid(self) -> "PipelineConfig":
-        """In generate mode: every ``reference_table`` named on a generate column must
-        resolve to a generate-mode table in this config; every ``reference_column``
-        must exist on that parent; the reference graph must be acyclic so the engine
-        can topo-sort parent-then-child generation. Mirrors a SQL DDL FK contract
-        (referenced parents must exist, no cycles)."""
-        if self.mode != "generate":
-            return self
+        """Reference relationships are valid across mask + generate tables.
+
+        FC-1 (2026-06-02) rewrite: pre-FC-1 the validator only ran on
+        pure-generate configs and enforced that reference parents
+        were also generate-kind. With mixed-mode the engine resolves
+        FK relationships across both kinds (a generate child can
+        reference a mask parent: the generate side mints values from
+        the mask side's pool; a mask child can reference a generate
+        parent: the generate output becomes a source for the mask
+        side). The invariants now are: every `reference_table` must
+        exist in the config; every `reference_column` must exist on
+        that parent; the reference graph must be acyclic.
+        """
         by_name = {t.name: t for t in self.tables}
         # Build dep graph: table_name -> set of parent table names referenced by
         # any of its `reference`-typed generate columns.
@@ -115,18 +145,24 @@ class PipelineConfig(BaseModel):
                         f"points to unknown table {ref_table!r}"
                     )
                 parent = by_name[ref_table]
-                if not parent.generate_columns:
+                # FC-1: parent may be mask-kind (columns) or generate-kind
+                # (generate_columns). The reference column must exist on
+                # whichever kind the parent declares.
+                if parent.generate_columns:
+                    parent_cols = {c.name for c in parent.generate_columns}
+                elif parent.columns:
+                    parent_cols = {c.name for c in parent.columns}
+                else:
                     raise ValueError(
                         f"table {table.name!r}: reference column {col.name!r} "
-                        f"points to mask-mode table {ref_table!r}; a reference "
-                        f"requires a generate-mode parent"
+                        f"points to {ref_table!r} which has no columns OR "
+                        "generate_columns; parent must declare at least one"
                     )
-                parent_cols = {c.name for c in parent.generate_columns}
                 if ref_column not in parent_cols:
                     raise ValueError(
                         f"table {table.name!r}: reference column {col.name!r} "
                         f"points to {ref_table}.{ref_column!r}, but "
-                        f"{ref_table!r} declares no such generate_column"
+                        f"{ref_table!r} declares no such column"
                     )
                 d.add(ref_table)
             deps[table.name] = d
