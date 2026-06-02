@@ -35,6 +35,7 @@ EXPECTED_FIXTURES = {
     "relational_parent_child",
     "repeated_across_tables",
     "repeated_within_column",
+    "self_fk",
 }
 
 
