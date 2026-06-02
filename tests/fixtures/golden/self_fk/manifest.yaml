@@ -1,0 +1,29 @@
+fixture_name: self_fk
+description: Single-table self-FK on `employees(manager_id -> id)`. The parent + child
+  columns live on the same table but are distinct (id is the PK; manager_id is the FK
+  child). Industry standard pattern (SQL self-referencing FK; ISO/IEC 9075-2 §4.10).
+  Mirrors SDV HMA1's "same-table self-FK is a topo node keyed by (table, column_tuple)"
+  disambiguator. FC-2 G1 fixture.
+files:
+- table: employees
+  path: employees.csv
+  format: csv
+relationships:
+- parent:
+    table: employees
+    columns:
+    - id
+  children:
+  - table: employees
+    columns:
+    - manager_id
+  orphan_policy: remap
+  namespace: employee_identity
+invariants_post_mask:
+- every non-null masked manager_id is in the masked id set OR carries a remap sentinel
+- null manager_id values stay null in output
+- child row count unchanged
+- byte-equal across re-runs with same seed
+expected_orphans: 1
+gating_sprints:
+- FC-2

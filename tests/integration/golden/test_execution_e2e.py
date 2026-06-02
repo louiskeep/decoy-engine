@@ -361,3 +361,160 @@ class TestCompositeCoherenceE2E:
         table = set(load_locality_table())
         triples = list(zip(loc["city"], loc["state"], loc["zip"], strict=True))
         assert all(t in table for t in triples)
+
+
+# --------------------------------------------------------------------------
+# self_fk (FC-2): single-table self-referencing FK with distinct parent/child
+# columns. Industry standard pattern (SQL self-referencing FK, ISO/IEC 9075-2
+# §4.10; SDV HMA1 disambiguates self-FK as a topo node keyed by (table,
+# column_tuple)). The verification doc dennis-mix-self-fk-verification-2026-
+# 06-01 traced the V2 execution path clean; this fixture proves it.
+# --------------------------------------------------------------------------
+
+
+def _self_fk_profile(frames: dict[str, pd.DataFrame]) -> Profile:
+    emp = frames["employees"]
+    employees = TableProfile(
+        name="employees",
+        row_count=len(emp),
+        columns=(
+            _column_profile("id", emp, pk=True),
+            _column_profile("name", emp),
+            _column_profile("department", emp),
+            _column_profile(
+                "manager_id", emp, fk=True, fk_target=("employees", "id"),
+            ),
+        ),
+    )
+    return Profile(
+        schema_version=1,
+        tables=(employees,),
+        relationships=(
+            Relationship(
+                parent_table="employees",
+                parent_columns=("id",),
+                child_table="employees",
+                child_columns=("manager_id",),
+                namespace="employee_identity",
+            ),
+        ),
+        profiled_at=datetime(2026, 6, 2),
+        decoy_engine_version=_VERSION,
+    )
+
+
+def _self_fk_config(policy: str = "remap") -> dict[str, Any]:
+    return {
+        "global_settings": {"seed": 11},
+        "tables": [
+            {
+                "name": "employees",
+                "columns": [
+                    _faker_col("id", "employee_identity"),
+                    _faker_col("manager_id", "employee_identity"),
+                ],
+            },
+        ],
+        "relationships": [
+            {
+                "parent": {"table": "employees", "columns": ["id"]},
+                "children": [{"table": "employees", "columns": ["manager_id"]}],
+                "orphan_policy": policy,
+                "namespace": "employee_identity",
+            }
+        ],
+    }
+
+
+class TestSelfFkE2E:
+    def _setup(self) -> tuple[Profile, dict[str, pd.DataFrame]]:
+        frames = _load_csvs("self_fk", ("employees",))
+        # The CSV's manager_id column round-trips as float (NaN for nulls,
+        # whole numbers for valid ids). Normalize to string so the engine's
+        # provider machinery + the FK resolver see one dtype across rows;
+        # this mirrors how the platform loader builds Arrow tables from CSV.
+        emp = frames["employees"]
+        emp["manager_id"] = (
+            emp["manager_id"]
+            .astype("string")
+            .str.removesuffix(".0")
+            .where(emp["manager_id"].notna(), None)
+        )
+        emp["id"] = emp["id"].astype("string")
+        return _self_fk_profile(frames), frames
+
+    def test_self_fk_execution_preserves_referential_integrity(self) -> None:
+        """For every row whose SOURCE manager_id was a real parent id,
+        the masked manager_id must appear in the masked id column. This
+        is the legitimate-FK case: parent column emitted first, child
+        draws from out[parent_col] via the topo + parent-map machinery.
+        Orphan rows (src manager_id not in src id set) are exempt --
+        the remap policy may produce a fresh masked value that does not
+        round-trip to a real parent (covered by the orphan-remap cell).
+        """
+        profile, frames = self._setup()
+        src_ids = set(frames["employees"]["id"].astype(str))
+        res = _run(profile, _self_fk_config("remap"), frames)
+        emp = res.outputs["employees"].to_pydict()
+        masked_ids = set(emp["id"])
+        src_mids = list(frames["employees"]["manager_id"])
+        for i, mid in enumerate(emp["manager_id"]):
+            if mid is None or mid == "":
+                continue
+            src_mid = src_mids[i]
+            if src_mid is None or src_mid == "" or src_mid not in src_ids:
+                # null + orphan rows are exempt from the legitimate-FK check
+                continue
+            assert mid in masked_ids, (
+                f"row {i}: src manager_id {src_mid!r} was a legitimate FK "
+                f"into the parent set, but masked manager_id {mid!r} is "
+                f"not in the masked id set; FK self-join broken"
+            )
+
+    def test_self_fk_null_manager_id_passes_through(self) -> None:
+        """Null manager_id rows (root nodes; 5 of 50) stay null in output.
+        _resolve_fk_node skips null FK values rather than treating them as
+        orphans (engine `_pandas_adapter.py` per the verification doc)."""
+        import pandas as pd
+
+        profile, frames = self._setup()
+        src_mids = frames["employees"]["manager_id"]
+        src_nulls = [i for i in range(len(src_mids)) if pd.isna(src_mids.iloc[i])]
+        assert src_nulls, "fixture must carry null manager_id rows"
+        res = _run(profile, _self_fk_config("remap"), frames)
+        out_mids = res.outputs["employees"].to_pydict()["manager_id"]
+        for i in src_nulls:
+            v = out_mids[i]
+            assert v is None or v == "" or pd.isna(v), (
+                f"row {i}: src manager_id was null; output is {v!r}"
+            )
+
+    def test_self_fk_orphan_remap_uses_parent_strategy(self) -> None:
+        """The fixture's row 30 carries manager_id=999 (no matching id).
+        Under orphan_policy=remap the engine routes that cell through the
+        parent's masking strategy via `_make_remap_fn`; the output cell
+        must NOT equal the source 999."""
+        import pandas as pd
+
+        profile, frames = self._setup()
+        src_mids = frames["employees"]["manager_id"]
+        orphan_rows = [
+            i for i in range(len(src_mids))
+            if not pd.isna(src_mids.iloc[i]) and src_mids.iloc[i] == "999"
+        ]
+        assert orphan_rows, "fixture must carry one orphan row"
+        res = _run(profile, _self_fk_config("remap"), frames)
+        out_mids = res.outputs["employees"].to_pydict()["manager_id"]
+        for i in orphan_rows:
+            assert out_mids[i] != "999", (
+                f"row {i}: orphan manager_id 999 was not remapped"
+            )
+
+    def test_self_fk_byte_equal_across_runs_with_same_seed(self) -> None:
+        """Same seed -> byte-equal output across runs. Pins the determinism
+        invariant for the self-FK path; non-determinism would surface as a
+        flaky FK join in a real run."""
+        profile, frames = self._setup()
+        a = _run(profile, _self_fk_config("remap"), frames).outputs["employees"].to_pydict()
+        b = _run(profile, _self_fk_config("remap"), frames).outputs["employees"].to_pydict()
+        assert a == b

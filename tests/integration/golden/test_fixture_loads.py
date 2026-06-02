@@ -66,6 +66,9 @@ EXPECTED_ROW_COUNTS: dict[str, dict[str, int]] = {
         "people": 100,
         "locations": 100,
     },
+    "self_fk": {
+        "employees": 50,
+    },
 }
 
 

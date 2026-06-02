@@ -526,6 +526,59 @@ class TestMultiParentFkSyntheticConfig:
         assert excinfo.value.code == "multi_parent_fk_unsupported"
 
 
+@pytest.mark.golden
+class TestSelfFkInvariants:
+    """self_fk (FC-2): single-table self-FK with distinct parent + child
+    columns compiles to a topo ordering where the parent column is
+    ordered BEFORE the child column. The graph keys nodes by
+    (table, column_tuple), so a self-FK on the same table with different
+    columns is two distinct nodes (industry standard pattern: SDV HMA1
+    "parent-then-child" within one table)."""
+
+    def test_self_fk_compile_orders_parent_before_child(self) -> None:
+        employees = TableProfile(
+            name="employees",
+            row_count=50,
+            columns=(
+                _col("id", row_count=50, distinct_count=50, declared_pk=True),
+                _col(
+                    "manager_id",
+                    row_count=50,
+                    null_count=5,
+                    is_fk=True,
+                    fk_target=("employees", "id"),
+                    distinct_count=10,
+                ),
+            ),
+        )
+        rels = (
+            Relationship(
+                parent_table="employees",
+                parent_columns=("id",),
+                child_table="employees",
+                child_columns=("manager_id",),
+                namespace="employee_identity",
+            ),
+        )
+        profile = Profile(
+            schema_version=1,
+            tables=(employees,),
+            relationships=rels,
+            profiled_at=datetime(2026, 6, 2, 0, 0, 0),
+            decoy_engine_version="0.1.0",
+        )
+        config = _config_from_manifest(_load_manifest("self_fk"))
+        plan = compile_plan(config, profile, decoy_engine_version="0.1.0")
+        nodes = [(o.table, o.columns) for o in plan.ordering]
+        parent_idx = nodes.index(("employees", ("id",)))
+        child_idx = nodes.index(("employees", ("manager_id",)))
+        assert parent_idx < child_idx, (
+            f"self-FK topo broken: parent ('employees', ('id',)) at {parent_idx}, "
+            f"child ('employees', ('manager_id',)) at {child_idx}; "
+            f"ordering={nodes}"
+        )
+
+
 # ---------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------

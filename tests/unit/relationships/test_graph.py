@@ -149,6 +149,38 @@ class TestCycleRejection:
             _build_graph_for(profile)
         assert excinfo.value.code == "fk_cycle"
 
+    def test_self_fk_same_column_raises_fk_cycle(self) -> None:
+        """FC-2 G2: a self-FK where parent_column == child_column on the
+        SAME table is a tautological cycle (the node depends on itself).
+        Distinct columns on the same table (the canonical self-FK case)
+        is two distinct topo nodes and DOES compile; same column on both
+        sides collapses to one node with a self-edge, which the topo
+        rejects as `fk_cycle`.
+
+        Pin the current behavior: rejecting `parent_col == child_col` is
+        correct (industry standard SQL semantics: `t.x -> t.x` has no
+        meaningful resolution since there is nothing to point at), so
+        future refactors cannot silently change it."""
+        rels = (
+            Relationship(
+                parent_table="employees",
+                parent_columns=("id",),
+                child_table="employees",
+                child_columns=("id",),
+                namespace="employee_identity",
+            ),
+        )
+        profile = Profile(
+            schema_version=1,
+            tables=(),
+            relationships=rels,
+            profiled_at=datetime(2026, 6, 2, 0, 0, 0),
+            decoy_engine_version="0.1.0",
+        )
+        with pytest.raises(PlanCompileError) as excinfo:
+            _build_graph_for(profile)
+        assert excinfo.value.code == "fk_cycle"
+
 
 class TestRoundTripQueries:
     def test_parents_of_and_children_of_round_trip(
