@@ -90,6 +90,7 @@ from decoy_engine.execution import (
     PandasExecutionAdapter,
     StrategyError,
     get_default_executor,
+    run_pipeline,
     select_execution_adapter,
 )
 from decoy_engine.generation.composite import (
@@ -349,6 +350,7 @@ __all__ = [
     "register_faker_provider",
     "register_faker_provider_v2",
     "run_discovery_sql",
+    "run_pipeline",
     "run_storm",
     "select_execution_adapter",
     "unregister_faker_provider",

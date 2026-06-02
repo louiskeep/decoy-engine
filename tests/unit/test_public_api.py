@@ -51,6 +51,7 @@ def test_all_lists_every_public_name():
         # surface; submodule-only import was an unintentional gap.
         "compile_plan",
         "generate_tables",
+        "run_pipeline",
         "select_execution_adapter",
         # engine-v2 S1 (Pipeline config schema, the validation choke-point).
         "PipelineConfig",
