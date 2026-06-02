@@ -27,8 +27,12 @@ If a critical issue is being actively exploited, we may shorten this window.
 
 Only the most recent minor release of `decoy-engine` receives security fixes. Older versions are not patched.
 
-## Where to read more
+## Security posture summary
 
-Central security review: see the platform repo's [Security Architecture](../decoy-platform/docs/security/SECURITY_ARCHITECTURE.md) for trust boundaries, sensitive assets, threat model, key model, and named V1 limits.
+`decoy-engine` is a library: it has no network surface, no auth boundary, and no background process of its own. It runs inside the caller's Python process with the caller's privileges.
 
-Engine-specific security notes: [engine-security.md](../decoy-platform/docs/guides/engine-security.md).
+- **Input data and output data stay local** to the process running the engine. No telemetry, no remote logging.
+- **Determinism keys** are derived from a master key the caller supplies (env var `DECOY_MASTER_KEY` or explicit argument). We use HKDF-SHA256 derivation; see [`docs/security/key-derivation.md`](docs/security/key-derivation.md).
+- **SQL surfaces** in the engine are parameter-bound. Source connectors that accept user SQL are documented in [`docs/security/sql-surfaces.md`](docs/security/sql-surfaces.md).
+- **Custom provider files** load at process start with the user's privileges. Treat a custom-providers directory the same way you would treat any directory of executable Python.
+- **Pre-1.0 caveat.** The engine is at version 0.1.0. The public API and the master-key derivation contract are not yet frozen; breaking changes are possible until 1.0.0 ships.

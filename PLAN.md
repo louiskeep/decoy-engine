@@ -1,9 +1,11 @@
-# decoy-engine Plan
+# decoy-engine plan
 
-Active planning moved to the central docs hub:
+Short-loop planning for `decoy-engine` lives privately while the project is in pre-1.0 development; this file exists as a placeholder so contributors know where to look.
 
-- [Master Roadmap](../decoy-platform/docs/ROADMAP.md)
-- [V2 Roadmap](../decoy-platform/docs/v2/roadmap.md)
-- [Audit Remediation Roadmap](../decoy-platform/docs/audit/remediation-roadmap.md)
+Public-facing planning surfaces:
 
-The previous engine short-loop plan is archived at [../decoy-platform/docs/archive/v2-superseded/backlog-v2/engine-plan-legacy.md](../decoy-platform/docs/archive/v2-superseded/backlog-v2/engine-plan-legacy.md).
+- [`CHANGELOG.md`](CHANGELOG.md): user-visible changes per release.
+- [GitHub Issues](https://github.com/louiskeep/decoy-engine/issues): bug reports, feature requests, and short-horizon planning discussion.
+- [GitHub Discussions](https://github.com/louiskeep/decoy-engine/discussions) (when enabled): longer-form design conversations.
+
+For contributor onboarding, start with [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`CODEMAP.md`](CODEMAP.md).
