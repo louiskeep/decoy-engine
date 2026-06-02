@@ -12,7 +12,7 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | Data | pandas, Polars, PyArrow |
 | Config | YAML, Pydantic |
 | Tests | pytest |
-| Consumers | `decoy` CLI and `decoy-platform` API |
+| Consumers | `decoy` CLI and the commercial platform API |
 
 ## Entry Points
 
@@ -57,19 +57,19 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | `src/decoy_engine/walks/` | Cross-file / drift / inference helpers; consumed by `tests/integration/test_walks_*`. Not part of the public API. |
 | `src/decoy_engine/forecast/` | Empty (only `__pycache__`); the V1 FORECAST recommender was removed in S22. Safe to delete. |
 | `tests/` | `unit/`, `integration/golden/`, `parity/`, `perf_fixtures/`, `benchmark/`, `privacy/`, `security/`, `sentry/`, `connectors/`, `snapshots/` |
-| `docs/` | Local Sphinx docs where present; active planning is in `../decoy-platform/docs/` |
+| `docs/` | Local engine docs (security notes, parity, in-repo index). Active planning lives in the commercial platform repo. |
 | `.pytest_cache/`, `__pycache__/`, `logs/`, `mappings/` | Ignore generated/runtime content |
 
 ## Where Do I Find...
 
 | Task | Start Here |
 |---|---|
-| Current roadmap | `../decoy-platform/docs/ROADMAP.md` |
-| Engine audit | `../decoy-platform/docs/audit/codebase-audit-map.md` |
-| Remediation plan | `../decoy-platform/docs/audit/remediation-roadmap.md` |
+| Current roadmap | Maintained in the commercial platform repo |
+| Engine audit | Maintained in the commercial platform repo |
+| Remediation plan | Maintained in the commercial platform repo |
 | Public exports | `src/decoy_engine/__init__.py` |
 | Config schema | `src/decoy_engine/config/_pipeline.py` |
-| Relationship schema | `src/decoy_engine/config/_relationships.py` and `../decoy-platform/docs/guides/relationships-reference.md` |
+| Relationship schema | `src/decoy_engine/config/_relationships.py` (reference doc lives in the commercial platform repo) |
 | Plan compilation | `src/decoy_engine/plan/_compile.py` |
 | Execution strategies | `src/decoy_engine/execution/_strategies/` |
 | Substrate selection | `src/decoy_engine/execution/_substrate.py` |
