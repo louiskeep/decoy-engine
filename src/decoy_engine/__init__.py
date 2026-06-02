@@ -90,6 +90,7 @@ from decoy_engine.execution import (
     PandasExecutionAdapter,
     StrategyError,
     get_default_executor,
+    select_execution_adapter,
 )
 from decoy_engine.generation.composite import (
     BundlePool,
@@ -120,6 +121,7 @@ from decoy_engine.generation.pool import (
     get_default_pool_cache,
 )
 from decoy_engine.license import LicenseVerifier
+from decoy_engine.plan import compile_plan
 from decoy_engine.plan.validate import (
     PlanCheckError,
     PlanValidationResult,
@@ -327,6 +329,7 @@ __all__ = [
     "composite_name_email",
     "composite_person",
     "composite_provider",
+    "compile_plan",
     "derive",
     "derive_index",
     "derive_value",
@@ -345,6 +348,7 @@ __all__ = [
     "register_faker_provider_v2",
     "run_discovery_sql",
     "run_storm",
+    "select_execution_adapter",
     "unregister_faker_provider",
     "validate_config",
     "validate_plan",

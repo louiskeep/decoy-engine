@@ -44,6 +44,13 @@ def test_all_lists_every_public_name():
         "composite_name_email",
         "composite_person",
         "composite_provider",
+        # CLI.1 (2026-06-01): V2 mask-job choke-point + adapter selector
+        # re-exported at top level (was submodule-only pre-CLI.1). Per
+        # Q-CLI1-1 Dennis verdict OVERSIGHT: both functions are documented
+        # in the __init__.py module docstring as part of the V2 public
+        # surface; submodule-only import was an unintentional gap.
+        "compile_plan",
+        "select_execution_adapter",
         # engine-v2 S1 (Pipeline config schema, the validation choke-point).
         "PipelineConfig",
         # S9: Masker + DataGenerator removed from the public surface. The
