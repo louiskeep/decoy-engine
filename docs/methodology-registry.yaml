@@ -36,6 +36,10 @@ modules:
     pattern: HMAC-SHA256-keyed deterministic offset
     source: HMAC RFC 2104
 
-  - path: src/decoy_engine/forecast/recommender.py
-    pattern: SDV HMA1 multi-table fidelity scoring
-    source: sdv-dev/SDV (MIT)
+  # Removed 2026-06-02: the entire `forecast/` module (Recommender +
+  # ForecastReport + DisguiseRecommendation + FieldRecommendation +
+  # RiskFlag) was deleted under the storm-reframe-C clean break
+  # (2026-05-31). The directory survives as an empty shell with stale
+  # __pycache__/; the registry entry was orphaned and tripped the
+  # sentry test. Removing both the registry entry AND the empty
+  # directory ends the drift.
