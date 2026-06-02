@@ -120,6 +120,7 @@ from decoy_engine.generation.pool import (
     ValuePool,
     get_default_pool_cache,
 )
+from decoy_engine.generation.synthesize import generate_tables
 from decoy_engine.license import LicenseVerifier
 from decoy_engine.plan import compile_plan
 from decoy_engine.plan.validate import (
@@ -338,6 +339,7 @@ __all__ = [
     "emit_quarantine",
     "emit_step",
     "emit_throughput_sample",
+    "generate_tables",
     "get_default_executor",
     "get_default_pool_cache",
     "get_default_registry",

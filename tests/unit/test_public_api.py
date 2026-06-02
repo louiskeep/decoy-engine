@@ -50,6 +50,7 @@ def test_all_lists_every_public_name():
         # in the __init__.py module docstring as part of the V2 public
         # surface; submodule-only import was an unintentional gap.
         "compile_plan",
+        "generate_tables",
         "select_execution_adapter",
         # engine-v2 S1 (Pipeline config schema, the validation choke-point).
         "PipelineConfig",
