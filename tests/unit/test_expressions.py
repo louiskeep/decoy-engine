@@ -8,6 +8,7 @@ calls in the engine are auditable through this module.
 from __future__ import annotations
 
 import pytest
+from simpleeval import InvalidExpression
 
 from decoy_engine.expressions import BASE_GLOBALS, MASK_GLOBALS, safe_eval
 
@@ -31,18 +32,22 @@ class TestSafeEval:
 
 
 class TestBuiltinsSuppression:
+    # SEC.1/C1: the sandbox is now simpleeval, which raises its own
+    # InvalidExpression family for an undefined name rather than NameError.
+    # The behavior (the call is blocked) is unchanged; only the exception
+    # type moved when the evaluator was swapped off CPython eval().
     def test_base_globals_blocks_builtins(self):
-        """BASE_GLOBALS must suppress __builtins__ so callers can't reach
+        """BASE_GLOBALS must suppress builtins so callers can't reach
         open(), exec(), __import__, etc. from within a formula."""
-        with pytest.raises((NameError, TypeError)):
+        with pytest.raises(InvalidExpression):
             safe_eval("open('/etc/passwd')", BASE_GLOBALS, {})
 
     def test_mask_globals_blocks_builtins(self):
-        with pytest.raises((NameError, TypeError)):
+        with pytest.raises(InvalidExpression):
             safe_eval("open('/etc/passwd')", MASK_GLOBALS, {})
 
     def test_base_globals_blocks_import(self):
-        with pytest.raises((NameError, ImportError, TypeError)):
+        with pytest.raises(InvalidExpression):
             safe_eval("__import__('os')", BASE_GLOBALS, {})
 
 
@@ -118,3 +123,56 @@ class TestQA1MakeMaskGlobals:
         assert safe_eval("len('abc')", scope, {}) == 3
         assert safe_eval("abs(-5)", scope, {}) == 5
         assert safe_eval("re.search(r'\\d+', 'a42').group()", scope, {}) == "42"
+
+
+class TestC1Sandbox:
+    """SEC.1 / C1: the simpleeval sandbox closes the eval() RCE class while
+    preserving the formula capability surface (the boundary is: deny dunder
+    attribute access and any name not explicitly in scope)."""
+
+    # --- attack surface: every one must be blocked (raise) ---
+    def test_rejects_class_traversal(self):
+        with pytest.raises(InvalidExpression):
+            safe_eval("().__class__.__bases__[0].__subclasses__()", BASE_GLOBALS, {})
+
+    def test_rejects_dunder_attr_on_value(self):
+        with pytest.raises(InvalidExpression):
+            safe_eval("value.__class__", MASK_GLOBALS, {"value": "x"})
+
+    def test_rejects_globals_reach(self):
+        with pytest.raises(InvalidExpression):
+            safe_eval("(lambda: 0).__globals__", BASE_GLOBALS, {})
+
+    def test_rejects_format_string_escape(self):
+        # The classic str.format() escape that bypasses naive AST allowlists.
+        with pytest.raises(InvalidExpression):
+            safe_eval("'{0.__class__}'.format(())", BASE_GLOBALS, {})
+
+    def test_rejects_mro_traversal(self):
+        with pytest.raises(InvalidExpression):
+            safe_eval("''.__class__.__mro__[1].__subclasses__()", BASE_GLOBALS, {})
+
+    def test_rejects_re_proxy_internal_reach(self):
+        # The safe re proxy must not be a path back to the module internals.
+        with pytest.raises(InvalidExpression):
+            safe_eval("re.sub.__globals__", MASK_GLOBALS, {})
+
+    # --- capability surface: every one must still work ---
+    def test_fstring_still_works(self):
+        assert safe_eval("f'Hi {value}'", MASK_GLOBALS, {"value": "x"}) == "Hi x"
+
+    def test_re_flags_still_work(self):
+        assert (
+            safe_eval("re.sub(r'a', 'b', 'AAA', flags=re.IGNORECASE)", MASK_GLOBALS, {})
+            == "bbb"
+        )
+
+    def test_re_search_group_index_still_works(self):
+        assert (
+            safe_eval("re.search(r'(\\d+)', 'id-42').group(1)", MASK_GLOBALS, {}) == "42"
+        )
+
+    def test_value_method_chain_still_works(self):
+        assert (
+            safe_eval("value.strip().upper()", MASK_GLOBALS, {"value": " hi "}) == "HI"
+        )
