@@ -110,6 +110,14 @@ dev = [
     # rather than failing on the first import in test collection.
     "moto[s3]>=5.0",
 ]
+# Linters are exact-pinned, not floored. ruff and mypy both ship new
+# rules / error categories in minor releases that turn previously-green
+# code red with no code change. CI (.github/workflows/ci.yml) installs
+# these same versions; bump them deliberately alongside a lint pass.
+lint = [
+    "ruff==0.15.14",
+    "mypy==2.1.0",
+]
 # engine-v2 S7: Mimesis is an OPTIONAL alternative provider backend. The
 # default install does NOT pull it; MimesisAdapter imports behind a
 # try/except and the default registry stays Faker/DecoyNative-only unless
@@ -207,11 +215,19 @@ ignore = [
 # fixture/raises body shape) and patterns legitimate in tests but
 # loud under the broader src ratchet (S108 /tmp paths, SLF001 private
 # member access in white-box tests).
+#
+# B017 (assert-raises-exception): white-box tests deliberately assert on a
+#   broad Exception when the point is "the guard rejects", not which subclass.
+# RUF043 (raises-ambiguous-pattern): pytest.raises(match=...) takes a regex;
+#   the substring patterns used here are intentional and read fine unescaped.
+# SIM117 (multiple-with): nested context managers are sometimes clearer in
+#   arrange blocks; not worth churn in tests.
 "tests/**" = [
     "S101", "S105", "S106", "S108",
     "N802", "N803", "N806",
     "PT011", "PT017", "PT018", "PT006", "PT012", "PT019",
     "SLF001",
+    "B017", "RUF043", "SIM117",
 ]
 # Connector contract tests intentionally use insecure hashing.
 "tests/connectors/**" = ["S101", "S105", "S106", "S324"]
@@ -233,6 +249,11 @@ ignore = [
 # Late-import-to-break-cycle pattern, documented in the module header.
 "src/decoy_engine/internal/validator.py" = ["E402"]
 "src/decoy_engine/sdk.py" = ["E402"]
+# Imports sit next to the thematically-grouped sections they serve (name-hint
+# loader by the _NAME_HINTS table; contextvars by the per-scan extras layer;
+# dataclass by the Span/iter_spans block), each with its own explanatory
+# header. Deliberate narrative layout, not a top-of-file omission.
+"src/decoy_engine/storm/detectors.py" = ["E402"]
 
 # Legacy modules scheduled for V2.1 hard deletion (per the V2 sprint
 # plan + v2-roadmap Phase 1 Sprint 5). Each entry deletes with its
@@ -488,6 +509,19 @@ module = [
     "pyarrow",
     "pyarrow.*",
     "yaml",
+    # simpleeval (MIT) ships no stubs / py.typed; imported by
+    # decoy_engine.expressions for the formula sandbox.
+    "simpleeval",
+    # jsonpath-ng ships no stubs; imported by the nested masking strategy.
+    "jsonpath_ng",
+    "jsonpath_ng.*",
+    # Cloud SDKs ship no usable stubs for our call surface; imported
+    # function-locally in decoy_engine.profile._source.
+    "boto3",
+    "botocore",
+    "botocore.*",
+    "google.cloud",
+    "google.cloud.*",
 ]
 ignore_missing_imports = true
 
@@ -522,10 +556,13 @@ disable_error_code = ["call-arg"]
 
 # generators.columns — V2.1 hard delete. `index` debt surfaced by
 # V2.0-C tightening deterministic_hash to return str | None; the
-# callsite filters nulls upstream so the slice is safe.
+# callsite filters nulls upstream so the slice is safe. `arg-type`:
+# year-bin parsing calls int()/float() on config dict values typed
+# Any | None and catches the TypeError on None deliberately; the guard
+# is the runtime contract, not a type to refine in a doomed module.
 [[tool.mypy.overrides]]
 module = ["decoy_engine.generators.columns"]
-disable_error_code = ["index"]
+disable_error_code = ["index", "arg-type"]
 
 # transforms.{hash,categorical,faker_based} — V2.1 candidates for the
 # legacy V1 Masker stack. `index` / `return-value` debt is the same
