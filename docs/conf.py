@@ -42,6 +42,7 @@ extensions = [
     "myst_parser",
     # Google / NumPy style docstring rendering for the few that exist.
     "sphinx.ext.napoleon",
+    # (napoleon config below the extension list.)
     # Cross-project link resolution (Python stdlib, pandas, pyarrow).
     "sphinx.ext.intersphinx",
     # Static API reference generation by walking the source tree —
@@ -108,6 +109,15 @@ autoapi_member_order = "groupwise"      # group classes / functions / data
 autoapi_keep_files = False              # don't commit autoapi-generated .rst
 autoapi_root = "api"                    # output goes to docs/api/ at build time
 autoapi_add_toctree_entry = True        # insert "API reference" toctree in index
+
+# ── Napoleon (Google/NumPy docstring) configuration ──────────────────────
+# Render docstring `Attributes:` sections as `:ivar:` fields inside the
+# class description rather than as standalone `.. py:attribute::` directives.
+# autoapi already emits a `py:attribute` for every annotated dataclass field;
+# without this, a class that also documents those fields in an `Attributes:`
+# section gets each one described twice on the same page, which trips the
+# (typeless, unsuppressable) "duplicate object description" warning under -W.
+napoleon_use_ivar = True
 
 # ── Autodoc fallback (used by autoapi internally) ────────────────────────
 # Render type hints in the description rather than the signature so
@@ -189,6 +199,11 @@ nitpick_ignore = [
     ("py:obj", "ConfigT"),
     ("py:class", "DetectorFn"),
     ("py:class", "TransformChoice"),
+    # More module-level type aliases (Literal / tuple / union) that autoapi
+    # renders as bare class references without emitting a linkable target.
+    ("py:class", "Severity"),
+    ("py:class", "StrategyDefault"),
+    ("py:class", "ExpectedField"),
     ("py:obj", "DecoyError"),
     # `ConfigError` is re-exported by `decoy_engine.sdk` from
     # `decoy_engine.exceptions`. autoapi records both targets, so any
@@ -228,11 +243,11 @@ suppress_warnings = [
     # is still legible. Suppressing here keeps -W focused on real failures
     # (broken refs, missing toctree entries) rather than docstring polish.
     "docutils",
-    # `docs/architecture.md` and `docs/adr/*.md` are linked from index.md
-    # via GitHub URLs so they render on the repo page too; they intentionally
-    # don't sit in the API-reference toctree. The hidden toctree added in
-    # index.md picks them up for Sphinx, but autoapi-generated walks pages
-    # that aren't in __all__ still surface this warning.
+    # NOTE: the "document isn't included in any toctree" warning is emitted
+    # by sphinx.environment without a warning type (Sphinx 8.x), so it is NOT
+    # suppressible here. Every autoapi-generated page is instead given a home
+    # via the hidden `:glob:` toctree in index.md (api/**). Kept for the
+    # remaining typed toc warnings.
     "toc.not_included",
     # `decoy_engine.sdk` re-exports `ConfigError` from `decoy_engine.exceptions`
     # via `__all__`, which is the right public-API shape but makes autoapi
