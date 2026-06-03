@@ -7,7 +7,9 @@ function of (input, detector_ids, token, label_token).
 
 Config (`provider_config`):
     detectors   list[str] | None  Which detector ids to run.
-                                  None = every built-in span detector.
+                                  None or [] = every built-in span detector
+                                  (an empty list is fail-safe, never "redact
+                                  nothing").
     token       str               Replacement token. Default "[REDACTED]".
     label_token bool              If True, emit "[REDACTED:<detector_id>]"
                                   instead of `token`. When `label_token`
@@ -69,7 +71,12 @@ class TextRedactHandler:
         if detectors_cfg is None:
             detector_ids = None
         elif isinstance(detectors_cfg, (list, tuple)):
-            detector_ids = [str(d) for d in detectors_cfg]
+            # Fail-safe (S5c F2): an empty detector list means "all detectors",
+            # NOT "redact nothing". iter_spans treats [] as zero detectors, so a
+            # cleared/empty selection that reaches the handler from any authoring
+            # path (hand-edited YAML, imported manifest) would otherwise leave PHI
+            # silently unredacted. Coerce empty to None so every path runs all.
+            detector_ids = [str(d) for d in detectors_cfg] or None
         else:
             return df, []
 
