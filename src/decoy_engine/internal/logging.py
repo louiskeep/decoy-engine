@@ -119,8 +119,7 @@ def _configure_logger(logger, config: dict[str, Any]):
             # one at lines 86-89; otherwise the operator gets duplicate
             # output on every log line.
             has_console = any(
-                isinstance(h, logging.StreamHandler)
-                and not isinstance(h, RotatingFileHandler)
+                isinstance(h, logging.StreamHandler) and not isinstance(h, RotatingFileHandler)
                 for h in logger.handlers
             )
             if not has_console:
@@ -129,7 +128,8 @@ def _configure_logger(logger, config: dict[str, Any]):
                 logger.addHandler(console_fallback)
             logger.warning(
                 "Could not open log file %s (%s); using console-only logging",
-                log_file, exc,
+                log_file,
+                exc,
             )
 
     # Only log this to file, not to console (unless the F3 fallback above kicked in).

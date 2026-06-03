@@ -91,7 +91,7 @@ class CompositeCustom:
         *,
         coherent_namespace: str,
         bundle: list[dict[str, Any]],
-        registry: "ProviderRegistry | None" = None,
+        registry: ProviderRegistry | None = None,
         pool_size: int = 10_000,
     ) -> None:
         if not _MIN_BUNDLE_SIZE <= len(bundle) <= _MAX_BUNDLE_SIZE:
@@ -113,8 +113,7 @@ class CompositeCustom:
                 raise CompositeError(
                     code="composite_custom_bundle_item_missing_keys",
                     message=(
-                        f"each bundle item requires column + provider; got "
-                        f"{sorted(item.keys())!r}"
+                        f"each bundle item requires column + provider; got {sorted(item.keys())!r}"
                     ),
                 )
             if isinstance(item["provider"], str) and item["provider"].startswith("composite_"):
@@ -130,9 +129,7 @@ class CompositeCustom:
         self.bundle = bundle
         # Output columns are sorted so they match the wiring-check
         # contract (sorted coherent group).
-        self.output_columns: tuple[str, ...] = tuple(
-            sorted(item["column"] for item in bundle)
-        )
+        self.output_columns: tuple[str, ...] = tuple(sorted(item["column"] for item in bundle))
         self._registry = registry
         self._pool_size = pool_size
         self._pools: list[np.ndarray] | None = None
@@ -233,10 +230,7 @@ class CompositeCustom:
                 idx = int.from_bytes(chunk, "big") % len(pools[s])
                 per_slot_values[s].append(pools[s][idx])
 
-        return {
-            self._slot_columns[s]: pd.Series(per_slot_values[s])
-            for s in range(n_outputs)
-        }
+        return {self._slot_columns[s]: pd.Series(per_slot_values[s]) for s in range(n_outputs)}
 
     def generate_bundle(
         self,
@@ -250,9 +244,7 @@ class CompositeCustom:
             if source is None or spec.seed is None:
                 raise CompositeError(
                     code="deterministic_requires_source_and_seed",
-                    message=(
-                        "Deterministic composite_custom requires source + seed."
-                    ),
+                    message=("Deterministic composite_custom requires source + seed."),
                 )
             if len(source) != count:
                 raise CompositeError(
@@ -275,7 +267,7 @@ def composite_custom(
     *,
     coherent_namespace: str,
     bundle: list[dict[str, Any]],
-    registry: "ProviderRegistry | None" = None,
+    registry: ProviderRegistry | None = None,
     pool_size: int = 10_000,
 ) -> CompositeCustom:
     """Construct a CompositeCustom generator bound to `coherent_namespace`."""

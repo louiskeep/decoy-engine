@@ -22,7 +22,6 @@ from pathlib import Path
 
 import pytest
 import yaml
-from tests.fixtures.golden._manifest_schema import FixtureManifest
 
 from decoy_engine.plan import PlanCompileError, compile_plan
 from decoy_engine.profile import (
@@ -31,6 +30,7 @@ from decoy_engine.profile import (
     Relationship,
     TableProfile,
 )
+from tests.fixtures.golden._manifest_schema import FixtureManifest
 
 GOLDEN_ROOT = Path(__file__).resolve().parent.parent.parent / "fixtures" / "golden"
 

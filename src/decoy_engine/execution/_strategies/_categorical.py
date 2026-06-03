@@ -41,7 +41,6 @@ from decoy_engine.generation.pool._canonicalize import _canonicalize_source
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._types import ColumnSeed
 
-
 # Resolution for the deterministic-weighted CDF. 1_000_000 supports
 # weights down to 1e-6 with the precision the CDF rounding allows.
 _WEIGHTED_CDF_RES = 1_000_000

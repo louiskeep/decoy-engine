@@ -6,7 +6,6 @@ DataGenerator (which has heavy side effects: opening connectors,
 touching output paths, etc.).
 """
 
-import logging
 from pathlib import Path
 from typing import Any
 
@@ -77,5 +76,3 @@ def _select_validator(data: dict) -> Any:
         "(see decoy_engine.PipelineConfig.model_validate) for v2 mask + "
         "v2 generate configs."
     )
-
-

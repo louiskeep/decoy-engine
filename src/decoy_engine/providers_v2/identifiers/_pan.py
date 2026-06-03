@@ -33,7 +33,6 @@ from decoy_engine.providers_v2._adapter import CapabilityMatrix, ProviderSpec
 from decoy_engine.providers_v2._errors import ProviderError
 from decoy_engine.providers_v2.identifiers._errors import IdentifierError
 
-
 # Canonical Faker test prefix (Visa-shaped, 4xxx). The first digit is
 # the Major Industry Identifier (MII); 4 is the bank/financial MII.
 _DEFAULT_IIN = "411111"

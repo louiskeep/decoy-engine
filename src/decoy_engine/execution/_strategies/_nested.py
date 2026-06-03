@@ -111,9 +111,7 @@ class NestedStrategyHandler:
             raise StrategyError(
                 code="nested_recursive_nested_rejected",
                 strategy="nested",
-                message=(
-                    f"nested cannot wrap itself recursively (column={column!r})."
-                ),
+                message=(f"nested cannot wrap itself recursively (column={column!r})."),
             )
 
         child_handler = SCALAR_HANDLERS.get(child_strategy_name)
@@ -247,9 +245,7 @@ class NestedStrategyHandler:
         # Run the child handler on the collected leaves in one batch.
         temp_col = "_nested_leaves"
         temp_df = pd.DataFrame({temp_col: leaf_values})
-        temp_df, child_warnings = child_handler.run(
-            temp_df, temp_col, child_seed, ctx
-        )
+        temp_df, child_warnings = child_handler.run(temp_df, temp_col, child_seed, ctx)
         warnings.extend(child_warnings)
         new_leaf_values = temp_df[temp_col].tolist()
 

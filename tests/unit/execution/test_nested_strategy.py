@@ -293,9 +293,7 @@ class TestChildTechniqueClass:
         # Stand-in test: confirm the strategy still produces correct
         # masked output, which is the user-visible signal that the
         # child seed was constructed correctly.
-        df = pd.DataFrame(
-            {"data": [json.dumps({"x": "y"})]}
-        )
+        df = pd.DataFrame({"data": [json.dumps({"x": "y"})]})
         handler = NestedStrategyHandler()
         out, _ = handler.run(
             df.copy(),

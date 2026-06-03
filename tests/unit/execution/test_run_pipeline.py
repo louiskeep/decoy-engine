@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import pandas as pd
 import pyarrow as pa
-import pytest
 
 from decoy_engine.config import PipelineConfig
 from decoy_engine.execution import (
@@ -22,7 +21,6 @@ from decoy_engine.execution import (
     classify_table_kinds,
     run_pipeline,
 )
-
 
 _ENGINE_VERSION = "fc-1-test"
 
@@ -96,21 +94,23 @@ class TestClassifyTableKinds:
 
 
 def _pure_generate_config() -> dict:
-    return _validated_dump({
-        "version": 1,
-        "global_settings": {"seed": 42},
-        "sources": {},
-        "tables": [
-            {
-                "name": "employees",
-                "row_count": 5,
-                "generate_columns": [
-                    {"name": "employee_id", "type": "sequence", "start": 1000, "step": 1},
-                ],
-            },
-        ],
-        "targets": {"employees": {"type": "file", "format": "csv", "path": "out.csv"}},
-    })
+    return _validated_dump(
+        {
+            "version": 1,
+            "global_settings": {"seed": 42},
+            "sources": {},
+            "tables": [
+                {
+                    "name": "employees",
+                    "row_count": 5,
+                    "generate_columns": [
+                        {"name": "employee_id", "type": "sequence", "start": 1000, "step": 1},
+                    ],
+                },
+            ],
+            "targets": {"employees": {"type": "file", "format": "csv", "path": "out.csv"}},
+        }
+    )
 
 
 class TestRunPipelinePureGenerate:
@@ -138,22 +138,28 @@ class TestRunPipelinePureGenerate:
 
 
 def _pure_mask_config(tmp_path) -> dict:
-    return _validated_dump({
-        "version": 1,
-        "global_settings": {"seed": 42},
-        "sources": {
-            "customers": {"type": "file", "format": "csv", "path": str(tmp_path / "customers.csv")},
-        },
-        "tables": [
-            {
-                "name": "customers",
-                "columns": [_faker_col("email", "customer_identity")],
+    return _validated_dump(
+        {
+            "version": 1,
+            "global_settings": {"seed": 42},
+            "sources": {
+                "customers": {
+                    "type": "file",
+                    "format": "csv",
+                    "path": str(tmp_path / "customers.csv"),
+                },
             },
-        ],
-        "targets": {
-            "customers": {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")},
-        },
-    })
+            "tables": [
+                {
+                    "name": "customers",
+                    "columns": [_faker_col("email", "customer_identity")],
+                },
+            ],
+            "targets": {
+                "customers": {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")},
+            },
+        }
+    )
 
 
 def _customers_source(tmp_path) -> dict[str, pa.Table]:
@@ -188,32 +194,46 @@ class TestRunPipelinePureMask:
 
 
 def _mixed_config(tmp_path) -> dict:
-    return _validated_dump({
-        "version": 1,
-        "global_settings": {"seed": 42},
-        "sources": {
-            "customers": {"type": "file", "format": "csv", "path": str(tmp_path / "customers.csv")},
-        },
-        "tables": [
-            # Generate-kind: synthesizes new rows.
-            {
-                "name": "employees",
-                "row_count": 5,
-                "generate_columns": [
-                    {"name": "employee_id", "type": "sequence", "start": 1000, "step": 1},
-                ],
+    return _validated_dump(
+        {
+            "version": 1,
+            "global_settings": {"seed": 42},
+            "sources": {
+                "customers": {
+                    "type": "file",
+                    "format": "csv",
+                    "path": str(tmp_path / "customers.csv"),
+                },
             },
-            # Mask-kind: transforms the customers source.
-            {
-                "name": "customers",
-                "columns": [_faker_col("email", "customer_identity")],
+            "tables": [
+                # Generate-kind: synthesizes new rows.
+                {
+                    "name": "employees",
+                    "row_count": 5,
+                    "generate_columns": [
+                        {"name": "employee_id", "type": "sequence", "start": 1000, "step": 1},
+                    ],
+                },
+                # Mask-kind: transforms the customers source.
+                {
+                    "name": "customers",
+                    "columns": [_faker_col("email", "customer_identity")],
+                },
+            ],
+            "targets": {
+                "employees": {
+                    "type": "file",
+                    "format": "csv",
+                    "path": str(tmp_path / "employees.csv"),
+                },
+                "customers": {
+                    "type": "file",
+                    "format": "csv",
+                    "path": str(tmp_path / "customers_out.csv"),
+                },
             },
-        ],
-        "targets": {
-            "employees": {"type": "file", "format": "csv", "path": str(tmp_path / "employees.csv")},
-            "customers": {"type": "file", "format": "csv", "path": str(tmp_path / "customers_out.csv")},
-        },
-    })
+        }
+    )
 
 
 class TestRunPipelineMixed:

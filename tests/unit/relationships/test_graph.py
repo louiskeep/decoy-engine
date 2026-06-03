@@ -324,9 +324,9 @@ class TestOrphanPolicyCheck:
         lookup = check_orphan_fk_policy_completeness(config, parent_child_profile.relationships)
         # S13-rebaseline P1 (2026-06-01): lookup is now keyed by
         # (parent_table, parent_cols, child_table, child_cols).
-        assert lookup[
-            ("customers", ("customer_id",), "orders", ("customer_id",))
-        ] == OrphanPolicy(policy)
+        assert lookup[("customers", ("customer_id",), "orders", ("customer_id",))] == OrphanPolicy(
+            policy
+        )
 
     def test_profile_relationship_without_matching_config_entry_raises(
         self, parent_child_profile: Profile

@@ -110,7 +110,10 @@ def composite_wiring_consistent(config: dict[str, Any], registry: NamespaceRegis
             known_composites = sorted(
                 set(_COMPOSITE_OUTPUT_COLUMNS) | set(_VARIABLE_OUTPUT_COMPOSITES)
             )
-            if provider not in _COMPOSITE_OUTPUT_COLUMNS and provider not in _VARIABLE_OUTPUT_COMPOSITES:
+            if (
+                provider not in _COMPOSITE_OUTPUT_COLUMNS
+                and provider not in _VARIABLE_OUTPUT_COMPOSITES
+            ):
                 raise PlanCompileError(
                     code="composite_wiring_inconsistent",
                     path=f"tables.{table_name}.columns.{col_name}.provider",

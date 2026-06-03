@@ -73,6 +73,7 @@ The acceptance criteria (from the sprint plan):
   - Report states that DCR is not a privacy guarantee.
   - No differential privacy claim is made.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -301,7 +302,10 @@ def compute_dcr(
     normalizer = _build_gower_normalizer(src_capped, cols)
 
     synth_to_source = _gower_min_distances(
-        out_capped, src_capped, cols, normalizer,
+        out_capped,
+        src_capped,
+        cols,
+        normalizer,
     )
     synth_to_source_block = _summarize_dcr(synth_to_source, len(src_capped))
 
@@ -312,10 +316,14 @@ def compute_dcr(
         if h_cols:
             holdout_capped = holdout.head(sample_cap)
             synth_to_holdout = _gower_min_distances(
-                out_capped, holdout_capped, h_cols, normalizer,
+                out_capped,
+                holdout_capped,
+                h_cols,
+                normalizer,
             )
             synth_to_holdout_block = _summarize_dcr(
-                synth_to_holdout, len(holdout_capped),
+                synth_to_holdout,
+                len(holdout_capped),
             )
             comparison = _interpret_holdout_comparison(
                 synth_to_source_block["median"],
@@ -410,12 +418,13 @@ def compute_attack_metrics(
     run_fn = getattr(attacks_pkg, "run_privacy_attacks", None)
     if run_fn is None:
         return _attacks_unavailable(
-            "extras_module_missing_entry_point", extras_module,
+            "extras_module_missing_entry_point",
+            extras_module,
         )
 
     try:
         results = run_fn(source, output, holdout=holdout)
-    except Exception as exc:  # noqa: BLE001 - third-party can raise anything
+    except Exception as exc:
         # Defensive: an attack extras module's failure must NOT
         # take down the rest of the SynthReport assembly. Record
         # the failure type for operator visibility, not the raw
@@ -485,9 +494,7 @@ def assemble_synth_report(
     # disclaimer dropped from every production report, contradicting
     # the intent. Now we keep the disclaimer whenever no attack ran.
     _attack_actually_attempted = (
-        attacks is not None
-        and isinstance(attacks, dict)
-        and attacks.get("available") is not False
+        attacks is not None and isinstance(attacks, dict) and attacks.get("available") is not False
     )
     if not _attack_actually_attempted:
         disclaimers.append(
@@ -574,7 +581,9 @@ def _max_band(
         # `synth_to_source.median == 0` or as an explicit `band:
         # "critical"` field once P3 F10 closure ships. Pre-P3 we read
         # the median directly.
-        synth_to_source = dcr.get("synth_to_source") if isinstance(dcr.get("synth_to_source"), dict) else None
+        synth_to_source = (
+            dcr.get("synth_to_source") if isinstance(dcr.get("synth_to_source"), dict) else None
+        )
         if synth_to_source is not None:
             median = synth_to_source.get("median")
             if isinstance(median, (int, float)) and median == 0:
@@ -634,7 +643,7 @@ def _row_hash_iter(df: pd.DataFrame, cols: list[str]):
         # cryptographic primitive; SHA-1's preimage strength is
         # irrelevant. Healthcare + federal deployments (NPI / ICD-10 /
         # NDC providers) commonly run FIPS hosts.
-        yield hashlib.sha1(composite.encode("utf-8"), usedforsecurity=False).hexdigest()  # noqa: S324
+        yield hashlib.sha1(composite.encode("utf-8"), usedforsecurity=False).hexdigest()
 
 
 def _band_for(fraction: float) -> str:
@@ -765,7 +774,10 @@ def _summarize_dcr(distances: np.ndarray, ref_rows: int) -> dict[str, Any]:
     if distances.size == 0:
         return {
             "median": None,
-            "p05": None, "p25": None, "p75": None, "p95": None,
+            "p05": None,
+            "p25": None,
+            "p75": None,
+            "p95": None,
             "rows_sampled": 0,
             "source_rows_sampled": ref_rows,
         }

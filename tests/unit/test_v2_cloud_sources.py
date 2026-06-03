@@ -14,15 +14,11 @@ No real-cloud calls.
 
 from __future__ import annotations
 
-import io
 from typing import Any
-from unittest.mock import MagicMock, patch
 
-import pandas as pd
 import pytest
 
-from decoy_engine.config import PipelineConfig, PipelineConfigError
-
+from decoy_engine.config import PipelineConfig
 
 # ---------------------------------------------------------------------
 # Schema acceptance / rejection (extra=forbid + discriminator)
@@ -108,8 +104,10 @@ class TestCloudSourceSchema:
         cfg_s3 = _base_config()
         cfg_s3["sources"] = {
             "t": {
-                "type": "s3", "format": "csv",
-                "bucket": "b", "key": "k",
+                "type": "s3",
+                "format": "csv",
+                "bucket": "b",
+                "key": "k",
                 "credentials_ref": "aws-prod-readonly",
             },
         }
@@ -118,8 +116,10 @@ class TestCloudSourceSchema:
         cfg_gcs = _base_config()
         cfg_gcs["sources"] = {
             "t": {
-                "type": "gcs", "format": "csv",
-                "bucket": "b", "object": "o",
+                "type": "gcs",
+                "format": "csv",
+                "bucket": "b",
+                "object": "o",
                 "credentials_ref": "gcp-prod-readonly",
             },
         }
@@ -140,8 +140,10 @@ class TestCloudSourceSchema:
         cfg = _base_config()
         cfg["sources"] = {
             "t": {
-                "type": "s3", "format": "csv",
-                "bucket": "b", "key": "k",
+                "type": "s3",
+                "format": "csv",
+                "bucket": "b",
+                "key": "k",
                 "session_token": "leaked-secret",
             },
         }
@@ -158,8 +160,8 @@ class TestCloudSourceSchema:
 def _moto_s3():
     """Spin up a moto-mocked S3 + pre-create one bucket. Yields the boto3
     client + bucket name. Uses moto's mock_aws context (moto 5.x)."""
-    from moto import mock_aws
     import boto3
+    from moto import mock_aws
 
     with mock_aws():
         client = boto3.client("s3", region_name="us-east-1")
@@ -177,15 +179,18 @@ class TestCloudSourceEndToEnd:
         client, bucket = _moto_s3
         key = "data/customers.csv"
         client.put_object(
-            Bucket=bucket, Key=key,
+            Bucket=bucket,
+            Key=key,
             Body=b"email\na@x.com\nb@y.com\nc@z.com\n",
         )
 
         config = _base_config()
         config["sources"] = {
             "customers": {
-                "type": "s3", "format": "csv",
-                "bucket": bucket, "key": key,
+                "type": "s3",
+                "format": "csv",
+                "bucket": bucket,
+                "key": key,
                 "region": "us-east-1",
             },
         }
@@ -200,11 +205,9 @@ class TestCloudSourceEndToEnd:
         """The platform's _read_sources_as_arrow + _fetch_s3_to_bytesio dispatch
         on type='s3' and return a real pa.Table loaded from moto."""
         import sys
+
         # Allow this engine test to reach the platform's v2_runner via path.
-        platform_root = (
-            __import__("pathlib").Path(__file__).resolve().parents[3]
-            / "decoy-platform"
-        )
+        platform_root = __import__("pathlib").Path(__file__).resolve().parents[3] / "decoy-platform"
         sys.path.insert(0, str(platform_root))
         try:
             from api.jobs.v2_runner import _read_sources_as_arrow
@@ -214,14 +217,17 @@ class TestCloudSourceEndToEnd:
         client, bucket = _moto_s3
         key = "data/customers.csv"
         client.put_object(
-            Bucket=bucket, Key=key,
+            Bucket=bucket,
+            Key=key,
             Body=b"email\na@x.com\nb@y.com\nc@z.com\n",
         )
         config = {
             "sources": {
                 "customers": {
-                    "type": "s3", "format": "csv",
-                    "bucket": bucket, "key": key,
+                    "type": "s3",
+                    "format": "csv",
+                    "bucket": bucket,
+                    "key": key,
                     "region": "us-east-1",
                 },
             },
@@ -260,14 +266,13 @@ class TestCloudSourceEndToEnd:
             def __exit__(self, exc_type, exc, tb):
                 return False
 
-        monkeypatch.setattr(
-            "google.cloud.storage.Client", lambda *a, **kw: _FakeClient()
-        )
+        monkeypatch.setattr("google.cloud.storage.Client", lambda *a, **kw: _FakeClient())
 
         config = _base_config()
         config["sources"] = {
             "customers": {
-                "type": "gcs", "format": "csv",
+                "type": "gcs",
+                "format": "csv",
                 "bucket": "my-bucket",
                 "object": "data/customers.csv",
             },
@@ -291,8 +296,10 @@ class TestCloudSourceEndToEnd:
         config = _base_config()
         config["sources"] = {
             "customers": {
-                "type": "s3", "format": "csv",
-                "bucket": bucket, "key": "missing/object.csv",
+                "type": "s3",
+                "format": "csv",
+                "bucket": bucket,
+                "key": "missing/object.csv",
                 "region": "us-east-1",
             },
         }

@@ -42,9 +42,7 @@ def test_parquet_matches_recorded_sha256(tier_name: str) -> None:
         pytest.skip(f"{tier_name} fixture not on disk")
 
     manifest_path = parquet.parent / "fixture.yaml"
-    assert manifest_path.exists(), (
-        f"{tier_name}: fixture.yaml missing next to {parquet.name}"
-    )
+    assert manifest_path.exists(), f"{tier_name}: fixture.yaml missing next to {parquet.name}"
     manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
     recorded = manifest.get("parquet_sha256")
     assert recorded, f"{tier_name}: fixture.yaml has no parquet_sha256"

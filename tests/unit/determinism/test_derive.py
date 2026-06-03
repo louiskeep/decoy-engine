@@ -284,7 +284,7 @@ class TestQa10F4DeriveContext:
         # speedup on the dev box. If the perf optimization regresses
         # (HKDF re-computed inside derive_source), this cell catches it.
         assert ctx_s < scalar_s, (
-            f"DeriveContext ({ctx_s*1000:.0f}ms) not faster than "
-            f"scalar derive ({scalar_s*1000:.0f}ms); QA-10 F4 may "
+            f"DeriveContext ({ctx_s * 1000:.0f}ms) not faster than "
+            f"scalar derive ({scalar_s * 1000:.0f}ms); QA-10 F4 may "
             "have regressed."
         )

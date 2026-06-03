@@ -27,10 +27,10 @@ from decoy_engine.storm.postmask.fk_preservation import check_fk_preservation
 from decoy_engine.storm.postmask.policy_validation import check_policy_validation
 from decoy_engine.storm.postmask.residual_pii import check_residual_pii
 from decoy_engine.storm.postmask.types import (
+    SCHEMA_VERSION,
     FKPreservationFinding,
     PolicyValidationFinding,
     ResidualPIIFinding,
-    SCHEMA_VERSION,
     StormPostMaskReport,
 )
 
@@ -70,9 +70,7 @@ def run_storm_post_mask(
             f"{type(output_frames).__name__}"
         )
     if not isinstance(config, dict):
-        raise TypeError(
-            f"run_storm_post_mask: config must be a dict, got {type(config).__name__}"
-        )
+        raise TypeError(f"run_storm_post_mask: config must be a dict, got {type(config).__name__}")
 
     residual_pii: list[ResidualPIIFinding] = []
     fk_preservation: list[FKPreservationFinding] = []
@@ -91,7 +89,7 @@ def run_storm_post_mask(
     # where the full exception text already lives at the catch site.
     try:
         residual_pii = check_residual_pii(output_frames, config)
-    except Exception as exc:  # noqa: BLE001 -- intentional catch-all per best-effort
+    except Exception as exc:
         residual_pii = [
             ResidualPIIFinding(
                 table="",
@@ -105,7 +103,7 @@ def run_storm_post_mask(
 
     try:
         fk_preservation = check_fk_preservation(output_frames, config)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         fk_preservation = [
             FKPreservationFinding(
                 parent_table="",
@@ -122,7 +120,7 @@ def run_storm_post_mask(
 
     try:
         policy_validation = check_policy_validation(source_frames, output_frames, config)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         policy_validation = [
             PolicyValidationFinding(
                 table="",
@@ -154,6 +152,7 @@ def run_storm_post_mask(
     # payload agree. Module-level import would force a stdlib pull at
     # every engine import; local for now.
     from datetime import datetime, timezone
+
     report = StormPostMaskReport(
         schema_version=SCHEMA_VERSION,
         residual_pii=residual_pii,

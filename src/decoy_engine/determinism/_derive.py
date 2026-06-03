@@ -133,7 +133,7 @@ class DeriveContext:
     _hmac_key: bytes
 
     @classmethod
-    def for_column(cls, seed: bytes, namespace: str) -> "DeriveContext":
+    def for_column(cls, seed: bytes, namespace: str) -> DeriveContext:
         """Build a context for one (seed, namespace) pair.
 
         Validates seed length + namespace emptiness the same way the
@@ -146,12 +146,8 @@ class DeriveContext:
                 message=f"seed must be exactly {_SEED_LENGTH} bytes; got {len(seed)}",
             )
         if not namespace:
-            raise DeterminismError(
-                code="namespace_empty", message="namespace must be non-empty"
-            )
-        key = hkdf_sha256(
-            ikm=seed, salt=_SALT, info=namespace.encode("utf-8"), length=32
-        )
+            raise DeterminismError(code="namespace_empty", message="namespace must be non-empty")
+        key = hkdf_sha256(ikm=seed, salt=_SALT, info=namespace.encode("utf-8"), length=32)
         return cls(_hmac_key=key)
 
     def derive_source(self, namespace: str, source: bytes) -> bytes:

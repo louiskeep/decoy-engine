@@ -57,7 +57,7 @@ class CompositePerson:
         self,
         *,
         coherent_namespace: str,
-        registry: "ProviderRegistry | None" = None,
+        registry: ProviderRegistry | None = None,
         pool_size: int = 10_000,
     ) -> None:
         self.coherent_namespace = coherent_namespace
@@ -67,9 +67,7 @@ class CompositePerson:
         self._last: np.ndarray | None = None
         self._dob: np.ndarray | None = None
 
-    def _pools(
-        self, spec: ProviderSpec
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def _pools(self, spec: ProviderSpec) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Build (and cache) first/last/dob pools, reproducibly from the seed."""
         if self._first is None or self._last is None or self._dob is None:
             from decoy_engine.generation.pool._builder import PoolBuilder
@@ -246,7 +244,7 @@ class CompositePerson:
 def composite_person(
     *,
     coherent_namespace: str,
-    registry: "ProviderRegistry | None" = None,
+    registry: ProviderRegistry | None = None,
     pool_size: int = 10_000,
 ) -> CompositePerson:
     """Construct a CompositePerson generator bound to `coherent_namespace`."""

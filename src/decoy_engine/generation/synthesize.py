@@ -109,9 +109,7 @@ def generate_tables(
     tables_list = config.get("tables") or []
     # Generate tables only (mask tables are skipped). Key by name + build the dep
     # graph so a `reference` column can read its already-generated parent's pool.
-    generate_by_name = {
-        t["name"]: t for t in tables_list if t.get("generate_columns")
-    }
+    generate_by_name = {t["name"]: t for t in tables_list if t.get("generate_columns")}
     deps: dict[str, set[str]] = {}
     for name, t in generate_by_name.items():
         d: set[str] = set()
@@ -142,9 +140,7 @@ def generate_tables(
         gcols = table["generate_columns"]
         n = int(table.get("row_count") or 0)
         data = {
-            col["name"]: _generate_column(
-                col, n, seed, derive_key, pools, instance_default_locale
-            )
+            col["name"]: _generate_column(col, n, seed, derive_key, pools, instance_default_locale)
             for col in gcols
         }
         tbl = pa.table(data)
@@ -169,7 +165,7 @@ def _topo_sort(deps: dict[str, set[str]]) -> list[str]:
     sibling iterative pattern in config/_pipeline.py
     `_reference_graph_valid` was written for the same reason.
     """
-    from collections.abc import Iterator as _IteratorRT  # noqa: F401 (runtime import for clarity)
+    from collections.abc import Iterator as _IteratorRT
 
     result: list[str] = []
     visited: set[str] = set()
@@ -177,7 +173,7 @@ def _topo_sort(deps: dict[str, set[str]]) -> list[str]:
     for start in deps:
         if start in visited or start not in deps:
             continue
-        stack: list[tuple[str, "_IteratorRT[str]"]] = [(start, iter(deps.get(start, ())))]
+        stack: list[tuple[str, _IteratorRT[str]]] = [(start, iter(deps.get(start, ())))]
         visited.add(start)
         while stack:
             node, parent_iter = stack[-1]
@@ -224,9 +220,7 @@ def _generate_column(
         # The Literal on GenerateColumnConfig.type rejects anything outside this set
         # at validation; this branch is the defensive fallback for callers that
         # bypass validation (e.g. an unvalidated dict).
-        raise ValueError(
-            f"generate column {col.get('name')!r}: unexpected generator type {kind!r}"
-        )
+        raise ValueError(f"generate column {col.get('name')!r}: unexpected generator type {kind!r}")
     return _apply_null_probability(values, col, seed, derive_key)
 
 
@@ -252,9 +246,7 @@ def _sequence(col: dict[str, Any], n: int) -> list[str]:
     return out
 
 
-def _categorical(
-    col: dict[str, Any], n: int, seed: int, derive_key: Any = None
-) -> list[Any]:
+def _categorical(col: dict[str, Any], n: int, seed: int, derive_key: Any = None) -> list[Any]:
     """Weighted / uniform random choice over ``categories``, parity-frozen vs V1
     ``_generate_categorical_column`` (``columns.py:321-353``).
 
@@ -267,9 +259,7 @@ def _categorical(
     """
     cats = col.get("categories", ["Category A", "Category B"])
     weights = col.get("weights")  # optional; None -> uniform
-    col_seed = synthetic_column_seed(
-        derive_key=derive_key, column_config=col, fallback_seed=seed
-    )
+    col_seed = synthetic_column_seed(derive_key=derive_key, column_config=col, fallback_seed=seed)
     # Instance-local Random: parity-preserving (same Mersenne Twister state
     # initialization as random.seed); thread-safe (no module-global mutation).
     rng = random.Random(col_seed)
@@ -317,9 +307,7 @@ def _faker(
     provider_func = providers.get(faker_type) or providers["word"]
     raw_kwargs = col.get("faker_kwargs") or {}
     faker_kwargs = raw_kwargs if isinstance(raw_kwargs, dict) else {}
-    col_seed = synthetic_column_seed(
-        derive_key=derive_key, column_config=col, fallback_seed=seed
-    )
+    col_seed = synthetic_column_seed(derive_key=derive_key, column_config=col, fallback_seed=seed)
     out: list[Any] = []
     # QA-7 F1 + C1 (2026-06-01): both seed_instance call sites are in
     # the critical section. The pre-loop seed_instance(seed) used to
@@ -354,9 +342,7 @@ def _apply_null_probability(
     # only `{"name": col["name"]}` to mirror V1; V1 has been
     # updated to also pass column_config (qa-1 step 3) so V1 and V2
     # stay byte-identical AND the null-mask collision is closed.
-    col_seed = synthetic_column_seed(
-        derive_key=derive_key, column_config=col, fallback_seed=seed
-    )
+    col_seed = synthetic_column_seed(derive_key=derive_key, column_config=col, fallback_seed=seed)
     out = list(values)
     # Per-row reseed preserves V1 byte-parity (V1 reseeds the global RNG per
     # row at columns.py:183). Switched to instance-local Random so the
@@ -377,9 +363,7 @@ def _apply_null_probability(
     return out
 
 
-def _formula(
-    col: dict[str, Any], n: int, seed: int, derive_key: Any = None
-) -> list[Any]:
+def _formula(col: dict[str, Any], n: int, seed: int, derive_key: Any = None) -> list[Any]:
     """Python-expression-driven values, parity-frozen vs V1
     ``_generate_formula_column`` (``columns.py:974+``).
 
@@ -412,6 +396,7 @@ def _formula(
         # The V2 post-pass for cross-column formulas lands in a later
         # sprint; until then warn loud.
         import warnings
+
         warnings.warn(
             f"column {col.get('name', 'unnamed_column')!r}: formula with "
             f"`references` is not yet supported in v2 generation "
@@ -423,9 +408,7 @@ def _formula(
     from decoy_engine.generators.columns import ColumnGenerator
 
     cg = ColumnGenerator(seed=seed, derive_key=derive_key)
-    series = cg._eval_formula_inline(
-        n, formula, col.get("name", "unnamed_column"), col
-    )
+    series = cg._eval_formula_inline(n, formula, col.get("name", "unnamed_column"), col)
     return series.tolist()
 
 
@@ -483,9 +466,7 @@ def _reference(
     if not ref_vals:
         return [None] * n
 
-    col_seed = synthetic_column_seed(
-        derive_key=derive_key, column_config=col, fallback_seed=seed
-    )
+    col_seed = synthetic_column_seed(derive_key=derive_key, column_config=col, fallback_seed=seed)
     # Instance-local Random: parity-preserving, thread-safe (F1 fix).
     rng = random.Random(col_seed)
 
@@ -514,6 +495,10 @@ def _reference(
         # via col_seed.
         cg = ColumnGenerator(seed=seed, derive_key=derive_key)
         values = cg._apply_cardinality_bounds(
-            values, ref_vals, min_per, max_per, rng=rng,
+            values,
+            ref_vals,
+            min_per,
+            max_per,
+            rng=rng,
         )
     return values

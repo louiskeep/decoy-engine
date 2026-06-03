@@ -298,9 +298,7 @@ class TestCrossProcessStability:
             "MrnAdapter": MrnAdapter,
         }
         spec = ProviderSpec(locale="en_US", deterministic=True, namespace=_NS, seed=_SEED)
-        expected = _adapter_cls_map[adapter_name]().generate(
-            provider, spec=spec, source_value=42
-        )
+        expected = _adapter_cls_map[adapter_name]().generate(provider, spec=spec, source_value=42)
         code = (
             f"from decoy_engine.providers_v2.identifiers import {adapter_name}; "
             f"from decoy_engine.providers_v2 import ProviderSpec; "

@@ -14,11 +14,10 @@ import pytest
 from decoy_engine.providers_v2._adapter import ProviderSpec
 from decoy_engine.providers_v2._errors import ProviderError
 from decoy_engine.providers_v2.identifiers._iban import (
-    IbanAdapter,
-    IbanDomain,
-    IbanValidator,
     _COUNTRIES_ORDERED,
     _IBAN_LENGTH_BY_COUNTRY,
+    IbanAdapter,
+    IbanDomain,
     _compute_iban_check,
     _generate_iban_from_country_and_bban,
     _letter_to_digits,
@@ -26,11 +25,12 @@ from decoy_engine.providers_v2.identifiers._iban import (
 )
 from decoy_engine.storm.detectors import _IBAN_COUNTRIES, _iban_valid
 
-
 _SEED = (0x0123456789).to_bytes(8, "big")
 
 
-def _spec(*, deterministic: bool = False, namespace: str | None = None, seed: bytes | None = None) -> ProviderSpec:
+def _spec(
+    *, deterministic: bool = False, namespace: str | None = None, seed: bytes | None = None
+) -> ProviderSpec:
     return ProviderSpec(
         locale="en_US",
         deterministic=deterministic,
@@ -50,24 +50,20 @@ class TestCountryCoverage:
     def test_length_table_covers_every_detector_country(self):
         missing = _IBAN_COUNTRIES - set(_IBAN_LENGTH_BY_COUNTRY.keys())
         assert missing == frozenset(), (
-            f"Country codes in detector set but missing from length "
-            f"table: {sorted(missing)!r}"
+            f"Country codes in detector set but missing from length table: {sorted(missing)!r}"
         )
 
     def test_length_table_has_no_unknown_countries(self):
         extra = set(_IBAN_LENGTH_BY_COUNTRY.keys()) - _IBAN_COUNTRIES
         assert extra == set(), (
-            f"Country codes in length table but not in detector set: "
-            f"{sorted(extra)!r}"
+            f"Country codes in length table but not in detector set: {sorted(extra)!r}"
         )
 
     def test_every_length_is_in_iso_13616_range(self):
         # ISO 13616 caps at 34 characters total; the detector also
         # rejects below 15 characters.
         for country, length in _IBAN_LENGTH_BY_COUNTRY.items():
-            assert 15 <= length <= 34, (
-                f"{country} length {length} outside ISO 13616 15-34 range"
-            )
+            assert 15 <= length <= 34, f"{country} length {length} outside ISO 13616 15-34 range"
 
 
 # ── mod-97 algorithm ──────────────────────────────────────────────
@@ -108,8 +104,7 @@ class TestIbanDomain:
             b = bytes([seed_byte] * 32)
             iban = domain.from_bytes(b)
             assert _iban_valid(iban), (
-                f"IbanDomain.from_bytes returned non-valid {iban!r} "
-                f"for byte seed {seed_byte!r}."
+                f"IbanDomain.from_bytes returned non-valid {iban!r} for byte seed {seed_byte!r}."
             )
 
     def test_from_bytes_deterministic(self):
@@ -120,6 +115,7 @@ class TestIbanDomain:
     def test_from_bytes_wrong_length_raises(self):
         domain = IbanDomain()
         from decoy_engine.providers_v2.identifiers._errors import IdentifierError
+
         with pytest.raises(IdentifierError):
             domain.from_bytes(b"x" * 16)
 

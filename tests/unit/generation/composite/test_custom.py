@@ -19,7 +19,6 @@ from decoy_engine.generation.composite._custom import CompositeCustom
 from decoy_engine.generation.composite._errors import CompositeError
 from decoy_engine.providers_v2._adapter import ProviderSpec
 
-
 _SEED = (0x0123456789).to_bytes(8, "big")
 
 
@@ -40,10 +39,7 @@ def _bundle(size: int) -> list[dict]:
         "person_email",
         "person_phone",
     ]
-    return [
-        {"column": f"c{i}", "provider": providers[i % len(providers)]}
-        for i in range(size)
-    ]
+    return [{"column": f"c{i}", "provider": providers[i % len(providers)]} for i in range(size)]
 
 
 # ── bundle-size boundaries ────────────────────────────────────────────

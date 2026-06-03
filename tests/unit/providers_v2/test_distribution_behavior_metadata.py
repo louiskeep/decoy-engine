@@ -17,7 +17,6 @@ from datetime import datetime
 import pytest
 
 from decoy_engine.execution._distribution_behavior import (
-    DistributionBehavior,
     distribution_behavior_for,
 )
 from decoy_engine.execution._strategies import SCALAR_HANDLERS
@@ -96,8 +95,7 @@ class TestCoverage:
 
     def test_every_shipped_strategy_has_a_label(self):
         unlabelled = sorted(
-            name for name in SCALAR_HANDLERS
-            if distribution_behavior_for(name) is None
+            name for name in SCALAR_HANDLERS if distribution_behavior_for(name) is None
         )
         assert unlabelled == [], (
             f"Strategies missing distribution_behavior: {unlabelled}. "

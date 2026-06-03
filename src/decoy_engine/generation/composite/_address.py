@@ -50,7 +50,7 @@ class CompositeAddress:
         self,
         *,
         coherent_namespace: str,
-        registry: "ProviderRegistry | None" = None,
+        registry: ProviderRegistry | None = None,
         pool_size: int = 10_000,
     ) -> None:
         self.coherent_namespace = coherent_namespace
@@ -186,7 +186,7 @@ class CompositeAddress:
 def composite_address(
     *,
     coherent_namespace: str,
-    registry: "ProviderRegistry | None" = None,
+    registry: ProviderRegistry | None = None,
     pool_size: int = 10_000,
 ) -> CompositeAddress:
     return CompositeAddress(

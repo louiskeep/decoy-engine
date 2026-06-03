@@ -9,7 +9,6 @@ use cases).
 from __future__ import annotations
 
 import pandas as pd
-import pytest
 
 from decoy_engine.execution._strategies._truncate import TruncateHandler
 from decoy_engine.plan._types import ColumnSeed
@@ -60,7 +59,8 @@ class TestTruncateNewKeepShape:
         df = pd.DataFrame({"col": ["hello"]})
         handler = TruncateHandler()
         out, _ = handler.run(
-            df.copy(), "col",
+            df.copy(),
+            "col",
             _seed({"length": 3, "keep": "head"}),
             _FakeCtx(),
         )
@@ -70,7 +70,8 @@ class TestTruncateNewKeepShape:
         df = pd.DataFrame({"col": ["hello"]})
         handler = TruncateHandler()
         out, _ = handler.run(
-            df.copy(), "col",
+            df.copy(),
+            "col",
             _seed({"length": 3, "keep": "tail"}),
             _FakeCtx(),
         )
@@ -81,7 +82,8 @@ class TestTruncateNewKeepShape:
         df = pd.DataFrame({"col": ["hello"]})
         handler = TruncateHandler()
         out, _ = handler.run(
-            df.copy(), "col",
+            df.copy(),
+            "col",
             _seed({"length": 3, "keep": "head", "from_end": True}),
             _FakeCtx(),
         )
@@ -91,7 +93,8 @@ class TestTruncateNewKeepShape:
         df = pd.DataFrame({"col": ["hello"]})
         handler = TruncateHandler()
         out, _ = handler.run(
-            df.copy(), "col",
+            df.copy(),
+            "col",
             _seed({"length": 3, "keep": "middle"}),
             _FakeCtx(),
         )
@@ -105,7 +108,8 @@ class TestTruncateMaskChar:
         df = pd.DataFrame({"col": ["1234567890", "abc"]})
         handler = TruncateHandler()
         out, _ = handler.run(
-            df.copy(), "col",
+            df.copy(),
+            "col",
             _seed({"length": 4, "keep": "tail", "mask_char": "*"}),
             _FakeCtx(),
         )
@@ -117,7 +121,8 @@ class TestTruncateMaskChar:
         df = pd.DataFrame({"col": ["1234567890"]})
         handler = TruncateHandler()
         out, _ = handler.run(
-            df.copy(), "col",
+            df.copy(),
+            "col",
             _seed({"length": 4, "keep": "head", "mask_char": "*"}),
             _FakeCtx(),
         )
@@ -129,7 +134,8 @@ class TestTruncateMaskChar:
         df = pd.DataFrame({"col": ["abcdefghij"]})
         handler = TruncateHandler()
         out, _ = handler.run(
-            df.copy(), "col",
+            df.copy(),
+            "col",
             _seed({"length": 2, "keep": "tail", "mask_char": "#"}),
             _FakeCtx(),
         )
@@ -140,7 +146,8 @@ class TestTruncateMaskChar:
         df = pd.DataFrame({"col": ["hello"]})
         handler = TruncateHandler()
         out, _ = handler.run(
-            df.copy(), "col",
+            df.copy(),
+            "col",
             _seed({"length": 2, "keep": "tail", "mask_char": "XY"}),
             _FakeCtx(),
         )
@@ -150,7 +157,8 @@ class TestTruncateMaskChar:
         df = pd.DataFrame({"col": ["hello"]})
         handler = TruncateHandler()
         out, _ = handler.run(
-            df.copy(), "col",
+            df.copy(),
+            "col",
             _seed({"length": 2, "keep": "tail", "mask_char": 42}),
             _FakeCtx(),
         )
@@ -162,7 +170,8 @@ class TestTruncateMaskChar:
         df = pd.DataFrame({"col": ["ab"]})
         handler = TruncateHandler()
         out, _ = handler.run(
-            df.copy(), "col",
+            df.copy(),
+            "col",
             _seed({"length": 4, "keep": "tail", "mask_char": "*"}),
             _FakeCtx(),
         )
@@ -172,7 +181,8 @@ class TestTruncateMaskChar:
         df = pd.DataFrame({"col": ["1234567890", None, "abc"]})
         handler = TruncateHandler()
         out, _ = handler.run(
-            df.copy(), "col",
+            df.copy(),
+            "col",
             _seed({"length": 4, "keep": "tail", "mask_char": "*"}),
             _FakeCtx(),
         )

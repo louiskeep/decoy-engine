@@ -53,12 +53,11 @@ from __future__ import annotations
 import threading
 import time
 from collections import defaultdict
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Iterator
 
 import psutil
-
 
 _PROCESS = psutil.Process()
 
@@ -119,9 +118,7 @@ class TimingCollector:
             entry["count"] = int(entry["count"]) + 1
             entry["total_ms"] = float(entry["total_ms"]) + r.elapsed_ms
             entry["max_ms"] = max(float(entry["max_ms"]), r.elapsed_ms)
-            entry["peak_delta_kb"] = max(
-                int(entry["peak_delta_kb"]), r.peak_memory_delta_kb
-            )
+            entry["peak_delta_kb"] = max(int(entry["peak_delta_kb"]), r.peak_memory_delta_kb)
         return dict(agg)
 
 

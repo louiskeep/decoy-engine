@@ -40,9 +40,7 @@ class _FakeCtx:
 
 class TestCoreRedaction:
     def test_text_redact_replaces_all_spans_with_default_token(self):
-        df = pd.DataFrame(
-            {"notes": ["Contact alice@example.com, SSN 123-45-6789."]}
-        )
+        df = pd.DataFrame({"notes": ["Contact alice@example.com, SSN 123-45-6789."]})
         handler = TextRedactHandler()
         out, _ = handler.run(df.copy(), "notes", _seed({}), _FakeCtx())
         cell = out["notes"].iloc[0]
@@ -65,17 +63,13 @@ class TestCoreRedaction:
     def test_text_redact_label_token_emits_per_detector_label(self):
         df = pd.DataFrame({"notes": ["alice@example.com"]})
         handler = TextRedactHandler()
-        out, _ = handler.run(
-            df.copy(), "notes", _seed({"label_token": True}), _FakeCtx()
-        )
+        out, _ = handler.run(df.copy(), "notes", _seed({"label_token": True}), _FakeCtx())
         assert out["notes"].iloc[0] == "[REDACTED:email]"
 
     def test_text_redact_custom_token_string(self):
         df = pd.DataFrame({"notes": ["alice@example.com"]})
         handler = TextRedactHandler()
-        out, _ = handler.run(
-            df.copy(), "notes", _seed({"token": "<PHI>"}), _FakeCtx()
-        )
+        out, _ = handler.run(df.copy(), "notes", _seed({"token": "<PHI>"}), _FakeCtx())
         assert out["notes"].iloc[0] == "<PHI>"
 
 
@@ -119,13 +113,9 @@ class TestOverlapAndSelection:
         assert out["notes"].iloc[0] == "[REDACTED] [REDACTED]"
 
     def test_text_redact_subset_detectors_only_redacts_listed(self):
-        df = pd.DataFrame(
-            {"notes": ["Contact alice@example.com, SSN 123-45-6789."]}
-        )
+        df = pd.DataFrame({"notes": ["Contact alice@example.com, SSN 123-45-6789."]})
         handler = TextRedactHandler()
-        out, _ = handler.run(
-            df.copy(), "notes", _seed({"detectors": ["email"]}), _FakeCtx()
-        )
+        out, _ = handler.run(df.copy(), "notes", _seed({"detectors": ["email"]}), _FakeCtx())
         cell = out["notes"].iloc[0]
         assert "alice@example.com" not in cell
         # SSN was not in the list -> stays.
@@ -139,9 +129,7 @@ class TestBadConfig:
     def test_text_redact_non_string_token_falls_back_to_passthrough(self):
         df = pd.DataFrame({"notes": ["alice@example.com"]})
         handler = TextRedactHandler()
-        out, _ = handler.run(
-            df.copy(), "notes", _seed({"token": 42}), _FakeCtx()
-        )
+        out, _ = handler.run(df.copy(), "notes", _seed({"token": 42}), _FakeCtx())
         # Bad config -> unchanged.
         assert out["notes"].iloc[0] == "alice@example.com"
 

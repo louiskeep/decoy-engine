@@ -227,9 +227,7 @@ def _load_s3_source(source_descriptor: dict[str, Any]) -> pd.DataFrame:
         # (NoSuchKey, AccessDenied, etc.) surfaces but the raw
         # request metadata + access key ID stays out of the log.
         code = exc.response.get("Error", {}).get("Code", "Unknown")
-        raise RuntimeError(
-            f"profile_source s3: client error {code}"
-        ) from exc
+        raise RuntimeError(f"profile_source s3: client error {code}") from exc
     # Q17 fix: StreamingBody backs an HTTP connection; .read() drains the
     # body but does not close the underlying socket. Closing explicitly
     # returns the connection to urllib3's pool. Without this, a multi-S3-

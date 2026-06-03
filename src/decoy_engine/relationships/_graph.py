@@ -131,9 +131,7 @@ def build_relationship_graph(
     relationships: tuple[Relationship, ...],
     *,
     namespace_registry: NamespaceRegistry,
-    orphan_policy_lookup: dict[
-        tuple[str, tuple[str, ...], str, tuple[str, ...]], OrphanPolicy
-    ],
+    orphan_policy_lookup: dict[tuple[str, tuple[str, ...], str, tuple[str, ...]], OrphanPolicy],
 ) -> RelationshipGraph:
     """Build a `RelationshipGraph` from profile relationships + planner inputs.
 
@@ -332,9 +330,7 @@ def check_orphan_fk_policy_completeness(
     # reviewer_id) with different policies. Pre-fix the (parent_only)
     # dedup key rejected the second entry as a merge conflict; the
     # legitimate pattern was unbuildable.
-    config_lookup: dict[
-        tuple[str, tuple[str, ...], str, tuple[str, ...]], str
-    ] = {}
+    config_lookup: dict[tuple[str, tuple[str, ...], str, tuple[str, ...]], str] = {}
     config_relationships = config.get("relationships", [])
     if isinstance(config_relationships, list):
         for idx, entry in enumerate(config_relationships):
@@ -421,9 +417,7 @@ def check_orphan_fk_policy_completeness(
     # Now check every profile relationship has a matching config entry.
     # Lookup key is now per-(parent, child) so different children of the
     # same parent can carry different policies.
-    lookup: dict[
-        tuple[str, tuple[str, ...], str, tuple[str, ...]], OrphanPolicy
-    ] = {}
+    lookup: dict[tuple[str, tuple[str, ...], str, tuple[str, ...]], OrphanPolicy] = {}
     for rel in relationships:
         key = (
             rel.parent_table,

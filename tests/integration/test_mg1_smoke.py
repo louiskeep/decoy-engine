@@ -25,7 +25,6 @@ from decoy_engine.providers_v2.identifiers._cusip import _is_valid_cusip
 from decoy_engine.providers_v2.identifiers._pan import _is_valid_pan
 from decoy_engine.storm.detectors import _iban_valid, _icd10_valid
 
-
 _NEW_PROVIDERS_MG1_S4 = (
     "synthetic_pan",
     "synthetic_icd10",
@@ -37,7 +36,9 @@ _NEW_PROVIDERS_MG1_S4 = (
 _SEED = (0x0123456789).to_bytes(8, "big")
 
 
-def _spec(*, deterministic: bool = False, namespace: str | None = None, seed: bytes | None = None) -> ProviderSpec:
+def _spec(
+    *, deterministic: bool = False, namespace: str | None = None, seed: bytes | None = None
+) -> ProviderSpec:
     return ProviderSpec(
         locale="en_US",
         deterministic=deterministic,
@@ -76,8 +77,7 @@ class TestMg1S4RegistryIntegration:
         value = adapter.generate(provider, spec=_spec())
         validator = _VALIDATOR_BY_PROVIDER[provider]
         assert validator(value), (
-            f"{provider} via default registry produced non-valid "
-            f"output {value!r}"
+            f"{provider} via default registry produced non-valid output {value!r}"
         )
 
     @pytest.mark.parametrize("provider", _NEW_PROVIDERS_MG1_S4)
@@ -89,8 +89,7 @@ class TestMg1S4RegistryIntegration:
         value = adapter.generate(provider, spec=spec, source_value="seed_input")
         validator = _VALIDATOR_BY_PROVIDER[provider]
         assert validator(value), (
-            f"{provider} deterministic-via-registry produced non-valid "
-            f"output {value!r}"
+            f"{provider} deterministic-via-registry produced non-valid output {value!r}"
         )
 
 

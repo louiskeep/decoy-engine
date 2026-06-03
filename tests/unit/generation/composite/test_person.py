@@ -14,7 +14,6 @@ from __future__ import annotations
 import datetime
 
 import pandas as pd
-import pytest
 
 from decoy_engine.generation.composite._person import CompositePerson
 from decoy_engine.providers_v2._adapter import ProviderSpec
@@ -39,18 +38,14 @@ def _make(pool_size: int = 200) -> CompositePerson:
 class TestOutputs:
     def test_person_4_outputs_match_output_columns(self):
         c = _make()
-        out = c.generate_bundle(
-            _spec(), 3, source=pd.Series(["a", "b", "c"]), deterministic=True
-        )
+        out = c.generate_bundle(_spec(), 3, source=pd.Series(["a", "b", "c"]), deterministic=True)
         assert set(out.keys()) == {"first_name", "last_name", "email", "dob"}
         for k in out:
             assert len(out[k]) == 3
 
     def test_person_email_matches_first_dot_last_at_domain(self):
         c = _make()
-        out = c.generate_bundle(
-            _spec(), 1, source=pd.Series(["alice"]), deterministic=True
-        )
+        out = c.generate_bundle(_spec(), 1, source=pd.Series(["alice"]), deterministic=True)
         first = str(out["first_name"].iloc[0]).lower()
         last = str(out["last_name"].iloc[0]).lower()
         email = out["email"].iloc[0]
@@ -71,9 +66,7 @@ class TestOutputs:
 
     def test_person_dob_drawn_from_faker_date_pool(self):
         c = _make()
-        out = c.generate_bundle(
-            _spec(), 3, source=pd.Series(["a", "b", "c"]), deterministic=True
-        )
+        out = c.generate_bundle(_spec(), 3, source=pd.Series(["a", "b", "c"]), deterministic=True)
         # All non-null dobs are real date objects (faker.date_of_birth -> datetime.date).
         for d in out["dob"]:
             assert isinstance(d, datetime.date)

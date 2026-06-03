@@ -46,63 +46,105 @@ def _base_config_with_target(target: dict[str, Any]) -> dict[str, Any]:
 
 class TestCloudTargetSchema:
     def test_target_descriptor_accepts_s3_variant(self):
-        cfg = _base_config_with_target({
-            "type": "s3", "format": "csv",
-            "bucket": "my-bucket", "key": "out/customers.csv",
-        })
+        cfg = _base_config_with_target(
+            {
+                "type": "s3",
+                "format": "csv",
+                "bucket": "my-bucket",
+                "key": "out/customers.csv",
+            }
+        )
         PipelineConfig.model_validate(cfg)
 
     def test_target_descriptor_accepts_gcs_variant(self):
-        cfg = _base_config_with_target({
-            "type": "gcs", "format": "parquet",
-            "bucket": "my-bucket", "object": "out/customers.parquet",
-        })
+        cfg = _base_config_with_target(
+            {
+                "type": "gcs",
+                "format": "parquet",
+                "bucket": "my-bucket",
+                "object": "out/customers.parquet",
+            }
+        )
         PipelineConfig.model_validate(cfg)
 
     def test_target_descriptor_rejects_unknown_type(self):
-        cfg = _base_config_with_target({
-            "type": "sftp", "format": "csv",
-            "host": "h", "path": "/x",
-        })
+        cfg = _base_config_with_target(
+            {
+                "type": "sftp",
+                "format": "csv",
+                "host": "h",
+                "path": "/x",
+            }
+        )
         with pytest.raises(Exception) as exc:
             PipelineConfig.model_validate(cfg)
         assert "sftp" in str(exc.value).lower() or "discriminator" in str(exc.value).lower()
 
     def test_s3_target_credentials_ref_optional(self):
-        cfg_no_creds = _base_config_with_target({
-            "type": "s3", "format": "csv", "bucket": "b", "key": "k",
-        })
+        cfg_no_creds = _base_config_with_target(
+            {
+                "type": "s3",
+                "format": "csv",
+                "bucket": "b",
+                "key": "k",
+            }
+        )
         PipelineConfig.model_validate(cfg_no_creds)
 
-        cfg_with_creds = _base_config_with_target({
-            "type": "s3", "format": "csv", "bucket": "b", "key": "k",
-            "credentials_ref": "aws-prod-writeonly",
-        })
+        cfg_with_creds = _base_config_with_target(
+            {
+                "type": "s3",
+                "format": "csv",
+                "bucket": "b",
+                "key": "k",
+                "credentials_ref": "aws-prod-writeonly",
+            }
+        )
         PipelineConfig.model_validate(cfg_with_creds)
 
     def test_gcs_target_credentials_ref_optional(self):
-        cfg_no_creds = _base_config_with_target({
-            "type": "gcs", "format": "csv", "bucket": "b", "object": "o",
-        })
+        cfg_no_creds = _base_config_with_target(
+            {
+                "type": "gcs",
+                "format": "csv",
+                "bucket": "b",
+                "object": "o",
+            }
+        )
         PipelineConfig.model_validate(cfg_no_creds)
 
-        cfg_with_creds = _base_config_with_target({
-            "type": "gcs", "format": "csv", "bucket": "b", "object": "o",
-            "credentials_ref": "gcp-prod-writeonly",
-        })
+        cfg_with_creds = _base_config_with_target(
+            {
+                "type": "gcs",
+                "format": "csv",
+                "bucket": "b",
+                "object": "o",
+                "credentials_ref": "gcp-prod-writeonly",
+            }
+        )
         PipelineConfig.model_validate(cfg_with_creds)
 
     def test_s3_target_rejects_empty_bucket(self):
-        cfg = _base_config_with_target({
-            "type": "s3", "format": "csv", "bucket": "", "key": "k",
-        })
+        cfg = _base_config_with_target(
+            {
+                "type": "s3",
+                "format": "csv",
+                "bucket": "",
+                "key": "k",
+            }
+        )
         with pytest.raises(Exception):
             PipelineConfig.model_validate(cfg)
 
     def test_s3_target_rejects_extra_field(self):
-        cfg = _base_config_with_target({
-            "type": "s3", "format": "csv", "bucket": "b", "key": "k",
-            "session_token": "leaked-secret",
-        })
+        cfg = _base_config_with_target(
+            {
+                "type": "s3",
+                "format": "csv",
+                "bucket": "b",
+                "key": "k",
+                "session_token": "leaked-secret",
+            }
+        )
         with pytest.raises(Exception):
             PipelineConfig.model_validate(cfg)

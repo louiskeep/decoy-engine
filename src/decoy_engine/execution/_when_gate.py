@@ -52,7 +52,7 @@ def _eval_predicate(
     pdf: pd.DataFrame,
     expression: str,
     strategy: str,
-) -> "pd.Series[bool]":
+) -> pd.Series[bool]:
     """Shared numexpr-pinned, scope-clamped predicate eval.
 
     Returns the boolean mask Series. Raises `StrategyError` with one
@@ -76,10 +76,7 @@ def _eval_predicate(
         raise StrategyError(
             code="numexpr_required",
             strategy=strategy,
-            message=(
-                "when: requires numexpr; install with: "
-                "pip install numexpr"
-            ),
+            message=("when: requires numexpr; install with: pip install numexpr"),
         ) from exc
     except Exception as exc:
         # L2 close (Dennis MG-3 gate, 2026-05-31): keep the original
@@ -117,12 +114,12 @@ def _eval_predicate(
 
 
 def run_with_when_gate(
-    handler: "StrategyHandler",
+    handler: StrategyHandler,
     df: pd.DataFrame,
     column: str,
-    plan: "ColumnSeed",
-    ctx: "StrategyContext",
-) -> tuple[pd.DataFrame, list["QualityWarning"]]:
+    plan: ColumnSeed,
+    ctx: StrategyContext,
+) -> tuple[pd.DataFrame, list[QualityWarning]]:
     """Invoke `handler.run(...)` directly when `plan.when` is None.
 
     When `plan.when` is set, evaluate the predicate on `df`, run the
@@ -153,11 +150,11 @@ def run_with_when_gate(
 
 def run_with_when_gate_polars(
     handler: Any,
-    frame: "pl.DataFrame",
+    frame: pl.DataFrame,
     column: str,
-    plan: "ColumnSeed",
-    ctx: "StrategyContext",
-) -> "tuple[pl.DataFrame, list[QualityWarning]]":
+    plan: ColumnSeed,
+    ctx: StrategyContext,
+) -> tuple[pl.DataFrame, list[QualityWarning]]:
     """Polars-frame counterpart of `run_with_when_gate`.
 
     For the predicate eval we hand the polars frame to pandas (the

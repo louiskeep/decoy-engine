@@ -429,15 +429,9 @@ def test_walks_gen_f2_pk_helper_iterates_in_sorted_order():
     of construction order."""
     from decoy_engine.walks.cross_file import _pk_table_for_id_column
 
-    a = _pk_table_for_id_column(
-        "customer_id", {"customer_archive", "customers", "zeta"}
-    )
-    b = _pk_table_for_id_column(
-        "customer_id", {"zeta", "customers", "customer_archive"}
-    )
-    c = _pk_table_for_id_column(
-        "customer_id", ["zeta", "customer_archive", "customers"]
-    )
+    a = _pk_table_for_id_column("customer_id", {"customer_archive", "customers", "zeta"})
+    b = _pk_table_for_id_column("customer_id", {"zeta", "customers", "customer_archive"})
+    c = _pk_table_for_id_column("customer_id", ["zeta", "customer_archive", "customers"])
     assert a == b == c, (
         f"QA walks/generators F2: _pk_table_for_id_column returned "
         f"{a!r} vs {b!r} vs {c!r}; iteration order leaked through."

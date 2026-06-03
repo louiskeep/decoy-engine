@@ -25,7 +25,9 @@ from decoy_engine.relationships._namespace import (
 )
 
 
-def _rel(parent_t: str, parent_c: str, child_t: str, child_c: str, *, ns: str | None = None) -> Relationship:
+def _rel(
+    parent_t: str, parent_c: str, child_t: str, child_c: str, *, ns: str | None = None
+) -> Relationship:
     return Relationship(
         parent_table=parent_t,
         parent_columns=(parent_c,),
@@ -125,9 +127,7 @@ class TestQA8F2NamespaceRegistryIndex:
         """Constructing NamespaceRegistry(bindings=...) without an
         explicit _index still gets fast lookups: the dataclass
         __post_init__ rebuilds the index from bindings."""
-        bindings = (
-            NamespaceBinding(namespace="ns_a", declared_by=(("t1", ("c1",)),)),
-        )
+        bindings = (NamespaceBinding(namespace="ns_a", declared_by=(("t1", ("c1",)),)),)
         reg = NamespaceRegistry(bindings=bindings)
         assert reg._index == {("t1", ("c1",)): "ns_a"}
 

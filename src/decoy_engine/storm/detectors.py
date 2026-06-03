@@ -204,8 +204,7 @@ def _hint(terms: list[str]) -> re.Pattern[str]:
 from decoy_engine.storm.name_hints.loader import load_name_hint_terms
 
 _NAME_HINTS: dict[str, re.Pattern[str]] = {
-    det_id: _hint(terms)
-    for det_id, terms in load_name_hint_terms().items()
+    det_id: _hint(terms) for det_id, terms in load_name_hint_terms().items()
 }
 
 
@@ -226,7 +225,8 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 
 _NAME_HINT_EXTRAS: ContextVar[dict[str, re.Pattern[str]] | None] = ContextVar(
-    "_NAME_HINT_EXTRAS", default=None,
+    "_NAME_HINT_EXTRAS",
+    default=None,
 )
 
 
@@ -390,7 +390,7 @@ _ADDRESS_RE = re.compile(
 # date_shift strategy can pass directly to dt.strftime().
 
 
-def _variant(label: str) -> tuple[str, "re.Pattern[str]"]:
+def _variant(label: str) -> tuple[str, re.Pattern[str]]:
     """F-8 fix: derive the compiled regex from the label so the two cannot
     drift. Used by the regex-style variants where ``label == regex_source``.
     The date variants below intentionally pass an independent label
@@ -1204,7 +1204,7 @@ class Span:
 # unambiguous PII inside free text" — adding name-hint-only detectors here
 # would shred legitimate prose. Customers needing those detectors in text
 # pass them via the `custom` kwarg with a tighter pattern.
-_SPAN_DETECTORS: "dict[str, tuple[re.Pattern[str], Callable[[str], bool] | None]]" = {
+_SPAN_DETECTORS: dict[str, tuple[re.Pattern[str], Callable[[str], bool] | None]] = {
     "email": (_EMAIL_RE, None),
     "ssn": (_SSN_RE, None),
     "us_phone": (_US_PHONE_RE, None),
@@ -1220,10 +1220,10 @@ _SPAN_DETECTORS: "dict[str, tuple[re.Pattern[str], Callable[[str], bool] | None]
 
 def iter_spans(
     text: str,
-    detector_ids: "list[str] | None" = None,
+    detector_ids: list[str] | None = None,
     *,
-    custom: "list[dict] | None" = None,
-) -> "list[Span]":
+    custom: list[dict] | None = None,
+) -> list[Span]:
     """Yield non-overlapping PII spans found in ``text``.
 
     ``detector_ids`` selects which built-in detectors run; ``None`` runs every

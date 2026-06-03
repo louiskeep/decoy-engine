@@ -45,6 +45,7 @@ class TestFPEKeyResolutionFailureRaises:
 
     def test_column_key_returns_bytes_when_derive_key_succeeds(self):
         """Normal path: a working derive_key returns its bytes through."""
+
         def good_derive_key(namespace: str) -> bytes:
             return b"x" * 32
 

@@ -15,7 +15,6 @@ Source: docs/v2/sprints/pre-pilot/pv-2-perf-budgets.md.
 
 from __future__ import annotations
 
-import json
 import time
 import tracemalloc
 
@@ -27,7 +26,6 @@ from decoy_engine.execution._strategies._hash import HashStrategyHandler
 from decoy_engine.execution._strategies._nested import NestedStrategyHandler
 from decoy_engine.execution._strategies._text_redact import TextRedactHandler
 from decoy_engine.plan._types import ColumnSeed
-
 
 # Per-cell budgets are calibrated 2x the observed dev-box wall-clock
 # at PV-2 implementation time (R6 lock #6 headroom factor). Revisit
@@ -90,8 +88,7 @@ def test_text_redact_throughput_10k_rows_under_5s():
     )
     # Loose RSS budget: 200 MiB peak for the 10k-row workload.
     assert peak_bytes < 200 * 1024 * 1024, (
-        f"text_redact 10k rows peak RSS {peak_bytes / (1024*1024):.1f} MiB; "
-        f"budget 200 MiB."
+        f"text_redact 10k rows peak RSS {peak_bytes / (1024 * 1024):.1f} MiB; budget 200 MiB."
     )
 
 
@@ -127,12 +124,9 @@ def test_nested_throughput_1k_rows_under_8s():
     tracemalloc.stop()
 
     assert len(out) == 1_000
-    assert elapsed_s < 8.0, (
-        f"nested 1k rows took {elapsed_s:.2f}s; budget 8.0s."
-    )
+    assert elapsed_s < 8.0, f"nested 1k rows took {elapsed_s:.2f}s; budget 8.0s."
     assert peak_bytes < 100 * 1024 * 1024, (
-        f"nested 1k rows peak RSS {peak_bytes / (1024*1024):.1f} MiB; "
-        f"budget 100 MiB."
+        f"nested 1k rows peak RSS {peak_bytes / (1024 * 1024):.1f} MiB; budget 100 MiB."
     )
 
 
@@ -173,9 +167,7 @@ def test_hash_throughput_10k_rows_under_2s():
     tracemalloc.stop()
 
     assert len(out) == 10_000
-    assert elapsed_s < 2.0, (
-        f"hash 10k rows took {elapsed_s:.2f}s; budget 2.0s."
-    )
+    assert elapsed_s < 2.0, f"hash 10k rows took {elapsed_s:.2f}s; budget 2.0s."
     assert peak_bytes < 100 * 1024 * 1024
 
 
@@ -209,7 +201,5 @@ def test_categorical_throughput_10k_rows_under_1s():
     tracemalloc.stop()
 
     assert len(out) == 10_000
-    assert elapsed_s < 1.0, (
-        f"categorical 10k rows took {elapsed_s:.2f}s; budget 1.0s."
-    )
+    assert elapsed_s < 1.0, f"categorical 10k rows took {elapsed_s:.2f}s; budget 1.0s."
     assert peak_bytes < 100 * 1024 * 1024

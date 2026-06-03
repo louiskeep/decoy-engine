@@ -50,10 +50,8 @@ class FormulaStrategy(BaseMaskingStrategy):
         # across runs (deterministic), but two different formulas in
         # the same job no longer share module-global RNG state.
         col_name = rule.get("column", "unnamed")
-        seed_material = f"{col_name}|{expr}".encode("utf-8")
+        seed_material = f"{col_name}|{expr}".encode()
         formula_seed = int(hashlib.sha256(seed_material).hexdigest()[:16], 16)
         rng = random.Random(formula_seed)
         scope = make_mask_globals(rng)
-        return column.apply(
-            lambda v: v if pd.isna(v) else safe_eval(expr, scope, {"value": v})
-        )
+        return column.apply(lambda v: v if pd.isna(v) else safe_eval(expr, scope, {"value": v}))

@@ -267,6 +267,7 @@ class TestSFTPSourceBehavior:
             class _FakeBadHostKey(paramiko.BadHostKeyException):
                 def __init__(self):
                     pass
+
             exc = _FakeBadHostKey()
         wrapped = _wrap_sftp_error(exc)
         assert isinstance(wrapped, _Permanent), (

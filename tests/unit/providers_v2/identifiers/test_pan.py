@@ -20,11 +20,12 @@ from decoy_engine.providers_v2.identifiers._pan import (
     generate_random,
 )
 
-
 _SEED = (0x0123456789).to_bytes(8, "big")
 
 
-def _spec(*, deterministic: bool = False, namespace: str | None = None, seed: bytes | None = None) -> ProviderSpec:
+def _spec(
+    *, deterministic: bool = False, namespace: str | None = None, seed: bytes | None = None
+) -> ProviderSpec:
     """Shorthand for the test specs. Deterministic mode requires
     namespace + seed per ProviderSpec.__post_init__."""
     return ProviderSpec(
@@ -47,7 +48,7 @@ class TestLuhnValidator:
         assert PanValidator.is_valid("5555555555554444")  # Mastercard test
 
     def test_rejects_wrong_length(self):
-        assert not PanValidator.is_valid("411111111111111")   # 15 digits
+        assert not PanValidator.is_valid("411111111111111")  # 15 digits
         assert not PanValidator.is_valid("41111111111111112")  # 17 digits
         assert not PanValidator.is_valid("")
 
@@ -75,8 +76,7 @@ class TestPanDomain:
             b = bytes([seed_byte] * 32)
             pan = domain.from_bytes(b)
             assert _is_valid_pan(pan), (
-                f"PanDomain.from_bytes returned non-Luhn-valid {pan!r} "
-                f"for byte seed {seed_byte!r}."
+                f"PanDomain.from_bytes returned non-Luhn-valid {pan!r} for byte seed {seed_byte!r}."
             )
 
     def test_from_bytes_deterministic(self):
@@ -88,6 +88,7 @@ class TestPanDomain:
     def test_from_bytes_wrong_length_raises(self):
         domain = PanDomain()
         from decoy_engine.providers_v2.identifiers._errors import IdentifierError
+
         with pytest.raises(IdentifierError):
             domain.from_bytes(b"x" * 16)
 

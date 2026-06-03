@@ -213,8 +213,12 @@ class TestPoolSamplerNonDeterministic:
         source = pd.Series(["a", "b", "c", "d", "e"])
         with pytest.raises(GenerationError) as excinfo:
             sampler.sample(
-                pool, n=5, mode=CardinalityMode.UNIQUE, seed=_SEED,
-                source=source, namespace="ns",
+                pool,
+                n=5,
+                mode=CardinalityMode.UNIQUE,
+                seed=_SEED,
+                source=source,
+                namespace="ns",
                 deterministic=True,
             )
         assert excinfo.value.code == "deterministic_mode_unsupported_cardinality"
@@ -233,8 +237,12 @@ class TestPoolSamplerNonDeterministic:
         source = pd.Series(["a", "b", "c"])
         with pytest.raises(GenerationError) as excinfo:
             sampler.sample_bundle(
-                pool, n=3, mode=CardinalityMode.UNIQUE, seed=_SEED,
-                source=source, namespace="loc",
+                pool,
+                n=3,
+                mode=CardinalityMode.UNIQUE,
+                seed=_SEED,
+                source=source,
+                namespace="loc",
                 deterministic=True,
             )
         assert excinfo.value.code == "deterministic_mode_unsupported_cardinality"

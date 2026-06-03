@@ -46,8 +46,12 @@ class TestQA1H6RngIsolation:
         """H6: a third party seeding module-global random.* BETWEEN
         ColumnGenerator constructions does not change either
         generator's output. Pre-fix this pattern was non-deterministic."""
-        col = {"name": "cat", "type": "categorical",
-               "categories": ["a", "b", "c"], "weights": [0.5, 0.3, 0.2]}
+        col = {
+            "name": "cat",
+            "type": "categorical",
+            "categories": ["a", "b", "c"],
+            "weights": [0.5, 0.3, 0.2],
+        }
         cg_a = ColumnGenerator(seed=42)
         out_a = cg_a.generate_column(10, col, "t", {})
         # Pollute module-global random state between calls.
@@ -96,12 +100,16 @@ class TestQA1M17NullSeedPerColumn:
         must NOT share a null/non-null decision. Pre-fix only the name
         flowed into the null seed."""
         col_a = {
-            "name": "first_name", "type": "faker",
-            "faker_type": "first_name", "null_probability": 0.5,
+            "name": "first_name",
+            "type": "faker",
+            "faker_type": "first_name",
+            "null_probability": 0.5,
         }
         col_b = {
-            "name": "last_name", "type": "faker",
-            "faker_type": "last_name", "null_probability": 0.5,
+            "name": "last_name",
+            "type": "faker",
+            "faker_type": "last_name",
+            "null_probability": 0.5,
         }
         cg = ColumnGenerator(seed=42)
         out_a = cg.generate_column(100, col_a, "t", {}).tolist()
@@ -118,13 +126,16 @@ class TestQA1M18DeriveKeyRaises:
         """M18: a failing derive_key in synthetic_column_seed must
         raise instead of silently falling through to the seed-only
         path."""
+
         def _boom(label):
             raise RuntimeError("simulated key resolver failure")
 
         col = {"name": "x", "type": "faker", "faker_type": "first_name"}
         with pytest.raises(RuntimeError, match="derive_key failed"):
             synthetic_column_seed(
-                derive_key=_boom, column_config=col, fallback_seed=42,
+                derive_key=_boom,
+                column_config=col,
+                fallback_seed=42,
             )
 
 
@@ -133,7 +144,8 @@ class TestQA1M19ReferenceTableRaises:
         """M19: a missing reference_table must raise ValueError, not
         return REF_TABLE_NOT_FOUND_N sentinel strings."""
         col = {
-            "name": "fk", "type": "reference",
+            "name": "fk",
+            "type": "reference",
             "reference_table": "nonexistent",
             "reference_column": "id",
         }
@@ -145,7 +157,8 @@ class TestQA1M19ReferenceTableRaises:
         """M19: a missing reference_column must raise ValueError, not
         return REF_COLUMN_NOT_FOUND_N sentinel strings."""
         col = {
-            "name": "fk", "type": "reference",
+            "name": "fk",
+            "type": "reference",
             "reference_table": "parent",
             "reference_column": "nonexistent",
         }
@@ -345,7 +358,7 @@ class TestQaWalksGenF3VectorisedNullInjection:
         assert 0.4 <= null_count / 1000 <= 0.6, (
             f"QA walks/generators F3: null fraction should converge to "
             f"null_probability=0.5; got {null_count}/{1000} = "
-            f"{null_count/1000:.3f}"
+            f"{null_count / 1000:.3f}"
         )
 
     def test_deterministic_null_pattern_same_seed_same_pattern(self):
@@ -394,10 +407,7 @@ class TestFormulaHashKeyedMigration:
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always", DeprecationWarning)
             result = cg.generate_column(50, col, "t", {})
-        depr_warnings = [
-            w for w in caught
-            if issubclass(w.category, DeprecationWarning)
-        ]
+        depr_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
         assert depr_warnings == [], (
             f"Formula-hash migration: sandbox `hash` leaked "
             f"{len(depr_warnings)} DeprecationWarning(s); migration "

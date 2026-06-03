@@ -17,17 +17,18 @@ from collections import Counter
 import pandas as pd
 import pytest
 
-from decoy_engine.execution._adapter import StrategyContext
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution._strategies._categorical import (
+    _WEIGHTED_CDF_RES,
     CategoricalStrategyHandler,
     _build_cdf,
-    _WEIGHTED_CDF_RES,
 )
 from decoy_engine.plan._types import ColumnSeed
 
 
-def _seed(provider_config: dict, *, deterministic: bool = False, namespace: str | None = "ns") -> ColumnSeed:
+def _seed(
+    provider_config: dict, *, deterministic: bool = False, namespace: str | None = "ns"
+) -> ColumnSeed:
     return ColumnSeed(
         namespace=namespace,
         strategy="categorical",
@@ -111,12 +112,14 @@ class TestV1ByteIdentity:
         df = pd.DataFrame({"col": ["a", "b", "c", "d", "e"]})
         handler = CategoricalStrategyHandler()
         out1, _ = handler.run(
-            df.copy(), "col",
+            df.copy(),
+            "col",
             _seed({"categories": ["X", "Y"]}, deterministic=True),
             _Ctx(),
         )
         out2, _ = handler.run(
-            df.copy(), "col",
+            df.copy(),
+            "col",
             _seed({"categories": ["X", "Y"]}, deterministic=True),
             _Ctx(),
         )
@@ -135,7 +138,8 @@ class TestWeightedDeterministic:
         handler = CategoricalStrategyHandler()
         with pytest.raises(StrategyError, match="weights_shape"):
             handler.run(
-                df.copy(), "col",
+                df.copy(),
+                "col",
                 _seed(
                     {"categories": ["X", "Y", "Z"], "weights": [0.5, 0.5]},
                     deterministic=True,
@@ -148,7 +152,8 @@ class TestWeightedDeterministic:
         df = pd.DataFrame({"col": ["alice"]})
         handler = CategoricalStrategyHandler()
         out1, _ = handler.run(
-            df.copy(), "col",
+            df.copy(),
+            "col",
             _seed(
                 {"categories": ["X", "Y", "Z"], "weights": [0.6, 0.3, 0.1]},
                 deterministic=True,
@@ -156,7 +161,8 @@ class TestWeightedDeterministic:
             _Ctx(),
         )
         out2, _ = handler.run(
-            df.copy(), "col",
+            df.copy(),
+            "col",
             _seed(
                 {"categories": ["X", "Y", "Z"], "weights": [0.6, 0.3, 0.1]},
                 deterministic=True,
@@ -173,7 +179,8 @@ class TestWeightedDeterministic:
         df = pd.DataFrame({"col": sources})
         handler = CategoricalStrategyHandler()
         out, _ = handler.run(
-            df.copy(), "col",
+            df.copy(),
+            "col",
             _seed(
                 {"categories": ["X", "Y", "Z"], "weights": [0.6, 0.3, 0.1]},
                 deterministic=True,
@@ -198,7 +205,8 @@ class TestWeightedDeterministic:
         df = pd.DataFrame({"col": sources})
         handler = CategoricalStrategyHandler()
         out, _ = handler.run(
-            df.copy(), "col",
+            df.copy(),
+            "col",
             _seed(
                 {"categories": ["X", "Y", "Z"], "weights": [1.0, 0.0, 1.0]},
                 deterministic=True,
@@ -217,7 +225,8 @@ class TestWeightedRandom:
         df = pd.DataFrame({"col": sources})
         handler = CategoricalStrategyHandler()
         out, _ = handler.run(
-            df.copy(), "col",
+            df.copy(),
+            "col",
             _seed(
                 {"categories": ["X", "Y"], "weights": [0.9, 0.1]},
                 deterministic=False,
@@ -234,7 +243,8 @@ class TestWeightedRandom:
         handler = CategoricalStrategyHandler()
         with pytest.raises(StrategyError, match="nonpositive"):
             handler.run(
-                df.copy(), "col",
+                df.copy(),
+                "col",
                 _seed(
                     {"categories": ["X", "Y"], "weights": [0.0, 0.0]},
                     deterministic=False,
@@ -251,7 +261,8 @@ class TestNullPreservation:
         df = pd.DataFrame({"col": ["a", None, "c"]})
         handler = CategoricalStrategyHandler()
         out, _ = handler.run(
-            df.copy(), "col",
+            df.copy(),
+            "col",
             _seed(
                 {"categories": ["X", "Y"], "weights": [0.5, 0.5]},
                 deterministic=True,

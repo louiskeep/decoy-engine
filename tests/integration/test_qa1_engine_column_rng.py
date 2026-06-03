@@ -24,7 +24,9 @@ import random
 import pandas as pd
 import pytest
 
-from decoy_engine.execution._errors import StrategyError  # noqa: F401  (used by referenced strategies)
+from decoy_engine.execution._errors import (
+    StrategyError,  # noqa: F401  (used by referenced strategies)
+)
 from decoy_engine.generation.pool import (
     CardinalityMode,
     GenerationError,
@@ -32,8 +34,7 @@ from decoy_engine.generation.pool import (
     PoolSampler,
 )
 from decoy_engine.generators.columns import ColumnGenerator
-from decoy_engine.providers_v2 import ProviderSpec, get_default_registry
-
+from decoy_engine.providers_v2 import get_default_registry
 
 _SEED = b"\x00\x00\x00\x00\x00\x00\x00\x2a"  # 42
 
@@ -42,8 +43,12 @@ def test_qa1_h6_no_module_global_pollution_e2e():
     """End-to-end: a third party seeding module-global random.* between
     two pipeline-shaped generator constructions does not change the
     second generator's output."""
-    col = {"name": "cat", "type": "categorical",
-           "categories": ["a", "b", "c"], "weights": [0.5, 0.3, 0.2]}
+    col = {
+        "name": "cat",
+        "type": "categorical",
+        "categories": ["a", "b", "c"],
+        "weights": [0.5, 0.3, 0.2],
+    }
     cg_a = ColumnGenerator(seed=42)
     out_a = cg_a.generate_column(20, col, "t", {}).tolist()
 
@@ -77,8 +82,13 @@ def test_qa1_h9_unique_plus_deterministic_raises_e2e():
     source = pd.Series(["a", "b", "c", "d", "e"])
     with pytest.raises(GenerationError) as excinfo:
         PoolSampler().sample(
-            pool, n=5, mode=CardinalityMode.UNIQUE, seed=_SEED,
-            source=source, namespace="ns", deterministic=True,
+            pool,
+            n=5,
+            mode=CardinalityMode.UNIQUE,
+            seed=_SEED,
+            source=source,
+            namespace="ns",
+            deterministic=True,
         )
     assert excinfo.value.code == "deterministic_mode_unsupported_cardinality"
 
@@ -86,10 +96,18 @@ def test_qa1_h9_unique_plus_deterministic_raises_e2e():
 def test_qa1_m17_two_columns_distinct_null_masks_e2e():
     """End-to-end: two columns with different configs at the same seed
     no longer share a null mask."""
-    col_a = {"name": "first_name", "type": "faker",
-             "faker_type": "first_name", "null_probability": 0.5}
-    col_b = {"name": "last_name", "type": "faker",
-             "faker_type": "last_name", "null_probability": 0.5}
+    col_a = {
+        "name": "first_name",
+        "type": "faker",
+        "faker_type": "first_name",
+        "null_probability": 0.5,
+    }
+    col_b = {
+        "name": "last_name",
+        "type": "faker",
+        "faker_type": "last_name",
+        "null_probability": 0.5,
+    }
     cg = ColumnGenerator(seed=42)
     out_a = cg.generate_column(100, col_a, "t", {}).tolist()
     out_b = cg.generate_column(100, col_b, "t", {}).tolist()
@@ -101,8 +119,12 @@ def test_qa1_m17_two_columns_distinct_null_masks_e2e():
 
 def test_qa1_m19_missing_reference_table_raises_e2e():
     """Missing reference_table no longer returns REF_TABLE_NOT_FOUND_N."""
-    col = {"name": "fk", "type": "reference",
-           "reference_table": "missing", "reference_column": "id"}
+    col = {
+        "name": "fk",
+        "type": "reference",
+        "reference_table": "missing",
+        "reference_column": "id",
+    }
     cg = ColumnGenerator(seed=42)
     with pytest.raises(ValueError, match="reference_table"):
         cg.generate_column(5, col, "t", {})
@@ -111,10 +133,8 @@ def test_qa1_m19_missing_reference_table_raises_e2e():
 def test_qa1_m21_two_formula_columns_independent_rng_e2e():
     """Two formula columns in the same generator: column A's output
     must equal itself regardless of column B running first or second."""
-    col_a = {"name": "rand_a", "type": "formula",
-             "formula": "randint(1, 1000)"}
-    col_b = {"name": "rand_b", "type": "formula",
-             "formula": "randint(1, 1000)"}
+    col_a = {"name": "rand_a", "type": "formula", "formula": "randint(1, 1000)"}
+    col_b = {"name": "rand_b", "type": "formula", "formula": "randint(1, 1000)"}
 
     cg1 = ColumnGenerator(seed=42)
     a_then_b_a = cg1.generate_column(10, col_a, "t", {}).tolist()

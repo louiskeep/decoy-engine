@@ -131,8 +131,7 @@ def _validate_select_only(sql: str) -> None:
         )
     if _QUOTED_PATH_FROM_RE.search(body):
         raise DiscoverySqlError(
-            "FROM clause must reference an identifier or registered view, "
-            "not a quoted path."
+            "FROM clause must reference an identifier or registered view, not a quoted path."
         )
 
 

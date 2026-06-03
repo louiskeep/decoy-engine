@@ -87,6 +87,7 @@ def _detect_format(series: pd.Series) -> str | None:
         return None
     if len(candidates) > 1:
         import warnings as _warnings
+
         _warnings.warn(
             "date_shift._detect_format: column matches multiple formats "
             f"{candidates!r}; using the first ({candidates[0]!r}). Configure "
@@ -200,7 +201,7 @@ class DateShiftStrategy(BaseMaskingStrategy):
         valid_strs = str_values[valid_mask].tolist()
         valid_shifts = [shift_fn(v) for v in valid_strs]
         shifts: list[int | None] = [None] * len(column)
-        for idx, shift in zip(valid_mask.to_numpy().nonzero()[0], valid_shifts):
+        for idx, shift in zip(valid_mask.to_numpy().nonzero()[0], valid_shifts, strict=True):
             shifts[idx] = shift
 
         shifted = parsed + pd.to_timedelta(shifts, unit="D")

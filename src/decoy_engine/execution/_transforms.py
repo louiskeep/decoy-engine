@@ -75,10 +75,7 @@ def _apply_filter(df: pd.DataFrame, op: FilterOp) -> pd.DataFrame:
     except ImportError as exc:
         raise TransformError(
             code="numexpr_required",
-            message=(
-                "transforms require numexpr; install it with: "
-                "pip install numexpr"
-            ),
+            message=("transforms require numexpr; install it with: pip install numexpr"),
         ) from exc
     except Exception as exc:
         raise TransformError(
@@ -115,8 +112,7 @@ def _apply_sort(df: pd.DataFrame, op: SortOp) -> pd.DataFrame:
         raise TransformError(
             code="sort_ascending_length_mismatch",
             message=(
-                f"sort.ascending length {len(ascending)} does not match by length "
-                f"{len(op.by)}"
+                f"sort.ascending length {len(ascending)} does not match by length {len(op.by)}"
             ),
         )
     return df.sort_values(by=op.by, ascending=ascending, kind="stable").reset_index(drop=True)
@@ -152,10 +148,7 @@ def _apply_derive(df: pd.DataFrame, op: DeriveOp) -> pd.DataFrame:
     except ImportError as exc:
         raise TransformError(
             code="numexpr_required",
-            message=(
-                "transforms require numexpr; install it with: "
-                "pip install numexpr"
-            ),
+            message=("transforms require numexpr; install it with: pip install numexpr"),
         ) from exc
     except Exception as exc:
         raise TransformError(

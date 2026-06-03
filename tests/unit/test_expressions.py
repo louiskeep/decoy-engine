@@ -162,17 +162,10 @@ class TestC1Sandbox:
         assert safe_eval("f'Hi {value}'", MASK_GLOBALS, {"value": "x"}) == "Hi x"
 
     def test_re_flags_still_work(self):
-        assert (
-            safe_eval("re.sub(r'a', 'b', 'AAA', flags=re.IGNORECASE)", MASK_GLOBALS, {})
-            == "bbb"
-        )
+        assert safe_eval("re.sub(r'a', 'b', 'AAA', flags=re.IGNORECASE)", MASK_GLOBALS, {}) == "bbb"
 
     def test_re_search_group_index_still_works(self):
-        assert (
-            safe_eval("re.search(r'(\\d+)', 'id-42').group(1)", MASK_GLOBALS, {}) == "42"
-        )
+        assert safe_eval("re.search(r'(\\d+)', 'id-42').group(1)", MASK_GLOBALS, {}) == "42"
 
     def test_value_method_chain_still_works(self):
-        assert (
-            safe_eval("value.strip().upper()", MASK_GLOBALS, {"value": " hi "}) == "HI"
-        )
+        assert safe_eval("value.strip().upper()", MASK_GLOBALS, {"value": " hi "}) == "HI"

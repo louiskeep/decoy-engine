@@ -8,11 +8,11 @@ Acceptance criteria from the sprint plan:
 
 These tests pin all four explicitly.
 """
+
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-import pytest
 
 from decoy_engine.quality.synth_report import (
     SYNTH_REPORT_SCHEMA_VERSION,
@@ -20,17 +20,18 @@ from decoy_engine.quality.synth_report import (
     compute_new_row_synthesis,
 )
 
-
 # ── acceptance: exact-copy reports POOR (fraction ~0) ─────────────────────
 
 
 class TestExactCopyMemorization:
     def test_exact_copy_scores_zero_new_rows(self):
         """The acceptance-critical case: synth == source -> 0 new rows."""
-        source = pd.DataFrame({
-            "a": [1, 2, 3, 4, 5],
-            "b": ["x", "y", "z", "p", "q"],
-        })
+        source = pd.DataFrame(
+            {
+                "a": [1, 2, 3, 4, 5],
+                "b": ["x", "y", "z", "p", "q"],
+            }
+        )
         synth = source.copy()
         result = compute_new_row_synthesis(source, synth)
         assert result["fraction_new"] == 0.0
@@ -196,7 +197,10 @@ class TestAssembleReport:
         r = assemble_synth_report(new_row_synthesis=None)
         joined = " ".join(r["disclaimers"]).lower()
         assert "differential" in joined or "differentially private" in joined
-        assert "not differentially private" in joined or "not make a differential-privacy claim" in joined
+        assert (
+            "not differentially private" in joined
+            or "not make a differential-privacy claim" in joined
+        )
 
     def test_high_fidelity_privacy_warning_present(self):
         """Acceptance: high fidelity does NOT imply low privacy risk."""
@@ -212,6 +216,7 @@ class TestAssembleReport:
     def test_json_serializable(self):
         """The whole report round-trips through JSON cleanly."""
         import json
+
         nrs = compute_new_row_synthesis(
             pd.DataFrame({"a": [1, 2, 3]}),
             pd.DataFrame({"a": [1, 2, 4]}),
@@ -229,6 +234,7 @@ class TestAssembleReport:
 class TestExports:
     def test_quality_package_exports_synth_symbols(self):
         from decoy_engine import quality
+
         assert hasattr(quality, "compute_new_row_synthesis")
         assert hasattr(quality, "assemble_synth_report")
         assert hasattr(quality, "SYNTH_REPORT_SCHEMA_VERSION")
@@ -302,10 +308,7 @@ class TestQa10F13AttacksDisclaimer:
             )
             joined = " ".join(report["disclaimers"])
             assert "DCR" in joined
-            assert (
-                "differential" in joined.lower()
-                or "no differential-privacy" in joined.lower()
-            )
+            assert "differential" in joined.lower() or "no differential-privacy" in joined.lower()
 
 
 class TestQa10F3FipsSha1:

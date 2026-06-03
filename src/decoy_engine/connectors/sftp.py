@@ -66,13 +66,9 @@ def _wrap_sftp_error(exc: Exception) -> Exception:
     # exposure time + burning the retry budget on guaranteed-to-fail
     # auth attempts.
     if isinstance(exc, paramiko.BadHostKeyException):
-        return PermanentError(
-            f"SFTP host key mismatch (possible MITM): {type(exc).__name__}"
-        )
+        return PermanentError(f"SFTP host key mismatch (possible MITM): {type(exc).__name__}")
     if isinstance(exc, paramiko.BadAuthenticationType):
-        return PermanentError(
-            f"SFTP auth method rejected by server: {type(exc).__name__}"
-        )
+        return PermanentError(f"SFTP auth method rejected by server: {type(exc).__name__}")
     if isinstance(exc, paramiko.AuthenticationException):
         return PermanentError(f"SFTP auth failed: {type(exc).__name__}")
     if isinstance(exc, paramiko.SSHException):

@@ -38,20 +38,20 @@ from __future__ import annotations
 
 from decoy_engine.storm.postmask.runner import run_storm_post_mask
 from decoy_engine.storm.postmask.types import (
+    SCHEMA_VERSION,
     FKPreservationFinding,
     PolicyValidationFinding,
     ResidualPIIFinding,
     Severity,
     StormPostMaskReport,
-    SCHEMA_VERSION,
 )
 
 __all__ = [
-    "run_storm_post_mask",
-    "StormPostMaskReport",
-    "ResidualPIIFinding",
+    "SCHEMA_VERSION",
     "FKPreservationFinding",
     "PolicyValidationFinding",
+    "ResidualPIIFinding",
     "Severity",
-    "SCHEMA_VERSION",
+    "StormPostMaskReport",
+    "run_storm_post_mask",
 ]

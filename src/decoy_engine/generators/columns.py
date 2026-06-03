@@ -103,7 +103,9 @@ class ColumnGenerator:
         # formula helpers (now/today/days_from_now/...) return
         # consistent output across runs of the same column on
         # different calendar days.
-        self._reference_date = reference_date if reference_date is not None else pd.Timestamp.utcnow()
+        self._reference_date = (
+            reference_date if reference_date is not None else pd.Timestamp.utcnow()
+        )
 
         # Initialize faker. When an instance-wide default locale is set,
         # bind the shared Faker to that locale so the "no column-level
@@ -497,8 +499,7 @@ class ColumnGenerator:
         snapshot = column_config.get("snapshot")
         if not isinstance(snapshot, dict):
             self.logger.warning(
-                f"distribution column '{column_name}' has no snapshot dict; "
-                "emitting nulls",
+                f"distribution column '{column_name}' has no snapshot dict; emitting nulls",
             )
             return pd.Series([None] * num_rows)
 
@@ -523,8 +524,7 @@ class ColumnGenerator:
             return self._generate_distribution_datetime(num_rows, snapshot, seed)
 
         self.logger.warning(
-            f"distribution column '{column_name}' has unsupported kind {kind!r}; "
-            "emitting nulls",
+            f"distribution column '{column_name}' has unsupported kind {kind!r}; emitting nulls",
         )
         return pd.Series([None] * num_rows)
 
@@ -568,8 +568,7 @@ class ColumnGenerator:
         bin_counts = stats.get("bin_counts") or snapshot.get("bin_counts") or []
         if not bin_edges or not bin_counts:
             self.logger.warning(
-                "distribution numeric snapshot missing bin_edges / bin_counts; "
-                "emitting nulls",
+                "distribution numeric snapshot missing bin_edges / bin_counts; emitting nulls",
             )
             return pd.Series([None] * num_rows)
         # bin_edges has len(bin_counts) + 1 entries by D1a convention.
@@ -587,8 +586,7 @@ class ColumnGenerator:
         total = float(counts.sum())
         if total <= 0:
             self.logger.warning(
-                "distribution numeric snapshot has zero total count; "
-                "emitting nulls",
+                "distribution numeric snapshot has zero total count; emitting nulls",
             )
             return pd.Series([None] * num_rows)
 
@@ -703,8 +701,7 @@ class ColumnGenerator:
         total = float(weights.sum())
         if total <= 0:
             self.logger.warning(
-                "distribution categorical snapshot has zero total weight; "
-                "emitting nulls",
+                "distribution categorical snapshot has zero total weight; emitting nulls",
             )
             return pd.Series([None] * num_rows)
 
@@ -765,14 +762,12 @@ class ColumnGenerator:
 
         if not year_bins:
             self.logger.warning(
-                "distribution datetime snapshot missing year_bins; "
-                "emitting nulls",
+                "distribution datetime snapshot missing year_bins; emitting nulls",
             )
             return pd.Series([pd.NaT] * num_rows, dtype="datetime64[ns]")
         if not min_iso or not max_iso:
             self.logger.warning(
-                "distribution datetime snapshot missing min/max; "
-                "emitting nulls",
+                "distribution datetime snapshot missing min/max; emitting nulls",
             )
             return pd.Series([pd.NaT] * num_rows, dtype="datetime64[ns]")
 
@@ -795,8 +790,7 @@ class ColumnGenerator:
             ts_max = ts_max.tz_convert("UTC").tz_localize(None)
         if ts_max < ts_min:
             self.logger.warning(
-                "distribution datetime snapshot has max < min; "
-                "emitting nulls",
+                "distribution datetime snapshot has max < min; emitting nulls",
             )
             return pd.Series([pd.NaT] * num_rows, dtype="datetime64[ns]")
 
@@ -819,8 +813,7 @@ class ColumnGenerator:
             weights_list.append(wi)
         if not years:
             self.logger.warning(
-                "distribution datetime snapshot has no usable year_bins; "
-                "emitting nulls",
+                "distribution datetime snapshot has no usable year_bins; emitting nulls",
             )
             return pd.Series([pd.NaT] * num_rows, dtype="datetime64[ns]")
 
@@ -828,8 +821,7 @@ class ColumnGenerator:
         total = float(weights.sum())
         if total <= 0:
             self.logger.warning(
-                "distribution datetime snapshot has zero total year count; "
-                "emitting nulls",
+                "distribution datetime snapshot has zero total year count; emitting nulls",
             )
             return pd.Series([pd.NaT] * num_rows, dtype="datetime64[ns]")
 
@@ -859,10 +851,7 @@ class ColumnGenerator:
         # Build per-row year-start + year-end timestamps.
         year_starts = pd.to_datetime([f"{y}-01-01" for y in years_arr])
         year_ends = pd.to_datetime(
-            [
-                "9999-12-31" if y >= 9999 else f"{y + 1}-01-01"
-                for y in years_arr
-            ]
+            ["9999-12-31" if y >= 9999 else f"{y + 1}-01-01" for y in years_arr]
         )  # exclusive
         # Clip to the snapshot's actual min/max.
         lo_ns = np.maximum(year_starts.view("int64"), ts_min.value)
@@ -1231,9 +1220,7 @@ class ColumnGenerator:
                 result = safe_eval(formula, BASE_GLOBALS, scope)
                 values.append(result)
             except Exception as exc:
-                self.logger.warning(
-                    f"Formula column {col_name!r} row {i} eval error: {exc}"
-                )
+                self.logger.warning(f"Formula column {col_name!r} row {i} eval error: {exc}")
                 values.append(None)
 
         return pd.Series(values, dtype=object)
@@ -1291,9 +1278,7 @@ class ColumnGenerator:
 
         return pd.Series(values)
 
-    def _formula_scope(
-        self, local_seed: int, rng: random.Random | None = None
-    ) -> dict[str, Any]:
+    def _formula_scope(self, local_seed: int, rng: random.Random | None = None) -> dict[str, Any]:
         """Build the names available inside a formula eval. Shared between
         the inline path here and the post-pass in
         ``DataGenerator._process_referenced_formulas`` so users get the
@@ -1351,15 +1336,13 @@ class ColumnGenerator:
             # Wall-clock helpers bound to reference_date (H7).
             "now": lambda fmt="%Y-%m-%d": ref_date.strftime(fmt),
             "today": lambda fmt="%Y-%m-%d": ref_date.strftime(fmt),
-            "days_from_now": lambda days: (ref_date + pd.Timedelta(days=days)).strftime(
+            "days_from_now": lambda days: (ref_date + pd.Timedelta(days=days)).strftime("%Y-%m-%d"),
+            "months_from_now": lambda months: (ref_date + pd.DateOffset(months=months)).strftime(
                 "%Y-%m-%d"
             ),
-            "months_from_now": lambda months: (
-                ref_date + pd.DateOffset(months=months)
-            ).strftime("%Y-%m-%d"),
-            "years_from_now": lambda years: (
-                ref_date + pd.DateOffset(years=years)
-            ).strftime("%Y-%m-%d"),
+            "years_from_now": lambda years: (ref_date + pd.DateOffset(years=years)).strftime(
+                "%Y-%m-%d"
+            ),
             "format_date": lambda date_obj, fmt="%Y-%m-%d": (
                 date_obj.strftime(fmt) if hasattr(date_obj, "strftime") else str(date_obj)
             ),

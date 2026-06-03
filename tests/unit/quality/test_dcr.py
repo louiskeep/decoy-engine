@@ -11,19 +11,18 @@ source rows should score `memorizing`; a synth drawn from the
 same distribution as both source and holdout should score
 `generalizing`.
 """
+
 from __future__ import annotations
 
 import json
 
 import numpy as np
 import pandas as pd
-import pytest
 
 from decoy_engine.quality.synth_report import (
     assemble_synth_report,
     compute_dcr,
 )
-
 
 # ── core: synth-to-source distances ───────────────────────────────────────
 
@@ -31,10 +30,12 @@ from decoy_engine.quality.synth_report import (
 class TestSynthToSource:
     def test_exact_copy_has_zero_dcr(self):
         """A synth row that exactly matches a source row has DCR=0."""
-        source = pd.DataFrame({
-            "a": [1.0, 2.0, 3.0, 4.0, 5.0],
-            "b": ["x", "y", "z", "p", "q"],
-        })
+        source = pd.DataFrame(
+            {
+                "a": [1.0, 2.0, 3.0, 4.0, 5.0],
+                "b": ["x", "y", "z", "p", "q"],
+            }
+        )
         synth = source.copy()
         result = compute_dcr(source, synth)
         assert result["synth_to_source"]["median"] == 0.0
@@ -59,8 +60,13 @@ class TestSynthToSource:
         # Only aggregate keys; no list-of-floats.
         block = result["synth_to_source"]
         assert set(block.keys()) >= {
-            "median", "p05", "p25", "p75", "p95",
-            "rows_sampled", "source_rows_sampled",
+            "median",
+            "p05",
+            "p25",
+            "p75",
+            "p95",
+            "rows_sampled",
+            "source_rows_sampled",
         }
         # The dict contains no per-row arrays anywhere.
         for value in block.values():
@@ -142,10 +148,12 @@ class TestGowerMixedTypes:
     def test_mixed_numeric_and_categorical(self):
         """Two-column frame: per-row distance = mean of per-column
         distances."""
-        source = pd.DataFrame({
-            "n": [0.0, 1.0],
-            "c": ["A", "B"],
-        })
+        source = pd.DataFrame(
+            {
+                "n": [0.0, 1.0],
+                "c": ["A", "B"],
+            }
+        )
         # Synth row: n=0 (matches first source row exactly), c="X"
         # (mismatch on both). So distance to source[0] = (0 + 1)/2 = 0.5
         # distance to source[1] = (1 + 1)/2 = 1.0. min = 0.5.
@@ -163,10 +171,12 @@ class TestGowerMixedTypes:
 
     def test_numeric_out_of_range_clipped_to_one(self):
         """A synth far past source range can't dominate other columns."""
-        source = pd.DataFrame({
-            "n": [0.0, 1.0, 2.0],   # range = 2
-            "c": ["A", "B", "C"],
-        })
+        source = pd.DataFrame(
+            {
+                "n": [0.0, 1.0, 2.0],  # range = 2
+                "c": ["A", "B", "C"],
+            }
+        )
         # n=1000 -> raw distance = 1000/2 = 500, clipped to 1.
         # c="C" -> matches source[2] (distance 0).
         # row distance = (1 + 0) / 2 = 0.5

@@ -284,8 +284,9 @@ class TestV2BehaviorRegressionPinsS11:
             job_seed=(0xC0FFEE).to_bytes(8, "big"),
         )
 
-    def _column_seed(self, *, namespace, strategy, provider=None, deterministic=True,
-                     cardinality_mode="reuse"):
+    def _column_seed(
+        self, *, namespace, strategy, provider=None, deterministic=True, cardinality_mode="reuse"
+    ):
         from decoy_engine.plan._types import ColumnSeed
 
         return ColumnSeed(
@@ -347,7 +348,9 @@ class TestV2BehaviorRegressionPinsS11:
 
         df = pd.DataFrame({"name": [f"user_{i}" for i in range(100)]})
         plan = self._column_seed(
-            namespace="name_ns", strategy="faker", provider="person_name",
+            namespace="name_ns",
+            strategy="faker",
+            provider="person_name",
         )
         FakerStrategyHandler().run(df, "name", plan, self._ctx())
         assert len(calls) == 1, (
@@ -412,8 +415,9 @@ class TestV2BehaviorRegressionPinsS11:
         _hash.HashStrategyHandler().run(df_a, "a", plan_a, self._ctx())
 
         df_b = pd.DataFrame({"b": ["2020-01-01", "2021-06-15"]})
-        plan_b = self._column_seed(namespace="B_ns", strategy="date_shift",
-                                    cardinality_mode="reuse")
+        plan_b = self._column_seed(
+            namespace="B_ns", strategy="date_shift", cardinality_mode="reuse"
+        )
         _date_shift.DateShiftStrategyHandler().run(df_b, "b", plan_b, self._ctx())
 
         hash_namespaces = {ns for kind, ns in recorded if kind == "hash"}

@@ -54,7 +54,9 @@ def run_cardinality(ctx: ScanContext) -> ScanOutcome:
                 warnings.append(
                     QualityWarning(
                         code="cardinality_match_deviation",
-                        provider=seed.provider,
+                        # Scalar-transform columns carry no provider; the
+                        # warning records the column, so "" is the empty marker.
+                        provider=seed.provider or "",
                         column=col_name,
                         detail={
                             "table": table_name,

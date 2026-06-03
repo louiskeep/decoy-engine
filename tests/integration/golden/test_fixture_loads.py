@@ -19,6 +19,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 import yaml
+
 from tests.fixtures.golden._manifest_schema import FixtureManifest
 
 GOLDEN_ROOT = Path(__file__).resolve().parent.parent.parent / "fixtures" / "golden"

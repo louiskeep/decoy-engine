@@ -179,6 +179,4 @@ def get_tier(name: str) -> TierSpec:
     try:
         return TIERS[name]
     except KeyError as exc:
-        raise KeyError(
-            f"unknown tier {name!r}; valid tiers: {sorted(TIERS)}"
-        ) from exc
+        raise KeyError(f"unknown tier {name!r}; valid tiers: {sorted(TIERS)}") from exc

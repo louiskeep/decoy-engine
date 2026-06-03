@@ -125,15 +125,15 @@ _DEFAULT_STRATEGY_EXPECTATIONS: dict[str, float] = {
 # `policy_config["shape_strategy_expectations"]` the same way the
 # value-identity table is overridden today.
 _DEFAULT_SHAPE_STRATEGY_EXPECTATIONS: dict[str, float] = {
-    "identity": 1.00,   # no change at all
-    "hash": 0.95,       # 1:1 transform preserves sorted freq vector exactly
-    "shuffle": 1.00,    # same value set + same frequencies
+    "identity": 1.00,  # no change at all
+    "hash": 0.95,  # 1:1 transform preserves sorted freq vector exactly
+    "shuffle": 1.00,  # same value set + same frequencies
     "bucketize": 0.30,  # collapses many source bins into one bucket; shape DOES change
-    "date_shift": 0.80, # subject-keyed shift preserves shape modulo edge bin spillover
-    "faker": 0.80,      # faker draws independently per row, frequency shape only
-                        # approximated (not 1:1 like hash)
-    "redact": 0.05,     # intentional destruction; collapses everything to one value
-    "generate": 0.50,   # synthetic data: depends on generator's distribution model
+    "date_shift": 0.80,  # subject-keyed shift preserves shape modulo edge bin spillover
+    "faker": 0.80,  # faker draws independently per row, frequency shape only
+    # approximated (not 1:1 like hash)
+    "redact": 0.05,  # intentional destruction; collapses everything to one value
+    "generate": 0.50,  # synthetic data: depends on generator's distribution model
 }
 
 _VALID_MODES = {"report", "warn", "fail"}
@@ -391,11 +391,7 @@ def _check_shape_marginal(
     minimum = cfg.get("min")
     if minimum is None:
         return
-    actual = (
-        report.get("shape_fidelity", {})
-        .get("marginal", {})
-        .get("shape_score")
-    )
+    actual = report.get("shape_fidelity", {}).get("marginal", {}).get("shape_score")
     if actual is None or float(actual) < float(minimum):
         violations.append(
             {
@@ -403,10 +399,7 @@ def _check_shape_marginal(
                 "severity": "fail",
                 "expected": float(minimum),
                 "actual": actual,
-                "detail": (
-                    f"shape_fidelity.marginal.shape_score {actual} "
-                    f"below minimum {minimum}"
-                ),
+                "detail": (f"shape_fidelity.marginal.shape_score {actual} below minimum {minimum}"),
             },
         )
 
@@ -420,11 +413,7 @@ def _check_shape_pairwise(
     minimum = cfg.get("min")
     if minimum is None:
         return
-    actual = (
-        report.get("shape_fidelity", {})
-        .get("pairwise", {})
-        .get("shape_score")
-    )
+    actual = report.get("shape_fidelity", {}).get("pairwise", {}).get("shape_score")
     if actual is None or float(actual) < float(minimum):
         violations.append(
             {
@@ -432,10 +421,7 @@ def _check_shape_pairwise(
                 "severity": "fail",
                 "expected": float(minimum),
                 "actual": actual,
-                "detail": (
-                    f"shape_fidelity.pairwise.shape_score {actual} "
-                    f"below minimum {minimum}"
-                ),
+                "detail": (f"shape_fidelity.pairwise.shape_score {actual} below minimum {minimum}"),
             },
         )
 
@@ -448,11 +434,7 @@ def _check_shape_per_column(
     strategy_expectations: dict[str, float],
     violations: list[dict[str, Any]],
 ) -> None:
-    columns = (
-        report.get("shape_fidelity", {})
-        .get("marginal", {})
-        .get("columns", [])
-    )
+    columns = report.get("shape_fidelity", {}).get("marginal", {}).get("columns", [])
     for col in columns:
         if not isinstance(col, dict):
             continue
@@ -480,10 +462,7 @@ def _check_shape_per_column(
                     "severity": "fail",
                     "expected": float(minimum),
                     "actual": float(sim),
-                    "detail": (
-                        f"column {name!r} shape_similarity {sim} "
-                        f"below minimum {minimum}"
-                    ),
+                    "detail": (f"column {name!r} shape_similarity {sim} below minimum {minimum}"),
                 },
             )
 

@@ -31,9 +31,7 @@ class TestPerTierSchema:
     def test_tier_row_count_matches_spec(self, tier_name: str) -> None:
         df = load_tier(tier_name)
         tier = get_tier(tier_name)
-        assert len(df) == tier.rows, (
-            f"tier {tier_name!r}: expected {tier.rows} rows, got {len(df)}"
-        )
+        assert len(df) == tier.rows, f"tier {tier_name!r}: expected {tier.rows} rows, got {len(df)}"
 
     @pytest.mark.parametrize("tier_name", _available(["small", "medium", "large"]))
     def test_tier_column_set_matches_spec(self, tier_name: str) -> None:
@@ -61,9 +59,7 @@ class TestCrossTierConsistency:
         for tier_name in available:
             df = load_tier(tier_name)
             missing = common_names - set(df.columns)
-            assert not missing, (
-                f"tier {tier_name!r} missing common columns: {sorted(missing)}"
-            )
+            assert not missing, f"tier {tier_name!r} missing common columns: {sorted(missing)}"
 
     def test_common_columns_have_same_dtype_across_tiers(self) -> None:
         # Need at least two tiers on disk for the comparison to mean
@@ -71,9 +67,7 @@ class TestCrossTierConsistency:
         available = _available(["small", "medium", "large"])
         if len(available) < 2:
             pytest.skip("need >= 2 tiers on disk for cross-tier dtype check")
-        dtypes_by_tier: dict[str, pd.Series] = {
-            t: load_tier(t).dtypes for t in available
-        }
+        dtypes_by_tier: dict[str, pd.Series] = {t: load_tier(t).dtypes for t in available}
         base_tier = available[0]
         for other in available[1:]:
             for col_spec in COMMON_COLUMNS:

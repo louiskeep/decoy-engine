@@ -14,19 +14,20 @@ import pytest
 from decoy_engine.providers_v2._adapter import ProviderSpec
 from decoy_engine.providers_v2._errors import ProviderError
 from decoy_engine.providers_v2.identifiers._icd10 import (
+    _CHAPTERS_ORDERED,
     Icd10Adapter,
     Icd10Domain,
     Icd10Validator,
-    _CHAPTERS_ORDERED,
     generate_random,
 )
-from decoy_engine.storm.detectors import _ICD10_CHAPTERS, _icd10_valid
-
+from decoy_engine.storm.detectors import _icd10_valid
 
 _SEED = (0x0123456789).to_bytes(8, "big")
 
 
-def _spec(*, deterministic: bool = False, namespace: str | None = None, seed: bytes | None = None) -> ProviderSpec:
+def _spec(
+    *, deterministic: bool = False, namespace: str | None = None, seed: bytes | None = None
+) -> ProviderSpec:
     return ProviderSpec(
         locale="en_US",
         deterministic=deterministic,
@@ -42,9 +43,9 @@ class TestIcd10Validator:
     def test_canonical_codes_validate(self):
         # Real-world examples from common clinical use:
         assert Icd10Validator.is_valid("J18.9")  # pneumonia, unspecified
-        assert Icd10Validator.is_valid("I10")     # essential hypertension
-        assert Icd10Validator.is_valid("E11.9")   # type 2 diabetes, no complications
-        assert Icd10Validator.is_valid("Z00.0")   # routine adult exam
+        assert Icd10Validator.is_valid("I10")  # essential hypertension
+        assert Icd10Validator.is_valid("E11.9")  # type 2 diabetes, no complications
+        assert Icd10Validator.is_valid("Z00.0")  # routine adult exam
 
     def test_rejects_invalid_chapter(self):
         # No ICD-10 chapter starts with a digit.
@@ -74,8 +75,7 @@ class TestIcd10Domain:
             b = bytes([seed_byte] * 32)
             code = domain.from_bytes(b)
             assert _icd10_valid(code), (
-                f"Icd10Domain.from_bytes returned non-valid {code!r} "
-                f"for byte seed {seed_byte!r}."
+                f"Icd10Domain.from_bytes returned non-valid {code!r} for byte seed {seed_byte!r}."
             )
 
     def test_from_bytes_deterministic(self):
@@ -86,6 +86,7 @@ class TestIcd10Domain:
     def test_from_bytes_wrong_length_raises(self):
         domain = Icd10Domain()
         from decoy_engine.providers_v2.identifiers._errors import IdentifierError
+
         with pytest.raises(IdentifierError):
             domain.from_bytes(b"x" * 16)
 

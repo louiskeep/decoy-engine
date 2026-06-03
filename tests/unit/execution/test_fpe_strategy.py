@@ -97,12 +97,8 @@ class TestQa10F2SingleCharBijection:
         charset = "0123456789"
         key = b"\x00" * 32
         tweak = b"col"
-        outputs = [
-            strategy._fpe_pure(d, key, charset, tweak, False) for d in charset
-        ]
-        assert len(set(outputs)) == 10, (
-            f"QA-10 F2 single-char bijection violated: {outputs}"
-        )
+        outputs = [strategy._fpe_pure(d, key, charset, tweak, False) for d in charset]
+        assert len(set(outputs)) == 10, f"QA-10 F2 single-char bijection violated: {outputs}"
         for o in outputs:
             assert o in charset
 
@@ -113,12 +109,8 @@ class TestQa10F2SingleCharBijection:
         charset = "abcdefghijklmnopqrstuvwxyz"
         key = b"\x42" * 32
         tweak = b"name-col"
-        outputs = [
-            strategy._fpe_pure(c, key, charset, tweak, False) for c in charset
-        ]
-        assert len(set(outputs)) == 26, (
-            f"QA-10 F2 single-char bijection violated on a-z: {outputs}"
-        )
+        outputs = [strategy._fpe_pure(c, key, charset, tweak, False) for c in charset]
+        assert len(set(outputs)) == 26, f"QA-10 F2 single-char bijection violated on a-z: {outputs}"
 
     def test_single_char_deterministic_same_key_same_output(self):
         """Bijection is a deterministic rotation; same key + tweak +

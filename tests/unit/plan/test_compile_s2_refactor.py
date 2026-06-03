@@ -460,9 +460,7 @@ class TestWalksGenF5BuildRelationshipsUsesPassedLookup:
         # includes child end.
         config: dict = {"global_settings": {"seed": 1}, "relationships": []}
         lookup = {("a", ("id",), "b", ("a_id",)): "fail"}
-        out = _build_relationships(
-            config, profile, orphan_policy_lookup=lookup
-        )
+        out = _build_relationships(config, profile, orphan_policy_lookup=lookup)
         assert len(out) == 1
         assert out[0].orphan_policy == "fail", (
             "QA walks/generators F5: _build_relationships must use the "

@@ -27,6 +27,7 @@ Loader is called once at engine import time
 is cached for the lifetime of the process; reloading at runtime would
 require restarting the engine.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -67,9 +68,7 @@ def load_name_hint_terms(directory: Path | None = None) -> dict[str, list[str]]:
     manifest = _read_yaml(manifest_path)
     files = manifest.get("files") if isinstance(manifest, dict) else None
     if not isinstance(files, list) or not files:
-        raise NameHintLoaderError(
-            f"{manifest_path} must define a non-empty `files:` list."
-        )
+        raise NameHintLoaderError(f"{manifest_path} must define a non-empty `files:` list.")
 
     # Tracks which file declared each detector_id so a collision error
     # can name both sides. Order of insertion mirrors manifest order

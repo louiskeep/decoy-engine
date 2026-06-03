@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 import yaml
 from pydantic import ValidationError
+
 from tests.fixtures.golden._manifest_schema import (
     FixtureManifest,
     RelationshipEntry,

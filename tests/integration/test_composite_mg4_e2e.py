@@ -17,7 +17,6 @@ from typing import Any
 
 import pandas as pd
 import pyarrow as pa
-import pytest
 
 from decoy_engine.execution import PandasExecutionAdapter
 from decoy_engine.generation.composite import load_locality_table
@@ -30,7 +29,6 @@ from decoy_engine.relationships._graph import (
     check_orphan_fk_policy_completeness,
 )
 from decoy_engine.relationships._namespace import (
-    NamespaceRegistry,
     build_namespace_registry,
 )
 from decoy_engine.storm.detectors import _npi_valid
@@ -69,7 +67,9 @@ def _profile(df: pd.DataFrame, table_name: str) -> Profile:
     )
 
 
-def _composite_col(name: str, provider: str, coherent_with: tuple[str, ...], ns: str, **extra: Any) -> dict:
+def _composite_col(
+    name: str, provider: str, coherent_with: tuple[str, ...], ns: str, **extra: Any
+) -> dict:
     out = {
         "name": name,
         "strategy": "<composite>",
@@ -351,11 +351,11 @@ class TestManifest:
     def test_manifest_carries_composite_person_config(self):
         """The plan serializer round-trips composite_person config so a
         downstream consumer can inspect coherent_with + provider."""
-        from decoy_engine.plan._types import ColumnSeed
         from decoy_engine.plan._serialize import (
             _column_seed_from_dict,
             _column_seed_to_dict,
         )
+        from decoy_engine.plan._types import ColumnSeed
 
         seed_in = ColumnSeed(
             namespace="p",

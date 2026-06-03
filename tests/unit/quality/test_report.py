@@ -233,7 +233,10 @@ def test_shape_fidelity_block_can_be_opted_out() -> None:
     """include_shape_fidelity=False drops the block (back-compat path)."""
     df = pd.DataFrame({"x": [1, 2, 3]})
     report = compute_quality_report(
-        df, df, now_iso=FIXED_TS, include_shape_fidelity=False,
+        df,
+        df,
+        now_iso=FIXED_TS,
+        include_shape_fidelity=False,
     )
     assert "shape_fidelity" not in report
     # Pre-D5b consumers see unchanged shape: every other key is still there.
@@ -247,9 +250,11 @@ def test_shape_fidelity_recognizes_hash_like_preservation() -> None:
     value identity. Simulate the hash case by mapping every source
     value through a distinct fake hash."""
     src = pd.DataFrame({"state": ["CA"] * 50 + ["NY"] * 30 + ["TX"] * 20})
-    out = pd.DataFrame({
-        "state": ["h_CA"] * 50 + ["h_NY"] * 30 + ["h_TX"] * 20,
-    })
+    out = pd.DataFrame(
+        {
+            "state": ["h_CA"] * 50 + ["h_NY"] * 30 + ["h_TX"] * 20,
+        }
+    )
     report = compute_quality_report(src, out, now_iso=FIXED_TS)
     # Value identity tanks (disjoint top-K).
     assert report["overall_score"] < 0.1

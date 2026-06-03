@@ -70,7 +70,7 @@ if TYPE_CHECKING:
     from decoy_engine.providers_v2 import ProviderRegistry
 
 
-__all__ = ["run_pipeline", "classify_table_kinds"]
+__all__ = ["classify_table_kinds", "run_pipeline"]
 
 
 def classify_table_kinds(config: dict[str, Any]) -> dict[str, str]:
@@ -99,10 +99,10 @@ def classify_table_kinds(config: dict[str, Any]) -> dict[str, str]:
 
 def run_pipeline(
     config: dict[str, Any],
-    sources: "dict[str, pa.Table] | None" = None,
+    sources: dict[str, pa.Table] | None = None,
     *,
     engine_version: str,
-    registry: "ProviderRegistry | None" = None,
+    registry: ProviderRegistry | None = None,
     derive_key: Any = None,
     instance_default_locale: str | None = None,
 ) -> ExecutionResult:
