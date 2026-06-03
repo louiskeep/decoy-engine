@@ -92,6 +92,14 @@ dependencies = [
     # our own parser). Required at import time of the nested strategy
     # module; absent imports fall back to a typed runtime error.
     "jsonpath-ng>=1.6",
+    # SEC.1 / C1 (2026-06-03): user-supplied `formula` expressions evaluate
+    # under simpleeval's restricted single-expression sandbox instead of
+    # CPython eval() (which, even with empty __builtins__, was a known RCE via
+    # ().__class__...__subclasses__). simpleeval (MIT) is the established,
+    # maintained "safely evaluate one user expression" library; matches our
+    # posture for numexpr / jsonpath-ng (do not roll our own AST sandbox).
+    # Required at import time of decoy_engine.expressions.
+    "simpleeval>=0.9.13",
 ]
 
 [project.optional-dependencies]
