@@ -500,6 +500,11 @@ module = [
     "duckdb.*",
     "faker",
     "faker.*",
+    # mimesis (MIT) is an optional alternative provider backend (the
+    # `mimesis` extra); imported at module top in providers_v2.mimesis,
+    # not installed in default-extras CI.
+    "mimesis",
+    "mimesis.*",
     "pandas",
     "pandas.*",
     "polars",

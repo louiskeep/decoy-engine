@@ -23,6 +23,12 @@ import stat as stat_lib
 import time
 
 import pytest
+
+# paramiko (the `sftp` extra) is out of the R1.0 cutline (file + cloud
+# object storage only; SFTP ships in S18). Default-extras CI does not
+# install it, so skip the whole module rather than error at collection.
+pytest.importorskip("paramiko")
+
 from sdk_contract_tests import FileSinkContract, FileSourceContract
 
 from decoy_engine.connectors.sftp import (
