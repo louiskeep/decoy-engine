@@ -16,7 +16,6 @@ import pytest
 
 from decoy_engine.storm.detectors import Span, iter_spans
 
-
 # ── empty / non-string inputs ─────────────────────────────────────────
 
 
@@ -231,9 +230,7 @@ class TestCustomDetectors:
         spans = iter_spans("SSN 123-45-6789 here.", custom=[spec])
         last_end = -1
         for s in spans:
-            assert s.start >= last_end, (
-                f"span {s} overlaps previous (last_end={last_end})"
-            )
+            assert s.start >= last_end, f"span {s} overlaps previous (last_end={last_end})"
             last_end = s.end
 
 

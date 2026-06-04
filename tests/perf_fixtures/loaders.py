@@ -37,12 +37,9 @@ def load_tier(tier_name: str) -> pd.DataFrame:
         committed_note = (
             "committed; check out the file or git lfs pull"
             if tier.committed
-            else "NOT committed; regenerate with: "
-            f"python scripts/gen_perf_fixtures.py {tier.name}"
+            else f"NOT committed; regenerate with: python scripts/gen_perf_fixtures.py {tier.name}"
         )
-        raise FileNotFoundError(
-            f"perf fixture missing: {path} ({committed_note})"
-        )
+        raise FileNotFoundError(f"perf fixture missing: {path} ({committed_note})")
     return pd.read_parquet(path, engine="pyarrow")
 
 

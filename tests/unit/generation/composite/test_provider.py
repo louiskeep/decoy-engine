@@ -36,9 +36,7 @@ def _make() -> CompositeProvider:
 class TestOutputs:
     def test_provider_3_outputs_match_output_columns(self):
         c = _make()
-        out = c.generate_bundle(
-            _spec(), 3, source=pd.Series(["a", "b", "c"]), deterministic=True
-        )
+        out = c.generate_bundle(_spec(), 3, source=pd.Series(["a", "b", "c"]), deterministic=True)
         assert set(out.keys()) == {"npi", "provider_name", "practice_address"}
         for k in out:
             assert len(out[k]) == 3
@@ -57,9 +55,7 @@ class TestOutputs:
 
     def test_provider_practice_address_is_flat_string(self):
         c = _make()
-        out = c.generate_bundle(
-            _spec(), 3, source=pd.Series(["a", "b", "c"]), deterministic=True
-        )
+        out = c.generate_bundle(_spec(), 3, source=pd.Series(["a", "b", "c"]), deterministic=True)
         for addr in out["practice_address"]:
             assert isinstance(addr, str)
             # Shape: "<city>, <ST> <zip>"

@@ -750,9 +750,7 @@ def _profile_column(
             # series re-coerced when parse_rate >= 0.7 (2x dateutil work).
             all_coerced = pd.to_datetime(non_null, errors="coerce")
             parse_rate = (
-                all_coerced.head(sample_size).notna().sum() / sample_size
-                if sample_size
-                else 0
+                all_coerced.head(sample_size).notna().sum() / sample_size if sample_size else 0
             )
             if parse_rate >= 0.7:
                 valid = all_coerced.dropna()
@@ -846,9 +844,7 @@ def run_storm(
     # log carried just "▶ storm.scan" / "✓ storm.scan" -- the
     # 30-second gap between them was a black box.
     custom_count = len(custom_detectors) if custom_detectors else 0
-    extras_count = sum(
-        len(v) for v in (extra_name_hints or {}).values()
-    )
+    extras_count = sum(len(v) for v in (extra_name_hints or {}).values())
     if logger is not None:
         logger.info(
             f"▶ profiling {len(df.columns)} columns x {len(df):,} rows "
@@ -874,9 +870,11 @@ def run_storm(
     # Install per-scan extras for the lifetime of this call. The
     # context manager is a no-op when extras is None or empty.
     from decoy_engine.storm.detectors import name_hint_extras
+
     with name_hint_extras(extra_name_hints):
         return _run_storm_inner(
-            df, source_label,
+            df,
+            source_label,
             sample_strategy=sample_strategy,
             sample_row_cap=sample_row_cap,
             custom_detectors=custom_detectors,
@@ -993,5 +991,5 @@ def _run_storm_inner(
         rows_in=total,
         rows_out=len(fields),
     )
-    assert profile is not None  # try block sets it before exiting normally
+    assert profile is not None  # noqa: S101 - type-narrowing invariant; try block sets it before normal exit
     return profile

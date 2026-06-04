@@ -286,7 +286,7 @@ def _detect_cycles(graph: ERGraph) -> list[Hazard]:
         # Each frame: (node, iterator-over-neighbors). path tracks the
         # current DFS path; same data the recursive `path` parameter
         # carried, materialised at the loop level.
-        stack: list[tuple[str, "Iterator[str]"]] = []
+        stack: list[tuple[str, Iterator[str]]] = []
         path: list[str] = []
 
         color[start] = GRAY

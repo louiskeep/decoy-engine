@@ -14,9 +14,8 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-import pyarrow as pa
-
 import pandas as pd
+import pyarrow as pa
 
 from decoy_engine.execution import PandasExecutionAdapter
 from decoy_engine.plan import compile_plan
@@ -71,9 +70,7 @@ def test_text_redact_full_pipeline_clinical_notes_matches_golden():
     )
     actual = result.outputs["t"].column("notes").to_pylist()[0]
     assert actual == expected, (
-        "text_redact e2e golden mismatch.\n"
-        f"--- expected ---\n{expected}\n"
-        f"--- actual ---\n{actual}"
+        f"text_redact e2e golden mismatch.\n--- expected ---\n{expected}\n--- actual ---\n{actual}"
     )
 
 

@@ -17,20 +17,19 @@ half of that contract:
 Tests use sys.modules monkeypatching to simulate an installed
 extras package without needing one to actually exist on disk.
 """
+
 from __future__ import annotations
 
 import sys
 import types
 
 import pandas as pd
-import pytest
 
 from decoy_engine.quality.synth_report import (
     SYNTH_REPORT_SCHEMA_VERSION,
     assemble_synth_report,
     compute_attack_metrics,
 )
-
 
 # ── default-off contract ──────────────────────────────────────────────────
 
@@ -50,7 +49,11 @@ class TestDefaultOff:
         even try to import the extras package. We assert this by
         monkeypatching the importer to raise if called."""
         called = {"count": 0}
-        real_import = __builtins__["__import__"] if isinstance(__builtins__, dict) else __builtins__.__import__
+        real_import = (
+            __builtins__["__import__"]
+            if isinstance(__builtins__, dict)
+            else __builtins__.__import__
+        )
 
         def fail_on_extras(name, *args, **kwargs):
             if name == "decoy_engine_privacy_attacks":
@@ -61,9 +64,7 @@ class TestDefaultOff:
         source = pd.DataFrame({"v": [1, 2, 3]})
         synth = pd.DataFrame({"v": [4, 5, 6]})
         compute_attack_metrics(source, synth)
-        assert called["count"] == 0, (
-            "extras module was imported even though enable_attacks=False"
-        )
+        assert called["count"] == 0, "extras module was imported even though enable_attacks=False"
 
 
 # ── opt-in but missing ────────────────────────────────────────────────────
@@ -77,7 +78,8 @@ class TestExtrasMissing:
         synth = pd.DataFrame({"v": [4, 5, 6]})
         # Use a name that definitely is not installed.
         result = compute_attack_metrics(
-            source, synth,
+            source,
+            synth,
             enable_attacks=True,
             extras_module="definitely_not_installed_pkg_xyz",
         )
@@ -101,16 +103,19 @@ class TestExtrasInstalled:
 
     def test_enabled_with_stub_runs_extras_and_returns_results(self, monkeypatch):
         captured = {"called": False}
+
         def fake_run(source, output, *, holdout=None):
             captured["called"] = True
             captured["holdout"] = holdout
             return {"mia_auc": 0.55, "shadow_auc": 0.51}
+
         self._install_stub(monkeypatch, "fake_attacks_pkg", fake_run)
 
         source = pd.DataFrame({"v": [1, 2, 3]})
         synth = pd.DataFrame({"v": [4, 5, 6]})
         result = compute_attack_metrics(
-            source, synth,
+            source,
+            synth,
             enable_attacks=True,
             extras_module="fake_attacks_pkg",
         )
@@ -122,9 +127,11 @@ class TestExtrasInstalled:
         """The extras module receives the holdout frame so it can
         run MIA-style attacks without re-resolving holdout itself."""
         captured = {}
+
         def fake_run(source, output, *, holdout=None):
             captured["holdout_len"] = len(holdout) if holdout is not None else None
             return {"x": 1}
+
         self._install_stub(monkeypatch, "fake_attacks_pkg_2", fake_run)
 
         holdout = pd.DataFrame({"v": [7, 8, 9, 10]})
@@ -153,8 +160,10 @@ class TestExtrasInstalled:
     def test_extras_runtime_error_does_not_propagate(self, monkeypatch):
         """The extras module raising must NOT propagate. The SynthReport
         assembly must keep going; the attacks block records the failure."""
+
         def boom(source, output, *, holdout=None):
             raise RuntimeError("simulated extras crash")
+
         self._install_stub(monkeypatch, "fake_attacks_crash", boom)
         result = compute_attack_metrics(
             pd.DataFrame({"v": [1]}),
@@ -167,12 +176,15 @@ class TestExtrasInstalled:
         assert result["error_type"] == "RuntimeError"
 
     def test_extras_runtime_error_does_not_leak_exception_message(
-        self, monkeypatch,
+        self,
+        monkeypatch,
     ):
         """The raw exception message can carry sensitive bits (file
         paths, data values). Only the type name is preserved."""
+
         def boom(source, output, *, holdout=None):
             raise RuntimeError("/etc/secrets/api_key=XXX leaked")
+
         self._install_stub(monkeypatch, "fake_attacks_leak", boom)
         result = compute_attack_metrics(
             pd.DataFrame({"v": [1]}),
@@ -218,6 +230,7 @@ class TestAttacksDisclaimer:
 
     def test_full_report_with_attacks_round_trips_json(self):
         import json
+
         attacks = compute_attack_metrics(
             pd.DataFrame({"v": [1, 2]}),
             pd.DataFrame({"v": [3, 4]}),
@@ -238,4 +251,5 @@ class TestAttacksDisclaimer:
 class TestExports:
     def test_quality_package_exports_compute_attack_metrics(self):
         from decoy_engine import quality
+
         assert hasattr(quality, "compute_attack_metrics")

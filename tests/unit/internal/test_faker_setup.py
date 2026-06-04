@@ -257,8 +257,7 @@ class TestQaInternalF7MakeFakerInvalidLocale:
         assert result is not None
         # The warning surfaced the locale string + the fallback intent.
         assert any(
-            "invalid_locale_xyz" in rec.message
-            and "falling back to en_US" in rec.message
+            "invalid_locale_xyz" in rec.message and "falling back to en_US" in rec.message
             for rec in caplog.records
         ), (
             "QA-internal F7: invalid locale must produce a WARNING log "
@@ -273,10 +272,7 @@ class TestQaInternalF7MakeFakerInvalidLocale:
 
         assert result is not None
         # No locale-warning lines.
-        locale_warnings = [
-            rec for rec in caplog.records
-            if "falling back" in rec.message
-        ]
+        locale_warnings = [rec for rec in caplog.records if "falling back" in rec.message]
         assert locale_warnings == []
 
     def test_none_locale_does_not_log_warning(self, caplog):
@@ -286,10 +282,7 @@ class TestQaInternalF7MakeFakerInvalidLocale:
             result = make_faker(None)
 
         assert result is not None
-        locale_warnings = [
-            rec for rec in caplog.records
-            if "falling back" in rec.message
-        ]
+        locale_warnings = [rec for rec in caplog.records if "falling back" in rec.message]
         assert locale_warnings == []
 
 

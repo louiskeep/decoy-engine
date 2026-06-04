@@ -38,6 +38,11 @@ class FakerStrategyHandler:
         plan: ColumnSeed,
         ctx: StrategyContext,
     ) -> tuple[pd.DataFrame, list[QualityWarning]]:
+        if plan.provider is None:
+            # A faker strategy without a provider is an invalid plan that
+            # validation should have rejected; guard so the type is concrete
+            # and the failure is named rather than a None reaching PoolBuilder.
+            raise ValueError(f"faker strategy on column {column!r} has no provider")
         source = df[column]
         n = len(source)
         cfg = provider_config_to_dict(plan.provider_config)

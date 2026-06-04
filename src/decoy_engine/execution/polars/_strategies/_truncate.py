@@ -59,10 +59,10 @@ class PolarsTruncateHandler:
         if mask_char is None:
             # V1 path; byte-identical.
             sliced = (
-                as_str.str.slice(-length) if keep == "tail"
-                else as_str.str.slice(0, length)
+                as_str.str.slice(-length) if keep == "tail" else as_str.str.slice(0, length)
             ).alias(column)
             return frame.with_columns(sliced), []
+
         # New path: replace truncated portion with mask_char repeated.
         # Polars doesn't have a built-in "pad with char to original
         # length" so build it via map_elements; nulls preserved by
@@ -78,5 +78,6 @@ class PolarsTruncateHandler:
                 keep_part = s[:length]
                 drop_part = s[length:] if length < len(s) else ""
                 return keep_part + (mask_char * len(drop_part))
+
         masked = as_str.map_elements(_mask_one, return_dtype=pl.Utf8).alias(column)
         return frame.with_columns(masked), []

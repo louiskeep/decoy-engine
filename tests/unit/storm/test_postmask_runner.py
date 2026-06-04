@@ -59,10 +59,12 @@ class TestRunStormPostMask:
         src = pd.DataFrame({"note": emails})
         out = pd.DataFrame({"note": emails})
         config = {
-            "tables": [{
-                "name": "users",
-                "columns": [{"name": "note", "strategy": "text_redact"}],
-            }],
+            "tables": [
+                {
+                    "name": "users",
+                    "columns": [{"name": "note", "strategy": "text_redact"}],
+                }
+            ],
         }
         report = run_storm_post_mask(
             source_frames={"users": src},
@@ -71,13 +73,9 @@ class TestRunStormPostMask:
         )
         # The residual_pii check must produce at least one fail finding
         # tagged with strategy='text_redact'.
-        fail_findings = [
-            f for f in report["residual_pii"] if f["severity"] == "fail"
-        ]
+        fail_findings = [f for f in report["residual_pii"] if f["severity"] == "fail"]
         assert len(fail_findings) >= 1
-        assert any(
-            f["configured_strategy"] == "text_redact" for f in fail_findings
-        )
+        assert any(f["configured_strategy"] == "text_redact" for f in fail_findings)
 
     def test_policy_validation_catches_noop_mask(self):
         """The configured strategy is 'hash' but the output is identical
@@ -85,10 +83,12 @@ class TestRunStormPostMask:
         src = pd.DataFrame({"email": ["a@x.com", "b@y.com", "c@z.com"]})
         out = src.copy()  # mask "didn't fire"
         config = {
-            "tables": [{
-                "name": "users",
-                "columns": [{"name": "email", "strategy": "hash"}],
-            }],
+            "tables": [
+                {
+                    "name": "users",
+                    "columns": [{"name": "email", "strategy": "hash"}],
+                }
+            ],
         }
         report = run_storm_post_mask(
             source_frames={"users": src},
@@ -108,20 +108,19 @@ class TestRunStormPostMask:
         src = pd.DataFrame({"id": [1, 2, 3]})
         out = src.copy()
         config = {
-            "tables": [{
-                "name": "users",
-                "columns": [{"name": "id", "strategy": "passthrough"}],
-            }],
+            "tables": [
+                {
+                    "name": "users",
+                    "columns": [{"name": "id", "strategy": "passthrough"}],
+                }
+            ],
         }
         report = run_storm_post_mask(
             source_frames={"users": src},
             output_frames={"users": out},
             config=config,
         )
-        passthroughs = [
-            f for f in report["policy_validation"]
-            if f["strategy"] == "passthrough"
-        ]
+        passthroughs = [f for f in report["policy_validation"] if f["strategy"] == "passthrough"]
         assert len(passthroughs) == 1
         assert passthroughs[0]["severity"] == "info"
         assert report["fail_count"] == 0

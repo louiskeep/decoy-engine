@@ -112,7 +112,7 @@ class GenerateColumnConfig(BaseModel):
     type: Literal["faker", "sequence", "categorical", "formula", "reference"]
 
     @model_validator(mode="after")
-    def _reference_params_required(self) -> "GenerateColumnConfig":
+    def _reference_params_required(self) -> GenerateColumnConfig:
         """A ``reference`` column must declare its parent: ``reference_table`` +
         ``reference_column``. Mirrors V1 ``_generate_reference_column`` (which
         returns placeholder strings when missing -- v2 catches it at validation
@@ -121,17 +121,13 @@ class GenerateColumnConfig(BaseModel):
             return self
         extras = self.model_extra or {}
         if not extras.get("reference_table"):
-            raise ValueError(
-                f"reference column {self.name!r} requires `reference_table`"
-            )
+            raise ValueError(f"reference column {self.name!r} requires `reference_table`")
         if not extras.get("reference_column"):
-            raise ValueError(
-                f"reference column {self.name!r} requires `reference_column`"
-            )
+            raise ValueError(f"reference column {self.name!r} requires `reference_column`")
         return self
 
     @model_validator(mode="after")
-    def _type_params_present(self) -> "GenerateColumnConfig":
+    def _type_params_present(self) -> GenerateColumnConfig:
         """QA walks/generators F6 (2026-06-01, MEDIUM correctness / PO
         Q-F6=no-users): every non-reference generator type now requires
         the params V1's ColumnGenerator reads at generation time. Pre-
@@ -150,21 +146,13 @@ class GenerateColumnConfig(BaseModel):
         pass through. Only missing-required-params are caught."""
         extras = self.model_extra or {}
         if self.type == "faker" and not extras.get("faker_type"):
-            raise ValueError(
-                f"faker column {self.name!r} requires `faker_type`"
-            )
+            raise ValueError(f"faker column {self.name!r} requires `faker_type`")
         if self.type == "sequence" and extras.get("start") is None:
-            raise ValueError(
-                f"sequence column {self.name!r} requires `start`"
-            )
+            raise ValueError(f"sequence column {self.name!r} requires `start`")
         if self.type == "categorical" and not extras.get("categories"):
-            raise ValueError(
-                f"categorical column {self.name!r} requires `categories`"
-            )
+            raise ValueError(f"categorical column {self.name!r} requires `categories`")
         if self.type == "formula" and not extras.get("formula"):
-            raise ValueError(
-                f"formula column {self.name!r} requires `formula`"
-            )
+            raise ValueError(f"formula column {self.name!r} requires `formula`")
         return self
 
 
@@ -194,7 +182,7 @@ class TableConfig(BaseModel):
     transforms: list[TransformOp] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def _mask_xor_generate(self) -> "TableConfig":
+    def _mask_xor_generate(self) -> TableConfig:
         if self.generate_columns:
             if self.columns:
                 raise ValueError(
@@ -203,8 +191,7 @@ class TableConfig(BaseModel):
                 )
             if self.row_count is None or self.row_count < 0:
                 raise ValueError(
-                    f"table {self.name!r}: a generate table requires a non-negative "
-                    f"row_count"
+                    f"table {self.name!r}: a generate table requires a non-negative row_count"
                 )
         else:
             if not self.columns:

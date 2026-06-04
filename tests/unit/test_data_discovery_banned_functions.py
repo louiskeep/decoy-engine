@@ -83,6 +83,4 @@ def test_legitimate_select_against_staged_view_passes() -> None:
 
 def test_legitimate_with_cte_passes() -> None:
     """WITH-leading CTEs are legitimate read-only constructs."""
-    _validate_select_only(
-        "WITH t AS (SELECT * FROM staged_view) SELECT count(*) FROM t"
-    )
+    _validate_select_only("WITH t AS (SELECT * FROM staged_view) SELECT count(*) FROM t")

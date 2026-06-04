@@ -32,7 +32,11 @@ jobs:
           python-version: "3.10"
           cache: pip
       - name: Install ruff
-        run: pip install ruff
+        # Pinned: ruff ships new lint rules in minor releases, which turn
+        # previously-green code red with zero code change. Bump deliberately
+        # alongside a lint pass, not implicitly on every CI run. Version
+        # mirrors the [lint] dev-deps group in pyproject.toml.
+        run: pip install ruff==0.15.14
       - name: Lint
         run: ruff check src tests
       - name: Format check
@@ -47,7 +51,10 @@ jobs:
           python-version: "3.10"
           cache: pip
       - name: Install engine + dev extras
-        run: pip install -e ".[dev]" mypy
+        # mypy pinned for the same reason as ruff: a minor bump can surface
+        # new error categories on unchanged code. Version mirrors the [lint]
+        # dev-deps group in pyproject.toml.
+        run: pip install -e ".[dev]" mypy==2.1.0
       - name: Type check
         run: mypy src/decoy_engine
 

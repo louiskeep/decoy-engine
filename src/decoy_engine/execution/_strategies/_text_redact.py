@@ -44,7 +44,7 @@ from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._types import ColumnSeed
 from decoy_engine.storm.detectors import Span, iter_spans
 
-_DEFAULT_TOKEN = "[REDACTED]"
+_DEFAULT_TOKEN = "[REDACTED]"  # noqa: S105 - redaction placeholder, not a credential
 
 
 class TextRedactHandler:

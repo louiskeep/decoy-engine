@@ -171,8 +171,7 @@ class TestOrderWork:
         ordered = order_work(nodes, _graph())
         keys = [w.key for w in ordered]
         assert keys == sorted(keys), (
-            f"QA-10 F9 heapq Kahn drift: expected lexicographic order, "
-            f"got {keys}"
+            f"QA-10 F9 heapq Kahn drift: expected lexicographic order, got {keys}"
         )
 
     def test_qa10_f9_large_chain_topological(self) -> None:
@@ -180,7 +179,7 @@ class TestOrderWork:
         the chain order. Sanity check that the heapq path scales."""
         # Build a chain: n_0 -> n_1 -> ... -> n_99
         nodes = [_node("t", (f"c{i:03d}",)) for i in range(100)]
-        edges = [_edge("t", (f"c{i:03d}",), "t", (f"c{i+1:03d}",)) for i in range(99)]
+        edges = [_edge("t", (f"c{i:03d}",), "t", (f"c{i + 1:03d}",)) for i in range(99)]
         ordered = order_work(nodes, _graph(*edges))
         keys = [w.key for w in ordered]
         assert keys == sorted(keys)

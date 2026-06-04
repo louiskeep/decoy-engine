@@ -10,13 +10,11 @@ M23 (generated_at on the engine payload).
 from __future__ import annotations
 
 import pandas as pd
-import pytest
 
 from decoy_engine.storm.postmask.fk_preservation import check_fk_preservation
 from decoy_engine.storm.postmask.policy_validation import check_policy_validation
 from decoy_engine.storm.postmask.residual_pii import check_residual_pii
 from decoy_engine.storm.postmask.runner import run_storm_post_mask
-
 
 # ── H4: composite FK tuple-wise check ─────────────────────────────
 
@@ -92,7 +90,8 @@ class TestCompositeFkTupleWise:
         parent = pd.DataFrame({"a": [1, 2]})
         child = pd.DataFrame({"fk_a": [1, 99]})
         findings = check_fk_preservation(
-            {"parent_tbl": parent, "child_tbl": child}, cfg,
+            {"parent_tbl": parent, "child_tbl": child},
+            cfg,
         )
         assert len(findings) == 1
         # parent_column is the single col, not a comma-joined label.
@@ -118,30 +117,8 @@ class TestPolicyValidationComparisonFailure:
         # quickly, monkeypatch the .equals call.
         src = pd.DataFrame({"col_a": [1, 2, 3]})
 
-        class _ExplodingSeries:
-            def __init__(self, base): self.base = base
-            def __len__(self): return len(self.base)
-            def astype(self, _): raise TypeError("simulated comparison failure")
-            @property
-            def values(self): return self.base.values
-
-        # Inject the exploding column into the output frame by
-        # monkeypatching __getitem__ on a wrapper. Cleaner approach
-        # in production tests: a real ArrowDtype mismatch. Here we
-        # use a small focused frame + a direct call to the policy
-        # check's internals via the public entrypoint.
-        out = pd.DataFrame({"col_a": pd.array([1, 2, 3], dtype="Int64")})
-        # Force a comparison failure by making source and output
-        # have incompatible dtypes the .equals call can't reconcile
-        # in a way that pandas surfaces as a TypeError on .astype.
-        # In practice ArrowDtype mismatch fits; we approximate by
-        # putting non-comparable Python objects in.
-        class _NotComparable:
-            def __eq__(self, _): raise TypeError("incomparable")
-            __hash__ = None  # type: ignore
-        # Easier: just verify the fix wrapper catches anything that
-        # raises during astype. Skip the synthetic exploder and
-        # instead exercise the success path + the no_op path.
+        # Verify the wrapper catches anything that raises during astype by
+        # exercising the success path + the no_op path.
         cfg = {
             "tables": [
                 {
@@ -155,7 +132,9 @@ class TestPolicyValidationComparisonFailure:
         # Sanity: legitimate non-identical comparison still surfaces.
         out_diff = pd.DataFrame({"col_a": [10, 20, 30]})
         findings = check_policy_validation(
-            {"t": src}, {"t": out_diff}, cfg,
+            {"t": src},
+            {"t": out_diff},
+            cfg,
         )
         # The findings list contains exactly one entry for col_a;
         # legitimate mask -> info because hash isn't in NO_OP set
@@ -180,10 +159,12 @@ class TestPolicyValidationComparisonFailure:
         monkeypatch.setattr(pd.Series, "equals", _exploding_equals)
 
         cfg = {
-            "tables": [{
-                "name": "t",
-                "columns": [{"name": "col_a", "strategy": "hash"}],
-            }]
+            "tables": [
+                {
+                    "name": "t",
+                    "columns": [{"name": "col_a", "strategy": "hash"}],
+                }
+            ]
         }
         findings = check_policy_validation({"t": src}, {"t": out}, cfg)
         # Restore for any test isolation issues.
@@ -191,8 +172,7 @@ class TestPolicyValidationComparisonFailure:
 
         assert len(findings) == 1
         assert findings[0].severity == "error", (
-            "comparison exception must surface as error, not silently "
-            "fall through to info"
+            "comparison exception must surface as error, not silently fall through to info"
         )
 
     def test_row_count_mismatch_emits_warning(self):
@@ -208,7 +188,9 @@ class TestPolicyValidationComparisonFailure:
             ]
         }
         findings = check_policy_validation(
-            {"t": src}, {"t": out}, cfg,
+            {"t": src},
+            {"t": out},
+            cfg,
         )
         assert len(findings) == 1
         f = findings[0]
@@ -225,11 +207,15 @@ class TestResidualPiiPassthroughIsNoOp:
     decision; the hit must be classified 'info' instead."""
 
     def test_passthrough_with_detector_hit_classifies_as_info(self):
-        df = pd.DataFrame({"email": [
-            "alice@example.com",
-            "bob@example.com",
-            "carol@example.com",
-        ]})
+        df = pd.DataFrame(
+            {
+                "email": [
+                    "alice@example.com",
+                    "bob@example.com",
+                    "carol@example.com",
+                ]
+            }
+        )
         cfg = {
             "tables": [
                 {
@@ -261,7 +247,9 @@ class TestEnginePayloadGeneratedAt:
         # Minimal config; empty frames so the checks short-circuit.
         cfg = {"tables": [], "relationships": []}
         payload = run_storm_post_mask(
-            source_frames={}, output_frames={}, config=cfg,
+            source_frames={},
+            output_frames={},
+            config=cfg,
         )
         assert "generated_at" in payload
         assert isinstance(payload["generated_at"], str)

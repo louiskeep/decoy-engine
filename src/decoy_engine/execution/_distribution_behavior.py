@@ -51,7 +51,6 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-
 DistributionBehavior = Literal[
     "preserves_all",
     "preserves_cardinality_only",

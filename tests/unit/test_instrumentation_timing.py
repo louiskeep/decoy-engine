@@ -97,12 +97,11 @@ class TestTimedStrategy:
 
     def test_timed_strategy_records_when_collector_active(self):
         c = TimingCollector()
-        with use_collector(c):
-            with timed_strategy("fpe", "ssn"):
-                # Simulate a small workload so elapsed_ms > 0. Windows
-                # clock granularity can shave a few ms off a sleep, so
-                # target 20ms + assert >= 10ms to keep the test stable.
-                time.sleep(0.020)
+        with use_collector(c), timed_strategy("fpe", "ssn"):
+            # Simulate a small workload so elapsed_ms > 0. Windows
+            # clock granularity can shave a few ms off a sleep, so
+            # target 20ms + assert >= 10ms to keep the test stable.
+            time.sleep(0.020)
 
         assert len(c.records) == 1
         record = c.records[0]
@@ -116,10 +115,9 @@ class TestTimedStrategy:
         # If the wrapped block raises, the record should still be captured
         # (so we can see how long the failure took before it fired).
         c = TimingCollector()
-        with use_collector(c):
-            with pytest.raises(ValueError, match="boom"):
-                with timed_strategy("hash", "x"):
-                    raise ValueError("boom")
+        with use_collector(c), pytest.raises(ValueError, match="boom"):
+            with timed_strategy("hash", "x"):
+                raise ValueError("boom")
 
         assert len(c.records) == 1
         assert c.records[0].strategy_type == "hash"

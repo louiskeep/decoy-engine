@@ -215,9 +215,7 @@ def compile_plan(
     # from the relationship_graph (S2 §4 wiring); namespaces still build
     # from config because the YAML shape carries seed material the
     # registry doesn't yet track (S3 promotes this).
-    relationships = _build_relationships(
-        config, profile, orphan_policy_lookup=orphan_policy_lookup
-    )
+    relationships = _build_relationships(config, profile, orphan_policy_lookup=orphan_policy_lookup)
     namespaces = _build_namespaces(config)
     ordering = tuple(OrderingNode(table=t, columns=c) for (t, c) in relationship_graph.ordering)
     seed_envelope, stamp_warnings = _build_seed_envelope(config, profile)
@@ -323,9 +321,11 @@ def _build_relationships(
     config: dict[str, Any],
     profile: Profile,
     *,
-    orphan_policy_lookup: dict[
-        tuple[str, tuple[str, ...], str, tuple[str, ...]], str
-    ] | None = None,
+    # Value is heterogeneous by producer: compile_plan passes the
+    # relationships.OrphanPolicy enum, the fallback below builds plain str.
+    # _normalised_policy() is the single normalizer for both shapes.
+    orphan_policy_lookup: dict[tuple[str, tuple[str, ...], str, tuple[str, ...]], Any]
+    | None = None,
 ) -> tuple[PlanRelationship, ...]:
     """Convert profile.relationships into Plan-side PlanRelationship tuples,
     pulling orphan_policy from the config when available.
@@ -397,7 +397,7 @@ def _build_relationships(
             value = value.value
         if value not in ("preserve", "remap", "warn", "fail"):
             return "preserve"
-        return value
+        return str(value)
 
     # Group profile.relationships by (parent_table, parent_cols, policy)
     # so children with the same parent + same policy collapse into one

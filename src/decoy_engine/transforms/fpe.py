@@ -48,8 +48,7 @@ _CHARSETS: dict[str, str] = {
 # to 9M. Keyed on the charset STRING (not the name) so _fpe_pure can look
 # up without a reverse mapping.
 _CHARSET_INDEX: dict[str, dict[str, int]] = {
-    chars: {ch: i for i, ch in enumerate(chars)}
-    for chars in _CHARSETS.values()
+    chars: {ch: i for i, ch in enumerate(chars)} for chars in _CHARSETS.values()
 }
 
 _ROUNDS = 8  # Feistel rounds; 8 gives good pseudorandomness with negligible overhead

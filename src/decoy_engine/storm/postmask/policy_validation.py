@@ -29,7 +29,6 @@ import pandas as pd
 
 from decoy_engine.storm.postmask.types import PolicyValidationFinding
 
-
 # Strategies that are EXPLICITLY allowed to produce identical output.
 _NO_OP_BY_DESIGN: frozenset[str] = frozenset({"passthrough"})
 
@@ -146,10 +145,9 @@ def _check_one_column(
     # the validation didn't conclude.
     try:
         bytes_identical = bool(
-            len(src_col) == len(out_col)
-            and src_col.astype(object).equals(out_col.astype(object))
+            len(src_col) == len(out_col) and src_col.astype(object).equals(out_col.astype(object))
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return PolicyValidationFinding(
             table=table,
             column=column,

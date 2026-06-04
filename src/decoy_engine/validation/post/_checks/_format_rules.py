@@ -33,9 +33,12 @@ def run_format_rules(ctx: ScanContext) -> ScanOutcome:
         if out_table is None:
             continue
         for col_name, seed in table_seed.per_column:
-            if col_name not in out_table.column_names or not ctx.registry.has(seed.provider):
+            provider = seed.provider
+            if provider is None or col_name not in out_table.column_names:
                 continue
-            caps = ctx.registry.get_capabilities(seed.provider)
+            if not ctx.registry.has(provider):
+                continue
+            caps = ctx.registry.get_capabilities(provider)
             if not caps.format_regex:
                 continue
             pattern = re.compile(caps.format_regex)
@@ -52,7 +55,7 @@ def run_format_rules(ctx: ScanContext) -> ScanOutcome:
             warnings.append(
                 QualityWarning(
                     code="format_rule_violation",
-                    provider=seed.provider,
+                    provider=provider,
                     column=col_name,
                     detail={
                         "table": table_name,

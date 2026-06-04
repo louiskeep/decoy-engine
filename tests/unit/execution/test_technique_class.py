@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import pytest
 
+from decoy_engine.execution._strategies import SCALAR_HANDLERS
 from decoy_engine.execution._technique_class import (
     TECHNIQUE_CLASS_BY_STRATEGY,
     technique_class_for,
 )
-from decoy_engine.execution._strategies import SCALAR_HANDLERS
 
 
 class TestTechniqueClassRegistry:
@@ -30,9 +30,9 @@ class TestTechniqueClassRegistry:
         strategy ships unclassified + the FE renders the needs-review
         badge in production."""
         unclassified = sorted(
-            name for name in SCALAR_HANDLERS
-            if name not in TECHNIQUE_CLASS_BY_STRATEGY
-            and name not in self._WRAPPER_STRATEGIES
+            name
+            for name in SCALAR_HANDLERS
+            if name not in TECHNIQUE_CLASS_BY_STRATEGY and name not in self._WRAPPER_STRATEGIES
         )
         assert unclassified == [], (
             f"Strategies missing a technique class: {unclassified}. "
@@ -40,19 +40,22 @@ class TestTechniqueClassRegistry:
             "or add the strategy to _WRAPPER_STRATEGIES if it is a wrapper."
         )
 
-    @pytest.mark.parametrize("strategy,expected", [
-        ("passthrough", "passthrough"),
-        ("redact", "anonymisation"),
-        ("truncate", "anonymisation"),
-        ("bucketize", "anonymisation"),
-        ("shuffle", "anonymisation"),
-        ("hash", "pseudonymisation"),
-        ("fpe", "pseudonymisation"),
-        ("date_shift", "pseudonymisation"),
-        ("formula", "pseudonymisation"),
-        ("faker", "synthetic"),
-        ("categorical", "synthetic"),
-    ])
+    @pytest.mark.parametrize(
+        "strategy,expected",
+        [
+            ("passthrough", "passthrough"),
+            ("redact", "anonymisation"),
+            ("truncate", "anonymisation"),
+            ("bucketize", "anonymisation"),
+            ("shuffle", "anonymisation"),
+            ("hash", "pseudonymisation"),
+            ("fpe", "pseudonymisation"),
+            ("date_shift", "pseudonymisation"),
+            ("formula", "pseudonymisation"),
+            ("faker", "synthetic"),
+            ("categorical", "synthetic"),
+        ],
+    )
     def test_classification_matches_industry_taxonomy(self, strategy, expected):
         """Pin the per-strategy classification rationale documented in
         _technique_class.py. A change here is a contract-level change

@@ -457,6 +457,8 @@ def make_faker(locale: str | list[str] | None = None) -> Faker:
     except (AttributeError, ValueError, TypeError) as exc:
         _log.warning(
             "make_faker: locale %r is invalid (%s: %s); falling back to en_US",
-            locale, type(exc).__name__, exc,
+            locale,
+            type(exc).__name__,
+            exc,
         )
         return Faker()

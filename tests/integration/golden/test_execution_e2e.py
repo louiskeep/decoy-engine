@@ -382,7 +382,10 @@ def _self_fk_profile(frames: dict[str, pd.DataFrame]) -> Profile:
             _column_profile("name", emp),
             _column_profile("department", emp),
             _column_profile(
-                "manager_id", emp, fk=True, fk_target=("employees", "id"),
+                "manager_id",
+                emp,
+                fk=True,
+                fk_target=("employees", "id"),
             ),
         ),
     )
@@ -499,16 +502,15 @@ class TestSelfFkE2E:
         profile, frames = self._setup()
         src_mids = frames["employees"]["manager_id"]
         orphan_rows = [
-            i for i in range(len(src_mids))
+            i
+            for i in range(len(src_mids))
             if not pd.isna(src_mids.iloc[i]) and src_mids.iloc[i] == "999"
         ]
         assert orphan_rows, "fixture must carry one orphan row"
         res = _run(profile, _self_fk_config("remap"), frames)
         out_mids = res.outputs["employees"].to_pydict()["manager_id"]
         for i in orphan_rows:
-            assert out_mids[i] != "999", (
-                f"row {i}: orphan manager_id 999 was not remapped"
-            )
+            assert out_mids[i] != "999", f"row {i}: orphan manager_id 999 was not remapped"
 
     def test_self_fk_byte_equal_across_runs_with_same_seed(self) -> None:
         """Same seed -> byte-equal output across runs. Pins the determinism

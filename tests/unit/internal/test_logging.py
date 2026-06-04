@@ -11,7 +11,6 @@ container fs is read-only and the configured log path is not writable.
 from __future__ import annotations
 
 import logging as stdlib_logging
-import os
 from unittest import mock
 
 import pytest
@@ -61,8 +60,7 @@ class TestQaInternalF3LoggingReadOnlyFs:
         # console handler was injected. Either way: console output
         # works.
         assert has_stream or any(
-            isinstance(h, stdlib_logging.StreamHandler)
-            for h in logger.handlers
+            isinstance(h, stdlib_logging.StreamHandler) for h in logger.handlers
         )
 
     def test_get_logger_falls_back_on_rotating_file_handler_error(self, tmp_path):
@@ -84,7 +82,8 @@ class TestQaInternalF3LoggingReadOnlyFs:
         assert logger is not None
         # Should have a console handler but no file handler.
         file_handlers = [
-            h for h in logger.handlers
+            h
+            for h in logger.handlers
             if isinstance(h, stdlib_logging.handlers.RotatingFileHandler)  # type: ignore[attr-defined]
         ]
         assert len(file_handlers) == 0
@@ -98,7 +97,8 @@ class TestQaInternalF3LoggingReadOnlyFs:
         assert logger is not None
         # A RotatingFileHandler should be present on the writable path.
         file_handlers = [
-            h for h in logger.handlers
+            h
+            for h in logger.handlers
             if isinstance(h, stdlib_logging.handlers.RotatingFileHandler)  # type: ignore[attr-defined]
         ]
         assert len(file_handlers) >= 1
@@ -114,15 +114,18 @@ class TestQaInternalF3LoggingReadOnlyFs:
         from logging.handlers import RotatingFileHandler
 
         with mock.patch("pathlib.Path.mkdir", side_effect=PermissionError("read-only")):
-            logger = get_logger({
-                "console": True,
-                "file": str(tmp_path / "nope" / "decoy.log"),
-            })
+            logger = get_logger(
+                {
+                    "console": True,
+                    "file": str(tmp_path / "nope" / "decoy.log"),
+                }
+            )
 
         # Count plain StreamHandlers (excluding RotatingFileHandler
         # which extends StreamHandler).
         console_handlers = [
-            h for h in logger.handlers
+            h
+            for h in logger.handlers
             if isinstance(h, stdlib_logging.StreamHandler)
             and not isinstance(h, RotatingFileHandler)
         ]

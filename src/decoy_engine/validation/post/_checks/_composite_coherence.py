@@ -40,10 +40,11 @@ def run_composite_coherence(ctx: ScanContext) -> ScanOutcome:
     groups: dict[tuple[str, str], set[str]] = {}
     for table_name, table_seed in ctx.plan.seed_envelope.per_table:
         for col_name, seed in table_seed.per_column:
-            if not ctx.registry.has(seed.provider):
+            provider = seed.provider
+            if provider is None or not ctx.registry.has(provider):
                 continue
-            if ctx.registry.get_capabilities(seed.provider).backend_type == "composite":
-                groups.setdefault((table_name, seed.provider), set()).add(col_name)
+            if ctx.registry.get_capabilities(provider).backend_type == "composite":
+                groups.setdefault((table_name, provider), set()).add(col_name)
 
     for (table_name, provider), _cols in sorted(groups.items()):
         out_table = ctx.outputs.get(table_name)

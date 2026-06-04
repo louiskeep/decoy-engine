@@ -41,13 +41,15 @@ def load_disguises(directory: Path | None = None) -> list[Disguise]:
         except yaml.YAMLError as exc:
             _log.error(
                 "load_disguises: YAML parse failed for %s: %s",
-                path.name, exc,
+                path.name,
+                exc,
             )
             continue
         except OSError as exc:
             _log.error(
                 "load_disguises: could not read %s: %s",
-                path.name, exc,
+                path.name,
+                exc,
             )
             continue
 
@@ -61,6 +63,7 @@ def load_disguises(directory: Path | None = None) -> list[Disguise]:
             # Broad except keeps the loader resilient to schema drift.
             _log.error(
                 "load_disguises: schema validation failed for %s: %s",
-                path.name, exc,
+                path.name,
+                exc,
             )
     return out

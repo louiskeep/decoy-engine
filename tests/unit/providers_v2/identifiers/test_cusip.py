@@ -13,21 +13,21 @@ import pytest
 from decoy_engine.providers_v2._adapter import ProviderSpec
 from decoy_engine.providers_v2._errors import ProviderError
 from decoy_engine.providers_v2.identifiers._cusip import (
+    _CUSIP_ALPHABET,
     CusipAdapter,
     CusipDomain,
-    CusipValidator,
-    _CUSIP_ALPHABET,
     _char_value,
     _is_valid_cusip,
     _luhn_check_digit,
     generate_random,
 )
 
-
 _SEED = (0x0123456789).to_bytes(8, "big")
 
 
-def _spec(*, deterministic: bool = False, namespace: str | None = None, seed: bytes | None = None) -> ProviderSpec:
+def _spec(
+    *, deterministic: bool = False, namespace: str | None = None, seed: bytes | None = None
+) -> ProviderSpec:
     return ProviderSpec(
         locale="en_US",
         deterministic=deterministic,
@@ -48,20 +48,24 @@ class TestCusipAlphabet:
         for special in ("*", "@", "#"):
             assert special in _CUSIP_ALPHABET
 
-    @pytest.mark.parametrize("ch,expected", [
-        ("0", 0),
-        ("9", 9),
-        ("A", 10),
-        ("Z", 35),
-        ("*", 36),
-        ("@", 37),
-        ("#", 38),
-    ])
+    @pytest.mark.parametrize(
+        "ch,expected",
+        [
+            ("0", 0),
+            ("9", 9),
+            ("A", 10),
+            ("Z", 35),
+            ("*", 36),
+            ("@", 37),
+            ("#", 38),
+        ],
+    )
     def test_char_value_canonical(self, ch, expected):
         assert _char_value(ch) == expected
 
     def test_char_value_rejects_invalid(self):
         from decoy_engine.providers_v2.identifiers._errors import IdentifierError
+
         with pytest.raises(IdentifierError, match="invalid_cusip_char"):
             _char_value("?")
         with pytest.raises(IdentifierError):
@@ -91,7 +95,7 @@ class TestModifiedLuhn:
         assert _is_valid_cusip("023135106")
 
     def test_rejects_wrong_length(self):
-        assert not _is_valid_cusip("12345678")    # 8 chars
+        assert not _is_valid_cusip("12345678")  # 8 chars
         assert not _is_valid_cusip("1234567890")  # 10 chars
 
     def test_rejects_non_digit_check(self):
@@ -121,8 +125,7 @@ class TestCusipDomain:
             b = bytes([seed_byte] * 32)
             cusip = domain.from_bytes(b)
             assert _is_valid_cusip(cusip), (
-                f"CusipDomain.from_bytes returned non-valid {cusip!r} "
-                f"for byte seed {seed_byte!r}."
+                f"CusipDomain.from_bytes returned non-valid {cusip!r} for byte seed {seed_byte!r}."
             )
 
     def test_from_bytes_deterministic(self):
@@ -133,6 +136,7 @@ class TestCusipDomain:
     def test_from_bytes_wrong_length_raises(self):
         domain = CusipDomain()
         from decoy_engine.providers_v2.identifiers._errors import IdentifierError
+
         with pytest.raises(IdentifierError):
             domain.from_bytes(b"x" * 16)
 

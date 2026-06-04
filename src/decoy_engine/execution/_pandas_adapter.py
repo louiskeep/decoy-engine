@@ -48,9 +48,9 @@ from decoy_engine.execution._guards import reject_null_bearing_int
 from decoy_engine.execution._runner import WorkNode, build_work_list, order_work
 from decoy_engine.execution._strategies import SCALAR_HANDLERS
 from decoy_engine.execution._strategies._composite import CompositeHandler
-from decoy_engine.execution._when_gate import run_with_when_gate
 from decoy_engine.execution._strategies._fpe import FpeStrategyHandler
 from decoy_engine.execution._strategies._orphan import resolve_fk_keys
+from decoy_engine.execution._when_gate import run_with_when_gate
 from decoy_engine.generation.pool._cache import PoolCache
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.instrumentation.timing import TimingCollector, timed_strategy, use_collector

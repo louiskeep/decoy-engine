@@ -377,7 +377,7 @@ def test_walks_gen_f4_deep_chain_does_not_recursionerror():
         for i in range(depth)
     )
     edges = tuple(
-        Edge(f"t{i:04d}", "parent_id", f"t{i-1:04d}", "id", declared=True)
+        Edge(f"t{i:04d}", "parent_id", f"t{i - 1:04d}", "id", declared=True)
         for i in range(1, depth)
     )
     snap = SchemaSnapshot(
@@ -389,8 +389,7 @@ def test_walks_gen_f4_deep_chain_does_not_recursionerror():
     hazards = detect_hazards(snap)
     cir = [h for h in hazards if h.kind == "CIR"]
     assert cir == [], (
-        f"QA walks/generators F4: 1500-deep chain has no cycles. "
-        f"Got {len(cir)} CIR hazards."
+        f"QA walks/generators F4: 1500-deep chain has no cycles. Got {len(cir)} CIR hazards."
     )
 
 

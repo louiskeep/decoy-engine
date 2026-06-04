@@ -275,14 +275,18 @@ _CASES: list[tuple[str, Any, dict[str, pa.Table]]] = [
     (
         "text_redact-default-token",
         _plan("t", (("c", _col("text_redact")),)),
-        {"t": pa.table(
-            {"c": [
-                "Contact alice@example.com please.",
-                None,
-                "SSN 123-45-6789 on file.",
-                "Just prose, no PII.",
-            ]}
-        )},
+        {
+            "t": pa.table(
+                {
+                    "c": [
+                        "Contact alice@example.com please.",
+                        None,
+                        "SSN 123-45-6789 on file.",
+                        "Just prose, no PII.",
+                    ]
+                }
+            )
+        },
     ),
     (
         "text_redact-label-token",

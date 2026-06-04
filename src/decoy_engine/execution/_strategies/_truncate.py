@@ -76,6 +76,7 @@ class TruncateHandler:
                     keep_part = s[:length]
                     drop_part = s[length:] if length < len(s) else ""
                     return keep_part + (mask_char * len(drop_part))
+
             result.loc[~na_mask] = non_na.apply(_mask_one)
         df[column] = result
         return df, []

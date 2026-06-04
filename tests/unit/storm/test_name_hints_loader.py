@@ -6,6 +6,7 @@ hits matrix as the pre-extraction Python dict. These tests cover the
 error paths so a malformed contribution fails CI with a clear message
 rather than booting an engine that silently has the wrong patterns.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -29,38 +30,58 @@ def _write(dir_: Path, name: str, body: str) -> Path:
 
 class TestHappyPath:
     def test_minimal_valid_library(self, tmp_path: Path) -> None:
-        _write(tmp_path, "manifest.yaml", """
+        _write(
+            tmp_path,
+            "manifest.yaml",
+            """
 library_version: "0.1.0"
 files:
   - one.yaml
-""")
-        _write(tmp_path, "one.yaml", """
+""",
+        )
+        _write(
+            tmp_path,
+            "one.yaml",
+            """
 detectors:
   - detector_id: foo
     description: Foo column.
     patterns:
       - foo
       - foo_bar
-""")
+""",
+        )
         terms = load_name_hint_terms(tmp_path)
         assert terms == {"foo": ["foo", "foo_bar"]}
 
     def test_multiple_files_merge(self, tmp_path: Path) -> None:
-        _write(tmp_path, "manifest.yaml", """
+        _write(
+            tmp_path,
+            "manifest.yaml",
+            """
 files:
   - first.yaml
   - second.yaml
-""")
-        _write(tmp_path, "first.yaml", """
+""",
+        )
+        _write(
+            tmp_path,
+            "first.yaml",
+            """
 detectors:
   - detector_id: a
     patterns: [a1, a2]
-""")
-        _write(tmp_path, "second.yaml", """
+""",
+        )
+        _write(
+            tmp_path,
+            "second.yaml",
+            """
 detectors:
   - detector_id: b
     patterns: [b1]
-""")
+""",
+        )
         terms = load_name_hint_terms(tmp_path)
         assert terms == {"a": ["a1", "a2"], "b": ["b1"]}
 
@@ -68,16 +89,24 @@ detectors:
         """A YAML file with no `detectors:` key is allowed -- it's a
         no-op contribution, useful for placeholder files before a
         domain pack lands."""
-        _write(tmp_path, "manifest.yaml", """
+        _write(
+            tmp_path,
+            "manifest.yaml",
+            """
 files:
   - filled.yaml
   - empty.yaml
-""")
-        _write(tmp_path, "filled.yaml", """
+""",
+        )
+        _write(
+            tmp_path,
+            "filled.yaml",
+            """
 detectors:
   - detector_id: a
     patterns: [a1]
-""")
+""",
+        )
         _write(tmp_path, "empty.yaml", "# placeholder\n")
         terms = load_name_hint_terms(tmp_path)
         assert terms == {"a": ["a1"]}
@@ -144,7 +173,7 @@ class TestPerFileErrors:
 
     def test_empty_detector_id_string(self, tmp_path: Path) -> None:
         self._wrap_manifest(tmp_path)
-        _write(tmp_path, "bad.yaml", "detectors:\n  - detector_id: \"\"\n    patterns: [x]\n")
+        _write(tmp_path, "bad.yaml", 'detectors:\n  - detector_id: ""\n    patterns: [x]\n')
         with pytest.raises(NameHintLoaderError, match="missing a non-empty `detector_id:`"):
             load_name_hint_terms(tmp_path)
 
@@ -162,13 +191,17 @@ class TestPerFileErrors:
 
     def test_pattern_term_not_string(self, tmp_path: Path) -> None:
         self._wrap_manifest(tmp_path)
-        _write(tmp_path, "bad.yaml", "detectors:\n  - detector_id: foo\n    patterns: [valid, 42]\n")
+        _write(
+            tmp_path, "bad.yaml", "detectors:\n  - detector_id: foo\n    patterns: [valid, 42]\n"
+        )
         with pytest.raises(NameHintLoaderError, match="pattern #1 must be a non-empty string"):
             load_name_hint_terms(tmp_path)
 
     def test_empty_pattern_string(self, tmp_path: Path) -> None:
         self._wrap_manifest(tmp_path)
-        _write(tmp_path, "bad.yaml", 'detectors:\n  - detector_id: foo\n    patterns: ["valid", ""]\n')
+        _write(
+            tmp_path, "bad.yaml", 'detectors:\n  - detector_id: foo\n    patterns: ["valid", ""]\n'
+        )
         with pytest.raises(NameHintLoaderError, match="pattern #1 must be a non-empty string"):
             load_name_hint_terms(tmp_path)
 
@@ -179,13 +212,17 @@ class TestPerFileErrors:
 class TestDuplicateDetectorId:
     def test_duplicate_within_one_file(self, tmp_path: Path) -> None:
         _write(tmp_path, "manifest.yaml", "files:\n  - one.yaml\n")
-        _write(tmp_path, "one.yaml", """
+        _write(
+            tmp_path,
+            "one.yaml",
+            """
 detectors:
   - detector_id: dup
     patterns: [a]
   - detector_id: dup
     patterns: [b]
-""")
+""",
+        )
         with pytest.raises(NameHintLoaderError, match="dup.*twice"):
             load_name_hint_terms(tmp_path)
 

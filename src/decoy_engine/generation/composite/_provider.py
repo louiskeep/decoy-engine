@@ -58,7 +58,7 @@ class CompositeProvider:
         self,
         *,
         coherent_namespace: str,
-        registry: "ProviderRegistry | None" = None,
+        registry: ProviderRegistry | None = None,
         pool_size: int = 10_000,
     ) -> None:
         self.coherent_namespace = coherent_namespace
@@ -209,7 +209,7 @@ class CompositeProvider:
 def composite_provider(
     *,
     coherent_namespace: str,
-    registry: "ProviderRegistry | None" = None,
+    registry: ProviderRegistry | None = None,
     pool_size: int = 10_000,
 ) -> CompositeProvider:
     return CompositeProvider(

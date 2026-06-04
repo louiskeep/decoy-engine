@@ -69,12 +69,12 @@ class TestSameParentDifferentChildrenDifferentPolicies:
             ],
         }
         lookup = check_orphan_fk_policy_completeness(config, rels)
-        assert lookup[
-            ("employees", ("employee_id",), "reviews", ("employee_id",))
-        ] == OrphanPolicy("preserve")
-        assert lookup[
-            ("employees", ("employee_id",), "reviews", ("reviewer_id",))
-        ] == OrphanPolicy("fail")
+        assert lookup[("employees", ("employee_id",), "reviews", ("employee_id",))] == OrphanPolicy(
+            "preserve"
+        )
+        assert lookup[("employees", ("employee_id",), "reviews", ("reviewer_id",))] == OrphanPolicy(
+            "fail"
+        )
 
     def test_same_parent_multiple_children_same_entry_same_policy(self) -> None:
         """One config entry naming N children all share its policy."""
@@ -95,12 +95,12 @@ class TestSameParentDifferentChildrenDifferentPolicies:
             ],
         }
         lookup = check_orphan_fk_policy_completeness(config, rels)
-        assert lookup[
-            ("employees", ("employee_id",), "reviews", ("employee_id",))
-        ] == OrphanPolicy("warn")
-        assert lookup[
-            ("employees", ("employee_id",), "reviews", ("reviewer_id",))
-        ] == OrphanPolicy("warn")
+        assert lookup[("employees", ("employee_id",), "reviews", ("employee_id",))] == OrphanPolicy(
+            "warn"
+        )
+        assert lookup[("employees", ("employee_id",), "reviews", ("reviewer_id",))] == OrphanPolicy(
+            "warn"
+        )
 
 
 class TestGenuineDuplicateStillRejects:
@@ -148,6 +148,4 @@ class TestGenuineDuplicateStillRejects:
             ],
         }
         lookup = check_orphan_fk_policy_completeness(config, rels)
-        assert lookup[
-            ("parent", ("id",), "child", ("fk",))
-        ] == OrphanPolicy("remap")
+        assert lookup[("parent", ("id",), "child", ("fk",))] == OrphanPolicy("remap")

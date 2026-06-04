@@ -204,7 +204,11 @@ class TestLoaderHandlesTempDirectory:
                 "summary": "test",
                 "triggers": {"any_detectors": ["phone"], "min_score": 0.3},
                 "field_rules": [
-                    {"detectors": ["phone"], "mask": "faker", "params": {"faker_type": "phone_number"}}
+                    {
+                        "detectors": ["phone"],
+                        "mask": "faker",
+                        "params": {"faker_type": "phone_number"},
+                    }
                 ],
             }
         )
@@ -215,10 +219,7 @@ class TestLoaderHandlesTempDirectory:
 
         loaded_ids = {d.id for d in result}
         assert loaded_ids == {"good_one", "good_two"}, (
-            f"F8: expected both good files to load past the bad one. "
-            f"Got {sorted(loaded_ids)}."
+            f"F8: expected both good files to load past the bad one. Got {sorted(loaded_ids)}."
         )
         # And we still get the ERROR log for visibility.
-        assert any(
-            "02_bad.yaml" in rec.message for rec in caplog.records
-        )
+        assert any("02_bad.yaml" in rec.message for rec in caplog.records)

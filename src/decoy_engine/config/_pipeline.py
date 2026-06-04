@@ -26,6 +26,7 @@ at the per-table-kind shape).
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -77,7 +78,7 @@ class PipelineConfig(BaseModel):
     run_storm: bool = False
 
     @model_validator(mode="after")
-    def _per_table_kind_consistency(self) -> "PipelineConfig":
+    def _per_table_kind_consistency(self) -> PipelineConfig:
         """FC-1 cross-table invariants for the mixed-mode shape.
 
         Replaces the pre-FC-1 `_mode_consistency` validator. The contract:
@@ -107,13 +108,12 @@ class PipelineConfig(BaseModel):
         for table in generate_tables:
             if not isinstance(table.row_count, int) or table.row_count < 0:
                 raise ValueError(
-                    f"generate table {table.name!r} must declare a "
-                    "non-negative integer `row_count`"
+                    f"generate table {table.name!r} must declare a non-negative integer `row_count`"
                 )
         return self
 
     @model_validator(mode="after")
-    def _reference_graph_valid(self) -> "PipelineConfig":
+    def _reference_graph_valid(self) -> PipelineConfig:
         """Reference relationships are valid across mask + generate tables.
 
         FC-1 (2026-06-02) rewrite: pre-FC-1 the validator only ran on
@@ -197,7 +197,7 @@ class PipelineConfig(BaseModel):
         for start in list(deps):
             if state[start] != WHITE:
                 continue
-            stack: list[tuple[str, "Iterator[str]"]] = []
+            stack: list[tuple[str, Iterator[str]]] = []
             path: list[str] = []
 
             state[start] = GRAY
@@ -216,10 +216,8 @@ class PipelineConfig(BaseModel):
                 ps = state.get(parent_name, WHITE)
                 if ps == GRAY:
                     idx = path.index(parent_name)
-                    cycle = path[idx:] + [parent_name]
-                    raise ValueError(
-                        f"reference cycle in generate config: {' -> '.join(cycle)}"
-                    )
+                    cycle = [*path[idx:], parent_name]
+                    raise ValueError(f"reference cycle in generate config: {' -> '.join(cycle)}")
                 if ps == WHITE:
                     state[parent_name] = GRAY
                     path.append(parent_name)

@@ -43,7 +43,6 @@ from decoy_engine.providers_v2._errors import ProviderError
 from decoy_engine.providers_v2.identifiers._errors import IdentifierError
 from decoy_engine.storm.detectors import _ICD10_CHAPTERS, _icd10_valid
 
-
 # Chapter letters as a stable list so deterministic byte->code maps
 # pick the same chapter for the same input every time. Order matches
 # A-Z alphabetic.

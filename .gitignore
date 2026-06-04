@@ -17,3 +17,8 @@ data/
 # re-include it past the broad data/ rule above (S8 us_localities starter).
 !src/decoy_engine/generation/composite/data/
 !src/decoy_engine/generation/composite/data/us_localities.csv
+
+# Sphinx output: rendered HTML and autoapi-generated .rst (autoapi_keep_files
+# is False, so docs/api is transient, but a failed build can leave it behind).
+docs/_build/
+docs/api/

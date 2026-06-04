@@ -21,7 +21,6 @@ from decoy_engine.generation.synthesize import generate_tables
 def _generate_config(row_count: int = 5) -> dict:
     return {
         "version": 1,
-        
         "global_settings": {"seed": 42},
         "sources": {},
         "tables": [
@@ -138,7 +137,13 @@ class TestGenerationOpSpine:
         assert t.num_rows == 7
         assert t.column_names == ["id"]
         assert t.column("id").to_pylist() == [
-            "1000", "1001", "1002", "1003", "1004", "1005", "1006",
+            "1000",
+            "1001",
+            "1002",
+            "1003",
+            "1004",
+            "1005",
+            "1006",
         ]
 
     def test_zero_rows(self):
@@ -211,7 +216,6 @@ def _v2_run(
     values list for that column."""
     cfg = {
         "version": 1,
-        
         "global_settings": {"seed": seed},
         "sources": {},
         "tables": [{"name": "t", "row_count": n, "generate_columns": [col]}],
@@ -339,7 +343,8 @@ class TestFakerParityV1:
         out = _v2_run(col, 500)
         # pd.NA != None in list comparison; count via pd.isna over the array.
         import pandas as pd
-        nulls = sum(1 for v in out if pd.isna(v) if v is not None or True)
+
+        nulls = sum(1 for v in out if pd.isna(v))
         # The fraction converges to 0.3 with reasonable variance at n=500.
         # Wide bound (0.2-0.4) absorbs the n=500 binomial variance + leaves
         # headroom for a future RNG family swap that preserves the FRACTION
@@ -347,7 +352,7 @@ class TestFakerParityV1:
         assert 0.2 <= nulls / 500 <= 0.4, (
             f"QA walks/generators F3: null FRACTION should converge to "
             f"null_probability=0.3 at n=500; got {nulls}/{500} = "
-            f"{nulls/500:.3f}."
+            f"{nulls / 500:.3f}."
         )
         # Non-null rows must be strings (faker first_name output).
         non_null = [v for v in out if not pd.isna(v)]
@@ -370,14 +375,15 @@ class TestQA7Coverage:
         col = {"name": "fn", "type": "faker", "faker_type": "first_name"}
         cfg = {
             "version": 1,
-            
             "global_settings": {"seed": 42},
             "sources": {},
-            "tables": [{
-                "name": "t",
-                "row_count": 50,
-                "generate_columns": [col],
-            }],
+            "tables": [
+                {
+                    "name": "t",
+                    "row_count": 50,
+                    "generate_columns": [col],
+                }
+            ],
         }
         results: list[Any] = []
         results_lock = threading.Lock()
@@ -406,6 +412,7 @@ class TestQA7Coverage:
         convention); same-config-different-effective-seed bug between
         generate + mask."""
         from decoy_engine.generation.synthesize import _DEFAULT_SEED
+
         assert _DEFAULT_SEED == 0
 
     def test_qa7_f7_references_emits_warning(self):
@@ -423,22 +430,22 @@ class TestQA7Coverage:
         }
         cfg = {
             "version": 1,
-            
             "global_settings": {"seed": 42},
             "sources": {},
-            "tables": [{
-                "name": "t",
-                "row_count": 5,
-                "generate_columns": [col],
-            }],
+            "tables": [
+                {
+                    "name": "t",
+                    "row_count": 5,
+                    "generate_columns": [col],
+                }
+            ],
         }
         with _warnings.catch_warnings(record=True) as w:
             _warnings.simplefilter("always")
             generate_tables(cfg)
         # At least one UserWarning naming `references` must surface.
         assert any(
-            issubclass(warn.category, UserWarning)
-            and "references" in str(warn.message).lower()
+            issubclass(warn.category, UserWarning) and "references" in str(warn.message).lower()
             for warn in w
         )
 
@@ -447,16 +454,22 @@ class TestQA7Coverage:
         cryptic message. Now wrapped + named."""
         cfg = {
             "version": 1,
-            
             "global_settings": {"seed": "not-a-number"},
             "sources": {},
-            "tables": [{
-                "name": "t",
-                "row_count": 5,
-                "generate_columns": [{
-                    "name": "id", "type": "sequence", "start": 1, "step": 1,
-                }],
-            }],
+            "tables": [
+                {
+                    "name": "t",
+                    "row_count": 5,
+                    "generate_columns": [
+                        {
+                            "name": "id",
+                            "type": "sequence",
+                            "start": 1,
+                            "step": 1,
+                        }
+                    ],
+                }
+            ],
         }
         with pytest.raises(ValueError) as exc:
             generate_tables(cfg)
@@ -513,9 +526,7 @@ class TestFormulaParityV1:
 # ----------------------------------------------------------------------------
 
 
-def _v1_run_multi(
-    tables_cfg: list[dict], seed: int = 42, derive_key=None
-) -> dict[str, dict]:
+def _v1_run_multi(tables_cfg: list[dict], seed: int = 42, derive_key=None) -> dict[str, dict]:
     """Run V1 ``ColumnGenerator`` across multiple tables in declared order,
     accumulating a ``reference_data`` dict the same way ``DataGenerator._generate_table``
     does, but in-memory (no CSV writes). Returns ``{table: {col: values_list}}``."""
@@ -524,7 +535,7 @@ def _v1_run_multi(
     from decoy_engine.generators.columns import ColumnGenerator
 
     cg = ColumnGenerator(seed=seed, derive_key=derive_key)
-    reference_data: dict[str, "pd.DataFrame"] = {}
+    reference_data: dict[str, pd.DataFrame] = {}
     out: dict[str, dict] = {}
     for table in tables_cfg:
         name = table["name"]
@@ -538,20 +549,16 @@ def _v1_run_multi(
     return out
 
 
-def _v2_run_multi(
-    tables_cfg: list[dict], seed: int = 42, derive_key=None
-) -> dict[str, dict]:
+def _v2_run_multi(tables_cfg: list[dict], seed: int = 42, derive_key=None) -> dict[str, dict]:
     """Run v2 ``generate_tables`` against a multi-table generate config; returns
     ``{table: {col: values_list}}`` for parity comparison vs ``_v1_run_multi``."""
     cfg = {
         "version": 1,
-        
         "global_settings": {"seed": seed},
         "sources": {},
         "tables": tables_cfg,
         "targets": {
-            t["name"]: {"type": "file", "format": "csv", "path": "o.csv"}
-            for t in tables_cfg
+            t["name"]: {"type": "file", "format": "csv", "path": "o.csv"} for t in tables_cfg
         },
     }
     cfg = PipelineConfig.model_validate(cfg).model_dump()
@@ -567,13 +574,13 @@ class TestReferenceParityV1:
     + the V1 ``generate_column`` null_probability post-process across multi-table
     generation under fixed seed (``derive_key=None``)."""
 
-    def _customers_then_orders(self, distribution: str, child_n: int = 10, **child_extras) -> list[dict]:
+    def _customers_then_orders(
+        self, distribution: str, child_n: int = 10, **child_extras
+    ) -> list[dict]:
         parent = {
             "name": "customers",
             "row_count": 5,
-            "generate_columns": [
-                {"name": "id", "type": "sequence", "start": 1, "step": 1}
-            ],
+            "generate_columns": [{"name": "id", "type": "sequence", "start": 1, "step": 1}],
         }
         child_col: dict = {
             "name": "customer_id",
@@ -607,21 +614,15 @@ class TestReferenceParityV1:
         assert _v2_run_multi(tables) == _v1_run_multi(tables)
 
     def test_weighted_distribution(self):
-        tables = self._customers_then_orders(
-            "weighted", weights=[5, 1, 1, 1, 1]
-        )
+        tables = self._customers_then_orders("weighted", weights=[5, 1, 1, 1, 1])
         assert _v2_run_multi(tables) == _v1_run_multi(tables)
 
     def test_min_per_parent(self):
-        tables = self._customers_then_orders(
-            "random", child_n=20, min_per_parent=2
-        )
+        tables = self._customers_then_orders("random", child_n=20, min_per_parent=2)
         assert _v2_run_multi(tables) == _v1_run_multi(tables)
 
     def test_max_per_parent(self):
-        tables = self._customers_then_orders(
-            "random", child_n=20, max_per_parent=5
-        )
+        tables = self._customers_then_orders("random", child_n=20, max_per_parent=5)
         assert _v2_run_multi(tables) == _v1_run_multi(tables)
 
     def test_empty_parent_pool(self):
@@ -629,9 +630,7 @@ class TestReferenceParityV1:
         parent = {
             "name": "customers",
             "row_count": 0,
-            "generate_columns": [
-                {"name": "id", "type": "sequence", "start": 1, "step": 1}
-            ],
+            "generate_columns": [{"name": "id", "type": "sequence", "start": 1, "step": 1}],
         }
         child = {
             "name": "orders",
@@ -660,16 +659,15 @@ class TestReferenceParityV1:
         for the rationale; this cell pins the same contract on the
         multi-table reference path."""
         import pandas as pd
-        tables = self._customers_then_orders(
-            "random", child_n=500, null_probability=0.3
-        )
+
+        tables = self._customers_then_orders("random", child_n=500, null_probability=0.3)
         result = _v2_run_multi(tables)
         col = result["orders"]["customer_id"]
         nulls = sum(1 for v in col if pd.isna(v))
         assert 0.2 <= nulls / 500 <= 0.4, (
             f"QA walks/generators F3: null FRACTION should converge to "
             f"null_probability=0.3 at n=500; got {nulls}/{500} = "
-            f"{nulls/500:.3f}."
+            f"{nulls / 500:.3f}."
         )
 
     def test_repeatability(self):
@@ -682,16 +680,12 @@ class TestReferenceParityV1:
         users = {
             "name": "users",
             "row_count": 3,
-            "generate_columns": [
-                {"name": "id", "type": "sequence", "start": 1, "step": 1}
-            ],
+            "generate_columns": [{"name": "id", "type": "sequence", "start": 1, "step": 1}],
         }
         groups = {
             "name": "groups",
             "row_count": 4,
-            "generate_columns": [
-                {"name": "id", "type": "sequence", "start": 100, "step": 1}
-            ],
+            "generate_columns": [{"name": "id", "type": "sequence", "start": 100, "step": 1}],
         }
         membership = {
             "name": "memberships",
@@ -733,16 +727,13 @@ class TestReferenceConfigValidation:
         child_col.update(child_extras)
         return {
             "version": 1,
-            
             "global_settings": {"seed": 42},
             "sources": {},
             "tables": [
                 {
                     "name": "customers",
                     "row_count": 5,
-                    "generate_columns": [
-                        {"name": "id", "type": "sequence", "start": 1, "step": 1}
-                    ],
+                    "generate_columns": [{"name": "id", "type": "sequence", "start": 1, "step": 1}],
                 },
                 {
                     "name": "orders",
@@ -813,7 +804,7 @@ class TestReferenceConfigValidation:
                             {
                                 "name": "parent_id",
                                 "type": "reference",
-                                "reference_table": f"t{i-1:04d}",
+                                "reference_table": f"t{i - 1:04d}",
                                 "reference_column": "id",
                                 "distribution": "random",
                             }
@@ -825,10 +816,12 @@ class TestReferenceConfigValidation:
             }
             for i in range(depth)
         ]
-        targets = {f"t{i:04d}": {"type": "file", "format": "csv", "path": f"t{i}.csv"} for i in range(depth)}
+        targets = {
+            f"t{i:04d}": {"type": "file", "format": "csv", "path": f"t{i}.csv"}
+            for i in range(depth)
+        }
         cfg = {
             "version": 1,
-            
             "global_settings": {"seed": 42},
             "sources": {},
             "tables": tables,
@@ -859,10 +852,12 @@ class TestReferenceConfigValidation:
             }
             for i in range(depth)
         ]
-        targets = {f"t{i:04d}": {"type": "file", "format": "csv", "path": f"t{i}.csv"} for i in range(depth)}
+        targets = {
+            f"t{i:04d}": {"type": "file", "format": "csv", "path": f"t{i}.csv"}
+            for i in range(depth)
+        }
         cfg = {
             "version": 1,
-            
             "global_settings": {"seed": 42},
             "sources": {},
             "tables": tables,
@@ -912,9 +907,7 @@ class TestDeriveKeyParity:
 
     def test_keyed_faker_parity(self):
         col = {"name": "fn", "type": "faker", "faker_type": "first_name"}
-        assert _v2_run(col, 10, derive_key=_fake_key) == _v1_run(
-            col, 10, derive_key=_fake_key
-        )
+        assert _v2_run(col, 10, derive_key=_fake_key) == _v1_run(col, 10, derive_key=_fake_key)
 
     def test_keyed_sequence_unchanged(self):
         # sequence does not use synthetic_column_seed; derive_key cannot change its
@@ -931,24 +924,18 @@ class TestDeriveKeyParity:
             "categories": ["A", "B", "C"],
             "weights": [10, 1, 1],
         }
-        assert _v2_run(col, 20, derive_key=_fake_key) == _v1_run(
-            col, 20, derive_key=_fake_key
-        )
+        assert _v2_run(col, 20, derive_key=_fake_key) == _v1_run(col, 20, derive_key=_fake_key)
 
     def test_keyed_formula_parity(self):
         col = {"name": "twice", "type": "formula", "formula": "i * 2"}
-        assert _v2_run(col, 5, derive_key=_fake_key) == _v1_run(
-            col, 5, derive_key=_fake_key
-        )
+        assert _v2_run(col, 5, derive_key=_fake_key) == _v1_run(col, 5, derive_key=_fake_key)
 
     def test_keyed_reference_parity(self):
         tables = [
             {
                 "name": "customers",
                 "row_count": 5,
-                "generate_columns": [
-                    {"name": "id", "type": "sequence", "start": 1, "step": 1}
-                ],
+                "generate_columns": [{"name": "id", "type": "sequence", "start": 1, "step": 1}],
             },
             {
                 "name": "orders",
@@ -971,9 +958,7 @@ class TestDeriveKeyParity:
     def test_cross_run_stability(self):
         # Same key + same column -> same bytes across two runs.
         col = {"name": "fn", "type": "faker", "faker_type": "first_name"}
-        assert _v2_run(col, 10, derive_key=_fake_key) == _v2_run(
-            col, 10, derive_key=_fake_key
-        )
+        assert _v2_run(col, 10, derive_key=_fake_key) == _v2_run(col, 10, derive_key=_fake_key)
 
     def test_different_keys_roll_output(self):
         # Different derive_keys -> different output (column-level rolling).
@@ -997,9 +982,9 @@ class TestInstanceDefaultLocale:
 
     def test_default_locale_threaded_to_faker(self):
         col = {"name": "city", "type": "faker", "faker_type": "city"}
-        assert _v2_run(
+        assert _v2_run(col, 10, instance_default_locale="en_GB") == _v1_run(
             col, 10, instance_default_locale="en_GB"
-        ) == _v1_run(col, 10, instance_default_locale="en_GB")
+        )
 
     def test_per_column_locale_overrides_instance_default(self):
         # When the column sets its own `locale`, it wins; the instance default
@@ -1012,9 +997,7 @@ class TestInstanceDefaultLocale:
         }
         with_instance = _v2_run(col, 5, instance_default_locale="en_GB")
         without_instance = _v2_run(col, 5, instance_default_locale=None)
-        assert with_instance == without_instance == _v1_run(
-            col, 5, instance_default_locale="en_GB"
-        )
+        assert with_instance == without_instance == _v1_run(col, 5, instance_default_locale="en_GB")
 
 
 class TestLegacyColumnNameSeed:
@@ -1056,7 +1039,7 @@ class TestDeterminismFresh:
         a = _v2_run(col, 10)
         b = _v2_run(col, 10)
         # Two independent runs SHOULD differ. Collision rate ~0 over 10 rows.
-        assert any(x != y for x, y in zip(a, b))
+        assert any(x != y for x, y in zip(a, b, strict=True))
 
     def test_fresh_consistent_within_run(self):
         # Within ONE call, n=10 rows are generated -- they are the output of a
@@ -1082,9 +1065,7 @@ class TestReferenceEdgeCases:
             {
                 "name": "customers",
                 "row_count": 5,
-                "generate_columns": [
-                    {"name": "id", "type": "sequence", "start": 1, "step": 1}
-                ],
+                "generate_columns": [{"name": "id", "type": "sequence", "start": 1, "step": 1}],
             },
             {
                 "name": "orders",
@@ -1104,9 +1085,7 @@ class TestReferenceEdgeCases:
             "distribution": "weighted",
             "weights": [1, 1, 1],  # wrong size
         }
-        assert _v2_run_multi(self._two_table(child)) == _v1_run_multi(
-            self._two_table(child)
-        )
+        assert _v2_run_multi(self._two_table(child)) == _v1_run_multi(self._two_table(child))
 
     def test_unknown_distribution_falls_through_to_random(self):
         # V1 warns + uses random; v2 silently uses random. Parity in values.
@@ -1117,9 +1096,7 @@ class TestReferenceEdgeCases:
             "reference_column": "id",
             "distribution": "not_a_real_distribution",
         }
-        assert _v2_run_multi(self._two_table(child)) == _v1_run_multi(
-            self._two_table(child)
-        )
+        assert _v2_run_multi(self._two_table(child)) == _v1_run_multi(self._two_table(child))
 
 
 class TestFC1QAFindings:

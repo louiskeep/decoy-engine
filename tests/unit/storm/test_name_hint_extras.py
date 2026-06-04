@@ -14,6 +14,7 @@ What this test surface guarantees:
   - Empty / None extras is a no-op.
   - Exceptions inside the context still clean up the ContextVar.
 """
+
 from __future__ import annotations
 
 import threading
@@ -25,7 +26,6 @@ from decoy_engine.storm.detectors import (
     hits_name_hint,
     name_hint_extras,
 )
-
 
 # ── additive semantics ──────────────────────────────────────────────────
 

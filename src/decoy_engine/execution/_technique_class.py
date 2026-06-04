@@ -26,7 +26,6 @@ from __future__ import annotations
 
 from typing import Literal
 
-
 # The four user-visible classes. None means "the strategy hasn't been
 # classified yet" -- defensive default for new strategies that ship
 # without a label. The FE renders a "needs review" badge in that case.

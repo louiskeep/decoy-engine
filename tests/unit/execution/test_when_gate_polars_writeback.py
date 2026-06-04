@@ -31,11 +31,11 @@ class _ReversingHandler:
 
     name = "reversing_redact"
 
-    def run(self, frame: pl.DataFrame, column: str, plan: ColumnSeed, ctx) -> tuple[pl.DataFrame, list]:
+    def run(
+        self, frame: pl.DataFrame, column: str, plan: ColumnSeed, ctx
+    ) -> tuple[pl.DataFrame, list]:
         reversed_frame = frame.reverse()
-        reversed_frame = reversed_frame.with_columns(
-            pl.lit("REDACTED").alias(column)
-        )
+        reversed_frame = reversed_frame.with_columns(pl.lit("REDACTED").alias(column))
         return reversed_frame, []
 
 

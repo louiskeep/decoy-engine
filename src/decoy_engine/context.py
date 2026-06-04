@@ -15,8 +15,6 @@ ExecutionContext end-to-end while the legacy Masker and DataGenerator
 paths use it partially.
 """
 
-import hashlib
-import hmac
 from collections.abc import Callable
 from typing import Any, Literal, Protocol, runtime_checkable
 
@@ -150,6 +148,7 @@ def emit_step(
         # otherwise). The fallback itself is intentional for
         # forward-compatibility; the log just makes it visible.
         import logging
+
         logging.getLogger(__name__).debug(
             "emit_step: step() rejected new kwargs (node_id / error_class); "
             "falling back to 3-kwarg form. Check engine/platform version alignment.",

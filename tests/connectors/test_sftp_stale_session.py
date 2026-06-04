@@ -17,8 +17,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-import pytest
-
 
 class _FakeSFTP:
     """Stand-in for paramiko's SFTP client. Tracks open/closed state +

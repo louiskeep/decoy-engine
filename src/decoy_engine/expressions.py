@@ -65,7 +65,7 @@ class _SafeRe:
     compile = staticmethod(_re.compile)
     escape = staticmethod(_re.escape)
     # Flag constants (both short and long spellings, mirroring `re`).
-    I = IGNORECASE = _re.IGNORECASE
+    I = IGNORECASE = _re.IGNORECASE  # noqa: E741 - mirrors re.I flag name
     M = MULTILINE = _re.MULTILINE
     S = DOTALL = _re.DOTALL
     X = VERBOSE = _re.VERBOSE

@@ -10,7 +10,7 @@ inference on it.
 
 Two complementary inference rules apply:
 
-  - **Engine's existing :func:`infer_edges`** handles the SQL-style
+  - **Engine's existing :func:`decoy_engine.walks.inference.infer_edges`** handles the SQL-style
     ``<x>_id`` :math:`\\rightarrow` ``<x>.id`` pattern (works for any
     table that happens to have a literal ``id`` PK column).
   - **:func:`infer_cross_file_edges`** in this module handles the
@@ -129,7 +129,8 @@ def infer_cross_file_edges(snapshot: SchemaSnapshot) -> tuple[Edge, ...]:
 
     The file-style convention: ``customers.customer_id`` is the PK,
     ``orders.customer_id`` is the FK, and the column name is identical
-    on both sides. The engine's existing :func:`infer_edges` doesn't
+    on both sides. The engine's existing
+    :func:`decoy_engine.walks.inference.infer_edges` doesn't
     catch this because it strips ``_id`` and looks for a literal ``id``
     PK in the target table — that rule is for the SQL convention where
     the PK is always named ``id``.

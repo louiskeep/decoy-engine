@@ -13,11 +13,10 @@ import pandas as pd
 from decoy_engine.generation.composite._city_state_zip import (
     CompositeCityStateZip,
 )
-from decoy_engine.generation.composite._name_email import CompositeNameEmail
 from decoy_engine.generation.composite._generator import _COMPOSITE_NAMES
+from decoy_engine.generation.composite._name_email import CompositeNameEmail
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.providers_v2._adapter import ProviderSpec
-
 
 _SEED = (0x0123456789).to_bytes(8, "big")
 
@@ -51,14 +50,14 @@ class TestRegistryMembership:
             assert cap.backend_type == "composite"
 
     def test_composite_names_frozenset_holds_six_entries(self):
-        assert _COMPOSITE_NAMES == {
+        assert {
             "composite_name_email",
             "composite_city_state_zip",
             "composite_custom",
             "composite_person",
             "composite_address",
             "composite_provider",
-        }
+        } == _COMPOSITE_NAMES
 
 
 class TestExistingCompositesUnchanged:

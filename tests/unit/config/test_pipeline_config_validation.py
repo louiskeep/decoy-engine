@@ -443,12 +443,16 @@ class TestQaWalksGenF6GenerateColumnConfigTypeParams:
 
     def test_categorical_missing_categories_raises(self):
         cfg = self._wrap({"name": "dept", "type": "categorical"})
-        with pytest.raises(ValidationError, match="categorical column 'dept' requires `categories`"):
+        with pytest.raises(
+            ValidationError, match="categorical column 'dept' requires `categories`"
+        ):
             PipelineConfig.model_validate(cfg)
 
     def test_categorical_empty_categories_raises(self):
         cfg = self._wrap({"name": "dept", "type": "categorical", "categories": []})
-        with pytest.raises(ValidationError, match="categorical column 'dept' requires `categories`"):
+        with pytest.raises(
+            ValidationError, match="categorical column 'dept' requires `categories`"
+        ):
             PipelineConfig.model_validate(cfg)
 
     def test_formula_missing_formula_raises(self):
@@ -464,12 +468,16 @@ class TestQaWalksGenF6GenerateColumnConfigTypeParams:
     def test_reference_validator_unchanged_still_raises_on_missing_table(self):
         """Existing _reference_params_required validator still works
         alongside the new _type_params_present validator."""
-        cfg = self._wrap({
-            "name": "fk",
-            "type": "reference",
-            "reference_column": "id",
-        })
-        with pytest.raises(ValidationError, match="reference column 'fk' requires `reference_table`"):
+        cfg = self._wrap(
+            {
+                "name": "fk",
+                "type": "reference",
+                "reference_column": "id",
+            }
+        )
+        with pytest.raises(
+            ValidationError, match="reference column 'fk' requires `reference_table`"
+        ):
             PipelineConfig.model_validate(cfg)
 
     def test_faker_with_unrelated_extra_still_validates(self):
@@ -477,12 +485,14 @@ class TestQaWalksGenF6GenerateColumnConfigTypeParams:
         Q-S6-1 lock). Unrelated extras like custom markers must still
         pass through. F6 catches MISSING-required-params, not
         UNKNOWN-extras."""
-        cfg = self._wrap({
-            "name": "fk",
-            "type": "faker",
-            "faker_type": "email",
-            "custom_marker": "team-alpha",
-        })
+        cfg = self._wrap(
+            {
+                "name": "fk",
+                "type": "faker",
+                "faker_type": "email",
+                "custom_marker": "team-alpha",
+            }
+        )
         validated = PipelineConfig.model_validate(cfg)
         col_dump = validated.model_dump()["tables"][0]["generate_columns"][0]
         assert col_dump.get("custom_marker") == "team-alpha"

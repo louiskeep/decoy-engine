@@ -12,8 +12,6 @@ from __future__ import annotations
 
 import warnings
 
-import pytest
-
 from decoy_engine.internal.crypto import deterministic_hash, hmac_hex
 
 
@@ -27,8 +25,7 @@ class TestQaInternalF12DeterministicHashDeprecated:
             deterministic_hash("some-value", seed=42)
         depr_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
         assert len(depr_warnings) == 1, (
-            f"QA-internal F12: expected exactly one DeprecationWarning, "
-            f"got {len(depr_warnings)}"
+            f"QA-internal F12: expected exactly one DeprecationWarning, got {len(depr_warnings)}"
         )
         assert "hmac_hex" in str(depr_warnings[0].message)
 

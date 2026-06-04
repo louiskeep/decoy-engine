@@ -35,7 +35,6 @@ from decoy_engine.execution._transforms import (
     apply_transforms,
 )
 
-
 # ---------------------------------------------------------------------
 # Schema acceptance + rejection at the PipelineConfig choke-point
 # ---------------------------------------------------------------------
@@ -78,9 +77,7 @@ class TestTransformSchema:
         )
 
     def test_accepts_sort_op_with_default_ascending(self):
-        PipelineConfig.model_validate(
-            _base_config_with_transforms([{"op": "sort", "by": ["age"]}])
-        )
+        PipelineConfig.model_validate(_base_config_with_transforms([{"op": "sort", "by": ["age"]}]))
 
     def test_accepts_sort_op_with_per_column_ascending(self):
         PipelineConfig.model_validate(
@@ -90,15 +87,11 @@ class TestTransformSchema:
         )
 
     def test_accepts_limit_op(self):
-        PipelineConfig.model_validate(
-            _base_config_with_transforms([{"op": "limit", "n": 100}])
-        )
+        PipelineConfig.model_validate(_base_config_with_transforms([{"op": "limit", "n": 100}]))
 
     def test_limit_op_rejects_negative_n(self):
         with pytest.raises(Exception):
-            PipelineConfig.model_validate(
-                _base_config_with_transforms([{"op": "limit", "n": -5}])
-            )
+            PipelineConfig.model_validate(_base_config_with_transforms([{"op": "limit", "n": -5}]))
 
     def test_accepts_dedupe_op_with_columns(self):
         PipelineConfig.model_validate(
@@ -106,9 +99,7 @@ class TestTransformSchema:
         )
 
     def test_accepts_dedupe_op_without_columns(self):
-        PipelineConfig.model_validate(
-            _base_config_with_transforms([{"op": "dedupe"}])
-        )
+        PipelineConfig.model_validate(_base_config_with_transforms([{"op": "dedupe"}]))
 
     def test_accepts_derive_op(self):
         PipelineConfig.model_validate(
@@ -119,9 +110,7 @@ class TestTransformSchema:
 
     def test_accepts_drop_column_op(self):
         PipelineConfig.model_validate(
-            _base_config_with_transforms(
-                [{"op": "drop_column", "columns": ["pii_a", "pii_b"]}]
-            )
+            _base_config_with_transforms([{"op": "drop_column", "columns": ["pii_a", "pii_b"]}])
         )
 
     def test_rejects_unknown_op(self):
@@ -153,13 +142,15 @@ class TestTransformSchema:
 
 @pytest.fixture
 def _sample_df() -> pd.DataFrame:
-    return pd.DataFrame({
-        "age": [25, 17, 40, 30, 22, 17],
-        "country": ["US", "US", "CA", "US", "GB", "US"],
-        "revenue": [100, 0, 200, 150, 80, 0],
-        "users": [10, 0, 20, 15, 8, 0],
-        "email": ["a@x", "b@y", "c@z", "a@x", "d@w", "b@y"],
-    })
+    return pd.DataFrame(
+        {
+            "age": [25, 17, 40, 30, 22, 17],
+            "country": ["US", "US", "CA", "US", "GB", "US"],
+            "revenue": [100, 0, 200, 150, 80, 0],
+            "users": [10, 0, 20, 15, 8, 0],
+            "email": ["a@x", "b@y", "c@z", "a@x", "d@w", "b@y"],
+        }
+    )
 
 
 class TestApplyFilter:
@@ -303,6 +294,7 @@ class TestExpressionScopeClamp:
 
     def test_filter_blocks_at_var_escape(self):
         import pandas as pd
+
         df = pd.DataFrame({"a": [1, 2, 3]})
         with pytest.raises(TransformError) as exc:
             apply_transform(df, FilterOp(op="filter", expression=self._ESCAPE_EXPR))
@@ -312,6 +304,7 @@ class TestExpressionScopeClamp:
 
     def test_derive_blocks_at_var_escape(self):
         import pandas as pd
+
         df = pd.DataFrame({"a": [1, 2, 3]})
         with pytest.raises(TransformError) as exc:
             apply_transform(
@@ -324,12 +317,14 @@ class TestExpressionScopeClamp:
         """Column references resolve through DataFrame's column scope,
         not local_dict / global_dict, so the clamp does not break them."""
         import pandas as pd
+
         df = pd.DataFrame({"age": [10, 20, 30]})
         out = apply_transform(df, FilterOp(op="filter", expression="age >= 20"))
         assert out["age"].tolist() == [20, 30]
 
     def test_derive_legitimate_arithmetic_still_works(self):
         import pandas as pd
+
         df = pd.DataFrame({"a": [1, 2, 3]})
         out = apply_transform(df, DeriveOp(op="derive", column="b", expression="a * 2"))
         assert out["b"].tolist() == [2, 4, 6]
@@ -401,9 +396,11 @@ class TestDropColumnMaskCrossCheck:
         is rejected at PipelineConfig.model_validate. The previous behavior
         would fall through to a `v2_runner_unexpected_error` mid-strategy
         when the column was missing; this catches it at the choke-point."""
-        cfg = _base_config_with_transforms([
-            {"op": "drop_column", "columns": ["c"]},  # `c` is the table's mask column
-        ])
+        cfg = _base_config_with_transforms(
+            [
+                {"op": "drop_column", "columns": ["c"]},  # `c` is the table's mask column
+            ]
+        )
         with pytest.raises(Exception) as exc:
             PipelineConfig.model_validate(cfg)
         assert "drop_column" in str(exc.value).lower()
@@ -413,9 +410,11 @@ class TestDropColumnMaskCrossCheck:
         """Dropping a column that is NOT in the mask columns list is fine --
         the table just emits without that column. The cross-check only fires
         on overlap."""
-        cfg = _base_config_with_transforms([
-            {"op": "drop_column", "columns": ["unrelated_column"]},
-        ])
+        cfg = _base_config_with_transforms(
+            [
+                {"op": "drop_column", "columns": ["unrelated_column"]},
+            ]
+        )
         # No exception -> the validator accepted it (drop_column on a
         # non-mask column is the intended use).
         PipelineConfig.model_validate(cfg)
@@ -423,9 +422,11 @@ class TestDropColumnMaskCrossCheck:
     def test_rejects_multi_column_drop_with_one_overlap(self):
         """If drop_column lists multiple columns AND one of them overlaps a
         mask column, the reject names ALL overlapping columns (sorted)."""
-        cfg = _base_config_with_transforms([
-            {"op": "drop_column", "columns": ["a", "c", "b"]},  # c is the mask col
-        ])
+        cfg = _base_config_with_transforms(
+            [
+                {"op": "drop_column", "columns": ["a", "c", "b"]},  # c is the mask col
+            ]
+        )
         with pytest.raises(Exception) as exc:
             PipelineConfig.model_validate(cfg)
         # Reject names the conflict (sorted).

@@ -32,19 +32,20 @@ from typing import Any
 import pandas as pd
 
 from decoy_engine.storm.detectors import run_all_detectors
-from decoy_engine.storm.postmask.types import ResidualPIIFinding
-
+from decoy_engine.storm.postmask.types import ResidualPIIFinding, Severity
 
 # Strategies whose output is EXPECTED to look like real PII. A detector
 # hit on a column masked with one of these is informational, not a
 # warning.
-_PRODUCES_PII_LIKE_VALUES: frozenset[str] = frozenset({
-    "faker",
-    "formula",
-    "categorical",
-    "reference",
-    "date_shift",
-})
+_PRODUCES_PII_LIKE_VALUES: frozenset[str] = frozenset(
+    {
+        "faker",
+        "formula",
+        "categorical",
+        "reference",
+        "date_shift",
+    }
+)
 
 # Strategies that DESTROY detector patterns. A surviving hit on a column
 # masked with one of these is a fail (the mask did not work).
@@ -52,12 +53,14 @@ _PRODUCES_PII_LIKE_VALUES: frozenset[str] = frozenset({
 # text_redact replaces matched PII spans with a fixed token; any
 # detector still hitting after text_redact ran is a failure of the
 # detector coverage and must surface as 'fail' (not 'warning').
-_DESTROYS_PATTERN: frozenset[str] = frozenset({
-    "hash",
-    "redact",
-    "text_redact",
-    "bucketize",
-})
+_DESTROYS_PATTERN: frozenset[str] = frozenset(
+    {
+        "hash",
+        "redact",
+        "text_redact",
+        "bucketize",
+    }
+)
 
 # Dennis M12 fix (2026-06-01): strategies that explicitly leave the
 # column untouched. A detector hit on these is expected -- the user
@@ -65,9 +68,11 @@ _DESTROYS_PATTERN: frozenset[str] = frozenset({
 # 'info' (a confirmation), not 'warning'. Without this, every
 # passthrough column that matched any detector emitted a false-positive
 # residual-PII warning.
-_NO_OP_BY_DESIGN: frozenset[str] = frozenset({
-    "passthrough",
-})
+_NO_OP_BY_DESIGN: frozenset[str] = frozenset(
+    {
+        "passthrough",
+    }
+)
 
 
 def check_residual_pii(
@@ -128,7 +133,7 @@ def check_residual_pii(
     return findings
 
 
-def _classify(detector_id: str, configured: str | None) -> tuple[str, str]:
+def _classify(detector_id: str, configured: str | None) -> tuple[Severity, str]:
     """Classify a detector hit + return (severity, human-readable message).
 
     Three buckets per the module docstring:

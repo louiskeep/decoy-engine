@@ -24,12 +24,12 @@ from typing import Any
 
 import pandas as pd
 
-from decoy_engine.storm.postmask.types import FKPreservationFinding
+from decoy_engine.storm.postmask.types import FKPreservationFinding, Severity
 
 # Default orphan-rate threshold for relationships without an explicit
 # orphan_policy tag. Above 1% = fail; 0.1%-1% = warning; under 0.1% = info.
 _DEFAULT_WARNING_THRESHOLD = 0.001  # 0.1%
-_DEFAULT_FAIL_THRESHOLD = 0.01      # 1%
+_DEFAULT_FAIL_THRESHOLD = 0.01  # 1%
 
 
 def check_fk_preservation(
@@ -134,7 +134,7 @@ def _check_one_fk(
             child_column=child_col,
             severity="error",
             orphan_count=0,
-            total_child_rows=int(len(child_df)),
+            total_child_rows=len(child_df),
             orphan_rate=0.0,
             namespace=namespace,
             message=(
@@ -146,7 +146,7 @@ def _check_one_fk(
     # + null FKs (child rows with null FK aren't orphans by definition).
     parent_pks = parent_df[parent_col].dropna()
     child_fks = child_df[child_col].dropna()
-    total_child = int(len(child_fks))
+    total_child = len(child_fks)
     if total_child == 0:
         return FKPreservationFinding(
             parent_table=parent_table,
@@ -172,7 +172,7 @@ def _check_one_fk(
     # - over fail = fail
     # - orphan_policy: skip means orphan-tolerant; demote one notch
     if orphan_count == 0:
-        severity = "info"
+        severity: Severity = "info"
         message = "all child FK values resolve."
     elif orphan_rate < _DEFAULT_WARNING_THRESHOLD:
         severity = "info"
@@ -180,8 +180,7 @@ def _check_one_fk(
     elif orphan_rate < _DEFAULT_FAIL_THRESHOLD:
         severity = "info" if orphan_policy == "skip" else "warning"
         message = (
-            f"{orphan_count} orphan(s) ({orphan_rate * 100:.2f}%); "
-            f"orphan_policy={orphan_policy!r}."
+            f"{orphan_count} orphan(s) ({orphan_rate * 100:.2f}%); orphan_policy={orphan_policy!r}."
         )
     else:
         severity = "warning" if orphan_policy == "skip" else "fail"
@@ -242,7 +241,7 @@ def _check_composite_fk(
             child_column=child_col_label,
             severity="error",
             orphan_count=0,
-            total_child_rows=int(len(child_df)),
+            total_child_rows=len(child_df),
             orphan_rate=0.0,
             namespace=namespace,
             message=(
@@ -256,7 +255,7 @@ def _check_composite_fk(
     # in any component anyway). Same logic on the parent side.
     parent_tuples_df = parent_df[parent_cols].dropna(how="any")
     child_tuples_df = child_df[child_cols].dropna(how="any")
-    total_child = int(len(child_tuples_df))
+    total_child = len(child_tuples_df)
     if total_child == 0:
         return FKPreservationFinding(
             parent_table=parent_table,
@@ -306,7 +305,7 @@ def _check_composite_fk(
 
     # Same severity rules as _check_one_fk.
     if orphan_count == 0:
-        severity = "info"
+        severity: Severity = "info"
         message = "all child FK tuples resolve."
     elif orphan_rate < _DEFAULT_WARNING_THRESHOLD:
         severity = "info"

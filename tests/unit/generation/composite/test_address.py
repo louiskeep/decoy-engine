@@ -36,9 +36,7 @@ def _make() -> CompositeAddress:
 class TestOutputs:
     def test_address_4_outputs_match_output_columns(self):
         c = _make()
-        out = c.generate_bundle(
-            _spec(), 3, source=pd.Series(["a", "b", "c"]), deterministic=True
-        )
+        out = c.generate_bundle(_spec(), 3, source=pd.Series(["a", "b", "c"]), deterministic=True)
         assert set(out.keys()) == {"street_address", "city", "state", "zip"}
         for k in out:
             assert len(out[k]) == 3
