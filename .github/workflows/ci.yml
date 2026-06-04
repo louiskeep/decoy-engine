@@ -1,19 +1,19 @@
 # V2.0-prep CI workflow.
 #
-# Three separate jobs (ruff / mypy / pytest) so a failure points at the
-# specific gate that tripped. Each job is fast (~20 s cold; <10 s warm
-# via pip cache) and runs on every push + pull request.
+# Three separate jobs (ruff / mypy / regression-gate) so a failure points
+# at the specific gate that tripped. ruff + mypy stay fast and focused;
+# regression-gate runs the whole non-benchmark suite in one invocation.
 #
-# Why three jobs and not one combined: a single shell-step setup keeps
-# the YAML short, but combined jobs hide which gate broke the build.
-# When a contributor sees "CI failed" they want to see "ruff" vs
-# "mypy" vs "pytest" at a glance, not scroll through interleaved logs.
+# Why separate jobs and not one combined: a single shell-step setup keeps
+# the YAML short, but combined jobs hide which gate broke the build. When a
+# contributor sees "CI failed" they want "ruff" vs "mypy" vs
+# "regression-gate" at a glance, not interleaved logs.
 #
-# Why no separate self-hosted runner yet: the V2.0-prep tier of lint +
-# type + pytest runs comfortably on ubuntu-latest. Self-hosted infra
-# arrives in V2.x for the benchmark guardrail (per engineering-best-
-# practices section 7.3, sub-second perf numbers from shared runners
-# are noise).
+# Why no separate self-hosted runner yet: the lint + type + test tier runs
+# comfortably on ubuntu-latest. Self-hosted infra arrives in V2.x for the
+# benchmark guardrail (per engineering-best-practices section 7.3,
+# sub-second perf numbers from shared runners are noise), which is why the
+# benchmark suite is excluded here and runs on its own workflow.
 
 name: ci
 
@@ -51,7 +51,24 @@ jobs:
       - name: Type check
         run: mypy src/decoy_engine
 
-  pytest:
+  # regression-gate: ONE job that vets every change across all correctness
+  # families. It runs the whole non-benchmark suite in a single invocation
+  # (fast, and one run cannot silently drop a directory the way N separate
+  # pytest calls could), preceded by a routing guard that fails if any named
+  # suite directory is renamed or removed without updating the list below.
+  # Full module-to-suite map: docs/ci-regression-gate.md.
+  #
+  #   relational   : tests/integration/golden (row-count / FK / join invariants)
+  #   parity       : tests/parity (pandas vs polars adapter)
+  #   determinism  : tests/unit/determinism + tests/integration/golden
+  #   golden       : tests/integration/golden (engine-v2 S1 fixtures)
+  #   quality      : tests/unit/quality + tests/snapshots (fidelity / privacy / DCR + frozen snapshots)
+  #   sentry       : tests/sentry (source-policy guards incl. the em-dash/arrow check)
+  #   security     : tests/security
+  #   privacy      : tests/privacy
+  #
+  # parity, substrate-matrix, benchmark, and docs stay as separate workflows.
+  regression-gate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -61,11 +78,18 @@ jobs:
           cache: pip
       - name: Install engine + dev extras
         run: pip install -e ".[dev]"
-      - name: Unit + integration tests
-        # Benchmark suite excluded from CI per resolved question #19;
-        # benchmarks run on a dedicated SKU on a separate schedule.
+      - name: Routing guard (every named suite directory must exist)
+        run: |
+          for d in \
+            tests/unit/determinism \
+            tests/unit/quality \
+            tests/snapshots \
+            tests/parity \
+            tests/integration/golden \
+            tests/sentry \
+            tests/security \
+            tests/privacy ; do
+            test -d "$d" || { echo "MISSING SUITE DIR: $d"; exit 1; }
+          done
+      - name: Regression gate (full suite, benchmarks excluded)
         run: pytest tests -m "not benchmark" --tb=short
-      - name: Sentry tests (security policies)
-        # Sentries are part of `pytest tests` above, but called out
-        # explicitly so CI logs make it obvious the policy checks ran.
-        run: pytest tests/sentry --tb=short
