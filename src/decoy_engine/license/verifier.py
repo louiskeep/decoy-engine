@@ -1,5 +1,5 @@
 """
-LicenseVerifier — stub.
+LicenseVerifier: stub.
 
 The real verifier will take a JWT, verify the signature against an
 embedded public key, and check expiration. The private key lives in

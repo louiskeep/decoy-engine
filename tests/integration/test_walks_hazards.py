@@ -6,7 +6,7 @@ with the right details. Modeled on the chaser stress-test schema
 (forge-platform/plans/chaser-stress-test-schema.sql) which has every
 hazard kind labeled in commentary.
 
-No real DB needed — these are pure-function tests.
+No real DB needed: these are pure-function tests.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from decoy_engine.walks import (
 
 
 def _col(name: str, *, nullable: bool = True, pk: bool = False, dtype: str = "integer") -> Column:
-    """Test fixture helper — saves typing."""
+    """Test fixture helper: saves typing."""
     return Column(name=name, data_type=dtype, nullable=nullable, is_primary_key=pk)
 
 
@@ -91,7 +91,7 @@ def test_hub_does_not_fire_below_threshold():
 
 
 def test_self_reference_fires_for_parent_id_column():
-    """Classic parent/child tree pattern — `teams.parent_team_id`
+    """Classic parent/child tree pattern: `teams.parent_team_id`
     points back at `teams.id`."""
     snap = SchemaSnapshot(
         db_kind="postgres",
@@ -118,7 +118,7 @@ def test_self_reference_fires_for_parent_id_column():
 
 
 def test_parallel_edges_fires_when_multiple_fks_to_same_target():
-    """`issues` has 4 FKs to `users` (assignee/reporter/created_by/resolved_by) —
+    """`issues` has 4 FKs to `users` (assignee/reporter/created_by/resolved_by):
     classic chaser stress-test pattern."""
     snap = SchemaSnapshot(
         db_kind="postgres",
@@ -158,7 +158,7 @@ def test_parallel_edges_fires_when_multiple_fks_to_same_target():
 
 def test_parallel_edges_excludes_self_reference():
     """Multiple SRs (e.g. `comments.parent_id` + `comments.thread_id`) shouldn't
-    fire as PE — SR has its own kind. PE is for cross-table parallel."""
+    fire as PE: SR has its own kind. PE is for cross-table parallel."""
     snap = SchemaSnapshot(
         db_kind="postgres",
         schema_name="public",
@@ -189,7 +189,7 @@ def test_parallel_edges_excludes_self_reference():
 
 def test_polymorphic_fk_fires_on_type_id_pattern():
     """`comments.entity_id` + `comments.entity_type` with no FK on
-    entity_id → polymorphic. Classic Rails-style "commentable" pattern."""
+    entity_id -> polymorphic. Classic Rails-style "commentable" pattern."""
     snap = SchemaSnapshot(
         db_kind="postgres",
         schema_name="public",
@@ -217,7 +217,7 @@ def test_polymorphic_fk_fires_on_type_id_pattern():
 
 def test_polymorphic_fk_does_not_fire_when_id_has_declared_fk():
     """If the `_id` column has a real FK, the table isn't actually
-    polymorphic — the type column might just be a denormalized
+    polymorphic: the type column might just be a denormalized
     convenience field."""
     snap = SchemaSnapshot(
         db_kind="postgres",
@@ -278,8 +278,8 @@ def test_alt_fires_for_two_nullable_fks_to_different_parents():
 
 
 def test_cycle_fires_for_three_table_loop():
-    """Classic chaser pattern: workflows → statuses → status_transitions
-    → workflows. The detector should catch this and report once."""
+    """Classic chaser pattern: workflows -> statuses -> status_transitions
+    -> workflows. The detector should catch this and report once."""
     snap = SchemaSnapshot(
         db_kind="postgres",
         schema_name="public",
@@ -322,7 +322,7 @@ def test_cycle_fires_for_three_table_loop():
 
 
 def test_cycle_does_not_double_count_same_loop_via_different_starting_points():
-    """The DFS visits every node — but the cycle should only be reported
+    """The DFS visits every node, but the cycle should only be reported
     once because we canonicalize on the smallest table name."""
     snap = SchemaSnapshot(
         db_kind="postgres",
@@ -339,11 +339,11 @@ def test_cycle_does_not_double_count_same_loop_via_different_starting_points():
     hazards = detect_hazards(snap)
     cir = [h for h in hazards if h.kind == "CIR"]
     assert len(cir) == 1
-    # Self-reference detector also fires? No — these are cross-table.
+    # Self-reference detector also fires? No: these are cross-table.
     assert not [h for h in hazards if h.kind == "SR"]
 
 
-# ── compose: empty schema → no hazards ───────────────────────────────
+# ── compose: empty schema -> no hazards ───────────────────────────────
 
 
 def test_empty_schema_produces_no_hazards():

@@ -7,18 +7,18 @@ composes them.
 The taxonomy comes from the chaser stress-test schema commentary
 (`decoy-platform/plans/chaser-stress-test-schema.sql`):
 
-    HUB — table referenced by many others (in-degree above threshold)
-    SR  — self-reference (table FKs to itself)
-    PE  — parallel edges (multiple FKs from one table to the same target)
-    PM  — polymorphic FK (entity_type + entity_id; no enforceable constraint)
-    ALT — alternative parents (XOR — one of N nullable FKs is set per row)
-    CIR — cycle in the FK graph
+    HUB : table referenced by many others (in-degree above threshold)
+    SR  : self-reference (table FKs to itself)
+    PE  : parallel edges (multiple FKs from one table to the same target)
+    PM  : polymorphic FK (entity_type + entity_id; no enforceable constraint)
+    ALT : alternative parents (XOR: one of N nullable FKs is set per row)
+    CIR : cycle in the FK graph
 
 Detectors that need data inspection (PM, ALT) are conservative: they
 fire only when the schema's *shape* is a strong signal. PM looks for
 the `<prefix>_type` + `<prefix>_id` pattern with the `_id` lacking
 a declared FK. ALT looks for tables with multiple nullable FKs to
-different parents — the intent is "exactly one is set" but we can't
+different parents: the intent is "exactly one is set" but we can't
 verify without scanning data, so we surface as a hazard for the user
 to confirm.
 """
@@ -70,7 +70,7 @@ def detect_hazards(
 def _detect_hub(graph: ERGraph) -> list[Hazard]:
     """Tables referenced by lots of others. They become visualization
     hubs in the ER graph and they're typically the high-value PII
-    tables (users, customers, patients) — worth flagging to the
+    tables (users, customers, patients): worth flagging to the
     operator who's deciding what to mask."""
     hazards: list[Hazard] = []
     for table, in_degree in graph.incoming_edge_count.items():
@@ -160,7 +160,7 @@ def _detect_polymorphic_fk(
 ) -> list[Hazard]:
     """Polymorphic FK: a table has both `<prefix>_type` and `<prefix>_id`
     columns where the `_id` doesn't have a declared FK. Pattern means
-    "id points at one of N tables, type tells you which" — a real DB
+    "id points at one of N tables, type tells you which": a real DB
     constraint is impossible because the target depends on the row's
     type value.
 
@@ -184,7 +184,7 @@ def _detect_polymorphic_fk(
                 continue
             # The id column exists; check it has no declared FK. Some
             # apps DO declare a default FK pointing at "the most common
-            # entity type" — not strictly polymorphic, so skip those.
+            # entity type": not strictly polymorphic, so skip those.
             if (table.name, id_col) in declared_pairs:
                 continue
             hazards.append(

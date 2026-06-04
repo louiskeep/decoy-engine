@@ -6,7 +6,7 @@ detector_id to a column, this table answers "what's the right default
 mask strategy + params?" so the user gets a sensible starting point
 without re-deriving it in three places.
 
-The user can always edit after the default is applied — the values here
+The user can always edit after the default is applied: the values here
 are starting points, not locks. Detection sprint (V1) chose conservative
 defaults that prioritize safety (format-preserving where it's well-
 defined, redact otherwise) over ergonomics.
@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from typing import Any
 
-# (strategy_name, params_dict) — strategy_name is the canonical mask kind
+# (strategy_name, params_dict): strategy_name is the canonical mask kind
 # (faker.first_name / fpe / date_shift / redact / ...). The platform
 # routes these through the mask registry without further translation.
 StrategyDefault = tuple[str, dict[str, Any]]
@@ -72,7 +72,7 @@ DEFAULT_STRATEGY_BY_DETECTOR: dict[str, StrategyDefault] = {
     "vehicle_id": ("fpe", {"charset": "ALPHANUM"}),
     # ── redact-default group ────────────────────────────────────────────
     # Semantic / structural format preservation is V2 (see gap doc).
-    # Until then, redact is the safe default — preserving "shape" without
+    # Until then, redact is the safe default: preserving "shape" without
     # semantics would be misleading (e.g. a fake ICD-10 that happens to
     # mean a different disease).
     "icd10": ("redact", {"redact_with": "REDACTED"}),
@@ -87,7 +87,7 @@ DEFAULT_STRATEGY_BY_DETECTOR: dict[str, StrategyDefault] = {
 # Valid strategy names accepted across the mask layer. Used by the
 # get_default_strategy validator + the test suite to detect typos in the
 # lookup above. Adding a new strategy here without wiring it in the mask
-# registry is harmless — it just widens the validator. Removing one
+# registry is harmless: it just widens the validator. Removing one
 # without updating the lookup will break the regression test.
 VALID_STRATEGIES: frozenset[str] = frozenset(
     {
@@ -102,7 +102,7 @@ VALID_STRATEGIES: frozenset[str] = frozenset(
 def get_default_strategy(detector_id: str) -> StrategyDefault | None:
     """Return the default (strategy_name, params) for a detector_id.
 
-    Returns None when the detector_id isn't in the table — callers should
+    Returns None when the detector_id isn't in the table: callers should
     treat that as "no smart default; leave the column to manual config".
     Custom detector ids (e.g. "custom__uk_nhs_number") will always miss
     this table by design.

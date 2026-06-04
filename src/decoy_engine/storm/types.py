@@ -22,7 +22,7 @@ class CustomDetectorSpec:
     can add organization-specific PII patterns (e.g. UK NHS numbers, SBR
     routing numbers) without engine changes.
 
-    `id` is the detector_id that appears in DetectorMatch.detector_id —
+    `id` is the detector_id that appears in DetectorMatch.detector_id:
     callers should namespace it (e.g. "custom__uk_nhs_number") to avoid
     colliding with built-in ids. `name_hints` is a list of substrings;
     the engine compiles a case-insensitive regex matching any of them
@@ -52,7 +52,7 @@ class DetectorMatch:
     detector_id: str  # "ssn", "email", "us_phone", "us_zip", "iso_date", ...
     match_rate: float  # fraction of non-null values that matched (0.0 - 1.0)
     sample_misses: list[str] = field(default_factory=list)  # up to 3 values that didn't match
-    # Item 65 — surface which sub-pattern variant actually fired so the
+    # Item 65: surface which sub-pattern variant actually fired so the
     # mask post-pass can splice separators back at the right positions.
     # Detectors with no variants (email, name, etc.) leave this None.
     # Detectors with variants (SSN dash/no-dash, phone separator styles,
@@ -78,7 +78,7 @@ class DetectorMatch:
 class Distribution:
     """Per-column value distribution for the Profile/Drill UI.
 
-    Five shapes the renderer supports — driven by `kind`:
+    Five shapes the renderer supports, driven by `kind`:
       - "numeric"      : 10 quantile bins, data = bucket counts
       - "date"         : decade bins, data = bucket counts, labels = decade ranges
       - "categorical"  : top 10 + "other", data = pct of column, labels = values
@@ -160,7 +160,7 @@ class FieldStats:
     invalid_count: int | None = None
     sample_invalid: list[str] = field(default_factory=list)
 
-    # Item 65 — surface-format hints consumed by the masking-strategy
+    # Item 65: surface-format hints consumed by the masking-strategy
     # post-pass so masked output preserves the source's shape.
     #   casing_pattern : 'upper' | 'lower' | 'title' | 'mixed' | 'digits_only' | None
     #   format_pattern : the dominant variant detected by a detector
@@ -170,7 +170,7 @@ class FieldStats:
     casing_pattern: str | None = None
     format_pattern: str | None = None
 
-    # Plan B-2 — column-shape signals FORECAST's per-detector choosers
+    # Plan B-2: column-shape signals FORECAST's per-detector choosers
     # consume to pick mask params instead of using hardcoded defaults.
     # All four are Optional / sensibly-defaulted so persisted profiles
     # from before Plan B-2 deserialize cleanly via dict-spreading at the
@@ -200,7 +200,7 @@ class FieldStats:
     # Top values for distribution awareness
     top_values: list[TopValue] = field(default_factory=list)
 
-    # Detector hits — what FORECAST will key on
+    # Detector hits: what FORECAST will key on
     detector_matches: list[DetectorMatch] = field(default_factory=list)
 
     # Outliers / sentinels

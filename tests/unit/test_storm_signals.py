@@ -4,7 +4,7 @@ These exercise the four FieldStats fields the profiler now computes:
 ``alphabet``, ``value_set_size_class``, ``numeric_range_class``,
 ``mode_value``/``mode_freq``. The signals exist so FORECAST's per-
 detector choosers can pick mask params from the data instead of using
-hardcoded constants — see ``test_forecast_param_choosing.py`` for the
+hardcoded constants: see ``test_forecast_param_choosing.py`` for the
 chooser-side coverage.
 """
 
@@ -63,7 +63,7 @@ class TestValueSetSizeClass:
         assert fields["opt_in"].value_set_size_class == "binary"
 
     def test_low_cardinality(self):
-        # 5 distinct values across 20 rows → 'low' (distinct <= 10).
+        # 5 distinct values across 20 rows -> 'low' (distinct <= 10).
         fields = _scan(status=["A", "B", "C", "D", "E"] * 4)
         assert fields["status"].value_set_size_class == "low"
 
@@ -72,7 +72,7 @@ class TestValueSetSizeClass:
         assert fields["user_id"].value_set_size_class == "unique"
 
     def test_medium_band(self):
-        # ~30% unique_rate → 'medium'.
+        # ~30% unique_rate -> 'medium'.
         fields = _scan(group=[i % 7 for i in range(20)])
         # 7 distinct out of 20 = 0.35 unique_rate. ``low`` because
         # distinct_count <= 10 triggers the low branch first.
@@ -96,7 +96,7 @@ class TestNumericRangeClass:
         assert fields["price"].numeric_range_class == "decimal_money"
 
     def test_decimal_other(self):
-        # Scientific / measurement values — varying decimal lengths,
+        # Scientific / measurement values: varying decimal lengths,
         # not predominantly 2-decimal.
         fields = _scan(ratio=[0.1234, 1.5, 3.14159, 0.001, 42.0] * 4)
         assert fields["ratio"].numeric_range_class == "decimal_other"

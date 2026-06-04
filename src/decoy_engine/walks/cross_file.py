@@ -2,7 +2,7 @@
 
 Walks today operates over a single ``SchemaSnapshot`` produced by the
 platform's DB snapshotter. File-based STORM scans never produce a
-snapshot — there's no live schema with declared constraints to read.
+snapshot: there's no live schema with declared constraints to read.
 But once you have a group of STORM profiles (members of one
 ``storm_run_group_id``), you can synthesize a multi-table snapshot
 from the per-column ``FieldStats`` they already carry and run PK/FK
@@ -53,7 +53,7 @@ def run_cross_file_walk(profiles: list[StormProfile]) -> CrossFileWalkResult:
     """Infer cross-file foreign-key edges from a group of STORM profiles.
 
     Returns deterministic, sorted edges. Empty result is valid (no
-    inferable relationships) — callers should not treat it as an error.
+    inferable relationships): callers should not treat it as an error.
     """
     snapshot = storm_profiles_to_snapshot(profiles)
     file_style = infer_cross_file_edges(snapshot)
@@ -94,10 +94,10 @@ def storm_profiles_to_snapshot(profiles: list[StormProfile]) -> SchemaSnapshot:
       - ``nullable`` :math:`\\leftarrow` ``null_rate > 0`` (best guess from
         the sampled rows)
       - ``is_primary_key`` :math:`\\leftarrow` ``is_likely_unique``
-        (heuristic — STORM flags columns where ``unique_rate > 0.9``
+        (heuristic: STORM flags columns where ``unique_rate > 0.9``
         which captures both surrogate keys and natural keys)
 
-    ``declared_edges`` is always empty for file-based snapshots — there
+    ``declared_edges`` is always empty for file-based snapshots: there
     are no schema-level constraints to read.
     """
     tables: list[Table] = []
@@ -131,7 +131,7 @@ def infer_cross_file_edges(snapshot: SchemaSnapshot) -> tuple[Edge, ...]:
     ``orders.customer_id`` is the FK, and the column name is identical
     on both sides. The engine's existing :func:`infer_edges` doesn't
     catch this because it strips ``_id`` and looks for a literal ``id``
-    PK in the target table — that rule is for the SQL convention where
+    PK in the target table: that rule is for the SQL convention where
     the PK is always named ``id``.
 
     **PK ambiguity tie-break.** STORM flags any column with
@@ -145,7 +145,7 @@ def infer_cross_file_edges(snapshot: SchemaSnapshot) -> tuple[Edge, ...]:
     get demoted to FK candidates for the purpose of edge inference.
 
     Self-loops are skipped. Edges between two non-PK occurrences of
-    the same column name are skipped — without a PK anchor we don't
+    the same column name are skipped: without a PK anchor we don't
     know which table is the "parent".
     """
     # Map column name -> tables where that column is flagged PK.
@@ -166,7 +166,7 @@ def infer_cross_file_edges(snapshot: SchemaSnapshot) -> tuple[Edge, ...]:
         match = _pk_table_for_id_column(col_name, table_names)
         # If exactly one of the PK-flagged tables matches the stem,
         # promote it as canonical. Otherwise leave the column ambiguous
-        # — emit no edges rather than guess wrong.
+        # and emit no edges rather than guess wrong.
         if match in tables:
             canonical_pk_table[col_name] = match
         else:
@@ -196,7 +196,7 @@ def infer_cross_file_edges(snapshot: SchemaSnapshot) -> tuple[Edge, ...]:
 
 def _pk_table_for_id_column(column_name: str, table_names: set[str]) -> str | None:
     """For a column named ``<stem>_id``, return the table whose name
-    matches ``<stem>`` (singular or plural) — that table is the
+    matches ``<stem>`` (singular or plural): that table is the
     canonical owner of this PK. Falls back to suffix-match for table
     names that prefix or suffix the stem (e.g. ``acme_csv_customers``
     matches the ``customer_id`` stem).

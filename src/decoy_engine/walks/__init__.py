@@ -1,13 +1,13 @@
 """Walks engine package.
 
 Pure-function PK/FK inference, hazard detection, ER graph construction,
-and schema-drift comparison. No DB I/O — input is `SchemaSnapshot`,
+and schema-drift comparison. No DB I/O: input is `SchemaSnapshot`,
 output is `WalkResult` / `DriftResult`. The platform layer
 (`decoy-platform/api/aqueduct/walks/`) wires these into the runner;
 the snapshotter that produces `SchemaSnapshot` from a live DB connection
 also lives platform-side (or in a future engine `connectors/snapshotter.py`).
 
-Public API — only these names are stable:
+Public API: only these names are stable:
 
     from decoy_engine.walks import (
         SchemaSnapshot, Table, Column, Edge, Hazard, WalkResult, DriftResult,

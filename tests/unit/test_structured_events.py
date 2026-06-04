@@ -1,16 +1,16 @@
 """Tests for the optional structured-event surface (LOGGING_GUIDE §5d).
 
 The engine emits step boundaries, lineage, fidelity, quarantines, and
-throughput samples through module-level ``emit_*`` helpers — not direct
-method calls — so a logger that doesn't implement them (e.g. a bare
+throughput samples through module-level ``emit_*`` helpers (not direct
+method calls) so a logger that doesn't implement them (e.g. a bare
 stdlib ``logging.Logger`` the engine falls back to when no caller
 context is provided) never raises AttributeError. These tests pin that
 contract:
 
-  - present method → called with the right arguments
-  - missing method → silent no-op
-  - logger is None → silent no-op
-  - method raises → exception swallowed, engine keeps going
+  - present method -> called with the right arguments
+  - missing method -> silent no-op
+  - logger is None -> silent no-op
+  - method raises -> exception swallowed, engine keeps going
 """
 
 import logging
@@ -54,7 +54,7 @@ class CapturingStructured:
 
 
 class NarrativeOnly:
-    """Has the four narrative methods but no structured surface — like a
+    """Has the four narrative methods but no structured surface: like a
     stdlib logger, or the existing CapturingLogger in
     test_context_injection.py before this slice."""
 
@@ -189,20 +189,20 @@ class TestEmitThroughputSample:
 
 
 class TestStructuredEventsProtocol:
-    """Static-typing surface check — the Protocol is not runtime_checkable
+    """Static-typing surface check: the Protocol is not runtime_checkable
     by design (see context.py docstring), so a positive isinstance test
     isn't available. We assert structurally instead: CapturingStructured
     can be assigned to a name typed as ``StructuredEvents`` without
     runtime error, and every advertised method is present."""
 
     def test_full_implementation_exposes_every_method(self):
-        cap: StructuredEvents = CapturingStructured()  # noqa: F841 — type-check intent
+        cap: StructuredEvents = CapturingStructured()  # noqa: F841 type-check intent
         for name in ("step", "lineage", "fidelity", "quarantine", "throughput_sample"):
             assert callable(getattr(CapturingStructured(), name)), name
 
     def test_not_runtime_checkable_against_stdlib(self):
         # If StructuredEvents *were* runtime_checkable, stdlib loggers
-        # would fail isinstance() — which is exactly why it isn't. This
+        # would fail isinstance(): which is exactly why it isn't. This
         # test fixes that design choice in place.
         with pytest.raises(TypeError):
             # runtime_checkable Protocols allow isinstance; non-runtime

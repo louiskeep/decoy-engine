@@ -1,7 +1,7 @@
 """Pydantic schemas for Disguise YAML bundles.
 
 A Disguise is parsed at load time into these models. Malformed bundles fail
-loud — `pydantic.ValidationError` will name the offending field. CI loads
+loud: `pydantic.ValidationError` will name the offending field. CI loads
 all bundles in `disguises/` as a smoke test so a broken YAML breaks the build.
 """
 

@@ -131,12 +131,12 @@ def compute_new_row_synthesis(
     source this is ~3 GB; D7a leaves that as a "future-tier"
     limitation (the V2.0 platform caps source rows at 1M for the
     quality pipeline). The fraction is mathematically well-defined
-    for any size — implementation just needs streaming hashing for
+    for any size: implementation just needs streaming hashing for
     very large frames, which can land later without touching the
     metric contract.
 
     Privacy note: the row hash is computed locally and never
-    serialized — only the aggregate counts + fraction land in the
+    serialized: only the aggregate counts + fraction land in the
     returned dict. Per the security requirements, no raw source rows
     or output rows are stored.
     """
@@ -761,7 +761,7 @@ def _gower_min_distances(
 
 def _summarize_dcr(distances: np.ndarray, ref_rows: int) -> dict[str, Any]:
     """Aggregate the per-row minimum distances. NO raw distances
-    in the output — only percentiles + counts."""
+    in the output: only percentiles + counts."""
     if distances.size == 0:
         return {
             "median": None,

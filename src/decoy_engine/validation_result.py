@@ -353,7 +353,7 @@ class CODES:
 
     # PK uniqueness: a column marked primary_key has duplicate values
     # in the output. Hard error in strict, warning otherwise (some
-    # generation strategies — faker — can produce duplicates by
+    # generation strategies (faker) can produce duplicates by
     # chance; operators may want to tolerate when sample size is small).
     PK_DUPLICATES = "pk.duplicates"  # runtime, error in strict / warning otherwise
 

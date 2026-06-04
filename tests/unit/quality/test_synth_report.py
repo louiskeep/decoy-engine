@@ -56,7 +56,7 @@ class TestExactCopyMemorization:
 class TestIndependentSample:
     def test_independent_floats_score_near_one(self):
         """Independent random draws are vanishingly unlikely to collide
-        with the source — fraction_new should be ~1.0."""
+        with the source: fraction_new should be ~1.0."""
         rng = np.random.default_rng(42)
         source = pd.DataFrame({"x": rng.normal(0, 1, size=1000)})
         synth = pd.DataFrame({"x": rng.normal(0, 1, size=1000)})
@@ -76,7 +76,7 @@ class TestIndependentSample:
         result = compute_new_row_synthesis(source, synth)
         # With 5 values and 200 rows, every output value will collide
         # with a source value, so fraction_new will be 0.0. This is
-        # the documented behavior — single-column low-cardinality
+        # the documented behavior: single-column low-cardinality
         # comparison hits this floor. We still verify it scores
         # consistently across a re-run.
         result2 = compute_new_row_synthesis(source, synth)

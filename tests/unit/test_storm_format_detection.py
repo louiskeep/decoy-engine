@@ -1,4 +1,4 @@
-"""Item 65 — STORM format-preservation detection tests.
+"""Item 65: STORM format-preservation detection tests.
 
 Two layers under test:
   - Per-detector ``format_pattern`` on DetectorMatch (dominant sub-variant
@@ -8,7 +8,7 @@ Two layers under test:
     post-pass).
 
 Detectors without a format-variant table (email, person_name, etc.)
-emit ``format_pattern=None`` — exercised in the cross-detector smoke
+emit ``format_pattern=None`` (exercised in the cross-detector smoke
 test below.
 """
 
@@ -190,7 +190,7 @@ class TestDetectCasing:
 
     def test_middle_initial_title_still_counts(self):
         # str.istitle treats every alpha-token's first char as the relevant
-        # one — 'Mary M Smith' is title-cased.
+        # one: 'Mary M Smith' is title-cased.
         assert _detect_casing(pd.Series(["Mary M Smith", "John Q Public"])) == "title"
 
     def test_digits_only(self):

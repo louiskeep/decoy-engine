@@ -30,7 +30,7 @@ def build_er_graph(
 ) -> ERGraph:
     """Build the ER graph from a snapshot.
 
-    `extra_edges` is typically the output of `infer_edges(snapshot)` —
+    `extra_edges` is typically the output of `infer_edges(snapshot)`:
     callers that want only declared edges pass `()`. Edges from both
     sources are merged; downstream code uses `Edge.declared` to tell
     them apart when needed.

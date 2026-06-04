@@ -1,4 +1,4 @@
-"""decoy_engine.storm — dataset analysis (the "scan" event).
+"""decoy_engine.storm: dataset analysis (the "scan" event).
 
 Public entry point:
     run_storm(df, source_label, *, sample_strategy=...) -> StormProfile

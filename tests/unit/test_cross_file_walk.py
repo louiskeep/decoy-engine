@@ -362,7 +362,7 @@ def test_profiles_round_trip_through_dict_unchanged():
     blob = json.dumps(p.to_dict())
     loaded = json.loads(blob)
     # Reconstruct StormProfile from the dict (skip FieldStats sub-fields
-    # the loader doesn't care about — same shape as platform does).
+    # the loader doesn't care about: same shape as platform does).
     reconstructed = StormProfile(
         source_label=loaded["source_label"],
         row_count=loaded["row_count"],

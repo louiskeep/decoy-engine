@@ -15,7 +15,7 @@ heuristic only fires when:
 
   1. A column ends in `_id` (case-insensitive), and
   2. Stripping `_id` produces a name that matches a table in the
-     snapshot (singular-or-plural tolerant — `customer_id` matches
+     snapshot (singular-or-plural tolerant: `customer_id` matches
      both `customer` and `customers`), and
   3. That target table has a column named `id`, and
   4. No declared edge from the same `(source_table, source_column)`
@@ -57,7 +57,7 @@ def infer_edges(snapshot: SchemaSnapshot) -> tuple[Edge, ...]:
             # Don't shadow a declared FK on the same column.
             if (table.name, col.name) in declared_pairs:
                 continue
-            # Self-reference is allowed — the SR detector picks them up.
+            # Self-reference is allowed: the SR detector picks them up.
             inferred.append(
                 Edge(
                     source_table=table.name,
@@ -83,7 +83,7 @@ def _candidate_target(column_name: str, by_name: dict[str, Table]) -> str | None
       3. Last component matches a table singular: `parent_team_id` -> `team`
       4. Last component matches a table plural:   `parent_team_id` -> `teams`
 
-    Steps 3+4 catch the common "qualifier + basename + _id" pattern —
+    Steps 3+4 catch the common "qualifier + basename + _id" pattern:
     `parent_team_id`, `manager_user_id`, `from_status_id`. Without them
     self-references with qualifiers wouldn't infer.
     """

@@ -171,7 +171,7 @@ class MaskingStrategy(ABC):
         Default implementation ignores `ctx` and delegates to
         `apply(column, rule)`. Strategies that don't need joint
         columns or other dispatcher-resolved runtime state get this
-        no-op routing for free — no signature changes required.
+        no-op routing for free: no signature changes required.
 
         Strategies that DO need ctx (D5c hash joint preservation,
         future date_shift subject-key work, etc.) should override

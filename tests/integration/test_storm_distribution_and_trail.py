@@ -1,7 +1,7 @@
 """PR3: per-field Distribution + DetectionSignal trail.
 
 Distribution shape depends on dtype + cardinality + whether a detector fired.
-Detection trail records the reasoning behind the winning detector — currently
+Detection trail records the reasoning behind the winning detector: currently
 regex match + (when matched) the column-name hint. ML rows are deferred to
 Roadmap Item 8.
 """
@@ -74,15 +74,15 @@ class TestCategoricalDistribution:
         f = _profile("gender", df)
         assert f.distribution is not None
         assert f.distribution.kind == "categorical"
-        # F (4), M (3), X (1) — under cap, no "other" needed.
+        # F (4), M (3), X (1): under cap, no "other" needed.
         assert "F" in f.distribution.labels
         assert "M" in f.distribution.labels
         # data is pct of column.
         assert max(f.distribution.data) == 50.0  # 4/8 = 50%
 
     def test_high_cardinality_overflow_uses_other_bucket(self):
-        # 50 distinct short tags — over the cap.
-        # Wait — over the cap routes to freetext, not categorical-with-other.
+        # 50 distinct short tags: over the cap.
+        # Wait: over the cap routes to freetext, not categorical-with-other.
         # The "other" path is for categorical when distinct count exceeds top-10
         # but is still under the cap. Build a column of 15 distinct values.
         df = pd.DataFrame(
@@ -109,17 +109,17 @@ class TestPatternDistribution:
         # SSN detector should fire, and column is small enough that we'd hit
         # the categorical path unless detector takes priority. The profiler
         # routes to pattern when distinct_count > _CATEGORICAL_DISTINCT_CAP OR
-        # when no detector fired but cardinality is high — let's check the
+        # when no detector fired but cardinality is high: let's check the
         # actual routing for low-cardinality detector-fired columns.
         # In the current implementation: low cardinality wins regardless of
-        # detector, so this gives "categorical". That's intentional — value
+        # detector, so this gives "categorical". That's intentional: value
         # set is the more useful summary at that scale.
         assert f.distribution is not None
         # Either path is acceptable as long as it's not freetext / numeric.
         assert f.distribution.kind in ("categorical", "pattern")
 
     def test_high_cardinality_detector_fired_uses_pattern(self):
-        # 100 distinct emails — over the categorical cap, detector fires.
+        # 100 distinct emails: over the categorical cap, detector fires.
         df = pd.DataFrame(
             {
                 "email": [f"user{i}@example.com" for i in range(100)],
@@ -153,7 +153,7 @@ class TestFreetextDistribution:
         )
         f = _profile("comment", df)
         assert f.distribution is not None
-        # 8 distinct comments * 5 = 40 rows but only 8 distinct values — under
+        # 8 distinct comments * 5 = 40 rows but only 8 distinct values: under
         # the cap, so this routes to categorical. That's correct behavior.
         # To force freetext we need >30 distinct values + no detector.
         assert f.distribution.kind in ("categorical", "freetext")
@@ -184,7 +184,7 @@ class TestDetectionTrail:
         assert f.detection_trail == []
 
     def test_regex_only_emits_one_signal(self):
-        # ssn-pattern values in a column NOT named ssn — regex fires, no
+        # ssn-pattern values in a column NOT named ssn: regex fires, no
         # name-hint row.
         df = pd.DataFrame(
             {
@@ -260,6 +260,6 @@ class TestSerialization:
         # ssn either took categorical or pattern path; both are valid kinds.
         assert ssn_field["distribution"] is not None
         assert ssn_field["distribution"]["kind"] in ("categorical", "pattern")
-        # score is numeric and has no detector → trail empty.
+        # score is numeric and has no detector -> trail empty.
         assert score_field["distribution"]["kind"] == "numeric"
         assert score_field["detection_trail"] == []
