@@ -32,7 +32,12 @@ jobs:
           python-version: "3.10"
           cache: pip
       - name: Install ruff
-        run: pip install ruff
+        # Pinned to match .pre-commit-config.yaml (astral-sh/ruff-pre-commit
+        # v0.5.0); bump both together. Unpinned `pip install ruff` made this
+        # gate non-deterministic: a newer ruff adds lint rules and reformats
+        # against a style the code was never linted under, so the gate could
+        # go red without any code change.
+        run: pip install ruff==0.5.0
       - name: Lint
         run: ruff check src tests
       - name: Format check
