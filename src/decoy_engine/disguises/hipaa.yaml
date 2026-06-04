@@ -104,6 +104,16 @@ field_rules:
       length: 3
     why: "Safe Harbor §B — ZIP → first 3 digits. Full ZIPs only allowed for ZCTAs >20K population."
 
+  # B (street): street-address columns get a realistic fake street address.
+  # Complements the us_zip rule above; together they cover Safe Harbor
+  # geographic data (street + ZIP). Closes the gap where `address` was an
+  # expected_field with no field_rule, so streets passed through unmasked.
+  - detectors: [address]
+    mask: faker
+    params:
+      faker_type: street_address
+    why: "Safe Harbor section B: street-address columns get a realistic fake street address; ZIP is generalised separately by the us_zip rule above."
+
   # C — Dates (all three date formats)
   - detectors: [iso_date, us_date, eu_date]
     mask: date_shift

@@ -84,6 +84,33 @@ class TestLoaderShipsBundles:
                         f"Disguise '{d.id}' expected_fields references unknown detector '{det_id}'"
                     )
 
+    def test_hipaa_masks_street_address(self):
+        """H1 (QA 2026-06-04, HIGH): `address` was an expected_field with no
+        field_rule, so street-address columns passed through UNMASKED while
+        the HIPAA Disguise advertised full Safe Harbor coverage. Lock the
+        fix: the `address` detector must carry a masking rule."""
+        hipaa = next(d for d in load_disguises() if d.id == "hipaa")
+        assert any("address" in rule.detectors for rule in hipaa.field_rules), (
+            "HIPAA Disguise has no field_rule for the `address` detector; "
+            "street addresses would pass through unmasked (Safe Harbor B)."
+        )
+
+    def test_every_expected_field_is_covered_by_a_field_rule(self):
+        """Generalises H1 (QA 2026-06-04): a detector listed in
+        expected_fields but absent from every field_rule means the
+        strict-mode preflight reports success while that column is left
+        UNMASKED. For each any-of expected group, at least one member must
+        carry a masking rule, so strict mode can never green-light an
+        unmasked identifier. All 8 shipped Disguises satisfy this today."""
+        for d in load_disguises():
+            masked = {det for rule in d.field_rules for det in rule.detectors}
+            for group in d.expected_field_groups():
+                assert any(member in masked for member in group), (
+                    f"Disguise '{d.id}': expected-field group {group} has no "
+                    f"field_rule for any member; strict mode would pass while "
+                    f"the column is left unmasked."
+                )
+
     def test_expected_field_groups_normalises_singletons(self):
         """expected_field_groups() should turn 'email' into ['email']
         and pass through ['first_name', 'last_name', 'person_name']."""
