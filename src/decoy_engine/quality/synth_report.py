@@ -650,7 +650,7 @@ def _warning_for(band: str, fraction: float) -> str | None:
         return (
             f"new-row synthesis is LOW ({fraction:.2%}): the output "
             "contains many rows that exactly match source rows. This "
-            "is a memorization signal — review the synth strategy "
+            "is a memorization signal: review the synth strategy "
             "before releasing the output."
         )
     if band == "moderate":

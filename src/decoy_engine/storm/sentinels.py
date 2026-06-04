@@ -33,20 +33,20 @@ from decoy_engine.storm.types import SentinelFlag
 # Date sentinels: parse to a real date but are placeholder-y.
 _DATE_SENTINELS: dict[date, str] = {
     date(1, 1, 1): "year-0001 placeholder, won't load into Postgres date type",
-    date(1900, 1, 1): "1900-01-01 — common 'unknown date' placeholder",
+    date(1900, 1, 1): "1900-01-01: common 'unknown date' placeholder",
     date(
         1899, 12, 31
-    ): "1899-12-31 — Excel date origin, often appears from corrupted serializations",
-    date(1970, 1, 1): "1970-01-01 — Unix epoch, often a default for missing timestamps",
-    date(9999, 12, 31): "9999-12-31 — common 'end of time' placeholder",
+    ): "1899-12-31: Excel date origin, often appears from corrupted serializations",
+    date(1970, 1, 1): "1970-01-01: Unix epoch, often a default for missing timestamps",
+    date(9999, 12, 31): "9999-12-31: common 'end of time' placeholder",
 }
 
 # Numeric sentinels: keyed by exact value.
 _NUMERIC_SENTINELS: dict[float, str] = {
-    -1.0: "-1 — common 'unknown / no parent' sentinel",
-    -999.0: "-999 — common missing-value sentinel",
-    999999999.0: "999999999 — common SSN/ID filler",
-    -2147483648.0: "INT_MIN — likely overflow or 'no value' placeholder",
+    -1.0: "-1: common 'unknown / no parent' sentinel",
+    -999.0: "-999: common missing-value sentinel",
+    999999999.0: "999999999: common SSN/ID filler",
+    -2147483648.0: "INT_MIN: likely overflow or 'no value' placeholder",
 }
 
 # String sentinels: case-insensitive exact match after stripping whitespace.
@@ -236,7 +236,7 @@ def _scan_strings(non_null: pd.Series) -> list[SentinelFlag]:
                 kind="string_sentinel",
                 value=normalized,
                 count=count,
-                note=f"placeholder string {normalized!r} — probably means missing data",
+                note=f"placeholder string {normalized!r}: probably means missing data",
             )
         )
     return flags

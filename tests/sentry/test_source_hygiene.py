@@ -180,3 +180,51 @@ def test_no_stale_path_comments() -> None:
         "Either delete the comment (file paths are obvious from "
         "their location on disk) or update to the current path."
     )
+
+
+# 5. Raw em-dash / arrow glyphs
+
+
+# U+2014 em-dash and U+2192 / U+2194 arrows are banned in source per the
+# repo style rule (use a colon, a spaced hyphen, parens, or the ASCII
+# "->"). Phase A (2026-06-04) swept the engine clean; this sentry stops
+# them creeping back in via copy/paste from documents. The section sign
+# (U+00A7) and box-drawing characters are intentionally not banned.
+# Built from chr() rather than literal glyphs so this hygiene file itself
+# stays ASCII-clean (it would pass its own check if tests/ is ever scanned).
+_BANNED_GLYPHS = (chr(0x2014), chr(0x2192), chr(0x2194))
+
+
+def _files_with_banned_glyphs(root: Path) -> list[str]:
+    offenders: list[str] = []
+    for path in root.rglob("*.py"):
+        if "__pycache__" in path.parts:
+            continue
+        text = path.read_text(encoding="utf-8")
+        hits = "".join(g for g in _BANNED_GLYPHS if g in text)
+        if hits:
+            offenders.append(f"{path.relative_to(root).as_posix()}: {hits}")
+    return offenders
+
+
+def test_no_raw_em_dash_or_arrow_in_source() -> None:
+    """Source files must not contain a raw U+2014 em-dash or U+2192 /
+    U+2194 arrow glyph. Use a colon, a spaced hyphen, parens, or the
+    ASCII '->' / '<->' instead."""
+    offenders = _files_with_banned_glyphs(ENGINE_ROOT)
+    assert not offenders, (
+        "Raw em-dash / arrow glyphs in source:\n  - "
+        + "\n  - ".join(offenders)
+        + "\nReplace U+2014 with a colon / spaced hyphen / parens, and "
+        "U+2192 / U+2194 with the ASCII '->' / '<->'."
+    )
+
+
+def test_banned_glyph_sentry_flags_injected_em_dash(tmp_path: Path) -> None:
+    """Negative control: the sentry must actually flag a raw em-dash, so
+    a real regression cannot pass this check vacuously."""
+    (tmp_path / "clean.py").write_text("x = 'plain ascii hyphen - ok'\n", encoding="utf-8")
+    (tmp_path / "dirty.py").write_text(f"x = 'bad {chr(0x2014)} dash'\n", encoding="utf-8")
+    offenders = _files_with_banned_glyphs(tmp_path)
+    assert any("dirty.py" in o for o in offenders), offenders
+    assert not any("clean.py" in o for o in offenders), offenders

@@ -192,7 +192,7 @@ def _detect_polymorphic_fk(
                     kind="PM",
                     table=table.name,
                     description=(
-                        f"{table.name}.{id_col} is polymorphic — target depends "
+                        f"{table.name}.{id_col} is polymorphic: target depends "
                         f"on {table.name}.{col.name}"
                     ),
                     details={

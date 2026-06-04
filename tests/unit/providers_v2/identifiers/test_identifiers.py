@@ -352,6 +352,6 @@ class TestNoSourceLeak:
             assert out != str(i), f"{provider}: output equals str(source) at i={i}"
         # Sanity-check the exhaustion rate stays within the documented ~1.5e-4 bound.
         assert blocklist_exhausted < 500, (
-            f"{provider}: {blocklist_exhausted}/100000 blocklist_exhausted — "
+            f"{provider}: {blocklist_exhausted}/100000 blocklist_exhausted - "
             "rate far exceeds expected ~15/100000; blocklist or domain logic is buggy."
         )

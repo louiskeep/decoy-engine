@@ -1098,7 +1098,7 @@ class ColumnGenerator:
         if len(queue) > len(free_slots):
             self.logger.warning(
                 f"Cardinality: min_per_parent={min_per_parent} cannot be "
-                f"fully satisfied — would need {len(queue)} injections, only "
+                f"fully satisfied: would need {len(queue)} injections, only "
                 f"{len(free_slots)} slots available without violating other "
                 f"min bounds. Partial satisfaction."
             )
