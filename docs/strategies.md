@@ -196,9 +196,21 @@ Draws each row from a fixed category pool.
 Draws values that reference an already-generated parent column, so a generated
 child can point at a generated parent's keys.
 
+- `reference_table` / `reference_column`: the generated parent table and column
+  to draw from (both required).
+- `distribution`: how draws are spread across the parent values: `random`
+  (default), `sequential`, or `weighted`.
+- `weights`: per-value weights, used when `distribution` is `weighted`.
+- `min_per_parent` / `max_per_parent`: optional per-parent cardinality bounds
+  (0 = unbounded). These bounds do not compose with `sequential`.
+
 ### formula
 
 Computes a column from an expression over the other generated columns.
+
+- `formula`: the Python expression evaluated per row (required).
+- `references`: the sibling column names the expression reads; filled in a
+  post-pass after the other columns exist.
 
 ### distribution
 
@@ -206,10 +218,7 @@ Samples rows whose distribution matches a provided snapshot (numeric,
 categorical, or datetime). Use it to generate a column shaped like a real
 source column's distribution.
 
-<!-- VERIFY: the per-`type` generate-column parameter names (start/step for
-sequence, faker_type for faker, categories/weights for categorical). These are
-read in decoy_engine/generators/columns.py and shown in the bundled
-generate.yaml template (decoy/src/decoy/templates/generate.yaml). Confirm the
-`reference`, `formula`, and `distribution` column parameter names against
-generators/columns.py before publishing - they were enumerated from the
-generator dispatch table but their individual config keys were not each read. -->
+- `snapshot`: a dict with `kind` (`numeric`, `categorical`, or `datetime`) and a
+  `stats` block. `numeric` needs `bin_edges` + `bin_counts`; `categorical` needs
+  `top_values` + `other_count`; `datetime` needs `year_bins` + `min` + `max`.
+  This matches `compute_distribution_snapshot`'s output.

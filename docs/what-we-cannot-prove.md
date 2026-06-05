@@ -1,7 +1,3 @@
-<!-- FRAMING-REVIEW: this page makes public claim-limiting statements about
-what Decoy does and does not guarantee. Review the wording for accuracy and
-tone before merge (main session + Dennis). Drafted conservatively. -->
-
 # What Decoy does not prove
 
 Decoy is a practical de-identification and synthetic-data tool. It applies
@@ -57,5 +53,4 @@ data's sensitivities to a correct config is yours to get right.
 To be clear about the other side: Decoy does give you deterministic,
 reproducible masking; foreign-key and join preservation across tables; a catalog
 of standard de-identification transforms; PII detection and risk profiling; and
-synthetic-data generation. Those are real and tested. This page exists so the
-strength of those features is not mistaken for guarantees Decoy does not make.
+synthetic-data generation. Those features are real and exercised by the test suite. This page exists so the strength of those features is not mistaken for guarantees Decoy does not make.

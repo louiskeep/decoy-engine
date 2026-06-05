@@ -47,15 +47,9 @@ The engine is plan-first: validate the config once at the choke-point, profile
 the source, compile a frozen plan, and run it on the default execution adapter.
 
 ```python
-import pyarrow as pa
 import pyarrow.csv as pacsv
 
-from decoy_engine import (
-    PipelineConfig,
-    compile_plan,
-    select_execution_adapter,
-)
-from decoy_engine.profile import profile_source
+from decoy_engine import PipelineConfig, run_pipeline
 
 config_dict = {
     "version": 1,
@@ -74,41 +68,18 @@ config_dict = {
     ],
 }
 
-# 1. Validate once. Downstream code does not re-validate.
+# 1. Validate once at the choke-point. Downstream code does not re-validate.
 config = PipelineConfig.model_validate(config_dict).model_dump()
 
-# 2. Profile the declared sources. profile_source reads config["sources"]
-#    (file/s3/gcs descriptors) itself.
-profile = profile_source(config, seed=42)
-
-# 3. Compile a frozen plan.
-plan = compile_plan(config, profile, decoy_engine_version="0.1.0")
-
-# 4. Load the in-memory source tables and run the plan.
+# 2. Load the in-memory source tables (keyed by table name).
 sources = {"people": pacsv.read_csv("people.csv")}
-result = select_execution_adapter().run(plan, sources)
+
+# 3. Run the whole pipeline: profile, compile, wire relationships, execute.
+result = run_pipeline(config, sources, engine_version="0.1.0")
 
 # result.outputs["people"] is the masked pyarrow.Table.
 masked = result.outputs["people"]
 ```
-
-<!-- VERIFY: the in-process call sequence above. Confirmed by reading:
-profile_source(config, *, sample_rows=, seed=) reads config["sources"] file
-descriptors (profile/_source.py); compile_plan(config, profile, *,
-decoy_engine_version=) (plan/_compile.py); ExecutionResult.outputs is the
-table dict and ExecutionResult.output is the single-table accessor
-(execution/_adapter.py). NOT verified by execution: whether
-select_execution_adapter().run(plan, sources) needs the registry /
-relationship_graph / namespace_registry kwargs that the golden E2E _run helper
-passes explicitly (tests/integration/golden/test_execution_e2e.py uses
-PandasExecutionAdapter().run(plan, sources, registry=..., relationship_graph=...,
-namespace_registry=...)). The README quickstart calls .run(plan, sources) with
-no extra kwargs, so the defaults likely cover the single-table no-FK case;
-please run this snippet to confirm before publishing, and add the kwargs if the
-adapter requires them. The README at decoy-engine/README.md also calls
-profile_source(sources) with a dict of arrow tables and reads result.tables -
-both are inconsistent with the code (profile_source takes a config dict;
-the field is .outputs). Flagged separately to Dennis. -->
 
 The CLI is the recommended path for most callers; the library path is for
 embedding the engine inside your own tool.
@@ -173,12 +144,6 @@ The `relationships` block plus a shared `namespace` is what binds the parent
 and child keys. `orphan_policy` controls what happens to child rows whose key
 has no parent (`preserve`, `remap`, `warn`, `fail`). See
 [relationships](relationships.md) for the full contract.
-
-<!-- VERIFY: the exact YAML key names in the `relationships` block
-(`parent` / `children` / `orphan_policy` / `namespace`). These mirror the
-config dicts in tests/integration/golden/test_execution_e2e.py
-(_orphan_fk_config), which build the model_dump()-ed form. Confirm the
-surface YAML field names match by running `decoy validate` on this file. -->
 
 ## (c) Generate a synthetic table
 
@@ -253,7 +218,10 @@ config fails the build before any run:
 ```yaml
 # .github/workflows/decoy.yml (excerpt)
 - run: pip install decoy-engine decoy-cli
-- run: decoy validate pipelines/*.yaml
+- run: |
+    for f in pipelines/*.yaml; do
+      decoy validate "$f"
+    done
 ```
 
 Second, run a mask and gate on the exit code (and optionally on the structured
@@ -266,9 +234,3 @@ decoy run pipeline.yaml --json --quiet
 `run` exits non-zero on failure, so a plain `decoy run pipeline.yaml` already
 gates the job. `--json` emits a structured result on stdout (progress goes to
 stderr) for a CI step that wants to assert on the report.
-
-<!-- VERIFY: that `decoy validate pipelines/*.yaml` accepts a glob / multiple
-path arguments. The validate command takes a single `config: Path` argument
-(decoy/src/decoy/cli/validate.py); shell glob expansion to multiple paths may
-need a loop instead. Confirm whether validate accepts multiple files or
-whether CI should iterate. -->

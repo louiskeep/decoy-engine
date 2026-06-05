@@ -91,10 +91,3 @@ yourself; declaring the relationship is enough.
 
 See [recipes](recipes.md) recipe (b) for a full folder-masking config, and
 [determinism](determinism.md) for what "byte-stable across runs" depends on.
-
-<!-- VERIFY: the surface YAML field names in the `relationships` block
-(`parent` / `children` / `orphan_policy` / `namespace`, and the
-`{table, columns}` shape). These mirror the model_dump()-ed config dicts in
-tests/integration/golden/test_execution_e2e.py (_orphan_fk_config and the
-composite-key config). Confirm the YAML-level field names against the config
-schema (decoy_engine/config) or by running `decoy validate` on recipe (b). -->

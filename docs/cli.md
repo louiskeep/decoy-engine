@@ -74,11 +74,7 @@ Bundled templates include `minimal`, `generate`, and the compliance-oriented
 There are no `decoy.mask(...)` or `decoy.scan(...)` convenience functions in the
 `decoy` package today: the package exposes only the CLI app (`decoy.__main__:app`),
 not a Python-callable shortcut surface. To mask from Python, use the engine
-library directly (validate a `PipelineConfig`, profile, `compile_plan`, run an
-execution adapter; see [recipes](recipes.md) recipe (a)). To scan from Python,
-call `decoy_engine.run_storm(df, source_label)` directly.
-
-<!-- VERIFY: that the `decoy` package exposes no public mask/scan one-liner.
-Confirmed by reading decoy/src/decoy/__init__.py (only __version__) and
-decoy/src/decoy/__main__.py (only the Typer `app`). If a convenience module is
-added later, document it here. -->
+library directly: build a `PipelineConfig` and call
+`decoy_engine.run_pipeline(config, sources, engine_version=...)` (see
+[recipes](recipes.md) recipe (a)). To scan from Python, call
+`decoy_engine.run_storm(df, source_label)` directly.
