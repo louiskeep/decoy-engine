@@ -1,7 +1,7 @@
 """Smoke tests for the Disguise schema + loader.
 
 These tests fail loud if a contributor edits a YAML with a typo or a missing
-field — that's the whole point of the Pydantic schema.
+field - that's the whole point of the Pydantic schema.
 """
 
 import pytest
@@ -23,7 +23,7 @@ class TestLoaderShipsBundles:
         assert not missing, f"Missing Disguise bundles: {sorted(missing)}"
 
     def test_loads_at_least_default_and_hipaa(self):
-        # Kept for historical context — the bones-only PR guarantee.
+        # Kept for historical context - the bones-only PR guarantee.
         ds = {d.id for d in load_disguises()}
         assert "default" in ds
         assert "hipaa" in ds
@@ -35,7 +35,7 @@ class TestLoaderShipsBundles:
     def test_every_disguise_has_a_trigger(self):
         for d in load_disguises():
             t = d.triggers
-            # Either required, any, or co_occurrence — at least one nonempty.
+            # Either required, any, or co_occurrence - at least one nonempty.
             assert t.required_detectors or t.any_detectors or t.co_occurrence, (
                 f"{d.id} has no triggers"
             )
@@ -62,7 +62,7 @@ class TestLoaderShipsBundles:
         """Detection sprint (V1): the strict-mode fail-safe needs each
         shipped Disguise to declare what it expects to see. An empty
         expected_fields list means strict mode is a no-op for that
-        Disguise — fine for ad-hoc / custom bundles, never for the
+        Disguise - fine for ad-hoc / custom bundles, never for the
         built-ins.
         """
         for d in load_disguises():

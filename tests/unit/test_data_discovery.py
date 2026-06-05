@@ -56,7 +56,7 @@ class TestValidation:
             run_discovery_sql("PRAGMA database_list", customers_table)
 
     def test_multi_statement_rejected(self, customers_table):
-        # The second statement is what we really care about — make sure
+        # The second statement is what we really care about - make sure
         # the splitter catches it even though the first is a benign SELECT.
         with pytest.raises(DiscoverySqlError, match="Multiple statements"):
             run_discovery_sql(
@@ -109,7 +109,7 @@ class TestExecution:
             customers_table,
         )
         assert out.columns == ["country", "total"]
-        # FR=40, US=30, UK=30 — sort stable on equal totals so just check FR first.
+        # FR=40, US=30, UK=30 - sort stable on equal totals so just check FR first.
         assert out.rows[0] == {"country": "FR", "total": 40.0}
 
     def test_row_limit_truncates(self, customers_table):

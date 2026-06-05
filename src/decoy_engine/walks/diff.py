@@ -1,7 +1,7 @@
 """Schema-drift comparator.
 
 Pure function: takes two snapshots (typically same logical schema in
-two different environments — dev vs prod, or two snapshots in time of
+two different environments - dev vs prod, or two snapshots in time of
 the same connector) and returns a structural delta. Row-counts are NOT
 compared; that's a Phase-3 toggle. Drift here means "table or column
 shape changed."
@@ -20,7 +20,7 @@ def compare(a: SchemaSnapshot, b: SchemaSnapshot) -> DriftResult:
     "current" / candidate. So a table missing from `b` but present in
     `a` is a `removed_table`.
 
-    Stable ordering of the output (sorted by name) — keeps test
+    Stable ordering of the output (sorted by name) - keeps test
     assertions deterministic and makes UI rendering match between
     re-runs of the same drift walk.
     """
@@ -48,7 +48,7 @@ def _diff_columns(before: Table, after: Table) -> list[dict]:
     Returns one dict per change. Multiple changes on the same column
     produce multiple entries (e.g. a column whose type AND nullability
     both shifted gets two `change_kind` records). That's noisier than
-    coalescing, but easier to act on — each row is one fix.
+    coalescing, but easier to act on - each row is one fix.
     """
     a_cols: dict[str, Column] = {c.name: c for c in before.columns}
     b_cols: dict[str, Column] = {c.name: c for c in after.columns}

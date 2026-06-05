@@ -2,7 +2,7 @@
 
 This table is the single source of truth that FORECAST + the platform's
 column-override endpoint both consume. A typo here ships a bad default to
-every user — the tests assert structural invariants so a future edit can't
+every user - the tests assert structural invariants so a future edit can't
 silently break the contract.
 """
 
@@ -20,7 +20,7 @@ from decoy_engine.storm.recommendations import (
 def _registered_detector_ids() -> set[str]:
     """All detector_ids the engine fires under in V1.
 
-    Pulled from REGISTERED_DETECTORS' function names — each
+    Pulled from REGISTERED_DETECTORS' function names - each
     detector_X function emits detector_id="X" in its DetectorMatch.
     """
     return {fn.__name__.removeprefix("detect_") for fn in REGISTERED_DETECTORS}
@@ -40,7 +40,7 @@ class TestStrategyTableShape:
 
     def test_every_registered_detector_has_a_default(self):
         """Catch the case where someone adds a new built-in detector but
-        forgets to wire a smart default — the override endpoint would
+        forgets to wire a smart default - the override endpoint would
         return None and the UI would show the column with no suggested
         strategy."""
         registered = _registered_detector_ids()
@@ -53,7 +53,7 @@ class TestStrategyTableShape:
 
     def test_no_orphan_strategies(self):
         """Catch the case where a strategy is in the table but no detector
-        ever produces that id — dead code in the lookup."""
+        ever produces that id - dead code in the lookup."""
         registered = _registered_detector_ids()
         defaulted = known_detector_ids()
         orphans = defaulted - registered
@@ -70,7 +70,7 @@ class TestStrategyLookup:
         strategy, params = result
         assert strategy == "fpe"
         # FPE in the engine takes `charset` (not "alphabet") and
-        # preserves length naturally — there's no "length" param.
+        # preserves length naturally - there's no "length" param.
         assert params == {"charset": "digits"}
 
     def test_unknown_detector_returns_none(self):
@@ -83,7 +83,7 @@ class TestRedactDefaults:
     """V1 ships redact-by-default for detectors where the value's semantic
     or structural format preservation is V2 (see gap doc). The tests
     enforce that the redact value is documented + the rest of the params
-    are minimal — so a careless edit can't accidentally drop a fake-but-
+    are minimal - so a careless edit can't accidentally drop a fake-but-
     realistic value into a redact'd column."""
 
     REDACT_DETECTORS = [
@@ -100,7 +100,7 @@ class TestRedactDefaults:
         strategy, params = DEFAULT_STRATEGY_BY_DETECTOR[detector_id]
         assert strategy == "redact", f"{detector_id} should redact in V1 (semantic FPE is V2)"
         # The CVV entry uses "XXX"; the rest use "REDACTED". Both are
-        # valid "obviously redacted" strings — assert it's at least one
+        # valid "obviously redacted" strings - assert it's at least one
         # of those. The engine's redact strategy keys this as
         # `redact_with` (not `value`), so the param assertion matches
         # what the strategy class actually reads.
@@ -112,7 +112,7 @@ class TestRedactDefaults:
 
 class TestFormatPreservingDefaults:
     """The other half: detectors whose default IS format-preserving must
-    point at fpe / date_shift / faker.* — never redact."""
+    point at fpe / date_shift / faker.* - never redact."""
 
     FORMAT_PRESERVING = [
         "first_name",

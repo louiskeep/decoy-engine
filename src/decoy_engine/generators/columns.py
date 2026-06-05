@@ -601,7 +601,7 @@ class ColumnGenerator:
         bin_lo = edges[chosen_bins]
         bin_hi = edges[chosen_bins + 1]
         # rng.uniform(low, high) is half-open [low, high); fine for
-        # sampling — the snapshot's upper bound was inclusive of the
+        # sampling - the snapshot's upper bound was inclusive of the
         # source max but np.histogram's right-most bin is closed, so
         # a tiny chance of sampling exactly at the open boundary is
         # not a real distribution loss.
@@ -1087,7 +1087,7 @@ class ColumnGenerator:
         if len(queue) > len(free_slots):
             self.logger.warning(
                 f"Cardinality: min_per_parent={min_per_parent} cannot be "
-                f"fully satisfied — would need {len(queue)} injections, only "
+                f"fully satisfied - would need {len(queue)} injections, only "
                 f"{len(free_slots)} slots available without violating other "
                 f"min bounds. Partial satisfaction."
             )

@@ -1,4 +1,4 @@
-"""Integration tests for run_storm — exercises the full profiler against
+"""Integration tests for run_storm - exercises the full profiler against
 realistic sample DataFrames and asserts the StormProfile that comes out.
 """
 
@@ -152,7 +152,7 @@ class TestProfileShape:
         assert profile.row_count == len(df)
 
     def test_json_serializable(self):
-        # asdict + json.dumps must succeed — the API layer relies on this.
+        # asdict + json.dumps must succeed - the API layer relies on this.
         import json
 
         df = _hipaa_like_dataframe()
@@ -180,7 +180,7 @@ class TestPIIDetection:
         assert any(m.detector_id == "first_name" for m in fn.detector_matches)
 
     def test_gender_not_flagged_high_pii(self):
-        # Gender alone is not high-PII (binary categorical) — should be low.
+        # Gender alone is not high-PII (binary categorical) - should be low.
         profile = run_storm(_hipaa_like_dataframe(), "x")
         gender = next(f for f in profile.fields if f.name == "gender")
         assert gender.pii_score < 0.5
@@ -236,20 +236,20 @@ class TestSentinelsSurface:
 class TestReidRiskScore:
     """Plan B-1: reid_risk_score = 100 / k_anonymity, capped at 100.
     reid_risk_columns is the flat union of columns participating in
-    the winning quasi-id combo(s) — NOT the set of columns whose
+    the winning quasi-id combo(s) - NOT the set of columns whose
     unique_rate > 0.9 (direct identifiers like ssn are covered by
     per-field pii_score / detector hits and don't appear here)."""
 
     def test_reid_score_reflects_quasi_identifier_linkage(self):
         # With 12 rows and dob/zip/gender forming low-k combos, at
-        # least one combo achieves k <= 2 → reid_risk_score >= 50.
+        # least one combo achieves k <= 2 -> reid_risk_score >= 50.
         profile = run_storm(_hipaa_like_dataframe(), "x")
         assert profile.k_anonymity is not None
         assert profile.reid_risk_score >= 50.0
 
     def test_direct_identifiers_not_in_quasi_id_columns(self):
-        # ssn / email / phone are direct identifiers (unique → above
-        # the unique_rate cap → filtered out of QI candidates).
+        # ssn / email / phone are direct identifiers (unique -> above
+        # the unique_rate cap -> filtered out of QI candidates).
         profile = run_storm(_hipaa_like_dataframe(), "x")
         assert "ssn" not in profile.reid_risk_columns
         assert "email" not in profile.reid_risk_columns

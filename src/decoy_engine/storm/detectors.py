@@ -12,7 +12,7 @@ A detector returns:
     - None otherwise.
 
 Conservative thresholds keep the ranked FORECAST output clean: a column with
-30% email-like values shouldn't get tagged "email" — that's noise.
+30% email-like values shouldn't get tagged "email" - that's noise.
 
 Built-in detector set:
   Core PII:  email, ssn, us_phone, us_zip, person_name,
@@ -57,7 +57,7 @@ SAMPLE_MISS_LIMIT = 3
 
 
 def _series_str(series: pd.Series) -> pd.Series:
-    """Drop nulls and coerce to string — every detector needs this prelude."""
+    """Drop nulls and coerce to string - every detector needs this prelude."""
     return series.dropna().astype(str).str.strip()
 
 
@@ -73,7 +73,7 @@ def _evaluate(
 ) -> DetectorMatch | None:
     """Apply a regex to non-null values and decide whether the detector fires.
 
-    Optional `validator` runs per-value AFTER regex match — used for
+    Optional `validator` runs per-value AFTER regex match - used for
     structurally-valid PAN (Luhn checksum), IBAN (mod-97), IPv4
     (octet range 0-255), NPI (CMS check digit), and ICD-10 (structure check).
     When set, a value counts as a match only if the regex matches AND
@@ -91,7 +91,7 @@ def _evaluate(
         return None
     pattern_matches = values.str.fullmatch(pattern)
     if validator is not None:
-        # Only run the validator on regex-passers — far cheaper than
+        # Only run the validator on regex-passers - far cheaper than
         # iterating every value, and a non-matching string can't pass a
         # checksum either.
         validator_results = pd.Series(False, index=values.index)
@@ -110,7 +110,7 @@ def _evaluate(
     if rate < threshold:
         return None
     misses = values[~matches].head(SAMPLE_MISS_LIMIT).tolist()
-    # Variant bucketing — count which sub-pattern won among the matches.
+    # Variant bucketing - count which sub-pattern won among the matches.
     format_pattern: str | None = None
     if format_variants:
         matched_values = values[matches]
@@ -290,13 +290,13 @@ def hits_name_hint(detector_id: str, col_name: str) -> bool:
 
 # ── value patterns ────────────────────────────────────────────────────────────────────────────
 
-# Email — RFC 5321ish but not strict; works for the 99% of fields users feed in.
+# Email - RFC 5321ish but not strict; works for the 99% of fields users feed in.
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 
-# SSN — ###-##-#### or 9 consecutive digits. Reject 000-/666-/9##- per SSA rules.
+# SSN - ###-##-#### or 9 consecutive digits. Reject 000-/666-/9##- per SSA rules.
 _SSN_RE = re.compile(r"(?!000|666|9\d{2})\d{3}-?(?!00)\d{2}-?(?!0000)\d{4}")
 
-# US phone — 10 digits with common separators, optional +1 country code.
+# US phone - 10 digits with common separators, optional +1 country code.
 _US_PHONE_RE = re.compile(r"(?:\+?1[\s.-]?)?\(?[2-9]\d{2}\)?[\s.-]?[2-9]\d{2}[\s.-]?\d{4}")
 
 # US ZIP -- 5 digits, optional -#### extension.
@@ -310,7 +310,7 @@ _US_PHONE_RE = re.compile(r"(?:\+?1[\s.-]?)?\(?[2-9]\d{2}\)?[\s.-]?[2-9]\d{2}[\s
 # extra (?!\.\d) lookahead rejects the decimal-number case.
 _US_ZIP_RE = re.compile(r"(?<!\w)\d{5}(?:-\d{4})?(?!\w)(?!\.\d)")
 
-# Date formats — strict patterns; the profiler also has pandas' to_datetime
+# Date formats - strict patterns; the profiler also has pandas' to_datetime
 # fuzzy parser as a backstop. These are for *format signal* only.
 #
 # ISO date accepts both the dashed shape (YYYY-MM-DD with optional time
@@ -321,58 +321,58 @@ _ISO_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?)?Z?|\
 _US_DATE_RE = re.compile(r"\d{1,2}/\d{1,2}/\d{2,4}")
 _EU_DATE_RE = re.compile(r"\d{1,2}\.\d{1,2}\.\d{2,4}|\d{1,2}-\d{1,2}-\d{4}")
 
-# Person name — 1-3 whitespace-separated tokens, each starts with a letter,
+# Person name - 1-3 whitespace-separated tokens, each starts with a letter,
 # letters / hyphens / apostrophes / dots only. Length 2-50 total.
 _NAME_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z''.\-]{0,29}")
 _PERSON_NAME_RE = re.compile(rf"{_NAME_TOKEN_RE.pattern}(?:\s+{_NAME_TOKEN_RE.pattern}){{0,2}}")
 
-# PAN (credit card) — 13-19 digits with optional spaces or dashes between
-# groups of 4. Final validity check is Luhn (mod-10) — the regex alone
+# PAN (credit card) - 13-19 digits with optional spaces or dashes between
+# groups of 4. Final validity check is Luhn (mod-10) - the regex alone
 # false-positives on any 13+ digit number, which is far too noisy.
 _PAN_RE = re.compile(r"\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{1,7}")
 
-# CVV — 3 or 4 digits. Pure regex match is uselessly broad (any 3-digit
+# CVV - 3 or 4 digits. Pure regex match is uselessly broad (any 3-digit
 # string), so this detector only fires on a strong column-name hint.
 _CVV_RE = re.compile(r"\d{3,4}")
 
-# IBAN — 2-letter country code + 2-digit checksum + 11-30 alphanumerics.
+# IBAN - 2-letter country code + 2-digit checksum + 11-30 alphanumerics.
 # Spaces optional, often grouped in 4s. Final validity check is mod-97.
 _IBAN_RE = re.compile(r"[A-Z]{2}\d{2}[\sA-Z0-9]{11,34}")
 
-# IPv4 — four 1-3 digit octets separated by dots. Range check (each octet
+# IPv4 - four 1-3 digit octets separated by dots. Range check (each octet
 # 0-255) is the per-value validator.
 _IPV4_RE = re.compile(r"(?:\d{1,3}\.){3}\d{1,3}")
 
-# ICD-10-CM — chapter letter + 2-digit category + optional decimal subcategory.
+# ICD-10-CM - chapter letter + 2-digit category + optional decimal subcategory.
 # Examples: A01.0, M79.3, S72.001A, Z23, F32.9, A010 (stored without dot).
 _ICD10_RE = re.compile(r"[A-Z]\d{2}(?:\.?[A-Z0-9]{1,4})?", re.IGNORECASE)
 
-# NPI — exactly 10 digits; check digit validated by CMS Luhn variant.
+# NPI - exactly 10 digits; check digit validated by CMS Luhn variant.
 _NPI_RE = re.compile(r"\d{10}")
 
-# MRN — no universal format; institution-defined alphanumeric + dash, 4-20 chars.
+# MRN - no universal format; institution-defined alphanumeric + dash, 4-20 chars.
 # Name-hint is the primary signal; this pattern guards against non-identifier noise.
 _MRN_RE = re.compile(r"[A-Z0-9\-]{4,20}", re.IGNORECASE)
 
-# URL — http/https scheme with a host and optional path.
+# URL - http/https scheme with a host and optional path.
 _URL_RE = re.compile(r"https?://[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]{4,}")
 
-# Fax number — identical value pattern to US phone; name hint is the
+# Fax number - identical value pattern to US phone; name hint is the
 # disambiguation signal (phone vs fax).
 _FAX_NUMBER_RE = re.compile(r"(?:\+?1[\s.-]?)?\(?[2-9]\d{2}\)?[\s.-]?[2-9]\d{2}[\s.-]?\d{4}")
 
-# Name-hint-only detectors — patterns broad enough to match any plausible
+# Name-hint-only detectors - patterns broad enough to match any plausible
 # identifier value; meaning lives in the column name, not the value shape.
 _HEALTH_PLAN_ID_RE = re.compile(r"[A-Z0-9\-]{4,30}", re.IGNORECASE)
 _LICENSE_NUM_RE = re.compile(r"[A-Z0-9\-]{4,20}", re.IGNORECASE)
 
-# VIN — exactly 17 chars with restricted charset (no I, O, or Q per ISO 3779).
+# VIN - exactly 17 chars with restricted charset (no I, O, or Q per ISO 3779).
 _VEHICLE_ID_RE = re.compile(r"[A-HJ-NPR-Z0-9]{17}", re.IGNORECASE)
 
 _DEVICE_ID_RE = re.compile(r"[A-Z0-9\-_.]{4,30}", re.IGNORECASE)
 _BIOMETRIC_ID_RE = re.compile(r".+")  # any non-empty value; name hint is definitive
 
-# Address — number + street word(s). Loose by design; the column-name hint
+# Address - number + street word(s). Loose by design; the column-name hint
 # carries the meaning and the value pattern just filters out obvious non-
 # addresses (pure phone numbers, dates).
 _ADDRESS_RE = re.compile(
@@ -385,7 +385,7 @@ _ADDRESS_RE = re.compile(
 #
 # Per-detector ordered (label, regex) pairs that classify which sub-shape
 # of the detector's parent pattern actually fired. The label is what the
-# mask post-pass reads — for regex-style detectors (SSN, phone, ZIP) it's
+# mask post-pass reads - for regex-style detectors (SSN, phone, ZIP) it's
 # the regex shape; for date detectors it's a strptime format string the
 # date_shift strategy can pass directly to dt.strftime().
 
@@ -425,7 +425,7 @@ _US_ZIP_VARIANTS = [
     _variant(r"(?<!\w)\d{5}(?!\w)(?!\.\d)"),
 ]
 
-# Date detectors map directly to strptime — the format_pattern label is
+# Date detectors map directly to strptime - the format_pattern label is
 # what date_shift's dt.strftime() will consume on the masked output.
 _ISO_DATE_VARIANTS = [
     ("%Y-%m-%dT%H:%M:%SZ", re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")),
@@ -621,9 +621,9 @@ def _npi_valid(value: str) -> bool:
     a modified Luhn (even 0-indexed positions from right are doubled), verify
     the computed check digit matches NPI[9].
 
-    Verified: 1234567893 → prefix 80840123456789 → sum 67 → check 3 ✓
-              1679576722 → prefix 80840167957672 → sum 68 → check 2 ✓
-              1000000004 → prefix 80840100000000 → sum 26 → check 4 ✓
+    Verified: 1234567893 -> prefix 80840123456789 -> sum 67 -> check 3 ✓
+              1679576722 -> prefix 80840167957672 -> sum 68 -> check 2 ✓
+              1000000004 -> prefix 80840100000000 -> sum 26 -> check 4 ✓
     """
     digits = re.sub(r"[\s-]", "", str(value))
     if not digits.isdigit() or len(digits) != 10:
@@ -643,7 +643,7 @@ def _npi_valid(value: str) -> bool:
 def _iso_date_valid(value: str) -> bool:
     """Reject random 8-digit strings that pass the compact-date branch
     but aren't plausible dates. Year 1900-2100, month 1-12, day 1-31.
-    Dashed dates always pass — only the compact branch needs the guard."""
+    Dashed dates always pass - only the compact branch needs the guard."""
     v = value.strip()
     if "-" in v or "T" in v or " " in v:
         return True
@@ -658,7 +658,7 @@ def _iso_date_valid(value: str) -> bool:
 # ICD-10-CM chapter category ranges. Each entry maps a chapter letter to
 # the inclusive [lo, hi] 2-digit category range that's actually used in
 # the standard. Detection sprint (V1) uses this to gate the icd10
-# validator so a random "M99" or "Z45" string can't false-positive — the
+# validator so a random "M99" or "Z45" string can't false-positive - the
 # letter+category prefix must be in a real ICD-10 chapter range.
 #
 # A bundled top-1000 lookup would be more precise (rejecting structurally
@@ -699,8 +699,8 @@ def _icd10_valid(value: str) -> bool:
 
     Verified: letter at index 0 belongs to a real ICD-10 chapter; the 2-digit
     category prefix falls within that chapter's valid range; total length
-    3-7 alphanumeric characters (dots stripped). Rejects e.g. "Z99.99X" → fine,
-    "P97.00" → P97 outside P0-P96 → rejected.
+    3-7 alphanumeric characters (dots stripped). Rejects e.g. "Z99.99X" -> fine,
+    "P97.00" -> P97 outside P0-P96 -> rejected.
     """
     v = re.sub(r"\.", "", str(value).strip().upper())
     if not (3 <= len(v) <= 7 and v[0].isalpha() and v[1:3].isdigit()):
@@ -762,7 +762,7 @@ def detect_us_zip(series: pd.Series, col_name: str) -> DetectorMatch | None:
 def detect_person_name(series: pd.Series, col_name: str) -> DetectorMatch | None:
     """Heuristic: name-hinted column name + values look like proper-cased tokens.
 
-    Without a strong column-name hint, person_name is too noisy — most short
+    Without a strong column-name hint, person_name is too noisy - most short
     string columns happen to "look like names" by this regex. Require the hint.
     """
     if not _hits_name_hint("person_name", col_name):
@@ -781,7 +781,7 @@ def detect_first_name(series: pd.Series, col_name: str) -> DetectorMatch | None:
 
     Detection sprint (V1): split out from person_name so the strategy
     table routes to faker.first_name (single token, gendered shape)
-    instead of faker.name. Name-hint only — value regex is the same as
+    instead of faker.name. Name-hint only - value regex is the same as
     person_name.
     """
     if not _hits_name_hint("first_name", col_name):
@@ -815,7 +815,7 @@ def detect_last_name(series: pd.Series, col_name: str) -> DetectorMatch | None:
 def detect_address(series: pd.Series, col_name: str) -> DetectorMatch | None:
     """Street addresses (addr, addr1, line1, street_1, mailing_address, ...).
 
-    Detection sprint (V1). Name-hint only — street formats vary too widely
+    Detection sprint (V1). Name-hint only - street formats vary too widely
     (rural routes, military APO, PO boxes, international) for a meaningful
     value regex. The address regex just filters out obviously non-address
     values (pure phone numbers, plain prose without a leading digit).
@@ -878,7 +878,7 @@ def detect_pan(series: pd.Series, col_name: str) -> DetectorMatch | None:
 
 def detect_cvv(series: pd.Series, col_name: str) -> DetectorMatch | None:
     """CVV / CVC. Any 3-digit string matches the regex, so the detector
-    only fires on a strong column-name hint — false-positive rate
+    only fires on a strong column-name hint - false-positive rate
     without the hint would be unmanageable."""
     if not _hits_name_hint("cvv", col_name):
         return None
@@ -888,7 +888,7 @@ def detect_cvv(series: pd.Series, col_name: str) -> DetectorMatch | None:
 
 
 def detect_iban(series: pd.Series, col_name: str) -> DetectorMatch | None:
-    """IBAN — country code + checksum + BBAN. Mod-97 validates the
+    """IBAN - country code + checksum + BBAN. Mod-97 validates the
     checksum so random alphanumeric strings don't false-positive."""
     return _evaluate(
         "iban",
@@ -930,7 +930,7 @@ def detect_icd10(series: pd.Series, col_name: str) -> DetectorMatch | None:
 
 
 def detect_npi(series: pd.Series, col_name: str) -> DetectorMatch | None:
-    """National Provider Identifier — 10-digit with CMS Luhn check digit."""
+    """National Provider Identifier - 10-digit with CMS Luhn check digit."""
     return _evaluate(
         "npi",
         _series_str(series),
@@ -942,7 +942,7 @@ def detect_npi(series: pd.Series, col_name: str) -> DetectorMatch | None:
 
 
 def detect_mrn(series: pd.Series, col_name: str) -> DetectorMatch | None:
-    """Medical Record Number — no universal format; fires on name hint only.
+    """Medical Record Number - no universal format; fires on name hint only.
     The alphanumeric pattern guards against obviously non-identifier values
     (plain prose, floats, very short strings)."""
     if not _hits_name_hint("mrn", col_name):
@@ -953,7 +953,7 @@ def detect_mrn(series: pd.Series, col_name: str) -> DetectorMatch | None:
 
 
 def detect_url(series: pd.Series, col_name: str) -> DetectorMatch | None:
-    """Web URLs — http/https scheme. Fires on value pattern alone (no
+    """Web URLs - http/https scheme. Fires on value pattern alone (no
     name hint required) since the URL format is distinctive enough."""
     return _evaluate(
         "url",
@@ -965,7 +965,7 @@ def detect_url(series: pd.Series, col_name: str) -> DetectorMatch | None:
 
 
 def detect_fax_number(series: pd.Series, col_name: str) -> DetectorMatch | None:
-    """Fax numbers — identical format to US phone; name hint is the only
+    """Fax numbers - identical format to US phone; name hint is the only
     way to distinguish a fax column from a phone column."""
     if not _hits_name_hint("fax_number", col_name):
         return None
@@ -979,7 +979,7 @@ def detect_fax_number(series: pd.Series, col_name: str) -> DetectorMatch | None:
 
 
 def detect_health_plan_id(series: pd.Series, col_name: str) -> DetectorMatch | None:
-    """Health-plan beneficiary / member / subscriber IDs — name hint only.
+    """Health-plan beneficiary / member / subscriber IDs - name hint only.
     No standard value format; meaning lives in the column name."""
     if not _hits_name_hint("health_plan_id", col_name):
         return None
@@ -993,7 +993,7 @@ def detect_health_plan_id(series: pd.Series, col_name: str) -> DetectorMatch | N
 
 
 def detect_license_num(series: pd.Series, col_name: str) -> DetectorMatch | None:
-    """Certificate and license numbers — name hint only. Formats vary by
+    """Certificate and license numbers - name hint only. Formats vary by
     state / regulatory body; the column name is the definitive signal."""
     if not _hits_name_hint("license_num", col_name):
         return None
@@ -1020,7 +1020,7 @@ def detect_vehicle_id(series: pd.Series, col_name: str) -> DetectorMatch | None:
 
 
 def detect_device_id(series: pd.Series, col_name: str) -> DetectorMatch | None:
-    """Device identifiers and serial numbers — name hint only. Medical device
+    """Device identifiers and serial numbers - name hint only. Medical device
     UDIs, implant serial numbers, and equipment IDs have no shared format."""
     if not _hits_name_hint("device_id", col_name):
         return None
@@ -1030,7 +1030,7 @@ def detect_device_id(series: pd.Series, col_name: str) -> DetectorMatch | None:
 
 
 def detect_biometric_id(series: pd.Series, col_name: str) -> DetectorMatch | None:
-    """Biometric identifiers (fingerprints, retina scans, etc.) — name hint only.
+    """Biometric identifiers (fingerprints, retina scans, etc.) - name hint only.
     Biometric data has no universal string format; the column name is definitive."""
     if not _hits_name_hint("biometric_id", col_name):
         return None
@@ -1066,7 +1066,7 @@ REGISTERED_DETECTORS: list[DetectorFn] = [
     detect_cvv,
     detect_iban,
     detect_ipv4,
-    # Item 31 phase 3 — HIPAA Safe Harbor completers + clinical identifiers.
+    # Item 31 phase 3 - HIPAA Safe Harbor completers + clinical identifiers.
     detect_icd10,
     detect_npi,
     detect_mrn,
@@ -1091,7 +1091,7 @@ def run_all_detectors(
     highest-confidence detector is first.
 
     Custom detectors run after the built-ins. A bad regex in one custom spec
-    (e.g. malformed pattern) is logged-and-skipped rather than raising — one
+    (e.g. malformed pattern) is logged-and-skipped rather than raising - one
     misconfigured admin entry shouldn't kill the whole scan.
     """
     matches: list[DetectorMatch] = []
@@ -1104,7 +1104,7 @@ def run_all_detectors(
             try:
                 m = _run_custom_detector(series, col_name, spec)
             except re.error:
-                # Bad regex — skip silently. The platform validates patterns
+                # Bad regex - skip silently. The platform validates patterns
                 # at create-time so we should rarely hit this in practice.
                 continue
             if m is not None:
@@ -1201,7 +1201,7 @@ class Span:
 # health_plan_id, device_id, biometric_id, vehicle_id, mrn) are intentionally
 # OMITTED: their regexes are too loose to use without a column-name signal
 # (per the existing docstrings on each). The text_redact contract is "find
-# unambiguous PII inside free text" — adding name-hint-only detectors here
+# unambiguous PII inside free text" - adding name-hint-only detectors here
 # would shred legitimate prose. Customers needing those detectors in text
 # pass them via the `custom` kwarg with a tighter pattern.
 _SPAN_DETECTORS: dict[str, tuple[re.Pattern[str], Callable[[str], bool] | None]] = {

@@ -77,7 +77,7 @@ def test_no_qi_candidates_when_every_column_is_unique():
 
 
 def test_no_qi_candidates_when_every_column_is_constant():
-    # The other extreme — single distinct value per column. Filtered
+    # The other extreme - single distinct value per column. Filtered
     # by the distinct_count > 1 guard.
     df = pd.DataFrame(
         {
@@ -94,7 +94,7 @@ def test_hipaa_trio_emerges_from_data_without_name_hardcoding():
     # The legacy hardcoded heuristic looked for column names matching
     # /dob/, /zip/, /gender/. Data-driven k-anonymity should surface
     # the same trio from cardinality alone, even with different
-    # column names — though here we keep the canonical names so the
+    # column names - though here we keep the canonical names so the
     # test reads naturally.
     # 8 rows; (dob, zip, gender) uniquely identifies 6 of them (k=1)
     # because two rows share (1985-03-15, 90210, F).
@@ -170,7 +170,7 @@ def test_existing_profile_json_without_k_anonymity_still_loads():
         "reid_risk_columns": ["foo"],
         "reid_risk_score": 30.0,
         "quasi_identifier_groups": [],
-        # NOTE: no "k_anonymity" key — that's the regression case.
+        # NOTE: no "k_anonymity" key - that's the regression case.
         "engine_version": "0.1.0",
         "generated_at": "2026-05-13T00:00:00Z",
     }

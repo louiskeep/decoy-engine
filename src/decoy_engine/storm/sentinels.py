@@ -3,18 +3,18 @@
 A "sentinel" is a value that parsed structurally (so it doesn't show up as
 invalid in the basic profiler) but is suspicious in context. Examples:
 
-    - `0001-01-01` in a `start_date` column — valid date, won't load into
+    - `0001-01-01` in a `start_date` column - valid date, won't load into
       Postgres `date` type, almost certainly a placeholder for "unknown".
-    - `9999-12-31` — common "end of time" placeholder.
-    - `-1` in a foreign-key column — legacy "no parent" sentinel.
-    - `999999999` in a SSN-shaped column — bogus filler.
+    - `9999-12-31` - common "end of time" placeholder.
+    - `-1` in a foreign-key column - legacy "no parent" sentinel.
+    - `999999999` in a SSN-shaped column - bogus filler.
     - `"N/A"`, `"NULL"`, `"TBD"`, `"UNKNOWN"` strings.
 
 These are surfaced as `SentinelFlag`s on FieldStats so FORECAST can warn
 the user and suggest fixes ("replace with NULL, drop row, etc.").
 
 MVP scope: the obvious ones, no statistical outlier detection yet (that's
-midrange — z-score, IQR, distribution-based).
+midrange - z-score, IQR, distribution-based).
 """
 
 from __future__ import annotations
@@ -30,26 +30,26 @@ from decoy_engine.storm.types import SentinelFlag
 
 # ── known sentinel values ─────────────────────────────────────────────────────
 
-# Date sentinels — parse to a real date but are placeholder-y.
+# Date sentinels - parse to a real date but are placeholder-y.
 _DATE_SENTINELS: dict[date, str] = {
     date(1, 1, 1): "year-0001 placeholder, won't load into Postgres date type",
-    date(1900, 1, 1): "1900-01-01 — common 'unknown date' placeholder",
+    date(1900, 1, 1): "1900-01-01 - common 'unknown date' placeholder",
     date(
         1899, 12, 31
-    ): "1899-12-31 — Excel date origin, often appears from corrupted serializations",
-    date(1970, 1, 1): "1970-01-01 — Unix epoch, often a default for missing timestamps",
-    date(9999, 12, 31): "9999-12-31 — common 'end of time' placeholder",
+    ): "1899-12-31 - Excel date origin, often appears from corrupted serializations",
+    date(1970, 1, 1): "1970-01-01 - Unix epoch, often a default for missing timestamps",
+    date(9999, 12, 31): "9999-12-31 - common 'end of time' placeholder",
 }
 
-# Numeric sentinels — keyed by exact value.
+# Numeric sentinels - keyed by exact value.
 _NUMERIC_SENTINELS: dict[float, str] = {
-    -1.0: "-1 — common 'unknown / no parent' sentinel",
-    -999.0: "-999 — common missing-value sentinel",
-    999999999.0: "999999999 — common SSN/ID filler",
-    -2147483648.0: "INT_MIN — likely overflow or 'no value' placeholder",
+    -1.0: "-1 - common 'unknown / no parent' sentinel",
+    -999.0: "-999 - common missing-value sentinel",
+    999999999.0: "999999999 - common SSN/ID filler",
+    -2147483648.0: "INT_MIN - likely overflow or 'no value' placeholder",
 }
 
-# String sentinels — case-insensitive exact match after stripping whitespace.
+# String sentinels - case-insensitive exact match after stripping whitespace.
 _STRING_SENTINELS: set[str] = {
     "n/a",
     "na",
@@ -92,7 +92,7 @@ def _to_date(v: Any) -> date | None:
 
     Handles dates outside pandas' Timestamp range (1677-09-21 .. 2262-04-11)
     via a stdlib regex+`date()` fallback. This is critical for sentinel
-    detection — `0001-01-01` and `9999-12-31` are exactly the values we
+    detection - `0001-01-01` and `9999-12-31` are exactly the values we
     want to flag, and they're outside pandas' supported range.
     """
     if isinstance(v, datetime):
@@ -136,7 +136,7 @@ def detect_sentinels(series: pd.Series, col_name: str) -> list[SentinelFlag]:
     elif pd.api.types.is_numeric_dtype(series):
         flags.extend(_scan_numerics(non_null))
     # Object / string columns: string sentinels, plus stdlib date-coerce for
-    # date-hinted columns (NOT pandas-coerce — pandas Timestamps reject the
+    # date-hinted columns (NOT pandas-coerce - pandas Timestamps reject the
     # 0001-01-01 / 9999-12-31 sentinels we care most about).
     else:
         flags.extend(_scan_strings(non_null))
@@ -236,7 +236,7 @@ def _scan_strings(non_null: pd.Series) -> list[SentinelFlag]:
                 kind="string_sentinel",
                 value=normalized,
                 count=count,
-                note=f"placeholder string {normalized!r} — probably means missing data",
+                note=f"placeholder string {normalized!r} - probably means missing data",
             )
         )
     return flags

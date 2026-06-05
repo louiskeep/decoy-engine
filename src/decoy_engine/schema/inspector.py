@@ -1,5 +1,5 @@
 """
-SchemaInspector — stub.
+SchemaInspector - stub.
 
 Connector schema introspection (table list, column types, primary/foreign
 keys) for use by `forge init` and synthetic-data scaffolding. Tracked in

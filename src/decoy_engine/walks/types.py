@@ -1,6 +1,6 @@
 """Type definitions for the walks engine.
 
-All frozen dataclasses — snapshots are immutable input; results are
+All frozen dataclasses - snapshots are immutable input; results are
 immutable output. Lets the runner cache them safely and lets tests
 construct them inline without spinning up a real DB.
 """
@@ -41,7 +41,7 @@ class Edge:
     target_column: str
     declared: bool
 
-    # True if this edge is part of a polymorphic-FK group — e.g. a
+    # True if this edge is part of a polymorphic-FK group - e.g. a
     # `comments.entity_id` column that points at multiple tables based
     # on a `comments.entity_type` discriminator. Surfaced separately
     # because a polymorphic FK can't have a real DB-side constraint.
@@ -54,7 +54,7 @@ class SchemaSnapshot:
 
     Produced by the platform's snapshotter (which reads
     `information_schema` for the connected database). Consumed by every
-    function in this package — `infer_edges`, `detect_hazards`,
+    function in this package - `infer_edges`, `detect_hazards`,
     `build_er_graph`, `compare`. No live DB connection is needed past
     the snapshotter.
 
@@ -78,12 +78,12 @@ class Hazard:
 
     `kind` is one of:
 
-      - "HUB"  — table referenced by many other tables (in-degree above threshold)
-      - "SR"   — self-reference (a table FKs to itself)
-      - "PE"   — parallel edges (multiple FKs from one table to the same target)
-      - "PM"   — polymorphic FK (entity_type + entity_id pattern; no enforceable constraint)
-      - "ALT"  — alternative parents (XOR — exactly one of N FK columns is set per row)
-      - "CIR"  — cycle in the FK graph
+      - "HUB"  - table referenced by many other tables (in-degree above threshold)
+      - "SR"   - self-reference (a table FKs to itself)
+      - "PE"   - parallel edges (multiple FKs from one table to the same target)
+      - "PM"   - polymorphic FK (entity_type + entity_id pattern; no enforceable constraint)
+      - "ALT"  - alternative parents (XOR - exactly one of N FK columns is set per row)
+      - "CIR"  - cycle in the FK graph
 
     Each detector is a single pure function in `hazards.py`.
     """
@@ -110,7 +110,7 @@ class WalkResult:
 @dataclass(frozen=True)
 class DriftResult:
     """What a drift-preset walk returns: the structural delta between
-    two snapshots. Row-count comparison is explicitly out of scope —
+    two snapshots. Row-count comparison is explicitly out of scope -
     drift is structural only. Phase 3 may add a row-count toggle.
     """
 

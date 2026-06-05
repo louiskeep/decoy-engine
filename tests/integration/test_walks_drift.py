@@ -1,4 +1,4 @@
-"""Tests for `compare()` — schema-drift comparator.
+"""Tests for `compare()` - schema-drift comparator.
 
 Drift is structural only. Row-counts intentionally out of scope; the
 test suite codifies that contract so a future "row-count toggle"
@@ -162,7 +162,7 @@ def test_nullability_change_recorded():
 
 
 def test_pk_change_recorded():
-    """Demoting a PK is a structural change worth flagging — could
+    """Demoting a PK is a structural change worth flagging - could
     indicate a schema migration in progress."""
     a = _snap([Table("users", "public", (_col("id", pk=True, nullable=False),))])
     b = _snap([Table("users", "public", (_col("id", pk=False, nullable=False),))])
@@ -173,7 +173,7 @@ def test_pk_change_recorded():
 
 def test_multiple_changes_on_same_column_emit_separate_records():
     """A column whose type AND nullability both shifted produces two
-    entries — easier to act on than one merged record."""
+    entries - easier to act on than one merged record."""
     a = _snap(
         [
             Table(

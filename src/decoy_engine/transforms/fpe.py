@@ -127,14 +127,14 @@ class FPEStrategy(BaseMaskingStrategy):
     """Format-Preserving Encryption (FPE) mask strategy (Sprint B · Item 32).
 
     Replaces each value with another value of the same length over the same
-    character set.  Same input + same key → same output (keyed determinism).
+    character set.  Same input + same key -> same output (keyed determinism).
 
     YAML config keys:
       charset: 'digits' | 'alpha' | 'ALPHA' | 'alphanum' | 'ALPHANUM'
                | explicit string   (default: 'digits')
       preserve_separators: bool  (default: true)
         Non-charset characters stay at their original positions; only charset
-        characters are encrypted.  Example: "123-45-6789" → "748-23-1056" with
+        characters are encrypted.  Example: "123-45-6789" -> "748-23-1056" with
         charset 'digits' and dashes preserved in-place.
       validate_luhn: bool  (default: false)
         After encryption, replace the last charset character with the Luhn
@@ -179,7 +179,7 @@ class FPEStrategy(BaseMaskingStrategy):
             key = hashlib.sha256(seed_material).digest()
 
         # The encryption itself (8 Feistel rounds, each an HMAC-SHA256) has
-        # to run once per value — there's no whole-column equivalent. So
+        # to run once per value - there's no whole-column equivalent. So
         # this isn't true vectorization; we're just trimming the pandas
         # overhead off the per-row loop. Three things move out of the loop
         # into single whole-column ops: the null check (one C-level mask vs
