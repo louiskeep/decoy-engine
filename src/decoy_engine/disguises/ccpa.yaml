@@ -1,7 +1,7 @@
-# CCPA Disguise — California Consumer Privacy Act / CPRA
+# CCPA Disguise - California Consumer Privacy Act / CPRA
 #
 # Built for US consumer-tech workloads where the product serves California
-# residents and the dataset carries their Personal Information (PI) — broadly
+# residents and the dataset carries their Personal Information (PI), broadly
 # defined by CCPA §1798.140(v) as information that "identifies, relates to,
 # describes, is reasonably capable of being associated with, or could
 # reasonably be linked, directly or indirectly, with a particular consumer or
@@ -14,7 +14,7 @@
 id: ccpa
 name: "CCPA Disguise"
 summary: "CCPA/CPRA consumer PI defaults: direct identifiers replaced, online identifiers hashed."
-regulation: "California Consumer Privacy Act — Cal. Civ. Code §1798.100 et seq. (as amended by CPRA, effective 2023)"
+regulation: "California Consumer Privacy Act - Cal. Civ. Code §1798.100 et seq. (as amended by CPRA, effective 2023)"
 primary_buyer: "US consumer-tech and SaaS engineers serving California residents"
 
 triggers:
@@ -23,7 +23,7 @@ triggers:
     - email
   co_occurrence:
     # Strong US consumer-tech signature: email + IP + location. The SSN-bearing
-    # variant was dropped so it doesn't shadow HIPAA/GLBA on healthcare data —
+    # variant was dropped so it doesn't shadow HIPAA/GLBA on healthcare data:
     # CCPA's signature is web/consumer-shape (IP, online identifiers), not the
     # SSN+identity pattern that HIPAA owns.
     - [email, ipv4, us_zip]
@@ -68,13 +68,13 @@ field_rules:
     mask: faker
     params:
       faker_type: email
-    why: "Online identifier per CCPA — email is the canonical account handle in consumer products. Realistic fake preserves the @ format that downstream systems parse."
+    why: "Online identifier per CCPA: email is the canonical account handle in consumer products. Realistic fake preserves the @ format that downstream systems parse."
 
   - detectors: [us_phone]
     mask: faker
     params:
       faker_type: phone_number
-    why: "Direct contact identifier — CCPA §1798.140(v)(1)(A). Realistic fake preserves format and country-code structure."
+    why: "Direct contact identifier: CCPA §1798.140(v)(1)(A). Realistic fake preserves format and country-code structure."
 
   - detectors: [ipv4]
     mask: faker
@@ -98,11 +98,11 @@ field_rules:
     mask: date_shift
     params:
       jitter_days: 30
-    why: "Consumer event dates (signup, last_active, purchase_date) — ±30d jitter severs the timestamp fingerprint that can re-identify users across de-identified datasets."
+    why: "Consumer event dates (signup, last_active, purchase_date): ±30d jitter severs the timestamp fingerprint that can re-identify users across de-identified datasets."
 
   - detectors: [pan]
     mask: fpe
     params:
       charset: digits
       validate_luhn: true
-    why: "Payment card number stored in consumer records — Sensitive PI under CPRA. Format-preserving 16-digit + valid Luhn; FK joins survive via determinism."
+    why: "Payment card number stored in consumer records: Sensitive PI under CPRA. Format-preserving 16-digit + valid Luhn; FK joins survive via determinism."

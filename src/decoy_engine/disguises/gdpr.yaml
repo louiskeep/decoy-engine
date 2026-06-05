@@ -1,15 +1,15 @@
-# GDPR Disguise — EU General Data Protection Regulation.
+# GDPR Disguise - EU General Data Protection Regulation.
 #
 # Built for any EU/UK workload where personal data ("any information
-# relating to an identified or identifiable natural person" — Art. 4(1))
+# relating to an identified or identifiable natural person", Art. 4(1))
 # leaves the regulated environment. GDPR doesn't enumerate identifier
 # types the way HIPAA does; instead it broadly protects every direct or
 # indirect identifier. This Disguise defaults to faker on the obvious
 # direct identifiers (name, email, phone, IBAN) and generalizes the
 # common quasi-identifiers (ZIP, age via DOB, IP).
 #
-# Recital 26 — anonymisation criterion ("information which does not
-# relate to an identified or identifiable natural person") — is the
+# Recital 26 (anonymisation criterion: "information which does not
+# relate to an identified or identifiable natural person") is the
 # target outcome; recital 28 frames pseudonymisation (the bulk of what
 # this Disguise does) as a recommended GDPR-compliance technique under
 # Art. 32. Implements pseudonymisation, not anonymisation: re-id by
@@ -21,16 +21,16 @@
 id: gdpr
 name: "GDPR Disguise"
 summary: "EU GDPR pseudonymisation defaults: direct identifiers replaced, quasi-identifiers generalised."
-regulation: "EU GDPR — Article 4(5) pseudonymisation, Article 32 security of processing, Recital 26 anonymisation"
+regulation: "EU GDPR - Article 4(5) pseudonymisation, Article 32 security of processing, Recital 26 anonymisation"
 primary_buyer: "EU/UK data engineers handling personal data"
 
 triggers:
-  # GDPR fires on a clear EU signal — IBAN (European bank account format)
+  # GDPR fires on a clear EU signal - IBAN (European bank account format)
   # or EU-formatted dates. We deliberately don't include email / phone /
   # person_name in `any_detectors` because those are universal PII; the
   # default Disguise already covers them. A US dataset with email and
   # name shouldn't be tagged "GDPR-relevant" just because the fields
-  # exist — if there's no EU-shaped field, this isn't an EU dataset.
+  # exist: if there's no EU-shaped field, this isn't an EU dataset.
   any_detectors:
     - iban
     - eu_date
@@ -89,34 +89,34 @@ field_rules:
     mask: faker
     params:
       faker_type: phone_number
-    why: "Direct identifier — phone numbers per Art. 4(1)."
+    why: "Direct identifier: phone numbers per Art. 4(1)."
 
   - detectors: [iban]
     mask: fpe
     params:
       charset: ALPHANUM
-    why: "Bank account number → format-preserving alphanumeric. Joins survive via instance-key determinism. Pseudonymisation under Art. 4(5); the controller can still link via the key."
+    why: "Bank account number -> format-preserving alphanumeric. Joins survive via instance-key determinism. Pseudonymisation under Art. 4(5); the controller can still link via the key."
 
   - detectors: [ipv4]
     mask: faker
     params:
       faker_type: ipv4
-    why: "IP address → realistic fake IPv4. CJEU Breyer (C-582/14) confirms IPs are personal data under GDPR; deterministic faker pseudonymises while preserving session-grouping joins."
+    why: "IP address -> realistic fake IPv4. CJEU Breyer (C-582/14) confirms IPs are personal data under GDPR; deterministic faker pseudonymises while preserving session-grouping joins."
 
   - detectors: [us_zip]
     mask: truncate
     params:
       length: 3
-    why: "Quasi-identifier — ZIP-3 generalisation. Mirrors HIPAA Safe Harbor's geographic rule; reduces re-identification risk by aggregating to ~thousands of records per bucket."
+    why: "Quasi-identifier: ZIP-3 generalisation. Mirrors HIPAA Safe Harbor's geographic rule; reduces re-identification risk by aggregating to ~thousands of records per bucket."
 
   - detectors: [iso_date, us_date, eu_date]
     mask: date_shift
     params:
       jitter_days: 30
-    why: "Quasi-identifier — date jitter breaks exact-time correlation across linked datasets. ±30d preserves seasonality and aging analytics."
+    why: "Quasi-identifier: date jitter breaks exact-time correlation across linked datasets. ±30d preserves seasonality and aging analytics."
 
   - detectors: [ssn]
     mask: fpe
     params:
       charset: digits
-    why: "Even in EU contexts, US SSN-shaped fields are direct identifiers — format-preserving so cross-Atlantic FK joins survive without losing the 9-digit shape."
+    why: "Even in EU contexts, US SSN-shaped fields are direct identifiers: format-preserving so cross-Atlantic FK joins survive without losing the 9-digit shape."

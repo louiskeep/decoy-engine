@@ -1,11 +1,11 @@
-# PCI DSS Disguise — Payment Card Industry Data Security Standard.
+# PCI DSS Disguise - Payment Card Industry Data Security Standard.
 #
 # Built for retail, payments, and adjacent finance workloads where the
 # data set carries primary account numbers (PAN), card security codes
 # (CVV/CVC), and IBANs. PCI DSS §3.4 ("render PAN unreadable anywhere
 # stored") is the load-bearing requirement; this Disguise covers the
-# common storage paths — cardholder profile tables, transaction logs,
-# refund records — by defaulting all PAN columns to keyed FPE-shaped
+# common storage paths (cardholder profile tables, transaction logs,
+# refund records) by defaulting all PAN columns to keyed FPE-shaped
 # masking and CVV columns to redact (PCI explicitly forbids storage of
 # CVV after authorization).
 #
@@ -14,7 +14,7 @@
 id: pci
 name: "PCI DSS Disguise"
 summary: "PCI DSS §3.4 cardholder data protection: PAN, CVV, IBAN, plus the usual identity fields."
-regulation: "PCI DSS v4.0 — Requirement 3 (Protect stored account data)"
+regulation: "PCI DSS v4.0 - Requirement 3 (Protect stored account data)"
 primary_buyer: "Payments, retail, fintech engineers"
 
 triggers:
@@ -49,58 +49,58 @@ field_rules:
     params:
       charset: digits
       validate_luhn: true
-    why: "PAN → format-preserving digits with valid Luhn check digit. PCI DSS §3.4 'render PAN unreadable' — same length, still passes card validation, joins survive via instance-key determinism."
+    why: "PAN -> format-preserving digits with valid Luhn check digit. PCI DSS §3.4 'render PAN unreadable' - same length, still passes card validation, joins survive via instance-key determinism."
 
   - detectors: [cvv]
     mask: redact
     params:
       redact_with: "***"
-    why: "CVV / CVC → fixed redaction. PCI DSS §3.2 explicitly forbids storage of card-verification codes after authorization; redaction kills the value."
+    why: "CVV / CVC -> fixed redaction. PCI DSS §3.2 explicitly forbids storage of card-verification codes after authorization; redaction kills the value."
 
   - detectors: [iban]
     mask: fpe
     params:
       charset: ALPHANUM
-    why: "IBAN → format-preserving alphanumeric. Bank-account joins survive via instance-key determinism; no clear-text IBAN persists."
+    why: "IBAN -> format-preserving alphanumeric. Bank-account joins survive via instance-key determinism; no clear-text IBAN persists."
 
   - detectors: [first_name]
     mask: faker
     params:
       faker_type: first_name
-    why: "Cardholder first names → realistic fake first name. Keeps datasets readable for QA without leaking identity."
+    why: "Cardholder first names -> realistic fake first name. Keeps datasets readable for QA without leaking identity."
 
   - detectors: [last_name]
     mask: faker
     params:
       faker_type: last_name
-    why: "Cardholder last names → realistic fake last name."
+    why: "Cardholder last names -> realistic fake last name."
 
   - detectors: [person_name]
     mask: faker
     params:
       faker_type: name
-    why: "Cardholder full names → realistic fake substitutes."
+    why: "Cardholder full names -> realistic fake substitutes."
 
   - detectors: [email]
     mask: faker
     params:
       faker_type: email
-    why: "Customer emails → realistic fake (preserves @-domain shape via `preserve_domain` if the user enables it on the field)."
+    why: "Customer emails -> realistic fake (preserves @-domain shape via `preserve_domain` if the user enables it on the field)."
 
   - detectors: [us_phone]
     mask: faker
     params:
       faker_type: phone_number
-    why: "Phone numbers → realistic fake."
+    why: "Phone numbers -> realistic fake."
 
   - detectors: [us_zip]
     mask: truncate
     params:
       length: 3
-    why: "ZIP → first 3 digits only. Coarse-grained geographic signal preserved for fraud analytics; full ZIP discarded."
+    why: "ZIP -> first 3 digits only. Coarse-grained geographic signal preserved for fraud analytics; full ZIP discarded."
 
   - detectors: [iso_date, us_date, eu_date]
     mask: date_shift
     params:
       jitter_days: 30
-    why: "Transaction dates → ±30d shift. Preserves the analytic distribution while breaking exact correlation with the unmasked source."
+    why: "Transaction dates -> ±30d shift. Preserves the analytic distribution while breaking exact correlation with the unmasked source."
