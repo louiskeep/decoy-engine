@@ -22,31 +22,25 @@ Polars, PyArrow) are pulled in automatically.
 ## Quickstart
 
 The shortest path from import to masked output: validate a config dict,
-profile the source, compile a plan, and run it on a Polars-backed
-execution adapter.
+load the source tables, and run the whole pipeline in one call.
 
 ```python
-import pandas as pd
-import pyarrow as pa
+import pyarrow.csv as pacsv
 
-from decoy_engine import (
-    PipelineConfig,
-    compile_plan,
-    select_execution_adapter,
-)
-from decoy_engine.profile import profile_source
+from decoy_engine import PipelineConfig, run_pipeline
 
 config_dict = {
     "version": 1,
     "global_settings": {"seed": 42},
+    "sources": {
+        "people": {"type": "file", "format": "csv", "path": "./people.csv"},
+    },
     "tables": [
         {
             "name": "people",
             "columns": [
-                {"name": "first_name", "strategy": "faker", "provider": "person_first_name"},
-                {"name": "last_name",  "strategy": "faker", "provider": "person_last_name"},
-                {"name": "email",      "strategy": "faker", "provider": "person_email"},
-                {"name": "ssn",        "strategy": "redact"},
+                {"name": "email", "strategy": "faker", "provider": "person_email"},
+                {"name": "ssn", "strategy": "redact"},
             ],
         }
     ],
@@ -55,16 +49,14 @@ config_dict = {
 # 1. Validate once at the choke-point. Downstream code does not re-validate.
 config = PipelineConfig.model_validate(config_dict).model_dump()
 
-# 2. Load source data and profile it.
-df = pd.read_csv("people.csv")
-sources = {"people": pa.Table.from_pandas(df, preserve_index=False)}
-profile = profile_source(sources)
+# 2. Load the in-memory source tables (keyed by table name).
+sources = {"people": pacsv.read_csv("people.csv")}
 
-# 3. Compile a frozen plan, then run it through the default execution adapter.
-plan = compile_plan(config, profile, decoy_engine_version="0.1.0")
-result = select_execution_adapter().run(plan, sources)
+# 3. Run the whole pipeline: profile, compile, wire relationships, execute.
+result = run_pipeline(config, sources, engine_version="0.1.0")
 
-# `result.tables["people"]` is the masked pyarrow.Table.
+# result.outputs["people"] is the masked pyarrow.Table.
+masked = result.outputs["people"]
 ```
 
 A more complete, runnable end-to-end shape lives in
@@ -79,7 +71,8 @@ pieces most callers need:
 | Symbol                                                                            | Use                                                                          |
 |-----------------------------------------------------------------------------------|------------------------------------------------------------------------------|
 | `PipelineConfig`                                                                  | Strict pipeline-config schema. Validate once: `PipelineConfig.model_validate(yaml).model_dump()`. |
-| `compile_plan(config, profile, decoy_engine_version=...)`                         | Compile a validated config + Profile into a frozen `Plan`.                   |
+| `run_pipeline(config, sources, engine_version=...)`                               | Run the whole pipeline in one call (validate, profile, compile, execute). The recommended entrypoint; returns an `ExecutionResult` with `.outputs[table]`. |
+| `compile_plan(config, profile, decoy_engine_version=...)`                         | Compile a validated config + Profile into a frozen `Plan` (the lower-level path).                   |
 | `select_execution_adapter()` / `PandasExecutionAdapter` / `PolarsExecutionAdapter`| Plan-to-data execution. Polars is the default substrate.                     |
 | `generate_tables(...)`                                                            | Table-from-schema synthesis for `mode: generate` configs.                    |
 | `run_storm(...)`                                                                  | Source profiling: distributions, PII detectors, sentinels.                   |

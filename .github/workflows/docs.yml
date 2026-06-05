@@ -78,11 +78,15 @@ jobs:
         with:
           path: docs/_build/html
 
-  # Only deploy on main. PRs get the build for validation; their HTML is
-  # downloadable from the Actions run as a workflow artifact, but doesn't
-  # overwrite the live site.
+  # Only deploy on main, AND only when the DOCS_DEPLOY repo variable is
+  # "true". The repo is private pre-launch and Pages needs the repo public
+  # (or a paid plan), so deploy stays OFF until launch to keep main green.
+  # Flip DOCS_DEPLOY to "true" in Settings -> Secrets and variables ->
+  # Actions -> Variables when the repo goes public at launch. PRs still get
+  # the build for validation (HTML downloadable as a workflow artifact);
+  # they never overwrite the live site.
   deploy:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.DOCS_DEPLOY == 'true'
     needs: build
     runs-on: ubuntu-latest
     environment:

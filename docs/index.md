@@ -2,6 +2,18 @@
 
 In-repo documentation for `decoy-engine`. Start here.
 
+## Guides
+
+New to Decoy? Start with the quickstart, then the recipes.
+
+- [Quickstart](quickstart.md): install and mask one CSV end to end.
+- [Recipes](recipes.md): five runnable recipes (CSV, folder + FKs, generate, detect PII, CI).
+- [Strategy catalog](strategies.md): every mask and generation strategy.
+- [Relationships](relationships.md): foreign-key and referential-integrity preservation.
+- [Determinism](determinism.md): the seed and key protocol; what is and is not deterministic.
+- [CLI](cli.md): the `decoy` command surface.
+- [What Decoy does not prove](what-we-cannot-prove.md): the honest limitations.
+
 ## Top-level
 
 These guides live at the repo root, outside the Sphinx source tree, so they
@@ -30,6 +42,26 @@ link to GitHub rather than into the rendered API reference.
 ---
 
 Architecture, roadmap, and audit documentation are maintained in the commercial platform repo.
+
+```{toctree}
+:hidden:
+:caption: Guides
+
+quickstart
+recipes
+strategies
+relationships
+determinism
+cli
+what-we-cannot-prove
+```
+
+```{toctree}
+:hidden:
+:caption: Development
+
+ci-regression-gate
+```
 
 ```{toctree}
 :hidden:
