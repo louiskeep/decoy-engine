@@ -7,6 +7,7 @@ foundation-closeout expected-tests list:
   - mojibake (utf-8 em-dash double-encoded as 'â€"')
   - old brand aliases (forge, Forge, FORGE -- legacy pre-Decoy names)
   - stale source paths in first-line comments (e.g. # decoy_engine/io/...)
+  - raw em-dash (U+2014) / arrow (U+2192, U+2194) glyphs in src + tests
 
 Each check has a narrow ALLOWLIST tuned to V2.0 reality. Adding a new
 entry without a removal-sprint comment is a review blocker by
@@ -180,3 +181,47 @@ def test_no_stale_path_comments() -> None:
         "Either delete the comment (file paths are obvious from "
         "their location on disk) or update to the current path."
     )
+
+
+# --- 5. Raw em-dash / arrow glyphs ------------------------------------
+
+
+# The repo bans the em-dash (U+2014) outright, and ASCII-only source keeps
+# the public OSS package greppable and renderable in any terminal or diff.
+# Arrows (U+2192, U+2194) get the same treatment. chr() keeps this sentry
+# file itself glyph-free so it never trips its own check.
+_BANNED_GLYPHS = (chr(0x2014), chr(0x2192), chr(0x2194))
+_TESTS_ROOT = Path(__file__).resolve().parents[2] / "tests"
+
+
+def _files_with_banned_glyphs(root: Path) -> list[str]:
+    hits: list[str] = []
+    for path in root.rglob("*.py"):
+        if "__pycache__" in path.parts:
+            continue
+        text = path.read_text(encoding="utf-8")
+        if any(glyph in text for glyph in _BANNED_GLYPHS):
+            hits.append(path.relative_to(root).as_posix())
+    return hits
+
+
+def test_no_raw_em_dash_or_arrow_in_source() -> None:
+    """src/ and tests/ must be ASCII-clean of em-dashes (U+2014) and
+    arrows (U+2192 / U+2194). Use a hyphen, '->', or '<->'. Enforces the
+    repo-wide no-em-dash rule mechanically and keeps the OSS source
+    greppable everywhere."""
+    offenders = _files_with_banned_glyphs(ENGINE_ROOT)
+    offenders += [f"tests/{rel}" for rel in _files_with_banned_glyphs(_TESTS_ROOT)]
+    assert not offenders, (
+        "Raw em-dash / arrow glyphs (U+2014 / U+2192 / U+2194) in:\n  - "
+        + "\n  - ".join(offenders)
+        + "\nReplace with '-', '->', or '<->'."
+    )
+
+
+def test_banned_glyph_sentry_flags_injected_em_dash(tmp_path: Path) -> None:
+    """Negative control: the scan must actually catch a raw em-dash, so a
+    future refactor cannot quietly neuter the guard into a no-op."""
+    injected = tmp_path / "injected.py"
+    injected.write_text("x = 1  " + chr(0x2014) + " note\n", encoding="utf-8")
+    assert _files_with_banned_glyphs(tmp_path) == ["injected.py"]

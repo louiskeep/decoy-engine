@@ -1,9 +1,9 @@
 """Per-detector unit tests for decoy_engine.storm.detectors.
 
 Each detector gets at minimum:
-  - a positive case (clean data → fires with high match_rate)
-  - a negative case (unrelated data → does not fire)
-  - a column-name hint case (low match rate but right name → still fires)
+  - a positive case (clean data -> fires with high match_rate)
+  - a negative case (unrelated data -> does not fire)
+  - a column-name hint case (low match rate but right name -> still fires)
 
 Plus a small registry-level test for the orchestrator.
 """
@@ -65,7 +65,7 @@ class TestEmail:
         assert m.match_rate == 0.6
 
     def test_partial_match_with_name_hint_still_fires(self):
-        # 50% emails, but column name says "email" → fires at lower threshold.
+        # 50% emails, but column name says "email" -> fires at lower threshold.
         s = pd.Series(["a@b.com", "c@d.com", "hello", "world"])
         m = detect_email(s, "email")
         assert m is not None and m.match_rate == 0.5
@@ -81,7 +81,7 @@ class TestSSN:
         assert m is not None and m.match_rate == 1.0
 
     def test_invalid_area_numbers_rejected(self):
-        # SSA invalid area numbers: 000, 666, 9xx → these don't match the pattern
+        # SSA invalid area numbers: 000, 666, 9xx -> these don't match the pattern
         s = pd.Series(["000-12-3456", "666-12-3456", "987-12-3456"])
         assert detect_ssn(s, "ssn_field") is None
 
@@ -141,7 +141,7 @@ class TestPersonName:
         assert m is not None
 
     def test_name_hinted_column_required(self):
-        # Same data, column name doesn't hint → person_name stays silent.
+        # Same data, column name doesn't hint -> person_name stays silent.
         s = pd.Series(["Alice Smith", "Bob Jones", "Carol O'Brien", "Dave"])
         assert detect_person_name(s, "label") is None
 
@@ -179,7 +179,7 @@ class TestDateFormats:
 
 class TestRunAllDetectors:
     def test_returns_matches_sorted_by_descending_rate(self):
-        # SSN-shaped + name-hinted as "ssn" → ssn detector fires first.
+        # SSN-shaped + name-hinted as "ssn" -> ssn detector fires first.
         s = pd.Series(["123-45-6789", "555-12-3456", "111-22-3333"])
         matches = run_all_detectors(s, "ssn")
         assert len(matches) >= 1
@@ -224,13 +224,13 @@ class TestPAN:
         assert m is not None and m.match_rate == 1.0
 
     def test_random_digits_dont_fire(self):
-        # 16 digits but Luhn-invalid — would false-positive if regex alone.
+        # 16 digits but Luhn-invalid - would false-positive if regex alone.
         s = pd.Series(["1234567890123456", "9999888877776666", "1111222233334444"])
         m = detect_pan(s, "transaction_id")
         assert m is None, "regex-only path would have fired; Luhn must reject"
 
     def test_short_digit_strings_dont_fire(self):
-        # 12 digits — below the PAN minimum.
+        # 12 digits - below the PAN minimum.
         s = pd.Series(["123456789012", "999999999999"])
         m = detect_pan(s, "ref")
         assert m is None
@@ -241,7 +241,7 @@ class TestPAN:
 
 class TestCVV:
     def test_only_fires_with_name_hint(self):
-        # Without the name hint CVV is uselessly broad — any 3-digit string.
+        # Without the name hint CVV is uselessly broad - any 3-digit string.
         s = pd.Series(["123", "456", "789"])
         assert detect_cvv(s, "random_col") is None
 
@@ -265,7 +265,7 @@ class TestCVV:
 
 
 class TestIBAN:
-    # Real test IBANs from Wikipedia / SWIFT — all mod-97 valid.
+    # Real test IBANs from Wikipedia / SWIFT - all mod-97 valid.
     VALID = [
         "GB82WEST12345698765432",  # UK
         "DE89370400440532013000",  # Germany
@@ -280,7 +280,7 @@ class TestIBAN:
         assert m.match_rate == 1.0
 
     def test_invalid_checksum_doesnt_fire(self):
-        # Right shape, wrong checksum — mod-97 should reject.
+        # Right shape, wrong checksum - mod-97 should reject.
         s = pd.Series(
             [
                 "GB00WEST12345698765432",
@@ -322,7 +322,7 @@ class TestIPv4:
 
 
 def test_sample_misses_capped_at_3():
-    # 5 emails + 5 misses → above name-hint threshold, but more than 3 misses.
+    # 5 emails + 5 misses -> above name-hint threshold, but more than 3 misses.
     s = pd.Series(
         [
             "a@b.com",
@@ -342,7 +342,7 @@ def test_sample_misses_capped_at_3():
     assert len(m.sample_misses) <= 3
 
 
-# ── detection sprint (V1) — 3-bucket confidence ──────────────────────────────
+# ── detection sprint (V1) - 3-bucket confidence ──────────────────────────────
 
 
 class TestConfidenceBuckets:
@@ -358,25 +358,25 @@ class TestConfidenceBuckets:
         assert m is not None and m.confidence == "high"
 
     def test_perfect_match_no_hint_is_high(self):
-        # 100% email-shape, column name "freeform" → high (rate >= 0.75).
+        # 100% email-shape, column name "freeform" -> high (rate >= 0.75).
         s = pd.Series(["a@b.com", "c@d.com", "e@f.com", "g@h.com"])
         m = detect_email(s, "freeform")
         assert m is not None and m.confidence == "high"
 
     def test_borderline_no_hint_is_medium(self):
-        # 3/5 = 60% → no hint → medium (0.50 <= rate < 0.75).
+        # 3/5 = 60% -> no hint -> medium (0.50 <= rate < 0.75).
         s = pd.Series(["a@b.com", "c@d.com", "e@f.com", "hello", "world"])
         m = detect_email(s, "freeform")
         assert m is not None and m.confidence == "medium"
 
     def test_borderline_with_hint_is_high(self):
-        # 50% match WITH hint → high (rate >= 0.45 with hint).
+        # 50% match WITH hint -> high (rate >= 0.45 with hint).
         s = pd.Series(["a@b.com", "c@d.com", "hello", "world"])
         m = detect_email(s, "email")
         assert m is not None and m.confidence == "high"
 
 
-# ── detection sprint (V1) — abbreviated US-English name hints ────────────────
+# ── detection sprint (V1) - abbreviated US-English name hints ────────────────
 
 
 class TestAbbreviatedNameHints:
@@ -534,14 +534,14 @@ class TestAddress:
         assert detect_address(s, "freeform") is None
 
     def test_phone_in_address_column_does_not_fire(self):
-        # The address value regex requires "digit + space + word" — a phone
+        # The address value regex requires "digit + space + word" - a phone
         # column mislabeled as "addr1" should fail the content check.
         s = pd.Series(["555-1234", "555-5678", "555-9012"])
         m = detect_address(s, "addr1")
         assert m is None
 
 
-# ── detection sprint (V1) — strengthened validators ──────────────────────────
+# ── detection sprint (V1) - strengthened validators ──────────────────────────
 
 
 class TestIBANCountryGate:
@@ -572,5 +572,5 @@ class TestICD10ChapterRange:
         # T89 is outside T0-T88.
         s = pd.Series(["P97.0", "T89.5", "T99.9"])
         m = detect_icd10(s, "diag_code")
-        # With name hint, fires at 0.4+ rate. All 3 are out-of-range → rate 0.
+        # With name hint, fires at 0.4+ rate. All 3 are out-of-range -> rate 0.
         assert m is None

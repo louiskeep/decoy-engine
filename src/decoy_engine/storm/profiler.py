@@ -1,4 +1,4 @@
-"""STORM profiler — `run_storm(df, source_label, ...) -> StormProfile`.
+"""STORM profiler - `run_storm(df, source_label, ...) -> StormProfile`.
 
 Pure function over a pandas DataFrame. Computes per-field statistics, runs
 PII / format detectors, scans for sentinel values, and rolls everything up
@@ -78,7 +78,7 @@ def _score_pii(detector_matches: list[DetectorMatch], unique_rate: float) -> flo
 _K_ANON_MAX_CANDIDATES = 10
 
 # Cardinality band for quasi-id candidates. Exclude high-cardinality
-# columns (likely PKs / direct identifiers — those don't need a combo
+# columns (likely PKs / direct identifiers - those don't need a combo
 # to identify rows) and near-constant ones (don't discriminate at all).
 _K_ANON_MIN_UNIQUE_RATE = 0.005
 _K_ANON_MAX_UNIQUE_RATE = 0.95
@@ -94,7 +94,7 @@ _K_ANON_MAX_DISTINCT_ABSOLUTE = 20
 # above also catches them, but being explicit keeps the groupby fast.
 # "mixed" is included because STORM infers it for short-string
 # categorical columns (gender, city, state) whose values don't match
-# a single narrow type pattern — these are valid quasi-id candidates.
+# a single narrow type pattern - these are valid quasi-id candidates.
 _K_ANON_TYPES = {"integer", "string", "boolean", "date", "mixed"}
 
 
@@ -111,7 +111,7 @@ def _compute_k_anonymity(
         one combo uniquely identifies at least one row (high linkage
         risk). ``k == None`` means no candidates were eligible (the
         dataset is either too small, or every column is unique /
-        constant — direct-identifier territory is captured separately
+        constant - direct-identifier territory is captured separately
         by per-field ``pii_score`` and detector hits, not here).
 
       - ``groups`` is every combo that ties at that minimum ``k``.
@@ -154,7 +154,7 @@ def _compute_k_anonymity(
     if not candidates:
         return None, []
 
-    # Rank by distinct_count descending — high-cardinality candidates
+    # Rank by distinct_count descending - high-cardinality candidates
     # are the most identifying. Tie-break alphabetically for determinism.
     candidates.sort(key=lambda f: (-f.distinct_count, f.name))
     candidate_names = [f.name for f in candidates[:_K_ANON_MAX_CANDIDATES]]
@@ -254,7 +254,7 @@ def _format_pattern_from_detectors(
     return None
 
 
-# Plan B-2 — column-shape signals.
+# Plan B-2 - column-shape signals.
 #
 # All four classify a column into a small enum the FORECAST chooser
 # can branch on. They run on the same non-null sample _detect_casing
@@ -267,16 +267,16 @@ def _classify_alphabet(series: pd.Series) -> str | None:
     """Classify the dominant character class of a string column.
 
     Returns one of:
-      'digits'    — every non-null sample is digits only
-      'alpha'     — every non-null sample is letters only
-      'alphanum'  — every sample is digits + letters (no other chars)
-      'mixed'     — at least one sample contains punctuation / separators
+      'digits'    - every non-null sample is digits only
+      'alpha'     - every non-null sample is letters only
+      'alphanum'  - every sample is digits + letters (no other chars)
+      'mixed'     - at least one sample contains punctuation / separators
                     / whitespace, or class membership is inconsistent
                     (e.g. some rows digits-only, others alphanum)
-      None        — column has no non-null string-shaped values
+      None        - column has no non-null string-shaped values
 
-    The chooser uses this to size hash.truncate (digits → 8, alphanum →
-    12, mixed → leave at default) and pick FPE radix (10 for digits,
+    The chooser uses this to size hash.truncate (digits -> 8, alphanum ->
+    12, mixed -> leave at default) and pick FPE radix (10 for digits,
     36 for alphanum). Sampling is capped at 200 values; the dominant
     class wins when >=80% of samples land in the same bucket.
     """
@@ -311,7 +311,7 @@ def _classify_alphabet(series: pd.Series) -> str | None:
     return winner[0]
 
 
-# Cardinality buckets — coarser than unique_rate so the chooser
+# Cardinality buckets - coarser than unique_rate so the chooser
 # doesn't need to re-derive these thresholds.
 _B2_VALUE_SET_BANDS: tuple[tuple[float, str], ...] = (
     (0.95, "unique"),  # near-PK
@@ -327,13 +327,13 @@ def _classify_value_set_size(
 ) -> str | None:
     """Bucket a column's cardinality into one of:
 
-    'constant' — exactly one distinct value (incl. all-NULL columns)
-    'binary'   — two distinct values (yes/no, 0/1, true/false)
-    'low'      — <=10 distinct values OR <10% unique_rate
-    'medium'   — <50% unique_rate
-    'high'     — <95% unique_rate
-    'unique'   — >=95% unique_rate (PK-shaped)
-    None       — empty column (no non-null values)
+    'constant' - exactly one distinct value (incl. all-NULL columns)
+    'binary'   - two distinct values (yes/no, 0/1, true/false)
+    'low'      - <=10 distinct values OR <10% unique_rate
+    'medium'   - <50% unique_rate
+    'high'     - <95% unique_rate
+    'unique'   - >=95% unique_rate (PK-shaped)
+    None       - empty column (no non-null values)
     """
     if distinct_count == 0:
         return None
@@ -355,15 +355,15 @@ def _classify_numeric_range(
 ) -> str | None:
     """Bucket a numeric column's range into one of:
 
-      'small_int'      — int column with magnitude under ~10k (lookup IDs,
+      'small_int'      - int column with magnitude under ~10k (lookup IDs,
                          counts, status codes, age in years)
-      'big_int'        — int column with magnitude >=10k (account numbers,
+      'big_int'        - int column with magnitude >=10k (account numbers,
                          large surrogate keys, timestamps in seconds)
-      'decimal_money'  — float column whose values look like currency:
+      'decimal_money'  - float column whose values look like currency:
                          dominant scale of exactly 2 decimal places
-      'decimal_other'  — float column with non-money decimals (measurements,
+      'decimal_other'  - float column with non-money decimals (measurements,
                          ratios, scientific values)
-      None             — non-numeric column
+      None             - non-numeric column
 
     Money detection samples up to 200 non-null values and checks the
     fractional-part length of each. >=70% with exactly 2 decimal places
@@ -383,7 +383,7 @@ def _classify_numeric_range(
     abs_max = float(numeric.abs().max())
     if inferred_type == "integer":
         return "small_int" if abs_max < 10_000 else "big_int"
-    # Float — sniff for 2-decimal money shape. Money values are
+    # Float - sniff for 2-decimal money shape. Money values are
     # representable in at most 2 decimal places (1.50 == round(1.50, 2)
     # within float epsilon) but at least some values have a non-zero
     # fractional part (otherwise it's an int-valued float column).
@@ -411,7 +411,7 @@ def _compute_mode(
 
     ``mode_value`` is the most common non-null value as a string;
     ``mode_freq`` is its count divided by ``total_rows`` (NOT by
-    non-null count — we want "this single value is 60% of the column"
+    non-null count - we want "this single value is 60% of the column"
     to reflect coverage, not just non-null density). Returns
     (None, 0.0) when the column has no non-null values.
     """
@@ -435,12 +435,12 @@ def _detect_casing(series: pd.Series) -> str | None:
     """Classify the dominant casing of a string column.
 
     Samples up to ~200 non-null values, classifies each as one of:
-      'upper'        — every alphabetic char is uppercase
-      'lower'        — every alphabetic char is lowercase
-      'title'        — every alphabetic token starts uppercase + rest lowercase
+      'upper'        - every alphabetic char is uppercase
+      'lower'        - every alphabetic char is lowercase
+      'title'        - every alphabetic token starts uppercase + rest lowercase
                        (Title Case + middle-initial-style 'Mary M Smith' both qualify)
-      'digits_only'  — no alphabetic characters at all
-      'mixed'        — anything else (e.g. 'iPhone' or random caps)
+      'digits_only'  - no alphabetic characters at all
+      'mixed'        - anything else (e.g. 'iPhone' or random caps)
 
     Returns the dominant class label (>50% of sampled non-empty values),
     or 'mixed' as a low-confidence fallback, or None when the column has
@@ -495,7 +495,7 @@ def _distribution_numeric(non_null: pd.Series) -> Distribution | None:
     series = pd.to_numeric(non_null, errors="coerce").dropna()
     if len(series) == 0:
         return None
-    # When all values are identical pd.cut errors on zero range — fall back to
+    # When all values are identical pd.cut errors on zero range - fall back to
     # a single-bin histogram so the renderer still has something to show.
     if series.min() == series.max():
         return Distribution(
@@ -614,7 +614,7 @@ def _build_distribution(
         return _distribution_date(non_null)
 
     if inferred_type == "string":
-        # Categorical when low cardinality regardless of detector — value-set is
+        # Categorical when low cardinality regardless of detector - value-set is
         # the most useful summary at that scale.
         if distinct_count > 0 and distinct_count <= _CATEGORICAL_DISTINCT_CAP:
             return _distribution_categorical(non_null, total_rows)
@@ -654,7 +654,7 @@ def _build_detection_trail(
     # Name-hint lookup: built-in detectors use the module dict; custom ones
     # use the spec list the caller passed in. The id namespace prevents
     # ambiguity when both have the same id (custom wins because we check
-    # specs first — but the registry layer already guarantees no collision).
+    # specs first - but the registry layer already guarantees no collision).
     name_hint_matched = False
     if custom:
         spec = next((s for s in custom if s.id == winner.detector_id), None)
@@ -689,7 +689,7 @@ def _profile_column(
     unique_rate = round(distinct_count / non_null_count, 4) if non_null_count > 0 else 0.0
     is_likely_unique = unique_rate > 0.9 and distinct_count > 1
 
-    # Inferred type — a friendlier label than the raw pandas dtype.
+    # Inferred type - a friendlier label than the raw pandas dtype.
     if pd.api.types.is_datetime64_any_dtype(series):
         inferred = "date"
     elif pd.api.types.is_bool_dtype(series):
@@ -735,7 +735,7 @@ def _profile_column(
         fs.avg_length = round(float(str_lens.mean()), 1)
 
         sample_size = min(200, non_null_count)
-        # Format inference is the whole point here — pandas 2.x emits a chatty
+        # Format inference is the whole point here - pandas 2.x emits a chatty
         # UserWarning when it falls back to dateutil. Suppress it; we are
         # deliberately probing for a date-shaped column without specifying
         # a format up front.
@@ -765,12 +765,12 @@ def _profile_column(
     # Detectors.
     fs.detector_matches = run_all_detectors(series, name, custom=custom_detectors)
     fs.date_format = _date_format_signal(fs.detector_matches)
-    # Item 65 — format-preservation hints. Both fields are optional; the
+    # Item 65 - format-preservation hints. Both fields are optional; the
     # masking-strategy post-pass reads them when `preserve_format=true`.
     fs.format_pattern = _format_pattern_from_detectors(fs.detector_matches)
     fs.casing_pattern = _detect_casing(series)
 
-    # Plan B-2 — column-shape signals FORECAST choosers read.
+    # Plan B-2 - column-shape signals FORECAST choosers read.
     if pd.api.types.is_string_dtype(series) and non_null_count > 0:
         fs.alphabet = _classify_alphabet(series)
     fs.value_set_size_class = _classify_value_set_size(distinct_count, unique_rate)
@@ -941,7 +941,7 @@ def _run_storm_inner(
             reid_score = round(min(100.0, 100.0 / k_anonymity), 1)
         else:
             reid_score = 0.0
-        # The flat union of column names from the winning combos —
+        # The flat union of column names from the winning combos -
         # what UI consumers want to highlight as the contributing
         # columns. Falls back to an empty list when no QI combos
         # exist.

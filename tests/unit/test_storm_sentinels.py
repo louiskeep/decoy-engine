@@ -7,7 +7,7 @@ from decoy_engine.storm.sentinels import detect_sentinels
 
 class TestDateSentinels:
     def test_year_0001_sentinel_fires(self):
-        # Strings, with the column name hinting "date" — exercises the
+        # Strings, with the column name hinting "date" - exercises the
         # stdlib date-coerce path that handles values pandas can't.
         s = pd.Series(["1985-03-15", "0001-01-01", "1990-07-22"])
         flags = detect_sentinels(s, "start_date")
@@ -26,7 +26,7 @@ class TestDateSentinels:
         assert any(f.value == "1899-12-31" for f in flags)
 
     def test_native_datetime_dtype_sentinels_fire(self):
-        # Same logic via pd.to_datetime path — values inside pandas range.
+        # Same logic via pd.to_datetime path - values inside pandas range.
         s = pd.to_datetime(pd.Series(["1985-03-15", "1900-01-01"]))
         flags = detect_sentinels(s, "dob")
         kinds = {f.kind for f in flags}
@@ -45,7 +45,7 @@ class TestDateSentinels:
         assert any(f.kind == "date_out_of_range" for f in flags)
 
     def test_date_hint_required_for_string_path(self):
-        # Same values, but column name doesn't hint date → no date scan.
+        # Same values, but column name doesn't hint date -> no date scan.
         s = pd.Series(["1985-03-15", "0001-01-01", "1990-07-22"])
         flags = detect_sentinels(s, "label")
         assert not any(f.kind == "date_sentinel" for f in flags)

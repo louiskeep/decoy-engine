@@ -41,7 +41,7 @@ class TestICD10Detector:
         assert detect_icd10(series, "icd_code") is not None
 
     def test_fires_on_value_pattern_without_name_hint(self):
-        # 100 valid codes, 0 invalids → rate 1.0 ≥ DEFAULT_MIN_MATCH_RATE 0.7
+        # 100 valid codes, 0 invalids -> rate 1.0 ≥ DEFAULT_MIN_MATCH_RATE 0.7
         series = pd.Series(self._VALID_CODES * 20)
         result = detect_icd10(series, "arbitrary_col")
         assert result is not None
@@ -64,9 +64,9 @@ class TestICD10Detector:
 
 class TestNPIDetector:
     # Known-good NPIs verified against the CMS Luhn algorithm:
-    # 1234567893: prefix 80840123456789 → sum 67 → check 3 ✓
-    # 1679576722: prefix 80840167957672 → sum 68 → check 2 ✓
-    # 1000000004: prefix 80840100000000 → sum 26 → check 4 ✓
+    # 1234567893: prefix 80840123456789 -> sum 67 -> check 3 ✓
+    # 1679576722: prefix 80840167957672 -> sum 68 -> check 2 ✓
+    # 1000000004: prefix 80840100000000 -> sum 26 -> check 4 ✓
     _VALID_NPIS = ["1234567893", "1679576722", "1000000004"]
 
     def test_fires_on_valid_npis_with_name_hint(self):
@@ -127,7 +127,7 @@ class TestMRNDetector:
         assert detect_mrn(series, "patient_id") is not None
 
     def test_does_not_fire_without_name_hint(self):
-        # MRN has no distinctive value format — name hint is mandatory.
+        # MRN has no distinctive value format - name hint is mandatory.
         series = pd.Series(["MRN12345", "PT1234567"] * 50)
         assert detect_mrn(series, "some_id_col") is None
 
@@ -163,7 +163,7 @@ class TestHIPAASafeHarborCompletors:
         assert detect_fax_number(series, "fax_number") is not None
 
     def test_fax_does_not_fire_without_name_hint(self):
-        # Same phone-format values; no fax hint → silent.
+        # Same phone-format values; no fax hint -> silent.
         series = pd.Series(["(555) 123-4567", "212-555-0100"] * 40)
         assert detect_fax_number(series, "phone_col") is None
 
@@ -184,7 +184,7 @@ class TestHIPAASafeHarborCompletors:
         assert detect_license_num(series, "random_col") is None
 
     def test_vehicle_id_fires_on_vin_format_with_hint(self):
-        # Real VINs — 17 chars, no I/O/Q per ISO 3779.
+        # Real VINs - 17 chars, no I/O/Q per ISO 3779.
         series = pd.Series(["1HGCM82633A004352", "2T1BURHE0JC043821"] * 40)
         assert detect_vehicle_id(series, "vin") is not None
 

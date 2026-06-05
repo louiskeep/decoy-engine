@@ -27,7 +27,7 @@ class TestCustomDetectorFiring:
         assert any(m.detector_id == "ssn" for m in f.detector_matches)
 
     def test_custom_pattern_matches_high_rate_no_name_hint(self):
-        # UK NHS-style numbers — built-in doesn't recognize them.
+        # UK NHS-style numbers - built-in doesn't recognize them.
         spec = CustomDetectorSpec(
             id="custom__uk_nhs",
             pattern=r"\d{3} \d{3} \d{4}",
@@ -44,7 +44,7 @@ class TestCustomDetectorFiring:
         assert "custom__uk_nhs" in ids
 
     def test_name_hint_lowers_threshold(self):
-        # Pattern matches only 50% of values — below the default 0.7 threshold.
+        # Pattern matches only 50% of values - below the default 0.7 threshold.
         # Without a name hint it shouldn't fire.
         spec_no_hint = CustomDetectorSpec(
             id="custom__weak",
@@ -72,7 +72,7 @@ class TestCustomDetectorFiring:
         assert any(m.detector_id == "custom__weak" for m in f2.detector_matches)
 
     def test_custom_fires_alongside_built_ins(self):
-        # SSN-pattern values in a column called ssn — built-in fires;
+        # SSN-pattern values in a column called ssn - built-in fires;
         # custom detector also fires on a different field.
         spec = CustomDetectorSpec(
             id="custom__zip5",
@@ -112,7 +112,7 @@ class TestCustomDetectionTrail:
             }
         )
         f = _profile("nhs_id", df, custom=[spec])
-        # Custom detector wins (100% match rate) → trail's regex row uses
+        # Custom detector wins (100% match rate) -> trail's regex row uses
         # the custom id.
         assert f.detection_trail
         assert f.detection_trail[0].signal == "regex · custom__uk_nhs_pattern"
@@ -155,7 +155,7 @@ class TestCustomDetectorSafety:
         assert all(m.detector_id != "custom__bad" for m in f.detector_matches)
 
     def test_empty_name_hint_list_does_not_match_anything(self):
-        # No name hints → name-hint floor never kicks in.
+        # No name hints -> name-hint floor never kicks in.
         spec = CustomDetectorSpec(
             id="custom__strict",
             pattern=r"^X\d+$",

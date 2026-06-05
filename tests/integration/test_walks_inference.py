@@ -186,7 +186,7 @@ def test_id_only_column_does_not_infer():
 
 def test_self_reference_inferable():
     """`teams.parent_team_id` inferring back to `teams.id` is the
-    expected outcome — SR detection picks up these edges separately."""
+    expected outcome - SR detection picks up these edges separately."""
     snap = SchemaSnapshot(
         db_kind="postgres",
         schema_name="public",

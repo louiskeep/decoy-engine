@@ -11,7 +11,7 @@ from decoy_engine.context import ExecutionContext
 
 def test_export_outside_node_scope_no_ops():
     """When the runner hasn't set _current_node_id, export() silently
-    drops the value rather than raising — preview and external callers
+    drops the value rather than raising - preview and external callers
     pass op code without a recording scope and shouldn't crash."""
     ctx = ExecutionContext()
     ctx.export("rows_processed", 100)

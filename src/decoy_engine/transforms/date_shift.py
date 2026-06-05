@@ -112,7 +112,7 @@ def _shift_for_value_md5(val: str, min_days: int, max_days: int) -> int:
 
 def _shift_for_value_keyed(key: bytes, val: str, min_days: int, max_days: int) -> int:
     """Keyed per-value shift via HMAC-SHA256(column_key, val).
-    Same value + same key → same shift, but the shift amount is not
+    Same value + same key -> same shift, but the shift amount is not
     derivable from the value alone (unlike the legacy MD5 path).
     """
     range_size = max_days - min_days + 1
@@ -126,9 +126,9 @@ class DateShiftStrategy(BaseMaskingStrategy):
     Shifts date values by a deterministic per-value offset.
 
     Two paths:
-      * **Keyed (preferred).** HMAC-SHA256(column_key, value) → shift days.
+      * **Keyed (preferred).** HMAC-SHA256(column_key, value) -> shift days.
         Cross-run, cross-instance stable; not derivable from value alone.
-      * **Legacy.** MD5(value) → shift days. Cross-run stable per-input but
+      * **Legacy.** MD5(value) -> shift days. Cross-run stable per-input but
         derivable. Kept as fallback when no master key is configured.
 
     The output format matches the input format unless ``date_format`` is set.
@@ -150,7 +150,7 @@ class DateShiftStrategy(BaseMaskingStrategy):
 
         # Arrow-backed string columns send to_datetime, astype(str), and
         # the format-detection sample loop down per-element Python
-        # fallback paths — costs roughly 5s extra at 1M rows under the
+        # fallback paths - costs roughly 5s extra at 1M rows under the
         # default hybrid engine. Pre-materialize once to numpy-backed
         # object dtype so every subsequent step lands on the fast paths.
         # Cost: ~95 ms at 1M rows; saves ~1+ s on the same input. The
@@ -174,19 +174,19 @@ class DateShiftStrategy(BaseMaskingStrategy):
         # nanosecond range (~1677-2262); we restore those positions to the
         # original input at the end so behavior matches the legacy
         # per-row path for normal data and degrades gracefully on edge
-        # cases. Per-value crypto for the shift amount is irreducible —
+        # cases. Per-value crypto for the shift amount is irreducible -
         # but a list comprehension over .tolist() avoids pandas.apply's
-        # per-row dispatch overhead. Net at 5M rows: ~15 min → ~30-60 s.
+        # per-row dispatch overhead. Net at 5M rows: ~15 min -> ~30-60 s.
         parsed = pd.to_datetime(column, format=fmt, errors="coerce")
         na_mask = column.isna()
         parse_failed = parsed.isna() & ~na_mask
 
         if parse_failed.any():
-            # Dedupe the warning per unique value rather than per row —
+            # Dedupe the warning per unique value rather than per row -
             # the legacy path logged once per row which spammed the log
             # pipeline on big columns of mostly-bad data.
             for v in column[parse_failed].dropna().unique()[:20]:
-                self.logger.warning(f"date_shift: could not parse '{v}' — leaving unchanged")
+                self.logger.warning(f"date_shift: could not parse '{v}' - leaving unchanged")
 
         # QA-internal-synth-providers F5 (2026-06-01, MEDIUM perf):
         # only HMAC the rows we'll actually use. Pre-fix every row,
@@ -219,7 +219,7 @@ class DateShiftStrategy(BaseMaskingStrategy):
 
     def _column_key(self, column_name: str) -> bytes | None:
         """Derive the mask subkey via the caller-supplied resolver. Same as
-        HashStrategy._column_key — instance-master-only, no per-column
+        HashStrategy._column_key - instance-master-only, no per-column
         tagging. ``column_name`` is kept for log context only.
 
         Dennis H2 fix (2026-06-01): previously a derive_key failure
