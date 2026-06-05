@@ -304,3 +304,24 @@ class TestRegistryLockingPreservesExistingApi:
         names = list_custom_faker_list_providers()
         assert names == sorted(names)
         assert {"zzz", "aaa", "mmm"} <= set(names)
+
+
+class TestQaH6CustomProviderIgnoresKwargs:
+    """QA 2026-06-04 engine H6 (HIGH correctness): get_faker_providers wraps
+    each custom provider so callers can invoke it as provider(**faker_kwargs).
+    The wrapper lambda previously took no kwargs, so a custom-provider column
+    with faker_kwargs set raised an opaque TypeError and failed the whole
+    table. The wrapper now accepts and ignores extra args/kwargs (a custom
+    provider's contract is fn(faker_instance); the kwargs are not applicable)."""
+
+    def test_custom_provider_ignores_faker_kwargs(self):
+        register_faker_list_provider("acme_id", ["acme-1", "acme-2"])
+        provider = get_faker_providers(Faker())["acme_id"]
+        # Pre-fix: provider(min_value=1) raised TypeError. Post-fix: ignored.
+        result = provider(min_value=1, max_value=9, locale="en_US")
+        assert result in ("acme-1", "acme-2")
+
+    def test_custom_provider_still_callable_without_kwargs(self):
+        register_faker_list_provider("acme_id2", ["only"])
+        provider = get_faker_providers(Faker())["acme_id2"]
+        assert provider() == "only"

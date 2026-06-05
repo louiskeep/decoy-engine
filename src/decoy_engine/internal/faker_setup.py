@@ -428,7 +428,12 @@ def get_faker_providers(faker_instance: Faker) -> dict[str, Callable[..., Any]]:
     with _PROVIDER_LOCK:
         custom_snapshot = list(_CUSTOM_FAKER_PROVIDERS.items())
     for name, fn in custom_snapshot:
-        providers[name] = lambda fn=fn, fake=fake: fn(fake)
+        # Accept and ignore args/kwargs: callers invoke every provider as
+        # provider(**faker_kwargs), but a custom provider's contract is
+        # fn(faker_instance) with no kwargs. Without *args/**kwargs a
+        # custom-provider column with faker_kwargs set raised an opaque
+        # TypeError and failed the whole table. (QA 2026-06-04 engine H6.)
+        providers[name] = lambda *args, fn=fn, fake=fake, **kwargs: fn(fake)
 
     return providers
 

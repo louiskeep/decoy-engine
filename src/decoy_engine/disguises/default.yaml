@@ -1,4 +1,4 @@
-# Default PII Disguise — generic starter pack.
+# Default PII Disguise - generic starter pack.
 # Recommended by FORECAST whenever the profile contains any common-PII fields
 # but the data doesn't specifically smell like a regulated dataset.
 
