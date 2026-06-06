@@ -11,6 +11,12 @@ minimum engine version it was tested against via its
 
 ### Changed
 
+- **Cloud SDKs moved to an optional `[cloud]` extra** (2026-06-06). The
+  default install no longer pulls boto3 + google-cloud-storage; install
+  `decoy-engine[cloud]` (or `decoy-cli[cloud]`) for S3/GCS. Connectors import
+  them lazily and raise a clear install-the-extra error if absent. Reverses
+  the S14 promote-to-core decision; the platform / Compose image must install
+  `[cloud]`.
 - **Repository visibility flipped to public** (2026-06-02). Aligns
   with the OSS launch plan (memory: `OSS CLI launch` PO lock
   2026-06-01: "publish free Apache-2.0 decoy-cli + decoy-engine on

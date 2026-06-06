@@ -71,15 +71,14 @@ dependencies = [
     # against the 1.x I/O API, so cap below 2.0 until a 2.x validation pass.
     "polars>=1.0,<2.0",
     "duckdb>=0.10.0",
-    # S14-CLOUD-SRC-S3GCS (2026-05-30): cloud sources are R1 marketed scope
-    # (decoy_release_1_scope memory). boto3 was previously transitive via
-    # moto[s3] in [dev] and platform-side; the engine's _load_s3_source +
-    # platform's _fetch_s3_to_bytesio import it at function-call time, so
-    # the production Compose image needs it declared. google-cloud-storage
-    # ships alongside; the gcs extra below stays as a backwards-compat
-    # marker. Dennis S14 gate B1 (2026-05-30): pyproject promote.
-    "boto3>=1.26",
-    "google-cloud-storage>=2.0",
+    # Cloud SDKs (boto3, google-cloud-storage) are OPTIONAL extras, not core.
+    # 2026-06-06 PO decision (DX): the common local-CSV install stays lean, so
+    # `pip install decoy-engine` does NOT pull the AWS/GCP SDKs; S3/GCS users
+    # opt in via `pip install decoy-engine[cloud]`. The engine imports them
+    # lazily at connector call time and raises a clear install-the-extra error
+    # if absent (see connectors/s3.py, connectors/gcs.py, profile/_source.py).
+    # This reverses the S14 promote-to-core decision; the original reason still
+    # stands, so the platform / Compose image MUST install decoy-engine[cloud].
     # QA Q16 (2026-05-30): execution/_transforms.py pins df.eval to engine=numexpr
     # so the Python-engine fallback (which can expose @var-based builtin escapes
     # for user-supplied filter / derive expressions) cannot trip silently.
@@ -109,6 +108,10 @@ dev = [
     # Pinned here so a fresh `pip install -e .[dev]` brings it along
     # rather than failing on the first import in test collection.
     "moto[s3]>=5.0",
+    # Cloud SDKs are optional extras for users (see [cloud]) but the
+    # cloud source/target tests need them in the dev/test env. moto[s3]
+    # already pulls boto3; google-cloud-storage is added for the GCS tests.
+    "google-cloud-storage>=2.0",
 ]
 # Linters are exact-pinned, not floored. ruff and mypy both ship new
 # rules / error categories in minor releases that turn previously-green
@@ -140,14 +143,21 @@ docs = [
     # Pygments treats `mermaid` as an unknown lexer and -W fails the build.
     "sphinxcontrib-mermaid>=0.9",
 ]
-# First-party cloud-storage connector extras. S14-CLOUD-SRC-S3GCS
-# promoted boto3 + google-cloud-storage to [project] dependencies (above)
-# because R1 marketed scope includes cloud object storage and the
-# extras-only model broke the production Compose image (Dennis S14 gate
-# B1). The `gcs` extra below is now a no-op backwards-compat marker
-# (already pulled by the base install); kept so existing `pip install -e .[gcs]`
-# invocations still work. SFTP remains an opt-in extra pending S18.
-gcs = []
+# Cloud object-storage connectors (S3 + GCS). Opt in with:
+#   pip install decoy-engine[cloud]
+# The engine imports boto3 / google-cloud-storage lazily at connector call
+# time; without this extra, a cloud source or target raises a clear error
+# telling the user to install it. The platform / Compose image must install
+# [cloud] (this is the S14 reason the SDKs were briefly core).
+cloud = [
+    "boto3>=1.26",
+    "google-cloud-storage>=2.0",
+]
+# Back-compat: `gcs` historically named the GCS connector deps. Kept so
+# existing `pip install -e .[gcs]` still resolves; prefer [cloud].
+gcs = [
+    "google-cloud-storage>=2.0",
+]
 sftp = ["paramiko>=3.0"]
 
 # Project URLs surfaced on the PyPI sidebar.

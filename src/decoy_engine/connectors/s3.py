@@ -143,8 +143,14 @@ def _build_s3_client(config: S3Config):
     waiting on TCP. The engine's retry logic provides the backoff layer
     above; we don't double up here.
     """
-    import boto3
-    from botocore.config import Config as BotoConfig
+    try:
+        import boto3
+        from botocore.config import Config as BotoConfig
+    except ImportError as exc:  # pragma: no cover - only without the cloud extra
+        raise ImportError(
+            "S3 support needs the optional cloud extra. Install it with: "
+            "pip install 'decoy-cli[cloud]'  (or 'decoy-engine[cloud]')."
+        ) from exc
 
     # Only pass static creds when explicitly configured. Passing None
     # would override the default chain with "no credentials" and cause

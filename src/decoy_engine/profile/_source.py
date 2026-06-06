@@ -177,14 +177,20 @@ def _load_s3_source(source_descriptor: dict[str, Any]) -> pd.DataFrame:
     """
     import io
 
-    import boto3
-    from botocore.config import Config as BotoConfig
-    from botocore.exceptions import (
-        ClientError,
-        ConnectTimeoutError,
-        EndpointConnectionError,
-        ReadTimeoutError,
-    )
+    try:
+        import boto3
+        from botocore.config import Config as BotoConfig
+        from botocore.exceptions import (
+            ClientError,
+            ConnectTimeoutError,
+            EndpointConnectionError,
+            ReadTimeoutError,
+        )
+    except ImportError as exc:  # pragma: no cover - only without the cloud extra
+        raise ImportError(
+            "S3 support needs the optional cloud extra. Install it with: "
+            "pip install 'decoy-cli[cloud]'  (or 'decoy-engine[cloud]')."
+        ) from exc
 
     fmt = source_descriptor.get("format")
     bucket = source_descriptor.get("bucket")
@@ -251,7 +257,13 @@ def _load_gcs_source(source_descriptor: dict[str, Any]) -> pd.DataFrame:
     """
     import io
 
-    from google.cloud import storage
+    try:
+        from google.cloud import storage
+    except ImportError as exc:  # pragma: no cover - only without the cloud extra
+        raise ImportError(
+            "GCS support needs the optional cloud extra. Install it with: "
+            "pip install 'decoy-cli[cloud]'  (or 'decoy-engine[cloud]')."
+        ) from exc
 
     fmt = source_descriptor.get("format")
     bucket_name = source_descriptor.get("bucket")

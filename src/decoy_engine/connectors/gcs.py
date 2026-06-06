@@ -106,7 +106,13 @@ def _build_gcs_client(config: GCSConfig):
     Uses service-account creds when provided; otherwise lets the library
     discover ADC.
     """
-    from google.cloud import storage
+    try:
+        from google.cloud import storage
+    except ImportError as exc:  # pragma: no cover - only without the cloud extra
+        raise ImportError(
+            "GCS support needs the optional cloud extra. Install it with: "
+            "pip install 'decoy-cli[cloud]'  (or 'decoy-engine[cloud]')."
+        ) from exc
 
     if config.service_account_json is not None:
         from google.oauth2 import service_account
