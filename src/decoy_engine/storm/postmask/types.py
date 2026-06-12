@@ -31,11 +31,17 @@ class ResidualPIIFinding:
         this is expected, not a leak).
       - ``warning``: detector matched + the column was NOT configured
         to be masked at all. Possible the operator forgot to mask a
-        sensitive column.
+        sensitive column. Also: a configured substitution strategy
+        whose output is positionally identical to source on a small
+        fraction of rows (partial mask failure, operator review).
       - ``fail``: detector matched + the column WAS configured to be
         masked to a strategy that should DESTROY the pattern (hash,
         redact, bucketize on a sensitive column), but the pattern
-        survived. Indicates the mask didn't fire or failed silently.
+        survived. Also: output positionally identical to source on a
+        strategy that should have REPLACED values (substitution
+        strategies at >=50% identity, value-reuse strategies at full
+        identity, or an unconfigured column with a high-confidence
+        detector hit at >=50% identity) -- the mask did not fire.
     """
 
     table: str
@@ -46,6 +52,12 @@ class ResidualPIIFinding:
     configured_strategy: str | None = None  # what the plan said to do (None = no policy)
     sample_match_count: int = 0  # how many rows still match
     message: str = ""
+    # Source-comparison evidence (audit C1 fix). Additive with defaults
+    # so storm-post-mask/v1 payload consumers are unaffected.
+    # Positional out==src rate over comparable non-null rows; None when
+    # the source was unavailable or the column was not comparable.
+    source_identity_rate: float | None = None
+    source_compared: bool = False  # True when the source comparison ran
 
 
 @dataclass(frozen=True)

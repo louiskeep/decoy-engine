@@ -12,7 +12,11 @@ Three net-new check categories ship here:
   output. Flags columns that still match a detector pattern AND
   weren't configured to produce that pattern (faker name on a
   person_name column is expected; an unconfigured detector hit
-  on a column the operator forgot to mask is a finding).
+  on a column the operator forgot to mask is a finding). Source-
+  aware: detector-flagged columns are compared positionally against
+  the source frames, and output==source identity escalates to
+  'fail' -- a silently-failed mask cannot hide behind a PII-like-
+  producer strategy.
 - ``fk_preservation``: walks the relationships graph against the
   masked output; counts orphan FKs, classifies severity.
 - ``policy_validation``: reads the compiled plan; verifies every
