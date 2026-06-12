@@ -9,6 +9,15 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added
+
+- **Generated engine capability matrix** (`docs/capability-matrix.md`, emitted by
+  `scripts/gen_capability_matrix.py`). Reads the live registries (mask + generate
+  strategies, synthetic providers, connectors + capabilities, STORM detectors,
+  disguises) and writes a correct-by-construction reference. A `tests/sentry/
+  test_capability_matrix.py` drift guard fails CI when a registry changes without
+  the matrix being regenerated, so a new capability cannot ship without its docs.
+
 ### Changed
 
 - **Repository visibility flipped to public** (2026-06-02). Aligns
