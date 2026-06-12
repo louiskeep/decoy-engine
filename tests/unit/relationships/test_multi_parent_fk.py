@@ -146,9 +146,7 @@ class TestMultiParentResolveE2E:
                             per_column=(
                                 (
                                     "id",
-                                    self._col(
-                                        "fpe", "ns_b", (("charset", "alphanum"),)
-                                    ),
+                                    self._col("fpe", "ns_b", (("charset", "alphanum"),)),
                                 ),
                             ),
                             per_group=(),

@@ -34,9 +34,7 @@ def _source_df() -> pd.DataFrame:
     n = 2_000
     states = rng.choice(["CA", "NY", "TX", "WA"], size=n, p=[0.5, 0.3, 0.15, 0.05])
     # tier correlates hard with state: CA -> gold, NY -> silver, rest -> bronze.
-    tier = [
-        {"CA": "gold", "NY": "silver"}.get(s, "bronze") for s in states
-    ]
+    tier = [{"CA": "gold", "NY": "silver"}.get(s, "bronze") for s in states]
     return pd.DataFrame(
         {
             "amount": rng.normal(100.0, 25.0, size=n).round(2),
@@ -118,9 +116,7 @@ class TestCategoricalSampling:
         snap_dict = compute_distribution_snapshot(df, categorical_top_k=2)
         path = tmp_path / "s.json"
         path.write_text(json.dumps(snap_dict), encoding="utf-8")
-        spec = load_spec(
-            _col("state", str(path), allow_real_categories=True, other_mode="emit")
-        )
+        spec = load_spec(_col("state", str(path), allow_real_categories=True, other_mode="emit"))
         out = sample_column(spec, 1_000, col_seed=5)
         assert "__other__" in set(out)
         assert set(out) <= {"CA", "NY", "__other__"}
@@ -149,9 +145,7 @@ class TestConditionalSampling:
         snap = _write_snapshot(tmp_path, df, joints=[("state", "tier")])
         parent_spec = load_spec(_col("state", snap, allow_real_categories=True))
         parents = sample_column(parent_spec, 1_000, col_seed=21)
-        child_spec = load_spec(
-            _col("tier", snap, allow_real_categories=True, condition_on="state")
-        )
+        child_spec = load_spec(_col("tier", snap, allow_real_categories=True, condition_on="state"))
         children = sample_column(child_spec, 1_000, col_seed=22, parent_values=parents)
         # The source correlation is deterministic: CA -> gold, NY -> silver.
         pairs = list(zip(parents, children, strict=True))
@@ -180,7 +174,9 @@ class TestSpecErrors:
         assert exc.value.code == "statistical_column_not_in_snapshot"
 
     def test_freetext_kind_rejected(self, tmp_path):
-        df = pd.DataFrame({"notes": [f"long free text value number {i} with words" for i in range(40)]})
+        df = pd.DataFrame(
+            {"notes": [f"long free text value number {i} with words" for i in range(40)]}
+        )
         snap = _write_snapshot(tmp_path, df)
         with pytest.raises(StatisticalSpecError) as exc:
             load_spec(_col("notes", snap))
@@ -300,7 +296,13 @@ class TestCompileCheck:
         from decoy_engine.plan import PlanCompileError
 
         cfg = self._cfg(
-            [{"name": "amount", "type": "statistical", "snapshot_file": str(tmp_path / "nope.json")}]
+            [
+                {
+                    "name": "amount",
+                    "type": "statistical",
+                    "snapshot_file": str(tmp_path / "nope.json"),
+                }
+            ]
         )
         with pytest.raises(PlanCompileError) as exc:
             run_config_only_checks(cfg)
@@ -336,7 +338,5 @@ class TestCompileCheck:
         from decoy_engine import run_config_only_checks
 
         snap = _write_snapshot(tmp_path, _source_df())
-        cfg = self._cfg(
-            [{"name": "amount", "type": "statistical", "snapshot_file": snap}]
-        )
+        cfg = self._cfg([{"name": "amount", "type": "statistical", "snapshot_file": snap}])
         assert "statistical_columns" in run_config_only_checks(cfg)

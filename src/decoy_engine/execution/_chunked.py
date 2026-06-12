@@ -67,9 +67,7 @@ def check_chunked_compatibility(config: dict[str, Any], *, table: str) -> None:
     or `strategy_not_chunk_safe` naming the offending columns.
     """
     tables = config.get("tables") or []
-    table_cfg = next(
-        (t for t in tables if isinstance(t, dict) and t.get("name") == table), None
-    )
+    table_cfg = next((t for t in tables if isinstance(t, dict) and t.get("name") == table), None)
     if table_cfg is None:
         known = sorted(t.get("name", "?") for t in tables if isinstance(t, dict))
         raise PlanCompileError(
@@ -181,9 +179,7 @@ def run_mask_pipeline_chunked(
     if first is None:
         return iter(())
     profile = _first_chunk_profile(first, table=table, engine_version=engine_version)
-    plan = compile_plan(
-        config, profile, decoy_engine_version=engine_version, no_profile=True
-    )
+    plan = compile_plan(config, profile, decoy_engine_version=engine_version, no_profile=True)
     resolved_registry = registry if registry is not None else get_default_registry()
     ns_registry = build_namespace_registry(config, profile)
     graph = RelationshipGraph(edges=(), ordering=())

@@ -91,9 +91,7 @@ def _decrypt_column(
     return table.set_column(idx, column, pa.array(decrypted, type=pa.string()))
 
 
-def unmask_pipeline(
-    config: dict[str, Any], masked_sources: dict[str, pa.Table]
-) -> UnmaskResult:
+def unmask_pipeline(config: dict[str, Any], masked_sources: dict[str, pa.Table]) -> UnmaskResult:
     """Invert the fpe columns of `masked_sources` under `config`.
 
     `config` is the pipeline config the mask run used (validated dump or
@@ -103,8 +101,8 @@ def unmask_pipeline(
     from `masked_sources` are reported `table_missing`, never invented.
 
     Raises:
-        ExecutionError(code='fpe_requires_namespace') when an fpe column
-            has no namespace (the key cannot be derived).
+        ExecutionError: ``code='fpe_requires_namespace'`` when an fpe
+            column has no namespace (the key cannot be derived).
     """
     job_seed = _normalize_job_seed(config)
     reports: list[UnmaskColumnReport] = []

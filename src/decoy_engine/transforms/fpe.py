@@ -226,7 +226,11 @@ def _fpe_value(
         if not positions:
             return val
         body = _fpe_pure_value(
-            "".join(val[i] for i in positions), key, charset, tweak, validate_luhn,
+            "".join(val[i] for i in positions),
+            key,
+            charset,
+            tweak,
+            validate_luhn,
             forward=forward,
         )
         result = list(val)
@@ -247,9 +251,7 @@ def fpe_encrypt_value(
     validate_luhn: bool = False,
 ) -> str:
     """Encrypt one value with the keyed format-preserving permutation."""
-    return _fpe_value(
-        val, key, charset, tweak, preserve_separators, validate_luhn, forward=True
-    )
+    return _fpe_value(val, key, charset, tweak, preserve_separators, validate_luhn, forward=True)
 
 
 def fpe_decrypt_value(
@@ -265,9 +267,7 @@ def fpe_decrypt_value(
     With validate_luhn=true the trailing check digit is recomputed rather
     than stored, so the round-trip is exact iff the source satisfied Luhn
     (see `_fpe_pure_value`)."""
-    return _fpe_value(
-        val, key, charset, tweak, preserve_separators, validate_luhn, forward=False
-    )
+    return _fpe_value(val, key, charset, tweak, preserve_separators, validate_luhn, forward=False)
 
 
 class FPEStrategy(BaseMaskingStrategy):

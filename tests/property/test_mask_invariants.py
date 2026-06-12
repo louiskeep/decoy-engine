@@ -325,9 +325,7 @@ def test_fpe_decrypt_inverts_encrypt(charset_name, key, tweak, body_len, data):
     )
 
     charset = _CHARSETS[charset_name]
-    value = "".join(
-        data.draw(st.sampled_from(charset)) for _ in range(body_len)
-    )
+    value = "".join(data.draw(st.sampled_from(charset)) for _ in range(body_len))
     enc = fpe_encrypt_value(value, key, charset, tweak)
     assert len(enc) == len(value)
     assert all(ch in charset for ch in enc)

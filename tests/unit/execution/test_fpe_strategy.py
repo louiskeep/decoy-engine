@@ -104,8 +104,7 @@ class TestWs1SingleKeyReversibility:
         # An unmask caller holds ONLY (job_seed, namespace, column, charset).
         key = derive(_SEED, "fpe_ns", FPE_KEY_LABEL)
         recovered = [
-            fpe_decrypt_value(v, key, _CHARSETS["digits"], b"acct")
-            for v in out["acct"].tolist()
+            fpe_decrypt_value(v, key, _CHARSETS["digits"], b"acct") for v in out["acct"].tolist()
         ]
         assert recovered == source
 

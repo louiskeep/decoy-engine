@@ -28,22 +28,28 @@ def _config(tmp_path, columns: list[dict], table: str = "accounts") -> dict:
     cfg = {
         "version": 1,
         "global_settings": {"seed": 42},
-        "sources": {
-            table: {"type": "file", "format": "csv", "path": str(tmp_path / "in.csv")}
-        },
+        "sources": {table: {"type": "file", "format": "csv", "path": str(tmp_path / "in.csv")}},
         "tables": [{"name": table, "columns": columns}],
-        "targets": {
-            table: {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")}
-        },
+        "targets": {table: {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")}},
     }
     return PipelineConfig.model_validate(cfg).model_dump()
 
 
 _SAFE_COLUMNS = [
-    {"name": "ssn", "strategy": "fpe", "namespace": "ssn_ns", "provider_config": {"charset": "digits"}},
+    {
+        "name": "ssn",
+        "strategy": "fpe",
+        "namespace": "ssn_ns",
+        "provider_config": {"charset": "digits"},
+    },
     {"name": "email", "strategy": "hash", "namespace": "email_ns"},
     {"name": "notes", "strategy": "text_redact"},
-    {"name": "dob", "strategy": "date_shift", "namespace": "dob_ns", "provider_config": {"min_days": -30, "max_days": 30}},
+    {
+        "name": "dob",
+        "strategy": "date_shift",
+        "namespace": "dob_ns",
+        "provider_config": {"min_days": -30, "max_days": 30},
+    },
     {"name": "zip", "strategy": "truncate", "provider_config": {"length": 3}},
     {"name": "secret", "strategy": "redact"},
 ]
@@ -114,10 +120,18 @@ class TestChunkParity:
         df.to_csv(tmp_path / "in.csv", index=False)
         cfg = _config(tmp_path, _SAFE_COLUMNS)
         a = pa.concat_tables(
-            list(run_mask_pipeline_chunked(cfg, _chunks(df, 7), table="accounts", engine_version=_ENGINE_VERSION))
+            list(
+                run_mask_pipeline_chunked(
+                    cfg, _chunks(df, 7), table="accounts", engine_version=_ENGINE_VERSION
+                )
+            )
         )
         b = pa.concat_tables(
-            list(run_mask_pipeline_chunked(cfg, _chunks(df, 7), table="accounts", engine_version=_ENGINE_VERSION))
+            list(
+                run_mask_pipeline_chunked(
+                    cfg, _chunks(df, 7), table="accounts", engine_version=_ENGINE_VERSION
+                )
+            )
         )
         assert a.equals(b)
 
@@ -127,9 +141,7 @@ class TestChunkedCompatibility:
         cfg = _config(tmp_path, [{"name": "ssn", "strategy": "shuffle"}])
         with pytest.raises(PlanCompileError) as exc:
             list(
-                run_mask_pipeline_chunked(
-                    cfg, [], table="accounts", engine_version=_ENGINE_VERSION
-                )
+                run_mask_pipeline_chunked(cfg, [], table="accounts", engine_version=_ENGINE_VERSION)
             )
         assert exc.value.code == "strategy_not_chunk_safe"
         assert "shuffle" in str(exc.value)
@@ -148,7 +160,9 @@ class TestChunkedCompatibility:
             ],
         )
         with pytest.raises(PlanCompileError) as exc:
-            list(run_mask_pipeline_chunked(cfg, [], table="accounts", engine_version=_ENGINE_VERSION))
+            list(
+                run_mask_pipeline_chunked(cfg, [], table="accounts", engine_version=_ENGINE_VERSION)
+            )
         assert exc.value.code == "strategy_not_chunk_safe"
 
     def test_relationships_rejected(self, tmp_path) -> None:
@@ -162,7 +176,9 @@ class TestChunkedCompatibility:
             }
         ]
         with pytest.raises(PlanCompileError) as exc:
-            list(run_mask_pipeline_chunked(cfg, [], table="accounts", engine_version=_ENGINE_VERSION))
+            list(
+                run_mask_pipeline_chunked(cfg, [], table="accounts", engine_version=_ENGINE_VERSION)
+            )
         assert exc.value.code == "chunked_relationships_unsupported"
 
     def test_generate_tables_rejected(self, tmp_path) -> None:
@@ -189,6 +205,8 @@ class TestChunkedCompatibility:
     def test_empty_iterator_yields_nothing(self, tmp_path) -> None:
         cfg = _config(tmp_path, [{"name": "ssn", "strategy": "hash", "namespace": "n"}])
         assert (
-            list(run_mask_pipeline_chunked(cfg, [], table="accounts", engine_version=_ENGINE_VERSION))
+            list(
+                run_mask_pipeline_chunked(cfg, [], table="accounts", engine_version=_ENGINE_VERSION)
+            )
             == []
         )

@@ -292,9 +292,7 @@ class PandasExecutionAdapter:
         if len(edges) > 1:
             merged: dict[_KeyTuple, _KeyTuple] = dict(parent_map)
             for extra_edge in edges[1:]:
-                extra_map = self._parent_map(
-                    extra_edge, frames, source_snapshots, parent_map_cache
-                )
+                extra_map = self._parent_map(extra_edge, frames, source_snapshots, parent_map_cache)
                 for key, value in extra_map.items():
                     merged.setdefault(key, value)
             parent_map = merged

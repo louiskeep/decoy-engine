@@ -122,9 +122,7 @@ class TestLuhnRoundTrip:
             spaced, _KEY, cs, _TWEAK, preserve_separators=True, validate_luhn=True
         )
         assert enc.count(" ") == 3
-        dec = fpe_decrypt_value(
-            enc, _KEY, cs, _TWEAK, preserve_separators=True, validate_luhn=True
-        )
+        dec = fpe_decrypt_value(enc, _KEY, cs, _TWEAK, preserve_separators=True, validate_luhn=True)
         assert dec == spaced
 
 

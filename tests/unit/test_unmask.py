@@ -79,9 +79,7 @@ class TestRoundTrip:
 
     def test_nulls_stay_null(self, tmp_path):
         cfg = _config(tmp_path, [_fpe_col("acct")])
-        masked = _mask(
-            tmp_path, cfg, pd.DataFrame({"acct": ["123456789", None, "987654321"]})
-        )
+        masked = _mask(tmp_path, cfg, pd.DataFrame({"acct": ["123456789", None, "987654321"]}))
         result = unmask_pipeline(cfg, masked)
         vals = result.outputs["accounts"].column("acct").to_pylist()
         assert vals[0] == "123456789"
@@ -173,13 +171,9 @@ class TestErrors:
         # validate; unmask must not silently guess a namespace).
         cfg = {
             "global_settings": {"seed": 42},
-            "tables": [
-                {"name": "accounts", "columns": [{"name": "acct", "strategy": "fpe"}]}
-            ],
+            "tables": [{"name": "accounts", "columns": [{"name": "acct", "strategy": "fpe"}]}],
         }
-        tbl = pa.Table.from_pandas(
-            pd.DataFrame({"acct": ["123456789"]}), preserve_index=False
-        )
+        tbl = pa.Table.from_pandas(pd.DataFrame({"acct": ["123456789"]}), preserve_index=False)
         with pytest.raises(ExecutionError) as exc:
             unmask_pipeline(cfg, {"accounts": tbl})
         assert exc.value.code == "fpe_requires_namespace"
