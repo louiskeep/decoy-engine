@@ -11,6 +11,15 @@ minimum engine version it was tested against via its
 
 ### Added (capability gaps, 2026-06-12)
 
+- **Multi-parent FK support** (WS5). A child column-tuple may now declare
+  FK relationships to multiple parent tables (polymorphic/shared-domain
+  keys). The child resolves through each parent's source->masked map in
+  DECLARED CONFIG ORDER, first hit wins; a row is an orphan only when
+  absent from every parent map. Per-edge orphan policies on a shared
+  child tuple must agree (new error `orphan_policy_conflict`).
+  BEHAVIOR CHANGE: the S2-era `multi_parent_fk_unsupported` rejection is
+  gone -- configs it used to reject now compile and run.
+
 - **NER-backed text_redact** (WS2). New opt-in `ner` key on text_redact's
   provider_config (`ner: true` or `ner: {model: ..., entities: [...]}`)
   detects person names and locations via spaCy NER -- the two categories

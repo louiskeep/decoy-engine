@@ -20,9 +20,12 @@ Source patterns:
 - The immutable-edge + graph-as-frozen-artifact shape draws from dbt's
   `manifest.json` dependency graph (every node + every edge committed
   to the artifact; downstream consumers read, never mutate).
-- Multi-parent FK rejection draws from RDBMS schema validation: a child
-  column referencing multiple distinct parent tables is rejected as a
-  declaration error rather than resolved by silent first-parent-wins.
+- Multi-parent FK (WS5, 2026-06-12): a child column referencing multiple
+  parent tables resolves DECLARED-ORDER FIRST-HIT-WINS through the
+  parent maps at execution time (the polymorphic-association pattern);
+  a row is an orphan only when absent from every parent map. The one
+  declaration error: per-edge orphan policies on a shared child tuple
+  must agree (orphan_policy_conflict).
 
 `is_descendant` is intentionally NOT in this module's public surface
 (per S2 spec M3 resolution): no concrete consumer in S2-S10 cites it;
@@ -156,35 +159,46 @@ def build_relationship_graph(
     - `NamespaceConfigError(code='namespace_missing')`: a relationship
       cannot resolve a namespace via any of (relationship.namespace,
       parent-column binding, child-column binding).
-    - `PlanCompileError(code='multi_parent_fk_unsupported')`: a child
-      `(child_table, child_columns)` declares FK relationships to two or
-      more distinct parent tables. Full multi-parent support is deferred
-      to a future sprint per S2 spec TODO 3 resolution; this typed
-      rejection prevents silent first-parent-wins.
+    - `PlanCompileError(code='orphan_policy_conflict')`: a child
+      `(child_table, child_columns)` declares FK relationships to
+      multiple parent tables whose orphan policies differ. Multi-parent
+      itself is supported (WS5, 2026-06-12): the executor resolves
+      declared-order first-hit-wins across the parent maps.
     - `PlanCompileError(code='fk_cycle')`: the FK DAG contains a cycle.
       The error message lists the nodes participating in the cycle.
 
     Pure function: same `(relationships, namespace_registry,
     orphan_policy_lookup)` produces an equal graph.
     """
-    # Multi-parent FK detection: group relationships by child key; reject
-    # when two different relationships have the same child but different
-    # parent tables.
+    # Multi-parent FK (capability-gaps WS5, 2026-06-12; replaces the
+    # S2-era multi_parent_fk_unsupported rejection): a child column-tuple
+    # MAY reference multiple parent tables. Resolution semantics live in
+    # the executor (declared-order first-hit-wins; orphan iff absent from
+    # ALL parents). The one declaration error left: per-edge orphan
+    # policies on a shared child tuple must agree -- combining e.g.
+    # `remap` with `fail` on one column has no coherent meaning.
     by_child: dict[tuple[str, tuple[str, ...]], list[Relationship]] = defaultdict(list)
     for rel in relationships:
         by_child[(rel.child_table, rel.child_columns)].append(rel)
     for (child_table, child_columns), rels in by_child.items():
-        parent_tables = sorted({r.parent_table for r in rels})
-        if len(parent_tables) > 1:
+        policies = {
+            orphan_policy_lookup[
+                (r.parent_table, r.parent_columns, r.child_table, r.child_columns)
+            ].value
+            for r in rels
+            if (r.parent_table, r.parent_columns, r.child_table, r.child_columns)
+            in orphan_policy_lookup
+        }
+        if len(policies) > 1:
             raise PlanCompileError(
-                code="multi_parent_fk_unsupported",
+                code="orphan_policy_conflict",
                 path=f"relationships[{child_table}.{child_columns}]",
                 message=(
                     f"Column {child_table}.{child_columns} declares FK relationships "
-                    f"to multiple parent tables: {parent_tables!r}. Multi-parent FK "
-                    "support is deferred to a future sprint; declare the column as "
-                    "a FK to one parent only, or remove the redundant relationship "
-                    "entries from the config."
+                    f"to multiple parents with CONFLICTING orphan policies: "
+                    f"{sorted(policies)!r}. A multi-parent child resolves through "
+                    "every parent map before a row counts as an orphan, so the "
+                    "edges must share one policy; align the orphan_policy values."
                 ),
             )
 

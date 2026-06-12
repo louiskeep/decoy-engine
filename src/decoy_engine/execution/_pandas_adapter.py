@@ -204,7 +204,7 @@ class PandasExecutionAdapter:
                     with timed_strategy("fk_resolve", ",".join(node.columns)):
                         node_warnings = self._resolve_fk_node(
                             node,
-                            child_edges[0],
+                            child_edges,
                             frames,
                             source_snapshots,
                             parent_map_cache,
@@ -268,7 +268,7 @@ class PandasExecutionAdapter:
     def _resolve_fk_node(
         self,
         node: WorkNode,
-        edge: RelationshipEdge,
+        edges: tuple[RelationshipEdge, ...],
         frames: dict[str, pd.DataFrame],
         source_snapshots: dict[tuple[str, str], pd.Series],
         parent_map_cache: dict[_NodeKey, dict[_KeyTuple, _KeyTuple]],
@@ -276,9 +276,28 @@ class PandasExecutionAdapter:
         ctx: StrategyContext,
     ) -> list[QualityWarning]:
         """Mask an FK child node by mapping its source key through the parent
-        source->masked map and applying the edge's OrphanPolicy. Serves both a
-        scalar FK child (1-tuple keys) and a composite-FK group (N-tuple keys)."""
+        source->masked map(s) and applying the OrphanPolicy. Serves scalar FK
+        children (1-tuple keys) and composite-FK groups (N-tuple keys).
+
+        Multi-parent (WS5, 2026-06-12): `edges` carries one edge per parent
+        the child column-tuple references, in declared config order. The
+        maps merge first-hit-wins (setdefault in edge order), so a key in
+        two parents resolves to the FIRST declared parent's masked value
+        and a row is an orphan only when absent from EVERY parent map.
+        The graph guarantees the edges share one orphan policy
+        (orphan_policy_conflict); remap minting routes through the first
+        edge's parent strategy."""
+        edge = edges[0]
         parent_map = self._parent_map(edge, frames, source_snapshots, parent_map_cache)
+        if len(edges) > 1:
+            merged: dict[_KeyTuple, _KeyTuple] = dict(parent_map)
+            for extra_edge in edges[1:]:
+                extra_map = self._parent_map(
+                    extra_edge, frames, source_snapshots, parent_map_cache
+                )
+                for key, value in extra_map.items():
+                    merged.setdefault(key, value)
+            parent_map = merged
         child_frame = frames[node.table]
         child_cols = edge.child_columns
         n = len(child_frame)

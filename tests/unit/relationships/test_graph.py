@@ -208,11 +208,14 @@ class TestRoundTripQueries:
         assert graph.children_of("nowhere", ("nada",)) == ()
 
 
-class TestMultiParentFkRejection:
-    """S2 spec TODO 3 + H2 resolution: a child column declaring FK to
-    multiple parent tables is rejected with code=multi_parent_fk_unsupported."""
+class TestMultiParentFkAccepted:
+    """Capability-gaps WS5 (2026-06-12) replaces the S2-era
+    multi_parent_fk_unsupported rejection: a child column declaring FK
+    to multiple parent tables builds two edges (declared order); the
+    executor resolves first-hit-wins. Deeper coverage:
+    test_multi_parent_fk.py."""
 
-    def test_two_parents_one_child_raises(self) -> None:
+    def test_two_parents_one_child_builds_two_edges(self) -> None:
         rels = (
             Relationship(
                 parent_table="parent_a",
@@ -236,11 +239,11 @@ class TestMultiParentFkRejection:
             profiled_at=datetime(2026, 5, 27, 0, 0, 0),
             decoy_engine_version="0.1.0",
         )
-        with pytest.raises(PlanCompileError) as excinfo:
-            _build_graph_for(profile, policy="fail")
-        assert excinfo.value.code == "multi_parent_fk_unsupported"
+        graph = _build_graph_for(profile, policy="fail")
+        edges = graph.parents_of("child", ("id",))
+        assert [e.parent_table for e in edges] == ["parent_a", "parent_b"]
 
-    def test_multi_parent_error_names_offending_tuple(self) -> None:
+    def test_multi_parent_shared_policy_carries_to_both_edges(self) -> None:
         rels = (
             Relationship(
                 parent_table="parent_a",
@@ -264,11 +267,9 @@ class TestMultiParentFkRejection:
             profiled_at=datetime(2026, 5, 27, 0, 0, 0),
             decoy_engine_version="0.1.0",
         )
-        with pytest.raises(PlanCompileError) as excinfo:
-            _build_graph_for(profile, policy="fail")
-        msg = excinfo.value.message
-        assert "parent_a" in msg and "parent_b" in msg
-        assert "child" in msg
+        graph = _build_graph_for(profile, policy="fail")
+        edges = graph.parents_of("child", ("id",))
+        assert all(e.orphan_policy.value == "fail" for e in edges)
 
 
 class TestOrphanPolicyCheck:
