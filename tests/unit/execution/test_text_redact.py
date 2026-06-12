@@ -163,7 +163,7 @@ class TestBadConfig:
 class TestPandasNullMarkers:
     """Audit H1 (2026-06-12): pd.NA / pd.NaT survived the None/float-nan
     guard, fell through to str(text), and shipped the literal strings
-    '<NA>' / 'NaT' into masked output — a null-preservation contract
+    '<NA>' / 'NaT' into masked output - a null-preservation contract
     break. The guard must catch every pandas null marker."""
 
     def test_pd_na_in_arrow_string_column_stays_null(self):

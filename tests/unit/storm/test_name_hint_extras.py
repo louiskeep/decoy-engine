@@ -178,7 +178,7 @@ class TestCaseInsensitive:
 class TestPhotoColumnsHitBiometricId:
     """Audit M2 (2026-06-12): the HIPAA disguise claimed item Q
     (full-face photographs) was 'flagged by biometric_id name hints',
-    but the shipped patterns carried no photo/face terms — the claim was
+    but the shipped patterns carried no photo/face terms - the claim was
     false at the detector level. These cells pin the now-true claim:
     photo path/URL columns hit biometric_id, and the token-fullmatch
     semantics keep generic words from matching inside unrelated names."""
