@@ -92,6 +92,55 @@ def check_unknown_provider(config: dict[str, Any]) -> None:
                 )
 
 
+def check_non_poolable_provider_with_pool_backend(config: dict[str, Any]) -> None:
+    """Reject pool-routed columns whose provider declares poolable=False.
+
+    Compile-check ownership table row #11 (audit H5, 2026-06-12). Pool
+    routing is structural: `strategy: faker` ALWAYS builds a pool
+    (FakerStrategyHandler -> PoolBuilder), and PoolBuilder.build raises
+    PoolCapacityError[provider_not_poolable] at runtime for any provider
+    with `poolable: False` -- so a faker column on uuid/lorem-style
+    providers is guaranteed dead at `run` while passing schema
+    validation. This check moves that failure to compile time. The
+    capacity pre-flight (row 7) deliberately SKIPS non-poolable
+    providers, so nothing else catches the combination.
+
+    Config + registry only (no profile): safe to run in --no-profile
+    mode and in config-only validation paths.
+    """
+    from decoy_engine.providers_v2 import get_default_registry
+
+    registry = get_default_registry()
+    known = registry.known_providers()
+    tables = config.get("tables", []) if isinstance(config.get("tables"), list) else []
+    for table_entry in tables:
+        if not isinstance(table_entry, dict):
+            continue
+        table_name = table_entry.get("name", "?")
+        for col_entry in table_entry.get("columns", []) or []:
+            if not isinstance(col_entry, dict):
+                continue
+            if col_entry.get("strategy") != "faker":
+                continue
+            provider = col_entry.get("provider")
+            if provider is None or provider not in known:
+                continue  # unknown_provider (row 2) owns missing/unknown
+            if not registry.get_capabilities(provider).poolable:
+                col_name = col_entry.get("name", "?")
+                raise PlanCompileError(
+                    code="non_poolable_provider_with_pool_backend",
+                    path=f"tables.{table_name}.columns.{col_name}.provider",
+                    message=(
+                        f"Provider {provider!r} declares poolable=False but column "
+                        f"{table_name}.{col_name} uses strategy 'faker', which always "
+                        "routes through the pool backend and fails at runtime with "
+                        "provider_not_poolable. Use a poolable provider, a keyed "
+                        "strategy (hash / fpe) for deterministic identifiers, or "
+                        "redact."
+                    ),
+                )
+
+
 def check_basic_uniqueness_pre_flight(config: dict[str, Any], profile: Profile) -> None:
     """Reject pool-backed `unique` configs whose source distinct count
     exceeds the pool capacity hint.

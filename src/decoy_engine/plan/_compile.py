@@ -50,6 +50,7 @@ from decoy_engine.execution._technique_class import technique_class_for
 from decoy_engine.plan._checks import (
     check_basic_uniqueness_pre_flight,
     check_composite_columns_length_match,
+    check_non_poolable_provider_with_pool_backend,
     check_null_bearing_int_unsupported,
     check_unknown_provider,
 )
@@ -132,6 +133,10 @@ def compile_plan(
 
     namespace_registry = build_namespace_registry(config, profile)
     check_unknown_provider(config)
+    # Row 11 (audit H5, 2026-06-12): structural (config + registry only),
+    # runs in both branches right after unknown_provider so a missing
+    # provider still surfaces as row 2 first.
+    check_non_poolable_provider_with_pool_backend(config)
     check_composite_columns_length_match(profile)
     # MG-3 / M3 (2026-05-31): reject when + coherent_with combo early,
     # before composite-wiring checks. A column carrying both fields is
@@ -174,6 +179,8 @@ def compile_plan(
             "orphan_fk_policy_completeness",
             "composite_wiring_consistent",
             "deterministic_namespace_completeness",
+            # Row 11 (audit H5): structural, tail-appended.
+            "non_poolable_provider_with_pool_backend",
         )
         checks_skipped: tuple[str, ...] = (
             "basic_uniqueness_pre_flight",
@@ -204,6 +211,8 @@ def compile_plan(
             "composite_wiring_consistent",
             "deterministic_namespace_completeness",
             "null_bearing_int_unsupported",
+            # Row 11 (audit H5): structural, tail-appended.
+            "non_poolable_provider_with_pool_backend",
         )
         checks_skipped = ()
 
@@ -241,6 +250,45 @@ def compile_plan(
 # ---------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------
+
+
+def run_config_only_checks(config: dict[str, Any]) -> tuple[str, ...]:
+    """Run the profile-free subset of plan-compile checks.
+
+    Audit H5 (2026-06-12): `decoy validate` only schema-checked configs,
+    so configs guaranteed to crash at `run` (e.g. `strategy: faker` on a
+    non-poolable provider) validated green. This is the strict subset of
+    `compile_plan`'s checks that consume only the config dict + the
+    provider registry -- no Profile, no source I/O -- so a config-only
+    caller can reject exactly what `run` would reject without false
+    positives (naive `compile_plan(no_profile=True)` is NOT equivalent:
+    it hard-errors on `cardinality_mode: unique` columns that a profiled
+    run accepts).
+
+    Profile-dependent checks (basic_uniqueness / pool_capacity /
+    null_bearing_int / namespace + FK graph / composite wiring) stay
+    compile-time-only.
+
+    Raises:
+        PlanCompileError: on the first failing check.
+
+    Returns:
+        Names of the checks that ran (for caller reporting).
+    """
+    from decoy_engine.providers_v2.identifiers import (
+        deterministic_namespace_completeness,
+    )
+
+    check_unknown_provider(config)
+    _check_when_with_coherent_with(config)
+    deterministic_namespace_completeness(config)
+    check_non_poolable_provider_with_pool_backend(config)
+    return (
+        "unknown_provider",
+        "when_with_coherent_with",
+        "deterministic_namespace_completeness",
+        "non_poolable_provider_with_pool_backend",
+    )
 
 
 def _check_when_with_coherent_with(config: dict[str, Any]) -> None:
