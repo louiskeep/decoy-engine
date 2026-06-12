@@ -44,17 +44,27 @@ class TestCapabilityBoosting:
 
     def test_non_poolable_provider_passes_through_unchanged(self) -> None:
         """address_full declares poolable=False; PoolAdapter does NOT
-        boost its capability matrix."""
-        cap = _adapter().capability_matrix("address_full")
+        boost its capability matrix. Wrap address_full's own bound
+        adapter (FakerAdapter in every install state) so "unchanged"
+        compares against the right inner view."""
+        registry = get_default_registry()
+        adapter = PoolAdapter(
+            wrapped=registry.get_adapter("address_full"),
+            builder=PoolBuilder(registry),
+            cache=PoolCache(max_bytes=10_000_000),
+        )
+        cap = adapter.capability_matrix("address_full")
         assert cap.supports_deterministic is False
         assert cap.backend_type == "faker"  # unchanged
 
     def test_live_registry_view_stays_false(self) -> None:
         """PoolAdapter's view is the source of truth WHEN routed through
         the wrapping pattern. The live registry view stays as the source
-        of truth WHEN routed directly through FakerAdapter."""
+        of truth WHEN routed directly through the bound adapter.
+        synthetic_member_id is poolable and Faker-bound in every install
+        state (person_* rebind under mimesis adoption)."""
         registry = get_default_registry()
-        live_cap = registry.get_capabilities("person_email")
+        live_cap = registry.get_capabilities("synthetic_member_id")
         assert live_cap.supports_deterministic is False
         assert live_cap.backend_type == "faker"
 

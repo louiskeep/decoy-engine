@@ -71,11 +71,21 @@ def _providers() -> list[tuple[str, str, str, str]]:
     # the registry is the runtime truth (34 at the time of this fix).
     from decoy_engine.providers_v2 import get_default_registry
 
+    # Adopted Mimesis providers bind to faker or mimesis depending on whether
+    # the optional extra is installed. The doc must not depend on the
+    # generating machine's install state, so render the combined label.
+    # _adoption_matrix is pure data and imports no optional dependency.
+    from decoy_engine.providers_v2.mimesis._adoption_matrix import (
+        ADOPTED_MIMESIS_PROVIDERS,
+    )
+
     registry = get_default_registry()
     rows = []
     for name in sorted(registry.known_providers()):
         d = registry.get_capabilities(name).model_dump()
         backend = d.get("backend_type") or ""
+        if name in ADOPTED_MIMESIS_PROVIDERS:
+            backend = "faker (mimesis with the `mimesis` extra)"
         deterministic = "yes" if d.get("supports_deterministic") else "no"
         unique = "yes" if d.get("supports_uniqueness") else "no"
         rows.append((str(name), str(backend), deterministic, unique))

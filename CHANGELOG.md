@@ -9,6 +9,19 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (capability gaps, 2026-06-12)
+
+- **Mimesis backend adoption completed** (closes the S7 evaluation that was
+  built but never run). With the `mimesis` extra installed, five person
+  providers (`person_name`, `person_first_name`, `person_last_name`,
+  `person_full_name`, `person_email`) now bind to MimesisAdapter, 17-55x
+  faster than Faker with checks 1-6 parity green. Without the extra,
+  behavior is byte-identical to before. The other 6 candidates were
+  rejected with evidence (speed or length/distribution parity); see
+  `docs/mimesis-adoption-2026-06-12.md`. The extra is now pinned
+  `mimesis>=19.0,<20` (evaluated on 19.1.0), and a seeded CI tripwire
+  re-runs gating parity for adopted providers.
+
 ### Fixed (audit remediation, 2026-06-12)
 
 Findings from the 2026-06-11 full-codebase audit. Behavior changes are

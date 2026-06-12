@@ -122,8 +122,10 @@ lint = [
 # default install does NOT pull it; MimesisAdapter imports behind a
 # try/except and the default registry stays Faker/DecoyNative-only unless
 # `mimesis` is installed AND a provider is in the adoption matrix.
+# Upper bound: the adoption matrix was evaluated against 19.x (2026-06-12);
+# a major bump re-runs the parity evaluation before widening.
 mimesis = [
-    "mimesis>=14.0",
+    "mimesis>=19.0,<20",
 ]
 # Sphinx + sphinx-autoapi build the API reference site published to
 # GitHub Pages. Build from the repo root via `pip install -e .[docs]`

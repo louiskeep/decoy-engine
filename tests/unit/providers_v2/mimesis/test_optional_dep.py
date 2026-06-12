@@ -2,31 +2,46 @@
 
 These tests do NOT import `mimesis` at module load, so they run whether or not
 the optional dep is installed. They assert the contract the engine must hold
-in BOTH states: the default registry is 24 providers with zero Mimesis
-adopted, and a direct import of the mimesis package without the dep raises the
-documented install message.
+in BOTH states: the registry is always 34 providers; with `mimesis` installed
+the five adopted person providers (2026-06-12 evaluation) bind to the Mimesis
+backend, without it everything stays Faker/native; and a direct import of the
+mimesis package without the dep raises the documented install message.
 """
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import subprocess
 import sys
 
 from decoy_engine.providers_v2 import get_default_registry
 
+_MIMESIS_INSTALLED = importlib.util.find_spec("mimesis") is not None
+
 
 class TestDefaultRegistryShape:
     def test_default_registry_has_34_providers(self) -> None:
         # 19 Faker + 5 DecoyNative (S6) + 2 composite (S8) + 4 MG-1 S4
-        # domain providers + 4 MG-4 composites = 34; 0 mimesis.
+        # domain providers + 4 MG-4 composites = 34. Mimesis adoption
+        # rebinds 5 of these; it never adds or removes providers.
         assert len(get_default_registry().known_providers()) == 34
 
-    def test_no_provider_is_mimesis_bound_by_default(self) -> None:
+    def test_mimesis_binding_matches_install_state(self) -> None:
         reg = get_default_registry()
         backends = {reg.get_capabilities(p).backend_type for p in reg.known_providers()}
-        assert "mimesis" not in backends
-        assert backends == {"faker", "decoy_native", "composite"}
+        if _MIMESIS_INSTALLED:
+            from decoy_engine.providers_v2.mimesis import ADOPTED_MIMESIS_PROVIDERS
+
+            assert backends == {"faker", "decoy_native", "composite", "mimesis"}
+            mimesis_bound = {
+                p
+                for p in reg.known_providers()
+                if reg.get_capabilities(p).backend_type == "mimesis"
+            }
+            assert mimesis_bound == ADOPTED_MIMESIS_PROVIDERS
+        else:
+            assert backends == {"faker", "decoy_native", "composite"}
 
 
 # Subprocess that simulates Mimesis being absent via a meta-path finder that

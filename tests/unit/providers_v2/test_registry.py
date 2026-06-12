@@ -180,11 +180,14 @@ class TestOverride:
 
     def test_override_does_not_mutate_default(self) -> None:
         default = get_default_registry()
+        before = default.get_capabilities("person_email").backend_type
         fake = _FakeAdapter()
         fake_caps = fake.capability_matrix("person_email")
         _ = default.override("person_email", fake, fake_caps)
-        # Default registry's binding is unchanged.
-        assert default.get_capabilities("person_email").backend_type == "faker"
+        # Default registry's binding is unchanged (faker by default, mimesis
+        # when the extra is installed and person_email is adopted).
+        assert default.get_capabilities("person_email").backend_type == before
+        assert before != "test_fake"
 
 
 class TestV2CustomProviderRegistration:
@@ -207,7 +210,9 @@ class TestV2CustomProviderRegistration:
         try:
             assert "custom_id_v2_unique_test_name" in _v2_custom_provider_names()
             registry = get_default_registry()
-            adapter = registry.get_adapter("person_email")  # FakerAdapter
+            # synthetic_member_id stays Faker-bound regardless of mimesis
+            # adoption state; person_email does not.
+            adapter = registry.get_adapter("synthetic_member_id")
             spec = ProviderSpec(locale="en_US", deterministic=False, namespace=None, seed=None)
             out = adapter.generate("custom_id_v2_unique_test_name", spec=spec)
             assert isinstance(out, str)

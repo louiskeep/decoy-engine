@@ -47,11 +47,11 @@ support, disguises) must agree with this file; the drift-guard test enforces it.
 | `composite_provider` | composite | no | yes |
 | `lorem_text` | faker | no | yes |
 | `person_dob` | faker | no | yes |
-| `person_email` | faker | no | yes |
-| `person_first_name` | faker | no | yes |
-| `person_full_name` | faker | no | yes |
-| `person_last_name` | faker | no | yes |
-| `person_name` | faker | no | yes |
+| `person_email` | faker (mimesis with the `mimesis` extra) | no | yes |
+| `person_first_name` | faker (mimesis with the `mimesis` extra) | no | yes |
+| `person_full_name` | faker (mimesis with the `mimesis` extra) | no | yes |
+| `person_last_name` | faker (mimesis with the `mimesis` extra) | no | yes |
+| `person_name` | faker (mimesis with the `mimesis` extra) | no | yes |
 | `person_phone` | faker | no | yes |
 | `random_choice` | faker | no | yes |
 | `random_int_range` | faker | no | yes |
