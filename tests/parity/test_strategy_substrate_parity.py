@@ -192,6 +192,31 @@ _CASES: list[tuple[str, Any, dict[str, pa.Table]]] = [
         {"t": pa.table({"c": _MEDIUM})},
     ),
     (
+        # Weighted deterministic path: the polars handler ignored `weights`
+        # entirely until 2026-06-12 (it predated the MG-1 S5 extension), so
+        # weighted categoricals silently diverged across substrates. The CDF
+        # is now imported from the pandas module; this case pins the parity.
+        "categorical-weighted-deterministic",
+        _plan(
+            "t",
+            (
+                (
+                    "c",
+                    _col(
+                        "categorical",
+                        namespace="cat_ns",
+                        deterministic=True,
+                        provider_config=(
+                            ("categories", ["A", "B", "C", "D"]),
+                            ("weights", [0.5, 0.3, 0.15, 0.05]),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        {"t": pa.table({"c": _MEDIUM})},
+    ),
+    (
         "date_shift-iso-dates",
         _plan(
             "t",

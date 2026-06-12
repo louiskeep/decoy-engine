@@ -25,30 +25,39 @@ VALID_SUBSTRATES = ("pandas", "polars")
 _DEFAULT_SUBSTRATE = "polars"
 
 
-def resolve_substrate() -> str:
-    """Read + validate the DECOY_SUBSTRATE env var. Raises on an invalid value."""
-    value = os.environ.get("DECOY_SUBSTRATE", _DEFAULT_SUBSTRATE).strip().lower()
+def resolve_substrate(override: str | None = None) -> str:
+    """Validate `override` when given, else read the DECOY_SUBSTRATE env var.
+
+    Raises:
+        ExecutionError: ``code='invalid_substrate'`` when the resolved
+            value is not one of ``VALID_SUBSTRATES``.
+    """
+    raw = override if override is not None else os.environ.get("DECOY_SUBSTRATE")
+    value = (raw if raw is not None else _DEFAULT_SUBSTRATE).strip().lower()
     if value not in VALID_SUBSTRATES:
+        source = "substrate override" if override is not None else "DECOY_SUBSTRATE"
         raise ExecutionError(
             code="invalid_substrate",
-            message=f"DECOY_SUBSTRATE must be one of {VALID_SUBSTRATES}; got {value!r}.",
+            message=f"{source} must be one of {VALID_SUBSTRATES}; got {value!r}.",
         )
     return value
 
 
 def select_execution_adapter(
     *,
+    substrate: str | None = None,
     fpe_chunk_count: int = 4,
     max_workers: int = 4,
     fallback_to_pandas: bool = True,
 ) -> ExecutionAdapter:
-    """Construct the execution adapter named by DECOY_SUBSTRATE.
+    """Construct the execution adapter for `substrate` (default: DECOY_SUBSTRATE).
 
     `max_workers` + `fallback_to_pandas` apply to the polars adapter only; the
     pandas adapter ignores them (it has no fallback and no runner-level
-    parallelism knob at S11).
+    parallelism knob at S11). An explicit `substrate` overrides the env var;
+    None keeps the env-resolved behavior unchanged.
     """
-    substrate = resolve_substrate()
+    substrate = resolve_substrate(substrate)
     if substrate == "polars":
         from decoy_engine.execution.polars._polars_adapter import PolarsExecutionAdapter
 

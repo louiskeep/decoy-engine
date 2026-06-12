@@ -49,10 +49,12 @@ Rejected at compile time (`check_chunked_compatibility`):
 - configs with relationships (FK resolution reads whole parent frames);
 - generate tables (generation is not masking; row_count is whole-run).
 
-Each chunk runs through the SAME compiled plan, the standard pandas
-adapter, and one shared pre-warmed pool cache, so chunked output is
-byte-identical to a serial run by construction rather than by
-re-implementation.
+Each chunk runs through the SAME compiled plan, one execution adapter
+(pandas by default; polars via the `adapter` parameter), and one shared
+pre-warmed pool cache, so chunked output is byte-identical to a serial
+run on the same substrate by construction rather than by
+re-implementation. Cross-substrate parity is value-level, per the v2
+rows in tests/parity/SEMANTIC_DIFFERENCES.md.
 """
 
 from __future__ import annotations
@@ -246,6 +248,7 @@ def run_mask_pipeline_chunked(
     table: str,
     engine_version: str,
     registry: Any = None,
+    adapter: Any = None,
 ) -> Iterator[pa.Table]:
     """Mask `table`'s rows chunk-by-chunk under `config`.
 
@@ -254,6 +257,13 @@ def run_mask_pipeline_chunked(
     masked chunks in the same order; concatenating them is byte-identical
     to a full-frame `run_pipeline` of the same rows (the value-keyed
     contract, enforced by `check_chunked_compatibility` up front).
+
+    `adapter` selects the execution substrate; None keeps the pandas
+    adapter (the byte-stable default this mode shipped with). Pass a
+    `PolarsExecutionAdapter` (e.g. via `select_execution_adapter`) for
+    polars-substrate streaming; cross-substrate output is VALUE-equal,
+    not Arrow-schema-equal (string widens to large_string etc.; the
+    recorded v2 rows in tests/parity/SEMANTIC_DIFFERENCES.md).
 
     Validation and plan compile happen EAGERLY at call time; only the
     per-chunk masking is lazy.
@@ -274,7 +284,8 @@ def run_mask_pipeline_chunked(
     resolved_registry = registry if registry is not None else get_default_registry()
     ns_registry = build_namespace_registry(config, profile)
     graph = RelationshipGraph(edges=(), ordering=())
-    adapter = PandasExecutionAdapter()
+    if adapter is None:
+        adapter = PandasExecutionAdapter()
     # One cache for the whole run: faker pools build ONCE (eagerly, so a
     # provider failure surfaces before any output streams) and every
     # chunk samples from the same pool via the handler's cache consult.
