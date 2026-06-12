@@ -85,17 +85,29 @@ def _providers() -> list[tuple[str, str, str, str]]:
     # Adopted Mimesis providers bind to faker or mimesis depending on whether
     # the optional extra is installed. The doc must not depend on the
     # generating machine's install state, so render the combined label.
-    # _adoption_matrix is pure data and imports no optional dependency.
-    from decoy_engine.providers_v2.mimesis._adoption_matrix import (
-        ADOPTED_MIMESIS_PROVIDERS,
+    # _adoption_matrix is pure data, but a normal import executes the
+    # mimesis package __init__, which raises when the extra is absent
+    # (CI installs [dev] only) -- so load the data module straight from
+    # its file, bypassing the package init.
+    import importlib.util
+
+    import decoy_engine
+
+    matrix_path = (
+        Path(decoy_engine.__file__).parent / "providers_v2" / "mimesis" / "_adoption_matrix.py"
     )
+    spec = importlib.util.spec_from_file_location("_decoy_adoption_matrix", matrix_path)
+    assert spec and spec.loader
+    matrix_mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(matrix_mod)
+    adopted_mimesis = frozenset(matrix_mod.ADOPTED_MIMESIS_PROVIDERS)
 
     registry = get_default_registry()
     rows = []
     for name in sorted(registry.known_providers()):
         d = registry.get_capabilities(name).model_dump()
         backend = d.get("backend_type") or ""
-        if name in ADOPTED_MIMESIS_PROVIDERS:
+        if name in adopted_mimesis:
             backend = "faker (mimesis with the `mimesis` extra)"
         deterministic = "yes" if d.get("supports_deterministic") else "no"
         unique = "yes" if d.get("supports_uniqueness") else "no"
