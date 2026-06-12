@@ -79,7 +79,11 @@ detectors:
       - udi
 
   - detector_id: biometric_id
-    description: Biometric identifier column (fingerprint, iris, voice, etc.).
+    description: >-
+      Biometric identifier column (fingerprint, iris, voice, etc.) plus
+      full-face photo path/URL columns (HIPAA Safe Harbor item Q rides on
+      this detector; token-fullmatch keeps 'photo' from matching inside
+      unrelated words).
     patterns:
       - fingerprint
       - retina
@@ -89,3 +93,11 @@ detectors:
       - hand_geometry
       - bio_id
       - biometric_id
+      - photo
+      - photo_path
+      - photo_url
+      - face_id
+      - facial_image
+      - headshot
+      - face_scan
+      - portrait

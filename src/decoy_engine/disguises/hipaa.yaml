@@ -7,24 +7,28 @@
 #  D  Telephone numbers           -> us_phone -> faker
 #  E  Fax numbers                 -> fax_number -> faker
 #  F  Electronic mail             -> email -> faker
-#  G  SSNs                        -> ssn -> hash
-#  H  Medical record numbers      -> mrn -> hash
-#  I  Health-plan beneficiary IDs -> health_plan_id -> hash
-#  J  Account numbers             -> iban -> hash (bank accounts via IBAN)
-#  K  Certificate/license numbers -> license_num -> hash
-#  L  Vehicle identifiers / VINs  -> vehicle_id -> hash
-#  M  Device identifiers          -> device_id -> hash
+#  G  SSNs                        -> ssn -> fpe (digits)
+#  H  Medical record numbers      -> mrn -> fpe (alphanum)
+#  I  Health-plan beneficiary IDs -> health_plan_id -> redact
+#  J  Account numbers             -> iban -> fpe (ALPHANUM)
+#  K  Certificate/license numbers -> license_num -> redact
+#  L  Vehicle identifiers / VINs  -> vehicle_id -> fpe (ALPHANUM)
+#  M  Device identifiers          -> device_id -> redact
 #  N  Web URLs                    -> url -> redact
 #  O  IP addresses                -> ipv4 -> faker (ipv4)
 #  P  Biometric identifiers       -> biometric_id -> redact
-#  Q  Full-face photographs       -> (path-based; flagged by biometric_id name hints)
+#  Q  Full-face photographs       -> photo path/URL COLUMNS via biometric_id
+#     name hints (photo, photo_url, face_id, headshot, ...) -> redact.
+#     LIMITATION: image FILE CONTENT is out of scope; only references
+#     (paths/URLs) stored in columns are masked.
 #  R  Any unique identifying code -> covered by ssn / npi / mrn / health_plan_id
 #
 # Clinical identifiers (beyond Safe Harbor):
 #  ICD-10-CM diagnosis codes -> icd10 -> truncate (3-char category generalisation)
-#  National Provider IDs     -> npi -> hash (FK-stable across provider analytics)
+#  National Provider IDs     -> npi -> fpe (digits; FK-stable across provider analytics)
 
 id: hipaa
+version: "2026-06-12"
 name: "HIPAA Safe Harbor"
 summary: "Full HIPAA Safe Harbor (45 CFR 164.514(b)(2)): all 18 identifier categories + clinical detectors."
 regulation: "HIPAA Privacy Rule - Safe Harbor (45 CFR 164.514(b)(2))"
@@ -210,12 +214,16 @@ field_rules:
       faker_type: ipv4
     why: "Safe Harbor §O: IPv4 addresses -> realistic fake IP."
 
-  # P: Biometric identifiers (fingerprints, retina scans, voice prints, etc.)
+  # P + Q: Biometric identifiers AND full-face photo references. The
+  # biometric_id name hints include photo/face terms, so columns holding
+  # photo paths or URLs route here. Image file content is explicitly out
+  # of scope: the engine masks column values (the references), not the
+  # image bytes they point at.
   - detectors: [biometric_id]
     mask: redact
     params:
       redact_with: "[BIOMETRIC REDACTED]"
-    why: "Safe Harbor §P: biometric identifiers -> redacted. Biometrics are permanent; any exposure is irreversible."
+    why: "Safe Harbor §P biometric identifiers and §Q full-face photo path/URL columns -> redacted. Biometrics are permanent; any exposure is irreversible. §Q limitation: only column-stored references are masked, never image file content."
 
   # Clinical: ICD-10-CM diagnosis codes -> generalise to 3-char category
   - detectors: [icd10]

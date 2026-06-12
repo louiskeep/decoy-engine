@@ -19,6 +19,7 @@
 # Sprint A · Item 31 phase 1 from forge-platform/ROADMAP.md.
 
 id: gdpr
+version: "2026-06-12"
 name: "GDPR Disguise"
 summary: "EU GDPR pseudonymisation defaults: direct identifiers replaced, quasi-identifiers generalised."
 regulation: "EU GDPR - Article 4(5) pseudonymisation, Article 32 security of processing, Recital 26 anonymisation"

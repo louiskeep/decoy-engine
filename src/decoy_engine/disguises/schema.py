@@ -58,6 +58,13 @@ class Disguise(BaseModel):
     id: str
     name: str
     summary: str
+    # Dated version of this disguise's legal-correspondence contract
+    # (audit H12 direction, 2026-06-12): a disguise is the canonical
+    # legal artifact for its regulation, so every change to
+    # field_rules / expected_fields / triggers MUST bump this date.
+    # Derived artifacts (CLI compliance templates) pin the version they
+    # were derived from; a drift guard fails when the pin goes stale.
+    version: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     regulation: str | None = None
     primary_buyer: str | None = None
     triggers: TriggerSpec

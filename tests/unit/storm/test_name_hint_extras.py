@@ -170,3 +170,26 @@ class TestCaseInsensitive:
             # Substring inside another token does NOT match
             # (matches the shipped _hint regex semantics).
             assert hits_name_hint("npi", "customnpiwithsuffix") is False
+
+
+# ── Safe-Harbor item Q photo coverage (audit M2) ─────────────────────────
+
+
+class TestPhotoColumnsHitBiometricId:
+    """Audit M2 (2026-06-12): the HIPAA disguise claimed item Q
+    (full-face photographs) was 'flagged by biometric_id name hints',
+    but the shipped patterns carried no photo/face terms — the claim was
+    false at the detector level. These cells pin the now-true claim:
+    photo path/URL columns hit biometric_id, and the token-fullmatch
+    semantics keep generic words from matching inside unrelated names."""
+
+    @pytest.mark.parametrize(
+        "header",
+        ["patient_photo", "photo_url", "photo_path", "face_id", "facial_image", "headshot"],
+    )
+    def test_photo_reference_columns_match(self, header: str) -> None:
+        assert hits_name_hint("biometric_id", header) is True
+
+    @pytest.mark.parametrize("header", ["surface_area", "photography_dept", "interface_id"])
+    def test_unrelated_columns_do_not_match(self, header: str) -> None:
+        assert hits_name_hint("biometric_id", header) is False

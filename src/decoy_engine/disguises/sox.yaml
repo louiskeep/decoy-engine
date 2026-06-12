@@ -19,6 +19,7 @@
 # Sprint B · Item 31 phase 2 from forge-platform/ROADMAP.md.
 
 id: sox
+version: "2026-06-12"
 name: "SOX Disguise"
 summary: "SOX insider-data protection: executive names, compensation records, and fiscal dates."
 regulation: "Sarbanes-Oxley Act - 15 U.S.C. §7201 (Sections 302, 404, 802, 906)"

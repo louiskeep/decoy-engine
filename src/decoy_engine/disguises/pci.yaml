@@ -12,6 +12,7 @@
 # Sprint A · Item 31 phase 1 from forge-platform/ROADMAP.md.
 
 id: pci
+version: "2026-06-12"
 name: "PCI DSS Disguise"
 summary: "PCI DSS §3.4 cardholder data protection: PAN, CVV, IBAN, plus the usual identity fields."
 regulation: "PCI DSS v4.0 - Requirement 3 (Protect stored account data)"

@@ -12,6 +12,7 @@
 # Sprint B · Item 31 phase 2 from forge-platform/ROADMAP.md.
 
 id: ccpa
+version: "2026-06-12"
 name: "CCPA Disguise"
 summary: "CCPA/CPRA consumer PI defaults: direct identifiers replaced, online identifiers hashed."
 regulation: "California Consumer Privacy Act - Cal. Civ. Code §1798.100 et seq. (as amended by CPRA, effective 2023)"
