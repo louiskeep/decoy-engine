@@ -30,7 +30,7 @@ support, disguises) must agree with this file; the drift-guard test enforces it.
 
 `categorical`, `distribution`, `faker`, `formula`, `reference`, `sequence`
 
-## Synthetic providers (19)
+## Synthetic providers (34)
 
 | Provider | Backend | Deterministic | Unique |
 | --- | --- | --- | --- |
@@ -39,6 +39,12 @@ support, disguises) must agree with this file; the drift-guard test enforces it.
 | `address_state` | faker | no | yes |
 | `address_street` | faker | no | yes |
 | `address_zip` | faker | no | yes |
+| `composite_address` | composite | no | yes |
+| `composite_city_state_zip` | composite | no | yes |
+| `composite_custom` | composite | no | yes |
+| `composite_name_email` | composite | no | yes |
+| `composite_person` | composite | no | yes |
+| `composite_provider` | composite | no | yes |
 | `lorem_text` | faker | no | yes |
 | `person_dob` | faker | no | yes |
 | `person_email` | faker | no | yes |
@@ -50,8 +56,17 @@ support, disguises) must agree with this file; the drift-guard test enforces it.
 | `random_choice` | faker | no | yes |
 | `random_int_range` | faker | no | yes |
 | `synthetic_account_number` | faker | no | yes |
+| `synthetic_cusip` | decoy_native | yes | yes |
+| `synthetic_ein` | decoy_native | yes | yes |
+| `synthetic_iban` | decoy_native | yes | yes |
+| `synthetic_icd10` | decoy_native | yes | no |
 | `synthetic_member_id` | faker | no | yes |
+| `synthetic_mrn` | decoy_native | yes | yes |
+| `synthetic_ndc` | decoy_native | yes | yes |
+| `synthetic_npi` | decoy_native | yes | yes |
+| `synthetic_pan` | decoy_native | yes | yes |
 | `synthetic_plan_id` | faker | no | yes |
+| `synthetic_ssn` | decoy_native | yes | yes |
 | `uuid` | faker | no | yes |
 
 ## Connectors (6)

@@ -56,19 +56,25 @@ def _generation_strategies() -> list[str]:
         from decoy_engine.generators.columns import ColumnGenerator
         return sorted(ColumnGenerator(seed=0).generators.keys())
     except Exception:
-        import re
         import inspect
+        import re
+
         from decoy_engine.generators import columns
         src = inspect.getsource(columns)
         return sorted(set(re.findall(r'"([a-z_]+)"\s*:\s*self\._generate_', src)))
 
 
 def _providers() -> list[tuple[str, str, str, str]]:
-    from decoy_engine.providers_v2._real_registry import _CATALOG
+    # Audit M3 (2026-06-12): walk the LIVE registry, not _CATALOG.
+    # _CATALOG carries only the Faker-bound subset (19), silently
+    # omitting the DecoyNative identifier providers and the composites;
+    # the registry is the runtime truth (34 at the time of this fix).
+    from decoy_engine.providers_v2 import get_default_registry
+
+    registry = get_default_registry()
     rows = []
-    for c in _CATALOG:
-        d = c.model_dump() if hasattr(c, "model_dump") else {}
-        name = d.get("provider") or getattr(c, "provider", "?")
+    for name in sorted(registry.known_providers()):
+        d = registry.get_capabilities(name).model_dump()
         backend = d.get("backend_type") or ""
         deterministic = "yes" if d.get("supports_deterministic") else "no"
         unique = "yes" if d.get("supports_uniqueness") else "no"
@@ -77,8 +83,8 @@ def _providers() -> list[tuple[str, str, str, str]]:
 
 
 def _connectors() -> tuple[list[str], list[tuple[str, dict]]]:
-    from decoy_engine import sdk
     import decoy_engine.connectors as conn
+    from decoy_engine import sdk
     cap_consts = [v for n, v in vars(sdk).items() if n.startswith("CAP_")]
     cap_order = sorted(cap_consts)
     rows = []
@@ -96,7 +102,7 @@ def _connectors() -> tuple[list[str], list[tuple[str, dict]]]:
 
 
 def _detectors() -> list[tuple[str, str]]:
-    from decoy_engine.storm.detectors import REGISTERED_DETECTORS, _SPAN_DETECTORS
+    from decoy_engine.storm.detectors import _SPAN_DETECTORS, REGISTERED_DETECTORS
     span = {getattr(f, "__name__", "") for f in _SPAN_DETECTORS}
     rows = []
     for fn in REGISTERED_DETECTORS:
