@@ -55,6 +55,7 @@ from decoy_engine.plan._checks import (
     check_statistical_columns,
     check_text_redact_ner_available,
     check_unknown_provider,
+    check_vault_columns,
 )
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._types import (
@@ -147,6 +148,10 @@ def compile_plan(
     # requires the spacy extra + model on THIS host. Config + installed
     # packages only; both branches + run_config_only_checks.
     check_text_redact_ner_available(config)
+    # Row 14 (deferred follow-up 1, 2026-06-12): vault: true needs a
+    # namespace and a one-way strategy. Config-only; both branches +
+    # run_config_only_checks.
+    check_vault_columns(config)
     check_composite_columns_length_match(profile)
     # MG-3 / M3 (2026-05-31): reject when + coherent_with combo early,
     # before composite-wiring checks. A column carrying both fields is
@@ -195,6 +200,8 @@ def compile_plan(
             "statistical_columns",
             # Row 13 (WS2): structural, tail-appended.
             "text_redact_ner_available",
+            # Row 14 (vault): structural, tail-appended.
+            "vault_columns",
         )
         checks_skipped: tuple[str, ...] = (
             "basic_uniqueness_pre_flight",
@@ -231,6 +238,8 @@ def compile_plan(
             "statistical_columns",
             # Row 13 (WS2): structural, tail-appended.
             "text_redact_ner_available",
+            # Row 14 (vault): structural, tail-appended.
+            "vault_columns",
         )
         checks_skipped = ()
 
@@ -307,6 +316,8 @@ def run_config_only_checks(config: dict[str, Any]) -> tuple[str, ...]:
     check_statistical_columns(config)
     # Row 13 (WS2): text_redact `ner` opt-in needs spacy + model here.
     check_text_redact_ner_available(config)
+    # Row 14 (vault): vault: true needs a namespace + a one-way strategy.
+    check_vault_columns(config)
     return (
         "unknown_provider",
         "when_with_coherent_with",
@@ -314,6 +325,7 @@ def run_config_only_checks(config: dict[str, Any]) -> tuple[str, ...]:
         "non_poolable_provider_with_pool_backend",
         "statistical_columns",
         "text_redact_ner_available",
+        "vault_columns",
     )
 
 

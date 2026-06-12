@@ -249,6 +249,7 @@ def run_mask_pipeline_chunked(
     engine_version: str,
     registry: Any = None,
     adapter: Any = None,
+    vault_writer: Any = None,
 ) -> Iterator[pa.Table]:
     """Mask `table`'s rows chunk-by-chunk under `config`.
 
@@ -264,6 +265,10 @@ def run_mask_pipeline_chunked(
     polars-substrate streaming; cross-substrate output is VALUE-equal,
     not Arrow-schema-equal (string widens to large_string etc.; the
     recorded v2 rows in tests/parity/SEMANTIC_DIFFERENCES.md).
+
+    `vault_writer` (a `decoy_engine.vault.VaultWriter`) collects each
+    chunk's source->masked pairs for `vault: true` columns as the chunk
+    masks; the caller writes the artifact after the stream drains.
 
     Validation and plan compile happen EAGERLY at call time; only the
     per-chunk masking is lazy.
@@ -308,7 +313,12 @@ def run_mask_pipeline_chunked(
                 relationship_graph=graph,
                 namespace_registry=ns_registry,
             )
-            yield result.outputs[table]
+            masked = result.outputs[table]
+            if vault_writer is not None:
+                from decoy_engine.vault import collect_vault_entries
+
+                vault_writer.add(collect_vault_entries(config, {table: chunk}, {table: masked}))
+            yield masked
 
     return _masked()
 

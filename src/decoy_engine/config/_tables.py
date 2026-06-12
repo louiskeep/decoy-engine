@@ -83,6 +83,12 @@ class ColumnConfig(BaseModel):
     # the column dict, so the adapter must allow it. S5 ships the full
     # pool_capacity_pre_flight check.
     pool_size: int | None = None
+    # Token-vault opt-in (deferred follow-up 1, 2026-06-12): record this
+    # column's source->masked map into the encrypted vault artifact when
+    # the run is given a vault path. Requires a namespace (the vault's
+    # lookup key) and a one-way strategy (fpe is already reversible);
+    # check_vault_columns enforces both at compile.
+    vault: bool = False
 
 
 class GenerateColumnConfig(BaseModel):

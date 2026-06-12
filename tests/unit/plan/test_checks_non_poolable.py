@@ -81,6 +81,7 @@ class TestRunConfigOnlyChecks:
             "non_poolable_provider_with_pool_backend",
             "statistical_columns",
             "text_redact_ner_available",
+            "vault_columns",
         )
 
     def test_raises_on_unknown_provider(self):
