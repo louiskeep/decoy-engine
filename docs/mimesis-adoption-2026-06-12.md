@@ -44,10 +44,31 @@ on speed evidence alone.
   re-runs gating checks 1-6 with SEEDED samples for every adopted provider on
   every CI run; a mimesis or Faker upgrade that breaks parity fails CI.
   Benchmark ratios are not asserted in CI (timing noise); re-measure manually
-  on dependency bumps with `run_parity_suite(provider)`.
+  on dependency bumps with `python scripts/reevaluate_mimesis.py` (see the
+  procedure below).
 - The `mimesis` extra is pinned `>=19.0,<20`; widening past 19.x requires
   re-running this evaluation.
 - Registry shape is unchanged: 34 providers either way; adoption rebinds the
   5 adopted names to MimesisAdapter when the extra is installed and leaves
   everything Faker/native when it is not
   (`test_optional_dep.py::test_mimesis_binding_matches_install_state`).
+
+## Re-evaluation procedure
+
+Trigger: any change that widens or replaces the `mimesis>=19.0,<20` pin
+(deferred follow-up 9, 2026-06-12). Steps:
+
+1. Install the candidate version into the working venv
+   (`uv pip install 'mimesis==<candidate>'`).
+2. Run `python scripts/reevaluate_mimesis.py` (options: `--locale`, `--n`,
+   `--json`). The script runs `run_parity_suite` for all 11 candidates and
+   diffs the verdicts against `ADOPTED_MIMESIS_PROVIDERS`. Exit 0 means no
+   drift; exit 1 prints which providers should be added or removed.
+   Benchmark ratios are timing-sensitive: run on an idle machine and
+   re-run any provider within ~0.05 of the 0.20 gate (person_dob has
+   historically sat at 0.20-0.25).
+3. On drift: update `ADOPTED_MIMESIS_PROVIDERS` in `_adoption_matrix.py`,
+   append a new dated results table to THIS document (keep the old one),
+   and confirm `TestAdoptionDriftTripwire` stays green. Behavioral
+   rejections (the address providers' narrower pools) need upstream data
+   changes, not just speed, to flip; do not re-add on speed evidence alone.
