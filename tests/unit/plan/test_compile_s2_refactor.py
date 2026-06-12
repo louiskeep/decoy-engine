@@ -49,8 +49,11 @@ EXPECTED_S2_CHECKS_PASSED = (
     "pool_capacity_pre_flight",
     "composite_wiring_consistent",
     "deterministic_namespace_completeness",
-    # Row 10 (B1, S13): null-bearing-int reject rule, appended at the tail.
+    # Row 10 (B1, S13): null-bearing-int reject rule.
     "null_bearing_int_unsupported",
+    # Row 11 (audit H5, 2026-06-12): non-poolable provider on the pool
+    # path rejected at compile time, appended at the tail.
+    "non_poolable_provider_with_pool_backend",
 )
 
 
@@ -64,12 +67,12 @@ class TestChecksPassedShape:
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
         assert plan.plan_compile.checks_passed == EXPECTED_S2_CHECKS_PASSED
 
-    def test_checks_passed_contains_exactly_ten_entries(
+    def test_checks_passed_contains_exactly_eleven_entries(
         self, simple_config: dict, simple_profile: Profile
     ) -> None:
         # 9 through S8, plus row 10 (null_bearing_int_unsupported, B1/S13).
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
-        assert len(plan.plan_compile.checks_passed) == 10
+        assert len(plan.plan_compile.checks_passed) == 11
 
     def test_orphan_fk_policy_completeness_at_documented_position(
         self, simple_config: dict, simple_profile: Profile
@@ -79,12 +82,13 @@ class TestChecksPassedShape:
         (deterministic_namespace_completeness) post-S6; row 10
         (null_bearing_int_unsupported) at the tail post-S13 (B1)."""
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
-        assert plan.plan_compile.checks_passed[-6] == "composite_columns_length_match"
-        assert plan.plan_compile.checks_passed[-5] == "orphan_fk_policy_completeness"
-        assert plan.plan_compile.checks_passed[-4] == "pool_capacity_pre_flight"
-        assert plan.plan_compile.checks_passed[-3] == "composite_wiring_consistent"
-        assert plan.plan_compile.checks_passed[-2] == "deterministic_namespace_completeness"
-        assert plan.plan_compile.checks_passed[-1] == "null_bearing_int_unsupported"
+        assert plan.plan_compile.checks_passed[-7] == "composite_columns_length_match"
+        assert plan.plan_compile.checks_passed[-6] == "orphan_fk_policy_completeness"
+        assert plan.plan_compile.checks_passed[-5] == "pool_capacity_pre_flight"
+        assert plan.plan_compile.checks_passed[-4] == "composite_wiring_consistent"
+        assert plan.plan_compile.checks_passed[-3] == "deterministic_namespace_completeness"
+        assert plan.plan_compile.checks_passed[-2] == "null_bearing_int_unsupported"
+        assert plan.plan_compile.checks_passed[-1] == "non_poolable_provider_with_pool_backend"
 
     def test_s1_check_order_preserved(self, simple_config: dict, simple_profile: Profile) -> None:
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")

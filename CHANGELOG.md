@@ -9,6 +9,80 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Fixed (audit remediation, 2026-06-12)
+
+Findings from the 2026-06-11 full-codebase audit. Behavior changes are
+called out explicitly.
+
+- **STORM residual-PII oracle is now source-aware** (audit C1, Critical;
+  + H6). A column whose mask silently failed (output positionally
+  identical to source) previously reported `severity='info'` on
+  faker/formula/categorical/reference/date_shift strategies — a real
+  leak shipped green. Detector-flagged columns are now compared
+  positionally against the source frames and severity escalates to
+  `fail` (substitution strategies at >=50% identity, value-reuse
+  strategies at full identity, unconfigured columns at >=50% on a
+  high-confidence hit). BEHAVIOR CHANGE: pipelines with partially-failed
+  masks or verbatim-preserved unconfigured PII columns now exit 4 at
+  `decoy storm integrity`. Shuffle's detector-hit baseline moved
+  warning -> info (expected outcome) with a full-identity fail backstop.
+  `ResidualPIIFinding` gains additive `source_identity_rate` +
+  `source_compared` fields (schema stays `storm-post-mask/v1`).
+- **text_redact null preservation** (audit H1): `pd.NA`/`pd.NaT` no
+  longer leak into output as the literal strings `'<NA>'`/`'NaT'`.
+- **composite_custom slot mapping** (audit H2): non-alphabetical bundle
+  declarations no longer write every generated value into the wrong
+  column on the pool/sampler path. Duplicate bundle column names are
+  rejected (`composite_custom_duplicate_columns`). First composite
+  pandas<->polars parity coverage added.
+- **Pool build race** (audit H3): concurrent cache misses on the same
+  deterministic identity now build exactly once (per-identity locks);
+  divergent pool instances can no longer break determinism under the
+  platform's async runner.
+- **New compile check row 11, `non_poolable_provider_with_pool_backend`**
+  (audit H5): `strategy: faker` on a poolable=False provider (e.g.
+  `uuid`) is rejected at plan compile instead of crashing at run.
+  BEHAVIOR CHANGE: `checks_passed` grows 10 -> 11 (no-profile 7 -> 8);
+  consumers asserting the exact check set must update.
+- **New public API `run_config_only_checks(config)`**: the profile-free
+  compile-check subset for config-only callers (`decoy validate`).
+- **Disguises carry a required dated `version`** (product rule: a
+  disguise is the canonical legal artifact for its regulation; derived
+  templates pin the version). All 8 bundles stamped `2026-06-12`.
+  BEHAVIOR CHANGE: third-party disguise YAMLs without `version` no
+  longer load.
+- **HIPAA Safe-Harbor item Q is now honestly covered** (audit M2):
+  biometric_id name hints gained photo/face terms (photo, photo_url,
+  face_id, headshot, ...) so photo path/URL columns route to redact;
+  the disguise states explicitly that image FILE CONTENT is out of
+  scope. Stale header comments that disagreed with the disguise's own
+  field_rules were corrected.
+- **Relationship graph dedupes duplicate edges** (audit M1): indegree
+  and parents_of/children_of bookkeeping no longer inflate when a
+  relationship is declared twice.
+- **Stable dtype labels across pandas majors** (audit M5/BL-2): pandas-3
+  default-inference labels (`str`, `datetime64[us]`) normalize to their
+  historical values (`object`, `datetime64[ns]`) in ColumnProfile and
+  distribution snapshots, so USER-HELD snapshot baseline digests minted
+  under pandas 2.x remain valid. pandas is now capped `>=1.5.0,<4`.
+- **numexpr fallback surfaced** (audit L1): the silent numexpr -> python
+  engine fallback on extension-array dtypes is logged through the
+  engine logger instead of an unmonitored RuntimeWarning.
+- **Capability matrix lists all 34 providers** (audit M3/BL-9): the
+  generator walks the live registry instead of the Faker-only _CATALOG.
+- New Hypothesis property suite `tests/property/test_mask_invariants.py`
+  (9 properties x 400 examples) pinning null-preservation, determinism,
+  namespace isolation, and per-strategy structural invariants.
+
+### Added
+
+- **Generated engine capability matrix** (`docs/capability-matrix.md`, emitted by
+  `scripts/gen_capability_matrix.py`). Reads the live registries (mask + generate
+  strategies, synthetic providers, connectors + capabilities, STORM detectors,
+  disguises) and writes a correct-by-construction reference. A `tests/sentry/
+  test_capability_matrix.py` drift guard fails CI when a registry changes without
+  the matrix being regenerated, so a new capability cannot ship without its docs.
+
 ### Changed
 
 - **Repository visibility flipped to public** (2026-06-02). Aligns

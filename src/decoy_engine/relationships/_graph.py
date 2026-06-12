@@ -226,10 +226,18 @@ def build_relationship_graph(
             )
         )
 
+    # Dedupe at the source (audit M1): a relationship declared twice in
+    # the config produced duplicate edges, doubling out_edges entries
+    # and inflating indegree -- topological ORDER stayed correct, but
+    # downstream edge/indegree bookkeeping (FK-remap counts) was wrong.
+    # Identity is the full edge tuple; the orphan-policy lookup is keyed
+    # by the same 4-tuple, so true duplicates are byte-identical here.
+    deduped: dict[RelationshipEdge, None] = dict.fromkeys(edges)
+
     # Sort edges deterministically for stable iteration.
     edges_sorted = tuple(
         sorted(
-            edges,
+            deduped,
             key=lambda e: (
                 e.parent_table,
                 e.parent_columns,

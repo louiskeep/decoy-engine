@@ -3,6 +3,7 @@
 # but the data doesn't specifically smell like a regulated dataset.
 
 id: default
+version: "2026-06-12"
 name: "Default PII Disguise"
 summary: "Generic PII starter pack: email, phone, name, ZIP."
 primary_buyer: "Everyone"

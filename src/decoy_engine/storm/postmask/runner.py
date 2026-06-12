@@ -45,7 +45,8 @@ def run_storm_post_mask(
 
     Args:
         source_frames: ``{table_name: pre-mask DataFrame}``. Required
-            for policy_validation (needs source for compare).
+            for policy_validation and for residual_pii's source
+            comparison (escalates output==source leaks to 'fail').
         output_frames: ``{table_name: post-mask DataFrame}``. Required
             for all three checks.
         config: the validated pipeline config dict (from
@@ -88,7 +89,7 @@ def run_storm_post_mask(
     # for the operator to find the underlying error in the job log,
     # where the full exception text already lives at the catch site.
     try:
-        residual_pii = check_residual_pii(output_frames, config)
+        residual_pii = check_residual_pii(output_frames, config, source_frames=source_frames)
     except Exception as exc:
         residual_pii = [
             ResidualPIIFinding(

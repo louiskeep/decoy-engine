@@ -40,6 +40,9 @@ surface is "your config is wrong" not "your data is wrong."
 
 from __future__ import annotations
 
+import logging
+import warnings
+
 import pandas as pd
 
 from decoy_engine.config._transforms import (
@@ -51,6 +54,31 @@ from decoy_engine.config._transforms import (
     SortOp,
     TransformOp,
 )
+
+_log = logging.getLogger(__name__)
+
+
+def _eval_clamped(df: pd.DataFrame, expression: str) -> object:
+    """df.eval pinned to numexpr with a clamped scope, fallback surfaced.
+
+    Audit L1 (2026-06-12): on extension-array dtypes pandas silently
+    falls back from numexpr to the python engine and emits an
+    unmonitored RuntimeWarning -- the Q16 sandbox posture (numexpr
+    pinned) degrades without anyone seeing it. Transforms have no
+    QualityWarning return channel, so the fallback is captured and
+    re-emitted through the engine logger where job logs pick it up.
+    """
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", RuntimeWarning)
+        result = df.eval(expression, engine="numexpr", local_dict={}, global_dict={})
+    for w in caught:
+        if issubclass(w.category, RuntimeWarning):
+            _log.warning(
+                "transform expression %r: numexpr fell back to the python engine (%s)",
+                expression,
+                w.message,
+            )
+    return result
 
 
 class TransformError(Exception):
@@ -71,7 +99,7 @@ def _apply_filter(df: pd.DataFrame, op: FilterOp) -> pd.DataFrame:
         # scope to the DataFrame's columns. The local_dict/global_dict
         # empties block @var-style scope walks that would otherwise reach
         # module-top imports (e.g. `@pd.compat.os.system(...)`).
-        mask = df.eval(op.expression, engine="numexpr", local_dict={}, global_dict={})
+        mask = _eval_clamped(df, op.expression)
     except ImportError as exc:
         raise TransformError(
             code="numexpr_required",
@@ -144,7 +172,7 @@ def _apply_derive(df: pd.DataFrame, op: DeriveOp) -> pd.DataFrame:
         )
     try:
         # Q16 + Dennis C1 fix: see _apply_filter for the full rationale.
-        result = df.eval(op.expression, engine="numexpr", local_dict={}, global_dict={})
+        result = _eval_clamped(df, op.expression)
     except ImportError as exc:
         raise TransformError(
             code="numexpr_required",

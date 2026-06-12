@@ -95,8 +95,14 @@ class TextRedactHandler:
         # the hot loop. Positional iteration via to_list() also
         # sidesteps the duplicate-index issue called out in F2.
         col_values = col.to_list()
+        # Vectorized null mask catches every pandas null marker uniformly
+        # (None, float nan, pd.NA, pd.NaT); the previous None/float-only
+        # per-cell guard let pd.NA/pd.NaT fall through to str() and emit
+        # the literal '<NA>'/'NaT' into masked output. Series.isna also
+        # sidesteps pd.isna's ambiguous result on array-like cells.
+        null_mask = col.isna().to_list()
         for pos, text in enumerate(col_values):
-            if text is None or (isinstance(text, float) and pd.isna(text)):
+            if null_mask[pos]:
                 continue
             if not isinstance(text, str):
                 text = str(text)

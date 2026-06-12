@@ -124,7 +124,7 @@ from decoy_engine.generation.pool import (
 )
 from decoy_engine.generation.synthesize import generate_tables
 from decoy_engine.license import LicenseVerifier
-from decoy_engine.plan import compile_plan
+from decoy_engine.plan import compile_plan, run_config_only_checks
 from decoy_engine.plan.validate import (
     PlanCheckError,
     PlanValidationResult,
@@ -351,6 +351,7 @@ __all__ = [
     "register_faker_list_provider",
     "register_faker_provider",
     "register_faker_provider_v2",
+    "run_config_only_checks",
     "run_discovery_sql",
     "run_pipeline",
     "run_storm",

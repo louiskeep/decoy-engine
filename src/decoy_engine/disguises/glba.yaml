@@ -11,6 +11,7 @@
 # Sprint B · Item 31 phase 2 from forge-platform/ROADMAP.md.
 
 id: glba
+version: "2026-06-12"
 name: "GLBA Disguise"
 summary: "GLBA Safeguards Rule NPI protection: SSN, account numbers, PAN, and identity fields."
 regulation: "Gramm-Leach-Bliley Act - GLBA Safeguards Rule (16 CFR Part 314), updated 2023"

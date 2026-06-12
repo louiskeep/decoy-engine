@@ -198,3 +198,54 @@ class TestProtocolConformance:
         assert callable(adapter.generate)
         assert callable(adapter.generate_batch)
         assert callable(adapter.capability_matrix)
+
+
+class TestConcurrentBuildSerialization:
+    """Audit H3 (2026-06-12): _build_or_get_pool was check-then-build
+    with no synchronization; two concurrent misses on the same
+    deterministic identity each called builder.build(), could cache and
+    return DIFFERENT pool instances, and broke the determinism contract
+    under concurrency (reachable via the platform async runner). The
+    build path is now serialized: exactly one build per identity, every
+    caller gets the same pool object."""
+
+    def test_concurrent_misses_build_exactly_once(self) -> None:
+        import threading
+        import time
+        from concurrent.futures import ThreadPoolExecutor
+
+        registry = get_default_registry()
+        builder = PoolBuilder(registry)
+        build_calls = {"n": 0}
+        real_build = builder.build
+
+        def slow_counting_build(*args, **kwargs):
+            build_calls["n"] += 1
+            time.sleep(0.05)  # widen the miss window so racing threads pile up
+            return real_build(*args, **kwargs)
+
+        builder.build = slow_counting_build  # type: ignore[method-assign]
+        adapter = PoolAdapter(
+            wrapped=registry.get_adapter("person_email"),
+            builder=builder,
+            cache=PoolCache(max_bytes=10_000_000),
+        )
+        spec = ProviderSpec(
+            locale="en_US",
+            deterministic=True,
+            namespace="race",
+            seed=b"\x01" * 8,
+            extra={"pool_size": 50},
+        )
+
+        barrier = threading.Barrier(8)
+
+        def hit_pool():
+            barrier.wait()
+            return adapter._build_or_get_pool("person_email", spec)
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = [f.result() for f in [pool.submit(hit_pool) for _ in range(8)]]
+
+        assert build_calls["n"] == 1, f"pool built {build_calls['n']} times for one identity"
+        assert all(r is results[0] for r in results), "callers got divergent pool instances"

@@ -13,6 +13,7 @@
 # Sprint B · Item 31 phase 2 from forge-platform/ROADMAP.md.
 
 id: ferpa
+version: "2026-06-12"
 name: "FERPA Disguise"
 summary: "FERPA student record protection: names, SSN, enrollment dates, grades, contact info."
 regulation: "Family Educational Rights and Privacy Act - 20 U.S.C. §1232g, 34 CFR Part 99"

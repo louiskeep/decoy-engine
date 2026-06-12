@@ -368,3 +368,31 @@ class TestDeterminism:
         graph = _build_graph_for(parent_child_profile)
         with pytest.raises(FrozenInstanceError):
             graph.edges = ()  # type: ignore[misc]
+
+
+class TestDuplicateEdgeDedup:
+    """Audit M1 (2026-06-12): a relationship declared twice produced
+    duplicate edges, doubling out_edges entries and inflating indegree.
+    Topological ORDER stayed correct, but edge bookkeeping (parents_of /
+    children_of, FK-remap counts) was wrong. Duplicates now collapse to
+    one edge at graph build."""
+
+    def test_duplicated_relationship_yields_single_edge(
+        self, parent_child_profile: Profile
+    ) -> None:
+        rel = parent_child_profile.relationships[0]
+        duplicated = (rel, rel)
+        config = _config_for(rel)
+        registry = build_namespace_registry(config, parent_child_profile)
+        lookup = check_orphan_fk_policy_completeness(config, duplicated)
+        graph = build_relationship_graph(
+            duplicated, namespace_registry=registry, orphan_policy_lookup=lookup
+        )
+        assert len(graph.edges) == 1
+        assert len(graph.children_of(rel.parent_table, rel.parent_columns)) == 1, (
+            "duplicate edge leaked into children_of"
+        )
+        # Ordering unchanged: parent before child, each node once.
+        tables = [t for (t, _cols) in graph.ordering]
+        assert tables.count(rel.parent_table) == 1
+        assert tables.count(rel.child_table) == 1

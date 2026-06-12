@@ -29,13 +29,14 @@ class TestCompilePlanHappyPath:
         assert plan.seed_protocol_version == 4
         assert plan.engine_version == "0.1.0"
 
-    def test_compile_records_ten_checks_passed(
+    def test_compile_records_eleven_checks_passed(
         self, simple_config: dict, simple_profile: Profile
     ) -> None:
         """S2 added orphan_fk_policy_completeness at row 6; S5 added
         pool_capacity_pre_flight at row 7; S8 added composite_wiring_consistent
         at row 8; S6/S7 added deterministic_namespace_completeness at row 9;
-        S13 (B1) added null_bearing_int_unsupported at row 10."""
+        S13 (B1) added null_bearing_int_unsupported at row 10; audit H5
+        (2026-06-12) added non_poolable_provider_with_pool_backend at row 11."""
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
         assert set(plan.plan_compile.checks_passed) == {
             "namespace_ambiguity",
@@ -48,6 +49,7 @@ class TestCompilePlanHappyPath:
             "composite_wiring_consistent",
             "deterministic_namespace_completeness",
             "null_bearing_int_unsupported",
+            "non_poolable_provider_with_pool_backend",
         }
 
     def test_compile_no_warnings_no_errors_no_skipped(

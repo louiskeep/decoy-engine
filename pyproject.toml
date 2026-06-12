@@ -53,7 +53,7 @@ keywords = [
 ]
 
 dependencies = [
-    "pandas>=1.5.0",
+    "pandas>=1.5.0,<4",
     "pyyaml>=6.0",
     "faker>=13.0.0",
     "psutil>=5.9.0",
@@ -109,6 +109,10 @@ dev = [
     # Pinned here so a fresh `pip install -e .[dev]` brings it along
     # rather than failing on the first import in test collection.
     "moto[s3]>=5.0",
+    # The property suite (tests/property/test_mask_invariants.py, audit
+    # remediation 2026-06-12) is part of the default test run; without
+    # this pin CI fails at collection with ModuleNotFoundError.
+    "hypothesis>=6.0",
 ]
 # Linters are exact-pinned, not floored. ruff and mypy both ship new
 # rules / error categories in minor releases that turn previously-green

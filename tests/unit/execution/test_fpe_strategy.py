@@ -53,7 +53,10 @@ class TestFpe:
         df = pd.DataFrame({"acct": ["12345", "67890", None]})
         out, _ = FpeStrategyHandler(chunk_count=1).run(df, "acct", _fpe_col(), _ctx())
         vals = out["acct"].tolist()
-        assert vals[2] is None
+        # Null stays null; the exact marker (None vs nan) is a pandas
+        # version detail, not part of the contract (audit BL-2 cleared
+        # the semantic concern via the property suite).
+        assert pd.isna(vals[2])
         for v in vals[:2]:
             assert len(v) == 5 and v.isdigit()
 

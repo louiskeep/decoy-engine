@@ -118,6 +118,7 @@ class TestLoaderShipsBundles:
             id="t",
             name="T",
             summary="t",
+            version="2026-06-12",
             triggers=TriggerSpec(any_detectors=["email"]),
             expected_fields=["email", ["first_name", "last_name", "person_name"]],
             field_rules=[FieldRule(detectors=["email"], mask="faker", params={})],
@@ -132,6 +133,7 @@ class TestSchemaValidatesShape:
             id="x",
             name="X",
             summary="X",
+            version="2026-06-12",
             triggers=TriggerSpec(any_detectors=["email"]),
             field_rules=[
                 FieldRule(detectors=["email"], mask="faker", params={"faker_type": "email"})
@@ -164,6 +166,7 @@ class TestLoaderHandlesTempDirectory:
         yaml_text = yaml.safe_dump(
             {
                 "id": "tmp",
+                "version": "2026-06-12",
                 "name": "Tmp",
                 "summary": "test",
                 "triggers": {"any_detectors": ["email"], "min_score": 0.3},
@@ -210,6 +213,7 @@ class TestLoaderHandlesTempDirectory:
                 "id": "good_one",
                 "name": "Good",
                 "summary": "test",
+                "version": "2026-06-12",
                 "triggers": {"any_detectors": ["email"], "min_score": 0.3},
                 "field_rules": [
                     {"detectors": ["email"], "mask": "faker", "params": {"faker_type": "email"}}
@@ -227,6 +231,7 @@ class TestLoaderHandlesTempDirectory:
         another_good = yaml.safe_dump(
             {
                 "id": "good_two",
+                "version": "2026-06-12",
                 "name": "GoodTwo",
                 "summary": "test",
                 "triggers": {"any_detectors": ["phone"], "min_score": 0.3},
@@ -250,3 +255,56 @@ class TestLoaderHandlesTempDirectory:
         )
         # And we still get the ERROR log for visibility.
         assert any("02_bad.yaml" in rec.message for rec in caplog.records)
+
+
+class TestDisguiseVersioning:
+    """Audit H12 direction (2026-06-12): every disguise carries a dated
+    version so derived artifacts (CLI compliance templates) can pin the
+    legal-correspondence contract they were generated from."""
+
+    def test_every_shipped_disguise_carries_a_dated_version(self):
+        import re
+
+        for d in load_disguises():
+            assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", d.version), (
+                f"{d.id} version {d.version!r} is not a YYYY-MM-DD date"
+            )
+
+    def test_all_eight_bundles_still_load(self):
+        # The loader skips schema-invalid files silently; a required
+        # field added without updating every YAML would shrink this set.
+        assert {d.id for d in load_disguises()} == {
+            "ccpa",
+            "default",
+            "ferpa",
+            "gdpr",
+            "glba",
+            "hipaa",
+            "pci",
+            "sox",
+        }
+
+    def test_version_missing_rejected(self):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            Disguise(
+                id="x",
+                name="X",
+                summary="X",
+                triggers=TriggerSpec(any_detectors=["email"]),
+                field_rules=[FieldRule(detectors=["email"], mask="faker", params={})],
+            )
+
+    def test_version_bad_format_rejected(self):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            Disguise(
+                id="x",
+                name="X",
+                summary="X",
+                version="v1.2",
+                triggers=TriggerSpec(any_detectors=["email"]),
+                field_rules=[FieldRule(detectors=["email"], mask="faker", params={})],
+            )
