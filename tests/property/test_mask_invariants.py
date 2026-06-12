@@ -128,7 +128,7 @@ def test_passthrough_is_identity(values):
     src = _df(values)["c"]
     # Identity: nulls and values both preserved, position-for-position.
     assert _null_mask(out["c"]) == _null_mask(src)
-    for a, b in zip(out["c"].tolist(), src.tolist()):
+    for a, b in zip(out["c"].tolist(), src.tolist(), strict=True):
         if pd.isna(a) and pd.isna(b):
             continue
         assert a == b
@@ -143,7 +143,7 @@ def test_redact_preserves_nulls_and_replaces_values(values):
     assert _null_mask(out["c"]) == _null_mask(src)
     # Every non-null becomes the constant; the only "source value" that may
     # survive is one that already equalled the redaction constant.
-    for o, s in zip(out["c"].tolist(), src.tolist()):
+    for o, s in zip(out["c"].tolist(), src.tolist(), strict=True):
         if pd.isna(s):
             continue
         assert o == "REDACTED"
@@ -159,13 +159,13 @@ def test_hash_null_preservation_and_determinism_and_joinability(values):
     # Null preservation.
     assert _null_mask(out1["c"]) == _null_mask(src)
     # Determinism: same seed+namespace+input -> identical tokens.
-    for a, b in zip(out1["c"].tolist(), out2["c"].tolist()):
+    for a, b in zip(out1["c"].tolist(), out2["c"].tolist(), strict=True):
         if pd.isna(a) and pd.isna(b):
             continue
         assert a == b
     # Joinability: equal source values -> equal tokens within a namespace.
     by_src: dict = {}
-    for s, t in zip(src.tolist(), out1["c"].tolist()):
+    for s, t in zip(src.tolist(), out1["c"].tolist(), strict=True):
         if pd.isna(s):
             continue
         by_src.setdefault(s, set()).add(t)
@@ -188,7 +188,7 @@ def test_hash_namespace_isolation(values):
     # For every non-null source value, the token must differ across namespaces.
     collisions = 0
     total = 0
-    for s, a, b in zip(src, out_a["c"].tolist(), out_b["c"].tolist()):
+    for s, a, b in zip(src, out_a["c"].tolist(), out_b["c"].tolist(), strict=True):
         if s is None:
             continue
         total += 1
@@ -222,7 +222,7 @@ def test_truncate_output_is_substring_within_length(values, length):
     out = _run(TruncateHandler(), _df(values), "c", seed)
     src = _df(values)["c"]
     assert _null_mask(out["c"]) == _null_mask(src)
-    for o, s in zip(out["c"].tolist(), src.tolist()):
+    for o, s in zip(out["c"].tolist(), src.tolist(), strict=True):
         if pd.isna(s):
             continue
         s_str = str(s)
@@ -241,7 +241,7 @@ def test_fpe_format_preserving_null_and_deterministic(values):
     out2 = _run(FpeStrategyHandler(chunk_count=4), _df(values), "c", seed)
     src = _df(values)["c"]
     assert _null_mask(out1["c"]) == _null_mask(src)
-    for o, s in zip(out1["c"].tolist(), src.tolist()):
+    for o, s in zip(out1["c"].tolist(), src.tolist(), strict=True):
         if pd.isna(s):
             continue
         # Format preservation: same length, still all digits.
@@ -249,7 +249,7 @@ def test_fpe_format_preserving_null_and_deterministic(values):
         assert o.isdigit()
     # Chunk-count invariance (the engine's own non-negotiable gate): chunk=1
     # and chunk=4 must be byte-identical.
-    for a, b in zip(out1["c"].tolist(), out2["c"].tolist()):
+    for a, b in zip(out1["c"].tolist(), out2["c"].tolist(), strict=True):
         if pd.isna(a) and pd.isna(b):
             continue
         assert a == b, "FPE chunk_count changed the output (parallelism non-determinism)"
@@ -265,7 +265,7 @@ def test_text_redact_preserves_nulls_and_never_emits_null_literals(values):
     # Null preservation: every source null stays null (audit H1: pd.NA /
     # pd.NaT previously leaked as the literal strings '<NA>' / 'NaT').
     assert _null_mask(out["c"]) == _null_mask(src)
-    for o, s in zip(out["c"].tolist(), src.tolist()):
+    for o, s in zip(out["c"].tolist(), src.tolist(), strict=True):
         if pd.isna(s):
             continue
         assert isinstance(o, str)
@@ -285,7 +285,7 @@ def test_date_shift_preserves_nulls_and_emits_valid_dates(values):
     for i, was_null in enumerate(src_null):
         if was_null:
             assert out_null[i], "date_shift invented a value for a null source"
-    for o, s in zip(out["c"].tolist(), src.tolist()):
+    for o, s in zip(out["c"].tolist(), src.tolist(), strict=True):
         if pd.isna(s) or pd.isna(o):
             continue
         # Output must be a real, parseable date.
