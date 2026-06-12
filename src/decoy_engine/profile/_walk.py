@@ -30,6 +30,7 @@ import random
 
 import pandas as pd
 
+from decoy_engine.internal.pandas_compat import canonical_dtype_label
 from decoy_engine.profile._pii import detect_pii_classes
 from decoy_engine.profile._types import ColumnProfile, PIIClass, TableProfile
 
@@ -162,7 +163,9 @@ def _walk_column(
 
     return ColumnProfile(
         name=name,
-        dtype=str(series.dtype),
+        # Audit M5: stable label across pandas majors (pandas-3 'str'
+        # normalizes to the historical 'object'); see internal.pandas_compat.
+        dtype=canonical_dtype_label(series.dtype),
         row_count=row_count,
         null_count=null_count,
         distinct_count=distinct_count,
@@ -173,3 +176,5 @@ def _walk_column(
         fk_target=fk_target,
         pii_class=pii_class,
     )
+
+

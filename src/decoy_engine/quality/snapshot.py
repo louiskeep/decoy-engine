@@ -49,6 +49,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from decoy_engine.internal.pandas_compat import canonical_dtype_label
+
 DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION = "distribution-snapshot/v1"
 
 # Determinism guard. Floating-point quantile / mean / std calculations can
@@ -139,7 +141,10 @@ def _column_snapshot(
     null_count = int(series.isna().sum())
     non_null_count = len(non_null)
     distinct_count = int(non_null.nunique()) if non_null_count else 0
-    dtype = str(series.dtype)
+    # Audit M5: stable label across pandas majors -- the snapshot digest
+    # is a USER-HELD baseline; pandas-3's 'str' label must not invalidate
+    # digests minted under pandas 2.x. See internal.pandas_compat.
+    dtype = canonical_dtype_label(series.dtype)
 
     if non_null_count == 0:
         return {
