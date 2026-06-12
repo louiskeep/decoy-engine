@@ -50,18 +50,24 @@ def _mask_strategies() -> list[tuple[str, str, str]]:
 
 
 def _generation_strategies() -> list[str]:
-    # Authoritative dispatch dict is ColumnGenerator.generators (instance-built).
-    # Construct with a fixed seed and read the keys; fall back to source parse.
+    # Authoritative source is the V2 config Literal on
+    # GenerateColumnConfig.type (the validation choke point every
+    # generate column passes through); union with V1's ColumnGenerator
+    # dispatch keys for any legacy-only type.
+    import typing
+
+    names: set[str] = set()
+    try:
+        from decoy_engine.config._tables import GenerateColumnConfig
+        names.update(typing.get_args(GenerateColumnConfig.model_fields["type"].annotation))
+    except Exception:
+        pass
     try:
         from decoy_engine.generators.columns import ColumnGenerator
-        return sorted(ColumnGenerator(seed=0).generators.keys())
+        names.update(ColumnGenerator(seed=0).generators.keys())
     except Exception:
-        import inspect
-        import re
-
-        from decoy_engine.generators import columns
-        src = inspect.getsource(columns)
-        return sorted(set(re.findall(r'"([a-z_]+)"\s*:\s*self\._generate_', src)))
+        pass
+    return sorted(names)
 
 
 def _providers() -> list[tuple[str, str, str, str]]:

@@ -26,9 +26,9 @@ support, disguises) must agree with this file; the drift-guard test enforces it.
 
 `nested` is an internal wrapper, not a user-facing strategy.
 
-## Generation strategies (6)
+## Generation strategies (7)
 
-`categorical`, `distribution`, `faker`, `formula`, `reference`, `sequence`
+`categorical`, `distribution`, `faker`, `formula`, `reference`, `sequence`, `statistical`
 
 ## Synthetic providers (34)
 
