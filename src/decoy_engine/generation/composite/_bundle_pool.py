@@ -24,6 +24,12 @@ from decoy_engine.generation.pool._value_pool import ValuePool
 class BundlePool(ValuePool):
     """A frozen pool whose `values` entries are tuples of length len(output_columns).
 
+    ORDER CONTRACT: tuple element ``j`` corresponds to
+    ``output_columns[j]``. ``PoolSampler.sample_bundle`` unpacks by
+    position, so a builder that assembles tuples in any other order
+    (e.g. declaration/slot order) silently writes every value into the
+    wrong column.
+
     Cache-keyed by the inherited 5-tuple identity (composite_name in the
     `provider` slot). Do not override `identity`.
     """

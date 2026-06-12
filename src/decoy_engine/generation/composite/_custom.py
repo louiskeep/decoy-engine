@@ -127,14 +127,30 @@ class CompositeCustom:
                 )
         self.coherent_namespace = coherent_namespace
         self.bundle = bundle
+        # Per-slot column lookup for the writeback step.
+        self._slot_columns: tuple[str, ...] = tuple(item["column"] for item in bundle)
+        if len(set(self._slot_columns)) != len(self._slot_columns):
+            raise CompositeError(
+                code="composite_custom_duplicate_columns",
+                message=(
+                    f"bundle declares duplicate column names {self._slot_columns!r}; "
+                    "the slot-to-column mapping requires unique columns."
+                ),
+            )
         # Output columns are sorted so they match the wiring-check
         # contract (sorted coherent group).
-        self.output_columns: tuple[str, ...] = tuple(sorted(item["column"] for item in bundle))
+        self.output_columns: tuple[str, ...] = tuple(sorted(self._slot_columns))
+        # Slot index for each output_columns position: BundlePool tuples
+        # must be ordered to match output_columns (the sampler unpacks
+        # tuple element j into output_columns[j]); the per-slot pools are
+        # built in bundle order, so the tuple assembly reorders through
+        # this map.
+        self._slot_for_output: tuple[int, ...] = tuple(
+            self._slot_columns.index(c) for c in self.output_columns
+        )
         self._registry = registry
         self._pool_size = pool_size
         self._pools: list[np.ndarray] | None = None
-        # Per-slot column lookup for the writeback step.
-        self._slot_columns: tuple[str, ...] = tuple(item["column"] for item in bundle)
 
     def _check_pool_size(self, size: int) -> None:
         if size > _POOL_SIZE_MAX:
@@ -191,8 +207,11 @@ class CompositeCustom:
         # One uniform draw per slot to form n coherent tuples.
         slot_indices = [rng.integers(0, len(pools[s]), size=n) for s in range(len(pools))]
         values = np.empty(n, dtype=object)
+        # Tuple element j must correspond to output_columns[j] (the
+        # sampler's unpack contract); pools are in slot order, so map
+        # each output position back to its slot.
         for k in range(n):
-            tup = tuple(pools[s][slot_indices[s][k]] for s in range(len(pools)))
+            tup = tuple(pools[s][slot_indices[s][k]] for s in self._slot_for_output)
             values[k] = tup
         values.setflags(write=False)
         return BundlePool(

@@ -188,3 +188,57 @@ class TestOutputColumnsShape:
             ],
         )
         assert c.output_columns == ("a", "m", "z")
+
+
+# ── slot-to-column mapping (audit H2) ─────────────────────────────────
+
+
+class TestSlotColumnMapping:
+    """Audit H2 (2026-06-12): build_pool handed the sampler tuples in
+    SLOT order while declaring alphabetically-sorted output_columns; the
+    sampler unpacks tuple element j into output_columns[j], so any
+    non-alphabetical bundle order put every value in the wrong column
+    (emails in the first-name column, etc.). The BundlePool contract is
+    'tuple element j corresponds to output_columns[j]' -- these cells
+    pin it for composite_custom on both sampler paths."""
+
+    _BUNDLE = [
+        {"column": "z_col", "provider": "person_first_name"},
+        {"column": "a_col", "provider": "person_last_name"},
+        {"column": "m_col", "provider": "person_email"},
+    ]
+
+    def test_non_deterministic_values_land_in_declared_columns(self):
+        gen = CompositeCustom(coherent_namespace="cust", bundle=self._BUNDLE, pool_size=50)
+        out = gen.generate_bundle(_spec(deterministic=False), 10)
+        assert set(out.keys()) == {"z_col", "a_col", "m_col"}
+        assert all("@" in v for v in out["m_col"]), "emails must land in m_col"
+        assert not any("@" in str(v) for v in out["z_col"])
+        assert not any("@" in str(v) for v in out["a_col"])
+
+    def test_deterministic_values_land_in_declared_columns(self):
+        gen = CompositeCustom(coherent_namespace="cust", bundle=self._BUNDLE, pool_size=50)
+        source = pd.Series([f"row-{i}" for i in range(10)])
+        out = gen.generate_bundle(_spec(deterministic=True), 10, source=source, deterministic=True)
+        assert all("@" in v for v in out["m_col"]), "emails must land in m_col"
+        assert not any("@" in str(v) for v in out["z_col"])
+        assert not any("@" in str(v) for v in out["a_col"])
+
+    def test_bundle_pool_tuple_order_matches_output_columns(self):
+        gen = CompositeCustom(coherent_namespace="cust", bundle=self._BUNDLE, pool_size=50)
+        pool = gen.build_pool(_spec(deterministic=False))
+        assert pool.output_columns == ("a_col", "m_col", "z_col")
+        email_pos = pool.output_columns.index("m_col")
+        for tup in pool.values[:10]:
+            assert "@" in tup[email_pos], (
+                "BundlePool tuples must be ordered to match output_columns"
+            )
+
+    def test_duplicate_bundle_columns_rejected(self):
+        dup = [
+            {"column": "c", "provider": "person_first_name"},
+            {"column": "c", "provider": "person_email"},
+        ]
+        with pytest.raises(CompositeError) as exc:
+            CompositeCustom(coherent_namespace="cust", bundle=dup)
+        assert exc.value.code == "composite_custom_duplicate_columns"
