@@ -94,6 +94,7 @@ from decoy_engine.execution import (
     run_pipeline,
     select_execution_adapter,
 )
+from decoy_engine.execution._chunked import run_mask_pipeline_chunked
 from decoy_engine.generation.composite import (
     BundlePool,
     CompositeAdapter,
@@ -356,6 +357,7 @@ __all__ = [
     "register_faker_provider_v2",
     "run_config_only_checks",
     "run_discovery_sql",
+    "run_mask_pipeline_chunked",
     "run_pipeline",
     "run_storm",
     "select_execution_adapter",

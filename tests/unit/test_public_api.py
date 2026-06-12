@@ -55,6 +55,8 @@ def test_all_lists_every_public_name():
         # Audit H5 (2026-06-12): profile-free compile-check subset for
         # config-only callers (decoy validate).
         "run_config_only_checks",
+        # WS4 chunked mask execution (2026-06-12).
+        "run_mask_pipeline_chunked",
         # WS1 detokenization (2026-06-12): fpe inversion entry + report types.
         "unmask_pipeline",
         "UnmaskColumnReport",

@@ -33,6 +33,11 @@ from decoy_engine.execution._adapter import (
     StrategyContext,
     StrategyHandler,
 )
+from decoy_engine.execution._chunked import (
+    CHUNK_SAFE_STRATEGIES,
+    check_chunked_compatibility,
+    run_mask_pipeline_chunked,
+)
 from decoy_engine.execution._errors import ExecutionError, StrategyError
 from decoy_engine.execution._events import ExecutionEvent
 from decoy_engine.execution._pandas_adapter import (
@@ -49,6 +54,7 @@ from decoy_engine.execution._substrate import (
 from decoy_engine.execution.polars import PolarsExecutionAdapter
 
 __all__ = [
+    "CHUNK_SAFE_STRATEGIES",
     "VALID_SUBSTRATES",
     "ExecutionAdapter",
     "ExecutionError",
@@ -61,10 +67,12 @@ __all__ = [
     "StrategyHandler",
     "WorkNode",
     "build_work_list",
+    "check_chunked_compatibility",
     "classify_table_kinds",
     "get_default_executor",
     "order_work",
     "resolve_substrate",
+    "run_mask_pipeline_chunked",
     "run_pipeline",
     "select_execution_adapter",
 ]

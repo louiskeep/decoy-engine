@@ -11,6 +11,19 @@ minimum engine version it was tested against via its
 
 ### Added (capability gaps, 2026-06-12)
 
+- **Chunked mask execution** (WS4). New public API
+  `run_mask_pipeline_chunked(config, chunks, *, table, engine_version)`
+  streams one table through the engine chunk-by-chunk for inputs too
+  large for memory. The contract is byte parity with a full-frame run,
+  honest because chunked mode only admits VALUE-KEYED strategies (hash,
+  fpe, redact, truncate, text_redact, date_shift, bucketize,
+  passthrough -- each output cell a pure function of its input cell +
+  config + seed). `check_chunked_compatibility` rejects shuffle,
+  composite/nested, faker/categorical (pool state; deferred),
+  relationship configs, and generate tables with typed codes. The plan
+  compiles once from a first-chunk profile; every chunk runs the
+  standard pandas adapter, so parity holds by construction.
+
 - **Multi-parent FK support** (WS5). A child column-tuple may now declare
   FK relationships to multiple parent tables (polymorphic/shared-domain
   keys). The child resolves through each parent's source->masked map in
