@@ -1223,6 +1223,7 @@ def iter_spans(
     detector_ids: list[str] | None = None,
     *,
     custom: list[dict] | None = None,
+    extra_spans: list[Span] | None = None,
 ) -> list[Span]:
     """Yield non-overlapping PII spans found in ``text``.
 
@@ -1236,6 +1237,12 @@ def iter_spans(
     Custom detectors run after the built-ins and are subject to the same
     overlap dedupe.
 
+    ``extra_spans`` (WS2, 2026-06-12) injects pre-computed spans -- e.g.
+    NER hits from `storm.ner.iter_ner_spans` -- into the SAME overlap
+    resolution as the regex spans, so a regex SSN and an NER person name
+    covering overlapping text resolve leftmost-then-longest instead of
+    double-splicing.
+
     Returns spans sorted by ``.start``, with overlaps resolved by keeping
     the leftmost-then-longest match.
     """
@@ -1244,7 +1251,7 @@ def iter_spans(
     if detector_ids is None:
         detector_ids = list(_SPAN_DETECTORS.keys())
 
-    raw_spans: list[Span] = []
+    raw_spans: list[Span] = list(extra_spans or [])
     for det_id in detector_ids:
         entry = _SPAN_DETECTORS.get(det_id)
         if entry is None:

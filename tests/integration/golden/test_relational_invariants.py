@@ -451,10 +451,12 @@ class TestRepeatedAcrossTablesInvariants:
 
 @pytest.mark.golden
 class TestMultiParentFkSyntheticConfig:
-    """S2 spec H2 resolution: an inline config that declares child.col as a
-    FK to two parents must fail compile with multi_parent_fk_unsupported."""
+    """Capability-gaps WS5 (2026-06-12): a config that declares child.col
+    as a FK to two parents COMPILES (executor resolves declared-order
+    first-hit-wins); conflicting per-edge orphan policies still fail
+    with orphan_policy_conflict."""
 
-    def test_multi_parent_fk_rejected_through_compile_plan(self) -> None:
+    def test_multi_parent_fk_compiles_through_compile_plan(self) -> None:
         parent_a = TableProfile(
             name="parent_a",
             row_count=10,
@@ -521,9 +523,18 @@ class TestMultiParentFkSyntheticConfig:
                 },
             ],
         }
+        plan = compile_plan(config, profile, decoy_engine_version="0.1.0")
+        parents_of_child = {
+            r.parent.table
+            for r in plan.relationships
+            if any(c.table == "child" for c in r.children)
+        }
+        assert parents_of_child == {"parent_a", "parent_b"}
+
+        config["relationships"][1]["orphan_policy"] = "preserve"
         with pytest.raises(PlanCompileError) as excinfo:
             compile_plan(config, profile, decoy_engine_version="0.1.0")
-        assert excinfo.value.code == "multi_parent_fk_unsupported"
+        assert excinfo.value.code == "orphan_policy_conflict"
 
 
 @pytest.mark.golden

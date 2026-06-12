@@ -94,6 +94,7 @@ from decoy_engine.execution import (
     run_pipeline,
     select_execution_adapter,
 )
+from decoy_engine.execution._chunked import run_mask_pipeline_chunked
 from decoy_engine.generation.composite import (
     BundlePool,
     CompositeAdapter,
@@ -198,6 +199,7 @@ from decoy_engine.sdk import (
     WriteResult,
 )
 from decoy_engine.storm import DetectorMatch, FieldStats, SentinelFlag, StormProfile, run_storm
+from decoy_engine.unmask import UnmaskColumnReport, UnmaskResult, unmask_pipeline
 from decoy_engine.validation import validate_config
 from decoy_engine.validation.post import (
     CompositeCoherenceReport,
@@ -317,6 +319,8 @@ __all__ = [
     "StructuredEvents",
     "TelemetryClient",
     "TransientError",
+    "UnmaskColumnReport",
+    "UnmaskResult",
     "ValidationError",
     "ValidationMessage",
     "ValidationResult",
@@ -353,9 +357,11 @@ __all__ = [
     "register_faker_provider_v2",
     "run_config_only_checks",
     "run_discovery_sql",
+    "run_mask_pipeline_chunked",
     "run_pipeline",
     "run_storm",
     "select_execution_adapter",
+    "unmask_pipeline",
     "unregister_faker_provider",
     "validate_config",
     "validate_plan",

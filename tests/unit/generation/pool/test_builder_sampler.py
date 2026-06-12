@@ -33,8 +33,10 @@ class TestPoolBuilder:
         assert len(pool.values) == 20
 
     def test_build_records_provider_and_backend_metadata(self) -> None:
-        pool = _builder().build("person_email", size=10, job_seed=_SEED)
-        assert pool.provider == "person_email"
+        # synthetic_member_id is poolable and stays Faker-bound regardless
+        # of mimesis adoption state, keeping the backend stamp assertable.
+        pool = _builder().build("synthetic_member_id", size=10, job_seed=_SEED)
+        assert pool.provider == "synthetic_member_id"
         assert pool.backend_type == "faker"
 
     def test_build_rejects_non_poolable_provider(self) -> None:

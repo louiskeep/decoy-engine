@@ -209,6 +209,11 @@ nitpick_ignore = [
     # `decoy_engine.exceptions`. autoapi records both targets, so any
     # cross-reference becomes ambiguous; the exceptions module is canonical.
     ("py:class", "ConfigError"),
+    # `ExecutionError` is defined in `execution/_errors.py` (autoapi-ignored
+    # private module) and re-exported via `decoy_engine.execution`; the
+    # Raises cross-reference from the public unmask module has no
+    # documented target to land on. Same class of issue as ConfigError.
+    ("py:exc", "ExecutionError"),
 ]
 
 # Private (underscore-prefixed) classes, the `decoy_engine.internal.*`

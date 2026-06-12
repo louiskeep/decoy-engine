@@ -53,20 +53,26 @@ def _mask_strategies() -> list[tuple[str, str, str]]:
 
 
 def _generation_strategies() -> list[str]:
-    # Authoritative dispatch dict is ColumnGenerator.generators (instance-built).
-    # Construct with a fixed seed and read the keys; fall back to source parse.
+    # Authoritative source is the V2 config Literal on
+    # GenerateColumnConfig.type (the validation choke point every
+    # generate column passes through); union with V1's ColumnGenerator
+    # dispatch keys for any legacy-only type.
+    import typing
+
+    names: set[str] = set()
+    try:
+        from decoy_engine.config._tables import GenerateColumnConfig
+
+        names.update(typing.get_args(GenerateColumnConfig.model_fields["type"].annotation))
+    except Exception:
+        pass
     try:
         from decoy_engine.generators.columns import ColumnGenerator
 
-        return sorted(ColumnGenerator(seed=0).generators.keys())
+        names.update(ColumnGenerator(seed=0).generators.keys())
     except Exception:
-        import inspect
-        import re
-
-        from decoy_engine.generators import columns
-
-        src = inspect.getsource(columns)
-        return sorted(set(re.findall(r'"([a-z_]+)"\s*:\s*self\._generate_', src)))
+        pass
+    return sorted(names)
 
 
 def _providers() -> list[tuple[str, str, str, str]]:
@@ -74,13 +80,35 @@ def _providers() -> list[tuple[str, str, str, str]]:
     # _CATALOG carries only the Faker-bound subset (19), silently
     # omitting the DecoyNative identifier providers and the composites;
     # the registry is the runtime truth (34 at the time of this fix).
+    import importlib.util
+
+    import decoy_engine
     from decoy_engine.providers_v2 import get_default_registry
+
+    # Adopted Mimesis providers bind to faker or mimesis depending on whether
+    # the optional extra is installed. The doc must not depend on the
+    # generating machine's install state, so render the combined label.
+    # _adoption_matrix is pure data, but a normal import executes the
+    # mimesis package __init__, which raises when the extra is absent
+    # (CI installs [dev] only) -- so load the data module straight from
+    # its file, bypassing the package init.
+    matrix_path = (
+        Path(decoy_engine.__file__).parent / "providers_v2" / "mimesis" / "_adoption_matrix.py"
+    )
+    spec = importlib.util.spec_from_file_location("_decoy_adoption_matrix", matrix_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load adoption matrix from {matrix_path}")
+    matrix_mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(matrix_mod)
+    adopted_mimesis = frozenset(matrix_mod.ADOPTED_MIMESIS_PROVIDERS)
 
     registry = get_default_registry()
     rows = []
     for name in sorted(registry.known_providers()):
         d = registry.get_capabilities(name).model_dump()
         backend = d.get("backend_type") or ""
+        if name in adopted_mimesis:
+            backend = "faker (mimesis with the `mimesis` extra)"
         deterministic = "yes" if d.get("supports_deterministic") else "no"
         unique = "yes" if d.get("supports_uniqueness") else "no"
         rows.append((str(name), str(backend), deterministic, unique))

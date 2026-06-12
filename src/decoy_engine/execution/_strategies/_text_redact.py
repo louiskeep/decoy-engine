@@ -67,6 +67,24 @@ class TextRedactHandler:
         if not isinstance(token, str):
             return df, []
 
+        # WS2 (2026-06-12): opt-in NER spans for person_name/location --
+        # the categories the regex catalog deliberately cannot cover.
+        # `ner: true` or `ner: {model: ..., entities: [...]}`. Off by
+        # default: model load + per-cell inference is a real cost.
+        ner_cfg = cfg.get("ner")
+        ner_model: str | None = None
+        ner_entities: list[str] | None = None
+        if ner_cfg:
+            from decoy_engine.storm.ner import DEFAULT_NER_MODEL
+
+            if isinstance(ner_cfg, dict):
+                ner_model = str(ner_cfg.get("model") or DEFAULT_NER_MODEL)
+                raw_entities = ner_cfg.get("entities")
+                if isinstance(raw_entities, (list, tuple)) and raw_entities:
+                    ner_entities = [str(e) for e in raw_entities]
+            else:
+                ner_model = DEFAULT_NER_MODEL
+
         detector_ids: list[str] | None
         if detectors_cfg is None:
             detector_ids = None
@@ -106,7 +124,12 @@ class TextRedactHandler:
                 continue
             if not isinstance(text, str):
                 text = str(text)
-            spans = iter_spans(text, detector_ids)
+            extra: list[Span] | None = None
+            if ner_model is not None:
+                from decoy_engine.storm.ner import iter_ner_spans
+
+                extra = iter_ner_spans(text, model=ner_model, entities=ner_entities)
+            spans = iter_spans(text, detector_ids, extra_spans=extra)
             if not spans:
                 col_values[pos] = text
                 continue

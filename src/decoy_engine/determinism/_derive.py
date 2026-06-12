@@ -77,7 +77,17 @@ from decoy_engine.determinism._hkdf import hkdf_sha256
 # pipeline that uses `hash(col)` inside a formula column. The
 # legacy primitive is still callable via the public surface but
 # emits a DeprecationWarning (QA-internal F12, 2026-06-01).
-SEED_PROTOCOL_VERSION: int = 4
+#
+# WS1 detokenization (2026-06-12): bump to v5. Two coordinated
+# FPE output-shifting changes: (a) the Feistel key moved from
+# per-value `derive(seed, ns, canonicalize(value))` to one key per
+# (seed, namespace) `derive(seed, ns, b"fpe-key/v1")` -- the NIST
+# SP 800-38G FF1 key model -- making ciphertext decryptable via
+# decoy_engine.unmask; (b) validate_luhn permutes the body and
+# appends the check digit instead of overwriting the last encrypted
+# digit (the old shape discarded a character and was irreversible).
+# Output bytes change for every fpe column. Pre-GA, hard cutover.
+SEED_PROTOCOL_VERSION: int = 5
 
 _SALT = b"decoy-engine/determinism/v1"
 _SEED_LENGTH = 8  # exactly 8 bytes; raises on any other length

@@ -9,6 +9,70 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (capability gaps, 2026-06-12)
+
+- **Chunked mask execution** (WS4). New public API
+  `run_mask_pipeline_chunked(config, chunks, *, table, engine_version)`
+  streams one table through the engine chunk-by-chunk for inputs too
+  large for memory. The contract is byte parity with a full-frame run,
+  honest because chunked mode only admits VALUE-KEYED strategies (hash,
+  fpe, redact, truncate, text_redact, date_shift, bucketize,
+  passthrough -- each output cell a pure function of its input cell +
+  config + seed). `check_chunked_compatibility` rejects shuffle,
+  composite/nested, faker/categorical (pool state; deferred),
+  relationship configs, and generate tables with typed codes. The plan
+  compiles once from a first-chunk profile; every chunk runs the
+  standard pandas adapter, so parity holds by construction.
+
+- **Multi-parent FK support** (WS5). A child column-tuple may now declare
+  FK relationships to multiple parent tables (polymorphic/shared-domain
+  keys). The child resolves through each parent's source->masked map in
+  DECLARED CONFIG ORDER, first hit wins; a row is an orphan only when
+  absent from every parent map. Per-edge orphan policies on a shared
+  child tuple must agree (new error `orphan_policy_conflict`).
+  BEHAVIOR CHANGE: the S2-era `multi_parent_fk_unsupported` rejection is
+  gone -- configs it used to reject now compile and run.
+
+- **NER-backed text_redact** (WS2). New opt-in `ner` key on text_redact's
+  provider_config (`ner: true` or `ner: {model: ..., entities: [...]}`)
+  detects person names and locations via spaCy NER -- the two categories
+  the regex span catalog deliberately cannot cover -- and merges those
+  spans into the same leftmost-longest overlap resolution as the regex
+  detectors (`iter_spans` gains an additive `extra_spans` kwarg). New
+  optional extra `decoy-engine[ner]`; the model installs separately via
+  `python -m spacy download en_core_web_sm`. New compile check row 13
+  (`text_redact_ner_available`) rejects an ner-enabled config when spacy
+  or the model is missing on this host (checks_passed grows 12 -> 13).
+  Off by default; the no-ner path is byte-identical to before.
+
+- **`statistical` generate type** (WS3). Samples synthetic columns from a
+  `distribution-snapshot/v1` artifact (the existing quality/snapshot
+  schema is the fitted model): histogram inverse-CDF for numeric
+  (Devroye), weighted top-k for categorical with
+  `other_mode: redistribute|emit`, year-bin sampling for datetime, and
+  `condition_on` declared-pair conditional sampling from the snapshot's
+  joint contingency tables (synthpop-style). Categorical columns require
+  the explicit `allow_real_categories: true` disclosure opt-in (snapshot
+  top_values carry real source values; DP is out of scope for v1).
+  Per-row seeded (chunk-safe), pure-Python sampling (bit-stable).
+  New compile check `statistical_columns` (row 12) validates config +
+  artifact at validate time; `checks_passed` grows 11 -> 12.
+
+- **`decoy_engine.unmask_pipeline` detokenization API** (WS1): inverts
+  fpe columns of a masked output under the same config; per-column
+  reversibility report. See the fpe re-keying entry under Changed.
+
+- **Mimesis backend adoption completed** (closes the S7 evaluation that was
+  built but never run). With the `mimesis` extra installed, five person
+  providers (`person_name`, `person_first_name`, `person_last_name`,
+  `person_full_name`, `person_email`) now bind to MimesisAdapter, 17-55x
+  faster than Faker with checks 1-6 parity green. Without the extra,
+  behavior is byte-identical to before. The other 6 candidates were
+  rejected with evidence (speed or length/distribution parity); see
+  `docs/mimesis-adoption-2026-06-12.md`. The extra is now pinned
+  `mimesis>=19.0,<20` (evaluated on 19.1.0), and a seeded CI tripwire
+  re-runs gating parity for adopted providers.
+
 ### Fixed (audit remediation, 2026-06-12)
 
 Findings from the 2026-06-11 full-codebase audit. Behavior changes are

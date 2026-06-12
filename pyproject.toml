@@ -126,8 +126,17 @@ lint = [
 # default install does NOT pull it; MimesisAdapter imports behind a
 # try/except and the default registry stays Faker/DecoyNative-only unless
 # `mimesis` is installed AND a provider is in the adoption matrix.
+# Upper bound: the adoption matrix was evaluated against 19.x (2026-06-12);
+# a major bump re-runs the parity evaluation before widening.
 mimesis = [
-    "mimesis>=14.0",
+    "mimesis>=19.0,<20",
+]
+# Capability-gaps WS2 (2026-06-12): spaCy NER backs text_redact's
+# person_name/location span detection (opt-in `ner` config key). The
+# language model is NOT pip-resolvable; install it separately:
+# `python -m spacy download en_core_web_sm`.
+ner = [
+    "spacy>=3.7,<4",
 ]
 # Sphinx + sphinx-autoapi build the API reference site published to
 # GitHub Pages. Build from the repo root via `pip install -e .[docs]`
@@ -509,6 +518,11 @@ module = [
     # not installed in default-extras CI.
     "mimesis",
     "mimesis.*",
+    # spacy (MIT) is the optional NER backend for text_redact (the
+    # `ner` extra); imported function-locally in storm.ner, not
+    # installed in default-extras CI.
+    "spacy",
+    "spacy.*",
     "pandas",
     "pandas.*",
     "polars",

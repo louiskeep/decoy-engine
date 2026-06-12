@@ -113,11 +113,11 @@ class TestSeedProtocolVersionStamp:
     F3 PO Q-F3=b (2026-06-01) bumped to v3 for the vectorised null-
     injection RNG-family swap; formula-hash migration to keyed
     HMAC-SHA256 (2026-06-01) bumps to v4. Every shipped plan now
-    stamps `seed_protocol_version == 4`."""
+    stamps `seed_protocol_version == 5`."""
 
     def test_plan_stamps_v4(self) -> None:
         plan = compile_plan(_minimal_config(), _minimal_profile(), decoy_engine_version="0.1.0")
-        assert plan.seed_protocol_version == 4
+        assert plan.seed_protocol_version == 5
 
 
 class TestJobSeedBytesShape:

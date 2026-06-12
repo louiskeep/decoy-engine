@@ -107,9 +107,10 @@ class GenerateColumnConfig(BaseModel):
     name: str
     # The closed set of generators v2 supports. Reading B: this mirrors V1
     # ColumnGenerator.generators (faker/sequence/categorical/formula/reference).
-    # `distribution` is V2+/fast-follow (column-replacer arity); `reference` lands
-    # in S6-ENG-3 as the column-level mint-a-pool FK path.
-    type: Literal["faker", "sequence", "categorical", "formula", "reference"]
+    # `reference` lands in S6-ENG-3 as the column-level mint-a-pool FK path.
+    # `statistical` (capability-gaps WS3, 2026-06-12) samples from a
+    # distribution-snapshot/v1 artifact; see generation/statistical.
+    type: Literal["faker", "sequence", "categorical", "formula", "reference", "statistical"]
 
     @model_validator(mode="after")
     def _reference_params_required(self) -> GenerateColumnConfig:
@@ -153,6 +154,8 @@ class GenerateColumnConfig(BaseModel):
             raise ValueError(f"categorical column {self.name!r} requires `categories`")
         if self.type == "formula" and not extras.get("formula"):
             raise ValueError(f"formula column {self.name!r} requires `formula`")
+        if self.type == "statistical" and not extras.get("snapshot_file"):
+            raise ValueError(f"statistical column {self.name!r} requires `snapshot_file`")
         return self
 
 

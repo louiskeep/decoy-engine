@@ -36,7 +36,25 @@ MIMESIS_CANDIDATES: frozenset[str] = frozenset(
 )
 
 # Providers actually bound to MimesisAdapter in the default registry build.
-# Empty at S7 close: the parity suite + benchmarks populate this only when a
-# candidate clears the adoption gate (items 1-6 pass AND ratio < 0.20). Until
-# then the default registry stays 24 providers (19 Faker + 5 DecoyNative).
-ADOPTED_MIMESIS_PROVIDERS: frozenset[str] = frozenset()
+# Populated 2026-06-12 from the first full adoption evaluation (mimesis
+# 19.1.0, n=10_000 per provider, en_US): the five person string providers
+# cleared the gate with ratios 0.018-0.060 (17-55x faster than Faker) and
+# checks 1-6 green. person_first_name failed only advisory check 7, with
+# MORE distinct values than Faker (3103 vs 656); adopted per is_adoptable.
+# Rejected with evidence (do not re-add without a fresh passing run):
+#   address_state  ratio 0.37   (speed)
+#   address_zip    ratio 0.82   (speed)
+#   person_dob     ratio 0.20-0.25 over 4 runs (speed, stable fail)
+#   address_city   length mean 9.2 vs 11.99, distribution 1749 vs 7735
+#   address_street length mean 7.3 vs 22.4, distribution 2307 vs 10000
+#   person_phone   length mean 13.5 vs 16.2
+# Full results table: docs/mimesis-adoption-2026-06-12.md.
+ADOPTED_MIMESIS_PROVIDERS: frozenset[str] = frozenset(
+    {
+        "person_name",
+        "person_first_name",
+        "person_last_name",
+        "person_full_name",
+        "person_email",
+    }
+)

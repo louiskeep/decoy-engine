@@ -292,12 +292,74 @@ class TestParitySuite:
         assert is_adoptable(broken) is False  # determinism failed
 
 
+# Adoption evaluation outcome (2026-06-12, mimesis 19.1.0): the five person
+# string providers cleared the gate (checks 1-6 pass, ratios 0.018-0.060).
+# Failers: address_state 0.37 / address_zip 0.82 / person_dob 0.20-0.25 on
+# speed; address_city, address_street, person_phone on length parity.
+# person_first_name fails only advisory check 7 with MORE distinct values
+# than Faker (3103 vs 656) -- richer pool, adopted per the is_adoptable
+# predicate. Full results: docs/mimesis-adoption-2026-06-12.md.
+_EVALUATED_ADOPTED = frozenset(
+    {
+        "person_name",
+        "person_first_name",
+        "person_last_name",
+        "person_full_name",
+        "person_email",
+    }
+)
+
+
 class TestAdoptionMatrix:
-    def test_adopted_empty_at_s7_close(self) -> None:
-        assert frozenset() == ADOPTED_MIMESIS_PROVIDERS
+    def test_adopted_set_matches_2026_06_12_evaluation(self) -> None:
+        assert _EVALUATED_ADOPTED == ADOPTED_MIMESIS_PROVIDERS
 
     def test_adopted_is_subset_of_candidates(self) -> None:
         assert ADOPTED_MIMESIS_PROVIDERS <= MIMESIS_CANDIDATES
+
+    def test_adopted_providers_bind_to_mimesis_adapter(self) -> None:
+        registry = get_default_registry()
+        for provider in ADOPTED_MIMESIS_PROVIDERS:
+            adapter = registry.get_adapter(provider)
+            assert isinstance(adapter, MimesisAdapter), provider
+
+    def test_non_adopted_candidates_stay_on_faker(self) -> None:
+        registry = get_default_registry()
+        for provider in MIMESIS_CANDIDATES - ADOPTED_MIMESIS_PROVIDERS:
+            adapter = registry.get_adapter(provider)
+            assert isinstance(adapter, FakerAdapter), provider
+
+
+class TestAdoptionDriftTripwire:
+    """Gating checks 1-6 must keep passing for every adopted provider.
+
+    A mimesis (or Faker) upgrade that breaks behavior parity for an adopted
+    provider must fail CI, not silently ship divergent pools. Samples are
+    SEEDED so the verdict is deterministic per dependency version: only a
+    real behavior change in either backend can flip it, never sampling
+    noise (person_full_name max-length parity sits near the 20% tolerance,
+    so unseeded samples flake). The benchmark ratio is deliberately not
+    asserted: CI timing is noisy and speed regressions do not corrupt
+    output. Re-evaluate ratios manually on dependency bumps (see
+    docs/mimesis-adoption-2026-06-12.md)."""
+
+    @pytest.mark.parametrize("provider", sorted(_EVALUATED_ADOPTED))
+    def test_gating_checks_still_pass(self, provider: str) -> None:
+        from decoy_engine.providers_v2.mimesis._parity import check_locale
+
+        spec = _seeded()
+        m = list(MimesisAdapter().generate_batch(provider, spec=spec, count=2_000))
+        f = list(FakerAdapter().generate_batch(provider, spec=spec, count=2_000))
+        verdicts = {
+            "dtype": check_dtype(m, f),
+            "null": check_null(m, f),
+            "locale": check_locale("en_US"),
+            "length": check_length(m, f),
+            "format": check_format(provider, m),
+            "determinism": check_determinism(provider, "en_US"),
+        }
+        failed = {c: d for c, (ok, d) in verdicts.items() if not ok}
+        assert not failed, f"{provider}: gating parity checks now fail: {failed}"
 
     def test_candidates_match_spec(self) -> None:
         assert (

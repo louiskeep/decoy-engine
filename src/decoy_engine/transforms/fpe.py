@@ -81,6 +81,25 @@ def _feistel(key: bytes, tweak: bytes, x: int, u_mod: int, v_mod: int) -> int:
     return A * v_mod + B
 
 
+def _feistel_inverse(key: bytes, tweak: bytes, y: int, u_mod: int, v_mod: int) -> int:
+    """Inverse of `_feistel`: undo the rounds in reverse order.
+
+    Each round only modifies one half using the OTHER half as the PRF
+    operand, so at undo time the operand still holds the value it had
+    when the round was applied; subtracting the same PRF output mod the
+    same modulus restores the half exactly (additive Feistel inversion,
+    the textbook construction property; Feistel 1973)."""
+    A, B = divmod(y, v_mod)
+    for i in reversed(range(_ROUNDS)):
+        if i % 2 == 0:
+            F = int.from_bytes(_prf(key, i, tweak, B), "big") % u_mod
+            A = (A - F) % u_mod
+        else:
+            F = int.from_bytes(_prf(key, i, tweak, A), "big") % v_mod
+            B = (B - F) % v_mod
+    return A * v_mod + B
+
+
 def _encode(s: str, charset: str, char_to_idx: dict[str, int] | None = None) -> int:
     """Encode a string over `charset` as a base-r integer.
 
@@ -121,6 +140,134 @@ def _luhn_check_digit(body: str) -> str:
                 n -= 9
         total += n
     return str((10 - total % 10) % 10)
+
+
+def _char_lookup(charset: str) -> dict[str, int]:
+    # F5 fix: pre-computed {char: index} lookup (built once per charset at
+    # module load) replaces O(r) charset.index() per character; per-call
+    # dict for custom charsets keeps O(n) instead of O(n*r).
+    lookup = _CHARSET_INDEX.get(charset)
+    if lookup is None:
+        lookup = {ch: i for i, ch in enumerate(charset)}
+    return lookup
+
+
+def _single_char_shift(key: bytes, tweak: bytes) -> int:
+    """Keyed rotation amount for the degenerate single-character case.
+
+    QA-10 F2 (2026-06-01): the shift depends on (key, tweak) only, NOT on
+    the source character, so the map is a uniform alphabet rotation
+    (trivially bijective; see the original fix note)."""
+    msg = b"fpe-single\xff" + tweak
+    return int.from_bytes(hmac.new(key, msg, hashlib.sha256).digest(), "big")
+
+
+def _permute(s: str, key: bytes, charset: str, tweak: bytes, *, forward: bool) -> str:
+    """Feistel-permute (or invert) a string made entirely of charset chars."""
+    n = len(s)
+    if n == 0:
+        return s
+    if n == 1:
+        idx = charset.index(s[0])
+        F = _single_char_shift(key, tweak)
+        shift = F if forward else -F
+        return charset[(idx + shift) % len(charset)]
+    u = (n + 1) // 2  # ceil(n/2)
+    v = n - u  # floor(n/2)
+    u_mod = len(charset) ** u
+    v_mod = len(charset) ** v
+    x = _encode(s, charset, _char_lookup(charset))
+    fn = _feistel if forward else _feistel_inverse
+    y = fn(key, tweak, x, u_mod, v_mod)
+    return _decode(y, charset, n)
+
+
+def _fpe_pure_value(
+    s: str, key: bytes, charset: str, tweak: bytes, validate_luhn: bool, *, forward: bool
+) -> str:
+    """FPE (or invert) a string consisting entirely of charset characters.
+
+    Luhn mode permutes the BODY (all chars but the last) and appends the
+    Luhn check digit of the result, in both directions. Encrypt output is
+    Luhn-valid by construction; decrypt restores the body exactly and
+    recomputes the check digit, so a Luhn-valid source (the domain the
+    mode exists for: PANs) round-trips byte-exactly. The pre-WS1 shape
+    (permute all n chars, overwrite the last with the check digit)
+    discarded one encrypted character and was therefore not invertible;
+    the change is covered by the SEED_PROTOCOL_VERSION 4 -> 5 bump."""
+    if validate_luhn and len(s) >= 2:
+        body = _permute(s[:-1], key, charset, tweak, forward=forward)
+        return body + _luhn_check_digit(body)
+    return _permute(s, key, charset, tweak, forward=forward)
+
+
+def _fpe_value(
+    val: str,
+    key: bytes,
+    charset: str,
+    tweak: bytes,
+    preserve_separators: bool,
+    validate_luhn: bool,
+    *,
+    forward: bool,
+) -> str:
+    """Shared encrypt/decrypt orchestration over one value.
+
+    Separator handling is symmetric: charset characters are extracted,
+    permuted as one string, and written back to their original positions,
+    so decrypt sees exactly the layout encrypt produced. Values with no
+    charset characters (or, with preserve_separators=false, any
+    out-of-charset character) pass through unchanged in both directions."""
+    if not val:
+        return val
+    charset_set = set(charset)
+    if preserve_separators:
+        positions = [i for i, ch in enumerate(val) if ch in charset_set]
+        if not positions:
+            return val
+        body = _fpe_pure_value(
+            "".join(val[i] for i in positions),
+            key,
+            charset,
+            tweak,
+            validate_luhn,
+            forward=forward,
+        )
+        result = list(val)
+        for pos, ch in zip(positions, body, strict=False):
+            result[pos] = ch
+        return "".join(result)
+    if not all(ch in charset_set for ch in val):
+        return val
+    return _fpe_pure_value(val, key, charset, tweak, validate_luhn, forward=forward)
+
+
+def fpe_encrypt_value(
+    val: str,
+    key: bytes,
+    charset: str,
+    tweak: bytes,
+    preserve_separators: bool = True,
+    validate_luhn: bool = False,
+) -> str:
+    """Encrypt one value with the keyed format-preserving permutation."""
+    return _fpe_value(val, key, charset, tweak, preserve_separators, validate_luhn, forward=True)
+
+
+def fpe_decrypt_value(
+    val: str,
+    key: bytes,
+    charset: str,
+    tweak: bytes,
+    preserve_separators: bool = True,
+    validate_luhn: bool = False,
+) -> str:
+    """Invert `fpe_encrypt_value` under the same (key, charset, tweak, config).
+
+    With validate_luhn=true the trailing check digit is recomputed rather
+    than stored, so the round-trip is exact iff the source satisfied Luhn
+    (see `_fpe_pure_value`)."""
+    return _fpe_value(val, key, charset, tweak, preserve_separators, validate_luhn, forward=False)
 
 
 class FPEStrategy(BaseMaskingStrategy):
@@ -210,34 +357,13 @@ class FPEStrategy(BaseMaskingStrategy):
         validate_luhn: bool,
         column_name: str,
     ) -> str:
-        if not val:
-            return val
-        charset_set = set(charset)
-
-        if preserve_sep:
-            charset_indices = []
-            charset_chars = []
-            for i, ch in enumerate(val):
-                if ch in charset_set:
-                    charset_indices.append(i)
-                    charset_chars.append(ch)
-            if not charset_chars:
-                return val
-            encrypted_body = self._fpe_pure(
-                "".join(charset_chars), key, charset, tweak, validate_luhn
+        if not preserve_sep and val and not all(ch in set(charset) for ch in val):
+            self.logger.warning(
+                f"fpe: value for '{column_name}' contains characters outside "
+                f"charset and preserve_separators=false; passing through unchanged"
             )
-            result = list(val)
-            for pos, enc_ch in zip(charset_indices, encrypted_body, strict=False):
-                result[pos] = enc_ch
-            return "".join(result)
-        else:
-            if not all(ch in charset_set for ch in val):
-                self.logger.warning(
-                    f"fpe: value for '{column_name}' contains characters outside "
-                    f"charset and preserve_separators=false; passing through unchanged"
-                )
-                return val
-            return self._fpe_pure(val, key, charset, tweak, validate_luhn)
+            return val
+        return fpe_encrypt_value(val, key, charset, tweak, preserve_sep, validate_luhn)
 
     def _fpe_pure(
         self,
@@ -247,47 +373,11 @@ class FPEStrategy(BaseMaskingStrategy):
         tweak: bytes,
         validate_luhn: bool,
     ) -> str:
-        """FPE a string consisting entirely of charset characters."""
-        n = len(s)
-        if n == 0:
-            return s
+        """FPE a string consisting entirely of charset characters.
 
-        if n == 1:
-            # Degenerate single-character case: keyed modular shift.
-            # QA-10 F2 (2026-06-01): F depends on (key, tweak) only,
-            # NOT on the source character. Pre-fix `msg` included
-            # `s.encode()` which made F vary per character; the output
-            # `charset[(idx + F_i) % r]` could then collide for distinct
-            # source characters (probability ~1/r per key). Post-fix F
-            # is the same for every character in the charset, making the
-            # function a uniform rotation of the alphabet, which is
-            # trivially bijective. Format-preserving deduplication is
-            # restored for single-character FK columns.
-            idx = charset.index(s[0])
-            msg = b"fpe-single\xff" + tweak
-            F = int.from_bytes(hmac.new(key, msg, hashlib.sha256).digest(), "big")
-            return charset[(idx + F) % len(charset)]
-
-        u = (n + 1) // 2  # ceil(n/2)
-        v = n - u  # floor(n/2)
-        u_mod = len(charset) ** u
-        v_mod = len(charset) ** v
-
-        # F5 fix: pre-computed {char: index} lookup (build once per charset
-        # at module load) replaces O(r) charset.index() per character.
-        # Falls back to a per-call dict for any custom charset that's not
-        # in the standard registry (still O(n) instead of O(n*r)).
-        char_to_idx = _CHARSET_INDEX.get(charset)
-        if char_to_idx is None:
-            char_to_idx = {ch: i for i, ch in enumerate(charset)}
-        x = _encode(s, charset, char_to_idx)
-        y = _feistel(key, tweak, x, u_mod, v_mod)
-        result = _decode(y, charset, n)
-
-        if validate_luhn and n >= 2:
-            result = result[:-1] + _luhn_check_digit(result[:-1])
-
-        return result
+        Kept as a thin delegate for established callers; the shared
+        forward/inverse implementation lives in `_fpe_pure_value`."""
+        return _fpe_pure_value(s, key, charset, tweak, validate_luhn, forward=True)
 
     def _column_key(self, column_name: str) -> bytes | None:
         """Derive the mask sub-key from the master key resolver (same pattern as HashStrategy).

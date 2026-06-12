@@ -306,5 +306,31 @@ def test_date_shift_preserves_nulls_and_emits_valid_dates(values):
         assert pd.notna(pd.to_datetime(o, errors="coerce")), f"date_shift emitted non-date {o!r}"
 
 
+# ── fpe round-trip (WS1 detokenization) ─────────────────────────────────────
+_FPE_CHARSETS = st.sampled_from(["digits", "alpha", "ALPHA", "alphanum", "ALPHANUM"])
+
+
+@given(
+    charset_name=_FPE_CHARSETS,
+    key=st.binary(min_size=32, max_size=32),
+    tweak=st.binary(min_size=1, max_size=32),
+    body_len=st.integers(min_value=1, max_value=24),
+    data=st.data(),
+)
+def test_fpe_decrypt_inverts_encrypt(charset_name, key, tweak, body_len, data):
+    from decoy_engine.transforms.fpe import (
+        _CHARSETS,
+        fpe_decrypt_value,
+        fpe_encrypt_value,
+    )
+
+    charset = _CHARSETS[charset_name]
+    value = "".join(data.draw(st.sampled_from(charset)) for _ in range(body_len))
+    enc = fpe_encrypt_value(value, key, charset, tweak)
+    assert len(enc) == len(value)
+    assert all(ch in charset for ch in enc)
+    assert fpe_decrypt_value(enc, key, charset, tweak) == value
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-q"])

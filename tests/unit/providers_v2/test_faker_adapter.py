@@ -25,7 +25,11 @@ def _spec(**overrides) -> ProviderSpec:
 
 
 def _adapter():
-    return get_default_registry().get_adapter("person_email")
+    # This module tests FakerAdapter specifically. Fetch it via a provider
+    # that stays Faker-bound regardless of mimesis adoption state
+    # (person_* providers rebind to MimesisAdapter when the extra is
+    # installed; synthetic_member_id is not an adoption candidate).
+    return get_default_registry().get_adapter("synthetic_member_id")
 
 
 class TestNonDeterministicGenerate:

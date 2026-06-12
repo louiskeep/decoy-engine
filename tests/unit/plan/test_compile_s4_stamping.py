@@ -19,9 +19,14 @@ class TestRegistryStamps:
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
         per_table = dict(plan.seed_envelope.per_table)
         per_column = dict(per_table["customers"].per_column)
-        # `name` is the column with strategy in simple_config; its provider
-        # is "person_name" which the registry binds to FakerAdapter.
-        assert per_column["name"].backend_type == "faker"
+        # `name` is the column with strategy in simple_config; its provider is
+        # "person_name". The stamp must mirror whatever the live registry
+        # binds (faker by default, mimesis when the extra is installed and
+        # the provider is adopted) -- THAT mirroring is the H1 contract.
+        from decoy_engine.providers_v2 import get_default_registry
+
+        expected = get_default_registry().get_capabilities("person_name").backend_type
+        assert per_column["name"].backend_type == expected
 
     def test_backend_version_from_registry(
         self, simple_config: dict, simple_profile: Profile
@@ -29,8 +34,12 @@ class TestRegistryStamps:
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
         per_table = dict(plan.seed_envelope.per_table)
         per_column = dict(per_table["customers"].per_column)
-        # H1: registry stamps the real faker version, not the "stub-0" S1 default.
-        assert per_column["name"].backend_version == faker_module.VERSION
+        # H1: registry stamps the bound backend's real version, not the
+        # "stub-0" S1 default.
+        from decoy_engine.providers_v2 import get_default_registry
+
+        expected = get_default_registry().get_capabilities("person_name").backend_version
+        assert per_column["name"].backend_version == expected
         assert per_column["name"].backend_version != "stub-0"
 
 
@@ -48,8 +57,8 @@ class TestUserOverrideWarning:
                         {
                             "name": "name",
                             "strategy": "faker_name",
-                            "provider": "person_name",
-                            "backend_type": "mimesis",  # contradicts registry
+                            "provider": "synthetic_member_id",
+                            "backend_type": "mimesis",  # contradicts registry (faker-bound, never adopted)
                             "cardinality_mode": "reuse",
                         }
                     ],
@@ -84,7 +93,7 @@ class TestUserOverrideWarning:
                         {
                             "name": "name",
                             "strategy": "faker_name",
-                            "provider": "person_name",
+                            "provider": "synthetic_member_id",
                             "backend_version": "0.0.0-fake",
                             "cardinality_mode": "reuse",
                         }
@@ -119,8 +128,8 @@ class TestUserOverrideWarning:
                         {
                             "name": "name",
                             "strategy": "faker_name",
-                            "provider": "person_name",
-                            "backend_type": "faker",  # matches registry
+                            "provider": "synthetic_member_id",
+                            "backend_type": "faker",  # matches registry (faker-bound, never adopted)
                             "backend_version": faker_module.VERSION,  # matches registry
                             "cardinality_mode": "reuse",
                         }

@@ -20,23 +20,24 @@ class TestCompilePlanHappyPath:
         assert isinstance(plan, Plan)
 
     def test_compile_stamps_versions(self, simple_config: dict, simple_profile: Profile) -> None:
-        """S3 bumped seed_protocol_version 0 -> 1; the F-series corrections
-        bump 1 -> 2 (coordinated Faker-seeding + canonicalize-integer
-        fixes). 2 -> 3 (QA walks/generators F3 null-injection
-        vectorisation, PO Q-F3=b 2026-06-01)."""
+        """S3 bumped seed_protocol_version 0 -> 1; F-series 1 -> 2;
+        QA walks/gen F3 2 -> 3; formula-hash 3 -> 4 (2026-06-01);
+        WS1 FPE detokenization 4 -> 5 (2026-06-12)."""
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
         assert plan.plan_version == 1
-        assert plan.seed_protocol_version == 4
+        assert plan.seed_protocol_version == 5
         assert plan.engine_version == "0.1.0"
 
-    def test_compile_records_eleven_checks_passed(
+    def test_compile_records_thirteen_checks_passed(
         self, simple_config: dict, simple_profile: Profile
     ) -> None:
         """S2 added orphan_fk_policy_completeness at row 6; S5 added
         pool_capacity_pre_flight at row 7; S8 added composite_wiring_consistent
         at row 8; S6/S7 added deterministic_namespace_completeness at row 9;
         S13 (B1) added null_bearing_int_unsupported at row 10; audit H5
-        (2026-06-12) added non_poolable_provider_with_pool_backend at row 11."""
+        (2026-06-12) added non_poolable_provider_with_pool_backend at row 11;
+        capability-gaps WS3/WS2 (2026-06-12) added statistical_columns at
+        row 12 and text_redact_ner_available at row 13."""
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
         assert set(plan.plan_compile.checks_passed) == {
             "namespace_ambiguity",
@@ -50,6 +51,8 @@ class TestCompilePlanHappyPath:
             "deterministic_namespace_completeness",
             "null_bearing_int_unsupported",
             "non_poolable_provider_with_pool_backend",
+            "statistical_columns",
+            "text_redact_ner_available",
         }
 
     def test_compile_no_warnings_no_errors_no_skipped(
@@ -102,16 +105,16 @@ class TestYamlRoundTrip:
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
         y = plan_to_yaml(plan)
         assert "plan_version: 1" in y
-        assert "seed_protocol_version: 4" in y
+        assert "seed_protocol_version: 5" in y
 
-    def test_yaml_emits_seed_protocol_version_two(
+    def test_yaml_emits_seed_protocol_version_five(
         self, simple_config: dict, simple_profile: Profile
     ) -> None:
         """The F-series corrections bump the stamped seed_protocol_version to
         2 (v1 = pre-correction era, v2 = corrected baseline)."""
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
         y = plan_to_yaml(plan)
-        assert "seed_protocol_version: 4" in y
+        assert "seed_protocol_version: 5" in y
 
     @pytest.mark.parametrize("policy", ["preserve", "remap", "warn", "fail"])
     def test_round_trip_preserves_each_orphan_policy(

@@ -155,9 +155,12 @@ class TestExtraFieldsForbidden:
 
 class TestRegistryWiring:
     def test_registry_get_capabilities_returns_catalog_entry(self) -> None:
+        # synthetic_member_id stays Faker-bound regardless of mimesis
+        # adoption state; person_* providers rebind when the extra is
+        # installed.
         registry = get_default_registry()
-        cap = registry.get_capabilities("person_email")
-        assert cap.provider == "person_email"
+        cap = registry.get_capabilities("synthetic_member_id")
+        assert cap.provider == "synthetic_member_id"
         assert cap.backend_type == "faker"
 
     def test_registry_get_capabilities_unknown_raises(self) -> None:
