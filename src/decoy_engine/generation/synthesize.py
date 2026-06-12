@@ -149,6 +149,20 @@ def generate_tables(
                 col, n, seed, derive_key, pools, instance_default_locale, data
             )
         tbl = pa.table(data)
+        # Generation-time fidelity warn-gate (deferred follow-up 5,
+        # 2026-06-12): score statistical columns against their source
+        # snapshot and warn below global_settings.fidelity_warn_threshold.
+        # Warn-only; output bytes are untouched. Lazy import mirrors the
+        # `_statistical` dispatch so non-statistical configs never pay it.
+        if any(c.get("type") == "statistical" for c in gcols):
+            from decoy_engine.generation._fidelity_gate import (
+                fidelity_warn_threshold,
+                warn_on_low_fidelity,
+            )
+
+            warn_on_low_fidelity(
+                gcols, data, table_name=name, threshold=fidelity_warn_threshold(config)
+            )
         pools[name] = tbl
         out[name] = tbl
     return out
