@@ -31,11 +31,15 @@ that contract.
 
 from __future__ import annotations
 
+import logging
+import warnings
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 
 from decoy_engine.execution._errors import StrategyError
+
+_log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     import polars as pl
@@ -66,12 +70,25 @@ def _eval_predicate(
     the failure when it bubbles up.
     """
     try:
-        mask = pdf.eval(
-            expression,
-            engine="numexpr",
-            local_dict={},
-            global_dict={},
-        )
+        # Audit L1 (2026-06-12): same fallback surfacing as
+        # execution/_transforms._eval_clamped -- pandas silently drops
+        # to the python engine on extension-array dtypes with only an
+        # unmonitored RuntimeWarning.
+        with warnings.catch_warnings(record=True) as _caught:
+            warnings.simplefilter("always", RuntimeWarning)
+            mask = pdf.eval(
+                expression,
+                engine="numexpr",
+                local_dict={},
+                global_dict={},
+            )
+        for _w in _caught:
+            if issubclass(_w.category, RuntimeWarning):
+                _log.warning(
+                    "when expression %r: numexpr fell back to the python engine (%s)",
+                    expression,
+                    _w.message,
+                )
     except ImportError as exc:
         raise StrategyError(
             code="numexpr_required",

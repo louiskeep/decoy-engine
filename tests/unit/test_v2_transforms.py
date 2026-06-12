@@ -465,3 +465,35 @@ class TestQa10F8FilterBooleanDtype:
         with pytest.raises(TransformError) as exc:
             apply_transform(df, op)
         assert exc.value.code == "filter_expression_not_boolean"
+
+
+class TestNumexprFallbackSurfaced:
+    """Audit L1 (2026-06-12): pandas silently falls back from numexpr to
+    the python engine on extension-array dtypes, emitting only an
+    unmonitored RuntimeWarning -- the Q16 sandbox posture degraded
+    invisibly. The fallback is now captured and re-emitted through the
+    engine logger; the warning must not propagate to callers."""
+
+    def test_fallback_logged_not_propagated(self, caplog):
+        import logging
+        import warnings as _warnings
+
+        df = pd.DataFrame({"age": pd.array([10, 20, 30], dtype="Int64")})
+        op = FilterOp(op="filter", expression="age >= 18")
+        with _warnings.catch_warnings():
+            _warnings.simplefilter("error", RuntimeWarning)  # propagation would raise
+            with caplog.at_level(logging.WARNING, logger="decoy_engine.execution._transforms"):
+                out = apply_transforms(df, [op])
+        assert len(out) == 2
+        fallback_logs = [r for r in caplog.records if "fell back" in r.message]
+        assert fallback_logs, "numexpr fallback was not surfaced through the logger"
+
+    def test_numexpr_native_path_logs_nothing(self, caplog):
+        import logging
+
+        df = pd.DataFrame({"age": [10, 20, 30]})
+        op = FilterOp(op="filter", expression="age >= 18")
+        with caplog.at_level(logging.WARNING, logger="decoy_engine.execution._transforms"):
+            out = apply_transforms(df, [op])
+        assert len(out) == 2
+        assert not [r for r in caplog.records if "fell back" in r.message]
