@@ -148,6 +148,18 @@ def sample_column(
                 code="statistical_stats_degenerate",
                 message=f"statistical column {spec.column!r}: snapshot has no top_values.",
             )
+        if sum(weights) <= 0:
+            # An aggressively DP-noised snapshot can clamp every count to
+            # zero; surface the typed code instead of random.choices's bare
+            # ValueError.
+            raise StatisticalSpecError(
+                code="statistical_stats_degenerate",
+                message=(
+                    f"statistical column {spec.column!r}: every top_values count "
+                    "is zero (nothing to weight a draw by). Refit, or use a "
+                    "larger epsilon if the snapshot was DP-noised."
+                ),
+            )
         conditional = _conditional_tables(spec) if spec.condition_on else {}
         out = []
         for i in range(n):
@@ -167,6 +179,15 @@ def sample_column(
             raise StatisticalSpecError(
                 code="statistical_stats_degenerate",
                 message=f"statistical column {spec.column!r}: snapshot has no year_bins.",
+            )
+        if sum(weights) <= 0:
+            raise StatisticalSpecError(
+                code="statistical_stats_degenerate",
+                message=(
+                    f"statistical column {spec.column!r}: every year_bins count "
+                    "is zero (nothing to weight a draw by). Refit, or use a "
+                    "larger epsilon if the snapshot was DP-noised."
+                ),
             )
         lo = datetime.fromisoformat(str(spec.stats["min"]))
         hi = datetime.fromisoformat(str(spec.stats["max"]))

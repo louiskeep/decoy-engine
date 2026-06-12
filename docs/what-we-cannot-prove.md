@@ -7,14 +7,35 @@ properties like foreign keys and determinism. This page is the honest boundary:
 the things Decoy does NOT prove, so you do not rely on a guarantee it does not
 make.
 
-## It does not provide a formal privacy guarantee
+## It provides a formal privacy guarantee in exactly one place, and nowhere else
 
-Decoy does not implement, measure, or certify differential privacy or any other
-formal privacy model. It does not attach an epsilon, a privacy budget, or a
-mathematical bound on re-identification risk to its output. The `storm` profiler
-reports heuristic re-identification-risk signals to help you assess a dataset;
-those are diagnostics, not a proof. If your use case requires a formal privacy
-guarantee, Decoy alone does not supply it.
+MASKED OUTPUTS carry no differential privacy, no epsilon, and no
+mathematical bound on re-identification risk. The `storm` profiler reports
+heuristic re-identification-risk signals to help you assess a dataset; those
+are diagnostics, not a proof.
+
+The one formal mechanism is `decoy fit --epsilon` (`quality/dp.py`): the
+distribution snapshot's COUNTS are released with per-count Laplace noise
+(sensitivity 1, add/remove-one-row adjacency), exact quantiles and means are
+removed, and min/max collapse to histogram-edge resolution. Read the scope
+narrowly:
+
+- The budget is PER COLUMN HISTOGRAM. A snapshot of k columns composes
+  sequentially to roughly (k + 1) * epsilon total; the artifact's `dp` block
+  records this scope.
+- Bin edges and category labels remain DATA-DEPENDENT supports: the histogram
+  range comes from the real min/max and categorical `top_values` carry real
+  category strings (gated behind `allow_real_categories`). A fully
+  data-independent release (fixed bin ranges, thresholded category sets) is a
+  recorded follow-up.
+- Joint contingency tables are rejected under `--epsilon` (no composition
+  accounting in v1).
+- Nothing downstream of the snapshot inherits the guarantee: generation
+  samples from the noisy artifact deterministically, and masking is entirely
+  outside it.
+
+If your use case requires a formal privacy guarantee over the masked or
+generated DATA, Decoy alone does not supply it.
 
 ## It does not certify legal or regulatory compliance
 
