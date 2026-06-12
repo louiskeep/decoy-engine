@@ -70,9 +70,9 @@ extensions = [
 # Keep the surface modest — these extensions cover what the existing
 # *_GUIDE.md files use. Add more only when a doc actually needs them.
 myst_enable_extensions = [
-    "colon_fence",   # ::: fenced directive blocks
-    "deflist",       # definition lists (already used in TAXONOMY-style guides)
-    "linkify",       # auto-link bare URLs
+    "colon_fence",  # ::: fenced directive blocks
+    "deflist",  # definition lists (already used in TAXONOMY-style guides)
+    "linkify",  # auto-link bare URLs
     "smartquotes",
     "tasklist",
 ]
@@ -104,11 +104,11 @@ autoapi_options = [
     # would be empty even though `__all__` re-exports 30+ symbols.
     "imported-members",
 ]
-autoapi_python_class_content = "both"   # combine class + __init__ docstrings
-autoapi_member_order = "groupwise"      # group classes / functions / data
-autoapi_keep_files = False              # don't commit autoapi-generated .rst
-autoapi_root = "api"                    # output goes to docs/api/ at build time
-autoapi_add_toctree_entry = True        # insert "API reference" toctree in index
+autoapi_python_class_content = "both"  # combine class + __init__ docstrings
+autoapi_member_order = "groupwise"  # group classes / functions / data
+autoapi_keep_files = False  # don't commit autoapi-generated .rst
+autoapi_root = "api"  # output goes to docs/api/ at build time
+autoapi_add_toctree_entry = True  # insert "API reference" toctree in index
 
 # ── Napoleon (Google/NumPy docstring) configuration ──────────────────────
 # Render docstring `Attributes:` sections as `:ivar:` fields inside the
