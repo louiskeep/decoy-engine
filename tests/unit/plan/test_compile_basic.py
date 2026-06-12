@@ -28,7 +28,7 @@ class TestCompilePlanHappyPath:
         assert plan.seed_protocol_version == 5
         assert plan.engine_version == "0.1.0"
 
-    def test_compile_records_twelve_checks_passed(
+    def test_compile_records_thirteen_checks_passed(
         self, simple_config: dict, simple_profile: Profile
     ) -> None:
         """S2 added orphan_fk_policy_completeness at row 6; S5 added
@@ -36,7 +36,8 @@ class TestCompilePlanHappyPath:
         at row 8; S6/S7 added deterministic_namespace_completeness at row 9;
         S13 (B1) added null_bearing_int_unsupported at row 10; audit H5
         (2026-06-12) added non_poolable_provider_with_pool_backend at row 11;
-        capability-gaps WS3 (2026-06-12) added statistical_columns at row 12."""
+        capability-gaps WS3/WS2 (2026-06-12) added statistical_columns at
+        row 12 and text_redact_ner_available at row 13."""
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
         assert set(plan.plan_compile.checks_passed) == {
             "namespace_ambiguity",
@@ -51,6 +52,7 @@ class TestCompilePlanHappyPath:
             "null_bearing_int_unsupported",
             "non_poolable_provider_with_pool_backend",
             "statistical_columns",
+            "text_redact_ner_available",
         }
 
     def test_compile_no_warnings_no_errors_no_skipped(

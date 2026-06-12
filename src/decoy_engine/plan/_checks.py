@@ -332,3 +332,43 @@ def check_statistical_columns(config: dict[str, Any]) -> None:
                         ),
                     )
             seen.append(str(col_name))
+
+
+def check_text_redact_ner_available(config: dict[str, Any]) -> None:
+    """Reject `text_redact` columns whose `ner` config cannot run here.
+
+    Compile-check ownership table row #13 (capability-gaps WS2,
+    2026-06-12). NER is an optional capability (the `ner` extra plus a
+    separately-downloaded spaCy model); a column that opts in while
+    either piece is missing is guaranteed dead at run. Config + installed
+    packages only (no model load, no profile): safe for config-only
+    callers (decoy validate).
+    """
+    from decoy_engine.storm.ner import DEFAULT_NER_MODEL, NerUnavailableError, ensure_ner_available
+
+    tables = config.get("tables", []) if isinstance(config.get("tables"), list) else []
+    for table_entry in tables:
+        if not isinstance(table_entry, dict):
+            continue
+        table_name = table_entry.get("name", "?")
+        for col_entry in table_entry.get("columns", []) or []:
+            if not isinstance(col_entry, dict):
+                continue
+            if col_entry.get("strategy") != "text_redact":
+                continue
+            provider_config = col_entry.get("provider_config") or {}
+            ner_cfg = provider_config.get("ner") if isinstance(provider_config, dict) else None
+            if not ner_cfg:
+                continue
+            model = DEFAULT_NER_MODEL
+            if isinstance(ner_cfg, dict) and ner_cfg.get("model"):
+                model = str(ner_cfg["model"])
+            col_name = col_entry.get("name", "?")
+            try:
+                ensure_ner_available(model)
+            except NerUnavailableError as exc:
+                raise PlanCompileError(
+                    code=exc.code,
+                    path=f"tables.{table_name}.columns.{col_name}.provider_config.ner",
+                    message=exc.message,
+                ) from exc

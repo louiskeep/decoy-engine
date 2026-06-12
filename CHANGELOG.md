@@ -11,6 +11,18 @@ minimum engine version it was tested against via its
 
 ### Added (capability gaps, 2026-06-12)
 
+- **NER-backed text_redact** (WS2). New opt-in `ner` key on text_redact's
+  provider_config (`ner: true` or `ner: {model: ..., entities: [...]}`)
+  detects person names and locations via spaCy NER -- the two categories
+  the regex span catalog deliberately cannot cover -- and merges those
+  spans into the same leftmost-longest overlap resolution as the regex
+  detectors (`iter_spans` gains an additive `extra_spans` kwarg). New
+  optional extra `decoy-engine[ner]`; the model installs separately via
+  `python -m spacy download en_core_web_sm`. New compile check row 13
+  (`text_redact_ner_available`) rejects an ner-enabled config when spacy
+  or the model is missing on this host (checks_passed grows 12 -> 13).
+  Off by default; the no-ner path is byte-identical to before.
+
 - **`statistical` generate type** (WS3). Samples synthetic columns from a
   `distribution-snapshot/v1` artifact (the existing quality/snapshot
   schema is the fitted model): histogram inverse-CDF for numeric

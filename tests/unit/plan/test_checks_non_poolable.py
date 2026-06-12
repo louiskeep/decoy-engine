@@ -80,6 +80,7 @@ class TestRunConfigOnlyChecks:
             "deterministic_namespace_completeness",
             "non_poolable_provider_with_pool_backend",
             "statistical_columns",
+            "text_redact_ner_available",
         )
 
     def test_raises_on_unknown_provider(self):
