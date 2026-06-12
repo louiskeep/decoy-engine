@@ -80,6 +80,9 @@ def _providers() -> list[tuple[str, str, str, str]]:
     # _CATALOG carries only the Faker-bound subset (19), silently
     # omitting the DecoyNative identifier providers and the composites;
     # the registry is the runtime truth (34 at the time of this fix).
+    import importlib.util
+
+    import decoy_engine
     from decoy_engine.providers_v2 import get_default_registry
 
     # Adopted Mimesis providers bind to faker or mimesis depending on whether
@@ -89,15 +92,12 @@ def _providers() -> list[tuple[str, str, str, str]]:
     # mimesis package __init__, which raises when the extra is absent
     # (CI installs [dev] only) -- so load the data module straight from
     # its file, bypassing the package init.
-    import importlib.util
-
-    import decoy_engine
-
     matrix_path = (
         Path(decoy_engine.__file__).parent / "providers_v2" / "mimesis" / "_adoption_matrix.py"
     )
     spec = importlib.util.spec_from_file_location("_decoy_adoption_matrix", matrix_path)
-    assert spec and spec.loader
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load adoption matrix from {matrix_path}")
     matrix_mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(matrix_mod)
     adopted_mimesis = frozenset(matrix_mod.ADOPTED_MIMESIS_PROVIDERS)
