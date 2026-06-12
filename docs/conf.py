@@ -76,7 +76,7 @@ myst_enable_extensions = [
     "smartquotes",
     "tasklist",
 ]
-myst_heading_anchors = 3  # generate slugs for h1–h3 so cross-doc anchor links resolve
+myst_heading_anchors = 3  # generate slugs for h1-h3 so cross-doc anchor links resolve
 # Route ```mermaid fenced blocks to the sphinxcontrib-mermaid directive
 # rather than letting Pygments try to highlight `mermaid` as a programming
 # language (which it isn't, so -W escalates the lexer-not-found warning).
