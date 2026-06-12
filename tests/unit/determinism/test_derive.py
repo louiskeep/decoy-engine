@@ -92,16 +92,15 @@ class TestDeriveValidation:
 
 
 class TestSeedProtocolVersion:
-    def test_constant_is_four(self) -> None:
+    def test_constant_is_five(self) -> None:
         """S3 shipped SEED_PROTOCOL_VERSION = 1; F-series corrections
         bumped to 2; QA walks/gen F3 vectorised null-injection bumped
         to 3 (2026-06-01); formula-hash migration to keyed primitive
-        bumps to 4 (2026-06-01): the formula sandbox `hash()` function
-        swapped from the legacy deterministic_hash SHA256(value+seed)
-        to HMAC-SHA256 keyed by the per-row local_seed, changing the
-        per-row output bytes for any pipeline using `hash(col)` in a
-        formula column."""
-        assert SEED_PROTOCOL_VERSION == 4
+        bumped to 4 (2026-06-01); WS1 FPE detokenization bumps to 5
+        (2026-06-12): the Feistel key moved to one key per
+        (seed, namespace) (NIST FF1 key model) and Luhn mode became
+        invertible, changing output bytes for every fpe column."""
+        assert SEED_PROTOCOL_VERSION == 5
 
 
 class TestDeriveIndex:

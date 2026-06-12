@@ -1,17 +1,24 @@
-"""fpe strategy (engine-v2 S9): format-preserving encryption, re-keyed + chunked.
+"""fpe strategy (engine-v2 S9, re-keyed WS1): format-preserving encryption.
 
 The Feistel+HMAC permutation is REUSED from V1 `transforms/fpe.FPEStrategy`
 (stdlib hmac, no PyCA -- per the module's design comment and Session 18 B1).
-The only S9 change is the keying: instead of the legacy column_key/seed:int, the
-per-value Feistel key is `derive(job_seed, namespace, _canonicalize_source(value))`
-(S9 spec §5.2 + §8 path #1). Same value -> same key -> same ciphertext within a
-namespace (joinability + format preserved), byte-stable across runs.
+
+Keying (WS1 detokenization, 2026-06-12, SEED_PROTOCOL_VERSION 4 -> 5): ONE
+Feistel key per (job_seed, namespace), `derive(job_seed, namespace,
+FPE_KEY_LABEL)`, with the column name as the per-column tweak. This is the
+NIST SP 800-38G FF1 key model (single key, varying tweak); it keeps the
+S9 contracts (same value -> same ciphertext within a namespace, byte-stable
+across runs, cross-column linkage broken by the tweak) AND makes ciphertext
+decryptable by any holder of (job_seed, namespace, column, charset) via
+`decoy_engine.unmask`. The pre-WS1 keying derived a key from the PLAINTEXT
+(`derive(seed, ns, _canonicalize_source(value))`), which made ciphertext-only
+reversal impossible and incidentally paid one HKDF per cell.
 
 Per-row parallelism (S9 spec §5.2): rows are split into `chunk_count` chunks
 processed in worker threads, then concatenated. Each value's encryption is
-independent + deterministic (its key derives from the value), so chunked and
-serial output are byte-identical by construction -- the non-negotiable parity
-gate. The lift is wall-clock, not output.
+independent + deterministic under the shared key, so chunked and serial
+output are byte-identical by construction -- the non-negotiable parity gate.
+The lift is wall-clock, not output.
 """
 
 from __future__ import annotations
@@ -26,12 +33,13 @@ import pandas as pd
 from decoy_engine.determinism import derive
 from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
 from decoy_engine.execution._errors import StrategyError
-from decoy_engine.generation.pool._canonicalize import _canonicalize_source
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._types import ColumnSeed
-from decoy_engine.transforms.fpe import _CHARSETS, FPEStrategy
+from decoy_engine.transforms.fpe import _CHARSETS, fpe_encrypt_value
 
-_V1_FPE = FPEStrategy()
+# The constant derive() source for the per-(job_seed, namespace) Feistel key.
+# Shared with decoy_engine.unmask; changing it is a SEED_PROTOCOL_VERSION bump.
+FPE_KEY_LABEL: bytes = b"fpe-key/v1"
 
 
 class FpeStrategyHandler:
@@ -67,10 +75,11 @@ class FpeStrategyHandler:
         tweak = column.encode("utf-8", errors="replace")
         namespace = plan.namespace
 
+        # One key per (job_seed, namespace) -- derived once, not per cell.
+        key = derive(ctx.job_seed, namespace, FPE_KEY_LABEL)
+
         def encrypt_one(value: str) -> str:
-            key = derive(ctx.job_seed, namespace, _canonicalize_source(value))
-            # White-box reuse of the V1 Feistel orchestration with the derived key.
-            return _V1_FPE._encrypt(value, key, charset, tweak, preserve_sep, validate_luhn, column)
+            return fpe_encrypt_value(value, key, charset, tweak, preserve_sep, validate_luhn)
 
         source = df[column]
         na_mask = source.isna().to_numpy()
