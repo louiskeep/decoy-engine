@@ -155,3 +155,36 @@ class TestBadConfig:
         )
         # The token is emitted as-is; no regex interpretation.
         assert out["notes"].iloc[0] == r"<\d+>"
+
+
+# ── pandas null markers (audit H1) ───────────────────────────────────
+
+
+class TestPandasNullMarkers:
+    """Audit H1 (2026-06-12): pd.NA / pd.NaT survived the None/float-nan
+    guard, fell through to str(text), and shipped the literal strings
+    '<NA>' / 'NaT' into masked output — a null-preservation contract
+    break. The guard must catch every pandas null marker."""
+
+    def test_pd_na_in_arrow_string_column_stays_null(self):
+        df = pd.DataFrame(
+            {"notes": pd.array(["a@x.com", pd.NA, "b@x.com"], dtype="string[pyarrow]")}
+        )
+        handler = TextRedactHandler()
+        out, _ = handler.run(df.copy(), "notes", _seed({}), _FakeCtx())
+        assert pd.isna(out["notes"].iloc[1])
+        assert not isinstance(out["notes"].iloc[1], str)  # not the literal '<NA>'
+        assert "[REDACTED]" in out["notes"].iloc[0]
+
+    def test_pd_nat_in_datetime_column_stays_null(self):
+        df = pd.DataFrame({"notes": pd.Series([pd.Timestamp("2026-01-01"), pd.NaT])})
+        handler = TextRedactHandler()
+        out, _ = handler.run(df.copy(), "notes", _seed({}), _FakeCtx())
+        assert pd.isna(out["notes"].iloc[1])
+        assert not isinstance(out["notes"].iloc[1], str)  # not the literal 'NaT'
+
+    def test_nullable_int_na_stays_null(self):
+        df = pd.DataFrame({"notes": pd.array([123456789, None], dtype="Int64")})
+        handler = TextRedactHandler()
+        out, _ = handler.run(df.copy(), "notes", _seed({}), _FakeCtx())
+        assert pd.isna(out["notes"].iloc[1])

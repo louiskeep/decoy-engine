@@ -255,6 +255,23 @@ def test_fpe_format_preserving_null_and_deterministic(values):
         assert a == b, "FPE chunk_count changed the output (parallelism non-determinism)"
 
 
+# ── text_redact ─────────────────────────────────────────────────────────────
+@given(_COLUMN)
+def test_text_redact_preserves_nulls_and_never_emits_null_literals(values):
+    from decoy_engine.execution._strategies._text_redact import TextRedactHandler
+
+    out = _run(TextRedactHandler(), _df(values), "c", _col("text_redact"))
+    src = _df(values)["c"]
+    # Null preservation: every source null stays null (audit H1: pd.NA /
+    # pd.NaT previously leaked as the literal strings '<NA>' / 'NaT').
+    assert _null_mask(out["c"]) == _null_mask(src)
+    for o, s in zip(out["c"].tolist(), src.tolist()):
+        if pd.isna(s):
+            continue
+        assert isinstance(o, str)
+        assert o not in ("<NA>", "NaT") or s in ("<NA>", "NaT")
+
+
 # ── date_shift ──────────────────────────────────────────────────────────────
 @given(_DATE_COLUMN)
 def test_date_shift_preserves_nulls_and_emits_valid_dates(values):
