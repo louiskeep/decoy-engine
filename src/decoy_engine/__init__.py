@@ -216,6 +216,7 @@ from decoy_engine.validation_result import (
     ValidationMessage,
     ValidationResult,
 )
+from decoy_engine.vault import VaultError, VaultWriter, load_vault, vault_writer_for_config
 
 __version__ = "0.1.0"
 
@@ -325,6 +326,8 @@ __all__ = [
     "ValidationMessage",
     "ValidationResult",
     "ValuePool",
+    "VaultError",
+    "VaultWriter",
     "WriteResult",
     "atomic_swap_db_providers",
     "build_namespace_registry",
@@ -351,6 +354,7 @@ __all__ = [
     "get_default_pool_cache",
     "get_default_registry",
     "load_custom_providers",
+    "load_vault",
     "make_key_resolver",
     "register_faker_list_provider",
     "register_faker_provider",
@@ -365,4 +369,5 @@ __all__ = [
     "unregister_faker_provider",
     "validate_config",
     "validate_plan",
+    "vault_writer_for_config",
 ]

@@ -286,8 +286,10 @@ def check_statistical_columns(config: dict[str, Any]) -> None:
     Compile-check ownership table row #12 (capability-gaps WS3,
     2026-06-12). A statistical column is guaranteed dead at run when its
     snapshot_file is unreadable, the source column is absent from the
-    artifact, the snapshot kind has no sampler (freetext), a categorical
-    column lacks the `allow_real_categories: true` disclosure opt-in, or
+    artifact, the snapshot kind has no sampler (an all-null "empty"
+    column; freetext is admitted since deferred follow-up 4), a
+    categorical column lacks the `allow_real_categories: true`
+    disclosure opt-in, or
     `condition_on` names a pair the snapshot has no joint table for.
     `generation/statistical.load_spec` owns those verdicts (one set of
     error codes for compile time and generation time); this check adds
@@ -372,3 +374,52 @@ def check_text_redact_ner_available(config: dict[str, Any]) -> None:
                     path=f"tables.{table_name}.columns.{col_name}.provider_config.ner",
                     message=exc.message,
                 ) from exc
+
+
+def check_vault_columns(config: dict[str, Any]) -> None:
+    """Reject `vault: true` columns whose vault entries could not work.
+
+    Compile-check ownership table row #14 (deferred follow-up 1,
+    2026-06-12). Two structural rules:
+
+    - a vaulted column needs a `namespace`: the vault's lookup key is
+      `(namespace, masked_value)`, so without one the entry could never
+      be found at unmask time;
+    - `vault: true` on `strategy: fpe` is rejected: fpe is already
+      algebraically reversible under the config's seed, so a vault there
+      stores a second copy of the source values for zero capability,
+      pure disclosure liability.
+
+    Config-only (no profile, no source data), so it runs in both
+    compile branches and in `run_config_only_checks`.
+    """
+    tables = config.get("tables", []) if isinstance(config.get("tables"), list) else []
+    for table_entry in tables:
+        if not isinstance(table_entry, dict):
+            continue
+        table_name = table_entry.get("name", "?")
+        for col_entry in table_entry.get("columns", []) or []:
+            if not isinstance(col_entry, dict) or not col_entry.get("vault"):
+                continue
+            col_name = col_entry.get("name", "?")
+            if col_entry.get("strategy") == "fpe":
+                raise PlanCompileError(
+                    code="vault_strategy_reversible",
+                    path=f"tables.{table_name}.columns.{col_name}.vault",
+                    message=(
+                        f"column {col_name!r} in table {table_name!r} declares "
+                        "vault: true on strategy fpe, which `decoy unmask` already "
+                        "reverses from the config alone. A vault there duplicates "
+                        "the source values for no capability; remove the flag."
+                    ),
+                )
+            if not col_entry.get("namespace"):
+                raise PlanCompileError(
+                    code="vault_requires_namespace",
+                    path=f"tables.{table_name}.columns.{col_name}.vault",
+                    message=(
+                        f"column {col_name!r} in table {table_name!r} declares "
+                        "vault: true but has no namespace; vault entries are keyed "
+                        "by (namespace, masked_value), so add a namespace."
+                    ),
+                )

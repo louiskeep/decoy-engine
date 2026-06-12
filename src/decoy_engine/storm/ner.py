@@ -39,8 +39,16 @@ DEFAULT_NER_MODEL = "en_core_web_sm"
 # spaCy entity label -> decoy detector id. The values join the regex
 # catalog's namespace, so [REDACTED:person_name] reads the same whether
 # the span came from a regex or the model.
+# Two label schemes share this map (deferred follow-up 8b, 2026-06-12):
+# English models (en_core_web_*) emit OntoNotes labels (PERSON/GPE/LOC/
+# FAC); most non-English and multilingual models (de_core_news_*,
+# es_core_news_*, xx_ent_wiki_sm) emit WikiNER-style PER/LOC/ORG/MISC.
+# Without the PER row, every person hit from a non-English model was
+# silently dropped even though the `ner: {model: ...}` config accepted
+# the model name.
 NER_ENTITY_MAP: dict[str, str] = {
     "PERSON": "person_name",
+    "PER": "person_name",
     "GPE": "location",
     "LOC": "location",
     "FAC": "location",
@@ -63,6 +71,24 @@ def spacy_installed() -> bool:
 def model_installed(model: str = DEFAULT_NER_MODEL) -> bool:
     """True when the model package is importable (cheap; no model load)."""
     return importlib.util.find_spec(model) is not None
+
+
+def installed_model_version(model: str = DEFAULT_NER_MODEL) -> str | None:
+    """Installed pip version of the model package, or None when absent.
+
+    importlib.metadata only: no spaCy import, no model load, safe in the
+    extras-free CI environment. The plan compiler stamps this onto
+    text_redact ColumnSeeds (deferred follow-up 8c) because NER output
+    is deterministic only per model VERSION: cross-environment
+    byte-stability needs the version pinned and recorded, not just the
+    model named.
+    """
+    import importlib.metadata
+
+    try:
+        return importlib.metadata.version(model)
+    except importlib.metadata.PackageNotFoundError:
+        return None
 
 
 def ensure_ner_available(model: str = DEFAULT_NER_MODEL) -> None:

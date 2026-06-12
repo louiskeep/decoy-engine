@@ -14,6 +14,11 @@ Methodology:
   (`other_mode: emit`).
 - Datetime: weighted year choice from year_bins, uniform timestamp
   within the year, clamped to the observed [min, max].
+- Freetext: LENGTH-ONLY surrogate text. Target length drawn from the
+  fitted length histogram via the same Devroye inverse-CDF as numeric,
+  filled with deterministic lorem tokens cut to exactly that length.
+  Shape-preserving filler for load-shaped test data; content is
+  deliberately meaningless and no source tokens are retained.
 - Conditional: per-row draw from the joint contingency row for the
   parent's value, falling back to the marginal when the parent value
   has no joint cells -- sequential conditional sampling as in synthpop
@@ -38,6 +43,94 @@ from decoy_engine.generation.statistical._spec import (
     StatisticalSpec,
     StatisticalSpecError,
 )
+
+# The classic lorem-ipsum vocabulary (fixed literal, no dependency).
+# Surrogate freetext draws words from this list; the fitted distribution
+# constrains LENGTH only, never content.
+_LOREM_WORDS: tuple[str, ...] = (
+    "lorem",
+    "ipsum",
+    "dolor",
+    "sit",
+    "amet",
+    "consectetur",
+    "adipiscing",
+    "elit",
+    "sed",
+    "do",
+    "eiusmod",
+    "tempor",
+    "incididunt",
+    "ut",
+    "labore",
+    "et",
+    "dolore",
+    "magna",
+    "aliqua",
+    "enim",
+    "ad",
+    "minim",
+    "veniam",
+    "quis",
+    "nostrud",
+    "exercitation",
+    "ullamco",
+    "laboris",
+    "nisi",
+    "aliquip",
+    "ex",
+    "ea",
+    "commodo",
+    "consequat",
+    "duis",
+    "aute",
+    "irure",
+    "in",
+    "reprehenderit",
+    "voluptate",
+    "velit",
+    "esse",
+    "cillum",
+    "fugiat",
+    "nulla",
+    "pariatur",
+    "excepteur",
+    "sint",
+    "occaecat",
+    "cupidatat",
+    "non",
+    "proident",
+    "sunt",
+    "culpa",
+    "qui",
+    "officia",
+    "deserunt",
+    "mollit",
+    "anim",
+    "id",
+    "est",
+    "laborum",
+)
+
+
+def _lorem_text(rng: random.Random, length: int) -> str:
+    """Deterministic filler of EXACTLY `length` characters.
+
+    Space-joined draws from `_LOREM_WORDS`, sliced to the target. The
+    exact-length cut (mid-word when needed) is what preserves the fitted
+    length distribution; surrogate text has no readability contract.
+    """
+    if length <= 0:
+        return ""
+    parts: list[str] = []
+    joined_len = 0
+    while joined_len < length:
+        word = _LOREM_WORDS[rng.randrange(len(_LOREM_WORDS))]
+        # The separator precedes every word but the first, so the joined
+        # length grows by len(word) + 1 only from the second word on.
+        joined_len += len(word) + (1 if parts else 0)
+        parts.append(word)
+    return " ".join(parts)[:length]
 
 
 def _cumulative(counts: list[float]) -> list[float]:
@@ -148,6 +241,18 @@ def sample_column(
                 code="statistical_stats_degenerate",
                 message=f"statistical column {spec.column!r}: snapshot has no top_values.",
             )
+        if sum(weights) <= 0:
+            # An aggressively DP-noised snapshot can clamp every count to
+            # zero; surface the typed code instead of random.choices's bare
+            # ValueError.
+            raise StatisticalSpecError(
+                code="statistical_stats_degenerate",
+                message=(
+                    f"statistical column {spec.column!r}: every top_values count "
+                    "is zero (nothing to weight a draw by). Refit, or use a "
+                    "larger epsilon if the snapshot was DP-noised."
+                ),
+            )
         conditional = _conditional_tables(spec) if spec.condition_on else {}
         out = []
         for i in range(n):
@@ -168,6 +273,15 @@ def sample_column(
                 code="statistical_stats_degenerate",
                 message=f"statistical column {spec.column!r}: snapshot has no year_bins.",
             )
+        if sum(weights) <= 0:
+            raise StatisticalSpecError(
+                code="statistical_stats_degenerate",
+                message=(
+                    f"statistical column {spec.column!r}: every year_bins count "
+                    "is zero (nothing to weight a draw by). Refit, or use a "
+                    "larger epsilon if the snapshot was DP-noised."
+                ),
+            )
         lo = datetime.fromisoformat(str(spec.stats["min"]))
         hi = datetime.fromisoformat(str(spec.stats["max"]))
         out = []
@@ -178,6 +292,27 @@ def sample_column(
             year_seconds = (datetime(year + 1, 1, 1) - year_start).total_seconds()
             ts = year_start + timedelta(seconds=rng.random() * year_seconds)
             out.append(min(max(ts, lo), hi))
+        return out
+
+    if spec.kind == "freetext":
+        edges = [float(e) for e in spec.stats.get("length_bin_edges") or []]
+        counts = [float(c) for c in spec.stats.get("length_bin_counts") or []]
+        if len(edges) < 2 or len(counts) != len(edges) - 1 or sum(counts) <= 0:
+            raise StatisticalSpecError(
+                code="statistical_stats_degenerate",
+                message=(
+                    f"statistical column {spec.column!r}: snapshot length histogram "
+                    f"is degenerate (edges={len(edges)}, counts={len(counts)}). "
+                    "Refit, or use a larger epsilon if the snapshot was DP-noised."
+                ),
+            )
+        cum = _cumulative(counts)
+        lo_len, hi_len = int(edges[0]), int(edges[-1])
+        out = []
+        for i in range(n):
+            rng.seed(col_seed + i)
+            target = int(min(max(round(_numeric_row(rng, edges, cum)), lo_len), hi_len))
+            out.append(_lorem_text(rng, target))
         return out
 
     raise StatisticalSpecError(  # load_spec already rejects; defensive only

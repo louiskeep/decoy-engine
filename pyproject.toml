@@ -138,6 +138,16 @@ mimesis = [
 ner = [
     "spacy>=3.7,<4",
 ]
+# Deferred follow-up 1 (2026-06-12): the token vault encrypts its
+# source->masked map with Fernet (AES-128-CBC + HMAC-SHA256) from the
+# audited `cryptography` package. Optional: the default install stays
+# compiled-dep-free; vault.py imports it function-locally and raises
+# vault_crypto_not_installed naming this extra when absent. No upper
+# bound: the Fernet API is stable and capping a crypto dependency pins
+# users to stale security fixes.
+vault = [
+    "cryptography>=42",
+]
 # Sphinx + sphinx-autoapi build the API reference site published to
 # GitHub Pages. Build from the repo root via `pip install -e .[docs]`
 # then `make -C docs html`. CI lives at `.github/workflows/docs.yml`.

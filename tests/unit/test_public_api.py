@@ -61,6 +61,12 @@ def test_all_lists_every_public_name():
         "unmask_pipeline",
         "UnmaskColumnReport",
         "UnmaskResult",
+        # Token vault (deferred follow-up 1, 2026-06-12): reversible
+        # tokenization for one-way strategies.
+        "VaultError",
+        "VaultWriter",
+        "load_vault",
+        "vault_writer_for_config",
         "select_execution_adapter",
         # engine-v2 S1 (Pipeline config schema, the validation choke-point).
         "PipelineConfig",

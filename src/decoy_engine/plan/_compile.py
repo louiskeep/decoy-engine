@@ -55,6 +55,7 @@ from decoy_engine.plan._checks import (
     check_statistical_columns,
     check_text_redact_ner_available,
     check_unknown_provider,
+    check_vault_columns,
 )
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._types import (
@@ -147,6 +148,10 @@ def compile_plan(
     # requires the spacy extra + model on THIS host. Config + installed
     # packages only; both branches + run_config_only_checks.
     check_text_redact_ner_available(config)
+    # Row 14 (deferred follow-up 1, 2026-06-12): vault: true needs a
+    # namespace and a one-way strategy. Config-only; both branches +
+    # run_config_only_checks.
+    check_vault_columns(config)
     check_composite_columns_length_match(profile)
     # MG-3 / M3 (2026-05-31): reject when + coherent_with combo early,
     # before composite-wiring checks. A column carrying both fields is
@@ -195,6 +200,8 @@ def compile_plan(
             "statistical_columns",
             # Row 13 (WS2): structural, tail-appended.
             "text_redact_ner_available",
+            # Row 14 (vault): structural, tail-appended.
+            "vault_columns",
         )
         checks_skipped: tuple[str, ...] = (
             "basic_uniqueness_pre_flight",
@@ -231,6 +238,8 @@ def compile_plan(
             "statistical_columns",
             # Row 13 (WS2): structural, tail-appended.
             "text_redact_ner_available",
+            # Row 14 (vault): structural, tail-appended.
+            "vault_columns",
         )
         checks_skipped = ()
 
@@ -307,6 +316,8 @@ def run_config_only_checks(config: dict[str, Any]) -> tuple[str, ...]:
     check_statistical_columns(config)
     # Row 13 (WS2): text_redact `ner` opt-in needs spacy + model here.
     check_text_redact_ner_available(config)
+    # Row 14 (vault): vault: true needs a namespace + a one-way strategy.
+    check_vault_columns(config)
     return (
         "unknown_provider",
         "when_with_coherent_with",
@@ -314,6 +325,7 @@ def run_config_only_checks(config: dict[str, Any]) -> tuple[str, ...]:
         "non_poolable_provider_with_pool_backend",
         "statistical_columns",
         "text_redact_ner_available",
+        "vault_columns",
     )
 
 
@@ -783,6 +795,33 @@ def _build_seed_envelope(
                 # ill-defined for the coherent set (spec §Pitfalls).
                 when_raw = col_entry.get("when")
                 when = when_raw if isinstance(when_raw, str) and when_raw.strip() else None
+                # Deferred follow-up 8c: stamp the installed NER model
+                # version for text_redact + ner columns (precedent: the
+                # backend_version registry stamp above). Row 13 already
+                # hard-fails a truly-missing model; a None version here
+                # means the package ships no metadata, which only weakens
+                # the cross-environment audit trail, so warn instead.
+                ner_model_version = None
+                if strategy == "text_redact" and isinstance(provider_config_raw, dict):
+                    ner_cfg = provider_config_raw.get("ner")
+                    if ner_cfg:
+                        from decoy_engine.storm.ner import (
+                            DEFAULT_NER_MODEL,
+                            installed_model_version,
+                        )
+
+                        ner_model = DEFAULT_NER_MODEL
+                        if isinstance(ner_cfg, dict) and ner_cfg.get("model"):
+                            ner_model = str(ner_cfg["model"])
+                        ner_model_version = installed_model_version(ner_model)
+                        if ner_model_version is None:
+                            warnings.append(
+                                f"ner_model_version_unavailable: column "
+                                f"{table_profile.name}.{col_name} uses ner model "
+                                f"{ner_model!r} which has no installed package "
+                                "metadata; text_redact output is byte-stable only "
+                                "within this environment."
+                            )
                 if when is not None and coherent_with:
                     raise PlanCompileError(
                         code="when_with_coherent_with_unsupported",
@@ -822,6 +861,7 @@ def _build_seed_envelope(
                             distribution_behavior=distribution_behavior_for(
                                 strategy, provider_config
                             ),
+                            ner_model_version=ner_model_version,
                         ),
                     )
                 )

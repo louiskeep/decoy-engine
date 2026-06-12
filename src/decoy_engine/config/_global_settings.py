@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class GlobalSettings(BaseModel):
@@ -21,6 +21,11 @@ class GlobalSettings(BaseModel):
     requirements. `on_pool_exhaustion` drives the planner's pool-capacity
     pre-flight (read via `global_settings.get("on_pool_exhaustion")` in
     plan-compile); default `scale_up` matches the engine default.
+    `fidelity_warn_threshold` drives the generation-time fidelity
+    warn-gate: statistical generate columns are scored against their
+    source snapshot after generation and a warning is logged when the
+    overall fidelity score falls below this value (warn-only; never
+    fails the run or changes output bytes).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -28,3 +33,4 @@ class GlobalSettings(BaseModel):
     seed: int
     post_validation: bool = False
     on_pool_exhaustion: Literal["fail", "scale_up", "fall_back"] = "scale_up"
+    fidelity_warn_threshold: float = Field(default=0.8, ge=0.0, le=1.0)

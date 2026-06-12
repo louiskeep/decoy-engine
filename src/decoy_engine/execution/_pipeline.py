@@ -105,6 +105,7 @@ def run_pipeline(
     registry: ProviderRegistry | None = None,
     derive_key: Any = None,
     instance_default_locale: str | None = None,
+    vault_writer: Any = None,
 ) -> ExecutionResult:
     """Execute a mixed mask + generate config end-to-end.
 
@@ -196,6 +197,13 @@ def run_pipeline(
         mask_conversion_ms = mask_result.boundary_conversion_ms
         mask_warnings = mask_result.warnings
         mask_quality_metrics = mask_result.quality_metrics
+        # Token vault (deferred follow-up 1): collect source->masked pairs
+        # for vault: true columns. Opt-in via the kwarg; the caller writes
+        # the artifact.
+        if vault_writer is not None:
+            from decoy_engine.vault import collect_vault_entries
+
+            vault_writer.add(collect_vault_entries(config, merged_sources, mask_outputs))
 
     # Step 3: stitch the outputs together. Mask wins ties (every name in
     # the config maps to one kind by construction, so no real conflicts).

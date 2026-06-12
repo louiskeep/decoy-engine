@@ -21,18 +21,40 @@ set is exactly those:
 | bucketize    | bin of the value |
 | passthrough  | identity |
 
+CONDITIONALLY admitted (deferred follow-up 2, 2026-06-12): faker and
+categorical, exactly when their deterministic value-keyed path is the
+one that runs and every whole-run input is declared in config rather
+than derived from the data:
+
+- faker: `deterministic: true` + `namespace` + an explicit
+  `provider_config.pool_size` + `cardinality_mode` absent or `reuse`.
+  The deterministic sampler maps each value via
+  `derive_index(job_seed, namespace, canonicalize(value), pool_size)`,
+  independent of row position or chunk arrival, and the pool build is
+  RNG-seeded by its identity, so a pre-built pool equals any rebuild.
+  A chunk with more distinct values than `pool_size` changes nothing:
+  derive_index maps any value into [0, pool_size) with collisions
+  allowed, byte-identical to the full-frame run of the same rows
+  (pool_size controls collision rate, not admission).
+- categorical: `deterministic: true` + `namespace` + explicit
+  `provider_config.categories`, and NOT `from_profile` (profile-derived
+  categories would come from the first chunk only).
+
 Rejected at compile time (`check_chunked_compatibility`):
 
-- shuffle (whole-column permutation), composite/nested (bundle state);
-- faker / categorical, even deterministic: pool construction is
-  profile-sized whole-run state -- deferred, recorded in the
-  capability-gaps plan, not silently wrong;
+- shuffle (whole-column permutation), composite/nested (bundle state):
+  `strategy_not_chunk_safe`;
+- faker / categorical with the conditions above unmet:
+  `chunked_strategy_conditions_unmet`, naming each unmet condition;
 - configs with relationships (FK resolution reads whole parent frames);
 - generate tables (generation is not masking; row_count is whole-run).
 
-Each chunk runs through the SAME compiled plan and the standard pandas
-adapter, so chunked output is byte-identical to a serial run by
-construction rather than by re-implementation.
+Each chunk runs through the SAME compiled plan, one execution adapter
+(pandas by default; polars via the `adapter` parameter), and one shared
+pre-warmed pool cache, so chunked output is byte-identical to a serial
+run on the same substrate by construction rather than by
+re-implementation. Cross-substrate parity is value-level, per the v2
+rows in tests/parity/SEMANTIC_DIFFERENCES.md.
 """
 
 from __future__ import annotations
@@ -58,13 +80,58 @@ CHUNK_SAFE_STRATEGIES: frozenset[str] = frozenset(
     }
 )
 
+# Admitted only when the column's config pins the deterministic
+# value-keyed path (see module docstring for the per-strategy rules).
+CHUNK_CONDITIONAL_STRATEGIES: frozenset[str] = frozenset({"faker", "categorical"})
+
+
+def _conditional_admission_failures(col_entry: dict[str, Any]) -> list[str]:
+    """Unmet chunked-admission conditions for a faker/categorical column.
+
+    Returns one human-readable string per unmet condition; an empty
+    list means the column is admitted.
+    """
+    strategy = col_entry.get("strategy")
+    cfg = col_entry.get("provider_config") or {}
+    failures: list[str] = []
+    if not col_entry.get("deterministic"):
+        failures.append(
+            "requires deterministic: true (the non-deterministic path draws "
+            "per-row randomness, which is chunk-variant)"
+        )
+    if not col_entry.get("namespace"):
+        failures.append("requires a namespace (the value-keyed mapping derives from it)")
+    if strategy == "faker":
+        if cfg.get("pool_size") is None:
+            failures.append(
+                "requires an explicit provider_config.pool_size as the chunked "
+                "capacity declaration (the non-chunked default of 10000 is not "
+                "applied silently here)"
+            )
+        if col_entry.get("cardinality_mode") not in (None, "reuse"):
+            failures.append(
+                "requires cardinality_mode absent or 'reuse' (source-cardinality "
+                "modes describe whole-run state)"
+            )
+    if strategy == "categorical":
+        if cfg.get("from_profile"):
+            failures.append(
+                "from_profile derives categories from the profile, which chunked "
+                "mode builds from the first chunk only; declare categories "
+                "explicitly"
+            )
+        elif not cfg.get("categories"):
+            failures.append("requires explicit provider_config.categories")
+    return failures
+
 
 def check_chunked_compatibility(config: dict[str, Any], *, table: str) -> None:
     """Reject configs whose chunked run could not match a full-frame run.
 
     Raises PlanCompileError with codes `chunked_table_unknown`,
     `chunked_generate_unsupported`, `chunked_relationships_unsupported`,
-    or `strategy_not_chunk_safe` naming the offending columns.
+    `strategy_not_chunk_safe`, or `chunked_strategy_conditions_unmet`
+    naming the offending columns.
     """
     tables = config.get("tables") or []
     table_cfg = next((t for t in tables if isinstance(t, dict) and t.get("name") == table), None)
@@ -96,12 +163,19 @@ def check_chunked_compatibility(config: dict[str, Any], *, table: str) -> None:
             ),
         )
     offending: list[tuple[str, str]] = []
+    conditions_unmet: list[tuple[str, str, list[str]]] = []
     for col_entry in table_cfg.get("columns") or []:
         if not isinstance(col_entry, dict):
             continue
         strategy = col_entry.get("strategy")
-        if strategy is not None and strategy not in CHUNK_SAFE_STRATEGIES:
-            offending.append((str(col_entry.get("name", "?")), str(strategy)))
+        if strategy is None or strategy in CHUNK_SAFE_STRATEGIES:
+            continue
+        if strategy in CHUNK_CONDITIONAL_STRATEGIES:
+            failures = _conditional_admission_failures(col_entry)
+            if failures:
+                conditions_unmet.append((str(col_entry.get("name", "?")), str(strategy), failures))
+            continue
+        offending.append((str(col_entry.get("name", "?")), str(strategy)))
     if offending:
         details = ", ".join(f"{name} ({strategy})" for name, strategy in offending)
         raise PlanCompileError(
@@ -113,6 +187,20 @@ def check_chunked_compatibility(config: dict[str, Any], *, table: str) -> None:
                 f"{', '.join(sorted(CHUNK_SAFE_STRATEGIES))}."
             ),
         )
+    if conditions_unmet:
+        details = "; ".join(
+            f"{name} ({strategy}: {'; '.join(failures)})"
+            for name, strategy, failures in conditions_unmet
+        )
+        raise PlanCompileError(
+            code="chunked_strategy_conditions_unmet",
+            path=f"tables.{table}.columns",
+            message=(
+                f"column(s) {details}. faker/categorical run chunked only on "
+                "their deterministic value-keyed path with all whole-run inputs "
+                "declared in config (see run_mask_pipeline_chunked docs)."
+            ),
+        )
 
 
 def _first_chunk_profile(first_chunk: pa.Table, *, table: str, engine_version: str) -> Any:
@@ -122,10 +210,14 @@ def _first_chunk_profile(first_chunk: pa.Table, *, table: str, engine_version: s
     for its columns to mask at all), so a fully-empty --no-profile-style
     Profile silently masks nothing. The first chunk gives real dtypes;
     distinct counts and row_count describe only that chunk, which is
-    fine -- chunk-safe strategies consume nothing distribution-dependent
-    (no pools, no capacity pre-flight; those checks land in
-    checks_skipped under no_profile=True). Epoch `profiled_at` keeps the
-    'not a real source profile' sentinel from the --no-profile path."""
+    fine -- admitted strategies consume nothing distribution-dependent.
+    Faker pools size from the config-declared pool_size (the admission
+    rule requires it explicitly), never from profile distinct counts,
+    and the pool-capacity pre-flight lands in checks_skipped under
+    no_profile=True, which is correct here: with admission restricted
+    to deterministic REUSE, pool capacity is a collision-rate knob, not
+    a correctness input. Epoch `profiled_at` keeps the 'not a real
+    source profile' sentinel from the --no-profile path."""
     import random
 
     from decoy_engine.profile import Profile
@@ -156,6 +248,8 @@ def run_mask_pipeline_chunked(
     table: str,
     engine_version: str,
     registry: Any = None,
+    adapter: Any = None,
+    vault_writer: Any = None,
 ) -> Iterator[pa.Table]:
     """Mask `table`'s rows chunk-by-chunk under `config`.
 
@@ -165,10 +259,22 @@ def run_mask_pipeline_chunked(
     to a full-frame `run_pipeline` of the same rows (the value-keyed
     contract, enforced by `check_chunked_compatibility` up front).
 
+    `adapter` selects the execution substrate; None keeps the pandas
+    adapter (the byte-stable default this mode shipped with). Pass a
+    `PolarsExecutionAdapter` (e.g. via `select_execution_adapter`) for
+    polars-substrate streaming; cross-substrate output is VALUE-equal,
+    not Arrow-schema-equal (string widens to large_string etc.; the
+    recorded v2 rows in tests/parity/SEMANTIC_DIFFERENCES.md).
+
+    `vault_writer` (a `decoy_engine.vault.VaultWriter`) collects each
+    chunk's source->masked pairs for `vault: true` columns as the chunk
+    masks; the caller writes the artifact after the stream drains.
+
     Validation and plan compile happen EAGERLY at call time; only the
     per-chunk masking is lazy.
     """
     from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
+    from decoy_engine.generation.pool import PoolCache
     from decoy_engine.plan import compile_plan
     from decoy_engine.providers_v2 import get_default_registry
     from decoy_engine.relationships import RelationshipGraph, build_namespace_registry
@@ -183,7 +289,19 @@ def run_mask_pipeline_chunked(
     resolved_registry = registry if registry is not None else get_default_registry()
     ns_registry = build_namespace_registry(config, profile)
     graph = RelationshipGraph(edges=(), ordering=())
-    adapter = PandasExecutionAdapter()
+    if adapter is None:
+        adapter = PandasExecutionAdapter()
+    # One cache for the whole run: faker pools build ONCE (eagerly, so a
+    # provider failure surfaces before any output streams) and every
+    # chunk samples from the same pool via the handler's cache consult.
+    pool_cache = PoolCache()
+    _warm_faker_pools(
+        config,
+        table=table,
+        job_seed=plan.seed_envelope.job_seed,
+        registry=resolved_registry,
+        pool_cache=pool_cache,
+    )
 
     def _masked() -> Iterator[pa.Table]:
         for chunk in _chain_first(first, chunk_iter):
@@ -191,12 +309,73 @@ def run_mask_pipeline_chunked(
                 plan,
                 {table: chunk},
                 registry=resolved_registry,
+                pool_cache=pool_cache,
                 relationship_graph=graph,
                 namespace_registry=ns_registry,
             )
-            yield result.outputs[table]
+            masked = result.outputs[table]
+            if vault_writer is not None:
+                from decoy_engine.vault import collect_vault_entries
+
+                vault_writer.add(collect_vault_entries(config, {table: chunk}, {table: masked}))
+            yield masked
 
     return _masked()
+
+
+def _warm_faker_pools(
+    config: dict[str, Any],
+    *,
+    table: str,
+    job_seed: bytes,
+    registry: Any,
+    pool_cache: Any,
+) -> None:
+    """Build each admitted faker column's pool once into `pool_cache`.
+
+    The build parameters mirror FakerStrategyHandler exactly (same
+    pool_size/locale/config split), so the handler's identity_for
+    lookup hits this cache on every chunk. Caching is byte-safe: the
+    build is RNG-seeded by the identity's pool_seed (S5 F2), so any
+    rebuild of the same identity is value-identical.
+    """
+    from decoy_engine.generation.pool import PoolBuilder
+
+    tables = config.get("tables") or []
+    table_cfg = next((t for t in tables if isinstance(t, dict) and t.get("name") == table), None)
+    if table_cfg is None:
+        return
+    builder = PoolBuilder(registry)
+    for col_entry in table_cfg.get("columns") or []:
+        if not isinstance(col_entry, dict) or col_entry.get("strategy") != "faker":
+            continue
+        provider = col_entry.get("provider")
+        if provider is None:
+            continue
+        cfg = dict(col_entry.get("provider_config") or {})
+        pool_size = int(cfg["pool_size"])  # admission requires it explicitly
+        locale = cfg.get("locale")
+        build_config = {k: v for k, v in cfg.items() if k not in ("pool_size", "locale")}
+        identity = builder.identity_for(
+            str(provider),
+            size=pool_size,
+            job_seed=job_seed,
+            locale=locale,
+            config=build_config,
+            namespace=col_entry.get("namespace"),
+        )
+        if pool_cache.get(identity) is not None:
+            continue
+        pool_cache.put(
+            builder.build(
+                provider=str(provider),
+                size=pool_size,
+                job_seed=job_seed,
+                locale=locale,
+                config=build_config,
+                namespace=col_entry.get("namespace"),
+            )
+        )
 
 
 def _chain_first(first: pa.Table, rest: Iterator[pa.Table]) -> Iterator[pa.Table]:

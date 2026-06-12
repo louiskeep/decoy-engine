@@ -10,8 +10,16 @@ Privacy gate: a categorical snapshot's `top_values` contain REAL values
 from the source frame. Emitting them is a deliberate disclosure the
 operator must opt into with `allow_real_categories: true`; without it
 the spec refuses to load (`statistical_real_categories_not_allowed`).
-Differential privacy is out of scope for v1 (capability-gaps plan,
-decision 3, 2026-06-12).
+Differential privacy lives at FIT time (`decoy fit --epsilon`,
+quality/dp.py); the spec layer consumes exact and noisy snapshots
+identically.
+
+Freetext (deferred follow-up 4, 2026-06-12) is LENGTH-ONLY: the sampler
+draws a target length from the fitted length histogram and fills with
+deterministic lorem tokens. No source tokens are stored in the snapshot
+(only length stats), so freetext needs no disclosure gate; a word-level
+Markov mode that would store real n-grams is a recorded follow-up
+behind its own opt-in.
 """
 
 from __future__ import annotations
@@ -22,7 +30,7 @@ from typing import Any
 
 from decoy_engine.quality.snapshot import DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION
 
-_SUPPORTED_KINDS = ("numeric", "categorical", "datetime")
+_SUPPORTED_KINDS = ("numeric", "categorical", "datetime", "freetext")
 _OTHER_MODES = ("redistribute", "emit")
 
 # The placeholder emitted for tail mass under other_mode="emit".
@@ -115,8 +123,7 @@ def load_spec(col_cfg: dict[str, Any]) -> StatisticalSpec:
             code="statistical_kind_unsupported",
             message=(
                 f"statistical column {name!r}: snapshot kind {kind!r} has no sampler "
-                f"(supported: {', '.join(_SUPPORTED_KINDS)}). Freetext columns belong "
-                f"on the faker path."
+                f"(supported: {', '.join(_SUPPORTED_KINDS)})."
             ),
         )
 

@@ -172,3 +172,149 @@ class TestCompileCheck:
 
         names = run_config_only_checks(self._cfg({"ner": True}))
         assert "text_redact_ner_available" in names
+
+
+class TestStreetAddressDetector:
+    """Pure-regex street detector (deferred follow-up 8a): house number +
+    USPS Pub 28 C1 suffix anchor, no spaCy needed."""
+
+    @pytest.mark.parametrize(
+        "text,expected",
+        [
+            ("ship to 123 Main St today", "123 Main St"),
+            ("at 4567 North Harbor Boulevard, suite open", "4567 North Harbor Boulevard"),
+            ("she lives at 9 Oak Ridge Rd.", "9 Oak Ridge Rd."),
+            ("deliver to 123 Main St Apt 4 by noon", "123 Main St Apt 4"),
+            ("office: 800 W 5th Ave Suite 210, floor 2", "800 W 5th Ave Suite 210"),
+        ],
+    )
+    def test_addresses_found(self, text: str, expected: str) -> None:
+        spans = iter_spans(text, ["street_address"])
+        assert [s.matched_text for s in spans] == [expected]
+        assert spans[0].detector_id == "street_address"
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "chapter 12 main idea recap",  # no suffix anchor
+            "the 5 best ways to win",  # no suffix
+            "Main Street is busy",  # no house number
+            "version 2 stable release",  # nothing address-shaped
+        ],
+    )
+    def test_prose_not_shredded(self, text: str) -> None:
+        assert iter_spans(text, ["street_address"]) == []
+
+    def test_in_default_detector_set(self) -> None:
+        spans = iter_spans("ship to 123 Main St today")
+        assert any(s.detector_id == "street_address" for s in spans)
+
+    def test_street_span_resolves_with_regex_overlaps(self) -> None:
+        # A zip inside the address text: leftmost-longest keeps the street
+        # span whole instead of double-splicing (the text_redact handler
+        # splices whatever iter_spans resolves).
+        text = "invoice for 99 Elm Street, attn billing"
+        spans = iter_spans(text, ["street_address", "us_zip"])
+        assert [s.matched_text for s in spans] == ["99 Elm Street"]
+
+
+class TestLocaleLabelScheme:
+    def test_wikiner_per_label_mapped(self) -> None:
+        """Non-English models emit PER (WikiNER), not PERSON (OntoNotes);
+        both must land on person_name or locale models silently drop
+        every person hit."""
+        from decoy_engine.storm.ner import NER_ENTITY_MAP
+
+        assert NER_ENTITY_MAP["PER"] == "person_name"
+        assert NER_ENTITY_MAP["PERSON"] == "person_name"
+        assert NER_ENTITY_MAP["LOC"] == "location"
+
+    @pytest.mark.skipif(
+        not (spacy_installed() and model_installed("de_core_news_sm")),
+        reason="de_core_news_sm not installed (locale model)",
+    )
+    def test_german_model_finds_person_and_location(self) -> None:
+        from decoy_engine.storm.ner import iter_ner_spans
+
+        spans = iter_ner_spans("Angela Schmidt wohnt in Berlin.", model="de_core_news_sm")
+        detectors = {s.detector_id for s in spans}
+        assert "person_name" in detectors
+        assert "location" in detectors
+
+
+class TestModelVersionStamp:
+    def test_installed_model_version_resolves_known_package(self) -> None:
+        from decoy_engine.storm.ner import installed_model_version
+
+        # pytest is always installed; the helper is a plain metadata lookup.
+        assert installed_model_version("pytest")
+        assert installed_model_version("xx_definitely_not_installed") is None
+
+    def test_column_seed_carries_ner_model_version(self, monkeypatch, tmp_path) -> None:
+        import pandas as pd
+        import pyarrow as pa
+
+        from decoy_engine.execution._chunked import _first_chunk_profile
+        from decoy_engine.plan import _compile as compile_mod
+        from decoy_engine.plan import compile_plan
+
+        monkeypatch.setattr("decoy_engine.storm.ner.installed_model_version", lambda model: "9.9.9")
+        cfg = {
+            "global_settings": {"seed": 1},
+            "tables": [
+                {
+                    "name": "t",
+                    "columns": [
+                        {
+                            "name": "notes",
+                            "strategy": "text_redact",
+                            "provider_config": {"ner": True},
+                        },
+                        {"name": "email", "strategy": "hash", "namespace": "n"},
+                    ],
+                }
+            ],
+        }
+        df = pd.DataFrame({"notes": ["hello"], "email": ["a@b.com"]})
+        profile = _first_chunk_profile(
+            pa.Table.from_pandas(df, preserve_index=False), table="t", engine_version="x"
+        )
+        # Row 13 hard-fails when the model is absent; bypass it for the
+        # stamp test (the stamp is independent of availability).
+        monkeypatch.setattr(compile_mod, "check_text_redact_ner_available", lambda config: None)
+        plan = compile_plan(cfg, profile, decoy_engine_version="x", no_profile=True)
+        per_column = dict(plan.seed_envelope.per_table[0][1].per_column)
+        assert per_column["notes"].ner_model_version == "9.9.9"
+        assert per_column["email"].ner_model_version is None
+
+    def test_unresolvable_version_warns(self, monkeypatch) -> None:
+        import pandas as pd
+        import pyarrow as pa
+
+        from decoy_engine.execution._chunked import _first_chunk_profile
+        from decoy_engine.plan import _compile as compile_mod
+        from decoy_engine.plan import compile_plan
+
+        monkeypatch.setattr("decoy_engine.storm.ner.installed_model_version", lambda model: None)
+        monkeypatch.setattr(compile_mod, "check_text_redact_ner_available", lambda config: None)
+        cfg = {
+            "global_settings": {"seed": 1},
+            "tables": [
+                {
+                    "name": "t",
+                    "columns": [
+                        {
+                            "name": "notes",
+                            "strategy": "text_redact",
+                            "provider_config": {"ner": {"model": "xx_meta_free"}},
+                        }
+                    ],
+                }
+            ],
+        }
+        df = pd.DataFrame({"notes": ["hello"]})
+        profile = _first_chunk_profile(
+            pa.Table.from_pandas(df, preserve_index=False), table="t", engine_version="x"
+        )
+        plan = compile_plan(cfg, profile, decoy_engine_version="x", no_profile=True)
+        assert any("ner_model_version_unavailable" in w for w in plan.plan_compile.warnings)

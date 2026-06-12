@@ -105,6 +105,13 @@ class ColumnSeed:
     # `nested`, this field carries the sentinel "inherits" and
     # the manifest layer substitutes the child's value.
     distribution_behavior: str | None = None
+    # Deferred follow-up 8c (2026-06-12): the installed spaCy model
+    # package version for text_redact columns with `ner` configured.
+    # NER output is deterministic per model VERSION, so this stamp is
+    # what makes a plan's text_redact bytes auditable across
+    # environments (sibling of the backend_version stamp). None for
+    # every other column, and when the model has no package metadata.
+    ner_model_version: str | None = None
 
 
 @dataclass(frozen=True)
