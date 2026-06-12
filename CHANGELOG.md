@@ -11,6 +11,23 @@ minimum engine version it was tested against via its
 
 ### Added (capability gaps, 2026-06-12)
 
+- **`statistical` generate type** (WS3). Samples synthetic columns from a
+  `distribution-snapshot/v1` artifact (the existing quality/snapshot
+  schema is the fitted model): histogram inverse-CDF for numeric
+  (Devroye), weighted top-k for categorical with
+  `other_mode: redistribute|emit`, year-bin sampling for datetime, and
+  `condition_on` declared-pair conditional sampling from the snapshot's
+  joint contingency tables (synthpop-style). Categorical columns require
+  the explicit `allow_real_categories: true` disclosure opt-in (snapshot
+  top_values carry real source values; DP is out of scope for v1).
+  Per-row seeded (chunk-safe), pure-Python sampling (bit-stable).
+  New compile check `statistical_columns` (row 12) validates config +
+  artifact at validate time; `checks_passed` grows 11 -> 12.
+
+- **`decoy_engine.unmask_pipeline` detokenization API** (WS1): inverts
+  fpe columns of a masked output under the same config; per-column
+  reversibility report. See the fpe re-keying entry under Changed.
+
 - **Mimesis backend adoption completed** (closes the S7 evaluation that was
   built but never run). With the `mimesis` extra installed, five person
   providers (`person_name`, `person_first_name`, `person_last_name`,

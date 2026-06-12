@@ -278,3 +278,57 @@ def check_composite_columns_length_match(profile: Profile) -> None:
                     f"{parent_len} != child columns length {child_len}."
                 ),
             )
+
+
+def check_statistical_columns(config: dict[str, Any]) -> None:
+    """Validate `type: statistical` generate columns against their snapshots.
+
+    Compile-check ownership table row #12 (capability-gaps WS3,
+    2026-06-12). A statistical column is guaranteed dead at run when its
+    snapshot_file is unreadable, the source column is absent from the
+    artifact, the snapshot kind has no sampler (freetext), a categorical
+    column lacks the `allow_real_categories: true` disclosure opt-in, or
+    `condition_on` names a pair the snapshot has no joint table for.
+    `generation/statistical.load_spec` owns those verdicts (one set of
+    error codes for compile time and generation time); this check adds
+    the declared-order rule load_spec cannot see: the condition_on
+    column must be generated BEFORE its dependent in the same table.
+
+    Config + snapshot artifact only (no profile, no source data): the
+    snapshot is a config-referenced fitted-model file, so config-only
+    callers (decoy validate) catch a bad artifact before a long run.
+    """
+    from decoy_engine.generation.statistical import load_spec
+    from decoy_engine.generation.statistical._spec import StatisticalSpecError
+
+    tables = config.get("tables", []) if isinstance(config.get("tables"), list) else []
+    for table_entry in tables:
+        if not isinstance(table_entry, dict):
+            continue
+        table_name = table_entry.get("name", "?")
+        seen: list[str] = []
+        for col_entry in table_entry.get("generate_columns", []) or []:
+            if not isinstance(col_entry, dict):
+                continue
+            col_name = col_entry.get("name", "?")
+            if col_entry.get("type") == "statistical":
+                try:
+                    spec = load_spec(col_entry)
+                except StatisticalSpecError as exc:
+                    raise PlanCompileError(
+                        code=exc.code,
+                        path=f"tables.{table_name}.generate_columns.{col_name}",
+                        message=exc.message,
+                    ) from exc
+                if spec.condition_on is not None and spec.condition_on not in seen:
+                    raise PlanCompileError(
+                        code="statistical_condition_column_unavailable",
+                        path=f"tables.{table_name}.generate_columns.{col_name}.condition_on",
+                        message=(
+                            f"statistical column {col_name!r} conditions on "
+                            f"{spec.condition_on!r}, which is not declared earlier in "
+                            f"table {table_name!r}'s generate_columns. Sequential "
+                            f"conditional sampling needs the parent first."
+                        ),
+                    )
+            seen.append(str(col_name))

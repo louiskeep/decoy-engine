@@ -52,6 +52,7 @@ from decoy_engine.plan._checks import (
     check_composite_columns_length_match,
     check_non_poolable_provider_with_pool_backend,
     check_null_bearing_int_unsupported,
+    check_statistical_columns,
     check_unknown_provider,
 )
 from decoy_engine.plan._errors import PlanCompileError
@@ -137,6 +138,10 @@ def compile_plan(
     # runs in both branches right after unknown_provider so a missing
     # provider still surfaces as row 2 first.
     check_non_poolable_provider_with_pool_backend(config)
+    # Row 12 (capability-gaps WS3, 2026-06-12): statistical generate
+    # columns vs their snapshot artifacts. Config + artifact only, so it
+    # runs in both branches and in run_config_only_checks.
+    check_statistical_columns(config)
     check_composite_columns_length_match(profile)
     # MG-3 / M3 (2026-05-31): reject when + coherent_with combo early,
     # before composite-wiring checks. A column carrying both fields is
@@ -181,6 +186,8 @@ def compile_plan(
             "deterministic_namespace_completeness",
             # Row 11 (audit H5): structural, tail-appended.
             "non_poolable_provider_with_pool_backend",
+            # Row 12 (WS3): structural, tail-appended.
+            "statistical_columns",
         )
         checks_skipped: tuple[str, ...] = (
             "basic_uniqueness_pre_flight",
@@ -213,6 +220,8 @@ def compile_plan(
             "null_bearing_int_unsupported",
             # Row 11 (audit H5): structural, tail-appended.
             "non_poolable_provider_with_pool_backend",
+            # Row 12 (WS3): structural, tail-appended.
+            "statistical_columns",
         )
         checks_skipped = ()
 
@@ -283,11 +292,16 @@ def run_config_only_checks(config: dict[str, Any]) -> tuple[str, ...]:
     _check_when_with_coherent_with(config)
     deterministic_namespace_completeness(config)
     check_non_poolable_provider_with_pool_backend(config)
+    # Row 12 (WS3): consumes the config plus its referenced snapshot
+    # artifact (a fitted-model JSON, not source data), so config-only
+    # callers catch a missing/incompatible artifact before a long run.
+    check_statistical_columns(config)
     return (
         "unknown_provider",
         "when_with_coherent_with",
         "deterministic_namespace_completeness",
         "non_poolable_provider_with_pool_backend",
+        "statistical_columns",
     )
 
 

@@ -139,10 +139,15 @@ def generate_tables(
         table = generate_by_name[name]
         gcols = table["generate_columns"]
         n = int(table.get("row_count") or 0)
-        data = {
-            col["name"]: _generate_column(col, n, seed, derive_key, pools, instance_default_locale)
-            for col in gcols
-        }
+        # Declared order, explicit loop: a `statistical` column with
+        # `condition_on` reads its already-generated sibling from `data`
+        # (WS3 sequential conditional sampling). Iteration order is the
+        # same as the prior dict comprehension; parity unaffected.
+        data: dict[str, list[Any]] = {}
+        for col in gcols:
+            data[col["name"]] = _generate_column(
+                col, n, seed, derive_key, pools, instance_default_locale, data
+            )
         tbl = pa.table(data)
         pools[name] = tbl
         out[name] = tbl
@@ -196,6 +201,7 @@ def _generate_column(
     derive_key: Any = None,
     pools: dict[str, pa.Table] | None = None,
     instance_default_locale: str | None = None,
+    generated: dict[str, list[Any]] | None = None,
 ) -> list[Any]:
     """Dispatch a generate column to its generator by ``type`` (mirrors V1
     ``ColumnGenerator.generators``), then apply the V1 ``null_probability``
@@ -216,6 +222,8 @@ def _generate_column(
         values = _formula(col, n, seed, derive_key)
     elif kind == "reference":
         values = _reference(col, n, seed, derive_key, pools or {})
+    elif kind == "statistical":
+        values = _statistical(col, n, seed, derive_key, generated or {})
     else:
         # The Literal on GenerateColumnConfig.type rejects anything outside this set
         # at validation; this branch is the defensive fallback for callers that
@@ -244,6 +252,39 @@ def _sequence(col: dict[str, Any], n: int) -> list[str]:
         value_str = str(value).zfill(pad) if pad > 0 else str(value)
         out.append(f"{prefix}{value_str}{suffix}")
     return out
+
+
+def _statistical(
+    col: dict[str, Any],
+    n: int,
+    seed: int,
+    derive_key: Any,
+    generated: dict[str, list[Any]],
+) -> list[Any]:
+    """WS3 statistical synthesis: sample from a distribution-snapshot/v1
+    artifact (see generation/statistical for the methodology + privacy
+    gate). ADDITIVE generator type -- the existing types stay
+    parity-frozen to V1. `generated` carries the table's already-built
+    columns so `condition_on` can read its conditioning sibling
+    (declared-order sequential conditional sampling)."""
+    from decoy_engine.generation.statistical import load_spec, sample_column
+    from decoy_engine.generation.statistical._spec import StatisticalSpecError
+
+    spec = load_spec(col)
+    parent_values: list[Any] | None = None
+    if spec.condition_on is not None:
+        parent_values = generated.get(spec.condition_on)
+        if parent_values is None:
+            raise StatisticalSpecError(
+                code="statistical_condition_column_unavailable",
+                message=(
+                    f"statistical column {spec.column!r} conditions on "
+                    f"{spec.condition_on!r}, which is not generated yet. Declare "
+                    f"{spec.condition_on!r} BEFORE {spec.column!r} in generate_columns."
+                ),
+            )
+    col_seed = synthetic_column_seed(derive_key=derive_key, column_config=col, fallback_seed=seed)
+    return sample_column(spec, n, col_seed=col_seed, parent_values=parent_values)
 
 
 def _categorical(col: dict[str, Any], n: int, seed: int, derive_key: Any = None) -> list[Any]:
