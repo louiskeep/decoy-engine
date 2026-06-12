@@ -795,6 +795,33 @@ def _build_seed_envelope(
                 # ill-defined for the coherent set (spec §Pitfalls).
                 when_raw = col_entry.get("when")
                 when = when_raw if isinstance(when_raw, str) and when_raw.strip() else None
+                # Deferred follow-up 8c: stamp the installed NER model
+                # version for text_redact + ner columns (precedent: the
+                # backend_version registry stamp above). Row 13 already
+                # hard-fails a truly-missing model; a None version here
+                # means the package ships no metadata, which only weakens
+                # the cross-environment audit trail, so warn instead.
+                ner_model_version = None
+                if strategy == "text_redact" and isinstance(provider_config_raw, dict):
+                    ner_cfg = provider_config_raw.get("ner")
+                    if ner_cfg:
+                        from decoy_engine.storm.ner import (
+                            DEFAULT_NER_MODEL,
+                            installed_model_version,
+                        )
+
+                        ner_model = DEFAULT_NER_MODEL
+                        if isinstance(ner_cfg, dict) and ner_cfg.get("model"):
+                            ner_model = str(ner_cfg["model"])
+                        ner_model_version = installed_model_version(ner_model)
+                        if ner_model_version is None:
+                            warnings.append(
+                                f"ner_model_version_unavailable: column "
+                                f"{table_profile.name}.{col_name} uses ner model "
+                                f"{ner_model!r} which has no installed package "
+                                "metadata; text_redact output is byte-stable only "
+                                "within this environment."
+                            )
                 if when is not None and coherent_with:
                     raise PlanCompileError(
                         code="when_with_coherent_with_unsupported",
@@ -834,6 +861,7 @@ def _build_seed_envelope(
                             distribution_behavior=distribution_behavior_for(
                                 strategy, provider_config
                             ),
+                            ner_model_version=ner_model_version,
                         ),
                     )
                 )

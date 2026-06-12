@@ -1192,18 +1192,87 @@ class Span:
     matched_text: str
 
 
+# Street addresses in free text (deferred follow-up 8a, 2026-06-12).
+# Pure regex, no spaCy: a leading house number plus a USPS street-suffix
+# anchor is unambiguous enough for prose, unlike the name-hint-only
+# column-level `address` detector. Suffix vocabulary: USPS Publication
+# 28, Appendix C1 (primary street suffix names + standard abbreviations),
+# curated to the high-frequency entries; secondary-unit designators
+# (Apt/Suite/Unit/#, Pub 28 Appendix C2) ride along optionally.
+_USPS_STREET_SUFFIXES: tuple[str, ...] = (
+    "street",
+    "st",
+    "avenue",
+    "ave",
+    "boulevard",
+    "blvd",
+    "road",
+    "rd",
+    "drive",
+    "dr",
+    "lane",
+    "ln",
+    "court",
+    "ct",
+    "circle",
+    "cir",
+    "place",
+    "pl",
+    "terrace",
+    "ter",
+    "trail",
+    "trl",
+    "parkway",
+    "pkwy",
+    "highway",
+    "hwy",
+    "way",
+    "plaza",
+    "plz",
+    "square",
+    "sq",
+    "expressway",
+    "expy",
+    "freeway",
+    "fwy",
+    "crossing",
+    "xing",
+    "loop",
+    "alley",
+    "aly",
+    "bend",
+    "cove",
+    "cv",
+    "point",
+    "pt",
+    "ridge",
+    "rdg",
+)
+_STREET_ADDRESS_RE = re.compile(
+    r"\b\d{1,6}\s+"  # house number
+    # 1-4 street-name words; the leading [A-Za-z0-9] admits ordinal names
+    # ("5th", "42nd") while the suffix anchor keeps bare number runs out.
+    r"(?:[A-Za-z0-9][A-Za-z0-9'.\-]*\s+){1,4}"
+    r"(?:" + "|".join(_USPS_STREET_SUFFIXES) + r")\.?"  # Pub 28 C1 suffix
+    r"(?:\s+(?:apt|apartment|suite|ste|unit|#)\.?\s*[\w\-]+)?"  # C2 unit
+    r"(?=[\s,.;:!?)\"']|$)",
+    re.IGNORECASE,
+)
+
 # Map from detector_id to (compiled_regex, optional_validator). Validators
 # are the same per-value functions that `_evaluate` already calls; reusing
 # them here keeps the column-level + span-level detector behavior in sync.
 # Mirrors the existing module-level `_*_RE` constants.
 #
-# `person_name` / `address` / name-hint-only detectors (license_num,
+# `person_name` / name-hint-only detectors (license_num,
 # health_plan_id, device_id, biometric_id, vehicle_id, mrn) are intentionally
 # OMITTED: their regexes are too loose to use without a column-name signal
 # (per the existing docstrings on each). The text_redact contract is "find
 # unambiguous PII inside free text" - adding name-hint-only detectors here
 # would shred legitimate prose. Customers needing those detectors in text
 # pass them via the `custom` kwarg with a tighter pattern.
+# `street_address` is the exception that proves the rule: the house-number
+# + USPS-suffix anchor makes it unambiguous without a column-name signal.
 _SPAN_DETECTORS: dict[str, tuple[re.Pattern[str], Callable[[str], bool] | None]] = {
     "email": (_EMAIL_RE, None),
     "ssn": (_SSN_RE, None),
@@ -1215,6 +1284,7 @@ _SPAN_DETECTORS: dict[str, tuple[re.Pattern[str], Callable[[str], bool] | None]]
     "icd10": (_ICD10_RE, _icd10_valid),
     "npi": (_NPI_RE, _npi_valid),
     "url": (_URL_RE, None),
+    "street_address": (_STREET_ADDRESS_RE, None),
 }
 
 
