@@ -173,13 +173,13 @@ class TestSpecErrors:
             load_spec(_col("ghost", snap))
         assert exc.value.code == "statistical_column_not_in_snapshot"
 
-    def test_freetext_kind_rejected(self, tmp_path):
-        df = pd.DataFrame(
-            {"notes": [f"long free text value number {i} with words" for i in range(40)]}
-        )
+    def test_unknown_kind_rejected(self, tmp_path):
+        """Freetext is admitted since deferred follow-up 4; an unknown or
+        empty kind still gets the typed rejection."""
+        df = pd.DataFrame({"blank": [None] * 10})
         snap = _write_snapshot(tmp_path, df)
         with pytest.raises(StatisticalSpecError) as exc:
-            load_spec(_col("notes", snap))
+            load_spec(_col("blank", snap))
         assert exc.value.code == "statistical_kind_unsupported"
 
     def test_source_column_override(self, tmp_path):
@@ -188,6 +188,108 @@ class TestSpecErrors:
         spec = load_spec(_col("renamed_amount", snap, source_column="amount"))
         out = sample_column(spec, 50, col_seed=2)
         assert len(out) == 50
+
+
+class TestFreetextSampling:
+    """Length-only surrogate text (deferred follow-up 4, 2026-06-12)."""
+
+    def _freetext_df(self) -> pd.DataFrame:
+        import numpy as np
+
+        rng = np.random.default_rng(3)
+        return pd.DataFrame(
+            {"comment": ["x" * int(n) for n in rng.normal(80, 20, size=1_000).clip(10, 160)]}
+        )
+
+    def test_lengths_within_source_range_and_deterministic(self, tmp_path):
+        df = self._freetext_df()
+        snap = _write_snapshot(tmp_path, df)
+        spec = load_spec(_col("comment", snap))
+        a = sample_column(spec, 500, col_seed=11)
+        b = sample_column(spec, 500, col_seed=11)
+        assert a == b
+        lo = df["comment"].str.len().min()
+        hi = df["comment"].str.len().max()
+        assert all(isinstance(v, str) and lo <= len(v) <= hi for v in a)
+
+    def test_prefix_property_holds(self, tmp_path):
+        """Per-row seeding (rng.seed(col_seed + i)): row i is independent of
+        n, so any chunking of rows is byte-identical to a serial pass."""
+        snap = _write_snapshot(tmp_path, self._freetext_df())
+        spec = load_spec(_col("comment", snap))
+        assert sample_column(spec, 50, col_seed=7) == sample_column(spec, 100, col_seed=7)[:50]
+
+    def test_length_distribution_matches_histogram(self, tmp_path):
+        import json as _json
+
+        df = self._freetext_df()
+        snap_path = _write_snapshot(tmp_path, df)
+        spec = load_spec(_col("comment", snap_path))
+        out = sample_column(spec, 5_000, col_seed=21)
+        with open(snap_path, encoding="utf-8") as fh:
+            snap = _json.load(fh)
+        stats = snap["columns"]["comment"]["stats"]
+        edges = stats["length_bin_edges"]
+        counts = stats["length_bin_counts"]
+        total = sum(counts)
+        lengths = [len(v) for v in out]
+        # Empirical per-bin proportion within a loose tolerance of the
+        # fitted weights (binomial noise at n=5000 stays well under 0.05).
+        for j, expected in enumerate(c / total for c in counts):
+            lo_e, hi_e = edges[j], edges[j + 1]
+            got = sum(
+                1
+                for length in lengths
+                if (lo_e <= length < hi_e) or (j == len(counts) - 1 and length == hi_e)
+            ) / len(lengths)
+            assert abs(got - expected) < 0.05
+
+    def test_constant_length_source_emits_constant_lengths(self, tmp_path):
+        # Distinct values (so the snapshot classifies freetext, not
+        # categorical) that share one exact length.
+        df = pd.DataFrame({"comment": [f"fixed length str {i:03d}" for i in range(50)]})
+        assert df["comment"].str.len().nunique() == 1
+        snap = _write_snapshot(tmp_path, df)
+        spec = load_spec(_col("comment", snap))
+        out = sample_column(spec, 100, col_seed=4)
+        assert all(len(v) == len(df["comment"][0]) for v in out)
+
+    def test_no_source_tokens_in_output(self, tmp_path):
+        df = pd.DataFrame({"comment": [f"SECRETVALUE{i} appears here" for i in range(40)]})
+        snap = _write_snapshot(tmp_path, df)
+        spec = load_spec(_col("comment", snap))
+        out = sample_column(spec, 200, col_seed=5)
+        assert not any("SECRETVALUE" in v for v in out)
+
+    def test_condition_on_freetext_rejected(self, tmp_path):
+        df = self._freetext_df()
+        df["state"] = (["CA", "NY"] * 500)[: len(df)]
+        snap = _write_snapshot(tmp_path, df)
+        with pytest.raises(StatisticalSpecError) as exc:
+            load_spec(_col("comment", snap, condition_on="state"))
+        assert exc.value.code == "statistical_condition_kind_invalid"
+
+    def test_compile_check_passes_and_generate_tables_end_to_end(self, tmp_path):
+        from decoy_engine.generation.synthesize import generate_tables
+        from decoy_engine.plan._checks import check_statistical_columns
+
+        snap = _write_snapshot(tmp_path, self._freetext_df())
+        cfg = {
+            "global_settings": {"seed": 42},
+            "tables": [
+                {
+                    "name": "synthetic",
+                    "row_count": 60,
+                    "generate_columns": [
+                        {"name": "comment", "type": "statistical", "snapshot_file": snap}
+                    ],
+                }
+            ],
+        }
+        check_statistical_columns(cfg)
+        out = generate_tables(cfg)
+        values = out["synthetic"].column("comment").to_pylist()
+        assert len(values) == 60 and all(isinstance(v, str) for v in values)
 
 
 class TestGenerateTablesIntegration:

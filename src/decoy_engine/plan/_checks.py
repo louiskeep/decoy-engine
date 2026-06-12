@@ -286,8 +286,10 @@ def check_statistical_columns(config: dict[str, Any]) -> None:
     Compile-check ownership table row #12 (capability-gaps WS3,
     2026-06-12). A statistical column is guaranteed dead at run when its
     snapshot_file is unreadable, the source column is absent from the
-    artifact, the snapshot kind has no sampler (freetext), a categorical
-    column lacks the `allow_real_categories: true` disclosure opt-in, or
+    artifact, the snapshot kind has no sampler (an all-null "empty"
+    column; freetext is admitted since deferred follow-up 4), a
+    categorical column lacks the `allow_real_categories: true`
+    disclosure opt-in, or
     `condition_on` names a pair the snapshot has no joint table for.
     `generation/statistical.load_spec` owns those verdicts (one set of
     error codes for compile time and generation time); this check adds
