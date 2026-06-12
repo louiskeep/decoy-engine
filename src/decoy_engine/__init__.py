@@ -198,6 +198,7 @@ from decoy_engine.sdk import (
     WriteResult,
 )
 from decoy_engine.storm import DetectorMatch, FieldStats, SentinelFlag, StormProfile, run_storm
+from decoy_engine.unmask import UnmaskColumnReport, UnmaskResult, unmask_pipeline
 from decoy_engine.validation import validate_config
 from decoy_engine.validation.post import (
     CompositeCoherenceReport,
@@ -317,6 +318,8 @@ __all__ = [
     "StructuredEvents",
     "TelemetryClient",
     "TransientError",
+    "UnmaskColumnReport",
+    "UnmaskResult",
     "ValidationError",
     "ValidationMessage",
     "ValidationResult",
@@ -356,6 +359,7 @@ __all__ = [
     "run_pipeline",
     "run_storm",
     "select_execution_adapter",
+    "unmask_pipeline",
     "unregister_faker_provider",
     "validate_config",
     "validate_plan",
