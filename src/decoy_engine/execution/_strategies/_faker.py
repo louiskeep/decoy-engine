@@ -19,7 +19,7 @@ from __future__ import annotations
 import pandas as pd
 
 from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
-from decoy_engine.generation.pool import CardinalityMode, PoolBuilder, PoolSampler
+from decoy_engine.generation.pool import CardinalityMode, PoolBuilder, PoolSampler, ValuePool
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._types import ColumnSeed
 
@@ -51,14 +51,33 @@ class FakerStrategyHandler:
         # pool_size + locale are build knobs, not Faker provider-method kwargs.
         build_config = {k: v for k, v in cfg.items() if k not in ("pool_size", "locale")}
 
-        pool = PoolBuilder(ctx.registry).build(
-            provider=plan.provider,
+        # Consult ctx.pool_cache before building. Safe for byte parity:
+        # the build is RNG-seeded by the identity's pool_seed (S5 F2), so
+        # a cached pool and a rebuilt pool of the same identity are
+        # value-identical (S5 F1 established the identity_for cheap
+        # lookup for exactly this reason). Chunked execution pre-warms
+        # the cache so every chunk reuses one pool instead of rebuilding.
+        builder = PoolBuilder(ctx.registry)
+        identity = builder.identity_for(
+            plan.provider,
             size=pool_size,
             job_seed=ctx.job_seed,
             locale=locale,
             config=build_config,
             namespace=plan.namespace,
         )
+        cached = ctx.pool_cache.get(identity)
+        pool = cached if isinstance(cached, ValuePool) else None
+        if pool is None:
+            pool = builder.build(
+                provider=plan.provider,
+                size=pool_size,
+                job_seed=ctx.job_seed,
+                locale=locale,
+                config=build_config,
+                namespace=plan.namespace,
+            )
+            ctx.pool_cache.put(pool)
         sampled = PoolSampler().sample(
             pool,
             n,
