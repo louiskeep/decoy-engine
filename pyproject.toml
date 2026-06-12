@@ -119,7 +119,7 @@ dev = [
 # code red with no code change. CI (.github/workflows/ci.yml) installs
 # these same versions; bump them deliberately alongside a lint pass.
 lint = [
-    "ruff==0.15.14",
+    "ruff==0.15.17",
     "mypy==2.1.0",
 ]
 # engine-v2 S7: Mimesis is an OPTIONAL alternative provider backend. The
