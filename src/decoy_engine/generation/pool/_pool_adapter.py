@@ -12,6 +12,7 @@ adapter per column at execute time; S5 ships the wrapping primitive.
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Sequence
 from typing import Any
 
@@ -46,6 +47,14 @@ class PoolAdapter:
         self._wrapped = wrapped
         self._builder = builder
         self._cache = cache
+        # Per-identity build locks: concurrent misses on the SAME
+        # identity must not each run builder.build() (divergent pool
+        # instances break the determinism contract under concurrency);
+        # builds for different identities stay parallel. The dict is
+        # bounded by the distinct identities seen by this adapter
+        # instance (per-job in practice).
+        self._build_locks: dict[Any, threading.Lock] = {}
+        self._build_locks_guard = threading.Lock()
         # backend_version is a per-instance attribute: "pool(<wrapped>)".
         self.backend_version: str = f"pool({wrapped.backend_version})"
 
@@ -91,16 +100,26 @@ class PoolAdapter:
         cached = self._cache.get(identity)
         if cached is not None:
             return cached
-        pool = self._builder.build(
-            provider=provider,
-            size=size,
-            job_seed=spec.seed,
-            locale=spec.locale,
-            config=build_config,
-            namespace=spec.namespace,
-        )
-        self._cache.put(pool)
-        return pool
+        # Double-checked per-identity locking: re-consult the cache
+        # under the lock so the losers of the race reuse the winner's
+        # pool instead of rebuilding (and possibly caching a divergent
+        # instance).
+        with self._build_locks_guard:
+            lock = self._build_locks.setdefault(identity, threading.Lock())
+        with lock:
+            cached = self._cache.get(identity)
+            if cached is not None:
+                return cached
+            pool = self._builder.build(
+                provider=provider,
+                size=size,
+                job_seed=spec.seed,
+                locale=spec.locale,
+                config=build_config,
+                namespace=spec.namespace,
+            )
+            self._cache.put(pool)
+            return pool
 
     def generate(
         self,
