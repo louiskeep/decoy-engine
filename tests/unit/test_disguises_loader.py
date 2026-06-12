@@ -274,7 +274,14 @@ class TestDisguiseVersioning:
         # The loader skips schema-invalid files silently; a required
         # field added without updating every YAML would shrink this set.
         assert {d.id for d in load_disguises()} == {
-            "ccpa", "default", "ferpa", "gdpr", "glba", "hipaa", "pci", "sox",
+            "ccpa",
+            "default",
+            "ferpa",
+            "gdpr",
+            "glba",
+            "hipaa",
+            "pci",
+            "sox",
         }
 
     def test_version_missing_rejected(self):

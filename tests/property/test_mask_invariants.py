@@ -108,8 +108,9 @@ _COLUMN = st.lists(_CELL, min_size=1, max_size=40)
 _DIGITS = st.text(alphabet="0123456789", min_size=1, max_size=12)
 _DIGIT_COLUMN = st.lists(st.one_of(st.none(), _DIGITS), min_size=1, max_size=40)
 
-_DATES = st.dates(min_value=pd.Timestamp("1950-01-01").date(),
-                  max_value=pd.Timestamp("2050-12-31").date()).map(lambda d: d.isoformat())
+_DATES = st.dates(
+    min_value=pd.Timestamp("1950-01-01").date(), max_value=pd.Timestamp("2050-12-31").date()
+).map(lambda d: d.isoformat())
 _DATE_COLUMN = st.lists(st.one_of(st.none(), _DATES), min_size=1, max_size=40)
 
 
@@ -180,10 +181,12 @@ def test_hash_namespace_isolation(values):
     non_null = [v for v in values if v is not None]
     if not non_null:
         return
-    out_a = _run(HashStrategyHandler(), _df(values), "c",
-                 _col("hash", namespace="ns_a", deterministic=True))
-    out_b = _run(HashStrategyHandler(), _df(values), "c",
-                 _col("hash", namespace="ns_b", deterministic=True))
+    out_a = _run(
+        HashStrategyHandler(), _df(values), "c", _col("hash", namespace="ns_a", deterministic=True)
+    )
+    out_b = _run(
+        HashStrategyHandler(), _df(values), "c", _col("hash", namespace="ns_b", deterministic=True)
+    )
     src = _df(values)["c"].tolist()
     # For every non-null source value, the token must differ across namespaces.
     collisions = 0
@@ -196,7 +199,9 @@ def test_hash_namespace_isolation(values):
             collisions += 1
     # A genuine 256-bit hash collision across namespaces is astronomically
     # unlikely; any collision indicates namespace material is not mixed in.
-    assert collisions == 0, f"namespace isolation broken: {collisions}/{total} tokens identical across namespaces"
+    assert collisions == 0, (
+        f"namespace isolation broken: {collisions}/{total} tokens identical across namespaces"
+    )
 
 
 # ── shuffle ─────────────────────────────────────────────────────────────────
@@ -235,8 +240,13 @@ def test_truncate_output_is_substring_within_length(values, length):
 # ── fpe (digits) ────────────────────────────────────────────────────────────
 @given(_DIGIT_COLUMN)
 def test_fpe_format_preserving_null_and_deterministic(values):
-    seed = _col("fpe", namespace="fpe_ns", deterministic=True,
-                provider="fpe", provider_config={"charset": "digits"})
+    seed = _col(
+        "fpe",
+        namespace="fpe_ns",
+        deterministic=True,
+        provider="fpe",
+        provider_config={"charset": "digits"},
+    )
     out1 = _run(FpeStrategyHandler(chunk_count=1), _df(values), "c", seed)
     out2 = _run(FpeStrategyHandler(chunk_count=4), _df(values), "c", seed)
     src = _df(values)["c"]
@@ -275,8 +285,12 @@ def test_text_redact_preserves_nulls_and_never_emits_null_literals(values):
 # ── date_shift ──────────────────────────────────────────────────────────────
 @given(_DATE_COLUMN)
 def test_date_shift_preserves_nulls_and_emits_valid_dates(values):
-    seed = _col("date_shift", namespace="ds", deterministic=True,
-                provider_config={"min_days": -365, "max_days": 365})
+    seed = _col(
+        "date_shift",
+        namespace="ds",
+        deterministic=True,
+        provider_config={"min_days": -365, "max_days": 365},
+    )
     out = _run(DateShiftStrategyHandler(), _df(values), "c", seed)
     src = _df(values)["c"]
     # Null/unparseable preserved as null; valid dates stay parseable dates.

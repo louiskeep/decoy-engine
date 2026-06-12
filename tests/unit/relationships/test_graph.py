@@ -389,9 +389,9 @@ class TestDuplicateEdgeDedup:
             duplicated, namespace_registry=registry, orphan_policy_lookup=lookup
         )
         assert len(graph.edges) == 1
-        assert (
-            len(graph.children_of(rel.parent_table, rel.parent_columns)) == 1
-        ), "duplicate edge leaked into children_of"
+        assert len(graph.children_of(rel.parent_table, rel.parent_columns)) == 1, (
+            "duplicate edge leaked into children_of"
+        )
         # Ordering unchanged: parent before child, each node once.
         tables = [t for (t, _cols) in graph.ordering]
         assert tables.count(rel.parent_table) == 1

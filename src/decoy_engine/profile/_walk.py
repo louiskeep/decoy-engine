@@ -176,5 +176,3 @@ def _walk_column(
         fk_target=fk_target,
         pii_class=pii_class,
     )
-
-

@@ -35,9 +35,7 @@ def _load_generator():
 def test_capability_matrix_is_up_to_date():
     gen = _load_generator()
     expected = gen.render()
-    assert MATRIX.exists(), (
-        f"{MATRIX} is missing. Run `python scripts/gen_capability_matrix.py`."
-    )
+    assert MATRIX.exists(), f"{MATRIX} is missing. Run `python scripts/gen_capability_matrix.py`."
     actual = MATRIX.read_text(encoding="utf-8")
     assert actual == expected, (
         "docs/capability-matrix.md is stale: a registry changed but the matrix "

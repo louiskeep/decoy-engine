@@ -88,11 +88,56 @@ _STATUS_VALUES = ("active", "inactive", "pending", "closed")
 _CATEGORY_VALUES = ("alpha", "beta", "gamma", "delta", "epsilon", "zeta")
 _TIER_VALUES = ("bronze", "silver", "gold", "platinum")
 _STATE_ABBR = (
-    "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
-    "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
-    "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
-    "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
-    "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY",
+    "AL",
+    "AK",
+    "AZ",
+    "AR",
+    "CA",
+    "CO",
+    "CT",
+    "DE",
+    "FL",
+    "GA",
+    "HI",
+    "ID",
+    "IL",
+    "IN",
+    "IA",
+    "KS",
+    "KY",
+    "LA",
+    "ME",
+    "MD",
+    "MA",
+    "MI",
+    "MN",
+    "MS",
+    "MO",
+    "MT",
+    "NE",
+    "NV",
+    "NH",
+    "NJ",
+    "NM",
+    "NY",
+    "NC",
+    "ND",
+    "OH",
+    "OK",
+    "OR",
+    "PA",
+    "RI",
+    "SC",
+    "SD",
+    "TN",
+    "TX",
+    "UT",
+    "VT",
+    "VA",
+    "WA",
+    "WV",
+    "WI",
+    "WY",
 )
 _FILLER_CAT_VALUES = ("A", "B", "C", "D")
 
@@ -147,23 +192,16 @@ def _gen_zip5(rows: int, rng: np.random.Generator, **_: Any) -> list[str]:
 
 def _gen_date_past(rows: int, faker: Faker, **_: Any) -> list[pd.Timestamp]:
     # DOB-shaped distribution: roughly 18-80 years old.
-    return [
-        pd.Timestamp(faker.date_of_birth(minimum_age=18, maximum_age=80))
-        for _ in range(rows)
-    ]
+    return [pd.Timestamp(faker.date_of_birth(minimum_age=18, maximum_age=80)) for _ in range(rows)]
 
 
-def _gen_timestamp_recent(
-    rows: int, rng: np.random.Generator, **_: Any
-) -> pd.DatetimeIndex:
+def _gen_timestamp_recent(rows: int, rng: np.random.Generator, **_: Any) -> pd.DatetimeIndex:
     # Spread of timestamps over the last 3 years from an arbitrary
     # anchor. Anchor is fixed so the spread is deterministic across
     # runs even if the wall clock moves.
     anchor = pd.Timestamp("2026-01-01T00:00:00")
     seconds_back = rng.integers(low=0, high=3 * 365 * 24 * 3600, size=rows)
-    return pd.DatetimeIndex(
-        [anchor - pd.Timedelta(seconds=int(s)) for s in seconds_back]
-    )
+    return pd.DatetimeIndex([anchor - pd.Timedelta(seconds=int(s)) for s in seconds_back])
 
 
 def _gen_amount_float(rows: int, rng: np.random.Generator, **_: Any) -> np.ndarray:
@@ -191,33 +229,25 @@ def _gen_filler_float(rows: int, rng: np.random.Generator, **_: Any) -> np.ndarr
     return np.round(rng.standard_normal(size=rows) * 100.0, 4)
 
 
-def _gen_filler_cat(
-    rows: int, rng: np.random.Generator, **_: Any
-) -> np.ndarray:
+def _gen_filler_cat(rows: int, rng: np.random.Generator, **_: Any) -> np.ndarray:
     idx = rng.integers(low=0, high=len(_FILLER_CAT_VALUES), size=rows)
     arr = np.array(_FILLER_CAT_VALUES, dtype=object)
     return arr[idx]
 
 
-def _gen_category_status(
-    rows: int, rng: np.random.Generator, **_: Any
-) -> np.ndarray:
+def _gen_category_status(rows: int, rng: np.random.Generator, **_: Any) -> np.ndarray:
     idx = rng.integers(low=0, high=len(_STATUS_VALUES), size=rows)
     arr = np.array(_STATUS_VALUES, dtype=object)
     return arr[idx]
 
 
-def _gen_category_general(
-    rows: int, rng: np.random.Generator, **_: Any
-) -> np.ndarray:
+def _gen_category_general(rows: int, rng: np.random.Generator, **_: Any) -> np.ndarray:
     idx = rng.integers(low=0, high=len(_CATEGORY_VALUES), size=rows)
     arr = np.array(_CATEGORY_VALUES, dtype=object)
     return arr[idx]
 
 
-def _gen_category_tier(
-    rows: int, rng: np.random.Generator, **_: Any
-) -> np.ndarray:
+def _gen_category_tier(rows: int, rng: np.random.Generator, **_: Any) -> np.ndarray:
     idx = rng.integers(low=0, high=len(_TIER_VALUES), size=rows)
     arr = np.array(_TIER_VALUES, dtype=object)
     return arr[idx]
@@ -305,9 +335,7 @@ def build_tier(tier_name: str, *, force: bool = False) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     parquet_path = out_dir / "data.parquet"
     if parquet_path.exists() and not force:
-        raise SystemExit(
-            f"{parquet_path} already exists; pass --force to regenerate."
-        )
+        raise SystemExit(f"{parquet_path} already exists; pass --force to regenerate.")
 
     print(
         f"[gen-perf-fixtures] building tier={tier.name} rows={tier.rows:,} "
@@ -332,10 +360,7 @@ def build_tier(tier_name: str, *, force: bool = False) -> Path:
     _write_fixture_yaml(tier, out_dir / "fixture.yaml", sha)
 
     size_mb = parquet_path.stat().st_size / (1024 * 1024)
-    print(
-        f"[gen-perf-fixtures] tier={tier.name} ok size={size_mb:.2f}MB "
-        f"sha256={sha[:16]}..."
-    )
+    print(f"[gen-perf-fixtures] tier={tier.name} ok size={size_mb:.2f}MB sha256={sha[:16]}...")
     return parquet_path
 
 

@@ -13,6 +13,7 @@ Out:  docs/capability-matrix.md  (committed; the guard test re-runs this and
 When a registry import path moves, fix it here once. Keep this script the only
 place that knows how to read the registries for docs.
 """
+
 from __future__ import annotations
 
 import io
@@ -34,8 +35,10 @@ support, disguises) must agree with this file; the drift-guard test enforces it.
 def _mask_strategies() -> list[tuple[str, str, str]]:
     from decoy_engine.execution._strategies import SCALAR_HANDLERS
     from decoy_engine.execution._technique_class import TECHNIQUE_CLASS_BY_STRATEGY
+
     try:
         from decoy_engine.execution.polars._strategies import POLARS_SCALAR_HANDLERS
+
         polars = set(POLARS_SCALAR_HANDLERS)
     except Exception:
         polars = set()
@@ -54,12 +57,14 @@ def _generation_strategies() -> list[str]:
     # Construct with a fixed seed and read the keys; fall back to source parse.
     try:
         from decoy_engine.generators.columns import ColumnGenerator
+
         return sorted(ColumnGenerator(seed=0).generators.keys())
     except Exception:
         import inspect
         import re
 
         from decoy_engine.generators import columns
+
         src = inspect.getsource(columns)
         return sorted(set(re.findall(r'"([a-z_]+)"\s*:\s*self\._generate_', src)))
 
@@ -85,13 +90,17 @@ def _providers() -> list[tuple[str, str, str, str]]:
 def _connectors() -> tuple[list[str], list[tuple[str, dict]]]:
     import decoy_engine.connectors as conn
     from decoy_engine import sdk
+
     cap_consts = [v for n, v in vars(sdk).items() if n.startswith("CAP_")]
     cap_order = sorted(cap_consts)
     rows = []
     for cls_name in (
-        "S3FileSource", "S3FileSink",
-        "GCSFileSource", "GCSFileSink",
-        "SFTPFileSource", "SFTPFileSink",
+        "S3FileSource",
+        "S3FileSink",
+        "GCSFileSource",
+        "GCSFileSink",
+        "SFTPFileSource",
+        "SFTPFileSink",
     ):
         cls = getattr(conn, cls_name, None)
         if cls is None:
@@ -103,11 +112,12 @@ def _connectors() -> tuple[list[str], list[tuple[str, dict]]]:
 
 def _detectors() -> list[tuple[str, str]]:
     from decoy_engine.storm.detectors import _SPAN_DETECTORS, REGISTERED_DETECTORS
+
     span = {getattr(f, "__name__", "") for f in _SPAN_DETECTORS}
     rows = []
     for fn in REGISTERED_DETECTORS:
         fname = getattr(fn, "__name__", str(fn))
-        label = fname[len("detect_"):] if fname.startswith("detect_") else fname
+        label = fname[len("detect_") :] if fname.startswith("detect_") else fname
         kind = "span" if fname in span else "value"
         rows.append((label, kind))
     return sorted(rows)
@@ -115,6 +125,7 @@ def _detectors() -> list[tuple[str, str]]:
 
 def _disguises() -> list[tuple[str, str, int]]:
     from decoy_engine.disguises import load_disguises
+
     rows = []
     for d in load_disguises():
         rules = getattr(d, "field_rules", []) or []
