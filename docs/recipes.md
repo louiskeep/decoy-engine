@@ -210,6 +210,19 @@ profile = run_storm(df, "data.csv")
 # profile is a JSON-serializable StormProfile.
 ```
 
+Every detector match carries a semantic `domain` (`IDENTITY`, `FINANCIAL`, `HEALTH`,
+`CONTACT`, `LOCATION`, or `OTHER`) so you can group or filter findings without
+memorizing detector ids. The mapping lives in `decoy_engine.storm.domains`:
+
+```python
+from decoy_engine.storm.domains import domain_for
+
+domain_for("ssn")    # Domain.IDENTITY
+domain_for("email")  # Domain.CONTACT
+```
+
+The same `domain` appears on each `FieldStats` and `DetectorMatch` in the profile.
+
 ## (e) Use Decoy in CI
 
 Two patterns. First, validate every pipeline config in the repo so a broken

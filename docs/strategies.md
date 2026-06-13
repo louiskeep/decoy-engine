@@ -176,6 +176,30 @@ purpose-built strategy where one exists.
   handles struct-typed columns. You do not set these as a column `strategy`
   directly.
 
+### Intentional collisions (allow_collisions)
+
+By default deterministic identifier and pool strategies preserve cardinality:
+distinct source values map to distinct masked values within a namespace. Set
+`allow_collisions: true` on a column when you deliberately want distinct inputs
+to collapse onto the same output (the classic "Tom and Peter both become Matt"
+case), for example to model a smaller masked population.
+
+```yaml
+columns:
+  - name: customer_name
+    strategy: faker
+    provider: person_first_name
+    namespace: people
+    allow_collisions: true
+```
+
+It is a compile-time alias for `cardinality_mode: reuse` plus `deterministic:
+true`, so it requires a namespace and conflicts with an explicitly different
+`cardinality_mode` (the compiler raises `allow_collisions_mode_conflict`). When
+such a column is vaulted, the ambiguous source-to-masked pairs cannot be
+reversed and are counted in the vault's `ambiguous_dropped`. The default stays
+collision-free; this knob is purely additive.
+
 ## Generation strategies (generate mode)
 
 In `mode: generate`, each column declares a `type` instead of a `strategy`.
