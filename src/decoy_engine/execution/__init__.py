@@ -34,6 +34,7 @@ from decoy_engine.execution._adapter import (
     StrategyHandler,
 )
 from decoy_engine.execution._chunked import (
+    CHUNK_CONDITIONAL_STRATEGIES,
     CHUNK_SAFE_STRATEGIES,
     check_chunked_compatibility,
     run_mask_pipeline_chunked,
@@ -54,6 +55,7 @@ from decoy_engine.execution._substrate import (
 from decoy_engine.execution.polars import PolarsExecutionAdapter
 
 __all__ = [
+    "CHUNK_CONDITIONAL_STRATEGIES",
     "CHUNK_SAFE_STRATEGIES",
     "VALID_SUBSTRATES",
     "ExecutionAdapter",
