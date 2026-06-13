@@ -781,6 +781,31 @@ def _build_seed_envelope(
                 # R6: read the new first-class `deterministic: bool` field.
                 # Defaults to False; the column opts in explicitly.
                 deterministic = bool(col_entry.get("deterministic", False))
+                # Gap-closure item 2: `allow_collisions: true` is a documented
+                # alias for Delphix Secure Lookup's collision-allowed semantics.
+                # It compiles to reuse + deterministic (a stable many-to-one
+                # masked map). Conflicts with any non-`reuse` cardinality_mode;
+                # the namespace requirement is enforced by the row-9
+                # deterministic_namespace_completeness pre-check.
+                if bool(col_entry.get("allow_collisions", False)):
+                    explicit_mode = col_entry.get("cardinality_mode")
+                    if explicit_mode is not None and explicit_mode != "reuse":
+                        raise PlanCompileError(
+                            code="allow_collisions_mode_conflict",
+                            path=(
+                                f"tables.{table_profile.name}.columns.{col_name}.allow_collisions"
+                            ),
+                            message=(
+                                f"Column {table_profile.name}.{col_name}: "
+                                "`allow_collisions: true` forces `cardinality_mode: "
+                                f"reuse`, which conflicts with the declared "
+                                f"`cardinality_mode: {explicit_mode}`. Drop one: "
+                                "use allow_collisions for intentional collisions, "
+                                "or the explicit mode for distinct output."
+                            ),
+                        )
+                    cardinality_mode = "reuse"
+                    deterministic = True
                 provider_config_raw = col_entry.get("provider_config", {})
                 if isinstance(provider_config_raw, dict):
                     provider_config = tuple(sorted(provider_config_raw.items()))

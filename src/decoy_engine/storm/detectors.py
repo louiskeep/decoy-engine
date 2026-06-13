@@ -30,6 +30,7 @@ from collections.abc import Callable
 
 import pandas as pd
 
+from decoy_engine.storm.domains import domain_for
 from decoy_engine.storm.types import CustomDetectorSpec, DetectorMatch
 
 # ── thresholds ──────────────────────────────────────────────────────────────────────────────
@@ -122,6 +123,7 @@ def _evaluate(
         sample_misses=[str(m) for m in misses],
         format_pattern=format_pattern,
         confidence=confidence,
+        domain=domain_for(detector_id).value,
     )
 
 

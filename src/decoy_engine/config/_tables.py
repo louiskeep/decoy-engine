@@ -89,6 +89,13 @@ class ColumnConfig(BaseModel):
     # lookup key) and a one-way strategy (fpe is already reversible);
     # check_vault_columns enforces both at compile.
     vault: bool = False
+    # Intentional-collisions knob (gap-closure item 2). Documented operator-facing
+    # alias for Delphix Secure Lookup's collision-allowed semantics: at compile it
+    # forces `cardinality_mode = reuse` + `deterministic = true`, yielding a stable
+    # many-to-one masked mapping (distinct sources may share a masked value, the way
+    # natural data recurs). Requires a namespace (the derive key) and conflicts with
+    # any non-`reuse` cardinality_mode; the planner enforces both.
+    allow_collisions: bool = False
 
 
 class GenerateColumnConfig(BaseModel):
