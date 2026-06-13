@@ -72,6 +72,10 @@ class DetectorMatch:
     # Defaults to 'high' so every existing firing site that didn't set
     # the field gets the old behavior.
     confidence: str = "high"
+    # Gap-closure item 1: the detector's semantic domain (Identity/Financial/
+    # Health/Contact/Location/Other), derived from detector_id at construction.
+    # Defaulted so older persisted profiles deserialize; OTHER for custom ids.
+    domain: str = "OTHER"
 
 
 @dataclass
@@ -217,6 +221,12 @@ class FieldStats:
     # Per-column detection-reasoning trail. Empty when no detector fires.
     # ML rows (column classifier, cell-level NER) append in Roadmap Item 8.
     detection_trail: list[DetectionSignal] = field(default_factory=list)
+
+    # Gap-closure item 1: the winning detector's semantic domain, for
+    # convenience grouping/filtering at the platform/web edge. None when no
+    # detector fired. Derived from detector_matches[0]; never persisted as a
+    # source of truth.
+    domain: str | None = None
 
 
 @dataclass

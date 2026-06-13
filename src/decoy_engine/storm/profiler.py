@@ -764,6 +764,10 @@ def _profile_column(
 
     # Detectors.
     fs.detector_matches = run_all_detectors(series, name, custom=custom_detectors)
+    # Gap-closure item 1: stamp the winning detector's semantic domain for
+    # convenience grouping/filtering. run_all_detectors sorts by descending
+    # match_rate, so [0] is the winner; None when nothing fired.
+    fs.domain = fs.detector_matches[0].domain if fs.detector_matches else None
     fs.date_format = _date_format_signal(fs.detector_matches)
     # Item 65 - format-preservation hints. Both fields are optional; the
     # masking-strategy post-pass reads them when `preserve_format=true`.
