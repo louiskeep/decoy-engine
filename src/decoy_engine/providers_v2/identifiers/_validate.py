@@ -20,7 +20,8 @@ def deterministic_namespace_completeness(config: dict[str, Any]) -> None:
     """Compile-check row 9. Raises on missing namespace + deterministic.
 
     Walks the config tables; for each column with `deterministic: true`
-    and missing/empty `namespace`, raises
+    (or `allow_collisions: true`, the gap-closure item 2 alias that implies
+    deterministic) and missing/empty `namespace`, raises
     `PlanCompileError(code='deterministic_namespace_missing')`.
     """
     tables = config.get("tables", []) if isinstance(config.get("tables"), list) else []
@@ -31,17 +32,28 @@ def deterministic_namespace_completeness(config: dict[str, Any]) -> None:
         for col_entry in table_entry.get("columns", []) or []:
             if not isinstance(col_entry, dict):
                 continue
-            if not bool(col_entry.get("deterministic", False)):
+            # `allow_collisions: true` (item 2) is a compile-time alias for
+            # deterministic + reuse, so it carries the same namespace
+            # requirement (the deterministic derive key).
+            implies_deterministic = bool(col_entry.get("deterministic", False)) or bool(
+                col_entry.get("allow_collisions", False)
+            )
+            if not implies_deterministic:
                 continue
             namespace = col_entry.get("namespace")
             if not namespace:
                 col_name = col_entry.get("name", "?")
+                trigger = (
+                    "`deterministic: true`"
+                    if col_entry.get("deterministic", False)
+                    else "`allow_collisions: true`"
+                )
                 raise PlanCompileError(
                     code="deterministic_namespace_missing",
                     path=f"tables.{table_name}.columns.{col_name}",
                     message=(
                         f"Column {table_name}.{col_name} declares "
-                        "`deterministic: true` but does not declare a namespace. "
+                        f"{trigger} but does not declare a namespace. "
                         "Deterministic mode requires an explicit namespace to "
                         "guarantee cross-column consistency."
                     ),
