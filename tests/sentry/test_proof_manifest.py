@@ -37,3 +37,12 @@ def test_generator_build_has_required_top_level_keys():
     for key in ("engine_version", "generated_at", "surface", "hero",
                 "capabilities", "providers", "generation_strategies", "benchmarks"):
         assert key in manifest, f"manifest missing top-level key {key!r}"
+
+
+def test_surface_counts_match_capability_matrix():
+    gen = _load_generator()
+    surface = gen.build()["surface"]
+    # Mask count excludes the internal `nested` wrapper, matching the matrix.
+    assert surface["mask"] == 12
+    assert surface["generate"] == 7
+    assert surface["providers"] == 34

@@ -13,8 +13,28 @@ Out:  docs/proof-manifest.json  (committed; a sentry test re-runs build() and
 
 from __future__ import annotations
 
+import importlib.util
 import json
 from pathlib import Path
+
+_MATRIX_GEN_PATH = Path(__file__).resolve().parent / "gen_capability_matrix.py"
+
+
+def _capability_matrix_module():
+    spec = importlib.util.spec_from_file_location("gen_capability_matrix", _MATRIX_GEN_PATH)
+    assert spec and spec.loader, f"cannot load {_MATRIX_GEN_PATH}"
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _surface() -> dict:
+    m = _capability_matrix_module()
+    return {
+        "mask": len(m._mask_strategies()),
+        "generate": len(m._generation_strategies()),
+        "providers": len(m._providers()),
+    }
 
 # Frozen stamp values. These are passed in (not read from the clock) so the
 # generator is deterministic and the sentry diff is stable. Bump GENERATED_AT
@@ -30,7 +50,7 @@ def build() -> dict:
     return {
         "engine_version": ENGINE_VERSION,
         "generated_at": GENERATED_AT,
-        "surface": {},
+        "surface": _surface(),
         "hero": {},
         "capabilities": [],
         "providers": [],
