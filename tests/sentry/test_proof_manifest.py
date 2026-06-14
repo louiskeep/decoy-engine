@@ -110,3 +110,14 @@ def test_providers_and_generation_strategies_listed():
     assert all("name" in p and "backend" in p for p in provs)
     gens = manifest["generation_strategies"]
     assert "sequence" in gens and "categorical" in gens and "faker" in gens
+
+
+def test_benchmarks_are_dated_and_sourced():
+    gen = _load_generator()
+    benches = gen.build()["benchmarks"]
+    assert benches, "expected at least one transcribed benchmark"
+    for b in benches:
+        assert b["measured_at"], "benchmark missing measured_at"
+        assert b["source"].endswith("results.md")
+        assert b["throughput"]
+        assert b["shape"]
