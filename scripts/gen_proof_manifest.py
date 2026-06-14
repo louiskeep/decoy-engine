@@ -15,7 +15,16 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import tempfile
 from pathlib import Path
+
+import pandas as pd
+import pyarrow as pa
+
+from decoy_engine.config._pipeline import PipelineConfig
+from decoy_engine.execution._pipeline import run_pipeline
+
+SAMPLE_ROWS = 5
 
 _MATRIX_GEN_PATH = Path(__file__).resolve().parent / "gen_capability_matrix.py"
 
@@ -48,12 +57,224 @@ GENERATED_AT = "2026-06-14"
 OUT = Path(__file__).resolve().parent.parent / "docs" / "proof-manifest.json"
 
 
+def _records(df: pd.DataFrame, n: int = SAMPLE_ROWS) -> list[dict]:
+    # JSON-safe: cast every cell to str so the marketing site renders verbatim
+    # and the sentry diff is stable across pandas dtype quirks.
+    return [
+        {col: ("" if pd.isna(v) else str(v)) for col, v in row.items()}
+        for row in df.head(n).to_dict(orient="records")
+    ]
+
+
+def _hero() -> dict:
+    # Source frames: the runnable_demo healthcare warehouse, trimmed to
+    # SAMPLE_ROWS rows. members is the FK parent; claims is the child.
+    members = pd.DataFrame(
+        {
+            "member_id": [f"{100000000 + i}" for i in range(SAMPLE_ROWS)],
+            "ssn": [f"{500 + i:03d}-{10 + i:02d}-{1000 + i:04d}" for i in range(SAMPLE_ROWS)],
+            "first_name": ["Ava", "Ben", "Cara", "Dan", "Eve"][:SAMPLE_ROWS],
+            "last_name": ["Reed", "Shaw", "Tran", "Underwood", "Vance"][:SAMPLE_ROWS],
+            "email": [f"user{i}@example.com" for i in range(SAMPLE_ROWS)],
+            "city": ["Austin"] * SAMPLE_ROWS,
+            "state": ["TX"] * SAMPLE_ROWS,
+            "zip": [f"{73301 + i}" for i in range(SAMPLE_ROWS)],
+        }
+    )
+    claims = pd.DataFrame(
+        {
+            "member_id": [f"{100000000 + (i % SAMPLE_ROWS)}" for i in range(SAMPLE_ROWS)],
+            "claim_id": [f"{700000 + i}" for i in range(SAMPLE_ROWS)],
+            "billed_amount": [round(100.0 + 13.5 * i, 2) for i in range(SAMPLE_ROWS)],
+        }
+    )
+    providers = pd.DataFrame(
+        {
+            "npi": [f"{1000000000 + i}" for i in range(SAMPLE_ROWS)],
+            "pan": [f"4{i:015d}" for i in range(SAMPLE_ROWS)],
+        }
+    )
+
+    # profile_source reads the sources config block from disk to build column
+    # profiles and FK structure. Write temp CSVs so the profiler gets real data;
+    # run_pipeline then uses the caller-supplied Arrow tables for masking.
+    with tempfile.TemporaryDirectory() as _tmp:
+        tmp = Path(_tmp)
+        members.to_csv(tmp / "members.csv", index=False)
+        claims.to_csv(tmp / "claims.csv", index=False)
+        providers.to_csv(tmp / "providers.csv", index=False)
+        return _run_hero(members, claims, providers, tmp)
+
+
+def _run_hero(
+    members: pd.DataFrame,
+    claims: pd.DataFrame,
+    providers: pd.DataFrame,
+    tmp: Path,
+) -> dict:
+    config = {
+        "version": 1,
+        "global_settings": {"seed": 1234567, "post_validation": False},
+        # sources/targets: PipelineConfig requires both; profile_source reads
+        # the sources block to build the column profile. We write temp CSVs so
+        # the profiler gets real column types and FK structure; the engine then
+        # ignores these paths and uses the caller-supplied Arrow tables instead.
+        "sources": {
+            "members": {"type": "file", "format": "csv", "path": str(tmp / "members.csv")},
+            "claims": {"type": "file", "format": "csv", "path": str(tmp / "claims.csv")},
+            "providers": {"type": "file", "format": "csv", "path": str(tmp / "providers.csv")},
+        },
+        "targets": {
+            "members": {"type": "file", "format": "csv", "path": "/dev/null"},
+            "claims": {"type": "file", "format": "csv", "path": "/dev/null"},
+            "providers": {"type": "file", "format": "csv", "path": "/dev/null"},
+            "audit_log": {"type": "file", "format": "csv", "path": "/dev/null"},
+        },
+        "namespaces": {"member_identity": {"declared_by": ["members.member_id"]}},
+        "tables": [
+            {
+                "name": "members",
+                "columns": [
+                    {
+                        "name": "member_id",
+                        "strategy": "fpe",
+                        "namespace": "member_identity",
+                        "provider_config": {"charset": "digits", "preserve_separators": True},
+                    },
+                    {
+                        "name": "ssn",
+                        "strategy": "fpe",
+                        "namespace": "ssn_space",
+                        "provider_config": {"charset": "digits", "preserve_separators": True},
+                    },
+                    {
+                        "name": "first_name",
+                        "strategy": "faker",
+                        "provider": "composite_name_email",
+                        "coherent_with": ["last_name", "email"],
+                        "namespace": "member_pii",
+                    },
+                    {
+                        "name": "last_name",
+                        "strategy": "faker",
+                        "provider": "composite_name_email",
+                        "coherent_with": ["first_name", "email"],
+                        "namespace": "member_pii",
+                    },
+                    {
+                        "name": "email",
+                        "strategy": "faker",
+                        "provider": "composite_name_email",
+                        "coherent_with": ["first_name", "last_name"],
+                        "namespace": "member_pii",
+                    },
+                    {
+                        "name": "city",
+                        "strategy": "faker",
+                        "provider": "composite_city_state_zip",
+                        "coherent_with": ["state", "zip"],
+                    },
+                    {
+                        "name": "state",
+                        "strategy": "faker",
+                        "provider": "composite_city_state_zip",
+                        "coherent_with": ["city", "zip"],
+                    },
+                    {
+                        "name": "zip",
+                        "strategy": "faker",
+                        "provider": "composite_city_state_zip",
+                        "coherent_with": ["city", "state"],
+                    },
+                ],
+            },
+            {
+                "name": "claims",
+                "columns": [
+                    {"name": "member_id", "strategy": "from_parent"},
+                    {
+                        "name": "claim_id",
+                        "strategy": "fpe",
+                        "namespace": "claim_space",
+                        "provider_config": {"charset": "digits"},
+                    },
+                    {"name": "billed_amount", "strategy": "passthrough"},
+                ],
+            },
+            {
+                "name": "providers",
+                "columns": [
+                    {
+                        "name": "npi",
+                        "strategy": "fpe",
+                        "namespace": "npi_space",
+                        "provider_config": {"charset": "digits"},
+                    },
+                    {
+                        "name": "pan",
+                        "strategy": "fpe",
+                        "namespace": "pan_space",
+                        "provider_config": {"charset": "digits", "validate_luhn": True},
+                    },
+                ],
+            },
+            {
+                "name": "audit_log",
+                "row_count": SAMPLE_ROWS,
+                "generate_columns": [
+                    {"name": "event_id", "type": "sequence", "start": 1, "step": 1},
+                    {"name": "actor", "type": "faker", "faker_type": "user_name"},
+                    {
+                        "name": "action",
+                        "type": "categorical",
+                        "categories": ["view", "edit", "export", "delete"],
+                    },
+                ],
+            },
+        ],
+        "relationships": [
+            {
+                "parent": {"table": "members", "columns": ["member_id"]},
+                "children": [{"table": "claims", "columns": ["member_id"]}],
+                "orphan_policy": "fail",
+            }
+        ],
+    }
+
+    cfg = PipelineConfig.model_validate(config).model_dump()
+    sources = {
+        "members": pa.Table.from_pandas(members),
+        "claims": pa.Table.from_pandas(claims),
+        "providers": pa.Table.from_pandas(providers),
+    }
+    result = run_pipeline(cfg, sources, engine_version=ENGINE_VERSION)
+    out = result.outputs
+
+    inputs = {"members": members, "claims": claims, "providers": providers}
+    tables = [
+        {"name": name, "input": _records(inputs[name]), "output": _records(out[name].to_pandas())}
+        for name in ("members", "claims", "providers")
+    ]
+    return {
+        "name": "HIPAA claims warehouse",
+        "disguise": "hipaa",
+        "tables": tables,
+        "audit_log": _records(out["audit_log"].to_pandas()),
+        "invariants": [
+            "Foreign keys stay valid: every masked claims.member_id still joins to a masked members row.",
+            "Reversible identifiers use format-preserving encryption: shape and length are preserved.",
+            "Name, email, city, state, and zip are replaced coherently as a unit, not field by field.",
+            "The audit_log table is generated from scratch and contains no source data.",
+        ],
+    }
+
+
 def build() -> dict:
     return {
         "engine_version": ENGINE_VERSION,
         "generated_at": GENERATED_AT,
         "surface": _surface(),
-        "hero": {},
+        "hero": _hero(),
         "capabilities": [],
         "providers": [],
         "generation_strategies": [],

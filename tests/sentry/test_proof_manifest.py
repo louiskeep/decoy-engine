@@ -53,3 +53,19 @@ def test_surface_counts_match_capability_matrix():
     assert surface["mask"] == 12
     assert surface["generate"] == 7
     assert surface["providers"] == 34
+
+
+def test_hero_has_input_output_and_audit_log():
+    gen = _load_generator()
+    hero = gen.build()["hero"]
+    assert hero["disguise"] == "hipaa"
+    table_names = {t["name"] for t in hero["tables"]}
+    assert {"members", "claims", "providers"} <= table_names
+    members = next(t for t in hero["tables"] if t["name"] == "members")
+    assert len(members["input"]) == len(members["output"]) >= 1
+    # ssn is masked: at least one row's ssn changes.
+    assert any(
+        i["ssn"] != o["ssn"] for i, o in zip(members["input"], members["output"], strict=True)
+    )
+    assert len(hero["audit_log"]) >= 1
+    assert isinstance(hero["invariants"], list) and hero["invariants"]
