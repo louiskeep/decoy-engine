@@ -15,7 +15,6 @@ and commit the updated docs/proof-manifest.json.
 from __future__ import annotations
 
 import importlib.util
-import json
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -34,8 +33,16 @@ def _load_generator():
 def test_generator_build_has_required_top_level_keys():
     gen = _load_generator()
     manifest = gen.build()
-    for key in ("engine_version", "generated_at", "surface", "hero",
-                "capabilities", "providers", "generation_strategies", "benchmarks"):
+    for key in (
+        "engine_version",
+        "generated_at",
+        "surface",
+        "hero",
+        "capabilities",
+        "providers",
+        "generation_strategies",
+        "benchmarks",
+    ):
         assert key in manifest, f"manifest missing top-level key {key!r}"
 
 

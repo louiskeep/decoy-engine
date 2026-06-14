@@ -22,7 +22,8 @@ _MATRIX_GEN_PATH = Path(__file__).resolve().parent / "gen_capability_matrix.py"
 
 def _capability_matrix_module():
     spec = importlib.util.spec_from_file_location("gen_capability_matrix", _MATRIX_GEN_PATH)
-    assert spec and spec.loader, f"cannot load {_MATRIX_GEN_PATH}"
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load {_MATRIX_GEN_PATH}")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -35,6 +36,7 @@ def _surface() -> dict:
         "generate": len(m._generation_strategies()),
         "providers": len(m._providers()),
     }
+
 
 # Frozen stamp values. These are passed in (not read from the clock) so the
 # generator is deterministic and the sentry diff is stable. Bump GENERATED_AT
