@@ -16,10 +16,13 @@ from __future__ import annotations
 import importlib.util
 import json
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
+from typing import NamedTuple
 
 import pandas as pd
 import pyarrow as pa
+import yaml
 
 from decoy_engine.config._pipeline import PipelineConfig
 from decoy_engine.execution._pipeline import run_pipeline
@@ -269,13 +272,138 @@ def _run_hero(
     }
 
 
+class CapabilityProof(NamedTuple):
+    id: str
+    kind: str
+    title: str
+    column: str
+    input_values: list
+    config: dict
+    invariant: str
+    check: Callable[[str, list, list], bool]
+
+
+def _mask_proof(
+    strategy_id,
+    title,
+    column,
+    values,
+    column_cfg,
+    invariant,
+    check,
+    *,
+    namespaces=None,
+):
+    table = {
+        "name": "t",
+        "columns": [{"name": column, "strategy": strategy_id, **column_cfg}],
+    }
+    cfg = {
+        "version": 1,
+        "global_settings": {"seed": 1234567, "post_validation": False},
+        "tables": [table],
+    }
+    if namespaces:
+        cfg["namespaces"] = namespaces
+    return CapabilityProof(
+        id=f"mask.{strategy_id}",
+        kind="mask",
+        title=title,
+        column=column,
+        input_values=values,
+        config=cfg,
+        invariant=invariant,
+        check=check,
+    )
+
+
+def _same_length(col, i, o):
+    return all(len(a[col]) == len(b[col]) for a, b in zip(i, o, strict=True))
+
+
+def _all_changed(col, i, o):
+    return all(a[col] != b[col] for a, b in zip(i, o, strict=True))
+
+
+CAPABILITY_PROOFS: list[CapabilityProof] = [
+    _mask_proof(
+        "fpe",
+        "Format-preserving encryption",
+        "account",
+        ["100000001", "100000002", "100000003"],
+        {"namespace": "acct", "provider_config": {"charset": "digits"}},
+        "Output preserves the exact length and digit charset of the input, and is reversible with the key.",
+        _same_length,
+        namespaces={"acct": {"declared_by": ["t.account"]}},
+    ),
+    _mask_proof(
+        "redact",
+        "Redaction",
+        "ssn",
+        ["500-10-1000", "501-11-1001", "502-12-1002"],
+        {},
+        "The original value is destroyed and replaced with a fixed mask; redaction is irreversible.",
+        _all_changed,
+    ),
+]
+
+
+def _yaml_for(proof: CapabilityProof) -> str:
+    table = proof.config["tables"][0]
+    snippet = {"tables": [{"name": table["name"], "columns": table["columns"]}]}
+    return yaml.safe_dump(snippet, sort_keys=False, default_flow_style=False).rstrip("\n")
+
+
+def _run_capability(proof: CapabilityProof) -> dict:
+    df = pd.DataFrame({proof.column: proof.input_values})
+    with tempfile.TemporaryDirectory() as _tmp:
+        tmp = Path(_tmp)
+        csv_path = tmp / "t.csv"
+        df.to_csv(csv_path, index=False)
+
+        cfg = {
+            **proof.config,
+            "sources": {
+                "t": {"type": "file", "format": "csv", "path": str(csv_path)},
+            },
+            "targets": {
+                "t": {"type": "file", "format": "csv", "path": "/dev/null"},
+            },
+        }
+        validated = PipelineConfig.model_validate(cfg).model_dump()
+        sources = {"t": pa.Table.from_pandas(df)}
+        result = run_pipeline(validated, sources, engine_version=ENGINE_VERSION)
+        out_df = result.outputs["t"].to_pandas()
+
+    inp = _records(df, n=len(df))
+    out = _records(out_df, n=len(out_df))
+    if not proof.check(proof.column, inp, out):
+        raise RuntimeError(
+            f"capability {proof.id}: invariant check failed; not emitting a false proof"
+        )
+    return {
+        "id": proof.id,
+        "kind": proof.kind,
+        "title": proof.title,
+        "column": proof.column,
+        "config_yaml": _yaml_for(proof),
+        "input": inp,
+        "output": out,
+        "invariant": proof.invariant,
+    }
+
+
+def _capabilities() -> list[dict]:
+    return [_run_capability(p) for p in CAPABILITY_PROOFS]
+
+
 def build() -> dict:
     return {
         "engine_version": ENGINE_VERSION,
         "generated_at": GENERATED_AT,
         "surface": _surface(),
         "hero": _hero(),
-        "capabilities": [],
+        "capabilities": _capabilities(),
         "providers": [],
         "generation_strategies": [],
         "benchmarks": [],

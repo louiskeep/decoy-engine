@@ -69,3 +69,21 @@ def test_hero_has_input_output_and_audit_log():
     )
     assert len(hero["audit_log"]) >= 1
     assert isinstance(hero["invariants"], list) and hero["invariants"]
+
+
+def test_capabilities_include_fpe_and_redact_with_invariants():
+    gen = _load_generator()
+    caps = {c["id"]: c for c in gen.build()["capabilities"]}
+    assert "mask.fpe" in caps and "mask.redact" in caps
+    fpe = caps["mask.fpe"]
+    assert fpe["kind"] == "mask"
+    assert fpe["invariant"]
+    assert fpe["config_yaml"].strip()
+    assert len(fpe["input"]) == len(fpe["output"]) >= 1
+    # fpe preserves length on the masked column.
+    col = fpe["column"]
+    assert all(len(i[col]) == len(o[col]) for i, o in zip(fpe["input"], fpe["output"], strict=True))
+    # redact replaces the value (output differs from input).
+    red = caps["mask.redact"]
+    rcol = red["column"]
+    assert all(i[rcol] != o[rcol] for i, o in zip(red["input"], red["output"], strict=True))
