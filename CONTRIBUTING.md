@@ -35,6 +35,15 @@ The full suite is large; running only the modules you touched plus their nearest
 - Capability changes (a new mask/generate strategy, synthetic provider, connector, STORM detector, or disguise) must regenerate the capability matrix: run `python scripts/gen_capability_matrix.py` and commit the updated `docs/capability-matrix.md`. The `tests/sentry/test_capability_matrix.py` guard fails CI if you forget, so a new capability cannot ship without its docs entry.
 - If a change is more than one PR, file an Issue describing the plan first.
 
+## Compatibility
+
+The [compatibility contract](docs/compatibility-contract.md) defines the frozen surface (persisted artifacts, the vault, the determinism derivation, disguises, the public API and config). Read it before changing anything under those paths. Two CI gates enforce it on PRs:
+
+- `scripts/check_compat_preflight.py` (Compat pre-flight workflow): a PR that touches a frozen-surface path must paste the contract's section-9 checklist into its description with every box ticked.
+- `scripts/prove_regression.py` (Prove regression workflow, opt-in via the `bugfix` label): a `@pytest.mark.regression` test must fail against the pre-fix baseline, proving it catches the bug.
+
+The cross-version compatibility corpus (`tests/integration/compat_corpus/`) locks artifacts written by an earlier engine version and asserts the current engine still reads them. Its behaviour keys off `decoy_engine.RELEASE_PHASE`.
+
 ## Code style
 
 `ruff` for lint + format. Pre-commit hooks configured in `.pre-commit-config.yaml` run them automatically; install with `pre-commit install`.

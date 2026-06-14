@@ -18,7 +18,7 @@ Engine-specific rules to watch in V2 sprints:
 - Library code does not know its callers. CLI and platform helpers live in their own repos.
 - Orchestration modules cap at ~600 LOC (`graph/runner.py` threshold).
 - Use established methodology (the rule above).
-- Pre-GA = hard delete (V2.1 framing).
+- Pre-GA = hard delete (V2.1 framing). The switch is `decoy_engine.RELEASE_PHASE` (`release.py`); `is_pre_ga()` is what the CI gates branch on. Flipping it to `"ga"` at launch makes the [compatibility contract](docs/compatibility-contract.md) binding.
 
 ## Comments
 
