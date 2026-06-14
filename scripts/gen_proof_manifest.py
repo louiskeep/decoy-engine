@@ -398,6 +398,7 @@ CAPABILITY_PROOFS: list[CapabilityProof] = [
         "tier",
         ["platinum", "gold", "diamond"],
         {
+            "deterministic": True,
             "namespace": "tier",
             "provider_config": {"categories": ["bronze", "silver"]},
         },
@@ -429,7 +430,7 @@ CAPABILITY_PROOFS: list[CapabilityProof] = [
         "Within-column shuffle",
         "salary",
         ["50000", "75000", "92000"],
-        {"namespace": "salary"},
+        {"deterministic": True, "namespace": "salary"},
         "Values are permuted within the column; the exact multiset of values is preserved.",
         # Shuffle may leave a value in place, so multiset equality is the correct invariant, not _all_changed.
         lambda col, i, o: sorted(a[col] for a in i) == sorted(b[col] for b in o),

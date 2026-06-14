@@ -15,6 +15,7 @@ and commit the updated docs/proof-manifest.json.
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -121,3 +122,14 @@ def test_benchmarks_are_dated_and_sourced():
         assert b["source"].endswith("results.md")
         assert b["throughput"]
         assert b["shape"]
+
+
+def test_proof_manifest_is_up_to_date():
+    gen = _load_generator()
+    expected = json.dumps(gen.build(), indent=2, sort_keys=False) + "\n"
+    assert MANIFEST.exists(), f"{MANIFEST} is missing. Run `python scripts/gen_proof_manifest.py`."
+    actual = MANIFEST.read_text(encoding="utf-8")
+    assert actual == expected, (
+        "docs/proof-manifest.json is stale: regenerate with "
+        "`python scripts/gen_proof_manifest.py` and commit the result."
+    )

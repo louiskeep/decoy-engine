@@ -1,0 +1,829 @@
+{
+  "engine_version": "0.2.0",
+  "generated_at": "2026-06-14",
+  "surface": {
+    "mask": 12,
+    "generate": 7,
+    "providers": 34
+  },
+  "hero": {
+    "name": "HIPAA claims warehouse",
+    "disguise": "hipaa",
+    "tables": [
+      {
+        "name": "members",
+        "input": [
+          {
+            "member_id": "100000000",
+            "ssn": "500-10-1000",
+            "first_name": "Ava",
+            "last_name": "Reed",
+            "email": "user0@example.com",
+            "city": "Austin",
+            "state": "TX",
+            "zip": "73301"
+          },
+          {
+            "member_id": "100000001",
+            "ssn": "501-11-1001",
+            "first_name": "Ben",
+            "last_name": "Shaw",
+            "email": "user1@example.com",
+            "city": "Austin",
+            "state": "TX",
+            "zip": "73302"
+          },
+          {
+            "member_id": "100000002",
+            "ssn": "502-12-1002",
+            "first_name": "Cara",
+            "last_name": "Tran",
+            "email": "user2@example.com",
+            "city": "Austin",
+            "state": "TX",
+            "zip": "73303"
+          },
+          {
+            "member_id": "100000003",
+            "ssn": "503-13-1003",
+            "first_name": "Dan",
+            "last_name": "Underwood",
+            "email": "user3@example.com",
+            "city": "Austin",
+            "state": "TX",
+            "zip": "73304"
+          },
+          {
+            "member_id": "100000004",
+            "ssn": "504-14-1004",
+            "first_name": "Eve",
+            "last_name": "Vance",
+            "email": "user4@example.com",
+            "city": "Austin",
+            "state": "TX",
+            "zip": "73305"
+          }
+        ],
+        "output": [
+          {
+            "member_id": "289467148",
+            "ssn": "676-97-0861",
+            "first_name": "Nu",
+            "last_name": "Merritt",
+            "email": "nu.merritt@example.net",
+            "city": "Raleigh",
+            "state": "NC",
+            "zip": "27601"
+          },
+          {
+            "member_id": "243396886",
+            "ssn": "977-34-0754",
+            "first_name": "Christoper",
+            "last_name": "Woodard",
+            "email": "christoper.woodard@corp.example.com",
+            "city": "St. Louis",
+            "state": "MO",
+            "zip": "63101"
+          },
+          {
+            "member_id": "835995586",
+            "ssn": "774-70-2468",
+            "first_name": "Jeanene",
+            "last_name": "Mitchell",
+            "email": "jeanene.mitchell@mail.example.com",
+            "city": "Philadelphia",
+            "state": "PA",
+            "zip": "19101"
+          },
+          {
+            "member_id": "029661349",
+            "ssn": "125-38-2088",
+            "first_name": "Robbie",
+            "last_name": "Swanson",
+            "email": "robbie.swanson@mail.example.com",
+            "city": "New York",
+            "state": "NY",
+            "zip": "10001"
+          },
+          {
+            "member_id": "398056721",
+            "ssn": "222-41-8208",
+            "first_name": "Piedad",
+            "last_name": "Walsh",
+            "email": "piedad.walsh@example.org",
+            "city": "Baltimore",
+            "state": "MD",
+            "zip": "21201"
+          }
+        ]
+      },
+      {
+        "name": "claims",
+        "input": [
+          {
+            "member_id": "100000000",
+            "claim_id": "700000",
+            "billed_amount": "100.0"
+          },
+          {
+            "member_id": "100000001",
+            "claim_id": "700001",
+            "billed_amount": "113.5"
+          },
+          {
+            "member_id": "100000002",
+            "claim_id": "700002",
+            "billed_amount": "127.0"
+          },
+          {
+            "member_id": "100000003",
+            "claim_id": "700003",
+            "billed_amount": "140.5"
+          },
+          {
+            "member_id": "100000004",
+            "claim_id": "700004",
+            "billed_amount": "154.0"
+          }
+        ],
+        "output": [
+          {
+            "member_id": "289467148",
+            "claim_id": "410976",
+            "billed_amount": "100.0"
+          },
+          {
+            "member_id": "243396886",
+            "claim_id": "713510",
+            "billed_amount": "113.5"
+          },
+          {
+            "member_id": "835995586",
+            "claim_id": "163910",
+            "billed_amount": "127.0"
+          },
+          {
+            "member_id": "029661349",
+            "claim_id": "242341",
+            "billed_amount": "140.5"
+          },
+          {
+            "member_id": "398056721",
+            "claim_id": "620751",
+            "billed_amount": "154.0"
+          }
+        ]
+      },
+      {
+        "name": "providers",
+        "input": [
+          {
+            "npi": "1000000000",
+            "pan": "4000000000000000"
+          },
+          {
+            "npi": "1000000001",
+            "pan": "4000000000000001"
+          },
+          {
+            "npi": "1000000002",
+            "pan": "4000000000000002"
+          },
+          {
+            "npi": "1000000003",
+            "pan": "4000000000000003"
+          },
+          {
+            "npi": "1000000004",
+            "pan": "4000000000000004"
+          }
+        ],
+        "output": [
+          {
+            "npi": "8227807855",
+            "pan": "4011233603868940"
+          },
+          {
+            "npi": "7353656635",
+            "pan": "4011233603868940"
+          },
+          {
+            "npi": "9332766264",
+            "pan": "4011233603868940"
+          },
+          {
+            "npi": "6973604942",
+            "pan": "4011233603868940"
+          },
+          {
+            "npi": "2680298499",
+            "pan": "4011233603868940"
+          }
+        ]
+      }
+    ],
+    "audit_log": [
+      {
+        "event_id": "1",
+        "actor": "pagegabriella",
+        "action": "edit"
+      },
+      {
+        "event_id": "2",
+        "actor": "montoyaelizabeth",
+        "action": "export"
+      },
+      {
+        "event_id": "3",
+        "actor": "lmartin",
+        "action": "edit"
+      },
+      {
+        "event_id": "4",
+        "actor": "nicoleterry",
+        "action": "delete"
+      },
+      {
+        "event_id": "5",
+        "actor": "lancearnold",
+        "action": "export"
+      }
+    ],
+    "invariants": [
+      "Foreign keys stay valid: every masked claims.member_id still joins to a masked members row.",
+      "Reversible identifiers use format-preserving encryption: shape and length are preserved.",
+      "Name, email, city, state, and zip are replaced coherently as a unit, not field by field.",
+      "The audit_log table is generated from scratch and contains no source data."
+    ]
+  },
+  "capabilities": [
+    {
+      "id": "mask.fpe",
+      "kind": "mask",
+      "title": "Format-preserving encryption",
+      "column": "account",
+      "config_yaml": "tables:\n- name: t\n  columns:\n  - name: account\n    strategy: fpe\n    namespace: acct\n    provider_config:\n      charset: digits",
+      "input": [
+        {
+          "account": "100000001"
+        },
+        {
+          "account": "100000002"
+        },
+        {
+          "account": "100000003"
+        }
+      ],
+      "output": [
+        {
+          "account": "216864985"
+        },
+        {
+          "account": "369850545"
+        },
+        {
+          "account": "362617244"
+        }
+      ],
+      "invariant": "Output preserves the exact length and digit charset of the input, and is reversible with the key."
+    },
+    {
+      "id": "mask.redact",
+      "kind": "mask",
+      "title": "Redaction",
+      "column": "ssn",
+      "config_yaml": "tables:\n- name: t\n  columns:\n  - name: ssn\n    strategy: redact",
+      "input": [
+        {
+          "ssn": "500-10-1000"
+        },
+        {
+          "ssn": "501-11-1001"
+        },
+        {
+          "ssn": "502-12-1002"
+        }
+      ],
+      "output": [
+        {
+          "ssn": "REDACTED"
+        },
+        {
+          "ssn": "REDACTED"
+        },
+        {
+          "ssn": "REDACTED"
+        }
+      ],
+      "invariant": "The original value is destroyed and replaced with a fixed mask; redaction is irreversible."
+    },
+    {
+      "id": "mask.hash",
+      "kind": "mask",
+      "title": "Joinability-preserving hash",
+      "column": "user_id",
+      "config_yaml": "tables:\n- name: t\n  columns:\n  - name: user_id\n    strategy: hash\n    namespace: uid",
+      "input": [
+        {
+          "user_id": "alice"
+        },
+        {
+          "user_id": "bob"
+        },
+        {
+          "user_id": "carol"
+        }
+      ],
+      "output": [
+        {
+          "user_id": "539f20fd0b2c15177afb691bbd61201d3b56833c4ca59194f76686b64bc5d86e"
+        },
+        {
+          "user_id": "46222fe0d4ebb36b6a9dad35bce7acf1e18c4c15dbb6a96f3aa893ffba17e857"
+        },
+        {
+          "user_id": "9670b5c4b2aa3fffb84c6fb4ae9405d3f333aa312d158f5f3ee20a9c6780a1f2"
+        }
+      ],
+      "invariant": "Each value becomes a fixed-length keyed hex token; equal inputs hash equally, so joins survive."
+    },
+    {
+      "id": "mask.truncate",
+      "kind": "mask",
+      "title": "Truncation",
+      "column": "phone",
+      "config_yaml": "tables:\n- name: t\n  columns:\n  - name: phone\n    strategy: truncate\n    provider_config:\n      length: 4",
+      "input": [
+        {
+          "phone": "555-100-2000"
+        },
+        {
+          "phone": "555-101-2001"
+        },
+        {
+          "phone": "555-102-2002"
+        }
+      ],
+      "output": [
+        {
+          "phone": "555-"
+        },
+        {
+          "phone": "555-"
+        },
+        {
+          "phone": "555-"
+        }
+      ],
+      "invariant": "Only the first N characters are kept; output is never longer than the input."
+    },
+    {
+      "id": "mask.bucketize",
+      "kind": "mask",
+      "title": "Bucketization",
+      "column": "age",
+      "config_yaml": "tables:\n- name: t\n  columns:\n  - name: age\n    strategy: bucketize\n    provider_config:\n      width: 10\n      format: range",
+      "input": [
+        {
+          "age": "42"
+        },
+        {
+          "age": "47"
+        },
+        {
+          "age": "81"
+        }
+      ],
+      "output": [
+        {
+          "age": "40-49"
+        },
+        {
+          "age": "40-49"
+        },
+        {
+          "age": "80-89"
+        }
+      ],
+      "invariant": "Numeric values collapse into fixed-width ranges, so distinct inputs share a bucket."
+    },
+    {
+      "id": "mask.categorical",
+      "kind": "mask",
+      "title": "Categorical remap",
+      "column": "tier",
+      "config_yaml": "tables:\n- name: t\n  columns:\n  - name: tier\n    strategy: categorical\n    deterministic: true\n    namespace: tier\n    provider_config:\n      categories:\n      - bronze\n      - silver",
+      "input": [
+        {
+          "tier": "platinum"
+        },
+        {
+          "tier": "gold"
+        },
+        {
+          "tier": "diamond"
+        }
+      ],
+      "output": [
+        {
+          "tier": "silver"
+        },
+        {
+          "tier": "silver"
+        },
+        {
+          "tier": "silver"
+        }
+      ],
+      "invariant": "Every value is remapped onto the configured category pool; equal inputs map to the same category."
+    },
+    {
+      "id": "mask.date_shift",
+      "kind": "mask",
+      "title": "Date shifting",
+      "column": "dob",
+      "config_yaml": "tables:\n- name: t\n  columns:\n  - name: dob\n    strategy: date_shift\n    namespace: dob\n    provider_config:\n      min_days: 30\n      max_days: 90",
+      "input": [
+        {
+          "dob": "1980-01-15"
+        },
+        {
+          "dob": "1991-06-30"
+        },
+        {
+          "dob": "2003-11-02"
+        }
+      ],
+      "output": [
+        {
+          "dob": "1980-02-28"
+        },
+        {
+          "dob": "1991-08-24"
+        },
+        {
+          "dob": "2004-01-16"
+        }
+      ],
+      "invariant": "Each date is shifted by a keyed offset inside the configured window, preserving the date format."
+    },
+    {
+      "id": "mask.shuffle",
+      "kind": "mask",
+      "title": "Within-column shuffle",
+      "column": "salary",
+      "config_yaml": "tables:\n- name: t\n  columns:\n  - name: salary\n    strategy: shuffle\n    deterministic: true\n    namespace: salary",
+      "input": [
+        {
+          "salary": "50000"
+        },
+        {
+          "salary": "75000"
+        },
+        {
+          "salary": "92000"
+        }
+      ],
+      "output": [
+        {
+          "salary": "92000"
+        },
+        {
+          "salary": "75000"
+        },
+        {
+          "salary": "50000"
+        }
+      ],
+      "invariant": "Values are permuted within the column; the exact multiset of values is preserved."
+    },
+    {
+      "id": "mask.faker",
+      "kind": "mask",
+      "title": "Synthetic replacement",
+      "column": "first_name",
+      "config_yaml": "tables:\n- name: t\n  columns:\n  - name: first_name\n    strategy: faker\n    provider: person_first_name\n    namespace: name",
+      "input": [
+        {
+          "first_name": "__src_a__"
+        },
+        {
+          "first_name": "__src_b__"
+        },
+        {
+          "first_name": "__src_c__"
+        }
+      ],
+      "output": [
+        {
+          "first_name": "Lane"
+        },
+        {
+          "first_name": "Rubie"
+        },
+        {
+          "first_name": "Rodrick"
+        }
+      ],
+      "invariant": "Values are replaced with synthetic provider output drawn from a value pool, not the originals."
+    },
+    {
+      "id": "mask.formula",
+      "kind": "mask",
+      "title": "Custom formula",
+      "column": "code",
+      "config_yaml": "tables:\n- name: t\n  columns:\n  - name: code\n    strategy: formula\n    provider_config:\n      formula: value[::-1]",
+      "input": [
+        {
+          "code": "ABC123"
+        },
+        {
+          "code": "XYZ789"
+        },
+        {
+          "code": "QRS456"
+        }
+      ],
+      "output": [
+        {
+          "code": "321CBA"
+        },
+        {
+          "code": "987ZYX"
+        },
+        {
+          "code": "654SRQ"
+        }
+      ],
+      "invariant": "A user-supplied expression transforms each value; here the value is reversed, preserving length."
+    },
+    {
+      "id": "mask.text_redact",
+      "kind": "mask",
+      "title": "Free-text PII redaction",
+      "column": "note",
+      "config_yaml": "tables:\n- name: t\n  columns:\n  - name: note\n    strategy: text_redact",
+      "input": [
+        {
+          "note": "Member SSN 500-10-1000 on file"
+        },
+        {
+          "note": "Reach me at user1@example.com today"
+        },
+        {
+          "note": "Spoke with member SSN 502-12-1002"
+        }
+      ],
+      "output": [
+        {
+          "note": "Member SSN [REDACTED] on file"
+        },
+        {
+          "note": "Reach me at [REDACTED] today"
+        },
+        {
+          "note": "Spoke with member SSN [REDACTED]"
+        }
+      ],
+      "invariant": "PII spans inside free text are replaced with a redaction token; surrounding text is preserved."
+    }
+  ],
+  "providers": [
+    {
+      "name": "address_city",
+      "backend": "faker",
+      "deterministic": false,
+      "unique": true
+    },
+    {
+      "name": "address_full",
+      "backend": "faker",
+      "deterministic": false,
+      "unique": true
+    },
+    {
+      "name": "address_state",
+      "backend": "faker",
+      "deterministic": false,
+      "unique": true
+    },
+    {
+      "name": "address_street",
+      "backend": "faker",
+      "deterministic": false,
+      "unique": true
+    },
+    {
+      "name": "address_zip",
+      "backend": "faker",
+      "deterministic": false,
+      "unique": true
+    },
+    {
+      "name": "composite_address",
+      "backend": "composite",
+      "deterministic": false,
+      "unique": true
+    },
+    {
+      "name": "composite_city_state_zip",
+      "backend": "composite",
+      "deterministic": false,
+      "unique": true
+    },
+    {
+      "name": "composite_custom",
+      "backend": "composite",
+      "deterministic": false,
+      "unique": true
+    },
+    {
+      "name": "composite_name_email",
+      "backend": "composite",
+      "deterministic": false,
+      "unique": true
+    },
+    {
+      "name": "composite_person",
+      "backend": "composite",
+      "deterministic": false,
+      "unique": true
+    },
+    {
+      "name": "composite_provider",
+      "backend": "composite",
+      "deterministic": false,
+      "unique": true
+    },
+    {
+      "name": "lorem_text",
+      "backend": "faker",
+      "deterministic": false,
+      "unique": true
+    },
+    {
+      "name": "person_dob",
+      "backend": "faker",
+      "deterministic": false,
+      "unique": true
+    },
+    {
+      "name": "person_email",
+      "backend": "faker (mimesis with the `mimesis` extra)",
+      "deterministic": false,
+      "unique": true
+    },
+    {
+      "name": "person_first_name",
+      "backend": "faker (mimesis with the `mimesis` extra)",
+      "deterministic": false,
+      "unique": true
+    },
+    {
+      "name": "person_full_name",
+      "backend": "faker (mimesis with the `mimesis` extra)",
+      "deterministic": false,
+      "unique": true
+    },
+    {
+      "name": "person_last_name",
+      "backend": "faker (mimesis with the `mimesis` extra)",
+      "deterministic": false,
+      "unique": true
+    },
+    {
+      "name": "person_name",
+      "backend": "faker (mimesis with the `mimesis` extra)",
+      "deterministic": false,
+      "unique": true
+    },
+    {
+      "name": "person_phone",
+      "backend": "faker",
+      "deterministic": false,
+      "unique": true
+    },
+    {
+      "name": "random_choice",
+      "backend": "faker",
+      "deterministic": false,
+      "unique": true
+    },
+    {
+      "name": "random_int_range",
+      "backend": "faker",
+      "deterministic": false,
+      "unique": true
+    },
+    {
+      "name": "synthetic_account_number",
+      "backend": "faker",
+      "deterministic": false,
+      "unique": true
+    },
+    {
+      "name": "synthetic_cusip",
+      "backend": "decoy_native",
+      "deterministic": true,
+      "unique": true
+    },
+    {
+      "name": "synthetic_ein",
+      "backend": "decoy_native",
+      "deterministic": true,
+      "unique": true
+    },
+    {
+      "name": "synthetic_iban",
+      "backend": "decoy_native",
+      "deterministic": true,
+      "unique": true
+    },
+    {
+      "name": "synthetic_icd10",
+      "backend": "decoy_native",
+      "deterministic": true,
+      "unique": false
+    },
+    {
+      "name": "synthetic_member_id",
+      "backend": "faker",
+      "deterministic": false,
+      "unique": true
+    },
+    {
+      "name": "synthetic_mrn",
+      "backend": "decoy_native",
+      "deterministic": true,
+      "unique": true
+    },
+    {
+      "name": "synthetic_ndc",
+      "backend": "decoy_native",
+      "deterministic": true,
+      "unique": true
+    },
+    {
+      "name": "synthetic_npi",
+      "backend": "decoy_native",
+      "deterministic": true,
+      "unique": true
+    },
+    {
+      "name": "synthetic_pan",
+      "backend": "decoy_native",
+      "deterministic": true,
+      "unique": true
+    },
+    {
+      "name": "synthetic_plan_id",
+      "backend": "faker",
+      "deterministic": false,
+      "unique": true
+    },
+    {
+      "name": "synthetic_ssn",
+      "backend": "decoy_native",
+      "deterministic": true,
+      "unique": true
+    },
+    {
+      "name": "uuid",
+      "backend": "faker",
+      "deterministic": false,
+      "unique": true
+    }
+  ],
+  "generation_strategies": [
+    "categorical",
+    "distribution",
+    "faker",
+    "formula",
+    "reference",
+    "sequence",
+    "statistical"
+  ],
+  "benchmarks": [
+    {
+      "shape": "1M rows, HIPAA-shaped parquet, hybrid engine",
+      "throughput": "~1.7M rows/s",
+      "measured_at": "2026-05-09",
+      "note": "0.59 s elapsed; Intel Core i7-1265U; single hash-rule pipeline",
+      "source": "tests/benchmark/calibration/results.md"
+    },
+    {
+      "shape": "5M rows, HIPAA-shaped parquet, hybrid engine",
+      "throughput": "~1.6M rows/s",
+      "measured_at": "2026-05-09",
+      "note": "3.14 s elapsed; Intel Core i7-1265U; single hash-rule pipeline",
+      "source": "tests/benchmark/calibration/results.md"
+    },
+    {
+      "shape": "10M rows, HIPAA-shaped parquet, hybrid engine",
+      "throughput": "~1.8M rows/s",
+      "measured_at": "2026-05-09",
+      "note": "5.47 s elapsed; Intel Core i7-1265U; single hash-rule pipeline",
+      "source": "tests/benchmark/calibration/results.md"
+    }
+  ]
+}
