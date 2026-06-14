@@ -20,6 +20,7 @@ tests/unit/test_compat_preflight.py.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 
@@ -31,7 +32,8 @@ FROZEN_PREFIXES = (
     "src/decoy_engine/unmask.py",
     "src/decoy_engine/determinism/",
     "src/decoy_engine/disguises/",
-    "src/decoy_engine/config",
+    "src/decoy_engine/config.py",
+    "src/decoy_engine/config/",
     "src/decoy_engine/sdk.py",
     "src/decoy_engine/__init__.py",
 )
@@ -55,22 +57,38 @@ def touched_frozen(changed_files: list[str]) -> list[str]:
     return [f for f in changed_files if f.startswith(FROZEN_PREFIXES)]
 
 
-def _ticked_lines(pr_body: str) -> list[str]:
-    out = []
-    for line in pr_body.splitlines():
-        low = line.lower()
-        if "[x]" in low.replace(" ", ""):  # tolerate "[x]" / "[ x ]" / "[X]"
-            out.append(low)
-    return out
+# A ticked checkbox line: "- [x] ...", tolerating "* [X]" and inner spaces.
+_TICKED_CHECKBOX = re.compile(r"^\s*[-*]\s*\[\s*[xX]\s*\]\s*(.*)$")
+_FENCED_CODE = re.compile(r"```.*?```", re.DOTALL)
+
+
+def _ticked_checkbox_texts(pr_body: str) -> list[str]:
+    """Lowercased text of each ticked checkbox line, with fenced code stripped."""
+    body = _FENCED_CODE.sub("", pr_body)
+    texts = []
+    for line in body.splitlines():
+        m = _TICKED_CHECKBOX.match(line)
+        if m:
+            texts.append(m.group(1).lower())
+    return texts
 
 
 def checklist_problems(pr_body: str) -> list[str]:
-    """Return the section-9 items not present on a ticked line. Empty = satisfied."""
-    ticked = _ticked_lines(pr_body)
+    """Section-9 items not acknowledged. Empty = satisfied.
+
+    Each item must appear on its OWN ticked checkbox line: a single line that
+    crams every fragment satisfies only one item, and text inside fenced code
+    blocks does not count. This stops the checklist being faked with one line.
+    """
+    ticked = _ticked_checkbox_texts(pr_body)
+    used = [False] * len(ticked)
     missing = []
     for item in CHECKLIST_ITEMS:
-        if not any(item in line for line in ticked):
+        idx = next((i for i, t in enumerate(ticked) if not used[i] and item in t), None)
+        if idx is None:
             missing.append(item)
+        else:
+            used[idx] = True
     return missing
 
 

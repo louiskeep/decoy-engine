@@ -53,3 +53,25 @@ def test_checklist_flags_unticked_item() -> None:
     body = _TICKED_CHECKLIST.replace("- [x] Vault read/write", "- [ ] Vault read/write")
     problems = preflight.checklist_problems(body)
     assert problems == ["vault read/write"]
+
+
+def test_single_crammed_line_does_not_satisfy_all() -> None:
+    # One ticked line with every fragment must satisfy only one item, not all.
+    crammed = (
+        "- [x] read this document additive artifact shape determinism golden baseline "
+        "vault read/write released disguise version deprecation shim compatibility corpus"
+    )
+    problems = preflight.checklist_problems(crammed)
+    assert len(problems) == len(preflight.CHECKLIST_ITEMS) - 1
+
+
+def test_fenced_code_block_checkboxes_do_not_count() -> None:
+    body = "```\n" + _TICKED_CHECKLIST + "\n```\n"
+    assert len(preflight.checklist_problems(body)) == len(preflight.CHECKLIST_ITEMS)
+
+
+def test_config_prefix_is_precise() -> None:
+    # config.py and config/ are frozen; an unrelated configuration.py is not.
+    assert preflight.touched_frozen(["src/decoy_engine/config.py"])
+    assert preflight.touched_frozen(["src/decoy_engine/config/loader.py"])
+    assert preflight.touched_frozen(["src/decoy_engine/configuration_helper.py"]) == []

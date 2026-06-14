@@ -30,6 +30,22 @@ def test_verdict_failing_on_baseline_passes() -> None:
     assert ok is True
 
 
+def test_verdict_inconclusive_exit_code_fails() -> None:
+    # rc 2 = collection/usage error, not a clean assertion failure.
+    ok, msg = pr.verdict(regression_tests_found=True, baseline_pytest_rc=2)
+    assert ok is False
+    assert "inconclusive" in msg
+
+
+def test_verdict_errors_not_failures_is_inconclusive() -> None:
+    # rc 1 but the run reported errors (import/fixture), not asserted failures.
+    ok, msg = pr.verdict(
+        regression_tests_found=True, baseline_pytest_rc=1, baseline_had_errors=True
+    )
+    assert ok is False
+    assert "inconclusive" in msg
+
+
 def test_regression_test_files_picks_marked_tests() -> None:
     files = {
         "tests/unit/test_bug.py": "import pytest\n@pytest.mark.regression\ndef test_x(): ...",
