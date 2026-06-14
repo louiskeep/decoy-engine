@@ -526,6 +526,19 @@ def _capabilities() -> list[dict]:
     return [_run_capability(p) for p in CAPABILITY_PROOFS]
 
 
+def _providers_list() -> list[dict]:
+    m = _capability_matrix_module()
+    # _providers() returns (name, backend, deterministic, unique) tuples.
+    return [
+        {"name": name, "backend": backend, "deterministic": det == "yes", "unique": uniq == "yes"}
+        for name, backend, det, uniq in m._providers()
+    ]
+
+
+def _generation_strategies_list() -> list[str]:
+    return _capability_matrix_module()._generation_strategies()
+
+
 def build() -> dict:
     return {
         "engine_version": ENGINE_VERSION,
@@ -533,8 +546,8 @@ def build() -> dict:
         "surface": _surface(),
         "hero": _hero(),
         "capabilities": _capabilities(),
-        "providers": [],
-        "generation_strategies": [],
+        "providers": _providers_list(),
+        "generation_strategies": _generation_strategies_list(),
         "benchmarks": [],
     }
 

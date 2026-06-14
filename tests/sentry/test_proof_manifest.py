@@ -100,3 +100,13 @@ def test_every_mask_strategy_is_proven_or_waived():
     assert waived <= registry_strategies, (
         f"waiver names not in registry: {sorted(waived - registry_strategies)}"
     )
+
+
+def test_providers_and_generation_strategies_listed():
+    gen = _load_generator()
+    manifest = gen.build()
+    provs = manifest["providers"]
+    assert len(provs) == manifest["surface"]["providers"]
+    assert all("name" in p and "backend" in p for p in provs)
+    gens = manifest["generation_strategies"]
+    assert "sequence" in gens and "categorical" in gens and "faker" in gens
