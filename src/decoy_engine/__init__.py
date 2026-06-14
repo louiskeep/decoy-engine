@@ -216,6 +216,7 @@ from decoy_engine.validation_result import (
     ValidationMessage,
     ValidationResult,
 )
+from decoy_engine.release import RELEASE_PHASE, ReleasePhase, is_pre_ga
 from decoy_engine.vault import VaultError, VaultWriter, load_vault, vault_writer_for_config
 
 __version__ = "0.1.0"
@@ -227,9 +228,12 @@ __all__ = [
     "CAP_RESUMABLE",
     "CAP_SIGNED_URL",
     "CAP_STREAMING",
+    "RELEASE_PHASE",
     "SDK_VERSION",
     "SEED_PROTOCOL_VERSION",
     "VALIDATION_CODES",
+    "ReleasePhase",
+    "is_pre_ga",
     "AdapterError",
     "BackendAdapter",
     "BundlePool",
