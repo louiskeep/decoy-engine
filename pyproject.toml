@@ -55,7 +55,12 @@ keywords = [
 dependencies = [
     "pandas>=1.5.0,<4",
     "pyyaml>=6.0",
-    "faker>=13.0.0",
+    # Pinned exactly: Faker's name/data pools are not semver-stable, so the
+    # version is part of the determinism guarantee (compatibility-contract
+    # section 3.3) and the proof manifest. Bump only as a reviewed, golden-and-
+    # manifest-regenerating change. Was an unpinned floor (>=13.0.0), which let
+    # the proof-manifest drift across environments.
+    "faker==40.23.0",
     "psutil>=5.9.0",
     "pyarrow>=14.0.0",
     # Used by decoy_engine.disguises.schema for the Disguise model.
