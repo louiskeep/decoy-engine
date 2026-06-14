@@ -178,6 +178,7 @@ from decoy_engine.relationships import (
     build_relationship_graph,
     check_orphan_fk_policy_completeness,
 )
+from decoy_engine.release import RELEASE_PHASE, ReleasePhase, is_pre_ga
 from decoy_engine.schema import SchemaInspector
 
 # Connector SDK.
@@ -216,7 +217,6 @@ from decoy_engine.validation_result import (
     ValidationMessage,
     ValidationResult,
 )
-from decoy_engine.release import RELEASE_PHASE, ReleasePhase, is_pre_ga
 from decoy_engine.vault import VaultError, VaultWriter, load_vault, vault_writer_for_config
 
 __version__ = "0.1.0"
@@ -232,8 +232,6 @@ __all__ = [
     "SDK_VERSION",
     "SEED_PROTOCOL_VERSION",
     "VALIDATION_CODES",
-    "ReleasePhase",
-    "is_pre_ga",
     "AdapterError",
     "BackendAdapter",
     "BundlePool",
@@ -314,6 +312,7 @@ __all__ = [
     "QualityWarning",
     "RelationshipEdge",
     "RelationshipGraph",
+    "ReleasePhase",
     "SchemaInspector",
     "SentinelFlag",
     "SsnAdapter",
@@ -357,6 +356,7 @@ __all__ = [
     "get_default_executor",
     "get_default_pool_cache",
     "get_default_registry",
+    "is_pre_ga",
     "load_custom_providers",
     "load_vault",
     "make_key_resolver",
