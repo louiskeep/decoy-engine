@@ -18,11 +18,22 @@ mutation of a non-self parameter:
 **Copy boundary (the part section 2.2 cares about).** A parameter that is ever
 rebound in the function (e.g. `config = dict(config)` or `rule = rule.copy()`)
 is treated as laundered and is NOT checked: mutating the copy is the correct,
-blessed idiom. The check is deliberately conservative here. It catches the
-common real bug (a validate that writes straight into its input with no copy)
-and accepts a false negative on the rare "mutate the original, then copy it"
-ordering, rather than risk flagging legitimate copy-then-mutate code. `self`
-and `cls` are never treated as inputs.
+blessed idiom. `self` and `cls` are never treated as inputs.
+
+**Known gaps (false negatives), by design.** This is a deliberately conservative
+syntactic check that favours zero false positives over total coverage. It does
+NOT catch, and does not claim to:
+  - **Aliasing.** `a = config; a['x'] = 1` passes: the mutation is on `a`, and
+    `config` is untouched syntactically. Aliases are not taint-tracked.
+  - **Any-branch rebind.** There is no flow analysis. A rebind anywhere in the
+    body (even in a sibling branch) launders the parameter, so a real mutation
+    on one path is missed if another path rebinds the name.
+  - **Mutate-then-copy ordering.** Mutating the original before copying it.
+  - **Nested functions.** The walk descends into nested `def`s, so an inner
+    function sharing a parameter name can cross-contaminate (latent; no current
+    source triggers it).
+What it DOES catch reliably is the common, high-value bug: a validate/check that
+writes straight into its input with no copy at all. That is the case worth a gate.
 
 If a function genuinely must be named validate/check and mutate an input
 (it almost never should: rename it per section 2.2), add it to ALLOWLIST with

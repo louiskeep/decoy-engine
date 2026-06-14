@@ -63,6 +63,9 @@ def _is_deprecation_warn(call: ast.Call) -> bool:
             return node.id == "DeprecationWarning"
         if isinstance(node, ast.Attribute):
             return node.attr == "DeprecationWarning"
+        # Instance form: warnings.warn(DeprecationWarning("msg"), ...)
+        if isinstance(node, ast.Call):
+            return _names_deprecation(node.func)
         return False
 
     args_and_kw = list(call.args) + [kw.value for kw in call.keywords]
@@ -165,3 +168,15 @@ def test_sentry_accepts_declared_removal(tmp_path: Path) -> None:
     )
     _func, text = _find_deprecations(good)[0]
     assert _REMOVAL_MARKER.search(text)
+
+
+def test_detects_instance_form_emission(tmp_path: Path) -> None:
+    """Meta-test: warn(DeprecationWarning('msg')) (instance form) is detected,
+    not just warn('msg', DeprecationWarning)."""
+    f = tmp_path / "inst.py"
+    f.write_text(
+        "import warnings\n"
+        "def old():\n"
+        "    warnings.warn(DeprecationWarning('use new()'), stacklevel=2)\n"
+    )
+    assert _find_deprecations(f), "instance-form DeprecationWarning must be detected"

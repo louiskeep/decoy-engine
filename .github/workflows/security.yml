@@ -1,4 +1,4 @@
-# Security audit — runs `pip-audit` against the engine's resolved dependency
+# Security audit. Runs `pip-audit` against the engine's resolved dependency
 # tree. Catches CVEs in any pinned dep (direct or transitive).
 #
 # Mirrors decoy-platform's security.yml so the engine gates supply-chain CVEs
@@ -39,7 +39,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install pip-audit
 
-      # Audit the project's resolved deps — pip-audit reads pyproject.toml by
+      # Audit the project's resolved deps. pip-audit reads pyproject.toml by
       # default and resolves the full transitive tree. `--strict` fails the
       # job on any known CVE.
       - name: Audit dependencies

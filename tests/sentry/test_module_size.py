@@ -45,8 +45,9 @@ ALLOWLIST: dict[str, int] = {
 
 
 def _loc(py_file: Path) -> int:
-    """Total physical lines, matching the `wc -l` convention the cap is stated in."""
-    return len(py_file.read_text(encoding="utf-8").splitlines())
+    """Newline count, matching the `wc -l` convention the cap is stated in
+    (a final line without a trailing newline is not counted, exactly as wc -l)."""
+    return py_file.read_text(encoding="utf-8").count("\n")
 
 
 @pytest.mark.parametrize(
