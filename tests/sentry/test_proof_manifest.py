@@ -87,3 +87,16 @@ def test_capabilities_include_fpe_and_redact_with_invariants():
     red = caps["mask.redact"]
     rcol = red["column"]
     assert all(i[rcol] != o[rcol] for i, o in zip(red["input"], red["output"], strict=True))
+
+
+def test_every_mask_strategy_is_proven_or_waived():
+    gen = _load_generator()
+    m = gen._capability_matrix_module()
+    registry_strategies = {name for name, _gdpr, _accel in m._mask_strategies()}
+    proven = {c["id"].split(".", 1)[1] for c in gen.build()["capabilities"] if c["kind"] == "mask"}
+    waived = gen.WAIVED_MASK_STRATEGIES
+    missing = registry_strategies - proven - waived
+    assert not missing, f"mask strategies with no proof and no waiver: {sorted(missing)}"
+    assert waived <= registry_strategies, (
+        f"waiver names not in registry: {sorted(waived - registry_strategies)}"
+    )

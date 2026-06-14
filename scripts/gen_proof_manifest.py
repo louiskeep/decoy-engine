@@ -325,6 +325,12 @@ def _all_changed(col, i, o):
     return all(a[col] != b[col] for a, b in zip(i, o, strict=True))
 
 
+# Strategies intentionally not given a standalone card. `passthrough` is the
+# no-op (shown in the hero instead). Every other registry mask strategy MUST
+# have a CAPABILITY_PROOFS entry, enforced by the completeness sentry.
+WAIVED_MASK_STRATEGIES = {"passthrough"}
+
+
 CAPABILITY_PROOFS: list[CapabilityProof] = [
     _mask_proof(
         "fpe",
@@ -344,6 +350,129 @@ CAPABILITY_PROOFS: list[CapabilityProof] = [
         {},
         "The original value is destroyed and replaced with a fixed mask; redaction is irreversible.",
         _all_changed,
+    ),
+    _mask_proof(
+        "hash",
+        "Joinability-preserving hash",
+        "user_id",
+        ["alice", "bob", "carol"],
+        {"namespace": "uid"},
+        "Each value becomes a fixed-length keyed hex token; equal inputs hash equally, so joins survive.",
+        lambda col, i, o: (
+            _all_changed(col, i, o)
+            and len({len(b[col]) for b in o}) == 1
+            and all(len(b[col]) == 64 for b in o)
+        ),
+        namespaces={"uid": {"declared_by": ["t.user_id"]}},
+    ),
+    _mask_proof(
+        "truncate",
+        "Truncation",
+        "phone",
+        ["555-100-2000", "555-101-2001", "555-102-2002"],
+        {"provider_config": {"length": 4}},
+        "Only the first N characters are kept; output is never longer than the input.",
+        lambda col, i, o: (
+            all(len(b[col]) <= len(a[col]) for a, b in zip(i, o, strict=True))
+            and all(len(b[col]) == 4 for b in o)
+        ),
+    ),
+    _mask_proof(
+        "bucketize",
+        "Bucketization",
+        "age",
+        ["42", "47", "81"],
+        {"provider_config": {"width": 10, "format": "range"}},
+        "Numeric values collapse into fixed-width ranges, so distinct inputs share a bucket.",
+        # 42 and 47 both fall in the [40, 50) bucket, so output cardinality < input cardinality.
+        lambda col, i, o: (
+            _all_changed(col, i, o)
+            and len({b[col] for b in o}) < len({a[col] for a in i})
+            and all("-" in b[col] for b in o)
+        ),
+    ),
+    _mask_proof(
+        "categorical",
+        "Categorical remap",
+        "tier",
+        ["platinum", "gold", "diamond"],
+        {
+            "namespace": "tier",
+            "provider_config": {"categories": ["bronze", "silver"]},
+        },
+        "Every value is remapped onto the configured category pool; equal inputs map to the same category.",
+        # Inputs are never in the target pool, so pool membership already proves remapping.
+        lambda col, i, o: all(b[col] in {"bronze", "silver"} for b in o),
+        namespaces={"tier": {"declared_by": ["t.tier"]}},
+    ),
+    _mask_proof(
+        "date_shift",
+        "Date shifting",
+        "dob",
+        ["1980-01-15", "1991-06-30", "2003-11-02"],
+        {
+            "namespace": "dob",
+            "provider_config": {"min_days": 30, "max_days": 90},
+        },
+        "Each date is shifted by a keyed offset inside the configured window, preserving the date format.",
+        # min_days=30 excludes a zero shift, so _all_changed is a valid check here.
+        lambda col, i, o: (
+            _all_changed(col, i, o)
+            and _same_length(col, i, o)
+            and all(b[col].count("-") == 2 for b in o)
+        ),
+        namespaces={"dob": {"declared_by": ["t.dob"]}},
+    ),
+    _mask_proof(
+        "shuffle",
+        "Within-column shuffle",
+        "salary",
+        ["50000", "75000", "92000"],
+        {"namespace": "salary"},
+        "Values are permuted within the column; the exact multiset of values is preserved.",
+        # Shuffle may leave a value in place, so multiset equality is the correct invariant, not _all_changed.
+        lambda col, i, o: sorted(a[col] for a in i) == sorted(b[col] for b in o),
+        namespaces={"salary": {"declared_by": ["t.salary"]}},
+    ),
+    _mask_proof(
+        "faker",
+        "Synthetic replacement",
+        "first_name",
+        ["__src_a__", "__src_b__", "__src_c__"],
+        {"provider": "person_first_name", "namespace": "name"},
+        "Values are replaced with synthetic provider output drawn from a value pool, not the originals.",
+        # _all_changed rules out sentinel passthrough; non-empty guards a provider returning "".
+        lambda col, i, o: _all_changed(col, i, o) and all(b[col] for b in o),
+        namespaces={"name": {"declared_by": ["t.first_name"]}},
+    ),
+    _mask_proof(
+        "formula",
+        "Custom formula",
+        "code",
+        ["ABC123", "XYZ789", "QRS456"],
+        {"provider_config": {"formula": "value[::-1]"}},
+        "A user-supplied expression transforms each value; here the value is reversed, preserving length.",
+        lambda col, i, o: _all_changed(col, i, o) and _same_length(col, i, o),
+    ),
+    _mask_proof(
+        "text_redact",
+        "Free-text PII redaction",
+        "note",
+        [
+            "Member SSN 500-10-1000 on file",
+            "Reach me at user1@example.com today",
+            "Spoke with member SSN 502-12-1002",
+        ],
+        {},
+        "PII spans inside free text are replaced with a redaction token; surrounding text is preserved.",
+        lambda col, i, o: (
+            all("[REDACTED]" in b[col] for b in o)
+            and not any(
+                tok in b[col]
+                for a, b in zip(i, o, strict=True)
+                for tok in ("500-10-1000", "user1@example.com", "502-12-1002")
+            )
+        ),
     ),
 ]
 
