@@ -205,6 +205,7 @@ nitpick_ignore = [
     ("py:class", "Severity"),
     ("py:class", "StrategyDefault"),
     ("py:class", "ExpectedField"),
+    ("py:class", "ReleasePhase"),
     ("py:obj", "DecoyError"),
     # `ConfigError` is re-exported by `decoy_engine.sdk` from
     # `decoy_engine.exceptions`. autoapi records both targets, so any

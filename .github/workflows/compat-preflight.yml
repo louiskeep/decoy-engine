@@ -1,0 +1,42 @@
+# Compatibility pre-flight gate (compatibility-contract section 9).
+#
+# When a PR changes a frozen-surface path (section 3: artifact formats, the
+# vault, the determinism derivation, disguises, the public API/config), this
+# fails unless the PR description carries the section-9 checklist with every box
+# ticked. PRs that touch nothing frozen pass untouched.
+
+name: Compat pre-flight
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  compat-preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+
+      - name: Fetch base branch
+        run: git fetch origin "$BASE_REF"
+        env:
+          BASE_REF: ${{ github.base_ref }}
+
+      - name: Pre-flight check
+        # PR_BODY is passed via env (never interpolated into the run script) so
+        # a crafted PR description cannot inject shell.
+        run: python scripts/check_compat_preflight.py
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          PR_BODY: ${{ github.event.pull_request.body }}

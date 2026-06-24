@@ -20,6 +20,12 @@ Public API (the contract CLI and platform code depend on):
                       `select_execution_adapter().run(plan, source) -> ExecutionResult`.
     generate_tables   (decoy_engine.generation.synthesize) table-from-schema
                       synthesis for generate-mode configs.
+    RELEASE_PHASE / ReleasePhase / is_pre_ga:
+                      (decoy_engine.release) the single pre-GA/GA switch the rule
+                      inversions and CI gates read. Pre-GA: hard-delete is allowed
+                      and the compatibility contract is advisory. The platform
+                      reads RELEASE_PHASE across the in-process boundary; there is
+                      no separate platform constant.
 
 Public exceptions (also in decoy_engine.errors):
     DecoyError, ConfigError, PipelineValidationError,
@@ -178,6 +184,7 @@ from decoy_engine.relationships import (
     build_relationship_graph,
     check_orphan_fk_policy_completeness,
 )
+from decoy_engine.release import RELEASE_PHASE, ReleasePhase, is_pre_ga
 from decoy_engine.schema import SchemaInspector
 
 # Connector SDK.
@@ -227,6 +234,7 @@ __all__ = [
     "CAP_RESUMABLE",
     "CAP_SIGNED_URL",
     "CAP_STREAMING",
+    "RELEASE_PHASE",
     "SDK_VERSION",
     "SEED_PROTOCOL_VERSION",
     "VALIDATION_CODES",
@@ -310,6 +318,7 @@ __all__ = [
     "QualityWarning",
     "RelationshipEdge",
     "RelationshipGraph",
+    "ReleasePhase",
     "SchemaInspector",
     "SentinelFlag",
     "SsnAdapter",
@@ -353,6 +362,7 @@ __all__ = [
     "get_default_executor",
     "get_default_pool_cache",
     "get_default_registry",
+    "is_pre_ga",
     "load_custom_providers",
     "load_vault",
     "make_key_resolver",
