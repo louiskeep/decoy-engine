@@ -208,6 +208,12 @@ def test_all_lists_every_public_name():
         "NullCount",
         "FkValidityReport",
         "CompositeCoherenceReport",
+        # Methodology hardening Tier 2/3 (2026-06-14): the pre-GA/GA release
+        # switch (release.py), exported so the platform reads it across the
+        # in-process boundary (ADR-0001) rather than keeping a separate copy.
+        "RELEASE_PHASE",
+        "ReleasePhase",
+        "is_pre_ga",
     }
     assert set(decoy_engine.__all__) == expected
 
