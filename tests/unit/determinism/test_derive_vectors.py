@@ -46,7 +46,7 @@ from decoy_engine.determinism import SEED_PROTOCOL_VERSION, derive
 #   HMAC_key   = HKDF-Expand(PRK, info=namespace.encode(), length=32)
 #                (equivalent to one round of HMAC-SHA256 since 32 == HashLen)
 #   HMAC_input = (
-#       bytes([SEED_PROTOCOL_VERSION])              # 0x05 (v5 envelope)
+#       bytes([SEED_PROTOCOL_VERSION])              # 0x06 (v6 envelope)
 #       + len(namespace).to_bytes(4, "big")         # b"\x00\x00\x00\x14" (20)
 #       + namespace.encode("utf-8")                 # 20 bytes
 #       + len(source).to_bytes(4, "big")            # b"\x00\x00\x00\x11" (17)
@@ -54,9 +54,9 @@ from decoy_engine.determinism import SEED_PROTOCOL_VERSION, derive
 #   )
 #   expected   = HMAC-SHA256(HMAC_key, HMAC_input)  # 32 bytes
 #
-# Computed value (regenerated at the v4 -> v5 bump for WS1 FPE
-# detokenization, 2026-06-12; pinned thereafter):
-EXPECTED_HEX_V5 = "0a8e61e153833d918096a5815a2c127263ed0e45c8a6c80ffb8d324200df502b"
+# Computed value (regenerated at the v5 -> v6 bump for the F2/F3
+# generation-determinism rewrite, 2026-06-26; pinned thereafter):
+EXPECTED_HEX_V6 = "05eaf09c4e22b5fd91ed25d0298416be5dfd525341a4d6637727dc71f4becb06"
 
 _SEED = b"\x00" * 8
 _NS = "audit-test-namespace"
@@ -64,21 +64,21 @@ _SRC = b"audit-test-source"
 
 
 @pytest.mark.golden
-class TestDeriveReferenceVectorV5:
-    def test_seed_protocol_version_is_five(self) -> None:
+class TestDeriveReferenceVectorV6:
+    def test_seed_protocol_version_is_six(self) -> None:
         """Guard: if someone bumps SEED_PROTOCOL_VERSION without updating
         the reference vector, both this assertion AND the next one fire
         together. Catches half-finished bumps."""
-        assert SEED_PROTOCOL_VERSION == 5
+        assert SEED_PROTOCOL_VERSION == 6
 
-    def test_v5_envelope_matches_reference_vector(self) -> None:
+    def test_v6_envelope_matches_reference_vector(self) -> None:
         """The contract pin. Any unintentional envelope change breaks
         this test. Intentional shifts require a SEED_PROTOCOL_VERSION
         bump in the same PR."""
         actual = derive(_SEED, _NS, _SRC).hex()
-        assert actual == EXPECTED_HEX_V5, (
-            f"v5 envelope drift: expected {EXPECTED_HEX_V5}, got {actual}. "
+        assert actual == EXPECTED_HEX_V6, (
+            f"v6 envelope drift: expected {EXPECTED_HEX_V6}, got {actual}. "
             "Either the envelope shape changed (HKDF salt, length-prefix, "
             "version byte, byte-order) or SEED_PROTOCOL_VERSION needs bumping "
-            "with a same-PR update to EXPECTED_HEX_V5."
+            "with a same-PR update to EXPECTED_HEX_V6."
         )

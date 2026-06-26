@@ -98,7 +98,23 @@ from decoy_engine.determinism._hkdf import hkdf_sha256
 # a column rename as a re-keying event. See also:
 # execution/_strategies/_fpe.py (key + tweak wiring) and
 # docs/determinism.md (FPE key and tweak model section).
-SEED_PROTOCOL_VERSION: int = 5
+#
+# F2/F3 generation rewrite (2026-06-26): bump to v6. The synthetic-
+# generation path moved off the legacy 4-byte truncated per-column int
+# seed (synthetic_column_seed: derive_key("gen:"+fingerprint)[:4], the
+# F2 32-bit keyspace) and the F3 `column_seed + i` per-row arithmetic to
+# a full-32-byte, per-RNG-family, per-row derivation (GenDeriveContext in
+# generators/derivation.py). Generation now also mixes this version byte
+# into its HMAC (via _gen_hmac), the same way the mask path does, so the
+# protocol version is a single compatibility knob across both determinism
+# roots and a cross-version vaulted-unmask can detect generation drift.
+# Output bytes change for every synthetic column AND (via the version
+# byte) every masked column. Pre-GA, hard cutover; no manifests in the
+# wild. Engine A (generators/columns.py) + Engine B
+# (generation/synthesize.py) were rewritten in lockstep; the V2 null path
+# was unified to V1's numpy-vectorized mask so null-prob columns are now
+# byte-identical across engines.
+SEED_PROTOCOL_VERSION: int = 6
 
 _SALT = b"decoy-engine/determinism/v1"
 _SEED_LENGTH = 8  # exactly 8 bytes; raises on any other length
