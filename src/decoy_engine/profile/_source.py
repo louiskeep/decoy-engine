@@ -68,7 +68,10 @@ def profile_source(
     # applied in platform v2_runner.py; both belt + suspenders.
     if seed is None:
         config_seed = (config.get("global_settings") or {}).get("seed")
-        if isinstance(config_seed, int):
+        # F5 (2026-06-26): exclude bool — isinstance(True, int) is True, so
+        # without this guard `seed: true` would seed random.Random(True),
+        # coercing `seed: true` to be identical to `seed: 1`.
+        if isinstance(config_seed, int) and not isinstance(config_seed, bool):
             seed = config_seed
 
     # QA-7 F3 (2026-06-01): warn loud when seed is still None after
