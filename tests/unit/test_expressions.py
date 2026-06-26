@@ -124,6 +124,19 @@ class TestQA1MakeMaskGlobals:
         assert safe_eval("abs(-5)", scope, {}) == 5
         assert safe_eval("re.search(r'\\d+', 'a42').group()", scope, {}) == "42"
 
+    def test_bare_mask_globals_has_no_shared_rng(self):
+        # F16a (2026-06-26): the dangerous module-global RNG bindings are gone
+        # from the bare MASK_GLOBALS. A formula calling randint/choice/random
+        # against it now raises (undefined name) instead of silently using
+        # shared process state; make_mask_globals is the only RNG path.
+        assert "randint" not in MASK_GLOBALS
+        assert "choice" not in MASK_GLOBALS
+        assert "random" not in MASK_GLOBALS
+        with pytest.raises(InvalidExpression):
+            safe_eval("randint(1, 10)", MASK_GLOBALS, {})
+        # Non-RNG bindings remain on the bare scope.
+        assert safe_eval("abs(-3)", MASK_GLOBALS, {}) == 3
+
 
 class TestC1Sandbox:
     """SEC.1 / C1: the simpleeval sandbox closes the eval() RCE class while
