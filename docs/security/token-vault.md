@@ -39,10 +39,14 @@ derivation domain without touching the seed protocol.
    AND the operator must pass `--vault PATH`. A mask run never writes
    a vault otherwise.
 2. Store the vault and the config separately, each access-controlled.
-3. `vault: true` requires a `namespace` and is rejected on
-   `strategy: fpe` (already reversible from the config alone); the
-   plan compiler enforces both (`vault_requires_namespace`,
-   `vault_strategy_reversible`).
+3. `vault: true` requires the `cryptography` package (the optional
+   `vault` extra), a `namespace`, and is rejected on `strategy: fpe`
+   (already reversible from the config alone). The plan compiler
+   enforces all three at PLAN/COMPILE time: `vault_requires_cryptography`
+   (missing package), `vault_requires_namespace` (missing namespace),
+   `vault_strategy_reversible` (fpe strategy). A missing `cryptography`
+   package is caught here rather than hours into a run at vault-write
+   time; install with `pip install 'decoy-engine[vault]'`.
 4. Pooled strategies can map two sources to one masked value; those
    keys are dropped at write time (`ambiguous_dropped` in the unmask
    report). Exact round trips are guaranteed only for collision-free

@@ -60,6 +60,12 @@ been found, nor that the surviving text is semantically coherent. Treat
 free-text output as reduced-risk, not as proven-clean, and review it where the
 stakes warrant.
 
+When NER-backed redaction is enabled (`ner: true`), the spaCy model version is
+stamped into the compiled plan. If the installed model is updated between compile
+time and run time, the engine raises `ner_model_version_mismatch` rather than
+silently producing different redactions for the same config and seed. This guard
+catches version drift; it does not widen the coverage guarantee above.
+
 ## It does not validate that your configuration matches your intent
 
 Decoy validates a config against its schema and runs what the config says. It

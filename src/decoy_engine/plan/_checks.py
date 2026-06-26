@@ -399,7 +399,7 @@ def check_vault_columns(config: dict[str, Any]) -> None:
     compile branches and in `run_config_only_checks`.
     """
     tables = config.get("tables", []) if isinstance(config.get("tables"), list) else []
-    crypto_ok: bool | None = None  # env-global; resolved lazily on the first vaulted column
+    crypto_ok: bool | None = None  # per-call memo; resolved lazily on the first vaulted column
     for table_entry in tables:
         if not isinstance(table_entry, dict):
             continue

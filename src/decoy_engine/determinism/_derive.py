@@ -87,6 +87,17 @@ from decoy_engine.determinism._hkdf import hkdf_sha256
 # appends the check digit instead of overwriting the last encrypted
 # digit (the old shape discarded a character and was irreversible).
 # Output bytes change for every fpe column. Pre-GA, hard cutover.
+#
+# FPE tweak model (canonical note, do not duplicate elsewhere):
+# the per-column tweak is the column name encoded as UTF-8. One key
+# per (seed, namespace); one tweak per column. Two columns in the
+# same namespace share the key but not the tweak, so their
+# ciphertexts are independent. Renaming a column changes its tweak
+# and therefore its ciphertext: unmask against the old column name
+# will not reverse ciphertexts produced under the new name. Treat
+# a column rename as a re-keying event. See also:
+# execution/_strategies/_fpe.py (key + tweak wiring) and
+# docs/determinism.md (FPE key and tweak model section).
 SEED_PROTOCOL_VERSION: int = 5
 
 _SALT = b"decoy-engine/determinism/v1"
