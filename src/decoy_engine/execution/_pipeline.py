@@ -143,7 +143,7 @@ def run_pipeline(
     # (`seed: true` -> random.Random(True) == Random(1)) and only caught
     # later by compile_plan. Defaults absent seed to 0, matching the
     # compiler so the profile and mask paths stay in lockstep.
-    from decoy_engine.plan._compile import _normalize_job_seed_int
+    from decoy_engine.plan._seed import _normalize_job_seed_int
 
     job_seed = _normalize_job_seed_int(config)
 

@@ -100,7 +100,7 @@ def generate_tables(
     # (QA-7 F8 / QA-3 F1 lineage), instead of int(True) silently coercing
     # `seed: true` to 1 on a direct generate call. Defaults absent seed to
     # 0 (== _DEFAULT_SEED, pinned by test_v2_generation.py).
-    from decoy_engine.plan._compile import _normalize_job_seed_int
+    from decoy_engine.plan._seed import _normalize_job_seed_int
 
     seed = _normalize_job_seed_int(config)
     tables_list = config.get("tables") or []
