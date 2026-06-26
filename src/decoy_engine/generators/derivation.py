@@ -33,10 +33,13 @@ configured.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 from collections.abc import Callable
 from typing import Any
+
+from decoy_engine.determinism import SEED_PROTOCOL_VERSION
 
 # Fields that are intentionally excluded from the fingerprint. ``name``
 # is the rename surface R3.10 is severing. ``null_probability`` is a
@@ -67,6 +70,130 @@ def strategy_config_fingerprint(column_config: dict[str, Any]) -> str:
     }
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+# RNG families a generated column may drive. Each gets a disjoint sub-key so
+# the three never share one int (F3) and adjacent columns never correlate.
+#   py    -> random.Random(...)
+#   np    -> numpy.random.default_rng(...)
+#   faker -> Faker.seed_instance(...)
+GEN_FAMILIES = ("py", "np", "faker")
+
+
+def _gen_hmac(key: bytes, label: bytes, *, extra: bytes = b"") -> bytes:
+    """Version-mixed, length-prefixed HMAC-SHA256.
+
+    Mirrors `determinism._derive.derive_source` byte-for-byte in shape:
+    `version_byte || len(label) || label || len(extra) || extra`. Mixing
+    SEED_PROTOCOL_VERSION makes generation output version-aware (the same
+    way the mask path is), so the protocol version is the single
+    compatibility knob and a cross-version vaulted-unmask can detect drift.
+    """
+    hmac_input = (
+        bytes([SEED_PROTOCOL_VERSION])
+        + len(label).to_bytes(4, "big")
+        + label
+        + len(extra).to_bytes(4, "big")
+        + extra
+    )
+    return hmac.new(key, hmac_input, hashlib.sha256).digest()
+
+
+class GenDeriveContext:
+    """Per-column generation derivation: full-32-byte, per-family, per-row.
+
+    Replaces the F2 4-byte truncation (`_bytes_to_seed`) and the F3
+    `column_seed + i` arithmetic. One 32-byte column root is resolved once
+    (see `for_column`); per-family keys and per-row ints are derived from it
+    by HMAC, mirroring `determinism._derive.DeriveContext` (precompute key
+    once, cheap per-row HMAC). Distinct labels give independent HKDF/HMAC
+    outputs, so:
+
+    - the three RNG families (`GEN_FAMILIES`) no longer share one int, and
+    - adjacent columns (distinct fingerprints -> distinct roots) no longer
+      produce row-shifted-identical streams.
+
+    `base_int(family)` seeds base-only consumers (`random.Random`,
+    `numpy.default_rng`) with full-width material. `row_int(family, i)`
+    replaces the per-row `seed + i` for faker/formula row loops.
+    """
+
+    __slots__ = ("_family_keys", "_root")
+
+    def __init__(self, root: bytes) -> None:
+        self._root = root
+        self._family_keys: dict[str, bytes] = {}
+
+    @classmethod
+    def for_column(
+        cls,
+        derive_key: Callable[[str], bytes] | None,
+        column_config: dict[str, Any],
+        fallback_seed: int,
+    ) -> GenDeriveContext:
+        """Resolve the 32-byte column root, preserving the four-path order of
+        the legacy `synthetic_column_seed` (fresh / legacy / keyed / unkeyed).
+
+        Keyed path uses the SAME `derive_key("gen:" + fingerprint)` label as
+        before (now consuming all 32 bytes, not the first 4). Raises on a
+        `derive_key` resolver failure (QA-1 M18 contract) rather than
+        silently degrading to the unkeyed path.
+        """
+        cfg = column_config or {}
+
+        if cfg.get("determinism") == "fresh":
+            # Same root for every row this run (within-run stable), fresh
+            # across runs. Full 32 bytes, not 4.
+            return cls(os.urandom(32))
+
+        if derive_key is not None and cfg.get("_legacy_column_name_seed"):
+            name = cfg.get("name", "unnamed")
+            try:
+                root = derive_key(f"col:{name}")
+            except Exception as exc:
+                raise RuntimeError(
+                    f"GenDeriveContext: derive_key failed for legacy "
+                    f"column-name path (column={name!r}): {type(exc).__name__}"
+                ) from exc
+            return cls(root)
+
+        fingerprint = strategy_config_fingerprint(cfg)
+
+        if derive_key is not None:
+            try:
+                root = derive_key(f"gen:{fingerprint}")
+            except Exception as exc:
+                raise RuntimeError(
+                    f"GenDeriveContext: derive_key failed for fingerprint-based "
+                    f"path (fingerprint={fingerprint!r}): {type(exc).__name__}"
+                ) from exc
+            return cls(root)
+
+        # Unkeyed fallback: HKDF-strength root over the fallback seed +
+        # fingerprint (replaces the old md5[:4] truncation). Reproducible
+        # without a master key, still independent of the column display name.
+        digest = hashlib.sha256(
+            int(fallback_seed).to_bytes(8, "big", signed=False) + fingerprint.encode("utf-8")
+        ).digest()
+        return cls(digest)
+
+    def _family_key(self, family: str) -> bytes:
+        key = self._family_keys.get(family)
+        if key is None:
+            key = _gen_hmac(self._root, b"fam:" + family.encode("utf-8"))
+            self._family_keys[family] = key
+        return key
+
+    def base_int(self, family: str) -> int:
+        """Full-width non-negative int for a base-only RNG seed (one per column)."""
+        return int.from_bytes(self._family_key(family), "big", signed=False)
+
+    def row_int(self, family: str, i: int) -> int:
+        """Full-width non-negative int for row `i` of `family` (replaces seed + i)."""
+        block = _gen_hmac(
+            self._family_key(family), family.encode("utf-8"), extra=i.to_bytes(8, "big")
+        )
+        return int.from_bytes(block, "big", signed=False)
 
 
 def _bytes_to_seed(b: bytes) -> int:
