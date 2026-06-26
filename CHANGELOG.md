@@ -9,6 +9,24 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (BF3 generation completeness, 2026-06-26)
+
+- **Cross-column `formula` references in v2 generation**. A generate
+  `formula` column carrying `references: [...]` (e.g. an `email` column
+  built from `first_name`/`last_name` siblings) is now computed instead
+  of returning all-null placeholders plus a "not yet supported"
+  UserWarning. `generate_tables` runs a single declared-order in-memory
+  post-pass (`_fill_referenced_formula_columns`) after every sibling
+  column is finalized, delegating to the existing
+  `ColumnGenerator.fill_referenced_formula_column`. It reuses the same v6
+  per-row family derivation as the inline formula path, so there is NO
+  `SEED_PROTOCOL_VERSION` / persisted-format change. `null_probability`
+  applies to the computed values; a reference to a missing column logs a
+  warning and yields nulls. LIMITATION: the post-pass is a single
+  declared-order pass -- a referenced formula that reads a
+  LATER-declared referenced formula sees that sibling's null placeholder
+  (no multi-pass dependency resolver).
+
 ### Added (capability gaps, 2026-06-12)
 
 - **Chunked mask execution** (WS4). New public API

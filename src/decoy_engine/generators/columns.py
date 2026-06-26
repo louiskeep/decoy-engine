@@ -1114,7 +1114,9 @@ class ColumnGenerator:
 
         When ``references: [...]`` is set on the column config, this method
         emits a None-filled placeholder series -- the column's actual values
-        are filled by ``DataGenerator._process_referenced_formulas`` AFTER
+        are filled by the in-memory post-pass
+        (``fill_referenced_formula_column``, driven by the v2
+        ``generation._referenced_formula.fill_referenced_formula_columns``) AFTER
         every other column has been generated, so the formula can read its
         siblings. When ``references`` is empty/missing, the formula is
         evaluated inline per row with deterministic seeding.
@@ -1161,13 +1163,12 @@ class ColumnGenerator:
     ) -> "pd.Series":
         """Evaluate a formula column whose expression reads sibling columns.
 
-        Called by generate_op after pass 1 has produced all non-formula
-        columns, so ``out`` contains finalized values for every referenced
-        column. Uses the same per-row deterministic seeding and safe_eval
-        scope as ``_eval_formula_inline``.
-
-        Mirrors DataGenerator._evaluate_composite_formula but operates
-        on the in-memory DataFrame instead of a CSV file.
+        Called by the v2 generation post-pass
+        (``generation._referenced_formula.fill_referenced_formula_columns``) after
+        the per-column loop has produced every other column, so ``out``
+        contains finalized values for each referenced column. Uses the same
+        per-row deterministic seeding and safe_eval scope as
+        ``_eval_formula_inline``, operating on the in-memory DataFrame.
         """
         missing = [r for r in references if r not in out.columns]
         if missing:
@@ -1235,7 +1236,7 @@ class ColumnGenerator:
         values = []
         # F2/F3 (2026-06-26): per-row family derivations (py for the formula
         # RNG + keyed hash, faker for Faker) replace column_seed + i. See
-        # _evaluate_referenced_formula_column for the rationale.
+        # fill_referenced_formula_column for the rationale.
         row_rng = random.Random()
         for i in range(num_rows):
             local_seed = gen_ctx.row_int("py", i)
@@ -1263,8 +1264,8 @@ class ColumnGenerator:
 
     def _formula_scope(self, local_seed: int, rng: random.Random | None = None) -> dict[str, Any]:
         """Build the names available inside a formula eval. Shared between
-        the inline path here and the post-pass in
-        ``DataGenerator._process_referenced_formulas`` so users get the
+        the inline path (``_eval_formula_inline``) and the cross-column
+        post-pass (``fill_referenced_formula_column``) so users get the
         same vocabulary regardless of whether their formula reads other
         columns. Per-row seed is captured into the closure so RNG calls
         within the eval stay deterministic.

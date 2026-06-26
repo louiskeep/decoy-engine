@@ -415,19 +415,14 @@ class TestQA7Coverage:
 
         assert _DEFAULT_SEED == 0
 
-    def test_qa7_f7_references_emits_warning(self):
-        """F7: a formula column with references set must emit a
-        UserWarning + return all-None placeholders. Pre-fix the path
-        was silent + the operator only discovered the all-None column
-        downstream."""
+    def test_qa7_f7_references_no_longer_warns(self):
+        """F7 (BF3 update): a formula column with `references` is now filled
+        by the in-memory declared-order post-pass, so the pre-BF3
+        'not yet supported' UserWarning must be gone. Here `name` references
+        a real sibling column, so the post-pass computes a value rather than
+        emitting nulls."""
         import warnings as _warnings
 
-        col = {
-            "name": "greet",
-            "type": "formula",
-            "formula": "f'Hello {name}'",
-            "references": ["name"],
-        }
         cfg = {
             "version": 1,
             "global_settings": {"seed": 42},
@@ -436,18 +431,24 @@ class TestQA7Coverage:
                 {
                     "name": "t",
                     "row_count": 5,
-                    "generate_columns": [col],
+                    "generate_columns": [
+                        {"name": "name", "type": "faker", "faker_type": "first_name"},
+                        {
+                            "name": "greet",
+                            "type": "formula",
+                            "formula": "f'Hello {name}'",
+                            "references": ["name"],
+                        },
+                    ],
                 }
             ],
         }
         with _warnings.catch_warnings(record=True) as w:
             _warnings.simplefilter("always")
-            generate_tables(cfg)
-        # At least one UserWarning naming `references` must surface.
-        assert any(
-            issubclass(warn.category, UserWarning) and "references" in str(warn.message).lower()
-            for warn in w
-        )
+            tbl = generate_tables(cfg)["t"]
+        assert not any("not yet supported" in str(warn.message).lower() for warn in w)
+        names = tbl.column("name").to_pylist()
+        assert tbl.column("greet").to_pylist() == [f"Hello {nm}" for nm in names]
 
     def test_qa7_f8_non_numeric_seed_raises_typed_error(self):
         """F8 + F5 (2026-06-26): a non-numeric seed now raises the SAME
@@ -502,18 +503,38 @@ class TestFormulaParityV1:
         }
         assert _v2_run(col, 10) == _v1_run(col, 10)
 
-    def test_references_defers_to_post_pass(self):
-        # V1 returns [None]*n for the per-column phase when `references` is set
-        # (DataGenerator._process_referenced_formulas fills them later); v2 mirrors
-        # the placeholder behavior. The v2 post-pass machinery is a later sprint.
-        col = {
-            "name": "greet",
-            "type": "formula",
-            "formula": "f'Hello {name}'",
-            "references": ["name"],
+    def test_references_filled_by_post_pass(self):
+        # BF3: a formula column with `references` is filled by the in-memory
+        # declared-order post-pass (ColumnGenerator.fill_referenced_formula_column)
+        # after every sibling is built, instead of the pre-BF3 all-None stub.
+        # `greet` reads a real `name` sibling, so the computed value lands.
+        cfg = {
+            "version": 1,
+            "global_settings": {"seed": 42},
+            "sources": {},
+            "tables": [
+                {
+                    "name": "t",
+                    "row_count": 5,
+                    "generate_columns": [
+                        {"name": "name", "type": "faker", "faker_type": "first_name"},
+                        {
+                            "name": "greet",
+                            "type": "formula",
+                            "formula": "f'Hello {name}'",
+                            "references": ["name"],
+                        },
+                    ],
+                }
+            ],
+            "targets": {"t": {"type": "file", "format": "csv", "path": "o.csv"}},
         }
-        assert _v2_run(col, 5) == _v1_run(col, 5)
-        assert _v2_run(col, 5) == [None] * 5
+        cfg = PipelineConfig.model_validate(cfg).model_dump()
+        tbl = generate_tables(cfg)["t"]
+        names = tbl.column("name").to_pylist()
+        greet = tbl.column("greet").to_pylist()
+        assert greet == [f"Hello {nm}" for nm in names]
+        assert all(v is not None for v in greet)
 
     def test_empty_formula_rejected_at_validation_time(self):
         """QA walks/generators F6 (2026-06-01, MEDIUM correctness / PO
@@ -525,6 +546,190 @@ class TestFormulaParityV1:
         col = {"name": "x", "type": "formula", "formula": ""}
         with pytest.raises(ValidationError, match="formula column 'x' requires `formula`"):
             _v2_run(col, 5)
+
+
+def _v2_run_single_table(gcols: list[dict], n: int, seed: int = 42, derive_key=None) -> dict:
+    """Run v2 ``generate_tables`` on one single-table generate config and return
+    ``{col: values_list}`` for every generated column. Used by the cross-column
+    ``references`` post-pass cells, which need sibling columns visible together."""
+    cfg = {
+        "version": 1,
+        "global_settings": {"seed": seed},
+        "sources": {},
+        "tables": [{"name": "t", "row_count": n, "generate_columns": gcols}],
+        "targets": {"t": {"type": "file", "format": "csv", "path": "o.csv"}},
+    }
+    cfg = PipelineConfig.model_validate(cfg).model_dump()
+    tbl = generate_tables(cfg, derive_key=derive_key)["t"]
+    return {c: tbl.column(c).to_pylist() for c in tbl.column_names}
+
+
+class TestReferencedFormulaPostPass:
+    """BF3: a ``formula`` column carrying ``references: [...]`` is filled by an
+    in-memory declared-order post-pass (ColumnGenerator.fill_referenced_formula_column)
+    after every sibling column is built, instead of the pre-BF3 stub that returned
+    all-None placeholders + a 'not yet supported' UserWarning. The post-pass reuses
+    the same v6 per-row family derivation as the inline formula path, so no
+    SEED_PROTOCOL_VERSION change is involved."""
+
+    def _email_cols(self, **email_extras) -> list[dict]:
+        email: dict = {
+            "name": "email",
+            "type": "formula",
+            "references": ["first_name", "last_name"],
+            "formula": "f'{first_name.lower()}.{last_name.lower()}@example.com'",
+        }
+        email.update(email_extras)
+        return [
+            {"name": "first_name", "type": "faker", "faker_type": "first_name"},
+            {"name": "last_name", "type": "faker", "faker_type": "last_name"},
+            email,
+        ]
+
+    def test_email_references_compute_joined_string(self):
+        # The conftest sample_generator_config shape: email joins two faker
+        # siblings. Post-BF3 the column holds the computed address, not nulls.
+        out = _v2_run_single_table(self._email_cols(), 8)
+        expected = [
+            f"{fn.lower()}.{ln.lower()}@example.com"
+            for fn, ln in zip(out["first_name"], out["last_name"], strict=True)
+        ]
+        assert out["email"] == expected
+        assert all(v is not None for v in out["email"])
+
+    def test_two_runs_byte_identical(self):
+        a = _v2_run_single_table(self._email_cols(), 16)
+        b = _v2_run_single_table(self._email_cols(), 16)
+        assert a["email"] == b["email"]
+
+    def test_references_resolve_non_faker_siblings(self):
+        # The post-pass reads finalized sibling values regardless of the
+        # sibling's generator type: sequence, categorical, and an inline
+        # (non-referenced) formula all resolve.
+        gcols = [
+            {"name": "sku", "type": "sequence", "start": 1, "step": 1, "prefix": "SKU"},
+            {"name": "tier", "type": "categorical", "categories": ["gold", "silver"]},
+            {"name": "n", "type": "formula", "formula": "i + 1"},
+            {
+                "name": "label",
+                "type": "formula",
+                "references": ["sku", "tier", "n"],
+                "formula": "f'{sku}|{tier}|{n}'",
+            },
+        ]
+        out = _v2_run_single_table(gcols, 6)
+        expected = [
+            f"{sku}|{tier}|{n}"
+            for sku, tier, n in zip(out["sku"], out["tier"], out["n"], strict=True)
+        ]
+        assert out["label"] == expected
+
+    def test_declared_order_chaining_single_pass(self):
+        # Single declared-order pass: a referenced formula declared AFTER
+        # another referenced formula reads the earlier one's computed value.
+        # (The post-pass is intentionally single-pass; a referenced formula
+        # that reads a LATER-declared referenced formula is out of scope --
+        # see test_reverse_order_chain_does_not_resolve.)
+        gcols = [
+            {"name": "first_name", "type": "faker", "faker_type": "first_name"},
+            {"name": "last_name", "type": "faker", "faker_type": "last_name"},
+            {
+                "name": "email",
+                "type": "formula",
+                "references": ["first_name", "last_name"],
+                "formula": "f'{first_name.lower()}.{last_name.lower()}@example.com'",
+            },
+            {
+                "name": "mailto",
+                "type": "formula",
+                "references": ["email"],
+                "formula": "f'mailto:{email}'",
+            },
+        ]
+        out = _v2_run_single_table(gcols, 6)
+        assert out["mailto"] == [f"mailto:{e}" for e in out["email"]]
+
+    def test_reverse_order_chain_does_not_resolve(self):
+        # Documented limitation: when a referenced formula reads a sibling
+        # referenced formula declared LATER, that sibling is still a None
+        # placeholder at read time (the post-pass does not reorder). The
+        # missing value resolves to "" in the formula scope. No multi-pass
+        # dependency resolver is built (YAGNI/scope).
+        gcols = [
+            {
+                "name": "wrap",
+                "type": "formula",
+                "references": ["base"],
+                "formula": "f'[{base}]'",
+            },
+            {
+                "name": "base",
+                "type": "formula",
+                "references": ["seed_col"],
+                "formula": "f'B{seed_col}'",
+            },
+            {"name": "seed_col", "type": "sequence", "start": 1, "step": 1},
+        ]
+        out = _v2_run_single_table(gcols, 4)
+        # base resolves (reads a plain sequence sibling)...
+        assert out["base"] == [f"B{s}" for s in out["seed_col"]]
+        # ...but wrap read base's None placeholder (-> "") because base is
+        # declared after wrap.
+        assert out["wrap"] == ["[]"] * 4
+
+    def test_missing_reference_emits_none(self):
+        # A reference to a column that does not exist -> the post-pass logs a
+        # warning and emits a None-filled column (fill_referenced_formula_column
+        # behavior). Raw dict bypasses validation (extra="allow" carries
+        # `references`; there is no missing-column validator).
+        cfg = {
+            "version": 1,
+            "global_settings": {"seed": 42},
+            "sources": {},
+            "tables": [
+                {
+                    "name": "t",
+                    "row_count": 5,
+                    "generate_columns": [
+                        {"name": "first_name", "type": "faker", "faker_type": "first_name"},
+                        {
+                            "name": "greet",
+                            "type": "formula",
+                            "references": ["does_not_exist"],
+                            "formula": "f'Hi {does_not_exist}'",
+                        },
+                    ],
+                }
+            ],
+        }
+        out = generate_tables(cfg)["t"].column("greet").to_pylist()
+        assert out == [None] * 5
+
+    def test_null_probability_on_referenced_formula(self):
+        # null_probability applies to the post-pass output: a deterministic
+        # subset of rows is nulled, the rest carry computed values, and the
+        # pattern is stable across runs.
+        cols = self._email_cols(null_probability=0.5)
+        a = _v2_run_single_table(cols, 60)
+        b = _v2_run_single_table(cols, 60)
+        email_a = a["email"]
+        assert any(v is None for v in email_a)  # some nulled
+        assert any(v is not None for v in email_a)  # some kept
+        assert email_a == b["email"]  # deterministic null pattern + values
+        # Non-null rows are still the correctly computed address.
+        for i, v in enumerate(email_a):
+            if v is not None:
+                assert v == f"{a['first_name'][i].lower()}.{a['last_name'][i].lower()}@example.com"
+
+    def test_no_not_yet_supported_warning(self):
+        import warnings as _warnings
+
+        with _warnings.catch_warnings(record=True) as w:
+            _warnings.simplefilter("always")
+            _v2_run_single_table(self._email_cols(), 5)
+        assert not any("not yet supported" in str(warn.message).lower() for warn in w), (
+            "the pre-BF3 references stub warning must be gone"
+        )
 
 
 # ----------------------------------------------------------------------------

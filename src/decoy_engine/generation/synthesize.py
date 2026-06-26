@@ -146,6 +146,20 @@ def generate_tables(
             data[col["name"]] = _generate_column(
                 col, n, seed, derive_key, pools, instance_default_locale, data
             )
+        # Cross-column formula post-pass: a `formula` column carrying
+        # `references` was filled with None placeholders by `_formula`
+        # above (the per-column loop cannot read siblings that may not
+        # exist yet). Now that every sibling column is finalized in
+        # `data`, `fill_referenced_formula_columns` overwrites them in
+        # declared order from the finished values. Lazy import (mirrors
+        # the fidelity-gate dispatch) so configs without reference-bearing
+        # formulas never pay pandas.
+        if any(c.get("type") == "formula" and (c.get("references") or []) for c in gcols):
+            from decoy_engine.generation._referenced_formula import (
+                fill_referenced_formula_columns,
+            )
+
+            fill_referenced_formula_columns(gcols, data, seed, derive_key)
         tbl = pa.table(data)
         # Generation-time fidelity warn-gate (deferred follow-up 5,
         # 2026-06-12): score statistical columns against their source
@@ -422,12 +436,12 @@ def _formula(col: dict[str, Any], n: int, seed: int, derive_key: Any = None) -> 
     ``_generate_formula_column`` (``columns.py:974+``).
 
     V1's structure (mirrored here):
-      - empty ``formula`` -> warn + None series (we just return Nones).
-      - ``references: [...]`` set -> DEFER to V1's post-pass
-        (``DataGenerator._process_referenced_formulas``); the per-column generator
-        returns ``[None] * n`` placeholders. v2 returns the same placeholders;
-        cross-column-reference formulas land in a later sprint (alongside the
-        v2 post-pass plumbing).
+      - empty ``formula`` -> None series (we just return Nones).
+      - ``references: [...]`` set -> return ``[None] * n`` placeholders that
+        ``generate_tables``'s ``_referenced_formula.fill_referenced_formula_columns``
+        post-pass overwrites once every sibling column is finalized (the
+        per-column loop can't read siblings that may not be generated yet).
+        No warning is emitted here: the column is filled, not dropped.
       - else (inline path) -> per-row safe_eval with row-seeded ``random`` /
         ``faker`` scope.
 
@@ -443,21 +457,10 @@ def _formula(col: dict[str, Any], n: int, seed: int, derive_key: Any = None) -> 
     if not formula:
         return [None] * n
     if references:
-        # QA-7 F7 (2026-06-01): emit a warning when references is set.
-        # Pre-fix the cross-column-reference path silently returned
-        # all-None placeholders with no signal to the operator. The
-        # column landed in the output as nulls + no warning anywhere.
-        # The V2 post-pass for cross-column formulas lands in a later
-        # sprint; until then warn loud.
-        import warnings
-
-        warnings.warn(
-            f"column {col.get('name', 'unnamed_column')!r}: formula with "
-            f"`references` is not yet supported in v2 generation "
-            f"(cross-column formulas land in a later sprint). Returning "
-            "nulls for this column.",
-            stacklevel=4,
-        )
+        # Cross-column formula: return None placeholders that the
+        # generate_tables post-pass (_referenced_formula.fill_referenced_formula_columns)
+        # overwrites once every sibling column is finalized. The per-column
+        # loop can't read siblings here, so no eval happens at dispatch.
         return [None] * n
     from decoy_engine.generators.columns import ColumnGenerator
 
