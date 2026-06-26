@@ -450,8 +450,13 @@ class TestQA7Coverage:
         )
 
     def test_qa7_f8_non_numeric_seed_raises_typed_error(self):
-        """F8: int(non-numeric) used to leak a bare ValueError with
-        cryptic message. Now wrapped + named."""
+        """F8 + F5 (2026-06-26): a non-numeric seed now raises the SAME
+        typed PlanCompileError(seed_not_numeric) as the plan compiler,
+        because generate_tables routes through the shared
+        _normalize_job_seed_int validator instead of a local int() coercion
+        (which also silently accepted bool)."""
+        from decoy_engine.plan._errors import PlanCompileError
+
         cfg = {
             "version": 1,
             "global_settings": {"seed": "not-a-number"},
@@ -471,8 +476,9 @@ class TestQA7Coverage:
                 }
             ],
         }
-        with pytest.raises(ValueError) as exc:
+        with pytest.raises(PlanCompileError) as exc:
             generate_tables(cfg)
+        assert exc.value.code == "seed_not_numeric"
         assert "global_settings.seed" in str(exc.value)
 
 

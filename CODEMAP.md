@@ -38,7 +38,7 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | `src/decoy_engine/` | Engine package |
 | `src/decoy_engine/_MAP.md` | Engine package navigation map |
 | `src/decoy_engine/config/` | `PipelineConfig`, `RelationshipConfig`, `TableConfig`, source/target descriptors |
-| `src/decoy_engine/plan/` | `compile_plan` + frozen `Plan` |
+| `src/decoy_engine/plan/` | `compile_plan` + frozen `Plan`; `_seed.py` holds the shared seed validator used by the compiler, pipeline profile path, and generation |
 | `src/decoy_engine/execution/` | `ExecutionAdapter` Protocol, `PandasExecutionAdapter`, `select_execution_adapter`, `_strategies/` (column-strategy handlers), `polars/` (Polars adapter) |
 | `src/decoy_engine/generation/` | `generate_tables` + composite + pool helpers |
 | `src/decoy_engine/relationships/` | `build_relationship_graph`, `build_namespace_registry`, `check_orphan_fk_policy_completeness`, `OrphanPolicy` |
@@ -54,7 +54,7 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | `src/decoy_engine/instrumentation/` | Public timing / collector helpers |
 | `src/decoy_engine/determinism/` | Seed protocol, key derivation |
 | `src/decoy_engine/transforms/` | Three leaf modules (`base.py`, `date_shift.py`, `formula.py`, `fpe.py`) kept because V2 strategies in `execution/_strategies/` import them; a future sprint may relocate them into `_strategies/_reused_v1/`. |
-| `src/decoy_engine/generators/` | Two leaf modules (`columns.py`, `derivation.py`) kept for the same V2 reuse reason; `generation/synthesize.py` imports `ColumnGenerator`. |
+| `src/decoy_engine/generators/` | Two leaf modules (`columns.py`, `derivation.py`) kept for the same V2 reuse reason; `generation/synthesize.py` imports `ColumnGenerator`. `derivation.py` exports `GenDeriveContext` (v6 per-column generation derivation, replaces the pre-v6 `synthetic_column_seed`) and `strategy_config_fingerprint`. |
 | `src/decoy_engine/walks/` | Cross-file / drift / inference helpers; consumed by `tests/integration/test_walks_*`. Not part of the public API. |
 | `src/decoy_engine/forecast/` | Empty (only `__pycache__`); the V1 FORECAST recommender was removed in S22. Safe to delete. |
 | `tests/` | `unit/`, `integration/golden/`, `integration/compat_corpus/`, `parity/`, `perf_fixtures/`, `benchmark/`, `privacy/`, `security/`, `sentry/`, `connectors/`, `snapshots/` |
@@ -74,6 +74,7 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | Config schema | `src/decoy_engine/config/_pipeline.py` |
 | Relationship schema | `src/decoy_engine/config/_relationships.py` (reference doc lives in the commercial platform repo) |
 | Plan compilation | `src/decoy_engine/plan/_compile.py` |
+| Seed normalization (shared validator) | `src/decoy_engine/plan/_seed.py` |
 | Execution strategies | `src/decoy_engine/execution/_strategies/` |
 | Substrate selection | `src/decoy_engine/execution/_substrate.py` |
 | Pandas adapter | `src/decoy_engine/execution/_pandas_adapter.py` |

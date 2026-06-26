@@ -12,9 +12,7 @@ import pandas as pd
 from faker import Faker
 
 from decoy_engine.expressions import BASE_GLOBALS, safe_eval
-from decoy_engine.generators.derivation import (
-    synthetic_column_seed,
-)
+from decoy_engine.generators.derivation import GenDeriveContext
 from decoy_engine.internal.crypto import (
     hmac_hex,
 )
@@ -156,37 +154,24 @@ class ColumnGenerator:
             f"Initialized ColumnGenerator with seed: {seed}, keyed: {self.derive_key is not None}"
         )
 
-    def _column_seed(
+    def _column_ctx(
         self,
         column_name: str,
         column_config: dict[str, Any] | None = None,
-    ) -> int:
-        """Per-column base seed used by every row-level seeding site.
+    ) -> GenDeriveContext:
+        """Per-column generation derivation context (v6, F2/F3).
 
-        R3.10 contract: the seed is derived from the resolved generation
-        key plus a canonical fingerprint of strategy/config, NOT the
-        display column name. Same key + same strategy/config produces
-        the same seed regardless of what the column is called or which
-        column it lives in.
-
-        Direct-YAML pipelines that need the pre-R3.10 column-name path
-        can opt in by setting ``_legacy_column_name_seed: true`` on the
-        column config. The Web UI never sets this; it is compat-only
-        surface.
-
-        Honors ``determinism: fresh`` for the admin-allowed roll-per-run
-        path. Fresh is gated upstream by
-        ``allow_per_pipeline_random_generation``; the engine accepts
-        whatever the caller passed.
-
-        Falls through to a seed-based (key-less) path when no resolver
-        is configured. The fallback uses the fingerprint, not the
-        column name, so renames are stable in unkeyed runs too.
+        The full-width replacement for `_column_seed`: same R3.10 keying
+        rules (fingerprint-scoped, rename-stable, fresh + legacy paths),
+        but exposes per-family (`base_int`) and per-row (`row_int`)
+        derivations that consume all 32 bytes instead of the legacy
+        4-byte int. Base-only consumers call `base_int(family)`; per-row
+        loops call `row_int(family, i)` in place of `seed + i`.
         """
         cfg = column_config or {}
         if column_name and "name" not in cfg:
             cfg = {**cfg, "name": column_name}
-        return synthetic_column_seed(
+        return GenDeriveContext.for_column(
             derive_key=self.derive_key,
             column_config=cfg,
             fallback_seed=self.seed,
@@ -262,8 +247,9 @@ class ColumnGenerator:
             # converges to null_probability either way. This is a
             # controlled determinism bump; SEED_PROTOCOL_VERSION
             # bumped in determinism/_derive.py to 3.
-            column_seed = self._column_seed(column_name, column_config)
-            null_rng = np.random.default_rng(column_seed)
+            null_rng = np.random.default_rng(
+                self._column_ctx(column_name, column_config).base_int("np")
+            )
             null_mask = null_rng.random(num_rows) < null_probability
             if null_mask.any():
                 # Promote integer dtypes to pandas nullable Int64 so
@@ -360,19 +346,16 @@ class ColumnGenerator:
         # comes from os.urandom instead -- the column's output rolls per
         # run while staying internally consistent within the run.
         column_name = column_config.get("name", "unnamed_column")
-        column_seed = self._column_seed(column_name, column_config)
+        gen_ctx = self._column_ctx(column_name, column_config)
         values = []
-        # QA-1 H6 (2026-06-01): use a column-scoped Random instance so the
-        # per-row re-seed does not pollute self._rng or module-global.
-        # Faker.seed_instance still mutates module-level random.seed
-        # internally (Faker library limitation; QA-7 F1 added the
-        # cross-thread lock for that). Within a single ColumnGenerator
-        # call we accept the within-call serialization.
-        row_rng = random.Random()
+        # F2/F3 (2026-06-26): per-row Faker seed is a full-width, faker-family
+        # derivation (gen_ctx.row_int("faker", i)) instead of column_seed + i,
+        # so adjacent columns no longer share row-shifted seeds. Faker.seed_instance
+        # still mutates module-level random.seed internally (Faker library
+        # limitation; QA-7 F1 added the cross-thread lock for that). Within a
+        # single ColumnGenerator call we accept the within-call serialization.
         for i in range(num_rows):
-            row_seed = column_seed + i
-            row_rng.seed(row_seed)
-            faker_inst.seed_instance(row_seed)
+            faker_inst.seed_instance(gen_ctx.row_int("faker", i))
             values.append(provider_func(**faker_kwargs))
 
         return pd.Series(values)
@@ -455,7 +438,7 @@ class ColumnGenerator:
         # is seeded byte-identically to the V1 pattern (random.Random(s)
         # produces the same sequence as random.seed(s) followed by
         # module-level draws).
-        cat_rng = random.Random(self._column_seed(column_name, column_config))
+        cat_rng = random.Random(self._column_ctx(column_name, column_config).base_int("py"))
         values = cat_rng.choices(categories, weights=weights, k=num_rows)
         return pd.Series(values)
 
@@ -504,7 +487,7 @@ class ColumnGenerator:
             return pd.Series([None] * num_rows)
 
         kind = str(snapshot.get("kind") or "").lower()
-        seed = self._column_seed(column_name, column_config)
+        seed = self._column_ctx(column_name, column_config).base_int("np")
 
         # D6a: numeric. Numpy RNG for vectorized sampling + bitwise
         # determinism across machines/python versions when the
@@ -960,7 +943,7 @@ class ColumnGenerator:
         # QA-1 H6 (2026-06-01): column-scoped Random instance replaces
         # module-global random.seed. ref_rng below is byte-identical to
         # the V1 module-global pattern.
-        ref_rng = random.Random(self._column_seed(column_name, column_config))
+        ref_rng = random.Random(self._column_ctx(column_name, column_config).base_int("py"))
 
         # Generate references based on distribution type
         values = []
@@ -1194,18 +1177,18 @@ class ColumnGenerator:
             )
             return pd.Series([None] * len(out), dtype=object)
 
-        column_seed = self._column_seed(col_name)
+        gen_ctx = self._column_ctx(col_name)
         values: list = []
-        # QA-1 H6 + M21 (2026-06-01): per-row Random instance feeds
-        # _formula_scope; module-global random no longer used by formula
-        # eval. faker.seed_instance still serializes module-level state
-        # internally (Faker library limitation; see synthesize.py
-        # _FAKER_CALL_LOCK).
+        # F2/F3 (2026-06-26): per-row seeds are full-width family derivations
+        # (py for the formula RNG + keyed hash, faker for Faker) instead of
+        # column_seed + i, so adjacent columns no longer correlate. faker
+        # .seed_instance still serializes module-level state internally (Faker
+        # library limitation; see synthesize.py _FAKER_CALL_LOCK).
         row_rng = random.Random()
         for i in range(len(out)):
-            local_seed = column_seed + i
+            local_seed = gen_ctx.row_int("py", i)
             row_rng.seed(local_seed)
-            self.faker.seed_instance(local_seed)
+            self.faker.seed_instance(gen_ctx.row_int("faker", i))
 
             scope = self._formula_scope(local_seed, rng=row_rng)
             scope["i"] = i
@@ -1248,16 +1231,16 @@ class ColumnGenerator:
           - Faker date helpers + arithmetic (``today``, ``days_from_now``, ...)
 
         Cross-column refs aren't reachable here -- that's the post-pass."""
-        column_seed = self._column_seed(column_name, column_config)
+        gen_ctx = self._column_ctx(column_name, column_config)
         values = []
-        # QA-1 H6 + M21 (2026-06-01): per-row Random instance feeds
-        # _formula_scope. See _evaluate_referenced_formula_column for
-        # the rationale.
+        # F2/F3 (2026-06-26): per-row family derivations (py for the formula
+        # RNG + keyed hash, faker for Faker) replace column_seed + i. See
+        # _evaluate_referenced_formula_column for the rationale.
         row_rng = random.Random()
         for i in range(num_rows):
-            local_seed = column_seed + i
+            local_seed = gen_ctx.row_int("py", i)
             row_rng.seed(local_seed)
-            self.faker.seed_instance(local_seed)
+            self.faker.seed_instance(gen_ctx.row_int("faker", i))
 
             scope = self._formula_scope(local_seed, rng=row_rng)
             scope["i"] = i

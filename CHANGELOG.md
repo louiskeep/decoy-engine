@@ -138,6 +138,167 @@ called out explicitly.
   (9 properties x 400 examples) pinning null-preservation, determinism,
   namespace isolation, and per-strategy structural invariants.
 
+### Fixed (remediation batch 1, 2026-06-26)
+
+Targeted correctness and hardening fixes from the F-series findings register
+(`docs/remediation-source.md`). Behavior changes are called out explicitly.
+
+- **Typed `MaskKeyDerivationError` for FPE and date-shift key failures** (F15).
+  `transforms/fpe.py` and `transforms/date_shift.py` previously raised a bare
+  `RuntimeError` when the per-column key derivation failed, which escaped an
+  upstream `except DecoyError` handler. Both now raise
+  `MaskKeyDerivationError(DecoyError, code="mask.key_derivation_failed")`, so
+  the failure is catchable at the engine boundary like every other typed engine
+  error. The `.strategy` attribute names the originating strategy (`"fpe"` or
+  `"date_shift"`). `MaskKeyDerivationError` is exported from
+  `decoy_engine.errors`. BEHAVIOR CHANGE: callers catching bare `RuntimeError`
+  on these paths must update to `DecoyError` or `MaskKeyDerivationError`.
+
+- **Deterministic shuffle binds the column name into its derivation source**
+  (F4). Before this fix, two shuffle columns sharing a namespace derived their
+  permutation from `derive(job_seed, namespace, b"")`, so both received the
+  same permutation and permuted in lockstep. That re-links values across columns
+  that masking is meant to decouple: a privacy regression. The source is now
+  `derive(job_seed, namespace, column_name.encode("utf-8"))`, so each column
+  draws a distinct permutation. BEHAVIOR CHANGE: deterministic-shuffle output
+  shifts for all columns. This fix bundles into the upcoming
+  `SEED_PROTOCOL_VERSION` v6 bump (not yet bumped); do not assume v6 has landed.
+
+- **`vault: true` fails at compile when `cryptography` is not installed**
+  (F14a). A vaulted column without the `vault` extra (`cryptography` package)
+  previously reached vault-write time hours into a run before failing. The plan
+  compiler now rejects it immediately with
+  `PlanCompileError(code="vault_requires_cryptography")`. Install the extra with
+  `pip install 'decoy-engine[vault]'`. BEHAVIOR CHANGE: configs with
+  `vault: true` that previously ran until vault-write now fail at compile.
+
+- **NER model version mismatch raises at run time** (F14b). When
+  `text_redact` is configured with `ner: true`, the spaCy model version is
+  stamped into the plan at compile time. If the installed model version differs
+  at run time, the engine now raises
+  `StrategyError(code="ner_model_version_mismatch")` before any redaction
+  runs, rather than silently producing different redactions for the same config
+  and seed. Pin the model version or recompile the plan after a model update.
+  Plans compiled before this version have no stamped version and skip the guard.
+
+### Security / Changed (vault hardening F13, 2026-06-26)
+
+- **Vault format bumped to `decoy-vault/v2`; per-chunk streaming encryption**
+  (F13). BEHAVIOR CHANGE: vault files written by this engine use the new
+  `decoy-vault/v2` format (magic `DCYVAULT2\n`) and are not readable by any
+  prior engine version. v1 vault files are not readable by this engine. This is
+  a pre-GA hard cutover: no vaults exist in the wild, so no migration is
+  required at this point. The forever-readable rule begins at the first
+  in-the-wild v2 vault.
+
+  Format change: the file now contains an unencrypted JSON header (`format`,
+  `seed_protocol_version`, `ambiguous_dropped`, `chunk_rows`, `chunk_count`)
+  followed by a sequence of length-prefixed Fernet tokens, one per bounded
+  chunk of up to 65 536 sorted entries.
+
+  Privacy fix: `VaultWriter.write` now serializes and encrypts one bounded
+  chunk at a time (F13). The previous implementation serialized the entire
+  source-value table into a single Parquet buffer before encrypting it. That
+  created a window where the full plaintext source-value table sat in heap
+  as one unencrypted blob. The new path drops each chunk's plaintext
+  immediately after encrypting it; the full-table plaintext blob is never
+  materialized.
+
+- **New typed error `vault_protocol_version_mismatch`** (F13). `load_vault`
+  reads the unencrypted v2 header before any decryption attempt. If the
+  header's `seed_protocol_version` does not match the running
+  `SEED_PROTOCOL_VERSION`, it raises
+  `VaultError(code="vault_protocol_version_mismatch")` with a message naming
+  both versions. Previously a cross-version vault would surface as an opaque
+  `vault_key_mismatch` (because the protocol version byte is mixed into the
+  derived vault key). The new code is distinct from `vault_key_mismatch` (wrong
+  seed, correct version). Cross-version unmask remains unsupported; F13 makes
+  the error diagnosable. `unmask_pipeline` surfaces this code in its per-column
+  error list alongside the existing vault error codes.
+
+- **Single shared seed validator** (F5). `plan/_seed.py` is a new internal
+  module containing `_normalize_job_seed` and `_normalize_job_seed_int`. The
+  pipeline profile path (`execution/_pipeline.py`), the plan compiler
+  (`plan/_compile.py`), and generation (`generation/synthesize.py`) all route
+  through it. Previously the profile path accepted a bool seed
+  (`isinstance(True, int)` is True in Python), so `seed: true` in YAML would
+  seed `random.Random(True) == random.Random(1)` on the profile path while
+  later being rejected by the compiler, producing a non-deterministic profile.
+  Now rejected uniformly across all paths. BEHAVIOR CHANGE: a non-numeric seed
+  passed to the public `generate_tables` now raises `PlanCompileError`
+  (code `seed_not_numeric`) instead of `ValueError`; callers catching
+  `ValueError` on that path must update to `PlanCompileError` or `DecoyError`.
+  BEHAVIOR CHANGE: a config with no `seed` (or `seed: null`) now defaults to
+  `0` on the profile path too, so seedless profiling is deterministic and the
+  former "called without a seed" warning no longer fires; callers that relied
+  on seedless runs drawing fresh entropy must set an explicit random seed.
+
+- **Shared-state RNG removed from bare `MASK_GLOBALS`** (F16a). The three RNG
+  bindings (`randint`, `choice`, `random`) are no longer present in the base
+  `MASK_GLOBALS` scope. They were bound to the module-global `random._random`
+  instance, so two formula strategies in the same job shared process-global
+  random state: column B's output depended on column A's execution order and
+  was non-deterministic across runs. The only supported RNG path is
+  `make_mask_globals(rng)`, which binds a per-formula isolated
+  `random.Random(formula_seed)`. BEHAVIOR CHANGE: a formula that calls
+  `randint`, `choice`, or `random` against the bare scope now raises
+  `InvalidExpression` (undefined name) instead of silently reading shared state.
+
+### Fixed (generation determinism v6 rewrite, 2026-06-26)
+
+Resolves findings F2 and F3 from `docs/remediation-source.md`. References the
+F4 shuffle fix (shipped earlier on its own branch) that also rides the v6 bump.
+
+- **`SEED_PROTOCOL_VERSION` bumped 5 to 6** (F2/F3). BEHAVIOR CHANGE: all
+  synthetic-generation output and all masked output shift at v6. This is a
+  pre-GA hard cutover; no plans or vaults exist in the wild, so no migration is
+  required at this point. A v5 vault over a synthetic column cannot be unmasked
+  under v6 (the regenerated seed diverges). The explicit cross-version vault
+  protocol guard (error on mismatch instead of silently returning wrong values)
+  is deferred to the vault-hardening work (F13); see
+  `docs/compatibility-contract.md`.
+
+- **Generate-path seed widened from 32 bits to 256 bits** (F2). The legacy
+  `synthetic_column_seed` helper truncated every HKDF-derived key to 4 bytes
+  (`int.from_bytes(b[:4], "big")`), leaving a 32-bit keyspace. The replacement
+  `GenDeriveContext` (`generators/derivation.py`) resolves a full 32-byte
+  column root via `derive_key("gen:" + fingerprint)`, consuming all 256 bits.
+  `GenDeriveContext` is the public replacement; `synthetic_column_seed` is
+  removed.
+
+- **Per-row `seed + i` arithmetic replaced with per-family HMAC derivation**
+  (F3). The old `column_seed + i` per-row loop meant column A (base `S`) and
+  column B (base `S+1`) produced row-shift-identical seed sequences. The new
+  `row_int(family, i)` method on `GenDeriveContext` derives each row's integer
+  via a version-mixed HMAC keyed to the column root and RNG family, so adjacent
+  columns never share seeds under any row shift.
+
+- **Three RNG families now draw from disjoint sub-keys** (F3). `py`
+  (`random.Random`), `np` (`numpy.random.default_rng`), and `faker`
+  (`Faker.seed_instance`) each receive a distinct family key derived from the
+  column root. Before v6, all three were seeded from the same truncated integer.
+
+- **Generation mixes the protocol version byte into its HMAC** (F2/F3). The
+  new `_gen_hmac` helper in `generators/derivation.py` mirrors the mask-path
+  envelope in `determinism/_derive.py`: both mix `SEED_PROTOCOL_VERSION` into
+  the HMAC input. The protocol version is now the single compatibility knob
+  across both determinism roots; a bump re-keys both masked output and
+  synthetic-generation output together.
+
+- **V2 null-injection path unified to V1 numpy-vectorized mask** (F2/F3).
+  `generation/synthesize.py` (`_apply_null_probability`) previously used a
+  per-row Python `random.Random` reseed loop, which converged to the correct
+  null fraction but did not produce the same null pattern as V1 (which uses
+  `numpy.random.default_rng(column_seed).random(n) < null_prob`). Both engines
+  now use the same numpy vectorized draw seeded from `GenDeriveContext.base_int
+  ("np")`, so null-probability columns are byte-identical across the two
+  generation engines.
+
+- **New tests** (F6): subprocess byte-identity gate for `generate_tables`
+  (`tests/unit/generation/test_synthesize_determinism.py`), cross-column seed
+  independence tests, and a full `GenDeriveContext` contract suite
+  (`tests/unit/generators/test_gen_derive_context.py`).
+
 ### Added
 
 - **Generated engine capability matrix** (`docs/capability-matrix.md`, emitted by
@@ -146,6 +307,16 @@ called out explicitly.
   disguises) and writes a correct-by-construction reference. A `tests/sentry/
   test_capability_matrix.py` drift guard fails CI when a registry changes without
   the matrix being regenerated, so a new capability cannot ship without its docs.
+
+### Added (F1 compatibility-corpus expansion, 2026-06-26)
+
+- **`distribution-snapshot/v1` added to the cross-version compatibility corpus**
+  (F1). The corpus (`tests/integration/compat_corpus/`) previously covered only
+  `decoy-vault/v2`. It now also freezes a synthetic `distribution-snapshot/v1`
+  artifact and verifies it through the real `load_spec` reader (numeric,
+  categorical, and conditioned-joint branches) on every CI run. A schema-version
+  tamper bite-test confirms the guard fires for this artifact kind. Every
+  corpus artifact now stamps `seed_protocol_version`. Corpus version bumped to 2.
 
 ### Changed
 

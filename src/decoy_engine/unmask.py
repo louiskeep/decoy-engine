@@ -42,7 +42,7 @@ import pyarrow as pa
 from decoy_engine.determinism import derive
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._strategies._fpe import FPE_KEY_LABEL
-from decoy_engine.plan._compile import _normalize_job_seed
+from decoy_engine.plan._seed import _normalize_job_seed
 from decoy_engine.transforms.fpe import _CHARSETS, fpe_decrypt_value
 
 _LUHN_CAVEAT = (
@@ -167,7 +167,9 @@ def unmask_pipeline(
             column has no namespace (the key cannot be derived);
             ``code='vault_crypto_not_installed'``,
             ``code='vault_unreadable'``,
-            ``code='vault_format_unsupported'``, or
+            ``code='vault_format_unsupported'``,
+            ``code='vault_protocol_version_mismatch'`` when the vault was
+            written under a different ``SEED_PROTOCOL_VERSION``, or
             ``code='vault_key_mismatch'`` when the supplied vault cannot
             be opened under this config.
     """

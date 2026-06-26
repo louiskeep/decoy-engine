@@ -66,51 +66,51 @@
         ],
         "output": [
           {
-            "member_id": "289467148",
-            "ssn": "676-97-0861",
-            "first_name": "Thomas",
-            "last_name": "Brown",
-            "email": "thomas.brown@example.net",
+            "member_id": "072426646",
+            "ssn": "498-77-6275",
+            "first_name": "Tricia",
+            "last_name": "Clark",
+            "email": "tricia.clark@example.net",
             "city": "Raleigh",
             "state": "NC",
             "zip": "27601"
           },
           {
-            "member_id": "243396886",
-            "ssn": "977-34-0754",
-            "first_name": "Jeffrey",
-            "last_name": "Anderson",
-            "email": "jeffrey.anderson@corp.example.com",
+            "member_id": "198389147",
+            "ssn": "120-21-3146",
+            "first_name": "Connie",
+            "last_name": "Lane",
+            "email": "connie.lane@corp.example.com",
             "city": "St. Louis",
             "state": "MO",
             "zip": "63101"
           },
           {
-            "member_id": "835995586",
-            "ssn": "774-70-2468",
-            "first_name": "Cory",
-            "last_name": "Nielsen",
-            "email": "cory.nielsen@mail.example.com",
+            "member_id": "294512140",
+            "ssn": "966-18-6578",
+            "first_name": "Leah",
+            "last_name": "Schaefer",
+            "email": "leah.schaefer@mail.example.com",
             "city": "Philadelphia",
             "state": "PA",
             "zip": "19101"
           },
           {
-            "member_id": "029661349",
-            "ssn": "125-38-2088",
-            "first_name": "Harold",
-            "last_name": "Harrington",
-            "email": "harold.harrington@mail.example.com",
+            "member_id": "997965490",
+            "ssn": "913-40-7403",
+            "first_name": "Derek",
+            "last_name": "Hall",
+            "email": "derek.hall@mail.example.com",
             "city": "New York",
             "state": "NY",
             "zip": "10001"
           },
           {
-            "member_id": "398056721",
-            "ssn": "222-41-8208",
-            "first_name": "Timothy",
-            "last_name": "Cox",
-            "email": "timothy.cox@example.org",
+            "member_id": "017723403",
+            "ssn": "184-61-3581",
+            "first_name": "Lance",
+            "last_name": "Wilson",
+            "email": "lance.wilson@example.org",
             "city": "Baltimore",
             "state": "MD",
             "zip": "21201"
@@ -148,28 +148,28 @@
         ],
         "output": [
           {
-            "member_id": "289467148",
-            "claim_id": "410976",
+            "member_id": "072426646",
+            "claim_id": "720378",
             "billed_amount": "100.0"
           },
           {
-            "member_id": "243396886",
-            "claim_id": "713510",
+            "member_id": "198389147",
+            "claim_id": "428746",
             "billed_amount": "113.5"
           },
           {
-            "member_id": "835995586",
-            "claim_id": "163910",
+            "member_id": "294512140",
+            "claim_id": "264321",
             "billed_amount": "127.0"
           },
           {
-            "member_id": "029661349",
-            "claim_id": "242341",
+            "member_id": "997965490",
+            "claim_id": "497136",
             "billed_amount": "140.5"
           },
           {
-            "member_id": "398056721",
-            "claim_id": "620751",
+            "member_id": "017723403",
+            "claim_id": "795379",
             "billed_amount": "154.0"
           }
         ]
@@ -200,24 +200,24 @@
         ],
         "output": [
           {
-            "npi": "8227807855",
-            "pan": "4011233603868940"
+            "npi": "8846327154",
+            "pan": "7533568238343757"
           },
           {
-            "npi": "7353656635",
-            "pan": "4011233603868940"
+            "npi": "5886096479",
+            "pan": "7533568238343757"
           },
           {
-            "npi": "9332766264",
-            "pan": "4011233603868940"
+            "npi": "5465126330",
+            "pan": "7533568238343757"
           },
           {
-            "npi": "6973604942",
-            "pan": "4011233603868940"
+            "npi": "7156967787",
+            "pan": "7533568238343757"
           },
           {
-            "npi": "2680298499",
-            "pan": "4011233603868940"
+            "npi": "3046560588",
+            "pan": "7533568238343757"
           }
         ]
       }
@@ -225,27 +225,27 @@
     "audit_log": [
       {
         "event_id": "1",
-        "actor": "pagegabriella",
+        "actor": "barrypowell",
         "action": "edit"
       },
       {
         "event_id": "2",
-        "actor": "montoyaelizabeth",
+        "actor": "christopher97",
         "action": "export"
       },
       {
         "event_id": "3",
-        "actor": "lmartin",
-        "action": "edit"
+        "actor": "josewilliams",
+        "action": "view"
       },
       {
         "event_id": "4",
-        "actor": "nicoleterry",
+        "actor": "vharrison",
         "action": "delete"
       },
       {
         "event_id": "5",
-        "actor": "lancearnold",
+        "actor": "todd47",
         "action": "export"
       }
     ],
@@ -276,13 +276,13 @@
       ],
       "output": [
         {
-          "account": "216864985"
+          "account": "946470353"
         },
         {
-          "account": "369850545"
+          "account": "722880873"
         },
         {
-          "account": "362617244"
+          "account": "103419103"
         }
       ],
       "invariant": "Output preserves the exact length and digit charset of the input, and is reversible with the key."
@@ -336,13 +336,13 @@
       ],
       "output": [
         {
-          "user_id": "539f20fd0b2c15177afb691bbd61201d3b56833c4ca59194f76686b64bc5d86e"
+          "user_id": "539398115eb4e9a85a5862d64650cd7bc5207fdbfb43830bbc5c9fae565e01a2"
         },
         {
-          "user_id": "46222fe0d4ebb36b6a9dad35bce7acf1e18c4c15dbb6a96f3aa893ffba17e857"
+          "user_id": "1a85797e34b487ce2f346ee9021028fd39dc9d37bd1309cdc9b30af65d55f587"
         },
         {
-          "user_id": "9670b5c4b2aa3fffb84c6fb4ae9405d3f333aa312d158f5f3ee20a9c6780a1f2"
+          "user_id": "63735569c9c83936e3ce9cde91b0cc69526044ebfac0ea2d9602c2b03434122c"
         }
       ],
       "invariant": "Each value becomes a fixed-length keyed hex token; equal inputs hash equally, so joins survive."
@@ -432,7 +432,7 @@
           "tier": "silver"
         },
         {
-          "tier": "silver"
+          "tier": "bronze"
         }
       ],
       "invariant": "Every value is remapped onto the configured category pool; equal inputs map to the same category."
@@ -456,13 +456,13 @@
       ],
       "output": [
         {
-          "dob": "1980-02-28"
+          "dob": "1980-04-13"
         },
         {
-          "dob": "1991-08-24"
+          "dob": "1991-08-19"
         },
         {
-          "dob": "2004-01-16"
+          "dob": "2003-12-05"
         }
       ],
       "invariant": "Each date is shifted by a keyed offset inside the configured window, preserving the date format."
@@ -486,13 +486,13 @@
       ],
       "output": [
         {
+          "salary": "50000"
+        },
+        {
           "salary": "92000"
         },
         {
           "salary": "75000"
-        },
-        {
-          "salary": "50000"
         }
       ],
       "invariant": "Values are permuted within the column; the exact multiset of values is preserved."
@@ -516,13 +516,13 @@
       ],
       "output": [
         {
-          "first_name": "Sandra"
+          "first_name": "Katherine"
         },
         {
-          "first_name": "Megan"
+          "first_name": "Marissa"
         },
         {
-          "first_name": "Mariah"
+          "first_name": "Sarah"
         }
       ],
       "invariant": "Values are replaced with synthetic provider output drawn from a value pool, not the originals."

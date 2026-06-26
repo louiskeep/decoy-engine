@@ -11,7 +11,7 @@ The envelope (per spec §2):
     HMAC_key   = HKDF-SHA256(IKM=seed, salt=b"decoy-engine/determinism/v1",
                              info=namespace.encode("utf-8"), length=32)
     HMAC_input = (
-        bytes([SEED_PROTOCOL_VERSION])               # 1 byte; 0x04 today
+        bytes([SEED_PROTOCOL_VERSION])               # 1 byte; current SEED_PROTOCOL_VERSION
         + len(namespace).to_bytes(4, "big") + namespace.encode("utf-8")
         + len(source).to_bytes(4, "big") + source
     )
@@ -87,7 +87,34 @@ from decoy_engine.determinism._hkdf import hkdf_sha256
 # appends the check digit instead of overwriting the last encrypted
 # digit (the old shape discarded a character and was irreversible).
 # Output bytes change for every fpe column. Pre-GA, hard cutover.
-SEED_PROTOCOL_VERSION: int = 5
+#
+# FPE tweak model (canonical note, do not duplicate elsewhere):
+# the per-column tweak is the column name encoded as UTF-8. One key
+# per (seed, namespace); one tweak per column. Two columns in the
+# same namespace share the key but not the tweak, so their
+# ciphertexts are independent. Renaming a column changes its tweak
+# and therefore its ciphertext: unmask against the old column name
+# will not reverse ciphertexts produced under the new name. Treat
+# a column rename as a re-keying event. See also:
+# execution/_strategies/_fpe.py (key + tweak wiring) and
+# docs/determinism.md (FPE key and tweak model section).
+#
+# F2/F3 generation rewrite (2026-06-26): bump to v6. The synthetic-
+# generation path moved off the legacy 4-byte truncated per-column int
+# seed (synthetic_column_seed: derive_key("gen:"+fingerprint)[:4], the
+# F2 32-bit keyspace) and the F3 `column_seed + i` per-row arithmetic to
+# a full-32-byte, per-RNG-family, per-row derivation (GenDeriveContext in
+# generators/derivation.py). Generation now also mixes this version byte
+# into its HMAC (via _gen_hmac), the same way the mask path does, so the
+# protocol version is a single compatibility knob across both determinism
+# roots and a cross-version vaulted-unmask can detect generation drift.
+# Output bytes change for every synthetic column AND (via the version
+# byte) every masked column. Pre-GA, hard cutover; no manifests in the
+# wild. Engine A (generators/columns.py) + Engine B
+# (generation/synthesize.py) were rewritten in lockstep; the V2 null path
+# was unified to V1's numpy-vectorized mask so null-prob columns are now
+# byte-identical across engines.
+SEED_PROTOCOL_VERSION: int = 6
 
 _SALT = b"decoy-engine/determinism/v1"
 _SEED_LENGTH = 8  # exactly 8 bytes; raises on any other length
@@ -201,7 +228,7 @@ def derive(seed: bytes, namespace: str, source: bytes) -> bytes:
             ints, etc.
 
     Returns:
-        32 bytes of stable derived material under `SEED_PROTOCOL_VERSION=4`.
+        32 bytes of stable derived material under the current `SEED_PROTOCOL_VERSION`.
 
     Raises:
         DeterminismError on invalid inputs (seed wrong length, empty namespace).

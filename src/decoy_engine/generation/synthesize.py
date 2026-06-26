@@ -10,8 +10,8 @@ S6-ENG-1 landed the spine + the ``sequence`` generator. S6-ENG-2 adds parity-fro
 ``categorical`` (and on the next sub-commits, ``faker`` / ``formula``); S6-ENG-3 adds
 FK-aware generation (mint-a-pool); S6-ENG-4 the seed / derive-key determinism envelope.
 
-Parity seeding uses V1's ``synthetic_column_seed`` (``decoy_engine.generators.derivation``)
-directly so the per-column seed is byte-identical to V1 ``ColumnGenerator._column_seed``
+Parity seeding uses V1's ``GenDeriveContext`` (``decoy_engine.generators.derivation``)
+directly so the per-column derivation is byte-identical to V1 ``ColumnGenerator._column_ctx``
 under the same ``derive_key`` (always ``None`` in ENG-2; ENG-4 wires the real key).
 
 Thread-safety: all explicit RNG use here is instance-local (``random.Random(seed)``)
@@ -31,10 +31,11 @@ import random
 import threading
 from typing import Any
 
+import numpy as np
 import pyarrow as pa
 from faker import Faker
 
-from decoy_engine.generators.derivation import synthetic_column_seed
+from decoy_engine.generators.derivation import GenDeriveContext
 from decoy_engine.internal.faker_setup import get_faker_providers, make_faker
 
 # QA-7 F5 (2026-06-01): seed default aligned with plan compiler's
@@ -95,17 +96,14 @@ def generate_tables(
     The platform run path (S6-PLT) writes these through the same ``write_v2_outputs``
     + ``build_v2_target_node_runs`` path the mask spine uses.
     """
-    # QA-7 F8 (2026-06-01): typed error for non-numeric seed. Pre-fix
-    # int("abc") leaked a bare ValueError with cryptic message; matches
-    # the plan compiler's behavior post-QA-3 F1.
-    raw_seed = (config.get("global_settings") or {}).get("seed", _DEFAULT_SEED)
-    try:
-        seed = int(raw_seed)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(
-            f"generate_tables: global_settings.seed must be an integer; "
-            f"got {type(raw_seed).__name__} {raw_seed!r}"
-        ) from exc
+    # F5 (2026-06-26): use the single shared seed validator so a bool/float
+    # seed is rejected identically to the plan compiler + profile path
+    # (QA-7 F8 / QA-3 F1 lineage), instead of int(True) silently coercing
+    # `seed: true` to 1 on a direct generate call. Defaults absent seed to
+    # 0 (== _DEFAULT_SEED, pinned by test_v2_generation.py).
+    from decoy_engine.plan._seed import _normalize_job_seed_int
+
+    seed = _normalize_job_seed_int(config)
     tables_list = config.get("tables") or []
     # Generate tables only (mask tables are skipped). Key by name + build the dep
     # graph so a `reference` column can read its already-generated parent's pool.
@@ -297,7 +295,9 @@ def _statistical(
                     f"{spec.condition_on!r} BEFORE {spec.column!r} in generate_columns."
                 ),
             )
-    col_seed = synthetic_column_seed(derive_key=derive_key, column_config=col, fallback_seed=seed)
+    col_seed = GenDeriveContext.for_column(
+        derive_key=derive_key, column_config=col, fallback_seed=seed
+    ).base_int("np")
     return sample_column(spec, n, col_seed=col_seed, parent_values=parent_values)
 
 
@@ -308,13 +308,15 @@ def _categorical(col: dict[str, Any], n: int, seed: int, derive_key: Any = None)
     V1 reseeds ``random`` from the column seed (so output is stable across runs +
     order-independent across columns when keyed), then ``random.choices(categories,
     weights=weights, k=num_rows)``. ``weights`` is optional; when omitted the choice
-    is uniform. We reuse V1 ``synthetic_column_seed`` for the per-column seed (Dennis
-    S6-ENG-2 plan: import V1's helper, do not reinvent), so seed-only output is
-    byte-identical to V1's under the same ``seed`` + ``derive_key=None``.
+    is uniform. We reuse V1 ``GenDeriveContext`` for the per-column derivation
+    (import V1's helper, do not reinvent), so seed-only output is byte-identical
+    to V1's under the same ``seed`` + ``derive_key=None``.
     """
     cats = col.get("categories", ["Category A", "Category B"])
     weights = col.get("weights")  # optional; None -> uniform
-    col_seed = synthetic_column_seed(derive_key=derive_key, column_config=col, fallback_seed=seed)
+    col_seed = GenDeriveContext.for_column(
+        derive_key=derive_key, column_config=col, fallback_seed=seed
+    ).base_int("py")
     # Instance-local Random: parity-preserving (same Mersenne Twister state
     # initialization as random.seed); thread-safe (no module-global mutation).
     rng = random.Random(col_seed)
@@ -362,7 +364,9 @@ def _faker(
     provider_func = providers.get(faker_type) or providers["word"]
     raw_kwargs = col.get("faker_kwargs") or {}
     faker_kwargs = raw_kwargs if isinstance(raw_kwargs, dict) else {}
-    col_seed = synthetic_column_seed(derive_key=derive_key, column_config=col, fallback_seed=seed)
+    gen_ctx = GenDeriveContext.for_column(
+        derive_key=derive_key, column_config=col, fallback_seed=seed
+    )
     out: list[Any] = []
     # QA-7 F1 + C1 (2026-06-01): both seed_instance call sites are in
     # the critical section. The pre-loop seed_instance(seed) used to
@@ -375,8 +379,7 @@ def _faker(
         if pre_seed is not None:
             faker_inst.seed_instance(pre_seed)
         for i in range(n):
-            row_seed = col_seed + i
-            faker_inst.seed_instance(row_seed)
+            faker_inst.seed_instance(gen_ctx.row_int("faker", i))
             out.append(provider_func(**faker_kwargs))
     return out
 
@@ -392,28 +395,24 @@ def _apply_null_probability(
     if null_prob <= 0:
         return values
     # QA-1 M17 (2026-06-01): pass the FULL column_config to
-    # synthetic_column_seed so two columns with different strategies +
+    # GenDeriveContext so two columns with different strategies +
     # the same name no longer share a null mask. Pre-fix this used
     # only `{"name": col["name"]}` to mirror V1; V1 has been
     # updated to also pass column_config (qa-1 step 3) so V1 and V2
     # stay byte-identical AND the null-mask collision is closed.
-    col_seed = synthetic_column_seed(derive_key=derive_key, column_config=col, fallback_seed=seed)
+    # F2/F3 (2026-06-26): unify the null mask with V1 (columns.py null
+    # injection) -- a single numpy.default_rng(base_int("np")) vectorized
+    # draw, NOT a per-row Python random loop. Both engines now compute the
+    # identical null PATTERN (same seed, same N) so a null-prob column is
+    # byte-identical V1<->V2, closing the pre-fix divergence the parity
+    # oracle previously tolerated as fraction-only convergence.
+    col_seed = GenDeriveContext.for_column(
+        derive_key=derive_key, column_config=col, fallback_seed=seed
+    ).base_int("np")
     out = list(values)
-    # Per-row reseed preserves V1 byte-parity (V1 reseeds the global RNG per
-    # row at columns.py:183). Switched to instance-local Random so the
-    # mutation no longer leaks to module-global state. F6 fix.
-    #
-    # QA 2026-05-31 session2 F3 (HIGH perf) closure: allocate the Random
-    # ONCE + reseed in place each row. Previously we allocated a new
-    # random.Random(col_seed + i) per row; each allocation initializes
-    # the 624-word Mersenne Twister state (~2.5 KB write), adding ~3-5x
-    # overhead on large tables. rng.seed(s) on a reused instance runs
-    # the same mt_init_genrand(s) so the first draw is byte-identical
-    # to a fresh Random(s) -- V1 byte-parity preserved.
-    rng = random.Random()
-    for i in range(len(out)):
-        rng.seed(col_seed + i)
-        if rng.random() < null_prob:
+    null_mask = np.random.default_rng(col_seed).random(len(out)) < null_prob
+    for i, is_null in enumerate(null_mask):
+        if is_null:
             out[i] = None
     return out
 
@@ -521,7 +520,9 @@ def _reference(
     if not ref_vals:
         return [None] * n
 
-    col_seed = synthetic_column_seed(derive_key=derive_key, column_config=col, fallback_seed=seed)
+    col_seed = GenDeriveContext.for_column(
+        derive_key=derive_key, column_config=col, fallback_seed=seed
+    ).base_int("py")
     # Instance-local Random: parity-preserving, thread-safe (F1 fix).
     rng = random.Random(col_seed)
 

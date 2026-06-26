@@ -72,6 +72,17 @@ class TestShuffle:
         out2 = _run(_plan("c", seed), src).output.column("c").to_pylist()
         assert out1 == out2
 
+    def test_same_namespace_distinct_columns_diverge(self) -> None:
+        # F4 regression: two deterministic-shuffle columns in the SAME namespace
+        # must NOT receive the identical permutation. The derivation source binds
+        # the column name; without it both columns permute in lockstep and re-link
+        # values that masking was meant to decouple (a privacy failure).
+        values = list("abcdefghij")  # 10 distinct -> collision odds 1/10! negligible
+        seed = _col("shuffle", namespace="pii", deterministic=True)
+        out_a = _run(_plan("a", seed), pa.table({"a": values})).output.column("a").to_pylist()
+        out_b = _run(_plan("b", seed), pa.table({"b": values})).output.column("b").to_pylist()
+        assert out_a != out_b
+
     def test_deterministic_requires_namespace(self) -> None:
         src = pa.table({"c": ["a", "b"]})
         with pytest.raises(ExecutionError) as exc:

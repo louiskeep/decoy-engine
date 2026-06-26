@@ -218,6 +218,25 @@ class PKDuplicatesError(DecoyError):
         super().__init__(message)
 
 
+class MaskKeyDerivationError(DecoyError):
+    """A value-preserving mask strategy (FPE, date-shift) could not derive its
+    per-column key from the configured master key.
+
+    The engine refuses to silently degrade to a weaker seed-only path; the
+    operator must fix the master-key infrastructure and re-run. Raised as a
+    ``DecoyError`` (not a bare ``RuntimeError``) so an upstream
+    ``except DecoyError`` catches it like every other typed engine failure.
+
+    Maps to code ``mask.key_derivation_failed``. Carries the originating
+    strategy name on ``.strategy`` for the manifest / operator message."""
+
+    code: str = "mask.key_derivation_failed"
+
+    def __init__(self, message: str, *, strategy: str | None = None) -> None:
+        self.strategy = strategy
+        super().__init__(message)
+
+
 __all__ = [
     "ConfigError",
     "ConnectorAuthError",
@@ -228,6 +247,7 @@ __all__ = [
     "FlagPauseSignal",
     "LicenseError",
     "LicenseExpiredError",
+    "MaskKeyDerivationError",
     "PKDuplicatesError",
     "PipelineValidationError",
     "UnknownFKColumnError",

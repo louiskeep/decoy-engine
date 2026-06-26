@@ -131,7 +131,7 @@ from decoy_engine.generation.pool import (
 )
 from decoy_engine.generation.synthesize import generate_tables
 from decoy_engine.license import LicenseVerifier
-from decoy_engine.plan import compile_plan, run_config_only_checks
+from decoy_engine.plan import compile_plan, job_seed_for_config, run_config_only_checks
 from decoy_engine.plan.validate import (
     PlanCheckError,
     PlanValidationResult,
@@ -363,6 +363,7 @@ __all__ = [
     "get_default_pool_cache",
     "get_default_registry",
     "is_pre_ga",
+    "job_seed_for_config",
     "load_custom_providers",
     "load_vault",
     "make_key_resolver",

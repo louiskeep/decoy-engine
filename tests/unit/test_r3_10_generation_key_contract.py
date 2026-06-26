@@ -22,10 +22,7 @@ from __future__ import annotations
 
 from decoy_engine.context import make_key_resolver
 from decoy_engine.generators.columns import ColumnGenerator
-from decoy_engine.generators.derivation import (
-    strategy_config_fingerprint,
-    synthetic_column_seed,
-)
+from decoy_engine.generators.derivation import strategy_config_fingerprint
 
 _MASTER = bytes(range(32))
 
@@ -173,34 +170,6 @@ def test_legacy_column_name_seed_restores_pre_r3_10_coupling():
     assert _gen(base, derive_key=resolver) != _gen(renamed, derive_key=resolver)
 
 
-# ── synthetic_column_seed contract ───────────────────────────────────────────
-
-
-def test_synthetic_column_seed_is_int_in_signed_int32_range():
-    """Seed must fit in the 32-bit non-negative integer range that
-    Faker.seed_instance and random.seed accept without wrapping."""
-    seed = synthetic_column_seed(
-        derive_key=_resolver(),
-        column_config={"type": "faker", "faker_type": "first_name"},
-        fallback_seed=42,
-    )
-    assert isinstance(seed, int)
-    assert 0 <= seed < 2**32
-
-
-def test_synthetic_column_seed_fresh_path_returns_fresh_bytes():
-    """``determinism: fresh`` draws from os.urandom; two consecutive
-    calls should almost certainly differ."""
-    cfg = {"determinism": "fresh", "type": "faker", "faker_type": "first_name"}
-    a = synthetic_column_seed(
-        derive_key=_resolver(),
-        column_config=cfg,
-        fallback_seed=42,
-    )
-    b = synthetic_column_seed(
-        derive_key=_resolver(),
-        column_config=cfg,
-        fallback_seed=42,
-    )
-    # 32-bit urandom collision probability is ~2^-32; this is safe.
-    assert a != b
+# The synthetic_column_seed contract (int32 range, fresh path, M18 raise)
+# moved to GenDeriveContext at the v6 F2/F3 rewrite; see
+# tests/unit/generators/test_gen_derive_context.py.
