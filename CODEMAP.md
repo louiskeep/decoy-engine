@@ -40,7 +40,7 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | `src/decoy_engine/config/` | `PipelineConfig`, `RelationshipConfig`, `TableConfig`, source/target descriptors |
 | `src/decoy_engine/plan/` | `compile_plan` + frozen `Plan`; `_seed.py` holds the shared seed validator used by the compiler, pipeline profile path, and generation |
 | `src/decoy_engine/execution/` | `ExecutionAdapter` Protocol, `PandasExecutionAdapter`, `select_execution_adapter`, `_strategies/` (column-strategy handlers), `polars/` (Polars adapter) |
-| `src/decoy_engine/generation/` | `generate_tables` + composite + pool helpers |
+| `src/decoy_engine/generation/` | `generate_tables` + composite + pool helpers; `_referenced_formula.py` runs the cross-column formula post-pass (lazy-imported) |
 | `src/decoy_engine/relationships/` | `build_relationship_graph`, `build_namespace_registry`, `check_orphan_fk_policy_completeness`, `OrphanPolicy` |
 | `src/decoy_engine/providers_v2/` | `ProviderRegistry`, identifier adapters |
 | `src/decoy_engine/profile/` | Profile types + `profile_source` |

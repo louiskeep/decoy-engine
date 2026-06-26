@@ -246,7 +246,10 @@ Computes a column from an expression over the other generated columns.
 
 - `formula`: the Python expression evaluated per row (required).
 - `references`: the sibling column names the expression reads; filled in a
-  post-pass after the other columns exist.
+  single declared-order post-pass after the other columns exist. A formula
+  column that reads a later-declared referenced formula sibling sees that
+  sibling's null placeholder, not its computed value. Declare dependencies
+  before the columns that read them.
 
 ### distribution
 
