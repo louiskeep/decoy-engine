@@ -40,6 +40,7 @@ from __future__ import annotations
 import pandas as pd
 
 from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
+from decoy_engine.execution._errors import StrategyError
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._types import ColumnSeed
 from decoy_engine.storm.detectors import Span, iter_spans
@@ -84,6 +85,31 @@ class TextRedactHandler:
                     ner_entities = [str(e) for e in raw_entities]
             else:
                 ner_model = DEFAULT_NER_MODEL
+
+        # F14b (2026-06-26): a spaCy model update between plan compile and run
+        # silently changes redaction output for the same config + seed -- a
+        # determinism break on the highest false-negative strategy, with no
+        # error today. If the installed model version no longer matches the
+        # version stamped at compile (plan.ner_model_version), fail loudly
+        # rather than emit different redactions. Runs before iter_ner_spans, so
+        # it needs no spaCy pipeline; skipped when no version was stamped.
+        if ner_model is not None and plan.ner_model_version is not None:
+            from decoy_engine.storm.ner import installed_model_version
+
+            current_version = installed_model_version(ner_model)
+            if current_version is not None and current_version != plan.ner_model_version:
+                raise StrategyError(
+                    code="ner_model_version_mismatch",
+                    strategy="text_redact",
+                    message=(
+                        f"column {column!r}: NER model {ner_model!r} is installed at "
+                        f"version {current_version!r} but the plan was compiled against "
+                        f"{plan.ner_model_version!r}. spaCy model updates change redaction "
+                        f"output for the same config + seed; recompile the plan against the "
+                        f"installed model (or pin the model version) to keep redactions "
+                        f"reproducible."
+                    ),
+                )
 
         detector_ids: list[str] | None
         if detectors_cfg is None:
