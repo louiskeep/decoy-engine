@@ -32,6 +32,7 @@ from __future__ import annotations
 
 from decoy_engine.plan._compile import compile_plan, run_config_only_checks
 from decoy_engine.plan._errors import PlanCompileError
+from decoy_engine.plan._seed import job_seed_for_config
 from decoy_engine.plan._serialize import plan_from_yaml, plan_to_yaml
 from decoy_engine.plan._types import (
     ColumnSeed,
@@ -59,6 +60,7 @@ __all__ = [
     "SeedEnvelope",
     "TableSeed",
     "compile_plan",
+    "job_seed_for_config",
     "plan_from_yaml",
     "plan_to_yaml",
     "run_config_only_checks",
