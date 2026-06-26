@@ -21,6 +21,8 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | `src/decoy_engine/__init__.py` | Public API exports |
 | `src/decoy_engine/config/_pipeline.py` | `PipelineConfig` (the V2 validation choke-point) |
 | `src/decoy_engine/plan/_compile.py` | `compile_plan` -> frozen `Plan` |
+| `src/decoy_engine/execution/_pipeline.py` | `run_pipeline` (unified mask+generate spine; opt-in `fidelity_report` attaches a label-free `quality-report/v1` per mask table) |
+| `src/decoy_engine/quality/report.py` | `compute_quality_report` -> aggregate-only fidelity report (diagnostic + value-identity + shape) |
 | `src/decoy_engine/execution/_substrate.py` | `select_execution_adapter` |
 | `src/decoy_engine/execution/_pandas_adapter.py` | `PandasExecutionAdapter` (default) |
 | `src/decoy_engine/execution/polars/_polars_adapter.py` | `PolarsExecutionAdapter` |
