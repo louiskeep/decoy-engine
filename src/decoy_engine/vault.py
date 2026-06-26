@@ -204,7 +204,7 @@ class VaultWriter:
 
         Conflicting sources for one `(namespace, masked)` key are
         dropped (see the module docstring's ambiguity policy); the
-        dropped-key count rides in the payload metadata.
+        dropped-key count rides in the unencrypted header.
 
         F13 (2026-06-26): the plaintext source values are serialized and
         encrypted one bounded chunk at a time, never as a single full-table
@@ -233,6 +233,10 @@ class VaultWriter:
         # Build the Fernet (and surface the crypto-absent error) before any
         # chunk work, so the failure point matches the pre-streaming writer.
         fernet = self._fernet()
+        # chunk_rows/chunk_count are forensic/debug metadata only. load_vault
+        # does NOT trust them: it self-terminates on the framed token stream
+        # (while offset < len(blob)), so a tampered count cannot make the
+        # reader over- or under-read.
         chunk_count = (len(rows) + _CHUNK_ROWS - 1) // _CHUNK_ROWS
         header = {
             "format": VAULT_FORMAT_VERSION,
@@ -363,7 +367,5 @@ def load_vault(path: str | Path, job_seed: bytes) -> tuple[dict[tuple[str, str],
         namespaces = chunk.column("namespace").to_pylist()
         masked = chunk.column("masked").to_pylist()
         sources = chunk.column("source").to_pylist()
-        mapping.update(
-            {(ns, m): s for ns, m, s in zip(namespaces, masked, sources, strict=True)}
-        )
+        mapping.update({(ns, m): s for ns, m, s in zip(namespaces, masked, sources, strict=True)})
     return mapping, ambiguous
