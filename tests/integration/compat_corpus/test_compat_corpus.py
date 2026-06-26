@@ -58,7 +58,29 @@ def test_corpus_artifact_round_trips(artifact: dict) -> None:
             f"recorded mapping. A frozen-format reader regressed "
             f"(compatibility-contract section 3.1/3.2)."
         )
-    else:  # pragma: no cover - only vault artifacts exist today
+    elif artifact["kind"] == "distribution_snapshot":
+        # Round-trip through the REAL reader (load_spec), not a re-json.loads,
+        # so a regression in the kind dispatch / joint lookup / schema guard
+        # is caught. One col_cfg per reader branch (numeric, categorical,
+        # conditioned-joint).
+        from decoy_engine.generation.statistical import load_spec
+
+        path = HERE / artifact["path"]
+        for rec in artifact["expected_specs"]:
+            cfg = {**rec["col_cfg"], "snapshot_file": str(path)}
+            spec = load_spec(cfg)
+            ctx = (
+                f"{artifact['tag']} written by engine "
+                f"{artifact['produced_by_engine_version']}: column "
+                f"{rec['col_cfg'].get('name')!r} no longer reads back. A frozen "
+                f"distribution-snapshot reader regressed (compatibility-contract 3.1/3.2)."
+            )
+            assert spec.kind == rec["kind"], ctx
+            assert spec.dtype == rec["dtype"], ctx
+            assert spec.parent_first == rec["parent_first"], ctx
+            assert (spec.joint is not None) == rec["has_joint"], ctx
+            assert spec.stats, ctx  # the sampler needs non-empty stats
+    else:  # pragma: no cover - guards against an unrecorded artifact kind
         pytest.fail(f"no round-trip check implemented for artifact kind {artifact['kind']!r}")
 
 
@@ -87,3 +109,23 @@ def test_harness_bites_on_corruption(tmp_path: Path) -> None:
     tampered.write_bytes(bytes(blob))
     with pytest.raises(VaultError):
         load_vault(tampered, bytes.fromhex(art["job_seed_hex"]))
+
+
+def test_harness_bites_on_corruption_snapshot(tmp_path: Path) -> None:
+    """Meta-test for the snapshot kind: a tampered schema_version must make the
+    reader (load_spec) raise, proving the gate bites for this artifact too. The
+    tampered copy goes to a fresh path so load_spec's per-path cache cannot mask
+    the corruption with a previously-cached good parse."""
+    from decoy_engine.generation.statistical import StatisticalSpecError, load_spec
+
+    snaps = [a for a in _artifacts() if a["kind"] == "distribution_snapshot"]
+    assert snaps, "expected at least one distribution_snapshot artifact in the corpus"
+    art = snaps[0]
+    data = json.loads((HERE / art["path"]).read_text(encoding="utf-8"))
+    data["schema_version"] = "distribution-snapshot/v999"  # flip the guarded field
+    tampered = tmp_path / "tampered-snapshot.json"
+    tampered.write_text(json.dumps(data), encoding="utf-8")
+    cfg = {**art["expected_specs"][0]["col_cfg"], "snapshot_file": str(tampered)}
+    with pytest.raises(StatisticalSpecError) as exc:
+        load_spec(cfg)
+    assert exc.value.code == "statistical_snapshot_schema_mismatch"

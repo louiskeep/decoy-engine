@@ -234,14 +234,27 @@ turns into "I can add X alongside the old X" with five more minutes of thought.
 - **Golden / determinism snapshots** (`tests/snapshots/golden`,
   `tests/integration/golden/test_determinism_invariants.py`) catch **output
   drift**. A baseline change is a red flag, not a refresh chore.
-- **The cross-version compatibility corpus (BUILD THIS BEFORE GA).** Golden tests
-  regenerate artifacts with *current* code, so they do **not** catch *format*
-  drift. We need a frozen corpus: real artifacts produced by each *released*
-  version — a snapshot, a vault + key, a masked CSV, a report, a `pipeline.yaml`
-  — committed as fixtures, with a test that the *current* engine loads and
-  round-trips every one. That suite is the executable proof we did not break a
-  prior version, and it fails loudly the moment someone reinterprets `vault/v1`.
-  See the launch-blocking action item below.
+- **The cross-version compatibility corpus** (`tests/integration/compat_corpus/`).
+  Golden tests regenerate artifacts with *current* code, so they do **not** catch
+  *format* drift. The corpus freezes synthetic artifacts produced at a known
+  engine version and verifies the *current* engine can read and round-trip every
+  one. It currently covers two read-back artifact kinds:
+
+  - `decoy-vault/v2`: full `load_vault` round-trip plus a schema-tamper bite-test
+    (verifies the guard actually fires on a corrupted artifact).
+  - `distribution-snapshot/v1`: full `load_spec` round-trip for each reader branch
+    (numeric, categorical, conditioned-joint) plus a `schema_version` tamper
+    bite-test.
+
+  Intentionally **not** in corpus scope for now: masked CSV/Parquet output (the
+  engine has no owned reader for its own masked output; freezing it would only
+  retest pandas/pyarrow), and plan YAML / profile JSON (real cross-version readers
+  exist, but these are in-process artifacts today; add them once the platform
+  persists plans/profiles to disk for cross-version reuse).
+
+  The corpus is synthetic pre-GA: artifacts carry `synthetic: true` and
+  `produced_by_engine_version: "0.1.0"`. At GA, replace or supplement with a real
+  (`synthetic: false`) artifact of each read-back kind.
 - **`CHANGELOG.md`** records every user-visible change.
 - **The regression-gate** runs the above on every PR.
 
@@ -282,12 +295,13 @@ acceptable cost.
 
 ---
 
-## Launch-blocking action item
+## Pre-GA corpus action item
 
-**Build the cross-version compatibility corpus (§6) before GA.** It is the only
-mechanism that catches format drift, and it cannot be retrofitted after users
-hold artifacts we no longer have fixtures for. Capture the `0.2.0` artifacts now,
-at the cut, as the first frozen generation.
+The cross-version compatibility corpus (§6) exists and runs in CI, covering
+`decoy-vault/v2` and `distribution-snapshot/v1`. Before GA: capture a real
+(`synthetic: false`) artifact of each read-back kind at the `0.2.0` cut and
+add it alongside the existing synthetic fixtures. The corpus cannot be
+retrofitted after users hold artifacts we no longer have fixtures for.
 
 ## Cross-references
 
