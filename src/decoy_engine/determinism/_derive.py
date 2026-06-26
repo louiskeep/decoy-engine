@@ -11,7 +11,7 @@ The envelope (per spec §2):
     HMAC_key   = HKDF-SHA256(IKM=seed, salt=b"decoy-engine/determinism/v1",
                              info=namespace.encode("utf-8"), length=32)
     HMAC_input = (
-        bytes([SEED_PROTOCOL_VERSION])               # 1 byte; 0x04 today
+        bytes([SEED_PROTOCOL_VERSION])               # 1 byte; current SEED_PROTOCOL_VERSION
         + len(namespace).to_bytes(4, "big") + namespace.encode("utf-8")
         + len(source).to_bytes(4, "big") + source
     )
@@ -201,7 +201,7 @@ def derive(seed: bytes, namespace: str, source: bytes) -> bytes:
             ints, etc.
 
     Returns:
-        32 bytes of stable derived material under `SEED_PROTOCOL_VERSION=4`.
+        32 bytes of stable derived material under the current `SEED_PROTOCOL_VERSION`.
 
     Raises:
         DeterminismError on invalid inputs (seed wrong length, empty namespace).

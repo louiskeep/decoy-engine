@@ -26,6 +26,7 @@ from typing import Any
 
 import pandas as pd
 
+from decoy_engine.errors import MaskKeyDerivationError
 from decoy_engine.transforms.base import BaseMaskingStrategy
 
 _COMMON_FORMATS = [
@@ -243,10 +244,11 @@ class DateShiftStrategy(BaseMaskingStrategy):
                 f"DateShift: derive_key failed for 'mask' ({type(exc).__name__}: {exc}). "
                 "Refusing to silently degrade to seed-only MD5."
             )
-            raise RuntimeError(
+            raise MaskKeyDerivationError(
                 f"DateShift column key derivation failed: {type(exc).__name__}. "
                 "Refusing to silently degrade to seed-only MD5; "
-                "fix the master key infrastructure + re-run the job."
+                "fix the master key infrastructure + re-run the job.",
+                strategy="date_shift",
             ) from exc
 
     def validate_rule(self, rule: dict[str, Any]) -> None:

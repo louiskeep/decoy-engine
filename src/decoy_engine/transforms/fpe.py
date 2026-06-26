@@ -32,6 +32,7 @@ from typing import Any
 
 import pandas as pd
 
+from decoy_engine.errors import MaskKeyDerivationError
 from decoy_engine.transforms.base import BaseMaskingStrategy
 
 _CHARSETS: dict[str, str] = {
@@ -402,8 +403,9 @@ class FPEStrategy(BaseMaskingStrategy):
                 f"FPE: derive_key failed for 'mask' ({type(exc).__name__}: {exc}). "
                 "Refusing to silently degrade to seed-only encryption."
             )
-            raise RuntimeError(
+            raise MaskKeyDerivationError(
                 f"FPE column key derivation failed: {type(exc).__name__}. "
                 "Refusing to silently degrade to seed-only encryption; "
-                "fix the master key infrastructure + re-run the job."
+                "fix the master key infrastructure + re-run the job.",
+                strategy="fpe",
             ) from exc
