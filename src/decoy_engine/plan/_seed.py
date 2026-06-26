@@ -106,3 +106,15 @@ def _normalize_job_seed_int(config: dict[str, Any]) -> int:
 def _normalize_job_seed(config: dict[str, Any]) -> bytes:
     """Normalize `seed` to the 8-byte big-endian form `derive(...)` consumes."""
     return _normalize_job_seed_int(config).to_bytes(8, "big")
+
+
+def job_seed_for_config(config: dict[str, Any]) -> bytes:
+    """The 8-byte job seed ``config`` resolves to (public).
+
+    The same value `VaultWriter` and `unmask_pipeline` key on, exposed so an
+    external caller (e.g. a CLI vault inspector) can run
+    ``load_vault(path, job_seed_for_config(config))`` without reaching into the
+    private normalizer. A `bool`/`float`/out-of-range seed is rejected here
+    exactly as it is on the run path.
+    """
+    return _normalize_job_seed(config)
