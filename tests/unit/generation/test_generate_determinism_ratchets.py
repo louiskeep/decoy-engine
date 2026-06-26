@@ -114,19 +114,46 @@ class TestGenerateInProcessStability:
 
 
 class TestCrossColumnIndependence:
-    def test_distinct_faker_columns_are_not_row_shifted(self):
-        # F3 regression: with column_seed + i, two adjacent faker columns
-        # produced row-shifted-identical streams. `first` and `last` draw from
-        # different providers AND different fingerprints; their per-row values
-        # must not align under any small row shift.
-        cfg = PipelineConfig.model_validate(_multi_col_config(row_count=40)).model_dump()
-        t = generate_tables(cfg)["people"]
-        first = t.column("first").to_pylist()
-        last = t.column("last").to_pylist()
-        assert first != last
-        for k in range(1, 4):
-            assert first[k:] != last[: len(first) - k]
-            assert last[k:] != first[: len(last) - k]
+    def test_same_domain_distinct_fingerprint_columns_are_not_row_shifted(self):
+        # F3 regression: with column_seed + i, two columns with adjacent base
+        # seeds produced row-shifted-identical streams. These two categoricals
+        # draw from the SAME 8-value domain (so a row-shift is observable in
+        # real output) but have DISTINCT fingerprints (col `b` carries explicit
+        # uniform weights), so their roots -- and therefore their per-row
+        # streams -- must be independent: not equal and not aligned under any
+        # small shift. Picked same-domain on purpose: provider-different columns
+        # (e.g. first_name vs last_name) would differ even under the old bug, so
+        # they cannot witness an F3 regression.
+        cats = ["A", "B", "C", "D", "E", "F", "G", "H"]
+        cfg = {
+            "version": 1,
+            "global_settings": {"seed": 42},
+            "sources": {},
+            "tables": [
+                {
+                    "name": "t",
+                    "row_count": 48,
+                    "generate_columns": [
+                        {"name": "a", "type": "categorical", "categories": cats},
+                        {
+                            "name": "b",
+                            "type": "categorical",
+                            "categories": cats,
+                            "weights": [1] * len(cats),
+                        },
+                    ],
+                }
+            ],
+            "targets": {"t": {"type": "file", "format": "csv", "path": "out.csv"}},
+        }
+        cfg = PipelineConfig.model_validate(cfg).model_dump()
+        t = generate_tables(cfg)["t"]
+        a = t.column("a").to_pylist()
+        b = t.column("b").to_pylist()
+        assert a != b
+        for k in range(1, 5):
+            assert a[k:] != b[: len(a) - k]
+            assert b[k:] != a[: len(b) - k]
 
     def test_null_prob_column_is_deterministic_across_runs(self):
         # The numpy-family null mask must be stable run-to-run (and, per the

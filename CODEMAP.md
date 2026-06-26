@@ -54,7 +54,7 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | `src/decoy_engine/instrumentation/` | Public timing / collector helpers |
 | `src/decoy_engine/determinism/` | Seed protocol, key derivation |
 | `src/decoy_engine/transforms/` | Three leaf modules (`base.py`, `date_shift.py`, `formula.py`, `fpe.py`) kept because V2 strategies in `execution/_strategies/` import them; a future sprint may relocate them into `_strategies/_reused_v1/`. |
-| `src/decoy_engine/generators/` | Two leaf modules (`columns.py`, `derivation.py`) kept for the same V2 reuse reason; `generation/synthesize.py` imports `ColumnGenerator`. |
+| `src/decoy_engine/generators/` | Two leaf modules (`columns.py`, `derivation.py`) kept for the same V2 reuse reason; `generation/synthesize.py` imports `ColumnGenerator`. `derivation.py` exports `GenDeriveContext` (v6 per-column generation derivation, replaces the pre-v6 `synthetic_column_seed`) and `strategy_config_fingerprint`. |
 | `src/decoy_engine/walks/` | Cross-file / drift / inference helpers; consumed by `tests/integration/test_walks_*`. Not part of the public API. |
 | `src/decoy_engine/forecast/` | Empty (only `__pycache__`); the V1 FORECAST recommender was removed in S22. Safe to delete. |
 | `tests/` | `unit/`, `integration/golden/`, `integration/compat_corpus/`, `parity/`, `perf_fixtures/`, `benchmark/`, `privacy/`, `security/`, `sentry/`, `connectors/`, `snapshots/` |

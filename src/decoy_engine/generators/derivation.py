@@ -171,6 +171,10 @@ class GenDeriveContext:
         # Unkeyed fallback: HKDF-strength root over the fallback seed +
         # fingerprint (replaces the old md5[:4] truncation). Reproducible
         # without a master key, still independent of the column display name.
+        # fallback_seed is expected in [0, 2**64): the plan path normalizes it
+        # via _normalize_job_seed_int before generation. A direct-API caller
+        # passing a negative or oversized seed fails loud here (OverflowError)
+        # rather than silently masking it the way the old `& 0x7FFFFFFF` did.
         digest = hashlib.sha256(
             int(fallback_seed).to_bytes(8, "big", signed=False) + fingerprint.encode("utf-8")
         ).digest()

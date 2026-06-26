@@ -10,8 +10,8 @@ S6-ENG-1 landed the spine + the ``sequence`` generator. S6-ENG-2 adds parity-fro
 ``categorical`` (and on the next sub-commits, ``faker`` / ``formula``); S6-ENG-3 adds
 FK-aware generation (mint-a-pool); S6-ENG-4 the seed / derive-key determinism envelope.
 
-Parity seeding uses V1's ``synthetic_column_seed`` (``decoy_engine.generators.derivation``)
-directly so the per-column seed is byte-identical to V1 ``ColumnGenerator._column_seed``
+Parity seeding uses V1's ``GenDeriveContext`` (``decoy_engine.generators.derivation``)
+directly so the per-column derivation is byte-identical to V1 ``ColumnGenerator._column_ctx``
 under the same ``derive_key`` (always ``None`` in ENG-2; ENG-4 wires the real key).
 
 Thread-safety: all explicit RNG use here is instance-local (``random.Random(seed)``)
@@ -308,9 +308,9 @@ def _categorical(col: dict[str, Any], n: int, seed: int, derive_key: Any = None)
     V1 reseeds ``random`` from the column seed (so output is stable across runs +
     order-independent across columns when keyed), then ``random.choices(categories,
     weights=weights, k=num_rows)``. ``weights`` is optional; when omitted the choice
-    is uniform. We reuse V1 ``synthetic_column_seed`` for the per-column seed (Dennis
-    S6-ENG-2 plan: import V1's helper, do not reinvent), so seed-only output is
-    byte-identical to V1's under the same ``seed`` + ``derive_key=None``.
+    is uniform. We reuse V1 ``GenDeriveContext`` for the per-column derivation
+    (import V1's helper, do not reinvent), so seed-only output is byte-identical
+    to V1's under the same ``seed`` + ``derive_key=None``.
     """
     cats = col.get("categories", ["Category A", "Category B"])
     weights = col.get("weights")  # optional; None -> uniform
@@ -395,7 +395,7 @@ def _apply_null_probability(
     if null_prob <= 0:
         return values
     # QA-1 M17 (2026-06-01): pass the FULL column_config to
-    # synthetic_column_seed so two columns with different strategies +
+    # GenDeriveContext so two columns with different strategies +
     # the same name no longer share a null mask. Pre-fix this used
     # only `{"name": col["name"]}` to mirror V1; V1 has been
     # updated to also pass column_config (qa-1 step 3) so V1 and V2
