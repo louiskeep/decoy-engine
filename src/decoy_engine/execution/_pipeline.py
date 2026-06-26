@@ -137,8 +137,15 @@ def run_pipeline(
     has_mask_table = any(kind == "mask" for kind in table_kinds.values())
     has_generate_table = any(kind == "generate" for kind in table_kinds.values())
 
-    job_seed_raw = (config.get("global_settings") or {}).get("seed")
-    job_seed = job_seed_raw if isinstance(job_seed_raw, int) else None
+    # F5 (2026-06-26): route the profile-path seed through the canonical
+    # int normalizer so a bool/float seed is rejected here, BEFORE
+    # profile_source seeds its RNG, rather than being silently coerced
+    # (`seed: true` -> random.Random(True) == Random(1)) and only caught
+    # later by compile_plan. Defaults absent seed to 0, matching the
+    # compiler so the profile and mask paths stay in lockstep.
+    from decoy_engine.plan._compile import _normalize_job_seed_int
+
+    job_seed = _normalize_job_seed_int(config)
 
     profile = profile_source(config, seed=job_seed)
 

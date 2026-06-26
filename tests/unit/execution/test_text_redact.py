@@ -13,7 +13,9 @@ Locks the cell-level behavior of `TextRedactHandler`:
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
+from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution._strategies._text_redact import TextRedactHandler
 from decoy_engine.plan._types import ColumnSeed
 
@@ -188,3 +190,60 @@ class TestPandasNullMarkers:
         handler = TextRedactHandler()
         out, _ = handler.run(df.copy(), "notes", _seed({}), _FakeCtx())
         assert pd.isna(out["notes"].iloc[1])
+
+
+def _ner_seed(ner_model_version: str | None) -> ColumnSeed:
+    return ColumnSeed(
+        namespace=None,
+        strategy="text_redact",
+        provider=None,
+        backend_type="decoy_native",
+        backend_version="1",
+        cardinality_mode="bijective",
+        deterministic=False,
+        provider_config=(("ner", True),),
+        ner_model_version=ner_model_version,
+    )
+
+
+class TestF14bNerVersionGuard:
+    """F14b (2026-06-26): text_redact must refuse to run when the installed
+    spaCy model version differs from the version stamped into the plan at
+    compile -- a silent model update would otherwise change redactions for the
+    same config + seed with no error. Tested without spaCy by mocking the
+    version lookup (the guard runs before any iter_ner_spans call)."""
+
+    def test_version_mismatch_raises(self, monkeypatch):
+        import decoy_engine.storm.ner as ner_mod
+
+        monkeypatch.setattr(ner_mod, "installed_model_version", lambda model=None: "2.0.0")
+        df = pd.DataFrame({"notes": ["Contact alice@example.com"]})
+        handler = TextRedactHandler()
+        with pytest.raises(StrategyError) as exc:
+            handler.run(df.copy(), "notes", _ner_seed("1.0.0"), _FakeCtx())
+        assert exc.value.code == "ner_model_version_mismatch"
+
+    def test_version_match_does_not_fire_guard(self, monkeypatch):
+        # Same installed version as stamped -> guard passes; stub iter_ner_spans
+        # (no real spaCy) so the rest of the handler runs without error.
+        import decoy_engine.storm.ner as ner_mod
+
+        monkeypatch.setattr(ner_mod, "installed_model_version", lambda model=None: "1.0.0")
+        monkeypatch.setattr(ner_mod, "iter_ner_spans", lambda *a, **k: [])
+        df = pd.DataFrame({"notes": ["Contact alice@example.com"]})
+        handler = TextRedactHandler()
+        out, _ = handler.run(df.copy(), "notes", _ner_seed("1.0.0"), _FakeCtx())
+        # Regex detectors still redact the email; the guard did not fire.
+        assert "alice@example.com" not in out["notes"].iloc[0]
+
+    def test_no_stamped_version_skips_guard(self, monkeypatch):
+        # A plan with no stamped version (ner_model_version=None) cannot be
+        # compared, so the guard is skipped even if a version is installed.
+        import decoy_engine.storm.ner as ner_mod
+
+        monkeypatch.setattr(ner_mod, "installed_model_version", lambda model=None: "9.9.9")
+        monkeypatch.setattr(ner_mod, "iter_ner_spans", lambda *a, **k: [])
+        df = pd.DataFrame({"notes": ["Contact alice@example.com"]})
+        handler = TextRedactHandler()
+        out, _ = handler.run(df.copy(), "notes", _ner_seed(None), _FakeCtx())
+        assert "alice@example.com" not in out["notes"].iloc[0]

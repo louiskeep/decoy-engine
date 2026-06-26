@@ -10,14 +10,16 @@ from a SHA-256 hash of ``f"fpe-legacy-{seed}-{column_name}"``. Output
 was no longer recoverable from the master key + didn't match a
 successful re-run. Invisible to the operator.
 
-After the fix: derive_key failure raises RuntimeError; the job fails
-with a typed manifest error.
+After the fix: derive_key failure raises MaskKeyDerivationError (a
+DecoyError subclass, F15 2026-06-26 -- was a bare RuntimeError that
+escaped `except DecoyError`); the job fails with a typed manifest error.
 """
 
 from __future__ import annotations
 
 import pytest
 
+from decoy_engine.errors import DecoyError, MaskKeyDerivationError
 from decoy_engine.transforms.fpe import FPEStrategy
 
 
@@ -33,8 +35,19 @@ class TestFPEKeyResolutionFailureRaises:
 
     def test_column_key_raises_when_derive_key_throws(self):
         strategy = FPEStrategy(seed=42, derive_key=_bad_derive_key)
-        with pytest.raises(RuntimeError, match="(?i)FPE column key derivation failed"):
+        with pytest.raises(MaskKeyDerivationError, match="(?i)FPE column key derivation failed"):
             strategy._column_key("ssn")
+
+    def test_raised_error_is_catchable_as_decoy_error(self):
+        """F15: the failure must be catchable via `except DecoyError` (the
+        upstream handler) and carry the typed code + strategy, unlike the
+        old bare RuntimeError."""
+        strategy = FPEStrategy(seed=42, derive_key=_bad_derive_key)
+        with pytest.raises(DecoyError) as exc_info:
+            strategy._column_key("ssn")
+        assert isinstance(exc_info.value, MaskKeyDerivationError)
+        assert exc_info.value.code == "mask.key_derivation_failed"
+        assert exc_info.value.strategy == "fpe"
 
     def test_column_key_returns_none_when_derive_key_is_none(self):
         """The legacy seed-only opt-out (derive_key=None passed by the
@@ -57,7 +70,7 @@ class TestFPEKeyResolutionFailureRaises:
         """The raised error includes the underlying exception type for
         operator debugging."""
         strategy = FPEStrategy(seed=42, derive_key=_bad_derive_key)
-        with pytest.raises(RuntimeError) as exc_info:
+        with pytest.raises(MaskKeyDerivationError) as exc_info:
             strategy._column_key("ssn")
         # The chained __cause__ carries the original exception.
         assert exc_info.value.__cause__ is not None

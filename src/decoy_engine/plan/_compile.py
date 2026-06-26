@@ -550,9 +550,16 @@ def _build_namespaces(config: dict[str, Any]) -> tuple[NamespaceBinding, ...]:
     return tuple(out)
 
 
-def _normalize_job_seed(config: dict[str, Any]) -> bytes:
-    """Normalize the config-side `seed` value to the 8-byte bytes form
-    that `decoy_engine.determinism.derive(...)` consumes.
+def _normalize_job_seed_int(config: dict[str, Any]) -> int:
+    """Normalize the config-side `seed` value to the validated int form.
+
+    This is the single shared seed validator (QA F5, 2026-06-26). The
+    pipeline profile path (`execution/_pipeline.py`), the plan compiler,
+    and generation (`generation/synthesize.py`) all route through it so a
+    `bool`/`float` seed is rejected identically everywhere instead of one
+    path coercing `seed: true` to `1` while another raises. The 8-byte
+    `bytes` form that `decoy_engine.determinism.derive(...)` consumes is
+    produced by the thin `_normalize_job_seed` wrapper below.
 
     Per S3 spec §5.5 (resolution of B2 + H1): the int -> bytes conversion
     happens exactly once at the pipeline-config adapter boundary. The
@@ -626,7 +633,12 @@ def _normalize_job_seed(config: dict[str, Any]) -> bytes:
             path="global_settings.seed",
             message=(f"seed must fit in unsigned 64-bit (range [0, 2**64)); got {seed_int}"),
         )
-    return seed_int.to_bytes(8, "big")
+    return seed_int
+
+
+def _normalize_job_seed(config: dict[str, Any]) -> bytes:
+    """Normalize `seed` to the 8-byte big-endian form `derive(...)` consumes."""
+    return _normalize_job_seed_int(config).to_bytes(8, "big")
 
 
 def _build_seed_envelope(
