@@ -1,12 +1,13 @@
 {
-  "corpus_version": 1,
-  "note": "Cross-version compatibility corpus. Each artifact was written by produced_by_engine_version and must stay readable by every later engine within the major (compatibility-contract section 3.1/3.2).",
+  "corpus_version": 2,
+  "note": "Cross-version compatibility corpus. Each artifact was written by produced_by_engine_version and must stay readable by every later engine within the major (compatibility-contract section 3.1/3.2). At GA, capture a real (synthetic=False) artifact of each read-back kind, not just the vault.",
   "artifacts": [
     {
       "tag": "decoy-vault/v2",
       "kind": "vault",
       "synthetic": true,
       "produced_by_engine_version": "0.1.0",
+      "seed_protocol_version": 6,
       "path": "decoy-vault-v2__synthetic.vault",
       "job_seed_hex": "c0ffee0badc0de01",
       "entries_written": 5,
@@ -17,6 +18,49 @@
         "member_id\u001fMBR-100002": "771-04-3325",
         "email_pool\u001fuser01@example.net": "real.person@hospital.org"
       }
+    },
+    {
+      "tag": "distribution-snapshot/v1",
+      "kind": "distribution_snapshot",
+      "synthetic": true,
+      "produced_by_engine_version": "0.1.0",
+      "seed_protocol_version": 6,
+      "path": "distribution-snapshot-v1__synthetic.json",
+      "expected_specs": [
+        {
+          "col_cfg": {
+            "name": "salary",
+            "source_column": "salary"
+          },
+          "kind": "numeric",
+          "dtype": "int64",
+          "parent_first": false,
+          "has_joint": false
+        },
+        {
+          "col_cfg": {
+            "name": "state",
+            "source_column": "state",
+            "allow_real_categories": true
+          },
+          "kind": "categorical",
+          "dtype": "object",
+          "parent_first": false,
+          "has_joint": false
+        },
+        {
+          "col_cfg": {
+            "name": "state_given_active",
+            "source_column": "state",
+            "condition_on": "active",
+            "allow_real_categories": true
+          },
+          "kind": "categorical",
+          "dtype": "object",
+          "parent_first": true,
+          "has_joint": true
+        }
+      ]
     }
   ]
 }
