@@ -181,6 +181,41 @@ Targeted correctness and hardening fixes from the F-series findings register
   and seed. Pin the model version or recompile the plan after a model update.
   Plans compiled before this version have no stamped version and skip the guard.
 
+### Security / Changed (vault hardening F13, 2026-06-26)
+
+- **Vault format bumped to `decoy-vault/v2`; per-chunk streaming encryption**
+  (F13). BEHAVIOR CHANGE: vault files written by this engine use the new
+  `decoy-vault/v2` format (magic `DCYVAULT2\n`) and are not readable by any
+  prior engine version. v1 vault files are not readable by this engine. This is
+  a pre-GA hard cutover: no vaults exist in the wild, so no migration is
+  required at this point. The forever-readable rule begins at the first
+  in-the-wild v2 vault.
+
+  Format change: the file now contains an unencrypted JSON header (`format`,
+  `seed_protocol_version`, `ambiguous_dropped`, `chunk_rows`, `chunk_count`)
+  followed by a sequence of length-prefixed Fernet tokens, one per bounded
+  chunk of up to 65 536 sorted entries.
+
+  Privacy fix: `VaultWriter.write` now serializes and encrypts one bounded
+  chunk at a time (F13). The previous implementation serialized the entire
+  source-value table into a single Parquet buffer before encrypting it. That
+  created a window where the full plaintext source-value table sat in heap
+  as one unencrypted blob. The new path drops each chunk's plaintext
+  immediately after encrypting it; the full-table plaintext blob is never
+  materialized.
+
+- **New typed error `vault_protocol_version_mismatch`** (F13). `load_vault`
+  reads the unencrypted v2 header before any decryption attempt. If the
+  header's `seed_protocol_version` does not match the running
+  `SEED_PROTOCOL_VERSION`, it raises
+  `VaultError(code="vault_protocol_version_mismatch")` with a message naming
+  both versions. Previously a cross-version vault would surface as an opaque
+  `vault_key_mismatch` (because the protocol version byte is mixed into the
+  derived vault key). The new code is distinct from `vault_key_mismatch` (wrong
+  seed, correct version). Cross-version unmask remains unsupported; F13 makes
+  the error diagnosable. `unmask_pipeline` surfaces this code in its per-column
+  error list alongside the existing vault error codes.
+
 - **Single shared seed validator** (F5). `plan/_seed.py` is a new internal
   module containing `_normalize_job_seed` and `_normalize_job_seed_int`. The
   pipeline profile path (`execution/_pipeline.py`), the plan compiler

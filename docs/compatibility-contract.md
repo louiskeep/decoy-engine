@@ -59,7 +59,7 @@ The engine already version-tags every persisted artifact with a `name/vN` tag.
 As of this writing the tags include:
 
 ```
-distribution-snapshot/v1   decoy-vault/v1        vault-key/v1
+distribution-snapshot/v1   decoy-vault/v2        vault-key/v1
 fpe-key/v1                  quality-report/v1     synth-report/v1
 quality-diagnostic/v1      quality-fidelity/v1   quality-policy/v1
 quality-shape-fidelity/v1  storm-post-mask/v1    name-hints/v1
@@ -86,7 +86,7 @@ feeds it to a later engine version. That artifact is a **contract**.
 
 ### 3.2 The vault (the catastrophic one)
 
-`decoy-vault/v1` + `vault-key/v1` back re-identification. If a new engine version
+`decoy-vault/v2` + `vault-key/v1` back re-identification. If a new engine version
 cannot read an old vault, **users can never unmask the data they already
 masked.** That is unrecoverable, not inconvenient.
 
@@ -94,6 +94,12 @@ masked.** That is unrecoverable, not inconvenient.
 conservative format we own. A vault change is a new version *plus* a permanent
 reader for every prior version, reviewed by the PO. There is no "pre-GA hard
 delete" exception for the vault once a real vault exists in the wild.
+
+**Pre-GA hard cutover to v2 (F13, 2026-06-26):** `decoy-vault/v1` was replaced
+by `decoy-vault/v2` without a v1 reader. This is legal only pre-GA because no
+vaults exist in the wild. The forever-readable rule begins at the first
+in-the-wild `decoy-vault/v2` vault. From that point forward, a v2 reader is
+permanent and any future format bump must add a v3 alongside a kept v2 reader.
 
 ### 3.3 The determinism guarantee (the silent one)
 
@@ -129,12 +135,15 @@ roots. CONSEQUENCE for future maintainers: any future `SEED_PROTOCOL_VERSION`
 bump re-keys synthetic-generation output too, even a bump made for a mask-only
 reason. There is no longer a "mask-only" envelope change; budget for the
 generation shift (and a corpus re-baseline) whenever you bump the version.
-A v5 vault over a synthetic column cannot be unmasked under v6. The
-explicit guard that detects a protocol-version mismatch at unmask time and
-returns a clear error (rather than silently returning wrong values) is deferred
-to the vault-hardening work (F13 in `docs/remediation-source.md`). Until F13
-lands, callers holding vaulted synthetic columns should treat cross-version
-unmask as unsupported.
+A v5 vault over a synthetic column cannot be unmasked under v6.
+
+The vault format is now `decoy-vault/v2` (F13, 2026-06-26). The v2 file stamps
+`SEED_PROTOCOL_VERSION` in an unencrypted header; `load_vault` reads that header
+before any decryption attempt and raises a typed
+`VaultError(code="vault_protocol_version_mismatch")` on a mismatch, distinct
+from the wrong-seed `vault_key_mismatch`. Cross-version unmask is not supported
+and was not supported before F13; F13 makes the failure diagnosable rather than
+opaque.
 
 ### 3.4 The public API + CLI contract
 

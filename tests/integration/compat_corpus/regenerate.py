@@ -45,7 +45,7 @@ _SYNTHETIC_ENTRIES = [
 
 
 def main() -> None:
-    vault_path = HERE / "decoy-vault-v1__synthetic.vault"
+    vault_path = HERE / "decoy-vault-v2__synthetic.vault"
     writer = VaultWriter(_SYNTHETIC_JOB_SEED)
     writer.add(_SYNTHETIC_ENTRIES)
     written = writer.write(vault_path)
@@ -60,7 +60,7 @@ def main() -> None:
         ),
         "artifacts": [
             {
-                "tag": "decoy-vault/v1",
+                "tag": "decoy-vault/v2",
                 "kind": "vault",
                 "synthetic": True,
                 "produced_by_engine_version": decoy_engine.__version__,
