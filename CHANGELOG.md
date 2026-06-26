@@ -308,6 +308,16 @@ F4 shuffle fix (shipped earlier on its own branch) that also rides the v6 bump.
   test_capability_matrix.py` drift guard fails CI when a registry changes without
   the matrix being regenerated, so a new capability cannot ship without its docs.
 
+### Added (F1 compatibility-corpus expansion, 2026-06-26)
+
+- **`distribution-snapshot/v1` added to the cross-version compatibility corpus**
+  (F1). The corpus (`tests/integration/compat_corpus/`) previously covered only
+  `decoy-vault/v2`. It now also freezes a synthetic `distribution-snapshot/v1`
+  artifact and verifies it through the real `load_spec` reader (numeric,
+  categorical, and conditioned-joint branches) on every CI run. A schema-version
+  tamper bite-test confirms the guard fires for this artifact kind. Every
+  corpus artifact now stamps `seed_protocol_version`. Corpus version bumped to 2.
+
 ### Changed
 
 - **Repository visibility flipped to public** (2026-06-02). Aligns
