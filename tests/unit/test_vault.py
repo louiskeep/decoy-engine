@@ -288,6 +288,27 @@ class TestCompileChecks:
             run_config_only_checks(cfg)
         assert exc.value.code == "vault_strategy_reversible"
 
+    def test_vault_requires_cryptography_when_missing(self, tmp_path, monkeypatch):
+        # F14a: a vault: true job must fail at compile when `cryptography` is
+        # absent, not after a multi-hour run at vault-write time. Simulate the
+        # package being uninstalled by stubbing find_spec for it only.
+        import importlib.util as _ilu
+
+        real_find_spec = _ilu.find_spec
+
+        def fake_find_spec(name, *args, **kwargs):
+            if name == "cryptography":
+                return None
+            return real_find_spec(name, *args, **kwargs)
+
+        monkeypatch.setattr(_ilu, "find_spec", fake_find_spec)
+        cfg = _config(
+            tmp_path, [{"name": "email", "strategy": "hash", "namespace": "n", "vault": True}]
+        )
+        with pytest.raises(PlanCompileError) as exc:
+            run_config_only_checks(cfg)
+        assert exc.value.code == "vault_requires_cryptography"
+
     def test_check_in_config_only_names(self, tmp_path):
         cfg = _config(tmp_path, [{"name": "email", "strategy": "hash", "namespace": "n"}])
         assert "vault_columns" in run_config_only_checks(cfg)
