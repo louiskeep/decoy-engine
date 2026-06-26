@@ -25,7 +25,7 @@ class TestCompilePlanHappyPath:
         WS1 FPE detokenization 4 -> 5 (2026-06-12)."""
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
         assert plan.plan_version == 1
-        assert plan.seed_protocol_version == 5
+        assert plan.seed_protocol_version == 6
         assert plan.engine_version == "0.1.0"
 
     def test_compile_records_thirteen_checks_passed(
@@ -107,16 +107,16 @@ class TestYamlRoundTrip:
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
         y = plan_to_yaml(plan)
         assert "plan_version: 1" in y
-        assert "seed_protocol_version: 5" in y
+        assert "seed_protocol_version: 6" in y
 
-    def test_yaml_emits_seed_protocol_version_five(
+    def test_yaml_emits_seed_protocol_version_six(
         self, simple_config: dict, simple_profile: Profile
     ) -> None:
-        """The F-series corrections bump the stamped seed_protocol_version to
-        2 (v1 = pre-correction era, v2 = corrected baseline)."""
+        """The F2/F3 generation rewrite bumps the stamped
+        seed_protocol_version to 6 (see determinism/_derive.py history)."""
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
         y = plan_to_yaml(plan)
-        assert "seed_protocol_version: 5" in y
+        assert "seed_protocol_version: 6" in y
 
     @pytest.mark.parametrize("policy", ["preserve", "remap", "warn", "fail"])
     def test_round_trip_preserves_each_orphan_policy(

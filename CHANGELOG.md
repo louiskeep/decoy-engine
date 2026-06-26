@@ -209,6 +209,61 @@ Targeted correctness and hardening fixes from the F-series findings register
   `randint`, `choice`, or `random` against the bare scope now raises
   `InvalidExpression` (undefined name) instead of silently reading shared state.
 
+### Fixed (generation determinism v6 rewrite, 2026-06-26)
+
+Resolves findings F2 and F3 from `docs/remediation-source.md`. References the
+F4 shuffle fix (shipped earlier on its own branch) that also rides the v6 bump.
+
+- **`SEED_PROTOCOL_VERSION` bumped 5 to 6** (F2/F3). BEHAVIOR CHANGE: all
+  synthetic-generation output and all masked output shift at v6. This is a
+  pre-GA hard cutover; no plans or vaults exist in the wild, so no migration is
+  required at this point. A v5 vault over a synthetic column cannot be unmasked
+  under v6 (the regenerated seed diverges). The explicit cross-version vault
+  protocol guard (error on mismatch instead of silently returning wrong values)
+  is deferred to the vault-hardening work (F13); see
+  `docs/compatibility-contract.md`.
+
+- **Generate-path seed widened from 32 bits to 256 bits** (F2). The legacy
+  `synthetic_column_seed` helper truncated every HKDF-derived key to 4 bytes
+  (`int.from_bytes(b[:4], "big")`), leaving a 32-bit keyspace. The replacement
+  `GenDeriveContext` (`generators/derivation.py`) resolves a full 32-byte
+  column root via `derive_key("gen:" + fingerprint)`, consuming all 256 bits.
+  `GenDeriveContext` is the public replacement; `synthetic_column_seed` is
+  removed.
+
+- **Per-row `seed + i` arithmetic replaced with per-family HMAC derivation**
+  (F3). The old `column_seed + i` per-row loop meant column A (base `S`) and
+  column B (base `S+1`) produced row-shift-identical seed sequences. The new
+  `row_int(family, i)` method on `GenDeriveContext` derives each row's integer
+  via a version-mixed HMAC keyed to the column root and RNG family, so adjacent
+  columns never share seeds under any row shift.
+
+- **Three RNG families now draw from disjoint sub-keys** (F3). `py`
+  (`random.Random`), `np` (`numpy.random.default_rng`), and `faker`
+  (`Faker.seed_instance`) each receive a distinct family key derived from the
+  column root. Before v6, all three were seeded from the same truncated integer.
+
+- **Generation mixes the protocol version byte into its HMAC** (F2/F3). The
+  new `_gen_hmac` helper in `generators/derivation.py` mirrors the mask-path
+  envelope in `determinism/_derive.py`: both mix `SEED_PROTOCOL_VERSION` into
+  the HMAC input. The protocol version is now the single compatibility knob
+  across both determinism roots; a bump re-keys both masked output and
+  synthetic-generation output together.
+
+- **V2 null-injection path unified to V1 numpy-vectorized mask** (F2/F3).
+  `generation/synthesize.py` (`_apply_null_probability`) previously used a
+  per-row Python `random.Random` reseed loop, which converged to the correct
+  null fraction but did not produce the same null pattern as V1 (which uses
+  `numpy.random.default_rng(column_seed).random(n) < null_prob`). Both engines
+  now use the same numpy vectorized draw seeded from `GenDeriveContext.base_int
+  ("np")`, so null-probability columns are byte-identical across the two
+  generation engines.
+
+- **New tests** (F6): subprocess byte-identity gate for `generate_tables`
+  (`tests/unit/generation/test_synthesize_determinism.py`), cross-column seed
+  independence tests, and a full `GenDeriveContext` contract suite
+  (`tests/unit/generators/test_gen_derive_context.py`).
+
 ### Added
 
 - **Generated engine capability matrix** (`docs/capability-matrix.md`, emitted by

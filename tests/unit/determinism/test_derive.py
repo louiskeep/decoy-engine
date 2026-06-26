@@ -92,7 +92,7 @@ class TestDeriveValidation:
 
 
 class TestSeedProtocolVersion:
-    def test_constant_is_five(self) -> None:
+    def test_constant_is_six(self) -> None:
         """S3 shipped SEED_PROTOCOL_VERSION = 1; F-series corrections
         bumped to 2; QA walks/gen F3 vectorised null-injection bumped
         to 3 (2026-06-01); formula-hash migration to keyed primitive
@@ -100,7 +100,7 @@ class TestSeedProtocolVersion:
         (2026-06-12): the Feistel key moved to one key per
         (seed, namespace) (NIST FF1 key model) and Luhn mode became
         invertible, changing output bytes for every fpe column."""
-        assert SEED_PROTOCOL_VERSION == 5
+        assert SEED_PROTOCOL_VERSION == 6
 
 
 class TestDeriveIndex:

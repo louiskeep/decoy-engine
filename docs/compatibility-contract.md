@@ -119,6 +119,23 @@ user with **zero error message.**
   baselines are updated only as a conscious, reviewed, version-gated act — never
   as a "tests went red so I refreshed them" reflex.
 
+**Current state (v6, 2026-06-26, pre-GA):** `SEED_PROTOCOL_VERSION` was bumped
+from 5 to 6 by the F2/F3 generation-determinism rewrite (see `CHANGELOG.md`
+and `docs/determinism.md`). Both masked output and synthetic-generation output
+shifted. This is a pre-GA hard cutover; no vaults exist in the wild. The
+`SEED_PROTOCOL_VERSION` byte is now mixed into the generation-path HMAC as well
+as the mask-path envelope, so it is the single compatibility knob across both
+roots. CONSEQUENCE for future maintainers: any future `SEED_PROTOCOL_VERSION`
+bump re-keys synthetic-generation output too, even a bump made for a mask-only
+reason. There is no longer a "mask-only" envelope change; budget for the
+generation shift (and a corpus re-baseline) whenever you bump the version.
+A v5 vault over a synthetic column cannot be unmasked under v6. The
+explicit guard that detects a protocol-version mismatch at unmask time and
+returns a clear error (rather than silently returning wrong values) is deferred
+to the vault-hardening work (F13 in `docs/remediation-source.md`). Until F13
+lands, callers holding vaulted synthetic columns should treat cross-version
+unmask as unsupported.
+
 ### 3.4 The public API + CLI contract
 
 - **Python:** the symbols re-exported from `decoy_engine/__init__.py` and
