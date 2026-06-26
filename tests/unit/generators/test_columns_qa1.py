@@ -28,7 +28,7 @@ import pandas as pd
 import pytest
 
 from decoy_engine.generators.columns import ColumnGenerator
-from decoy_engine.generators.derivation import synthetic_column_seed
+from decoy_engine.generators.derivation import GenDeriveContext
 
 
 class TestQA1H6RngIsolation:
@@ -122,17 +122,16 @@ class TestQA1M17NullSeedPerColumn:
 
 
 class TestQA1M18DeriveKeyRaises:
-    def test_synthetic_column_seed_raises_on_derive_key_failure(self):
-        """M18: a failing derive_key in synthetic_column_seed must
-        raise instead of silently falling through to the seed-only
-        path."""
+    def test_gen_derive_context_raises_on_derive_key_failure(self):
+        """M18: a failing derive_key in GenDeriveContext must raise
+        instead of silently falling through to the seed-only path."""
 
         def _boom(label):
             raise RuntimeError("simulated key resolver failure")
 
         col = {"name": "x", "type": "faker", "faker_type": "first_name"}
         with pytest.raises(RuntimeError, match="derive_key failed"):
-            synthetic_column_seed(
+            GenDeriveContext.for_column(
                 derive_key=_boom,
                 column_config=col,
                 fallback_seed=42,
