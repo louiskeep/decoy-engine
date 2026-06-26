@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import pytest
 
-from decoy_engine.plan._seed import _normalize_job_seed, _normalize_job_seed_int
 from decoy_engine.plan._errors import PlanCompileError
+from decoy_engine.plan._seed import _normalize_job_seed, _normalize_job_seed_int
 from decoy_engine.profile import profile_source
 
 
