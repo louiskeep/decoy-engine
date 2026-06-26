@@ -348,6 +348,46 @@ F4 shuffle fix (shipped earlier on its own branch) that also rides the v6 bump.
   Changelog) surfaced on the PyPI sidebar.
 - This `CHANGELOG.md` itself.
 
+### Added (BF2 field-recognition harness, 2026-06-26)
+
+Groundwork for a future ML column classifier (ML2+, gated and not built
+here). Both additions are off the public run path and are intentionally
+NOT re-exported from `decoy_engine.__init__`.
+
+- **Regex-detector baseline harness + labeled fixtures** (`storm/eval/`,
+  BF2/ML0). Five deterministic synthetic datasets with per-column
+  ground-truth labels: `hipaa` (mrn, icd10, npi, health_plan_id),
+  `pci` (pan, cvv, iban), `account_order` (account_id, order_id),
+  `claim` (claim_id, service_date, amount), and `cryptic_header` (real
+  PII under opaque column names). Identifier values (PAN, NPI, IBAN) are
+  constructed with their real checksums so the structural detectors
+  actually fire; the checksum-digit generators in `fixtures.py` are
+  independent of `storm/detectors.py` to avoid "cheating" by sharing
+  code under test. `run_baseline()` runs the registered detector set over
+  all fixtures and returns a `HarnessReport` with per-field-type recall,
+  precision, review-burden, and false-negative lists. Pinned
+  misses at overall recall 0.8462 (11 of 13 PII columns): name-hint-gated
+  health detectors (mrn, health_plan_id) miss entirely under opaque
+  headers; content detectors (ssn, email, pan) stay header-agnostic and
+  fire correctly; account_id is a confirmed false positive (the mrn
+  detector claims generic account/acct identifiers by design). Read-only
+  over the detector set; no run-path change.
+
+- **Deterministic column feature builder** (`storm/features/`, BF2/ML1).
+  `build_column_features(series, col_name)` produces a `ColumnFeatures`
+  artifact: header tokens, inferred dtype, null/distinct/unique rates,
+  char-class fractions, stdlib Shannon entropy (raw and normalized),
+  per-detector regex weak signals (including checksum-gated rates for pan,
+  iban, ipv4, icd10, npi), standalone checksum pass rates (no regex gate),
+  and a `ShapeSignature` (dominant value mask, length stats). Reuses the
+  profiler's four coarse classifiers (alphabet, casing, value-set-size,
+  numeric-range) and the detector regex constants and validators so a
+  detector change flows through automatically. Deterministic: content
+  features sample `iloc[:200]` (matching the profiler's head-sample
+  convention, never a random draw). `ColumnFeatures` is a separate
+  artifact from `StormProfile`/`FieldStats` by design so it never
+  crosses the persisted-format compatibility boundary.
+
 ## [0.1.0] - 2026-06-02
 
 The first publishable cut of the engine. Not yet pushed to the real
