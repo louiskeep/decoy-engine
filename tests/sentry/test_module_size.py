@@ -37,7 +37,7 @@ LIMIT = 600
 # Each owes a decomposition target (tracked via ADR-0005 / the hardening plan).
 ALLOWLIST: dict[str, int] = {
     "src/decoy_engine/storm/detectors.py": 1356,
-    "src/decoy_engine/generators/columns.py": 1349,
+    "src/decoy_engine/generators/columns.py": 666,
     "src/decoy_engine/storm/profiler.py": 999,
     "src/decoy_engine/plan/_compile.py": 921,
     "src/decoy_engine/quality/synth_report.py": 863,
