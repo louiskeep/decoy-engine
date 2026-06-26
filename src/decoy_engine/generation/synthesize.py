@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import random
 import threading
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pyarrow as pa
@@ -37,6 +37,9 @@ from faker import Faker
 
 from decoy_engine.generators.derivation import GenDeriveContext
 from decoy_engine.internal.faker_setup import get_faker_providers, make_faker
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 # QA-7 F5 (2026-06-01): seed default aligned with plan compiler's
 # _normalize_job_seed default (0). Pre-fix _DEFAULT_SEED = 42 diverged
@@ -196,15 +199,13 @@ def _topo_sort(deps: dict[str, set[str]]) -> list[str]:
     sibling iterative pattern in config/_pipeline.py
     `_reference_graph_valid` was written for the same reason.
     """
-    from collections.abc import Iterator as _IteratorRT
-
     result: list[str] = []
     visited: set[str] = set()
 
     for start in deps:
         if start in visited or start not in deps:
             continue
-        stack: list[tuple[str, _IteratorRT[str]]] = [(start, iter(deps.get(start, ())))]
+        stack: list[tuple[str, Iterator[str]]] = [(start, iter(deps.get(start, ())))]
         visited.add(start)
         while stack:
             node, parent_iter = stack[-1]
