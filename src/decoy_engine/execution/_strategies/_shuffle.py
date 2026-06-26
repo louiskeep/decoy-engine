@@ -1,8 +1,11 @@
 """shuffle strategy (engine-v2 S9): within-column permutation, multiset-preserving.
 
 Re-keyed onto S3 (S9 spec §4 row 9 / R19): the permutation rng is seeded from
-`derive(job_seed, namespace, b"")` (column-stable, NOT the global
+`derive(job_seed, namespace, column_name)` (column-stable, NOT the global
 `np.random.seed`), so a deterministic shuffle is byte-stable across runs.
+The column name is bound into the derivation source so two shuffle columns
+sharing a namespace draw distinct permutations; otherwise they would be
+permuted in lockstep and re-link the values masking is meant to decouple.
 Non-deterministic mode uses an unseeded `default_rng`. Null positions are
 preserved; only the non-null values are permuted.
 """
@@ -43,7 +46,9 @@ class ShuffleStrategyHandler:
                     strategy="shuffle",
                     message=f"column {column!r} uses deterministic shuffle but has no namespace.",
                 )
-            seed_int = int.from_bytes(derive(ctx.job_seed, plan.namespace, b"")[:8], "big")
+            seed_int = int.from_bytes(
+                derive(ctx.job_seed, plan.namespace, column.encode("utf-8"))[:8], "big"
+            )
             rng = np.random.default_rng(seed_int)
         else:
             rng = np.random.default_rng()

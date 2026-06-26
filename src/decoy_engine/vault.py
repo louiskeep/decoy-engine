@@ -211,7 +211,7 @@ def vault_writer_for_config(config: dict[str, Any]) -> VaultWriter:
     `global_settings.seed` rules), so the vault key always matches the
     seed envelope the mask run used.
     """
-    from decoy_engine.plan._compile import _normalize_job_seed
+    from decoy_engine.plan._seed import _normalize_job_seed
 
     return VaultWriter(_normalize_job_seed(config))
 

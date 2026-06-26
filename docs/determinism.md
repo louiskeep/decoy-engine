@@ -14,8 +14,8 @@ derive(seed, namespace, source) -> 32 bytes (HMAC-SHA256)
 
 The same `(seed, namespace, source)` produces byte-identical output across
 processes, across days, and across engine versions while the seed-protocol
-version is unchanged. The current `SEED_PROTOCOL_VERSION` is `4`; it is exposed
-as `decoy_engine.SEED_PROTOCOL_VERSION`. A bump to that version is a deliberate,
+version is unchanged. The current `SEED_PROTOCOL_VERSION` is exposed as
+`decoy_engine.SEED_PROTOCOL_VERSION`. A bump to that version is a deliberate,
 release-noted change that re-keys output, so it is not done casually.
 
 From this primitive the engine builds the higher-level mappings:
@@ -88,3 +88,34 @@ foreign keys stay joined). Two columns in different namespaces are independent.
 Keyed strategies (`hash`, `fpe`, `date_shift`, and deterministic-mode
 `shuffle`) require a namespace; a keyed column without one is a wiring error
 that the engine rejects rather than silently mis-keying.
+
+## FPE key and tweak model
+
+FPE uses a single Feistel key per `(job_seed, namespace)`, derived as
+`derive(job_seed, namespace, b"fpe-key/v1")`. This is the NIST SP 800-38G FF1
+key model: one key, varying tweak per column. The tweak is the column name
+encoded as UTF-8.
+
+This means:
+
+- Two columns in the same namespace with different names receive the same key
+  but different tweaks, so their ciphertexts are independent.
+- A given source value in a given column always produces the same ciphertext
+  within one seed and namespace: `fpe("alice", key, tweak="email")` is
+  byte-stable across runs.
+- **Renaming a column changes its FPE tweak and therefore its ciphertext.**
+  If you rename `email` to `contact_email` and re-run the mask, `unmask` with
+  the original column name will not reverse the new ciphertexts. Re-run unmask
+  against the new column name, or treat the rename as a re-keying event.
+
+The implementation is in `src/decoy_engine/execution/_strategies/_fpe.py`
+(key derivation) and `src/decoy_engine/transforms/fpe.py` (Feistel cipher).
+
+## Deterministic shuffle and column names
+
+The `shuffle` strategy binds the column name into its derivation source:
+`derive(job_seed, namespace, column_name.encode("utf-8"))`. This ensures that
+two shuffle columns in the same namespace draw distinct permutations. Without
+the column-name binding, both columns would share one permutation and their
+values would permute in lockstep, re-linking records across columns that masking
+is meant to decouple.

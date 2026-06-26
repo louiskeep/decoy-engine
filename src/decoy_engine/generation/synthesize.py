@@ -95,17 +95,14 @@ def generate_tables(
     The platform run path (S6-PLT) writes these through the same ``write_v2_outputs``
     + ``build_v2_target_node_runs`` path the mask spine uses.
     """
-    # QA-7 F8 (2026-06-01): typed error for non-numeric seed. Pre-fix
-    # int("abc") leaked a bare ValueError with cryptic message; matches
-    # the plan compiler's behavior post-QA-3 F1.
-    raw_seed = (config.get("global_settings") or {}).get("seed", _DEFAULT_SEED)
-    try:
-        seed = int(raw_seed)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(
-            f"generate_tables: global_settings.seed must be an integer; "
-            f"got {type(raw_seed).__name__} {raw_seed!r}"
-        ) from exc
+    # F5 (2026-06-26): use the single shared seed validator so a bool/float
+    # seed is rejected identically to the plan compiler + profile path
+    # (QA-7 F8 / QA-3 F1 lineage), instead of int(True) silently coercing
+    # `seed: true` to 1 on a direct generate call. Defaults absent seed to
+    # 0 (== _DEFAULT_SEED, pinned by test_v2_generation.py).
+    from decoy_engine.plan._seed import _normalize_job_seed_int
+
+    seed = _normalize_job_seed_int(config)
     tables_list = config.get("tables") or []
     # Generate tables only (mask tables are skipped). Key by name + build the dep
     # graph so a `reference` column can read its already-generated parent's pool.

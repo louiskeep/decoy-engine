@@ -91,14 +91,15 @@ MASK_GLOBALS: dict[str, Any] = {
     "abs": abs,
     "min": min,
     "max": max,
-    # QA-1 M21 (2026-06-01): module-level bindings retained for backward
-    # compatibility but tagged as the dangerous path. Two formula strategies in
-    # the same job calling these share module-global random state; column B's
-    # output depends on column A's execution order. make_mask_globals returns an
-    # isolated scope per call site.
-    "randint": _random.randint,
-    "choice": _random.choice,
-    "random": _random.random,
+    # F16a (2026-06-26): the RNG bindings (randint/choice/random) are deliberately
+    # NOT in the base scope. They are added ONLY by make_mask_globals(rng), bound
+    # to a per-formula isolated Random. Binding them here to module-global _random
+    # was a shared-state footgun: two formula strategies in the same job shared
+    # process-global random state, so column B's output depended on column A's
+    # execution order and the stream was non-deterministic across runs. Evaluating
+    # a formula that calls randint/choice/random against the bare MASK_GLOBALS now
+    # raises (the name is undefined) instead of silently sharing state; the only
+    # supported RNG path is make_mask_globals.
 }
 
 
@@ -108,8 +109,9 @@ def make_mask_globals(rng: _random.Random) -> dict[str, Any]:
 
     The mask-side FormulaStrategy should construct a per-formula
     `random.Random(formula_seed)` and pass it to this factory. The returned
-    dict is identical to `MASK_GLOBALS` except for the three RNG bindings,
-    which now read from the instance instead of module-global state.
+    dict is `MASK_GLOBALS` PLUS the three RNG bindings (randint/choice/random)
+    bound to the passed-in instance. The bare `MASK_GLOBALS` no longer carries
+    them (F16a), so this factory is the only path that exposes RNG to a formula.
     """
     scope = dict(MASK_GLOBALS)
     scope["randint"] = rng.randint

@@ -138,6 +138,77 @@ called out explicitly.
   (9 properties x 400 examples) pinning null-preservation, determinism,
   namespace isolation, and per-strategy structural invariants.
 
+### Fixed (remediation batch 1, 2026-06-26)
+
+Targeted correctness and hardening fixes from the F-series findings register
+(`docs/remediation-source.md`). Behavior changes are called out explicitly.
+
+- **Typed `MaskKeyDerivationError` for FPE and date-shift key failures** (F15).
+  `transforms/fpe.py` and `transforms/date_shift.py` previously raised a bare
+  `RuntimeError` when the per-column key derivation failed, which escaped an
+  upstream `except DecoyError` handler. Both now raise
+  `MaskKeyDerivationError(DecoyError, code="mask.key_derivation_failed")`, so
+  the failure is catchable at the engine boundary like every other typed engine
+  error. The `.strategy` attribute names the originating strategy (`"fpe"` or
+  `"date_shift"`). `MaskKeyDerivationError` is exported from
+  `decoy_engine.errors`. BEHAVIOR CHANGE: callers catching bare `RuntimeError`
+  on these paths must update to `DecoyError` or `MaskKeyDerivationError`.
+
+- **Deterministic shuffle binds the column name into its derivation source**
+  (F4). Before this fix, two shuffle columns sharing a namespace derived their
+  permutation from `derive(job_seed, namespace, b"")`, so both received the
+  same permutation and permuted in lockstep. That re-links values across columns
+  that masking is meant to decouple: a privacy regression. The source is now
+  `derive(job_seed, namespace, column_name.encode("utf-8"))`, so each column
+  draws a distinct permutation. BEHAVIOR CHANGE: deterministic-shuffle output
+  shifts for all columns. This fix bundles into the upcoming
+  `SEED_PROTOCOL_VERSION` v6 bump (not yet bumped); do not assume v6 has landed.
+
+- **`vault: true` fails at compile when `cryptography` is not installed**
+  (F14a). A vaulted column without the `vault` extra (`cryptography` package)
+  previously reached vault-write time hours into a run before failing. The plan
+  compiler now rejects it immediately with
+  `PlanCompileError(code="vault_requires_cryptography")`. Install the extra with
+  `pip install 'decoy-engine[vault]'`. BEHAVIOR CHANGE: configs with
+  `vault: true` that previously ran until vault-write now fail at compile.
+
+- **NER model version mismatch raises at run time** (F14b). When
+  `text_redact` is configured with `ner: true`, the spaCy model version is
+  stamped into the plan at compile time. If the installed model version differs
+  at run time, the engine now raises
+  `StrategyError(code="ner_model_version_mismatch")` before any redaction
+  runs, rather than silently producing different redactions for the same config
+  and seed. Pin the model version or recompile the plan after a model update.
+  Plans compiled before this version have no stamped version and skip the guard.
+
+- **Single shared seed validator** (F5). `plan/_seed.py` is a new internal
+  module containing `_normalize_job_seed` and `_normalize_job_seed_int`. The
+  pipeline profile path (`execution/_pipeline.py`), the plan compiler
+  (`plan/_compile.py`), and generation (`generation/synthesize.py`) all route
+  through it. Previously the profile path accepted a bool seed
+  (`isinstance(True, int)` is True in Python), so `seed: true` in YAML would
+  seed `random.Random(True) == random.Random(1)` on the profile path while
+  later being rejected by the compiler, producing a non-deterministic profile.
+  Now rejected uniformly across all paths. BEHAVIOR CHANGE: a non-numeric seed
+  passed to the public `generate_tables` now raises `PlanCompileError`
+  (code `seed_not_numeric`) instead of `ValueError`; callers catching
+  `ValueError` on that path must update to `PlanCompileError` or `DecoyError`.
+  BEHAVIOR CHANGE: a config with no `seed` (or `seed: null`) now defaults to
+  `0` on the profile path too, so seedless profiling is deterministic and the
+  former "called without a seed" warning no longer fires; callers that relied
+  on seedless runs drawing fresh entropy must set an explicit random seed.
+
+- **Shared-state RNG removed from bare `MASK_GLOBALS`** (F16a). The three RNG
+  bindings (`randint`, `choice`, `random`) are no longer present in the base
+  `MASK_GLOBALS` scope. They were bound to the module-global `random._random`
+  instance, so two formula strategies in the same job shared process-global
+  random state: column B's output depended on column A's execution order and
+  was non-deterministic across runs. The only supported RNG path is
+  `make_mask_globals(rng)`, which binds a per-formula isolated
+  `random.Random(formula_seed)`. BEHAVIOR CHANGE: a formula that calls
+  `randint`, `choice`, or `random` against the bare scope now raises
+  `InvalidExpression` (undefined name) instead of silently reading shared state.
+
 ### Added
 
 - **Generated engine capability matrix** (`docs/capability-matrix.md`, emitted by
