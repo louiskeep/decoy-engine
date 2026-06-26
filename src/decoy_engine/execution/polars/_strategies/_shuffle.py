@@ -3,8 +3,8 @@
 Mirrors the pandas `ShuffleStrategyHandler` (S9): a within-column,
 multiset-preserving permutation of the non-null values; null positions
 preserved. The permutation RNG is the SAME shared primitive as the pandas path
-(`numpy.random.default_rng` seeded from `derive(job_seed, namespace, b"")` for
-deterministic mode), so for a given seed the permutation is byte-identical across
+(`numpy.random.default_rng` seeded from `derive(job_seed, namespace, column_name)`
+for deterministic mode), so for a given seed the permutation is byte-identical across
 substrates. Only the data container changes (pl.Series in/out); the permutation
 logic is not reimplemented per substrate (substrate-decision doc: shared
 primitive, container-only migration).
@@ -47,7 +47,9 @@ class PolarsShuffleStrategyHandler:
                     strategy="shuffle",
                     message=f"column {column!r} uses deterministic shuffle but has no namespace.",
                 )
-            seed_int = int.from_bytes(derive(ctx.job_seed, plan.namespace, b"")[:8], "big")
+            seed_int = int.from_bytes(
+                derive(ctx.job_seed, plan.namespace, column.encode("utf-8"))[:8], "big"
+            )
             rng = np.random.default_rng(seed_int)
         else:
             rng = np.random.default_rng()
