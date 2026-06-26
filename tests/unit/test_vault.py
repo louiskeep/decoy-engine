@@ -264,6 +264,75 @@ class TestVaultFile:
         assert exc.value.code == "vault_key_mismatch"
 
 
+def _patch_vault_header(path, **overrides) -> None:
+    """Rewrite the unencrypted decoy-vault/v2 header in place, leaving the
+    encrypted chunks intact. Used to simulate a vault written under a
+    different SEED_PROTOCOL_VERSION without monkeypatching the constant."""
+    from decoy_engine.vault import _MAGIC
+
+    blob = path.read_bytes()
+    assert blob.startswith(_MAGIC)
+    off = len(_MAGIC)
+    hlen = int.from_bytes(blob[off : off + 4], "big")
+    header = json.loads(blob[off + 4 : off + 4 + hlen])
+    header.update(overrides)
+    new_header = json.dumps(header, sort_keys=True).encode("utf-8")
+    rest = blob[off + 4 + hlen :]
+    path.write_bytes(_MAGIC + len(new_header).to_bytes(4, "big") + new_header + rest)
+
+
+@needs_crypto
+class TestProtocolVersionGuard:
+    """F13/cross-version guard (2026-06-26): the vault stamps SEED_PROTOCOL_VERSION
+    in its unencrypted header; load_vault refuses a mismatch BEFORE decrypt with a
+    typed vault_protocol_version_mismatch, distinct from the wrong-seed
+    vault_key_mismatch (the version byte is mixed into the vault key, so a
+    cross-version vault is also undecryptable -- the guard makes the error clear)."""
+
+    def test_wrong_protocol_version_raises_protocol_mismatch(self, tmp_path):
+        writer = VaultWriter(b"\x01" * 8)
+        writer.add([("ns", "masked", "source")])
+        path = tmp_path / "v.bin"
+        writer.write(path)
+        # Same job_seed (so the key is correct), but the stamped version differs.
+        _patch_vault_header(path, seed_protocol_version=999)
+        with pytest.raises(VaultError) as exc:
+            load_vault(path, b"\x01" * 8)
+        assert exc.value.code == "vault_protocol_version_mismatch"
+
+    def test_protocol_mismatch_checked_before_decrypt(self, tmp_path):
+        # A wrong-version header with the WRONG seed too must still report the
+        # protocol mismatch (the header is validated before any decrypt).
+        writer = VaultWriter(b"\x01" * 8)
+        writer.add([("ns", "masked", "source")])
+        path = tmp_path / "v.bin"
+        writer.write(path)
+        _patch_vault_header(path, seed_protocol_version=999)
+        with pytest.raises(VaultError) as exc:
+            load_vault(path, b"\x02" * 8)  # wrong seed AND wrong version
+        assert exc.value.code == "vault_protocol_version_mismatch"
+
+    def test_matching_version_still_round_trips(self, tmp_path):
+        # Sanity: an untouched vault (current version) loads cleanly.
+        writer = VaultWriter(b"\x01" * 8)
+        writer.add([("ns", "masked", "source")])
+        path = tmp_path / "v.bin"
+        writer.write(path)
+        mapping, ambiguous = load_vault(path, b"\x01" * 8)
+        assert mapping == {("ns", "masked"): "source"}
+        assert ambiguous == 0
+
+    def test_wrong_version_distinct_from_wrong_seed(self, tmp_path):
+        # Wrong seed, CORRECT version -> key_mismatch (not protocol mismatch).
+        writer = VaultWriter(b"\x01" * 8)
+        writer.add([("ns", "masked", "source")])
+        path = tmp_path / "v.bin"
+        writer.write(path)
+        with pytest.raises(VaultError) as exc:
+            load_vault(path, b"\x02" * 8)
+        assert exc.value.code == "vault_key_mismatch"
+
+
 class TestCompileChecks:
     def test_vault_requires_namespace(self, tmp_path):
         cfg = _config(tmp_path, [{"name": "email", "strategy": "hash", "vault": True}])

@@ -167,7 +167,9 @@ def unmask_pipeline(
             column has no namespace (the key cannot be derived);
             ``code='vault_crypto_not_installed'``,
             ``code='vault_unreadable'``,
-            ``code='vault_format_unsupported'``, or
+            ``code='vault_format_unsupported'``,
+            ``code='vault_protocol_version_mismatch'`` when the vault was
+            written under a different ``SEED_PROTOCOL_VERSION``, or
             ``code='vault_key_mismatch'`` when the supplied vault cannot
             be opened under this config.
     """
