@@ -29,9 +29,7 @@ from decoy_engine import (
 def test_all_lists_every_public_name():
     expected = {
         # engine-v2 S8 composite generators + S13-rebaseline additions
-        "BundlePool",
         "CompositeAdapter",
-        "CompositeAddress",
         "CompositeCustom",
         "CompositeError",
         "CompositeGenerator",
@@ -39,7 +37,6 @@ def test_all_lists_every_public_name():
         "CompositeProvider",
         "atomic_swap_db_providers",
         "composite_address",
-        "composite_city_state_zip",
         "composite_custom",
         "composite_name_email",
         "composite_person",
@@ -168,30 +165,14 @@ def test_all_lists_every_public_name():
         "GenerationError",
         "PoolAdapter",
         "PoolBuilder",
-        "PoolCache",
         "PoolCapacityError",
         "PoolSampler",
         "QualityWarning",
         "ValuePool",
         "get_default_pool_cache",
-        # engine-v2 S6 (Custom Identifier Generators).
-        "EinAdapter",
-        "EinDomain",
-        "EinValidator",
-        "IdentifierError",
-        "IdentifierFormatError",
-        "MrnAdapter",
-        "MrnDomain",
-        "MrnValidator",
-        "NdcAdapter",
-        "NdcDomain",
-        "NdcValidator",
-        "NpiAdapter",
-        "NpiDomain",
-        "NpiValidator",
-        "SsnAdapter",
-        "SsnDomain",
-        "SsnValidator",
+        # engine-v2 S6 (Custom Identifier Generators) were moved out of the
+        # top-level __all__ (F9); they live under decoy_engine.identifiers now
+        # while keeping their module bindings for backward compatibility.
         # engine-v2 S9 (Execution Adapter, pandas).
         "ExecutionAdapter",
         "ExecutionError",
