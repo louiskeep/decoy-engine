@@ -1,0 +1,66 @@
+{
+  "_comment": "Signed-provenance scaffold (§B.7). Fields marked PENDING are populated by the ML3.2 signing sprint.",
+  "schema_version": "provenance/v1",
+  "pack_id": "lgbm-v1",
+  "pack_version": "0.1.0",
+
+  "corpus": {
+    "datasheet_ref": "docs/v2/ml/corpus-datasheet.md",
+    "generation_function": "decoy_engine.storm.eval.fixtures:build_extended_fixtures",
+    "generation_seed": 20260627,
+    "total_columns": 291,
+    "real_pii_used": false,
+    "ood_columns": 30,
+    "note": "100% synthetic; no real PII at any stage."
+  },
+
+  "code": {
+    "repo": "decoy-engine",
+    "branch": "feat/ml2-lightgbm",
+    "base_commit": "8a5f63d",
+    "training_module": "decoy_engine.storm.model_pack.trainer",
+    "feature_module": "decoy_engine.storm.model_pack.featurizer",
+    "loader_module": "decoy_engine.storm.model_pack.loader",
+    "feature_schema_version": "ml1-v1"
+  },
+
+  "eval": {
+    "report_path": "docs/v2/ml/lightgbm-report.json",
+    "report_sha256": "36f4a54af098d0d9a4a99e7c66ad187e2ab5d26ce97af0e49f194c5a5cbd46b8",
+    "gate_doc": "docs/ml-benchmarking-and-privacy.md",
+    "lift_gate_threshold_ppt": 5.0,
+    "lift_gate_met": true,
+    "macro_recall_baseline": 0.8472,
+    "macro_recall_model": 0.9861,
+    "lift_ppt": 13.89,
+    "brier_score": 0.0099
+  },
+
+  "model": {
+    "weights_sha256": "04e7ed061ca3503abf32ab7482f4b1b50c19b3a4d45e30684d325ca529ce69a5",
+    "algorithm": "LGBMClassifier + CalibratedClassifierCV(sigmoid)",
+    "calibration_method": "sigmoid",
+    "operating_threshold": 0.1667,
+    "fn_fp_cost_ratio": 5,
+    "training_seed": 42,
+    "split_strategy": "StratifiedGroupKFold(n_splits=5, value-level groups)"
+  },
+
+  "privacy": {
+    "no_real_pii_in_weights": true,
+    "no_raw_values_in_report": true,
+    "b4_test_path": "tests/privacy/test_no_raw_values_in_ml_pack.py",
+    "deployment_constraint": "on-prem only (§B.5); SHA-256 verified before joblib.load",
+    "detection_is_not_deidentification": true,
+    "differential_privacy_claim": false
+  },
+
+  "signing": {
+    "status": "unsigned",
+    "signing_key_ref": "unsigned",
+    "signature": "PENDING-ML3.2",
+    "signed_at": "PENDING-ML3.2",
+    "signer": "PENDING-ML3.2",
+    "verification_command": "PENDING-ML3.2"
+  }
+}
