@@ -714,7 +714,12 @@ class TestReferencedFormulaPostPass:
 
         gcols = [
             {"name": "wrap", "type": "formula", "references": ["base"], "formula": "f'[{base}]'"},
-            {"name": "base", "type": "formula", "references": ["seed_col"], "formula": "f'B{seed_col}'"},
+            {
+                "name": "base",
+                "type": "formula",
+                "references": ["seed_col"],
+                "formula": "f'B{seed_col}'",
+            },
             {"name": "seed_col", "type": "sequence", "start": 1, "step": 1},
         ]
         with caplog.at_level(logging.WARNING):
