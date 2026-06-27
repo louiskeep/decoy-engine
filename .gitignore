@@ -18,6 +18,11 @@ data/
 !src/decoy_engine/generation/composite/data/
 !src/decoy_engine/generation/composite/data/us_localities.csv
 
+# SP-06 / P5.INFRA.3: reference table Parquet files are packaged source data.
+!src/decoy_engine/reference_tables/data/
+!src/decoy_engine/reference_tables/data/us_zip5_city_state.parquet
+!src/decoy_engine/reference_tables/data/vehicle_make_model_year.parquet
+
 # Sphinx output: rendered HTML and autoapi-generated .rst (autoapi_keep_files
 # is False, so docs/api is transient, but a failed build can leave it behind).
 docs/_build/
