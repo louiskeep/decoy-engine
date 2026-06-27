@@ -445,3 +445,73 @@ def check_vault_columns(config: dict[str, Any]) -> None:
                         "by (namespace, masked_value), so add a namespace."
                     ),
                 )
+
+
+def check_fpe_checksum_scheme(config: dict[str, Any]) -> None:
+    """Reject FPE columns whose ``checksum`` param is unknown or unsupported.
+
+    Compile-check ownership table row #15 (SP-04 / P5.INFRA.1 remediation).
+
+    Two failure modes caught here:
+
+    1. Unknown scheme (typo, e.g. ``checksum: ibna``): Decoy forbids silent
+       misconfiguration passthrough.  Any value not in
+       ``checksums._KNOWN_SCHEMES`` raises with code
+       ``fpe_checksum_unknown_scheme``.
+
+    2. IBAN (``checksum: iban``): per-country BBAN structure enforced by
+       ``stdnum.iban.validate`` cannot be satisfied by a free Feistel
+       permutation.  Raises with code ``fpe_checksum_iban_unsupported``.
+       IBAN columns may still use ``checksums.validate('iban', ...)`` for
+       validation-only use cases; only the FPE mode is rejected here.
+
+    Config-only (no profile, no source data): safe to run in --no-profile
+    mode and in ``run_config_only_checks``.
+    """
+    from decoy_engine.checksums import _KNOWN_SCHEMES
+
+    _FPE_UNSUPPORTED_SCHEMES = frozenset({"iban"})
+
+    tables = config.get("tables", []) if isinstance(config.get("tables"), list) else []
+    for table_entry in tables:
+        if not isinstance(table_entry, dict):
+            continue
+        table_name = table_entry.get("name", "?")
+        for col_entry in table_entry.get("columns", []) or []:
+            if not isinstance(col_entry, dict):
+                continue
+            if col_entry.get("strategy") != "fpe":
+                continue
+            provider_config = col_entry.get("provider_config") or {}
+            checksum = (
+                provider_config.get("checksum") if isinstance(provider_config, dict) else None
+            )
+            if not checksum:
+                continue
+            col_name = col_entry.get("name", "?")
+            if checksum not in _KNOWN_SCHEMES:
+                raise PlanCompileError(
+                    code="fpe_checksum_unknown_scheme",
+                    path=f"tables.{table_name}.columns.{col_name}.provider_config.checksum",
+                    message=(
+                        f"column {col_name!r} in table {table_name!r} uses "
+                        f"strategy fpe with unknown checksum scheme {checksum!r}. "
+                        f"Known schemes: {sorted(_KNOWN_SCHEMES)}. "
+                        "Check for typos; valid fpe checksum schemes are "
+                        "luhn, npi, vin, isbn13, ean13, gtin "
+                        "(iban is not supported for FPE mode)."
+                    ),
+                )
+            if checksum in _FPE_UNSUPPORTED_SCHEMES:
+                raise PlanCompileError(
+                    code="fpe_checksum_iban_unsupported",
+                    path=f"tables.{table_name}.columns.{col_name}.provider_config.checksum",
+                    message=(
+                        f"column {col_name!r} in table {table_name!r} uses "
+                        "strategy fpe with checksum='iban'. FPE checksum mode "
+                        "does not support 'iban': per-country BBAN structure "
+                        "(enforced by stdnum.iban.validate) cannot be satisfied "
+                        "by a format-preservation permutation. "
+                        "Use validate-only or a different strategy for IBAN columns."
+                    ),
+                )

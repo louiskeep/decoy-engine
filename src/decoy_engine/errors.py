@@ -237,6 +237,24 @@ class MaskKeyDerivationError(DecoyError):
         super().__init__(message)
 
 
+class FpeChecksumError(DecoyError):
+    """FPE checksum mode cannot produce a valid-by-construction value for the
+    requested scheme, or the scheme name is unknown.
+
+    Raised at call time in ``_fpe_checksum_permute`` (backstop) and at
+    plan-compile time for the same conditions.  Callers should catch
+    ``DecoyError`` or ``FpeChecksumError`` specifically.
+
+    Maps to code ``fpe.checksum_unsupported``. Carries the scheme name on
+    ``.scheme``."""
+
+    code: str = "fpe.checksum_unsupported"
+
+    def __init__(self, message: str, *, scheme: str | None = None) -> None:
+        self.scheme = scheme
+        super().__init__(message)
+
+
 __all__ = [
     "ConfigError",
     "ConnectorAuthError",
@@ -245,6 +263,7 @@ __all__ = [
     "EmptyParentPoolError",
     "FKPreservationError",
     "FlagPauseSignal",
+    "FpeChecksumError",
     "LicenseError",
     "LicenseExpiredError",
     "MaskKeyDerivationError",

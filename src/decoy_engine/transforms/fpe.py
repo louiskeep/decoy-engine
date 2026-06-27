@@ -194,40 +194,125 @@ def _fpe_checksum_permute(
 ) -> str:
     """Permute a string and recompute the check digit for the given scheme.
 
-    For schemes where the check digit is at the end (luhn, npi, ean13,
-    isbn13, gtin): permute the body (everything except the last character),
-    then append the recomputed check digit.  Output is always checksum-valid
-    by construction, and the transformation is a bijection on the body space.
+    Each scheme enforces its own alphabet constraint so the output is
+    valid-by-construction and calc_check_digit never KeyErrors.
 
-    For IBAN: permute CC+BBAN (body = s[:2]+s[4:]), then recompute the
-    2-character check digits and reassemble.
+    Per-scheme rules
+    ----------------
+    luhn / ean13 / gtin
+        Digit-only schemes.  The permutation charset is constrained to
+        ``'0123456789'`` regardless of the caller's charset config.  Check
+        digit appended at the end.
 
-    For VIN: permute the 16 non-check characters (body = s[:8]+s[9:]), then
-    recompute the single check character and insert at position 8.
+    npi
+        NPI (CMS NPPES, 2008): first digit must be 1 or 2.  The leading
+        digit is pinned (preserved from the source), and only the 8-digit
+        middle body is permuted over digits.  Check digit appended at end.
+        Minimum length: 10 chars (9-char body + 1-char check).
 
-    The same logic applies in both the forward (encrypt) and inverse (decrypt)
-    directions -- the body is permuted/inverted and the check digit recomputed
-    -- so the function is symmetric and no separate inverse path is needed.
+    isbn13
+        The 3-char bookland prefix (978 or 979) is pinned; the 9-digit
+        inner body (s[3:12]) is permuted over digits; the EAN-13 check
+        digit is appended.  Minimum length: 13 chars.
+
+    vin
+        The permutation charset is constrained to the VIN alphabet
+        (0-9 A-Z excluding I, O, Q -- NHTSA 49 CFR Part 565).  Any I/O/Q
+        in the caller's charset is silently dropped; the body characters
+        are translated to the nearest VIN-legal value (already ensured by
+        the permutation staying in-alphabet).  16 non-check chars (s[:8] +
+        s[9:]) are permuted; the ISO 3779 check char is inserted at pos 8.
+        Minimum length: 17 chars.
+
+    iban
+        FAILS CLOSED.  Per-country BBAN structure (enforced by
+        stdnum.iban.validate) cannot be satisfied by a free Feistel
+        permutation.  Raises ``FpeChecksumError`` unconditionally.
+        Use validate-only or a different strategy for IBAN columns.
+
+    unknown scheme
+        FAILS CLOSED.  Any scheme name not in ``checksums._KNOWN_SCHEMES``
+        raises ``FpeChecksumError``.  The pre-SP04 fall-through to plain
+        FPE with no check digit was silent misconfiguration; Decoy forbids
+        that pattern.
+
+    The function is symmetric: the same body permutation runs in both the
+    forward (encrypt) and inverse (decrypt) directions.
     """
-    from decoy_engine.checksums import calc_check_digit
+    from decoy_engine.checksums import _KNOWN_SCHEMES, calc_check_digit
+    from decoy_engine.errors import FpeChecksumError
 
-    if scheme in ("luhn", "npi", "ean13", "isbn13", "gtin"):
-        body = _permute(s[:-1], key, charset, tweak, forward=forward)
-        return body + calc_check_digit(scheme, body)
+    # H2: unknown scheme - fail closed.
+    if scheme not in _KNOWN_SCHEMES:
+        raise FpeChecksumError(
+            f"FPE checksum mode received unknown scheme {scheme!r}. "
+            f"Known schemes: {sorted(_KNOWN_SCHEMES)}. "
+            "Check your config for typos; valid fpe checksum schemes are "
+            "luhn, npi, vin, isbn13, ean13, gtin (iban is not supported for FPE).",
+            scheme=scheme,
+        )
+
+    # B1: IBAN - fail closed.
     if scheme == "iban":
-        # Body = CC (positions 0-1) + BBAN (positions 4+); skip the 2-char check
-        raw_body = s[:2] + s[4:]
-        enc = _permute(raw_body, key, charset, tweak, forward=forward)
-        check = calc_check_digit("iban", enc)
-        return enc[:2] + check + enc[2:]
+        raise FpeChecksumError(
+            "FPE checksum mode does not support 'iban': per-country BBAN "
+            "structure (enforced by stdnum.iban.validate) cannot be satisfied "
+            "by a format-preservation permutation. Use validate-only or a "
+            "different strategy for IBAN columns. "
+            "See carry-forward note in p5-infra-1-python-stdnum.md.",
+            scheme="iban",
+        )
+
+    _DIGITS_ONLY = "0123456789"
+
+    # luhn / ean13 / gtin: digit-only, check digit at end.
+    if scheme in ("luhn", "ean13", "gtin"):
+        body = _permute(s[:-1], key, _DIGITS_ONLY, tweak, forward=forward)
+        return body + calc_check_digit(scheme, body)
+
+    # M1: NPI - pin leading digit, permute 8-digit middle body over digits.
+    if scheme == "npi":
+        # L1: NPI needs at least 10 chars (9-char body + check); pass through if too short.
+        if len(s) < 10:
+            return s
+        # Pin the first character (must be 1 or 2 per NPPES).
+        leading = s[0]
+        middle_body = _permute(s[1:9], key, _DIGITS_ONLY, tweak, forward=forward)
+        body9 = leading + middle_body
+        return body9 + calc_check_digit("npi", body9)
+
+    # B2: isbn13 - pin bookland prefix (s[:3]), permute 9 inner digits.
+    if scheme == "isbn13":
+        # L1: isbn13 needs 13 chars; pass through if too short.
+        if len(s) < 13:
+            return s
+        prefix = s[:3]  # '978' or '979' -- pinned
+        inner = _permute(s[3:12], key, _DIGITS_ONLY, tweak, forward=forward)
+        body12 = prefix + inner
+        return body12 + calc_check_digit("isbn13", body12)
+
+    # H1: VIN - constrain charset to VIN alphabet, permute 16-char body.
     if scheme == "vin":
-        # Body = positions 0-7 + positions 9-16; skip the check at position 8
-        raw_body = s[:8] + s[9:]
-        enc = _permute(raw_body, key, charset, tweak, forward=forward)
+        # L1: VIN needs 17 chars; pass through if too short.
+        if len(s) < 17:
+            return s
+        # Drop I, O, Q from whatever charset the caller provided.
+        from decoy_engine.checksums import _VIN_CHARSET
+
+        vin_charset = "".join(c for c in charset if c in _VIN_CHARSET)
+        if len(vin_charset) < 2:
+            # Fallback: use the canonical VIN digit subset so permutation can proceed.
+            vin_charset = _DIGITS_ONLY
+        raw_body = s[:8] + s[9:]  # 16 non-check chars
+        enc = _permute(raw_body, key, vin_charset, tweak, forward=forward)
         check = calc_check_digit("vin", enc)
         return enc[:8] + check + enc[8:]
-    # Unknown scheme: fall through to plain permute (validation upstream)
-    return _permute(s, key, charset, tweak, forward=forward)
+
+    # Should never reach here: all known non-IBAN schemes handled above.
+    raise FpeChecksumError(
+        f"Unhandled scheme {scheme!r} in _fpe_checksum_permute (internal error).",
+        scheme=scheme,
+    )
 
 
 def _fpe_pure_value(

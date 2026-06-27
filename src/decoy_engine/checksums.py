@@ -112,8 +112,16 @@ def _npi_calc_check_digit(body: str) -> str:
 
 
 def _npi_validate(value: str) -> bool:
-    """NPI check: 10 digits, last digit is the check digit per CMS spec."""
+    """NPI check: 10 digits, first digit 1 or 2 (NPPES), last digit is CMS check.
+
+    NPPES allocates 1- and 2-prefixed NPIs only (CMS, 2008).  A 10-digit
+    string with a valid Luhn check but a leading 0 or 3-9 is structurally
+    invalid and is rejected here to agree with the engine's own NpiValidator
+    (providers_v2/identifiers/_npi.py ``_is_valid_npi``).
+    """
     if not _NPI_RE.match(value):
+        return False
+    if value[0] not in ("1", "2"):
         return False
     return value[9] == _npi_calc_check_digit(value[:9])
 

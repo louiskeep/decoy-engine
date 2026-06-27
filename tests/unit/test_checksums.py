@@ -94,6 +94,22 @@ class TestNpi:
     def test_validate_non_digits_rejected(self) -> None:
         assert checksums.validate("npi", "12345678AB") is False
 
+    def test_validate_npi_leading_digit_zero_invalid(self) -> None:
+        # NPPES allocates 1 and 2 only; leading-0 is invalid even with correct check
+        body = "023456789"
+        check = checksums.calc_check_digit("npi", body)
+        assert checksums.validate("npi", body + check) is False
+
+    def test_validate_npi_leading_digit_nine_invalid(self) -> None:
+        # Leading-9 is outside NPPES allocation
+        body = "923456789"
+        check = checksums.calc_check_digit("npi", body)
+        assert checksums.validate("npi", body + check) is False
+
+    def test_validate_npi_leading_digit_two_valid(self) -> None:
+        # Leading-2 is a valid NPPES allocation; check digit = 2 for body 200000000
+        assert checksums.validate("npi", "2000000002") is True
+
 
 # ---------------------------------------------------------------------------
 # IBAN (International Bank Account Number, ISO 13616 / mod-97)
