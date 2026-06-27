@@ -13,6 +13,7 @@ New to Decoy? Start with the quickstart, then the recipes.
 - [Determinism](determinism.md): the seed and key protocol; what is and is not deterministic.
 - [CLI](cli.md): the `decoy` command surface.
 - [What Decoy does not prove](what-we-cannot-prove.md): the honest limitations.
+- [ML benchmarking & privacy](ml-benchmarking-and-privacy.md): the gated standard for the field-recognition ML sprints.
 
 ## Top-level
 
@@ -54,6 +55,7 @@ relationships
 determinism
 cli
 what-we-cannot-prove
+ml-benchmarking-and-privacy
 ```
 
 ```{toctree}
