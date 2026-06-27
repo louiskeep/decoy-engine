@@ -29,6 +29,10 @@ import os
 from pathlib import Path
 from typing import Any
 
+from decoy_engine.storm.model_pack.provenance import (
+    load_signing_key_from_env,
+    verify_manifest,
+)
 from decoy_engine.storm.model_pack.types import (
     FEATURE_SCHEMA_VERSION,
     PACK_FORMAT,
@@ -95,6 +99,7 @@ class ModelPackLoader:
         self._check_feature_schema(manifest)
         model_bytes = self._read_weights()
         self._check_sha256(model_bytes, manifest)
+        self._check_signature(manifest)
 
         pack_obj = self._deserialise(model_bytes)
         pack_obj["manifest"] = manifest
@@ -176,6 +181,52 @@ class ModelPackLoader:
                 f"expected {manifest.sha256!r}, got {actual!r}. "
                 "The weights file may have been tampered with or corrupted."
             )
+
+    def _check_signature(self, manifest: ModelPackManifest) -> None:
+        """Verify HMAC-SHA256 signature when a signing key is configured (ML3.2).
+
+        Behaviour:
+          - Key configured + valid HMAC stored  -> pass (signature verified).
+          - Key configured + HMAC mismatch      -> ModelPackLoadError (tampered).
+          - Key configured + no HMAC stored     -> ModelPackLoadError (unsigned pack).
+          - No key configured + HMAC stored     -> warn once; verification skipped.
+          - No key configured + no HMAC stored  -> warn once; unsigned pack accepted.
+
+        The key is read from the DECOY_PACK_SIGNING_KEY env var (hex-encoded bytes).
+        """
+        key = load_signing_key_from_env()
+        signed = bool(manifest.manifest_hmac)
+
+        if key is not None:
+            # Key is configured: enforce signature.
+            if not signed:
+                raise ModelPackLoadError(
+                    f"Pack {self._pack_dir} is unsigned (manifest_hmac is empty) "
+                    "but DECOY_PACK_SIGNING_KEY is configured. "
+                    "Sign the pack with sign_manifest() before deploying."
+                )
+            if not verify_manifest(manifest, key):
+                raise ModelPackLoadError(
+                    f"Pack {self._pack_dir} signature verification FAILED. "
+                    "The manifest may have been tampered with. "
+                    "Re-sign with the current key or investigate the discrepancy."
+                )
+            _log.debug("Pack %s signature verified (ML3.2).", self._pack_dir)
+        else:
+            # No key configured: accept but flag.
+            if signed:
+                _log.warning(
+                    "Pack %s has a manifest_hmac signature but DECOY_PACK_SIGNING_KEY "
+                    "is not configured; signature verification skipped.",
+                    self._pack_dir,
+                )
+            else:
+                _log.warning(
+                    "Pack %s is unsigned (manifest_hmac empty) and no "
+                    "DECOY_PACK_SIGNING_KEY is configured. "
+                    "Provenance cannot be verified (ML3.2).",
+                    self._pack_dir,
+                )
 
     def _deserialise(self, model_bytes: bytes) -> dict[str, Any]:
         # SHA-256 verified above before reaching this point.

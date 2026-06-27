@@ -1,0 +1,145 @@
+"""classify_fields: public ML3.1 column-type classification function.
+
+Loads the model pack via ``ModelPackLoader``, builds ML1 aggregate features
+per column, and returns per-column classification results.
+
+Privacy invariant (ml-benchmarking-and-privacy.md §B.4):
+    Output contains ONLY: label, calibrated_confidence, band, and model
+    provenance metadata.  No raw cell values are ever included in the
+    returned dict.  The feature pipeline (``build_column_features`` +
+    ``flatten_features``) already enforces this at the featurizer boundary;
+    this function adds no new surface.
+
+Off-by-default (ml-benchmarking-and-privacy.md §B.5):
+    The function returns ``None`` when ML is disabled (``DECOY_ML_DISABLED=1``)
+    or when the pack cannot be loaded (missing, corrupt, wrong schema).
+    Callers MUST treat ``None`` as "use the deterministic baseline" --
+    a failed pack load must NEVER crash the host process.
+
+Determinism:
+    Given the same ``DataFrame`` + same pack, ``classify_fields`` always
+    returns the same result.  The feature builder is deterministic (no
+    random sampling), and the model uses a fixed seed (``TRAIN_SEED=42``).
+    No external state is written.
+"""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+from typing import Any
+
+_log = logging.getLogger(__name__)
+
+#: Default pack location (the committed lgbm-v1 artifact).
+_DEFAULT_PACK = (
+    Path(__file__).parents[4] / "docs" / "v2" / "ml" / "packs" / "lgbm-v1"
+)
+
+
+def classify_fields(
+    df: "pandas.DataFrame",  # noqa: F821 (forward ref)
+    *,
+    pack_dir: Path | None = None,
+) -> dict[str, dict[str, Any]] | None:
+    """Classify each column in *df* using the trained LightGBM model pack.
+
+    This is the engine library entry point for ML field recognition (ML3.1).
+    The HTTP classify-fields endpoint and the platform review UI consume this
+    function; they live in the platform repo (ML3.3, frontend lane).
+
+    Parameters
+    ----------
+    df:
+        A pandas ``DataFrame``.  Each column is classified independently.
+        The raw cell values are NEVER included in the output (§B.4).
+    pack_dir:
+        Path to the ``decoy-model-pack/v1`` directory.  Defaults to the
+        committed ``docs/v2/ml/packs/lgbm-v1`` artifact.
+
+    Returns
+    -------
+    dict[str, dict] | None
+        Per-column classification results, keyed by column name.  Each value
+        is a dict with keys:
+
+          ``label`` (str | None)
+            Predicted field type (e.g. ``"ssn"``, ``"pan"``), or ``None``
+            when the calibrated confidence is below the operating threshold.
+          ``calibrated_confidence`` (float)
+            Calibrated ``predict_proba`` maximum score, in [0, 1].
+          ``band`` (str)
+            ``"high"`` (>= 0.95), ``"review"`` (0.70-0.95), or ``"low"``.
+            NOTE: for lgbm-v1 the ``"high"`` band is not triggered at this
+            corpus scale (see ``eval/bands.py`` PROVISIONAL measurements).
+          ``model_pack_id`` (str)
+            Pack identifier from the manifest (e.g. ``"lgbm-v1"``).
+          ``model_pack_version`` (str)
+            Semantic version from the manifest (e.g. ``"0.1.0"``).
+          ``feature_schema_version`` (str)
+            Feature schema the pack was trained against (e.g. ``"ml1-v1"``).
+
+        Returns ``None`` when ML is disabled (``DECOY_ML_DISABLED=1``) or
+        when the pack cannot be loaded (missing, corrupt, schema mismatch).
+        Callers MUST treat ``None`` as "fall back to the deterministic regex
+        baseline" and MUST NOT raise from ``None``.
+
+    Notes
+    -----
+    - Empty ``DataFrame`` (0 columns) returns an empty dict (not ``None``).
+    - Columns with all-null values are classified from their header tokens
+      and dtype alone; the feature builder handles nulls gracefully.
+    """
+    import numpy as np  # noqa: PLC0415
+
+    from decoy_engine.storm.eval.bands import classify_band
+    from decoy_engine.storm.eval.fixtures import NO_DETECTOR
+    from decoy_engine.storm.features.builder import build_column_features
+    from decoy_engine.storm.model_pack.featurizer import flatten_features
+    from decoy_engine.storm.model_pack.loader import ModelPackLoader, ModelPackLoadError
+
+    resolved_dir = pack_dir if pack_dir is not None else _DEFAULT_PACK
+
+    loader = ModelPackLoader(resolved_dir)
+    pack = loader.load_with_fallback()
+    if pack is None:
+        # ML disabled or pack unavailable; caller uses the regex baseline.
+        _log.debug("classify_fields: pack unavailable; returning None.")
+        return None
+
+    vec = pack["vec"]
+    clf = pack["clf"]
+    manifest = pack["manifest"]
+    threshold: float = manifest.operating_threshold
+
+    results: dict[str, dict[str, Any]] = {}
+
+    for col_name in df.columns:
+        series = df[col_name]
+        feats = build_column_features(series, str(col_name))
+        flat = flatten_features(feats.to_dict())
+
+        X_mat = vec.transform([flat])
+        proba: np.ndarray = clf.predict_proba(X_mat)[0]
+        max_idx = int(np.argmax(proba))
+        max_prob = float(proba[max_idx])
+        predicted_cls: str = clf.classes_[max_idx]
+
+        if max_prob < threshold:
+            label = None
+            band = "low"
+        else:
+            label = predicted_cls if predicted_cls != NO_DETECTOR else None
+            band = classify_band(max_prob)
+
+        # §B.4: output contains metadata and statistics only -- NO raw cell values.
+        results[str(col_name)] = {
+            "label": label,
+            "calibrated_confidence": round(max_prob, 4),
+            "band": band,
+            "model_pack_id": manifest.pack_id,
+            "model_pack_version": manifest.version,
+            "feature_schema_version": manifest.feature_schema_version,
+        }
+
+    return results

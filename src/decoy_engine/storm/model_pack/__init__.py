@@ -10,16 +10,21 @@ Requires the ``[ml]`` optional extras:
     pip install -e '.[ml]'
 """
 
+from decoy_engine.storm.model_pack.classify import classify_fields
 from decoy_engine.storm.model_pack.featurizer import flatten_features
 from decoy_engine.storm.model_pack.loader import (
     ModelPackLoader,
     ModelPackLoadError,
 )
+from decoy_engine.storm.model_pack.provenance import sign_manifest, verify_manifest
 from decoy_engine.storm.model_pack.types import ModelPackManifest
 
 __all__ = [
     "ModelPackLoader",
     "ModelPackLoadError",
     "ModelPackManifest",
+    "classify_fields",
     "flatten_features",
+    "sign_manifest",
+    "verify_manifest",
 ]

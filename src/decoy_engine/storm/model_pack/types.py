@@ -81,6 +81,10 @@ class ModelPackManifest:
     operating_threshold: float = 0.167
     eval_report_hash: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
+    #: HMAC-SHA256 of the canonical manifest JSON (all fields except this one).
+    #: Set by sign_manifest(); verified by the loader when DECOY_PACK_SIGNING_KEY
+    #: is configured (ML3.2).  Empty string = unsigned.
+    manifest_hmac: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
