@@ -28,6 +28,42 @@ minimum engine version it was tested against via its
   consumed but never attached, pinned by a guard test. Default-OFF
   leaves the hot path byte-for-byte unchanged, so golden / compat-corpus
   fixtures do not move; no persisted-format or seed-protocol bump.
+### Added (internal module hygiene, 2026-06-26)
+
+- **`decoy_engine.identifiers` sub-import namespace** (F9). The identifier
+  families (Ein/Mrn/Ndc/Npi/Ssn adapters, domains, and validators, plus
+  `IdentifierError`/`IdentifierFormatError`) are now addressable via a focused
+  module: `from decoy_engine.identifiers import EinValidator`. The top-level
+  `decoy_engine` package keeps all 21 symbols as module bindings for backward
+  compatibility, but they are no longer part of `decoy_engine.__all__`; the
+  canonical import path is `decoy_engine.identifiers`. `BundlePool`,
+  `PoolCache`, `CompositeAddress`, and `composite_city_state_zip` are similarly
+  removed from `__all__` while keeping their top-level bindings.
+
+### Changed (internal module splits, 2026-06-26)
+
+No behavior or API change. Modules that exceeded the 600-LOC orchestration cap
+were decomposed into private helpers. All external import paths are preserved.
+
+- **`generators/columns.py`** (1333 LOC) split into `_distribution.py`
+  (distribution-snapshot sampler methods, F11a) and `_formula.py` (formula
+  column evaluation methods, F11a); both are private mixins folded into
+  `ColumnGenerator` via multiple inheritance.
+- **`storm/detectors.py`** (1356 LOC) split: regex catalog extracted to
+  `_patterns.py` and detector validation helpers extracted to `_validators.py`
+  (F11b).
+- **`storm/profiler.py`** (999 LOC) split: column-shape classification helpers
+  extracted to `_classification.py` and distribution-snapshot builders extracted
+  to `_distributions.py` (F11c).
+- **`plan/_compile.py`** (845 LOC) split: seed-envelope builder extracted to
+  `_seed_envelope.py` and relationship/namespace graph builders extracted to
+  `_graph.py` (F11d). `_compile.py` now sits below the 600-LOC cap and its
+  allowlist entry has been removed.
+- **`generation/synthesize.py`**: the one type-only function-body import
+  (`collections.abc.Iterator`) hoisted to a `TYPE_CHECKING` block (F12). All
+  other deferred imports in that module are real runtime imports and were left
+  in place.
+
 ### Added (BF3 generation completeness, 2026-06-26)
 
 - **Cross-column `formula` references in v2 generation**. A generate

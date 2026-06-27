@@ -154,6 +154,10 @@ from decoy_engine.providers_v2 import (
     get_default_registry,
     register_faker_provider_v2,
 )
+
+# F9: these identifier families are no longer in decoy_engine.__all__ (use the
+# decoy_engine.identifiers sub-import). The bindings are kept here for
+# backward-compatible attribute access; see _F9_KEPT_BINDINGS below.
 from decoy_engine.providers_v2.identifiers import (
     EinAdapter,
     EinDomain,
@@ -225,6 +229,35 @@ from decoy_engine.validation_result import (
 )
 from decoy_engine.vault import VaultError, VaultWriter, load_vault, vault_writer_for_config
 
+# F9: names trimmed from __all__ but kept as module bindings so existing
+# attribute access (decoy_engine.EinValidator, decoy_engine.BundlePool, ...)
+# stays non-breaking. Anchoring them here marks the imports as intentional
+# re-exports for the unused-import lint without scattering per-name noqas.
+# The canonical home for the identifier families is decoy_engine.identifiers.
+_F9_KEPT_BINDINGS = (
+    BundlePool,
+    CompositeAddress,
+    PoolCache,
+    composite_city_state_zip,
+    EinAdapter,
+    EinDomain,
+    EinValidator,
+    IdentifierError,
+    IdentifierFormatError,
+    MrnAdapter,
+    MrnDomain,
+    MrnValidator,
+    NdcAdapter,
+    NdcDomain,
+    NdcValidator,
+    NpiAdapter,
+    NpiDomain,
+    NpiValidator,
+    SsnAdapter,
+    SsnDomain,
+    SsnValidator,
+)
+
 __version__ = "0.1.0"
 
 __all__ = [
@@ -240,12 +273,10 @@ __all__ = [
     "VALIDATION_CODES",
     "AdapterError",
     "BackendAdapter",
-    "BundlePool",
     "CapabilityMatrix",
     "CardinalityMode",
     "CheckResult",
     "CompositeAdapter",
-    "CompositeAddress",
     "CompositeCoherenceReport",
     "CompositeCustom",
     "CompositeError",
@@ -263,9 +294,6 @@ __all__ = [
     "DiscoverySqlError",
     "DistinctCount",
     "Domain",
-    "EinAdapter",
-    "EinDomain",
-    "EinValidator",
     "ExecutionAdapter",
     "ExecutionContext",
     "ExecutionError",
@@ -278,25 +306,14 @@ __all__ = [
     "FkValidityReport",
     "FlagPauseSignal",
     "GenerationError",
-    "IdentifierError",
-    "IdentifierFormatError",
     "IdentityDomain",
     "LicenseError",
     "LicenseExpiredError",
     "LicenseVerifier",
     "Logger",
-    "MrnAdapter",
-    "MrnDomain",
-    "MrnValidator",
     "NamespaceBinding",
     "NamespaceConfigError",
     "NamespaceRegistry",
-    "NdcAdapter",
-    "NdcDomain",
-    "NdcValidator",
-    "NpiAdapter",
-    "NpiDomain",
-    "NpiValidator",
     "NullCount",
     "OrphanPolicy",
     "PandasExecutionAdapter",
@@ -307,7 +324,6 @@ __all__ = [
     "PlanValidationResult",
     "PoolAdapter",
     "PoolBuilder",
-    "PoolCache",
     "PoolCapacityError",
     "PoolSampler",
     "PostValidationRunner",
@@ -321,9 +337,6 @@ __all__ = [
     "ReleasePhase",
     "SchemaInspector",
     "SentinelFlag",
-    "SsnAdapter",
-    "SsnDomain",
-    "SsnValidator",
     "StormProfile",
     "StrategyError",
     "StructuredEvents",
@@ -345,7 +358,6 @@ __all__ = [
     "classify_table_kinds",
     "compile_plan",
     "composite_address",
-    "composite_city_state_zip",
     "composite_custom",
     "composite_name_email",
     "composite_person",

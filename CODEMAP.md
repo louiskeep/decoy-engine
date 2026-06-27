@@ -38,15 +38,17 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | Path | What Lives Here |
 |---|---|
 | `src/decoy_engine/` | Engine package |
+| `src/decoy_engine/identifiers.py` | Stable sub-import namespace for identifier families (Ein/Mrn/Ndc/Npi/Ssn adapters, domains, validators); use `decoy_engine.identifiers.EinValidator` instead of the top-level package |
 | `src/decoy_engine/_MAP.md` | Engine package navigation map |
 | `src/decoy_engine/config/` | `PipelineConfig`, `RelationshipConfig`, `TableConfig`, source/target descriptors |
-| `src/decoy_engine/plan/` | `compile_plan` + frozen `Plan`; `_seed.py` holds the shared seed validator used by the compiler, pipeline profile path, and generation |
+| `src/decoy_engine/plan/` | `compile_plan` + frozen `Plan`; `_seed.py` holds the shared seed validator used by the compiler, pipeline profile path, and generation; `_graph.py` builds plan-side relationship and namespace tuples; `_seed_envelope.py` builds per-table/column/group `SeedEnvelope` (split from `_compile.py`, F11d) |
 | `src/decoy_engine/execution/` | `ExecutionAdapter` Protocol, `PandasExecutionAdapter`, `select_execution_adapter`, `_strategies/` (column-strategy handlers), `polars/` (Polars adapter) |
 | `src/decoy_engine/generation/` | `generate_tables` + composite + pool helpers; `_referenced_formula.py` runs the cross-column formula post-pass (lazy-imported) |
 | `src/decoy_engine/relationships/` | `build_relationship_graph`, `build_namespace_registry`, `check_orphan_fk_policy_completeness`, `OrphanPolicy` |
 | `src/decoy_engine/providers_v2/` | `ProviderRegistry`, identifier adapters |
 | `src/decoy_engine/profile/` | Profile types + `profile_source` |
 | `src/decoy_engine/storm/` | Profiling, detectors, and post-mask integrity checks (`postmask/residual_pii.py`, `postmask/fk_preservation.py`) |
+| `src/decoy_engine/storm/` | Profiling and detectors; `_classification.py` holds column-shape classification helpers; `_distributions.py` holds distribution-snapshot builders; `_patterns.py` holds the detector regex catalog; `_validators.py` holds detector validation helpers (all split from `profiler.py`/`detectors.py`, F11b/F11c) |
 | `src/decoy_engine/validation/` | `validate_config` |
 | `src/decoy_engine/validation_result.py` | `ValidationResult`, `ValidationMessage`, `VALIDATION_CODES` |
 | `src/decoy_engine/sdk.py` | Public Connector SDK (file-shaped) |
@@ -56,7 +58,7 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | `src/decoy_engine/instrumentation/` | Public timing / collector helpers |
 | `src/decoy_engine/determinism/` | Seed protocol, key derivation |
 | `src/decoy_engine/transforms/` | Three leaf modules (`base.py`, `date_shift.py`, `formula.py`, `fpe.py`) kept because V2 strategies in `execution/_strategies/` import them; a future sprint may relocate them into `_strategies/_reused_v1/`. |
-| `src/decoy_engine/generators/` | Two leaf modules (`columns.py`, `derivation.py`) kept for the same V2 reuse reason; `generation/synthesize.py` imports `ColumnGenerator`. `derivation.py` exports `GenDeriveContext` (v6 per-column generation derivation, replaces the pre-v6 `synthetic_column_seed`) and `strategy_config_fingerprint`. |
+| `src/decoy_engine/generators/` | `columns.py` and `derivation.py` kept for V2 reuse; `generation/synthesize.py` imports `ColumnGenerator`. `derivation.py` exports `GenDeriveContext` (v6 per-column generation derivation) and `strategy_config_fingerprint`. `_distribution.py` holds distribution-snapshot sampler methods and `_formula.py` holds formula evaluation methods, both private mixins folded into `ColumnGenerator` (split from `columns.py`, F11a). |
 | `src/decoy_engine/walks/` | Cross-file / drift / inference helpers; consumed by `tests/integration/test_walks_*`. Not part of the public API. |
 | `src/decoy_engine/forecast/` | Empty (only `__pycache__`); the V1 FORECAST recommender was removed in S22. Safe to delete. |
 | `tests/` | `unit/`, `integration/golden/`, `integration/compat_corpus/`, `parity/`, `perf_fixtures/`, `benchmark/`, `privacy/`, `security/`, `sentry/`, `connectors/`, `snapshots/` |
@@ -73,6 +75,7 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | Engine audit | Maintained in the commercial platform repo |
 | Remediation plan | Maintained in the commercial platform repo |
 | Public exports | `src/decoy_engine/__init__.py` |
+| Identifier validators/adapters/domains | `src/decoy_engine/identifiers.py` |
 | Config schema | `src/decoy_engine/config/_pipeline.py` |
 | Relationship schema | `src/decoy_engine/config/_relationships.py` (reference doc lives in the commercial platform repo) |
 | Plan compilation | `src/decoy_engine/plan/_compile.py` |

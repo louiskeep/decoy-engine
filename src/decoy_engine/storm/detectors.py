@@ -30,6 +30,41 @@ from collections.abc import Callable
 
 import pandas as pd
 
+from decoy_engine.storm._patterns import (
+    _ADDRESS_RE,
+    _BIOMETRIC_ID_RE,
+    _CVV_RE,
+    _DEVICE_ID_RE,
+    _EMAIL_RE,
+    _EU_DATE_RE,
+    _FAX_NUMBER_RE,
+    _HEALTH_PLAN_ID_RE,
+    _IBAN_RE,
+    _ICD10_RE,
+    _IPV4_RE,
+    _ISO_DATE_RE,
+    _LICENSE_NUM_RE,
+    _MRN_RE,
+    _NPI_RE,
+    _PAN_RE,
+    _PERSON_NAME_RE,
+    _SSN_RE,
+    _URL_RE,
+    _US_DATE_RE,
+    _US_PHONE_RE,
+    _US_ZIP_RE,
+    _VEHICLE_ID_RE,
+)
+from decoy_engine.storm._validators import (
+    _IBAN_COUNTRIES,  # noqa: F401  re-exported; external importers use this path
+    _ICD10_CHAPTERS,  # noqa: F401  re-exported; external importers use this path
+    _iban_valid,
+    _icd10_valid,
+    _ipv4_valid,
+    _iso_date_valid,
+    _luhn_valid,
+    _npi_valid,
+)
 from decoy_engine.storm.domains import domain_for
 from decoy_engine.storm.types import CustomDetectorSpec, DetectorMatch
 
@@ -290,99 +325,6 @@ def hits_name_hint(detector_id: str, col_name: str) -> bool:
     return _hits_name_hint(detector_id, col_name)
 
 
-# ── value patterns ────────────────────────────────────────────────────────────────────────────
-
-# Email - RFC 5321ish but not strict; works for the 99% of fields users feed in.
-_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
-
-# SSN - ###-##-#### or 9 consecutive digits. Reject 000-/666-/9##- per SSA rules.
-_SSN_RE = re.compile(r"(?!000|666|9\d{2})\d{3}-?(?!00)\d{2}-?(?!0000)\d{4}")
-
-# US phone - 10 digits with common separators, optional +1 country code.
-_US_PHONE_RE = re.compile(r"(?:\+?1[\s.-]?)?\(?[2-9]\d{2}\)?[\s.-]?[2-9]\d{2}[\s.-]?\d{4}")
-
-# US ZIP -- 5 digits, optional -#### extension.
-# QA-3 F6 (2026-05-31): non-word lookbehind + lookahead reject 5-digit
-# numbers inside larger numeric tokens like "12345mg" or
-# "weight: 12345.6" (a dose or weight reading). Pre-fix `\d{5}` matched
-# as a substring, so any 5-digit block in a dose/measurement column
-# over-fired the us_zip detector and the column got pulled into the
-# PII span set. `\b` alone is insufficient because `.` is a non-word
-# character, so "12345.6" still satisfies \b at the boundary; the
-# extra (?!\.\d) lookahead rejects the decimal-number case.
-_US_ZIP_RE = re.compile(r"(?<!\w)\d{5}(?:-\d{4})?(?!\w)(?!\.\d)")
-
-# Date formats - strict patterns; the profiler also has pandas' to_datetime
-# fuzzy parser as a backstop. These are for *format signal* only.
-#
-# ISO date accepts both the dashed shape (YYYY-MM-DD with optional time
-# component) AND the compact 8-digit shape (YYYYMMDD). The compact
-# branch is gated by `_iso_compact_date_valid` so a random 8-digit
-# ID column doesn't false-positive as a date.
-_ISO_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?)?Z?|\d{8}")
-_US_DATE_RE = re.compile(r"\d{1,2}/\d{1,2}/\d{2,4}")
-_EU_DATE_RE = re.compile(r"\d{1,2}\.\d{1,2}\.\d{2,4}|\d{1,2}-\d{1,2}-\d{4}")
-
-# Person name - 1-3 whitespace-separated tokens, each starts with a letter,
-# letters / hyphens / apostrophes / dots only. Length 2-50 total.
-_NAME_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z''.\-]{0,29}")
-_PERSON_NAME_RE = re.compile(rf"{_NAME_TOKEN_RE.pattern}(?:\s+{_NAME_TOKEN_RE.pattern}){{0,2}}")
-
-# PAN (credit card) - 13-19 digits with optional spaces or dashes between
-# groups of 4. Final validity check is Luhn (mod-10) - the regex alone
-# false-positives on any 13+ digit number, which is far too noisy.
-_PAN_RE = re.compile(r"\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{1,7}")
-
-# CVV - 3 or 4 digits. Pure regex match is uselessly broad (any 3-digit
-# string), so this detector only fires on a strong column-name hint.
-_CVV_RE = re.compile(r"\d{3,4}")
-
-# IBAN - 2-letter country code + 2-digit checksum + 11-30 alphanumerics.
-# Spaces optional, often grouped in 4s. Final validity check is mod-97.
-_IBAN_RE = re.compile(r"[A-Z]{2}\d{2}[\sA-Z0-9]{11,34}")
-
-# IPv4 - four 1-3 digit octets separated by dots. Range check (each octet
-# 0-255) is the per-value validator.
-_IPV4_RE = re.compile(r"(?:\d{1,3}\.){3}\d{1,3}")
-
-# ICD-10-CM - chapter letter + 2-digit category + optional decimal subcategory.
-# Examples: A01.0, M79.3, S72.001A, Z23, F32.9, A010 (stored without dot).
-_ICD10_RE = re.compile(r"[A-Z]\d{2}(?:\.?[A-Z0-9]{1,4})?", re.IGNORECASE)
-
-# NPI - exactly 10 digits; check digit validated by CMS Luhn variant.
-_NPI_RE = re.compile(r"\d{10}")
-
-# MRN - no universal format; institution-defined alphanumeric + dash, 4-20 chars.
-# Name-hint is the primary signal; this pattern guards against non-identifier noise.
-_MRN_RE = re.compile(r"[A-Z0-9\-]{4,20}", re.IGNORECASE)
-
-# URL - http/https scheme with a host and optional path.
-_URL_RE = re.compile(r"https?://[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]{4,}")
-
-# Fax number - identical value pattern to US phone; name hint is the
-# disambiguation signal (phone vs fax).
-_FAX_NUMBER_RE = re.compile(r"(?:\+?1[\s.-]?)?\(?[2-9]\d{2}\)?[\s.-]?[2-9]\d{2}[\s.-]?\d{4}")
-
-# Name-hint-only detectors - patterns broad enough to match any plausible
-# identifier value; meaning lives in the column name, not the value shape.
-_HEALTH_PLAN_ID_RE = re.compile(r"[A-Z0-9\-]{4,30}", re.IGNORECASE)
-_LICENSE_NUM_RE = re.compile(r"[A-Z0-9\-]{4,20}", re.IGNORECASE)
-
-# VIN - exactly 17 chars with restricted charset (no I, O, or Q per ISO 3779).
-_VEHICLE_ID_RE = re.compile(r"[A-HJ-NPR-Z0-9]{17}", re.IGNORECASE)
-
-_DEVICE_ID_RE = re.compile(r"[A-Z0-9\-_.]{4,30}", re.IGNORECASE)
-_BIOMETRIC_ID_RE = re.compile(r".+")  # any non-empty value; name hint is definitive
-
-# Address - number + street word(s). Loose by design; the column-name hint
-# carries the meaning and the value pattern just filters out obvious non-
-# addresses (pure phone numbers, dates).
-_ADDRESS_RE = re.compile(
-    r"\d+\s+[A-Za-z][A-Za-z0-9\s,.\-#'/]+",
-    re.IGNORECASE,
-)
-
-
 # ── format variants (Item 65) ───────────────────────────────────────────────────────────────
 #
 # Per-detector ordered (label, regex) pairs that classify which sub-shape
@@ -461,258 +403,6 @@ _ICD10_VARIANTS = [
     _variant(r"[A-Z]\d{2}"),
     _variant(r"[A-Z]\d{2}[A-Z0-9]{1,4}"),
 ]
-
-
-# ── validators ──────────────────────────────────────────────────────────────────────────────
-
-
-def _luhn_valid(value: str) -> bool:
-    """Luhn / mod-10 checksum used by every major credit-card scheme.
-    Strips spaces and dashes; rejects anything that isn't pure digits
-    after stripping. Lower bound on length (13) keeps it from accepting
-    very short numbers that happen to satisfy the checksum."""
-    digits = re.sub(r"[\s-]", "", value)
-    if not digits.isdigit() or len(digits) < 13:
-        return False
-    total = 0
-    for i, ch in enumerate(reversed(digits)):
-        d = int(ch)
-        if i % 2 == 1:
-            d *= 2
-            if d > 9:
-                d -= 9
-        total += d
-    return total % 10 == 0
-
-
-# ISO 3166-1 alpha-2 codes of countries that issue IBANs (SWIFT registry as of
-# 2024). Detection sprint (V1) gates the IBAN validator on country membership
-# so random "GB"- or "DE"-prefixed alphanumerics don't pass the mod-97 check
-# by luck. Adding a new country (e.g. when SWIFT publishes the next update)
-# is a one-line edit here.
-_IBAN_COUNTRIES: frozenset[str] = frozenset(
-    {
-        "AD",
-        "AE",
-        "AL",
-        "AT",
-        "AZ",
-        "BA",
-        "BE",
-        "BG",
-        "BH",
-        "BR",
-        "BY",
-        "CH",
-        "CR",
-        "CY",
-        "CZ",
-        "DE",
-        "DK",
-        "DO",
-        "EE",
-        "EG",
-        "ES",
-        "FI",
-        "FO",
-        "FR",
-        "GB",
-        "GE",
-        "GI",
-        "GL",
-        "GR",
-        "GT",
-        "HR",
-        "HU",
-        "IE",
-        "IL",
-        "IQ",
-        "IS",
-        "IT",
-        "JO",
-        "KW",
-        "KZ",
-        "LB",
-        "LC",
-        "LI",
-        "LT",
-        "LU",
-        "LV",
-        "MC",
-        "MD",
-        "ME",
-        "MK",
-        "MR",
-        "MT",
-        "MU",
-        "NL",
-        "NO",
-        "PK",
-        "PL",
-        "PS",
-        "PT",
-        "QA",
-        "RO",
-        "RS",
-        "RU",
-        "SA",
-        "SC",
-        "SE",
-        "SI",
-        "SK",
-        "SM",
-        "ST",
-        "SV",
-        "TL",
-        "TN",
-        "TR",
-        "UA",
-        "VA",
-        "VG",
-        "XK",
-    }
-)
-
-
-def _iban_valid(value: str) -> bool:
-    """ISO 13616 mod-97 check, gated by ISO 3166 country-code membership.
-
-    After stripping spaces and uppercasing, the first two characters must
-    be a known IBAN-issuing country code; that filter rejects random
-    alphanumeric strings that happen to satisfy mod-97. Then move the
-    first 4 chars to the end, replace letters with digits (A=10, B=11,
-    …, Z=35), and verify integer mod 97 == 1.
-    """
-    iban = re.sub(r"\s", "", str(value).upper())
-    if len(iban) < 15 or len(iban) > 34:
-        return False
-    if not (iban[:2].isalpha() and iban[2:4].isdigit()):
-        return False
-    if iban[:2] not in _IBAN_COUNTRIES:
-        return False
-    rearranged = iban[4:] + iban[:4]
-    digits = []
-    for c in rearranged:
-        if c.isdigit():
-            digits.append(c)
-        elif c.isalpha():
-            digits.append(str(ord(c) - 55))
-        else:
-            return False
-    try:
-        return int("".join(digits)) % 97 == 1
-    except ValueError:
-        return False
-
-
-def _ipv4_valid(value: str) -> bool:
-    parts = str(value).split(".")
-    if len(parts) != 4:
-        return False
-    for p in parts:
-        if not p.isdigit() or len(p) > 3:
-            return False
-        n = int(p)
-        if n < 0 or n > 255:
-            return False
-    return True
-
-
-def _npi_valid(value: str) -> bool:
-    """CMS NPI check digit: prepend '80840' to the 9-digit NPI body, apply
-    a modified Luhn (even 0-indexed positions from right are doubled), verify
-    the computed check digit matches NPI[9].
-
-    Verified: 1234567893 -> prefix 80840123456789 -> sum 67 -> check 3 ✓
-              1679576722 -> prefix 80840167957672 -> sum 68 -> check 2 ✓
-              1000000004 -> prefix 80840100000000 -> sum 26 -> check 4 ✓
-    """
-    digits = re.sub(r"[\s-]", "", str(value))
-    if not digits.isdigit() or len(digits) != 10:
-        return False
-    prefixed = "80840" + digits[:9]
-    total = 0
-    for i, ch in enumerate(reversed(prefixed)):
-        d = int(ch)
-        if i % 2 == 0:
-            d *= 2
-            if d > 9:
-                d -= 9
-        total += d
-    return (10 - total % 10) % 10 == int(digits[9])
-
-
-def _iso_date_valid(value: str) -> bool:
-    """Reject random 8-digit strings that pass the compact-date branch
-    but aren't plausible dates. Year 1900-2100, month 1-12, day 1-31.
-    Dashed dates always pass - only the compact branch needs the guard."""
-    v = value.strip()
-    if "-" in v or "T" in v or " " in v:
-        return True
-    if len(v) != 8 or not v.isdigit():
-        return False
-    year = int(v[:4])
-    month = int(v[4:6])
-    day = int(v[6:8])
-    return 1900 <= year <= 2100 and 1 <= month <= 12 and 1 <= day <= 31
-
-
-# ICD-10-CM chapter category ranges. Each entry maps a chapter letter to
-# the inclusive [lo, hi] 2-digit category range that's actually used in
-# the standard. Detection sprint (V1) uses this to gate the icd10
-# validator so a random "M99" or "Z45" string can't false-positive - the
-# letter+category prefix must be in a real ICD-10 chapter range.
-#
-# A bundled top-1000 lookup would be more precise (rejecting structurally
-# valid but non-existent codes like J50.0); that's tracked in the gap doc
-# as a V1.5 item alongside the cross-cultural patterns.
-_ICD10_CHAPTERS: dict[str, tuple[int, int]] = {
-    "A": (0, 99),
-    "B": (0, 99),  # infectious + parasitic
-    "C": (0, 99),
-    "D": (0, 89),  # neoplasms / blood (D50-D89 separate chapter but same letter)
-    "E": (0, 89),  # endocrine
-    "F": (1, 99),  # mental
-    "G": (0, 99),  # nervous
-    "H": (0, 95),  # eye + ear
-    "I": (0, 99),  # circulatory
-    "J": (0, 99),  # respiratory
-    "K": (0, 95),  # digestive
-    "L": (0, 99),  # skin
-    "M": (0, 99),  # musculoskeletal
-    "N": (0, 99),  # genitourinary
-    "O": (0, 99),  # pregnancy (O9A handled separately)
-    "P": (0, 96),  # perinatal
-    "Q": (0, 99),  # congenital
-    "R": (0, 99),  # symptoms / signs
-    "S": (0, 99),
-    "T": (0, 88),  # injury / poisoning
-    "U": (0, 85),  # special purposes (COVID-19)
-    "V": (0, 99),
-    "W": (0, 99),  # external causes
-    "X": (0, 99),
-    "Y": (0, 99),
-    "Z": (0, 99),  # factors influencing health
-}
-
-
-def _icd10_valid(value: str) -> bool:
-    """ICD-10-CM structural + chapter-range validity.
-
-    Verified: letter at index 0 belongs to a real ICD-10 chapter; the 2-digit
-    category prefix falls within that chapter's valid range; total length
-    3-7 alphanumeric characters (dots stripped). Rejects e.g. "Z99.99X" -> fine,
-    "P97.00" -> P97 outside P0-P96 -> rejected.
-    """
-    v = re.sub(r"\.", "", str(value).strip().upper())
-    if not (3 <= len(v) <= 7 and v[0].isalpha() and v[1:3].isdigit()):
-        return False
-    chapter = v[0]
-    if chapter not in _ICD10_CHAPTERS:
-        return False
-    cat_lo, cat_hi = _ICD10_CHAPTERS[chapter]
-    cat = int(v[1:3])
-    return cat_lo <= cat <= cat_hi
 
 
 # ── detectors (callables) ───────────────────────────────────────────────────────────────────
