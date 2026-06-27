@@ -90,9 +90,7 @@ autoapi_dirs = ["../src/decoy_engine"]
 # documenting it would actively mislead callers about the contract.
 autoapi_ignore = [
     "*/internal/*",
-    # Exclude private modules (_foo.py) but NOT __init__.py or __all__.py.
-    # __init__.py files start with double-underscore so _[a-z]*.py skips them.
-    "*/_[a-z]*.py",
+    "*/_*.py",
     "*/conftest.py",
 ]
 autoapi_options = [
