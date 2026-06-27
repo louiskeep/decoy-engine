@@ -303,9 +303,30 @@ class TestFpeChecksumCompileCheck:
     def test_known_non_iban_checksum_passes(self) -> None:
         from decoy_engine.plan._checks import check_fpe_checksum_scheme
 
+        # npi and luhn are digit schemes; "digits" charset is correct.
         check_fpe_checksum_scheme(self._config_with_checksum("npi"))
-        check_fpe_checksum_scheme(self._config_with_checksum("vin"))
         check_fpe_checksum_scheme(self._config_with_checksum("luhn"))
+        # VIN requires the full VIN alphabet (digits + A-Z minus I/O/Q).
+        # "digits" alone is incompatible; use an explicit VIN-compatible charset.
+        check_fpe_checksum_scheme(
+            {
+                "tables": [
+                    {
+                        "name": "vehicles",
+                        "columns": [
+                            {
+                                "name": "vin",
+                                "strategy": "fpe",
+                                "provider_config": {
+                                    "charset": "0123456789ABCDEFGHJKLMNPRSTUVWXYZ",
+                                    "checksum": "vin",
+                                },
+                            }
+                        ],
+                    }
+                ]
+            }
+        )
 
     def test_no_checksum_passes(self) -> None:
         from decoy_engine.plan._checks import check_fpe_checksum_scheme
@@ -326,3 +347,103 @@ class TestFpeChecksumCompileCheck:
             ]
         }
         check_fpe_checksum_scheme(config)
+
+
+# ---------------------------------------------------------------------------
+# Charset-vs-scheme compatibility: fail-closed at compile (SP-04 remediation)
+# ---------------------------------------------------------------------------
+
+
+class TestFpeChecksumCharsetIncompatible:
+    """charset incompatible with checksum scheme must raise at plan-compile.
+
+    The hole: digits-only charset for VIN fragments the value via
+    preserve_separators into short runs that fall below the L1 min-length
+    guard, returning the input verbatim (unmasked).  The compile check
+    prevents that silent passthrough from reaching runtime.
+    """
+
+    def _cfg(self, checksum: str, charset: str) -> dict:
+        return {
+            "tables": [
+                {
+                    "name": "t",
+                    "columns": [
+                        {
+                            "name": "col",
+                            "strategy": "fpe",
+                            "provider_config": {
+                                "charset": charset,
+                                "checksum": checksum,
+                            },
+                        }
+                    ],
+                }
+            ]
+        }
+
+    # RED tests: written before the check exists; must fail until implemented.
+
+    def test_vin_digits_only_charset_raises_at_compile(self) -> None:
+        """Digits-only charset for VIN must raise fpe_checksum_charset_incompatible.
+
+        Before this fix: fpe_encrypt_value("1HGCM82633A004352", key,
+        "0123456789", tweak, checksum="vin") returns the input verbatim.
+        After this fix: the misconfiguration is caught at plan-compile and
+        never reaches runtime.
+        """
+        from decoy_engine.plan._checks import check_fpe_checksum_scheme
+        from decoy_engine.plan._errors import PlanCompileError
+
+        with pytest.raises(PlanCompileError) as exc:
+            check_fpe_checksum_scheme(self._cfg("vin", "0123456789"))
+        assert exc.value.code == "fpe_checksum_charset_incompatible"
+        assert "vin" in exc.value.message.lower()
+
+    def test_luhn_alpha_only_charset_raises_at_compile(self) -> None:
+        """Alpha-only charset for luhn (no digits) must raise fpe_checksum_charset_incompatible."""
+        from decoy_engine.plan._checks import check_fpe_checksum_scheme
+        from decoy_engine.plan._errors import PlanCompileError
+
+        with pytest.raises(PlanCompileError) as exc:
+            check_fpe_checksum_scheme(self._cfg("luhn", "ABCDEFGHIJKLMNOPQRSTUVWXYZ"))
+        assert exc.value.code == "fpe_checksum_charset_incompatible"
+        assert "luhn" in exc.value.message.lower()
+
+    # Positive / no-over-rejection tests: valid configs must compile clean.
+
+    def test_vin_exact_vin_alphabet_passes(self) -> None:
+        """Charset equal to the VIN alphabet (no I/O/Q) must compile."""
+        from decoy_engine.plan._checks import check_fpe_checksum_scheme
+
+        check_fpe_checksum_scheme(self._cfg("vin", "0123456789ABCDEFGHJKLMNPRSTUVWXYZ"))
+
+    def test_vin_superset_charset_passes(self) -> None:
+        """Full uppercase alphanum (superset: includes I/O/Q, harmless extras) must compile."""
+        from decoy_engine.plan._checks import check_fpe_checksum_scheme
+
+        check_fpe_checksum_scheme(self._cfg("vin", "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"))
+
+    def test_vin_named_ALPHANUM_passes(self) -> None:
+        """Named 'ALPHANUM' charset is a superset of the VIN alphabet; must compile."""
+        from decoy_engine.plan._checks import check_fpe_checksum_scheme
+
+        check_fpe_checksum_scheme(self._cfg("vin", "ALPHANUM"))
+
+    def test_luhn_digits_charset_passes(self) -> None:
+        """Digits charset is correct for luhn; must compile."""
+        from decoy_engine.plan._checks import check_fpe_checksum_scheme
+
+        check_fpe_checksum_scheme(self._cfg("luhn", "0123456789"))
+
+    def test_luhn_named_digits_passes(self) -> None:
+        """Named 'digits' charset for luhn; must compile."""
+        from decoy_engine.plan._checks import check_fpe_checksum_scheme
+
+        check_fpe_checksum_scheme(self._cfg("luhn", "digits"))
+
+    def test_luhn_alphanum_superset_passes(self) -> None:
+        """Alphanumeric superset (includes digits) for luhn; must compile."""
+        from decoy_engine.plan._checks import check_fpe_checksum_scheme
+
+        check_fpe_checksum_scheme(self._cfg("luhn", "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"))

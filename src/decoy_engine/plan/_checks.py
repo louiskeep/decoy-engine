@@ -448,11 +448,11 @@ def check_vault_columns(config: dict[str, Any]) -> None:
 
 
 def check_fpe_checksum_scheme(config: dict[str, Any]) -> None:
-    """Reject FPE columns whose ``checksum`` param is unknown or unsupported.
+    """Reject FPE columns whose ``checksum`` param is unknown, unsupported, or charset-incompatible.
 
     Compile-check ownership table row #15 (SP-04 / P5.INFRA.1 remediation).
 
-    Two failure modes caught here:
+    Three failure modes caught here:
 
     1. Unknown scheme (typo, e.g. ``checksum: ibna``): Decoy forbids silent
        misconfiguration passthrough.  Any value not in
@@ -465,10 +465,21 @@ def check_fpe_checksum_scheme(config: dict[str, Any]) -> None:
        IBAN columns may still use ``checksums.validate('iban', ...)`` for
        validation-only use cases; only the FPE mode is rejected here.
 
+    3. Charset incompatible with scheme (e.g. ``checksum: vin`` with a
+       digits-only charset): a charset that cannot represent the scheme's
+       required alphabet causes values to pass through unmasked at runtime.
+       With ``preserve_separators=True`` (the default), missing characters are
+       treated as separators; the extracted body falls below the scheme's L1
+       min-length guard and the value is returned verbatim.  Raises with code
+       ``fpe_checksum_charset_incompatible``.  A charset that is a strict
+       superset of the required alphabet is accepted: the runtime already
+       constrains the permutation to the scheme's own alphabet.
+
     Config-only (no profile, no source data): safe to run in --no-profile
     mode and in ``run_config_only_checks``.
     """
-    from decoy_engine.checksums import _KNOWN_SCHEMES
+    from decoy_engine.checksums import _KNOWN_SCHEMES, _SCHEME_REQUIRED_CHARSET
+    from decoy_engine.transforms.fpe import _CHARSETS as _FPE_CHARSETS
 
     _FPE_UNSUPPORTED_SCHEMES = frozenset({"iban"})
 
@@ -515,3 +526,32 @@ def check_fpe_checksum_scheme(config: dict[str, Any]) -> None:
                         "Use validate-only or a different strategy for IBAN columns."
                     ),
                 )
+            # Charset-vs-scheme compatibility: a charset missing characters
+            # required by the scheme causes values to pass through unmasked
+            # (silent no-op).  Fail closed at compile.
+            charset_spec = (
+                provider_config.get("charset", "digits")
+                if isinstance(provider_config, dict)
+                else "digits"
+            )
+            charset_str = _FPE_CHARSETS.get(str(charset_spec), str(charset_spec))
+            charset_set = frozenset(charset_str)
+            required = _SCHEME_REQUIRED_CHARSET.get(checksum)
+            if required is not None:
+                missing = required - charset_set
+                if missing:
+                    raise PlanCompileError(
+                        code="fpe_checksum_charset_incompatible",
+                        path=(f"tables.{table_name}.columns.{col_name}.provider_config.charset"),
+                        message=(
+                            f"column {col_name!r} in table {table_name!r} uses "
+                            f"strategy fpe with checksum={checksum!r} but the "
+                            f"configured charset {charset_spec!r} is missing "
+                            f"characters required by the {checksum!r} scheme: "
+                            f"{sorted(missing)!r}. A charset that cannot represent "
+                            "the scheme alphabet causes source values to pass through "
+                            "unmasked (silent no-op). Use a charset that is a superset "
+                            "of the scheme alphabet (e.g. 'ALPHANUM' for vin, "
+                            "'digits' for luhn/npi/ean13/isbn13/gtin)."
+                        ),
+                    )

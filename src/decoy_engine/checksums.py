@@ -317,6 +317,27 @@ _CHECK_DIGIT_FUNCS: dict[str, Callable[[str], str]] = {
 
 _KNOWN_SCHEMES: frozenset[str] = frozenset(_VALIDATORS.keys())
 
+# Per-scheme minimum required charset for FPE mode.  A configured FPE charset
+# that does not contain all characters in this set causes values to pass
+# through unmasked at runtime: with preserve_separators=True, missing characters
+# are treated as separators, fragmenting the value into short runs that fall
+# below the per-scheme L1 min-length guard and returning the input verbatim.
+# check_fpe_checksum_scheme in plan/_checks.py rejects the misconfiguration
+# at plan-compile rather than letting it silently no-op at run time.
+#
+# iban is absent: FPE mode is unconditionally unsupported for iban regardless
+# of charset (caught by the preceding fpe_checksum_iban_unsupported check).
+_SCHEME_REQUIRED_CHARSET: dict[str, frozenset[str]] = {
+    "luhn": frozenset("0123456789"),
+    "npi": frozenset("0123456789"),
+    "ean13": frozenset("0123456789"),
+    "isbn13": frozenset("0123456789"),
+    "gtin": frozenset("0123456789"),
+    # VIN: 0-9 plus A-Z excluding I, O, Q (NHTSA 49 CFR Part 565 Appendix B).
+    # Reuses the module-level _VIN_CHARSET so the two stay in sync.
+    "vin": _VIN_CHARSET,
+}
+
 
 # ---------------------------------------------------------------------------
 # Public API
