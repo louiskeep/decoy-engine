@@ -546,6 +546,26 @@ on the ML1/ML2 foundation. Gated by the `[ml]` optional extra; off by default.
   (forward compatibility for development/testing). Production signing-key source is
   escalated (see Sprint C hand-off); key management not configured in this module.
 
+### Added (SP-01 perf guard coverage, 2026-06-27)
+
+- **PERF.BASE.3 guard coverage restored for the V2 baseline** (`tests/perf/`,
+  SP-01). The guard suite deleted in b9b73e1 (when the engine became V2-only)
+  is restored against the V2 substrate. `test_baseline_schema.py` (6 tests)
+  pins `meta.schema_version`, the `["pandas", "polars"]` substrates
+  declaration, 11-strategy x {small, medium} coverage, all required top-level
+  and substrate timing fields, and the p95 >= p50 sanity invariant against
+  `tests/perf_fixtures/engine-v2-baseline.json`.
+  `test_baseline_reproducibility.py` (2 tests) runs a subprocess dual-run on
+  mid-band cells (date_shift, hash) and asserts the polars p50 values land
+  within 3x of each other: a harness-sanity check that a broken or
+  non-deterministic benchmark script surfaces in CI. The 3x bound is
+  deliberately loose and is NOT the regression gate. The throughput regression
+  gate is `scripts/compare_baselines.py`, which flags any cell more than 5%
+  slower than the committed baseline JSON. `docs/v2/perf/engine-v2-baseline-report.md`
+  is the accompanying baseline report (human-readable gate table and caveats).
+  These tests run under `pytest -m "not benchmark"` (the `perf` marker is not
+  excluded from the CI regression gate).
+
 ## [0.1.0] - 2026-06-02
 
 The first publishable cut of the engine. Not yet pushed to the real
