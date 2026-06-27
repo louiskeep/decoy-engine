@@ -1,4 +1,4 @@
-"""Public `job_seed_for_config` — the CLI vault-inspector's seed helper.
+"""Public `job_seed_for_config`, the CLI vault-inspector's seed helper.
 
 It exposes the same 8-byte job seed the vault and `unmask_pipeline` key on, so an
 external caller can `load_vault(path, job_seed_for_config(config))` without
