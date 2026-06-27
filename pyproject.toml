@@ -177,6 +177,18 @@ docs = [
 # invocations still work. SFTP remains an opt-in extra pending S18.
 gcs = []
 sftp = ["paramiko>=3.0"]
+# ML field-recognition harness extras. scikit-learn backs the held-out
+# split scaffolding (StratifiedGroupKFold, §A.3 leakage guard) and
+# calibration utilities (CalibratedClassifierCV, §A.4). LightGBM is the
+# optional gradient-boosted classifier (ML2.2). Not required for the regex
+# baseline (which has no training phase). Upper bound: 2.x changes the
+# GroupKFold API; pin below 3 until a 3.x validation pass.
+# lightgbm upper bound: 4.x is the stable API; cap below 5 until a 5.x
+# validation pass.
+ml = [
+    "scikit-learn>=1.4,<3",
+    "lightgbm>=4.0,<5",
+]
 
 # Project URLs surfaced on the PyPI sidebar.
 [project.urls]

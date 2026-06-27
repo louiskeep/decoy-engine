@@ -1,0 +1,431 @@
+{
+  "balanced_accuracy": 0.9,
+  "by_field_type": {
+    "cvv": {
+      "f2": 1.0,
+      "false_negative_columns": [],
+      "false_negatives": 0,
+      "false_positives": 0,
+      "field_type": "cvv",
+      "precision": 1.0,
+      "recall": 1.0,
+      "review_burden": 0,
+      "support": 1,
+      "true_positives": 1
+    },
+    "email": {
+      "f2": 1.0,
+      "false_negative_columns": [],
+      "false_negatives": 0,
+      "false_positives": 0,
+      "field_type": "email",
+      "precision": 1.0,
+      "recall": 1.0,
+      "review_burden": 0,
+      "support": 1,
+      "true_positives": 1
+    },
+    "health_plan_id": {
+      "f2": 0.5556,
+      "false_negative_columns": [
+        "cryptic_header.z3"
+      ],
+      "false_negatives": 1,
+      "false_positives": 0,
+      "field_type": "health_plan_id",
+      "precision": 1.0,
+      "recall": 0.5,
+      "review_burden": 0,
+      "support": 2,
+      "true_positives": 1
+    },
+    "iban": {
+      "f2": 1.0,
+      "false_negative_columns": [],
+      "false_negatives": 0,
+      "false_positives": 0,
+      "field_type": "iban",
+      "precision": 1.0,
+      "recall": 1.0,
+      "review_burden": 0,
+      "support": 1,
+      "true_positives": 1
+    },
+    "icd10": {
+      "f2": 1.0,
+      "false_negative_columns": [],
+      "false_negatives": 0,
+      "false_positives": 0,
+      "field_type": "icd10",
+      "precision": 1.0,
+      "recall": 1.0,
+      "review_burden": 0,
+      "support": 1,
+      "true_positives": 1
+    },
+    "iso_date": {
+      "f2": 1.0,
+      "false_negative_columns": [],
+      "false_negatives": 0,
+      "false_positives": 0,
+      "field_type": "iso_date",
+      "precision": 1.0,
+      "recall": 1.0,
+      "review_burden": 0,
+      "support": 1,
+      "true_positives": 1
+    },
+    "mrn": {
+      "f2": 0.5,
+      "false_negative_columns": [
+        "cryptic_header.q9"
+      ],
+      "false_negatives": 1,
+      "false_positives": 1,
+      "field_type": "mrn",
+      "precision": 0.5,
+      "recall": 0.5,
+      "review_burden": 0,
+      "support": 2,
+      "true_positives": 1
+    },
+    "none": {
+      "f2": null,
+      "false_negative_columns": [],
+      "false_negatives": 0,
+      "false_positives": 0,
+      "field_type": "none",
+      "precision": null,
+      "recall": null,
+      "review_burden": 0,
+      "support": 4,
+      "true_positives": 0
+    },
+    "npi": {
+      "f2": 1.0,
+      "false_negative_columns": [],
+      "false_negatives": 0,
+      "false_positives": 0,
+      "field_type": "npi",
+      "precision": 1.0,
+      "recall": 1.0,
+      "review_burden": 0,
+      "support": 1,
+      "true_positives": 1
+    },
+    "pan": {
+      "f2": 1.0,
+      "false_negative_columns": [],
+      "false_negatives": 0,
+      "false_positives": 0,
+      "field_type": "pan",
+      "precision": 1.0,
+      "recall": 1.0,
+      "review_burden": 0,
+      "support": 2,
+      "true_positives": 2
+    },
+    "ssn": {
+      "f2": 1.0,
+      "false_negative_columns": [],
+      "false_negatives": 0,
+      "false_positives": 0,
+      "field_type": "ssn",
+      "precision": 1.0,
+      "recall": 1.0,
+      "review_burden": 0,
+      "support": 1,
+      "true_positives": 1
+    }
+  },
+  "columns": [
+    {
+      "column": "mrn",
+      "correct": true,
+      "fired_detector_ids": [
+        "mrn"
+      ],
+      "fixture": "hipaa",
+      "medium_match_count": 0,
+      "predicted_confidence": "high",
+      "predicted_id": "mrn",
+      "predicted_match_rate": 1.0,
+      "truth_label": "mrn"
+    },
+    {
+      "column": "icd10",
+      "correct": true,
+      "fired_detector_ids": [
+        "icd10"
+      ],
+      "fixture": "hipaa",
+      "medium_match_count": 0,
+      "predicted_confidence": "high",
+      "predicted_id": "icd10",
+      "predicted_match_rate": 1.0,
+      "truth_label": "icd10"
+    },
+    {
+      "column": "npi",
+      "correct": true,
+      "fired_detector_ids": [
+        "npi"
+      ],
+      "fixture": "hipaa",
+      "medium_match_count": 0,
+      "predicted_confidence": "high",
+      "predicted_id": "npi",
+      "predicted_match_rate": 1.0,
+      "truth_label": "npi"
+    },
+    {
+      "column": "health_plan_id",
+      "correct": true,
+      "fired_detector_ids": [
+        "health_plan_id"
+      ],
+      "fixture": "hipaa",
+      "medium_match_count": 0,
+      "predicted_confidence": "high",
+      "predicted_id": "health_plan_id",
+      "predicted_match_rate": 1.0,
+      "truth_label": "health_plan_id"
+    },
+    {
+      "column": "pan",
+      "correct": true,
+      "fired_detector_ids": [
+        "pan"
+      ],
+      "fixture": "pci",
+      "medium_match_count": 0,
+      "predicted_confidence": "high",
+      "predicted_id": "pan",
+      "predicted_match_rate": 1.0,
+      "truth_label": "pan"
+    },
+    {
+      "column": "cvv",
+      "correct": true,
+      "fired_detector_ids": [
+        "cvv"
+      ],
+      "fixture": "pci",
+      "medium_match_count": 0,
+      "predicted_confidence": "high",
+      "predicted_id": "cvv",
+      "predicted_match_rate": 1.0,
+      "truth_label": "cvv"
+    },
+    {
+      "column": "iban",
+      "correct": true,
+      "fired_detector_ids": [
+        "iban"
+      ],
+      "fixture": "pci",
+      "medium_match_count": 0,
+      "predicted_confidence": "high",
+      "predicted_id": "iban",
+      "predicted_match_rate": 1.0,
+      "truth_label": "iban"
+    },
+    {
+      "column": "account_id",
+      "correct": false,
+      "fired_detector_ids": [
+        "mrn"
+      ],
+      "fixture": "account_order",
+      "medium_match_count": 0,
+      "predicted_confidence": "high",
+      "predicted_id": "mrn",
+      "predicted_match_rate": 1.0,
+      "truth_label": "none"
+    },
+    {
+      "column": "order_id",
+      "correct": true,
+      "fired_detector_ids": [],
+      "fixture": "account_order",
+      "medium_match_count": 0,
+      "predicted_confidence": null,
+      "predicted_id": null,
+      "predicted_match_rate": null,
+      "truth_label": "none"
+    },
+    {
+      "column": "claim_id",
+      "correct": true,
+      "fired_detector_ids": [],
+      "fixture": "claim",
+      "medium_match_count": 0,
+      "predicted_confidence": null,
+      "predicted_id": null,
+      "predicted_match_rate": null,
+      "truth_label": "none"
+    },
+    {
+      "column": "service_date",
+      "correct": true,
+      "fired_detector_ids": [
+        "iso_date"
+      ],
+      "fixture": "claim",
+      "medium_match_count": 0,
+      "predicted_confidence": "high",
+      "predicted_id": "iso_date",
+      "predicted_match_rate": 1.0,
+      "truth_label": "iso_date"
+    },
+    {
+      "column": "claim_amount",
+      "correct": true,
+      "fired_detector_ids": [],
+      "fixture": "claim",
+      "medium_match_count": 0,
+      "predicted_confidence": null,
+      "predicted_id": null,
+      "predicted_match_rate": null,
+      "truth_label": "none"
+    },
+    {
+      "column": "c1",
+      "correct": true,
+      "fired_detector_ids": [
+        "ssn"
+      ],
+      "fixture": "cryptic_header",
+      "medium_match_count": 0,
+      "predicted_confidence": "high",
+      "predicted_id": "ssn",
+      "predicted_match_rate": 1.0,
+      "truth_label": "ssn"
+    },
+    {
+      "column": "f07",
+      "correct": true,
+      "fired_detector_ids": [
+        "email"
+      ],
+      "fixture": "cryptic_header",
+      "medium_match_count": 0,
+      "predicted_confidence": "high",
+      "predicted_id": "email",
+      "predicted_match_rate": 1.0,
+      "truth_label": "email"
+    },
+    {
+      "column": "xref",
+      "correct": true,
+      "fired_detector_ids": [
+        "pan"
+      ],
+      "fixture": "cryptic_header",
+      "medium_match_count": 0,
+      "predicted_confidence": "high",
+      "predicted_id": "pan",
+      "predicted_match_rate": 1.0,
+      "truth_label": "pan"
+    },
+    {
+      "column": "q9",
+      "correct": false,
+      "fired_detector_ids": [],
+      "fixture": "cryptic_header",
+      "medium_match_count": 0,
+      "predicted_confidence": null,
+      "predicted_id": null,
+      "predicted_match_rate": null,
+      "truth_label": "mrn"
+    },
+    {
+      "column": "z3",
+      "correct": false,
+      "fired_detector_ids": [],
+      "fixture": "cryptic_header",
+      "medium_match_count": 0,
+      "predicted_confidence": null,
+      "predicted_id": null,
+      "predicted_match_rate": null,
+      "truth_label": "health_plan_id"
+    }
+  ],
+  "confusion_matrix": {
+    "cvv": {
+      "cvv": 1
+    },
+    "email": {
+      "email": 1
+    },
+    "health_plan_id": {
+      "health_plan_id": 1,
+      "none": 1
+    },
+    "iban": {
+      "iban": 1
+    },
+    "icd10": {
+      "icd10": 1
+    },
+    "iso_date": {
+      "iso_date": 1
+    },
+    "mrn": {
+      "mrn": 1,
+      "none": 1
+    },
+    "none": {
+      "mrn": 1,
+      "none": 3
+    },
+    "npi": {
+      "npi": 1
+    },
+    "pan": {
+      "pan": 2
+    },
+    "ssn": {
+      "ssn": 1
+    }
+  },
+  "false_negatives_list": [
+    {
+      "column_id": "cryptic_header.q9",
+      "error_type": "FN",
+      "predicted_label": null,
+      "truth_label": "mrn"
+    },
+    {
+      "column_id": "cryptic_header.z3",
+      "error_type": "FN",
+      "predicted_label": null,
+      "truth_label": "health_plan_id"
+    }
+  ],
+  "false_positive_count": 1,
+  "false_positives_list": [
+    {
+      "column_id": "account_order.account_id",
+      "error_type": "FP",
+      "predicted_label": "mrn",
+      "truth_label": "none"
+    }
+  ],
+  "macro_f2": 0.9056,
+  "overall_recall": 0.8462,
+  "precision_by_predicted": {
+    "cvv": 1.0,
+    "email": 1.0,
+    "health_plan_id": 1.0,
+    "iban": 1.0,
+    "icd10": 1.0,
+    "iso_date": 1.0,
+    "mrn": 0.5,
+    "npi": 1.0,
+    "pan": 1.0,
+    "ssn": 1.0
+  },
+  "total_review_burden": 0,
+  "weighted_f2": 0.8547
+}

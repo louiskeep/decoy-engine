@@ -437,6 +437,115 @@ F4 shuffle fix (shipped earlier on its own branch) that also rides the v6 bump.
   Changelog) surfaced on the PyPI sidebar.
 - This `CHANGELOG.md` itself.
 
+### Added (BF2 field-recognition harness, 2026-06-26)
+
+Groundwork for a future ML column classifier (ML2+, gated and not built
+here). Both additions are off the public run path and are intentionally
+NOT re-exported from `decoy_engine.__init__`.
+
+- **Regex-detector baseline harness + labeled fixtures** (`storm/eval/`,
+  BF2/ML0). Five deterministic synthetic datasets with per-column
+  ground-truth labels: `hipaa` (mrn, icd10, npi, health_plan_id),
+  `pci` (pan, cvv, iban), `account_order` (account_id, order_id),
+  `claim` (claim_id, service_date, amount), and `cryptic_header` (real
+  PII under opaque column names). Identifier values (PAN, NPI, IBAN) are
+  constructed with their real checksums so the structural detectors
+  actually fire; the checksum-digit generators in `fixtures.py` are
+  independent of `storm/detectors.py` to avoid "cheating" by sharing
+  code under test. `run_baseline()` runs the registered detector set over
+  all fixtures and returns a `HarnessReport` with per-field-type recall,
+  precision, review-burden, and false-negative lists. Pinned
+  misses at overall recall 0.8462 (11 of 13 PII columns): name-hint-gated
+  health detectors (mrn, health_plan_id) miss entirely under opaque
+  headers; content detectors (ssn, email, pan) stay header-agnostic and
+  fire correctly; account_id is a confirmed false positive (the mrn
+  detector claims generic account/acct identifiers by design). Read-only
+  over the detector set; no run-path change.
+
+- **Deterministic column feature builder** (`storm/features/`, BF2/ML1).
+  `build_column_features(series, col_name)` produces a `ColumnFeatures`
+  artifact: header tokens, inferred dtype, null/distinct/unique rates,
+  char-class fractions, stdlib Shannon entropy (raw and normalized),
+  per-detector regex weak signals (including checksum-gated rates for pan,
+  iban, ipv4, icd10, npi), standalone checksum pass rates (no regex gate),
+  and a `ShapeSignature` (dominant value mask, length stats). Reuses the
+  profiler's four coarse classifiers (alphabet, casing, value-set-size,
+  numeric-range) and the detector regex constants and validators so a
+  detector change flows through automatically. Deterministic: content
+  features sample `iloc[:200]` (matching the profiler's head-sample
+  convention, never a random draw). `ColumnFeatures` is a separate
+  artifact from `StormProfile`/`FieldStats` by design so it never
+  crosses the persisted-format compatibility boundary.
+
+### Added (ML-foundation measurement substrate, 2026-06-27)
+
+Measurement gates for a future ML column classifier (ML2.2+). Scaffolding
+is off the public run path and intentionally NOT re-exported from
+`decoy_engine.__init__`.
+
+- **Extended harness with F2, confusion matrix, and aggregate metrics**
+  (`storm/eval/harness.py`, ML0/§A.1, §A.7). `run_baseline()` now
+  computes per-type precision, recall, and F2 (β=2, recall-weighted per
+  Presidio SpanEvaluator conventions). Aggregate metrics: macro-F2,
+  weighted-F2 (corpus-prevalence weighted), balanced_accuracy (macro-average
+  recall), entity-type confusion matrix (truth rows x predicted columns),
+  and enumerated FP/FN lists identifying which columns false-positive or
+  false-negative. This is the foundational evidence artifact proving where
+  the regex detectors miss. The baseline report is frozen at
+  `docs/v2/ml/baseline-report.json` with a regression-test gate
+  (`tests/snapshots/test_ml_baseline_golden.py`).
+
+- **StratifiedGroupKFold split scaffolding** (`storm/eval/split.py`,
+  ML0/§A.3). Held-out split utility guarded against data leakage: group
+  = the unique PII value string, so the same value cannot appear in both
+  train and test. Prevents a future model memorising strings instead of
+  learning column-shape patterns. `make_split_inputs()` converts labeled
+  fixtures to `(X, y, groups)` for sklearn's `StratifiedGroupKFold`.
+  Requires the optional `[ml]` extra (`pip install 'decoy-engine[ml]'`,
+  pins scikit-learn >= 1.4, < 3). The regex baseline has no training phase
+  and does not use this utility; it is scaffolding for ML2.2.
+
+- **Confidence bands and per-column latency benchmark** (`storm/eval/bands.py`,
+  ML0/§A.4). Three operational confidence bands for STORM field-recognition
+  suggestions: high (precision >= 0.95), review (0.70 <= precision < 0.95),
+  low (precision < 0.70). Thresholds calibrate to the regex baseline
+  precision (not probabilistic model outputs; calibration deferred to ML2.2).
+  Includes per-column latency micro-benchmark (target: < 50ms dev-tier budget).
+
+- **Privacy test for baseline artifact** (`tests/privacy/`,
+  test_no_raw_values_in_baseline_report.py, ML0/§B.4). Asserts no raw PII
+  cell values in the frozen baseline report or feature dicts, a guard
+  against accidental training-data leakage into version-controlled artifacts.
+
+### Added (ML3 field classification and provenance, 2026-06-27)
+
+Production column-type classification and manifest integrity features built
+on the ML1/ML2 foundation. Gated by the `[ml]` optional extra; off by default.
+
+- **ML3.1: `classify_fields()` public function** (`storm/model_pack/classify.py`).
+  Entry point for LightGBM-backed field-type classification: loads the model pack
+  via `ModelPackLoader`, builds ML1 aggregate column features, and returns per-
+  column predictions with calibrated confidence scores and operational confidence
+  bands (high/review/low). Output contains metadata only; no raw cell values are
+  included (privacy invariant per ml-benchmarking-and-privacy.md §B.4). Returns
+  `None` (never raises) when ML is disabled (`DECOY_ML_DISABLED=1`) or the pack
+  is missing/corrupt, so callers can fall back to the deterministic regex baseline.
+  Deterministic: given the same `DataFrame` and pack, always returns identical
+  results. The platform's HTTP classify-fields endpoint and review UI consume this
+  function (ML3.3, frontend lane).
+
+- **ML3.2: HMAC-SHA256 provenance signing** (`storm/model_pack/provenance.py`).
+  New functions `sign_manifest()` and `verify_manifest()` bind manifest integrity:
+  canonical-JSON payload (all fields except `manifest_hmac` itself) is signed with
+  HMAC-SHA256, binding the weights file hash, eval report hash, feature schema
+  version, and pack identity. Uses stdlib `hmac` + `hashlib` (established keyed-hash
+  primitive used throughout the engine). The `ModelPackLoader` enforces signature
+  verification when a signing key is configured via `DECOY_PACK_SIGNING_KEY` env
+  var (hex-encoded 32 bytes): unsigned packs rejected, tampered manifests detected
+  via constant-time comparison. Without a key, packs are accepted with a warning
+  (forward compatibility for development/testing). Production signing-key source is
+  escalated (see Sprint C hand-off); key management not configured in this module.
+
 ## [0.1.0] - 2026-06-02
 
 The first publishable cut of the engine. Not yet pushed to the real

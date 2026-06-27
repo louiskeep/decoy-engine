@@ -75,6 +75,22 @@ will succeed and the output will leak. Use `storm` to find candidate PII and the
 post-mask checks to look for residual identifiers, but the mapping from your
 data's sensitivities to a correct config is yours to get right.
 
+## The ML column classifier does not de-identify anything
+
+The STORM LightGBM column classifier (lgbm-v1) DETECTS which semantic type
+a column is likely to contain (SSN, email, ICD-10 code, etc.). It does not
+mask, redact, transform, or remove any values. A column classified as `ssn`
+still contains SSNs until a masking step explicitly transforms them.
+
+The classifier is an advisory signal. It can have false negatives (missed PII
+columns) and false positives (non-PII flagged as PII). The held-out evaluation
+in `docs/v2/ml/lightgbm-report.json` documents the known error rates.
+
+The model artifact carries no differential privacy guarantee. It was trained on
+fully synthetic data and its weights do not encode any real PII cell values
+(§B.4 of ml-benchmarking-and-privacy.md), but that is a training-data hygiene
+property, not a DP guarantee over the model's outputs.
+
 ## What it does do
 
 To be clear about the other side: Decoy does give you deterministic,

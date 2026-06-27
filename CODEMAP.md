@@ -49,6 +49,7 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | `src/decoy_engine/profile/` | Profile types + `profile_source` |
 | `src/decoy_engine/storm/` | Profiling, detectors, and post-mask integrity checks (`postmask/residual_pii.py`, `postmask/fk_preservation.py`) |
 | `src/decoy_engine/storm/` | Profiling and detectors; `_classification.py` holds column-shape classification helpers; `_distributions.py` holds distribution-snapshot builders; `_patterns.py` holds the detector regex catalog; `_validators.py` holds detector validation helpers (all split from `profiler.py`/`detectors.py`, F11b/F11c) |
+| `src/decoy_engine/storm/` | Profiling and detectors; `eval/` (labeled fixtures + regex-baseline recognition harness + ML measurement substrate) and `features/` (deterministic per-column feature builder) are off-run-path field-recognition tooling (BF2 / ML0); `eval/split.py` + `eval/bands.py` are scaffolding for ML2.2; `model_pack/` holds the LightGBM pack loader + featurizer + ML3.1 classification function + ML3.2 HMAC provenance signing |
 | `src/decoy_engine/validation/` | `validate_config` |
 | `src/decoy_engine/validation_result.py` | `ValidationResult`, `ValidationMessage`, `VALIDATION_CODES` |
 | `src/decoy_engine/sdk.py` | Public Connector SDK (file-shaped) |
@@ -90,8 +91,18 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | Validation surface | `src/decoy_engine/validation/_config.py`, `src/decoy_engine/validation_result.py` |
 | Connectors | `src/decoy_engine/sdk.py`, `src/decoy_engine/connectors/` |
 | STORM | `src/decoy_engine/storm/` |
+| ML field-recognition evaluation (BF2 / ML0) | `src/decoy_engine/storm/eval/` (harness, split, bands); see CHANGELOG §"ML-foundation measurement substrate" |
+| ML3.1 column-type classification | `src/decoy_engine/storm/model_pack/classify.py` (`classify_fields` function); see CHANGELOG §"ML3 field classification and provenance" |
+| ML3.2 manifest provenance signing | `src/decoy_engine/storm/model_pack/provenance.py` (`sign_manifest`, `verify_manifest`); signatures enforced by `ModelPackLoader` when `DECOY_PACK_SIGNING_KEY` is set |
 | Canonical caller shape | `tests/integration/golden/test_execution_e2e.py::_run` |
 | Parity notes | `tests/parity/SEMANTIC_DIFFERENCES.md` |
+
+## Known Issues / Flags
+
+| Issue | Note |
+|---|---|
+| `docs/ml-benchmarking-and-privacy.md` missing | Referenced extensively in `src/decoy_engine/storm/eval/` (harness.py, split.py, bands.py) and test files with citations like §A.1 / §A.3 / §A.4 / §A.7 / §B.4. This document is the authoritative ML measurement standard but is not present in the engine repo. Likely lives in the commercial platform repo. Cross-link when available. |
+| `docs/v2/ml/baseline-report.json` path | Uses retired "v2" nomenclature. Should be relocated to `docs/ml/baseline-report.json` or similar at a future sprint. Flagged for relocation, do not move independently (shared with commercial platform schema docs). |
 
 ## Conventions
 
