@@ -428,6 +428,35 @@ is off the public run path and intentionally NOT re-exported from
   cell values in the frozen baseline report or feature dicts, a guard
   against accidental training-data leakage into version-controlled artifacts.
 
+### Added (ML3 field classification and provenance, 2026-06-27)
+
+Production column-type classification and manifest integrity features built
+on the ML1/ML2 foundation. Gated by the `[ml]` optional extra; off by default.
+
+- **ML3.1: `classify_fields()` public function** (`storm/model_pack/classify.py`).
+  Entry point for LightGBM-backed field-type classification: loads the model pack
+  via `ModelPackLoader`, builds ML1 aggregate column features, and returns per-
+  column predictions with calibrated confidence scores and operational confidence
+  bands (high/review/low). Output contains metadata only; no raw cell values are
+  included (privacy invariant per ml-benchmarking-and-privacy.md §B.4). Returns
+  `None` (never raises) when ML is disabled (`DECOY_ML_DISABLED=1`) or the pack
+  is missing/corrupt, so callers can fall back to the deterministic regex baseline.
+  Deterministic: given the same `DataFrame` and pack, always returns identical
+  results. The platform's HTTP classify-fields endpoint and review UI consume this
+  function (ML3.3, frontend lane).
+
+- **ML3.2: HMAC-SHA256 provenance signing** (`storm/model_pack/provenance.py`).
+  New functions `sign_manifest()` and `verify_manifest()` bind manifest integrity:
+  canonical-JSON payload (all fields except `manifest_hmac` itself) is signed with
+  HMAC-SHA256, binding the weights file hash, eval report hash, feature schema
+  version, and pack identity. Uses stdlib `hmac` + `hashlib` (established keyed-hash
+  primitive used throughout the engine). The `ModelPackLoader` enforces signature
+  verification when a signing key is configured via `DECOY_PACK_SIGNING_KEY` env
+  var (hex-encoded 32 bytes): unsigned packs rejected, tampered manifests detected
+  via constant-time comparison. Without a key, packs are accepted with a warning
+  (forward compatibility for development/testing). Production signing-key source is
+  escalated (see Sprint C hand-off); key management not configured in this module.
+
 ## [0.1.0] - 2026-06-02
 
 The first publishable cut of the engine. Not yet pushed to the real

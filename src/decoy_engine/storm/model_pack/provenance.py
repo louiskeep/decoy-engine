@@ -1,11 +1,11 @@
 """HMAC-SHA256 provenance signing for model-pack manifests (ML3.2).
 
-Established methodology (per CLAUDE.md core rule):
-    HMAC-SHA256 via stdlib ``hmac`` + ``hashlib`` -- the same primitive used
-    in ``internal/crypto.py`` (``hmac_hex``) and ``determinism/_hkdf.py``
-    throughout the engine.  We do NOT use the ``cryptography`` package here
-    because the engine's existing keyed-hash surface is stdlib-only (see
-    ``determinism/_hkdf.py`` lines 6-11 for the rationale).
+Pattern: HMAC-SHA256 (RFC 2104, stdlib).
+  Reference: https://datatracker.ietf.org/doc/html/rfc2104
+  Rationale: stdlib-only keyed-hash primitive used throughout the engine
+  (internal/crypto.py hmac_hex, determinism/_hkdf.py). We do NOT use
+  the ``cryptography`` package for consistency with existing keyed-hash
+  surface (see determinism/_hkdf.py lines 6-11).
 
 Signing algorithm (``sign_manifest``):
     1. Serialise the manifest to canonical JSON: ``json.dumps(d, sort_keys=True,

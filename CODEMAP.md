@@ -44,7 +44,7 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | `src/decoy_engine/relationships/` | `build_relationship_graph`, `build_namespace_registry`, `check_orphan_fk_policy_completeness`, `OrphanPolicy` |
 | `src/decoy_engine/providers_v2/` | `ProviderRegistry`, identifier adapters |
 | `src/decoy_engine/profile/` | Profile types + `profile_source` |
-| `src/decoy_engine/storm/` | Profiling and detectors; `eval/` (labeled fixtures + regex-baseline recognition harness + ML measurement substrate) and `features/` (deterministic per-column feature builder) are off-run-path field-recognition tooling (BF2 / ML0); `eval/split.py` + `eval/bands.py` are scaffolding for ML2.2 |
+| `src/decoy_engine/storm/` | Profiling and detectors; `eval/` (labeled fixtures + regex-baseline recognition harness + ML measurement substrate) and `features/` (deterministic per-column feature builder) are off-run-path field-recognition tooling (BF2 / ML0); `eval/split.py` + `eval/bands.py` are scaffolding for ML2.2; `model_pack/` holds the LightGBM pack loader + featurizer + ML3.1 classification function + ML3.2 HMAC provenance signing |
 | `src/decoy_engine/validation/` | `validate_config` |
 | `src/decoy_engine/validation_result.py` | `ValidationResult`, `ValidationMessage`, `VALIDATION_CODES` |
 | `src/decoy_engine/sdk.py` | Public Connector SDK (file-shaped) |
@@ -86,6 +86,8 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | Connectors | `src/decoy_engine/sdk.py`, `src/decoy_engine/connectors/` |
 | STORM | `src/decoy_engine/storm/` |
 | ML field-recognition evaluation (BF2 / ML0) | `src/decoy_engine/storm/eval/` (harness, split, bands); see CHANGELOG §"ML-foundation measurement substrate" |
+| ML3.1 column-type classification | `src/decoy_engine/storm/model_pack/classify.py` (`classify_fields` function); see CHANGELOG §"ML3 field classification and provenance" |
+| ML3.2 manifest provenance signing | `src/decoy_engine/storm/model_pack/provenance.py` (`sign_manifest`, `verify_manifest`); signatures enforced by `ModelPackLoader` when `DECOY_PACK_SIGNING_KEY` is set |
 | Canonical caller shape | `tests/integration/golden/test_execution_e2e.py::_run` |
 | Parity notes | `tests/parity/SEMANTIC_DIFFERENCES.md` |
 
