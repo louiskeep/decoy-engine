@@ -16,15 +16,22 @@ from decoy_engine.storm.model_pack.loader import (
     ModelPackLoader,
     ModelPackLoadError,
 )
-from decoy_engine.storm.model_pack.provenance import sign_manifest, verify_manifest
+from decoy_engine.storm.model_pack.provenance import (
+    derive_pack_signing_key,
+    sign_manifest,
+    sign_pack,
+    verify_manifest,
+)
 from decoy_engine.storm.model_pack.types import ModelPackManifest
 
 __all__ = [
-    "ModelPackLoader",
     "ModelPackLoadError",
+    "ModelPackLoader",
     "ModelPackManifest",
     "classify_fields",
+    "derive_pack_signing_key",
     "flatten_features",
     "sign_manifest",
+    "sign_pack",
     "verify_manifest",
 ]

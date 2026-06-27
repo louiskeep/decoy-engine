@@ -25,7 +25,7 @@ import joblib  # type: ignore[import]
 import pytest
 from sklearn.feature_extraction import DictVectorizer
 
-from decoy_engine.storm.model_pack.loader import ModelPackLoadError, ModelPackLoader
+from decoy_engine.storm.model_pack.loader import ModelPackLoader, ModelPackLoadError
 from decoy_engine.storm.model_pack.provenance import (
     SIGNING_KEY_ENV,
     sign_manifest,
@@ -43,9 +43,7 @@ from decoy_engine.storm.model_pack.types import (
 # production.  The production key source is an escalated decision (see
 # keyMgmtNote in the Sprint C hand-off).
 
-_FIXTURE_KEY = bytes.fromhex(
-    "de00c0de000000000000000000000000000000000000000000000000000000f1"
-)
+_FIXTURE_KEY = bytes.fromhex("de00c0de000000000000000000000000000000000000000000000000000000f1")
 
 _FIXTURE_KEY_HEX = _FIXTURE_KEY.hex()
 
@@ -247,3 +245,129 @@ def test_load_with_fallback_returns_none_on_signature_failure(
     loader = ModelPackLoader(pack_dir)
     result = loader.load_with_fallback()
     assert result is None
+
+
+# ── Option A: derive_pack_signing_key (instance-master-key-derived) ───────────
+
+_FIXTURE_MASTER = bytes.fromhex("00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff")
+
+
+def test_derive_pack_signing_key_is_32_bytes_and_deterministic() -> None:
+    """Deriving from the same 32-byte master yields the same 32-byte key."""
+    from decoy_engine.storm.model_pack.provenance import derive_pack_signing_key
+
+    k1 = derive_pack_signing_key(_FIXTURE_MASTER)
+    k2 = derive_pack_signing_key(_FIXTURE_MASTER)
+    assert isinstance(k1, bytes)
+    assert len(k1) == 32
+    assert k1 == k2, "derivation must be deterministic for a given master"
+
+
+def test_derive_pack_signing_key_differs_from_master_and_other_labels() -> None:
+    """The derived key is not the master itself and is purpose-separated."""
+    from decoy_engine.determinism._hkdf import hkdf_sha256
+    from decoy_engine.storm.model_pack.provenance import (
+        PACK_SIGNING_INFO,
+        derive_pack_signing_key,
+    )
+
+    derived = derive_pack_signing_key(_FIXTURE_MASTER)
+    assert derived != _FIXTURE_MASTER
+    # A different info label must produce a different key (domain separation).
+    other = hkdf_sha256(
+        ikm=_FIXTURE_MASTER,
+        salt=b"\x00" * 32,
+        info=b"pipeline:something-else",
+        length=32,
+    )
+    assert derived != other
+    assert PACK_SIGNING_INFO == "decoy-pack-signing-v1"
+
+
+def test_derive_pack_signing_key_rejects_wrong_length() -> None:
+    """A non-32-byte master is rejected (matches make_key_resolver's contract)."""
+    from decoy_engine.storm.model_pack.provenance import derive_pack_signing_key
+
+    with pytest.raises(ValueError):
+        derive_pack_signing_key(b"too-short")
+
+
+def test_derived_key_round_trips_through_sign_verify() -> None:
+    """A manifest signed with the derived key verifies with the derived key."""
+    from decoy_engine.storm.model_pack.provenance import derive_pack_signing_key
+
+    key = derive_pack_signing_key(_FIXTURE_MASTER)
+    m = _make_manifest()
+    m.manifest_hmac = sign_manifest(m, key)
+    assert verify_manifest(m, key) is True
+    # A key derived from a different master must NOT verify.
+    other_key = derive_pack_signing_key(bytes(32))
+    assert verify_manifest(m, other_key) is False
+
+
+# ── Option A: sign_pack (install/deploy-time in-place signing) ────────────────
+
+
+def test_sign_pack_signs_in_place_and_loader_accepts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """sign_pack writes a valid HMAC that the loader then accepts with the key set."""
+    from decoy_engine.storm.model_pack.provenance import derive_pack_signing_key, sign_pack
+
+    pack_dir = _write_signed_pack(tmp_path, key=None)  # unsigned on disk
+    key = derive_pack_signing_key(_FIXTURE_MASTER)
+
+    digest = sign_pack(pack_dir, key)
+    assert len(digest) == 64
+
+    # Manifest on disk now carries the signature.
+    raw = json.loads((pack_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert raw["manifest_hmac"] == digest
+
+    # Loader accepts it when the matching key is configured.
+    monkeypatch.setenv(SIGNING_KEY_ENV, key.hex())
+    loader = ModelPackLoader(pack_dir)
+    pack = loader.load()  # must not raise
+    assert "manifest" in pack
+
+
+def test_sign_pack_rejects_empty_key(tmp_path: Path) -> None:
+    """sign_pack refuses an empty key rather than producing a weak signature."""
+    from decoy_engine.storm.model_pack.provenance import sign_pack
+
+    pack_dir = _write_signed_pack(tmp_path, key=None)
+    with pytest.raises(ValueError):
+        sign_pack(pack_dir, b"")
+
+
+# ── Option A: DECOY_PACK_REQUIRE_SIGNATURE fail-closed posture ────────────────
+
+
+def test_require_signature_without_key_is_fail_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """REQUIRE_SIGNATURE=1 with no key configured -> hard error, not a warning."""
+    pack_dir = _write_signed_pack(tmp_path, key=None)
+    monkeypatch.delenv(SIGNING_KEY_ENV, raising=False)
+    monkeypatch.setenv("DECOY_PACK_REQUIRE_SIGNATURE", "1")
+
+    loader = ModelPackLoader(pack_dir)
+    with pytest.raises(ModelPackLoadError, match="REQUIRE_SIGNATURE"):
+        loader.load()
+
+
+def test_require_signature_with_signed_pack_and_key_loads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """REQUIRE_SIGNATURE=1 + key + properly signed pack -> loads ok (fail-closed allows the good path)."""
+    from decoy_engine.storm.model_pack.provenance import derive_pack_signing_key, sign_pack
+
+    pack_dir = _write_signed_pack(tmp_path, key=None)
+    key = derive_pack_signing_key(_FIXTURE_MASTER)
+    sign_pack(pack_dir, key)
+    monkeypatch.setenv(SIGNING_KEY_ENV, key.hex())
+    monkeypatch.setenv("DECOY_PACK_REQUIRE_SIGNATURE", "1")
+
+    loader = ModelPackLoader(pack_dir)
+    pack = loader.load()
+    assert "manifest" in pack

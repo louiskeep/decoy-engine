@@ -117,7 +117,7 @@ class ModelPackLoader:
         except ModelPackLoadError as exc:
             _log.warning("Model pack unavailable; falling back to regex baseline: %s", exc)
             return None
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             _log.warning(
                 "Unexpected error loading model pack; falling back to regex baseline: %s", exc
             )
@@ -136,9 +136,7 @@ class ModelPackLoader:
             raw = json.loads(manifest_path.read_text(encoding="utf-8"))
             return ModelPackManifest.from_dict(raw)
         except (json.JSONDecodeError, TypeError, KeyError) as exc:
-            raise ModelPackLoadError(
-                f"Corrupt manifest.json in {self._pack_dir}: {exc}"
-            ) from exc
+            raise ModelPackLoadError(f"Corrupt manifest.json in {self._pack_dir}: {exc}") from exc
 
     def _check_format(self, manifest: ModelPackManifest) -> None:
         if manifest.format_version != PACK_FORMAT:
@@ -159,9 +157,7 @@ class ModelPackLoader:
     def _read_weights(self) -> bytes:
         model_path = self._pack_dir / "model.joblib"
         if not model_path.exists():
-            raise ModelPackLoadError(
-                f"Missing model.joblib in {self._pack_dir}."
-            )
+            raise ModelPackLoadError(f"Missing model.joblib in {self._pack_dir}.")
         try:
             return model_path.read_bytes()
         except OSError as exc:
@@ -193,9 +189,25 @@ class ModelPackLoader:
           - No key configured + no HMAC stored  -> warn once; unsigned pack accepted.
 
         The key is read from the DECOY_PACK_SIGNING_KEY env var (hex-encoded bytes).
+
+        Fail-closed production posture (Option A): when
+        ``DECOY_PACK_REQUIRE_SIGNATURE=1`` is set, a missing key is treated as
+        a hard error rather than a warning, so a misconfigured production box
+        (platform forgot to derive/inject the key) refuses to load an
+        unverifiable pack instead of silently trusting it. Development leaves
+        the flag unset and keeps the warn-and-continue behaviour.
         """
         key = load_signing_key_from_env()
         signed = bool(manifest.manifest_hmac)
+        require_sig = os.environ.get("DECOY_PACK_REQUIRE_SIGNATURE", "0") == "1"
+
+        if key is None and require_sig:
+            raise ModelPackLoadError(
+                f"DECOY_PACK_REQUIRE_SIGNATURE=1 but no DECOY_PACK_SIGNING_KEY is "
+                f"configured; refusing to load pack {self._pack_dir} whose provenance "
+                "cannot be verified. Derive the signing key from the instance master "
+                "key (derive_pack_signing_key) and set DECOY_PACK_SIGNING_KEY."
+            )
 
         if key is not None:
             # Key is configured: enforce signature.
@@ -237,12 +249,9 @@ class ModelPackLoader:
             import joblib  # type: ignore[import]
         except ImportError as exc:
             raise ModelPackLoadError(
-                "joblib is required to load a model pack. "
-                "Install via: pip install -e '.[ml]'"
+                "joblib is required to load a model pack. Install via: pip install -e '.[ml]'"
             ) from exc
         try:
             return dict(joblib.load(io.BytesIO(model_bytes)))
-        except Exception as exc:  # noqa: BLE001
-            raise ModelPackLoadError(
-                f"Failed to deserialise model.joblib: {exc}"
-            ) from exc
+        except Exception as exc:
+            raise ModelPackLoadError(f"Failed to deserialise model.joblib: {exc}") from exc
