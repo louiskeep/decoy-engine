@@ -83,7 +83,7 @@ merged into one group that always landed in training.  That artefact is resolved
 ## 4. Metrics (Held-out Test Set, §A.1 / §A.8)
 
 **Split:** First fold of StratifiedGroupKFold(n_splits=5, shuffle=True, seed=42),
-value-level groups (§A.3). n_train=234, n_test=57.
+value-level groups (§A.3). n_train=232, n_test=59.
 
 **Operating threshold:** 0.1667 (suppress predictions below this calibrated
 probability; derived from FN:FP cost ratio k=5, Elkan 2001).
