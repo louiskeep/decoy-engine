@@ -41,6 +41,12 @@ ALLOWLIST: dict[str, int] = {
     "src/decoy_engine/storm/profiler.py": 999,
     "src/decoy_engine/plan/_compile.py": 921,
     "src/decoy_engine/quality/synth_report.py": 863,
+    # Sprint B (ML2.x): extended fixture corpus; decomposition deferred to
+    # ML3.x corpus expansion sprint when fixture types are fully settled.
+    "src/decoy_engine/storm/eval/fixtures.py": 726,
+    # Sprint B (ML2.x): monolithic train_and_evaluate; decompose into
+    # separate split / fit / calibrate / evaluate modules in ML3.x.
+    "src/decoy_engine/storm/model_pack/trainer.py": 716,
 }
 
 

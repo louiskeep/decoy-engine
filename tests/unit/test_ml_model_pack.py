@@ -18,6 +18,7 @@ verified before joblib.load).
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import sys
@@ -45,10 +46,12 @@ def _write_minimal_pack(tmp_path: Path, *, weights: bytes | None = None) -> Path
     pack_dir = tmp_path / "test-pack"
     pack_dir.mkdir()
 
-    # Build a trivial model to serialise
+    # Build a trivial model to serialise (joblib has no dumps(); use BytesIO)
     vec = DictVectorizer(sparse=False)
     vec.fit([{"x": 1.0}])
-    blob = joblib.dumps({"vec": vec, "clf": None, "classes": ["a", "b"]})
+    buf = io.BytesIO()
+    joblib.dump({"vec": vec, "clf": None, "classes": ["a", "b"]}, buf)
+    blob = buf.getvalue()
 
     if weights is not None:
         blob = weights
