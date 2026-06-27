@@ -12,7 +12,14 @@ rest of the config schema).
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+# Triggers that are fully wired in this SP release (SP-05).
+# format_error and mask_error are reserved names for future wiring;
+# they are NOT accepted yet so operators get a clear error rather than
+# a silent no-op. See carry-forward in docs/backlog/phase5-gaps/
+# backlog-promotions/p5-b-quarantine-rows.md.
+_WIRED_TRIGGERS: frozenset[str] = frozenset({"validation_fail"})
 
 
 class ValidatorEntry(BaseModel):
@@ -50,10 +57,14 @@ class QuarantineConfig(BaseModel):
     offending row is written to ``output_path`` instead of the main output.
     The job continues and completes successfully.
 
-    Supported triggers (SP-05):
+    Wired triggers (SP-05):
       - ``validation_fail``: row failed a job-level validator.
-      - ``format_error``: row contained a malformed value at format conversion.
-      - ``mask_error``: row triggered an error during the mask phase.
+
+    Reserved (not yet wired - see carry-forward in p5-b-quarantine-rows.md):
+      - ``format_error``: reserved for future wiring (malformed value at
+        format conversion). Rejected at config validation until wired.
+      - ``mask_error``: reserved for future wiring (error during mask phase).
+        Rejected at config validation until wired.
 
     Example YAML::
 
@@ -62,7 +73,6 @@ class QuarantineConfig(BaseModel):
           output_path: /mnt/quarantine/run-2026-06-27.jsonl
           triggers:
             - validation_fail
-            - format_error
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -70,3 +80,35 @@ class QuarantineConfig(BaseModel):
     enabled: bool = False
     output_path: str = ""
     triggers: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _fail_closed_when_enabled(self) -> QuarantineConfig:
+        """Enforce fail-closed invariants when enabled is True.
+
+        1. output_path must be non-empty/non-whitespace: a valid enabled
+           quarantine block with no output_path would silently drop rows
+           (data loss). Rejected up front.
+        2. Every trigger must be in the wired set: an unwired trigger
+           (format_error, mask_error) appears to quarantine those rows
+           but does nothing, creating a silent no-op. Rejected up front
+           with a message naming the unwired trigger.
+        """
+        if not self.enabled:
+            return self
+
+        if not self.output_path or not self.output_path.strip():
+            raise ValueError(
+                "quarantine output_path must not be empty when enabled is True; "
+                "a missing output_path would silently drop quarantined rows"
+            )
+
+        for trigger in self.triggers:
+            if trigger not in _WIRED_TRIGGERS:
+                raise ValueError(
+                    f"trigger {trigger!r} is not yet wired in SP-05 and would be "
+                    f"a silent no-op. Wired triggers: {sorted(_WIRED_TRIGGERS)}. "
+                    "See docs/backlog/phase5-gaps/backlog-promotions/"
+                    "p5-b-quarantine-rows.md for the carry-forward plan."
+                )
+
+        return self
