@@ -46,6 +46,12 @@ modules:
     note: Manifest integrity signing for ML model packs (ML3.2). Same stdlib
       keyed-hash primitive as transforms/fpe.py and determinism/_hkdf.py.
 
+  # SP-05 (2026-06-27): FK-integrity validators use the SDV HMA1 parent-first
+  # DAG pattern: materialise parent PK set, resolve child FK values against it.
+  - path: src/decoy_engine/validators/_fk_validators.py
+    pattern: SDV HMA1
+    source: sdv-dev/SDV (MIT); HierarchicalMetaData model (HMA1)
+
   # Removed 2026-06-02: the entire `forecast/` module (Recommender +
   # ForecastReport + DisguiseRecommendation + FieldRecommendation +
   # RiskFlag) was deleted under the storm-reframe-C clean break
