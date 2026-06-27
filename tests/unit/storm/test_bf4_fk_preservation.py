@@ -26,7 +26,6 @@ from __future__ import annotations
 import hashlib
 
 import pandas as pd
-import pytest
 
 from decoy_engine.storm.postmask.fk_preservation import check_fk_preservation
 from decoy_engine.storm.postmask.runner import run_storm_post_mask
@@ -335,7 +334,9 @@ class TestF6CompositeFkTupleCheck:
         # values individually exist in parent but the TUPLE does not.
         parent = pd.DataFrame({"pk_a": [1, 2], "pk_b": [1, 99]})
         child = pd.DataFrame({"fk_a": [1], "fk_b": [99]})
-        findings = check_fk_preservation({"parent": parent, "child": child}, self._composite_config())
+        findings = check_fk_preservation(
+            {"parent": parent, "child": child}, self._composite_config()
+        )
         assert len(findings) == 1
         f = findings[0]
         assert f.severity == "fail"
@@ -347,7 +348,9 @@ class TestF6CompositeFkTupleCheck:
     def test_composite_valid_tuples_pass(self):
         parent = pd.DataFrame({"pk_a": [1, 2], "pk_b": [1, 99]})
         child = pd.DataFrame({"fk_a": [1, 2], "fk_b": [1, 99]})
-        findings = check_fk_preservation({"parent": parent, "child": child}, self._composite_config())
+        findings = check_fk_preservation(
+            {"parent": parent, "child": child}, self._composite_config()
+        )
         assert len(findings) == 1
         assert findings[0].orphan_count == 0
         assert findings[0].severity == "info"
@@ -397,8 +400,7 @@ class TestF8SecurityNoRawKeyValues:
         findings = check_fk_preservation({"users": parent, "orders": child}, config)
         finding_str = str([f.__dict__ if hasattr(f, "__dict__") else f for f in findings])
         assert self._CANARY_ID not in finding_str, (
-            f"raw FK value {self._CANARY_ID!r} leaked into FK findings: "
-            f"{finding_str[:400]!r}"
+            f"raw FK value {self._CANARY_ID!r} leaked into FK findings: {finding_str[:400]!r}"
         )
 
     def test_runner_fk_preservation_section_has_no_raw_values(self):

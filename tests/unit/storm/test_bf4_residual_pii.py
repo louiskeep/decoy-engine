@@ -144,13 +144,9 @@ class TestS2SuccessfulHashSsn:
         }
         report = run_storm_post_mask(src, out, config=config)
         ssn_fails = [
-            f
-            for f in report["residual_pii"]
-            if f["column"] == "ssn" and f["severity"] == "fail"
+            f for f in report["residual_pii"] if f["column"] == "ssn" and f["severity"] == "fail"
         ]
-        assert ssn_fails == [], (
-            f"hashed SSNs should produce no fail findings; got {ssn_fails!r}"
-        )
+        assert ssn_fails == [], f"hashed SSNs should produce no fail findings; got {ssn_fails!r}"
 
 
 # ── S3: Unconfigured PII column ───────────────────────────────────────────────
@@ -207,9 +203,7 @@ class TestS4RedactStrategyFailed:
             ],
         }
         findings = check_residual_pii(output, config, source_frames=source)
-        fail_findings = [
-            f for f in findings if f.severity == "fail" and f.column == "email"
-        ]
+        fail_findings = [f for f in findings if f.severity == "fail" and f.column == "email"]
         assert len(fail_findings) >= 1
         assert fail_findings[0].configured_strategy == "redact"
         assert fail_findings[0].detector_id == "email"
@@ -232,11 +226,7 @@ class TestS5MultiColumnMixedOutcomes:
         syn_emails = _synthetic_emails()
         notes = _plain_text()
 
-        source = {
-            "patients": pd.DataFrame(
-                {"ssn": ssns, "email": emails, "notes": notes}
-            )
-        }
+        source = {"patients": pd.DataFrame({"ssn": ssns, "email": emails, "notes": notes})}
         output = {
             "patients": pd.DataFrame(
                 {
