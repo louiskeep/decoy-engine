@@ -389,14 +389,14 @@ def _npi_values(n: int) -> list[str]:
     return [make_npi(bodies[i % len(bodies)]) for i in range(n)]
 
 
-def _cvv_values(rng: random.Random, n: int) -> list[str]:
-    # 4-digit CVVs (Amex-style: 1000-9999) rather than 3-digit (100-999).
-    # This prevents value-level grouping with "none" columns that use short
-    # 3-digit strings (e.g., area_code "300"-"359"), which would otherwise
-    # cause all CVV columns to land in the same StratifiedGroupKFold fold
-    # as the "none" column and leave zero CVV examples in training.
-    # The _CVV_RE pattern matches \d{3,4} so 4-digit values are valid.
-    return [f"{rng.randint(1000, 9999)}" for _ in range(n)]
+def _cvv_unique_values(col_idx: int, n: int) -> list[str]:
+    """Non-overlapping 4-digit CVV values per column (§A.3 leakage guard).
+
+    Each column gets a distinct 100-slot window in 2000-2999 so
+    assign_value_level_groups keeps CVV columns in separate groups.
+    """
+    start = 2000 + col_idx * 100
+    return [str(start + j % 100) for j in range(n)]
 
 
 def _mrn_values(rng: random.Random, n: int, prefix: str = "MRN") -> list[str]:
@@ -447,8 +447,6 @@ def build_extended_fixtures() -> list[LabeledFixture]:
     - none: 60 columns (non-PII identifiers / amounts / codes)
     Total: approx 370 columns.
 
-    Includes the OOD/adversarial slice returned by build_ood_fixtures() as a
-    subset tagged with the "ood_" prefix in fixture names.
     """
     rng = random.Random(_EXT_SEED)
     fx: list[LabeledFixture] = []
@@ -520,9 +518,11 @@ def build_extended_fixtures() -> list[LabeledFixture]:
         vals = [make_npi(f"{start_body + j:09d}") for j in range(n)]
         fx.append(_make_fixture(f"ext_npi_{i:02d}", hdr, vals, "npi"))
 
-    # CVV (10 columns: clear header only -- name-hint-gated detector)
+    # CVV (10 columns: clear header only -- name-hint-gated detector).
+    # Non-overlapping value ranges via _cvv_unique_values so each column is a
+    # distinct union-find group and some land in the held-out test fold.
     for i, hdr in enumerate(_CVV_HEADERS_CLEAR):
-        fx.append(_make_fixture(f"ext_cvv_{i:02d}", hdr, _cvv_values(rng, n), "cvv"))
+        fx.append(_make_fixture(f"ext_cvv_{i:02d}", hdr, _cvv_unique_values(i, n), "cvv"))
 
     # MRN (40 columns: 20 clear header, 20 cryptic)
     mrn_prefixes = ["MRN", "MR", "MRC", "PT", "REC", "EMR", "EHR", "CHT", "HSI", "FHIR",
@@ -620,9 +620,7 @@ def build_extended_fixtures() -> list[LabeledFixture]:
         ("ext_none_idx2", "position", [str(i + 1) for i in range(n)]),
         ("ext_none_idx3", "rank", [str(i + 1) for i in range(n)]),
         ("ext_none_sz1", "file_size", [str(1024 * (i + 1)) for i in range(n)]),
-        # Use unit-suffixed strings so the numeric portion does not collide with
-        # the 4-digit CVV integer range, which would create spurious union-find
-        # bridges between CVV and the small-integer none-column cluster.
+        # Unit-suffixed to avoid union-find collision with 4-digit CVV range.
         ("ext_none_sz2", "record_count", [f"{i * 10} recs" for i in range(n)]),
         ("ext_none_dur1", "duration_sec", [f"PT{i}M" for i in range(n)]),
     ]
@@ -633,22 +631,24 @@ def build_extended_fixtures() -> list[LabeledFixture]:
 
 
 def build_ood_fixtures() -> list[LabeledFixture]:
-    """Return the out-of-distribution / adversarial held-out slice (§B.2).
+    """Out-of-distribution / adversarial held-out slice (§B.2).
 
-    All columns use single/double-character cryptic headers and / or mixed-locale
-    value formats. This slice is evaluated SEPARATELY to measure how well the
-    model generalises beyond the training distribution -- the "motivated-intruder
-    analogue" required by ml-benchmarking-and-privacy.md §B.2.
-
-    Source: NIST SP 800-188 motivated-intruder test; §B.2.
+    Cryptic single/double-char headers PLUS value-obfuscation: spaced PAN,
+    no-dash SSN, mixed-domain email.  Evaluated SEPARATELY (not in the
+    §A.1/§A.4 held-out test fold).  Source: NIST SP 800-188 §B.2.
     """
     rng = random.Random(_EXT_SEED + 1)
     n = _EXT_ROWS
     fx: list[LabeledFixture] = []
 
-    # SSN under single/double-char headers
+    # SSN: standard dashed format under single/double-char headers.
     for i, hdr in enumerate(["a1", "b2", "c3", "s1"]):
         fx.append(_make_fixture(f"ood_ssn_{i:02d}", hdr, _ssn_values(rng, n), "ssn"))
+
+    # SSN: no-dash obfuscation "NNNNNNNNN" (§B.2). _SSN_RE uses -? so matches.
+    for i, hdr in enumerate(["v1", "w2"]):
+        nodash = [v.replace("-", "") for v in _ssn_values(rng, n)]
+        fx.append(_make_fixture(f"ood_ssn_nd_{i:02d}", hdr, nodash, "ssn"))
 
     # EMAIL under cryptic headers with mixed domains
     # Use high base index (1000) to avoid overlap with extended corpus emails.
@@ -663,11 +663,11 @@ def build_ood_fixtures() -> list[LabeledFixture]:
             )
         )
 
-    # PAN -- obfuscated format (spaces between groups like "4111 1111 1111 1111")
+    # PAN: spaced format "NNNN NNNN NNNN NNNN" (§B.2). _PAN_RE handles [\s-]?.
     for i, hdr in enumerate(["p1", "q2"]):
         raw = _pan_values(rng, n, "4111")
-        # Keep plain format -- the regex will match either way.
-        fx.append(_make_fixture(f"ood_pan_{i:02d}", hdr, raw, "pan"))
+        spaced = [f"{v[:4]} {v[4:8]} {v[8:12]} {v[12:]}" for v in raw]
+        fx.append(_make_fixture(f"ood_pan_{i:02d}", hdr, spaced, "pan"))
 
     # IBAN -- German IBANs under cryptic headers
     for i, hdr in enumerate(["i1", "j2"]):

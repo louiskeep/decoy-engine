@@ -1,101 +1,35 @@
 {
-  "per_class": [
-    {
-      "field_type": "email",
-      "support": 4,
-      "true_positives": 4,
-      "false_positives": 0,
-      "false_negatives": 0,
-      "precision": 1.0,
-      "recall": 1.0,
-      "f2": 1.0
-    },
-    {
-      "field_type": "health_plan_id",
-      "support": 8,
-      "true_positives": 7,
-      "false_positives": 0,
-      "false_negatives": 1,
-      "precision": 1.0,
-      "recall": 0.875,
-      "f2": 0.8974
-    },
-    {
-      "field_type": "iban",
-      "support": 4,
-      "true_positives": 4,
-      "false_positives": 0,
-      "false_negatives": 0,
-      "precision": 1.0,
-      "recall": 1.0,
-      "f2": 1.0
-    },
-    {
-      "field_type": "icd10",
-      "support": 4,
-      "true_positives": 4,
-      "false_positives": 0,
-      "false_negatives": 0,
-      "precision": 1.0,
-      "recall": 1.0,
-      "f2": 1.0
-    },
-    {
-      "field_type": "iso_date",
-      "support": 4,
-      "true_positives": 4,
-      "false_positives": 0,
-      "false_negatives": 0,
-      "precision": 1.0,
-      "recall": 1.0,
-      "f2": 1.0
-    },
-    {
-      "field_type": "mrn",
-      "support": 8,
-      "true_positives": 8,
-      "false_positives": 0,
-      "false_negatives": 0,
-      "precision": 1.0,
-      "recall": 1.0,
-      "f2": 1.0
-    },
-    {
-      "field_type": "npi",
-      "support": 4,
-      "true_positives": 4,
-      "false_positives": 0,
-      "false_negatives": 0,
-      "precision": 1.0,
-      "recall": 1.0,
-      "f2": 1.0
-    },
-    {
-      "field_type": "pan",
-      "support": 4,
-      "true_positives": 4,
-      "false_positives": 0,
-      "false_negatives": 0,
-      "precision": 1.0,
-      "recall": 1.0,
-      "f2": 1.0
-    },
-    {
-      "field_type": "ssn",
-      "support": 4,
-      "true_positives": 4,
-      "false_positives": 0,
-      "false_negatives": 0,
-      "precision": 1.0,
-      "recall": 1.0,
-      "f2": 1.0
-    }
+  "balanced_accuracy": 0.975,
+  "calibration_method": "sigmoid",
+  "class_labels": [
+    "cvv",
+    "email",
+    "health_plan_id",
+    "iban",
+    "icd10",
+    "iso_date",
+    "mrn",
+    "none",
+    "npi",
+    "pan",
+    "ssn"
   ],
-  "macro_f2": 0.9886,
-  "weighted_f2": 0.9813,
-  "balanced_accuracy": 0.9861,
   "confusion_matrix": [
     [
+      2,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    [
+      0,
       4,
       0,
       0,
@@ -109,24 +43,13 @@
     ],
     [
       0,
-      7,
+      0,
+      6,
       0,
       0,
       0,
       0,
-      1,
-      0,
-      0,
-      0
-    ],
-    [
-      0,
-      0,
-      4,
-      0,
-      0,
-      0,
-      0,
+      2,
       0,
       0,
       0
@@ -136,6 +59,7 @@
       0,
       0,
       4,
+      0,
       0,
       0,
       0,
@@ -153,9 +77,24 @@
       0,
       0,
       0,
+      0,
       0
     ],
     [
+      0,
+      0,
+      0,
+      0,
+      0,
+      4,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    [
+      0,
       0,
       0,
       0,
@@ -168,6 +107,7 @@
       0
     ],
     [
+      0,
       0,
       0,
       0,
@@ -187,6 +127,7 @@
       0,
       0,
       0,
+      0,
       4,
       0,
       0
@@ -200,10 +141,12 @@
       0,
       0,
       0,
+      0,
       4,
       0
     ],
     [
+      0,
       0,
       0,
       0,
@@ -216,46 +159,143 @@
       4
     ]
   ],
-  "class_labels": [
-    "email",
-    "health_plan_id",
-    "iban",
-    "icd10",
-    "iso_date",
-    "mrn",
-    "none",
-    "npi",
-    "pan",
-    "ssn"
-  ],
   "false_negatives_list": [
     {
       "column_id": "ext_hp_clear_05.carrier_id",
-      "truth_label": "health_plan_id",
+      "error_type": "FN",
       "predicted_label": "none",
-      "error_type": "FN"
+      "truth_label": "health_plan_id"
+    },
+    {
+      "column_id": "ext_hp_clear_18.ins_id",
+      "error_type": "FN",
+      "predicted_label": "none",
+      "truth_label": "health_plan_id"
     }
   ],
   "false_positives_list": [],
-  "lift": {
-    "baseline_macro_recall": 0.8472,
-    "model_macro_recall": 0.9861,
-    "lift_ppt": 13.89,
-    "gate_met": true,
-    "gate_threshold_ppt": 5.0
-  },
-  "reliability": {
-    "brier_score": 0.0099,
-    "n_bins": 10,
-    "mean_calibration_error": 0.1997
-  },
-  "operating_threshold": 0.1667,
+  "feature_schema_version": "ml1-v1",
   "fn_fp_cost_ratio": 5,
+  "lift": {
+    "baseline_macro_recall": 0.8,
+    "gate_met": true,
+    "gate_threshold_ppt": 5.0,
+    "lift_ppt": 17.5,
+    "model_macro_recall": 0.975
+  },
+  "macro_f2": 0.9789,
+  "n_test": 59,
+  "n_train": 232,
   "ood_balanced_accuracy": 1.0,
   "ood_macro_recall": 1.0,
+  "operating_threshold": 0.1667,
+  "per_class": [
+    {
+      "f2": 1.0,
+      "false_negatives": 0,
+      "false_positives": 0,
+      "field_type": "cvv",
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 2,
+      "true_positives": 2
+    },
+    {
+      "f2": 1.0,
+      "false_negatives": 0,
+      "false_positives": 0,
+      "field_type": "email",
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 4,
+      "true_positives": 4
+    },
+    {
+      "f2": 0.7895,
+      "false_negatives": 2,
+      "false_positives": 0,
+      "field_type": "health_plan_id",
+      "precision": 1.0,
+      "recall": 0.75,
+      "support": 8,
+      "true_positives": 6
+    },
+    {
+      "f2": 1.0,
+      "false_negatives": 0,
+      "false_positives": 0,
+      "field_type": "iban",
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 4,
+      "true_positives": 4
+    },
+    {
+      "f2": 1.0,
+      "false_negatives": 0,
+      "false_positives": 0,
+      "field_type": "icd10",
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 4,
+      "true_positives": 4
+    },
+    {
+      "f2": 1.0,
+      "false_negatives": 0,
+      "false_positives": 0,
+      "field_type": "iso_date",
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 4,
+      "true_positives": 4
+    },
+    {
+      "f2": 1.0,
+      "false_negatives": 0,
+      "false_positives": 0,
+      "field_type": "mrn",
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 8,
+      "true_positives": 8
+    },
+    {
+      "f2": 1.0,
+      "false_negatives": 0,
+      "false_positives": 0,
+      "field_type": "npi",
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 4,
+      "true_positives": 4
+    },
+    {
+      "f2": 1.0,
+      "false_negatives": 0,
+      "false_positives": 0,
+      "field_type": "pan",
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 4,
+      "true_positives": 4
+    },
+    {
+      "f2": 1.0,
+      "false_negatives": 0,
+      "false_positives": 0,
+      "field_type": "ssn",
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 4,
+      "true_positives": 4
+    }
+  ],
+  "reliability": {
+    "brier_score": 0.0104,
+    "mean_calibration_error": 0.2063,
+    "n_bins": 10
+  },
   "training_seed": 42,
-  "n_train": 234,
-  "n_test": 57,
-  "calibration_method": "sigmoid",
-  "feature_schema_version": "ml1-v1"
+  "weighted_f2": 0.9634
 }

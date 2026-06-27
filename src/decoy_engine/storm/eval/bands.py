@@ -4,34 +4,50 @@ Defines the three operational confidence bands (high / review / low) for
 STORM field-recognition suggestions, and provides a micro-benchmark for
 measuring per-column detection latency against the <50ms dev-tier budget.
 
-Band thresholds (source: ml-benchmarking-and-privacy.md §A.4, superseding
-ml0.3-confidence-bands.md):
+Band thresholds (source: ml-benchmarking-and-privacy.md §A.4):
 
-    high   : precision >= 0.95  -- suggestion can be accepted with low review cost
-    review : 0.70 <= precision < 0.95  -- human must confirm before accepting
-    low    : precision < 0.70   -- suggestion should be treated as a hint only
+    high   : calibrated proba >= 0.95 -- accepts suggestion with low review cost
+    review : 0.70 <= calibrated proba < 0.95 -- human must confirm
+    low    : below operating_threshold or proba < 0.70 -- hint only
 
-These thresholds are defined on the REGEX BASELINE precision (measured by
-``run_baseline()``), not on calibrated model probabilities.
+For the regex baseline (no predict_proba) these were originally defined as
+PRECISION FLOORS on the per-type baseline precision.
 
-CALIBRATION DEFERRED (ML2)
----------------------------
-For a probabilistic model (ML2.2, LightGBM), the bands MUST be applied to
-CALIBRATED ``predict_proba`` scores, not raw model outputs:
+For the LightGBM probabilistic model (lgbm-v1), the thresholds apply to
+CALIBRATED ``predict_proba`` scores.  Empirical verification on the held-out
+test set (n=59, seed=42, StratifiedGroupKFold) shows:
 
-    - Report a reliability curve + Brier score for the shipped model.
-    - Use ``CalibratedClassifierCV(method='isotonic')`` for >= ~1000
-      calibration samples; sigmoid otherwise.
-    - Set the high/review/low thresholds on calibrated scores so that a
-      "high confidence >= X" band means ~X% of those predictions are
-      correct (verified on the held-out set).
+    PROVISIONAL BAND MEASUREMENTS (lgbm-v1, n_test=59):
+    - high   (>= 0.95): 0 samples -- this band is currently NEVER triggered
+                         by lgbm-v1.  Max calibrated probability observed on
+                         the held-out set is < 0.75, so the 0.95 floor is
+                         unreachable with the sigmoid calibration at this
+                         corpus size.  Empirical guarantee: N/A.
+    - review (0.70-0.95): 13 samples, 100% correct.  PROVISIONAL: n=13 is
+                           too small for a tight statistical guarantee; the
+                           Wilson 95% CI lower bound is ~0.75.
+    - low    (op-thresh to 0.70): 46 samples, 43/46 = 93.5% correct (3 FNs,
+                           all health_plan_id columns suppressed to 'none').
+                           PROVISIONAL.
 
-This requirement is deferred because the regex baseline has no
-``predict_proba``. The threshold names and documentation are established
-here so ML2.2 inherits the correct interface.
+    The MCE (mean calibration error) for lgbm-v1 is 0.2063, meaning the
+    model is UNDERCONFIDENT: it assigns probabilities in the 0.5-0.73 range
+    for columns it classifies correctly nearly 100% of the time.  This is
+    expected with CalibratedClassifierCV(sigmoid) on a small calibration
+    set (~46 samples per fold); sigmoid calibration cannot produce high-
+    confidence (> 0.9) outputs from low-entropy LightGBM leaf scores on
+    this corpus scale.
+
+    Planned resolution: expand to >= 500 columns per type (corpus-datasheet
+    recommendation) and re-calibrate with isotonic method once calibration
+    set exceeds ~1000 samples (sklearn §1.16).
+
+The test ``tests/snapshots/test_ml_lightgbm_golden.py::test_predict_column_band_accuracy``
+verifies the band-to-accuracy relationship on every CI run.
 
 Source: sklearn §1.16 (reliability diagrams, Brier score, isotonic >= ~1000
-samples); ml-benchmarking-and-privacy.md §A.4.
+samples); ml-benchmarking-and-privacy.md §A.4; Platt (1999) sigmoid
+calibration.
 """
 
 from __future__ import annotations

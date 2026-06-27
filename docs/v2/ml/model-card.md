@@ -16,8 +16,8 @@ Gate reference: ml-benchmarking-and-privacy.md §B.7 (9-section model card).
 | Operating threshold | 0.1667 (derived from FN:FP cost ratio k=5; see §5) |
 | Training seed | 42 |
 | Signing status | unsigned (development artifact; ML3.2 provenance signing sprint pending) |
-| SHA-256 of weights | `04e7ed061ca3503abf32ab7482f4b1b50c19b3a4d45e30684d325ca529ce69a5` |
-| Eval report hash | `36f4a54af098d0d9a4a99e7c66ad187e2ab5d26ce97af0e49f194c5a5cbd46b8` |
+| SHA-256 of weights | `c6f990308cce4602fc6cc4c43aaa4e71c4ea32fed608f3c22a4bcac85e9dd5d6` |
+| Eval report hash | `73863b66a4ffd4a5f4b47025b1e99ee6911980a662391cd973f4986b3dda54ff` |
 
 ### Intended use
 
@@ -67,16 +67,16 @@ The model was evaluated on two axes of variation:
 Single- or double-character header tokens (e.g. "e1", "f2") that are more
 cryptic than most training examples.
 
-**Known limitation: CVV in held-out evaluation.**
+**CVV held-out evaluation (fixed).**
 
-The 10 CVV columns (with clear headers like "cvv", "cvc") all landed in the
-TRAINING fold due to value-level grouping (§A.3): the union-find assigned
-them entirely to training when the StratifiedGroupKFold split was computed.
-CVV is therefore not represented in the held-out test metrics. At inference
-the model CAN predict `cvv` using both header tokens and the 4-digit content
-signature; the absence from test metrics is a corpus artefact, not a
-capability gap. A future corpus expansion (20+ CVV columns) would allow
-proper held-out evaluation.
+CVV columns now use non-overlapping 4-digit value ranges (2000-2999, partitioned
+per column) so that assign_value_level_groups keeps them in separate union-find
+groups.  This allows StratifiedGroupKFold to place 2 CVV columns in the held-out
+test fold: recall=1.00, precision=1.00, F2=1.00 on n=2 test samples (PROVISIONAL
+due to small support).  The remaining 8 CVV columns are in the training fold.
+
+Previously, all 10 CVV columns shared values from a common RNG pool and were
+merged into one group that always landed in training.  That artefact is resolved.
 
 ---
 
@@ -90,8 +90,9 @@ probability; derived from FN:FP cost ratio k=5, Elkan 2001).
 
 | Semantic type | Precision | Recall | F2 | Support |
 |---|---|---|---|---|
+| cvv | 1.00 | 1.00 | 1.00 | 2 |
 | email | 1.00 | 1.00 | 1.00 | 4 |
-| health_plan_id | 1.00 | 0.875 | 0.897 | 8 |
+| health_plan_id | 1.00 | 0.75 | 0.790 | 8 |
 | iban | 1.00 | 1.00 | 1.00 | 4 |
 | icd10 | 1.00 | 1.00 | 1.00 | 4 |
 | iso_date | 1.00 | 1.00 | 1.00 | 4 |
@@ -99,38 +100,38 @@ probability; derived from FN:FP cost ratio k=5, Elkan 2001).
 | npi | 1.00 | 1.00 | 1.00 | 4 |
 | pan | 1.00 | 1.00 | 1.00 | 4 |
 | ssn | 1.00 | 1.00 | 1.00 | 4 |
-| cvv | - | - | - | 0 (all in train) |
-| none | implicit | - | - | 17 |
+| none | implicit | - | - | 13 |
 
 **Aggregate metrics:**
 
 | Metric | Value |
 |---|---|
-| macro-F2 | 0.9886 |
-| weighted-F2 | 0.9813 |
-| balanced_accuracy | 0.9861 |
-| Brier score (avg OvR, sigmoid calibration) | 0.0099 |
-| Mean calibration error | 0.1997 |
+| macro-F2 | 0.9789 |
+| weighted-F2 | 0.9634 |
+| balanced_accuracy | 0.9750 |
+| Brier score (avg OvR, sigmoid calibration) | 0.0104 |
+| Mean calibration error (MCE) | 0.2063 |
 
 **Lift gate (§A.2):**
 
 | | Macro recall |
 |---|---|
-| Regex baseline | 0.8472 |
-| LightGBM (lgbm-v1) | 0.9861 |
-| Lift | +13.89 ppt |
+| Regex baseline | 0.8000 |
+| LightGBM (lgbm-v1) | 0.9750 |
+| Lift | +17.50 ppt |
 | Gate threshold | 5 ppt |
 | Gate status | PASSED |
 
-**OOD slice (§B.2):**
+**OOD slice (§B.2):** Obfuscated columns (spaced PAN, no-dash SSN) alongside
+single/double-char cryptic headers.
 
 | Metric | Value |
 |---|---|
 | balanced_accuracy | 1.00 |
 | macro_recall | 1.00 |
 
-**False negatives (n=1):** one `health_plan_id` column with a cryptic header
-was not confidently predicted above the operating threshold.
+**False negatives (n=2):** two `health_plan_id` columns (`carrier_id`,
+`ins_id`) were suppressed to `none` below the operating threshold.
 
 **False positives (n=0):** no false positives on the held-out test set.
 
@@ -180,13 +181,36 @@ threshold = 1/6 = 0.1667. At this threshold the model suppresses to `none`
 only when it is less than 16.67% confident in any PII class, which strongly
 biases toward recall.
 
-**Calibration justification (§A.4):**
+**Calibration and confidence bands (§A.4) -- PROVISIONAL:**
 
-With ~234 training columns and a 5-fold CV calibration split (calibration
-fold ~47 columns), the total calibration sample is below ~1000, so `sigmoid`
-calibration was used (sklearn documentation §1.16: isotonic regression requires
-larger calibration sets to avoid overfitting). Reliability curve and Brier score
+Sigmoid calibration was used because the calibration fold contains ~46 samples
+(sklearn §1.16: isotonic requires >= ~1000).  Reliability curve and Brier score
 are recorded in `lightgbm-report.json`.
+
+Band thresholds are set from the held-out test set but must be treated as
+PROVISIONAL because n_test=59 is too small for narrow confidence intervals:
+
+| Band | Proba threshold | Empirical accuracy (held-out) | n samples | 95% CI lower |
+|---|---|---|---|---|
+| high | >= 0.95 | N/A -- NEVER TRIGGERED | 0 | N/A |
+| review | 0.70 -- 0.95 | 100% (13/13) | 13 | ~0.75 (Wilson) |
+| low | op-thresh -- 0.70 | 93.5% (43/46) | 46 | ~0.82 (Wilson) |
+
+The "high" band is currently unreachable: max calibrated probability for
+lgbm-v1 on the held-out set is < 0.75.  This is expected with sigmoid
+calibration at this corpus scale: the calibration mapping compresses LightGBM
+leaf probabilities toward 0.5, rarely producing outputs above 0.8.  The band
+threshold of 0.95 is retained as a forward-compatible definition for when the
+corpus expands and isotonic calibration becomes viable.
+
+The MCE of 0.2063 reflects UNDERCONFIDENCE: the model assigns probabilities
+in the 0.5-0.73 range for columns it classifies with near-100% empirical
+accuracy.  A downstream operator can safely treat any prediction above the
+operating threshold (0.1667) as high-confidence on this corpus, though the
+"review" band label is technically correct per the probabilistic definition.
+
+Test: `tests/snapshots/test_ml_lightgbm_golden.py::test_predict_column_band_accuracy`
+verifies the band-to-accuracy relationship holds on every CI run.
 
 ---
 
@@ -205,22 +229,29 @@ are recorded in `lightgbm-report.json`.
 
 ## 9. Caveats and Recommendations
 
-1. **CVV held-out gap:** CVV type has no test-fold evaluation due to corpus
-   size. Expand to 20+ CVV training columns in a future corpus revision to
-   allow proper held-out recall measurement.
+1. **CVV held-out support is small (n=2):** The CVV fix (non-overlapping value
+   ranges) gave 2 test-fold CVV samples.  Recall=1.00 is PROVISIONAL.  Expand
+   to 30+ CVV training columns to obtain a larger held-out sample.
 
-2. **Calibration:** Mean calibration error (MCE) is 0.1997 on 9 classes; the
-   model tends to be slightly overconfident at high-probability predictions.
-   Use calibrated probabilities for threshold decisions, not raw scores.
+2. **Confidence bands are PROVISIONAL:** The "high" band (>= 0.95) is never
+   triggered by lgbm-v1 because max calibrated probabilities are < 0.75.
+   The sigmoid calibration compresses outputs; bands can only be sharpened
+   by expanding the corpus and switching to isotonic calibration (>= ~1000
+   calibration samples, sklearn §1.16).  See §A.4 above for measured numbers.
 
-3. **Provenance signing (ML3.2):** The pack is currently unsigned
+3. **MCE reflects underconfidence:** MCE is 0.2063 because the model assigns
+   probabilities of 0.5-0.73 to predictions that are empirically ~100%
+   correct.  This is not a safety hazard (no overconfident FPs) but should
+   be resolved with a larger corpus.
+
+4. **Provenance signing (ML3.2):** The pack is currently unsigned
    (`signing_key_ref: "unsigned"`). Before production use, implement the
    ML3.2 provenance signing sprint to generate a hardware-backed signature.
 
-4. **Corpus expansion:** 291 training columns is sufficient to demonstrate
+5. **Corpus expansion:** 301 training columns is sufficient to demonstrate
    the lift gate but is a small corpus. Pre-GA training should use a larger
    synthetic corpus (500+ columns per type).
 
-5. **On-prem only:** Never load this pack from an external or untrusted
+6. **On-prem only:** Never load this pack from an external or untrusted
    source. The SHA-256 check in `ModelPackLoader` is a tamper-detection
    mechanism, not an authentication scheme.

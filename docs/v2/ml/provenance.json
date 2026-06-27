@@ -8,10 +8,10 @@
     "datasheet_ref": "docs/v2/ml/corpus-datasheet.md",
     "generation_function": "decoy_engine.storm.eval.fixtures:build_extended_fixtures",
     "generation_seed": 20260627,
-    "total_columns": 291,
+    "total_columns": 301,
     "real_pii_used": false,
-    "ood_columns": 30,
-    "note": "100% synthetic; no real PII at any stage."
+    "ood_columns": 32,
+    "note": "100% synthetic; no real PII at any stage. CVV columns now use non-overlapping value ranges (§A.3 fix). OOD slice includes spaced-PAN and no-dash SSN obfuscation (§B.2 fix)."
   },
 
   "code": {
@@ -26,18 +26,18 @@
 
   "eval": {
     "report_path": "docs/v2/ml/lightgbm-report.json",
-    "report_sha256": "36f4a54af098d0d9a4a99e7c66ad187e2ab5d26ce97af0e49f194c5a5cbd46b8",
+    "report_sha256": "73863b66a4ffd4a5f4b47025b1e99ee6911980a662391cd973f4986b3dda54ff",
     "gate_doc": "docs/ml-benchmarking-and-privacy.md",
     "lift_gate_threshold_ppt": 5.0,
     "lift_gate_met": true,
-    "macro_recall_baseline": 0.8472,
-    "macro_recall_model": 0.9861,
-    "lift_ppt": 13.89,
-    "brier_score": 0.0099
+    "macro_recall_baseline": 0.8,
+    "macro_recall_model": 0.975,
+    "lift_ppt": 17.5,
+    "brier_score": 0.0104
   },
 
   "model": {
-    "weights_sha256": "04e7ed061ca3503abf32ab7482f4b1b50c19b3a4d45e30684d325ca529ce69a5",
+    "weights_sha256": "c6f990308cce4602fc6cc4c43aaa4e71c4ea32fed608f3c22a4bcac85e9dd5d6",
     "algorithm": "LGBMClassifier + CalibratedClassifierCV(sigmoid)",
     "calibration_method": "sigmoid",
     "operating_threshold": 0.1667,

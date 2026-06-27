@@ -587,10 +587,9 @@ def train_and_evaluate(
         feature_schema_version=FEATURE_SCHEMA_VERSION,
     )
 
+    # §B.7: hash the canonical report (no training_elapsed_sec) so that
+    # manifest.eval_report_hash matches the committed lightgbm-report.json.
     report_dict = report.to_dict()
-    report_dict["training_elapsed_sec"] = elapsed
-
-    # Compute report hash and update manifest.
     report_blob = json.dumps(report_dict, sort_keys=True, indent=2, default=str).encode("utf-8")
     report_hash = hashlib.sha256(report_blob).hexdigest()
     manifest.eval_report_hash = report_hash
