@@ -35,6 +35,7 @@ from decoy_engine.storm.eval.harness import (
     run_baseline,
 )
 from decoy_engine.storm.eval.split import (
+    assign_value_level_groups,
     held_out_split,
     make_group_key,
     make_split_inputs,
@@ -53,11 +54,12 @@ __all__ = [
     "FieldTypeMetrics",
     "HarnessReport",
     "LabeledFixture",
+    # split
+    "assign_value_level_groups",
     "benchmark_all_fixture_columns",
     "benchmark_column_latency",
     "build_fixtures",
     "classify_band",
-    # split
     "held_out_split",
     "make_group_key",
     "make_iban",

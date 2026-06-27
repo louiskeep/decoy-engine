@@ -29,19 +29,59 @@ import pandas as pd
 
 
 def make_group_key(series: pd.Series) -> str:
-    """Return the group key for one fixture column.
+    """Return a column's value SIGNATURE: sorted unique non-null values joined
+    by ``|``.
 
-    Group key = lexicographically sorted unique non-null values joined by
-    ``|``.  Two columns that share any value get the same group; the split
-    then keeps them on the same side of the train/test boundary so the model
-    cannot memorise the values.
-
-    For the regex baseline the key is informational (the baseline has no
-    training phase).  At ML2 it becomes the ``groups`` argument to
-    ``StratifiedGroupKFold``.
+    This identifies columns with an IDENTICAL value set. It does NOT by itself
+    deliver the §A.3 value-level leakage guard: two columns that merely SHARE a
+    value have different signatures. The cross-column guarantee is produced by
+    :func:`assign_value_level_groups`, which :func:`make_split_inputs` uses to
+    build the ``groups`` argument for ``StratifiedGroupKFold``. Retained as a
+    deterministic signature helper.
     """
     unique_vals = sorted(str(v) for v in series.dropna().unique())
     return "|".join(unique_vals)
+
+
+def assign_value_level_groups(value_sets: list[set[str]]) -> list[int]:
+    """Assign a group id per column so any two columns sharing AT LEAST one
+    value land in the same group (the real §A.3 value-level leakage guard).
+
+    Connected components over the column<->value graph via union-find: a value
+    seen in two columns unions them, so ``StratifiedGroupKFold`` keeps every
+    column touching a shared value on one side of the train/test boundary. Ids
+    are remapped to contiguous ints in first-seen column order, so the result
+    is deterministic for a fixed column order.
+    """
+    parent = list(range(len(value_sets)))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def union(a: int, b: int) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[rb] = ra
+
+    owner: dict[str, int] = {}
+    for i, vals in enumerate(value_sets):
+        for v in vals:
+            if v in owner:
+                union(owner[v], i)
+            else:
+                owner[v] = i
+
+    remap: dict[int, int] = {}
+    out: list[int] = []
+    for i in range(len(value_sets)):
+        root = find(i)
+        if root not in remap:
+            remap[root] = len(remap)
+        out.append(remap[root])
+    return out
 
 
 def make_split_inputs(
@@ -64,9 +104,10 @@ def make_split_inputs(
         Ground-truth semantic-type label per column (the truth_label from
         the fixture).
     groups : list of str
-        Group key per column -- the sorted unique PII values in that column
-        (via ``make_group_key``).  ``StratifiedGroupKFold`` uses this to
-        keep the same value on one side of the train/test boundary.
+        Value-level group id per column (via ``assign_value_level_groups``):
+        any two columns sharing a value get the same id, so
+        ``StratifiedGroupKFold`` keeps that value on one side of the
+        train/test boundary (§A.3).
 
     Notes
     -----
@@ -78,15 +119,17 @@ def make_split_inputs(
 
     X: list[dict[str, Any]] = []
     y: list[str] = []
-    groups: list[str] = []
+    value_sets: list[set[str]] = []
 
     for fx in fixtures:
         for col, label in fx.labels.items():
             feats = build_column_features(fx.df[col], col)
             X.append(feats.to_dict())
             y.append(label)
-            groups.append(make_group_key(fx.df[col]))
+            value_sets.append({str(v) for v in fx.df[col].dropna().unique()})
 
+    # Value-level grouping: columns sharing any value -> same group (§A.3).
+    groups = [str(g) for g in assign_value_level_groups(value_sets)]
     return X, y, groups
 
 

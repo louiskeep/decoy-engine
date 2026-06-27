@@ -15,7 +15,11 @@ import json
 import pytest
 
 from decoy_engine.storm.eval import build_fixtures
-from decoy_engine.storm.eval.split import make_group_key, make_split_inputs
+from decoy_engine.storm.eval.split import (
+    assign_value_level_groups,
+    make_group_key,
+    make_split_inputs,
+)
 
 
 class TestMakeGroupKey:
@@ -47,6 +51,34 @@ class TestMakeGroupKey:
         s1 = pd.Series(["123-45-6789"])
         s2 = pd.Series(["987-65-4321"])
         assert make_group_key(s1) != make_group_key(s2)
+
+
+class TestValueLevelGroups:
+    """The real §A.3 guard: columns sharing ANY value land in one group."""
+
+    def test_shared_value_unions_columns(self):
+        # cols 0 and 1 share "b"; col 2 is disjoint. The shared pair MUST share
+        # a group (so the value can't straddle the train/test boundary), and the
+        # disjoint column MUST be separate. make_group_key alone fails this:
+        # cols 0 and 1 have different signatures.
+        groups = assign_value_level_groups([{"a", "b"}, {"b", "c"}, {"x", "y"}])
+        assert groups[0] == groups[1]
+        assert groups[2] != groups[0]
+
+    def test_transitive_union_via_chain(self):
+        # 0-1 share "b", 1-2 share "c" -> all three transitively one group.
+        groups = assign_value_level_groups([{"a", "b"}, {"b", "c"}, {"c", "d"}])
+        assert groups[0] == groups[1] == groups[2]
+
+    def test_all_disjoint_are_distinct_groups(self):
+        groups = assign_value_level_groups([{"a"}, {"b"}, {"c"}])
+        assert len(set(groups)) == 3
+
+    def test_deterministic_contiguous_ids(self):
+        vs = [{"p", "q"}, {"r"}, {"q", "z"}]
+        assert assign_value_level_groups(vs) == assign_value_level_groups(vs)
+        # 0 and 2 share "q"; ids are first-seen-contiguous: 0->0, 1->1, 2->0.
+        assert assign_value_level_groups(vs) == [0, 1, 0]
 
 
 class TestMakeSplitInputs:
@@ -128,25 +160,26 @@ class TestHeldOutSplit:
             )
 
     def test_split_requires_sklearn(self):
-        """ImportError raised when sklearn is absent (documents the dependency)."""
+        """ImportError raised when the [ml] extra (scikit-learn) is absent.
+
+        Forces the failure deterministically whether or not sklearn is installed:
+        a ``None`` entry in ``sys.modules`` makes ``from sklearn... import`` raise
+        ImportError, so this documents the dependency contract in any environment.
+        """
         import sys
 
-        # Simulate absence of sklearn by temporarily hiding the module.
-        sklearn_mod = sys.modules.pop("sklearn", None)
-        sklearn_ms_mod = sys.modules.pop("sklearn.model_selection", None)
+        keys = ("sklearn", "sklearn.model_selection")
+        saved = {k: sys.modules.get(k) for k in keys}
+        for k in keys:
+            sys.modules[k] = None  # force ImportError on the next `from sklearn...`
         try:
             from decoy_engine.storm.eval.split import held_out_split
 
             with pytest.raises(ImportError, match="scikit-learn"):
                 list(held_out_split([1], ["ssn"], ["g1"], n_splits=2))
         finally:
-            if sklearn_mod is not None:
-                sys.modules["sklearn"] = sklearn_mod
-            if sklearn_ms_mod is not None:
-                sys.modules["sklearn.model_selection"] = sklearn_ms_mod
-            # Also reload split module to reset its cached import state.
-            import importlib
-
-            import decoy_engine.storm.eval.split as _split_mod
-
-            importlib.reload(_split_mod)
+            for k, v in saved.items():
+                if v is None:
+                    sys.modules.pop(k, None)
+                else:
+                    sys.modules[k] = v
