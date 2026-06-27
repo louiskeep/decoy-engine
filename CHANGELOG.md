@@ -355,6 +355,22 @@ F4 shuffle fix (shipped earlier on its own branch) that also rides the v6 bump.
   tamper bite-test confirms the guard fires for this artifact kind. Every
   corpus artifact now stamps `seed_protocol_version`. Corpus version bumped to 2.
 
+### Added (BF4 post-mask tests, 2026-06-26)
+
+- **TDD synthetic fixture test suites for post-mask check runners** (BF4).
+  Two pure-engine test modules exercise the behavioral contracts of the
+  residual-PII scanner and FK-preservation checker, both shipped as part of
+  Reframe-A. `tests/unit/storm/test_bf4_residual_pii.py` (12 test scenarios,
+  374 LOC) covers failed-hash detection (S1), successful masking (S2),
+  unconfigured PII columns (S3), redact failures (S4), multi-column mixtures
+  (S5), non-PII columns (S6), and a security invariant asserting that report
+  findings never leak raw cell values. `tests/unit/storm/test_bf4_fk_preservation.py`
+  (15 test scenarios, 417 LOC) validates consistent masking (F1), orphan
+  detection on inconsistent hashing (F2), null FK handling (F3), multi-child
+  independence (F4), namespace routing (F5), composite FK tuples (F6), missing-
+  parent error gracefully handled (F7), and the security invariant that findings
+  carry no raw key material.
+
 ### Changed
 
 - **Repository visibility flipped to public** (2026-06-02). Aligns

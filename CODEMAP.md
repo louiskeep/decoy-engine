@@ -46,7 +46,7 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | `src/decoy_engine/relationships/` | `build_relationship_graph`, `build_namespace_registry`, `check_orphan_fk_policy_completeness`, `OrphanPolicy` |
 | `src/decoy_engine/providers_v2/` | `ProviderRegistry`, identifier adapters |
 | `src/decoy_engine/profile/` | Profile types + `profile_source` |
-| `src/decoy_engine/storm/` | Profiling and detectors |
+| `src/decoy_engine/storm/` | Profiling, detectors, and post-mask integrity checks (`postmask/residual_pii.py`, `postmask/fk_preservation.py`) |
 | `src/decoy_engine/validation/` | `validate_config` |
 | `src/decoy_engine/validation_result.py` | `ValidationResult`, `ValidationMessage`, `VALIDATION_CODES` |
 | `src/decoy_engine/sdk.py` | Public Connector SDK (file-shaped) |
