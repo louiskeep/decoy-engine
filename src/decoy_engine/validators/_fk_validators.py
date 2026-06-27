@@ -72,6 +72,7 @@ def _extract_relationships(config: dict[str, Any]) -> list[dict[str, Any]]:
 def _parent_pk_set(
     table: pa.Table,
     columns: list[str],
+    parent_table_name: str = "",
 ) -> set[tuple[Any, ...]]:
     """Build the set of non-null parent PK tuples from a pa.Table.
 
@@ -82,11 +83,24 @@ def _parent_pk_set(
     Args:
         table: Parent table (read-only; not mutated).
         columns: List of column names forming the parent PK.
+        parent_table_name: Table name for error messages.
 
     Returns:
         Set of non-null PK tuples present in the parent table.
+
+    Raises:
+        ValueError: If any column in ``columns`` is not present in ``table``.
+            An absent column silently produces an empty PK set, which would
+            make every child FK appear broken (mass false-positive quarantine).
     """
-    col_arrays = [table.column(c).to_pylist() for c in columns if c in table.schema.names]
+    table_cols = set(table.schema.names)
+    missing = [c for c in columns if c not in table_cols]
+    if missing:
+        raise ValueError(
+            f"misconfigured FK validator: column(s) {missing!r} not found in parent "
+            f"table {parent_table_name!r}. Available columns: {sorted(table_cols)}"
+        )
+    col_arrays = [table.column(c).to_pylist() for c in columns]
     if not col_arrays:
         return set()
     n = len(col_arrays[0])
@@ -171,7 +185,12 @@ def validate_fk_intact(
             continue
 
         parent_table = outputs.get(parent_table_name)
-        pk_set = _parent_pk_set(parent_table, parent_cols) if parent_table is not None else set()
+        if parent_table is None:
+            raise ValueError(
+                f"misconfigured fk_intact validator: parent table {parent_table_name!r} "
+                f"not found in outputs. Available tables: {sorted(outputs)}"
+            )
+        pk_set = _parent_pk_set(parent_table, parent_cols, parent_table_name=parent_table_name)
 
         for child_info in children:
             if not isinstance(child_info, dict):
