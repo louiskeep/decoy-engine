@@ -62,7 +62,7 @@ class CompiledExpression:
     """
 
     source: str
-    tree: lark.Tree
+    tree: lark.Tree[Any]
 
 
 def compile_expr(expr_string: str) -> CompiledExpression:
@@ -135,10 +135,13 @@ def evaluate(compiled: CompiledExpression, row_context: dict[str, Any]) -> Any:
     except lark.exceptions.VisitError as exc:
         # Lark wraps transformer exceptions in VisitError; unwrap so
         # callers see KeyError / ValidationError directly.
-        raise exc.__context__ from exc.__context__
+        ctx = exc.__context__
+        if ctx is not None:
+            raise ctx from ctx
+        raise
 
 
-class _ExprTransformer(lark.Transformer):  # type: ignore[misc]
+class _ExprTransformer(lark.Transformer):  # type: ignore[type-arg]
     """Transforms a Lark parse tree into a Python value.
 
     Each method corresponds to a rule alias in grammar.lark. Lark calls

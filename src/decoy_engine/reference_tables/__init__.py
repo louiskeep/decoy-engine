@@ -40,4 +40,4 @@ from __future__ import annotations
 from decoy_engine.reference_tables._loader import load_table
 from decoy_engine.reference_tables._types import ReferenceTable
 
-__all__ = ["load_table", "ReferenceTable"]
+__all__ = ["ReferenceTable", "load_table"]

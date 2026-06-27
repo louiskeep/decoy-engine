@@ -63,7 +63,7 @@ def load_table(name: str, path: Path | None = None) -> ReferenceTable:
             )
 
     try:
-        arrow_table = pq.read_table(str(path))
+        arrow_table = pq.read_table(str(path))  # type: ignore[no-untyped-call]
     except Exception as exc:
         raise ValueError(f"failed to read Parquet at {path}: {exc}") from exc
 

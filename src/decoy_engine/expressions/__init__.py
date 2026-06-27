@@ -25,6 +25,13 @@ closed-grammar approach (zero dynamic execution surface).
 
 from __future__ import annotations
 
+# Lark closed-grammar API for derived / case_when strategies.
+from decoy_engine.expressions._lark_parser import (
+    CompiledExpression,
+    compile_expr,
+    evaluate,
+)
+
 # Re-export the simpleeval-based formula API so all existing callers
 # (generators/_formula.py, transforms/formula.py, etc.) see the same
 # public names as before the flat expressions.py was converted to a
@@ -37,22 +44,13 @@ from decoy_engine.expressions._safe_eval import (
     safe_eval,
 )
 
-# Lark closed-grammar API for derived / case_when strategies.
-from decoy_engine.expressions._lark_parser import (
-    CompiledExpression,
-    compile_expr,
-    evaluate,
-)
-
 __all__ = [
-    # simpleeval formula API (unchanged public surface)
-    "safe_eval",
     "BASE_GLOBALS",
     "MASK_GLOBALS",
-    "make_mask_globals",
+    "CompiledExpression",
     "_SafeRe",
-    # Lark derived/case_when API (new in SP-06)
     "compile_expr",
     "evaluate",
-    "CompiledExpression",
+    "make_mask_globals",
+    "safe_eval",
 ]

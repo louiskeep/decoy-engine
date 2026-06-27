@@ -37,12 +37,12 @@ class ReferenceTable:
     @property
     def row_count(self) -> int:
         """Total number of rows."""
-        return self._table.num_rows
+        return int(self._table.num_rows)
 
     @property
     def column_names(self) -> list[str]:
         """Names of all columns in load order."""
-        return self._table.schema.names
+        return list(self._table.schema.names)
 
     def row(self, index: int) -> dict[str, Any]:
         """Return the row at ``index`` as a plain dict.
@@ -80,7 +80,8 @@ class ReferenceTable:
             Row dict for the derived index.
         """
         hex_digest = hmac_hex(_KEYED_ACCESS_SALT, key_value)
-        assert hex_digest is not None
+        if hex_digest is None:
+            raise ValueError("hmac_hex returned None for a non-None key_value")
         # First 8 hex chars -> 32-bit int; modulo row_count for stable index.
         index = int(hex_digest[:8], 16) % self.row_count
         return self.row(index)

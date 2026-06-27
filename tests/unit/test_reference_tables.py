@@ -5,10 +5,10 @@ TDD: tests written before implementation. Covers:
   - loading a customer-provided table from a fixture path
   - version mismatch (wrong version logs warning + uses available version)
 """
+
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -17,6 +17,7 @@ import pytest
 
 def _get_api():
     from decoy_engine.reference_tables import ReferenceTable, load_table
+
     return load_table, ReferenceTable
 
 
@@ -27,12 +28,12 @@ class TestShippedTables:
         assert isinstance(tbl, ReferenceTable)
 
     def test_us_zip5_city_state_row_count(self):
-        load_table, ReferenceTable = _get_api()
+        load_table, _ = _get_api()
         tbl = load_table("us_zip5_city_state")
         assert tbl.row_count >= 10, "shipped table must have at least 10 rows"
 
     def test_us_zip5_city_state_schema(self):
-        load_table, ReferenceTable = _get_api()
+        load_table, _ = _get_api()
         tbl = load_table("us_zip5_city_state")
         assert "id" in tbl.column_names
         assert "zip" in tbl.column_names
@@ -41,7 +42,7 @@ class TestShippedTables:
 
     def test_us_zip5_city_state_has_population(self):
         """SP-08 forward: population column for HIPAA Safe Harbor (<20k check)."""
-        load_table, ReferenceTable = _get_api()
+        load_table, _ = _get_api()
         tbl = load_table("us_zip5_city_state")
         assert "population" in tbl.column_names
 
@@ -51,12 +52,12 @@ class TestShippedTables:
         assert isinstance(tbl, ReferenceTable)
 
     def test_vehicle_make_model_year_row_count(self):
-        load_table, ReferenceTable = _get_api()
+        load_table, _ = _get_api()
         tbl = load_table("vehicle_make_model_year")
         assert tbl.row_count >= 10
 
     def test_vehicle_make_model_year_schema(self):
-        load_table, ReferenceTable = _get_api()
+        load_table, _ = _get_api()
         tbl = load_table("vehicle_make_model_year")
         assert "id" in tbl.column_names
         assert "make" in tbl.column_names
@@ -66,14 +67,14 @@ class TestShippedTables:
 
 class TestRandomAccess:
     def test_row_by_index(self):
-        load_table, ReferenceTable = _get_api()
+        load_table, _ = _get_api()
         tbl = load_table("us_zip5_city_state")
         row = tbl.row(0)
         assert "id" in row
         assert "zip" in row
 
     def test_row_index_out_of_bounds(self):
-        load_table, ReferenceTable = _get_api()
+        load_table, _ = _get_api()
         tbl = load_table("us_zip5_city_state")
         with pytest.raises((IndexError, KeyError, ValueError)):
             tbl.row(tbl.row_count + 9999)
@@ -81,7 +82,7 @@ class TestRandomAccess:
 
 class TestKeyedAccess:
     def test_keyed_access_returns_row(self):
-        load_table, ReferenceTable = _get_api()
+        load_table, _ = _get_api()
         tbl = load_table("us_zip5_city_state")
         first_row = tbl.row(0)
         key_val = str(first_row["id"])
@@ -92,13 +93,15 @@ class TestKeyedAccess:
 class TestCustomerProvided:
     def test_load_customer_provided_table(self, tmp_path):
         """A customer drops a Parquet at a configured path; load_table reads it."""
-        load_table, ReferenceTable = _get_api()
+        load_table, _ = _get_api()
 
-        table = pa.table({
-            "id": pa.array([1, 2, 3], type=pa.int64()),
-            "code": pa.array(["A", "B", "C"], type=pa.string()),
-            "label": pa.array(["Alpha", "Beta", "Gamma"], type=pa.string()),
-        })
+        table = pa.table(
+            {
+                "id": pa.array([1, 2, 3], type=pa.int64()),
+                "code": pa.array(["A", "B", "C"], type=pa.string()),
+                "label": pa.array(["Alpha", "Beta", "Gamma"], type=pa.string()),
+            }
+        )
         parquet_path = tmp_path / "my_codes.parquet"
         pq.write_table(table, parquet_path)
 
@@ -107,11 +110,13 @@ class TestCustomerProvided:
         assert "code" in tbl.column_names
 
     def test_customer_table_row_access(self, tmp_path):
-        load_table, ReferenceTable = _get_api()
-        table = pa.table({
-            "id": pa.array([10, 20], type=pa.int64()),
-            "value": pa.array(["X", "Y"], type=pa.string()),
-        })
+        load_table, _ = _get_api()
+        table = pa.table(
+            {
+                "id": pa.array([10, 20], type=pa.int64()),
+                "value": pa.array(["X", "Y"], type=pa.string()),
+            }
+        )
         parquet_path = tmp_path / "vals.parquet"
         pq.write_table(table, parquet_path)
 
@@ -125,7 +130,7 @@ class TestVersionMismatch:
         """Loading a table with wrong version metadata logs a warning
         and still returns the table (graceful degradation).
         """
-        load_table, ReferenceTable = _get_api()
+        load_table, _ = _get_api()
 
         table = pa.table(
             {
@@ -149,7 +154,7 @@ class TestVersionMismatch:
         assert tbl.row_count == 1
 
     def test_version_mismatch_still_returns_table(self, tmp_path):
-        load_table, ReferenceTable = _get_api()
+        load_table, _ = _get_api()
         table = pa.table(
             {
                 "id": pa.array([1, 2], type=pa.int64()),

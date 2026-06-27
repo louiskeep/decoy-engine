@@ -6,6 +6,7 @@ criterion has a failing test before it has a passing one. Covers:
   - REJECTION tests that must raise ValidationError
   - performance budget (compile once + evaluate 10k rows)
 """
+
 from __future__ import annotations
 
 import time
@@ -17,6 +18,7 @@ from decoy_engine.errors import ValidationError
 
 def _get_parser():
     from decoy_engine.expressions import compile_expr, evaluate
+
     return compile_expr, evaluate
 
 
@@ -229,47 +231,47 @@ class TestRejection:
     """
 
     def test_rejects_eval_call(self):
-        compile_expr, evaluate = _get_parser()
+        compile_expr, _ = _get_parser()
         with pytest.raises(ValidationError, match="unsupported"):
             compile_expr("eval('1+1')")
 
     def test_rejects_import_call(self):
-        compile_expr, evaluate = _get_parser()
+        compile_expr, _ = _get_parser()
         with pytest.raises(ValidationError, match="unsupported"):
             compile_expr("__import__('os')")
 
     def test_rejects_attribute_access(self):
-        compile_expr, evaluate = _get_parser()
+        compile_expr, _ = _get_parser()
         with pytest.raises(ValidationError, match="unsupported"):
             compile_expr("x.__class__")
 
     def test_rejects_dunder_identifier(self):
-        compile_expr, evaluate = _get_parser()
+        compile_expr, _ = _get_parser()
         with pytest.raises(ValidationError, match="unsupported"):
             compile_expr("__builtins__")
 
     def test_rejects_arbitrary_function_call(self):
-        compile_expr, evaluate = _get_parser()
+        compile_expr, _ = _get_parser()
         with pytest.raises(ValidationError, match="unsupported"):
             compile_expr("open('/etc/passwd')")
 
     def test_rejects_getattr_call(self):
-        compile_expr, evaluate = _get_parser()
+        compile_expr, _ = _get_parser()
         with pytest.raises(ValidationError, match="unsupported"):
             compile_expr("getattr(x, 'y')")
 
     def test_rejects_exec_call(self):
-        compile_expr, evaluate = _get_parser()
+        compile_expr, _ = _get_parser()
         with pytest.raises(ValidationError, match="unsupported"):
             compile_expr("exec('import os')")
 
     def test_rejects_lambda(self):
-        compile_expr, evaluate = _get_parser()
+        compile_expr, _ = _get_parser()
         with pytest.raises(ValidationError, match="unsupported"):
             compile_expr("lambda x: x")
 
     def test_rejects_subscript_on_col(self):
-        compile_expr, evaluate = _get_parser()
+        compile_expr, _ = _get_parser()
         with pytest.raises(ValidationError, match="unsupported"):
             compile_expr('col["key"]')
 
