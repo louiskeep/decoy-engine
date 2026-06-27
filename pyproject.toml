@@ -206,7 +206,7 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 markers = [
     "benchmark: informational performance benchmarks; not a regression gate",
-    "perf: PERF.BASE.2/3 fixture + baseline tests; opt-in via -m perf",
+    "perf: PERF.BASE.2/3 fixture + baseline tests; run in the default regression gate (not opt-in)",
     "golden: engine-v2 S1 golden fixture suite (CSVs + manifests under tests/fixtures/golden/); CI gates engine-v2 sprint work on these",
     "regression: a bugfix's regression test; the prove-regression gate re-runs it against the pre-fix baseline and requires it to fail there",
 ]

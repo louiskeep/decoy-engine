@@ -21,6 +21,7 @@ a directory; the routing guard makes the coverage explicit.
 | sentry | `tests/sentry/` | source-policy guards: eval, mojibake, brand, stale paths, raw em-dash/arrow |
 | security | `tests/security/` | redaction, expression scope, no PII in output |
 | privacy | `tests/privacy/` | disclosure-risk and privacy-metric guards |
+| perf guard | `tests/perf/` | PERF.BASE.3 schema pins and harness-sanity check for `engine-v2-baseline.json`; runs under `pytest -m "not benchmark"` but is NOT in the routing guard list (see ci.yml) |
 
 Overlaps are intentional: the golden suite is where relational and
 determinism invariants are asserted, so those families share files. The
