@@ -28,7 +28,11 @@ SRC = Path(__file__).parents[2] / "src" / "decoy_engine"
 # The single audited entry point. Any new entry must be added here and
 # carry tech-lead sign-off in the PR that adds it.
 SAFE_PATHS = {
-    SRC / "expressions.py",
+    # SP-06: expressions.py converted to a package; _safe_eval.py is the
+    # audited file that owns the simpleeval sandbox chain. The new
+    # _lark_parser.py has no eval/exec/compile calls -- the grammar IS
+    # the security boundary.
+    SRC / "expressions" / "_safe_eval.py",
 }
 
 # Strip triple-quoted strings (docstrings) and end-of-line comments so

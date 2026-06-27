@@ -111,6 +111,12 @@ dependencies = [
     # used by the HIPAA pack NPI columns and the P&C pack VIN columns.
     # The CI no-extras job installs .[dev] only, so this must live here.
     "python-stdnum>=2.2",
+    # SP-06 / P5.INFRA.2: closed-vocabulary expression parser for
+    # derived/case_when strategies. lark (MIT) is the established EBNF
+    # parser generator; parses config-supplied expressions against a
+    # closed grammar so arbitrary Python execution is impossible.
+    # Core dep: derived/case_when are core strategies, not optional.
+    "lark>=1.1",
 ]
 
 [project.optional-dependencies]
@@ -530,6 +536,14 @@ module = [
     "decoy_engine.execution._strategies._redact",
     "decoy_engine.execution._strategies._shuffle",
     "decoy_engine.execution._strategies._truncate",
+    # SP-06 / P5.INFRA.2: Lark closed-grammar expression parser.
+    "decoy_engine.expressions",
+    "decoy_engine.expressions._safe_eval",
+    "decoy_engine.expressions._lark_parser",
+    # SP-06 / P5.INFRA.3: reference table loader.
+    "decoy_engine.reference_tables",
+    "decoy_engine.reference_tables._types",
+    "decoy_engine.reference_tables._loader",
 ]
 disallow_any_generics = true
 disallow_subclassing_any = true
@@ -599,6 +613,11 @@ module = [
     # polars, etc. above).
     "stdnum",
     "stdnum.*",
+    # lark (MIT) ships no py.typed marker / inline stubs.
+    # SP-06 / P5.INFRA.2: added as core dep for the closed-grammar parser.
+    # Per the established convention (same pattern as duckdb, faker, etc.).
+    "lark",
+    "lark.*",
 ]
 ignore_missing_imports = true
 

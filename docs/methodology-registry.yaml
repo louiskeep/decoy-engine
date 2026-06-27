@@ -52,6 +52,20 @@ modules:
     pattern: SDV HMA1
     source: sdv-dev/SDV (MIT); HierarchicalMetaData model (HMA1)
 
+  # SP-06 / P5.INFRA.2 (2026-06-27): closed-vocabulary expression parser.
+  # Lark EBNF grammar closes the arbitrary-code-execution surface that
+  # eval()-based parsers expose. The grammar IS the boundary.
+  - path: src/decoy_engine/expressions/_lark_parser.py
+    pattern: Lark EBNF parser generator
+    source: lark-parser/lark (MIT)
+
+  # SP-06 / P5.INFRA.3 (2026-06-27): reference table loader.
+  # pyarrow Parquet I/O is the established in-process columnar format;
+  # HMAC-SHA256 keyed row derivation reuses internal.crypto.hmac_hex.
+  - path: src/decoy_engine/reference_tables/_loader.py
+    pattern: pyarrow Parquet I/O
+    source: apache/arrow (Apache-2.0)
+
   # Removed 2026-06-02: the entire `forecast/` module (Recommender +
   # ForecastReport + DisguiseRecommendation + FieldRecommendation +
   # RiskFlag) was deleted under the storm-reframe-C clean break
