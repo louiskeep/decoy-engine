@@ -81,9 +81,7 @@ def weights_bytes() -> bytes:
     return (_PACK_DIR / "model.joblib").read_bytes()
 
 
-def test_manifest_contains_no_raw_cell_values(
-    raw_values: list[str], manifest_text: str
-) -> None:
+def test_manifest_contains_no_raw_cell_values(raw_values: list[str], manifest_text: str) -> None:
     """manifest.json must not embed any training cell value as a string."""
     leaks = [v for v in raw_values if v in manifest_text]
     assert not leaks, (
@@ -92,9 +90,7 @@ def test_manifest_contains_no_raw_cell_values(
     )
 
 
-def test_report_contains_no_raw_cell_values(
-    raw_values: list[str], report_text: str
-) -> None:
+def test_report_contains_no_raw_cell_values(raw_values: list[str], report_text: str) -> None:
     """lightgbm-report.json must not embed any training cell value."""
     leaks = [v for v in raw_values if v in report_text]
     assert not leaks, (

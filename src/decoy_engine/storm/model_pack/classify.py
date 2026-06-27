@@ -32,13 +32,11 @@ from typing import Any
 _log = logging.getLogger(__name__)
 
 #: Default pack location (the committed lgbm-v1 artifact).
-_DEFAULT_PACK = (
-    Path(__file__).parents[4] / "docs" / "v2" / "ml" / "packs" / "lgbm-v1"
-)
+_DEFAULT_PACK = Path(__file__).parents[4] / "docs" / "v2" / "ml" / "packs" / "lgbm-v1"
 
 
 def classify_fields(
-    df: "pandas.DataFrame",  # noqa: F821 (forward ref)
+    df: pandas.DataFrame,  # noqa: F821 (forward ref)
     *,
     pack_dir: Path | None = None,
 ) -> dict[str, dict[str, Any]] | None:
@@ -90,13 +88,13 @@ def classify_fields(
     - Columns with all-null values are classified from their header tokens
       and dtype alone; the feature builder handles nulls gracefully.
     """
-    import numpy as np  # noqa: PLC0415
+    import numpy as np
 
     from decoy_engine.storm.eval.bands import classify_band
     from decoy_engine.storm.eval.fixtures import NO_DETECTOR
     from decoy_engine.storm.features.builder import build_column_features
     from decoy_engine.storm.model_pack.featurizer import flatten_features
-    from decoy_engine.storm.model_pack.loader import ModelPackLoader, ModelPackLoadError
+    from decoy_engine.storm.model_pack.loader import ModelPackLoader
 
     resolved_dir = pack_dir if pack_dir is not None else _DEFAULT_PACK
 

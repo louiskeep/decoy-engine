@@ -53,7 +53,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -75,10 +74,6 @@ try:
     from sklearn.metrics import (
         balanced_accuracy_score,
         brier_score_loss,
-        confusion_matrix,
-        f1_score,
-        precision_score,
-        recall_score,
     )
 except ImportError as _err:
     raise ImportError(
@@ -92,7 +87,7 @@ from decoy_engine.storm.eval.fixtures import (
     build_ood_fixtures,
 )
 from decoy_engine.storm.eval.harness import run_baseline
-from decoy_engine.storm.eval.split import assign_value_level_groups, held_out_split
+from decoy_engine.storm.eval.split import held_out_split
 from decoy_engine.storm.features import build_column_features
 from decoy_engine.storm.model_pack.featurizer import flatten_features
 from decoy_engine.storm.model_pack.types import (
@@ -312,8 +307,6 @@ def train_and_evaluate(
         ``docs/v2/ml/lightgbm-report.json`` and update the manifest's
         ``eval_report_hash`` field.
     """
-    t0 = time.perf_counter()
-
     # ── 1. Build corpus + featurise ───────────────────────────────────────────
     fixtures = build_extended_fixtures()
     X_flat, y, groups = _build_feature_inputs(fixtures)
@@ -370,7 +363,6 @@ def train_and_evaluate(
             y_pred.append(y_pred_raw[i])
 
     # ── 6a. Per-type metrics (§A.1) ───────────────────────────────────────────
-    pii_types = sorted(set(y_test + y_pred) - {NO_DETECTOR})
     all_types_in_test = sorted(set(y_test))
 
     per_class_results: list[PerClassMetrics] = []
@@ -380,9 +372,9 @@ def train_and_evaluate(
     for cls in all_types_in_test:
         if cls == NO_DETECTOR:
             continue
-        tp = sum(1 for a, b in zip(y_test, y_pred) if a == cls and b == cls)
-        fp = sum(1 for a, b in zip(y_test, y_pred) if a != cls and b == cls)
-        fn = sum(1 for a, b in zip(y_test, y_pred) if a == cls and b != cls)
+        tp = sum(1 for a, b in zip(y_test, y_pred, strict=False) if a == cls and b == cls)
+        fp = sum(1 for a, b in zip(y_test, y_pred, strict=False) if a != cls and b == cls)
+        fn = sum(1 for a, b in zip(y_test, y_pred, strict=False) if a == cls and b != cls)
         sup = sum(1 for a in y_test if a == cls)
         prec = round(tp / (tp + fp), 4) if (tp + fp) > 0 else None
         rec = round(tp / (tp + fn), 4) if (tp + fn) > 0 else None
@@ -406,11 +398,7 @@ def train_and_evaluate(
     macro_f2 = round(sum(f2_vals) / len(f2_vals), 4) if f2_vals else 0.0
     weighted_f2 = (
         round(
-            sum(
-                (m.f2 or 0.0) * m.support
-                for m in per_class_results
-                if m.f2 is not None
-            )
+            sum((m.f2 or 0.0) * m.support for m in per_class_results if m.f2 is not None)
             / support_total,
             4,
         )
@@ -420,15 +408,10 @@ def train_and_evaluate(
 
     # balanced_accuracy (macro recall) -- §A.1 + §A.2
     pii_y_test = [a for a in y_test if a != NO_DETECTOR]
-    pii_y_pred = [b for a, b in zip(y_test, y_pred) if a != NO_DETECTOR]
+    pii_y_pred = [b for a, b in zip(y_test, y_pred, strict=False) if a != NO_DETECTOR]
     balanced_acc = (
         round(
-            float(
-                balanced_accuracy_score(
-                    [a for a in y_test if a != NO_DETECTOR],
-                    [b for a, b in zip(y_test, y_pred) if a != NO_DETECTOR],
-                )
-            ),
+            float(balanced_accuracy_score(pii_y_test, pii_y_pred)),
             4,
         )
         if pii_y_test
@@ -444,13 +427,13 @@ def train_and_evaluate(
     label_to_idx = {lbl: i for i, lbl in enumerate(all_test_labels)}
     cm_size = len(all_test_labels)
     cm: list[list[int]] = [[0] * cm_size for _ in range(cm_size)]
-    for truth, pred in zip(y_test, y_pred):
+    for truth, pred in zip(y_test, y_pred, strict=False):
         cm[label_to_idx[truth]][label_to_idx[pred]] += 1
 
     # ── 6c. Enumerated FP/FN lists (§A.1) ────────────────────────────────────
     fn_list: list[dict[str, Any]] = []
     fp_list: list[dict[str, Any]] = []
-    for (fix_name, col_name), truth, pred in zip(test_fixtures_meta, y_test, y_pred):
+    for (fix_name, col_name), truth, pred in zip(test_fixtures_meta, y_test, y_pred, strict=False):
         col_id = f"{fix_name}.{col_name}"
         if truth == NO_DETECTOR and pred != NO_DETECTOR:
             fp_list.append(
@@ -474,9 +457,7 @@ def train_and_evaluate(
     # ── 6d. §A.2 lift gate: baseline macro-recall on the SAME test fixtures ──
     test_fixture_set = {(fix_name, col_name) for fix_name, col_name in test_fixtures_meta}
     test_fixtures_objs = [
-        fx
-        for fx in fixtures
-        if any((fx.name, col) in test_fixture_set for col in fx.labels)
+        fx for fx in fixtures if any((fx.name, col) in test_fixture_set for col in fx.labels)
     ]
     baseline_report = run_baseline(test_fixtures_objs)
     baseline_recall_vals = [
@@ -514,17 +495,19 @@ def train_and_evaluate(
             ood_pred.append(ood_pred_raw[i])
 
     ood_pii_y = [a for a in ood_y if a != NO_DETECTOR]
-    ood_pii_pred = [b for a, b in zip(ood_y, ood_pred) if a != NO_DETECTOR]
+    ood_pii_pred = [b for a, b in zip(ood_y, ood_pred, strict=False) if a != NO_DETECTOR]
     ood_balanced_acc = (
-        round(float(balanced_accuracy_score(ood_pii_y, ood_pii_pred)), 4)
-        if ood_pii_y
-        else None
+        round(float(balanced_accuracy_score(ood_pii_y, ood_pii_pred)), 4) if ood_pii_y else None
     )
     ood_recall_vals_raw: list[float] = []
     ood_cls_set = sorted(set(ood_pii_y))
     for cls in ood_cls_set:
-        tp_ood = sum(1 for a, b in zip(ood_pii_y, ood_pii_pred) if a == cls and b == cls)
-        fn_ood = sum(1 for a, b in zip(ood_pii_y, ood_pii_pred) if a == cls and b != cls)
+        tp_ood = sum(
+            1 for a, b in zip(ood_pii_y, ood_pii_pred, strict=False) if a == cls and b == cls
+        )
+        fn_ood = sum(
+            1 for a, b in zip(ood_pii_y, ood_pii_pred, strict=False) if a == cls and b != cls
+        )
         denom = tp_ood + fn_ood
         if denom > 0:
             ood_recall_vals_raw.append(tp_ood / denom)
@@ -565,7 +548,6 @@ def train_and_evaluate(
     )
 
     # Assemble the report.
-    elapsed = round(time.perf_counter() - t0, 2)
     report = EvalReport(
         per_class=per_class_results,
         macro_f2=macro_f2,
@@ -626,9 +608,7 @@ def load_pack(pack_dir: Path) -> dict[str, Any]:
     if not model_path.exists():
         raise FileNotFoundError(f"Missing model.joblib in {pack_dir}")
 
-    manifest = ModelPackManifest.from_dict(
-        json.loads(manifest_path.read_text(encoding="utf-8"))
-    )
+    manifest = ModelPackManifest.from_dict(json.loads(manifest_path.read_text(encoding="utf-8")))
     if manifest.format_version != PACK_FORMAT:
         raise ValueError(
             f"Unsupported pack format {manifest.format_version!r}; expected {PACK_FORMAT!r}"
@@ -642,8 +622,7 @@ def load_pack(pack_dir: Path) -> dict[str, Any]:
     actual_sha = hashlib.sha256(model_path.read_bytes()).hexdigest()
     if actual_sha != manifest.sha256:
         raise ValueError(
-            f"model.joblib SHA-256 mismatch: "
-            f"expected {manifest.sha256!r}, got {actual_sha!r}"
+            f"model.joblib SHA-256 mismatch: expected {manifest.sha256!r}, got {actual_sha!r}"
         )
 
     pack_obj = joblib.load(model_path)
@@ -653,7 +632,7 @@ def load_pack(pack_dir: Path) -> dict[str, Any]:
 
 def predict_column(
     pack: dict[str, Any],
-    series: "pd.Series",  # noqa: F821 (forward ref, pandas imported lazily)
+    series: pd.Series,  # noqa: F821 (forward ref, pandas imported lazily)
     col_name: str,
 ) -> dict[str, Any]:
     """Run inference on one column using a loaded pack.
@@ -679,8 +658,6 @@ def predict_column(
         "model_pack_sha256" (str): sha256 from manifest.
         "ml" (bool): always True (marks classifier-suggested evidence).
     """
-    import pandas as pd  # noqa: PLC0415 (lazy import)
-
     from decoy_engine.storm.eval.bands import classify_band
 
     feats = build_column_features(series, col_name)

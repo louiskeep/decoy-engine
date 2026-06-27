@@ -50,9 +50,7 @@ import json
 import os
 from pathlib import Path
 
-_GOLDEN_SHA256 = (
-    Path(__file__).parent / "golden" / "ml_lightgbm" / "lightgbm.sha256"
-)
+_GOLDEN_SHA256 = Path(__file__).parent / "golden" / "ml_lightgbm" / "lightgbm.sha256"
 _REPORT_PATH = Path(__file__).parents[2] / "docs" / "v2" / "ml" / "lightgbm-report.json"
 
 
@@ -91,8 +89,9 @@ def test_lightgbm_report_matches_golden() -> None:
     actual_digest = _digest(blob)
 
     if os.environ.get("UPDATE_SNAPSHOTS") == "1":
-        from decoy_engine.storm.model_pack.trainer import train_and_evaluate
         import dataclasses
+
+        from decoy_engine.storm.model_pack.trainer import train_and_evaluate
 
         # _REPORT_PATH.parent == docs/v2/ml; packs/ lives alongside the report.
         pack_dir = _REPORT_PATH.parent / "packs" / "lgbm-v1"
@@ -108,8 +107,7 @@ def test_lightgbm_report_matches_golden() -> None:
 
     if not _GOLDEN_SHA256.exists():
         raise AssertionError(
-            f"Missing golden SHA-256 at {_GOLDEN_SHA256}. "
-            "Run with UPDATE_SNAPSHOTS=1 to create it."
+            f"Missing golden SHA-256 at {_GOLDEN_SHA256}. Run with UPDATE_SNAPSHOTS=1 to create it."
         )
 
     expected = _GOLDEN_SHA256.read_text(encoding="utf-8").strip()
@@ -120,8 +118,7 @@ def test_lightgbm_report_matches_golden() -> None:
             f"  actual   SHA-256: {actual_digest}\n"
             f"  Run with UPDATE_SNAPSHOTS=1 only after confirming the metric "
             f"change is intentional (model or corpus improvement).\n"
-            f"  Report snippet:\n"
-            + blob.decode("utf-8")[:2000]
+            f"  Report snippet:\n" + blob.decode("utf-8")[:2000]
         )
 
 
@@ -186,7 +183,7 @@ def test_manifest_report_hash_matches_committed_report() -> None:
 _LIVE_PACK = _REPORT_PATH.parent / "packs" / "lgbm-v1"
 
 
-def test_lightgbm_regression_retrain(tmp_path: "Path") -> None:
+def test_lightgbm_regression_retrain(tmp_path: Path) -> None:
     """§A.7: Re-run train_and_evaluate (seed-pinned) and assert key metrics
     match the committed golden within a tight tolerance.
 
@@ -270,21 +267,21 @@ def test_predict_column_band_accuracy() -> None:
 
     If the high-band sample count is 0, the test passes (band not triggered).
     """
-    import pytest
     import pandas as pd
+    import pytest
 
     if not _LIVE_PACK.exists():
         pytest.skip("lgbm-v1 pack not found; run UPDATE_SNAPSHOTS=1 first")
 
+    from decoy_engine.storm.eval.bands import HIGH_PRECISION_FLOOR, REVIEW_PRECISION_FLOOR
+    from decoy_engine.storm.eval.fixtures import NO_DETECTOR, build_extended_fixtures
+    from decoy_engine.storm.eval.split import held_out_split
     from decoy_engine.storm.model_pack.trainer import (
         TRAIN_SEED,
         _build_feature_inputs,
         load_pack,
+        predict_column,
     )
-    from decoy_engine.storm.eval.fixtures import NO_DETECTOR, build_extended_fixtures
-    from decoy_engine.storm.eval.split import held_out_split
-    from decoy_engine.storm.model_pack.trainer import predict_column
-    from decoy_engine.storm.eval.bands import HIGH_PRECISION_FLOOR, REVIEW_PRECISION_FLOOR
 
     pack = load_pack(_LIVE_PACK)
 
@@ -349,8 +346,10 @@ def test_predict_column_band_accuracy() -> None:
     print(
         f"\n§A.4 band accuracy (PROVISIONAL, n_test=59):\n"
         f"  high   (>={HIGH_PRECISION_FLOOR}): {high_correct}/{high_total} "
-        f"({'N/A - never triggered for lgbm-v1' if high_total == 0 else f'{high_correct/high_total:.3f}'})\n"
+        f"({'N/A - never triggered for lgbm-v1' if high_total == 0 else f'{high_correct / high_total:.3f}'})\n"
         f"  review ({REVIEW_PRECISION_FLOOR}-{HIGH_PRECISION_FLOOR}): "
         f"{review_correct}/{review_total} "
-        f"({review_correct/review_total:.3f} >= {REVIEW_PRECISION_FLOOR} floor)" if review_total else ""
+        f"({review_correct / review_total:.3f} >= {REVIEW_PRECISION_FLOOR} floor)"
+        if review_total
+        else ""
     )

@@ -142,7 +142,7 @@ def run_baseline(fixtures: list[LabeledFixture] | None = None) -> HarnessReport:
     """Run the registered detectors over the fixtures and build the report.
 
     The report is the frozen baseline artifact for ml-benchmarking-and-privacy.md
-    §A.7: same corpus + same seed → identical report bytes (via to_dict() with
+    §A.7: same corpus + same seed to identical report bytes (via to_dict() with
     sorted keys).
     """
     if fixtures is None:

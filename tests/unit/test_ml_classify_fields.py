@@ -28,9 +28,7 @@ _LIVE_PACK = Path(__file__).parents[2] / "docs" / "v2" / "ml" / "packs" / "lgbm-
 # ── §B.4 no-raw-values asserting test ────────────────────────────────────────
 
 
-@pytest.mark.skipif(
-    not _LIVE_PACK.exists(), reason="lgbm-v1 pack not found"
-)
+@pytest.mark.skipif(not _LIVE_PACK.exists(), reason="lgbm-v1 pack not found")
 def test_classify_fields_output_contains_no_raw_cell_values() -> None:
     """§B.4: classify_fields output must not contain any raw input cell values.
 
@@ -41,11 +39,13 @@ def test_classify_fields_output_contains_no_raw_cell_values() -> None:
     from decoy_engine.storm.model_pack.classify import classify_fields
 
     # Create a small DataFrame with distinctive PII-like values.
-    df = pd.DataFrame({
-        "ssn_col": ["123-45-6789", "987-65-4321", "111-22-3333"],
-        "email_col": ["alice@example.com", "bob@test.org", "carol@domain.net"],
-        "plain_id": [1001, 1002, 1003],
-    })
+    df = pd.DataFrame(
+        {
+            "ssn_col": ["123-45-6789", "987-65-4321", "111-22-3333"],
+            "email_col": ["alice@example.com", "bob@test.org", "carol@domain.net"],
+            "plain_id": [1001, 1002, 1003],
+        }
+    )
 
     result = classify_fields(df, pack_dir=_LIVE_PACK)
     assert result is not None, "classify_fields returned None with a live pack"
@@ -62,7 +62,7 @@ def test_classify_fields_output_contains_no_raw_cell_values() -> None:
 
     leaked = [v for v in raw_values if v in output_json]
     assert not leaked, (
-        f"§B.4 VIOLATION: raw cell values found in classify_fields output:\n"
+        "§B.4 VIOLATION: raw cell values found in classify_fields output:\n"
         + "\n".join(f"  {v!r}" for v in leaked)
     )
 
@@ -103,17 +103,17 @@ _EXPECTED_KEYS = {
 }
 
 
-@pytest.mark.skipif(
-    not _LIVE_PACK.exists(), reason="lgbm-v1 pack not found"
-)
+@pytest.mark.skipif(not _LIVE_PACK.exists(), reason="lgbm-v1 pack not found")
 def test_classify_fields_output_shape() -> None:
     """Each column result has exactly the required keys (no extra, no missing)."""
     from decoy_engine.storm.model_pack.classify import classify_fields
 
-    df = pd.DataFrame({
-        "ssn": ["123-45-6789", "987-65-4321"],
-        "name": ["Alice Smith", "Bob Jones"],
-    })
+    df = pd.DataFrame(
+        {
+            "ssn": ["123-45-6789", "987-65-4321"],
+            "name": ["Alice Smith", "Bob Jones"],
+        }
+    )
     result = classify_fields(df, pack_dir=_LIVE_PACK)
     assert result is not None
 
@@ -129,14 +129,12 @@ def test_classify_fields_output_shape() -> None:
 
         # calibrated_confidence is a float in [0, 1]
         conf = col_result["calibrated_confidence"]
-        assert isinstance(conf, float), f"calibrated_confidence must be float"
+        assert isinstance(conf, float), "calibrated_confidence must be float"
         assert 0.0 <= conf <= 1.0, f"calibrated_confidence {conf} out of [0, 1]"
 
         # band is one of the three valid values
         band = col_result["band"]
-        assert band in ("high", "review", "low"), (
-            f"band must be high/review/low, got {band!r}"
-        )
+        assert band in ("high", "review", "low"), f"band must be high/review/low, got {band!r}"
 
         # provenance strings are non-empty
         assert col_result["model_pack_id"], "model_pack_id must be non-empty"
@@ -147,9 +145,7 @@ def test_classify_fields_output_shape() -> None:
 # ── Empty DataFrame ───────────────────────────────────────────────────────────
 
 
-@pytest.mark.skipif(
-    not _LIVE_PACK.exists(), reason="lgbm-v1 pack not found"
-)
+@pytest.mark.skipif(not _LIVE_PACK.exists(), reason="lgbm-v1 pack not found")
 def test_classify_fields_empty_dataframe_returns_empty_dict() -> None:
     """An empty DataFrame (0 columns) returns {} not None."""
     from decoy_engine.storm.model_pack.classify import classify_fields
@@ -162,18 +158,18 @@ def test_classify_fields_empty_dataframe_returns_empty_dict() -> None:
 # ── Determinism ───────────────────────────────────────────────────────────────
 
 
-@pytest.mark.skipif(
-    not _LIVE_PACK.exists(), reason="lgbm-v1 pack not found"
-)
+@pytest.mark.skipif(not _LIVE_PACK.exists(), reason="lgbm-v1 pack not found")
 def test_classify_fields_is_deterministic() -> None:
     """Same DataFrame + same pack -> identical result on two calls."""
     from decoy_engine.storm.model_pack.classify import classify_fields
 
-    df = pd.DataFrame({
-        "email": ["user@example.com", "admin@test.org"],
-        "amount": [100.50, 250.00],
-        "ssn": ["123-45-6789", "987-65-4321"],
-    })
+    df = pd.DataFrame(
+        {
+            "email": ["user@example.com", "admin@test.org"],
+            "amount": [100.50, 250.00],
+            "ssn": ["123-45-6789", "987-65-4321"],
+        }
+    )
 
     result_a = classify_fields(df, pack_dir=_LIVE_PACK)
     result_b = classify_fields(df, pack_dir=_LIVE_PACK)

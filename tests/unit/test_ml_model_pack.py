@@ -20,15 +20,13 @@ from __future__ import annotations
 import hashlib
 import io
 import json
-import os
-import sys
 from pathlib import Path
 
 import joblib  # type: ignore[import]
 import pytest
 from sklearn.feature_extraction import DictVectorizer
 
-from decoy_engine.storm.model_pack.loader import ModelPackLoadError, ModelPackLoader
+from decoy_engine.storm.model_pack.loader import ModelPackLoader, ModelPackLoadError
 from decoy_engine.storm.model_pack.types import (
     FEATURE_SCHEMA_VERSION,
     PACK_FORMAT,
@@ -67,9 +65,7 @@ def _write_minimal_pack(tmp_path: Path, *, weights: bytes | None = None) -> Path
         feature_schema_version=FEATURE_SCHEMA_VERSION,
         sha256=sha,
     )
-    (pack_dir / "manifest.json").write_text(
-        json.dumps(manifest.to_dict()), encoding="utf-8"
-    )
+    (pack_dir / "manifest.json").write_text(json.dumps(manifest.to_dict()), encoding="utf-8")
     return pack_dir
 
 
@@ -92,16 +88,25 @@ def test_live_pack_loads_successfully() -> None:
     assert manifest.feature_schema_version == FEATURE_SCHEMA_VERSION
 
 
-@pytest.mark.skipif(
-    not _LIVE_PACK.exists(), reason="lgbm-v1 pack not found"
-)
+@pytest.mark.skipif(not _LIVE_PACK.exists(), reason="lgbm-v1 pack not found")
 def test_live_pack_has_expected_classes() -> None:
     """The committed pack was trained on the expected 11 label classes."""
     loader = ModelPackLoader(_LIVE_PACK)
     pack = loader.load()
     classes = set(pack["classes"])
-    expected = {"ssn", "pan", "iban", "email", "icd10", "iso_date", "npi",
-                "mrn", "health_plan_id", "cvv", "none"}
+    expected = {
+        "ssn",
+        "pan",
+        "iban",
+        "email",
+        "icd10",
+        "iso_date",
+        "npi",
+        "mrn",
+        "health_plan_id",
+        "cvv",
+        "none",
+    }
     assert expected.issubset(classes), f"Missing classes: {expected - classes}"
 
 
