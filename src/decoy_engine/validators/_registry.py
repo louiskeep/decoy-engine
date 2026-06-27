@@ -92,7 +92,10 @@ def validate(
 
     for entry in validator_entries:
         if not isinstance(entry, dict):
-            continue
+            raise ValueError(
+                f"each validators: entry must be a dict with a 'name' key, "
+                f"got {type(entry).__name__!r}: {entry!r}"
+            )
         name: str = entry.get("name") or ""
         fn = _REGISTRY.get(name)
         if fn is None:
