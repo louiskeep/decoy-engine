@@ -80,7 +80,7 @@ class HarnessReport:
 
     Extended for ml-benchmarking-and-privacy.md §A.1 / §A.7:
     - F2 per type + macro-F2 + weighted-F2 + balanced_accuracy
-    - Entity-type confusion matrix (truth rows × predicted columns)
+    - Entity-type confusion matrix (truth rows x predicted columns)
     - Enumerated FP/FN list (column_id + predicted/true label)
     """
 
@@ -238,11 +238,9 @@ def run_baseline(fixtures: list[LabeledFixture] | None = None) -> HarnessReport:
     )
 
     recall_vals = [m.recall for m in pii_types if m.recall is not None]
-    balanced_accuracy = (
-        round(sum(recall_vals) / len(recall_vals), 4) if recall_vals else 0.0
-    )
+    balanced_accuracy = round(sum(recall_vals) / len(recall_vals), 4) if recall_vals else 0.0
 
-    # ── Confusion matrix (truth × predicted, "none" for no prediction) ────────
+    # ── Confusion matrix (truth x predicted, "none" for no prediction) ────────
     confusion_matrix: dict[str, dict[str, int]] = {}
     for r in results:
         pred_key = r.predicted_id if r.predicted_id is not None else _PRED_NONE

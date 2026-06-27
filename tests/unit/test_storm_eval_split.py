@@ -130,7 +130,6 @@ class TestHeldOutSplit:
     def test_split_requires_sklearn(self):
         """ImportError raised when sklearn is absent (documents the dependency)."""
         import sys
-        import unittest.mock as mock
 
         # Simulate absence of sklearn by temporarily hiding the module.
         sklearn_mod = sys.modules.pop("sklearn", None)
@@ -151,4 +150,3 @@ class TestHeldOutSplit:
             import decoy_engine.storm.eval.split as _split_mod
 
             importlib.reload(_split_mod)
-            mock  # suppress unused import warning via reference

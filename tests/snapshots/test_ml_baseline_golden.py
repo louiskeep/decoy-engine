@@ -26,9 +26,7 @@ from pathlib import Path
 
 from decoy_engine.storm.eval import run_baseline
 
-_GOLDEN_SHA256 = (
-    Path(__file__).parent / "golden" / "ml_baseline" / "baseline.sha256"
-)
+_GOLDEN_SHA256 = Path(__file__).parent / "golden" / "ml_baseline" / "baseline.sha256"
 _REPORT_PATH = Path(__file__).parents[2] / "docs" / "v2" / "ml" / "baseline-report.json"
 
 
@@ -45,9 +43,9 @@ def test_baseline_report_is_deterministic():
     """Two back-to-back runs produce byte-identical canonical JSON."""
     rep_a = run_baseline()
     rep_b = run_baseline()
-    assert _digest(_canonical_blob(rep_a.to_dict())) == _digest(
-        _canonical_blob(rep_b.to_dict())
-    ), "Baseline report is not deterministic across two runs"
+    assert _digest(_canonical_blob(rep_a.to_dict())) == _digest(_canonical_blob(rep_b.to_dict())), (
+        "Baseline report is not deterministic across two runs"
+    )
 
 
 def test_baseline_report_matches_golden():
@@ -78,6 +76,5 @@ def test_baseline_report_matches_golden():
             f"  actual   SHA-256: {actual_digest}\n"
             f"  Run with UPDATE_SNAPSHOTS=1 only after confirming the metric "
             f"change is intentional (detector improvement or corpus change).\n"
-            f"  Report preview:\n"
-            + blob.decode("utf-8")[:2000]
+            f"  Report preview:\n" + blob.decode("utf-8")[:2000]
         )

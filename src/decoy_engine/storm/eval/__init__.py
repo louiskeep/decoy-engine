@@ -12,8 +12,8 @@ Extended for ml-benchmarking-and-privacy.md §A.1 / §A.3 / §A.4 / §A.7:
 """
 
 from decoy_engine.storm.eval.bands import (
-    LATENCY_BUDGET_MS,
     HIGH_PRECISION_FLOOR,
+    LATENCY_BUDGET_MS,
     REVIEW_PRECISION_FLOOR,
     Band,
     benchmark_all_fixture_columns,
@@ -41,28 +41,28 @@ from decoy_engine.storm.eval.split import (
 )
 
 __all__ = [
+    "HIGH_PRECISION_FLOOR",
+    "LATENCY_BUDGET_MS",
     # fixtures
     "NO_DETECTOR",
-    "LabeledFixture",
-    "build_fixtures",
-    "make_iban",
-    "make_npi",
-    "make_pan",
+    "REVIEW_PRECISION_FLOOR",
+    # bands
+    "Band",
     # harness
     "ColumnResult",
     "FieldTypeMetrics",
     "HarnessReport",
-    "run_baseline",
+    "LabeledFixture",
+    "benchmark_all_fixture_columns",
+    "benchmark_column_latency",
+    "build_fixtures",
+    "classify_band",
     # split
     "held_out_split",
     "make_group_key",
+    "make_iban",
+    "make_npi",
+    "make_pan",
     "make_split_inputs",
-    # bands
-    "Band",
-    "HIGH_PRECISION_FLOOR",
-    "LATENCY_BUDGET_MS",
-    "REVIEW_PRECISION_FLOOR",
-    "benchmark_all_fixture_columns",
-    "benchmark_column_latency",
-    "classify_band",
+    "run_baseline",
 ]

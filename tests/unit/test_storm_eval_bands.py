@@ -9,6 +9,7 @@ Validates:
 Gate reference: ml-benchmarking-and-privacy.md §A.4; ml0.3-confidence-bands.md.
 """
 
+from decoy_engine.storm.eval import build_fixtures
 from decoy_engine.storm.eval.bands import (
     HIGH_PRECISION_FLOOR,
     LATENCY_BUDGET_MS,
@@ -18,7 +19,6 @@ from decoy_engine.storm.eval.bands import (
     benchmark_column_latency,
     classify_band,
 )
-from decoy_engine.storm.eval import build_fixtures
 
 
 class TestBandThresholds:
@@ -104,9 +104,8 @@ class TestLatencyBenchmark:
     def test_all_fixture_columns_within_budget(self):
         timings = benchmark_all_fixture_columns()
         violations = {k: v for k, v in timings.items() if v >= LATENCY_BUDGET_MS}
-        assert not violations, (
-            f"Columns exceeded {LATENCY_BUDGET_MS}ms budget: "
-            + ", ".join(f"{k}={v:.1f}ms" for k, v in sorted(violations.items()))
+        assert not violations, f"Columns exceeded {LATENCY_BUDGET_MS}ms budget: " + ", ".join(
+            f"{k}={v:.1f}ms" for k, v in sorted(violations.items())
         )
 
     def test_benchmark_returns_positive_value(self):
@@ -116,9 +115,5 @@ class TestLatencyBenchmark:
 
     def test_benchmark_all_covers_all_fixture_columns(self):
         timings = benchmark_all_fixture_columns()
-        expected_keys = {
-            f"{fx.name}.{col}"
-            for fx in build_fixtures()
-            for col in fx.df.columns
-        }
+        expected_keys = {f"{fx.name}.{col}" for fx in build_fixtures() for col in fx.df.columns}
         assert set(timings.keys()) == expected_keys

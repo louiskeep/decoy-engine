@@ -159,9 +159,7 @@ class TestEnumeratedErrors:
     def test_fn_list_length_matches_false_negative_counts(self):
         rep = run_baseline()
         total_fn = sum(
-            m.false_negatives
-            for ft, m in rep.by_field_type.items()
-            if ft != NO_DETECTOR
+            m.false_negatives for ft, m in rep.by_field_type.items() if ft != NO_DETECTOR
         )
         assert len(rep.false_negatives_list) == total_fn
 

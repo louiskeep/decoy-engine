@@ -22,7 +22,8 @@ sklearn §12.2 data-leakage warning: "any preprocessing steps must be
 
 from __future__ import annotations
 
-from typing import Any, Iterator
+from collections.abc import Iterator
+from typing import Any
 
 import pandas as pd
 
@@ -136,8 +137,7 @@ def held_out_split(
         from sklearn.model_selection import StratifiedGroupKFold  # type: ignore[import]
     except ImportError as e:
         raise ImportError(
-            "scikit-learn is required for held_out_split. "
-            "Install it via: pip install -e '.[ml]'"
+            "scikit-learn is required for held_out_split. Install it via: pip install -e '.[ml]'"
         ) from e
 
     splitter = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
