@@ -263,6 +263,33 @@ def run_pipeline(
     if fidelity_reports:
         quality_metrics["fidelity_reports"] = fidelity_reports
 
+    # SP-05 (2026-06-27): job-level validator framework (P5.INFRA.4).
+    # Runs AFTER all column passes complete. Fail-closed by default:
+    # a validator failure raises ValidatorFailedError unless quarantine
+    # is enabled with the validation_fail trigger.
+    validators_config: list[Any] = config.get("validators") or []
+    if validators_config:
+        import dataclasses
+
+        from decoy_engine.errors import ValidatorFailedError
+        from decoy_engine.validators._registry import validate as _run_validators
+
+        v_report = _run_validators(outputs, config)
+        quality_metrics["validation"] = {"validators": dataclasses.asdict(v_report)}
+
+        if not v_report.passed:
+            quarantine_cfg: dict[str, Any] = config.get("quarantine") or {}
+            q_enabled = bool(quarantine_cfg.get("enabled", False))
+            raw_triggers: Any = quarantine_cfg.get("triggers") or []
+            q_triggers: list[str] = list(raw_triggers)
+            if q_enabled and "validation_fail" in q_triggers:
+                from decoy_engine.quarantine import apply_quarantine, quarantine_manifest
+
+                outputs, q_summary = apply_quarantine(outputs, v_report, quarantine_cfg)
+                quality_metrics["quarantine"] = quarantine_manifest(q_summary)
+            else:
+                raise ValidatorFailedError(v_report)
+
     return ExecutionResult(
         outputs=outputs,
         timings=mask_timings,
