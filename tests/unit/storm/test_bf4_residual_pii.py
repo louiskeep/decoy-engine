@@ -25,7 +25,6 @@ import hashlib
 import re
 
 import pandas as pd
-import pytest
 
 from decoy_engine.storm.postmask.residual_pii import check_residual_pii
 from decoy_engine.storm.postmask.runner import run_storm_post_mask
@@ -333,11 +332,15 @@ class TestSecurityNoRawValuesInReport:
     -- never raw PII cell values in the returned report or logs.'
     """
 
-    _CANARY_SSN = "999-88-7777"  # a specific value that must not appear in the report
+    # A DETECTOR-VALID SSN (area != 000/666/900-999, group != 00, serial != 0000)
+    # so the residual scanner actually fires on it; otherwise the canary is
+    # vacuous (an invalid SSN produces no finding, so a leak could never show).
+    _CANARY_SSN = "501-22-3456"
 
     def test_ssn_cell_values_absent_from_report_dict(self):
-        # Build a fixture where ONE specific SSN appears in every row.
-        # If that value leaked into the report, the canary test catches it.
+        # Build a fixture where ONE specific SSN appears in every row, masked
+        # with a strategy whose output still equals the source (silently-failed
+        # mask) so the residual scanner DOES produce a finding for it.
         ssns = [self._CANARY_SSN] * _N
         src = {"patients": pd.DataFrame({"ssn": ssns})}
         out = {"patients": pd.DataFrame({"ssn": ssns})}
@@ -347,6 +350,13 @@ class TestSecurityNoRawValuesInReport:
             ],
         }
         report = run_storm_post_mask(src, out, config=config)
+        # Guard against a vacuous canary: the scanner MUST have flagged the
+        # residual SSN, otherwise the no-leak assertion below proves nothing.
+        assert any(f["severity"] == "fail" for f in report["residual_pii"]), (
+            "vacuous canary: the residual scanner produced no fail finding for "
+            "the unmasked SSN, so the no-leak assertion would never exercise the "
+            "value-handling path it claims to guard."
+        )
         # Serialize the entire report to a string and scan for the canary value.
         report_str = str(report)
         assert self._CANARY_SSN not in report_str, (
