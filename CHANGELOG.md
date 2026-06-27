@@ -9,6 +9,26 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (BF1 distribution-fidelity surfacing, 2026-06-26)
+
+- **Opt-in fidelity report on the run path** (BF1, engine slice). The
+  already-built `decoy_engine.quality` metrics
+  (`compute_quality_report` -> diagnostic + value-identity fidelity +
+  shape fidelity) are now wired into `run_pipeline` behind a new
+  default-OFF kwarg `fidelity_report: bool = False`, with an optional
+  `now_iso` passthrough for deterministic `generated_at` stamping. When
+  ON, a per-mask-table `quality-report/v1` block is attached under
+  `ExecutionResult.quality_metrics["fidelity_reports"]` (the free-form
+  dict already plumbed to the platform manifest). It is REPORT-ONLY: a
+  low fidelity score never fails the job. First slice is mask-kind
+  tables, marginal-only (no joint columns); generate-kind tables are
+  skipped. SECURITY: only the assembled, aggregate-only report is
+  emitted (column names + kinds + scores); the intermediate
+  distribution snapshots that carry category labels / raw values are
+  consumed but never attached, pinned by a guard test. Default-OFF
+  leaves the hot path byte-for-byte unchanged, so golden / compat-corpus
+  fixtures do not move; no persisted-format or seed-protocol bump.
+
 ### Added (capability gaps, 2026-06-12)
 
 - **Chunked mask execution** (WS4). New public API

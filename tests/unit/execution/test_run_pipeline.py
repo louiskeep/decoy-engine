@@ -12,6 +12,8 @@ mixed) plus the per-table-kind classification helper.
 
 from __future__ import annotations
 
+import json
+
 import pandas as pd
 import pyarrow as pa
 
@@ -291,3 +293,150 @@ class TestRunPipelineDeterminism:
             assert r1.outputs[name].to_pydict() == r2.outputs[name].to_pydict(), (
                 f"{name} drifted across runs"
             )
+
+
+# --------------------------------------------------------------------------
+# BF1 (2026-06-26): opt-in distribution-fidelity surfacing
+# --------------------------------------------------------------------------
+
+_PINNED_NOW = "2026-06-26T00:00:00+00:00"
+
+# A categorical value present in the source data. The fidelity report
+# compares its distribution but must NEVER embed the label itself.
+_SECRET_CATEGORY_VALUES = ("gold", "silver", "bronze")
+_SECRET_EMAIL_VALUES = ("alice@x.com", "bob@x.com", "carol@x.com")
+
+
+def _fidelity_mask_config(tmp_path) -> dict:
+    """Mask `email` (faker) and pass `plan` through, so the output keeps
+    a real categorical column the snapshot can capture labels for."""
+    return _validated_dump(
+        {
+            "version": 1,
+            "global_settings": {"seed": 42},
+            "sources": {
+                "customers": {
+                    "type": "file",
+                    "format": "csv",
+                    "path": str(tmp_path / "customers.csv"),
+                },
+            },
+            "tables": [
+                {
+                    "name": "customers",
+                    "columns": [
+                        _faker_col("email", "customer_identity"),
+                        {"name": "plan", "strategy": "passthrough"},
+                    ],
+                },
+            ],
+            "targets": {
+                "customers": {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")},
+            },
+        }
+    )
+
+
+def _fidelity_source(tmp_path) -> dict[str, pa.Table]:
+    df = pd.DataFrame(
+        {
+            "email": [*_SECRET_EMAIL_VALUES, "dave@x.com", "erin@x.com"],
+            "plan": ["gold", "silver", "gold", "bronze", "silver"],
+        }
+    )
+    df.to_csv(tmp_path / "customers.csv", index=False)
+    return {"customers": pa.Table.from_pandas(df, preserve_index=False)}
+
+
+class TestRunPipelineFidelityReportFlag:
+    def test_flag_off_attaches_no_fidelity_report(self, tmp_path):
+        """Default-OFF: zero ripple. quality_metrics carries no report key."""
+        cfg = _fidelity_mask_config(tmp_path)
+        sources = _fidelity_source(tmp_path)
+        result = run_pipeline(cfg, sources=sources, engine_version=_ENGINE_VERSION)
+        assert "fidelity_reports" not in result.quality_metrics
+
+    def test_flag_on_attaches_report_per_mask_table(self, tmp_path):
+        cfg = _fidelity_mask_config(tmp_path)
+        sources = _fidelity_source(tmp_path)
+        result = run_pipeline(
+            cfg,
+            sources=sources,
+            engine_version=_ENGINE_VERSION,
+            fidelity_report=True,
+            now_iso=_PINNED_NOW,
+        )
+        reports = result.quality_metrics["fidelity_reports"]
+        assert set(reports) == {"customers"}
+        report = reports["customers"]
+        assert report["schema_version"] == "quality-report/v1"
+        assert report["generated_at"] == _PINNED_NOW
+        assert "grade" in report
+        assert "overall_score" in report
+
+    def test_report_only_low_score_does_not_fail_job(self, tmp_path):
+        """A masked email column tanks fidelity; the job still succeeds."""
+        cfg = _fidelity_mask_config(tmp_path)
+        sources = _fidelity_source(tmp_path)
+        result = run_pipeline(
+            cfg,
+            sources=sources,
+            engine_version=_ENGINE_VERSION,
+            fidelity_report=True,
+            now_iso=_PINNED_NOW,
+        )
+        # Outputs are present and complete despite any low fidelity score.
+        assert result.outputs["customers"].num_rows == 5
+        assert isinstance(result.quality_metrics["fidelity_reports"]["customers"]["grade"], str)
+
+    def test_generate_table_gets_no_fidelity_report(self, tmp_path):
+        """First slice is mask-only; generate tables are skipped."""
+        cfg = _mixed_config(tmp_path)
+        sources = _customers_source(tmp_path)
+        result = run_pipeline(
+            cfg,
+            sources=sources,
+            engine_version=_ENGINE_VERSION,
+            fidelity_report=True,
+            now_iso=_PINNED_NOW,
+        )
+        reports = result.quality_metrics["fidelity_reports"]
+        assert "customers" in reports  # mask table
+        assert "employees" not in reports  # generate table skipped
+
+
+class TestRunPipelineFidelityReportSecurity:
+    """The one rule that must not regress: the emitted report is
+    aggregate-only and label-free. Category labels / raw values live in
+    the intermediate snapshots, which are consumed but never attached."""
+
+    def test_report_contains_no_category_labels_or_raw_values(self, tmp_path):
+        cfg = _fidelity_mask_config(tmp_path)
+        sources = _fidelity_source(tmp_path)
+        result = run_pipeline(
+            cfg,
+            sources=sources,
+            engine_version=_ENGINE_VERSION,
+            fidelity_report=True,
+            now_iso=_PINNED_NOW,
+        )
+        report = result.quality_metrics["fidelity_reports"]["customers"]
+        serialized = json.dumps(report)
+        # The source genuinely contains these labels (so the snapshot
+        # captured them); the assembled report must not echo any of them.
+        for secret in (*_SECRET_CATEGORY_VALUES, *_SECRET_EMAIL_VALUES):
+            assert secret not in serialized, f"raw value {secret!r} leaked into fidelity report"
+
+    def test_report_is_json_serializable(self, tmp_path):
+        cfg = _fidelity_mask_config(tmp_path)
+        sources = _fidelity_source(tmp_path)
+        result = run_pipeline(
+            cfg,
+            sources=sources,
+            engine_version=_ENGINE_VERSION,
+            fidelity_report=True,
+            now_iso=_PINNED_NOW,
+        )
+        report = result.quality_metrics["fidelity_reports"]["customers"]
+        # No custom encoder needed: the report must round-trip as plain JSON.
+        assert json.loads(json.dumps(report)) == report

@@ -106,6 +106,8 @@ def run_pipeline(
     derive_key: Any = None,
     instance_default_locale: str | None = None,
     vault_writer: Any = None,
+    fidelity_report: bool = False,
+    now_iso: str | None = None,
 ) -> ExecutionResult:
     """Execute a mixed mask + generate config end-to-end.
 
@@ -118,6 +120,18 @@ def run_pipeline(
     Returns one `ExecutionResult` whose `outputs` covers every output
     table (generate + mask) and whose `table_kinds` field carries the
     per-table classification for the manifest stamping.
+
+    BF1 (2026-06-26) distribution-fidelity surfacing. `fidelity_report`
+    is the opt-in, default-OFF switch that attaches a per-mask-table
+    `quality-report/v1` block under `ExecutionResult.quality_metrics`
+    (key `fidelity_reports`). It is REPORT-ONLY: a low score never fails
+    the job. Default-OFF leaves the hot path byte-for-byte unchanged, so
+    golden / compat-corpus fixtures do not move. `now_iso` pins the
+    report's `generated_at` for deterministic stamping (None -> wall
+    clock). SECURITY: only the assembled, aggregate-only report is
+    emitted; the intermediate snapshots (which carry category labels /
+    raw values) are never attached. First slice is mask-kind tables,
+    marginal-only (no joint_columns); generate-kind tables are skipped.
     """
     from decoy_engine.generation.synthesize import generate_tables
     from decoy_engine.plan import compile_plan
@@ -179,6 +193,7 @@ def run_pipeline(
     mask_conversion_ms: float = 0.0
     mask_warnings: tuple = ()
     mask_quality_metrics: dict[str, Any] = {}
+    fidelity_reports: dict[str, Any] = {}
     if has_mask_table:
         # Merge generate outputs into the sources dict the mask adapter
         # reads. A mask table whose FK parent is a generate table reads the
@@ -212,17 +227,47 @@ def run_pipeline(
 
             vault_writer.add(collect_vault_entries(config, merged_sources, mask_outputs))
 
+        # BF1: opt-in, report-only distribution fidelity per mask table.
+        # Imported lazily so the default-OFF path never pulls in the
+        # quality stack. SECURITY: emit ONLY the assembled report
+        # (aggregate, label-free); the snapshots that carry raw category
+        # values stay inside compute_quality_report and are never attached.
+        if fidelity_report:
+            from decoy_engine.quality.report import compute_quality_report
+
+            for table_name, out_table in mask_outputs.items():
+                if table_kinds.get(table_name) != "mask":
+                    continue  # first slice: mask-kind tables only
+                src_table = merged_sources.get(table_name)
+                if src_table is None:
+                    continue
+                fidelity_reports[table_name] = compute_quality_report(
+                    src_table.to_pandas(),
+                    out_table.to_pandas(),
+                    expect_row_parity=True,
+                    joint_columns=None,
+                    now_iso=now_iso,
+                )
+
     # Step 3: stitch the outputs together. Mask wins ties (every name in
     # the config maps to one kind by construction, so no real conflicts).
     outputs: dict[str, pa.Table] = {}
     outputs.update(generate_outputs)
     outputs.update(mask_outputs)
 
+    # BF1: namespace the fidelity reports under the existing free-form
+    # quality_metrics dict (already plumbed to the platform manifest).
+    # Additive + default-OFF: when the flag is off, fidelity_reports is
+    # empty and quality_metrics is untouched.
+    quality_metrics: dict[str, Any] = dict(mask_quality_metrics)
+    if fidelity_reports:
+        quality_metrics["fidelity_reports"] = fidelity_reports
+
     return ExecutionResult(
         outputs=outputs,
         timings=mask_timings,
         boundary_conversion_ms=mask_conversion_ms,
         warnings=mask_warnings,
-        quality_metrics=mask_quality_metrics,
+        quality_metrics=quality_metrics,
         table_kinds=table_kinds,
     )
