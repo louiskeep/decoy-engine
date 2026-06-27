@@ -37,6 +37,7 @@ from decoy_engine.config._relationships import RelationshipConfig
 from decoy_engine.config._sources import SourceDescriptor
 from decoy_engine.config._tables import TableConfig
 from decoy_engine.config._targets import TargetDescriptor
+from decoy_engine.config._validators import QuarantineConfig, ValidatorEntry
 
 
 class PipelineConfig(BaseModel):
@@ -76,6 +77,16 @@ class PipelineConfig(BaseModel):
     # pipelines are unchanged (run_storm omitted -> False; no new behavior).
     # Per PO lock 2026-05-30 docs/audit/po-decisions-storm-reframe-2026-05-30.md.
     run_storm: bool = False
+    # SP-05 (2026-06-27): job-level validator framework (P5.INFRA.4).
+    # Each entry names a validator and supplies its per-validator config.
+    # The engine runs them after all column passes complete. Default empty
+    # list -> no validators run -> zero overhead on existing pipelines.
+    validators: list[ValidatorEntry] = Field(default_factory=list)
+    # SP-05 (2026-06-27): quarantine block (P5.B.quarantine_rows).
+    # When enabled and a trigger fires, the offending row is written to
+    # output_path instead of the main output; the job continues successfully.
+    # Default None -> quarantine disabled -> fail-closed on validator failures.
+    quarantine: QuarantineConfig | None = None
 
     @model_validator(mode="after")
     def _per_table_kind_consistency(self) -> PipelineConfig:

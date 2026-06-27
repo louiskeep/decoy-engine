@@ -255,6 +255,38 @@ class FpeChecksumError(DecoyError):
         super().__init__(message)
 
 
+class ValidatorFailedError(DecoyError):
+    """Raised when a job-level validator fails and quarantine is not active.
+
+    The engine is fail-closed by default (SP-05 / P5.INFRA.4): a validator
+    failure kills the job unless quarantine is enabled with the
+    ``validation_fail`` trigger. Callers that want warn-only behaviour must
+    wait for a later sprint.
+
+    Carries the full ``ValidationReport`` on ``.report`` so error handlers
+    can inspect which validators failed and which rows were affected without
+    re-running validation. The report type is ``decoy_engine.validators.ValidationReport``;
+    it is typed as ``Any`` here to avoid a circular import between
+    ``decoy_engine.errors`` and ``decoy_engine.validators``.
+
+    Raises:
+        ValidatorFailedError: Always raised with a non-None ``report``
+            whose ``passed`` attribute is ``False``.
+    """
+
+    def __init__(self, report: Any) -> None:
+        self.report = report
+        findings = getattr(report, "findings", ())
+        n = len(findings)
+        validators_run = list(getattr(report, "validators_run", ()))
+        super().__init__(
+            f"validator framework: {n} finding(s) failed the job. "
+            f"Validators run: {validators_run}. "
+            "Enable quarantine with trigger 'validation_fail' to route "
+            "failing rows to a separate output instead of failing the job."
+        )
+
+
 __all__ = [
     "ConfigError",
     "ConnectorAuthError",
@@ -271,4 +303,5 @@ __all__ = [
     "PipelineValidationError",
     "UnknownFKColumnError",
     "ValidationError",
+    "ValidatorFailedError",
 ]

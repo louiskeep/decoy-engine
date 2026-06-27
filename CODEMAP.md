@@ -51,6 +51,8 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | `src/decoy_engine/storm/` | Profiling, detectors, and post-mask integrity checks (`postmask/residual_pii.py`, `postmask/fk_preservation.py`) |
 | `src/decoy_engine/storm/` | Profiling and detectors; `_classification.py` holds column-shape classification helpers; `_distributions.py` holds distribution-snapshot builders; `_patterns.py` holds the detector regex catalog; `_validators.py` holds detector validation helpers (all split from `profiler.py`/`detectors.py`, F11b/F11c) |
 | `src/decoy_engine/storm/` | Profiling and detectors; `eval/` (labeled fixtures + regex-baseline recognition harness + ML measurement substrate) and `features/` (deterministic per-column feature builder) are off-run-path field-recognition tooling (BF2 / ML0); `eval/split.py` + `eval/bands.py` are scaffolding for ML2.2; `model_pack/` holds the LightGBM pack loader + featurizer + ML3.1 classification function + ML3.2 HMAC provenance signing |
+| `src/decoy_engine/validators/` | Job-level validator framework (SP-05 / P5.INFRA.4). `validate(outputs, config)` runs all configured validators after column passes complete and returns a frozen `ValidationReport`. Six built-in validators: `luhn`, `npi`, `iban`, `vin` (delegate to SP-04 checksums), `fk_intact`, `no_orphan_children` (SDV HMA1 parent-first DAG pattern). Fail-closed by default: any failure raises `ValidatorFailedError`. |
+| `src/decoy_engine/quarantine.py` | Quarantine-row support (SP-05 / P5.B). `apply_quarantine(outputs, report, quarantine_config)` routes failing rows to a JSONL file and removes them from main output; job continues and succeeds. Three fail-closed guards: empty `output_path` raises, unwired triggers raise, misconfigured FK validators raise. |
 | `src/decoy_engine/validation/` | `validate_config` |
 | `src/decoy_engine/validation_result.py` | `ValidationResult`, `ValidationMessage`, `VALIDATION_CODES` |
 | `src/decoy_engine/sdk.py` | Public Connector SDK (file-shaped) |
@@ -79,6 +81,8 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | Public exports | `src/decoy_engine/__init__.py` |
 | Identifier validators/adapters/domains | `src/decoy_engine/identifiers.py` |
 | Check-digit validation and FPE checksum support | `src/decoy_engine/checksums.py` |
+| Job-level validator framework (validators: config block) | `src/decoy_engine/validators/` (entry: `validate`; types: `ValidationReport`, `ValidatorFinding`) |
+| Quarantine-row routing (quarantine: config block) | `src/decoy_engine/quarantine.py` (`apply_quarantine`, `quarantine_manifest`) |
 | Config schema | `src/decoy_engine/config/_pipeline.py` |
 | Relationship schema | `src/decoy_engine/config/_relationships.py` (reference doc lives in the commercial platform repo) |
 | Plan compilation | `src/decoy_engine/plan/_compile.py` |

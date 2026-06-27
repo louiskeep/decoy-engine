@@ -230,6 +230,13 @@ nitpick_ignore = [
     # module docstring cannot be resolved by autoapi without a full dotted
     # path. Adding to ignore rather than expanding every bare reference.
     ("py:class", "ColumnFeatures"),
+    # SP-05 (2026-06-27): quarantine.py references ValidationReport and
+    # QuarantineSummary via TYPE_CHECKING; autoapi renders them as cross-
+    # references to the private `validators._types` module which is not
+    # documented (private module pattern). Listed here per the existing
+    # convention for private-module-sourced types (see ExecutionError above).
+    ("py:class", "decoy_engine.validators._types.ValidationReport"),
+    ("py:class", "decoy_engine.validators._types.QuarantineSummary"),
 ]
 
 # Private (underscore-prefixed) classes, the `decoy_engine.internal.*`

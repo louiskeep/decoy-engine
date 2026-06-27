@@ -9,6 +9,51 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (SP-05 validator framework + quarantine_rows, 2026-06-27)
+
+- **Job-level validator framework** (`src/decoy_engine/validators/`, SP-05 /
+  P5.INFRA.4). A new top-level `validators:` block in the pipeline config
+  declares which validators run after all column passes complete. Six built-in
+  validators ship: `luhn`, `npi`, `iban`, `vin` (all delegate to
+  `checksums.validate` from SP-04), `fk_intact` (every non-null child FK value
+  resolves to a parent PK), and `no_orphan_children` (every child row has a
+  non-null FK value). The two FK validators implement the SDV HMA1 parent-first
+  DAG pattern (sdv-dev/SDV, MIT). `validate(outputs, config)` is the single
+  entry point; it returns a frozen `ValidationReport` and never mutates output.
+  The `ValidationReport` and per-finding `ValidatorFinding` are persisted to the
+  evidence manifest under `quality_metrics["validation"]["validators"]`.
+  Fail-closed by default: any validator failure raises `ValidatorFailedError`
+  (exported from `decoy_engine.errors`) and fails the job. A warn-only override
+  is deferred to a later sprint.
+
+- **`quarantine_rows` config block** (`src/decoy_engine/quarantine.py`, SP-05 /
+  P5.B). A new top-level `quarantine:` block accepts `enabled`, `output_path`,
+  and `triggers`. When enabled with the `validation_fail` trigger, rows that fail
+  validation are written to a JSONL file at `output_path` (one JSON object per
+  distinct quarantined row, with `_quarantine_trigger`, `_quarantine_reason`, and
+  `_source_table` metadata fields) and removed from the main output. The job
+  continues and completes successfully. Deduplication: a row failing multiple
+  validators appears once in the JSONL file; `total_quarantined` counts distinct
+  rows removed, while `counts_by_trigger` tallies per finding and may sum higher.
+  Quarantine state is persisted to the evidence manifest under
+  `quality_metrics["quarantine"]` as a `QuarantineSummary`.
+
+  Three fail-closed guards prevent silent data loss:
+
+  1. `enabled: true` with an empty or whitespace `output_path` raises at config
+     validation (caught by Pydantic `QuarantineConfig`) and again as a backstop
+     in `apply_quarantine` for callers that bypass Pydantic. There is no silent
+     row-drop.
+  2. An unwired trigger (`format_error` or `mask_error`) raises at config
+     validation. These are reserved names for future wiring; using one now would
+     appear to quarantine rows but do nothing, a silent no-op. Rejected up front.
+  3. A misconfigured FK validator (missing parent table or unknown parent column
+     in the `relationships:` block) raises at `validate()` call time rather than
+     mass-flagging every row.
+
+  `format_error` and `mask_error` are reserved trigger names. They are not wired
+  in SP-05 and will be rejected at config validation if used.
+
 ### Added (BF1 distribution-fidelity surfacing, 2026-06-26)
 
 - **Opt-in fidelity report on the run path** (BF1, engine slice). The
@@ -154,8 +199,8 @@ called out explicitly.
 - **STORM residual-PII oracle is now source-aware** (audit C1, Critical;
   + H6). A column whose mask silently failed (output positionally
   identical to source) previously reported `severity='info'` on
-  faker/formula/categorical/reference/date_shift strategies — a real
-  leak shipped green. Detector-flagged columns are now compared
+  faker/formula/categorical/reference/date_shift strategies (a real
+  leak shipped green). Detector-flagged columns are now compared
   positionally against the source frames and severity escalates to
   `fail` (substitution strategies at >=50% identity, value-reuse
   strategies at full identity, unconfigured columns at >=50% on a
