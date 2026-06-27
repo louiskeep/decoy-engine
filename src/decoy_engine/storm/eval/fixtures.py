@@ -92,6 +92,7 @@ def make_iban(country: str, bban: str) -> str:
 
 # ── fixed value pools ────────────────────────────────────────────────────────
 
+# fmt: off
 _ICD10_CODES = [
     "E11.9",  # type 2 diabetes
     "I10",  # essential hypertension
@@ -102,6 +103,7 @@ _ICD10_CODES = [
     "N18.3",  # chronic kidney disease
     "K21.9",  # GERD
 ]
+# fmt: on
 
 
 @dataclass
@@ -231,6 +233,7 @@ _EXT_ROWS = 60  # rows per extended-corpus column
 
 # Header name pools: clear (name hint fires regex baseline) vs cryptic
 # (opaque header; model must rely on content signals alone).
+# fmt: off
 _MRN_HEADERS_CLEAR = [
     "mrn", "patient_mrn", "medical_record_no", "med_rec_num", "mrn_number",
     "patient_id_mr", "mr_number", "pt_mrn", "record_number", "hospital_mrn",
@@ -300,11 +303,10 @@ _NPI_HEADERS = [
     "p3", "q4", "n_id", "ref07", "col_npi",
     "field_n", "uid_n", "prov_id", "tax_npi", "npi_ref",
 ]
+# fmt: on
 
 
-def _make_fixture(
-    name: str, col_name: str, values: list[str], label: str
-) -> LabeledFixture:
+def _make_fixture(name: str, col_name: str, values: list[str], label: str) -> LabeledFixture:
     """Build a single-column LabeledFixture."""
     return LabeledFixture(name, pd.DataFrame({col_name: values}), {col_name: label})
 
@@ -325,7 +327,9 @@ def _pan_values(rng: random.Random, n: int, prefix: str = "4111") -> list[str]:
     return [make_pan(f"{prefix}{rng.randint(10**10, 10**11 - 1)}") for _ in range(n)]
 
 
-def _iban_values(rng: random.Random, n: int, country: str = "GB", bban_prefix: str = "WEST") -> list[str]:
+def _iban_values(
+    rng: random.Random, n: int, country: str = "GB", bban_prefix: str = "WEST"
+) -> list[str]:
     return [
         make_iban(country, f"{bban_prefix}{rng.randint(10**13, 10**14 - 1)}".upper())
         for _ in range(n)
@@ -366,8 +370,7 @@ def _iso_date_values(col_idx: int, n: int) -> list[str]:
     """
     offset = col_idx * 200
     return [
-        f"{2020 + (offset + j) // 365}-{((offset + j) % 12) + 1:02d}"
-        f"-{((offset + j) % 27) + 1:02d}"
+        f"{2020 + (offset + j) // 365}-{((offset + j) % 12) + 1:02d}-{((offset + j) % 27) + 1:02d}"
         for j in range(n)
     ]
 
@@ -402,7 +405,7 @@ def _cvv_unique_values(col_idx: int, n: int) -> list[str]:
 def _mrn_values(rng: random.Random, n: int, prefix: str = "MRN") -> list[str]:
     # Prefix 2-4 alpha chars + 5-6 digits to give distinctive content signals.
     width = 6 if len(prefix) <= 2 else 5
-    return [f"{prefix}{rng.randint(10**(width-1), 10**width - 1)}" for _ in range(n)]
+    return [f"{prefix}{rng.randint(10 ** (width - 1), 10**width - 1)}" for _ in range(n)]
 
 
 def _hp_values(rng: random.Random, n: int, fmt: str = "HP") -> list[str]:
@@ -488,16 +491,16 @@ def build_extended_fixtures() -> list[LabeledFixture]:
         )
 
     # IBAN (20 columns: 10 clear header, 10 cryptic)
+    # fmt: off
     iban_configs = [
         ("GB", "WEST"), ("DE", "IBAN"), ("FR", "BARC"), ("NL", "ABNA"),
         ("GB", "NWBK"), ("DE", "DEUT"), ("FR", "BNPA"), ("NL", "INGB"),
         ("GB", "LLOY"), ("ES", "CAJA"),
     ]
+    # fmt: on
     for i, hdr in enumerate(_IBAN_HEADERS):
         cc, bpfx = iban_configs[i % len(iban_configs)]
-        fx.append(
-            _make_fixture(f"ext_iban_{i:02d}", hdr, _iban_values(rng, n, cc, bpfx), "iban")
-        )
+        fx.append(_make_fixture(f"ext_iban_{i:02d}", hdr, _iban_values(rng, n, cc, bpfx), "iban"))
 
     # ICD10 (20 columns: 10 clear header, 10 cryptic)
     # Each column gets a non-overlapping slice of _EXT_ICD10_POOL so that no
@@ -525,37 +528,33 @@ def build_extended_fixtures() -> list[LabeledFixture]:
         fx.append(_make_fixture(f"ext_cvv_{i:02d}", hdr, _cvv_unique_values(i, n), "cvv"))
 
     # MRN (40 columns: 20 clear header, 20 cryptic)
+    # fmt: off
     mrn_prefixes = ["MRN", "MR", "MRC", "PT", "REC", "EMR", "EHR", "CHT", "HSI", "FHIR",
                     "EPIC", "MED", "PAT", "MR", "RN"]
+    # fmt: on
     for i, hdr in enumerate(_MRN_HEADERS_CLEAR):
         pfx = mrn_prefixes[i % len(mrn_prefixes)]
-        fx.append(
-            _make_fixture(f"ext_mrn_clear_{i:02d}", hdr, _mrn_values(rng, n, pfx), "mrn")
-        )
+        fx.append(_make_fixture(f"ext_mrn_clear_{i:02d}", hdr, _mrn_values(rng, n, pfx), "mrn"))
     for i, hdr in enumerate(_MRN_HEADERS_CRYPTIC):
         pfx = mrn_prefixes[(i + 5) % len(mrn_prefixes)]
-        fx.append(
-            _make_fixture(f"ext_mrn_crypt_{i:02d}", hdr, _mrn_values(rng, n, pfx), "mrn")
-        )
+        fx.append(_make_fixture(f"ext_mrn_crypt_{i:02d}", hdr, _mrn_values(rng, n, pfx), "mrn"))
 
     # HEALTH_PLAN_ID (40 columns: 20 clear header, 20 cryptic)
+    # fmt: off
     hp_formats = [
         "HP-", "PLN", "HMO", "INS", "BP", "MED", "BEN", "COV",
         "HPLAN", "PAYER", "CARR", "INS-", "HP", "PLAN", "HLT-",
     ]
+    # fmt: on
     for i, hdr in enumerate(_HP_HEADERS_CLEAR):
         fmt = hp_formats[i % len(hp_formats)]
         fx.append(
-            _make_fixture(
-                f"ext_hp_clear_{i:02d}", hdr, _hp_values(rng, n, fmt), "health_plan_id"
-            )
+            _make_fixture(f"ext_hp_clear_{i:02d}", hdr, _hp_values(rng, n, fmt), "health_plan_id")
         )
     for i, hdr in enumerate(_HP_HEADERS_CRYPTIC):
         fmt = hp_formats[(i + 3) % len(hp_formats)]
         fx.append(
-            _make_fixture(
-                f"ext_hp_crypt_{i:02d}", hdr, _hp_values(rng, n, fmt), "health_plan_id"
-            )
+            _make_fixture(f"ext_hp_crypt_{i:02d}", hdr, _hp_values(rng, n, fmt), "health_plan_id")
         )
 
     # NONE (60 columns: non-PII identifiers, amounts, codes)
@@ -699,18 +698,12 @@ def build_ood_fixtures() -> list[LabeledFixture]:
     # MRN under single-char headers (hardest case)
     for i, hdr in enumerate(["r1", "s2", "t3", "u4"]):
         pfx = ["MRN", "MR", "PT", "REC"][i]
-        fx.append(
-            _make_fixture(f"ood_mrn_{i:02d}", hdr, _mrn_values(rng, n, pfx), "mrn")
-        )
+        fx.append(_make_fixture(f"ood_mrn_{i:02d}", hdr, _mrn_values(rng, n, pfx), "mrn"))
 
     # HEALTH_PLAN_ID under single-char headers
     for i, hdr in enumerate(["w1", "x2", "y3", "z4"]):
         fmt = ["HP-", "PLN", "INS", "BEN"][i]
-        fx.append(
-            _make_fixture(
-                f"ood_hp_{i:02d}", hdr, _hp_values(rng, n, fmt), "health_plan_id"
-            )
-        )
+        fx.append(_make_fixture(f"ood_hp_{i:02d}", hdr, _hp_values(rng, n, fmt), "health_plan_id"))
 
     # NONE under cryptic headers (short integers, codes)
     for i, hdr in enumerate(["aa", "bb", "cc", "dd"]):
