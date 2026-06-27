@@ -82,6 +82,7 @@ class TestRunConfigOnlyChecks:
             "statistical_columns",
             "text_redact_ner_available",
             "vault_columns",
+            "fpe_checksum_scheme",
         )
 
     def test_raises_on_unknown_provider(self):

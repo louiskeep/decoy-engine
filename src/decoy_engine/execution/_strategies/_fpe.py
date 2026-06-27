@@ -69,8 +69,12 @@ class FpeStrategyHandler:
         if len(charset) < 2:
             return df, []  # degenerate charset -> passthrough (V1 behavior)
         preserve_sep = bool(cfg.get("preserve_separators", True))
-        validate_luhn = bool(cfg.get("validate_luhn", False)) and all(
-            c in "0123456789" for c in charset
+        # checksum takes priority over validate_luhn when both are configured.
+        checksum: str | None = cfg.get("checksum") or None
+        validate_luhn = (
+            checksum is None
+            and bool(cfg.get("validate_luhn", False))
+            and all(c in "0123456789" for c in charset)
         )
         tweak = column.encode("utf-8", errors="replace")
         namespace = plan.namespace
@@ -79,7 +83,9 @@ class FpeStrategyHandler:
         key = derive(ctx.job_seed, namespace, FPE_KEY_LABEL)
 
         def encrypt_one(value: str) -> str:
-            return fpe_encrypt_value(value, key, charset, tweak, preserve_sep, validate_luhn)
+            return fpe_encrypt_value(
+                value, key, charset, tweak, preserve_sep, validate_luhn, checksum
+            )
 
         source = df[column]
         na_mask = source.isna().to_numpy()

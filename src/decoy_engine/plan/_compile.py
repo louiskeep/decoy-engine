@@ -48,6 +48,7 @@ from decoy_engine.determinism import SEED_PROTOCOL_VERSION
 from decoy_engine.plan._checks import (
     check_basic_uniqueness_pre_flight,
     check_composite_columns_length_match,
+    check_fpe_checksum_scheme,
     check_non_poolable_provider_with_pool_backend,
     check_null_bearing_int_unsupported,
     check_statistical_columns,
@@ -147,6 +148,10 @@ def compile_plan(
     # namespace and a one-way strategy. Config-only; both branches +
     # run_config_only_checks.
     check_vault_columns(config)
+    # Row 15 (SP-04 / P5.INFRA.1, 2026-06-27): reject unknown or structurally
+    # unsupported FPE checksum schemes at compile time. Config-only; both branches +
+    # run_config_only_checks.
+    check_fpe_checksum_scheme(config)
     check_composite_columns_length_match(profile)
     # MG-3 / M3 (2026-05-31): reject when + coherent_with combo early,
     # before composite-wiring checks. A column carrying both fields is
@@ -197,6 +202,8 @@ def compile_plan(
             "text_redact_ner_available",
             # Row 14 (vault): structural, tail-appended.
             "vault_columns",
+            # Row 15 (SP-04): structural, tail-appended.
+            "fpe_checksum_scheme",
         )
         checks_skipped: tuple[str, ...] = (
             "basic_uniqueness_pre_flight",
@@ -235,6 +242,8 @@ def compile_plan(
             "text_redact_ner_available",
             # Row 14 (vault): structural, tail-appended.
             "vault_columns",
+            # Row 15 (SP-04): structural, tail-appended.
+            "fpe_checksum_scheme",
         )
         checks_skipped = ()
 
@@ -313,6 +322,8 @@ def run_config_only_checks(config: dict[str, Any]) -> tuple[str, ...]:
     check_text_redact_ner_available(config)
     # Row 14 (vault): vault: true needs a namespace + a one-way strategy.
     check_vault_columns(config)
+    # Row 15 (SP-04): reject unknown or structurally unsupported FPE checksum schemes.
+    check_fpe_checksum_scheme(config)
     return (
         "unknown_provider",
         "when_with_coherent_with",
@@ -321,6 +332,7 @@ def run_config_only_checks(config: dict[str, Any]) -> tuple[str, ...]:
         "statistical_columns",
         "text_redact_ner_available",
         "vault_columns",
+        "fpe_checksum_scheme",
     )
 
 

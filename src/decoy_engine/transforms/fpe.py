@@ -183,19 +183,166 @@ def _permute(s: str, key: bytes, charset: str, tweak: bytes, *, forward: bool) -
     return _decode(y, charset, n)
 
 
+def _fpe_checksum_permute(
+    s: str,
+    key: bytes,
+    charset: str,
+    tweak: bytes,
+    scheme: str,
+    *,
+    forward: bool,
+) -> str:
+    """Permute a string and recompute the check digit for the given scheme.
+
+    Each scheme enforces its own alphabet constraint so the output is
+    valid-by-construction and calc_check_digit never KeyErrors.
+
+    Per-scheme rules
+    ----------------
+    luhn / ean13 / gtin
+        Digit-only schemes.  The permutation charset is constrained to
+        ``'0123456789'`` regardless of the caller's charset config.  Check
+        digit appended at the end.
+
+    npi
+        NPI (CMS NPPES, 2008): first digit must be 1 or 2.  The leading
+        digit is pinned (preserved from the source), and only the 8-digit
+        middle body is permuted over digits.  Check digit appended at end.
+        Minimum length: 10 chars (9-char body + 1-char check).
+
+    isbn13
+        The 3-char bookland prefix (978 or 979) is pinned; the 9-digit
+        inner body (s[3:12]) is permuted over digits; the EAN-13 check
+        digit is appended.  Minimum length: 13 chars.
+
+    vin
+        The permutation charset is constrained to the VIN alphabet
+        (0-9 A-Z excluding I, O, Q -- NHTSA 49 CFR Part 565).  Any I/O/Q
+        in the caller's charset is silently dropped; the body characters
+        are translated to the nearest VIN-legal value (already ensured by
+        the permutation staying in-alphabet).  16 non-check chars (s[:8] +
+        s[9:]) are permuted; the ISO 3779 check char is inserted at pos 8.
+        Minimum length: 17 chars.
+
+    iban
+        FAILS CLOSED.  Per-country BBAN structure (enforced by
+        stdnum.iban.validate) cannot be satisfied by a free Feistel
+        permutation.  Raises ``FpeChecksumError`` unconditionally.
+        Use validate-only or a different strategy for IBAN columns.
+
+    unknown scheme
+        FAILS CLOSED.  Any scheme name not in ``checksums._KNOWN_SCHEMES``
+        raises ``FpeChecksumError``.  The pre-SP04 fall-through to plain
+        FPE with no check digit was silent misconfiguration; Decoy forbids
+        that pattern.
+
+    The function is symmetric: the same body permutation runs in both the
+    forward (encrypt) and inverse (decrypt) directions.
+    """
+    from decoy_engine.checksums import _KNOWN_SCHEMES, calc_check_digit
+    from decoy_engine.errors import FpeChecksumError
+
+    # H2: unknown scheme - fail closed.
+    if scheme not in _KNOWN_SCHEMES:
+        raise FpeChecksumError(
+            f"FPE checksum mode received unknown scheme {scheme!r}. "
+            f"Known schemes: {sorted(_KNOWN_SCHEMES)}. "
+            "Check your config for typos; valid fpe checksum schemes are "
+            "luhn, npi, vin, isbn13, ean13, gtin (iban is not supported for FPE).",
+            scheme=scheme,
+        )
+
+    # B1: IBAN - fail closed.
+    if scheme == "iban":
+        raise FpeChecksumError(
+            "FPE checksum mode does not support 'iban': per-country BBAN "
+            "structure (enforced by stdnum.iban.validate) cannot be satisfied "
+            "by a format-preservation permutation. Use validate-only or a "
+            "different strategy for IBAN columns. "
+            "See carry-forward note in p5-infra-1-python-stdnum.md.",
+            scheme="iban",
+        )
+
+    _DIGITS_ONLY = "0123456789"
+
+    # luhn / ean13 / gtin: digit-only, check digit at end.
+    if scheme in ("luhn", "ean13", "gtin"):
+        body = _permute(s[:-1], key, _DIGITS_ONLY, tweak, forward=forward)
+        return body + calc_check_digit(scheme, body)
+
+    # M1: NPI - pin leading digit, permute 8-digit middle body over digits.
+    if scheme == "npi":
+        # L1: NPI needs at least 10 chars (9-char body + check); pass through if too short.
+        if len(s) < 10:
+            return s
+        # Pin the first character (must be 1 or 2 per NPPES).
+        leading = s[0]
+        middle_body = _permute(s[1:9], key, _DIGITS_ONLY, tweak, forward=forward)
+        body9 = leading + middle_body
+        return body9 + calc_check_digit("npi", body9)
+
+    # B2: isbn13 - pin bookland prefix (s[:3]), permute 9 inner digits.
+    if scheme == "isbn13":
+        # L1: isbn13 needs 13 chars; pass through if too short.
+        if len(s) < 13:
+            return s
+        prefix = s[:3]  # '978' or '979' -- pinned
+        inner = _permute(s[3:12], key, _DIGITS_ONLY, tweak, forward=forward)
+        body12 = prefix + inner
+        return body12 + calc_check_digit("isbn13", body12)
+
+    # H1: VIN - constrain charset to VIN alphabet, permute 16-char body.
+    if scheme == "vin":
+        # L1: VIN needs 17 chars; pass through if too short.
+        if len(s) < 17:
+            return s
+        # Drop I, O, Q from whatever charset the caller provided.
+        from decoy_engine.checksums import _VIN_CHARSET
+
+        vin_charset = "".join(c for c in charset if c in _VIN_CHARSET)
+        if len(vin_charset) < 2:
+            # Fallback: use the canonical VIN digit subset so permutation can proceed.
+            vin_charset = _DIGITS_ONLY
+        raw_body = s[:8] + s[9:]  # 16 non-check chars
+        enc = _permute(raw_body, key, vin_charset, tweak, forward=forward)
+        check = calc_check_digit("vin", enc)
+        return enc[:8] + check + enc[8:]
+
+    # Should never reach here: all known non-IBAN schemes handled above.
+    raise FpeChecksumError(
+        f"Unhandled scheme {scheme!r} in _fpe_checksum_permute (internal error).",
+        scheme=scheme,
+    )
+
+
 def _fpe_pure_value(
-    s: str, key: bytes, charset: str, tweak: bytes, validate_luhn: bool, *, forward: bool
+    s: str,
+    key: bytes,
+    charset: str,
+    tweak: bytes,
+    validate_luhn: bool,
+    *,
+    forward: bool,
+    checksum: str | None = None,
 ) -> str:
     """FPE (or invert) a string consisting entirely of charset characters.
 
-    Luhn mode permutes the BODY (all chars but the last) and appends the
-    Luhn check digit of the result, in both directions. Encrypt output is
-    Luhn-valid by construction; decrypt restores the body exactly and
-    recomputes the check digit, so a Luhn-valid source (the domain the
-    mode exists for: PANs) round-trips byte-exactly. The pre-WS1 shape
-    (permute all n chars, overwrite the last with the check digit)
-    discarded one encrypted character and was therefore not invertible;
+    Checksum mode (``checksum`` is not None): permutes the non-check-digit
+    portion of the string and recomputes the check digit from the encrypted
+    body.  Output is checksum-valid by construction in both the forward and
+    inverse directions (see ``_fpe_checksum_permute``).  Checksum mode takes
+    priority over ``validate_luhn`` when both are set.
+
+    Luhn mode (``validate_luhn=True``, no ``checksum``): permutes the BODY
+    (all chars but the last) and appends the Luhn check digit of the result,
+    in both directions. Encrypt output is Luhn-valid by construction; decrypt
+    restores the body exactly and recomputes the check digit, so a Luhn-valid
+    source (the domain the mode exists for: PANs) round-trips byte-exactly.
+    The pre-WS1 shape (permute all n chars, overwrite the last with the check
+    digit) discarded one encrypted character and was therefore not invertible;
     the change is covered by the SEED_PROTOCOL_VERSION 4 -> 5 bump."""
+    if checksum is not None and len(s) >= 2:
+        return _fpe_checksum_permute(s, key, charset, tweak, checksum, forward=forward)
     if validate_luhn and len(s) >= 2:
         body = _permute(s[:-1], key, charset, tweak, forward=forward)
         return body + _luhn_check_digit(body)
@@ -209,6 +356,7 @@ def _fpe_value(
     tweak: bytes,
     preserve_separators: bool,
     validate_luhn: bool,
+    checksum: str | None = None,
     *,
     forward: bool,
 ) -> str:
@@ -233,6 +381,7 @@ def _fpe_value(
             tweak,
             validate_luhn,
             forward=forward,
+            checksum=checksum,
         )
         result = list(val)
         for pos, ch in zip(positions, body, strict=False):
@@ -240,7 +389,9 @@ def _fpe_value(
         return "".join(result)
     if not all(ch in charset_set for ch in val):
         return val
-    return _fpe_pure_value(val, key, charset, tweak, validate_luhn, forward=forward)
+    return _fpe_pure_value(
+        val, key, charset, tweak, validate_luhn, forward=forward, checksum=checksum
+    )
 
 
 def fpe_encrypt_value(
@@ -250,9 +401,21 @@ def fpe_encrypt_value(
     tweak: bytes,
     preserve_separators: bool = True,
     validate_luhn: bool = False,
+    checksum: str | None = None,
 ) -> str:
-    """Encrypt one value with the keyed format-preserving permutation."""
-    return _fpe_value(val, key, charset, tweak, preserve_separators, validate_luhn, forward=True)
+    """Encrypt one value with the keyed format-preserving permutation.
+
+    When ``checksum`` is supplied the non-check-digit portion is permuted and
+    the correct check digit is appended / inserted, making the output
+    checksum-valid by construction.  Supported schemes: ``'luhn'``,
+    ``'npi'``, ``'iban'``, ``'vin'``, ``'isbn13'``, ``'ean13'``,
+    ``'gtin'`` (see ``decoy_engine.checksums``).
+
+    ``checksum`` takes priority over ``validate_luhn`` when both are set.
+    """
+    return _fpe_value(
+        val, key, charset, tweak, preserve_separators, validate_luhn, checksum, forward=True
+    )
 
 
 def fpe_decrypt_value(
@@ -262,13 +425,18 @@ def fpe_decrypt_value(
     tweak: bytes,
     preserve_separators: bool = True,
     validate_luhn: bool = False,
+    checksum: str | None = None,
 ) -> str:
-    """Invert `fpe_encrypt_value` under the same (key, charset, tweak, config).
+    """Invert ``fpe_encrypt_value`` under the same (key, charset, tweak, config).
 
-    With validate_luhn=true the trailing check digit is recomputed rather
-    than stored, so the round-trip is exact iff the source satisfied Luhn
-    (see `_fpe_pure_value`)."""
-    return _fpe_value(val, key, charset, tweak, preserve_separators, validate_luhn, forward=False)
+    With ``validate_luhn=True`` or ``checksum`` set, the check digit is
+    recomputed rather than stored, so the round-trip is exact iff the source
+    was already checksum-valid for the configured scheme (see
+    ``_fpe_pure_value`` and ``_fpe_checksum_permute``).
+    """
+    return _fpe_value(
+        val, key, charset, tweak, preserve_separators, validate_luhn, checksum, forward=False
+    )
 
 
 class FPEStrategy(BaseMaskingStrategy):
@@ -289,6 +457,10 @@ class FPEStrategy(BaseMaskingStrategy):
         check digit computed from the preceding characters.  Useful for
         masking PANs into values that pass card-validation checks.  Silently
         ignored when the charset contains non-digit characters.
+      checksum: str  (default: none)
+        Scheme name for check-digit recomputation after encryption.
+        Supported: 'luhn', 'npi', 'iban', 'vin', 'isbn13', 'ean13', 'gtin'.
+        Takes priority over validate_luhn when both are set.
     """
 
     def apply(self, column: pd.Series, rule: dict[str, Any]) -> pd.Series:
@@ -308,8 +480,9 @@ class FPEStrategy(BaseMaskingStrategy):
 
         preserve_sep = bool(rule.get("preserve_separators", True))
         validate_luhn = bool(rule.get("validate_luhn", False))
-        # Luhn only meaningful over a pure-digit charset
-        if validate_luhn and not all(c in "0123456789" for c in charset):
+        checksum: str | None = rule.get("checksum") or None
+        # Luhn only meaningful over a pure-digit charset (ignored when checksum is set)
+        if validate_luhn and checksum is None and not all(c in "0123456789" for c in charset):
             self.logger.warning(
                 f"fpe: validate_luhn=true ignored for column '{column_name}' "
                 f"because charset contains non-digit characters"
@@ -339,7 +512,9 @@ class FPEStrategy(BaseMaskingStrategy):
         na_mask = column.isna()
         non_na_str = column[~na_mask].astype(str).tolist()
         encrypted = [
-            self._encrypt(s, key, charset, tweak, preserve_sep, validate_luhn, column_name)
+            self._encrypt(
+                s, key, charset, tweak, preserve_sep, validate_luhn, column_name, checksum
+            )
             for s in non_na_str
         ]
         result = column.copy().astype(object)
@@ -357,6 +532,7 @@ class FPEStrategy(BaseMaskingStrategy):
         preserve_sep: bool,
         validate_luhn: bool,
         column_name: str,
+        checksum: str | None = None,
     ) -> str:
         if not preserve_sep and val and not all(ch in set(charset) for ch in val):
             self.logger.warning(
@@ -364,7 +540,7 @@ class FPEStrategy(BaseMaskingStrategy):
                 f"charset and preserve_separators=false; passing through unchanged"
             )
             return val
-        return fpe_encrypt_value(val, key, charset, tweak, preserve_sep, validate_luhn)
+        return fpe_encrypt_value(val, key, charset, tweak, preserve_sep, validate_luhn, checksum)
 
     def _fpe_pure(
         self,

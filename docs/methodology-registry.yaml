@@ -32,6 +32,10 @@ modules:
     pattern: Type-II Feistel + HMAC-SHA256
     source: Feistel 1973; HMAC RFC 2104
 
+  - path: src/decoy_engine/checksums.py
+    pattern: Check-digit validation (python-stdnum + NPPES + ISO 3779)
+    source: python-stdnum (LGPL); CMS NPPES NPI Check Digit Procedure; ISO 3779 / NHTSA 49 CFR 565
+
   - path: src/decoy_engine/transforms/date_shift.py
     pattern: HMAC-SHA256-keyed deterministic offset
     source: HMAC RFC 2104

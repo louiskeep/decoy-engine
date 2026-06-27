@@ -39,6 +39,7 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 |---|---|
 | `src/decoy_engine/` | Engine package |
 | `src/decoy_engine/identifiers.py` | Stable sub-import namespace for identifier families (Ein/Mrn/Ndc/Npi/Ssn adapters, domains, validators); use `decoy_engine.identifiers.EinValidator` instead of the top-level package |
+| `src/decoy_engine/checksums.py` | Check-digit registry for seven structured-identifier schemes (luhn, npi, iban, vin, isbn13, ean13, gtin). Public functions: `validate(scheme, value) -> bool` and `calc_check_digit(scheme, body) -> str`. python-stdnum 2.2 backs luhn/iban/ean13/isbn13/gtin; npi and vin are hand-rolled per CMS NPPES and NHTSA 49 CFR Part 565 / ISO 3779. Used internally by the FPE `checksum:` parameter to recompute check digits after permutation. |
 | `src/decoy_engine/_MAP.md` | Engine package navigation map |
 | `src/decoy_engine/config/` | `PipelineConfig`, `RelationshipConfig`, `TableConfig`, source/target descriptors |
 | `src/decoy_engine/plan/` | `compile_plan` + frozen `Plan`; `_seed.py` holds the shared seed validator used by the compiler, pipeline profile path, and generation; `_graph.py` builds plan-side relationship and namespace tuples; `_seed_envelope.py` builds per-table/column/group `SeedEnvelope` (split from `_compile.py`, F11d) |
@@ -77,6 +78,7 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | Remediation plan | Maintained in the commercial platform repo |
 | Public exports | `src/decoy_engine/__init__.py` |
 | Identifier validators/adapters/domains | `src/decoy_engine/identifiers.py` |
+| Check-digit validation and FPE checksum support | `src/decoy_engine/checksums.py` |
 | Config schema | `src/decoy_engine/config/_pipeline.py` |
 | Relationship schema | `src/decoy_engine/config/_relationships.py` (reference doc lives in the commercial platform repo) |
 | Plan compilation | `src/decoy_engine/plan/_compile.py` |

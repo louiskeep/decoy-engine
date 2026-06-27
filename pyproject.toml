@@ -105,6 +105,12 @@ dependencies = [
     # posture for numexpr / jsonpath-ng (do not roll our own AST sandbox).
     # Required at import time of decoy_engine.expressions.
     "simpleeval>=0.9.13",
+    # SP-04 / P5.INFRA.1: check-digit validators for luhn, iban, ean, isbn,
+    # and gtin (python-stdnum); npi and vin are hand-rolled (not in stdnum).
+    # Core dep (not optional): the checksum: fpe param is engine functionality
+    # used by the HIPAA pack NPI columns and the P&C pack VIN columns.
+    # The CI no-extras job installs .[dev] only, so this must live here.
+    "python-stdnum>=2.2",
 ]
 
 [project.optional-dependencies]
@@ -350,6 +356,8 @@ strict_equality = true
 # scoped to the listed modules.
 [[tool.mypy.overrides]]
 module = [
+    # SP-04 / P5.INFRA.1: checksum registry (new public module).
+    "decoy_engine.checksums",
     # V2.0-A Sprint A modules (runner decomposition).
     "decoy_engine.graph.run_state",
     "decoy_engine.graph.memory_monitor",
@@ -584,6 +592,13 @@ module = [
     # storm.model_pack.trainer (ml extra only).
     "lightgbm",
     "lightgbm.*",
+    # python-stdnum ships no py.typed marker / stub package.
+    # SP-04 / P5.INFRA.1: added as a core dep; ignore_missing_imports
+    # keeps mypy green without losing the import-time catch for everything
+    # else. Per the established convention (same pattern as duckdb, faker,
+    # polars, etc. above).
+    "stdnum",
+    "stdnum.*",
 ]
 ignore_missing_imports = true
 

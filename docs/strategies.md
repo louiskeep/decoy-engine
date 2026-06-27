@@ -53,6 +53,40 @@ a namespace.
   A degenerate (< 2 char) set degrades to passthrough.
 - `preserve_separators`: keep non-charset separators in place (default true).
 - `validate_luhn`: keep Luhn-checksum validity for digit charsets (default false).
+- `checksum`: scheme name for check-digit recomputation after encryption
+  (default: none). When set, `checksum` takes priority over `validate_luhn`.
+  After the Feistel permutation rewrites the value body, the engine recomputes
+  the check digit in place, so the masked value is valid for the named scheme
+  by construction. Determinism is preserved: the same input, key, and scheme
+  always produce the same output.
+
+  Supported schemes (all seven pass through `checksums.validate` and
+  `checksums.calc_check_digit`): `luhn`, `npi`, `iban`, `vin`, `isbn13`,
+  `ean13`, `gtin`.
+
+  Valid-by-construction in FPE mode: `luhn`, `npi`, `vin`, `isbn13`, `ean13`,
+  `gtin`. Scheme-specific constraints: NPI output pins the 1/2 NPPES leading
+  digit (NPPES allocates only 1- and 2-prefixed NPIs); VIN constrains the
+  permutation to the VIN alphabet (A-Z excluding I/O/Q, plus digits 0-9, per
+  NHTSA 49 CFR Part 565); ISBN-13 pins the 978/979 GS1 prefix.
+
+  Three fail-closed behaviors (no silent passthrough of unmasked data):
+
+  1. `iban`: raises `PlanCompileError(fpe_checksum_iban_unsupported)` at
+     plan-compile and `FpeChecksumError` at runtime. Per-country BBAN
+     structure enforced by `stdnum.iban.validate` cannot be satisfied by a
+     free Feistel permutation. For validation-only use, call
+     `checksums.validate("iban", value)` directly; only FPE checksum mode is
+     unsupported.
+  2. Unknown or misspelled scheme: raises
+     `PlanCompileError(fpe_checksum_unknown_scheme)` at plan-compile. There is
+     no silent fallback to plain FPE.
+  3. Incompatible charset: a charset missing characters required by the scheme
+     (for example, `checksum: vin` with a digits-only charset, which is missing
+     the letter characters VIN requires) raises
+     `PlanCompileError(fpe_checksum_charset_incompatible)` at plan-compile.
+     This prevents a silent no-op where values would pass through unmasked at
+     runtime.
 
 Use it when a downstream system validates the format of an identifier (credit
 card, account number) and you cannot change its shape.

@@ -566,6 +566,59 @@ on the ML1/ML2 foundation. Gated by the `[ml]` optional extra; off by default.
   These tests run under `pytest -m "not benchmark"` (the `perf` marker is not
   excluded from the CI regression gate).
 
+### Added (SP-04 checksums + FPE valid-by-construction, 2026-06-27)
+
+- **`decoy_engine.checksums` check-digit registry** (SP-04 / P5.INFRA.1).
+  New module `src/decoy_engine/checksums.py` exposes a uniform pair of
+  functions for seven structured-identifier schemes:
+  `validate(scheme, value) -> bool` and `calc_check_digit(scheme, body) -> str`.
+  Schemes and backing implementations: `luhn` (python-stdnum 2.2, Luhn 1954),
+  `npi` (hand-rolled per CMS NPPES check-digit spec; enforces the 1/2
+  leading-digit NPPES allocation rule), `iban` (python-stdnum 2.2 stdnum.iban,
+  ISO 13616 / ISO 7064 mod-97), `vin` (hand-rolled per NHTSA 49 CFR Part 565 /
+  ISO 3779), `isbn13` (python-stdnum 2.2 stdnum.isbn via GS1 EAN algorithm),
+  `ean13` (python-stdnum 2.2 stdnum.ean), `gtin` (python-stdnum 2.2 stdnum.ean;
+  covers all four GTIN lengths 8/12/13/14). `python-stdnum >= 2.2` is now a core
+  dependency declared in `pyproject.toml`.
+
+- **FPE `checksum:` parameter: valid-by-construction masked identifiers**
+  (SP-04 / P5.INFRA.1). `transforms/fpe.py` and
+  `execution/_strategies/_fpe.py` accept a new `checksum: <scheme>` config key.
+  After the Feistel permutation rewrites the value body, the engine recomputes
+  the check digit in place. The masked value is valid for the named scheme by
+  construction, in both the forward (mask) and inverse (unmask) directions.
+  Determinism is preserved: the same input, key, and scheme always produce the
+  same output. `checksum:` takes priority over `validate_luhn:` when both are set.
+
+  Schemes valid-by-construction in FPE mode: `luhn`, `npi`, `vin`, `isbn13`,
+  `ean13`, `gtin`. Scheme-specific constraints applied at permutation time:
+  NPI output pins the 1/2 NPPES leading digit; VIN constrains the permutation
+  to the VIN alphabet (A-Z excluding I/O/Q, plus digits 0-9); ISBN-13 pins
+  the 978/979 GS1 prefix.
+
+  Three fail-closed behaviors (no silent passthrough of unmasked data):
+
+  1. `iban` in FPE mode: `checksum: iban` raises
+     `PlanCompileError(fpe_checksum_iban_unsupported)` at plan-compile and
+     `FpeChecksumError` at runtime. Per-country BBAN structure enforced by
+     `stdnum.iban.validate` cannot be satisfied by a format-preservation
+     permutation. `checksums.validate("iban", ...)` and
+     `checksums.calc_check_digit("iban", ...)` still work for validation-only
+     use cases; only FPE checksum mode is unsupported for IBAN.
+
+  2. Unknown scheme: a `checksum` value not in the known-scheme set (for example
+     a typo) raises `PlanCompileError(fpe_checksum_unknown_scheme)` at compile.
+     There is no silent fallback to plain FPE.
+
+  3. Incompatible charset: a column whose configured charset cannot represent
+     the scheme's required alphabet (for example `checksum: vin` with a
+     digits-only charset, missing the letter characters VIN requires) raises
+     `PlanCompileError(fpe_checksum_charset_incompatible)` at compile. This
+     prevents a silent no-op where values would pass through unmasked because
+     they fail the per-scheme minimum-body-length guard at runtime.
+
+  `FpeChecksumError` (new typed error) is exported from `decoy_engine.errors`.
+
 ## [0.1.0] - 2026-06-02
 
 The first publishable cut of the engine. Not yet pushed to the real
