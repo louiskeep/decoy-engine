@@ -388,6 +388,46 @@ NOT re-exported from `decoy_engine.__init__`.
   artifact from `StormProfile`/`FieldStats` by design so it never
   crosses the persisted-format compatibility boundary.
 
+### Added (ML-foundation measurement substrate, 2026-06-27)
+
+Measurement gates for a future ML column classifier (ML2.2+). Scaffolding
+is off the public run path and intentionally NOT re-exported from
+`decoy_engine.__init__`.
+
+- **Extended harness with F2, confusion matrix, and aggregate metrics**
+  (`storm/eval/harness.py`, ML0/§A.1, §A.7). `run_baseline()` now
+  computes per-type precision, recall, and F2 (β=2, recall-weighted per
+  Presidio SpanEvaluator conventions). Aggregate metrics: macro-F2,
+  weighted-F2 (corpus-prevalence weighted), balanced_accuracy (macro-average
+  recall), entity-type confusion matrix (truth rows x predicted columns),
+  and enumerated FP/FN lists identifying which columns false-positive or
+  false-negative. This is the foundational evidence artifact proving where
+  the regex detectors miss. The baseline report is frozen at
+  `docs/v2/ml/baseline-report.json` with a regression-test gate
+  (`tests/snapshots/test_ml_baseline_golden.py`).
+
+- **StratifiedGroupKFold split scaffolding** (`storm/eval/split.py`,
+  ML0/§A.3). Held-out split utility guarded against data leakage: group
+  = the unique PII value string, so the same value cannot appear in both
+  train and test. Prevents a future model memorising strings instead of
+  learning column-shape patterns. `make_split_inputs()` converts labeled
+  fixtures to `(X, y, groups)` for sklearn's `StratifiedGroupKFold`.
+  Requires the optional `[ml]` extra (`pip install 'decoy-engine[ml]'`,
+  pins scikit-learn >= 1.4, < 3). The regex baseline has no training phase
+  and does not use this utility; it is scaffolding for ML2.2.
+
+- **Confidence bands and per-column latency benchmark** (`storm/eval/bands.py`,
+  ML0/§A.4). Three operational confidence bands for STORM field-recognition
+  suggestions: high (precision >= 0.95), review (0.70 <= precision < 0.95),
+  low (precision < 0.70). Thresholds calibrate to the regex baseline
+  precision (not probabilistic model outputs; calibration deferred to ML2.2).
+  Includes per-column latency micro-benchmark (target: < 50ms dev-tier budget).
+
+- **Privacy test for baseline artifact** (`tests/privacy/`,
+  test_no_raw_values_in_baseline_report.py, ML0/§B.4). Asserts no raw PII
+  cell values in the frozen baseline report or feature dicts, a guard
+  against accidental training-data leakage into version-controlled artifacts.
+
 ## [0.1.0] - 2026-06-02
 
 The first publishable cut of the engine. Not yet pushed to the real

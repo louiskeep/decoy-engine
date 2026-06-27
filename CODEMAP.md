@@ -44,7 +44,7 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | `src/decoy_engine/relationships/` | `build_relationship_graph`, `build_namespace_registry`, `check_orphan_fk_policy_completeness`, `OrphanPolicy` |
 | `src/decoy_engine/providers_v2/` | `ProviderRegistry`, identifier adapters |
 | `src/decoy_engine/profile/` | Profile types + `profile_source` |
-| `src/decoy_engine/storm/` | Profiling and detectors; `eval/` (labeled fixtures + regex-baseline recognition harness) and `features/` (deterministic per-column feature builder) are off-run-path field-recognition tooling (BF2) |
+| `src/decoy_engine/storm/` | Profiling and detectors; `eval/` (labeled fixtures + regex-baseline recognition harness + ML measurement substrate) and `features/` (deterministic per-column feature builder) are off-run-path field-recognition tooling (BF2 / ML0); `eval/split.py` + `eval/bands.py` are scaffolding for ML2.2 |
 | `src/decoy_engine/validation/` | `validate_config` |
 | `src/decoy_engine/validation_result.py` | `ValidationResult`, `ValidationMessage`, `VALIDATION_CODES` |
 | `src/decoy_engine/sdk.py` | Public Connector SDK (file-shaped) |
@@ -85,8 +85,16 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | Validation surface | `src/decoy_engine/validation/_config.py`, `src/decoy_engine/validation_result.py` |
 | Connectors | `src/decoy_engine/sdk.py`, `src/decoy_engine/connectors/` |
 | STORM | `src/decoy_engine/storm/` |
+| ML field-recognition evaluation (BF2 / ML0) | `src/decoy_engine/storm/eval/` (harness, split, bands); see CHANGELOG §"ML-foundation measurement substrate" |
 | Canonical caller shape | `tests/integration/golden/test_execution_e2e.py::_run` |
 | Parity notes | `tests/parity/SEMANTIC_DIFFERENCES.md` |
+
+## Known Issues / Flags
+
+| Issue | Note |
+|---|---|
+| `docs/ml-benchmarking-and-privacy.md` missing | Referenced extensively in `src/decoy_engine/storm/eval/` (harness.py, split.py, bands.py) and test files with citations like §A.1 / §A.3 / §A.4 / §A.7 / §B.4. This document is the authoritative ML measurement standard but is not present in the engine repo. Likely lives in the commercial platform repo. Cross-link when available. |
+| `docs/v2/ml/baseline-report.json` path | Uses retired "v2" nomenclature. Should be relocated to `docs/ml/baseline-report.json` or similar at a future sprint. Flagged for relocation, do not move independently (shared with commercial platform schema docs). |
 
 ## Conventions
 
