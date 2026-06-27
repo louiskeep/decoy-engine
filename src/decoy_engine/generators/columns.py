@@ -1180,6 +1180,10 @@ class ColumnGenerator:
 
         gen_ctx = self._column_ctx(col_name)
         values: list = []
+        # Track null sibling cells coerced to '' so the substitution is
+        # diagnosable: a null in a referenced column silently blanks the formula
+        # input otherwise (e.g. "first last" -> "first " on a null last name).
+        null_subs: dict[str, int] = {}
         # F2/F3 (2026-06-26): per-row seeds are full-width family derivations
         # (py for the formula RNG + keyed hash, faker for Faker) instead of
         # column_seed + i, so adjacent columns no longer correlate. faker
@@ -1197,6 +1201,7 @@ class ColumnGenerator:
             for ref in references:
                 val = out.at[i, ref]
                 if val is None or (isinstance(val, float) and pd.isna(val)):
+                    null_subs[ref] = null_subs.get(ref, 0) + 1
                     val = ""
                 scope[ref] = val
 
@@ -1207,6 +1212,11 @@ class ColumnGenerator:
                 self.logger.warning(f"Formula column {col_name!r} row {i} eval error: {exc}")
                 values.append(None)
 
+        if null_subs:
+            self.logger.warning(
+                f"Formula column {col_name!r}: substituted '' for null cells in "
+                f"referenced column(s) {null_subs!r}; blanks may appear in the output."
+            )
         return pd.Series(values, dtype=object)
 
     def _eval_formula_inline(

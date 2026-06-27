@@ -705,6 +705,25 @@ class TestReferencedFormulaPostPass:
         out = generate_tables(cfg)["t"].column("greet").to_pylist()
         assert out == [None] * 5
 
+    def test_null_cell_in_reference_warns(self, caplog):
+        # BF3 medium: a referenced sibling CELL being null is coerced to "" in
+        # the formula scope (reverse-order chain reads a None placeholder). The
+        # output is unchanged, but the substitution must be DIAGNOSABLE: a single
+        # per-column warning fires so a silent blank does not go unnoticed.
+        import logging
+
+        gcols = [
+            {"name": "wrap", "type": "formula", "references": ["base"], "formula": "f'[{base}]'"},
+            {"name": "base", "type": "formula", "references": ["seed_col"], "formula": "f'B{seed_col}'"},
+            {"name": "seed_col", "type": "sequence", "start": 1, "step": 1},
+        ]
+        with caplog.at_level(logging.WARNING):
+            out = _v2_run_single_table(gcols, 4)
+        assert out["wrap"] == ["[]"] * 4  # behavior unchanged: still "" substitution
+        assert "substituted '' for null cells" in caplog.text and "'wrap'" in caplog.text, (
+            "null-cell substitution in a referenced formula must emit a diagnostic warning"
+        )
+
     def test_null_probability_on_referenced_formula(self):
         # null_probability applies to the post-pass output: a deterministic
         # subset of rows is nulled, the rest carry computed values, and the
