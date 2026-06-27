@@ -199,8 +199,8 @@ called out explicitly.
 - **STORM residual-PII oracle is now source-aware** (audit C1, Critical;
   + H6). A column whose mask silently failed (output positionally
   identical to source) previously reported `severity='info'` on
-  faker/formula/categorical/reference/date_shift strategies — a real
-  leak shipped green. Detector-flagged columns are now compared
+  faker/formula/categorical/reference/date_shift strategies (a real
+  leak shipped green). Detector-flagged columns are now compared
   positionally against the source frames and severity escalates to
   `fail` (substitution strategies at >=50% identity, value-reuse
   strategies at full identity, unconfigured columns at >=50% on a
