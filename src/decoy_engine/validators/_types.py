@@ -86,8 +86,16 @@ class QuarantineSummary:
     Args:
         enabled: Whether the quarantine block was enabled for this run.
         output_path: Path where the quarantine JSONL file was written.
-        counts_by_trigger: Row counts keyed by trigger name.
-        total_quarantined: Total count of quarantined rows across all triggers.
+        counts_by_trigger: Per-finding row counts keyed by trigger name.
+            A row failing two validators contributes 1 to each matching
+            trigger count, so the sum of counts_by_trigger values may
+            exceed total_quarantined. This is intentional: per-trigger
+            counts reveal which validators fired most, while
+            total_quarantined reflects the distinct rows actually removed
+            from the main output.
+        total_quarantined: Count of DISTINCT rows removed from the main
+            output (deduplicated by (table, row_index)). Equals the
+            number of lines written to the quarantine JSONL file.
     """
 
     enabled: bool

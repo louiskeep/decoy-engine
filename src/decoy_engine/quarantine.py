@@ -4,22 +4,26 @@ When a row triggers any configured quarantine trigger, ``apply_quarantine``
 routes it to a JSONL file at ``config["quarantine"]["output_path"]`` instead
 of the main pipeline output. The job continues and completes successfully.
 
-Supported triggers (SP-05):
+Wired triggers (SP-05):
   - ``validation_fail``: row failed a job-level validator (ValidationReport
     finding with row indices).
-  - ``format_error``: future (placeholder, not wired in SP-05).
-  - ``mask_error``: future (placeholder, not wired in SP-05).
 
-The quarantine output is JSON-lines (one JSON object per quarantined row).
-Each record carries the original column values plus two extra fields:
+Reserved for future wiring (not active in SP-05):
+  - ``format_error``: placeholder - not wired. Rejected at config validation.
+  - ``mask_error``: placeholder - not wired. Rejected at config validation.
+
+The quarantine output is JSON-lines (one JSON object per distinct quarantined
+row). Each record carries the original column values plus extra fields:
 
   _quarantine_trigger
-      Name of the trigger that fired (e.g. ``"validation_fail"``).
+      Name of the first trigger that fired for this row.
   _quarantine_reason
-      Human-readable explanation from the ValidatorFinding.
+      Human-readable explanation from the first ValidatorFinding for this row.
 
-Multiple triggers can fire for the same row; the row appears once per trigger
-in the quarantine output.
+Deduplication: a row failing multiple validators appears ONCE in the quarantine
+output (the first finding wins). ``total_quarantined`` equals the number of
+distinct rows removed from main; ``counts_by_trigger`` tallies per finding and
+may sum higher than ``total_quarantined`` when a row fails multiple validators.
 
 The main output has all quarantined rows removed; its schema is unchanged.
 If no rows are quarantined, the JSONL file is not written.
@@ -77,11 +81,14 @@ def apply_quarantine(
     output_path: str = quarantine_config.get("output_path") or ""
     triggers: list[str] = quarantine_config.get("triggers") or []
 
-    # Collect (table_name, row_index, trigger, reason) for each quarantine entry.
-    # Key: (table_name, row_index) -> list of (trigger, reason) so a row
-    # quarantined by multiple validators still appears for each trigger.
+    # Collect one quarantine entry per DISTINCT (table, row_index) pair.
+    # A row failing two validators appears once in the output file (first
+    # finding wins for _quarantine_trigger and _quarantine_reason).
+    # counts_by_trigger tallies per finding and may sum higher than
+    # total_quarantined when a row fails multiple validators.
     quarantine_entries: list[dict[str, Any]] = []
     counts_by_trigger: dict[str, int] = defaultdict(int)
+    seen_rows: set[tuple[str, int]] = set()
 
     if "validation_fail" in triggers:
         for finding in report.findings:
@@ -92,6 +99,11 @@ def apply_quarantine(
                 col: tbl.column(col).to_pylist() for col in tbl.schema.names
             }
             for row_idx in finding.failing_row_indices:
+                counts_by_trigger["validation_fail"] += 1
+                key = (finding.table, row_idx)
+                if key in seen_rows:
+                    continue  # already written; dedup per distinct row
+                seen_rows.add(key)
                 row_data: dict[str, Any] = {
                     col: col_pylist[col][row_idx] for col in tbl.schema.names
                 }
@@ -99,9 +111,9 @@ def apply_quarantine(
                 row_data["_quarantine_reason"] = finding.detail
                 row_data["_source_table"] = finding.table
                 quarantine_entries.append(row_data)
-                counts_by_trigger["validation_fail"] += 1
 
-    total = len(quarantine_entries)
+    # total_quarantined = distinct rows removed from main (not sum of per-trigger counts).
+    total = len(seen_rows)
 
     # Build per-table sets of row indices to remove from the main output.
     rows_to_remove: dict[str, set[int]] = defaultdict(set)
@@ -121,6 +133,18 @@ def apply_quarantine(
         n = table.num_rows
         keep_mask = pa.array([i not in bad_rows for i in range(n)], type=pa.bool_())
         filtered_outputs[table_name] = table.filter(keep_mask)
+
+    # Fail-closed backstop: if rows need to be written but output_path is
+    # absent, raise rather than silently dropping rows (data loss). Pydantic
+    # config validation (QuarantineConfig._fail_closed_when_enabled) catches
+    # this earlier for callers who go through PipelineConfig.model_validate;
+    # this guard covers raw-dict callers that bypass Pydantic.
+    if quarantine_entries and not output_path:
+        raise ValueError(
+            f"apply_quarantine: {len(quarantine_entries)} row(s) must be quarantined "
+            "but output_path is empty. Set quarantine.output_path to a non-empty path "
+            "to avoid silent data loss."
+        )
 
     # Write the quarantine JSONL file only when rows were quarantined.
     if quarantine_entries and output_path:
