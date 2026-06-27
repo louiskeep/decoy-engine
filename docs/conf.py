@@ -216,6 +216,20 @@ nitpick_ignore = [
     # Raises cross-reference from the public unmask module has no
     # documented target to land on. Same class of issue as ConfigError.
     ("py:exc", "ExecutionError"),
+    # `pd.Series` appears as a parameter type in storm.model_pack.trainer
+    # (pandas imported lazily under TYPE_CHECKING). Intersphinx resolves
+    # `pandas.Series` but not the `pd.` alias; adding the alias form here
+    # rather than renaming all occurrences in the docstring.
+    ("py:class", "pd.Series"),
+    # `Band` is a Literal type alias in storm.eval.bands; autoapi renders
+    # its return annotation as a :class: cross-reference but there is no
+    # documented class page for a Literal alias.
+    ("py:class", "Band"),
+    # `ColumnFeatures` is a public dataclass in storm.features.types; the
+    # bare (unqualified) :class:`ColumnFeatures` in storm.features.builder's
+    # module docstring cannot be resolved by autoapi without a full dotted
+    # path. Adding to ignore rather than expanding every bare reference.
+    ("py:class", "ColumnFeatures"),
 ]
 
 # Private (underscore-prefixed) classes, the `decoy_engine.internal.*`
@@ -226,7 +240,14 @@ nitpick_ignore = [
 # the explicit ignore list from ballooning every time a new private helper
 # is added.
 nitpick_ignore_regex = [
+    # Bare private names (e.g. `_SomeHelper`) that autoapi exposes as
+    # cross-reference targets but has no documented page for.
     (r"py:.*", r"_[A-Za-z][A-Za-z0-9_]*"),
+    # Fully-qualified dotted paths whose LAST component is private (e.g.
+    # `decoy_engine.generators._distribution._DistributionMixin`). These
+    # arise from show-inheritance when a public class mixes in a private
+    # helper that lives in an autoapi-ignored module.
+    (r"py:.*", r".*\._[A-Za-z][A-Za-z0-9_]*"),
     (r"py:.*", r"decoy_engine\.internal\..*"),
     (r"py:.*", r"decoy_engine\.graph\.ops\._.*"),
 ]

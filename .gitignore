@@ -22,3 +22,4 @@ data/
 # is False, so docs/api is transient, but a failed build can leave it behind).
 docs/_build/
 docs/api/
+.gstack/

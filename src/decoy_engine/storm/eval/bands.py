@@ -167,7 +167,9 @@ def benchmark_all_fixture_columns(
 
     Returns
     -------
-    dict mapping "fixture.column" keys to mean latency in milliseconds.
+    dict[str, float]
+        Keys are ``"fixture.column"`` strings; values are mean latency in
+        milliseconds.
     """
     from decoy_engine.storm.eval.fixtures import build_fixtures
 

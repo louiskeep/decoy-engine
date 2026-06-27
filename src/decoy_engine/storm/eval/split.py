@@ -177,7 +177,7 @@ def held_out_split(
       ``predict_proba``, so calibration does not apply here.
     """
     try:
-        from sklearn.model_selection import StratifiedGroupKFold  # type: ignore[import]
+        from sklearn.model_selection import StratifiedGroupKFold
     except ImportError as e:
         raise ImportError(
             "scikit-learn is required for held_out_split. Install it via: pip install -e '.[ml]'"

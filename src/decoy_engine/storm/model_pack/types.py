@@ -90,6 +90,6 @@ class ModelPackManifest:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> ModelPackManifest:
-        known = {f.name for f in cls.__dataclass_fields__.values()}  # type: ignore[attr-defined]
+        known = {f.name for f in cls.__dataclass_fields__.values()}
         base = {k: v for k, v in d.items() if k in known}
         return cls(**base)
