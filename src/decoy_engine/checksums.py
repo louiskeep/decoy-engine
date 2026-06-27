@@ -1,5 +1,9 @@
 """Check-digit registry for structured identifier schemes (SP-04 / P5.INFRA.1).
 
+Pattern: Check-digit validation (python-stdnum + NPPES + ISO 3779).
+python-stdnum (LGPL) backs luhn/iban/ean/isbn/gtin; the CMS NPPES NPI Check
+Digit Procedure backs npi; ISO 3779 / NHTSA 49 CFR 565 Appendix B backs vin.
+
 Provides two public functions with a uniform signature:
 
     validate(scheme, value) -> bool
