@@ -27,7 +27,10 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    import pandas  # classify_fields signature only; imported lazily at call-time
 
 _log = logging.getLogger(__name__)
 
@@ -36,7 +39,7 @@ _DEFAULT_PACK = Path(__file__).parents[4] / "docs" / "v2" / "ml" / "packs" / "lg
 
 
 def classify_fields(
-    df: pandas.DataFrame,  # noqa: F821 (forward ref)
+    df: pandas.DataFrame,
     *,
     pack_dir: Path | None = None,
 ) -> dict[str, dict[str, Any]] | None:

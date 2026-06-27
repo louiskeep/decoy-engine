@@ -102,11 +102,11 @@ class ModelPackLoader:
 
         Returns
         -------
-        dict with keys:
-            "vec"       - fitted DictVectorizer
-            "clf"       - CalibratedClassifierCV (LightGBM base)
-            "classes"   - list of class-name strings
-            "manifest"  - ModelPackManifest
+        dict[str, Any]
+            Keys: ``"vec"`` (fitted DictVectorizer), ``"clf"``
+            (CalibratedClassifierCV with LightGBM base), ``"classes"``
+            (list of class-name strings), ``"manifest"``
+            (ModelPackManifest).
 
         Raises
         ------
@@ -284,7 +284,7 @@ class ModelPackLoader:
         try:
             import io
 
-            import joblib  # type: ignore[import]
+            import joblib
         except ImportError as exc:
             raise ModelPackLoadError(
                 "joblib is required to load a model pack. Install via: pip install -e '.[ml]'"

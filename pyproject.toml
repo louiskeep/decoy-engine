@@ -573,6 +573,17 @@ module = [
     "botocore.*",
     "google.cloud",
     "google.cloud.*",
+    # scikit-learn ships no py.typed marker; imported lazily in
+    # storm.model_pack.trainer and storm.eval.split (ml extra only).
+    "sklearn",
+    "sklearn.*",
+    # joblib ships no py.typed marker; imported lazily in
+    # storm.model_pack.trainer and storm.model_pack.loader (ml extra only).
+    "joblib",
+    # lightgbm ships no py.typed marker; imported lazily in
+    # storm.model_pack.trainer (ml extra only).
+    "lightgbm",
+    "lightgbm.*",
 ]
 ignore_missing_imports = true
 
@@ -614,6 +625,23 @@ disable_error_code = ["call-arg"]
 [[tool.mypy.overrides]]
 module = ["decoy_engine.generators.columns"]
 disable_error_code = ["index", "arg-type"]
+
+# generators._distribution / generators._formula — V2.1 hard delete
+# (mixin helpers split out of columns.py to stay under the size cap).
+# Both mixins reference attributes (logger, _column_ctx, faker,
+# _reference_date) that are provided by ColumnGenerator at runtime;
+# mypy cannot verify the mixin-host contract without abstract Protocol
+# declarations, which are not worth adding to modules slated for
+# deletion. `arg-type` in _distribution: int() called on Any|None dict
+# value inside a try/except (TypeError, ValueError) guard; the guard IS
+# the contract here, same pattern as generators.columns.
+[[tool.mypy.overrides]]
+module = ["decoy_engine.generators._distribution"]
+disable_error_code = ["attr-defined", "arg-type"]
+
+[[tool.mypy.overrides]]
+module = ["decoy_engine.generators._formula"]
+disable_error_code = ["attr-defined", "index"]
 
 # transforms.{hash,categorical,faker_based} — V2.1 candidates for the
 # legacy V1 Masker stack. `index` / `return-value` debt is the same

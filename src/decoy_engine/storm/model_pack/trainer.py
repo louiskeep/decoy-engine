@@ -55,9 +55,12 @@ import hashlib
 import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
+
+if TYPE_CHECKING:
+    import pandas as pd  # predict_column signature only; pandas imported lazily at call-time
 
 # ── Lazy sklearn / lightgbm imports (require [ml] extra) ─────────────────────
 try:
@@ -68,7 +71,7 @@ try:
     # only (no loading from arbitrary external sources).  This is the same
     # posture used by every sklearn model-persistence workflow.
     import joblib
-    from lightgbm import LGBMClassifier  # type: ignore[import]
+    from lightgbm import LGBMClassifier
     from sklearn.calibration import CalibratedClassifierCV, calibration_curve
     from sklearn.feature_extraction import DictVectorizer
     from sklearn.metrics import (
@@ -591,8 +594,9 @@ def load_pack(pack_dir: Path) -> dict[str, Any]:
 
     Returns
     -------
-    dict with keys "vec" (DictVectorizer), "clf" (calibrated classifier),
-    "classes" (list[str]), "manifest" (ModelPackManifest).
+    dict[str, Any]
+        Keys: ``"vec"`` (DictVectorizer), ``"clf"`` (calibrated classifier),
+        ``"classes"`` (list[str]), ``"manifest"`` (ModelPackManifest).
 
     Raises
     ------
@@ -632,7 +636,7 @@ def load_pack(pack_dir: Path) -> dict[str, Any]:
 
 def predict_column(
     pack: dict[str, Any],
-    series: pd.Series,  # noqa: F821 (forward ref, pandas imported lazily)
+    series: pd.Series,
     col_name: str,
 ) -> dict[str, Any]:
     """Run inference on one column using a loaded pack.
@@ -648,15 +652,13 @@ def predict_column(
 
     Returns
     -------
-    dict with keys:
-        "predicted_type" (str | None): highest-confidence type, or None
-            if below operating_threshold.
-        "confidence" (float): calibrated max probability.
-        "band" (str): "high" | "review" | "low" based on calibrated score.
-        "model_pack_id" (str): pack_id from manifest.
-        "model_pack_version" (str): version from manifest.
-        "model_pack_sha256" (str): sha256 from manifest.
-        "ml" (bool): always True (marks classifier-suggested evidence).
+    dict[str, Any]
+        Keys: ``"predicted_type"`` (str | None, highest-confidence type or
+        None if below threshold), ``"confidence"`` (float, calibrated max
+        probability), ``"band"`` (str, "high"/"review"/"low"),
+        ``"model_pack_id"``, ``"model_pack_version"``,
+        ``"model_pack_sha256"`` (str provenance fields),
+        ``"ml"`` (bool, always True).
     """
     from decoy_engine.storm.eval.bands import classify_band
 
