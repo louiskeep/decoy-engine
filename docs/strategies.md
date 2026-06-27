@@ -295,3 +295,117 @@ source column's distribution.
   `stats` block. `numeric` needs `bin_edges` + `bin_counts`; `categorical` needs
   `top_values` + `other_count`; `datetime` needs `year_bins` + `min` + `max`.
   This matches `compute_distribution_snapshot`'s output.
+
+## Job-level config: validators and quarantine (SP-05)
+
+These two top-level blocks run after all column passes complete. They operate on
+the assembled output tables, not on individual columns mid-run.
+
+### validators:
+
+Declares a list of validators to run against the pipeline outputs. The engine
+runs them in declared order after all column passes complete. A validator failure
+fails the job by default (fail-closed).
+
+```yaml
+validators:
+  - name: luhn
+    columns:
+      orders: [credit_card_number]
+  - name: npi
+    columns:
+      providers: [npi_number]
+  - name: iban
+    columns:
+      payments: [iban_field]
+  - name: vin
+    columns:
+      vehicles: [vin_number]
+  - name: fk_intact
+  - name: no_orphan_children
+```
+
+Built-in validators:
+
+- `luhn`: Luhn mod-10 check digit per column. Delegates to
+  `checksums.validate('luhn', value)` (SP-04).
+- `npi`: US National Provider Identifier check digit per column. Delegates to
+  `checksums.validate('npi', value)`.
+- `iban`: IBAN ISO 13616 mod-97 check digits per column. Delegates to
+  `checksums.validate('iban', value)`.
+- `vin`: VIN ISO 3779 check character per column. Delegates to
+  `checksums.validate('vin', value)`.
+- `fk_intact`: Every non-null child FK value resolves to a parent PK. Reads the
+  `relationships:` block. Uses the SDV HMA1 parent-first DAG pattern.
+- `no_orphan_children`: Every child row has a non-null FK value. Uses the SDV
+  HMA1 parent-first DAG pattern.
+
+Parameters:
+
+- `name` (required): one of the six built-in validator names above. Unknown
+  names raise `ValueError` at the `validate()` call.
+- `columns` (optional for FK validators): dict mapping table name to a list of
+  column names. Required for `luhn`, `npi`, `iban`, and `vin`. Unused for
+  `fk_intact` and `no_orphan_children`, which read `relationships:` instead.
+
+Results are persisted to the evidence manifest under
+`quality_metrics["validation"]["validators"]` as a serialised `ValidationReport`
+(frozen dataclass with `passed`, `validators_run`, `findings`, `elapsed_ms`).
+
+Fail-closed by default: any validator failure raises `ValidatorFailedError`
+(exported from `decoy_engine.errors`), which carries the `ValidationReport` for
+inspection. Enable `quarantine:` with the `validation_fail` trigger to route
+failing rows to a JSONL file instead of failing the job.
+
+### quarantine:
+
+Routes rows that fail validation to a separate JSONL file instead of failing the
+job. When active, the job continues and completes successfully; only the failing
+rows are removed from the main output.
+
+```yaml
+quarantine:
+  enabled: true
+  output_path: /mnt/quarantine/run-2026-06-27.jsonl
+  triggers:
+    - validation_fail
+```
+
+Parameters:
+
+- `enabled` (bool, default `false`): activates the quarantine block.
+- `output_path` (str, required when `enabled: true`): path for the JSONL output
+  file. Must be non-empty and non-whitespace when `enabled` is `true`; an empty
+  path with `enabled: true` raises at config validation to prevent silent data
+  loss.
+- `triggers` (list): which conditions route rows to quarantine. Only
+  `validation_fail` is wired in SP-05. Two names are reserved for future
+  wiring but not yet active:
+  - `format_error`: reserved, not wired. Rejected at config validation.
+  - `mask_error`: reserved, not wired. Rejected at config validation.
+
+Each quarantined row is written as one JSON object containing all original column
+values plus three metadata fields: `_quarantine_trigger` (name of the first
+trigger that fired), `_quarantine_reason` (human-readable explanation from the
+first `ValidatorFinding`), and `_source_table` (output table name).
+
+Deduplication: a row that fails multiple validators appears once in the JSONL
+file (first finding wins for `_quarantine_trigger` and `_quarantine_reason`).
+`total_quarantined` counts distinct rows removed from the main output.
+`counts_by_trigger` tallies per finding and may sum higher when a row fails
+multiple validators. The JSONL file is not written when no rows are quarantined.
+
+Quarantine state is persisted to the evidence manifest under
+`quality_metrics["quarantine"]` as a serialised `QuarantineSummary` (frozen
+dataclass with `enabled`, `output_path`, `counts_by_trigger`, `total_quarantined`).
+
+Three fail-closed guards (no silent data loss):
+
+1. `enabled: true` with an empty or whitespace `output_path` raises at config
+   validation. A backstop in `apply_quarantine` covers callers that bypass
+   Pydantic config validation.
+2. An unwired trigger (`format_error`, `mask_error`) raises at config
+   validation. A silent no-op is rejected up front.
+3. A misconfigured FK validator (unknown parent table or column in
+   `relationships:`) raises at `validate()` call time rather than
+   mass-flagging every row.
