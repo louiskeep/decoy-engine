@@ -139,7 +139,7 @@ def apply_quarantine(
     # config validation (QuarantineConfig._fail_closed_when_enabled) catches
     # this earlier for callers who go through PipelineConfig.model_validate;
     # this guard covers raw-dict callers that bypass Pydantic.
-    if quarantine_entries and not output_path:
+    if quarantine_entries and not (output_path or "").strip():
         raise ValueError(
             f"apply_quarantine: {len(quarantine_entries)} row(s) must be quarantined "
             "but output_path is empty. Set quarantine.output_path to a non-empty path "

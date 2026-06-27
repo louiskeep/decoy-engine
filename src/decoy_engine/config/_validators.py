@@ -17,8 +17,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 # Triggers that are fully wired in this SP release (SP-05).
 # format_error and mask_error are reserved names for future wiring;
 # they are NOT accepted yet so operators get a clear error rather than
-# a silent no-op. See carry-forward in docs/backlog/phase5-gaps/
-# backlog-promotions/p5-b-quarantine-rows.md.
+# a silent no-op. See the carry-forward in the platform quarantine-rows
+# backlog doc (decoy-platform phase5-gaps).
 _WIRED_TRIGGERS: frozenset[str] = frozenset({"validation_fail"})
 
 
@@ -107,8 +107,8 @@ class QuarantineConfig(BaseModel):
                 raise ValueError(
                     f"trigger {trigger!r} is not yet wired in SP-05 and would be "
                     f"a silent no-op. Wired triggers: {sorted(_WIRED_TRIGGERS)}. "
-                    "See docs/backlog/phase5-gaps/backlog-promotions/"
-                    "p5-b-quarantine-rows.md for the carry-forward plan."
+                    "See the platform quarantine-rows backlog doc "
+                    "(decoy-platform phase5-gaps) for the carry-forward plan."
                 )
 
         return self
