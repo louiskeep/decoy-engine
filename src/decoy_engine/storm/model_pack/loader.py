@@ -41,9 +41,34 @@ from decoy_engine.storm.model_pack.types import (
 
 _log = logging.getLogger(__name__)
 
+#: Tokens accepted as "on"/"off" for the fail-closed signature flag, case-insensitive.
+_REQUIRE_SIG_TRUTHY = frozenset({"1", "true", "yes", "on"})
+_REQUIRE_SIG_FALSY = frozenset({"0", "false", "no", "off", ""})
+
 
 class ModelPackLoadError(ValueError):
     """Raised when a pack fails any validation check."""
+
+
+def _require_signature_enabled() -> bool:
+    """Parse ``DECOY_PACK_REQUIRE_SIGNATURE`` into a bool, failing CLOSED.
+
+    A security flag whose purpose is fail-closed posture must not silently
+    fail *open* on a plausible misconfiguration (M1). So ``true``/``yes``/``on``
+    (any case) all enable the requirement, the explicit falsy tokens disable
+    it, and ANY other value raises ``ModelPackLoadError`` -- an ambiguous
+    security flag is treated as "require + you typo'd it", never as "off".
+    """
+    raw = os.environ.get("DECOY_PACK_REQUIRE_SIGNATURE", "0").strip().lower()
+    if raw in _REQUIRE_SIG_TRUTHY:
+        return True
+    if raw in _REQUIRE_SIG_FALSY:
+        return False
+    raise ModelPackLoadError(
+        f"DECOY_PACK_REQUIRE_SIGNATURE has an unrecognized value {raw!r}; "
+        f"expected one of {sorted(_REQUIRE_SIG_TRUTHY)} or {sorted(_REQUIRE_SIG_FALSY)}. "
+        "Refusing to guess a security-flag value (fail-closed)."
+    )
 
 
 class ModelPackLoader:
@@ -191,20 +216,33 @@ class ModelPackLoader:
         The key is read from the DECOY_PACK_SIGNING_KEY env var (hex-encoded bytes).
 
         Fail-closed production posture (Option A): when
-        ``DECOY_PACK_REQUIRE_SIGNATURE=1`` is set, a missing key is treated as
-        a hard error rather than a warning, so a misconfigured production box
-        (platform forgot to derive/inject the key) refuses to load an
-        unverifiable pack instead of silently trusting it. Development leaves
-        the flag unset and keeps the warn-and-continue behaviour.
+        ``DECOY_PACK_REQUIRE_SIGNATURE`` is truthy (``1``/``true``/``yes``/``on``,
+        any case; see :func:`_require_signature_enabled`), a missing key is
+        treated as a hard error rather than a warning, so a misconfigured
+        production box (platform forgot to derive/inject the key) refuses to
+        load an unverifiable pack instead of silently trusting it. Development
+        leaves the flag unset and keeps the warn-and-continue behaviour.
+
+        Note on raising vs falling back (L2): this method RAISES; callers using
+        :meth:`load_with_fallback` will catch that and degrade to the regex
+        baseline (no unverified ML runs, but the job is not aborted). Callers
+        that need a hard stop on a require-signature failure must use
+        :meth:`load` directly.
+
+        Note on signature scope (L1): the HMAC binds the typed manifest fields
+        only (everything ``ModelPackManifest`` knows about, incl. ``sha256`` and
+        ``eval_report_hash``); any extra non-dataclass keys in manifest.json are
+        outside signature scope but are never read by the loader, and the
+        weights are independently SHA-256 checked.
         """
         key = load_signing_key_from_env()
         signed = bool(manifest.manifest_hmac)
-        require_sig = os.environ.get("DECOY_PACK_REQUIRE_SIGNATURE", "0") == "1"
+        require_sig = _require_signature_enabled()
 
         if key is None and require_sig:
             raise ModelPackLoadError(
-                f"DECOY_PACK_REQUIRE_SIGNATURE=1 but no DECOY_PACK_SIGNING_KEY is "
-                f"configured; refusing to load pack {self._pack_dir} whose provenance "
+                f"DECOY_PACK_REQUIRE_SIGNATURE is enabled but no DECOY_PACK_SIGNING_KEY "
+                f"is configured; refusing to load pack {self._pack_dir} whose provenance "
                 "cannot be verified. Derive the signing key from the instance master "
                 "key (derive_pack_signing_key) and set DECOY_PACK_SIGNING_KEY."
             )

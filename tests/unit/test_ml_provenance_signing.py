@@ -371,3 +371,42 @@ def test_require_signature_with_signed_pack_and_key_loads(
     loader = ModelPackLoader(pack_dir)
     pack = loader.load()
     assert "manifest" in pack
+
+
+def test_require_signature_accepts_truthy_word_true(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M1: DECOY_PACK_REQUIRE_SIGNATURE=true (not just '1') enables fail-closed."""
+    pack_dir = _write_signed_pack(tmp_path, key=None)
+    monkeypatch.delenv(SIGNING_KEY_ENV, raising=False)
+    monkeypatch.setenv("DECOY_PACK_REQUIRE_SIGNATURE", "TRUE")
+
+    loader = ModelPackLoader(pack_dir)
+    with pytest.raises(ModelPackLoadError, match="REQUIRE_SIGNATURE"):
+        loader.load()
+
+
+def test_require_signature_ambiguous_value_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M1: an unrecognized flag value raises rather than silently failing open."""
+    pack_dir = _write_signed_pack(tmp_path, key=None)
+    monkeypatch.delenv(SIGNING_KEY_ENV, raising=False)
+    monkeypatch.setenv("DECOY_PACK_REQUIRE_SIGNATURE", "maybe")
+
+    loader = ModelPackLoader(pack_dir)
+    with pytest.raises(ModelPackLoadError, match="unrecognized value"):
+        loader.load()
+
+
+def test_require_signature_falsy_word_disables(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An explicit falsy token ('off') keeps the warn-and-continue dev behaviour."""
+    pack_dir = _write_signed_pack(tmp_path, key=None)
+    monkeypatch.delenv(SIGNING_KEY_ENV, raising=False)
+    monkeypatch.setenv("DECOY_PACK_REQUIRE_SIGNATURE", "off")
+
+    loader = ModelPackLoader(pack_dir)
+    pack = loader.load()  # must not raise
+    assert "manifest" in pack
