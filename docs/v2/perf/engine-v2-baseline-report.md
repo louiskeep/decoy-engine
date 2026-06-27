@@ -9,6 +9,14 @@ indicative only. See `scripts/run_engine_v2_baseline.py` for the measurement met
 (pandas, polars). Large tier (10M rows) is deferred to bigger hardware. Reference strategy
 is excluded: it is I/O-bound rather than CPU-bound and belongs in a separate I/O matrix.
 
+**Supersession note.** PERF.BASE.3 originally targeted a pandas baseline
+(`run_perf_baseline.py` + `pandas-baseline.json`, with a sub-25% reproducibility band on
+cheap-band cells). Those artifacts were retired in b9b73e1 when the engine became V2-only,
+which left the committed V2 baseline (`engine-v2-baseline.json`) unguarded. This report and
+the `tests/perf/` guards re-establish equivalent coverage against the V2 substrate baseline.
+The legacy spec `docs/backlog/perf-baseline/perf-base-3-baseline-measurement.md` (status
+"complete", pandas) is historical and describes deleted files.
+
 All performance numbers below are valid only where the Correctness Gate = PASS.
 
 ## Hot-spot summary
@@ -83,8 +91,12 @@ gates must stay green after any re-run.
   (estimated 5-10 GB Parquet load + multi-column faker). The small + medium cells are
   the active regression net.
 - **Variance.** Adaptive iteration counts (1 iter for warmup > 30s, 2 for > 5s, 5
-  otherwise) mean slower cells have less iteration coverage. The 25% variance band in
-  the reproducibility test accounts for this.
+  otherwise) mean slower cells have less iteration coverage. The reproducibility test
+  (`tests/perf/test_baseline_reproducibility.py`) is a harness-sanity check, not the
+  regression gate: it asserts two runs of a mid-band cell land within 3x on polars p50,
+  which catches a broken or non-deterministic harness, not a perf regression. The actual
+  regression gate is `scripts/compare_baselines.py`, which flags any cell more than 5%
+  slower than the committed baseline JSON (see the Reading guide above).
 - **Polars boundary cost.** Cheap-band passthrough/redact/truncate cells show polars
   SLOWER than pandas at medium tier. This is the Arrow-boundary conversion cost
   dominating at sub-1ms operation time; the cell spends more time converting than
