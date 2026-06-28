@@ -8,6 +8,7 @@ Tests cover:
   H3.5 - Config validation: type=lat_lng + h3 cascade levels accepted.
   H3.6 - Invalid cascade levels raise PlanCompileError.
   H3.7 - Integration through the real plan/run path (STRATEGY-WIRING GUARD).
+  H3.8 - non_top_label derived from configured cascade, not hardcoded h3_resolution_9.
 
 Methodology: H3 geospatial indexing system (Uber, Apache-2.0).
   H3 hierarchical grid: resolution 9 ~150m, 7 ~1km, 5 ~9km.
@@ -336,3 +337,126 @@ class TestH3Integration:
         )
         cascade_latlng_column(df, "coords", config)
         assert df["coords"].iloc[0] == original_val, "Source DataFrame must not be mutated."
+
+
+# ── H3.8: non_top_label derivation from cascade config ──────────────────────
+
+
+class TestH3NonTopLabelCascadeWarning:
+    """H3.8 - geo_generalize_cascade warning uses the configured top level, not hardcoded res-9.
+
+    When a recipe's cascade starts at h3_resolution_7 (coarser than the default),
+    rows retained at h3_resolution_7 must NOT be flagged in the QualityWarning.
+    The hardcoded 'h3_resolution_9' label caused spurious warning entries for any
+    cascade that did not start at resolution 9.
+    """
+
+    def test_non_res9_cascade_no_spurious_warning_for_top_level(self):
+        """H3.8a - cascade starting at res-7: rows at res-7 must NOT appear in warning.
+
+        With the bug: non_top_label = 'h3_resolution_9' (hardcoded) -> res-7 decisions
+        compare != -> spurious warning. After fix: non_top_label derived from the first
+        cascade level -> h3_resolution_7 decisions compare == -> no spurious flag.
+        """
+        pytest.importorskip("h3")
+
+        import pyarrow as pa
+
+        from decoy_engine.execution import PandasExecutionAdapter
+        from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
+        from decoy_engine.providers_v2 import get_default_registry
+        from decoy_engine.relationships._graph import RelationshipGraph
+        from decoy_engine.relationships._namespace import NamespaceRegistry
+
+        col_seed = ColumnSeed(
+            namespace=None,
+            strategy="geo_generalize",
+            provider="geo_generalize",
+            backend_type="faker",
+            backend_version="v",
+            cardinality_mode="reuse",
+            deterministic=False,
+            provider_config=(
+                ("type", "lat_lng"),
+                # Cascade starts at res-7, NOT res-9.
+                ("cascade", ["h3_resolution_7", "h3_resolution_5", "suppress"]),
+                ("k_threshold", 1),  # low threshold: one record is enough to stay at res-7
+            ),
+            coherent_with=(),
+        )
+        plan = SimpleNamespace(
+            seed_envelope=SeedEnvelope(
+                job_seed=b"\xab" * 8,
+                per_table=(("t", TableSeed(per_column=(("coords", col_seed),), per_group=())),),
+            )
+        )
+        # Single coord: at k_threshold=1, one record satisfies the threshold -> stays at res-7.
+        src = pa.table({"coords": [f"{_SEA_LAT},{_SEA_LNG}"]})
+        result = PandasExecutionAdapter().run_single(
+            plan,
+            src,
+            registry=get_default_registry(),
+            relationship_graph=RelationshipGraph(edges=(), ordering=()),
+            namespace_registry=NamespaceRegistry(bindings=()),
+        )
+        # At k=1 with one record, the row satisfies threshold at h3_resolution_7.
+        # No warning should be emitted (the row is at the top configured level).
+        cascade_warnings = [w for w in result.warnings if w.code == "geo_generalize_cascade"]
+        assert len(cascade_warnings) == 0, (
+            f"No cascade warning expected when all rows stay at the configured top level "
+            f"(h3_resolution_7). Got: {cascade_warnings}"
+        )
+
+    def test_non_res9_cascade_warning_emitted_when_coarser(self):
+        """H3.8b - cascade starting at res-7, high k: cascades to res-5, warning emitted."""
+        pytest.importorskip("h3")
+
+        import pyarrow as pa
+
+        from decoy_engine.execution import PandasExecutionAdapter
+        from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
+        from decoy_engine.providers_v2 import get_default_registry
+        from decoy_engine.relationships._graph import RelationshipGraph
+        from decoy_engine.relationships._namespace import NamespaceRegistry
+
+        col_seed = ColumnSeed(
+            namespace=None,
+            strategy="geo_generalize",
+            provider="geo_generalize",
+            backend_type="faker",
+            backend_version="v",
+            cardinality_mode="reuse",
+            deterministic=False,
+            provider_config=(
+                ("type", "lat_lng"),
+                ("cascade", ["h3_resolution_7", "h3_resolution_5", "suppress"]),
+                ("k_threshold", 999_999),  # impossibly high: forces cascade to suppress
+            ),
+            coherent_with=(),
+        )
+        plan = SimpleNamespace(
+            seed_envelope=SeedEnvelope(
+                job_seed=b"\xab" * 8,
+                per_table=(("t", TableSeed(per_column=(("coords", col_seed),), per_group=())),),
+            )
+        )
+        src = pa.table({"coords": [f"{_SEA_LAT},{_SEA_LNG}"]})
+        result = PandasExecutionAdapter().run_single(
+            plan,
+            src,
+            registry=get_default_registry(),
+            relationship_graph=RelationshipGraph(edges=(), ordering=()),
+            namespace_registry=NamespaceRegistry(bindings=()),
+        )
+        # With k=999_999 the row cascades past all levels to suppress.
+        # A warning MUST be emitted.
+        cascade_warnings = [w for w in result.warnings if w.code == "geo_generalize_cascade"]
+        assert len(cascade_warnings) == 1, (
+            f"Expected exactly one cascade warning when all rows cascade below top level. "
+            f"Got: {cascade_warnings}"
+        )
+        decisions = cascade_warnings[0].detail["cascade_decisions"]
+        # The decision must be 'suppressed' (not h3_resolution_7, which is the top level).
+        assert all(v == "suppressed" for v in decisions.values()), (
+            f"Expected all decisions to be 'suppressed', got: {decisions}"
+        )

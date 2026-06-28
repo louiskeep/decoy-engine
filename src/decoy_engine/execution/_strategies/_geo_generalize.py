@@ -62,7 +62,12 @@ class GeoGeneralizeHandler:
 
         if geo_cfg.type == "lat_lng":
             updated_df, evidence = cascade_latlng_column(df, column, geo_cfg)
-            non_top_label = "h3_resolution_9"
+            # Derive the top (finest) cascade level from the configured cascade.
+            # Hardcoding "h3_resolution_9" mislabels cascades that start coarser
+            # (e.g. [h3_resolution_7, h3_resolution_5, suppress]): retained
+            # h3_resolution_7 rows would be spuriously flagged in the warning.
+            h3_levels = [lvl for lvl in geo_cfg.cascade if lvl != "suppress"]
+            non_top_label = h3_levels[0] if h3_levels else "h3_resolution_9"
         else:
             updated_df, evidence = cascade_zip_column(df, column, geo_cfg)
             non_top_label = "zip5"
