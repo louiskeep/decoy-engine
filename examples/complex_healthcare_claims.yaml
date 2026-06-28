@@ -1,5 +1,5 @@
 # =============================================================================
-# Decoy engine pipeline config — complex hand-authored example
+# Decoy engine pipeline config - complex hand-authored example
 #
 # Scenario: a healthcare-claims warehouse. One parent (members) feeds three
 # child tables via single-column AND composite FKs, plus a pure-generate
@@ -20,9 +20,9 @@ global_settings:
   # The value below is a non-secret placeholder so the example validates and
   # runs deterministically in dev. In production, inject the seed out-of-band
   # at job time (the platform runner overlays global_settings before compile,
-  # the same pattern as config._override.override_sources) — pulled from a
+  # the same pattern as config._override.override_sources) - pulled from a
   # secrets manager (Vault / AWS / GCP), never from source control.
-  seed: 0                     # placeholder — overridden per job; not a secret
+  seed: 0                     # placeholder - overridden per job; not a secret
   post_validation: true       # run post-mask invariant checks (FK joins, coherence)
   on_pool_exhaustion: fail     # pool-backed `unique` columns: fail rather than scale
   fidelity_warn_threshold: 0.85  # statistical generate columns warn below this score
@@ -42,7 +42,7 @@ sources:
     format: parquet
     path: ./in/enrollments.parquet
   claims:
-    # An S3 source. `credentials_ref` is OPAQUE to the engine — the platform
+    # An S3 source. `credentials_ref` is OPAQUE to the engine - the platform
     # layer resolves it against its secrets store; the engine never sees a key.
     type: s3
     format: parquet
@@ -68,7 +68,7 @@ targets:
 # namespaces mask independently even if source values collide.
 #
 # Here we pin member_identity to the parent key explicitly. We DON'T have to
-# repeat it on the child columns — the relationship below auto-inherits it
+# repeat it on the child columns - the relationship below auto-inherits it
 # (path #3). Composite keys are written "table.colA__colB".
 # -----------------------------------------------------------------------------
 namespaces:
@@ -95,7 +95,7 @@ tables:
     columns:
       # --- FK parent key: FPE, reversible. namespace pinned above. ------------
       # FPE keeps format (9 digits in, 9 digits out) and is reversible from the
-      # config alone via `decoy unmask` — so a vault here would be REJECTED
+      # config alone via `decoy unmask` - so a vault here would be REJECTED
       # (vault_strategy_reversible). FPE columns MUST carry a namespace or
       # compile fails with fpe_requires_namespace (the key can't be derived).
       - name: member_id
@@ -143,7 +143,7 @@ tables:
 
       # --- Coherent composite #2: a valid US city/state/zip triple -----------
       # No member declares a namespace, so the engine DERIVES one:
-      #   composite/members/city__state__zip   (resolution path #4 — the only
+      #   composite/members/city__state__zip   (resolution path #4 - the only
       #   place a namespace comes from the column names rather than a key).
       - name: city
         strategy: replace_with_synthetic
@@ -162,7 +162,7 @@ tables:
       # replace_with_synthetic is irreversible from config alone. vault: true
       # records the source->masked map into the encrypted vault so `decoy
       # unmask` can reverse it. Vault REQUIRES a namespace (it's the lookup
-      # key (namespace, masked)) — declared in the namespaces: block above.
+      # key (namespace, masked)) - declared in the namespaces: block above.
       - name: legacy_account
         strategy: replace_with_synthetic
         provider: account_number
@@ -233,7 +233,7 @@ tables:
 
   # ===========================================================================
   # audit_log: PURE GENERATE table (no source, no mask columns). Mask-XOR-
-  # generate is enforced — declaring `columns` here too would be rejected.
+  # generate is enforced - declaring `columns` here too would be rejected.
   # ===========================================================================
   - name: audit_log
     row_count: 1000000
@@ -272,7 +272,7 @@ relationships:
       - { table: claims, columns: [member_id] }
     orphan_policy: fail
 
-  # Composite FK: (member_id, plan_id) — the relationship DECLARES the
+  # Composite FK: (member_id, plan_id) - the relationship DECLARES the
   # namespace, so both ends bind to it; member_id's existing member_identity
   # binding would conflict, so we name a fresh composite namespace instead.
   - parent:   { table: members, columns: [member_id, plan_id] }

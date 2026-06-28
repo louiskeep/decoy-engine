@@ -71,7 +71,7 @@ claims.to_csv(IN / "claims.csv", index=False)
 providers.to_csv(IN / "providers.csv", index=False)
 
 # --------------------------------------------------------------------------
-# 2. Config (runnable variant — real strategies/providers).
+# 2. Config (runnable variant - real strategies/providers).
 # --------------------------------------------------------------------------
 config = {
     "version": 1,
