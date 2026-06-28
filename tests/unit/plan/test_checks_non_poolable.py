@@ -84,6 +84,7 @@ class TestRunConfigOnlyChecks:
             "vault_columns",
             "fpe_checksum_scheme",
             "derived_column_refs",
+            "derived_aggregate_refs",
         )
 
     def test_raises_on_unknown_provider(self):

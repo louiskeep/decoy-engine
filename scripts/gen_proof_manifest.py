@@ -774,6 +774,86 @@ def _derived_proof() -> dict:
     }
 
 
+def _derived_aggregate_proof() -> dict:
+    """Proof for derived_aggregate: sum fills every row with the column total.
+
+    Uses a two-column table: source column ``amount`` and target column
+    ``total``. The derived_aggregate strategy computes sum(amount) and writes
+    the scalar to every row of ``total``.
+    """
+    amount_values = [10.0, 20.0, 30.0, 40.0, 50.0]
+    total_values = [0.0] * len(amount_values)  # placeholder; overwritten
+    df = pd.DataFrame({"amount": amount_values, "total": total_values})
+    expected_sum = sum(amount_values)
+
+    with tempfile.TemporaryDirectory() as _tmp:
+        tmp = Path(_tmp)
+        csv_path = tmp / "t.csv"
+        df.to_csv(csv_path, index=False)
+
+        cfg = {
+            "version": 1,
+            "global_settings": {"seed": 1234567, "post_validation": False},
+            "sources": {"t": {"type": "file", "format": "csv", "path": str(csv_path)}},
+            "targets": {"t": {"type": "file", "format": "csv", "path": "/dev/null"}},
+            "tables": [
+                {
+                    "name": "t",
+                    "columns": [
+                        {"name": "amount", "strategy": "passthrough"},
+                        {
+                            "name": "total",
+                            "strategy": "derived_aggregate",
+                            "provider_config": {"op": "sum", "column": "amount"},
+                        },
+                    ],
+                }
+            ],
+        }
+        validated = PipelineConfig.model_validate(cfg).model_dump()
+        sources = {"t": pa.Table.from_pandas(df)}
+        result = run_pipeline(validated, sources, engine_version=ENGINE_VERSION)
+        out_df = result.outputs["t"].to_pandas()
+
+    # Invariant: every row of total == sum(amount)
+    for idx, row in out_df.iterrows():
+        if abs(float(row["total"]) - expected_sum) > 1e-6:
+            raise RuntimeError(
+                f"derived_aggregate proof: invariant failed at row {idx}: "
+                f"expected total={expected_sum}, got {row['total']}"
+            )
+
+    inp = _records(df, n=len(df))
+    out = _records(out_df, n=len(out_df))
+    config_yaml_snippet = (
+        "tables:\n"
+        "- name: t\n"
+        "  columns:\n"
+        "  - name: amount\n"
+        "    strategy: passthrough\n"
+        "  - name: total\n"
+        "    strategy: derived_aggregate\n"
+        "    provider_config:\n"
+        "      op: sum\n"
+        "      column: amount"
+    )
+    return {
+        "id": "mask.derived_aggregate",
+        "kind": "mask",
+        "title": "Intra-table aggregate (derived_aggregate)",
+        "column": "total",
+        "config_yaml": config_yaml_snippet,
+        "input": inp,
+        "output": out,
+        "invariant": (
+            "Every row of the target column carries the same scalar aggregate "
+            "(sum, mean, min, max, or count) computed from the named source column. "
+            "Deterministic: same source column -> same scalar on every run. "
+            "No individual row values are exposed in the output."
+        ),
+    }
+
+
 def _capabilities() -> list[dict]:
     caps = [_run_capability(p) for p in CAPABILITY_PROOFS]
     # joint_mask proof runs the transforms layer directly (multi-column output
@@ -781,6 +861,8 @@ def _capabilities() -> list[dict]:
     caps.append(_joint_mask_proof())
     # derived proof uses a two-column table (expression must reference another column).
     caps.append(_derived_proof())
+    # derived_aggregate proof uses a two-column table (source column + aggregate target).
+    caps.append(_derived_aggregate_proof())
     return caps
 
 

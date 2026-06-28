@@ -90,6 +90,9 @@ def compile_expr(expr_string: str) -> CompiledExpression:
     Note: string literals must use double quotes. Single-quoted strings
     (e.g. ``'hello'``) are not in the closed grammar; use ``"hello"``.
 
+    Supported built-in forms: ``concat(a, b)``, ``days_between(start, end)``,
+    ``case_when(cond1, val1, ..., condN, valN, default)`` (SP-10b).
+
     Args:
         expr_string: A column-level expression string, e.g. ``"a + b"``.
 
@@ -147,9 +150,10 @@ def compile_expr(expr_string: str) -> CompiledExpression:
             f"unsupported expression: {expr_string!r} is outside the closed "
             f"operator set. Only arithmetic (+,-,*,/,//), comparison "
             f"(==,!=,<,>,<=,>=,in), logical (and,or,not), concat(), "
-            f"days_between(), if/else ternary, literals, and column "
-            f"references are allowed. Workaround: use a formula strategy "
-            f"for arbitrary Python expressions.{single_quote_hint} Detail: {exc}"
+            f"days_between(), case_when(cond, val, ..., default), "
+            f"if/else ternary, literals, and column references are allowed. "
+            f"Workaround: use a formula strategy for arbitrary Python "
+            f"expressions.{single_quote_hint} Detail: {exc}"
         ) from exc
     except RecursionError as exc:
         # Belt-and-suspenders: the depth bound above prevents most cases,
@@ -358,6 +362,27 @@ class _ExprTransformer(lark.Transformer):  # type: ignore[type-arg]
         start = _parse_date(items[0])
         end = _parse_date(items[1])
         return (end - start).days
+
+    def case_when_op(self, items: list[Any]) -> Any:
+        """SQL-style CASE WHEN conditional expression (SP-10b / ISO/IEC 9075-2).
+
+        Pattern: SQL CASE WHEN conditional expression (ANSI SQL ISO/IEC 9075-2).
+        Semantics: evaluate conditions left-to-right; first truthy condition
+        returns its value; fall through to the mandatory default (last item).
+
+        items layout: [cond1, val1, ..., condN, valN, default]
+        Length is always odd: 1 pair = 3 items; 2 pairs = 5 items; etc.
+        The grammar rule guarantees this shape.
+        """
+        # The last item is always the default expression.
+        default = items[-1]
+        # Pairs occupy items[0..len-2] in cond/val order.
+        for i in range(0, len(items) - 1, 2):
+            cond = items[i]
+            val = items[i + 1]
+            if cond:
+                return val
+        return default
 
     # ---- primary atoms --------------------------------------------------
 

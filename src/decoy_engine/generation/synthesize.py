@@ -37,6 +37,7 @@ from faker import Faker
 
 from decoy_engine.generators.derivation import GenDeriveContext
 from decoy_engine.internal.faker_setup import get_faker_providers, make_faker
+from decoy_engine.transforms.derived_aggregate import generate_derived_aggregate_column
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -253,6 +254,8 @@ def _generate_column(
         values = _statistical(col, n, seed, derive_key, generated or {})
     elif kind == "derived":
         values = _derived_generate(col, n, generated or {})
+    elif kind == "derived_aggregate":
+        values = generate_derived_aggregate_column(col, n, generated or {})
     else:
         # The Literal on GenerateColumnConfig.type rejects anything outside this set
         # at validation; this branch is the defensive fallback for callers that

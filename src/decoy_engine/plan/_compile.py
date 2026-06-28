@@ -57,6 +57,10 @@ from decoy_engine.plan._checks import (
     check_unknown_provider,
     check_vault_columns,
 )
+
+# SP-10b: derived_aggregate check extracted from _checks.py to keep that
+# module under its allowlisted ceiling. See test_module_size.py ALLOWLIST.
+from decoy_engine.plan._checks_derived_aggregate import check_derived_aggregate_refs
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._graph import _build_namespaces, _build_relationships
 
@@ -157,6 +161,10 @@ def compile_plan(
     # expression references a missing column or forms a cycle. Config-only; both
     # branches + run_config_only_checks.
     check_derived_column_refs(config)
+    # Row 17 (SP-10b / P5.S.derived_aggregate, 2026-06-28): reject derived_aggregate
+    # columns whose source column is missing or op is invalid. Config-only; both
+    # branches + run_config_only_checks.
+    check_derived_aggregate_refs(config)
     check_composite_columns_length_match(profile)
     # MG-3 / M3 (2026-05-31): reject when + coherent_with combo early,
     # before composite-wiring checks. A column carrying both fields is
@@ -211,6 +219,8 @@ def compile_plan(
             "fpe_checksum_scheme",
             # Row 16 (SP-10): derived column-ref / cycle check, tail-appended.
             "derived_column_refs",
+            # Row 17 (SP-10b): derived_aggregate source-column + op check.
+            "derived_aggregate_refs",
         )
         checks_skipped: tuple[str, ...] = (
             "basic_uniqueness_pre_flight",
@@ -253,6 +263,8 @@ def compile_plan(
             "fpe_checksum_scheme",
             # Row 16 (SP-10): derived column-ref / cycle check, tail-appended.
             "derived_column_refs",
+            # Row 17 (SP-10b): derived_aggregate source-column + op check.
+            "derived_aggregate_refs",
         )
         checks_skipped = ()
 
@@ -336,6 +348,9 @@ def run_config_only_checks(config: dict[str, Any]) -> tuple[str, ...]:
     # Row 16 (SP-10 / P5.S.derived): reject derived expression with missing or
     # cyclic column refs. Config-only; config + Lark parse only.
     check_derived_column_refs(config)
+    # Row 17 (SP-10b / P5.S.derived_aggregate): reject derived_aggregate source
+    # column refs that are missing or have an invalid op. Config-only.
+    check_derived_aggregate_refs(config)
     return (
         "unknown_provider",
         "when_with_coherent_with",
@@ -346,6 +361,7 @@ def run_config_only_checks(config: dict[str, Any]) -> tuple[str, ...]:
         "vault_columns",
         "fpe_checksum_scheme",
         "derived_column_refs",
+        "derived_aggregate_refs",
     )
 
 

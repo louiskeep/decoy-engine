@@ -7,7 +7,7 @@ This is the authoritative list of what the engine can do, read straight from
 the registries in `src/decoy_engine/`. Narrative guides (strategies, connector
 support, disguises) must agree with this file; the drift-guard test enforces it.
 
-## Mask strategies (18)
+## Mask strategies (19)
 
 | Strategy | GDPR technique class | Polars-accelerated |
 | --- | --- | --- |
@@ -17,6 +17,7 @@ support, disguises) must agree with this file; the drift-guard test enforces it.
 | `code_set` | anonymisation | no |
 | `date_shift` | pseudonymisation | yes |
 | `derived` | pseudonymisation | no |
+| `derived_aggregate` | pseudonymisation | no |
 | `faker` | synthetic | yes |
 | `formula` | pseudonymisation | yes |
 | `fpe` | pseudonymisation | yes |
@@ -32,9 +33,9 @@ support, disguises) must agree with this file; the drift-guard test enforces it.
 
 `nested` is an internal wrapper, not a user-facing strategy.
 
-## Generation strategies (8)
+## Generation strategies (9)
 
-`categorical`, `derived`, `distribution`, `faker`, `formula`, `reference`, `sequence`, `statistical`
+`categorical`, `derived`, `derived_aggregate`, `distribution`, `faker`, `formula`, `reference`, `sequence`, `statistical`
 
 ## Synthetic providers (34)
 
