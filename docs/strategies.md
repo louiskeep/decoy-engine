@@ -409,3 +409,137 @@ Three fail-closed guards (no silent data loss):
 3. A misconfigured FK validator (unknown parent table or column in
    `relationships:`) raises at `validate()` call time rather than
    mass-flagging every row.
+
+## Infrastructure: expression parser and reference tables (SP-06)
+
+The features in this section are infrastructure built in SP-06 and are not
+yet directly reachable from column config. The strategies that consume them
+(`derived`, `case_when`, `derived_aggregate`, `code_set`, `joint_mask`) are
+planned for SP-08 through SP-10 and are not yet built.
+
+### Closed-vocabulary expression parser
+
+Source: `src/decoy_engine/expressions/_lark_parser.py` + `grammar.lark`.
+
+Config-supplied expressions for the future `derived` and `case_when`
+strategies route through a Lark EBNF closed grammar. The grammar is the
+complete security boundary: only the listed forms can parse. Any expression
+outside the set raises `ValidationError` at compile time, before any row
+data is touched. There is no `eval()` or dynamic code execution on this path.
+
+Two safety bounds are checked before parsing:
+
+- Maximum expression length: 4096 characters.
+- Maximum parenthesis nesting depth: 50 levels.
+
+#### Permitted operator set
+
+| Category | Permitted forms |
+|---|---|
+| Arithmetic | `+` `-` `*` `/` `//` |
+| Comparison | `==` `!=` `<` `>` `<=` `>=` `in` |
+| Logical | `and` `or` `not` |
+| String | `concat(a, b)` (exactly two arguments) |
+| Date | `days_between(start, end)` (integer days; accepts `datetime.date` or ISO-8601 strings) |
+| Ternary | `value if condition else other` |
+| Literals | integers, floats, double-quoted strings, `True`, `False`, `None` |
+| Column refs | bare identifiers (no dots, no dunders) |
+
+Anything not in the table above is rejected. This includes: function calls
+other than `concat` and `days_between`, attribute access (`.`), subscript
+syntax (`[]`), `import`, and dunder identifiers (`__class__`, etc.).
+
+String literals must use double quotes (`"hello"`); single-quoted strings
+(`'hello'`) are not in the grammar. String escape sequences are validated at
+compile time.
+
+#### API
+
+```python
+from decoy_engine.expressions import compile_expr, evaluate, CompiledExpression
+
+compiled: CompiledExpression = compile_expr("age + 1")   # once per column
+value = evaluate(compiled, {"age": 30})                  # called at row evaluation time
+```
+
+`CompiledExpression` is immutable and safe to share across threads and rows.
+`compile_expr` raises `ValidationError` on any expression outside the closed
+set or outside the safety bounds. `evaluate` raises `KeyError` when a column
+reference is absent from the row context.
+
+The existing `formula` strategy continues to use `safe_eval` (simpleeval
+sandbox, separate evaluator in `_safe_eval.py`). The two evaluators are
+intentionally separate: `formula` uses a permissive-but-sandboxed approach;
+`derived`/`case_when` use the closed-grammar approach with zero dynamic
+execution surface.
+
+### Reference-table loader
+
+Source: `src/decoy_engine/reference_tables/`.
+
+Reference tables are static Parquet datasets loaded once per pipeline and
+used by the future `code_set` and `joint_mask` strategies to look up
+replacement values (for example: map a ZIP code to a canonical city/state
+pair, or draw a vehicle make/model from a controlled set).
+
+#### Schema convention
+
+Every reference table must have:
+
+- `id` column, type `int64` (enforced at load; raises `ValueError` otherwise).
+  Rows are sorted ascending by `id` at load time to establish a stable,
+  file-order-independent row ordering.
+- Domain columns specific to the table (for example `zip`, `city`, `state`
+  for the US ZIP table).
+
+Shipped tables carry a `decoy_table_version` string in Parquet file-level
+metadata. A mismatch between the file version and the engine's expected version
+is logged as a WARNING; the table is still used.
+
+#### Shipped tables
+
+| Name | Version | Source | Content |
+|---|---|---|---|
+| `us_zip5_city_state` | 1.0 | USPS/Census ACS | US 5-digit ZIP codes, city, state (public domain; 50-row foundation slice) |
+| `vehicle_make_model_year` | 1.0 | NHTSA vPIC | Vehicle make, model, year (public domain; 50-row foundation slice) |
+
+#### Customer-provided tables
+
+Replace a shipped table with a fuller dataset by passing a Parquet path:
+
+```python
+from pathlib import Path
+from decoy_engine.reference_tables import load_table
+
+table = load_table("us_zip5_city_state", path=Path("/data/us_zip_full.parquet"))
+```
+
+The file must follow the same schema convention: an `id` column (int64) plus
+the expected domain columns.
+
+#### API
+
+```python
+from decoy_engine.reference_tables import load_table
+
+table = load_table("us_zip5_city_state")
+row = table.row(0)                      # {"id": 10001, "zip": "10001", ...}
+row = table.keyed_row("some-masked-pk") # deterministic per key_value
+```
+
+`load_table` raises `FileNotFoundError` when no shipped table exists for the
+given name and no `path` is supplied. It raises `ValueError` when the file is
+unreadable or lacks the required `id` column.
+
+#### Keyed-access semantics and cross-version caveat
+
+`ReferenceTable.keyed_row(key_value)` selects a row by reducing an
+HMAC-SHA256 digest of `key_value` modulo `row_count` over the `id`-sorted row
+order. Access is deterministic for a given `key_value` within a single table
+version (same row count, same `id` column).
+
+Adding or removing rows changes `row_count`, which remaps the modular index.
+A given `key_value` will then select a different row. Cross-version key
+stability is NOT guaranteed. This constraint must be revisited and resolved
+before the `joint_mask` (SP-09) and `code_set` (SP-08) strategies make any
+cross-version stability assumptions.

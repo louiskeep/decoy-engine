@@ -9,6 +9,95 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (SP-06 expression parser + reference tables, 2026-06-28)
+
+- **Closed-vocabulary expression parser** (`src/decoy_engine/expressions/`,
+  SP-06 / P5.INFRA.2). The `expressions.py` module is promoted to a package.
+  The existing `safe_eval` / `BASE_GLOBALS` / `MASK_GLOBALS` / `make_mask_globals`
+  API moves to `_safe_eval.py` and is re-exported without change; all callers on
+  the `formula` strategy path are unaffected.
+
+  A new Lark-backed closed-grammar parser ships in `_lark_parser.py` and
+  `grammar.lark` (Pattern: Lark EBNF parser generator, lark-parser/lark, MIT).
+  This is the expression evaluator that will power the `derived`, `case_when`,
+  and `derived_aggregate` strategies (SP-10, not yet built).
+
+  Public API:
+  - `compile_expr(expr_string) -> CompiledExpression`: parses and validates once
+    per column at pipeline-compile time. Raises `ValidationError` for any
+    expression outside the closed set.
+  - `evaluate(compiled, row_context) -> value`: evaluates a compiled
+    expression against one row's values. `CompiledExpression` is immutable
+    and safe to share across threads.
+
+  Permitted operator set (the grammar is the complete and only security
+  boundary):
+
+  - Arithmetic: `+ - * / //`
+  - Comparison: `== != < > <= >= in`
+  - Logical: `and or not`
+  - String: `concat(a, b)` (exactly two arguments)
+  - Date: `days_between(start, end)` (returns integer days; accepts
+    `datetime.date` or ISO-8601 strings)
+  - Ternary: `value if condition else other`
+  - Literals: integers, floats, double-quoted strings, `True`, `False`, `None`
+  - Column references: bare identifiers (no dots, no dunders)
+
+  Anything outside that set, including function calls other than `concat` and
+  `days_between`, attribute access (`.`), subscript syntax (`[]`), `import`,
+  and dunder identifiers, raises `ValidationError` at compile time before any
+  row data is touched. There is no `eval()`, `exec()`, or dynamic code
+  execution on this path.
+
+  Two safety bounds are applied before the parser is invoked:
+  - Maximum expression length: 4096 characters.
+  - Maximum parenthesis nesting depth: 50 levels.
+  String literal escape sequences are validated at compile time. Single-quoted
+  strings are not in the grammar; use double quotes.
+
+- **Reference-table loader** (`src/decoy_engine/reference_tables/`,
+  SP-06 / P5.INFRA.3). A new package that loads static Parquet datasets for
+  use by the `code_set` and `joint_mask` strategies (SP-08/09, not yet built).
+
+  Public API:
+  - `load_table(name, path=None) -> ReferenceTable`: loads a shipped table by
+    name or a customer-provided Parquet at an explicit path. Raises
+    `FileNotFoundError` when no shipped table exists for `name` and no `path`
+    is given; raises `ValueError` when the file is unreadable or lacks the
+    required `id` column.
+  - `ReferenceTable.row(index) -> dict`: random access by zero-based row index.
+  - `ReferenceTable.keyed_row(key_value) -> dict`: HMAC-SHA256-keyed
+    deterministic row selection (see cross-version caveat below).
+  - `ReferenceTable.row_count`: total rows.
+  - `ReferenceTable.column_names`: column names in load order.
+
+  Schema convention: every table must have an `id` column of type `int64`;
+  enforced at load and raises `ValueError` otherwise. Rows are sorted ascending
+  by `id` at load time. Domain columns follow (for example `zip`, `city`,
+  `state` for the US ZIP table). Shipped tables carry `decoy_table_version`
+  Parquet file-level metadata.
+
+  Two public-domain tables ship in `data/`:
+  - `us_zip5_city_state` v1.0: US 5-digit ZIP codes with city and state
+    (USPS/Census ACS source; minimal 50-row foundation slice).
+  - `vehicle_make_model_year` v1.0: vehicle make, model, and year
+    (NHTSA vPIC source; minimal 50-row foundation slice).
+
+  Customer-provided pathway: pass a Parquet file path as `load_table(name,
+  path=Path(...))`. The file must follow the schema convention (`id` int64
+  column plus domain columns). A version mismatch between the file's
+  `decoy_table_version` metadata and the engine's expected version is logged as
+  a WARNING; the table is still used.
+
+  Keyed-access semantics and cross-version caveat: `keyed_row` reduces an
+  HMAC-SHA256 digest of the key value modulo `row_count` to select a position
+  in the `id`-sorted row order. Access is deterministic within a single table
+  version. Adding or removing rows changes `row_count` and remaps the modular
+  index; a given `key_value` will select a different row in a table with a
+  different row count. Cross-version key stability is NOT guaranteed. This
+  constraint must be revisited before `joint_mask` and `code_set` (SP-08/09)
+  make cross-version stability assumptions.
+
 ### Added (SP-05 validator framework + quarantine_rows, 2026-06-27)
 
 - **Job-level validator framework** (`src/decoy_engine/validators/`, SP-05 /
