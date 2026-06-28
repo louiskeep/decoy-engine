@@ -135,11 +135,13 @@ class ColumnDistributionSpec(BaseModel):
 
     `joint_columns` is a list of (col_a, col_b) pairs to pass to
     compute_quality_report's joint_columns argument (pairwise correlation check).
-    Declaring pairs is mandatory for tables where correlation must be preserved;
-    undeclared pairs are explicitly out of scope.
+    Declaring pairs is mandatory for multi-column preserve tables; undeclared pairs
+    are explicitly out of scope. Set `joints_waived=True` with a reason on any
+    column entry to explicitly opt out when correlation is not required for the table.
 
     `corr_tol` applies only when this column appears in a joint pair; it is the
-    minimum TVD-based similarity the pair must achieve (default 0.90).
+    minimum TVD-based similarity the pair must achieve (default 0.90, floor 0.50).
+    Values below 0.50 are degenerate: they would not catch gross decorrelation.
 
     `strategy` is the raw strategy name (fpe, hash, shuffle, bucketize, etc.)
     used to build the strategy_map for apply_quality_policy and to distinguish
@@ -151,6 +153,11 @@ class ColumnDistributionSpec(BaseModel):
     `null_pp` is the per-column null-rate drift tolerance in percentage points.
     The explicit null-rate tooth asserts abs(null_rate_out - null_rate_in) <= null_pp.
     Default 10.0 pp (matches compute_quality_report's null_drift_threshold_pp default).
+    Values above 25.0 are degenerate: they would not catch gross null-rate inflation.
+
+    `joints_waived` opts this table out of the multi-column joint-pair requirement
+    (MEDIUM-2). Must be set on at least one column entry for the table. Requires
+    `joints_waived_reason` to be non-empty so the opt-out is reviewable.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -160,10 +167,12 @@ class ColumnDistributionSpec(BaseModel):
     distribution_class: DistributionClassLiteral
     strategy: str | None = None
     tolerance: float = Field(ge=0.0, le=1.0, default=0.05)
-    null_pp: float = Field(ge=0.0, default=10.0)
+    null_pp: float = Field(ge=0.0, le=25.0, default=10.0)
     joint_columns: list[list[str]] = Field(default_factory=list)
-    corr_tol: float = Field(ge=0.0, le=1.0, default=0.90)
+    corr_tol: float = Field(ge=0.5, le=1.0, default=0.90)
     expected_coarsening: bool = False
+    joints_waived: bool = False
+    joints_waived_reason: str | None = None
 
 
 class ChecksumSpec(BaseModel):
