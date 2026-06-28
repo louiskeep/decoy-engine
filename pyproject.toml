@@ -547,6 +547,8 @@ module = [
     "decoy_engine.reference_tables",
     "decoy_engine.reference_tables._types",
     "decoy_engine.reference_tables._loader",
+    # SP-09 / P5.S.code_set.1/2/3: code_set strategy + corpus loader.
+    "decoy_engine.transforms.code_set",
 ]
 disallow_any_generics = true
 disallow_subclassing_any = true

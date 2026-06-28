@@ -101,6 +101,12 @@ TECHNIQUE_CLASS_BY_STRATEGY: dict[str, TechniqueClass] = {
     # Generalises ZIP to 3-digit prefix or state; the original ZIP5
     # is not recoverable from the generalised output. Anonymisation.
     "geo_generalize": "anonymisation",
+    # code_set (SP-09b, 2026-06-28): HMAC-keyed code remap. Replaces each
+    # code value with a different code from a named corpus via HMAC % N
+    # modular selection (RFC 2104). The original code is not recoverable
+    # from the output (many-to-one through modular arithmetic). Anonymisation,
+    # same rationale as joint_mask (which uses the same HMAC-keyed pattern).
+    "code_set": "anonymisation",
     # `nested` (MG-3 M2, 2026-05-31) is intentionally absent. It is a
     # wrapper -- its GDPR posture is the child strategy's posture, not
     # its own. Until the FE surfaces the child-strategy badge for

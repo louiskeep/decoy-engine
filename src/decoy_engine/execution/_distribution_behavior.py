@@ -92,6 +92,11 @@ _STATIC_BEHAVIOR: dict[str, DistributionBehavior] = {
     # geo_generalize (SP-08): ZIP cascade with k-threshold. Many-to-one
     # mapping (zip5 -> zip3 -> state). Coarsens geographic granularity.
     "geo_generalize": "coarsens",
+    # code_set (SP-09b): HMAC-keyed or seeded selection from a bounded
+    # code corpus. Many source values map to the same output code (N
+    # source codes map to N-1 candidates from the corpus). Coarsens:
+    # the output distribution is bounded by the corpus size.
+    "code_set": "coarsens",
 }
 
 

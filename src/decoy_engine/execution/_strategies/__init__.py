@@ -12,6 +12,7 @@ from __future__ import annotations
 from decoy_engine.execution._adapter import StrategyHandler
 from decoy_engine.execution._strategies._bucketize import BucketizeStrategyHandler
 from decoy_engine.execution._strategies._categorical import CategoricalStrategyHandler
+from decoy_engine.execution._strategies._code_set import CodeSetHandler
 from decoy_engine.execution._strategies._date_shift import DateShiftStrategyHandler
 from decoy_engine.execution._strategies._faker import FakerStrategyHandler
 from decoy_engine.execution._strategies._formula import FormulaStrategyHandler
@@ -46,6 +47,7 @@ SCALAR_HANDLERS: dict[str, StrategyHandler] = {
         NestedStrategyHandler(),
         JointMaskHandler(),
         GeoGeneralizeHandler(),
+        CodeSetHandler(),
     )
 }
 
@@ -53,6 +55,7 @@ __all__ = [
     "SCALAR_HANDLERS",
     "BucketizeStrategyHandler",
     "CategoricalStrategyHandler",
+    "CodeSetHandler",
     "DateShiftStrategyHandler",
     "FakerStrategyHandler",
     "FormulaStrategyHandler",
