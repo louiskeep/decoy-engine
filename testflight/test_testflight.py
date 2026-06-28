@@ -5,8 +5,10 @@ Phase 0 contains:
     Loads the skeleton a_healthcare_claims manifest, round-trips the data
     model, and proves the fail-closed unknown-key rejection.
 
-Phase 1+: parametrized job execution tests (one test per discovered job).
-The parametrization will be added in Phase 1 alongside the real runner body.
+Phase 2 adds:
+  - test_job_passes_all_invariants: parametrized end-to-end test that runs
+    each discovered job through the real runner and asserts all invariant
+    families pass. One test per job discovered under testflight/jobs/.
 
 All tests are marked `testflight` so the default regression loop (which
 uses addopts="-m not benchmark and not testflight") never collects them.
@@ -288,25 +290,34 @@ class TestManifestLoader:
 
 
 # ---------------------------------------------------------------------------
-# Phase 1+: Parametrized job execution tests
+# Phase 2: Parametrized job execution tests
 # ---------------------------------------------------------------------------
-# The following will be filled in during Phase 1 once the runner is
-# implemented. Placeholder to show the intended structure.
 
-# @pytest.mark.parametrize(
-#     "manifest_path",
-#     sorted((Path(__file__).parent / "jobs").glob("*/manifest.yaml")),
-#     ids=lambda p: p.parent.name,
-# )
-# def test_job_passes_all_invariants(manifest_path: Path) -> None:
-#     """Run one test-flight job and assert all invariants pass."""
-#     from testflight._runner import run_job
-#     result = run_job(manifest_path)
-#     assert result.passed, (
-#         f"Job {result.job_name} failed. "
-#         + "\n".join(
-#             f"  {r.family}: {r.detail}"
-#             for r in result.invariant_results
-#             if not r.passed
-#         )
-#     )
+
+@pytest.mark.parametrize(
+    "manifest_path",
+    sorted((Path(__file__).parent / "jobs").glob("*/manifest.yaml")),
+    ids=lambda p: p.parent.name,
+)
+def test_job_passes_all_invariants(manifest_path: Path) -> None:
+    """Run one test-flight job end-to-end and assert all invariants pass.
+
+    Discovers jobs from testflight/jobs/*/manifest.yaml. For each job:
+    1. Builds source frames from the job's fixture.py.
+    2. Runs the pipeline twice (determinism check).
+    3. Evaluates all invariant families declared in the manifest.
+    4. Asserts the job result is fully passing.
+
+    A failure in any invariant family fails the test with a message naming
+    the failing families and their detail lines. This is the primary
+    regression gate: any change that breaks an invariant is caught here
+    before it reaches CI.
+    """
+    from testflight._runner import run_job
+
+    result = run_job(manifest_path)
+    assert result.passed, (
+        f"Job '{result.job_name}' failed {sum(1 for r in result.invariant_results if not r.passed)} "
+        f"invariant(s):\n"
+        + "\n".join(f"  [{r.family}] {r.detail}" for r in result.invariant_results if not r.passed)
+    )

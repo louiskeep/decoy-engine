@@ -3,7 +3,7 @@
 Each public function corresponds to one invariant family described in the
 acceptance-testflight plan (sections 6.1-6.10). Phase 1 implements
 check_distribution_mask and check_distribution_generate via the
-_distribution sub-module; remaining families carry Phase 2+ stubs.
+_distribution sub-module; Phase 2 implements all remaining families.
 
 Naming convention: check_<family>(...) raises AssertionError on failure with a
 message naming job/table/column/strategy so triage localises to one strategy.
@@ -16,6 +16,8 @@ callers that import from testflight._invariants continue to work unchanged.
 from __future__ import annotations
 
 from typing import Any
+
+import pyarrow as pa
 
 # Re-export distribution-fidelity functions and FIXED_TS so the teeth test
 # module and any runner code can import from here without change.
@@ -33,6 +35,7 @@ from ._spec import (
     ComputedColumnSpec,
     FKIntegritySpec,
     QuarantineSpec,
+    RelationshipSpec,
     SafeHarborSpec,
     SentinelSpec,
 )
@@ -50,6 +53,29 @@ __all__ = [
     "check_sentinels",
     "check_strategy_coverage",
 ]
+
+# HHS-restricted ZIP3 prefixes (HIPAA Safe Harbor; populations < 20,000).
+_RESTRICTED_ZIP3_PREFIXES: frozenset[str] = frozenset(
+    {
+        "036",
+        "059",
+        "063",
+        "102",
+        "203",
+        "556",
+        "692",
+        "790",
+        "821",
+        "823",
+        "830",
+        "831",
+        "878",
+        "879",
+        "884",
+        "890",
+        "893",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -78,9 +104,30 @@ def check_determinism(
 
     Raises:
         AssertionError: If any table output differs across runs.
-        NotImplementedError: Phase 2 implementation pending.
     """
-    raise NotImplementedError("Phase 2: check_determinism")
+    tables_a: dict[str, pa.Table] = result_a.outputs
+    tables_b: dict[str, pa.Table] = result_b.outputs
+
+    assert set(tables_a) == set(tables_b), (
+        f"[{job_name}] determinism: output table sets differ between runs: "
+        f"A={set(tables_a)} B={set(tables_b)}"
+    )
+
+    for table_name in tables_a:
+        dict_a = tables_a[table_name].to_pydict()
+        dict_b = tables_b[table_name].to_pydict()
+        assert dict_a == dict_b, (
+            f"[{job_name}] determinism: table '{table_name}' differs between runs. "
+            f"Columns with mismatches: "
+            + ", ".join(col for col in dict_a if dict_a.get(col) != dict_b.get(col))
+        )
+
+    # Also compare fidelity_reports block if present (golden idiom).
+    fr_a = result_a.quality_metrics.get("fidelity_reports", {})
+    fr_b = result_b.quality_metrics.get("fidelity_reports", {})
+    assert fr_a == fr_b, (
+        f"[{job_name}] determinism: quality_metrics['fidelity_reports'] differ between runs."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -92,27 +139,92 @@ def check_fk_integrity(
     job_name: str,
     spec: list[FKIntegritySpec],
     result: Any,
-    sources: dict[str, Any],
+    relationships: list[RelationshipSpec],
 ) -> None:
     """Assert FK integrity for all declared relationships.
 
-    For each RelationshipSpec: assert every non-null child key in the masked
-    output exists in the parent's masked key set (no orphans except planted
-    ones). Checks both the built-in engine validators (fk_intact,
-    no_orphan_children via quality_metrics) AND a direct set-membership
-    assertion (belt-and-suspenders). Composite tuples are matched as a unit.
+    For each FKIntegritySpec:
+    - Looks up the relationship by spec.relationship_name (matching the
+      RelationshipSpec.namespace field).
+    - Performs a direct set-membership assertion: every non-null child FK
+      value must exist in the parent's masked output key set (belt-and-
+      suspenders on top of the engine's built-in fk_intact / no_orphan_children
+      validators).
+    - Asserts orphan count == spec.expected_orphans.
 
     Args:
         job_name: Job name for error messages.
         spec: List of FKIntegritySpec from the manifest invariants.
         result: ExecutionResult (carries outputs and quality_metrics).
-        sources: dict[table_name, pa.Table] of source frames.
+        relationships: List of RelationshipSpec from the manifest (used to
+            look up parent/child table names and column names by namespace).
 
     Raises:
         AssertionError: If orphan count does not match expected or FK is broken.
-        NotImplementedError: Phase 2 implementation pending.
     """
-    raise NotImplementedError("Phase 2: check_fk_integrity")
+    # Build a namespace -> RelationshipSpec lookup.
+    ns_to_rel: dict[str, RelationshipSpec] = {}
+    for r in relationships:
+        if r.namespace is not None:
+            ns_to_rel[r.namespace] = r
+
+    for fk_spec in spec:
+        rel_found = ns_to_rel.get(fk_spec.relationship_name)
+        assert rel_found is not None, (
+            f"[{job_name}] fk_integrity: relationship_name "
+            f"'{fk_spec.relationship_name}' not found in manifest relationships. "
+            f"Known: {list(ns_to_rel)}"
+        )
+        rel: RelationshipSpec = rel_found
+
+        parent_table = rel.parent.table
+        parent_cols = rel.parent.columns
+
+        # Every declared child table shares the same parent FK check.
+        for child_end in rel.children:
+            child_table = child_end.table
+            child_cols = child_end.columns
+
+            parent_out = result.outputs.get(parent_table)
+            child_out = result.outputs.get(child_table)
+            assert parent_out is not None, (
+                f"[{job_name}] fk_integrity: parent table '{parent_table}' not in result.outputs."
+            )
+            assert child_out is not None, (
+                f"[{job_name}] fk_integrity: child table '{child_table}' not in result.outputs."
+            )
+
+            # Build parent key set (tuple for composite, scalar for single).
+            if len(parent_cols) == 1:
+                parent_keys: set[Any] = set(parent_out.column(parent_cols[0]).to_pylist())
+            else:
+                parent_keys = set(
+                    zip(*[parent_out.column(c).to_pylist() for c in parent_cols], strict=True)
+                )
+
+            # Count child orphans.
+            if len(child_cols) == 1:
+                child_fk_vals = child_out.column(child_cols[0]).to_pylist()
+                orphan_count = sum(
+                    1 for v in child_fk_vals if v is not None and v not in parent_keys
+                )
+            else:
+                child_fk_vals_multi = list(
+                    zip(*[child_out.column(c).to_pylist() for c in child_cols], strict=True)
+                )
+                orphan_count = sum(
+                    1
+                    for v in child_fk_vals_multi
+                    if any(x is not None for x in v) and v not in parent_keys
+                )
+
+            assert orphan_count == fk_spec.expected_orphans, (
+                f"[{job_name}] fk_integrity: {parent_table}.{parent_cols} -> "
+                f"{child_table}.{child_cols}: "
+                f"orphan_count={orphan_count}, expected={fk_spec.expected_orphans}. "
+                f"Parent key pool size: {len(parent_keys)}, "
+                f"child FK value count: {len(child_fk_vals if len(child_cols) == 1 else child_fk_vals_multi)}."
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -138,9 +250,25 @@ def check_checksums(
 
     Raises:
         AssertionError: If any output value fails checksum validation.
-        NotImplementedError: Phase 2 implementation pending.
     """
-    raise NotImplementedError("Phase 2: check_checksums")
+    from decoy_engine.checksums import validate
+
+    for cs in spec:
+        tbl = result.outputs.get(cs.table)
+        assert tbl is not None, f"[{job_name}] checksums: table '{cs.table}' not in result.outputs."
+        values: list[Any] = tbl.column(cs.column).to_pylist()
+        for i, v in enumerate(values):
+            if v is None:
+                continue
+            str_v = str(v)
+            ok = validate(cs.scheme, str_v)
+            assert ok, (
+                f"[{job_name}] checksums: {cs.table}.{cs.column} row {i}: "
+                f"validate('{cs.scheme}', {str_v!r}) == False. "
+                f"Column uses a checksum-producing strategy (fpe + checksum:{cs.scheme}) "
+                f"but the output value failed the check-digit assertion. "
+                f"This indicates the FPE checksum-recomputation path was not taken."
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -158,9 +286,9 @@ def check_safe_harbor(
     For each SafeHarborSpec:
     - Assert no restricted ZIP3 prefix survives at zip5 resolution in the
       output (geo_generalize must have generalized or suppressed it).
-    - Assert suppressed/generalized row count == planted_restricted_zip3_count.
-    - Assert the geo_generalize_cascade QualityWarning is present with the
-      expected aggregate count.
+    - Assert the count of 'suppressed' entries in the geo_generalize_cascade
+      QualityWarning equals planted_restricted_zip3_count.
+    - Assert expected_suppressions matches that count.
 
     Args:
         job_name: Job name for error messages.
@@ -169,9 +297,61 @@ def check_safe_harbor(
 
     Raises:
         AssertionError: If suppression counts mismatch or a restricted ZIP3 leaks.
-        NotImplementedError: Phase 2 implementation pending.
     """
-    raise NotImplementedError("Phase 2: check_safe_harbor")
+    # Index QualityWarnings by (code, column).
+    geo_warnings = [w for w in result.warnings if w.code == "geo_generalize_cascade"]
+
+    for sh in spec:
+        tbl = result.outputs.get(sh.table)
+        assert tbl is not None, (
+            f"[{job_name}] safe_harbor: table '{sh.table}' not in result.outputs."
+        )
+        out_values: list[Any] = tbl.column(sh.column).to_pylist()
+
+        # 1. No full ZIP5 starting with a restricted prefix survives.
+        leaked = [
+            v
+            for v in out_values
+            if isinstance(v, str) and len(v) == 5 and v[:3] in _RESTRICTED_ZIP3_PREFIXES
+        ]
+        assert len(leaked) == 0, (
+            f"[{job_name}] safe_harbor: {sh.table}.{sh.column}: "
+            f"{len(leaked)} restricted ZIP5 value(s) leaked into output: {leaked[:5]}. "
+            f"geo_generalize should have generalized or suppressed all restricted ZIP3 rows."
+        )
+
+        # 2. Find the geo_generalize_cascade warning for this column.
+        col_warnings = [w for w in geo_warnings if w.column == sh.column]
+        assert col_warnings, (
+            f"[{job_name}] safe_harbor: {sh.table}.{sh.column}: "
+            f"no geo_generalize_cascade QualityWarning found for column '{sh.column}'. "
+            f"Expected at least {sh.planted_restricted_zip3_count} suppressed rows. "
+            f"Available warnings: {[w.code for w in result.warnings]}"
+        )
+
+        # 3. Count suppressed decisions (rows with the restricted ZIP3 prefix
+        #    that were suppressed because ZIP3 population < HIPAA_K_THRESHOLD).
+        cascade_decisions: dict[str, str] = col_warnings[0].detail.get("cascade_decisions", {})
+        suppressed_count = sum(1 for v in cascade_decisions.values() if v == "suppressed")
+
+        assert suppressed_count == sh.planted_restricted_zip3_count, (
+            f"[{job_name}] safe_harbor: {sh.table}.{sh.column}: "
+            f"suppressed_count={suppressed_count} != "
+            f"planted_restricted_zip3_count={sh.planted_restricted_zip3_count}. "
+            f"Cascade decision distribution: "
+            + str(
+                {
+                    v: sum(1 for d in cascade_decisions.values() if d == v)
+                    for v in set(cascade_decisions.values())
+                }
+            )
+        )
+
+        assert suppressed_count == sh.expected_suppressions, (
+            f"[{job_name}] safe_harbor: {sh.table}.{sh.column}: "
+            f"suppressed_count={suppressed_count} != "
+            f"expected_suppressions={sh.expected_suppressions}."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -187,10 +367,10 @@ def check_quarantine(
     """Assert quarantine row count and file presence.
 
     Asserts:
-    - result.quality_metrics["quarantine"].total_quarantined == expected.
-    - Main output row count reduced by exactly expected_total_quarantined.
-    - JSONL quarantine file exists with matching line count.
-    - quality_metrics["validation"]["validators"] reports expected_validator failing.
+    - result.quality_metrics["quarantine"]["total_quarantined"] == expected.
+    - The JSONL quarantine file exists and has the correct line count.
+    - result.quality_metrics["validation"]["validators"]["findings"] includes
+      a finding for the expected_validator.
 
     Args:
         job_name: Job name for error messages.
@@ -199,9 +379,46 @@ def check_quarantine(
 
     Raises:
         AssertionError: If quarantine count mismatches or file is absent.
-        NotImplementedError: Phase 2 implementation pending.
     """
-    raise NotImplementedError("Phase 2: check_quarantine")
+    qm = result.quality_metrics
+
+    # Check quarantine block presence.
+    assert "quarantine" in qm, (
+        f"[{job_name}] quarantine: quality_metrics missing 'quarantine' key. "
+        f"Expected {spec.expected_total_quarantined} quarantined rows. "
+        f"Available keys: {list(qm.keys())}"
+    )
+    q_data = qm["quarantine"]
+
+    actual_quarantined: int = q_data["total_quarantined"]
+    assert actual_quarantined == spec.expected_total_quarantined, (
+        f"[{job_name}] quarantine: total_quarantined={actual_quarantined} != "
+        f"expected={spec.expected_total_quarantined}. "
+        f"counts_by_trigger={q_data.get('counts_by_trigger', {})}."
+    )
+
+    # Check the JSONL file exists and has the correct line count.
+    import pathlib
+
+    q_path = pathlib.Path(q_data["output_path"])
+    assert q_path.exists(), f"[{job_name}] quarantine: JSONL file does not exist: {q_path}."
+    lines = q_path.read_text(encoding="utf-8").splitlines()
+    non_empty = [ln for ln in lines if ln.strip()]
+    assert len(non_empty) == spec.expected_total_quarantined, (
+        f"[{job_name}] quarantine: JSONL file has {len(non_empty)} lines, "
+        f"expected {spec.expected_total_quarantined}."
+    )
+
+    # Check the validator findings include expected_validator.
+    v_data = qm.get("validation", {})
+    validators_dict = v_data.get("validators", {}) if v_data else {}
+    findings = validators_dict.get("findings", []) if validators_dict else []
+    fired_validators = {f["validator"] for f in findings if isinstance(f, dict)}
+    assert spec.expected_validator in fired_validators, (
+        f"[{job_name}] quarantine: expected_validator '{spec.expected_validator}' "
+        f"not found in validation findings. "
+        f"Validators that fired: {fired_validators}."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -227,14 +444,49 @@ def check_sentinels(
 
     Raises:
         AssertionError: If any sentinel string appears in any output column.
-        NotImplementedError: Phase 2 implementation pending.
     """
-    raise NotImplementedError("Phase 2: check_sentinels")
+    for sentinel in spec:
+        sv = sentinel.value
+        for table_name, tbl in result.outputs.items():
+            schema = tbl.schema
+            for col_name in schema.names:
+                col_values: list[Any] = tbl.column(col_name).to_pylist()
+                for row_idx, v in enumerate(col_values):
+                    if v is None:
+                        continue
+                    str_v = str(v)
+                    if sv in str_v:
+                        raise AssertionError(
+                            f"[{job_name}] sentinels: sentinel value "
+                            f"{sv!r} (planted in source {sentinel.table}.{sentinel.column}) "
+                            f"found in output {table_name}.{col_name} row {row_idx}: "
+                            f"{str_v!r}. "
+                            f"The masking strategy did not transform this value."
+                        )
 
 
 # ---------------------------------------------------------------------------
 # 6.9 Computed-column correctness
 # ---------------------------------------------------------------------------
+
+# Job A known computed column dispatchers.
+# Key is (table, column) -> (recompute_fn, branch_values_fn | None).
+# branch_values_fn returns a set of distinct discount_tier values in the output
+# for branch-coverage assertion.
+
+
+def _recompute_line_total(row: dict[str, Any]) -> float:
+    """Pure-Python recomputation of line_total from the output row."""
+    la = row["line_amount"]
+    u = row["units"]
+    dt = row["discount_tier"]
+    if dt == "copay":
+        factor = 0.80
+    elif dt == "preferred":
+        factor = 0.90
+    else:
+        factor = 1.0
+    return la * u * factor
 
 
 def check_computed_columns(
@@ -251,6 +503,9 @@ def check_computed_columns(
     bug). For derived_aggregate, asserts the single scalar equals the Python
     aggregate of the sibling column broadcast to all rows.
 
+    Column-specific recomputation is hardcoded for Job A. Phase 4 will
+    generalise this to a formula-language interpreter.
+
     Args:
         job_name: Job name for error messages.
         spec: List of ComputedColumnSpec from the manifest invariants.
@@ -258,9 +513,73 @@ def check_computed_columns(
 
     Raises:
         AssertionError: If a computed value is wrong or a branch is unexercised.
-        NotImplementedError: Phase 2 implementation pending.
     """
-    raise NotImplementedError("Phase 2: check_computed_columns")
+    for cs in spec:
+        tbl = result.outputs.get(cs.table)
+        assert tbl is not None, (
+            f"[{job_name}] computed_columns: table '{cs.table}' not in result.outputs."
+        )
+        col_dict = tbl.to_pydict()
+
+        if cs.column == "line_total":
+            # Derived: line_amount * units * discount_factor (case_when, 3 branches).
+            la_vals = col_dict["line_amount"]
+            un_vals = col_dict["units"]
+            dt_vals = col_dict["discount_tier"]
+            lt_vals = col_dict["line_total"]
+
+            errors = []
+            for i in range(len(lt_vals)):
+                expected = _recompute_line_total(
+                    {
+                        "line_amount": la_vals[i],
+                        "units": un_vals[i],
+                        "discount_tier": dt_vals[i],
+                    }
+                )
+                actual = lt_vals[i]
+                if abs(actual - expected) > 1e-6:
+                    errors.append((i, expected, actual, dt_vals[i]))
+                    if len(errors) >= 5:
+                        break
+
+            assert not errors, (
+                f"[{job_name}] computed_columns: {cs.table}.{cs.column}: "
+                f"{len(errors)} incorrect values (first 5): {errors}."
+            )
+
+            # Branch-coverage check.
+            if cs.branch_count > 0:
+                seen_branches = set(dt_vals)
+                required_branches = {"copay", "preferred", "standard"}
+                missing = required_branches - seen_branches
+                assert not missing, (
+                    f"[{job_name}] computed_columns: {cs.table}.{cs.column}: "
+                    f"case_when branch_count={cs.branch_count} but "
+                    f"branches {missing} are not exercised by any output row. "
+                    f"Branches present: {seen_branches}. "
+                    f"A missing branch could hide a formula bug."
+                )
+
+        elif cs.column == "claim_line_sum":
+            # Derived aggregate: sum(line_amount) across all rows, broadcast.
+            la_vals = col_dict["line_amount"]
+            cls_vals = col_dict["claim_line_sum"]
+
+            expected_sum = sum(la_vals)
+            for i, v in enumerate(cls_vals):
+                assert abs(v - expected_sum) < 1e-4, (
+                    f"[{job_name}] computed_columns: {cs.table}.{cs.column} "
+                    f"row {i}: value={v}, expected scalar sum={expected_sum}."
+                )
+
+        else:
+            # Unknown column: fail loudly rather than silently skip.
+            raise AssertionError(
+                f"[{job_name}] computed_columns: no recomputation registered "
+                f"for {cs.table}.{cs.column}. "
+                f"Add a case to check_computed_columns for this column."
+            )
 
 
 # ---------------------------------------------------------------------------

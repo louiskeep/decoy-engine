@@ -1,4 +1,4 @@
-"""Test-flight mutation-control suite (Phase 1: distribution teeth).
+"""Test-flight mutation-control suite (Phase 2: all non-coverage families).
 
 Anti-vacuity: an assertion that cannot fail on a real regression manufactures
 false confidence. Each invariant family requires a known-bad mutation control
@@ -6,7 +6,8 @@ that applies a specific regression to a fixture and asserts the corresponding
 invariant RAISES. This is the engine analogue of scripts/prove_regression.py.
 
 Phase 1 fills in the distribution-fidelity controls (TestDistributionTeeth).
-Phase 2+ fills in the remaining families.
+Phase 2 fills in FK, quarantine, sentinel, and computed-column controls.
+Phase 4 fills in coverage rot.
 
 Mutation controls per family (plan section 9):
   - Distribution constant-collapse: fpe column collapsed to one value;
@@ -19,32 +20,48 @@ Mutation controls per family (plan section 9):
     and that the invariant compares source vs output (never output vs output).
   - Good input: a faithfully-masked output (fpe bijection + genuine coarsening
     + preserved correlation) -> invariant PASSES (proves no over-assertion).
-  - FK break: Phase 2.
-  - Quarantine miscount: Phase 2.
-  - Sentinel leak: Phase 2.
-  - Computed-column corruption: Phase 2.
+  - FK break: orphaned child FK row -> check_fk_integrity raises.
+  - Quarantine miscount: wrong quarantine count -> check_quarantine raises.
+  - Sentinel leak: raw PII value in output -> check_sentinels raises.
+  - Computed-column corruption: wrong formula output -> check_computed_columns raises.
   - Coverage rot: Phase 4.
 
 All tests are marked testflight. Run via:
   pytest testflight -m testflight
-  python scripts/test_flight.py --mutate <kind>
+  python scripts/test_flight.py
 """
 
 from __future__ import annotations
 
+import pathlib
+import tempfile
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 import pytest
 from pydantic import ValidationError
 
 from testflight._invariants import (
     FIXED_TS,
+    check_computed_columns,
     check_distribution_generate,
     check_distribution_mask,
+    check_fk_integrity,
+    check_quarantine,
+    check_sentinels,
 )
-from testflight._spec import ColumnDistributionSpec
+from testflight._spec import (
+    ColumnDistributionSpec,
+    ComputedColumnSpec,
+    FKIntegritySpec,
+    QuarantineSpec,
+    RelationshipEndSpec,
+    RelationshipSpec,
+    SentinelSpec,
+)
 
 pytestmark = pytest.mark.testflight
 
@@ -411,54 +428,374 @@ class TestFKIntegrityTeeth:
     """Mutation controls for the FK integrity invariant family."""
 
     def test_fk_break_detected(self) -> None:
-        """Deleting a relationship must trip the FK-integrity invariant.
+        """An orphaned child FK row must trip the FK-integrity invariant.
 
-        Phase 2: build a job config without a declared relationship, run the
-        pipeline, and assert check_fk_integrity raises AssertionError with the
-        expected vs found orphan count differing.
+        RED: 100 parent members (masked ids P000..P099) + 11 child claims
+        where the last row references FK "P999" which does not exist in the
+        parent output. check_fk_integrity expects 0 orphans.
+
+        GREEN: test_good_fk_passes (below) uses a clean child table and passes.
+
+        This test verifies the invariant is not vacuous: a pipeline that somehow
+        creates an orphan (e.g. masking deleted a parent key but left the child)
+        is caught here, not silently accepted.
         """
-        pytest.skip("Phase 2: FK-break mutation control pending.")
+        # Build parent table: 100 masked member IDs.
+        parent_ids = [f"P{i:03d}" for i in range(100)]
+        parent_tbl = pa.table({"member_id": parent_ids})
+
+        # Build child table: 10 valid FK refs + 1 orphan ref to "P999".
+        child_fk = [f"P{i:03d}" for i in range(10)] + ["P999"]
+        child_tbl = pa.table({"claim_id": [f"C{i:03d}" for i in range(11)], "member_id": child_fk})
+
+        result = SimpleNamespace(
+            outputs={"members": parent_tbl, "claims": child_tbl},
+            quality_metrics={},
+        )
+
+        relationships = [
+            RelationshipSpec(
+                parent=RelationshipEndSpec(table="members", columns=["member_id"]),
+                children=[RelationshipEndSpec(table="claims", columns=["member_id"])],
+                orphan_policy="fail",
+                namespace="member_identity",
+            )
+        ]
+        spec = [
+            FKIntegritySpec(relationship_name="member_identity", expected_orphans=0, policy="fail")
+        ]
+
+        with pytest.raises(AssertionError, match="orphan_count=1"):
+            check_fk_integrity("fk_control", spec, result, relationships)
+
+    def test_good_fk_passes(self) -> None:
+        """A fully-intact FK relationship must NOT raise.
+
+        Proves check_fk_integrity does not over-assert. All child FK values
+        reference an existing parent key.
+        """
+        parent_ids = [f"P{i:03d}" for i in range(100)]
+        parent_tbl = pa.table({"member_id": parent_ids})
+        child_fk = [f"P{i % 100:03d}" for i in range(200)]
+        child_tbl = pa.table({"claim_id": [f"C{i:03d}" for i in range(200)], "member_id": child_fk})
+
+        result = SimpleNamespace(
+            outputs={"members": parent_tbl, "claims": child_tbl},
+            quality_metrics={},
+        )
+        relationships = [
+            RelationshipSpec(
+                parent=RelationshipEndSpec(table="members", columns=["member_id"]),
+                children=[RelationshipEndSpec(table="claims", columns=["member_id"])],
+                orphan_policy="fail",
+                namespace="member_identity",
+            )
+        ]
+        spec = [
+            FKIntegritySpec(relationship_name="member_identity", expected_orphans=0, policy="fail")
+        ]
+
+        # Must NOT raise: all child FK values are in the parent key pool.
+        check_fk_integrity("fk_control_good", spec, result, relationships)
 
 
 class TestQuarantineTeeth:
     """Mutation controls for the quarantine invariant family."""
 
     def test_quarantine_miscount_detected(self) -> None:
-        """Injecting an extra bad row not in the manifest must trip the quarantine
-        count invariant.
+        """A quarantine count that does not match the manifest must raise.
 
-        Phase 2: plant one more invalid-checksum row than expected_total_quarantined
-        in the manifest declares, run the pipeline, and assert check_quarantine
-        raises AssertionError with the count mismatch.
+        RED: quality_metrics reports 11 quarantined rows but the QuarantineSpec
+        expects exactly 10. check_quarantine must raise with the mismatch.
+
+        The JSONL file is also written with 11 lines so only the count assertion
+        fires (not the file-line-count assertion), keeping the failure localised.
         """
-        pytest.skip("Phase 2: quarantine-miscount mutation control pending.")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            q_path = pathlib.Path(tmpdir) / "quarantine.jsonl"
+            # Write 11 lines (matching the WRONG actual count).
+            q_path.write_text(
+                "\n".join([f'{{"row": {i}}}' for i in range(11)]) + "\n",
+                encoding="utf-8",
+            )
+
+            qm = {
+                "quarantine": {
+                    "enabled": True,
+                    "output_path": str(q_path),
+                    "counts_by_trigger": {"validation_fail": 11},
+                    "total_quarantined": 11,  # one more than expected
+                },
+                "validation": {
+                    "validators": {
+                        "passed": False,
+                        "validators_run": 1,
+                        "findings": [
+                            {
+                                "validator": "luhn",
+                                "table": "members",
+                                "column": "card_no",
+                                "failing_row_indices": [0],
+                                "detail": {},
+                            }
+                        ],
+                        "elapsed_ms": 5,
+                    }
+                },
+            }
+            result = SimpleNamespace(outputs={}, quality_metrics=qm)
+            spec = QuarantineSpec(
+                planted_bad_row_count=10,
+                expected_total_quarantined=10,
+                expected_validator="luhn",
+            )
+
+            with pytest.raises(AssertionError, match="total_quarantined=11"):
+                check_quarantine("quarantine_control", spec, result)
+
+    def test_good_quarantine_passes(self) -> None:
+        """A quarantine count matching the manifest must NOT raise.
+
+        Proves check_quarantine does not over-assert when the pipeline quarantines
+        exactly the expected number of rows with the expected validator.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            q_path = pathlib.Path(tmpdir) / "quarantine.jsonl"
+            q_path.write_text(
+                "\n".join([f'{{"row": {i}}}' for i in range(10)]) + "\n",
+                encoding="utf-8",
+            )
+
+            qm = {
+                "quarantine": {
+                    "enabled": True,
+                    "output_path": str(q_path),
+                    "counts_by_trigger": {"validation_fail": 10},
+                    "total_quarantined": 10,
+                },
+                "validation": {
+                    "validators": {
+                        "passed": False,
+                        "validators_run": 1,
+                        "findings": [
+                            {
+                                "validator": "luhn",
+                                "table": "members",
+                                "column": "card_no",
+                                "failing_row_indices": list(range(10)),
+                                "detail": {},
+                            }
+                        ],
+                        "elapsed_ms": 5,
+                    }
+                },
+            }
+            result = SimpleNamespace(outputs={}, quality_metrics=qm)
+            spec = QuarantineSpec(
+                planted_bad_row_count=10,
+                expected_total_quarantined=10,
+                expected_validator="luhn",
+            )
+
+            # Must NOT raise: count and validator both match.
+            check_quarantine("quarantine_control_good", spec, result)
 
 
 class TestSentinelTeeth:
     """Mutation controls for the sentinel no-leakage invariant family."""
 
     def test_sentinel_leak_detected(self) -> None:
-        """Setting a masked column to passthrough must trip the sentinel scan.
+        """A sentinel SSN appearing in any output column must trip the sentinel scan.
 
-        Phase 2: modify a job config so a column carrying a sentinel SSN string
-        uses passthrough instead of fpe, run the pipeline, and assert
-        check_sentinels raises AssertionError naming the output column and the
-        leaked sentinel value.
+        RED: a passthrough bug leaves the source SSN column unmasked in the
+        output. The sentinel SSN "8880088888" appears verbatim in members.ssn
+        row 0. check_sentinels scans ALL output columns and raises immediately
+        on finding it.
+
+        GREEN: test_good_sentinels_passes (below) shows a masked output passes.
+
+        Note: the sentinel scan checks for the string as a SUBSTRING so even a
+        column that embeds the value in a longer string (e.g. "ID:8880088888")
+        would be caught. This control uses the exact string to match the most
+        common passthrough regression.
         """
-        pytest.skip("Phase 2: sentinel-leak mutation control pending.")
+        sentinel_ssn = "8880088888"
+
+        # Leaked output: ssn column contains the raw sentinel value in row 0.
+        # (Simulates a passthrough bug where fpe was not applied.)
+        members_tbl = pa.table(
+            {
+                "member_id": ["P000", "P001"],
+                "ssn": [sentinel_ssn, "1234567890"],  # row 0 leaked
+                "name": ["Alice", "Bob"],
+            }
+        )
+
+        result = SimpleNamespace(
+            outputs={"members": members_tbl},
+            quality_metrics={},
+        )
+        spec = [SentinelSpec(table="members", column="ssn", value=sentinel_ssn)]
+
+        with pytest.raises(AssertionError, match=sentinel_ssn):
+            check_sentinels("sentinel_control", spec, result)
+
+    def test_good_sentinels_passes(self) -> None:
+        """An output with no sentinel strings present must NOT raise.
+
+        Proves check_sentinels does not over-assert. All SSN values in the
+        output are masked (different from the sentinel value).
+        """
+        sentinel_ssn = "8880088888"
+
+        # Properly masked output: ssn column contains transformed values.
+        members_tbl = pa.table(
+            {
+                "member_id": ["P000", "P001"],
+                "ssn": ["5551234567", "4449876543"],  # neither is the sentinel
+                "name": ["Alice", "Bob"],
+            }
+        )
+
+        result = SimpleNamespace(
+            outputs={"members": members_tbl},
+            quality_metrics={},
+        )
+        spec = [SentinelSpec(table="members", column="ssn", value=sentinel_ssn)]
+
+        # Must NOT raise: sentinel is absent from all output columns.
+        check_sentinels("sentinel_control_good", spec, result)
 
 
 class TestComputedColumnTeeth:
     """Mutation controls for the computed-column correctness invariant family."""
 
     def test_formula_corruption_detected(self) -> None:
-        """Perturbing a derived formula must trip the computed-column invariant.
+        """A corrupted line_total formula must trip the computed-column invariant.
 
-        Phase 2: modify a derived column expression so its output is off by one
-        (e.g. multiply by units + 1 instead of units), run the pipeline, and assert
-        check_computed_columns raises AssertionError naming the affected column.
+        RED: line_total is computed WITHOUT the discount_tier factor (i.e.
+        always line_amount * units * 1.0 regardless of tier). The control
+        builds rows where discount_tier="copay" (factor 0.80) so the expected
+        value (0.80 * line_amount * units) differs from the corrupted value
+        (1.0 * line_amount * units).
+
+        GREEN: test_good_computed_columns_passes (below) shows a correctly
+        computed line_total passes.
+
+        This test proves the branch-weight assertion in check_computed_columns
+        catches a real formula regression (the discount factor silently dropped
+        from the pipeline's derived expression).
         """
-        pytest.skip("Phase 2: formula-corruption mutation control pending.")
+        # 3 rows: one per discount_tier branch. copay and preferred rows will
+        # expose the formula corruption (factor != 1.0).
+        rows = [
+            {
+                "line_amount": 100.0,
+                "units": 2,
+                "discount_tier": "copay",
+                # corrupted: 100 * 2 * 1.0 = 200 (should be 100*2*0.80=160)
+                "line_total": 200.0,
+                "claim_line_sum": 300.0,
+            },
+            {
+                "line_amount": 100.0,
+                "units": 2,
+                "discount_tier": "preferred",
+                # corrupted: 100 * 2 * 1.0 = 200 (should be 100*2*0.90=180)
+                "line_total": 200.0,
+                "claim_line_sum": 300.0,
+            },
+            {
+                "line_amount": 100.0,
+                "units": 2,
+                "discount_tier": "standard",
+                # standard factor is 1.0 so corrupted == correct (200)
+                "line_total": 200.0,
+                "claim_line_sum": 300.0,
+            },
+        ]
+        tbl = pa.table(
+            {
+                k: [r[k] for r in rows]
+                for k in ["line_amount", "units", "discount_tier", "line_total", "claim_line_sum"]
+            }
+        )
+
+        result = SimpleNamespace(
+            outputs={"claim_lines": tbl},
+            quality_metrics={},
+        )
+        spec = [
+            ComputedColumnSpec(
+                table="claim_lines",
+                column="line_total",
+                formula="line_amount * units * case_when(discount_tier, copay=0.80, preferred=0.90, 1.0)",
+                branch_count=3,
+            )
+        ]
+
+        with pytest.raises(AssertionError, match="claim_lines.line_total"):
+            check_computed_columns("computed_control", spec, result)
+
+    def test_good_computed_columns_passes(self) -> None:
+        """A correctly computed line_total and claim_line_sum must NOT raise.
+
+        Proves check_computed_columns does not over-assert. The line_total
+        values exactly match the case_when formula and claim_line_sum equals
+        sum(line_amount) broadcast to all rows.
+        """
+        rows = [
+            {
+                "line_amount": 100.0,
+                "units": 2,
+                "discount_tier": "copay",
+                "line_total": 160.0,
+            },  # 100*2*0.80
+            {
+                "line_amount": 100.0,
+                "units": 2,
+                "discount_tier": "preferred",
+                "line_total": 180.0,
+            },  # 100*2*0.90
+            {
+                "line_amount": 100.0,
+                "units": 2,
+                "discount_tier": "standard",
+                "line_total": 200.0,
+            },  # 100*2*1.00
+        ]
+        total_la = 300.0  # sum(line_amount)
+        tbl = pa.table(
+            {
+                "line_amount": [r["line_amount"] for r in rows],
+                "units": [r["units"] for r in rows],
+                "discount_tier": [r["discount_tier"] for r in rows],
+                "line_total": [r["line_total"] for r in rows],
+                "claim_line_sum": [total_la, total_la, total_la],
+            }
+        )
+
+        result = SimpleNamespace(
+            outputs={"claim_lines": tbl},
+            quality_metrics={},
+        )
+        spec = [
+            ComputedColumnSpec(
+                table="claim_lines",
+                column="line_total",
+                formula="line_amount * units * case_when(discount_tier, copay=0.80, preferred=0.90, 1.0)",
+                branch_count=3,
+            ),
+            ComputedColumnSpec(
+                table="claim_lines",
+                column="claim_line_sum",
+                formula="sum(line_amount) broadcast to all rows",
+                branch_count=0,
+            ),
+        ]
+
+        # Must NOT raise: all computed values are correct.
+        check_computed_columns("computed_control_good", spec, result)
 
 
 class TestCoverageRotTeeth:
