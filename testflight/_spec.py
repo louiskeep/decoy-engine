@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 # ---------------------------------------------------------------------------
 # Closed-string literals used across multiple models
@@ -173,6 +173,18 @@ class ColumnDistributionSpec(BaseModel):
     expected_coarsening: bool = False
     joints_waived: bool = False
     joints_waived_reason: str | None = None
+
+    @model_validator(mode="after")
+    def _require_waiver_reason(self) -> ColumnDistributionSpec:
+        # The waiver silences the correlation tooth; it must carry a reviewable
+        # reason. Enforce what the docstring promises (a reason-less waiver is a
+        # silent opt-out from a teeth check).
+        if self.joints_waived and not (self.joints_waived_reason or "").strip():
+            raise ValueError(
+                "joints_waived=True requires a non-empty joints_waived_reason "
+                "so the correlation opt-out is reviewable"
+            )
+        return self
 
 
 class ChecksumSpec(BaseModel):

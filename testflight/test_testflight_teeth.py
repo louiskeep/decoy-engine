@@ -37,6 +37,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import pytest
+from pydantic import ValidationError
 
 from testflight._invariants import (
     FIXED_TS,
@@ -807,6 +808,33 @@ class TestMediumTwoJointMandatory:
             output_df,
             strategy_map={"x": "passthrough", "y": "passthrough"},
         )
+
+    def test_joints_waived_without_reason_rejected(self) -> None:
+        """joints_waived=True with no reason must be REJECTED at construction.
+
+        RED (pre-fix): the docstring promised a reason was required, but no
+        validator enforced it, so a manifest could silence the correlation tooth
+        with reason=None. The model_validator now makes the docstring true.
+        """
+        with pytest.raises(ValidationError, match="joints_waived_reason"):
+            ColumnDistributionSpec(
+                table="t",
+                column="x",
+                distribution_class="preserve",
+                strategy="passthrough",
+                joints_waived=True,
+                joints_waived_reason=None,
+            )
+        # blank-after-strip is also rejected (not just None).
+        with pytest.raises(ValidationError, match="joints_waived_reason"):
+            ColumnDistributionSpec(
+                table="t",
+                column="x",
+                distribution_class="preserve",
+                strategy="passthrough",
+                joints_waived=True,
+                joints_waived_reason="   ",
+            )
 
     def test_declared_pair_uncomputed_raises(self) -> None:
         """A declared joint pair that compute_quality_report cannot compute must raise.
