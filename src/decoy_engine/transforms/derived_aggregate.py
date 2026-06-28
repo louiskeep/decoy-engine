@@ -25,9 +25,15 @@ Determinism:
   Same input column -> same scalar aggregate on every run. No RNG involved.
   The strategy is fully deterministic.
 
-No raw-value leakage:
-  The output is a scalar aggregate (e.g. sum, mean), never an individual
-  row value. The target column carries the same scalar in every row.
+Privacy note on min / max:
+  sum, mean, and count produce aggregate scalars with no individual-row
+  signal. min and max return an actual extremal value from the source
+  column, broadcast to every row. That broadcast value is a real data
+  point from the source column; an operator must not assume that min or
+  max hides individual data. _technique_class.py classifies
+  derived_aggregate as pseudonymisation for this reason (the conservative
+  assumption per Art 4(5) GDPR). Only sum, mean, and count are
+  unambiguously non-individual-level aggregates.
 
 Validation timing:
   op + column: config-parse time (DerivedAggregateConfig.from_dict).

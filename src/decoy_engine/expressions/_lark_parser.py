@@ -370,6 +370,16 @@ class _ExprTransformer(lark.Transformer):  # type: ignore[type-arg]
         Semantics: evaluate conditions left-to-right; first truthy condition
         returns its value; fall through to the mandatory default (last item).
 
+        Non-short-circuit evaluation: Lark drives this transformer bottom-up
+        (leaves are evaluated before their parents). All conditions AND all
+        value sub-expressions are evaluated before any branch is selected. A
+        sub-expression that would raise for some rows (e.g. 100 // a when a=0)
+        will do so even if its branch will never be chosen. Every sub-expression
+        must be safe to evaluate for all rows, unconditionally. This behaviour
+        matches the existing ``ternary`` rule and is a known property of the
+        bottom-up evaluator model. Changing it to short-circuit semantics is a
+        larger refactor; it is deferred.
+
         items layout: [cond1, val1, ..., condN, valN, default]
         Length is always odd: 1 pair = 3 items; 2 pairs = 5 items; etc.
         The grammar rule guarantees this shape.

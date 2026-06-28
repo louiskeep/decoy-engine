@@ -1,8 +1,8 @@
 """Plan-compile check for derived_aggregate columns (SP-10b).
 
-Extracted from plan/_checks.py to keep that module within its allowlisted
+Added as its own module to avoid growing plan/_checks.py past its size
 ceiling. See the SP-10 comment in tests/sentry/test_module_size.py: the
-growing _checks.py decomposes into per-strategy sub-modules as new strategies
+_checks.py module decomposes into per-strategy sub-modules as new strategies
 land; this is the SP-10b slice.
 
 This module exports exactly one function: ``check_derived_aggregate_refs``,
