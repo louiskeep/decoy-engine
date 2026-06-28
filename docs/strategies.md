@@ -13,7 +13,7 @@ what keeps masked values stable and joinable.
 
 ## Mask strategies
 
-There are twelve mask strategies. `passthrough` (a no-op pass) and the
+There are fourteen mask strategies. `passthrough` (a no-op pass) and the
 internal composite/nested handlers are listed separately below.
 
 ### faker
@@ -279,6 +279,121 @@ columns:
       token: "[REDACTED]"
 ```
 
+### geo_generalize
+
+HIPAA Safe Harbor geographic generalization for ZIP columns (45 CFR
+164.514(b)(2)). For each row, attempts the configured cascade levels in order
+and retains the most specific level whose in-dataset count meets the
+k-threshold. If no level satisfies the threshold, the value is suppressed.
+
+- `type` (str, required): `zip` only in SP-08. The lat/lng to H3 path requires
+  the `h3` dependency and is deferred to SP-08b.
+- `cascade` (list, required): ordered list of generalization levels to attempt.
+  Must include `suppress` as a terminator. Supported levels for `type: zip`:
+  `zip5`, `zip3`, `state`, `suppress`.
+- `k_threshold` (int, default `20000`): minimum in-dataset record count for a
+  generalization level to be retained. The default matches the HIPAA Safe
+  Harbor population threshold per 45 CFR 164.514(b)(2)(i)(B).
+
+Cascade levels for `type: zip`:
+
+- `zip5`: retain the full 5-digit ZIP when at least `k_threshold` records in
+  the dataset share it.
+- `zip3`: generalize to the 3-digit prefix. This level is skipped entirely for
+  any prefix in the HHS-restricted list, regardless of the in-dataset count.
+  The restricted list is the regulatory lever: it covers every geographic unit
+  with population below 20,000 per the Census-based determination (45 CFR
+  164.514(b)(2)(i)(B)). The canonical 17 restricted 3-digit prefixes ship as
+  `reference_tables/data/us_zip3_population.parquet`, loaded via
+  `load_table("us_zip3_population")`.
+- `state`: generalize to the 2-letter state abbreviation derived from the ZIP5
+  via the `us_zip5_city_state` reference table. Retained when at least
+  `k_threshold` records in the dataset share the same state.
+- `suppress`: emit an empty string (`""`). Required as the final level; omitting
+  it raises `PlanCompileError(geo_generalize_missing_suppress)`.
+
+In-dataset counts (ZIP5, ZIP3, state) are computed once before the cascade
+loop, so the threshold check is applied consistently across all rows.
+
+Cascade decisions are recorded in a frozen `CascadeEvidence` dataclass
+(a `decisions` tuple, one label for each input row: `zip5`, `zip3`, `state`,
+or `suppressed`). When at least one row was generalized past `zip5`, the
+handler surfaces a `QualityWarning` with code `geo_generalize_cascade` in
+`ExecutionResult.warnings`.
+
+Config validation runs at execution time, pre-mutation, fail-closed. Raises
+`PlanCompileError` on unsupported `type`, empty `cascade`, or missing
+`suppress`. Error codes: `geo_generalize_unsupported_type`,
+`geo_generalize_invalid_cascade`, `geo_generalize_missing_suppress`.
+
+```yaml
+columns:
+  - name: zipcode
+    strategy: geo_generalize
+    provider_config:
+      type: zip
+      cascade: [zip5, zip3, state, suppress]
+      k_threshold: 20000
+```
+
+Use it for HIPAA Safe Harbor de-identification of ZIP-format geographic fields.
+
+### joint_mask
+
+Replaces a set of logically coupled columns with a consistent tuple drawn from
+a reference table (for example `zip`, `city`, and `state` from
+`us_zip5_city_state`). Consistency holds because the output is a real
+reference-table row, never assembled field-by-field; no per-column replacement
+can produce a city/state pair that does not exist in the source data.
+
+- `columns` (list, required): the output column names to write. Every name must
+  appear in the reference table (the `id` column is excluded). All listed
+  columns are written in a single pass.
+- `reference` (str, required): shipped or customer-provided reference table
+  name. Shipped tables: `us_zip5_city_state` (USPS/Census ACS, US 5-digit ZIP
+  codes with city and state) and `vehicle_make_model_year` (NHTSA vPIC).
+- `key_by` (str, required): name of the source column whose value drives
+  HMAC-keyed row selection in mask mode. Not used in gen mode.
+- `mode` (str, default `mask`): `mask` (deterministic, HMAC-keyed) or `gen`
+  (seeded random, independent of source values).
+
+Two modes:
+
+- **Mask mode**: calls `ReferenceTable.keyed_row(str(key_by_value))`, which
+  selects a row at position `HMAC-SHA256(job_seed, key_value) % row_count` in
+  the `id`-sorted table (RFC 2104). Same key value and seed always produce the
+  same row. Null `key_by` values fall back to a seeded random row.
+- **Gen mode**: draws row indices from `numpy.default_rng` seeded from the job
+  seed, independent of source column values. Deterministic for the same seed and
+  DataFrame length.
+
+Config validation runs at execution time, before any data is mutated
+(fail-closed). Raises `PlanCompileError` on missing `columns`, missing
+`key_by`, unknown `reference`, or a column name absent from the reference table.
+Error codes: `joint_mask_columns_missing`, `joint_mask_key_by_missing`,
+`joint_mask_reference_missing`, `joint_mask_reference_not_found`,
+`joint_mask_reference_invalid`, `joint_mask_column_not_in_reference`.
+
+**Cross-version keyed-access caveat (inherited from SP-06
+`ReferenceTable.keyed_row`).** `keyed_row` selects at position
+`HMAC(...) % row_count` in the `id`-sorted table. This is deterministic within
+a single table version. It is NOT stable if `row_count` changes (rows added or
+removed): a given `key_by` value will select a different row after a row-count
+change. Do not assume cross-version key stability for `joint_mask` outputs.
+
+```yaml
+columns:
+  - name: zip
+    strategy: joint_mask
+    provider_config:
+      columns: [zip, city, state]
+      reference: us_zip5_city_state
+      key_by: patient_id
+```
+
+Use it when a group of columns must stay internally consistent after masking
+(city in state, ZIP in city).
+
 ### truncate
 
 Keeps the first (or last) N characters of each value; nulls preserved.
@@ -514,10 +629,10 @@ Three fail-closed guards (no silent data loss):
 
 ## Infrastructure: expression parser and reference tables (SP-06)
 
-The features in this section are infrastructure built in SP-06 and are not
-yet directly reachable from column config. The strategies that consume them
-(`derived`, `case_when`, `derived_aggregate`, `code_set`, `joint_mask`) are
-planned for SP-08 through SP-10 and are not yet built.
+The features in this section are infrastructure built in SP-06. `joint_mask`
+(SP-08) is now built and documented in its strategy section above.
+The strategies that consume this infrastructure and are not yet built:
+`derived`, `case_when`, `derived_aggregate` (SP-10) and `code_set` (SP-09).
 
 ### Closed-vocabulary expression parser
 
@@ -642,6 +757,7 @@ version (same row count, same `id` column).
 
 Adding or removing rows changes `row_count`, which remaps the modular index.
 A given `key_value` will then select a different row. Cross-version key
-stability is NOT guaranteed. This constraint must be revisited and resolved
-before the `joint_mask` (SP-09) and `code_set` (SP-08) strategies make any
-cross-version stability assumptions.
+stability is NOT guaranteed. `joint_mask` (SP-08) ships with this caveat
+documented; operators must not assume cross-version key stability for
+`joint_mask` outputs. The same constraint applies to `code_set` (SP-09, not
+yet built).

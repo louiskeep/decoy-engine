@@ -32,6 +32,9 @@ _DATA_DIR = Path(__file__).parent / "data"
 _SHIPPED_VERSIONS: dict[str, str] = {
     "us_zip5_city_state": "1.0",
     "vehicle_make_model_year": "1.0",
+    # SP-08: restricted ZIP3 prefix list for geo_generalize Safe Harbor cascade.
+    # Source: 45 CFR 164.514(b)(2)(i)(B) HHS HIPAA Safe Harbor guidance.
+    "us_zip3_population": "1.0",
 }
 
 

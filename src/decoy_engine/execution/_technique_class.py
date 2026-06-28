@@ -92,6 +92,15 @@ TECHNIQUE_CLASS_BY_STRATEGY: dict[str, TechniqueClass] = {
     # where all detectors use "redact" are anonymised at the column level, but
     # text_mask as a strategy cannot guarantee that statically.
     "text_mask": "pseudonymisation",
+    # joint_mask (SP-08, 2026-06-28): replaces coupled columns with a
+    # row drawn from a reference table via HMAC-keyed selection. The
+    # real value is not recoverable from the output (the row selection
+    # is many-to-one from the key space). Anonymisation.
+    "joint_mask": "anonymisation",
+    # geo_generalize (SP-08, 2026-06-28): ZIP Safe Harbor cascade.
+    # Generalises ZIP to 3-digit prefix or state; the original ZIP5
+    # is not recoverable from the generalised output. Anonymisation.
+    "geo_generalize": "anonymisation",
     # `nested` (MG-3 M2, 2026-05-31) is intentionally absent. It is a
     # wrapper -- its GDPR posture is the child strategy's posture, not
     # its own. Until the FE surfaces the child-strategy badge for

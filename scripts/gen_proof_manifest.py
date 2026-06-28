@@ -499,6 +499,32 @@ CAPABILITY_PROOFS: list[CapabilityProof] = [
             and all("SSN" in b[col] for b in o)
         ),
     ),
+    # geo_generalize (SP-08): k=3 so all three rows share the same ZIP3 prefix
+    # "981" (which is NOT in the HHS restricted list), meaning zip5 count=1 < k,
+    # but zip3 count=3 >= k -> generalises to the 3-digit prefix.
+    _mask_proof(
+        "geo_generalize",
+        "ZIP Safe Harbor k-threshold cascade",
+        "zipcode",
+        ["98101", "98102", "98103"],
+        {
+            "provider_config": {
+                "type": "zip",
+                "cascade": ["zip5", "zip3", "state", "suppress"],
+                "k_threshold": 3,
+            }
+        },
+        (
+            "Each ZIP5 is generalised to the most specific level whose in-dataset "
+            "count satisfies the k-threshold; restricted ZIP3 prefixes (HHS Safe Harbor "
+            "45 CFR 164.514(b)(2)(i)(B)) are skipped regardless of count."
+        ),
+        lambda col, i, o: (
+            # All three outputs should be the ZIP3 prefix "981"
+            # (zip5 count=1 < k=3; zip3 count=3 >= k=3; "981" not restricted).
+            all(b[col] == "981" for b in o)
+        ),
+    ),
 ]
 
 
@@ -547,8 +573,91 @@ def _run_capability(proof: CapabilityProof) -> dict:
     }
 
 
+def _joint_mask_proof() -> dict:
+    """Proof for joint_mask: runs the transforms module directly.
+
+    joint_mask writes multiple output columns in one pass, which the
+    single-column _run_capability helper does not support. This function
+    runs apply_joint_mask directly on a test DataFrame and verifies that
+    every output (zip, city, state) tuple is a real reference-table row.
+    """
+    from decoy_engine.reference_tables import load_table
+    from decoy_engine.transforms.joint_mask import JointMaskConfig, apply_joint_mask
+
+    job_seed = b"\xca\xfe" * 16
+    patient_ids = ["P0001", "P0002", "P0003"]
+    df = pd.DataFrame(
+        {
+            "patient_id": patient_ids,
+            "zip": ["00000"] * 3,
+            "city": ["placeholder"] * 3,
+            "state": ["XX"] * 3,
+        }
+    )
+    cfg = JointMaskConfig.from_dict(
+        {
+            "columns": ["zip", "city", "state"],
+            "reference": "us_zip5_city_state",
+            "key_by": "patient_id",
+        }
+    )
+    result = apply_joint_mask(df, cfg, mode="mask", job_seed=job_seed)
+
+    tbl = load_table("us_zip5_city_state")
+    valid_tuples = {
+        (tbl.row(i)["zip"], tbl.row(i)["city"], tbl.row(i)["state"]) for i in range(tbl.row_count)
+    }
+    for _, row in result.iterrows():
+        out_tuple = (row["zip"], row["city"], row["state"])
+        if out_tuple not in valid_tuples:
+            raise RuntimeError(
+                f"joint_mask proof: output {out_tuple!r} is not a real reference row; "
+                "invariant check failed -- real reference rows only."
+            )
+
+    inp = [{"patient_id": r["patient_id"], "zip": r["zip"]} for _, r in df.iterrows()]
+    out = [
+        {
+            "patient_id": r["patient_id"],
+            "zip": r["zip"],
+            "city": r["city"],
+            "state": r["state"],
+        }
+        for _, r in result.iterrows()
+    ]
+    config_yaml_snippet = (
+        "tables:\n"
+        "- name: t\n"
+        "  columns:\n"
+        "  - name: zip\n"
+        "    strategy: joint_mask\n"
+        "    provider_config:\n"
+        "      columns: [zip, city, state]\n"
+        "      reference: us_zip5_city_state\n"
+        "      key_by: patient_id"
+    )
+    return {
+        "id": "mask.joint_mask",
+        "kind": "mask",
+        "title": "Joint reference-tuple masking (ZIP/city/state)",
+        "column": "zip",
+        "config_yaml": config_yaml_snippet,
+        "input": inp,
+        "output": out,
+        "invariant": (
+            "Every output (zip, city, state) tuple is a real row from the reference "
+            "table; geographic consistency is guaranteed because the entire row is "
+            "drawn from a single reference record, never assembled field-by-field."
+        ),
+    }
+
+
 def _capabilities() -> list[dict]:
-    return [_run_capability(p) for p in CAPABILITY_PROOFS]
+    caps = [_run_capability(p) for p in CAPABILITY_PROOFS]
+    # joint_mask proof runs the transforms layer directly (multi-column output
+    # does not fit the single-column _run_capability helper).
+    caps.append(_joint_mask_proof())
+    return caps
 
 
 def _providers_list() -> list[dict]:

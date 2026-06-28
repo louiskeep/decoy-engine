@@ -9,6 +9,128 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (SP-08 joint_mask + geo_generalize, 2026-06-28)
+
+- **`joint_mask` mask strategy** (`src/decoy_engine/transforms/joint_mask.py`,
+  `src/decoy_engine/execution/_strategies/_joint_mask.py`, SP-08 /
+  P5.S.joint_mask.1). Compound reference-tuple masking: replaces a set of
+  logically coupled columns (for example `zip`, `city`, `state`) with a
+  consistent tuple drawn from a reference table. Consistency holds because the
+  output is a real reference-table row, never assembled field-by-field; no
+  per-column replacement can produce a city/state pair that does not exist in
+  the source data.
+
+  Config surface (`strategy: joint_mask` on a column; parameters under
+  `provider_config:`):
+
+  - `columns` (list, required): target output column names. Every name must
+    appear in the reference table (the `id` column is excluded).
+  - `reference` (str, required): name of the shipped or customer-provided
+    reference table. Ships with `us_zip5_city_state` and
+    `vehicle_make_model_year`.
+  - `key_by` (str, required): source column whose value drives HMAC-keyed row
+    selection in mask mode. Not used in gen mode.
+  - `mode` (str, default `mask`): `mask` (HMAC-keyed) or `gen` (seeded
+    random).
+
+  Two modes:
+
+  - **MASK mode**: calls `ReferenceTable.keyed_row(str(key_by_value))`, which
+    selects a row by reducing `HMAC-SHA256(job_seed, key_value)` modulo
+    `row_count` over the `id`-sorted row order (RFC 2104). Same key value and
+    seed always select the same row. Null `key_by` values fall back to a
+    seeded random row.
+  - **GEN mode**: draws row indices from `numpy.default_rng` seeded from the
+    job seed, independently of source column values. Deterministic for the same
+    seed and DataFrame length.
+
+  Config validation runs at execution time, before any data is mutated
+  (fail-closed). Raises `PlanCompileError` on missing `columns`, missing
+  `key_by`, unknown `reference`, or a column name absent from the reference
+  table. Error codes: `joint_mask_columns_missing`, `joint_mask_key_by_missing`,
+  `joint_mask_reference_missing`, `joint_mask_reference_not_found`,
+  `joint_mask_reference_invalid`, `joint_mask_column_not_in_reference`.
+
+  **Cross-version keyed-access caveat (inherited from SP-06
+  `ReferenceTable.keyed_row`).** `keyed_row` selects at position
+  `HMAC(...) % row_count` in the `id`-sorted table. Deterministic within a
+  single table version. NOT stable if `row_count` changes (rows added or
+  removed): a given `key_by` value will select a different row after a
+  row-count change. Do not assume cross-version key stability for `joint_mask`
+  outputs.
+
+- **`geo_generalize` mask strategy** (`src/decoy_engine/transforms/geo_generalize.py`,
+  `src/decoy_engine/execution/_strategies/_geo_generalize.py`, SP-08 /
+  P5.S.geo_generalize.1). HIPAA Safe Harbor geographic generalization for ZIP
+  columns (45 CFR 164.514(b)(2)). For each row, attempts cascade levels in
+  order until one satisfies the k-threshold; if no level does, the value is
+  suppressed.
+
+  Config surface (`strategy: geo_generalize`; parameters under
+  `provider_config:`):
+
+  - `type` (str, required): `zip` is the only supported type in SP-08.
+    The lat/lng to H3 path requires the `h3` dependency and is deferred to
+    SP-08b.
+  - `cascade` (list, required): ordered list of generalization levels to
+    attempt. Must include `suppress` as a terminator. Supported levels for
+    `type: zip`: `zip5`, `zip3`, `state`, `suppress`.
+  - `k_threshold` (int, default `20000`): minimum in-dataset record count for
+    a generalization level to be retained. The default matches the HIPAA Safe
+    Harbor population threshold for geographic units per
+    45 CFR 164.514(b)(2)(i)(B).
+
+  Cascade logic (applied to each row):
+
+  - `zip5`: retain the full 5-digit ZIP when at least `k_threshold` records in
+    the dataset share it.
+  - `zip3`: generalize to the 3-digit prefix, but skip entirely for any prefix
+    in the HHS-restricted list. The restricted list is the regulatory lever:
+    it covers every geographic unit with population below 20,000 per the
+    Census-based determination (45 CFR 164.514(b)(2)(i)(B)). The canonical 17
+    restricted 3-digit prefixes ship as
+    `reference_tables/data/us_zip3_population.parquet`, loaded via
+    `load_table("us_zip3_population")`.
+  - `state`: generalize to the 2-letter state abbreviation derived from the
+    ZIP5 via the `us_zip5_city_state` reference table. Retained when at least
+    `k_threshold` records in the dataset share the same state.
+  - `suppress`: emit an empty string (`""`). Terminates the cascade.
+    `suppress` must appear as the final level; omitting it raises
+    `PlanCompileError(geo_generalize_missing_suppress)`.
+
+  In-dataset counts (ZIP5, ZIP3, state) are computed once before the cascade
+  loop. The restricted-ZIP3 check uses the shipped HHS list, not the
+  in-dataset count: a restricted prefix is skipped regardless of how many
+  records share it.
+
+  Cascade decisions are recorded in a frozen `CascadeEvidence`
+  dataclass (a `decisions` tuple, one label for each input row: `zip5`, `zip3`, `state`,
+  or `suppressed`). Evidence is surfaced in `ExecutionResult.warnings` under
+  `code="geo_generalize_cascade"` when at least one row was generalized past
+  `zip5`, providing an auditable record of what happened to each row.
+
+  Config validation runs at execution time, pre-mutation, fail-closed. Raises
+  `PlanCompileError` on unsupported `type`, empty `cascade`, or missing
+  `suppress`. Error codes: `geo_generalize_unsupported_type`,
+  `geo_generalize_invalid_cascade`, `geo_generalize_missing_suppress`.
+
+- **`us_zip3_population.parquet`** added to
+  `src/decoy_engine/reference_tables/data/`. Loaded by `geo_generalize` via
+  `load_table("us_zip3_population")`. Contains the 17 HHS-restricted 3-digit
+  ZIP prefixes (geographic units with population below 20,000 per
+  45 CFR 164.514(b)(2)(i)(B)). Schema: `id` (int64) + `zip3` (str), following
+  the SP-06 schema convention.
+
+**SP-08b carry-forwards (not yet built):**
+
+- `geo_generalize` lat/lng to H3 generalization (requires the `h3` dependency).
+- Additional `joint_mask` reference tables: NDC drug codes, MCC merchant
+  category codes, and customer-provided reference path.
+- D5 distribution-preserving strategies: entity-scoped `date_shift` and
+  `bucket_perturb`.
+- HIPAA-pack default wiring: automatic `geo_generalize` on ZIP columns is
+  SP-11, not yet built.
+
 ### Added (SP-07 text_mask strategy, 2026-06-28)
 
 - **`text_mask` mask strategy** (`src/decoy_engine/transforms/text_mask.py`,
