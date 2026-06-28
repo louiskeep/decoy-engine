@@ -1,7 +1,7 @@
 # Test-flight Job A: Healthcare claims
 # Topology: one_to_many_multilevel (members -> claims -> claim_lines, depth 3)
 #
-# Phase 0: skeleton manifest exercising the TestFlightManifest data model.
+# Phase 0: skeleton manifest exercising the FlightManifest data model.
 # Full pipeline config (config:) and seeded fixture generator (fixture.py)
 # are populated in Phase 1 / Phase 2.
 #
