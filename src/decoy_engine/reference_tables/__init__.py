@@ -12,8 +12,14 @@ Schema convention
 -----------------
 Every reference table MUST have:
 
-- ``id`` column (int64, stable across versions) -- canonical row
-  identifier for HMAC-keyed access.
+- ``id`` column (int64, required) -- used to establish a stable,
+  file-order-independent row ordering for HMAC-keyed access. Rows are
+  sorted ascending by ``id`` at load time. Adding or removing rows
+  changes ``row_count`` and remaps the HMAC modular index, so keyed
+  access is deterministic within a table version but NOT guaranteed
+  stable across versions with different row counts. See
+  :meth:`~decoy_engine.reference_tables._types.ReferenceTable.keyed_row`
+  for the full semantics and the cross-version stability caveat.
 - Domain columns specific to the table (e.g. ``zip``, ``city``,
   ``state`` for the US ZIP table).
 

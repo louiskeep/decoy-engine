@@ -16,6 +16,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+import pyarrow as pa
 import pyarrow.parquet as pq
 
 from decoy_engine.reference_tables._types import ReferenceTable
@@ -71,6 +72,14 @@ def load_table(name: str, path: Path | None = None) -> ReferenceTable:
         raise ValueError(
             f"reference table at {path} is missing required 'id' column. "
             f"All reference tables must have a stable 'id' column."
+        )
+
+    id_type = arrow_table.schema.field("id").type
+    if id_type != pa.int64():
+        raise ValueError(
+            f"reference table at {path} has 'id' column of type {id_type!r}; "
+            f"expected int64. All reference tables must have a stable int64 'id' column "
+            f"(schema convention -- see reference_tables/__init__.py)."
         )
 
     _check_version(name, arrow_table, path)
