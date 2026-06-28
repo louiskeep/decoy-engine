@@ -31,8 +31,9 @@ class JointMaskHandler:
     """Reference-tuple masking: replaces coupled columns with a consistent row.
 
     Delegates to ``decoy_engine.transforms.joint_mask.apply_joint_mask``.
-    Config-time validation runs in ``JointMaskConfig.from_dict``; invalid
-    configs raise ``PlanCompileError`` before any data is processed.
+    Config validation runs at execution time, pre-mutation, fail-closed: an invalid
+    ``provider_config`` raises ``PlanCompileError`` (via ``JointMaskConfig.from_dict``)
+    before any row is processed.
     """
 
     name: str = "joint_mask"

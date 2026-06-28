@@ -28,6 +28,8 @@ class GeoGeneralizeHandler:
     """ZIP Safe Harbor cascade: generalise ZIP columns with k-threshold enforcement.
 
     Delegates to ``decoy_engine.transforms.geo_generalize.cascade_zip_column``.
+    Config validation runs at execution time, pre-mutation, fail-closed: an invalid
+    ``provider_config`` raises ``PlanCompileError`` before any row is processed.
     Per-row cascade decisions are returned as a ``QualityWarning`` event so
     the execution adapter can surface them in ``ExecutionResult.warnings``.
     """

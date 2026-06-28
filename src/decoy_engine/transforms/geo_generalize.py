@@ -40,6 +40,7 @@ from typing import Any
 
 import pandas as pd
 
+from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.reference_tables import load_table
 
 _LOG = logging.getLogger(__name__)
@@ -109,14 +110,17 @@ class GeoGeneralizeConfig:
 
     @classmethod
     def from_dict(cls, cfg: dict[str, Any]) -> GeoGeneralizeConfig:
-        """Parse a config dict; raise ValueError on invalid input.
+        """Parse a config dict; raise PlanCompileError on invalid input.
+
+        Called at execution time, pre-mutation, before any row is processed.
+        Validation is fail-closed: an invalid config raises before touching data.
 
         Args:
             cfg: Config dict with keys ``type``, ``cascade``, and optionally
                 ``k_threshold``.
 
         Raises:
-            ValueError: Invalid ``type``, empty ``cascade``, or missing ``suppress``
+            PlanCompileError: Invalid ``type``, empty ``cascade``, or missing ``suppress``
                 as final cascade level.
         """
         validate_geo_generalize_config(cfg)
@@ -146,7 +150,10 @@ class CascadeEvidence:
 
 
 def validate_geo_generalize_config(cfg: dict[str, Any]) -> None:
-    """Validate a geo_generalize config dict; raise ValueError on failure.
+    """Validate a geo_generalize config dict; raise PlanCompileError on failure.
+
+    Called at execution time, pre-mutation, before any row is processed.
+    Validation is fail-closed: an invalid config raises before touching data.
 
     Checks:
       - ``type`` is ``"zip"`` (only type in SP-08; lat/lng is SP-08b).
@@ -157,28 +164,40 @@ def validate_geo_generalize_config(cfg: dict[str, Any]) -> None:
         cfg: Raw config dict.
 
     Raises:
-        ValueError: Any validation failure.
+        PlanCompileError: Any validation failure.
     """
     geo_type = cfg.get("type")
     if geo_type != "zip":
-        raise ValueError(
-            f"geo_generalize: unsupported type {geo_type!r}. "
-            f"Only 'zip' is supported in SP-08. "
-            f"The lat/lng -> H3 path is deferred to SP-08b."
+        raise PlanCompileError(
+            code="geo_generalize_unsupported_type",
+            path="provider_config.type",
+            message=(
+                f"geo_generalize: unsupported type {geo_type!r}. "
+                f"Only 'zip' is supported in SP-08. "
+                f"The lat/lng -> H3 path is deferred to SP-08b."
+            ),
         )
 
     cascade = cfg.get("cascade")
     if not cascade:
-        raise ValueError(
-            "geo_generalize: 'cascade' must be a non-empty list of levels. "
-            "Example: cascade: [zip5, zip3, state, suppress]"
+        raise PlanCompileError(
+            code="geo_generalize_invalid_cascade",
+            path="provider_config.cascade",
+            message=(
+                "geo_generalize: 'cascade' must be a non-empty list of levels. "
+                "Example: cascade: [zip5, zip3, state, suppress]"
+            ),
         )
 
     if "suppress" not in cascade:
-        raise ValueError(
-            "geo_generalize: 'cascade' must include 'suppress' as a terminator. "
-            "Without it there is no defined behavior when all levels are below threshold. "
-            "Example: cascade: [zip5, zip3, state, suppress]"
+        raise PlanCompileError(
+            code="geo_generalize_missing_suppress",
+            path="provider_config.cascade",
+            message=(
+                "geo_generalize: 'cascade' must include 'suppress' as a terminator. "
+                "Without it there is no defined behavior when all levels are below threshold. "
+                "Example: cascade: [zip5, zip3, state, suppress]"
+            ),
         )
 
 
@@ -196,7 +215,7 @@ def _zip5_to_zip3(zip5: str) -> str:
     return zip5[:3] if len(zip5) >= 3 else zip5
 
 
-def _build_state_map(df: pd.DataFrame, zip_col: str) -> dict[str, str]:
+def _build_state_map() -> dict[str, str]:
     """Build a zip5 -> state-abbreviation map from a ZIP reference table column.
 
     Looks up via the shipped us_zip5_city_state table. Falls back to an empty
@@ -269,7 +288,7 @@ def cascade_zip_column(
         zip3_counts[z3] = zip3_counts.get(z3, 0) + 1
 
     # State-level map (zip5 -> state abbreviation).
-    state_map = _build_state_map(df, column)
+    state_map = _build_state_map()
     state_values = [state_map.get(z5, "") for z5 in zip5_values]
     state_counts: dict[str, int] = {}
     for s in state_values:
