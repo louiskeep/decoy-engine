@@ -376,7 +376,7 @@ it, the handler fails closed with a clear `ImportError` naming the extra.
 
 H3 resolution scale (source: https://h3geo.org/docs/core-library/restable/):
 
-- `h3_resolution_9`: H3 cell at resolution 9. Average edge length ~150m,
+- `h3_resolution_9`: H3 cell at resolution 9. Average edge length ~170m,
   average area ~0.105 km2.
 - `h3_resolution_7`: H3 cell at resolution 7. Average edge length ~1.2km,
   average area ~5.16 km2.
