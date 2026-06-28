@@ -2,7 +2,7 @@
   "engine_version": "0.2.0",
   "generated_at": "2026-06-14",
   "surface": {
-    "mask": 12,
+    "mask": 13,
     "generate": 7,
     "providers": 34
   },
@@ -586,6 +586,36 @@
         }
       ],
       "invariant": "PII spans inside free text are replaced with a redaction token; surrounding text is preserved."
+    },
+    {
+      "id": "mask.text_mask",
+      "kind": "mask",
+      "title": "Per-detector span masking",
+      "column": "note",
+      "config_yaml": "tables:\n- name: t\n  columns:\n  - name: note\n    strategy: text_mask\n    provider_config:\n      detectors:\n      - ssn\n      unmatched_span_policy: passthrough",
+      "input": [
+        {
+          "note": "Patient SSN 500-10-1000 on file"
+        },
+        {
+          "note": "SSN 501-11-1001 updated on record"
+        },
+        {
+          "note": "Contact SSN 502-12-1002 verified"
+        }
+      ],
+      "output": [
+        {
+          "note": "Patient SSN 238-40-1968 on file"
+        },
+        {
+          "note": "SSN 164-58-3497 updated on record"
+        },
+        {
+          "note": "Contact SSN 293-00-5427 verified"
+        }
+      ],
+      "invariant": "PII spans are detected and masked per-detector (FPE for SSN by default); unmatched surrounding text is controlled by unmatched_span_policy."
     }
   ],
   "providers": [

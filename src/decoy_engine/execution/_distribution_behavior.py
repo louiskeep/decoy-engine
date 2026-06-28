@@ -78,6 +78,10 @@ _STATIC_BEHAVIOR: dict[str, DistributionBehavior] = {
     "truncate": "coarsens",
     "redact": "collapses",
     "text_redact": "collapses",
+    # text_mask (SP-07): per-span dispatch means behavior varies by config
+    # (FPE preserves cardinality; redact collapses; faker destroys frequency).
+    # Cannot be resolved statically without inspecting per_detector_strategy.
+    "text_mask": "mixed",
     "date_shift": "varies_shape",
     "formula": "mixed",
     "nested": "inherits",

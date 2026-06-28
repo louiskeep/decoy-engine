@@ -86,6 +86,12 @@ TECHNIQUE_CLASS_BY_STRATEGY: dict[str, TechniqueClass] = {
     # free-text with a fixed token; the original span is not recoverable.
     # Anonymisation, same class as `redact` (which replaces the whole cell).
     "text_redact": "anonymisation",
+    # text_mask (SP-07, 2026-06-28): per-span strategy dispatch (fpe/faker/date_shift/redact).
+    # The overall cell is pseudonymised because the default FPE strategy for
+    # structured identifiers (SSN, phone) is keyed and reversible. Columns
+    # where all detectors use "redact" are anonymised at the column level, but
+    # text_mask as a strategy cannot guarantee that statically.
+    "text_mask": "pseudonymisation",
     # `nested` (MG-3 M2, 2026-05-31) is intentionally absent. It is a
     # wrapper -- its GDPR posture is the child strategy's posture, not
     # its own. Until the FE surfaces the child-strategy badge for

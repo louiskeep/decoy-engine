@@ -476,6 +476,29 @@ CAPABILITY_PROOFS: list[CapabilityProof] = [
             )
         ),
     ),
+    _mask_proof(
+        "text_mask",
+        "Per-detector span masking",
+        "note",
+        [
+            "Patient SSN 500-10-1000 on file",
+            "SSN 501-11-1001 updated on record",
+            "Contact SSN 502-12-1002 verified",
+        ],
+        {"provider_config": {"detectors": ["ssn"], "unmatched_span_policy": "passthrough"}},
+        (
+            "PII spans are detected and masked per-detector (FPE for SSN by default); "
+            "unmatched surrounding text is controlled by unmatched_span_policy."
+        ),
+        lambda col, i, o: (
+            not any(
+                tok in b[col]
+                for a, b in zip(i, o, strict=True)
+                for tok in ("500-10-1000", "501-11-1001", "502-12-1002")
+            )
+            and all("SSN" in b[col] for b in o)
+        ),
+    ),
 ]
 
 

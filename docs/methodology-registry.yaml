@@ -66,6 +66,14 @@ modules:
     pattern: pyarrow Parquet I/O
     source: apache/arrow (Apache-2.0)
 
+  # SP-07 / P5.S.text_mask (2026-06-28): span-level PII masking.
+  # HMAC-SHA256 keyed per-span determinism (same real value in any cell
+  # always produces the same masked value). Reuses fpe_encrypt_value
+  # (Feistel+HMAC) and storm.detectors.iter_spans (single source of truth).
+  - path: src/decoy_engine/transforms/text_mask.py
+    pattern: HMAC-SHA256 keyed span determinism
+    source: RFC 2104 (HMAC); Type-II Feistel 1973 (via fpe.py)
+
   # Removed 2026-06-02: the entire `forecast/` module (Recommender +
   # ForecastReport + DisguiseRecommendation + FieldRecommendation +
   # RiskFlag) was deleted under the storm-reframe-C clean break

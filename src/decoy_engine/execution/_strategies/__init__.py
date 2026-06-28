@@ -21,6 +21,7 @@ from decoy_engine.execution._strategies._nested import NestedStrategyHandler
 from decoy_engine.execution._strategies._passthrough import PassthroughHandler
 from decoy_engine.execution._strategies._redact import RedactHandler
 from decoy_engine.execution._strategies._shuffle import ShuffleStrategyHandler
+from decoy_engine.execution._strategies._text_mask import TextMaskHandler
 from decoy_engine.execution._strategies._text_redact import TextRedactHandler
 from decoy_engine.execution._strategies._truncate import TruncateHandler
 
@@ -39,6 +40,7 @@ SCALAR_HANDLERS: dict[str, StrategyHandler] = {
         FormulaStrategyHandler(),
         FpeStrategyHandler(),
         TextRedactHandler(),
+        TextMaskHandler(),
         NestedStrategyHandler(),
     )
 }
@@ -56,6 +58,7 @@ __all__ = [
     "PassthroughHandler",
     "RedactHandler",
     "ShuffleStrategyHandler",
+    "TextMaskHandler",
     "TextRedactHandler",
     "TruncateHandler",
 ]
