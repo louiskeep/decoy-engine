@@ -77,7 +77,8 @@ class JointMaskConfig:
             cfg: Raw config dict with keys ``columns``, ``reference``, ``key_by``.
 
         Raises:
-            PlanCompileError: Missing or invalid fields detected at config time.
+            PlanCompileError: Missing or invalid fields detected at execution
+                time, before any data is mutated (fail-closed).
         """
         validate_joint_mask_config(cfg)
         name = cfg["reference"]
@@ -104,8 +105,8 @@ def validate_joint_mask_config(cfg: dict[str, Any]) -> None:
       - ``key_by`` is present.
       - Every column in ``columns`` exists in the reference table.
 
-    This is a config-time (compile-time) check: it must run before any data
-    is touched so invalid configs fail fast and loudly.
+    This is an execution-time, pre-mutation check: it runs before any data
+    is touched so invalid configs fail closed (fast and loud).
 
     Args:
         cfg: Raw config dict.
