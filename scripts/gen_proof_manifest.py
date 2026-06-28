@@ -426,6 +426,29 @@ CAPABILITY_PROOFS: list[CapabilityProof] = [
         namespaces={"dob": {"declared_by": ["t.dob"]}},
     ),
     _mask_proof(
+        "bucket_perturb",
+        "Calendar-bucket date perturbation",
+        "event_date",
+        ["2024-01-15", "2024-04-30", "2024-07-10"],
+        {
+            "namespace": "event_date",
+            "provider_config": {"bucket": "month"},
+        },
+        (
+            "Each date is snapped to a deterministic position within its calendar month. "
+            "The output is always a valid date in the same month as the input; "
+            "exact day is derived from (job_seed, namespace, value) so the same input "
+            "always produces the same output across runs."
+        ),
+        # Output is ISO-formatted and stays within the same year-month as input.
+        lambda col, i, o: (
+            _same_length(col, i, o)
+            and all(b[col].count("-") == 2 for b in o)
+            and all(a[col][:7] == b[col][:7] for a, b in zip(i, o, strict=True))
+        ),
+        namespaces={"event_date": {"declared_by": ["t.event_date"]}},
+    ),
+    _mask_proof(
         "shuffle",
         "Within-column shuffle",
         "salary",

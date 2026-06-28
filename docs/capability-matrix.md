@@ -7,10 +7,11 @@ This is the authoritative list of what the engine can do, read straight from
 the registries in `src/decoy_engine/`. Narrative guides (strategies, connector
 support, disguises) must agree with this file; the drift-guard test enforces it.
 
-## Mask strategies (17)
+## Mask strategies (18)
 
 | Strategy | GDPR technique class | Polars-accelerated |
 | --- | --- | --- |
+| `bucket_perturb` | anonymisation | no |
 | `bucketize` | anonymisation | yes |
 | `categorical` | synthetic | yes |
 | `code_set` | anonymisation | no |

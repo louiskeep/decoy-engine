@@ -2,7 +2,7 @@
   "engine_version": "0.2.0",
   "generated_at": "2026-06-14",
   "surface": {
-    "mask": 17,
+    "mask": 18,
     "generate": 8,
     "providers": 34
   },
@@ -466,6 +466,36 @@
         }
       ],
       "invariant": "Each date is shifted by a keyed offset inside the configured window, preserving the date format."
+    },
+    {
+      "id": "mask.bucket_perturb",
+      "kind": "mask",
+      "title": "Calendar-bucket date perturbation",
+      "column": "event_date",
+      "config_yaml": "tables:\n- name: t\n  columns:\n  - name: event_date\n    strategy: bucket_perturb\n    namespace: event_date\n    provider_config:\n      bucket: month",
+      "input": [
+        {
+          "event_date": "2024-01-15"
+        },
+        {
+          "event_date": "2024-04-30"
+        },
+        {
+          "event_date": "2024-07-10"
+        }
+      ],
+      "output": [
+        {
+          "event_date": "2024-01-21"
+        },
+        {
+          "event_date": "2024-04-08"
+        },
+        {
+          "event_date": "2024-07-29"
+        }
+      ],
+      "invariant": "Each date is snapped to a deterministic position within its calendar month. The output is always a valid date in the same month as the input; exact day is derived from (job_seed, namespace, value) so the same input always produces the same output across runs."
     },
     {
       "id": "mask.shuffle",
