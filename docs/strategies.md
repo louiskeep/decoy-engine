@@ -13,7 +13,7 @@ what keeps masked values stable and joinable.
 
 ## Mask strategies
 
-There are fourteen mask strategies. `passthrough` (a no-op pass) and the
+There are sixteen mask strategies. `passthrough` (a no-op pass) and the
 internal composite/nested handlers are listed separately below.
 
 ### faker
@@ -394,6 +394,103 @@ columns:
 Use it when a group of columns must stay internally consistent after masking
 (city in state, ZIP in city).
 
+### code_set
+
+Replaces a code column value with a different code drawn from a named corpus
+(ICD-10, HCPCS, NDC, MCC, or a customer-supplied file). The output is always a
+real corpus code and always differs from the input. Technique class:
+anonymisation.
+
+Config surface (`strategy: code_set` on a column; parameters under
+`provider_config:`):
+
+- `code_set` (str, required): corpus name. Shipped corpora: `icd10`, `hcpcs`,
+  `ndc`, `mcc`. For a customer corpus, provide any name here and set
+  `corpus_source: customer:<path>`.
+- `chapter_preserve` (bool, default `false`): when true, restrict the
+  replacement candidate pool to codes in the same chapter bucket as the input.
+  For ICD-10, the chapter is the first letter (`I21` maps to chapter `I`).
+  See fail-closed behavior below.
+- `corpus_source` (str, default `shipped`): `shipped` loads from the bundled
+  corpus directory. `customer:<absolute_path>` loads a Parquet file at the
+  given path. A customer corpus must have a `code` column (string) and, when
+  `chapter_preserve: true`, a `chapter` column.
+
+Two modes:
+
+- **MASK mode** (default): picks a replacement via `HMAC-SHA256(salt, input)
+  % candidate_count` over the full corpus sorted ascending by code. The
+  candidate set excludes the input code, so output is never equal to input
+  (domain-exclusion idiom, RFC 2104 keying, same primitive as `fpe` and
+  `joint_mask`). Same input, same job_seed, same corpus version always produce
+  the same output.
+- **GEN mode**: picks a code for each source row via `derive_index` keyed on
+  the column namespace and the row index (HKDF+HMAC, covered by
+  `SEED_PROTOCOL_VERSION`). Two columns with different namespaces sharing the
+  same job_seed produce decorrelated output sequences. Same namespace, seed,
+  and row index always produce the same code. Needs a namespace on the column.
+
+`chapter_preserve` fail-closed cases (both raise `PlanCompileError`,
+execution-time, pre-mutation):
+
+- Input's chapter is absent from the corpus (`code_set_chapter_absent`). No
+  silent cross-chapter fallback: falling back would return a code from a
+  different chapter, silently breaking the chapter_preserve invariant.
+- Input's chapter bucket has only one code, which equals the input
+  (`code_set_sole_member_bucket`). No valid alternative exists; a silent
+  return of the input would violate the output != input guarantee.
+
+Customer corpus (`corpus_source: customer:<path>`): a missing `code` column or
+an empty corpus raises `PlanCompileError` at execution time, pre-mutation,
+before any row is changed.
+
+Shipped corpora (under `src/decoy_engine/codesets/`):
+
+| Name | Rows | Source | License | Notes |
+|---|---|---|---|---|
+| `icd10` | 65 | CMS ICD-10-CM | US public domain | First-letter chapter per ICD-10-CM spec |
+| `hcpcs` | 32 | CMS HCPCS | US public domain | |
+| `ndc` | 38 | FDA NDC | US public domain | `chapter` column is a Decoy-defined therapeutic bucket (A/B/C/D); NDC has no native chapter structure |
+| `mcc` | 62 | ISO 18245 | See NOTICE | Merchant Category Codes |
+
+The `chapter` column in the NDC corpus is a Decoy-defined therapeutic grouping,
+not an attribute of the NDC standard. When using `chapter_preserve: true` with
+`ndc`, the chapter constraint refers to these Decoy-defined buckets, not to any
+native NDC hierarchy.
+
+**Cross-version keyed-access caveat (inherited from SP-06 corpus-sort pattern).**
+MASK mode selects at position `HMAC(...) % candidate_count` over the
+code-sorted corpus. Deterministic within a corpus version. NOT stable if corpus
+row count changes: a given input maps to a different output code after any row
+is added or removed. Do not assume cross-version MASK output stability for
+`code_set` columns.
+
+**Carry-forwards (not yet built):** additional shipped corpora LOINC, CIP,
+NUCC, UPC/EAN; CPT and MedDRA bring-your-own-corpus workflow documentation; an
+out-of-corpus-input `QualityWarning` signal (currently, an out-of-corpus input
+is silently remapped to a real code). HIPAA-pack default wiring is SP-11.
+
+```yaml
+# Mask ICD-10 diagnosis codes, preserving chapter grouping.
+columns:
+  - name: diag_code
+    strategy: code_set
+    provider_config:
+      code_set: icd10
+      chapter_preserve: true
+
+# Use a customer-supplied corpus; any label name is accepted.
+columns:
+  - name: procedure_code
+    strategy: code_set
+    provider_config:
+      code_set: cpt_local
+      corpus_source: customer:/data/cpt_subset.parquet
+```
+
+Use it for diagnosis codes, procedure codes, and other controlled-vocabulary
+fields where the output must be a real code from the same code system.
+
 ### truncate
 
 Keeps the first (or last) N characters of each value; nulls preserved.
@@ -630,9 +727,9 @@ Three fail-closed guards (no silent data loss):
 ## Infrastructure: expression parser and reference tables (SP-06)
 
 The features in this section are infrastructure built in SP-06. `joint_mask`
-(SP-08) is now built and documented in its strategy section above.
-The strategies that consume this infrastructure and are not yet built:
-`derived`, `case_when`, `derived_aggregate` (SP-10) and `code_set` (SP-09).
+(SP-08) and `code_set` (SP-09) are now built and documented in their strategy
+sections above. The strategies that consume this infrastructure and are not yet
+built: `derived`, `case_when`, `derived_aggregate` (SP-10).
 
 ### Closed-vocabulary expression parser
 
@@ -695,9 +792,11 @@ execution surface.
 Source: `src/decoy_engine/reference_tables/`.
 
 Reference tables are static Parquet datasets loaded once per pipeline and
-used by the future `code_set` and `joint_mask` strategies to look up
-replacement values (for example: map a ZIP code to a canonical city/state
-pair, or draw a vehicle make/model from a controlled set).
+used by `joint_mask` (SP-08) and the expression-based strategies planned for
+SP-10 to look up replacement values (for example: map a ZIP code to a canonical
+city/state pair, or draw a vehicle make/model from a controlled set). The
+`code_set` strategy (SP-09) uses a separate corpus loader in
+`decoy_engine/codesets/`, not the reference-table loader.
 
 #### Schema convention
 
@@ -759,5 +858,5 @@ Adding or removing rows changes `row_count`, which remaps the modular index.
 A given `key_value` will then select a different row. Cross-version key
 stability is NOT guaranteed. `joint_mask` (SP-08) ships with this caveat
 documented; operators must not assume cross-version key stability for
-`joint_mask` outputs. The same constraint applies to `code_set` (SP-09, not
-yet built).
+`joint_mask` outputs. `code_set` (SP-09) carries the same caveat: see the
+cross-version caveat in the `code_set` strategy section above.

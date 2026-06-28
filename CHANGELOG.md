@@ -9,6 +9,72 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (SP-09 code_set strategy, 2026-06-28)
+
+- **`code_set` mask strategy** (`src/decoy_engine/transforms/code_set.py`,
+  `src/decoy_engine/execution/_strategies/_code_set.py`, SP-09 /
+  P5.S.code_set.1/2/3-corpus_source). Registered in `SCALAR_HANDLERS`;
+  technique class `anonymisation`; `distribution_behavior: coarsens`. Replaces
+  a code column value with a different code drawn from a named corpus (ICD-10,
+  HCPCS, NDC, MCC, or a customer-supplied file). Output is always a real corpus
+  code and always differs from the input.
+
+  Config surface (`strategy: code_set` on a column; parameters under
+  `provider_config:`):
+
+  - `code_set` (str, required): corpus name. Shipped: `icd10`, `hcpcs`, `ndc`,
+    `mcc`. Customer corpora: any name with `corpus_source: customer:<path>`.
+  - `chapter_preserve` (bool, default `false`): restrict candidates to the same
+    chapter bucket as the input. For ICD-10 the chapter is the first letter.
+  - `corpus_source` (str, default `shipped`): `shipped` or
+    `customer:<absolute_path>`. A customer corpus must have a `code` column
+    (string) and, when `chapter_preserve: true`, a `chapter` column.
+
+  Two modes:
+
+  - **MASK mode** (default): `HMAC-SHA256(salt, input) % candidate_count` over
+    the full corpus sorted ascending by `code` (RFC 2104). Candidate set
+    excludes the input code, so output is never equal to input
+    (domain-exclusion idiom, same primitive as `fpe` and `joint_mask`). Same
+    input, same job_seed, same corpus version always produce the same output.
+  - **GEN mode**: `derive_index` keyed on column namespace and row index
+    (HKDF+HMAC, SEED_PROTOCOL_VERSION-covered). Two columns with different
+    namespaces sharing the same job_seed produce decorrelated output sequences.
+    Needs a namespace on the column.
+
+  `chapter_preserve` fail-closed behavior (both raise `PlanCompileError`,
+  execution-time, pre-mutation, before any data is changed):
+
+  - Input's chapter absent from corpus (`code_set_chapter_absent`): no
+    cross-chapter fallback; falling back would silently return a code from a
+    different chapter.
+  - Chapter bucket has only the input code (`code_set_sole_member_bucket`): no
+    valid alternative exists; returning the input would violate output != input.
+
+  Shipped corpora (in `src/decoy_engine/codesets/`):
+
+  | Name | Rows | Source | License |
+  |---|---|---|---|
+  | `icd10` | 65 | CMS ICD-10-CM | US public domain |
+  | `hcpcs` | 32 | CMS HCPCS | US public domain |
+  | `ndc` | 38 | FDA NDC | US public domain |
+  | `mcc` | 62 | ISO 18245 | See NOTICE |
+
+  The `chapter` column in `ndc.parquet` is a Decoy-defined therapeutic bucket
+  (A/B/C/D). NDC has no native chapter structure; this column is not a source
+  attribute.
+
+  **Cross-version keyed-access caveat.** MASK mode selects at position
+  `HMAC(...) % candidate_count` over the code-sorted corpus. Deterministic
+  within a corpus version. NOT stable if corpus row count changes (rows added
+  or removed remap the modular index). Inherited from the SP-06 corpus-sort
+  pattern.
+
+  **Carry-forwards (not yet built):** additional shipped corpora LOINC, CIP,
+  NUCC, UPC/EAN; CPT and MedDRA bring-your-own-corpus workflow documentation;
+  an out-of-corpus-input `QualityWarning` signal (out-of-corpus inputs are
+  currently silently remapped to a real code). HIPAA-pack wiring is SP-11.
+
 ### Added (SP-08 joint_mask + geo_generalize, 2026-06-28)
 
 - **`joint_mask` mask strategy** (`src/decoy_engine/transforms/joint_mask.py`,
