@@ -286,6 +286,110 @@ class TestCompileOnce:
         assert evaluate(c, {"a": 10, "b": 20}) == 30
 
 
+class TestRobustnessBounds:
+    """M1: deeply-nested / over-long expressions raise ValidationError.
+
+    Before the fix, long expressions parsed silently and deeply nested
+    parens could raise RecursionError instead of ValidationError.
+    """
+
+    def test_deeply_nested_parens_raises_validation_error(self):
+        """60 levels of paren nesting exceeds depth limit (50); must be
+        ValidationError, not RecursionError or silent success."""
+        compile_expr, _ = _get_parser()
+        expr = "(" * 60 + "0" + ")" * 60
+        with pytest.raises(ValidationError):
+            compile_expr(expr)
+
+    def test_overlength_expression_raises_validation_error(self):
+        """A 5000-char identifier (valid grammar, silly config) exceeds
+        the length cap and must be rejected at compile time."""
+        compile_expr, _ = _get_parser()
+        expr = "a" * 5000
+        with pytest.raises(ValidationError):
+            compile_expr(expr)
+
+    def test_expressions_near_depth_limit_are_accepted(self):
+        """Expressions within the nesting bound must still compile."""
+        compile_expr, evaluate = _get_parser()
+        expr = "(" * 10 + "42" + ")" * 10
+        c = compile_expr(expr)
+        assert evaluate(c, {}) == 42
+
+    def test_recursion_error_surfaced_as_validation_error(self):
+        """RecursionError at parse time must be converted to ValidationError
+        so the closed-grammar contract ('anything outside raises ValidationError')
+        holds even for pathological inputs."""
+        import sys
+
+        compile_expr, _ = _get_parser()
+        # Build an expression whose depth is just above Python's recursion
+        # limit so that if the pre-check is absent, RecursionError fires.
+        # depth = sys.getrecursionlimit() // 2 would be extreme; the
+        # depth-bound check prevents reaching the parser for any depth > 50.
+        depth = min(sys.getrecursionlimit(), 500)
+        expr = "(" * depth + "0" + ")" * depth
+        with pytest.raises(ValidationError):
+            compile_expr(expr)
+
+
+class TestStringEscapeCompileTime:
+    """M2: bad string escapes must fail at compile time, not per-row.
+
+    compile_expr must validate all string literals eagerly so a bad
+    escape never crashes evaluate() mid-pipeline.
+    """
+
+    def test_invalid_hex_escape_raises_at_compile_time(self):
+        r"""'C:\xyz' has an invalid \\x escape; must fail at compile."""
+        compile_expr, _ = _get_parser()
+        # The expression is: "C:\xyz" -- backslash-x not followed by 2 hex digits.
+        with pytest.raises(ValidationError, match="escape"):
+            compile_expr(r'"C:\xyz"')
+
+    def test_valid_nonascii_string_still_works(self):
+        """Non-ASCII literals (no escape sequences) round-trip correctly."""
+        compile_expr, evaluate = _get_parser()
+        c = compile_expr('"café"')
+        assert evaluate(c, {}) == "café"
+
+    def test_valid_newline_escape_still_works(self):
+        r"""A real \\n escape must decode to a newline at evaluate time."""
+        compile_expr, evaluate = _get_parser()
+        c = compile_expr(r'"line\nbreak"')
+        result = evaluate(c, {})
+        assert result == "line\nbreak"
+
+    def test_valid_tab_escape_still_works(self):
+        r"""\\t escape must decode to a tab at evaluate time."""
+        compile_expr, evaluate = _get_parser()
+        c = compile_expr(r'"col1\tcol2"')
+        result = evaluate(c, {})
+        assert result == "col1\tcol2"
+
+    def test_valid_backslash_escape_still_works(self):
+        r"""Double backslash must decode to a single backslash."""
+        compile_expr, evaluate = _get_parser()
+        c = compile_expr(r'"a\\b"')
+        result = evaluate(c, {})
+        assert result == "a\\b"
+
+
+class TestSingleQuoteHint:
+    """L1: single-quoted strings get a helpful error message."""
+
+    def test_single_quoted_string_mentions_double_quotes(self):
+        """Rejection of single-quoted strings must hint at double quotes."""
+        compile_expr, _ = _get_parser()
+        with pytest.raises(ValidationError, match="double"):
+            compile_expr("'hello'")
+
+    def test_single_quoted_membership_mentions_double_quotes(self):
+        compile_expr, _ = _get_parser()
+        with pytest.raises(ValidationError, match="double"):
+            compile_expr("x in 'cat'")
+
+
 @pytest.mark.perf
 class TestPerformance:
     """SP-06 perf budget: compile once + evaluate 10k rows in under 5s."""

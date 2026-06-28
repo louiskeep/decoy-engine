@@ -49,6 +49,12 @@ _PARSER = lark.Lark(
     ambiguity="resolve",
 )
 
+# Safety bounds applied BEFORE parsing to prevent RecursionError and
+# to keep compile times predictable. Any expression outside these bounds
+# is rejected with a clear ValidationError.
+_MAX_EXPR_LENGTH = 4096  # ~4 KB -- far beyond any realistic column expression
+_MAX_NESTING_DEPTH = 50  # open-paren depth proxy
+
 
 @dataclass(frozen=True)
 class CompiledExpression:
@@ -72,6 +78,18 @@ def compile_expr(expr_string: str) -> CompiledExpression:
     :class:`~decoy_engine.errors.ValidationError` if the expression uses
     any operator, construct, or identifier outside the permitted set.
 
+    Safety bounds (applied before parsing):
+      - Maximum expression length: 4096 characters.
+      - Maximum parenthesis nesting depth: 50 levels.
+    These prevent RecursionError and keep compile times predictable.
+
+    String literal escapes (e.g. ``\\n``, ``\\t``, ``\\uXXXX``) are
+    validated at compile time so a bad escape fails immediately rather
+    than crashing per-row at evaluate time.
+
+    Note: string literals must use double quotes. Single-quoted strings
+    (e.g. ``'hello'``) are not in the closed grammar; use ``"hello"``.
+
     Args:
         expr_string: A column-level expression string, e.g. ``"a + b"``.
 
@@ -79,11 +97,37 @@ def compile_expr(expr_string: str) -> CompiledExpression:
         A :class:`CompiledExpression` ready for :func:`evaluate`.
 
     Raises:
-        ValidationError: Expression is outside the closed operator set.
-            The message names the unsupported construct and suggests a
-            workaround.
+        ValidationError: Expression is outside the closed operator set,
+            exceeds the safety bounds, or contains an invalid string
+            escape sequence.
     """
     expr_string = expr_string.strip()
+
+    # M1: length bound -- reject before touching the parser.
+    if len(expr_string) > _MAX_EXPR_LENGTH:
+        raise ValidationError(
+            f"expression is too long ({len(expr_string)} chars); "
+            f"maximum allowed length is {_MAX_EXPR_LENGTH} chars. "
+            f"Simplify the expression or split it across multiple columns."
+        )
+
+    # M1: nesting-depth bound -- count open-paren depth as a proxy.
+    depth = 0
+    max_depth = 0
+    for ch in expr_string:
+        if ch == "(":
+            depth += 1
+            if depth > max_depth:
+                max_depth = depth
+        elif ch == ")":
+            depth -= 1
+    if max_depth > _MAX_NESTING_DEPTH:
+        raise ValidationError(
+            f"expression nesting depth {max_depth} exceeds the maximum "
+            f"{_MAX_NESTING_DEPTH}. Refactor deeply nested subexpressions "
+            f"into intermediate columns."
+        )
+
     try:
         tree = _PARSER.parse(expr_string)
     except (
@@ -92,14 +136,31 @@ def compile_expr(expr_string: str) -> CompiledExpression:
         lark.exceptions.UnexpectedToken,
         lark.exceptions.UnexpectedEOF,
     ) as exc:
+        # L1: if the expression contains single quotes, add a targeted hint.
+        single_quote_hint = (
+            " Note: string literals must use double quotes, not single quotes "
+            "(e.g. \"hello\" not 'hello')."
+            if "'" in expr_string
+            else ""
+        )
         raise ValidationError(
             f"unsupported expression: {expr_string!r} is outside the closed "
             f"operator set. Only arithmetic (+,-,*,/,//), comparison "
             f"(==,!=,<,>,<=,>=,in), logical (and,or,not), concat(), "
             f"days_between(), if/else ternary, literals, and column "
             f"references are allowed. Workaround: use a formula strategy "
-            f"for arbitrary Python expressions. Detail: {exc}"
+            f"for arbitrary Python expressions.{single_quote_hint} Detail: {exc}"
         ) from exc
+    except RecursionError as exc:
+        # Belt-and-suspenders: the depth bound above prevents most cases,
+        # but catch any RecursionError that slips through and surface it
+        # as ValidationError so the closed-grammar contract holds.
+        raise ValidationError(
+            f"expression is too deeply nested to parse (exceeded Python "
+            f"recursion limit). Maximum nesting depth is {_MAX_NESTING_DEPTH}. "
+            f"Refactor deeply nested subexpressions into intermediate columns."
+        ) from exc
+
     # Walk the parse tree and reject dunder identifiers. The grammar's
     # IDENTIFIER regex allows them (underscore is a valid leading char),
     # but dunder names (__class__, __builtins__, etc.) are never valid
@@ -112,7 +173,38 @@ def compile_expr(expr_string: str) -> CompiledExpression:
                     f"unsupported expression: dunder identifier {name!r} is not "
                     f"allowed. Column references must be plain identifiers."
                 )
+
+    # M2: validate all string literal escape sequences at compile time
+    # so a malformed escape fails immediately rather than crashing
+    # per-row inside evaluate().
+    _validate_string_escapes(tree, expr_string)
+
     return CompiledExpression(source=expr_string, tree=tree)
+
+
+def _validate_string_escapes(tree: lark.Tree[Any], source: str) -> None:
+    """Validate escape sequences in all string literals in *tree*.
+
+    Walks the parse tree and attempts to decode each string token using
+    the same codec used at evaluate time. Raises ValidationError for any
+    token whose escape sequence cannot be decoded so the error is surfaced
+    at compile time rather than crashing per-row inside evaluate().
+    """
+    for subtree in tree.iter_subtrees():
+        if subtree.data == "string_lit":
+            raw = str(subtree.children[0])
+            content = raw[1:-1]  # strip surrounding double-quote chars
+            try:
+                content.encode("raw_unicode_escape").decode("unicode_escape")
+            except (UnicodeDecodeError, ValueError) as exc:
+                raise ValidationError(
+                    f"invalid string escape sequence in {raw!r} "
+                    f"(in expression {source!r}): {exc}. "
+                    f"Check that all backslash sequences are valid "
+                    f"(e.g. \\\\n, \\\\t, \\\\\\\\, \\\\uXXXX). "
+                    f"Raw Windows paths such as C:\\\\xyz should escape "
+                    f"the backslash (C:\\\\\\\\xyz) or use forward slashes."
+                ) from exc
 
 
 def evaluate(compiled: CompiledExpression, row_context: dict[str, Any]) -> Any:
