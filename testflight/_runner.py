@@ -4,7 +4,7 @@ Seven-step contract for driving the real engine pipeline and collecting
 results:
   1. Load JobSpec from jobs/<job>/manifest.yaml via _spec.load_manifest.
   2. Build deterministic source frames from fixture.py (seeded, plants edge
-     cases); compute and verify a source fingerprint.
+     cases); fingerprint verified inside each fixture builder.
   3. Assemble the pipeline config dict from the manifest; validate through
      PipelineConfig.model_validate(raw).model_dump() (the real choke-point).
   4. Build a fixed master-key resolver via make_key_resolver(MASTER, LABEL).
@@ -22,13 +22,14 @@ Design notes (plan section 3):
     run_pipeline for the masking step.
   - Quarantine output_path is set to a temp JSONL file before each pipeline
     call; the invariant check then verifies file line count.
+
+build_source_frames and assemble_config live in _builder.py (split to keep
+both modules within the 600-line limit). They are re-exported from here for
+backwards compatibility.
 """
 
 from __future__ import annotations
 
-import importlib
-import importlib.util
-import sys
 import tempfile
 import time
 from dataclasses import dataclass, field
@@ -37,8 +38,11 @@ from typing import Any
 
 import pyarrow as pa
 
+from ._builder import assemble_config as assemble_config
+from ._builder import build_source_frames as build_source_frames
 from ._invariants import (
     FIXED_TS,
+    check_chapter_preserve,
     check_checksums,
     check_computed_columns,
     check_determinism,
@@ -140,161 +144,7 @@ def load_job(manifest_path: Path) -> FlightManifest:
 # ---------------------------------------------------------------------------
 # Steps 2-5: fixture building, config assembly, pipeline execution
 # ---------------------------------------------------------------------------
-
-
-def build_source_frames(
-    manifest: FlightManifest,
-    job_dir: Path,
-) -> dict[str, Any]:
-    """Step 2: Build deterministic source frames from fixture.py or CSVs.
-
-    Resolves each TableSpec.source_builder reference and calls the fixture
-    generator with manifest.seed. Returns source DataFrames (not PyArrow tables)
-    for the mask tables only.
-
-    The fixture module is loaded from job_dir/fixture.py. Source builders
-    are called with keyword argument `seed=manifest.seed`. If a builder accepts
-    a `members_df` or `claims_df` kwarg (for inter-table FK seeding), the
-    previously built frame is passed in.
-
-    Args:
-        manifest: Validated FlightManifest.
-        job_dir: Directory containing the job's fixture.py.
-
-    Returns:
-        dict[table_name, pandas.DataFrame] for mask tables only.
-
-    Raises:
-        FileNotFoundError: If fixture.py is missing.
-        RuntimeError: If the source fingerprint does not match the baseline.
-    """
-    import pandas as pd
-
-    # Fingerprints are committed in the manifest YAML comment block; we read
-    # them from the comment block via the manifest.yaml file directly.
-    # For Job A the committed fingerprints are:
-    #   members:     f0a05c63ddfd74c9625f44800ffa87f26cfe8e9e6927cb8ad6907b3b8032c281
-    #   claims:      588ca0e3cd05ff1f42d91b080bc64867f7a48cac8b385b8202dfc6782664968b
-    #   claim_lines: 3678e5ce5ac37add2d3bf66fc274875282297f038a4a6ebec246ed79b6ecb0f3
-    # The runner does NOT enforce fingerprints at Phase 2 execution time so
-    # tests remain fast; fingerprint assertions live in the teeth test module.
-
-    fixture_path = job_dir / "fixture.py"
-    if not fixture_path.exists():
-        raise FileNotFoundError(
-            f"Fixture module not found at {fixture_path}. "
-            f"Each job requires a fixture.py with source builders."
-        )
-
-    # Dynamic import of job-specific fixture module.
-    mod_name = f"_testflight_fixture_{manifest.job_name}"
-    spec_obj = importlib.util.spec_from_file_location(mod_name, fixture_path)
-    assert spec_obj is not None
-    fixture_mod = importlib.util.module_from_spec(spec_obj)
-    sys.modules[mod_name] = fixture_mod
-    loader = spec_obj.loader
-    assert loader is not None
-    loader.exec_module(fixture_mod)
-
-    seed = manifest.seed
-    frames: dict[str, Any] = {}
-
-    for table_spec in manifest.tables:
-        if table_spec.kind != "mask":
-            continue
-        builder_name = table_spec.source_builder
-        # Support "fixture.build_X" dotted form.
-        if "." in builder_name:
-            _, func_name = builder_name.rsplit(".", 1)
-        else:
-            func_name = builder_name
-
-        builder = getattr(fixture_mod, func_name)
-
-        # Pass inter-table dependencies based on parameter name conventions.
-        import inspect
-
-        params = list(inspect.signature(builder).parameters)
-        kwargs: dict[str, Any] = {"seed": seed}
-        if "members_df" in params and "members" in frames:
-            kwargs["members_df"] = frames["members"]
-        if "claims_df" in params and "claims" in frames:
-            kwargs["claims_df"] = frames["claims"]
-
-        df = builder(**kwargs)
-        assert isinstance(df, pd.DataFrame), (
-            f"Source builder '{func_name}' for table '{table_spec.name}' "
-            f"must return a pandas DataFrame, got {type(df).__name__}."
-        )
-        frames[table_spec.name] = df
-
-    return frames
-
-
-def assemble_config(
-    manifest: FlightManifest,
-    source_paths: dict[str, str],
-    output_dir: Path,
-    quarantine_path: str,
-) -> dict[str, Any]:
-    """Step 3: Assemble and validate the pipeline config dict.
-
-    Starts from manifest.config, substitutes placeholder source/target/quarantine
-    paths with the actual temp-file paths, then validates through
-    PipelineConfig.model_validate(raw).model_dump() to use the real engine
-    choke-point. Any invalid config shape raises pydantic.ValidationError before
-    the pipeline is invoked.
-
-    Args:
-        manifest: Validated FlightManifest.
-        source_paths: dict[table_name, parquet_path] of written source files.
-        output_dir: Directory to write output parquet files.
-        quarantine_path: Path to write the quarantine JSONL file.
-
-    Returns:
-        Validated, dumped pipeline config dict suitable for run_pipeline.
-
-    Raises:
-        pydantic.ValidationError: If the assembled config is invalid.
-    """
-    import copy
-
-    from decoy_engine.config._pipeline import PipelineConfig
-
-    raw = copy.deepcopy(manifest.config)
-
-    # Substitute source paths.
-    sources_block = raw.get("sources", {})
-    for table_name, parquet_path in source_paths.items():
-        if table_name in sources_block:
-            sources_block[table_name]["path"] = parquet_path
-        else:
-            sources_block[table_name] = {
-                "type": "file",
-                "format": "parquet",
-                "path": parquet_path,
-            }
-    raw["sources"] = sources_block
-
-    # Substitute target paths.
-    targets_block = raw.get("targets", {})
-    for table_name in source_paths:
-        out_path = str(output_dir / f"{table_name}_out.parquet")
-        if table_name in targets_block:
-            targets_block[table_name]["path"] = out_path
-        else:
-            targets_block[table_name] = {
-                "type": "file",
-                "format": "parquet",
-                "path": out_path,
-            }
-    raw["targets"] = targets_block
-
-    # Substitute quarantine path if quarantine block is present.
-    if "quarantine" in raw and isinstance(raw["quarantine"], dict):
-        raw["quarantine"]["output_path"] = quarantine_path
-
-    return PipelineConfig.model_validate(raw).model_dump()
+# build_source_frames and assemble_config are imported from _builder.py above.
 
 
 def build_key_resolver(manifest: FlightManifest) -> Any:
@@ -381,8 +231,11 @@ def evaluate_invariants(
 
     def _run(family: str, fn: Any, *args: Any, **kwargs: Any) -> None:
         try:
-            fn(*args, **kwargs)
-            results.append(InvariantResult(family=family, passed=True))
+            evidence = fn(*args, **kwargs)
+            # Capture optional return-value evidence (expected-vs-found counts)
+            # for the report's PASS lines (LOW-2).
+            detail = str(evidence) if evidence is not None else ""
+            results.append(InvariantResult(family=family, passed=True, detail=detail))
         except (AssertionError, NotImplementedError) as exc:
             msg = str(exc)
             results.append(
@@ -504,9 +357,9 @@ def evaluate_invariants(
     if inv.safe_harbor:
         _run("safe_harbor", check_safe_harbor, job_name, inv.safe_harbor, result_a)
 
-    # 6.7 Quarantine
+    # 6.7 Quarantine (pass sources so LOW-1 direct row-count assertion runs)
     if inv.quarantine is not None:
-        _run("quarantine", check_quarantine, job_name, inv.quarantine, result_a)
+        _run("quarantine", check_quarantine, job_name, inv.quarantine, result_a, sources)
 
     # 6.8 Sentinels
     if inv.sentinels:
@@ -520,6 +373,17 @@ def evaluate_invariants(
             job_name,
             inv.computed_columns,
             result_a,
+        )
+
+    # 6.11 chapter_preserve
+    if inv.chapter_preserve:
+        _run(
+            "chapter_preserve",
+            check_chapter_preserve,
+            job_name,
+            inv.chapter_preserve,
+            result_a,
+            sources,
         )
 
     return results

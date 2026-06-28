@@ -316,8 +316,38 @@ def test_job_passes_all_invariants(manifest_path: Path) -> None:
     from testflight._runner import run_job
 
     result = run_job(manifest_path)
-    assert result.passed, (
-        f"Job '{result.job_name}' failed {sum(1 for r in result.invariant_results if not r.passed)} "
-        f"invariant(s):\n"
-        + "\n".join(f"  [{r.family}] {r.detail}" for r in result.invariant_results if not r.passed)
+    n_failed = sum(1 for r in result.invariant_results if not r.passed)
+    assert result.passed, f"Job '{result.job_name}' failed {n_failed} invariant(s):\n" + "\n".join(
+        f"  [{r.family}] {r.detail}" for r in result.invariant_results if not r.passed
     )
+
+    # LOW-5: assert expected family set actually ran for known jobs.
+    # This prevents a silent test that passes only because no invariants were
+    # configured (which would make result.passed vacuously True).
+    families_run = {r.family for r in result.invariant_results}
+    job_name = manifest_path.parent.name
+
+    if job_name == "a_healthcare_claims":
+        # These families must ALL appear in the result for Job A.
+        # If a new invariant is added to the manifest without wiring it in
+        # the runner, or if a family is silently dropped, this assertion fires.
+        expected_families = {
+            "determinism",
+            "fk_integrity",
+            "distribution:members",
+            "distribution:claims",
+            "chapter_preserve",
+            "checksums",
+            "safe_harbor",
+            "quarantine",
+            "sentinels",
+            "computed_columns",
+        }
+        missing = expected_families - families_run
+        assert not missing, (
+            f"Job '{job_name}': expected invariant families not found in "
+            f"result: {sorted(missing)}. "
+            f"Families actually run: {sorted(families_run)}. "
+            "Check that each family is wired in evaluate_invariants() "
+            "and declared in the manifest."
+        )

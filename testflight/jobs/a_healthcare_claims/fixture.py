@@ -66,7 +66,7 @@ import numpy as np
 import pandas as pd
 import stdnum.luhn as _luhn
 
-from testflight._fixtures import make_rng
+from testflight._fixtures import make_rng, verify_fingerprint
 
 # ---------------------------------------------------------------------------
 # Constants (match manifest.yaml exactly)
@@ -80,6 +80,20 @@ CLAIM_LINES_COUNT = 20000
 # luhn validator. These are the LAST 10 rows so no claims reference them.
 INVALID_LUHN_COUNT = 10
 QUARANTINE_MEMBER_COUNT = INVALID_LUHN_COUNT  # alias for clarity
+
+# Source fingerprints (SHA-256 of canonical CSV). verify_fingerprint is called
+# inside each build_* function so a faker/numpy version bump that shifts the
+# fixture output fails loudly with a re-baseline instruction.
+# Re-baseline deliberately by running compute_fingerprint() on the new output
+# and updating these constants + the manifest.yaml comment block.
+_MEMBERS_FINGERPRINT = "f0a05c63ddfd74c9625f44800ffa87f26cfe8e9e6927cb8ad6907b3b8032c281"
+_CLAIMS_FINGERPRINT = "f1728aef9f060f176da6af8a9621e0e009a33512ea1d193c06a524d55a08889c"
+_CLAIM_LINES_FINGERPRINT = "3678e5ce5ac37add2d3bf66fc274875282297f038a4a6ebec246ed79b6ecb0f3"
+
+# Orphan claims: reference quarantine member IDs so they become orphans in the
+# masked output (the quarantine removes those members; orphan_policy:warn keeps
+# the orphan claim rows in the claims output but no parent exists).
+ORPHAN_CLAIM_COUNT = 5
 
 # Exactly 18 rows have a HHS-restricted ZIP3 prefix (Safe Harbor).
 RESTRICTED_ZIP3_COUNT = 18
@@ -335,6 +349,7 @@ def build_members(seed: int = 42) -> pd.DataFrame:
 
     df = pd.DataFrame(rows)
     assert len(df) == MEMBER_COUNT, f"Expected {MEMBER_COUNT} members, got {len(df)}"
+    verify_fingerprint(df, _MEMBERS_FINGERPRINT, label="members")
     return df
 
 
@@ -375,9 +390,13 @@ def build_claims(seed: int = 42, members_df: pd.DataFrame | None = None) -> pd.D
 
     # Load ICD-10 codes from shipped corpus
     icd10_codes, icd10_chapters = _load_icd10_corpus()
-    # Load NDC codes. Limit to 20 unique codes so source cardinality (20) and
-    # code_set output cardinality (~20-25) are both below the categorical/freetext
-    # threshold (30), avoiding kind_drift in the distribution diagnostic.
+    # NDC corpus: cap at 20 codes. Known boundary (MEDIUM-2):
+    # Using all 38 shipped NDC codes makes the source freetext (38 > 30)
+    # but code_set's HMAC-deterministic mapping produces ~23 distinct output
+    # codes (categorical, <= 30) due to pigeonhole collisions in the N->N-1
+    # candidate pool. Capping at 20 keeps both source and output categorical
+    # (no kind_drift). A larger cap would require a NDC corpus with >= 50 codes
+    # to clear the freetext threshold on the output side (output ~= 0.63*N).
     ndc_codes = _load_ndc_corpus()[:20]
 
     rows: list[dict[str, Any]] = []
@@ -404,6 +423,21 @@ def build_claims(seed: int = 42, members_df: pd.DataFrame | None = None) -> pd.D
         else:
             claim_amount = float(rng.uniform(1000, 8000))
 
+        # amount_band: 3-category banding of claim_amount (correlated with chapter
+        # by construction). Passthrough in the pipeline; joint (amount_band,
+        # diagnosis_chapter) is declared for the distribution correlation check.
+        if chapter in _HIGH_COST_CHAPTERS:
+            amount_band = "high"
+        elif chapter in _LOW_COST_CHAPTERS:
+            amount_band = "low"
+        else:
+            amount_band = "mid"
+
+        # diagnosis_chapter: first letter of the ICD-10 code (preserved when
+        # chapter_preserve: true is set on the diagnosis code_set column).
+        # Passthrough in the pipeline; appears in the joint with amount_band.
+        diagnosis_chapter = chapter
+
         # service_date: random date in last 24 months
         months_ago = int(rng.integers(0, 24))
         year = 2026 - months_ago // 12
@@ -418,12 +452,60 @@ def build_claims(seed: int = 42, members_df: pd.DataFrame | None = None) -> pd.D
                 "diagnosis": diagnosis,
                 "drug_ndc": drug_ndc,
                 "claim_amount": round(claim_amount, 2),
+                "amount_band": amount_band,
+                "diagnosis_chapter": diagnosis_chapter,
                 "service_date": service_date,
             }
         )
 
+    # Plant ORPHAN_CLAIM_COUNT claims referencing quarantine member IDs (last
+    # INVALID_LUHN_COUNT members). Those members are removed from the masked
+    # members output by quarantine, so these claims have no parent in the
+    # output -- orphan_policy:warn keeps them in the claims output.
+    quarantine_member_ids = members_df["member_id"].iloc[n_valid:].tolist()
+    for k in range(ORPHAN_CLAIM_COUNT):
+        orphan_claim_id = f"C{CLAIMS_COUNT + k + 1:07d}"
+        # Cycle through quarantine member IDs for variety.
+        orphan_member_id = quarantine_member_ids[k % len(quarantine_member_ids)]
+
+        # Use a mid-cost ICD-10 code for orphan claims (chapters not in
+        # high/low cost sets so amount_band="mid" is predictable).
+        orphan_diag_idx = int(rng.integers(0, len(icd10_codes)))
+        orphan_diag = icd10_codes[orphan_diag_idx]
+        orphan_chapter = icd10_chapters[orphan_diag_idx]
+        if orphan_chapter in _HIGH_COST_CHAPTERS:
+            orphan_amount = float(rng.uniform(5000, 25000))
+            orphan_band = "high"
+        elif orphan_chapter in _LOW_COST_CHAPTERS:
+            orphan_amount = float(rng.uniform(100, 2000))
+            orphan_band = "low"
+        else:
+            orphan_amount = float(rng.uniform(1000, 8000))
+            orphan_band = "mid"
+
+        orphan_ndc = ndc_codes[int(rng.integers(0, len(ndc_codes)))]
+        orphan_months = int(rng.integers(0, 24))
+        orphan_year = 2026 - orphan_months // 12
+        orphan_month = ((5 - orphan_months) % 12) + 1
+        orphan_day = int(rng.integers(1, 29))
+
+        rows.append(
+            {
+                "claim_id": orphan_claim_id,
+                "member_id": orphan_member_id,
+                "diagnosis": orphan_diag,
+                "drug_ndc": orphan_ndc,
+                "claim_amount": round(orphan_amount, 2),
+                "amount_band": orphan_band,
+                "diagnosis_chapter": orphan_chapter,
+                "service_date": f"{orphan_year:04d}-{orphan_month:02d}-{orphan_day:02d}",
+            }
+        )
+
     df = pd.DataFrame(rows)
-    assert len(df) == CLAIMS_COUNT, f"Expected {CLAIMS_COUNT} claims, got {len(df)}"
+    expected_total = CLAIMS_COUNT + ORPHAN_CLAIM_COUNT
+    assert len(df) == expected_total, f"Expected {expected_total} claims, got {len(df)}"
+    verify_fingerprint(df, _CLAIMS_FINGERPRINT, label="claims")
     return df
 
 
@@ -440,7 +522,7 @@ def build_claim_lines(
 
     Line amounts and units are the source values for the derived column test.
     line_total (derived: line_amount * units with case_when discount) and
-    claim_line_sum (derived_aggregate: sum(line_amount) per claim) are set to
+    claim_line_sum (derived_aggregate: sum(line_amount) across ALL rows) are set to
     placeholder values here; the pipeline's derived/derived_aggregate strategies
     compute the real values from line_amount and units in the OUTPUT.
 
@@ -510,6 +592,7 @@ def build_claim_lines(
     _ensure_all_tiers(df)
 
     assert len(df) == CLAIM_LINES_COUNT, f"Expected {CLAIM_LINES_COUNT} lines, got {len(df)}"
+    verify_fingerprint(df, _CLAIM_LINES_FINGERPRINT, label="claim_lines")
     return df
 
 
@@ -519,7 +602,15 @@ def build_claim_lines(
 
 
 def _load_icd10_corpus() -> tuple[list[str], list[str]]:
-    """Return (codes, chapters) lists from the shipped ICD-10 corpus."""
+    """Return (codes, chapters) lists from the shipped ICD-10 corpus.
+
+    Filters out chapters with fewer than 2 codes. chapter_preserve:true
+    requires the engine to select a DIFFERENT code from the same chapter;
+    single-code chapters make that impossible and raise a pipeline error.
+    Chapters V, W, X, Y each have only 1 code in the shipped corpus and
+    are excluded here.
+    """
+    from collections import Counter
     from pathlib import Path
 
     import pyarrow.parquet as pq
@@ -532,9 +623,12 @@ def _load_icd10_corpus() -> tuple[list[str], list[str]]:
         / "icd10.parquet"
     )
     tbl = pq.read_table(str(corpus_path))
-    codes = tbl.column("code").to_pylist()
-    chapters = tbl.column("chapter").to_pylist()
-    return codes, chapters
+    codes: list[str] = tbl.column("code").to_pylist()
+    chapters: list[str] = tbl.column("chapter").to_pylist()
+
+    chapter_counts: Counter[str] = Counter(chapters)
+    pairs = [(c, ch) for c, ch in zip(codes, chapters, strict=True) if chapter_counts[ch] >= 2]
+    return [c for c, _ in pairs], [ch for _, ch in pairs]
 
 
 def _load_ndc_corpus() -> list[str]:

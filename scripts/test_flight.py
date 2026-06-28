@@ -74,6 +74,13 @@ def main() -> int:
     report = render_report(results)
     print(report)
 
+    # Write report to _artifacts/report.md so CI can archive it.
+    artifacts_dir = _REPO_ROOT / "_artifacts"
+    artifacts_dir.mkdir(exist_ok=True)
+    from testflight._report import write_report
+
+    write_report(report, artifacts_dir / "report.md")
+
     all_passed = all(r.passed for r in results)
     return 0 if all_passed else 1
 

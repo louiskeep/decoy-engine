@@ -46,10 +46,13 @@ def format_job_section(result: JobResult) -> str:
 
     for ir in result.invariant_results:
         mark = "[PASS]" if ir.passed else "[FAIL]"
-        lines.append(f"  {mark}  {ir.family}")
-        if not ir.passed and ir.detail:
-            for detail_line in ir.detail.splitlines()[:5]:
+        # Show detail for both PASS (expected-vs-found counts) and FAIL cases.
+        if ir.detail:
+            lines.append(f"  {mark}  {ir.family}  ({ir.detail.splitlines()[0]})")
+            for detail_line in ir.detail.splitlines()[1:5]:
                 lines.append(f"           {detail_line}")
+        else:
+            lines.append(f"  {mark}  {ir.family}")
 
     return "\n".join(lines)
 

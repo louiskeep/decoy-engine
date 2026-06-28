@@ -12,17 +12,28 @@
 # DELIBERATE CORRELATIONS (non-trivial for distribution invariant):
 #   - plan_tier correlated with age (young -> Bronze/Silver, older -> Gold/Platinum)
 #   - claim_amount correlated with ICD-10 chapter (I/E/N/C = high, A/B/R = low)
+#   - amount_band (high/mid/low) correlated with diagnosis_chapter (both passthrough;
+#     joint declared as (amount_band, diagnosis_chapter) with corr_tol >= 0.90)
+#   - chapter_preserve: true on diagnosis so masked ICD code stays in same chapter
 #
-# Source fingerprints (SHA-256 of canonical CSV; must match fixture output):
-#   members:    f0a05c63ddfd74c9625f44800ffa87f26cfe8e9e6927cb8ad6907b3b8032c281
-#   claims:     4b607d33076500fa923472bd156af6c32da9d0a60e3361495d9c9596c2c3899a
+# PLANTED ORPHANS (MEDIUM-1):
+#   - 5 claim rows referencing quarantine member IDs (M001991-M001995)
+#     These members are removed from the masked output by quarantine;
+#     orphan_policy:warn keeps the orphan claims in the claims output.
+#     member_identity expected_orphans: 5
+#
+# Source fingerprints (SHA-256 of canonical CSV; verified by verify_fingerprint
+# inside each fixture build_* function -- update all three after any fixture change):
+#   members:     f0a05c63ddfd74c9625f44800ffa87f26cfe8e9e6927cb8ad6907b3b8032c281
+#   claims:      f1728aef9f060f176da6af8a9621e0e009a33512ea1d193c06a524d55a08889c
 #   claim_lines: 3678e5ce5ac37add2d3bf66fc274875282297f038a4a6ebec246ed79b6ecb0f3
 #
 # Strategies exercised (strategy_coverage below):
 #   fpe+checksum (luhn, npi), geo_generalize (Safe Harbor), date_shift,
-#   bucket_perturb, code_set (icd10, hcpcs, ndc), categorical, passthrough,
-#   derived (+ case_when builtin), derived_aggregate, from_parent, faker,
-#   validators (luhn via card_no, fk_intact, no_orphan_children), quarantine.
+#   bucket_perturb, code_set (icd10 with chapter_preserve, hcpcs, ndc[:20]),
+#   categorical, passthrough, derived (+ case_when builtin), derived_aggregate,
+#   from_parent, faker, validators (luhn, fk_intact, no_orphan_children), quarantine.
+# NDC capped at 20 codes (known boundary; see MEDIUM-2 note in distribution spec).
 
 job_name: a_healthcare_claims
 topology: one_to_many_multilevel
@@ -176,21 +187,37 @@ config:
         - name: member_id
           strategy: from_parent
 
-        # diagnosis: code_set ICD-10 with chapter_preserve.
+        # diagnosis: code_set ICD-10 with chapter_preserve:true so the masked
+        # code stays in the same ICD chapter as the source code. Verified by
+        # the chapter_preserve invariant (6.11).
         - name: diagnosis
           strategy: code_set
           provider_config:
             code_set: icd10
+            chapter_preserve: true
 
-        # drug_ndc: code_set NDC.
+        # drug_ndc: code_set NDC (capped at 20 codes in fixture; see MEDIUM-2
+        # known-boundary note in distribution section). Categorical on both
+        # source and output; no kind_drift.
         - name: drug_ndc
           strategy: code_set
           provider_config:
             code_set: ndc
 
-        # claim_amount: passthrough (kept numeric; correlation with diagnosis
-        # chapter is checked by the distribution joint_columns invariant).
+        # claim_amount: passthrough (kept numeric).
         - name: claim_amount
+          strategy: passthrough
+
+        # amount_band: passthrough (high/mid/low derived in fixture from
+        # claim_amount; correlated with diagnosis_chapter by fixture construction;
+        # declared as joint with diagnosis_chapter in the distribution invariant).
+        - name: amount_band
+          strategy: passthrough
+
+        # diagnosis_chapter: passthrough (= first letter of source ICD-10 code;
+        # matches the chapter of the masked diagnosis because chapter_preserve:true
+        # is set on the diagnosis column). Appears in the joint with amount_band.
+        - name: diagnosis_chapter
           strategy: passthrough
 
         # service_date: bucket_perturb to ISO month (coarsens to month granularity).
@@ -269,11 +296,15 @@ config:
       orphan_policy: warn
       namespace: claim_identity
 
-  # luhn validator on card_no: fires on the 10 invalid-Luhn rows.
+  # Validators: luhn fires on the 10 invalid-Luhn card_no rows and triggers
+  # quarantine. fk_intact and no_orphan_children run as belt-and-suspenders
+  # FK integrity checks alongside the harness set-membership check (plan 6.4).
   validators:
     - name: luhn
       columns:
         members: [card_no]
+    - name: fk_intact
+    - name: no_orphan_children
 
   # Quarantine: rows failing luhn on card_no are quarantined to a JSONL file.
   # The runner sets the actual output_path via the assembled config before running.
@@ -285,10 +316,15 @@ config:
 invariants:
   determinism: true
 
-  # 6.4 FK integrity: 0 orphans expected (quarantine rows have no child claims).
+  # 6.4 FK integrity:
+  #   member_identity: 5 orphan claims expected. The 5 claims reference
+  #     quarantine member IDs (M001991-M001995). After quarantine removes those
+  #     10 luhn-failing members, the 5 planted orphan claims remain in the
+  #     claims output under orphan_policy:warn. Exercises the warn path.
+  #   claim_identity: 0 orphans expected (no orphan claim_lines planted).
   fk_integrity:
     - relationship_name: member_identity
-      expected_orphans: 0
+      expected_orphans: 5
       policy: warn
     - relationship_name: claim_identity
       expected_orphans: 0
@@ -301,6 +337,9 @@ invariants:
 
   distribution:
     # members.ssn: preserve class (fpe bijection; cardinality + shape guard).
+    # FPE is a strict bijection so the marginal distribution shape is preserved
+    # by construction. No meaningful correlation joint between SSN and other
+    # columns; joint requirement waived.
     - table: members
       column: ssn
       distribution_class: preserve
@@ -308,8 +347,14 @@ invariants:
       tolerance: 0.05
       null_pp: 2.0
       joint_columns: []
+      joints_waived: true
+      joints_waived_reason: >-
+        FPE is a bijection that permutes values without altering their frequency
+        distribution; marginal shape is preserved by construction. No meaningful
+        correlation between SSN and other members columns is expected to hold
+        post-masking (FPE remaps each SSN independently of plan_tier or age).
 
-    # members.npi: preserve class (fpe bijection).
+    # members.npi: preserve class (fpe bijection). Same waiver rationale as ssn.
     - table: members
       column: npi
       distribution_class: preserve
@@ -317,6 +362,10 @@ invariants:
       tolerance: 0.05
       null_pp: 2.0
       joint_columns: []
+      joints_waived: true
+      joints_waived_reason: >-
+        NPI is FPE-bijected independently of SSN and all other members columns;
+        no correlation joint is expected or meaningful post-masking.
 
     # members.zip5: coarsen class (geo_generalize; cardinality must drop).
     - table: members
@@ -342,27 +391,63 @@ invariants:
       null_pp: 2.0
       joint_columns: []
 
-    # claims.claim_amount: preserve class with a joint pair (age correlates with
-    # claim_amount through ICD chapter; declared for the correlation check).
-    # strategy: passthrough (source claim_amount is kept unchanged).
+    # claims.claim_amount: preserve class. Passthrough (unchanged).
+    # Joint with diagnosis (exact code) is broken post-mask (code_set replaces
+    # codes within the chapter). Waived here; the chapter-level correlation is
+    # checked via the (amount_band, diagnosis_chapter) joint declared below.
     - table: claims
       column: claim_amount
       distribution_class: preserve
       strategy: passthrough
       tolerance: 0.05
       null_pp: 2.0
-      # claim_amount should correlate with diagnosis (same chapter group).
-      # Use diagnosis chapter initial letter encoded as a category.
       joint_columns: []
-      # Waive joint pair: diagnosis is code_set-replaced with a DIFFERENT
-      # code from the same chapter, so the (claim_amount, diagnosis) joint is
-      # broken after masking (different code, same chapter structure).
       joints_waived: true
       joints_waived_reason: >-
-        code_set replaces diagnosis with a different code from the same chapter;
-        the joint (claim_amount, diagnosis_code) is correctly broken post-mask
-        because the exact code changes. The chapter-level correlation is not
-        checkable via raw code values.
+        claim_amount->diagnosis-code joint is broken by code_set (code changes
+        within chapter); chapter-level correlation is verified by the
+        (amount_band, diagnosis_chapter) joint on the amount_band spec.
+
+    # claims.amount_band: preserve class. Passthrough (high/mid/low; unchanged).
+    # Correlated with diagnosis_chapter by fixture construction. The joint pair
+    # (amount_band, diagnosis_chapter) is declared here with corr_tol=0.90.
+    # Both are passthrough -> source and output distributions are identical ->
+    # joint similarity = 1.0 in a correct run. Decorrelating amount_band drops
+    # similarity below 0.90 (verified by the control test in test_testflight_teeth.py).
+    - table: claims
+      column: amount_band
+      distribution_class: preserve
+      strategy: passthrough
+      tolerance: 0.05
+      null_pp: 2.0
+      joint_columns: [[amount_band, diagnosis_chapter]]
+      corr_tol: 0.90
+
+    # claims.diagnosis_chapter: preserve class. Passthrough (first letter of
+    # source ICD-10 code; unchanged). Appears in the joint declared on amount_band.
+    # Waived here so the joint-requirement count fires only on amount_band.
+    - table: claims
+      column: diagnosis_chapter
+      distribution_class: preserve
+      strategy: passthrough
+      tolerance: 0.05
+      null_pp: 2.0
+      joint_columns: []
+      joints_waived: true
+      joints_waived_reason: >-
+        diagnosis_chapter is the target column of the (amount_band,
+        diagnosis_chapter) joint declared on the amount_band spec. Waiving here
+        avoids double-declaring the pair and avoids inflating non-waived count.
+
+    # claims.drug_ndc: NOT declared in the distribution spec. Known boundary
+    # (MEDIUM-2): the fixture caps NDC codes at 20 (categorical; <=30 distinct)
+    # to avoid freetext->categorical kind_drift. Using all 38 shipped NDC codes
+    # would classify the source as freetext (>30) but code_set's HMAC-based
+    # mapping produces ~23 distinct output codes (categorical) due to birthday-
+    # paradox collisions in the N->N-1 candidate pool. The cap ensures both
+    # source and output are categorical and kind_drift does not fire.
+    # The 20-code limit is documented here; a larger NDC corpus (>=50 codes)
+    # would allow freetext source and freetext output without kind_drift.
 
     # claims.service_date: coarsen class (bucket_perturb to month).
     - table: claims
@@ -418,6 +503,14 @@ invariants:
       column: claim_line_sum
       formula: "sum(line_amount) across all rows, broadcast as scalar"
       branch_count: 0
+
+  # 6.11 Chapter-preserve end-to-end: verify that the masked diagnosis code
+  # is in the same ICD-10 chapter as the source code. chapter_preserve:true
+  # is set on the diagnosis code_set column in the pipeline config; this
+  # invariant confirms the constraint holds for every row in the output.
+  chapter_preserve:
+    - table: claims
+      column: diagnosis
 
   # Strategy coverage declared for this job.
   strategy_coverage:

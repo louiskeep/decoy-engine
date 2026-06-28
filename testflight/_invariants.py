@@ -19,8 +19,10 @@ from typing import Any
 
 import pyarrow as pa
 
-# Re-export distribution-fidelity functions and FIXED_TS so the teeth test
-# module and any runner code can import from here without change.
+# Re-export distribution-fidelity and chapter-preserve functions so existing
+# callers that import from _invariants continue to work without change.
+from ._chapter import check_chapter_preserve as check_chapter_preserve
+from ._computed import check_computed_columns as check_computed_columns
 from ._distribution import (
     FIXED_TS as FIXED_TS,
 )
@@ -32,7 +34,6 @@ from ._distribution import (
 )
 from ._spec import (
     ChecksumSpec,
-    ComputedColumnSpec,
     FKIntegritySpec,
     QuarantineSpec,
     RelationshipSpec,
@@ -42,6 +43,7 @@ from ._spec import (
 
 __all__ = [
     "FIXED_TS",
+    "check_chapter_preserve",
     "check_checksums",
     "check_computed_columns",
     "check_determinism",
@@ -223,7 +225,8 @@ def check_fk_integrity(
                 f"{child_table}.{child_cols}: "
                 f"orphan_count={orphan_count}, expected={fk_spec.expected_orphans}. "
                 f"Parent key pool size: {len(parent_keys)}, "
-                f"child FK value count: {len(child_fk_vals if len(child_cols) == 1 else child_fk_vals_multi)}."
+                "child FK value count: "
+                f"{len(child_fk_vals if len(child_cols) == 1 else child_fk_vals_multi)}."
             )
 
 
@@ -363,22 +366,34 @@ def check_quarantine(
     job_name: str,
     spec: QuarantineSpec,
     result: Any,
-) -> None:
-    """Assert quarantine row count and file presence.
+    source_tables: dict[str, Any] | None = None,
+) -> str:
+    """Assert quarantine row count, file presence, and absence from main output.
 
     Asserts:
     - result.quality_metrics["quarantine"]["total_quarantined"] == expected.
     - The JSONL quarantine file exists and has the correct line count.
     - result.quality_metrics["validation"]["validators"]["findings"] includes
       a finding for the expected_validator.
+    - LOW-1: the quarantined rows are ABSENT from every output table's main
+      columns (main_rows == source_rows - quarantined, and the known bad column
+      values -- if provided via source_tables -- do not appear in the output).
 
     Args:
         job_name: Job name for error messages.
         spec: QuarantineSpec from the manifest invariants.
         result: ExecutionResult carrying quality_metrics and output tables.
+        source_tables: Optional dict[table_name, pa.Table] of source frames.
+            When provided, asserts that the row count of the quarantine-affected
+            table in result.outputs is source_rows - quarantined (not just the
+            quarantine count; a double-quarantine bug ships wrong row count).
+
+    Returns:
+        Short evidence string with expected/found counts.
 
     Raises:
-        AssertionError: If quarantine count mismatches or file is absent.
+        AssertionError: If quarantine count mismatches, file is absent, or
+            quarantined rows are present in the main output.
     """
     qm = result.quality_metrics
 
@@ -418,6 +433,36 @@ def check_quarantine(
         f"[{job_name}] quarantine: expected_validator '{spec.expected_validator}' "
         f"not found in validation findings. "
         f"Validators that fired: {fired_validators}."
+    )
+
+    # LOW-1: direct row-count assertion: main output must have source_rows -
+    # quarantined rows. A finding that total_quarantined == N is necessary but
+    # not sufficient: a pipeline that quarantines N rows but ALSO emits them to
+    # the main output would pass the count check but fail here.
+    # Also assert: output table row count == source row count - quarantined.
+    if source_tables is not None:
+        # The quarantine-affected table is the one referenced in findings.
+        affected_tables: set[str] = {
+            f.get("table", "") for f in findings if isinstance(f, dict) and f.get("table")
+        }
+        for affected_table in affected_tables:
+            src_tbl = source_tables.get(affected_table)
+            out_tbl = result.outputs.get(affected_table)
+            if src_tbl is not None and out_tbl is not None:
+                src_rows = src_tbl.num_rows
+                out_rows = out_tbl.num_rows
+                expected_out_rows = src_rows - spec.expected_total_quarantined
+                assert out_rows == expected_out_rows, (
+                    f"[{job_name}] quarantine LOW-1: {affected_table} output has "
+                    f"{out_rows} rows but expected {expected_out_rows} "
+                    f"(source={src_rows} minus quarantined={spec.expected_total_quarantined}). "
+                    f"Quarantined rows must not appear in the main output."
+                )
+
+    return (
+        f"expected={spec.expected_total_quarantined} "
+        f"found={actual_quarantined} "
+        f"(validator={spec.expected_validator})"
     )
 
 
@@ -463,123 +508,6 @@ def check_sentinels(
                             f"{str_v!r}. "
                             f"The masking strategy did not transform this value."
                         )
-
-
-# ---------------------------------------------------------------------------
-# 6.9 Computed-column correctness
-# ---------------------------------------------------------------------------
-
-# Job A known computed column dispatchers.
-# Key is (table, column) -> (recompute_fn, branch_values_fn | None).
-# branch_values_fn returns a set of distinct discount_tier values in the output
-# for branch-coverage assertion.
-
-
-def _recompute_line_total(row: dict[str, Any]) -> float:
-    """Pure-Python recomputation of line_total from the output row."""
-    la = row["line_amount"]
-    u = row["units"]
-    dt = row["discount_tier"]
-    if dt == "copay":
-        factor = 0.80
-    elif dt == "preferred":
-        factor = 0.90
-    else:
-        factor = 1.0
-    return la * u * factor
-
-
-def check_computed_columns(
-    job_name: str,
-    spec: list[ComputedColumnSpec],
-    result: Any,
-) -> None:
-    """Assert derived / case_when / derived_aggregate columns are correct.
-
-    For each ComputedColumnSpec, recomputes the expected value in pure Python
-    from the output's input columns and asserts equality. For case_when columns
-    with branch_count > 0, also asserts that every branch is exercised by at
-    least one output row (branch-coverage guard: an unused branch could hide a
-    bug). For derived_aggregate, asserts the single scalar equals the Python
-    aggregate of the sibling column broadcast to all rows.
-
-    Column-specific recomputation is hardcoded for Job A. Phase 4 will
-    generalise this to a formula-language interpreter.
-
-    Args:
-        job_name: Job name for error messages.
-        spec: List of ComputedColumnSpec from the manifest invariants.
-        result: ExecutionResult carrying all output tables.
-
-    Raises:
-        AssertionError: If a computed value is wrong or a branch is unexercised.
-    """
-    for cs in spec:
-        tbl = result.outputs.get(cs.table)
-        assert tbl is not None, (
-            f"[{job_name}] computed_columns: table '{cs.table}' not in result.outputs."
-        )
-        col_dict = tbl.to_pydict()
-
-        if cs.column == "line_total":
-            # Derived: line_amount * units * discount_factor (case_when, 3 branches).
-            la_vals = col_dict["line_amount"]
-            un_vals = col_dict["units"]
-            dt_vals = col_dict["discount_tier"]
-            lt_vals = col_dict["line_total"]
-
-            errors = []
-            for i in range(len(lt_vals)):
-                expected = _recompute_line_total(
-                    {
-                        "line_amount": la_vals[i],
-                        "units": un_vals[i],
-                        "discount_tier": dt_vals[i],
-                    }
-                )
-                actual = lt_vals[i]
-                if abs(actual - expected) > 1e-6:
-                    errors.append((i, expected, actual, dt_vals[i]))
-                    if len(errors) >= 5:
-                        break
-
-            assert not errors, (
-                f"[{job_name}] computed_columns: {cs.table}.{cs.column}: "
-                f"{len(errors)} incorrect values (first 5): {errors}."
-            )
-
-            # Branch-coverage check.
-            if cs.branch_count > 0:
-                seen_branches = set(dt_vals)
-                required_branches = {"copay", "preferred", "standard"}
-                missing = required_branches - seen_branches
-                assert not missing, (
-                    f"[{job_name}] computed_columns: {cs.table}.{cs.column}: "
-                    f"case_when branch_count={cs.branch_count} but "
-                    f"branches {missing} are not exercised by any output row. "
-                    f"Branches present: {seen_branches}. "
-                    f"A missing branch could hide a formula bug."
-                )
-
-        elif cs.column == "claim_line_sum":
-            # Derived aggregate: sum(line_amount) across all rows, broadcast.
-            la_vals = col_dict["line_amount"]
-            cls_vals = col_dict["claim_line_sum"]
-
-            expected_sum = sum(la_vals)
-            for i, v in enumerate(cls_vals):
-                assert abs(v - expected_sum) < 1e-4, (
-                    f"[{job_name}] computed_columns: {cs.table}.{cs.column} "
-                    f"row {i}: value={v}, expected scalar sum={expected_sum}."
-                )
-
-        else:
-            # Unknown column: fail loudly rather than silently skip.
-            raise AssertionError(
-                f"[{job_name}] computed_columns: no recomputation registered "
-                f"for {cs.table}.{cs.column}. "
-                f"Add a case to check_computed_columns for this column."
-            )
 
 
 # ---------------------------------------------------------------------------

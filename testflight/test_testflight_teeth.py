@@ -46,6 +46,7 @@ from pydantic import ValidationError
 
 from testflight._invariants import (
     FIXED_TS,
+    check_chapter_preserve,
     check_computed_columns,
     check_distribution_generate,
     check_distribution_mask,
@@ -54,6 +55,7 @@ from testflight._invariants import (
     check_sentinels,
 )
 from testflight._spec import (
+    ChapterPreserveSpec,
     ColumnDistributionSpec,
     ComputedColumnSpec,
     FKIntegritySpec,
@@ -725,11 +727,12 @@ class TestComputedColumnTeeth:
             outputs={"claim_lines": tbl},
             quality_metrics={},
         )
+        formula = "line_amount * units * case_when(discount_tier, copay=0.80, preferred=0.90, 1.0)"
         spec = [
             ComputedColumnSpec(
                 table="claim_lines",
                 column="line_total",
-                formula="line_amount * units * case_when(discount_tier, copay=0.80, preferred=0.90, 1.0)",
+                formula=formula,
                 branch_count=3,
             )
         ]
@@ -779,11 +782,14 @@ class TestComputedColumnTeeth:
             outputs={"claim_lines": tbl},
             quality_metrics={},
         )
+        line_total_formula = (
+            "line_amount * units * case_when(discount_tier, copay=0.80, preferred=0.90, 1.0)"
+        )
         spec = [
             ComputedColumnSpec(
                 table="claim_lines",
                 column="line_total",
-                formula="line_amount * units * case_when(discount_tier, copay=0.80, preferred=0.90, 1.0)",
+                formula=line_total_formula,
                 branch_count=3,
             ),
             ComputedColumnSpec(
@@ -1605,3 +1611,350 @@ class TestLowThreeCorrelationTol:
             # If raise: TVD discriminated even for continuous floats at this n.
             # Either outcome is acceptable; the test documents the behavior.
             pass
+
+
+# ---------------------------------------------------------------------------
+# TestJobACorrelationBites: Tooth C (correlation-preservation) genuinely fires
+# on the Job A (amount_band, diagnosis_chapter) joint when the output is
+# decorrelated. The control test proves the joint is not vacuous.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.testflight
+class TestJobACorrelationBites:
+    """Mutation controls for the (amount_band, diagnosis_chapter) joint.
+
+    Proves that Tooth C fires when amount_band is shuffled in the output
+    (decorrelation -> similarity < 0.90 -> AssertionError), and that a
+    correct passthrough output passes (similarity = 1.0).
+    """
+
+    @staticmethod
+    def _build_correlated_df(n: int = 2000, seed: int = 42) -> pd.DataFrame:
+        """Return a DataFrame with amount_band correlated to diagnosis_chapter.
+
+        amount_band and diagnosis_chapter are strongly correlated by construction:
+          high -> chapter I or E (ICD high-cost chapters)
+          low  -> chapter A or B (ICD low-cost chapters)
+          mid  -> chapter J or K
+        Matches the correlation pattern in fixture.build_claims().
+        """
+        rng = np.random.default_rng(seed)
+        bands = rng.choice(["high", "low", "mid"], size=n, p=[0.35, 0.30, 0.35])
+        chapter_map = {"high": list("IE"), "low": list("AB"), "mid": list("JK")}
+        chapters = [rng.choice(chapter_map[str(b)]) for b in bands]
+        return pd.DataFrame({"amount_band": bands, "diagnosis_chapter": chapters})
+
+    @staticmethod
+    def _make_spec() -> list[ColumnDistributionSpec]:
+        return [
+            ColumnDistributionSpec(
+                table="claims",
+                column="amount_band",
+                distribution_class="preserve",
+                strategy="passthrough",
+                joint_columns=[["amount_band", "diagnosis_chapter"]],
+                corr_tol=0.90,
+            ),
+            ColumnDistributionSpec(
+                table="claims",
+                column="diagnosis_chapter",
+                distribution_class="preserve",
+                strategy="passthrough",
+                joints_waived=True,
+                joints_waived_reason=(
+                    "diagnosis_chapter is the target of the joint declared on "
+                    "amount_band; waived here to avoid inflating non-waived count."
+                ),
+            ),
+        ]
+
+    def test_correct_passthrough_output_passes(self) -> None:
+        """A passthrough output (amount_band unchanged) must pass Tooth C.
+
+        Both amount_band and diagnosis_chapter are passthrough; the joint
+        similarity between source and output is 1.0 because the values are
+        identical. This proves the 'good path' is not over-asserted.
+        """
+        source_df = self._build_correlated_df()
+        output_df = source_df.copy()  # passthrough: no change
+        # Should not raise.
+        check_distribution_mask(
+            "job_a_corr_control",
+            "claims",
+            self._make_spec(),
+            source_df,
+            output_df,
+            strategy_map={"amount_band": "passthrough", "diagnosis_chapter": "passthrough"},
+        )
+
+    def test_decorrelated_output_raises(self) -> None:
+        """Shuffling amount_band in the output breaks the joint -> Tooth C fires.
+
+        The source has a strong (amount_band, diagnosis_chapter) correlation
+        (TVD similarity near 1.0). Shuffling amount_band independently of
+        diagnosis_chapter destroys the joint distribution, bringing the
+        joint similarity below corr_tol=0.90. The check must raise with a
+        correlation-preservation message.
+        """
+        rng = np.random.default_rng(99)
+        source_df = self._build_correlated_df()
+        output_df = source_df.copy()
+        # Shuffle amount_band independently of diagnosis_chapter.
+        output_df["amount_band"] = rng.permutation(output_df["amount_band"].values)
+        with pytest.raises(AssertionError, match="correlation-preservation"):
+            check_distribution_mask(
+                "job_a_corr_control",
+                "claims",
+                self._make_spec(),
+                source_df,
+                output_df,
+                strategy_map={"amount_band": "passthrough", "diagnosis_chapter": "passthrough"},
+            )
+
+
+# ---------------------------------------------------------------------------
+# TestChapterPreserve: check_chapter_preserve end-to-end mutation controls.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.testflight
+class TestChapterPreserve:
+    """Mutation controls for check_chapter_preserve (invariant 6.11).
+
+    Proves that check_chapter_preserve detects chapter mismatches and
+    passes cleanly when chapters are preserved.
+    """
+
+    @staticmethod
+    def _make_result(outputs: dict[str, pa.Table]) -> Any:
+        return SimpleNamespace(outputs=outputs)
+
+    def test_same_chapter_replacement_passes(self) -> None:
+        """Masked codes in the same ICD-10 chapter must pass check.
+
+        Source A01.0 -> output A02.0: same chapter (A). Should not raise.
+        """
+        src = pa.table(
+            {
+                "claim_id": ["C1", "C2", "C3", "C4"],
+                "diagnosis": ["A01.0", "B20.0", "I10.0", "C50.0"],
+            }
+        )
+        out = pa.table(
+            {
+                "claim_id": ["C1", "C2", "C3", "C4"],
+                "diagnosis": ["A02.0", "B19.0", "I11.0", "C51.0"],  # same chapters
+            }
+        )
+        spec = [ChapterPreserveSpec(table="claims", column="diagnosis")]
+        check_chapter_preserve(
+            "chapter_test",
+            spec,
+            self._make_result({"claims": out}),
+            {"claims": src},
+        )
+
+    def test_chapter_mismatch_raises(self) -> None:
+        """A masked code in a different chapter must raise.
+
+        Source C50.0 (chapter C) -> output Z10.0 (chapter Z) is a chapter
+        violation. check_chapter_preserve must raise with a 'chapter_preserve'
+        message including the count of mismatches.
+        """
+        src = pa.table(
+            {
+                "claim_id": ["C1", "C2", "C3"],
+                "diagnosis": ["A01.0", "B20.0", "C50.0"],
+            }
+        )
+        out = pa.table(
+            {
+                "claim_id": ["C1", "C2", "C3"],
+                # C50.0 -> Z10.0 is a chapter violation (C -> Z).
+                "diagnosis": ["A02.0", "B19.0", "Z10.0"],
+            }
+        )
+        spec = [ChapterPreserveSpec(table="claims", column="diagnosis")]
+        with pytest.raises(AssertionError, match="chapter_preserve"):
+            check_chapter_preserve(
+                "chapter_test",
+                spec,
+                self._make_result({"claims": out}),
+                {"claims": src},
+            )
+
+    def test_multiple_mismatches_raises(self) -> None:
+        """Multiple chapter mismatches are reported in the AssertionError."""
+        src = pa.table(
+            {
+                "claim_id": ["C1", "C2", "C3", "C4"],
+                "diagnosis": ["A01.0", "B20.0", "I10.0", "C50.0"],
+            }
+        )
+        out = pa.table(
+            {
+                "claim_id": ["C1", "C2", "C3", "C4"],
+                # B20.0 -> A20.0 (B->A) and C50.0 -> Z10.0 (C->Z) are mismatches.
+                "diagnosis": ["A02.0", "A20.0", "I11.0", "Z10.0"],
+            }
+        )
+        spec = [ChapterPreserveSpec(table="claims", column="diagnosis")]
+        with pytest.raises(AssertionError, match="chapter_preserve"):
+            check_chapter_preserve(
+                "chapter_test",
+                spec,
+                self._make_result({"claims": out}),
+                {"claims": src},
+            )
+
+
+# ---------------------------------------------------------------------------
+# TestPerColumnWaiverScoping: verifies the HIGH-1 per-column waiver fix.
+# The bug was: any(s.joints_waived) disabled the joint requirement for the
+# WHOLE table. The fix: only non-waived preserve columns contribute to the
+# >=2 count that triggers the requirement.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.testflight
+class TestPerColumnWaiverScoping:
+    """Mutation controls for the per-column waiver scoping fix (HIGH-1).
+
+    Before the fix:
+      - waiving column C also exempted columns A and B from the joint requirement.
+    After the fix:
+      - waiving C exempts only C; A and B still require a declared joint.
+    """
+
+    @staticmethod
+    def _build_df(n: int = 200, seed: int = 42) -> pd.DataFrame:
+        rng = np.random.default_rng(seed)
+        return pd.DataFrame(
+            {
+                "a": [str(v) for v in rng.integers(0, 5, n)],
+                "b": [str(v) for v in rng.integers(0, 5, n)],
+                "c": [str(v) for v in rng.integers(0, 5, n)],
+            }
+        )
+
+    def test_two_non_waived_no_joints_raises(self) -> None:
+        """With 2 non-waived preserve columns and no joints -> RAISES.
+
+        Column c is waived, but columns a and b are non-waived. The per-column
+        scoping fix ensures that c's waiver does NOT exempt a and b from the
+        joint requirement. With no joint declared, the requirement fires.
+        """
+        df = self._build_df()
+        spec = [
+            ColumnDistributionSpec(
+                table="t",
+                column="a",
+                distribution_class="preserve",
+                strategy="passthrough",
+            ),
+            ColumnDistributionSpec(
+                table="t",
+                column="b",
+                distribution_class="preserve",
+                strategy="passthrough",
+            ),
+            ColumnDistributionSpec(
+                table="t",
+                column="c",
+                distribution_class="preserve",
+                strategy="passthrough",
+                joints_waived=True,
+                joints_waived_reason="c is waived; a and b are still non-waived",
+            ),
+        ]
+        with pytest.raises(AssertionError, match="non-waived preserve"):
+            check_distribution_mask(
+                "waiver_scope_test",
+                "t",
+                spec,
+                df,
+                df.copy(),
+                strategy_map={"a": "passthrough", "b": "passthrough", "c": "passthrough"},
+            )
+
+    def test_waived_column_with_joint_for_others_passes(self) -> None:
+        """Waiving c does not block a declared joint for a and b.
+
+        Adding joint_columns=[["a","b"]] to the spec for column a satisfies
+        the requirement for the two non-waived preserve columns. The check
+        must pass.
+        """
+        df = self._build_df()
+        spec = [
+            ColumnDistributionSpec(
+                table="t",
+                column="a",
+                distribution_class="preserve",
+                strategy="passthrough",
+                joint_columns=[["a", "b"]],
+                # 0.50 is the minimum allowed by the spec (ge=0.5). The test
+                # verifies scoping, not TVD value; 0.5 is loose enough to pass
+                # with uncorrelated random integer columns.
+                corr_tol=0.50,
+            ),
+            ColumnDistributionSpec(
+                table="t",
+                column="b",
+                distribution_class="preserve",
+                strategy="passthrough",
+                joints_waived=True,
+                joints_waived_reason="b is the target of the joint declared on a",
+            ),
+            ColumnDistributionSpec(
+                table="t",
+                column="c",
+                distribution_class="preserve",
+                strategy="passthrough",
+                joints_waived=True,
+                joints_waived_reason="c is explicitly waived",
+            ),
+        ]
+        # Should not raise: joint declared for the two non-waived specs' columns.
+        check_distribution_mask(
+            "waiver_scope_test",
+            "t",
+            spec,
+            df,
+            df.copy(),
+            strategy_map={"a": "passthrough", "b": "passthrough", "c": "passthrough"},
+        )
+
+    def test_all_waived_no_joints_passes(self) -> None:
+        """If ALL preserve columns are individually waived, no joints are needed.
+
+        With 0 non-waived preserve columns, the >=2 requirement cannot fire.
+        """
+        df = self._build_df()
+        spec = [
+            ColumnDistributionSpec(
+                table="t",
+                column="a",
+                distribution_class="preserve",
+                strategy="passthrough",
+                joints_waived=True,
+                joints_waived_reason="test: all waived",
+            ),
+            ColumnDistributionSpec(
+                table="t",
+                column="b",
+                distribution_class="preserve",
+                strategy="passthrough",
+                joints_waived=True,
+                joints_waived_reason="test: all waived",
+            ),
+        ]
+        # Should not raise: no non-waived columns -> no joint requirement.
+        check_distribution_mask(
+            "waiver_scope_test",
+            "t",
+            spec,
+            df,
+            df.copy(),
+            strategy_map={"a": "passthrough", "b": "passthrough"},
+        )

@@ -1,0 +1,128 @@
+"""Computed-column correctness invariant (check_computed_columns).
+
+Split from _invariants.py to keep both modules within the 600-line limit.
+Imported and re-exported by _invariants.py for backwards compatibility.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from ._spec import ComputedColumnSpec
+
+
+def _recompute_line_total(row: dict[str, Any]) -> float:
+    """Pure-Python recomputation of line_total from the output row."""
+    la = row["line_amount"]
+    u = row["units"]
+    dt = row["discount_tier"]
+    if dt == "copay":
+        factor = 0.80
+    elif dt == "preferred":
+        factor = 0.90
+    else:
+        factor = 1.0
+    return la * u * factor
+
+
+def check_computed_columns(
+    job_name: str,
+    spec: list[ComputedColumnSpec],
+    result: Any,
+) -> str:
+    """Assert derived / case_when / derived_aggregate columns are correct.
+
+    For each ComputedColumnSpec, recomputes the expected value in pure Python
+    from the output's input columns and asserts equality. For case_when columns
+    with branch_count > 0, also asserts that every branch is exercised by at
+    least one output row (branch-coverage guard: an unused branch could hide a
+    bug). For derived_aggregate, asserts the single scalar equals the Python
+    aggregate of the sibling column broadcast to all rows.
+
+    Column-specific recomputation is hardcoded for Job A. Phase 4 will
+    generalise this to a formula-language interpreter.
+
+    Args:
+        job_name: Job name for error messages.
+        spec: List of ComputedColumnSpec from the manifest invariants.
+        result: ExecutionResult carrying all output tables.
+
+    Returns:
+        Short evidence string summarising what was verified.
+
+    Raises:
+        AssertionError: If a computed value is wrong or a branch is unexercised.
+    """
+    checked: list[str] = []
+    for cs in spec:
+        tbl = result.outputs.get(cs.table)
+        assert tbl is not None, (
+            f"[{job_name}] computed_columns: table '{cs.table}' not in result.outputs."
+        )
+        col_dict = tbl.to_pydict()
+
+        if cs.column == "line_total":
+            # Derived: line_amount * units * discount_factor (case_when, 3 branches).
+            la_vals = col_dict["line_amount"]
+            un_vals = col_dict["units"]
+            dt_vals = col_dict["discount_tier"]
+            lt_vals = col_dict["line_total"]
+
+            errors = []
+            for i in range(len(lt_vals)):
+                expected = _recompute_line_total(
+                    {
+                        "line_amount": la_vals[i],
+                        "units": un_vals[i],
+                        "discount_tier": dt_vals[i],
+                    }
+                )
+                actual = lt_vals[i]
+                if abs(actual - expected) > 1e-6:
+                    errors.append((i, expected, actual, dt_vals[i]))
+                    if len(errors) >= 5:
+                        break
+
+            assert not errors, (
+                f"[{job_name}] computed_columns: {cs.table}.{cs.column}: "
+                f"{len(errors)} incorrect values (first 5): {errors}."
+            )
+
+            # Branch-coverage check.
+            if cs.branch_count > 0:
+                seen_branches = set(dt_vals)
+                required_branches = {"copay", "preferred", "standard"}
+                missing = required_branches - seen_branches
+                assert not missing, (
+                    f"[{job_name}] computed_columns: {cs.table}.{cs.column}: "
+                    f"case_when branch_count={cs.branch_count} but "
+                    f"branches {missing} are not exercised by any output row. "
+                    f"Branches present: {seen_branches}. "
+                    f"A missing branch could hide a formula bug."
+                )
+            checked.append(
+                f"{cs.table}.{cs.column}(rows={len(lt_vals)},branches={cs.branch_count})"
+            )
+
+        elif cs.column == "claim_line_sum":
+            # Derived aggregate: sum(line_amount) across all rows, broadcast.
+            la_vals = col_dict["line_amount"]
+            cls_vals = col_dict["claim_line_sum"]
+
+            expected_sum = sum(la_vals)
+            for i, v in enumerate(cls_vals):
+                assert abs(v - expected_sum) < 1e-4, (
+                    f"[{job_name}] computed_columns: {cs.table}.{cs.column} "
+                    f"row {i}: value={v}, expected scalar sum={expected_sum}."
+                )
+            checked.append(f"{cs.table}.{cs.column}(sum={expected_sum:.2f},rows={len(cls_vals)})")
+
+        else:
+            # Unknown column: fail loudly rather than silently skip.
+            raise AssertionError(
+                f"[{job_name}] computed_columns: no recomputation registered "
+                f"for {cs.table}.{cs.column}. "
+                f"Add a case to check_computed_columns for this column."
+            )
+
+    return "checked=" + ",".join(checked)

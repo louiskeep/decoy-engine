@@ -204,19 +204,26 @@ def check_distribution_mask(
         if isinstance(c, dict) and "column" in c
     }
 
-    # --- MEDIUM-2: multi-column joint requirement ---
+    # --- MEDIUM-2: multi-column joint requirement (per-column waiver scoping) ---
     # A multi-column preserve table without declared joint pairs means pairwise
     # correlation is never checked (the check is vacuous). Tables must either
-    # declare >=1 pair or explicitly waive the requirement with a reason.
+    # declare >=1 joint pair or explicitly waive each column's requirement.
+    #
+    # Per-column scoping (HIGH-1 fix): a waiver on ONE column exempts only THAT
+    # column from the requirement, not the whole table. If >= 2 preserve columns
+    # are non-waived AND no joint_cols are declared, the requirement fires.
+    # Previously, any(s.joints_waived) was used, which let one waived column
+    # disable the joint requirement for all other (non-waived) columns.
     preserve_cols_in_spec = [s for s in spec if s.distribution_class == "preserve"]
-    joints_waived_by_spec = any(s.joints_waived for s in spec)
-    if len(preserve_cols_in_spec) >= 2 and not joint_cols and not joints_waived_by_spec:
+    non_waived_preserve_cols = [s for s in preserve_cols_in_spec if not s.joints_waived]
+    if len(non_waived_preserve_cols) >= 2 and not joint_cols:
         raise AssertionError(
             f"[{job_name}/{table}] multi-column mask table has "
-            f"{len(preserve_cols_in_spec)} preserve columns but no joint_columns "
-            f"declared. Declare >=1 joint pair to check correlation, or set "
-            f"joints_waived=True with a joints_waived_reason on a column spec entry "
-            f"if correlation preservation is not required for this table."
+            f"{len(non_waived_preserve_cols)} non-waived preserve columns but "
+            f"no joint_columns declared. "
+            f"Declare >=1 joint pair to check correlation, or set "
+            f"joints_waived=True with a joints_waived_reason on each column spec "
+            f"entry where correlation is not required."
         )
 
     # --- TOOTH A: constant-collapse guard (preserve class) ---
