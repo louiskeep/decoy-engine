@@ -40,9 +40,9 @@ jobs:
         # mirrors the [lint] dev-deps group in pyproject.toml.
         run: pip install ruff==0.15.14
       - name: Lint
-        run: ruff check src tests
+        run: ruff check src tests testflight scripts
       - name: Format check
-        run: ruff format --check src tests
+        run: ruff format --check src tests testflight scripts
 
   mypy:
     runs-on: ubuntu-latest
@@ -58,7 +58,10 @@ jobs:
         # dev-deps group in pyproject.toml.
         run: pip install -e ".[dev]" mypy==2.1.0
       - name: Type check
-        run: mypy src/decoy_engine
+        # testflight/ holds real runner+invariant logic (acceptance suite); it
+        # lives outside src/tests so it must be named explicitly. scripts/ stays
+        # out of mypy (pre-existing untyped perf scripts) but is ruff-gated above.
+        run: mypy src/decoy_engine testflight
 
   # regression-gate: ONE job that vets every change across all correctness
   # families. It runs the whole non-benchmark suite in a single invocation

@@ -1,0 +1,144 @@
+# Test-flight Job A: Healthcare claims
+# Topology: one_to_many_multilevel (members -> claims -> claim_lines, depth 3)
+#
+# Phase 0: skeleton manifest exercising the FlightManifest data model.
+# Full pipeline config (config:) and seeded fixture generator (fixture.py)
+# are populated in Phase 1 / Phase 2.
+#
+# Strategies exercised (strategy_coverage below):
+#   fpe+checksum (luhn, npi), geo_generalize (Safe Harbor), date_shift,
+#   bucket_perturb, code_set (icd10, hcpcs, ndc), joint_mask, categorical,
+#   derived, case_when, derived_aggregate, from_parent, passthrough,
+#   validators (luhn, fk_intact, no_orphan_children), quarantine.
+
+job_name: a_healthcare_claims
+topology: one_to_many_multilevel
+seed: 42
+master_key_label: testflight
+
+tables:
+  - name: members
+    kind: mask
+    row_count: 2000
+    source_builder: "fixture.build_members"
+  - name: claims
+    kind: mask
+    row_count: 8000
+    source_builder: "fixture.build_claims"
+  - name: claim_lines
+    kind: mask
+    row_count: 20000
+    source_builder: "fixture.build_claim_lines"
+
+relationships:
+  - parent:
+      table: members
+      columns: [member_id]
+    children:
+      - table: claims
+        columns: [member_id]
+    orphan_policy: warn
+    namespace: member_identity
+  - parent:
+      table: claims
+      columns: [claim_id]
+    children:
+      - table: claim_lines
+        columns: [claim_id]
+    orphan_policy: warn
+    namespace: claim_identity
+
+# Pipeline config: skeleton only for Phase 0. Phase 1 populates the full
+# PipelineConfig-compatible dict (version, global_settings, sources, tables,
+# relationships, targets). The runner validates this through
+# PipelineConfig.model_validate(raw) before calling run_pipeline.
+config: {}
+
+invariants:
+  determinism: true
+
+  fk_integrity:
+    - relationship_name: member_identity
+      expected_orphans: 0
+      policy: warn
+    - relationship_name: claim_identity
+      expected_orphans: 0
+      policy: warn
+
+  distribution:
+    # members.ssn: fpe (preserve class) -- cardinality and value-identity expected high
+    - table: members
+      column: ssn
+      distribution_class: preserve
+      tolerance: 0.05
+      joint_columns: []
+      corr_tol: 0.90
+      expected_coarsening: false
+    # members.zip5: geo_generalize (coarsen class) -- cardinality must drop;
+    #   corr_tol is not a correlation pair here, just the default
+    - table: members
+      column: zip5
+      distribution_class: coarsen
+      tolerance: 0.10
+      joint_columns: []
+      corr_tol: 0.90
+      expected_coarsening: true
+    # claims.claim_amount and diagnosis chapter: pairwise correlation pair declared
+    # Phase 1 populates joint_columns for the pairwise check
+    - table: claims
+      column: claim_amount
+      distribution_class: preserve
+      tolerance: 0.10
+      joint_columns: []
+      corr_tol: 0.90
+      expected_coarsening: false
+
+  checksums:
+    - table: members
+      column: ssn
+      scheme: luhn
+    - table: members
+      column: npi
+      scheme: npi
+
+  safe_harbor:
+    - table: members
+      column: zip5
+      planted_restricted_zip3_count: 18
+      expected_suppressions: 18
+
+  quarantine:
+    planted_bad_row_count: 10
+    expected_total_quarantined: 10
+    expected_validator: luhn
+
+  sentinels:
+    - table: members
+      column: ssn
+      value: "SENTINEL-SSN-000-00-0000"
+    - table: members
+      column: email
+      value: "sentinel.leak.test@example-decoy-testflight.invalid"
+
+  computed_columns:
+    - table: claim_lines
+      column: line_total
+      formula: "line_amount * units, with case_when discount_tier branch"
+      branch_count: 3
+    - table: claim_lines
+      column: claim_line_sum
+      formula: "derived_aggregate sum(line_amount) per claim_id, broadcast to all rows"
+      branch_count: 0
+
+  strategy_coverage:
+    - fpe
+    - geo_generalize
+    - date_shift
+    - bucket_perturb
+    - code_set
+    - joint_mask
+    - categorical
+    - derived
+    - derived_aggregate
+    - from_parent
+    - passthrough

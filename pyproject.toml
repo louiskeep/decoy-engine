@@ -224,11 +224,19 @@ packages = ["src/decoy_engine"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+# addopts: belt-and-suspenders exclusion for the test-flight suite (primary
+# exclusion is the testflight/ location outside testpaths). The CLI -m flag
+# overrides addopts -m, so addopts alone is not sufficient -- but together
+# with the path exclusion it closes all default-loop collection vectors.
+# The `perf` marker is intentionally NOT excluded: perf tests run in the
+# default regression gate (see the perf marker description below).
+addopts = "-m 'not benchmark and not testflight'"
 markers = [
     "benchmark: informational performance benchmarks; not a regression gate",
     "perf: PERF.BASE.2/3 fixture + baseline tests; run in the default regression gate (not opt-in)",
     "golden: engine-v2 S1 golden fixture suite (CSVs + manifests under tests/fixtures/golden/); CI gates engine-v2 sprint work on these",
     "regression: a bugfix's regression test; the prove-regression gate re-runs it against the pre-fix baseline and requires it to fail there",
+    "testflight: acceptance test-flight suite (deliberately run, multi-job); excluded from the default loop; invoke via pytest testflight -m testflight or python scripts/test_flight.py",
 ]
 
 # ── Tooling baseline (V2.0-prep, sprint 1) ──────────────────────────────────
@@ -295,6 +303,19 @@ ignore = [
 ]
 # Connector contract tests intentionally use insecure hashing.
 "tests/connectors/**" = ["S101", "S105", "S106", "S324"]
+# Test-flight suite (lives outside tests/ for path-based exclusion from the
+# default loop). Apply the same relaxed rules as tests/** so assert statements,
+# pytest parametrize style, and lower naming bars do not false-positive.
+"testflight/**" = [
+    "S101", "S105", "S106", "S108",
+    "N802", "N803", "N806",
+    "PT011", "PT017", "PT018", "PT006", "PT012", "PT019",
+    "SLF001",
+    "B017", "RUF043", "RUF059", "SIM117",
+]
+# scripts/test_flight.py: confirmed-importable stub; run_suite import is
+# intentionally present to prove the runner package is importable.
+"scripts/test_flight.py" = ["F401"]
 # Benchmark suite has measurement loops that look stylistically loud.
 "tests/benchmark/**" = ["S101", "S105", "S106", "N802", "N806", "PT011"]
 # Intentional design / math-notation exceptions (no removal trigger;
