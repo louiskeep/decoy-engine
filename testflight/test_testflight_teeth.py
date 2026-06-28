@@ -2120,7 +2120,12 @@ class TestM2MFKIntegrityTeeth:
 
 @pytest.mark.testflight
 class TestM2MCorrelationTeeth:
-    """Mutation controls for the M2M correlation-through-masking invariant (Phase 3a).
+    """Mutation controls for the M2M passthrough-column correlation invariant (Phase 3a).
+
+    NOTE: this is correlation preservation for VALUE-STABLE (passthrough) columns,
+    NOT correlation-through-masking. The engine crosstab-TVD metric cannot measure
+    correlation through a value-changing mask (it relabels cell keys). See
+    docs/what-we-cannot-prove.md.
 
     Job B plants two PASSTHROUGH columns on the orders junction table:
       qty_band and order_total_band, correlated by fixture construction.

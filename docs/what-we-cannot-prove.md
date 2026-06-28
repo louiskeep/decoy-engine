@@ -91,6 +91,28 @@ fully synthetic data and its weights do not encode any real PII cell values
 (§B.4 of ml-benchmarking-and-privacy.md), but that is a training-data hygiene
 property, not a DP guarantee over the model's outputs.
 
+## The acceptance suite cannot measure correlation preserved THROUGH a value-changing mask
+
+The acceptance test-flight (`testflight/`) asserts pairwise-correlation
+preservation using the engine quality module's joint metric, which is a Total
+Variation Distance over the joint contingency table of the two columns' actual
+values. That metric compares value-labeled cells. A value-changing strategy
+(`fpe`, `hash`, `code_set`, `joint_mask`) relabels the cells, so the source and
+output crosstabs become disjoint and the similarity collapses to 0.0 even when
+the correlation structure is preserved perfectly. Measured directly: an
+`fpe`-masked pair whose structure is identical to the source scores 0.0, which
+is lower than a genuinely decorrelated pair (about 0.34).
+
+Consequence: the suite's correlation tooth can only verify that a correlation is
+preserved for columns that remain VALUE-STABLE (e.g. `passthrough`), and that
+such a correlation is not destroyed. It cannot verify that a value-changing
+masking strategy preserves a correlation, because the shipped metric cannot see
+through the relabeling. Genuinely closing that gap requires a relabel-invariant
+statistic (Cramers V, mutual information, or a rank correlation) computed by the
+harness on the masked output columns; that is owed work, not a current
+capability. Do not read a green correlation check on a value-changing column as
+proof that masking preserved its correlation.
+
 ## What it does do
 
 To be clear about the other side: Decoy does give you deterministic,

@@ -20,10 +20,18 @@
 #   Mutation control (TestM2MFKIntegrityTeeth) breaks one parent's FK resolution
 #   and asserts the invariant raises. Proves both checks are active.
 #
-# GENUINE CORRELATION-THROUGH-MASKING (Phase 2 carry-forward):
+# PASSTHROUGH-COLUMN CORRELATION PRESERVATION (Phase 2 carry-forward: PARTIAL):
 #   qty_band and order_total_band are PASSTHROUGH columns correlated by fixture
 #   construction: products have category-driven unit_price ranges (electronics
 #   high, food low). order_total = qty * unit_price correlates with qty_band.
+#   LIMITATION (the carry-forward is NOT closed): this verifies correlation
+#   preservation for VALUE-STABLE (passthrough) columns only. Correlation THROUGH
+#   a value-changing mask (fpe/code_set/joint_mask) is NOT measurable by the
+#   engine crosstab-TVD metric - it relabels cell keys, so source and output
+#   crosstabs are disjoint and similarity is 0.0 even when the structure is
+#   perfectly preserved. See docs/what-we-cannot-prove.md. Genuinely closing the
+#   carry-forward needs a harness-side relabel-invariant statistic (Cramers V /
+#   mutual information), which is owed work, not delivered here.
 #   Both are passthrough -> source=output -> joint similarity = 1.0 in faithful run.
 #   Mutation control (TestM2MCorrelationTeeth) shuffles order_total_band in the
 #   output -> joint similarity drops below corr_tol=0.90 -> RAISES.
@@ -220,8 +228,10 @@ config:
 
         # qty_band: passthrough. Correlated with order_total_band by fixture
         # construction (category-driven unit_price model). The joint
-        # (qty_band, order_total_band) with corr_tol=0.90 is the Phase 2
-        # carry-forward correlation-through-masking tooth.
+        # (qty_band, order_total_band) with corr_tol=0.90 verifies correlation
+        # preservation for these PASSTHROUGH columns (catches a decorrelation of
+        # a passthrough junction column). This is NOT correlation-through-masking
+        # - see the manifest header limitation note.
         - name: qty_band
           strategy: passthrough
 
