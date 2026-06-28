@@ -1,35 +1,54 @@
-"""geo_generalize strategy (SP-08 / P5.S.geo_generalize.1): ZIP Safe Harbor cascade.
+"""geo_generalize strategy (SP-08 / P5.S.geo_generalize.1+2): geographic generalization.
 
-Implements k-threshold geographic generalization for ZIP-format columns per the
-HIPAA Safe Harbor de-identification standard (45 CFR 164.514(b)(2)). Each row
-is generalized to the most specific level whose in-dataset count satisfies the
-k-threshold; if no level satisfies the threshold, the value is suppressed.
+Two generalization types:
 
-Cascade levels (ZIP type):
-  zip5      -- retain the full 5-digit ZIP (satisfies threshold when >= k records
-               in the dataset share this ZIP5).
-  zip3      -- generalise to the 3-digit prefix, UNLESS that prefix is in the
-               HHS-published restricted-prefix list (population < 20,000 per
-               45 CFR 164.514(b)(2)(i)(B)), in which case this level is skipped.
-  state     -- generalise to the 2-letter state abbreviation derived from the
-               ZIP5. Satisfies threshold when >= k records in the dataset share
-               the same state.
-  suppress  -- replace with empty string ("") when no level satisfies the threshold.
+ZIP (type="zip"):
+  Implements k-threshold geographic generalization for ZIP-format columns per the
+  HIPAA Safe Harbor de-identification standard (45 CFR 164.514(b)(2)). Each row
+  is generalized to the most specific level whose in-dataset count satisfies the
+  k-threshold; if no level satisfies the threshold, the value is suppressed.
 
-HIPAA Safe Harbor restricted ZIP3 prefixes:
-  The set of 3-digit ZIP code prefixes representing geographic units with fewer than
-  20,000 persons per the Census-based determination is loaded from the shipped
-  ``us_zip3_population`` reference table (SP-08). Source: 45 CFR 164.514(b)(2)(i)(B).
-  See ``decoy_engine.reference_tables.data/us_zip3_population.parquet``.
+  Cascade levels (ZIP type):
+    zip5      -- retain the full 5-digit ZIP (satisfies threshold when >= k records
+                 in the dataset share this ZIP5).
+    zip3      -- generalise to the 3-digit prefix, UNLESS that prefix is in the
+                 HHS-published restricted-prefix list (population < 20,000 per
+                 45 CFR 164.514(b)(2)(i)(B)), in which case this level is skipped.
+    state     -- generalise to the 2-letter state abbreviation derived from the
+                 ZIP5. Satisfies threshold when >= k records in the dataset share
+                 the same state.
+    suppress  -- replace with empty string ("") when no level satisfies the threshold.
 
-Evidence:
-  ``cascade_zip_column`` returns a ``CascadeEvidence`` dataclass whose ``decisions``
-  attribute is a frozen tuple of per-row level labels ("zip3", "state", "suppressed",
-  etc.). Evidence is captured once at run time and must not be mutated afterward
-  (engineering best-practices §2.1: validation never mutates; evidence frozen).
+  HIPAA Safe Harbor restricted ZIP3 prefixes:
+    The set of 3-digit ZIP code prefixes representing geographic units with fewer than
+    20,000 persons per the Census-based determination is loaded from the shipped
+    ``us_zip3_population`` reference table (SP-08). Source: 45 CFR 164.514(b)(2)(i)(B).
+    See ``decoy_engine.reference_tables.data/us_zip3_population.parquet``.
+
+Lat/Lng (type="lat_lng"):
+  Implements H3 geospatial generalization (SP-08b / P5.S.geo_generalize.2). Each row
+  truncates a "lat,lng" coordinate pair to an H3 cell at a configurable resolution,
+  then cascades to coarser resolutions if the in-dataset count is below k_threshold.
+
+  Cascade levels (lat_lng type):
+    h3_resolution_9  -- H3 cell at resolution 9 (~174m average edge length, ~0.105 km2 area).
+    h3_resolution_7  -- H3 cell at resolution 7 (~1.22km average edge length, ~5.16 km2 area).
+    h3_resolution_5  -- H3 cell at resolution 5 (~8.54km average edge length, ~252 km2 area).
+    suppress         -- replace with empty string ("") when no level satisfies the threshold.
+
+  Output is the H3 cell INDEX STRING (not lat/lng coordinates; that would defeat
+  generalization). Requires the optional `geo` extra: ``pip install decoy-engine[geo]``.
+
+  H3 resolution scale (from https://h3geo.org/docs/core-library/restable/):
+    resolution 9 ~150m edge, resolution 7 ~1km edge, resolution 5 ~9km edge.
 
 Pattern: HIPAA Safe Harbor ZIP cascade (45 CFR 164.514(b)(2), HHS HIPAA Privacy Rule).
   See: https://www.hhs.gov/hipaa/for-professionals/privacy/special-topics/de-identification/
+
+Pattern: H3 geospatial indexing (Uber, Apache-2.0, h3-py library).
+  H3 hierarchical hexagonal grid; each cell at resolution R is fully contained in its
+  parent at resolution R-1. Same (lat, lng, resolution) -> same stable cell index.
+  See: https://h3geo.org/docs/
 """
 
 from __future__ import annotations
@@ -44,6 +63,20 @@ from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.reference_tables import load_table
 
 _LOG = logging.getLogger(__name__)
+
+# Supported geo types.
+_SUPPORTED_TYPES = frozenset({"zip", "lat_lng"})
+
+# Valid cascade levels for the lat_lng type. The int value is the H3 resolution.
+_H3_LEVEL_TO_RESOLUTION: dict[str, int] = {
+    "h3_resolution_9": 9,
+    "h3_resolution_7": 7,
+    "h3_resolution_5": 5,
+}
+
+# All valid cascade level names across all types.
+_ZIP_LEVELS = frozenset({"zip5", "zip3", "state", "suppress"})
+_H3_LEVELS = frozenset(_H3_LEVEL_TO_RESOLUTION) | {"suppress"}
 
 # Default HIPAA Safe Harbor population threshold: geographic units < 20,000 persons
 # must be generalised to a coarser level (45 CFR 164.514(b)(2)(i)(B)).
@@ -78,19 +111,26 @@ def _load_restricted_zip3() -> frozenset[str]:
 
 @dataclass(frozen=True)
 class GeoGeneralizeConfig:
-    """Configuration for a geo_generalize ZIP cascade operation.
+    """Configuration for a geo_generalize cascade operation.
 
     Attributes:
-        type: Generalization type. Only ``"zip"`` is supported in SP-08.
-            The lat/lng -> H3 path is deferred to SP-08b (requires h3-python).
+        type: Generalization type. ``"zip"`` (HIPAA Safe Harbor cascade, SP-08)
+            or ``"lat_lng"`` (H3 geospatial generalization, SP-08b).
         cascade: Ordered cascade levels. Must end with ``"suppress"``.
             Supported levels for ``type="zip"``:
-                ``zip5``    -- retain full 5-digit ZIP.
-                ``zip3``    -- generalise to 3-digit prefix (skipped if restricted).
-                ``state``   -- generalise to 2-letter state abbreviation.
-                ``suppress``-- emit empty string; terminates the cascade.
+                ``zip5``          -- retain full 5-digit ZIP.
+                ``zip3``          -- generalise to 3-digit prefix (skipped if restricted).
+                ``state``         -- generalise to 2-letter state abbreviation.
+                ``suppress``      -- emit empty string; terminates the cascade.
+            Supported levels for ``type="lat_lng"``:
+                ``h3_resolution_9``  -- H3 cell at resolution 9 (~150m).
+                ``h3_resolution_7``  -- H3 cell at resolution 7 (~1km).
+                ``h3_resolution_5``  -- H3 cell at resolution 5 (~9km).
+                ``suppress``         -- emit empty string; terminates the cascade.
         k_threshold: Minimum record count required to retain a generalization level.
             Default: 20000 (HIPAA Safe Harbor per 45 CFR 164.514(b)(2)).
+            For lat_lng H3 use, a lower threshold (e.g. 5) is typical since H3
+            resolution-9 cells cover only ~0.1 km2.
     """
 
     type: str
@@ -120,8 +160,8 @@ class GeoGeneralizeConfig:
                 ``k_threshold``.
 
         Raises:
-            PlanCompileError: Invalid ``type``, empty ``cascade``, or missing ``suppress``
-                as final cascade level.
+            PlanCompileError: Invalid ``type``, empty ``cascade``, missing ``suppress``
+                as cascade terminator, or invalid cascade level for the given type.
         """
         validate_geo_generalize_config(cfg)
         return cls(
@@ -156,9 +196,10 @@ def validate_geo_generalize_config(cfg: dict[str, Any]) -> None:
     Validation is fail-closed: an invalid config raises before touching data.
 
     Checks:
-      - ``type`` is ``"zip"`` (only type in SP-08; lat/lng is SP-08b).
+      - ``type`` is one of the supported types (``"zip"`` or ``"lat_lng"``).
       - ``cascade`` is a non-empty list.
       - ``cascade`` ends with ``"suppress"`` (must have a terminator).
+      - Each cascade level is valid for the given ``type``.
 
     Args:
         cfg: Raw config dict.
@@ -167,14 +208,13 @@ def validate_geo_generalize_config(cfg: dict[str, Any]) -> None:
         PlanCompileError: Any validation failure.
     """
     geo_type = cfg.get("type")
-    if geo_type != "zip":
+    if geo_type not in _SUPPORTED_TYPES:
         raise PlanCompileError(
             code="geo_generalize_unsupported_type",
             path="provider_config.type",
             message=(
                 f"geo_generalize: unsupported type {geo_type!r}. "
-                f"Only 'zip' is supported in SP-08. "
-                f"The lat/lng -> H3 path is deferred to SP-08b."
+                f"Supported types: {sorted(_SUPPORTED_TYPES)}."
             ),
         )
 
@@ -185,7 +225,8 @@ def validate_geo_generalize_config(cfg: dict[str, Any]) -> None:
             path="provider_config.cascade",
             message=(
                 "geo_generalize: 'cascade' must be a non-empty list of levels. "
-                "Example: cascade: [zip5, zip3, state, suppress]"
+                "Example (zip): cascade: [zip5, zip3, state, suppress]. "
+                "Example (lat_lng): cascade: [h3_resolution_9, h3_resolution_7, suppress]."
             ),
         )
 
@@ -195,10 +236,22 @@ def validate_geo_generalize_config(cfg: dict[str, Any]) -> None:
             path="provider_config.cascade",
             message=(
                 "geo_generalize: 'cascade' must include 'suppress' as a terminator. "
-                "Without it there is no defined behavior when all levels are below threshold. "
-                "Example: cascade: [zip5, zip3, state, suppress]"
+                "Without it there is no defined behavior when all levels are below threshold."
             ),
         )
+
+    # Validate per-level names for the given type.
+    valid_levels = _ZIP_LEVELS if geo_type == "zip" else _H3_LEVELS
+    for level in cascade:
+        if level not in valid_levels:
+            raise PlanCompileError(
+                code="geo_generalize_invalid_cascade_level",
+                path="provider_config.cascade",
+                message=(
+                    f"geo_generalize: cascade level {level!r} is not valid for "
+                    f"type={geo_type!r}. Valid levels: {sorted(valid_levels)}."
+                ),
+            )
 
 
 # ── ZIP5 -> ZIP3 -> state helper ──────────────────────────────────────────────
@@ -369,4 +422,160 @@ def _cascade_one_row(
 
     # Fallback: suppress if cascade list has no 'suppress' (should not happen
     # after validate_geo_generalize_config, but be fail-safe).
+    return _SUPPRESS_VALUE, _SUPPRESS_LABEL
+
+
+# ── H3 lat/lng generalization (SP-08b) ────────────────────────────────────────
+
+
+def _require_h3() -> Any:
+    """Import h3 or raise a clear ImportError naming the geo extra.
+
+    Fail-closed guard: called at function entry by any code that needs h3.
+    The error message names the optional extra so the operator knows how to
+    fix it without reading source code.
+
+    Raises:
+        ImportError: h3 is not installed; names the [geo] extra.
+    """
+    try:
+        import h3 as _h3  # type: ignore[import-untyped]
+
+        return _h3
+    except (ImportError, TypeError):
+        raise ImportError(
+            "geo_generalize with type='lat_lng' requires the h3 library. "
+            "Install it with: pip install 'decoy-engine[geo]'  "
+            "or: uv add 'decoy-engine[geo]'"
+        )
+
+
+def _parse_latlng(value: str) -> tuple[float, float] | None:
+    """Parse a 'lat,lng' string into (lat, lng) floats; return None on failure."""
+    try:
+        parts = value.strip().split(",", 1)
+        if len(parts) != 2:
+            return None
+        return float(parts[0].strip()), float(parts[1].strip())
+    except (ValueError, AttributeError):
+        return None
+
+
+def cascade_latlng_column(
+    df: pd.DataFrame,
+    column: str,
+    config: GeoGeneralizeConfig,
+) -> tuple[pd.DataFrame, CascadeEvidence]:
+    """Generalise a lat/lng column to H3 cell indexes via k-threshold cascade.
+
+    Each row is parsed as ``"lat,lng"`` and encoded as an H3 cell at the highest
+    configured resolution. If the in-dataset count of records sharing that cell
+    is below ``k_threshold``, the cell is generalised to the next coarser resolution
+    in the cascade until a resolution satisfies the threshold or ``suppress`` is
+    reached.
+
+    Output is the H3 cell index string (e.g. ``"8928308280fffff"``). This is
+    deliberately NOT a lat/lng coordinate pair -- the cell index is the
+    generalised value; converting back to lat/lng would restore partial precision
+    and defeat the generalization.
+
+    H3 resolution scale (from https://h3geo.org/docs/core-library/restable/):
+      resolution 9 ~150m average edge, ~0.105 km2 area.
+      resolution 7 ~1.22km average edge, ~5.16 km2 area.
+      resolution 5 ~8.54km average edge, ~252 km2 area.
+
+    Requires: h3 (``pip install decoy-engine[geo]``).
+
+    Args:
+        df: Source DataFrame. Must contain ``column`` with "lat,lng" string values.
+        column: Column name holding the "lat,lng" coordinates.
+        config: Validated :class:`GeoGeneralizeConfig` with ``type="lat_lng"``.
+
+    Returns:
+        ``(result_df, evidence)`` -- a copy of ``df`` with ``column``
+        replaced by H3 cell index strings (or ``""`` for suppressed rows),
+        and a :class:`CascadeEvidence` instance with one decision label per row.
+
+    Raises:
+        ImportError: h3 is not installed; names the [geo] extra (fail-closed).
+    """
+    h3 = _require_h3()
+
+    raw_col = df[column].astype(str)
+    # Parse (lat, lng) pairs once; None for unparseable values.
+    parsed_coords: list[tuple[float, float] | None] = [_parse_latlng(v) for v in raw_col]
+
+    # For each cascade H3 resolution, compute the cell index per row and
+    # count how many rows share that cell (in-dataset aggregator).
+    resolutions: list[int] = []
+    for level in config.cascade:
+        if level in _H3_LEVEL_TO_RESOLUTION:
+            resolutions.append(_H3_LEVEL_TO_RESOLUTION[level])
+
+    # cell_at_res[resolution][row_index] = H3 cell string (or "" for parse failure)
+    cell_at_res: dict[int, list[str]] = {}
+    for res in resolutions:
+        cells: list[str] = []
+        for coords in parsed_coords:
+            if coords is None:
+                cells.append("")
+            else:
+                cells.append(h3.latlng_to_cell(coords[0], coords[1], res))
+        cell_at_res[res] = cells
+
+    # Count in-dataset occurrences of each cell at each resolution.
+    cell_counts: dict[int, dict[str, int]] = {}
+    for res in resolutions:
+        counts: dict[str, int] = {}
+        for cell in cell_at_res[res]:
+            if cell:
+                counts[cell] = counts.get(cell, 0) + 1
+        cell_counts[res] = counts
+
+    k = config.k_threshold
+    result_values: list[str] = []
+    decisions: list[str] = []
+
+    for row_idx, coords in enumerate(parsed_coords):
+        if coords is None:
+            # Unparseable coordinate: suppress immediately (cannot generalize).
+            result_values.append(_SUPPRESS_VALUE)
+            decisions.append(_SUPPRESS_LABEL)
+            continue
+
+        out_val, decision = _cascade_one_latlng_row(
+            row_idx=row_idx,
+            cascade=config.cascade,
+            k=k,
+            cell_at_res=cell_at_res,
+            cell_counts=cell_counts,
+        )
+        result_values.append(out_val)
+        decisions.append(decision)
+
+    result_df = df.copy()
+    result_df[column] = result_values
+    return result_df, CascadeEvidence(decisions=tuple(decisions))
+
+
+def _cascade_one_latlng_row(
+    row_idx: int,
+    cascade: tuple[str, ...],
+    k: int,
+    cell_at_res: dict[int, list[str]],
+    cell_counts: dict[int, dict[str, int]],
+) -> tuple[str, str]:
+    """Cascade one lat/lng row through H3 resolutions; return (output_cell, label)."""
+    for level in cascade:
+        if level == "suppress":
+            return _SUPPRESS_VALUE, _SUPPRESS_LABEL
+        res = _H3_LEVEL_TO_RESOLUTION.get(level)
+        if res is None:
+            continue  # unknown level; skip (validation should have caught it)
+        cell = cell_at_res[res][row_idx]
+        if not cell:
+            continue  # parse failure at this resolution; skip
+        count = cell_counts[res].get(cell, 0)
+        if count >= k:
+            return cell, level
     return _SUPPRESS_VALUE, _SUPPRESS_LABEL
