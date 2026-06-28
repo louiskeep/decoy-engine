@@ -13,7 +13,7 @@ what keeps masked values stable and joinable.
 
 ## Mask strategies
 
-There are eleven mask strategies. `passthrough` (a no-op pass) and the
+There are twelve mask strategies. `passthrough` (a no-op pass) and the
 internal composite/nested handlers are listed separately below.
 
 ### faker
@@ -176,6 +176,108 @@ intact. Deterministic by construction. This is what lets you sanitize a
   version in deployments that need byte-stable output across environments:
   NER output is deterministic per model version, and the compiled plan stamps
   the installed version (`ner_model_version`) for the audit trail.
+
+### text_mask
+
+Span-level PII masking for free-text columns: scans each cell with the STORM
+detector library (`iter_spans`) and masks only the PII-bearing spans,
+leaving surrounding prose intact. Contrast with `redact`, which replaces the
+whole cell, and with `text_redact`, which replaces every matched span with a
+single fixed token. `text_mask` dispatches each span to a per-detector
+strategy (`fpe` for SSN, `faker` for names, `date_shift` for dates, etc.),
+so the output is more useful than blanket redaction for columns such as
+clinical notes or support tickets.
+
+- `detectors` (list or null): detector IDs to run. Null or absent runs all
+  built-in span detectors. Unknown IDs are skipped silently.
+- `per_detector_strategy` (dict): per-detector strategy overrides. Keys are
+  detector IDs; values are `fpe`, `faker`, `date_shift`, `redact`, or
+  `passthrough`. Unspecified detectors fall back to the built-in
+  `DETECTOR_DEFAULTS` table.
+- `unmatched_span_policy` (str, default `redact`): controls text in each cell
+  not covered by any detector match. See the policy table below.
+- `token` (str, default `[REDACTED]`): replacement token for the `redact`
+  unmatched policy and for per-span `redact` dispatch.
+- `min_days` / `max_days` (int, defaults -365 / 365): date-shift offset range
+  for spans dispatched to `date_shift`.
+
+#### Detector reachability: TIER-1 and TIER-2
+
+The 26 detector IDs in `DETECTOR_DEFAULTS` divide into two reachability
+tiers. Whether a detector's default strategy fires depends entirely on which
+tier it belongs to.
+
+| Tier | IDs | Fires under built-in path? |
+|---|---|---|
+| TIER 1 (11) | `email`, `ssn`, `us_phone`, `us_zip`, `pan`, `iban`, `ipv4`, `icd10`, `npi`, `url`, `street_address` | Yes. `iter_spans` produces spans for these on every call. |
+| TIER 2 (15) | `person_name`, `first_name`, `last_name`, `address`, `iso_date`, `us_date`, `eu_date`, `fax_number`, `cvv`, `mrn`, `health_plan_id`, `license_num`, `vehicle_id`, `device_id`, `biometric_id` | No. `iter_spans` never emits spans with TIER-2 IDs under the built-in path. |
+
+TIER-2 defaults are active only when spans are injected via the `extra_spans=`
+parameter on `mask_cell` (for example, NER spans from
+`storm.ner.iter_ner_spans`). Under the built-in path alone, person names,
+free-text addresses, and dates are NOT masked, even when those detector IDs
+appear in `per_detector_strategy`.
+
+#### Unmatched span policy
+
+| Policy | Behavior | WARNING emitted? |
+|---|---|---|
+| `redact` (default) | Replace unmatched text with `token`. Treats all unmatched content as potentially undetected PII. TIER-2 values (names, dates) that the built-in detectors cannot reach are tokenized instead of leaking. | No |
+| `passthrough` | Pass unmatched text through unchanged. The engine emits a WARNING per cell noting that only the 11 TIER-1 detectors ran and that names, addresses, and dates not supplied via `extra_spans=` ride through in the clear. | Yes, per cell |
+| `replace_with_token` | Replace unmatched text with the sentinel `[UNMATCHED]`, distinct from per-span redaction tokens. | No |
+
+Use `passthrough` only when surrounding prose is known to contain no sensitive
+content. The default `redact` is the safe choice for any column where the
+TIER-1 detector set may not cover all PII present.
+
+#### Cross-cell determinism
+
+Each matched span is keyed by `HMAC-SHA256(job_seed, matched_text)` (RFC 2104).
+The key depends only on the matched value, not on surrounding cell text, column
+name, or row index. The same SSN in two different cells always produces the same
+masked SSN, keeping cross-column joins intact.
+
+#### Raw-value isolation
+
+`matched_text` is consumed only to derive HMAC key material and drive the
+strategy. It is never written to logs or evidence. A sentry test enforces this
+invariant.
+
+#### Overlap resolution
+
+When two detected spans overlap, the leftmost span wins; ties on start position
+resolve to the longer match (leftmost-then-longest). An earlier spec described
+this as "longer-match-wins", which is imprecise: the primary sort key is start
+position, not span length.
+
+#### NER injection and carry-forwards
+
+To reach TIER-2 classes (names, dates, etc.), supply pre-computed spans via
+`extra_spans=` on `mask_cell`. Automatic handler-level NER wiring via a `ner:`
+config key (the design is in `storm/ner.py`) is not yet implemented in the
+column handler; deferred to SP-16/SP-19. HIPAA-pack default wiring is SP-11.
+The `decoy text-mask explain` CLI subcommand is deferred to SP-16/SP-19.
+
+```yaml
+# Minimal: run all 11 built-in span detectors; redact unmatched text.
+columns:
+  - name: clinical_note
+    strategy: text_mask
+
+# Targeted: SSN via FPE, email redacted; unmatched prose passes through.
+# WARNING: passthrough emits a warning per cell and lets names and dates
+# ride through in the clear unless NER extra_spans are supplied.
+columns:
+  - name: support_ticket
+    strategy: text_mask
+    provider_config:
+      detectors: [ssn, email]
+      per_detector_strategy:
+        ssn: fpe
+        email: redact
+      unmatched_span_policy: passthrough
+      token: "[REDACTED]"
+```
 
 ### truncate
 

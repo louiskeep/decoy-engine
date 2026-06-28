@@ -9,6 +9,90 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (SP-07 text_mask strategy, 2026-06-28)
+
+- **`text_mask` mask strategy** (`src/decoy_engine/transforms/text_mask.py`,
+  `src/decoy_engine/execution/_strategies/_text_mask.py`, SP-07 /
+  P5.S.text_mask.1/2/3). Span-level PII masking for free-text columns: scans
+  each cell with the STORM detector library (`iter_spans`) and masks only the
+  PII-bearing spans, leaving surrounding prose intact. Registered in
+  `SCALAR_HANDLERS` and available in all V2 mask pipelines. STORM is the single
+  source of truth: any detector added to `_SPAN_DETECTORS` is automatically
+  available to `text_mask` in the same release without a separate wiring step.
+
+  Config surface (`provider_config:` keys):
+
+  - `detectors` (list or null): detector IDs to run; null or absent runs all
+    built-in span detectors. Unknown IDs are skipped silently.
+  - `per_detector_strategy` (dict): per-detector strategy overrides. Keys are
+    detector IDs; values are `fpe`, `faker`, `date_shift`, `redact`, or
+    `passthrough`. Unspecified detectors fall back to `DETECTOR_DEFAULTS`.
+  - `unmatched_span_policy` (str, default `redact`): controls text in each cell
+    that no detector matched. See policy detail below.
+  - `token` (str, default `[REDACTED]`): replacement token for the `redact`
+    unmatched policy and for per-span `redact` strategy dispatch.
+  - `min_days` / `max_days` (int, defaults -365 / 365): date-shift offset range
+    for spans dispatched to the `date_shift` strategy.
+
+  **TIER-1 vs TIER-2 detector reachability.** The `DETECTOR_DEFAULTS` table
+  holds entries for 26 detector IDs, divided into two tiers based on whether
+  `iter_spans` can reach them under the built-in path:
+
+  - TIER 1 (11, fire automatically via `iter_spans`): `email`, `ssn`,
+    `us_phone`, `us_zip`, `pan`, `iban`, `ipv4`, `icd10`, `npi`, `url`,
+    `street_address`. These 11 detectors produce spans on every `mask_cell`
+    call under the built-in path.
+  - TIER 2 (15, NER/custom-only, NOT reached by the built-in path):
+    `person_name`, `first_name`, `last_name`, `address`, `iso_date`, `us_date`,
+    `eu_date`, `fax_number`, `cvv`, `mrn`, `health_plan_id`, `license_num`,
+    `vehicle_id`, `device_id`, `biometric_id`. `iter_spans` never emits spans
+    with TIER-2 IDs because name-hint-only regexes are intentionally excluded
+    from `_SPAN_DETECTORS`. TIER-2 defaults in `DETECTOR_DEFAULTS` are active
+    only when spans are injected via the `extra_spans=` parameter on `mask_cell`
+    (for example, NER spans from `storm.ner.iter_ner_spans`).
+
+  Under the built-in path alone, person names, free-text addresses, and dates
+  are NOT masked, regardless of any `per_detector_strategy` settings for TIER-2
+  detector IDs.
+
+  **`unmatched_span_policy` and the passthrough leak caveat.** Text not covered
+  by any detected span is controlled by this policy:
+
+  - `redact` (default, safe): replace unmatched text with `token`. Treats all
+    unmatched content as potentially undetected PII. Under this policy, TIER-2
+    values (names, dates) that the built-in detectors miss are tokenized rather
+    than leaking.
+  - `passthrough` (operator opt-in, risk): pass unmatched text through unchanged.
+    The engine emits a WARNING per cell stating that only the 11 TIER-1 detectors
+    ran and that names, addresses, and dates not supplied via `extra_spans=` ride
+    through in the clear. Use only when surrounding prose is known safe.
+  - `replace_with_token`: replace unmatched text with the fixed sentinel
+    `[UNMATCHED]`, distinguishable from per-span redaction tokens.
+
+  **Cross-cell determinism.** Each matched span is keyed by
+  `HMAC-SHA256(job_seed, matched_text)` (RFC 2104). The key depends only on the
+  matched value, not on surrounding cell text, column name, or row index. The
+  same SSN in two different cells always produces the same masked SSN.
+
+  **Raw-value isolation.** `matched_text` is consumed only to derive HMAC key
+  material and drive the strategy. It is never written to logs or evidence. A
+  sentry test enforces this invariant.
+
+  **Overlap resolution.** When two detected spans overlap, the leftmost span
+  wins; ties on start position resolve to the longer match
+  (leftmost-then-longest). An earlier spec draft described this as
+  "longer-match-wins", which is imprecise: the primary sort key is start
+  position, not span length.
+
+  **Carry-forwards (not yet in SP-07).** Automatic NER wiring via a `ner:`
+  config key on the column (intended to drive `storm.ner.iter_ner_spans` into
+  the `extra_spans=` path to reach TIER-2 name/date spans) is designed in
+  `storm/ner.py` but not yet wired into the column handler. Deferred to
+  SP-16/SP-19. The `extra_spans=` injection path on `mask_cell` is available
+  today for callers that supply spans directly. HIPAA-pack default wiring is
+  SP-11. The `decoy text-mask explain` CLI subcommand is deferred to
+  SP-16/SP-19.
+
 ### Added (SP-06 expression parser + reference tables, 2026-06-28)
 
 - **Closed-vocabulary expression parser** (`src/decoy_engine/expressions/`,
