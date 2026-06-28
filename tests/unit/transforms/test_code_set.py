@@ -398,3 +398,87 @@ class TestShippedCorpora:
 
         out = apply_code_set("any_value", cfg, mode="gen", job_seed=_JOB_SEED)
         assert out in codes, f"Gen output {out!r} not in {corpus_name!r} corpus."
+
+
+# ── H1: gen mode must vary per row (intra-column variation) ───────────────────
+
+
+class TestGenModePerRowVariation:
+    def test_gen_mode_varies_across_row_indices(self):
+        """H1: gen mode must produce >1 distinct code across a column of 10 rows.
+        The original defect: np.random.default_rng(same_seed) always picks the
+        same index, so a 10-row column is a constant. Per-row variation requires
+        row_index to be threaded into the RNG seed.
+        """
+        cfg = CodeSetConfig.from_dict({"code_set": "icd10"})
+        seed = b"\xca\xfe" * 16
+        outputs = [
+            apply_code_set("", cfg, mode="gen", job_seed=seed, row_index=i) for i in range(10)
+        ]
+        distinct = len(set(outputs))
+        assert distinct > 1, (
+            f"gen mode produced a constant column: all 10 rows are {outputs[0]!r}. "
+            "gen mode must vary per row_index (same seed + different row -> different code)."
+        )
+
+    def test_gen_mode_determinism_per_row_index(self):
+        """Same seed + same row_index -> same code (determinism preserved)."""
+        cfg = CodeSetConfig.from_dict({"code_set": "icd10"})
+        seed = b"\x11" * 32
+        for i in range(5):
+            out1 = apply_code_set("", cfg, mode="gen", job_seed=seed, row_index=i)
+            out2 = apply_code_set("", cfg, mode="gen", job_seed=seed, row_index=i)
+            assert out1 == out2, (
+                f"row_index={i}: same seed + same row_index must give same code."
+            )
+
+
+# ── H2: chapter_preserve with unknown chapter must fail closed ────────────────
+
+
+class TestChapterPreserveUnknownChapter:
+    def test_unknown_chapter_raises_plan_compile_error(self, tmp_path: pathlib.Path):
+        """H2: when chapter_preserve=True and the input's chapter is not present
+        in the corpus, raise PlanCompileError (fail-closed). The old behavior
+        (fall through to full-corpus selection) silently breaks the invariant.
+        """
+        tbl = pa.table(
+            {
+                "code": pa.array(["A01", "A02", "B01", "B02"], type=pa.string()),
+                "chapter": pa.array(["A", "A", "B", "B"], type=pa.string()),
+            }
+        )
+        path = tmp_path / "two_chapters.parquet"
+        pq.write_table(tbl, str(path))
+
+        cfg = CodeSetConfig.from_dict(
+            {
+                "code_set": "two_chapters",
+                "chapter_preserve": True,
+                "corpus_source": f"customer:{path}",
+            }
+        )
+        with pytest.raises(PlanCompileError, match="chapter"):
+            # U chapter is absent from the corpus (only A and B exist).
+            apply_code_set("U07.1", cfg, mode="mask", job_seed=_JOB_SEED)
+
+    def test_unknown_chapter_gen_mode_raises_plan_compile_error(self, tmp_path: pathlib.Path):
+        """H2: same fail-closed behavior in gen mode."""
+        tbl = pa.table(
+            {
+                "code": pa.array(["A01", "A02"], type=pa.string()),
+                "chapter": pa.array(["A", "A"], type=pa.string()),
+            }
+        )
+        path = tmp_path / "one_chapter.parquet"
+        pq.write_table(tbl, str(path))
+
+        cfg = CodeSetConfig.from_dict(
+            {
+                "code_set": "one_chapter",
+                "chapter_preserve": True,
+                "corpus_source": f"customer:{path}",
+            }
+        )
+        with pytest.raises(PlanCompileError, match="chapter"):
+            apply_code_set("Z99", cfg, mode="gen", job_seed=_JOB_SEED)
