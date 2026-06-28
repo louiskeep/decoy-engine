@@ -102,18 +102,35 @@ class TestMaskMode:
 
 class TestGenMode:
     def test_gen_mode_determinism_with_seed(self):
-        """Same seed -> same sequence of output codes."""
+        """Same seed + namespace -> same sequence of output codes."""
         cfg = CodeSetConfig.from_dict({"code_set": "icd10"})
-        seed = b"\x01" * 32
-        outputs1 = [apply_code_set(str(i), cfg, mode="gen", job_seed=seed) for i in range(10)]
-        outputs2 = [apply_code_set(str(i), cfg, mode="gen", job_seed=seed) for i in range(10)]
+        seed = b"\x01" * 8
+        ns = "test.gen"
+        outputs1 = [
+            apply_code_set(str(i), cfg, mode="gen", job_seed=seed, namespace=ns) for i in range(10)
+        ]
+        outputs2 = [
+            apply_code_set(str(i), cfg, mode="gen", job_seed=seed, namespace=ns) for i in range(10)
+        ]
         assert outputs1 == outputs2, "Gen mode must be seed-deterministic."
 
     def test_gen_different_seeds_differ(self):
-        """Different seeds should produce different outputs."""
+        """Different seeds + row_index variation should produce different sequences.
+
+        Note: the comparison needs row_index variation so each call draws from a
+        different derive_index position; without row_index the outputs are constant
+        and two constant sequences may coincide by chance (hash collision mod corpus).
+        """
         cfg = CodeSetConfig.from_dict({"code_set": "icd10"})
-        out1 = [apply_code_set(str(i), cfg, mode="gen", job_seed=b"\x01" * 32) for i in range(20)]
-        out2 = [apply_code_set(str(i), cfg, mode="gen", job_seed=b"\x02" * 32) for i in range(20)]
+        ns = "test.gen"
+        out1 = [
+            apply_code_set(str(i), cfg, mode="gen", job_seed=b"\x01" * 8, row_index=i, namespace=ns)
+            for i in range(20)
+        ]
+        out2 = [
+            apply_code_set(str(i), cfg, mode="gen", job_seed=b"\x02" * 8, row_index=i, namespace=ns)
+            for i in range(20)
+        ]
         assert out1 != out2, "Different seeds should differ."
 
     def test_gen_output_is_real_corpus_code(self):
@@ -122,8 +139,9 @@ class TestGenMode:
 
         cfg = CodeSetConfig.from_dict({"code_set": "icd10"})
         corpus_codes = {row["code"] for row in load_corpus("icd10")}
+        ns = "test.gen"
         for i in range(20):
-            out = apply_code_set(str(i), cfg, mode="gen", job_seed=_JOB_SEED)
+            out = apply_code_set(str(i), cfg, mode="gen", job_seed=b"\xca\xfe" * 4, namespace=ns)
             assert out in corpus_codes, f"Gen output {out!r} not in ICD-10 corpus."
 
 
@@ -242,9 +260,10 @@ class TestCustomerCorpus:
                 "corpus_source": f"customer:{path}",
             }
         )
-        seed = b"\xab" * 32
-        out1 = apply_code_set("any", cfg, mode="gen", job_seed=seed)
-        out2 = apply_code_set("any", cfg, mode="gen", job_seed=seed)
+        seed = b"\xab" * 8
+        ns = "test.gen"
+        out1 = apply_code_set("any", cfg, mode="gen", job_seed=seed, namespace=ns)
+        out2 = apply_code_set("any", cfg, mode="gen", job_seed=seed, namespace=ns)
         assert out1 == out2, "Gen mode must be deterministic for same seed."
         assert out1 in set(codes), "Gen output must be a real corpus code."
 
@@ -396,7 +415,9 @@ class TestShippedCorpora:
         rows = load_corpus(corpus_name)
         codes = {r["code"] for r in rows}
 
-        out = apply_code_set("any_value", cfg, mode="gen", job_seed=_JOB_SEED)
+        out = apply_code_set(
+            "any_value", cfg, mode="gen", job_seed=b"\xca\xfe" * 4, namespace="test.gen"
+        )
         assert out in codes, f"Gen output {out!r} not in {corpus_name!r} corpus."
 
 
@@ -408,12 +429,14 @@ class TestGenModePerRowVariation:
         """H1: gen mode must produce >1 distinct code across a column of 10 rows.
         The original defect: np.random.default_rng(same_seed) always picks the
         same index, so a 10-row column is a constant. Per-row variation requires
-        row_index to be threaded into the RNG seed.
+        row_index to be threaded into the derive_index source.
         """
         cfg = CodeSetConfig.from_dict({"code_set": "icd10"})
-        seed = b"\xca\xfe" * 16
+        seed = b"\xca\xfe" * 4  # 8 bytes
+        ns = "test.variation"
         outputs = [
-            apply_code_set("", cfg, mode="gen", job_seed=seed, row_index=i) for i in range(10)
+            apply_code_set("", cfg, mode="gen", job_seed=seed, row_index=i, namespace=ns)
+            for i in range(10)
         ]
         distinct = len(set(outputs))
         assert distinct > 1, (
@@ -422,12 +445,13 @@ class TestGenModePerRowVariation:
         )
 
     def test_gen_mode_determinism_per_row_index(self):
-        """Same seed + same row_index -> same code (determinism preserved)."""
+        """Same seed + same namespace + same row_index -> same code."""
         cfg = CodeSetConfig.from_dict({"code_set": "icd10"})
-        seed = b"\x11" * 32
+        seed = b"\x11" * 8
+        ns = "test.determinism"
         for i in range(5):
-            out1 = apply_code_set("", cfg, mode="gen", job_seed=seed, row_index=i)
-            out2 = apply_code_set("", cfg, mode="gen", job_seed=seed, row_index=i)
+            out1 = apply_code_set("", cfg, mode="gen", job_seed=seed, row_index=i, namespace=ns)
+            out2 = apply_code_set("", cfg, mode="gen", job_seed=seed, row_index=i, namespace=ns)
             assert out1 == out2, f"row_index={i}: same seed + same row_index must give same code."
 
 

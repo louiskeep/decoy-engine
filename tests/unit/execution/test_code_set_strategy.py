@@ -37,9 +37,10 @@ def _col(
     strategy: str,
     *,
     provider_config: tuple[tuple[str, Any], ...] = (),
+    namespace: str | None = None,
 ) -> ColumnSeed:
     return ColumnSeed(
-        namespace=None,
+        namespace=namespace,
         strategy=strategy,
         provider="x_nobackend",
         backend_type="faker",
@@ -68,9 +69,14 @@ def _plan(column: str, col_seed: ColumnSeed) -> Any:
     )
 
 
-def _run(column: str, values: list[str | None], provider_config: tuple) -> list:
+def _run(
+    column: str,
+    values: list[str | None],
+    provider_config: tuple,
+    namespace: str | None = None,
+) -> list:
     table = pa.table({column: pa.array(values, type=pa.string())})
-    plan = _plan(column, _col("code_set", provider_config=provider_config))
+    plan = _plan(column, _col("code_set", provider_config=provider_config, namespace=namespace))
     result = PandasExecutionAdapter().run_single(
         plan, table, registry=_REG, relationship_graph=_GRAPH, namespace_registry=_NS
     )
@@ -113,6 +119,7 @@ class TestCodeSetAdapterIntegration:
             "diag",
             values,
             (("code_set", "icd10"), ("mode", "gen")),
+            namespace="test.diag",
         )
         assert len(out) == 5
         for v in out:
@@ -129,6 +136,7 @@ class TestCodeSetAdapterIntegration:
             "diag",
             values,
             (("code_set", "icd10"), ("mode", "gen")),
+            namespace="test.diag",
         )
         distinct = len(set(out))
         assert distinct > 1, (

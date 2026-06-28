@@ -17,6 +17,7 @@ from __future__ import annotations
 import pandas as pd
 
 from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
+from decoy_engine.execution._errors import StrategyError
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._types import ColumnSeed
 from decoy_engine.transforms.code_set import CodeSetConfig, apply_code_set
@@ -47,6 +48,17 @@ class CodeSetHandler:
         mode = str(cfg.get("mode", "mask"))
         code_cfg = CodeSetConfig.from_dict(cfg)
 
+        if mode == "gen" and plan.namespace is None:
+            raise StrategyError(
+                code="code_set_gen_requires_namespace",
+                strategy="code_set",
+                message=(
+                    f"column {column!r} uses code_set gen mode but has no namespace. "
+                    "Set namespace on the ColumnSeed so gen-mode columns are "
+                    "decorrelated across namespaces via derive_index."
+                ),
+            )
+
         source = df[column]
         na_mask = source.isna().to_numpy()
         out: list[object] = []
@@ -60,6 +72,7 @@ class CodeSetHandler:
                 mode=mode,
                 job_seed=ctx.job_seed,
                 row_index=i,
+                namespace=plan.namespace,
             )
             out.append(result)
 

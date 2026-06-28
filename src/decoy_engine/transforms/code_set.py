@@ -13,9 +13,13 @@ the pandas execution adapter. Two modes:
     (ascending) at load time; HMAC modulo candidate_count selects one.
 
   Gen mode (mode="gen")
-    Draws one row per-row via numpy.default_rng seeded from job_seed XOR the
-    row index. Same job_seed + same row_index -> same code (deterministic).
-    Different row indices produce different codes (intra-column variation).
+    Picks one row per-row via ``derive_index`` keyed on the column namespace
+    and the row index. Routing through the HKDF+HMAC primitive
+    (``determinism._derive``) makes gen-mode columns namespace-bound:
+    two columns with different namespaces sharing the same job_seed produce
+    decorrelated output sequences. Same namespace + seed + row_index -> same
+    code on rerun. Different row indices -> different codes (intra-column
+    variation). Covered by SEED_PROTOCOL_VERSION (SP-09c MEDIUM fix).
 
 chapter_preserve (code_set.2)
   When True, restricts the candidate set to corpus rows whose ``chapter``
@@ -64,9 +68,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import pyarrow.parquet as pq
 
+from decoy_engine.determinism import derive_index
 from decoy_engine.internal.crypto import hmac_hex
 from decoy_engine.plan._errors import PlanCompileError
 
@@ -313,6 +317,7 @@ def apply_code_set(
     mode: str = "mask",
     job_seed: bytes,
     row_index: int = 0,
+    namespace: str | None = None,
 ) -> str:
     """Apply the code_set strategy to a single value.
 
@@ -326,11 +331,13 @@ def apply_code_set(
     Args:
         value: The input code to mask (mask mode) or an ignored hint (gen mode).
         config: Parsed :class:`CodeSetConfig`.
-        mode: "mask" (keyed HMAC, output != input) or "gen" (seeded random).
-        job_seed: 32-byte entropy input. Same seed + same row_index -> same output.
-        row_index: Zero-based row position. Used by gen mode to vary the RNG seed
-            per row, preventing a constant-column output. Ignored in mask mode
-            (which is keyed by ``value`` instead).
+        mode: "mask" (keyed HMAC, output != input) or "gen" (derive_index-keyed).
+        job_seed: Entropy input. First 8 bytes are used by gen mode. Same
+            seed + same namespace + same row_index -> same output.
+        row_index: Zero-based row position. Used by gen mode to vary selection
+            per row (intra-column variation). Ignored in mask mode.
+        namespace: Column namespace string. Required for gen mode (raises
+            PlanCompileError if None); not used by mask mode.
 
     Returns:
         A real corpus code string.
@@ -339,7 +346,7 @@ def apply_code_set(
         PlanCompileError: Corpus not loadable, missing required columns,
             or empty; sole-member chapter bucket (chapter_preserve); missing
             chapter column when chapter_preserve=True; input chapter absent
-            from corpus when chapter_preserve=True.
+            from corpus when chapter_preserve=True; namespace is None in gen mode.
         ValueError: Unsupported mode.
     """
     corpus_name, override_path = _resolve_corpus_path(config)
@@ -347,13 +354,22 @@ def apply_code_set(
 
     if config.chapter_preserve:
         return _apply_chapter_preserve(
-            value, rows, mode=mode, job_seed=job_seed, row_index=row_index
+            value, rows, mode=mode, job_seed=job_seed, namespace=namespace, row_index=row_index
         )
 
     if mode == "mask":
         return _pick_mask(value, rows)
     if mode == "gen":
-        return _pick_gen(rows, job_seed=job_seed, row_index=row_index)
+        if namespace is None:
+            raise PlanCompileError(
+                code="code_set_gen_requires_namespace",
+                path="namespace",
+                message=(
+                    "code_set gen mode requires a column namespace. "
+                    "Set namespace on the ColumnSeed or pass namespace= to apply_code_set."
+                ),
+            )
+        return _pick_gen(rows, job_seed=job_seed, namespace=namespace, row_index=row_index)
     raise ValueError(f"code_set: unsupported mode {mode!r}. Use 'mask' or 'gen'.")
 
 
@@ -363,6 +379,7 @@ def _apply_chapter_preserve(
     *,
     mode: str,
     job_seed: bytes,
+    namespace: str | None = None,
     row_index: int = 0,
 ) -> str:
     """Apply code_set with chapter_preserve=True.
@@ -375,6 +392,7 @@ def _apply_chapter_preserve(
         bucket posture below.
       - The input's chapter bucket has only the input code (sole-member bucket,
         code_set_sole_member_bucket): no valid alternative exists.
+      - mode is "gen" and namespace is None (code_set_gen_requires_namespace).
     """
     if not rows or "chapter" not in rows[0]:
         raise PlanCompileError(
@@ -427,8 +445,19 @@ def _apply_chapter_preserve(
 
     if mode == "mask":
         return _pick_from_candidates(value, candidates)
-    # Gen mode within chapter bucket, varying per row.
-    return _pick_gen(bucket, job_seed=job_seed, row_index=row_index)
+    # Gen mode: draw from candidates (bucket minus input), consistent with the
+    # mask path. The input value is not used as a gen hint, but excluding it
+    # from the pool keeps the chapter_preserve gen path symmetric with mask.
+    if namespace is None:
+        raise PlanCompileError(
+            code="code_set_gen_requires_namespace",
+            path="namespace",
+            message=(
+                "code_set gen mode requires a column namespace. "
+                "Set namespace on the ColumnSeed or pass namespace= to apply_code_set."
+            ),
+        )
+    return _pick_gen(candidates, job_seed=job_seed, namespace=namespace, row_index=row_index)
 
 
 def _pick_mask(value: str, rows: list[dict[str, Any]]) -> str:
@@ -471,15 +500,28 @@ def _pick_from_candidates(key_value: str, candidates: list[dict[str, Any]]) -> s
     return str(candidates[idx]["code"])
 
 
-def _pick_gen(rows: list[dict[str, Any]], *, job_seed: bytes, row_index: int = 0) -> str:
-    """Pick one row via numpy.default_rng seeded from job_seed and row_index.
+def _pick_gen(
+    rows: list[dict[str, Any]], *, job_seed: bytes, namespace: str, row_index: int = 0
+) -> str:
+    """Pick one row via ``derive_index`` keyed on namespace and row_index.
 
-    Deterministic: same job_seed + same row_index + same corpus -> same code.
-    Per-row variation: adding row_index to the seed base ensures each row in
-    a column draws from a different RNG state, preventing constant-column output.
-    The addition is modulo 2**64 to stay within numpy's uint64 seed range.
+    Callers are responsible for validating namespace before calling; this
+    function does not check for None (the validate-then-call pattern keeps
+    the hot path free of repeated None checks at call sites).
+
+    Deterministic: same job_seed + same namespace + same row_index + same
+    corpus -> same code. Decorrelated: two columns with different namespaces
+    sharing the same job_seed produce independent sequences because HKDF
+    binds the namespace into the key material (SP-09c MEDIUM fix).
+
+    ``job_seed[:8]`` is used so callers may pass the full StrategyContext
+    ``job_seed`` (exactly 8 bytes) or a longer test seed without
+    re-encoding at call sites.
     """
-    seed_int = (int.from_bytes(job_seed[:8], "big") + row_index) % (2**64)
-    rng = np.random.default_rng(seed_int)
-    idx = int(rng.integers(0, len(rows)))
+    idx = derive_index(
+        job_seed[:8],
+        namespace,
+        row_index.to_bytes(8, "big"),
+        pool_size=len(rows),
+    )
     return str(rows[idx]["code"])
