@@ -2,7 +2,7 @@
   "engine_version": "0.2.0",
   "generated_at": "2026-06-14",
   "surface": {
-    "mask": 15,
+    "mask": 16,
     "generate": 7,
     "providers": 34
   },
@@ -646,6 +646,36 @@
         }
       ],
       "invariant": "Each ZIP5 is generalised to the most specific level whose in-dataset count satisfies the k-threshold; restricted ZIP3 prefixes (HHS Safe Harbor 45 CFR 164.514(b)(2)(i)(B)) are skipped regardless of count."
+    },
+    {
+      "id": "mask.code_set",
+      "kind": "mask",
+      "title": "Medical-code corpus remap",
+      "column": "diag_code",
+      "config_yaml": "tables:\n- name: t\n  columns:\n  - name: diag_code\n    strategy: code_set\n    provider_config:\n      code_set: icd10\n      mode: mask",
+      "input": [
+        {
+          "diag_code": "I10"
+        },
+        {
+          "diag_code": "E11.9"
+        },
+        {
+          "diag_code": "F32.9"
+        }
+      ],
+      "output": [
+        {
+          "diag_code": "Q65.00"
+        },
+        {
+          "diag_code": "J06.9"
+        },
+        {
+          "diag_code": "C34.10"
+        }
+      ],
+      "invariant": "Each diagnosis code is replaced with a different real ICD-10 code drawn from the shipped corpus via HMAC-keyed selection. Output is always a valid corpus code and is always different from the input."
     },
     {
       "id": "mask.joint_mask",

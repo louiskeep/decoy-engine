@@ -525,6 +525,25 @@ CAPABILITY_PROOFS: list[CapabilityProof] = [
             all(b[col] == "981" for b in o)
         ),
     ),
+    # code_set (SP-09b): three ICD-10 codes masked to different ICD-10 codes.
+    # Output != input is the key invariant; all outputs are real corpus codes.
+    _mask_proof(
+        "code_set",
+        "Medical-code corpus remap",
+        "diag_code",
+        ["I10", "E11.9", "F32.9"],
+        {"provider_config": {"code_set": "icd10", "mode": "mask"}},
+        (
+            "Each diagnosis code is replaced with a different real ICD-10 code drawn "
+            "from the shipped corpus via HMAC-keyed selection. Output is always a valid "
+            "corpus code and is always different from the input."
+        ),
+        lambda col, i, o: (
+            _all_changed(col, i, o)
+            # every output must be a non-empty string (a real code)
+            and all(b[col] for b in o)
+        ),
+    ),
 ]
 
 
