@@ -1958,3 +1958,322 @@ class TestPerColumnWaiverScoping:
             df.copy(),
             strategy_map={"a": "passthrough", "b": "passthrough"},
         )
+
+
+# ---------------------------------------------------------------------------
+# Phase 3a: M2M FK integrity mutation controls (TestM2MFKIntegrityTeeth)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.testflight
+class TestM2MFKIntegrityTeeth:
+    """Mutation controls for the M2M FK integrity invariant (Phase 3a, Job B).
+
+    Job B has two FK parents for the orders junction table:
+      customer_identity: customers.customer_id -> orders.customer_id
+      product_identity:  products.product_id  -> orders.product_id
+
+    These controls prove BOTH FK checks are active. Breaking the customer FK
+    trips the customer_identity check; breaking the product FK trips the
+    product_identity check. Only one parent needs to be broken at a time.
+
+    The invariant checks orphan counts in the OUTPUT tables (set-membership
+    on the masked parent key set). These controls bypass the pipeline and
+    construct output tables directly.
+    """
+
+    @staticmethod
+    def _build_m2m_outputs(
+        n_customers: int = 50,
+        n_products: int = 20,
+        n_orders: int = 100,
+        seed: int = 7,
+        *,
+        broken_customer: bool = False,
+        broken_product: bool = False,
+    ) -> tuple[Any, list[RelationshipSpec], list[FKIntegritySpec]]:
+        """Build minimal M2M output tables and spec for FK integrity tests.
+
+        Args:
+            n_customers: Number of customer rows.
+            n_products: Number of product rows.
+            n_orders: Number of order rows.
+            seed: RNG seed for reproducibility.
+            broken_customer: If True, one order references a non-existent customer.
+            broken_product: If True, one order references a non-existent product.
+
+        Returns:
+            (result_ns, relationships, fk_spec) ready for check_fk_integrity.
+        """
+        from types import SimpleNamespace
+
+        rng = np.random.default_rng(seed)
+
+        customer_ids = [f"MC{i:03d}" for i in range(n_customers)]
+        product_ids = [f"MP{i:03d}" for i in range(n_products)]
+
+        # Build valid order FK references.
+        order_customer_ids = [
+            customer_ids[int(rng.integers(0, n_customers))] for _ in range(n_orders)
+        ]
+        order_product_ids = [product_ids[int(rng.integers(0, n_products))] for _ in range(n_orders)]
+
+        # Inject broken FK if requested.
+        if broken_customer:
+            order_customer_ids[0] = "MC999"  # does not exist
+        if broken_product:
+            order_product_ids[0] = "MP999"  # does not exist
+
+        customers_tbl = pa.table({"customer_id": customer_ids})
+        products_tbl = pa.table({"product_id": product_ids})
+        orders_tbl = pa.table(
+            {
+                "order_id": [f"OR{i:04d}" for i in range(n_orders)],
+                "customer_id": order_customer_ids,
+                "product_id": order_product_ids,
+            }
+        )
+
+        result = SimpleNamespace(
+            outputs={
+                "customers": customers_tbl,
+                "products": products_tbl,
+                "orders": orders_tbl,
+            },
+            quality_metrics={},
+        )
+
+        relationships = [
+            RelationshipSpec(
+                parent=RelationshipEndSpec(table="customers", columns=["customer_id"]),
+                children=[RelationshipEndSpec(table="orders", columns=["customer_id"])],
+                orphan_policy="warn",
+                namespace="customer_identity",
+            ),
+            RelationshipSpec(
+                parent=RelationshipEndSpec(table="products", columns=["product_id"]),
+                children=[RelationshipEndSpec(table="orders", columns=["product_id"])],
+                orphan_policy="warn",
+                namespace="product_identity",
+            ),
+        ]
+
+        fk_spec = [
+            FKIntegritySpec(
+                relationship_name="customer_identity", expected_orphans=0, policy="warn"
+            ),
+            FKIntegritySpec(
+                relationship_name="product_identity", expected_orphans=0, policy="warn"
+            ),
+        ]
+
+        return result, relationships, fk_spec
+
+    def test_m2m_customer_fk_break_detected(self) -> None:
+        """Breaking the CUSTOMER FK must trip the customer_identity check.
+
+        RED: one order references customer "MC999" which is not in the customers
+        output. check_fk_integrity expects 0 orphans for customer_identity.
+
+        GREEN: test_m2m_both_fk_intact_passes (below) uses clean orders and passes.
+
+        This proves the CUSTOMER side of the M2M FK invariant is active. A
+        regression that skips the customer FK check would not catch this orphan.
+        """
+        result, relationships, fk_spec = self._build_m2m_outputs(broken_customer=True)
+
+        with pytest.raises(AssertionError, match="orphan_count=1"):
+            check_fk_integrity("m2m_customer_break", fk_spec, result, relationships)
+
+    def test_m2m_product_fk_break_detected(self) -> None:
+        """Breaking the PRODUCT FK must trip the product_identity check.
+
+        RED: one order references product "MP999" which is not in the products
+        output. check_fk_integrity expects 0 orphans for product_identity.
+
+        This proves the PRODUCT side of the M2M FK invariant is active.
+        The customer side passes (customer FKs are valid). Only the product
+        check fires. This distinguishes the two-parent check: if only one
+        FK check were run (e.g., customer-only), this test would silently pass.
+        """
+        result, relationships, fk_spec = self._build_m2m_outputs(broken_product=True)
+
+        with pytest.raises(AssertionError, match="orphan_count=1"):
+            check_fk_integrity("m2m_product_break", fk_spec, result, relationships)
+
+    def test_m2m_both_fk_intact_passes(self) -> None:
+        """All M2M FK references valid -> check_fk_integrity must NOT raise.
+
+        Proves the invariant does not over-assert. With all orders referencing
+        valid customers AND valid products, both FK checks pass.
+        """
+        result, relationships, fk_spec = self._build_m2m_outputs()
+
+        # Must NOT raise: all child FK values exist in the parent key pools.
+        check_fk_integrity("m2m_clean", fk_spec, result, relationships)
+
+
+# ---------------------------------------------------------------------------
+# Phase 3a: M2M correlation mutation controls (TestM2MCorrelationTeeth)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.testflight
+class TestM2MCorrelationTeeth:
+    """Mutation controls for the M2M correlation-through-masking invariant (Phase 3a).
+
+    Job B plants two PASSTHROUGH columns on the orders junction table:
+      qty_band and order_total_band, correlated by fixture construction.
+    With both passthrough, source == output -> joint similarity = 1.0 -> PASSES.
+
+    The mutation control replaces order_total_band in the output with independently
+    shuffled values, destroying the correlation. The joint (qty_band, order_total_band)
+    similarity drops well below corr_tol=0.90 -> RAISES.
+
+    This proves: the correlation tooth catches a pipeline regression where the
+    M2M masking pipeline accidentally transforms a passthrough column (e.g., by
+    treating it as an FK column and remapping its values).
+    """
+
+    @staticmethod
+    def _build_m2m_correlated_frames(
+        n: int = 500,
+        seed: int = 42,
+    ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+        """Build source + faithful-output + broken-output for M2M correlation test.
+
+        Source: orders table with correlated qty_band and order_total_band.
+        Correlation design: electronics/home products are high-price -> high
+        order_total_band regardless of qty. Food products are low-price -> low
+        order_total_band. Within a category, qty and order_total scale together.
+
+        Returns:
+            (source_df, faithful_output_df, broken_output_df)
+            faithful: both columns identical to source (passthrough)
+            broken: order_total_band shuffled independently (correlation destroyed)
+        """
+        rng = np.random.default_rng(seed)
+
+        # Unit price ranges matching the Job B fixture.
+        price_ranges = {
+            "electronics": (200.0, 1200.0),
+            "food": (3.0, 30.0),
+            "home": (50.0, 500.0),
+            "clothing": (20.0, 150.0),
+            "sports": (25.0, 200.0),
+        }
+        order_total_low = 50.0
+        order_total_high = 300.0
+
+        categories = list(price_ranges.keys())
+        cat_choices = rng.choice(len(categories), size=n)
+
+        rows = []
+        for i in range(n):
+            category = categories[cat_choices[i]]
+            qty = int(rng.integers(1, 9))
+            price_lo, price_hi = price_ranges[category]
+            unit_price = float(rng.uniform(price_lo, price_hi))
+            total = round(qty * unit_price, 2)
+
+            if qty <= 2:
+                qty_b = "low"
+            elif qty <= 5:
+                qty_b = "mid"
+            else:
+                qty_b = "high"
+
+            if total < order_total_low:
+                total_b = "low"
+            elif total < order_total_high:
+                total_b = "mid"
+            else:
+                total_b = "high"
+
+            rows.append({"qty_band": qty_b, "order_total_band": total_b})
+
+        source_df = pd.DataFrame(rows)
+        faithful_df = source_df.copy()
+
+        # Broken output: shuffle order_total_band independently (destroying correlation).
+        broken_df = source_df.copy()
+        shuffled = broken_df["order_total_band"].to_numpy().copy()
+        rng.shuffle(shuffled)
+        broken_df["order_total_band"] = shuffled
+
+        return source_df, faithful_df, broken_df
+
+    @staticmethod
+    def _corr_spec() -> list[Any]:
+        """Build the ColumnDistributionSpec for the M2M correlation pair."""
+        from testflight._spec import ColumnDistributionSpec
+
+        return [
+            ColumnDistributionSpec(
+                table="orders",
+                column="qty_band",
+                distribution_class="preserve",
+                strategy="passthrough",
+                joint_columns=[["qty_band", "order_total_band"]],
+                corr_tol=0.90,
+            ),
+            ColumnDistributionSpec(
+                table="orders",
+                column="order_total_band",
+                distribution_class="preserve",
+                strategy="passthrough",
+                joints_waived=True,
+                joints_waived_reason="target of the joint declared on qty_band; waived here",
+            ),
+        ]
+
+    def test_m2m_correlation_break_detected(self) -> None:
+        """Shuffling order_total_band must drop joint similarity below 0.90.
+
+        RED: order_total_band is shuffled independently in the output. The joint
+        (qty_band, order_total_band) loses its category-driven structure.
+        Label-aware TVD between source and shuffled output crosstabs is > 0.10
+        -> similarity < 0.90 < corr_tol=0.90 -> RAISES.
+
+        GREEN: test_m2m_good_passthrough_correlation_passes (below) uses a
+        faithful passthrough output and passes.
+
+        This proves the correlation tooth catches a pipeline regression where
+        the M2M masking accidentally corrupts a passthrough column on the
+        junction table (e.g., by treating qty_band or order_total_band as an
+        FK column and remapping its values to a different value set).
+        """
+        source_df, _, broken_df = self._build_m2m_correlated_frames(n=800, seed=42)
+        spec = self._corr_spec()
+
+        with pytest.raises(AssertionError, match="corr_tol"):
+            check_distribution_mask(
+                "m2m_corr_break",
+                "orders",
+                spec,
+                source_df,
+                broken_df,
+                strategy_map={"qty_band": "passthrough", "order_total_band": "passthrough"},
+            )
+
+    def test_m2m_good_passthrough_correlation_passes(self) -> None:
+        """Faithful passthrough output must NOT raise for the M2M correlation pair.
+
+        Both qty_band and order_total_band are passthrough -> output identical
+        to source -> joint similarity = 1.0 >= corr_tol=0.90 -> PASSES.
+
+        Proves the correlation tooth does not over-assert: a correctly masked
+        junction table with passthrough columns passes without false alarms.
+        """
+        source_df, faithful_df, _ = self._build_m2m_correlated_frames(n=800, seed=42)
+        spec = self._corr_spec()
+
+        # Must NOT raise: source == output -> joint similarity = 1.0.
+        check_distribution_mask(
+            "m2m_corr_good",
+            "orders",
+            spec,
+            source_df,
+            faithful_df,
+            strategy_map={"qty_band": "passthrough", "order_total_band": "passthrough"},
+        )
