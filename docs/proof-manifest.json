@@ -2,7 +2,7 @@
   "engine_version": "0.2.0",
   "generated_at": "2026-06-14",
   "surface": {
-    "mask": 13,
+    "mask": 15,
     "generate": 7,
     "providers": 34
   },
@@ -616,6 +616,78 @@
         }
       ],
       "invariant": "PII spans are detected and masked per-detector (FPE for SSN by default); unmatched surrounding text is controlled by unmatched_span_policy."
+    },
+    {
+      "id": "mask.geo_generalize",
+      "kind": "mask",
+      "title": "ZIP Safe Harbor k-threshold cascade",
+      "column": "zipcode",
+      "config_yaml": "tables:\n- name: t\n  columns:\n  - name: zipcode\n    strategy: geo_generalize\n    provider_config:\n      type: zip\n      cascade:\n      - zip5\n      - zip3\n      - state\n      - suppress\n      k_threshold: 3",
+      "input": [
+        {
+          "zipcode": "98101"
+        },
+        {
+          "zipcode": "98102"
+        },
+        {
+          "zipcode": "98103"
+        }
+      ],
+      "output": [
+        {
+          "zipcode": "981"
+        },
+        {
+          "zipcode": "981"
+        },
+        {
+          "zipcode": "981"
+        }
+      ],
+      "invariant": "Each ZIP5 is generalised to the most specific level whose in-dataset count satisfies the k-threshold; restricted ZIP3 prefixes (HHS Safe Harbor 45 CFR 164.514(b)(2)(i)(B)) are skipped regardless of count."
+    },
+    {
+      "id": "mask.joint_mask",
+      "kind": "mask",
+      "title": "Joint reference-tuple masking (ZIP/city/state)",
+      "column": "zip",
+      "config_yaml": "tables:\n- name: t\n  columns:\n  - name: zip\n    strategy: joint_mask\n    provider_config:\n      columns: [zip, city, state]\n      reference: us_zip5_city_state\n      key_by: patient_id",
+      "input": [
+        {
+          "patient_id": "P0001",
+          "zip": "00000"
+        },
+        {
+          "patient_id": "P0002",
+          "zip": "00000"
+        },
+        {
+          "patient_id": "P0003",
+          "zip": "00000"
+        }
+      ],
+      "output": [
+        {
+          "patient_id": "P0001",
+          "zip": "19101",
+          "city": "Philadelphia",
+          "state": "PA"
+        },
+        {
+          "patient_id": "P0002",
+          "zip": "77002",
+          "city": "Houston",
+          "state": "TX"
+        },
+        {
+          "patient_id": "P0003",
+          "zip": "77003",
+          "city": "Houston",
+          "state": "TX"
+        }
+      ],
+      "invariant": "Every output (zip, city, state) tuple is a real row from the reference table; geographic consistency is guaranteed because the entire row is drawn from a single reference record, never assembled field-by-field."
     }
   ],
   "providers": [

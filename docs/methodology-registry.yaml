@@ -74,6 +74,19 @@ modules:
     pattern: HMAC-SHA256 keyed span determinism
     source: RFC 2104 (HMAC); Type-II Feistel 1973 (via fpe.py)
 
+  # SP-08 (2026-06-28): joint_mask compound reference-tuple masking.
+  # HMAC-SHA256-keyed row selection via ReferenceTable.keyed_row (RFC 2104).
+  # Reuses SP-06 reference_tables loader (pyarrow Parquet I/O).
+  - path: src/decoy_engine/transforms/joint_mask.py
+    pattern: HMAC-SHA256-keyed row derivation via ReferenceTable.keyed_row
+    source: RFC 2104 (HMAC); apache/arrow (Apache-2.0)
+
+  # SP-08 (2026-06-28): geo_generalize ZIP Safe Harbor cascade.
+  # HIPAA Safe Harbor restricted-ZIP3 list per 45 CFR 164.514(b)(2)(i)(B).
+  - path: src/decoy_engine/transforms/geo_generalize.py
+    pattern: HIPAA Safe Harbor ZIP cascade
+    source: 45 CFR 164.514(b)(2) HHS HIPAA Privacy Rule
+
   # Removed 2026-06-02: the entire `forecast/` module (Recommender +
   # ForecastReport + DisguiseRecommendation + FieldRecommendation +
   # RiskFlag) was deleted under the storm-reframe-C clean break

@@ -51,7 +51,8 @@ def test_surface_counts_match_capability_matrix():
     gen = _load_generator()
     surface = gen.build()["surface"]
     # Mask count excludes the internal `nested` wrapper, matching the matrix.
-    assert surface["mask"] == 13
+    # SP-08 (2026-06-28): added joint_mask + geo_generalize -> 13 + 2 = 15.
+    assert surface["mask"] == 15
     assert surface["generate"] == 7
     assert surface["providers"] == 34
 

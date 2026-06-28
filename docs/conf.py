@@ -254,6 +254,11 @@ nitpick_ignore = [
     # */_*.py. Same pattern as expressions above.
     ("py:func", "load_table"),
     ("py:class", "ReferenceTable"),
+    # SP-08 (2026-06-28): joint_mask.py references PlanCompileError (defined
+    # in plan._errors, a private autoapi-ignored module) and the qualified
+    # ReferenceTable path. Same class of issue as ExecutionError above.
+    ("py:exc", "PlanCompileError"),
+    ("py:class", "decoy_engine.reference_tables.ReferenceTable"),
     # Pre-existing bare :data: cross-references from public module docstrings.
     # CODES is defined in validation_result.py as a class used as a data
     # namespace; autoapi renders the bare :data:`CODES` reference from that
