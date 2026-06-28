@@ -27,10 +27,12 @@ ENGINE_ROOT = Path(__file__).resolve().parents[2] / "src" / "decoy_engine"
 # Allow these to use eval / exec / compile because they are themselves
 # the safe-eval implementation or test fixtures that probe it.
 _EVAL_ALLOWLIST: dict[str, str] = {
-    "expressions.py": (
-        "Implements safe_eval() / compile() with AST sanitization for "
-        "the expression DSL. The eval / compile callsites are the "
-        "library; the safety check is in this module."
+    # SP-06: expressions.py converted to expressions/ package.
+    # _safe_eval.py is the audited module that owns the simpleeval chain.
+    "expressions/_safe_eval.py": (
+        "Implements safe_eval() with simpleeval's restricted sandbox for "
+        "the formula strategy. The simpleeval .eval() callsite is the "
+        "library; the safety boundary is simpleeval, not CPython eval()."
     ),
     "transforms/formula.py": (
         "Pre-V2 legacy strategy that delegates to safe_eval from "

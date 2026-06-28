@@ -40,6 +40,8 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | `src/decoy_engine/` | Engine package |
 | `src/decoy_engine/identifiers.py` | Stable sub-import namespace for identifier families (Ein/Mrn/Ndc/Npi/Ssn adapters, domains, validators); use `decoy_engine.identifiers.EinValidator` instead of the top-level package |
 | `src/decoy_engine/checksums.py` | Check-digit registry for seven structured-identifier schemes (luhn, npi, iban, vin, isbn13, ean13, gtin). Public functions: `validate(scheme, value) -> bool` and `calc_check_digit(scheme, body) -> str`. python-stdnum 2.2 backs luhn/iban/ean13/isbn13/gtin; npi and vin are hand-rolled per CMS NPPES and NHTSA 49 CFR Part 565 / ISO 3779. Used internally by the FPE `checksum:` parameter to recompute check digits after permutation. |
+| `src/decoy_engine/expressions/` | Two distinct expression evaluators. `_safe_eval.py` holds the simpleeval-backed `safe_eval` / `BASE_GLOBALS` / `MASK_GLOBALS` / `make_mask_globals` API used by the `formula` strategy (re-exported from the package, no caller change). `_lark_parser.py` + `grammar.lark` hold the Lark closed-grammar parser (`compile_expr` / `evaluate` / `CompiledExpression`) for the `derived` and `case_when` strategies (SP-10, not yet built). The grammar is the security boundary: no `eval()` or dynamic execution anywhere on the Lark path. |
+| `src/decoy_engine/reference_tables/` | Static Parquet dataset loader for the `code_set` and `joint_mask` strategies (SP-08/09, not yet built). Public API: `load_table(name, path=None) -> ReferenceTable`. Schema convention: every table must have an `id` column (int64); rows are id-sorted at load. Two public-domain tables ship in `data/`: `us_zip5_city_state` (USPS/Census ACS) and `vehicle_make_model_year` (NHTSA vPIC). Customer-provided tables are accepted via the `path` argument. `ReferenceTable.keyed_row` is deterministic within a table version but NOT stable across versions with different row counts (see CHANGELOG SP-06 entry). |
 | `src/decoy_engine/_MAP.md` | Engine package navigation map |
 | `src/decoy_engine/config/` | `PipelineConfig`, `RelationshipConfig`, `TableConfig`, source/target descriptors |
 | `src/decoy_engine/plan/` | `compile_plan` + frozen `Plan`; `_seed.py` holds the shared seed validator used by the compiler, pipeline profile path, and generation; `_graph.py` builds plan-side relationship and namespace tuples; `_seed_envelope.py` builds per-table/column/group `SeedEnvelope` (split from `_compile.py`, F11d) |
@@ -81,6 +83,9 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | Public exports | `src/decoy_engine/__init__.py` |
 | Identifier validators/adapters/domains | `src/decoy_engine/identifiers.py` |
 | Check-digit validation and FPE checksum support | `src/decoy_engine/checksums.py` |
+| Expression parser (closed grammar, `derived`/`case_when`) | `src/decoy_engine/expressions/_lark_parser.py` (`compile_expr`, `evaluate`, `CompiledExpression`) |
+| Formula safe-eval (`formula` strategy) | `src/decoy_engine/expressions/_safe_eval.py` (`safe_eval`, `make_mask_globals`, `BASE_GLOBALS`, `MASK_GLOBALS`) |
+| Reference-table loader (`code_set`/`joint_mask` tables) | `src/decoy_engine/reference_tables/` (`load_table`, `ReferenceTable`) |
 | Job-level validator framework (validators: config block) | `src/decoy_engine/validators/` (entry: `validate`; types: `ValidationReport`, `ValidatorFinding`) |
 | Quarantine-row routing (quarantine: config block) | `src/decoy_engine/quarantine.py` (`apply_quarantine`, `quarantine_manifest`) |
 | Config schema | `src/decoy_engine/config/_pipeline.py` |
@@ -126,7 +131,7 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | Gotcha | Note |
 |---|---|
 | Validation runs once at the choke-point | `PipelineConfig.model_validate(yaml).model_dump()` validates strictly; downstream engine functions do not re-validate |
-| Expression safety is sensitive | Avoid adding direct `eval()` paths; use the existing safe-eval helpers in `expressions.py` |
+| Expression safety is sensitive | Avoid adding direct `eval()` paths; use the safe-eval helpers in `expressions/_safe_eval.py` for `formula` strategy work, or `expressions/_lark_parser.py` for closed-grammar `derived`/`case_when` work |
 | Engine is library code | Do not import platform or CLI |
 | Substrate selection respects env | `DECOY_SUBSTRATE=polars\|pandas` overrides the default per `_substrate.py` |
 | Public stubs exist | Check capability docs before claiming production behavior |

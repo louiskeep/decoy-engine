@@ -237,6 +237,30 @@ nitpick_ignore = [
     # convention for private-module-sourced types (see ExecutionError above).
     ("py:class", "decoy_engine.validators._types.ValidationReport"),
     ("py:class", "decoy_engine.validators._types.QuarantineSummary"),
+    # SP-06 (2026-06-27): expressions.py converted to a package. The public
+    # API functions (safe_eval, make_mask_globals) are now defined in the
+    # private `_safe_eval.py` submodule (autoapi_ignore pattern */_*.py) and
+    # re-exported from `expressions/__init__.py`. autoapi's `imported-members`
+    # includes them in the rendered page but does not register a py:func
+    # cross-reference target under the re-exporting namespace. The :func:
+    # cross-references in transforms/formula.py therefore cannot resolve.
+    # Suppressed here rather than removing the docstring links (which remain
+    # accurate and readable).
+    ("py:func", "decoy_engine.expressions.make_mask_globals"),
+    ("py:func", "decoy_engine.expressions.safe_eval"),
+    # SP-06 (2026-06-27): reference_tables.__init__.py uses bare :func: and
+    # :class: roles for load_table and ReferenceTable. Both are defined in
+    # private submodules (_loader.py, _types.py) matching autoapi_ignore
+    # */_*.py. Same pattern as expressions above.
+    ("py:func", "load_table"),
+    ("py:class", "ReferenceTable"),
+    # Pre-existing bare :data: cross-references from public module docstrings.
+    # CODES is defined in validation_result.py as a class used as a data
+    # namespace; autoapi renders the bare :data:`CODES` reference from that
+    # module's own docstring as unresolvable. PACK_SIGNING_INFO is defined in
+    # storm.model_pack.provenance; same class of bare-name resolution issue.
+    ("py:data", "CODES"),
+    ("py:data", "PACK_SIGNING_INFO"),
 ]
 
 # Private (underscore-prefixed) classes, the `decoy_engine.internal.*`
