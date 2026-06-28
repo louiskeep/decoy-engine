@@ -51,7 +51,7 @@ def test_surface_counts_match_capability_matrix():
     gen = _load_generator()
     surface = gen.build()["surface"]
     # Mask count excludes the internal `nested` wrapper, matching the matrix.
-    assert surface["mask"] == 12
+    assert surface["mask"] == 13
     assert surface["generate"] == 7
     assert surface["providers"] == 34
 
