@@ -609,7 +609,7 @@ def check_derived_column_refs(config: dict[str, Any]) -> None:
         # generate tables.
         derived_refs: dict[str, frozenset[str]] = {}
 
-        def _derived_col_entries(t: dict) -> Any:
+        def _derived_col_entries(t: dict[str, Any]) -> Any:
             """Yield (col_name, expr, col_kind) per derived column. t passed
             explicitly to avoid capturing the loop variable (ruff B023)."""
             for e in t.get("columns") or []:
