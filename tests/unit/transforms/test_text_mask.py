@@ -19,7 +19,7 @@ import pandas as pd
 import pytest
 
 from decoy_engine.plan._types import ColumnSeed
-from decoy_engine.storm.detectors import _SPAN_DETECTORS
+from decoy_engine.storm.detectors import _SPAN_DETECTORS, Span
 from decoy_engine.transforms.text_mask import (
     DETECTOR_DEFAULTS,
     mask_cell,
@@ -144,20 +144,68 @@ class TestMultiDetectorDispatch:
         assert raw not in result
 
 
-class TestOverlapResolutionLongerMatchWins:
-    """text_mask.1: overlapping spans resolve to the longer match."""
+class TestOverlapResolution:
+    """text_mask.1: overlapping spans resolve by leftmost-then-longest policy.
 
-    def test_longer_span_wins_overlap(self) -> None:
-        """iter_spans already resolves by leftmost-then-longest; text_mask respects it."""
-        # Use two custom detectors via iter_spans' custom kwarg -- test through
-        # mask_cell's underlying iter_spans call by verifying only one span is masked
-        # (overlap from two detectors on the same text position).
-        text = "SSN 123-45-6789 end"
-        # Run with ssn only - the 11-char SSN should be masked once
-        result = mask_cell(text, _SEED, detector_ids=["ssn"], unmatched_span_policy="passthrough")
-        # There should be exactly one masked span (not two overlapping redactions)
-        assert result.count("[REDACTED]") <= 1
-        assert "123-45-6789" not in result
+    Policy: spans are sorted by (start, -length); the greedy sweep keeps the first
+    non-conflicting match.  Primary key is start position; length breaks ties.
+    Earlier spec text said 'longer-match-wins' which is imprecise for the general
+    case -- 'leftmost-then-longest' is the actual implementation.
+    """
+
+    def test_genuine_overlap_leftmost_longest_wins(self) -> None:
+        """Genuine two-detector overlap via extra_spans: longer span at same start wins."""
+        # Inject two overlapping spans at position 0:
+        #   span_long: ssn (length 11) -- should win (longer when starts tie)
+        #   span_short: us_zip (length 3) -- should be dropped (same start, shorter)
+        text = "123-45-6789"
+        span_long = Span("ssn", 0, 11, "123-45-6789")
+        span_short = Span("us_zip", 0, 3, "123")
+        # Pass shorter span first to prove ordering is not input-dependent
+        result = mask_cell(
+            text,
+            _SEED,
+            extra_spans=[span_short, span_long],
+            unmatched_span_policy="passthrough",
+        )
+        # ssn wins: output must be FPE-encrypted SSN (NNN-NN-NNNN shape)
+        assert re.search(r"\d{3}-\d{2}-\d{4}", result), (
+            f"Expected FPE-masked SSN in result; got {result!r}"
+        )
+        # Raw values must not appear
+        assert "123-45-6789" not in result, f"Raw SSN leaked: {result!r}"
+        assert "123" not in result, f"Raw us_zip content leaked: {result!r}"
+
+    def test_overlap_no_raw_remnant_under_passthrough(self) -> None:
+        """No raw PII remnant when two spans overlap and passthrough is active.
+
+        Verifies the M1 invariant: dropped spans' content is fully covered by the
+        winning span's masking; passthrough only applies to truly undetected segments.
+        """
+        # Two overlapping spans: span_a covers 0-15, span_b covers 8-20 (overlap 8-15)
+        # Leftmost wins (span_a), span_b is dropped.
+        # span_b's leading content (8-15) is covered by span_a's masking.
+        # span_b's trailing content (15-20) falls in unmatched territory.
+        text = "1234567890abcde12345"  # 20 chars
+        raw_a = text[0:15]  # "1234567890abcde"
+        raw_b_tail = text[15:20]  # "12345" (unmatched, rides through under passthrough)
+        span_a = Span("ssn", 0, 15, raw_a)  # leftmost, wins
+        span_b = Span("email", 8, 20, text[8:20])  # overlaps with span_a, dropped
+        result = mask_cell(
+            text,
+            _SEED,
+            extra_spans=[span_a, span_b],
+            unmatched_span_policy="passthrough",
+        )
+        # span_a's matched content must be masked (FPE for SSN, but here ssn= strategy)
+        assert raw_a not in result, f"Winning span's raw text leaked: {result!r}"
+        # span_b was dropped; its leading chars (8-15) are inside span_a's masked region
+        # span_b's trailing chars (15-20) pass through under passthrough (not PII in test)
+        assert raw_b_tail in result, (
+            f"Unmatched trailing segment should pass through under passthrough; result: {result!r}"
+        )
+        # The full original text must not survive unmodified
+        assert result != text, "Cell must not be returned unmodified when spans were detected"
 
     def test_non_overlapping_spans_both_masked(self) -> None:
         """Two non-overlapping SSNs in one cell - both are masked."""
@@ -222,7 +270,11 @@ class TestRawValueIsolation:
     """text_mask.2: raw matched_text must never appear in logs or evidence."""
 
     def test_no_raw_pii_in_log_records(self) -> None:
-        """Sentry: raw matched_text must not appear in any decoy_engine log record."""
+        """Sentry: raw matched_text must not appear in any decoy_engine log record.
+
+        Non-vacuous: passthrough policy causes mask_cell to emit a warning log,
+        so captured is guaranteed non-empty after the call.
+        """
         raw_ssn = "123-45-6789"
         captured: list[str] = []
 
@@ -239,29 +291,83 @@ class TestRawValueIsolation:
                 f"SSN: {raw_ssn} is confidential.",
                 _SEED,
                 detector_ids=["ssn"],
-                unmatched_span_policy="passthrough",
+                unmatched_span_policy="passthrough",  # triggers the passthrough warning log
             )
         finally:
             root.removeHandler(cap)
 
+        # Sentry must be non-vacuous: passthrough policy must emit at least one log record.
+        assert captured, (
+            "Expected at least one log record from mask_cell; passthrough policy "
+            "should emit a warning. If this fires, the warning log was removed."
+        )
         for msg in captured:
             assert raw_ssn not in msg, f"Raw PII leaked into log record: {msg!r}"
 
     def test_handler_no_raw_pii_in_warnings(self) -> None:
-        """Sentry: QualityWarnings returned by TextMaskHandler contain no raw PII."""
+        """Sentry: QualityWarnings and log records from TextMaskHandler contain no raw PII.
+
+        Non-vacuous: passthrough plan config causes mask_cell to emit a warning log,
+        so captured log records are guaranteed non-empty.
+        """
         from decoy_engine.execution._strategies._text_mask import TextMaskHandler
 
         raw_ssn = "123-45-6789"
+        captured: list[str] = []
+
+        class _Cap(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                captured.append(self.format(record))
+
+        cap = _Cap()
+        root = logging.getLogger("decoy_engine")
+        root.addHandler(cap)
+        root.setLevel(logging.DEBUG)
+
         df = pd.DataFrame({"notes": [f"SSN {raw_ssn} on file."]})
         handler = TextMaskHandler()
-        _, warnings = handler.run(
-            df.copy(),
-            "notes",
-            _make_plan(),
-            _FakeCtx(),
-        )
+        try:
+            _, warnings = handler.run(
+                df.copy(),
+                "notes",
+                _make_plan(unmatched_span_policy="passthrough"),  # triggers warning log
+                _FakeCtx(),
+            )
+        finally:
+            root.removeHandler(cap)
+
+        # QualityWarnings must not contain raw PII
         for w in warnings:
             assert raw_ssn not in str(w), f"Raw PII leaked into QualityWarning: {w!r}"
+        # Sentry must be non-vacuous: passthrough policy must have emitted a log warning.
+        assert captured, (
+            "Expected at least one log record from TextMaskHandler run; passthrough "
+            "policy should emit a warning. If this fires, the warning log was removed."
+        )
+        for msg in captured:
+            assert raw_ssn not in msg, f"Raw PII leaked into log record: {msg!r}"
+
+    def test_raw_value_never_interpolated_in_log_strings(self) -> None:
+        """Static sentry: text_mask.py must never format matched_text into any log call.
+
+        Scans the module source for log calls that reference 'matched_text'. If a
+        future edit adds such a call, this test fails and the change must be reverted.
+        The invariant is: only strategy name and detector_id are safe to log.
+        """
+        import inspect
+
+        from decoy_engine.transforms import text_mask as _tm
+
+        source = inspect.getsource(_tm)
+        # Find any log call that interpolates matched_text directly
+        dangerous = re.findall(
+            r"_log\.\w+\s*\([^)]*\bmatched_text\b",
+            source,
+        )
+        assert not dangerous, (
+            f"text_mask.py has a log call that references matched_text (raw-value isolation "
+            f"violation). Remove the interpolation: {dangerous}"
+        )
 
     def test_masked_output_does_not_contain_raw_ssn(self) -> None:
         """Basic sanity: the output cell must not equal the raw input."""
@@ -511,20 +617,32 @@ class TestTextMaskHandler:
 
 
 class TestDateShiftDispatch:
-    """Date-typed detectors dispatch to date_shift by default."""
+    """Date-typed detectors dispatch to date_shift by default.
+
+    iso_date is a Tier-2 detector (not in _SPAN_DETECTORS); spans must be
+    supplied via extra_spans= to exercise the date_shift strategy.
+    """
 
     def test_iso_date_is_shifted(self) -> None:
-        """iso_date default strategy is date_shift; output parses as a date."""
+        """iso_date -> date_shift via extra_spans injection; output is a shifted date.
+
+        Uses cfg min_days=1/max_days=30 to guarantee shift > 0, avoiding the
+        degenerate zero-shift edge case and making the assert unconditionally real.
+        """
         raw = "1990-01-15"
+        # Inject the iso_date span explicitly: iso_date is Tier-2 (NER/custom-only).
         result = mask_cell(
             raw,
             _SEED,
-            detector_ids=["iso_date"],
+            extra_spans=[Span("iso_date", 0, len(raw), raw)],
             unmatched_span_policy="passthrough",
+            cfg={"min_days": 1, "max_days": 30},  # shift in [1, 30]: guaranteed nonzero
         )
-        # Result should still be a parsable date in the same format
-        assert raw != result or True  # date_shift CAN return same date (zero-shift edge case)
-        # Verify result is a valid date string in YYYY-MM-DD format
+        # The date must have been shifted (shift > 0 guaranteed by cfg above)
+        assert result != raw, (
+            f"date_shift with min_days=1 must shift the date; got same value {result!r}"
+        )
+        # Output must still parse as YYYY-MM-DD (format preserved by date_shift)
         from datetime import datetime as dt
 
         try:
@@ -534,22 +652,38 @@ class TestDateShiftDispatch:
 
 
 class TestFakerDispatch:
-    """Name-typed detectors dispatch to faker by default."""
+    """Name-typed detectors dispatch to faker by default.
+
+    person_name is a Tier-2 detector (not in _SPAN_DETECTORS); spans must be
+    supplied via extra_spans= to exercise the faker strategy.
+    """
 
     def test_faker_default_for_person_name_is_not_original(self) -> None:
-        """person_name -> faker; the output should differ from (or equal, if seeded same) input."""
-        # faker is keyed so same input produces same output
+        """person_name -> faker via extra_spans injection; output is a different synthetic name."""
+        raw_name = "John Doe"
+        # Inject the person_name span explicitly: person_name is Tier-2 (NER/custom-only).
+        span = Span("person_name", 0, len(raw_name), raw_name)
         result1 = mask_cell(
-            "John Doe",
+            raw_name,
             _SEED,
-            strategy_map={"person_name": "faker"},
+            extra_spans=[span],
             unmatched_span_policy="passthrough",
         )
         result2 = mask_cell(
-            "John Doe",
+            raw_name,
             _SEED,
-            strategy_map={"person_name": "faker"},
+            extra_spans=[span],
             unmatched_span_policy="passthrough",
         )
-        # Deterministic: two calls with same seed must yield same result
-        assert result1 == result2
+        # Deterministic: same input + same seed -> same synthetic name
+        assert result1 == result2, (
+            f"Faker dispatch must be deterministic; got {result1!r} vs {result2!r}"
+        )
+        # The output must NOT be the original name (Faker generates a synthetic name)
+        assert result1 != raw_name, (
+            f"faker output should not equal the original name; got {result1!r}"
+        )
+        # Output must be a non-empty string
+        assert isinstance(result1, str) and result1.strip(), (
+            f"faker output must be a non-empty string; got {result1!r}"
+        )
