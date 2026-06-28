@@ -5,8 +5,10 @@ Phase 0 contains:
     Loads the skeleton a_healthcare_claims manifest, round-trips the data
     model, and proves the fail-closed unknown-key rejection.
 
-Phase 1+: parametrized job execution tests (one test per discovered job).
-The parametrization will be added in Phase 1 alongside the real runner body.
+Phase 2 adds:
+  - test_job_passes_all_invariants: parametrized end-to-end test that runs
+    each discovered job through the real runner and asserts all invariant
+    families pass. One test per job discovered under testflight/jobs/.
 
 All tests are marked `testflight` so the default regression loop (which
 uses addopts="-m not benchmark and not testflight") never collects them.
@@ -288,25 +290,64 @@ class TestManifestLoader:
 
 
 # ---------------------------------------------------------------------------
-# Phase 1+: Parametrized job execution tests
+# Phase 2: Parametrized job execution tests
 # ---------------------------------------------------------------------------
-# The following will be filled in during Phase 1 once the runner is
-# implemented. Placeholder to show the intended structure.
 
-# @pytest.mark.parametrize(
-#     "manifest_path",
-#     sorted((Path(__file__).parent / "jobs").glob("*/manifest.yaml")),
-#     ids=lambda p: p.parent.name,
-# )
-# def test_job_passes_all_invariants(manifest_path: Path) -> None:
-#     """Run one test-flight job and assert all invariants pass."""
-#     from testflight._runner import run_job
-#     result = run_job(manifest_path)
-#     assert result.passed, (
-#         f"Job {result.job_name} failed. "
-#         + "\n".join(
-#             f"  {r.family}: {r.detail}"
-#             for r in result.invariant_results
-#             if not r.passed
-#         )
-#     )
+
+@pytest.mark.parametrize(
+    "manifest_path",
+    sorted((Path(__file__).parent / "jobs").glob("*/manifest.yaml")),
+    ids=lambda p: p.parent.name,
+)
+def test_job_passes_all_invariants(manifest_path: Path) -> None:
+    """Run one test-flight job end-to-end and assert all invariants pass.
+
+    Discovers jobs from testflight/jobs/*/manifest.yaml. For each job:
+    1. Builds source frames from the job's fixture.py.
+    2. Runs the pipeline twice (determinism check).
+    3. Evaluates all invariant families declared in the manifest.
+    4. Asserts the job result is fully passing.
+
+    A failure in any invariant family fails the test with a message naming
+    the failing families and their detail lines. This is the primary
+    regression gate: any change that breaks an invariant is caught here
+    before it reaches CI.
+    """
+    from testflight._runner import run_job
+
+    result = run_job(manifest_path)
+    n_failed = sum(1 for r in result.invariant_results if not r.passed)
+    assert result.passed, f"Job '{result.job_name}' failed {n_failed} invariant(s):\n" + "\n".join(
+        f"  [{r.family}] {r.detail}" for r in result.invariant_results if not r.passed
+    )
+
+    # LOW-5: assert expected family set actually ran for known jobs.
+    # This prevents a silent test that passes only because no invariants were
+    # configured (which would make result.passed vacuously True).
+    families_run = {r.family for r in result.invariant_results}
+    job_name = manifest_path.parent.name
+
+    if job_name == "a_healthcare_claims":
+        # These families must ALL appear in the result for Job A.
+        # If a new invariant is added to the manifest without wiring it in
+        # the runner, or if a family is silently dropped, this assertion fires.
+        expected_families = {
+            "determinism",
+            "fk_integrity",
+            "distribution:members",
+            "distribution:claims",
+            "chapter_preserve",
+            "checksums",
+            "safe_harbor",
+            "quarantine",
+            "sentinels",
+            "computed_columns",
+        }
+        missing = expected_families - families_run
+        assert not missing, (
+            f"Job '{job_name}': expected invariant families not found in "
+            f"result: {sorted(missing)}. "
+            f"Families actually run: {sorted(families_run)}. "
+            "Check that each family is wired in evaluate_invariants() "
+            "and declared in the manifest."
+        )

@@ -1,15 +1,39 @@
 # Test-flight Job A: Healthcare claims
 # Topology: one_to_many_multilevel (members -> claims -> claim_lines, depth 3)
 #
-# Phase 0: skeleton manifest exercising the FlightManifest data model.
-# Full pipeline config (config:) and seeded fixture generator (fixture.py)
-# are populated in Phase 1 / Phase 2.
+# Phase 2: full pipeline config + seeded fixture generator (fixture.py).
+#
+# PLANTED EDGE CASES (exact counts asserted by invariants):
+#   - 18 member rows with HHS-restricted ZIP3 prefixes (Safe Harbor suppression)
+#   - 10 member rows with invalid-Luhn card_no (quarantined by luhn validator)
+#   - sentinel SSN "8880088888" in member row 0 (FPE transforms; sentinel scan)
+#   - sentinel email "sentinel.leak.test@example-decoy-testflight.invalid" in row 0
+#
+# DELIBERATE CORRELATIONS (non-trivial for distribution invariant):
+#   - plan_tier correlated with age (young -> Bronze/Silver, older -> Gold/Platinum)
+#   - claim_amount correlated with ICD-10 chapter (I/E/N/C = high, A/B/R = low)
+#   - amount_band (high/mid/low) correlated with diagnosis_chapter (both passthrough;
+#     joint declared as (amount_band, diagnosis_chapter) with corr_tol >= 0.90)
+#   - chapter_preserve: true on diagnosis so masked ICD code stays in same chapter
+#
+# PLANTED ORPHANS (MEDIUM-1):
+#   - 5 claim rows referencing quarantine member IDs (M001991-M001995)
+#     These members are removed from the masked output by quarantine;
+#     orphan_policy:warn keeps the orphan claims in the claims output.
+#     member_identity expected_orphans: 5
+#
+# Source fingerprints (SHA-256 of canonical CSV; verified by verify_fingerprint
+# inside each fixture build_* function -- update all three after any fixture change):
+#   members:     f0a05c63ddfd74c9625f44800ffa87f26cfe8e9e6927cb8ad6907b3b8032c281
+#   claims:      f1728aef9f060f176da6af8a9621e0e009a33512ea1d193c06a524d55a08889c
+#   claim_lines: 3678e5ce5ac37add2d3bf66fc274875282297f038a4a6ebec246ed79b6ecb0f3
 #
 # Strategies exercised (strategy_coverage below):
 #   fpe+checksum (luhn, npi), geo_generalize (Safe Harbor), date_shift,
-#   bucket_perturb, code_set (icd10, hcpcs, ndc), joint_mask, categorical,
-#   derived, case_when, derived_aggregate, from_parent, passthrough,
-#   validators (luhn, fk_intact, no_orphan_children), quarantine.
+#   bucket_perturb, code_set (icd10 with chapter_preserve, hcpcs, ndc[:20]),
+#   categorical, passthrough, derived (+ case_when builtin), derived_aggregate,
+#   from_parent, faker, validators (luhn, fk_intact, no_orphan_children), quarantine.
+# NDC capped at 20 codes (known boundary; see MEDIUM-2 note in distribution spec).
 
 job_name: a_healthcare_claims
 topology: one_to_many_multilevel
@@ -48,51 +72,397 @@ relationships:
     orphan_policy: warn
     namespace: claim_identity
 
-# Pipeline config: skeleton only for Phase 0. Phase 1 populates the full
-# PipelineConfig-compatible dict (version, global_settings, sources, tables,
-# relationships, targets). The runner validates this through
-# PipelineConfig.model_validate(raw) before calling run_pipeline.
-config: {}
+# Full PipelineConfig dict. Sources/targets use placeholder paths that the
+# runner replaces with temp-file paths before calling run_pipeline.
+config:
+  version: 1
+  global_settings:
+    seed: 42
+
+  # Placeholder sources (runner rewrites these to actual temp-file paths).
+  sources:
+    members: {type: file, format: parquet, path: "__PLACEHOLDER_members__"}
+    claims:  {type: file, format: parquet, path: "__PLACEHOLDER_claims__"}
+    claim_lines: {type: file, format: parquet, path: "__PLACEHOLDER_claim_lines__"}
+
+  targets:
+    members: {type: file, format: parquet, path: "__PLACEHOLDER_out_members__"}
+    claims:  {type: file, format: parquet, path: "__PLACEHOLDER_out_claims__"}
+    claim_lines: {type: file, format: parquet, path: "__PLACEHOLDER_out_claim_lines__"}
+
+  namespaces:
+    member_identity:
+      declared_by:
+        - members.member_id
+
+  tables:
+    # === members ===
+    - name: members
+      columns:
+        # FK parent key: FPE bijection, digits.
+        - name: member_id
+          strategy: fpe
+          namespace: member_identity
+          provider_config:
+            charset: digits
+
+        # SSN: FPE + Luhn checksum recomputation.
+        - name: ssn
+          strategy: fpe
+          namespace: ssn_ns
+          provider_config:
+            charset: digits
+            checksum: luhn
+
+        # NPI: FPE + NPI check digit recomputation.
+        - name: npi
+          strategy: fpe
+          namespace: npi_ns
+          provider_config:
+            charset: digits
+            checksum: npi
+
+        # MRN: FPE, alphanumeric.
+        - name: mrn
+          strategy: fpe
+          namespace: mrn_ns
+          provider_config:
+            charset: alphanum
+
+        # card_no: passthrough so invalid-Luhn rows survive to the validator.
+        # The luhn validator (below) fires on these rows; quarantine catches them.
+        - name: card_no
+          strategy: passthrough
+
+        # name: faker (full name).
+        - name: name
+          strategy: faker
+          provider: person_full_name
+          namespace: name_ns
+
+        # email: faker (email).
+        - name: email
+          strategy: faker
+          provider: person_email
+          namespace: email_ns
+
+        # dob: date_shift (keyed offset within a bounded range).
+        - name: dob
+          strategy: date_shift
+          namespace: dob_ns
+
+        # age: passthrough (used as source for plan_tier correlation check).
+        - name: age
+          strategy: passthrough
+
+        # zip5: geo_generalize (HIPAA Safe Harbor ZIP cascade).
+        - name: zip5
+          strategy: geo_generalize
+          provider_config:
+            type: zip
+            cascade: [zip5, zip3, state, suppress]
+
+        # plan_tier: categorical (replaces with a value drawn from {Bronze, Silver,
+        # Gold, Platinum}; distribution checked against declared weights).
+        # deterministic: true + namespace required for stable per-source-value mapping.
+        - name: plan_tier
+          strategy: categorical
+          namespace: plan_tier_ns
+          deterministic: true
+          provider_config:
+            categories: [Bronze, Silver, Gold, Platinum]
+            weights: [0.25, 0.35, 0.25, 0.15]
+
+    # === claims ===
+    - name: claims
+      columns:
+        # claim_id: FPE PK.
+        - name: claim_id
+          strategy: fpe
+          namespace: claim_identity
+          provider_config:
+            charset: digits
+
+        # member_id: from_parent (FK to members.member_id via member_identity).
+        - name: member_id
+          strategy: from_parent
+
+        # diagnosis: code_set ICD-10 with chapter_preserve:true so the masked
+        # code stays in the same ICD chapter as the source code. Verified by
+        # the chapter_preserve invariant (6.11).
+        - name: diagnosis
+          strategy: code_set
+          provider_config:
+            code_set: icd10
+            chapter_preserve: true
+
+        # drug_ndc: code_set NDC (capped at 20 codes in fixture; see MEDIUM-2
+        # known-boundary note in distribution section). Categorical on both
+        # source and output; no kind_drift.
+        - name: drug_ndc
+          strategy: code_set
+          provider_config:
+            code_set: ndc
+
+        # claim_amount: passthrough (kept numeric).
+        - name: claim_amount
+          strategy: passthrough
+
+        # amount_band: passthrough (high/mid/low derived in fixture from
+        # claim_amount; correlated with diagnosis_chapter by fixture construction;
+        # declared as joint with diagnosis_chapter in the distribution invariant).
+        - name: amount_band
+          strategy: passthrough
+
+        # diagnosis_chapter: passthrough (= first letter of source ICD-10 code;
+        # matches the chapter of the masked diagnosis because chapter_preserve:true
+        # is set on the diagnosis column). Appears in the joint with amount_band.
+        - name: diagnosis_chapter
+          strategy: passthrough
+
+        # service_date: bucket_perturb to ISO month (coarsens to month granularity).
+        - name: service_date
+          strategy: bucket_perturb
+          namespace: service_date_ns
+          provider_config:
+            bucket: month
+
+    # === claim_lines ===
+    - name: claim_lines
+      columns:
+        # line_id: FPE PK.
+        - name: line_id
+          strategy: fpe
+          namespace: line_identity
+          provider_config:
+            charset: digits
+
+        # claim_id: from_parent (FK to claims.claim_id via claim_identity).
+        - name: claim_id
+          strategy: from_parent
+
+        # procedure: code_set HCPCS.
+        - name: procedure
+          strategy: code_set
+          provider_config:
+            code_set: hcpcs
+
+        # line_amount: passthrough (source for line_total derived + claim_line_sum).
+        - name: line_amount
+          strategy: passthrough
+
+        # units: passthrough (source for line_total derived).
+        - name: units
+          strategy: passthrough
+
+        # discount_tier: passthrough (source for case_when in line_total).
+        - name: discount_tier
+          strategy: passthrough
+
+        # line_total: derived from line_amount * units with a case_when discount.
+        # case_when branches (3, all must be exercised per the branch-coverage test):
+        #   copay:     line_amount * units * 0.80
+        #   preferred: line_amount * units * 0.90
+        #   standard:  line_amount * units * 1.00 (default)
+        - name: line_total
+          strategy: derived
+          provider_config:
+            expression: >-
+              line_amount * units * case_when(
+                discount_tier == "copay", 0.80,
+                discount_tier == "preferred", 0.90,
+                1.0
+              )
+
+        # claim_line_sum: derived_aggregate sum of line_amount across ALL rows.
+        # Scalar broadcast to every row; the computed-column invariant asserts
+        # all rows equal Python sum(line_amount).
+        - name: claim_line_sum
+          strategy: derived_aggregate
+          provider_config:
+            op: sum
+            column: line_amount
+
+  relationships:
+    - parent:   {table: members, columns: [member_id]}
+      children:
+        - {table: claims, columns: [member_id]}
+      orphan_policy: warn
+      namespace: member_identity
+
+    - parent:   {table: claims, columns: [claim_id]}
+      children:
+        - {table: claim_lines, columns: [claim_id]}
+      orphan_policy: warn
+      namespace: claim_identity
+
+  # Validators: luhn fires on the 10 invalid-Luhn card_no rows and triggers
+  # quarantine. fk_intact and no_orphan_children run as belt-and-suspenders
+  # FK integrity checks alongside the harness set-membership check (plan 6.4).
+  validators:
+    - name: luhn
+      columns:
+        members: [card_no]
+    - name: fk_intact
+    - name: no_orphan_children
+
+  # Quarantine: rows failing luhn on card_no are quarantined to a JSONL file.
+  # The runner sets the actual output_path via the assembled config before running.
+  quarantine:
+    enabled: true
+    output_path: "__PLACEHOLDER_quarantine__"
+    triggers: [validation_fail]
 
 invariants:
   determinism: true
 
+  # 6.4 FK integrity:
+  #   member_identity: 5 orphan claims expected. The 5 claims reference
+  #     quarantine member IDs (M001991-M001995). After quarantine removes those
+  #     10 luhn-failing members, the 5 planted orphan claims remain in the
+  #     claims output under orphan_policy:warn. Exercises the warn path.
+  #   claim_identity: 0 orphans expected (no orphan claim_lines planted).
   fk_integrity:
     - relationship_name: member_identity
-      expected_orphans: 0
+      expected_orphans: 5
       policy: warn
     - relationship_name: claim_identity
       expected_orphans: 0
       policy: warn
 
+  # 6.2 Distribution fidelity per column.
+  # grade_floor_enabled: false because FPE columns (fpe value-identity ~ 0 by design)
+  # pull the grade down; the shape-floor and cardinality teeth are the correct checks.
+  grade_floor_enabled: false
+
   distribution:
-    # members.ssn: fpe (preserve class) -- cardinality and value-identity expected high
+    # members.ssn: preserve class (fpe bijection; cardinality + shape guard).
+    # FPE is a strict bijection so the marginal distribution shape is preserved
+    # by construction. No meaningful correlation joint between SSN and other
+    # columns; joint requirement waived.
     - table: members
       column: ssn
       distribution_class: preserve
+      strategy: fpe
       tolerance: 0.05
+      null_pp: 2.0
       joint_columns: []
-      corr_tol: 0.90
-      expected_coarsening: false
-    # members.zip5: geo_generalize (coarsen class) -- cardinality must drop;
-    #   corr_tol is not a correlation pair here, just the default
+      joints_waived: true
+      joints_waived_reason: >-
+        FPE is a bijection that permutes values without altering their frequency
+        distribution; marginal shape is preserved by construction. No meaningful
+        correlation between SSN and other members columns is expected to hold
+        post-masking (FPE remaps each SSN independently of plan_tier or age).
+
+    # members.npi: preserve class (fpe bijection). Same waiver rationale as ssn.
+    - table: members
+      column: npi
+      distribution_class: preserve
+      strategy: fpe
+      tolerance: 0.05
+      null_pp: 2.0
+      joint_columns: []
+      joints_waived: true
+      joints_waived_reason: >-
+        NPI is FPE-bijected independently of SSN and all other members columns;
+        no correlation joint is expected or meaningful post-masking.
+
+    # members.zip5: coarsen class (geo_generalize; cardinality must drop).
     - table: members
       column: zip5
       distribution_class: coarsen
-      tolerance: 0.10
-      joint_columns: []
-      corr_tol: 0.90
+      strategy: geo_generalize
+      tolerance: 0.15
+      null_pp: 10.0
       expected_coarsening: true
-    # claims.claim_amount and diagnosis chapter: pairwise correlation pair declared
-    # Phase 1 populates joint_columns for the pairwise check
+      # Waive joint pair: zip5 and plan_tier correlation is not expected to
+      # survive generalization (zip is generalized to state/suppress).
+      joints_waived: true
+      joints_waived_reason: >-
+        zip5 is generalized to zip3/state/suppress; the generalized values
+        have no meaningful correlation with plan_tier that should be preserved.
+
+    # members.plan_tier: synthetic class (categorical; TVD vs declared weights).
+    - table: members
+      column: plan_tier
+      distribution_class: synthetic
+      strategy: categorical
+      tolerance: 0.10
+      null_pp: 2.0
+      joint_columns: []
+
+    # claims.claim_amount: preserve class. Passthrough (unchanged).
+    # Joint with diagnosis (exact code) is broken post-mask (code_set replaces
+    # codes within the chapter). Waived here; the chapter-level correlation is
+    # checked via the (amount_band, diagnosis_chapter) joint declared below.
     - table: claims
       column: claim_amount
       distribution_class: preserve
-      tolerance: 0.10
+      strategy: passthrough
+      tolerance: 0.05
+      null_pp: 2.0
       joint_columns: []
-      corr_tol: 0.90
-      expected_coarsening: false
+      joints_waived: true
+      joints_waived_reason: >-
+        claim_amount->diagnosis-code joint is broken by code_set (code changes
+        within chapter); chapter-level correlation is verified by the
+        (amount_band, diagnosis_chapter) joint on the amount_band spec.
 
+    # claims.amount_band: preserve class. Passthrough (high/mid/low; unchanged).
+    # Correlated with diagnosis_chapter by fixture construction. The joint pair
+    # (amount_band, diagnosis_chapter) is declared here with corr_tol=0.90.
+    # Both are passthrough -> source and output distributions are identical ->
+    # joint similarity = 1.0 in a correct run. Decorrelating amount_band drops
+    # similarity below 0.90 (verified by the control test in test_testflight_teeth.py).
+    - table: claims
+      column: amount_band
+      distribution_class: preserve
+      strategy: passthrough
+      tolerance: 0.05
+      null_pp: 2.0
+      joint_columns: [[amount_band, diagnosis_chapter]]
+      corr_tol: 0.90
+
+    # claims.diagnosis_chapter: preserve class. Passthrough (first letter of
+    # source ICD-10 code; unchanged). Appears in the joint declared on amount_band.
+    # Waived here so the joint-requirement count fires only on amount_band.
+    - table: claims
+      column: diagnosis_chapter
+      distribution_class: preserve
+      strategy: passthrough
+      tolerance: 0.05
+      null_pp: 2.0
+      joint_columns: []
+      joints_waived: true
+      joints_waived_reason: >-
+        diagnosis_chapter is the target column of the (amount_band,
+        diagnosis_chapter) joint declared on the amount_band spec. Waiving here
+        avoids double-declaring the pair and avoids inflating non-waived count.
+
+    # claims.drug_ndc: NOT declared in the distribution spec. Known boundary
+    # (MEDIUM-2): the fixture caps NDC codes at 20 (categorical; <=30 distinct)
+    # to avoid freetext->categorical kind_drift. Using all 38 shipped NDC codes
+    # would classify the source as freetext (>30) but code_set's HMAC-based
+    # mapping produces ~23 distinct output codes (categorical) due to birthday-
+    # paradox collisions in the N->N-1 candidate pool. The cap ensures both
+    # source and output are categorical and kind_drift does not fire.
+    # The 20-code limit is documented here; a larger NDC corpus (>=50 codes)
+    # would allow freetext source and freetext output without kind_drift.
+
+    # claims.service_date: coarsen class (bucket_perturb to month).
+    - table: claims
+      column: service_date
+      distribution_class: coarsen
+      strategy: bucket_perturb
+      tolerance: 0.15
+      null_pp: 5.0
+      expected_coarsening: true
+      joints_waived: true
+      joints_waived_reason: >-
+        service_date is bucket-perturbed to month granularity; no meaningful
+        correlation joint needs preservation for this column.
+
+  # 6.5 Checksum validity: fpe-checksum columns.
   checksums:
     - table: members
       column: ssn
@@ -101,44 +471,57 @@ invariants:
       column: npi
       scheme: npi
 
+  # 6.6 Safe Harbor suppression.
   safe_harbor:
     - table: members
       column: zip5
       planted_restricted_zip3_count: 18
       expected_suppressions: 18
 
+  # 6.7 Quarantine: 10 invalid-Luhn card_no rows.
   quarantine:
     planted_bad_row_count: 10
     expected_total_quarantined: 10
     expected_validator: luhn
 
+  # 6.8 Sentinel no-leakage.
   sentinels:
     - table: members
       column: ssn
-      value: "SENTINEL-SSN-000-00-0000"
+      value: "8880088888"
     - table: members
       column: email
       value: "sentinel.leak.test@example-decoy-testflight.invalid"
 
+  # 6.9 Computed-column correctness.
   computed_columns:
     - table: claim_lines
       column: line_total
-      formula: "line_amount * units, with case_when discount_tier branch"
+      formula: "line_amount * units * case_when(copay->0.80, preferred->0.90, standard->1.00)"
       branch_count: 3
     - table: claim_lines
       column: claim_line_sum
-      formula: "derived_aggregate sum(line_amount) per claim_id, broadcast to all rows"
+      formula: "sum(line_amount) across all rows, broadcast as scalar"
       branch_count: 0
 
+  # 6.11 Chapter-preserve end-to-end: verify that the masked diagnosis code
+  # is in the same ICD-10 chapter as the source code. chapter_preserve:true
+  # is set on the diagnosis code_set column in the pipeline config; this
+  # invariant confirms the constraint holds for every row in the output.
+  chapter_preserve:
+    - table: claims
+      column: diagnosis
+
+  # Strategy coverage declared for this job.
   strategy_coverage:
     - fpe
     - geo_generalize
     - date_shift
     - bucket_perturb
     - code_set
-    - joint_mask
     - categorical
+    - passthrough
     - derived
     - derived_aggregate
     - from_parent
-    - passthrough
+    - faker

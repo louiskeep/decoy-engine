@@ -1,4 +1,4 @@
-"""Test-flight mutation-control suite (Phase 1: distribution teeth).
+"""Test-flight mutation-control suite (Phase 2: all non-coverage families).
 
 Anti-vacuity: an assertion that cannot fail on a real regression manufactures
 false confidence. Each invariant family requires a known-bad mutation control
@@ -6,7 +6,8 @@ that applies a specific regression to a fixture and asserts the corresponding
 invariant RAISES. This is the engine analogue of scripts/prove_regression.py.
 
 Phase 1 fills in the distribution-fidelity controls (TestDistributionTeeth).
-Phase 2+ fills in the remaining families.
+Phase 2 fills in FK, quarantine, sentinel, and computed-column controls.
+Phase 4 fills in coverage rot.
 
 Mutation controls per family (plan section 9):
   - Distribution constant-collapse: fpe column collapsed to one value;
@@ -19,32 +20,50 @@ Mutation controls per family (plan section 9):
     and that the invariant compares source vs output (never output vs output).
   - Good input: a faithfully-masked output (fpe bijection + genuine coarsening
     + preserved correlation) -> invariant PASSES (proves no over-assertion).
-  - FK break: Phase 2.
-  - Quarantine miscount: Phase 2.
-  - Sentinel leak: Phase 2.
-  - Computed-column corruption: Phase 2.
+  - FK break: orphaned child FK row -> check_fk_integrity raises.
+  - Quarantine miscount: wrong quarantine count -> check_quarantine raises.
+  - Sentinel leak: raw PII value in output -> check_sentinels raises.
+  - Computed-column corruption: wrong formula output -> check_computed_columns raises.
   - Coverage rot: Phase 4.
 
 All tests are marked testflight. Run via:
   pytest testflight -m testflight
-  python scripts/test_flight.py --mutate <kind>
+  python scripts/test_flight.py
 """
 
 from __future__ import annotations
 
+import pathlib
+import tempfile
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 import pytest
 from pydantic import ValidationError
 
 from testflight._invariants import (
     FIXED_TS,
+    check_chapter_preserve,
+    check_computed_columns,
     check_distribution_generate,
     check_distribution_mask,
+    check_fk_integrity,
+    check_quarantine,
+    check_sentinels,
 )
-from testflight._spec import ColumnDistributionSpec
+from testflight._spec import (
+    ChapterPreserveSpec,
+    ColumnDistributionSpec,
+    ComputedColumnSpec,
+    FKIntegritySpec,
+    QuarantineSpec,
+    RelationshipEndSpec,
+    RelationshipSpec,
+    SentinelSpec,
+)
 
 pytestmark = pytest.mark.testflight
 
@@ -411,54 +430,378 @@ class TestFKIntegrityTeeth:
     """Mutation controls for the FK integrity invariant family."""
 
     def test_fk_break_detected(self) -> None:
-        """Deleting a relationship must trip the FK-integrity invariant.
+        """An orphaned child FK row must trip the FK-integrity invariant.
 
-        Phase 2: build a job config without a declared relationship, run the
-        pipeline, and assert check_fk_integrity raises AssertionError with the
-        expected vs found orphan count differing.
+        RED: 100 parent members (masked ids P000..P099) + 11 child claims
+        where the last row references FK "P999" which does not exist in the
+        parent output. check_fk_integrity expects 0 orphans.
+
+        GREEN: test_good_fk_passes (below) uses a clean child table and passes.
+
+        This test verifies the invariant is not vacuous: a pipeline that somehow
+        creates an orphan (e.g. masking deleted a parent key but left the child)
+        is caught here, not silently accepted.
         """
-        pytest.skip("Phase 2: FK-break mutation control pending.")
+        # Build parent table: 100 masked member IDs.
+        parent_ids = [f"P{i:03d}" for i in range(100)]
+        parent_tbl = pa.table({"member_id": parent_ids})
+
+        # Build child table: 10 valid FK refs + 1 orphan ref to "P999".
+        child_fk = [f"P{i:03d}" for i in range(10)] + ["P999"]
+        child_tbl = pa.table({"claim_id": [f"C{i:03d}" for i in range(11)], "member_id": child_fk})
+
+        result = SimpleNamespace(
+            outputs={"members": parent_tbl, "claims": child_tbl},
+            quality_metrics={},
+        )
+
+        relationships = [
+            RelationshipSpec(
+                parent=RelationshipEndSpec(table="members", columns=["member_id"]),
+                children=[RelationshipEndSpec(table="claims", columns=["member_id"])],
+                orphan_policy="fail",
+                namespace="member_identity",
+            )
+        ]
+        spec = [
+            FKIntegritySpec(relationship_name="member_identity", expected_orphans=0, policy="fail")
+        ]
+
+        with pytest.raises(AssertionError, match="orphan_count=1"):
+            check_fk_integrity("fk_control", spec, result, relationships)
+
+    def test_good_fk_passes(self) -> None:
+        """A fully-intact FK relationship must NOT raise.
+
+        Proves check_fk_integrity does not over-assert. All child FK values
+        reference an existing parent key.
+        """
+        parent_ids = [f"P{i:03d}" for i in range(100)]
+        parent_tbl = pa.table({"member_id": parent_ids})
+        child_fk = [f"P{i % 100:03d}" for i in range(200)]
+        child_tbl = pa.table({"claim_id": [f"C{i:03d}" for i in range(200)], "member_id": child_fk})
+
+        result = SimpleNamespace(
+            outputs={"members": parent_tbl, "claims": child_tbl},
+            quality_metrics={},
+        )
+        relationships = [
+            RelationshipSpec(
+                parent=RelationshipEndSpec(table="members", columns=["member_id"]),
+                children=[RelationshipEndSpec(table="claims", columns=["member_id"])],
+                orphan_policy="fail",
+                namespace="member_identity",
+            )
+        ]
+        spec = [
+            FKIntegritySpec(relationship_name="member_identity", expected_orphans=0, policy="fail")
+        ]
+
+        # Must NOT raise: all child FK values are in the parent key pool.
+        check_fk_integrity("fk_control_good", spec, result, relationships)
 
 
 class TestQuarantineTeeth:
     """Mutation controls for the quarantine invariant family."""
 
     def test_quarantine_miscount_detected(self) -> None:
-        """Injecting an extra bad row not in the manifest must trip the quarantine
-        count invariant.
+        """A quarantine count that does not match the manifest must raise.
 
-        Phase 2: plant one more invalid-checksum row than expected_total_quarantined
-        in the manifest declares, run the pipeline, and assert check_quarantine
-        raises AssertionError with the count mismatch.
+        RED: quality_metrics reports 11 quarantined rows but the QuarantineSpec
+        expects exactly 10. check_quarantine must raise with the mismatch.
+
+        The JSONL file is also written with 11 lines so only the count assertion
+        fires (not the file-line-count assertion), keeping the failure localised.
         """
-        pytest.skip("Phase 2: quarantine-miscount mutation control pending.")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            q_path = pathlib.Path(tmpdir) / "quarantine.jsonl"
+            # Write 11 lines (matching the WRONG actual count).
+            q_path.write_text(
+                "\n".join([f'{{"row": {i}}}' for i in range(11)]) + "\n",
+                encoding="utf-8",
+            )
+
+            qm = {
+                "quarantine": {
+                    "enabled": True,
+                    "output_path": str(q_path),
+                    "counts_by_trigger": {"validation_fail": 11},
+                    "total_quarantined": 11,  # one more than expected
+                },
+                "validation": {
+                    "validators": {
+                        "passed": False,
+                        "validators_run": 1,
+                        "findings": [
+                            {
+                                "validator": "luhn",
+                                "table": "members",
+                                "column": "card_no",
+                                "failing_row_indices": [0],
+                                "detail": {},
+                            }
+                        ],
+                        "elapsed_ms": 5,
+                    }
+                },
+            }
+            result = SimpleNamespace(outputs={}, quality_metrics=qm)
+            spec = QuarantineSpec(
+                planted_bad_row_count=10,
+                expected_total_quarantined=10,
+                expected_validator="luhn",
+            )
+
+            with pytest.raises(AssertionError, match="total_quarantined=11"):
+                check_quarantine("quarantine_control", spec, result)
+
+    def test_good_quarantine_passes(self) -> None:
+        """A quarantine count matching the manifest must NOT raise.
+
+        Proves check_quarantine does not over-assert when the pipeline quarantines
+        exactly the expected number of rows with the expected validator.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            q_path = pathlib.Path(tmpdir) / "quarantine.jsonl"
+            q_path.write_text(
+                "\n".join([f'{{"row": {i}}}' for i in range(10)]) + "\n",
+                encoding="utf-8",
+            )
+
+            qm = {
+                "quarantine": {
+                    "enabled": True,
+                    "output_path": str(q_path),
+                    "counts_by_trigger": {"validation_fail": 10},
+                    "total_quarantined": 10,
+                },
+                "validation": {
+                    "validators": {
+                        "passed": False,
+                        "validators_run": 1,
+                        "findings": [
+                            {
+                                "validator": "luhn",
+                                "table": "members",
+                                "column": "card_no",
+                                "failing_row_indices": list(range(10)),
+                                "detail": {},
+                            }
+                        ],
+                        "elapsed_ms": 5,
+                    }
+                },
+            }
+            result = SimpleNamespace(outputs={}, quality_metrics=qm)
+            spec = QuarantineSpec(
+                planted_bad_row_count=10,
+                expected_total_quarantined=10,
+                expected_validator="luhn",
+            )
+
+            # Must NOT raise: count and validator both match.
+            check_quarantine("quarantine_control_good", spec, result)
 
 
 class TestSentinelTeeth:
     """Mutation controls for the sentinel no-leakage invariant family."""
 
     def test_sentinel_leak_detected(self) -> None:
-        """Setting a masked column to passthrough must trip the sentinel scan.
+        """A sentinel SSN appearing in any output column must trip the sentinel scan.
 
-        Phase 2: modify a job config so a column carrying a sentinel SSN string
-        uses passthrough instead of fpe, run the pipeline, and assert
-        check_sentinels raises AssertionError naming the output column and the
-        leaked sentinel value.
+        RED: a passthrough bug leaves the source SSN column unmasked in the
+        output. The sentinel SSN "8880088888" appears verbatim in members.ssn
+        row 0. check_sentinels scans ALL output columns and raises immediately
+        on finding it.
+
+        GREEN: test_good_sentinels_passes (below) shows a masked output passes.
+
+        Note: the sentinel scan checks for the string as a SUBSTRING so even a
+        column that embeds the value in a longer string (e.g. "ID:8880088888")
+        would be caught. This control uses the exact string to match the most
+        common passthrough regression.
         """
-        pytest.skip("Phase 2: sentinel-leak mutation control pending.")
+        sentinel_ssn = "8880088888"
+
+        # Leaked output: ssn column contains the raw sentinel value in row 0.
+        # (Simulates a passthrough bug where fpe was not applied.)
+        members_tbl = pa.table(
+            {
+                "member_id": ["P000", "P001"],
+                "ssn": [sentinel_ssn, "1234567890"],  # row 0 leaked
+                "name": ["Alice", "Bob"],
+            }
+        )
+
+        result = SimpleNamespace(
+            outputs={"members": members_tbl},
+            quality_metrics={},
+        )
+        spec = [SentinelSpec(table="members", column="ssn", value=sentinel_ssn)]
+
+        with pytest.raises(AssertionError, match=sentinel_ssn):
+            check_sentinels("sentinel_control", spec, result)
+
+    def test_good_sentinels_passes(self) -> None:
+        """An output with no sentinel strings present must NOT raise.
+
+        Proves check_sentinels does not over-assert. All SSN values in the
+        output are masked (different from the sentinel value).
+        """
+        sentinel_ssn = "8880088888"
+
+        # Properly masked output: ssn column contains transformed values.
+        members_tbl = pa.table(
+            {
+                "member_id": ["P000", "P001"],
+                "ssn": ["5551234567", "4449876543"],  # neither is the sentinel
+                "name": ["Alice", "Bob"],
+            }
+        )
+
+        result = SimpleNamespace(
+            outputs={"members": members_tbl},
+            quality_metrics={},
+        )
+        spec = [SentinelSpec(table="members", column="ssn", value=sentinel_ssn)]
+
+        # Must NOT raise: sentinel is absent from all output columns.
+        check_sentinels("sentinel_control_good", spec, result)
 
 
 class TestComputedColumnTeeth:
     """Mutation controls for the computed-column correctness invariant family."""
 
     def test_formula_corruption_detected(self) -> None:
-        """Perturbing a derived formula must trip the computed-column invariant.
+        """A corrupted line_total formula must trip the computed-column invariant.
 
-        Phase 2: modify a derived column expression so its output is off by one
-        (e.g. multiply by units + 1 instead of units), run the pipeline, and assert
-        check_computed_columns raises AssertionError naming the affected column.
+        RED: line_total is computed WITHOUT the discount_tier factor (i.e.
+        always line_amount * units * 1.0 regardless of tier). The control
+        builds rows where discount_tier="copay" (factor 0.80) so the expected
+        value (0.80 * line_amount * units) differs from the corrupted value
+        (1.0 * line_amount * units).
+
+        GREEN: test_good_computed_columns_passes (below) shows a correctly
+        computed line_total passes.
+
+        This test proves the branch-weight assertion in check_computed_columns
+        catches a real formula regression (the discount factor silently dropped
+        from the pipeline's derived expression).
         """
-        pytest.skip("Phase 2: formula-corruption mutation control pending.")
+        # 3 rows: one per discount_tier branch. copay and preferred rows will
+        # expose the formula corruption (factor != 1.0).
+        rows = [
+            {
+                "line_amount": 100.0,
+                "units": 2,
+                "discount_tier": "copay",
+                # corrupted: 100 * 2 * 1.0 = 200 (should be 100*2*0.80=160)
+                "line_total": 200.0,
+                "claim_line_sum": 300.0,
+            },
+            {
+                "line_amount": 100.0,
+                "units": 2,
+                "discount_tier": "preferred",
+                # corrupted: 100 * 2 * 1.0 = 200 (should be 100*2*0.90=180)
+                "line_total": 200.0,
+                "claim_line_sum": 300.0,
+            },
+            {
+                "line_amount": 100.0,
+                "units": 2,
+                "discount_tier": "standard",
+                # standard factor is 1.0 so corrupted == correct (200)
+                "line_total": 200.0,
+                "claim_line_sum": 300.0,
+            },
+        ]
+        tbl = pa.table(
+            {
+                k: [r[k] for r in rows]
+                for k in ["line_amount", "units", "discount_tier", "line_total", "claim_line_sum"]
+            }
+        )
+
+        result = SimpleNamespace(
+            outputs={"claim_lines": tbl},
+            quality_metrics={},
+        )
+        formula = "line_amount * units * case_when(discount_tier, copay=0.80, preferred=0.90, 1.0)"
+        spec = [
+            ComputedColumnSpec(
+                table="claim_lines",
+                column="line_total",
+                formula=formula,
+                branch_count=3,
+            )
+        ]
+
+        with pytest.raises(AssertionError, match="claim_lines.line_total"):
+            check_computed_columns("computed_control", spec, result)
+
+    def test_good_computed_columns_passes(self) -> None:
+        """A correctly computed line_total and claim_line_sum must NOT raise.
+
+        Proves check_computed_columns does not over-assert. The line_total
+        values exactly match the case_when formula and claim_line_sum equals
+        sum(line_amount) broadcast to all rows.
+        """
+        rows = [
+            {
+                "line_amount": 100.0,
+                "units": 2,
+                "discount_tier": "copay",
+                "line_total": 160.0,
+            },  # 100*2*0.80
+            {
+                "line_amount": 100.0,
+                "units": 2,
+                "discount_tier": "preferred",
+                "line_total": 180.0,
+            },  # 100*2*0.90
+            {
+                "line_amount": 100.0,
+                "units": 2,
+                "discount_tier": "standard",
+                "line_total": 200.0,
+            },  # 100*2*1.00
+        ]
+        total_la = 300.0  # sum(line_amount)
+        tbl = pa.table(
+            {
+                "line_amount": [r["line_amount"] for r in rows],
+                "units": [r["units"] for r in rows],
+                "discount_tier": [r["discount_tier"] for r in rows],
+                "line_total": [r["line_total"] for r in rows],
+                "claim_line_sum": [total_la, total_la, total_la],
+            }
+        )
+
+        result = SimpleNamespace(
+            outputs={"claim_lines": tbl},
+            quality_metrics={},
+        )
+        line_total_formula = (
+            "line_amount * units * case_when(discount_tier, copay=0.80, preferred=0.90, 1.0)"
+        )
+        spec = [
+            ComputedColumnSpec(
+                table="claim_lines",
+                column="line_total",
+                formula=line_total_formula,
+                branch_count=3,
+            ),
+            ComputedColumnSpec(
+                table="claim_lines",
+                column="claim_line_sum",
+                formula="sum(line_amount) broadcast to all rows",
+                branch_count=0,
+            ),
+        ]
+
+        # Must NOT raise: all computed values are correct.
+        check_computed_columns("computed_control_good", spec, result)
 
 
 class TestCoverageRotTeeth:
@@ -1268,3 +1611,350 @@ class TestLowThreeCorrelationTol:
             # If raise: TVD discriminated even for continuous floats at this n.
             # Either outcome is acceptable; the test documents the behavior.
             pass
+
+
+# ---------------------------------------------------------------------------
+# TestJobACorrelationBites: Tooth C (correlation-preservation) genuinely fires
+# on the Job A (amount_band, diagnosis_chapter) joint when the output is
+# decorrelated. The control test proves the joint is not vacuous.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.testflight
+class TestJobACorrelationBites:
+    """Mutation controls for the (amount_band, diagnosis_chapter) joint.
+
+    Proves that Tooth C fires when amount_band is shuffled in the output
+    (decorrelation -> similarity < 0.90 -> AssertionError), and that a
+    correct passthrough output passes (similarity = 1.0).
+    """
+
+    @staticmethod
+    def _build_correlated_df(n: int = 2000, seed: int = 42) -> pd.DataFrame:
+        """Return a DataFrame with amount_band correlated to diagnosis_chapter.
+
+        amount_band and diagnosis_chapter are strongly correlated by construction:
+          high -> chapter I or E (ICD high-cost chapters)
+          low  -> chapter A or B (ICD low-cost chapters)
+          mid  -> chapter J or K
+        Matches the correlation pattern in fixture.build_claims().
+        """
+        rng = np.random.default_rng(seed)
+        bands = rng.choice(["high", "low", "mid"], size=n, p=[0.35, 0.30, 0.35])
+        chapter_map = {"high": list("IE"), "low": list("AB"), "mid": list("JK")}
+        chapters = [rng.choice(chapter_map[str(b)]) for b in bands]
+        return pd.DataFrame({"amount_band": bands, "diagnosis_chapter": chapters})
+
+    @staticmethod
+    def _make_spec() -> list[ColumnDistributionSpec]:
+        return [
+            ColumnDistributionSpec(
+                table="claims",
+                column="amount_band",
+                distribution_class="preserve",
+                strategy="passthrough",
+                joint_columns=[["amount_band", "diagnosis_chapter"]],
+                corr_tol=0.90,
+            ),
+            ColumnDistributionSpec(
+                table="claims",
+                column="diagnosis_chapter",
+                distribution_class="preserve",
+                strategy="passthrough",
+                joints_waived=True,
+                joints_waived_reason=(
+                    "diagnosis_chapter is the target of the joint declared on "
+                    "amount_band; waived here to avoid inflating non-waived count."
+                ),
+            ),
+        ]
+
+    def test_correct_passthrough_output_passes(self) -> None:
+        """A passthrough output (amount_band unchanged) must pass Tooth C.
+
+        Both amount_band and diagnosis_chapter are passthrough; the joint
+        similarity between source and output is 1.0 because the values are
+        identical. This proves the 'good path' is not over-asserted.
+        """
+        source_df = self._build_correlated_df()
+        output_df = source_df.copy()  # passthrough: no change
+        # Should not raise.
+        check_distribution_mask(
+            "job_a_corr_control",
+            "claims",
+            self._make_spec(),
+            source_df,
+            output_df,
+            strategy_map={"amount_band": "passthrough", "diagnosis_chapter": "passthrough"},
+        )
+
+    def test_decorrelated_output_raises(self) -> None:
+        """Shuffling amount_band in the output breaks the joint -> Tooth C fires.
+
+        The source has a strong (amount_band, diagnosis_chapter) correlation
+        (TVD similarity near 1.0). Shuffling amount_band independently of
+        diagnosis_chapter destroys the joint distribution, bringing the
+        joint similarity below corr_tol=0.90. The check must raise with a
+        correlation-preservation message.
+        """
+        rng = np.random.default_rng(99)
+        source_df = self._build_correlated_df()
+        output_df = source_df.copy()
+        # Shuffle amount_band independently of diagnosis_chapter.
+        output_df["amount_band"] = rng.permutation(output_df["amount_band"].values)
+        with pytest.raises(AssertionError, match="correlation-preservation"):
+            check_distribution_mask(
+                "job_a_corr_control",
+                "claims",
+                self._make_spec(),
+                source_df,
+                output_df,
+                strategy_map={"amount_band": "passthrough", "diagnosis_chapter": "passthrough"},
+            )
+
+
+# ---------------------------------------------------------------------------
+# TestChapterPreserve: check_chapter_preserve end-to-end mutation controls.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.testflight
+class TestChapterPreserve:
+    """Mutation controls for check_chapter_preserve (invariant 6.11).
+
+    Proves that check_chapter_preserve detects chapter mismatches and
+    passes cleanly when chapters are preserved.
+    """
+
+    @staticmethod
+    def _make_result(outputs: dict[str, pa.Table]) -> Any:
+        return SimpleNamespace(outputs=outputs)
+
+    def test_same_chapter_replacement_passes(self) -> None:
+        """Masked codes in the same ICD-10 chapter must pass check.
+
+        Source A01.0 -> output A02.0: same chapter (A). Should not raise.
+        """
+        src = pa.table(
+            {
+                "claim_id": ["C1", "C2", "C3", "C4"],
+                "diagnosis": ["A01.0", "B20.0", "I10.0", "C50.0"],
+            }
+        )
+        out = pa.table(
+            {
+                "claim_id": ["C1", "C2", "C3", "C4"],
+                "diagnosis": ["A02.0", "B19.0", "I11.0", "C51.0"],  # same chapters
+            }
+        )
+        spec = [ChapterPreserveSpec(table="claims", column="diagnosis")]
+        check_chapter_preserve(
+            "chapter_test",
+            spec,
+            self._make_result({"claims": out}),
+            {"claims": src},
+        )
+
+    def test_chapter_mismatch_raises(self) -> None:
+        """A masked code in a different chapter must raise.
+
+        Source C50.0 (chapter C) -> output Z10.0 (chapter Z) is a chapter
+        violation. check_chapter_preserve must raise with a 'chapter_preserve'
+        message including the count of mismatches.
+        """
+        src = pa.table(
+            {
+                "claim_id": ["C1", "C2", "C3"],
+                "diagnosis": ["A01.0", "B20.0", "C50.0"],
+            }
+        )
+        out = pa.table(
+            {
+                "claim_id": ["C1", "C2", "C3"],
+                # C50.0 -> Z10.0 is a chapter violation (C -> Z).
+                "diagnosis": ["A02.0", "B19.0", "Z10.0"],
+            }
+        )
+        spec = [ChapterPreserveSpec(table="claims", column="diagnosis")]
+        with pytest.raises(AssertionError, match="chapter_preserve"):
+            check_chapter_preserve(
+                "chapter_test",
+                spec,
+                self._make_result({"claims": out}),
+                {"claims": src},
+            )
+
+    def test_multiple_mismatches_raises(self) -> None:
+        """Multiple chapter mismatches are reported in the AssertionError."""
+        src = pa.table(
+            {
+                "claim_id": ["C1", "C2", "C3", "C4"],
+                "diagnosis": ["A01.0", "B20.0", "I10.0", "C50.0"],
+            }
+        )
+        out = pa.table(
+            {
+                "claim_id": ["C1", "C2", "C3", "C4"],
+                # B20.0 -> A20.0 (B->A) and C50.0 -> Z10.0 (C->Z) are mismatches.
+                "diagnosis": ["A02.0", "A20.0", "I11.0", "Z10.0"],
+            }
+        )
+        spec = [ChapterPreserveSpec(table="claims", column="diagnosis")]
+        with pytest.raises(AssertionError, match="chapter_preserve"):
+            check_chapter_preserve(
+                "chapter_test",
+                spec,
+                self._make_result({"claims": out}),
+                {"claims": src},
+            )
+
+
+# ---------------------------------------------------------------------------
+# TestPerColumnWaiverScoping: verifies the HIGH-1 per-column waiver fix.
+# The bug was: any(s.joints_waived) disabled the joint requirement for the
+# WHOLE table. The fix: only non-waived preserve columns contribute to the
+# >=2 count that triggers the requirement.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.testflight
+class TestPerColumnWaiverScoping:
+    """Mutation controls for the per-column waiver scoping fix (HIGH-1).
+
+    Before the fix:
+      - waiving column C also exempted columns A and B from the joint requirement.
+    After the fix:
+      - waiving C exempts only C; A and B still require a declared joint.
+    """
+
+    @staticmethod
+    def _build_df(n: int = 200, seed: int = 42) -> pd.DataFrame:
+        rng = np.random.default_rng(seed)
+        return pd.DataFrame(
+            {
+                "a": [str(v) for v in rng.integers(0, 5, n)],
+                "b": [str(v) for v in rng.integers(0, 5, n)],
+                "c": [str(v) for v in rng.integers(0, 5, n)],
+            }
+        )
+
+    def test_two_non_waived_no_joints_raises(self) -> None:
+        """With 2 non-waived preserve columns and no joints -> RAISES.
+
+        Column c is waived, but columns a and b are non-waived. The per-column
+        scoping fix ensures that c's waiver does NOT exempt a and b from the
+        joint requirement. With no joint declared, the requirement fires.
+        """
+        df = self._build_df()
+        spec = [
+            ColumnDistributionSpec(
+                table="t",
+                column="a",
+                distribution_class="preserve",
+                strategy="passthrough",
+            ),
+            ColumnDistributionSpec(
+                table="t",
+                column="b",
+                distribution_class="preserve",
+                strategy="passthrough",
+            ),
+            ColumnDistributionSpec(
+                table="t",
+                column="c",
+                distribution_class="preserve",
+                strategy="passthrough",
+                joints_waived=True,
+                joints_waived_reason="c is waived; a and b are still non-waived",
+            ),
+        ]
+        with pytest.raises(AssertionError, match="non-waived preserve"):
+            check_distribution_mask(
+                "waiver_scope_test",
+                "t",
+                spec,
+                df,
+                df.copy(),
+                strategy_map={"a": "passthrough", "b": "passthrough", "c": "passthrough"},
+            )
+
+    def test_waived_column_with_joint_for_others_passes(self) -> None:
+        """Waiving c does not block a declared joint for a and b.
+
+        Adding joint_columns=[["a","b"]] to the spec for column a satisfies
+        the requirement for the two non-waived preserve columns. The check
+        must pass.
+        """
+        df = self._build_df()
+        spec = [
+            ColumnDistributionSpec(
+                table="t",
+                column="a",
+                distribution_class="preserve",
+                strategy="passthrough",
+                joint_columns=[["a", "b"]],
+                # 0.50 is the minimum allowed by the spec (ge=0.5). The test
+                # verifies scoping, not TVD value; 0.5 is loose enough to pass
+                # with uncorrelated random integer columns.
+                corr_tol=0.50,
+            ),
+            ColumnDistributionSpec(
+                table="t",
+                column="b",
+                distribution_class="preserve",
+                strategy="passthrough",
+                joints_waived=True,
+                joints_waived_reason="b is the target of the joint declared on a",
+            ),
+            ColumnDistributionSpec(
+                table="t",
+                column="c",
+                distribution_class="preserve",
+                strategy="passthrough",
+                joints_waived=True,
+                joints_waived_reason="c is explicitly waived",
+            ),
+        ]
+        # Should not raise: joint declared for the two non-waived specs' columns.
+        check_distribution_mask(
+            "waiver_scope_test",
+            "t",
+            spec,
+            df,
+            df.copy(),
+            strategy_map={"a": "passthrough", "b": "passthrough", "c": "passthrough"},
+        )
+
+    def test_all_waived_no_joints_passes(self) -> None:
+        """If ALL preserve columns are individually waived, no joints are needed.
+
+        With 0 non-waived preserve columns, the >=2 requirement cannot fire.
+        """
+        df = self._build_df()
+        spec = [
+            ColumnDistributionSpec(
+                table="t",
+                column="a",
+                distribution_class="preserve",
+                strategy="passthrough",
+                joints_waived=True,
+                joints_waived_reason="test: all waived",
+            ),
+            ColumnDistributionSpec(
+                table="t",
+                column="b",
+                distribution_class="preserve",
+                strategy="passthrough",
+                joints_waived=True,
+                joints_waived_reason="test: all waived",
+            ),
+        ]
+        # Should not raise: no non-waived columns -> no joint requirement.
+        check_distribution_mask(
+            "waiver_scope_test",
+            "t",
+            spec,
+            df,
+            df.copy(),
+            strategy_map={"a": "passthrough", "b": "passthrough"},
+        )

@@ -255,6 +255,20 @@ class SentinelSpec(BaseModel):
     value: str = Field(description="The raw PII string that must be absent from output.")
 
 
+class ChapterPreserveSpec(BaseModel):
+    """Assertion that a code_set column with chapter_preserve:true keeps its chapter.
+
+    After masking, the first character of every output code must equal the first
+    character of the corresponding source code. This verifies the SP-09/SP-11
+    chapter_preserve feature end-to-end through run_pipeline.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    table: str = Field(description="Table containing the code_set column.")
+    column: str = Field(description="The code_set column (e.g. 'diagnosis').")
+
+
 class ComputedColumnSpec(BaseModel):
     """Correctness expectation for a derived / case_when / derived_aggregate column.
 
@@ -330,6 +344,10 @@ class InvariantSpec(BaseModel):
     # asserts the union across all jobs covers the full registry minus the
     # documented allowlist.
     strategy_coverage: list[str] = Field(default_factory=list)
+
+    # 6.11 chapter_preserve: assert code_set columns with chapter_preserve:true
+    # produce output codes in the same chapter as the source codes.
+    chapter_preserve: list[ChapterPreserveSpec] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
