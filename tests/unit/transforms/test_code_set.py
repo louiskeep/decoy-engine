@@ -431,6 +431,93 @@ class TestGenModePerRowVariation:
             assert out1 == out2, f"row_index={i}: same seed + same row_index must give same code."
 
 
+# ── MEDIUM: gen mode cross-column decorrelation (namespace-blind defect) ──────
+
+
+class TestGenModeDecorrelation:
+    """MEDIUM: gen selection must be namespace-bound via derive_index.
+
+    The original defect: two gen columns sharing the same job_seed produced
+    byte-identical output row-for-row because the RNG seed was computed from
+    job_seed + row_index with no namespace component. Two columns with
+    different namespaces must produce different sequences (decorrelation).
+    """
+
+    def test_cross_column_decorrelation(self):
+        """Two gen columns with different namespaces, same seed and corpus,
+        must produce different output sequences (NOT byte-identical).
+
+        Before fix: col_a == col_b because derive_index is bypassed.
+        After fix: col_a != col_b because each column's namespace feeds HKDF.
+        """
+        cfg = CodeSetConfig.from_dict({"code_set": "icd10"})
+        seed = b"\xca\xfe" * 4  # 8 bytes (canonical StrategyContext length)
+        n = 20
+        col_a = [
+            apply_code_set("", cfg, mode="gen", job_seed=seed, row_index=i, namespace="ns.col_a")
+            for i in range(n)
+        ]
+        col_b = [
+            apply_code_set("", cfg, mode="gen", job_seed=seed, row_index=i, namespace="ns.col_b")
+            for i in range(n)
+        ]
+        assert col_a != col_b, (
+            "Different namespaces must produce different gen sequences. "
+            "Both columns produced identical output, indicating gen selection is namespace-blind."
+        )
+
+    def test_gen_determinism_with_namespace(self):
+        """Same namespace + seed -> identical column on two independent runs."""
+        cfg = CodeSetConfig.from_dict({"code_set": "icd10"})
+        seed = b"\xca\xfe" * 4
+        ns = "ns.determinism"
+        run1 = [
+            apply_code_set("", cfg, mode="gen", job_seed=seed, row_index=i, namespace=ns)
+            for i in range(10)
+        ]
+        run2 = [
+            apply_code_set("", cfg, mode="gen", job_seed=seed, row_index=i, namespace=ns)
+            for i in range(10)
+        ]
+        assert run1 == run2, "Same namespace + seed must produce identical column on rerun."
+
+    def test_chapter_preserve_gen_draws_from_candidates(self, tmp_path):
+        """LOW: chapter_preserve gen mode must draw from candidates (bucket minus
+        input), not from the full bucket. With a two-code chapter the output must
+        never equal the input code.
+        """
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        tbl = pa.table(
+            {
+                "code": pa.array(["A01", "A02", "B01", "B02"], type=pa.string()),
+                "chapter": pa.array(["A", "A", "B", "B"], type=pa.string()),
+            }
+        )
+        path = tmp_path / "two_codes_per_chapter.parquet"
+        pq.write_table(tbl, str(path))
+
+        cfg = CodeSetConfig.from_dict(
+            {
+                "code_set": "two_codes",
+                "chapter_preserve": True,
+                "corpus_source": f"customer:{path}",
+            }
+        )
+        seed = b"\xca\xfe" * 4
+        # A chapter has only A01 and A02; input is A01 so candidates = [A02].
+        for i in range(5):
+            out = apply_code_set(
+                "A01", cfg, mode="gen", job_seed=seed, row_index=i, namespace="ns.test"
+            )
+            assert out != "A01", (
+                f"row {i}: chapter_preserve gen mode returned the input code A01. "
+                "gen must draw from candidates (bucket minus input), not from bucket."
+            )
+            assert out.startswith("A"), f"row {i}: chapter_preserve violated, got {out!r}."
+
+
 # ── H2: chapter_preserve with unknown chapter must fail closed ────────────────
 
 
