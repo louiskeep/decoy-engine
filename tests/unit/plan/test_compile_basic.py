@@ -28,7 +28,7 @@ class TestCompilePlanHappyPath:
         assert plan.seed_protocol_version == 6
         assert plan.engine_version == "0.1.0"
 
-    def test_compile_records_fifteen_checks_passed(
+    def test_compile_records_sixteen_checks_passed(
         self, simple_config: dict, simple_profile: Profile
     ) -> None:
         """S2 added orphan_fk_policy_completeness at row 6; S5 added
@@ -39,7 +39,8 @@ class TestCompilePlanHappyPath:
         capability-gaps WS3/WS2 (2026-06-12) added statistical_columns at
         row 12 and text_redact_ner_available at row 13; the vault follow-up
         (2026-06-12) added vault_columns at row 14; SP-04 (2026-06-27) added
-        fpe_checksum_scheme at row 15."""
+        fpe_checksum_scheme at row 15; SP-10 (2026-06-28) added
+        derived_column_refs at row 16."""
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
         assert set(plan.plan_compile.checks_passed) == {
             "namespace_ambiguity",
@@ -57,6 +58,7 @@ class TestCompilePlanHappyPath:
             "text_redact_ner_available",
             "vault_columns",
             "fpe_checksum_scheme",
+            "derived_column_refs",
         }
 
     def test_compile_no_warnings_no_errors_no_skipped(
