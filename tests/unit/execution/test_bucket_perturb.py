@@ -337,3 +337,43 @@ class TestBucketPerturbIntegration:
                 relationship_graph=_GRAPH,
                 namespace_registry=_NS,
             )
+
+    def test_invalid_bucket_raises_strategy_error_not_silent_quarter(self):
+        """D5.8 - bucket='garbage' must raise StrategyError, NOT silently return quarter output.
+
+        Fail-closed validator wiring: an unrecognized bucket must be caught before
+        apply_bucket_perturb is called. Without the fix, the fallthrough in
+        _bucket_start_and_size silently treats any unknown string as 'quarter',
+        violating the operator's stated privacy intent.
+        """
+        from decoy_engine.execution._errors import StrategyError
+
+        src = pa.table({"d": ["2024-06-15"]})
+        seed = _col(
+            "bucket_perturb",
+            namespace="dates",
+            provider_config=(("bucket", "weekly_typo"), ("date_format", "%Y-%m-%d")),
+        )
+        plan = _plan("d", seed)
+        with pytest.raises(StrategyError, match="weekly_typo"):
+            PandasExecutionAdapter().run_single(
+                plan,
+                src,
+                registry=_REG,
+                relationship_graph=_GRAPH,
+                namespace_registry=_NS,
+            )
+
+    def test_valid_buckets_still_work_after_validation_wiring(self):
+        """D5.9 - validate_bucket_perturb_config wiring does not break week/month/quarter."""
+        for bucket_name in ("week", "month", "quarter"):
+            src = pa.table({"d": ["2024-06-15"]})
+            seed = _col(
+                "bucket_perturb",
+                namespace="dates",
+                provider_config=(("bucket", bucket_name), ("date_format", "%Y-%m-%d")),
+            )
+            out = _run(_plan("d", seed), src)
+            assert len(out) == 1
+            assert out[0] is not None
+            datetime.date.fromisoformat(str(out[0]))

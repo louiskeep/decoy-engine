@@ -71,16 +71,24 @@ def _bucket_start_and_size(date: datetime.date, bucket: str) -> tuple[datetime.d
         _, days_in_month = calendar.monthrange(date.year, date.month)
         return start, days_in_month
 
-    # quarter
-    q_idx = (date.month - 1) // 3  # 0=Q1, 1=Q2, 2=Q3, 3=Q4
-    q_start_month = _QUARTER_START_MONTH[q_idx]
-    start = datetime.date(date.year, q_start_month, 1)
-    # Compute quarter size: count days from start of quarter to end of last month.
-    end_month = q_start_month + 2
-    _, days_in_end_month = calendar.monthrange(date.year, end_month)
-    end = datetime.date(date.year, end_month, days_in_end_month)
-    size = (end - start).days + 1
-    return start, size
+    if bucket == "quarter":
+        q_idx = (date.month - 1) // 3  # 0=Q1, 1=Q2, 2=Q3, 3=Q4
+        q_start_month = _QUARTER_START_MONTH[q_idx]
+        start = datetime.date(date.year, q_start_month, 1)
+        # Compute quarter size: count days from start of quarter to end of last month.
+        end_month = q_start_month + 2
+        _, days_in_end_month = calendar.monthrange(date.year, end_month)
+        end = datetime.date(date.year, end_month, days_in_end_month)
+        size = (end - start).days + 1
+        return start, size
+
+    # Defense-in-depth: an unrecognized bucket must never silently coarsen.
+    # validate_bucket_perturb_config should catch this before apply_bucket_perturb
+    # is called; this raise is the second line of defense.
+    raise ValueError(
+        f"bucket_perturb: unrecognized bucket {bucket!r}. "
+        f"Supported values: {sorted(_VALID_BUCKETS)}."
+    )
 
 
 def _perturb_date(

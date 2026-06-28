@@ -20,7 +20,10 @@ from decoy_engine.execution._adapter import StrategyContext, provider_config_to_
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._types import ColumnSeed
-from decoy_engine.transforms.bucket_perturb import apply_bucket_perturb
+from decoy_engine.transforms.bucket_perturb import (
+    apply_bucket_perturb,
+    validate_bucket_perturb_config,
+)
 
 
 class BucketPerturbStrategyHandler:
@@ -50,6 +53,19 @@ class BucketPerturbStrategyHandler:
         cfg = provider_config_to_dict(plan.provider_config)
         bucket = str(cfg.get("bucket", "month"))
         date_format: str | None = cfg.get("date_format") or None
+
+        # Validate fail-closed before touching any data. apply_bucket_perturb
+        # must never run with an unrecognized bucket. Pass a resolved cfg so the
+        # validator sees the default-applied bucket value, not the raw (possibly
+        # absent) key.
+        try:
+            validate_bucket_perturb_config({**cfg, "bucket": bucket})
+        except ValueError as exc:
+            raise StrategyError(
+                code="bucket_perturb_invalid_config",
+                strategy="bucket_perturb",
+                message=str(exc),
+            ) from exc
 
         col = df[column]
         perturbed = apply_bucket_perturb(
