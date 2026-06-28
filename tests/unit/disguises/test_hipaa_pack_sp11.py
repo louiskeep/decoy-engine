@@ -477,3 +477,178 @@ class TestHonestCoverageClaims:
             f"HIPAA pack must NOT carry a field_rule for 'clinical_notes' (no such "
             f"registered detector). Found: {freetext_rules}"
         )
+
+
+# ── Pack-param-driven end-to-end tests ────────────────────────────────────────
+
+
+class TestPackParamDriven:
+    """Pack-param-driven end-to-end tests for the three SP-11 tightened detectors.
+
+    These tests load the actual shipped HIPAA pack, extract rule.params for
+    npi, icd10, and us_zip FROM THE LOADED PACK (not hand-built dicts), and
+    drive those params through the strategy entry points:
+      - NPI: fpe_encrypt_value with rule.params.get('checksum')
+      - ICD-10: CodeSetConfig.from_dict(rule.params) -> apply_code_set
+      - ZIP: GeoGeneralizeConfig.from_dict(rule.params) -> cascade_zip_column
+
+    Teeth guarantee: if a key is dropped or renamed in hipaa.yaml, the test
+    fails at apply time because rule.params no longer carries the expected key.
+    Examples:
+      - Rename 'checksum' -> 'chk' in hipaa.yaml: rule.params.get('checksum')
+        returns None, fpe_encrypt_value skips checksum recomputation, and
+        checksums.validate('npi', masked) fails -> TEST FAILS.
+      - Rename 'chapter_preserve' -> 'chapter_pres': CodeSetConfig.from_dict
+        uses cfg.get('chapter_preserve', False) = False, chapter preservation
+        is disabled, I-codes may map to any chapter -> TEST FAILS.
+      - Rename 'cascade' -> 'cascade_levels': validate_geo_generalize_config
+        raises PlanCompileError because 'cascade' is a required key -> TEST FAILS.
+      - Rename 'type' -> 'typ': same PlanCompileError on the 'type' key -> TEST FAILS.
+    """
+
+    _JOB_SEED = b"\xca\xfe" * 16
+    _FPE_KEY = bytes(range(32))
+    _FPE_TWEAK = b"npi"
+
+    def _pack(self):
+        return {d.id: d for d in load_disguises()}["hipaa"]
+
+    def _rule(self, detector_id: str):
+        pack = self._pack()
+        return next(r for r in pack.field_rules if detector_id in r.detectors)
+
+    # NPI: fpe with checksum from rule.params
+
+    def test_P1_npi_pack_params_drive_valid_npi_output(self):
+        """NPI rule.params from the loaded pack drive fpe+checksum -> valid NPI.
+
+        Uses npi_rule.params.get('checksum') (not the hard-coded string 'npi').
+        If 'checksum' is renamed or dropped in hipaa.yaml, params.get('checksum')
+        returns None, fpe_encrypt_value skips recomputation, and
+        checksums.validate fails -- the test has teeth.
+        """
+        from decoy_engine.transforms.fpe import fpe_encrypt_value
+
+        npi_rule = self._rule("npi")
+        checksum = npi_rule.params.get("checksum")  # from YAML, not hand-built
+
+        for npi in ["1234567893", "1679576722", "1000000004"]:
+            masked = fpe_encrypt_value(
+                npi, self._FPE_KEY, "0123456789", self._FPE_TWEAK, checksum=checksum
+            )
+            assert checksums.validate("npi", masked), (
+                f"NPI {npi!r} -> {masked!r}: checksums.validate failed. "
+                f"Loaded npi_rule.params={npi_rule.params!r}. "
+                f"Dropping or renaming 'checksum' in hipaa.yaml causes this failure."
+            )
+
+    def test_P1_npi_pack_params_mask_is_fpe_strategy(self):
+        """Confirm the NPI rule uses mask='fpe' (not truncate or faker).
+
+        Belt-and-suspenders: the structural test (TestHipaaPackStructure.test_H1)
+        already checks this. Including here so the pack-param test class is
+        self-contained for readers.
+        """
+        npi_rule = self._rule("npi")
+        assert npi_rule.mask == "fpe", (
+            f"NPI rule.mask must be 'fpe'; got {npi_rule.mask!r}. "
+            f"A strategy rename in hipaa.yaml breaks this assertion."
+        )
+
+    # ICD-10: CodeSetConfig.from_dict driven by rule.params
+
+    def test_P2_icd10_pack_params_drive_chapter_preserved_output(self):
+        """ICD-10 rule.params from the loaded pack drive CodeSetConfig.from_dict -> chapter preserved.
+
+        Uses icd_rule.params (not a hand-built dict) with CodeSetConfig.from_dict.
+        If 'chapter_preserve' is renamed or dropped in hipaa.yaml, from_dict
+        uses cfg.get('chapter_preserve', False) = False, chapter preservation
+        is disabled, and I-codes may map outside chapter I -- test has teeth.
+        """
+        from decoy_engine.transforms.code_set import CodeSetConfig, apply_code_set
+
+        icd_rule = self._rule("icd10")
+        cfg = CodeSetConfig.from_dict(icd_rule.params)  # params straight from YAML
+
+        for code in ["I21.9", "I25.10", "I50.9"]:
+            masked = apply_code_set(code, cfg, mode="mask", job_seed=self._JOB_SEED)
+            assert masked.startswith("I"), (
+                f"Cardiovascular I-code {code!r} -> {masked!r}: chapter not preserved. "
+                f"Loaded icd_rule.params={icd_rule.params!r}. "
+                f"Dropping 'chapter_preserve' from hipaa.yaml disables preservation "
+                f"and causes cross-chapter output, failing this assertion."
+            )
+
+    def test_P2_icd10_pack_params_emit_real_corpus_code(self):
+        """ICD-10 pack-driven output is a real corpus code, not a truncation."""
+        from decoy_engine.transforms.code_set import CodeSetConfig, apply_code_set, load_corpus
+
+        icd_rule = self._rule("icd10")
+        cfg = CodeSetConfig.from_dict(icd_rule.params)
+        corpus_codes = {row["code"] for row in load_corpus("icd10")}
+
+        for code in ["I21.9", "I25.10", "I50.9"]:
+            masked = apply_code_set(code, cfg, mode="mask", job_seed=self._JOB_SEED)
+            assert masked in corpus_codes, (
+                f"ICD-10 output {masked!r} (from {code!r}) is not in the shipped corpus. "
+                f"Loaded icd_rule.params={icd_rule.params!r}."
+            )
+
+    # ZIP: GeoGeneralizeConfig.from_dict driven by rule.params
+
+    def test_P3_zip_pack_params_drive_restricted_prefix_suppressed(self):
+        """ZIP rule.params from the loaded pack drive GeoGeneralizeConfig.from_dict -> restricted suppressed.
+
+        Uses zip_rule.params (not a hand-built dict) with GeoGeneralizeConfig.from_dict.
+        If 'cascade' is renamed or dropped in hipaa.yaml, from_dict raises
+        PlanCompileError (cascade is a required key) -- test has teeth.
+        If 'type' is renamed, from_dict also raises PlanCompileError.
+        """
+        from decoy_engine.transforms.geo_generalize import GeoGeneralizeConfig, cascade_zip_column
+
+        zip_rule = self._rule("us_zip")
+        cfg = GeoGeneralizeConfig.from_dict(zip_rule.params)  # params straight from YAML
+
+        df = pd.DataFrame({"zipcode": ["03601", "03602"]})
+        result_df, evidence = cascade_zip_column(df, "zipcode", cfg)
+
+        for val in result_df["zipcode"]:
+            assert val != "036", (
+                f"Restricted ZIP3 '036' must not appear in output; got {val!r}. "
+                f"Loaded zip_rule.params={zip_rule.params!r}. "
+                f"Dropping 'cascade' from hipaa.yaml raises PlanCompileError; "
+                f"dropping k_threshold falls back to the HIPAA default (20000) "
+                f"which also suppresses restricted prefixes."
+            )
+
+    def test_P3_zip_pack_params_large_prefix_emits_zip3(self):
+        """ZIP rule.params from the loaded pack: non-restricted ZIP3 emits zip3 output."""
+        from decoy_engine.transforms.geo_generalize import GeoGeneralizeConfig, cascade_zip_column
+
+        zip_rule = self._rule("us_zip")
+        cfg = GeoGeneralizeConfig.from_dict(zip_rule.params)
+
+        df = pd.DataFrame({"zipcode": ["98101", "98102", "98103"]})
+        result_df, _ = cascade_zip_column(df, "zipcode", cfg)
+
+        for val in result_df["zipcode"]:
+            assert val == "981", (
+                f"Non-restricted ZIP3 '981' should generalize to '981'; got {val!r}. "
+                f"Loaded zip_rule.params={zip_rule.params!r}."
+            )
+
+    def test_P3_zip_pack_params_k_threshold_is_safe_harbor_floor(self):
+        """The k_threshold extracted from rule.params is 20000 (HIPAA Safe Harbor floor).
+
+        This asserts the YAML value feeds through correctly. If k_threshold is
+        renamed in hipaa.yaml, GeoGeneralizeConfig falls back to the HIPAA default
+        (20000) -- the test still passes, but the explicit YAML value is no longer
+        the source of truth. The renamed-cascade / renamed-type tests above carry
+        the primary teeth for this detector.
+        """
+        zip_rule = self._rule("us_zip")
+        k = zip_rule.params.get("k_threshold")
+        assert k == 20000, (
+            f"hipaa.yaml zip rule must carry k_threshold=20000; got {k!r}. "
+            f"Full params: {zip_rule.params!r}."
+        )
