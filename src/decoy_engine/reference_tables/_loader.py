@@ -35,7 +35,18 @@ _SHIPPED_VERSIONS: dict[str, str] = {
     # SP-08: restricted ZIP3 prefix list for geo_generalize Safe Harbor cascade.
     # Source: 45 CFR 164.514(b)(2)(i)(B) HHS HIPAA Safe Harbor guidance.
     "us_zip3_population": "1.0",
+    # SP-08b: NDC labeler/drug/strength/dosage-form table.
+    # Source: FDA NDC Database (public domain); abbreviated public seed set.
+    # Operators may swap in a full FDA export via the customer: path prefix.
+    "ndc_labeler_drug_strength": "1.0",
+    # SP-08b: MCC merchant category code table.
+    # Source: ISO 18245 merchant category codes (public standard); abbreviated seed set.
+    # Operators may swap in a complete MCC list via the customer: path prefix.
+    "mcc_category_description": "1.0",
 }
+
+
+_CUSTOMER_PREFIX = "customer:"
 
 
 def load_table(name: str, path: Path | None = None) -> ReferenceTable:
@@ -46,9 +57,16 @@ def load_table(name: str, path: Path | None = None) -> ReferenceTable:
     swap-in hook -- the file must follow the same schema convention: an ``id``
     column plus domain columns).
 
+    Customer-provided tables can also be specified by prefixing the ``name``
+    with ``"customer:"`` (e.g. ``"customer:/path/to/my_table.parquet"``). This
+    is the canonical customer-provided reference table pathway (SP-08b). The
+    file path follows the prefix directly without a separator.
+
     Args:
-        name: Table identifier (e.g. ``"us_zip5_city_state"``).
-        path: Optional override path to a Parquet file.
+        name: Table identifier (e.g. ``"us_zip5_city_state"``) or a
+            ``"customer:/path/to/file.parquet"`` reference (SP-08b).
+        path: Optional override path to a Parquet file. Takes precedence over
+            any ``"customer:"`` prefix in ``name``.
 
     Returns:
         A :class:`~decoy_engine.reference_tables._types.ReferenceTable`.
@@ -58,12 +76,20 @@ def load_table(name: str, path: Path | None = None) -> ReferenceTable:
         ValueError: File is not readable as Parquet, or lacks the ``id``
             column.
     """
+    # Resolve customer: prefix -> explicit path.
+    if path is None and name.startswith(_CUSTOMER_PREFIX):
+        customer_path_str = name[len(_CUSTOMER_PREFIX) :]
+        path = Path(customer_path_str)
+        # Use the basename (without extension) as the logical name for version checking.
+        name = path.stem
+
     if path is None:
         path = _DATA_DIR / f"{name}.parquet"
         if not path.exists():
             raise FileNotFoundError(
                 f"no shipped reference table {name!r}. "
-                f"Provide a path= override or check the table name."
+                f"Provide a path= override, a 'customer:/path/to/file.parquet' reference, "
+                f"or check the table name."
             )
 
     try:

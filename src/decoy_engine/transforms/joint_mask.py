@@ -1,4 +1,4 @@
-"""joint_mask strategy (SP-08 / P5.S.joint_mask.1): compound reference-tuple masking.
+"""joint_mask strategy (SP-08 / P5.S.joint_mask.1+2): compound reference-tuple masking.
 
 Replaces a set of logically coupled columns (e.g. zip + city + state) with a
 consistent tuple drawn from a reference table. Consistency is guaranteed because
@@ -16,6 +16,21 @@ Two modes:
     Draws rows via numpy.default_rng seeded from the job seed, independently of
     any source column value. Deterministic across runs for the same seed and
     DataFrame length.
+
+Shipped reference tables (SP-08b additions):
+  ``ndc_labeler_drug_strength`` -- NDC drug labeler/name/strength/dosage-form tuples.
+      Source: FDA NDC Database (public domain); abbreviated seed set. Operators may
+      swap in a full FDA export via the ``customer:`` path prefix.
+  ``mcc_category_description``  -- MCC merchant category code/category/description tuples.
+      Source: ISO 18245 (public standard); abbreviated seed set.
+
+Customer-provided tables (SP-08b):
+  Set ``reference: customer:/path/to/table.parquet`` to load a custom Parquet file.
+  The file must have an ``id`` column (int64) plus the domain columns that ``columns``
+  references. The swap-in hook follows the same schema convention as shipped tables.
+  Determinism caveat: adding/removing rows changes ``row_count`` and shifts the
+  modular HMAC index -- the same ``key_by`` value will select a different row.
+  Document table version in your pipeline manifest if longitudinal consistency matters.
 
 Pattern: HMAC-SHA256-keyed row derivation via ReferenceTable.keyed_row
   (RFC 2104, https://datatracker.ietf.org/doc/html/rfc2104).
@@ -44,7 +59,18 @@ from decoy_engine.reference_tables import ReferenceTable, load_table
 _LOG = logging.getLogger(__name__)
 
 # Shipped table names that joint_mask can use out of the box.
-_KNOWN_TABLES = frozenset({"us_zip5_city_state", "vehicle_make_model_year"})
+# SP-08b: ndc_labeler_drug_strength + mcc_category_description added.
+_KNOWN_TABLES = frozenset(
+    {
+        "us_zip5_city_state",
+        "vehicle_make_model_year",
+        "ndc_labeler_drug_strength",
+        "mcc_category_description",
+    }
+)
+
+# Prefix that identifies a customer-provided reference table path (SP-08b).
+_CUSTOMER_PREFIX = "customer:"
 
 
 @dataclass(frozen=True)
@@ -73,6 +99,9 @@ class JointMaskConfig:
     def from_dict(cls, cfg: dict[str, Any]) -> JointMaskConfig:
         """Parse and validate a config dict; raise PlanCompileError on failure.
 
+        Supports shipped table names (e.g. ``"us_zip5_city_state"``) and
+        customer-provided paths (e.g. ``"customer:/data/my_table.parquet"``).
+
         Args:
             cfg: Raw config dict with keys ``columns``, ``reference``, ``key_by``.
 
@@ -82,6 +111,7 @@ class JointMaskConfig:
         """
         validate_joint_mask_config(cfg)
         name = cfg["reference"]
+        # load_table handles the customer: prefix internally (SP-08b).
         tbl = load_table(name)
         return cls(
             columns=tuple(cfg["columns"]),
@@ -156,7 +186,7 @@ def validate_joint_mask_config(cfg: dict[str, Any]) -> None:
             message=(
                 f"reference table {ref_name!r} not found. "
                 f"Known shipped tables: {sorted(_KNOWN_TABLES)}. "
-                f"To use a custom table, provide a 'path' override to load_table."
+                f"To use a customer-provided table, set reference: customer:/path/to/file.parquet."
             ),
         )
     except ValueError as exc:
