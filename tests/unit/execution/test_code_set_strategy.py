@@ -169,6 +169,7 @@ class TestCodeSetChapterPreserveUnknownChapter:
         import tempfile
 
         import pyarrow.parquet as pq
+
         from decoy_engine.plan._errors import PlanCompileError
 
         with tempfile.TemporaryDirectory() as tmp:

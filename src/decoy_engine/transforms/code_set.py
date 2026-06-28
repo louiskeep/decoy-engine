@@ -346,7 +346,9 @@ def apply_code_set(
     rows = _load_corpus_rows(corpus_name, override_path)
 
     if config.chapter_preserve:
-        return _apply_chapter_preserve(value, rows, mode=mode, job_seed=job_seed, row_index=row_index)
+        return _apply_chapter_preserve(
+            value, rows, mode=mode, job_seed=job_seed, row_index=row_index
+        )
 
     if mode == "mask":
         return _pick_mask(value, rows)

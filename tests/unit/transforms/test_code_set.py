@@ -428,9 +428,7 @@ class TestGenModePerRowVariation:
         for i in range(5):
             out1 = apply_code_set("", cfg, mode="gen", job_seed=seed, row_index=i)
             out2 = apply_code_set("", cfg, mode="gen", job_seed=seed, row_index=i)
-            assert out1 == out2, (
-                f"row_index={i}: same seed + same row_index must give same code."
-            )
+            assert out1 == out2, f"row_index={i}: same seed + same row_index must give same code."
 
 
 # ── H2: chapter_preserve with unknown chapter must fail closed ────────────────
