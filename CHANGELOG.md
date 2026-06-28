@@ -62,6 +62,46 @@ minimum engine version it was tested against via its
   plan-compile time (a derived column in generate mode that references a
   sibling declared later currently fails at evaluation time, not plan-compile).
 
+### Added (SP-11 HIPAA pack tightening, 2026-06-28)
+
+- **HIPAA Safe Harbor pack tightened posture** (`src/decoy_engine/disguises/hipaa.yaml`,
+  SP-11). Three previously-weak field rules replaced with strategies that meet the
+  45 CFR 164.514(b)(2) Safe Harbor standard by construction:
+
+  - **NPI (National Provider Identifier):** `fpe` strategy now carries
+    `checksum: npi`. Masked NPIs are valid by construction per the CMS NPPES
+    check-digit spec (Luhn applied to prefix 80840 + 9-digit body). Masked
+    values pass downstream NPI validators; deterministic so provider-level FK
+    joins survive masking.
+
+  - **ICD-10-CM diagnosis codes:** `code_set: icd10` with `chapter_preserve: true`
+    replaces the prior `truncate(3)` strategy. Output is always a real CMS FY2024
+    ICD-10-CM code in the same chapter as the input. A cardiovascular I-code masks
+    to another I-code; a respiratory J-code stays in J. The HMAC-keyed selection
+    is deterministic so provider-level analytics survive masking.
+
+  - **ZIP / us_zip:** `geo_generalize` with `cascade: [zip5, zip3, state, suppress]`
+    and `k_threshold: 20000` replaces the prior `truncate(3)` strategy. Implements
+    the HIPAA Safe Harbor cascade (45 CFR 164.514(b)(2)(i)(B)): ZIP3 prefixes with
+    population below 20,000 (HHS restricted list) cascade to state or suppress.
+    Default `k_threshold: 20000` matches the Safe Harbor population floor.
+
+  Pack `version` bumped to `2026-06-28`. CLI compliance templates that pin the pack
+  version via a drift guard must be regenerated (SP-16/SP-19 lane).
+
+  **Honest coverage limits (not auto-applied by this pack):**
+  - Address columns use `faker: street_address` for standalone columns. For datasets
+    where address, city, zip, and state appear together, use `joint_mask:
+    us_zip5_city_state` in the recipe YAML; `joint_mask` requires a dataset-specific
+    `key_by` column and cannot be set pack-wide.
+  - Free-text columns (clinical notes, claim descriptions, etc.) have no registered
+    STORM detector; configure `text_mask` manually in the recipe YAML.
+  - HCPCS and NDC columns have no registered STORM detectors; configure
+    `code_set: hcpcs` or `code_set: ndc` manually in the recipe YAML.
+  - LOINC code_set corpus is not shipped (SP-09 carry-forward).
+  - No strategy in this pack provides differential-privacy-grade guarantees (M11
+    absent). `k-anonymity` (geo_generalize) and FPE are pseudonymisation techniques.
+
 ### Added (SP-09 code_set strategy, 2026-06-28)
 
 - **`code_set` mask strategy** (`src/decoy_engine/transforms/code_set.py`,
@@ -126,7 +166,7 @@ minimum engine version it was tested against via its
   **Carry-forwards (not yet built):** additional shipped corpora LOINC, CIP,
   NUCC, UPC/EAN; CPT and MedDRA bring-your-own-corpus workflow documentation;
   an out-of-corpus-input `QualityWarning` signal (out-of-corpus inputs are
-  currently silently remapped to a real code). HIPAA-pack wiring is SP-11.
+  currently silently remapped to a real code). HIPAA-pack wiring shipped in SP-11.
 
 ### Added (SP-08 joint_mask + geo_generalize, 2026-06-28)
 
@@ -247,8 +287,7 @@ minimum engine version it was tested against via its
   category codes, and customer-provided reference path.
 - D5 distribution-preserving strategies: entity-scoped `date_shift` and
   `bucket_perturb`.
-- HIPAA-pack default wiring: automatic `geo_generalize` on ZIP columns is
-  SP-11, not yet built.
+- HIPAA-pack default wiring: automatic `geo_generalize` on ZIP columns shipped in SP-11.
 
 ### Added (SP-07 text_mask strategy, 2026-06-28)
 

@@ -255,7 +255,7 @@ position, not span length.
 To reach TIER-2 classes (names, dates, etc.), supply pre-computed spans via
 `extra_spans=` on `mask_cell`. Automatic handler-level NER wiring via a `ner:`
 config key (the design is in `storm/ner.py`) is not yet implemented in the
-column handler; deferred to SP-16/SP-19. HIPAA-pack default wiring is SP-11.
+column handler; deferred to SP-16/SP-19. HIPAA-pack default wiring shipped in SP-11.
 The `decoy text-mask explain` CLI subcommand is deferred to SP-16/SP-19.
 
 ```yaml
@@ -468,7 +468,7 @@ is added or removed. Do not assume cross-version MASK output stability for
 **Carry-forwards (not yet built):** additional shipped corpora LOINC, CIP,
 NUCC, UPC/EAN; CPT and MedDRA bring-your-own-corpus workflow documentation; an
 out-of-corpus-input `QualityWarning` signal (currently, an out-of-corpus input
-is silently remapped to a real code). HIPAA-pack default wiring is SP-11.
+is silently remapped to a real code). HIPAA-pack default wiring shipped in SP-11.
 
 ```yaml
 # Mask ICD-10 diagnosis codes, preserving chapter grouping.
