@@ -46,6 +46,11 @@ ALLOWLIST: dict[str, int] = {
     # Sprint B (ML2.x): monolithic train_and_evaluate; decompose into
     # separate split / fit / calibrate / evaluate modules in ML3.x.
     "src/decoy_engine/storm/model_pack/trainer.py": 716,
+    # SP-10 (2026-06-28): check_derived_column_refs (row 16) added to the
+    # compile-check ownership table. Decompose the growing _checks.py into
+    # per-strategy check sub-modules in a follow-up sprint when the check set
+    # stabilises (post-SP-15 or when the next strategy batch lands).
+    "src/decoy_engine/plan/_checks.py": 695,
 }
 
 

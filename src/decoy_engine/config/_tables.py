@@ -123,7 +123,12 @@ class GenerateColumnConfig(BaseModel):
     # `reference` lands in S6-ENG-3 as the column-level mint-a-pool FK path.
     # `statistical` (capability-gaps WS3, 2026-06-12) samples from a
     # distribution-snapshot/v1 artifact; see generation/statistical.
-    type: Literal["faker", "sequence", "categorical", "formula", "reference", "statistical"]
+    # `derived` (SP-10 / P5.S.derived, 2026-06-28) evaluates a closed-grammar
+    # expression over already-generated sibling columns declared before it in
+    # generate_columns (declared-order sequential semantics).
+    type: Literal[
+        "faker", "sequence", "categorical", "formula", "reference", "statistical", "derived"
+    ]
 
     @model_validator(mode="after")
     def _reference_params_required(self) -> GenerateColumnConfig:
@@ -169,6 +174,8 @@ class GenerateColumnConfig(BaseModel):
             raise ValueError(f"formula column {self.name!r} requires `formula`")
         if self.type == "statistical" and not extras.get("snapshot_file"):
             raise ValueError(f"statistical column {self.name!r} requires `snapshot_file`")
+        if self.type == "derived" and not extras.get("expression"):
+            raise ValueError(f"derived column {self.name!r} requires `expression`")
         return self
 
 

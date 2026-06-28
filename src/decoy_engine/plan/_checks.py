@@ -555,3 +555,137 @@ def check_fpe_checksum_scheme(config: dict[str, Any]) -> None:
                             "'digits' for luhn/npi/ean13/isbn13/gtin)."
                         ),
                     )
+
+
+def check_derived_column_refs(config: dict[str, Any]) -> None:
+    """Reject derived columns whose expression refs are missing or cyclic.
+
+    Compile-check ownership table row #16 (SP-10 / P5.S.derived, 2026-06-28).
+    Two failure modes caught here (plan-compile time, before any execution):
+
+    1. Missing column ref: an expression references a column name that is not
+       present in the same table's ``columns`` or ``generate_columns``. A
+       missing ref is guaranteed to raise KeyError at row-evaluation time;
+       rejecting it here surfaces the error with a clear message and the exact
+       missing name.
+
+    2. Cyclic reference: a derived column's expression depends (directly or
+       transitively) on itself. Direct self-reference (``b: expression: b + 1``)
+       and transitive cycles (``a -> b -> a``) are both detected via DFS over
+       the dependency graph of derived columns in the same table.
+
+    Validation never mutates (per engine rule). Config-only (no profile, no
+    source data), so it runs in both compile branches and in
+    ``run_config_only_checks``.
+
+    Args:
+        config: Raw pipeline config dict.
+
+    Raises:
+        PlanCompileError: A missing column ref or cyclic dependency is found.
+    """
+    from decoy_engine.expressions import compile_expr
+    from decoy_engine.transforms.derived import _get_column_refs
+
+    tables = config.get("tables", []) if isinstance(config.get("tables"), list) else []
+    for table_entry in tables:
+        if not isinstance(table_entry, dict):
+            continue
+        table_name = table_entry.get("name", "?")
+
+        # Build the full set of column names known in this table.
+        all_col_names: set[str] = set()
+        for col_entry in table_entry.get("columns", []) or []:
+            if isinstance(col_entry, dict) and col_entry.get("name"):
+                all_col_names.add(str(col_entry["name"]))
+        for col_entry in table_entry.get("generate_columns", []) or []:
+            if isinstance(col_entry, dict) and col_entry.get("name"):
+                all_col_names.add(str(col_entry["name"]))
+
+        # Collect derived column definitions: {col_name -> frozenset of refs}.
+        # Scans both mask-kind columns (strategy: derived, provider_config.expression)
+        # and generate-kind columns (type: derived, flat expression key). The
+        # generate_columns union in all_col_names is LIVE once derived works in
+        # generate tables.
+        derived_refs: dict[str, frozenset[str]] = {}
+
+        def _derived_col_entries(t: dict[str, Any]) -> Any:
+            """Yield (col_name, expr, col_kind) per derived column. t passed
+            explicitly to avoid capturing the loop variable (ruff B023)."""
+            for e in t.get("columns") or []:
+                if isinstance(e, dict) and e.get("strategy") == "derived":
+                    yield (
+                        e.get("name", "?"),
+                        (e.get("provider_config") or {}).get("expression"),
+                        "columns",
+                    )
+            for e in t.get("generate_columns") or []:
+                if isinstance(e, dict) and e.get("type") == "derived":
+                    yield e.get("name", "?"), e.get("expression"), "generate_columns"
+
+        for col_name, expr, col_kind in _derived_col_entries(table_entry):
+            if not expr:
+                continue  # missing expression: DerivedConfig.from_dict catches at execution time
+            try:
+                compiled = compile_expr(str(expr))
+            except Exception:
+                continue  # invalid syntax: ValidationError at execution time; skip double-report
+            refs = _get_column_refs(compiled)
+            missing = refs - all_col_names
+            if missing:
+                raise PlanCompileError(
+                    code="derived_missing_column_ref",
+                    path=f"tables.{table_name}.{col_kind}.{col_name}.expression",
+                    message=(
+                        f"derived column {col_name!r} in table {table_name!r} "
+                        f"references column(s) {sorted(missing)!r} that are not "
+                        f"defined in the same table. Available columns: "
+                        f"{sorted(all_col_names)!r}. "
+                        f"Column references must be bare identifiers matching a "
+                        f"column name in the same table."
+                    ),
+                )
+
+            derived_refs[str(col_name)] = refs
+
+        # Check 2: cyclic dependencies among derived columns.
+        # DFS from each derived column; detect back-edges.
+        # all_derived is passed explicitly so the function does not capture
+        # a loop-scoped variable (avoids ruff B023).
+        def _has_cycle(
+            start: str,
+            visited: set[str],
+            path: set[str],
+            all_derived: dict[str, frozenset[str]],
+        ) -> bool:
+            if start in path:
+                return True
+            if start in visited:
+                return False
+            if start not in all_derived:
+                return False
+            visited.add(start)
+            path.add(start)
+            for dep in all_derived[start]:
+                if dep in all_derived and _has_cycle(dep, visited, path, all_derived):
+                    return True
+            path.discard(start)
+            return False
+
+        visited: set[str] = set()
+        for col_name in derived_refs:
+            path: set[str] = {col_name}
+            for dep in derived_refs[col_name]:
+                if dep in derived_refs and _has_cycle(dep, visited, path, derived_refs):
+                    raise PlanCompileError(
+                        code="derived_cyclic_reference",
+                        path=f"tables.{table_name}.columns.{col_name}.provider_config.expression",
+                        message=(
+                            f"derived column {col_name!r} in table {table_name!r} "
+                            f"has a cyclic dependency: the expression dependency graph "
+                            f"contains a cycle involving {col_name!r}. "
+                            f"Cyclic derived columns cannot be evaluated. "
+                            f"Refactor to remove the cycle."
+                        ),
+                    )
+            visited.add(col_name)

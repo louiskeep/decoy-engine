@@ -97,6 +97,11 @@ _STATIC_BEHAVIOR: dict[str, DistributionBehavior] = {
     # source codes map to N-1 candidates from the corpus). Coarsens:
     # the output distribution is bounded by the corpus size.
     "code_set": "coarsens",
+    # derived (SP-10): closed-grammar expression over same-row columns.
+    # Output distribution depends entirely on the expression: it could
+    # preserve, destroy, coarsen, or shift the source distribution.
+    # Cannot be resolved statically without inspecting the expression.
+    "derived": "mixed",
 }
 
 

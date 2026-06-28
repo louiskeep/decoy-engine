@@ -9,6 +9,59 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (SP-10 derived strategy, 2026-06-28)
+
+- **`derived` mask and generate strategy** (`src/decoy_engine/transforms/derived.py`,
+  `src/decoy_engine/execution/_strategies/_derived.py`, SP-10 / P5.S.derived).
+  Registered in `SCALAR_HANDLERS`; technique class `pseudonymisation`;
+  `distribution_behavior: mixed`. Also wired as a generate type in
+  `generation/synthesize.py` (`_derived_generate`). Computes a column value
+  from other columns in the same row via the SP-06 Lark closed-grammar
+  evaluator. Deterministic by construction: same row context, same output, no
+  RNG involved. Works in mask mode (`strategy: derived`, params under
+  `provider_config:`) and generate mode (`type: derived`, params at the top
+  level of the column config).
+
+  Config surface:
+
+  - `expression` (str, required): a closed-grammar expression. Column references
+    are bare identifiers. Permitted forms: arithmetic (`+`, `-`, `*`, `/`, `//`),
+    comparison (`==`, `!=`, `<`, `>`, `<=`, `>=`, `in`), logical (`and`, `or`,
+    `not`), string (`concat(a, b)`), date (`days_between(start, end)`), ternary
+    (`value if condition else other`), and literals. Anything outside the grammar
+    raises `ValidationError` at config-parse time.
+  - `bounds` (dict, optional): `{min: float, max: float}`. Clips numeric output
+    after evaluation; non-numeric results pass through unchanged.
+    `min > max` raises `PlanCompileError(derived_bounds_inverted)` at
+    config-parse.
+  - `null_propagation` (str, default `explicit_null`): `explicit_null` outputs
+    `None` when any referenced column is `None`/`NaN`; `sentinel` replaces
+    `None`/`NaN` with `""` before evaluation; `default` replaces with `0`.
+
+  Validation timing:
+
+  - Expression syntax: `compile_expr` at config-parse time (closed grammar;
+    `ValidationError` before any row data is touched).
+  - Column-ref existence: `check_derived_column_refs` in `plan/_checks.py` at
+    plan-compile time. Raises `PlanCompileError(derived_missing_column_ref)`.
+  - Cyclic references (direct and transitive, via DFS): same check, same
+    timing. Raises `PlanCompileError(derived_cyclic_ref)`.
+
+  Row-level evaluation errors (for example `ZeroDivisionError`, `TypeError`)
+  fail the job with a diagnosable message naming the column and row index.
+  No row is silently skipped.
+
+  **Security.** The SP-06 Lark grammar is the sole security boundary: no
+  `eval()`, `exec()`, or `__import__` on this path. A column value that looks
+  like an expression string is treated as data and is never re-evaluated.
+
+  **Carry-forwards (SP-10b, not yet built):** `case_when`, `derived_aggregate`,
+  `grouped_series`, `windowed_date`; FK extensions (`cardinality`,
+  `composite_depth`, `null_m2m`); layer-2/3 features (`conditioned_on`,
+  `group_key`, `reconciliation_pass`). Forward-reference detection at
+  plan-compile time (a derived column in generate mode that references a
+  sibling declared later currently fails at evaluation time, not plan-compile).
+
 ### Added (SP-09 code_set strategy, 2026-06-28)
 
 - **`code_set` mask strategy** (`src/decoy_engine/transforms/code_set.py`,

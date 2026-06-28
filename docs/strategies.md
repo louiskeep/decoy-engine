@@ -13,7 +13,7 @@ what keeps masked values stable and joinable.
 
 ## Mask strategies
 
-There are sixteen mask strategies. `passthrough` (a no-op pass) and the
+There are seventeen mask strategies. `passthrough` (a no-op pass) and the
 internal composite/nested handlers are listed separately below.
 
 ### faker
@@ -514,6 +514,108 @@ Deterministic by its expression; nulls pass through.
 Use it for derived transforms that none of the other strategies cover. Prefer a
 purpose-built strategy where one exists.
 
+### derived
+
+Computes a column's value from other columns in the same row via a
+closed-vocabulary Lark expression (SP-06). Works in both mask mode (replaces
+an existing column value) and generate mode (computes a new column from
+already-generated siblings). Deterministic by construction: same row context,
+same output. No RNG is involved; there is no code branching between mask and
+generate paths.
+
+**Config (mask mode):** `strategy: derived` on a column; parameters under
+`provider_config:`.
+
+**Config (generate mode):** `type: derived` on a generate column; the same
+parameters sit at the top level of the column config, not nested under
+`provider_config:`.
+
+Common parameters:
+
+- `expression` (str, required): a closed-grammar expression. Column references
+  are bare identifiers (no dots, no dunders). The permitted forms are:
+  arithmetic (`+`, `-`, `*`, `/`, `//`), comparison (`==`, `!=`, `<`, `>`,
+  `<=`, `>=`, `in`), logical (`and`, `or`, `not`), string (`concat(a, b)`),
+  date (`days_between(start, end)`), ternary (`value if condition else other`),
+  and literals (integers, floats, double-quoted strings, `True`, `False`,
+  `None`). Anything outside that set raises `ValidationError` at config-parse
+  time, before any row data is touched. A column value that looks like an
+  expression string is treated as data and is never re-evaluated.
+- `bounds` (dict, optional): `{min: float, max: float}`. Clips numeric output
+  after evaluation. Non-numeric results (strings, booleans, `None`) pass
+  through unchanged. Bounds apply only when the expression produces a real
+  number (int or float, but not bool). `min > max` is rejected at config-parse
+  with `PlanCompileError(derived_bounds_inverted)`.
+- `null_propagation` (str, default `explicit_null`): controls how `None` or
+  `NaN` values in referenced columns are handled.
+  - `explicit_null` (default): output is `None` when any referenced column
+    is `None` or `NaN`.
+  - `sentinel`: `None`/`NaN` values in referenced columns are replaced with
+    `""` before evaluation; the expression always runs.
+  - `default`: `None`/`NaN` values in referenced columns are coerced to `0`
+    before evaluation; the expression always runs.
+
+Validation timing:
+
+- Expression syntax: validated at config-parse time via `compile_expr`.
+  Raises `ValidationError` before any row data is touched.
+- Column-ref existence: validated at plan-compile time via
+  `check_derived_column_refs` in `plan/_checks.py`. A missing column ref
+  raises `PlanCompileError(derived_missing_column_ref)`.
+- Cyclic references (direct and transitive, detected via DFS): same check,
+  same timing. Raises `PlanCompileError(derived_cyclic_ref)`. Both checks
+  run before any execution begins.
+
+Row-level evaluation errors (for example `ZeroDivisionError`, `TypeError`)
+fail the job. The error message names the column and row index so the
+offending data can be located without re-running. There is no silent
+passthrough of rows that fail evaluation.
+
+**Security.** The SP-06 Lark grammar is the sole security boundary on this
+path. The engine calls no `eval()`, `exec()`, or `__import__`. A column value
+that looks like an expression string is treated as data and is never re-parsed.
+
+In generate mode, each derived column reads from already-generated sibling
+columns in declared order. A forward reference (a derived column that
+references a sibling declared later in `generate_columns`) is caught at
+evaluation time with a fail-closed error, not yet at plan-compile time.
+Declare dependencies before the columns that read them.
+
+**Carry-forwards (SP-10b, not yet built):** `case_when`, `derived_aggregate`,
+`grouped_series`, `windowed_date`; FK extensions (`cardinality`,
+`composite_depth`, `null_m2m`); layer-2/3 features (`conditioned_on`,
+`group_key`, `reconciliation_pass`). Forward-reference detection at
+plan-compile time is also deferred to SP-10b.
+
+```yaml
+# Mask mode: replace an existing column value using source siblings.
+columns:
+  - name: age_in_months
+    strategy: derived
+    provider_config:
+      expression: "age * 12"
+      bounds:
+        min: 0
+        max: 1500
+      null_propagation: explicit_null
+
+# Generate mode: build a column from already-generated siblings.
+# Declare first_name and last_name before full_name.
+generate_columns:
+  - name: first_name
+    type: faker
+    faker_type: first_name
+  - name: last_name
+    type: faker
+    faker_type: last_name
+  - name: full_name
+    type: derived
+    expression: "concat(first_name, last_name)"
+```
+
+Use it to compute a column that is a deterministic function of other columns in
+the same row, without writing a custom provider.
+
 ### passthrough and structural handlers
 
 - `passthrough`: leaves the column untouched. Use it to make an unmasked column
@@ -598,6 +700,18 @@ Computes a column from an expression over the other generated columns.
   column that reads a later-declared referenced formula sibling sees that
   sibling's null placeholder, not its computed value. Declare dependencies
   before the columns that read them.
+
+### derived
+
+Computes a column from other already-generated sibling columns via the SP-06
+Lark closed-grammar expression. See the `derived` mask-strategy section above
+for the full config reference (expression, bounds, null_propagation),
+validation timing, and security note.
+
+In generate mode the same parameters (`expression`, `bounds`,
+`null_propagation`) are top-level keys on the generate column config, not
+nested under `provider_config:`. Sibling columns must be declared before the
+`derived` column that reads them; a forward reference fails at evaluation time.
 
 ### distribution
 
@@ -727,16 +841,17 @@ Three fail-closed guards (no silent data loss):
 ## Infrastructure: expression parser and reference tables (SP-06)
 
 The features in this section are infrastructure built in SP-06. `joint_mask`
-(SP-08) and `code_set` (SP-09) are now built and documented in their strategy
-sections above. The strategies that consume this infrastructure and are not yet
-built: `derived`, `case_when`, `derived_aggregate` (SP-10).
+(SP-08), `code_set` (SP-09), and `derived` (SP-10) are now built and
+documented in their strategy sections above. `case_when` and
+`derived_aggregate` are deferred to SP-10b.
 
 ### Closed-vocabulary expression parser
 
 Source: `src/decoy_engine/expressions/_lark_parser.py` + `grammar.lark`.
 
-Config-supplied expressions for the future `derived` and `case_when`
-strategies route through a Lark EBNF closed grammar. The grammar is the
+Config-supplied expressions for the `derived` strategy (SP-10, built) and
+the future `case_when` strategy (SP-10b) route through a Lark EBNF closed
+grammar. The grammar is the
 complete security boundary: only the listed forms can parse. Any expression
 outside the set raises `ValidationError` at compile time, before any row
 data is touched. There is no `eval()` or dynamic code execution on this path.
@@ -792,11 +907,10 @@ execution surface.
 Source: `src/decoy_engine/reference_tables/`.
 
 Reference tables are static Parquet datasets loaded once per pipeline and
-used by `joint_mask` (SP-08) and the expression-based strategies planned for
-SP-10 to look up replacement values (for example: map a ZIP code to a canonical
-city/state pair, or draw a vehicle make/model from a controlled set). The
-`code_set` strategy (SP-09) uses a separate corpus loader in
-`decoy_engine/codesets/`, not the reference-table loader.
+used by `joint_mask` (SP-08) to look up replacement values (for example: map
+a ZIP code to a canonical city/state pair, or draw a vehicle make/model from a
+controlled set). The `code_set` strategy (SP-09) uses a separate corpus loader
+in `decoy_engine/codesets/`, not the reference-table loader.
 
 #### Schema convention
 

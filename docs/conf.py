@@ -259,6 +259,10 @@ nitpick_ignore = [
     # ReferenceTable path. Same class of issue as ExecutionError above.
     ("py:exc", "PlanCompileError"),
     ("py:class", "decoy_engine.reference_tables.ReferenceTable"),
+    # SP-10 (2026-06-28): derived.py references CompiledExpression, which is
+    # defined in the private expressions._lark_parser submodule and re-exported
+    # from expressions/__init__. Same pattern as SP-06 make_mask_globals above.
+    ("py:class", "decoy_engine.expressions.CompiledExpression"),
     # Pre-existing bare :data: cross-references from public module docstrings.
     # CODES is defined in validation_result.py as a class used as a data
     # namespace; autoapi renders the bare :data:`CODES` reference from that
