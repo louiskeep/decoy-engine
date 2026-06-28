@@ -104,6 +104,57 @@ across runs. Null and unparseable values are left as-is. Needs a namespace.
 Use it for HIPAA-style date generalization where relative spacing matters but
 the absolute date must move.
 
+### bucket_perturb
+
+Coarse time-bucket generalization: snaps each date to a deterministic position
+within its ISO week, calendar month, or calendar quarter. The bucket boundary
+is determined by the input date; the position within the bucket is derived
+deterministically from `derive(job_seed, namespace, value)`, so the same input
+value always maps to the same output position. Needs a namespace.
+
+- `bucket` (str, required): one of `week`, `month`, or `quarter`. An invalid
+  or misspelled value raises `StrategyError(bucket_perturb_invalid_config)` at
+  execution time, before any row is processed (fail-closed).
+- `date_format`: a strftime format; auto-detected from the column if omitted.
+
+Bucket semantics:
+
+- `week`: ISO 8601 week (Monday = day 0, Sunday = day 6). Output day falls in
+  `[0, 6]` from the ISO week start. Dates in the same ISO week map to positions
+  within that week.
+- `month`: calendar month. Output day in `[1, days_in_month]`. Dates in the
+  same calendar month stay in that month.
+- `quarter`: calendar quarter (Q1 = Jan-Mar, Q2 = Apr-Jun, Q3 = Jul-Sep, Q4 =
+  Oct-Dec). Output day in `[1, days_in_quarter]`. Dates in the same quarter
+  stay in that quarter.
+
+Determinism keying: uses `derive(job_seed, namespace, value)` (HKDF-SHA256,
+S3 contract) to derive a per-value offset within `[0, bucket_size - 1]` days
+from the bucket start. Namespace-bound: two columns with different namespaces
+sharing the same job seed produce independent offsets. Same `(job_seed,
+namespace, value)` always produces the same output, byte-stable across runs
+and processes.
+
+Null and unparseable values are passed through unchanged (same contract as
+`date_shift`). When no date format is detected, the column is passed through
+unchanged with a WARNING log (carry-forward: surfacing as a `QualityWarning`
+is deferred).
+
+```yaml
+columns:
+  - name: visit_date
+    strategy: bucket_perturb
+    namespace: clinical_dates
+    provider_config:
+      bucket: month
+      date_format: "%Y-%m-%d"
+```
+
+Use it to break sub-bucket temporal precision (exact appointment day within a
+month) while preserving coarse ordering and temporal density. Complementary to
+`date_shift`, which preserves exact cross-record ordering but shifts all dates
+by a bounded amount.
+
 ### bucketize
 
 Rounds numeric values into fixed-width bins. Deterministic by construction
@@ -281,19 +332,23 @@ columns:
 
 ### geo_generalize
 
-HIPAA Safe Harbor geographic generalization for ZIP columns (45 CFR
-164.514(b)(2)). For each row, attempts the configured cascade levels in order
-and retains the most specific level whose in-dataset count meets the
-k-threshold. If no level satisfies the threshold, the value is suppressed.
+Geographic generalization via configurable cascade levels. Two types are
+supported: HIPAA Safe Harbor ZIP cascade (`type: zip`, SP-08) and H3 hex-cell
+lat/lng generalization (`type: lat_lng`, SP-08b). For each row, the strategy
+attempts cascade levels in order and retains the most specific level whose
+in-dataset count meets the k-threshold. If no level satisfies the threshold,
+the value is suppressed.
 
-- `type` (str, required): `zip` only in SP-08. The lat/lng to H3 path requires
-  the `h3` dependency and is deferred to SP-08b.
+- `type` (str, required): `zip` (HIPAA Safe Harbor cascade) or `lat_lng` (H3
+  geospatial generalization, requires the `[geo]` extra: `pip install
+  'decoy-engine[geo]'`).
 - `cascade` (list, required): ordered list of generalization levels to attempt.
-  Must include `suppress` as a terminator. Supported levels for `type: zip`:
-  `zip5`, `zip3`, `state`, `suppress`.
+  Must include `suppress` as a terminator.
 - `k_threshold` (int, default `20000`): minimum in-dataset record count for a
   generalization level to be retained. The default matches the HIPAA Safe
-  Harbor population threshold per 45 CFR 164.514(b)(2)(i)(B).
+  Harbor population threshold per 45 CFR 164.514(b)(2)(i)(B). For `type:
+  lat_lng`, a lower threshold is typical because H3 resolution-9 cells cover
+  only ~0.1 km2; a threshold of 5-20 is common.
 
 Cascade levels for `type: zip`:
 
@@ -312,14 +367,33 @@ Cascade levels for `type: zip`:
 - `suppress`: emit an empty string (`""`). Required as the final level; omitting
   it raises `PlanCompileError(geo_generalize_missing_suppress)`.
 
-In-dataset counts (ZIP5, ZIP3, state) are computed once before the cascade
-loop, so the threshold check is applied consistently across all rows.
+Cascade levels for `type: lat_lng` (H3 geospatial generalization):
+
+The target column must contain `"lat,lng"` formatted strings (e.g.
+`"47.6205,-122.3493"`). Output is the H3 cell index string (not lat/lng
+coordinates). Requires the optional `[geo]` extra (`h3` library). Without
+it, the handler fails closed with a clear `ImportError` naming the extra.
+
+H3 resolution scale (source: https://h3geo.org/docs/core-library/restable/):
+
+- `h3_resolution_9`: H3 cell at resolution 9. Average edge length ~170m,
+  average area ~0.105 km2.
+- `h3_resolution_7`: H3 cell at resolution 7. Average edge length ~1.2km,
+  average area ~5.16 km2.
+- `h3_resolution_5`: H3 cell at resolution 5. Average edge length ~8.5km,
+  average area ~252 km2.
+- `suppress`: emit an empty string (`""`). Required as the final level.
+
+In-dataset counts (ZIP5, ZIP3, state for zip; H3 cell at each resolution for
+lat_lng) are computed once before the cascade loop, so the threshold check is
+applied consistently across all rows.
 
 Cascade decisions are recorded in a frozen `CascadeEvidence` dataclass
-(a `decisions` tuple, one label for each input row: `zip5`, `zip3`, `state`,
-or `suppressed`). When at least one row was generalized past `zip5`, the
-handler surfaces a `QualityWarning` with code `geo_generalize_cascade` in
-`ExecutionResult.warnings`.
+(a `decisions` tuple, one label per input row). When at least one row was
+generalized past the top configured cascade level, the handler surfaces a
+`QualityWarning` with code `geo_generalize_cascade` in
+`ExecutionResult.warnings`. The warning's `cascade_decisions` map includes
+only the rows that cascaded below the top level.
 
 Config validation runs at execution time, pre-mutation, fail-closed. Raises
 `PlanCompileError` on unsupported `type`, empty `cascade`, or missing
@@ -327,6 +401,7 @@ Config validation runs at execution time, pre-mutation, fail-closed. Raises
 `geo_generalize_invalid_cascade`, `geo_generalize_missing_suppress`.
 
 ```yaml
+# ZIP Safe Harbor cascade.
 columns:
   - name: zipcode
     strategy: geo_generalize
@@ -334,9 +409,20 @@ columns:
       type: zip
       cascade: [zip5, zip3, state, suppress]
       k_threshold: 20000
+
+# Lat/lng H3 generalization (requires [geo] extra).
+columns:
+  - name: coordinates
+    strategy: geo_generalize
+    provider_config:
+      type: lat_lng
+      cascade: [h3_resolution_9, h3_resolution_7, h3_resolution_5, suppress]
+      k_threshold: 5
 ```
 
-Use it for HIPAA Safe Harbor de-identification of ZIP-format geographic fields.
+Use `type: zip` for HIPAA Safe Harbor de-identification of ZIP-format
+geographic fields. Use `type: lat_lng` for coordinate-level geospatial
+generalization where sub-kilometer precision must be suppressed.
 
 ### joint_mask
 

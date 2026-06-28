@@ -189,6 +189,14 @@ docs = [
 # invocations still work. SFTP remains an opt-in extra pending S18.
 gcs = []
 sftp = ["paramiko>=3.0"]
+# SP-08b (2026-06-28): H3 geospatial indexing for lat/lng generalization.
+# h3-py (Uber, Apache-2.0) is optional: the base install stays free of the
+# C extension. geo_generalize with type=lat_lng fails closed (ImportError)
+# when h3 is absent and names this extra in the error message.
+# Upper bound: h3 4.x is the stable API; cap below 5 until a 5.x validation pass.
+geo = [
+    "h3>=4.0,<5",
+]
 # ML field-recognition harness extras. scikit-learn backs the held-out
 # split scaffolding (StratifiedGroupKFold, §A.3 leakage guard) and
 # calibration utilities (CalibratedClassifierCV, §A.4). LightGBM is the

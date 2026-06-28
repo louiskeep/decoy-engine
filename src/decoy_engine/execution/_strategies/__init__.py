@@ -5,11 +5,13 @@ three no-backend strategies (passthrough, redact, truncate); later slices add
 the keyed/backend strategies (faker, hash, date_shift, bucketize, categorical,
 shuffle, formula, fpe) re-keyed onto S3's `derive`/`derive_index` + S5's
 `PoolSampler`. SP-10 adds `derived` (closed-grammar row-context expression).
+SP-08b adds `bucket_perturb` (coarse time-bucket datetime generalization).
 """
 
 from __future__ import annotations
 
 from decoy_engine.execution._adapter import StrategyHandler
+from decoy_engine.execution._strategies._bucket_perturb import BucketPerturbStrategyHandler
 from decoy_engine.execution._strategies._bucketize import BucketizeStrategyHandler
 from decoy_engine.execution._strategies._categorical import CategoricalStrategyHandler
 from decoy_engine.execution._strategies._code_set import CodeSetHandler
@@ -50,11 +52,13 @@ SCALAR_HANDLERS: dict[str, StrategyHandler] = {
         GeoGeneralizeHandler(),
         CodeSetHandler(),
         DerivedStrategyHandler(),
+        BucketPerturbStrategyHandler(),
     )
 }
 
 __all__ = [
     "SCALAR_HANDLERS",
+    "BucketPerturbStrategyHandler",
     "BucketizeStrategyHandler",
     "CategoricalStrategyHandler",
     "CodeSetHandler",
