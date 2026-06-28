@@ -114,6 +114,13 @@ TECHNIQUE_CLASS_BY_STRATEGY: dict[str, TechniqueClass] = {
     # sees a classification prompt and can override at the column level if the
     # expression is actually irreversible.
     "derived": "pseudonymisation",
+    # bucket_perturb (SP-08b, 2026-06-28): coarse time-bucket datetime generalization.
+    # Replaces each date with a random date within the same ISO week/month/quarter.
+    # The original date is not recoverable from the output (many-to-one mapping
+    # from the full bucket onto its dates). Anonymisation: same class as bucketize
+    # (which maps numeric values to a band label; bucket_perturb maps dates to a
+    # position in a time band).
+    "bucket_perturb": "anonymisation",
     # `nested` (MG-3 M2, 2026-05-31) is intentionally absent. It is a
     # wrapper -- its GDPR posture is the child strategy's posture, not
     # its own. Until the FE surfaces the child-strategy badge for

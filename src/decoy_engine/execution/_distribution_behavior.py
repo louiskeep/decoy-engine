@@ -102,6 +102,13 @@ _STATIC_BEHAVIOR: dict[str, DistributionBehavior] = {
     # preserve, destroy, coarsen, or shift the source distribution.
     # Cannot be resolved statically without inspecting the expression.
     "derived": "mixed",
+    # bucket_perturb (SP-08b): coarse time-bucket datetime generalization.
+    # Snaps each date to a random position within its ISO week/month/quarter.
+    # The distribution is coarsened: exact dates are lost; the bucket-level
+    # distribution (month, quarter, year counts) is fully preserved. Same
+    # class as bucketize (numeric coarsening) and geo_generalize (geographic
+    # coarsening).
+    "bucket_perturb": "coarsens",
 }
 
 
