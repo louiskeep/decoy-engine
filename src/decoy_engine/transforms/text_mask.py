@@ -17,6 +17,12 @@ Raw-value isolation: ``matched_text`` is never emitted to logs or evidence.
 The HMAC derivation hides the raw value behind a one-way function. Sentry tests
 (``tests/unit/transforms/test_text_mask.py``) verify this invariant.
 
+Overlap resolution: when two detected spans overlap, the leftmost span wins; ties on
+start position resolve to the longer match (leftmost-then-longest). Spans are sorted
+by ``(start, -length)`` and a greedy non-overlap sweep keeps the first non-conflicting
+match. Earlier spec text described this as "longer-match-wins", which is imprecise: the
+primary sort key is start position, not length.
+
 Unmatched-span interpretation: "unmatched" means text segments NOT covered by
 any detector match (e.g. clinical prose surrounding an SSN). The default
 ``redact`` policy treats these as potentially undetected PII and replaces them
@@ -49,15 +55,40 @@ from decoy_engine.transforms.fpe import _CHARSETS, fpe_encrypt_value
 _log = logging.getLogger(__name__)
 
 _DEFAULT_TOKEN: str = "[REDACTED]"  # noqa: S105 - redaction placeholder, not a credential
-_UNMATCHED_TOKEN: str = "[UNMATCHED]"  # sentinel for replace_with_token policy
+_UNMATCHED_TOKEN: str = "[UNMATCHED]"  # noqa: S105 - sentinel for replace_with_token policy
 
 # ── Per-detector default dispatch table (SP-07) ───────────────────────────────
 #
+# REACHABILITY TIERS - read before adding or trusting entries:
+#
+# TIER 1 - Built-in span detectors (fire automatically via iter_spans):
+#   These 11 detectors produce spans under the built-in path and their
+#   defaults below are ACTIVE for every mask_cell call:
+#     email, ssn, us_phone, us_zip, pan, iban, ipv4, icd10, npi, url,
+#     street_address.
+#
+# TIER 2 - NER/custom-only detectors (defaults apply ONLY when spans are
+#   supplied via extra_spans= or custom=):
+#   These entries define sensible defaults for operators who inject spans
+#   from NER (storm.ner.iter_ner_spans -> extra_spans=) or custom= patterns.
+#   Under the BUILT-IN path they are UNREACHABLE - iter_spans never emits
+#   a span with these detector_ids because name-hint-only regexes are
+#   intentionally excluded from _SPAN_DETECTORS.
+#   Do NOT advertise Tier-2 detectors as "masked" in operator docs for
+#   the built-in path.  Tier-2 detectors:
+#     person_name, first_name, last_name, address   (require NER)
+#     iso_date, us_date, eu_date                    (require NER or custom=)
+#     fax_number, cvv, mrn, health_plan_id,
+#     license_num, vehicle_id, device_id, biometric_id
+#
+# Passthrough risk: unmatched_span_policy="passthrough" lets any text NOT
+#   covered by a detected span ride through unchanged. Under the built-in
+#   path, names, addresses, and dates are NEVER detected, so they ride
+#   through in the clear. Use the default "redact" policy (or inject NER
+#   extra_spans) when the column may contain such values.
+#
 # Strategy names: "fpe", "faker", "date_shift", "redact", "passthrough".
 # Operators override per-detector via YAML ``per_detector_strategy: {id: strategy}``.
-# This table is the V2 safe default; entries without a valid span detector are
-# included for completeness so dispatch is defined for every STORM detector even
-# if it never fires in free-text context (name-hint-only detectors).
 #
 # Default rationale per group:
 #   fpe        - digit-structured fields where format preservation adds value
@@ -139,7 +170,9 @@ def _span_key(job_seed: bytes, matched_text: str) -> bytes:
     return _hmac_mod.new(job_seed, msg, hashlib.sha256).digest()
 
 
-def _mask_fpe(matched_text: str, span_key: bytes, detector_id: str) -> str:
+def _mask_fpe(
+    matched_text: str, span_key: bytes, detector_id: str, token: str = _DEFAULT_TOKEN
+) -> str:
     """FPE-encrypt a span using the per-detector charset + checksum config.
 
     Uses ``fpe_encrypt_value`` from ``transforms.fpe`` (Feistel+HMAC, RFC 2104;
@@ -147,8 +180,9 @@ def _mask_fpe(matched_text: str, span_key: bytes, detector_id: str) -> str:
     value encrypted as "ssn" vs "us_phone" produces different ciphertext, even
     with the same span_key.
 
-    Falls back to ``_DEFAULT_TOKEN`` if FPE fails (e.g. value too short for
-    a checksum scheme, or all-separator input).
+    Falls back to ``token`` if FPE fails (e.g. value too short for a checksum
+    scheme, or all-separator input). Honors the operator-configured token rather
+    than hardcoding ``_DEFAULT_TOKEN``.
     """
     cfg = _FPE_CONFIG.get(detector_id, ("digits", None))
     charset_name, checksum = cfg
@@ -166,8 +200,10 @@ def _mask_fpe(matched_text: str, span_key: bytes, detector_id: str) -> str:
         )
     except Exception:
         # FPE failed (value too short for checksum scheme, degenerate input, etc.)
-        # Fail closed: redact rather than pass through unmasked text.
-        return _DEFAULT_TOKEN
+        # Fail closed: apply redact token rather than passing unmasked text.
+        # Log strategy + detector_id only; never the matched_text (raw-value isolation).
+        _log.debug("fpe strategy failed for detector %s; applying redact token", detector_id)
+        return token
 
 
 def _mask_faker(matched_text: str, span_key: bytes, detector_id: str) -> str:
@@ -250,7 +286,9 @@ def _mask_span(
     """
     span_key = _span_key(job_seed, span.matched_text)
     if strategy == "fpe":
-        return _mask_fpe(span.matched_text, span_key, span.detector_id)
+        return _mask_fpe(
+            span.matched_text, span_key, span.detector_id, str(cfg.get("token", _DEFAULT_TOKEN))
+        )
     if strategy == "faker":
         return _mask_faker(span.matched_text, span_key, span.detector_id)
     if strategy == "date_shift":
@@ -294,6 +332,7 @@ def mask_cell(
     job_seed: bytes,
     *,
     detector_ids: list[str] | None = None,
+    extra_spans: list[Span] | None = None,
     strategy_map: dict[str, str] | None = None,
     unmatched_span_policy: str = "redact",
     token: str = _DEFAULT_TOKEN,
@@ -318,11 +357,19 @@ def mask_cell(
         detector_ids:         Detector IDs to run. None = all span detectors.
                               Unknown IDs are silently skipped (``iter_spans``
                               contract).
+        extra_spans:          Pre-computed spans to merge with built-in detection
+                              results (e.g. NER hits from ``storm.ner.iter_ner_spans``).
+                              Resolved via the same leftmost-then-longest overlap
+                              sweep as built-in spans. Use this to mask Tier-2
+                              detectors (person_name, iso_date, etc.) that are
+                              not reachable via the built-in ``_SPAN_DETECTORS`` path.
         strategy_map:         Per-detector strategy overrides. Keys not in the
                               map fall back to ``DETECTOR_DEFAULTS``.
         unmatched_span_policy: Policy for text NOT covered by any detector match.
                               "redact" (default), "passthrough", or
-                              "replace_with_token".
+                              "replace_with_token". WARNING: "passthrough" lets
+                              any undetected text (including names and dates under
+                              the built-in path) ride through unchanged.
         token:                Replacement token for "redact" unmatched policy and
                               for per-span redact strategy. Default "[REDACTED]".
         cfg:                  Extra strategy config (min_days, max_days for
@@ -331,6 +378,16 @@ def mask_cell(
     if not isinstance(text, str) or not text:
         return text
 
+    if unmatched_span_policy == "passthrough":
+        _log.warning(
+            "text_mask: unmatched_span_policy='passthrough' lets any text not covered by "
+            "a detected span ride through unchanged. Built-in span detection covers only "
+            "11 detectors (email, ssn, us_phone, us_zip, pan, iban, ipv4, icd10, npi, "
+            "url, street_address). Names, addresses, and dates require NER (extra_spans=) "
+            "or custom= patterns. Use the default 'redact' policy unless this column is "
+            "known-safe."
+        )
+
     effective_map: dict[str, str] = dict(DETECTOR_DEFAULTS)
     if strategy_map:
         effective_map.update(strategy_map)
@@ -338,7 +395,7 @@ def mask_cell(
     extra_cfg: dict[str, Any] = dict(cfg or {})
     extra_cfg.setdefault("token", token)
 
-    spans: list[Span] = iter_spans(text, detector_ids)
+    spans: list[Span] = iter_spans(text, detector_ids, extra_spans=extra_spans)
 
     if not spans:
         # Entire cell is unmatched text.
