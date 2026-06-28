@@ -84,12 +84,17 @@ def build_source_frames(
         builder = getattr(fixture_mod, func_name)
 
         # Pass inter-table dependencies based on parameter name conventions.
+        # Supported: members_df, claims_df (Job A); customers_df, products_df (Job B).
         params = list(inspect.signature(builder).parameters)
         kwargs: dict[str, Any] = {"seed": seed}
         if "members_df" in params and "members" in frames:
             kwargs["members_df"] = frames["members"]
         if "claims_df" in params and "claims" in frames:
             kwargs["claims_df"] = frames["claims"]
+        if "customers_df" in params and "customers" in frames:
+            kwargs["customers_df"] = frames["customers"]
+        if "products_df" in params and "products" in frames:
+            kwargs["products_df"] = frames["products"]
 
         df = builder(**kwargs)
         assert isinstance(df, pd.DataFrame), (

@@ -1,0 +1,463 @@
+# Test-flight Job B: retail / payments (many-to-many junction)
+# Topology: many_to_many_junction
+#   customers -> orders via customer_identity (orders.customer_id FK)
+#   products  -> orders via product_identity  (orders.product_id FK)
+#
+# PLANTED EDGE CASES (exact counts asserted by invariants):
+#   - 15 customer rows with HHS-restricted ZIP3 prefixes (Safe Harbor suppression)
+#   - 7 orders referencing fictional customer_ids (CU099901..CU099907)
+#     orphan_policy:warn for customer_identity -> 7 orphan orders in output
+#   - 0 orphan product orders (all product_ids are valid)
+#     orphan_policy:warn for product_identity -> 0 orphan orders
+#   - SENTINEL_PAN "4111111111111110" in customer row 0 (FPE+luhn transforms it)
+#   - SENTINEL_EMAIL "sentinel.leak.test@b-retail-decoy-testflight.invalid" in row 0
+#     (text_redact masks to "[REDACTED]")
+#
+# M2M FK INVARIANT:
+#   The fk_integrity invariant checks BOTH FK parents independently:
+#   - customer_identity: expected_orphans=7 (planted)
+#   - product_identity:  expected_orphans=0 (no orphan products planted)
+#   Mutation control (TestM2MFKIntegrityTeeth) breaks one parent's FK resolution
+#   and asserts the invariant raises. Proves both checks are active.
+#
+# PASSTHROUGH-COLUMN CORRELATION PRESERVATION (Phase 2 carry-forward: PARTIAL):
+#   qty_band and order_total_band are PASSTHROUGH columns correlated by fixture
+#   construction: products have category-driven unit_price ranges (electronics
+#   high, food low). order_total = qty * unit_price correlates with qty_band.
+#   LIMITATION (the carry-forward is NOT closed): this verifies correlation
+#   preservation for VALUE-STABLE (passthrough) columns only. Correlation THROUGH
+#   a value-changing mask (fpe/code_set/joint_mask) is NOT measurable by the
+#   engine crosstab-TVD metric - it relabels cell keys, so source and output
+#   crosstabs are disjoint and similarity is 0.0 even when the structure is
+#   perfectly preserved. See docs/what-we-cannot-prove.md. Genuinely closing the
+#   carry-forward needs a harness-side relabel-invariant statistic (Cramers V /
+#   mutual information), which is owed work, not delivered here.
+#   Both are passthrough -> source=output -> joint similarity = 1.0 in faithful run.
+#   Mutation control (TestM2MCorrelationTeeth) shuffles order_total_band in the
+#   output -> joint similarity drops below corr_tol=0.90 -> RAISES.
+#
+# Source fingerprints (SHA-256 of canonical CSV; verified by verify_fingerprint
+# inside each fixture build_* function -- update all three after any fixture change):
+#   customers: e3c28d3e27dbc27d24adc53370cbe2c4e490b6b562e70ec483c9dcf20f29dd1e
+#   products:  8b5f2816591cd58d88566b6ef5d26c41e479c591fab7a6f55df841eb61da5d34
+#   orders:    8cc526d6c5749f56a343768664e6461bc0b422820b9be4110b2666918eaf325d
+#
+# Strategies exercised (strategy_coverage below):
+#   fpe+checksum (luhn), text_redact, geo_generalize (Safe Harbor), date_shift,
+#   code_set (mcc), categorical, passthrough, derived (+ case_when builtin), from_parent.
+
+job_name: b_retail_m2m
+topology: many_to_many_junction
+seed: 43
+master_key_label: testflight
+
+tables:
+  - name: customers
+    kind: mask
+    row_count: 3000
+    source_builder: "fixture.build_customers"
+  - name: products
+    kind: mask
+    row_count: 500
+    source_builder: "fixture.build_products"
+  - name: orders
+    kind: mask
+    row_count: 12007
+    source_builder: "fixture.build_orders"
+
+relationships:
+  - parent:
+      table: customers
+      columns: [customer_id]
+    children:
+      - table: orders
+        columns: [customer_id]
+    orphan_policy: warn
+    namespace: customer_identity
+  - parent:
+      table: products
+      columns: [product_id]
+    children:
+      - table: orders
+        columns: [product_id]
+    orphan_policy: warn
+    namespace: product_identity
+
+# Full PipelineConfig dict. Sources/targets use placeholder paths that the
+# runner replaces with temp-file paths before calling run_pipeline.
+config:
+  version: 1
+  global_settings:
+    seed: 43
+
+  sources:
+    customers: {type: file, format: parquet, path: "__PLACEHOLDER_customers__"}
+    products:  {type: file, format: parquet, path: "__PLACEHOLDER_products__"}
+    orders:    {type: file, format: parquet, path: "__PLACEHOLDER_orders__"}
+
+  targets:
+    customers: {type: file, format: parquet, path: "__PLACEHOLDER_out_customers__"}
+    products:  {type: file, format: parquet, path: "__PLACEHOLDER_out_products__"}
+    orders:    {type: file, format: parquet, path: "__PLACEHOLDER_out_orders__"}
+
+  namespaces:
+    customer_identity:
+      declared_by:
+        - customers.customer_id
+    product_identity:
+      declared_by:
+        - products.product_id
+
+  tables:
+    # === customers ===
+    - name: customers
+      columns:
+        # customer_id: FPE PK. Namespace declares the customer_identity FK.
+        # preserve_separators:true (default): "CU" prefix is preserved; only
+        # the trailing 6 digits are permuted. Output: "CU<6-digits>".
+        - name: customer_id
+          strategy: fpe
+          namespace: customer_identity
+          provider_config:
+            charset: digits
+
+        # pan: FPE + Luhn checksum recomputation. Digits only (16-digit PAN).
+        # FPE permutes digits 1-15; Luhn check digit is recomputed for digit 16.
+        # The sentinel PAN "4111111111111110" is transformed to a different
+        # Luhn-valid PAN (sentinel no-leakage verified by check_sentinels).
+        - name: pan
+          strategy: fpe
+          namespace: pan_ns
+          provider_config:
+            charset: digits
+            checksum: luhn
+
+        # email: text_redact with email detector. Replaces any email span
+        # in the cell with "[REDACTED]". For the structured email column,
+        # every cell becomes "[REDACTED]", including the sentinel email row.
+        - name: email
+          strategy: text_redact
+          provider_config:
+            detectors: [email]
+
+        # city: passthrough (no PII; used for realism only).
+        - name: city
+          strategy: passthrough
+
+        # state: passthrough (no PII; 2-char US state abbreviation).
+        - name: state
+          strategy: passthrough
+
+        # zip5: geo_generalize (HIPAA Safe Harbor ZIP cascade).
+        # 15 planted rows with HHS-restricted ZIP3 prefixes are suppressed.
+        - name: zip5
+          strategy: geo_generalize
+          provider_config:
+            type: zip
+            cascade: [zip5, zip3, state, suppress]
+
+        # signup_date: date_shift (keyed per-row date offset).
+        - name: signup_date
+          strategy: date_shift
+          namespace: signup_date_ns
+
+        # segment: categorical (replaces with a value drawn from the categories).
+        # deterministic:true + namespace for stable per-source-value mapping.
+        - name: segment
+          strategy: categorical
+          namespace: segment_ns
+          deterministic: true
+          provider_config:
+            categories: [budget, standard, premium]
+            weights: [0.30, 0.50, 0.20]
+
+    # === products ===
+    - name: products
+      columns:
+        # product_id: FPE PK. Namespace declares the product_identity FK.
+        # preserve_separators:true: "PR" prefix preserved; digits permuted.
+        - name: product_id
+          strategy: fpe
+          namespace: product_identity
+          provider_config:
+            charset: digits
+
+        # category: categorical. Replaces with a value from the same pool.
+        # deterministic:true ensures per-source-value stable mapping.
+        - name: category
+          strategy: categorical
+          namespace: category_ns
+          deterministic: true
+          provider_config:
+            categories: [electronics, clothing, food, home, sports]
+            weights: [0.20, 0.25, 0.20, 0.20, 0.15]
+
+        # mcc: code_set mcc. Replaces with a different code from the MCC corpus.
+        - name: mcc
+          strategy: code_set
+          provider_config:
+            code_set: mcc
+
+    # === orders ===
+    - name: orders
+      columns:
+        # order_id: FPE PK. preserve_separators: "OR" prefix preserved.
+        - name: order_id
+          strategy: fpe
+          namespace: order_identity
+          provider_config:
+            charset: digits
+
+        # customer_id: from_parent (FK to customers.customer_id via customer_identity).
+        # 7 orphan rows (fictional customer_ids) are passed through by orphan_policy:warn.
+        - name: customer_id
+          strategy: from_parent
+
+        # product_id: from_parent (FK to products.product_id via product_identity).
+        # 0 orphan rows (all product_ids valid).
+        - name: product_id
+          strategy: from_parent
+
+        # qty: passthrough (source for correlation and derived order_total).
+        - name: qty
+          strategy: passthrough
+
+        # unit_price: passthrough (source for derived order_total).
+        - name: unit_price
+          strategy: passthrough
+
+        # qty_band: passthrough. Correlated with order_total_band by fixture
+        # construction (category-driven unit_price model). The joint
+        # (qty_band, order_total_band) with corr_tol=0.90 verifies correlation
+        # preservation for these PASSTHROUGH columns (catches a decorrelation of
+        # a passthrough junction column). This is NOT correlation-through-masking
+        # - see the manifest header limitation note.
+        - name: qty_band
+          strategy: passthrough
+
+        # order_total_band: passthrough. Target of the joint declared on qty_band.
+        # Also passthrough -> joint similarity = 1.0 in faithful run.
+        - name: order_total_band
+          strategy: passthrough
+
+        # order_total: derived from qty * unit_price.
+        # The computed_columns invariant verifies every row.
+        - name: order_total
+          strategy: derived
+          provider_config:
+            expression: "qty * unit_price"
+
+        # tier: derived with case_when over order_total.
+        # 3 branches: premium (>= 1000), standard (>= 200), economy (default).
+        # The computed_columns invariant verifies every row and all 3 branches.
+        - name: tier
+          strategy: derived
+          provider_config:
+            expression: >-
+              case_when(
+                order_total >= 1000.0, "premium",
+                order_total >= 200.0, "standard",
+                "economy"
+              )
+
+  relationships:
+    - parent:   {table: customers, columns: [customer_id]}
+      children:
+        - {table: orders, columns: [customer_id]}
+      orphan_policy: warn
+      namespace: customer_identity
+
+    - parent:   {table: products, columns: [product_id]}
+      children:
+        - {table: orders, columns: [product_id]}
+      orphan_policy: warn
+      namespace: product_identity
+
+  # fk_intact and no_orphan_children are omitted here because Job B plants 7
+  # intentional orphan customer orders (CU099901..CU099907) and has no quarantine
+  # configured. Those validators would fail the pipeline before the testflight
+  # invariant evaluation phase. The testflight check_fk_integrity invariant (6.4)
+  # is the primary FK check; it runs on the output tables after the pipeline
+  # completes and directly asserts the expected orphan counts.
+
+invariants:
+  determinism: true
+
+  # 6.4 FK integrity (M2M: both FK parents must be checked independently).
+  #   customer_identity: 7 orphan orders expected. Fixture plants 7 orders with
+  #     fictional customer_ids (CU099901..CU099907) not in the customers table.
+  #     orphan_policy:warn keeps them in the orders output under warn policy.
+  #   product_identity: 0 orphans expected. All order product_ids are valid.
+  fk_integrity:
+    - relationship_name: customer_identity
+      expected_orphans: 7
+      policy: warn
+    - relationship_name: product_identity
+      expected_orphans: 0
+      policy: warn
+
+  # Distribution fidelity per column.
+  # grade_floor_enabled: false because FPE columns (fpe value-identity ~ 0 by design)
+  # pull the grade down; the shape-floor and cardinality teeth are the correct checks.
+  grade_floor_enabled: false
+
+  distribution:
+    # customers.customer_id: preserve class (fpe bijection; cardinality + shape guard).
+    - table: customers
+      column: customer_id
+      distribution_class: preserve
+      strategy: fpe
+      tolerance: 0.05
+      null_pp: 2.0
+      joint_columns: []
+      joints_waived: true
+      joints_waived_reason: >-
+        FPE is a bijection that permutes values without altering their frequency
+        distribution; marginal shape is preserved by construction. No meaningful
+        correlation between customer_id and any other customers column is expected
+        to hold post-masking (FPE remaps each ID independently).
+
+    # customers.pan: preserve class (fpe bijection + luhn checksum recomputation).
+    - table: customers
+      column: pan
+      distribution_class: preserve
+      strategy: fpe
+      tolerance: 0.05
+      null_pp: 2.0
+      joint_columns: []
+      joints_waived: true
+      joints_waived_reason: >-
+        PAN is FPE-bijected independently of all other customers columns;
+        no meaningful correlation joint is expected or required post-masking.
+        Luhn validity is verified separately by the checksums invariant.
+
+    # customers.email: synthetic class (text_redact; every cell becomes "[REDACTED]").
+    # text_redact intentionally causes kind_drift (freetext->constant) on a structured
+    # email column. The distribution check exempts text_redact columns from the
+    # kind_drift diagnostic so this expected change does not fail the invariant.
+    # Joint waived: "[REDACTED]" constant has no correlation with any other column.
+    - table: customers
+      column: email
+      distribution_class: synthetic
+      strategy: text_redact
+      tolerance: 0.10
+      null_pp: 2.0
+      joint_columns: []
+      joints_waived: true
+      joints_waived_reason: >-
+        text_redact replaces all email values with "[REDACTED]" (constant output);
+        no meaningful correlation joint can be declared for a constant column.
+
+    # customers.zip5: coarsen class (geo_generalize; cardinality must drop).
+    - table: customers
+      column: zip5
+      distribution_class: coarsen
+      strategy: geo_generalize
+      tolerance: 0.15
+      null_pp: 10.0
+      expected_coarsening: true
+      joints_waived: true
+      joints_waived_reason: >-
+        zip5 is generalized to zip3/state/suppress; the generalized values
+        have no meaningful correlation with segment or other customer columns.
+
+    # customers.segment: synthetic class (categorical; TVD vs declared weights).
+    - table: customers
+      column: segment
+      distribution_class: synthetic
+      strategy: categorical
+      tolerance: 0.10
+      null_pp: 2.0
+      joint_columns: []
+
+    # products.category: synthetic class (categorical).
+    - table: products
+      column: category
+      distribution_class: synthetic
+      strategy: categorical
+      tolerance: 0.10
+      null_pp: 2.0
+      joint_columns: []
+      joints_waived: true
+      joints_waived_reason: >-
+        products table has one declared distribution column (category). No
+        second non-waived preserve column exists; the joint requirement is
+        not triggered. mcc is synthetic (code_set) and not declared here.
+
+    # orders.qty_band: preserve class (passthrough; unchanged).
+    # Correlated with order_total_band by fixture construction. The joint pair
+    # (qty_band, order_total_band) is declared here with corr_tol=0.90.
+    # Both are passthrough -> source and output distributions are identical ->
+    # joint similarity = 1.0 in a correct run. Decorrelating order_total_band
+    # drops similarity below 0.90 (verified by TestM2MCorrelationTeeth).
+    - table: orders
+      column: qty_band
+      distribution_class: preserve
+      strategy: passthrough
+      tolerance: 0.05
+      null_pp: 2.0
+      joint_columns: [[qty_band, order_total_band]]
+      corr_tol: 0.90
+
+    # orders.order_total_band: preserve class (passthrough; unchanged).
+    # Target of the joint declared on qty_band. Waived here to avoid
+    # double-declaring the pair and inflating non-waived count.
+    - table: orders
+      column: order_total_band
+      distribution_class: preserve
+      strategy: passthrough
+      tolerance: 0.05
+      null_pp: 2.0
+      joint_columns: []
+      joints_waived: true
+      joints_waived_reason: >-
+        order_total_band is the target column of the (qty_band, order_total_band)
+        joint declared on the qty_band spec. Waiving here avoids double-declaring
+        the pair and avoids inflating the non-waived preserve count.
+
+  # 6.5 Checksum validity: FPE+luhn on customers.pan.
+  checksums:
+    - table: customers
+      column: pan
+      scheme: luhn
+
+  # 6.6 Safe Harbor suppression: 15 planted restricted-ZIP3 rows.
+  safe_harbor:
+    - table: customers
+      column: zip5
+      planted_restricted_zip3_count: 15
+      expected_suppressions: 15
+
+  # 6.8 Sentinel no-leakage.
+  sentinels:
+    - table: customers
+      column: pan
+      value: "4111111111111110"
+    - table: customers
+      column: email
+      value: "sentinel.leak.test@b-retail-decoy-testflight.invalid"
+
+  # 6.9 Computed-column correctness.
+  computed_columns:
+    - table: orders
+      column: order_total
+      formula: "qty * unit_price"
+      branch_count: 0
+    - table: orders
+      column: tier
+      formula: >-
+        case_when(order_total >= 1000.0, "premium";
+        order_total >= 200.0, "standard"; else "economy")
+      branch_count: 3
+
+  # Strategy coverage declared for this job.
+  strategy_coverage:
+    - fpe
+    - text_redact
+    - geo_generalize
+    - date_shift
+    - code_set
+    - categorical
+    - passthrough
+    - derived
+    - from_parent

@@ -351,3 +351,28 @@ def test_job_passes_all_invariants(manifest_path: Path) -> None:
             "Check that each family is wired in evaluate_invariants() "
             "and declared in the manifest."
         )
+
+    if job_name == "b_retail_m2m":
+        # These families must ALL appear in the result for Job B (M2M junction).
+        # Includes fk_integrity for BOTH FK parents (customer_identity + product_identity),
+        # the M2M-specific checksums (luhn on pan), safe_harbor, sentinels,
+        # computed_columns (order_total + tier), and distribution for all three tables.
+        expected_families = {
+            "determinism",
+            "fk_integrity",
+            "distribution:customers",
+            "distribution:products",
+            "distribution:orders",
+            "checksums",
+            "safe_harbor",
+            "sentinels",
+            "computed_columns",
+        }
+        missing = expected_families - families_run
+        assert not missing, (
+            f"Job '{job_name}': expected invariant families not found in "
+            f"result: {sorted(missing)}. "
+            f"Families actually run: {sorted(families_run)}. "
+            "Check that each family is wired in evaluate_invariants() "
+            "and declared in the manifest."
+        )

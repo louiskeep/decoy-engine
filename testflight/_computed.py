@@ -25,6 +25,20 @@ def _recompute_line_total(row: dict[str, Any]) -> float:
     return la * u * factor
 
 
+def _recompute_order_total(row: dict[str, Any]) -> float:
+    """Pure-Python recomputation of order_total = qty * unit_price."""
+    return float(row["qty"]) * float(row["unit_price"])
+
+
+def _recompute_tier(order_total: float) -> str:
+    """Pure-Python recomputation of tier from order_total (case_when, 3 branches)."""
+    if order_total >= 1000.0:
+        return "premium"
+    if order_total >= 200.0:
+        return "standard"
+    return "economy"
+
+
 def check_computed_columns(
     job_name: str,
     spec: list[ComputedColumnSpec],
@@ -116,6 +130,62 @@ def check_computed_columns(
                     f"row {i}: value={v}, expected scalar sum={expected_sum}."
                 )
             checked.append(f"{cs.table}.{cs.column}(sum={expected_sum:.2f},rows={len(cls_vals)})")
+
+        elif cs.column == "order_total":
+            # Derived: qty * unit_price (no case_when branches).
+            qty_vals = col_dict["qty"]
+            up_vals = col_dict["unit_price"]
+            ot_vals = col_dict["order_total"]
+
+            ot_errors: list[tuple[int, float, float]] = []
+            for i in range(len(ot_vals)):
+                ot_expected = _recompute_order_total({"qty": qty_vals[i], "unit_price": up_vals[i]})
+                ot_actual = float(ot_vals[i])
+                if abs(ot_actual - ot_expected) > 1e-4:
+                    ot_errors.append((i, ot_expected, ot_actual))
+                    if len(ot_errors) >= 5:
+                        break
+
+            assert not ot_errors, (
+                f"[{job_name}] computed_columns: {cs.table}.{cs.column}: "
+                f"{len(ot_errors)} incorrect values (first 5): {ot_errors}."
+            )
+            checked.append(f"{cs.table}.{cs.column}(rows={len(ot_vals)})")
+
+        elif cs.column == "tier":
+            # Derived: case_when(order_total >= 1000, "premium", >= 200, "standard", "economy").
+            ot_vals = col_dict["order_total"]
+            tier_vals = col_dict["tier"]
+
+            tier_errors: list[tuple[int, str, str, Any]] = []
+            for i in range(len(tier_vals)):
+                tier_expected = _recompute_tier(float(ot_vals[i]))
+                actual = tier_vals[i]
+                if actual != tier_expected:
+                    tier_errors.append((i, tier_expected, actual, ot_vals[i]))
+                    if len(tier_errors) >= 5:
+                        break
+
+            assert not tier_errors, (
+                f"[{job_name}] computed_columns: {cs.table}.{cs.column}: "
+                f"{len(tier_errors)} incorrect values (first 5): {tier_errors}."
+            )
+
+            # Branch-coverage check: all three tiers must appear in output.
+            if cs.branch_count > 0:
+                seen_tiers = set(tier_vals)
+                required_tiers = {"premium", "standard", "economy"}
+                missing = required_tiers - seen_tiers
+                assert not missing, (
+                    f"[{job_name}] computed_columns: {cs.table}.{cs.column}: "
+                    f"case_when branch_count={cs.branch_count} but "
+                    f"tier(s) {missing} are not exercised by any output row. "
+                    f"Tiers present: {seen_tiers}. "
+                    f"A missing branch could hide a formula bug."
+                )
+            checked.append(
+                f"{cs.table}.{cs.column}(rows={len(tier_vals)},branches={cs.branch_count})"
+            )
 
         else:
             # Unknown column: fail loudly rather than silently skip.

@@ -157,13 +157,41 @@ def check_distribution_mask(
     # The diagnostic catches structural problems (dtype change, missing columns,
     # row count mismatch) that the distribution teeth cannot see. Assert it
     # before the distribution checks so structural regressions surface clearly.
+    #
+    # text_redact exemption: text_redact replaces PII spans in-text, which
+    # intentionally produces constant ("[REDACTED]") output for structured PII
+    # columns (e.g., a pure-email column becomes all "[REDACTED]"). This causes
+    # expected kind_drift (freetext->constant) that would otherwise fail the
+    # diagnostic. We suppress kind_drift failures ONLY for columns whose declared
+    # strategy is text_redact so the exemption is narrow and reviewer-visible.
+    text_redact_cols: set[str] = {cs.column for cs in spec if cs.strategy == "text_redact"}
+    if strategy_map:
+        text_redact_cols |= {col for col, st in strategy_map.items() if st == "text_redact"}
+
     diag: dict[str, Any] = report.get("diagnostic") or {}
     if not diag.get("passed", True):
         failed_checks = [c for c in diag.get("checks", []) if not c.get("passed", True)]
-        details = "; ".join(c.get("detail", str(c)) for c in failed_checks[:3])
-        raise AssertionError(
-            f"[{job_name}/{table}] diagnostic failed (dtype-kind drift or row parity): {details}"
-        )
+        # Filter out kind_drift failures caused entirely by text_redact columns.
+        if text_redact_cols:
+            filtered: list[dict[str, Any]] = []
+            for fc in failed_checks:
+                if fc.get("check") == "kind_drift":
+                    non_tr_drifted = [
+                        d for d in fc.get("drifted", []) if d.get("column") not in text_redact_cols
+                    ]
+                    if non_tr_drifted:
+                        # Clone with only the non-text_redact drifted columns.
+                        filtered.append({**fc, "drifted": non_tr_drifted})
+                    # Otherwise suppress this check (all drifted cols are text_redact).
+                else:
+                    filtered.append(fc)
+            failed_checks = filtered
+        if failed_checks:
+            details = "; ".join(c.get("detail", str(c)) for c in failed_checks[:3])
+            raise AssertionError(
+                f"[{job_name}/{table}] diagnostic failed (dtype-kind drift or row parity): "
+                f"{details}"
+            )
 
     # --- build effective strategy_map (spec entries merged with caller-provided) ---
     effective_strategy_map: dict[str, str] = {}
