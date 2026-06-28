@@ -23,6 +23,7 @@ from pathlib import Path
 import pytest
 
 from testflight._spec import (
+    ColumnDistributionSpec,
     FlightManifest,
     InvariantSpec,
     TableSpec,
@@ -168,6 +169,94 @@ class TestManifestLoader:
         )
         with pytest.raises(ValueError, match="Manifest validation failed"):
             load_manifest(bad)
+
+    # ------------------------------------------------------------------
+    # Phase 1: new spec fields (tolerances in the manifest, not hardcoded)
+    # ------------------------------------------------------------------
+
+    def test_column_distribution_spec_accepts_strategy_and_null_pp(self) -> None:
+        """ColumnDistributionSpec accepts new Phase 1 fields: strategy, null_pp.
+
+        These fields ensure tolerances live in the manifest (plan LOW-3) so
+        reviewers can tighten or relax with a recorded reason rather than
+        hunting for hardcoded constants.
+        """
+        spec = ColumnDistributionSpec(
+            table="members",
+            column="ssn",
+            distribution_class="preserve",
+            strategy="fpe",
+            null_pp=5.0,
+            tolerance=0.05,
+            corr_tol=0.90,
+        )
+        assert spec.strategy == "fpe"
+        assert spec.null_pp == 5.0
+        # strategy is optional; omitting it defaults to None
+        spec2 = ColumnDistributionSpec(
+            table="members",
+            column="zip5",
+            distribution_class="coarsen",
+            expected_coarsening=True,
+        )
+        assert spec2.strategy is None
+        assert spec2.null_pp == 10.0  # default
+
+    def test_invariant_spec_accepts_policy_and_grade_floor(self) -> None:
+        """InvariantSpec accepts new Phase 1 fields: policy, grade_floor_enabled.
+
+        The policy dict is passed to apply_quality_policy (mode defaults to
+        fail inside check_distribution_mask). grade_floor_enabled controls
+        whether the grade-floor tooth is active for preserve-dominant tables.
+        """
+        spec = InvariantSpec(
+            determinism=True,
+            policy={"thresholds": {"overall": {"min": 0.70}}},
+            grade_floor_enabled=False,
+        )
+        assert spec.policy == {"thresholds": {"overall": {"min": 0.70}}}
+        assert spec.grade_floor_enabled is False
+        # Defaults: empty policy, grade floor enabled
+        default_spec = InvariantSpec()
+        assert default_spec.policy == {}
+        assert default_spec.grade_floor_enabled is True
+
+    def test_manifest_distribution_spec_round_trips_new_fields(self, tmp_path: Path) -> None:
+        """A manifest with strategy and null_pp in a distribution entry loads cleanly."""
+        manifest_yaml = tmp_path / "manifest.yaml"
+        manifest_yaml.write_text(
+            "job_name: test_p1\n"
+            "topology: one_to_many_multilevel\n"
+            "seed: 1\n"
+            "master_key_label: test\n"
+            "tables:\n"
+            "  - name: t\n"
+            "    kind: mask\n"
+            "    row_count: 100\n"
+            "    source_builder: fixture.build_t\n"
+            "invariants:\n"
+            "  determinism: true\n"
+            "  grade_floor_enabled: false\n"
+            "  policy:\n"
+            "    thresholds:\n"
+            "      overall:\n"
+            "        min: 0.80\n"
+            "  distribution:\n"
+            "    - table: t\n"
+            "      column: ssn\n"
+            "      distribution_class: preserve\n"
+            "      strategy: fpe\n"
+            "      null_pp: 5.0\n"
+            "      corr_tol: 0.92\n",
+            encoding="utf-8",
+        )
+        manifest = load_manifest(manifest_yaml)
+        assert manifest.invariants.grade_floor_enabled is False
+        assert manifest.invariants.policy == {"thresholds": {"overall": {"min": 0.80}}}
+        dist = manifest.invariants.distribution[0]
+        assert dist.strategy == "fpe"
+        assert dist.null_pp == 5.0
+        assert dist.corr_tol == 0.92
 
     def test_topology_literal_values(self) -> None:
         """Verify that all topology literal strings round-trip via Pydantic."""

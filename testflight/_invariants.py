@@ -1,33 +1,56 @@
-"""Invariant assertion library for the test-flight suite (Phase 0 stubs).
+"""Invariant assertion library for the test-flight suite.
 
-Each public function in this module corresponds to one invariant family
-described in the plan (sections 6.1-6.10). Phase 0 defines the function
-signatures and contracts; Phase 1+ fills in real assertion bodies.
+Each public function corresponds to one invariant family described in the
+acceptance-testflight plan (sections 6.1-6.10). Phase 1 implements
+check_distribution_mask and check_distribution_generate via the
+_distribution sub-module; remaining families carry Phase 2+ stubs.
 
-Naming convention: `check_<family>(...)` for invariant assertions that raise
-AssertionError on failure. Each error message names job/table/column/strategy
-so triage localises to one place.
+Naming convention: check_<family>(...) raises AssertionError on failure with a
+message naming job/table/column/strategy so triage localises to one strategy.
 
-Distribution note (6.2): the authoritative quality measurement calls
-`compute_quality_report` directly on the source frame and masked output
-(NOT on the in-pipeline fidelity_report result), passing the manifest's
-declared joint_columns. The in-pipeline fidelity block is still asserted
-byte-stable across the two runs as a determinism check.
+Module split (LOW-4): distribution logic lives in testflight/_distribution.py.
+This module re-exports the distribution entry points and FIXED_TS so existing
+callers that import from testflight._invariants continue to work unchanged.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+# Re-export distribution-fidelity functions and FIXED_TS so the teeth test
+# module and any runner code can import from here without change.
+from ._distribution import (
+    FIXED_TS as FIXED_TS,
+)
+from ._distribution import (
+    check_distribution_generate as check_distribution_generate,
+)
+from ._distribution import (
+    check_distribution_mask as check_distribution_mask,
+)
 from ._spec import (
     ChecksumSpec,
-    ColumnDistributionSpec,
     ComputedColumnSpec,
     FKIntegritySpec,
     QuarantineSpec,
     SafeHarborSpec,
     SentinelSpec,
 )
+
+__all__ = [
+    "FIXED_TS",
+    "check_checksums",
+    "check_computed_columns",
+    "check_determinism",
+    "check_distribution_generate",
+    "check_distribution_mask",
+    "check_fk_integrity",
+    "check_quarantine",
+    "check_safe_harbor",
+    "check_sentinels",
+    "check_strategy_coverage",
+]
+
 
 # ---------------------------------------------------------------------------
 # 6.1 Determinism
@@ -54,86 +77,10 @@ def check_determinism(
         result_b: Second ExecutionResult.
 
     Raises:
-        AssertionError: If any table's output differs across runs.
-        NotImplementedError: Phase 1 implementation pending.
+        AssertionError: If any table output differs across runs.
+        NotImplementedError: Phase 2 implementation pending.
     """
-    raise NotImplementedError("Phase 1: check_determinism")
-
-
-# ---------------------------------------------------------------------------
-# 6.2 Distribution fidelity (mask tables)
-# ---------------------------------------------------------------------------
-
-
-def check_distribution_mask(
-    job_name: str,
-    table: str,
-    spec: list[ColumnDistributionSpec],
-    source_df: Any,
-    output_df: Any,
-    policy_config: dict[str, Any] | None = None,
-) -> None:
-    """Assert distribution fidelity for one masked table.
-
-    Calls compute_quality_report(source_df, output_df, joint_columns=...) and
-    apply_quality_policy(report, strategy_map=...) in fail mode. Also applies
-    the explicit teeth the policy alone does not provide:
-    - Constant-collapse guard (cardinality-preserving strategies).
-    - Real-coarsening guard (expected_coarsening=True columns).
-    - Correlation-preservation (declared joint_columns pairs).
-    - Null-rate drift per column.
-    - Grade floor (preserve-dominant tables: grade in A/B).
-
-    Args:
-        job_name: Job name for error messages.
-        table: Table name for error messages.
-        spec: List of ColumnDistributionSpec for columns in this table.
-        source_df: pandas DataFrame of source (pre-mask) data.
-        output_df: pandas DataFrame of masked output data.
-        policy_config: Optional per-job policy override dict for apply_quality_policy.
-
-    Raises:
-        AssertionError: If any distribution invariant fails.
-        NotImplementedError: Phase 1 implementation pending.
-    """
-    raise NotImplementedError("Phase 1: check_distribution_mask")
-
-
-# ---------------------------------------------------------------------------
-# 6.3 Distribution fidelity (generate tables)
-# ---------------------------------------------------------------------------
-
-
-def check_distribution_generate(
-    job_name: str,
-    table: str,
-    spec: list[ColumnDistributionSpec],
-    output_df: Any,
-    config_table: dict[str, Any],
-) -> None:
-    """Assert distribution fidelity for one generated table.
-
-    Generate tables have no source frame; the baseline is the configured
-    weights / params (OWNER DECISION Q3: config-derived only, no committed
-    golden snapshots). Checks:
-    - Categorical columns: output value-frequency TVD vs declared weights <= tol.
-    - Statistical numeric columns: output mean and std within declared params +/- tol.
-    - Determinism covered by check_determinism (the generate table is in outputs).
-
-    Args:
-        job_name: Job name for error messages.
-        table: Table name for error messages.
-        spec: List of ColumnDistributionSpec for this table (distribution_class
-              should be "synthetic" for generate columns).
-        output_df: pandas DataFrame of generated output.
-        config_table: The raw config dict for this table (carries generate_columns
-                      with declared weights / params).
-
-    Raises:
-        AssertionError: If any distribution invariant fails.
-        NotImplementedError: Phase 1 implementation pending.
-    """
-    raise NotImplementedError("Phase 1: check_distribution_generate")
+    raise NotImplementedError("Phase 2: check_determinism")
 
 
 # ---------------------------------------------------------------------------

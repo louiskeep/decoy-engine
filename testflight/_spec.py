@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 # ---------------------------------------------------------------------------
 # Closed-string literals used across multiple models
@@ -135,11 +135,29 @@ class ColumnDistributionSpec(BaseModel):
 
     `joint_columns` is a list of (col_a, col_b) pairs to pass to
     compute_quality_report's joint_columns argument (pairwise correlation check).
-    Declaring pairs is mandatory for tables where correlation must be preserved;
-    undeclared pairs are explicitly out of scope.
+    Declaring pairs is mandatory for multi-column preserve tables; undeclared pairs
+    are explicitly out of scope. Set `joints_waived=True` with a reason on any
+    column entry to explicitly opt out when correlation is not required for the table.
 
     `corr_tol` applies only when this column appears in a joint pair; it is the
-    minimum TVD-based similarity the pair must achieve (default 0.90).
+    minimum TVD-based similarity the pair must achieve (default 0.90, floor 0.50).
+    Values below 0.50 are degenerate: they would not catch gross decorrelation.
+
+    `strategy` is the raw strategy name (fpe, hash, shuffle, bucketize, etc.)
+    used to build the strategy_map for apply_quality_policy and to distinguish
+    cardinality-bijective strategies (fpe/hash) from marginal-preserving ones
+    (shuffle) in the constant-collapse guard. Optional; columns without a declared
+    strategy are excluded from the policy's per-strategy floor check but still
+    checked by the explicit teeth (cardinality, null-rate, coarsening).
+
+    `null_pp` is the per-column null-rate drift tolerance in percentage points.
+    The explicit null-rate tooth asserts abs(null_rate_out - null_rate_in) <= null_pp.
+    Default 10.0 pp (matches compute_quality_report's null_drift_threshold_pp default).
+    Values above 25.0 are degenerate: they would not catch gross null-rate inflation.
+
+    `joints_waived` opts this table out of the multi-column joint-pair requirement
+    (MEDIUM-2). Must be set on at least one column entry for the table. Requires
+    `joints_waived_reason` to be non-empty so the opt-out is reviewable.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -147,10 +165,26 @@ class ColumnDistributionSpec(BaseModel):
     table: str
     column: str
     distribution_class: DistributionClassLiteral
+    strategy: str | None = None
     tolerance: float = Field(ge=0.0, le=1.0, default=0.05)
+    null_pp: float = Field(ge=0.0, le=25.0, default=10.0)
     joint_columns: list[list[str]] = Field(default_factory=list)
-    corr_tol: float = Field(ge=0.0, le=1.0, default=0.90)
+    corr_tol: float = Field(ge=0.5, le=1.0, default=0.90)
     expected_coarsening: bool = False
+    joints_waived: bool = False
+    joints_waived_reason: str | None = None
+
+    @model_validator(mode="after")
+    def _require_waiver_reason(self) -> ColumnDistributionSpec:
+        # The waiver silences the correlation tooth; it must carry a reviewable
+        # reason. Enforce what the docstring promises (a reason-less waiver is a
+        # silent opt-out from a teeth check).
+        if self.joints_waived and not (self.joints_waived_reason or "").strip():
+            raise ValueError(
+                "joints_waived=True requires a non-empty joints_waived_reason "
+                "so the correlation opt-out is reviewable"
+            )
+        return self
 
 
 class ChecksumSpec(BaseModel):
@@ -262,6 +296,19 @@ class InvariantSpec(BaseModel):
 
     # 6.2 / 6.3 Distribution fidelity: per-column quality expectations.
     distribution: list[ColumnDistributionSpec] = Field(default_factory=list)
+
+    # policy_config passed to apply_quality_policy (mode key defaults to "fail"
+    # inside check_distribution_mask if not set here). Tolerances in this dict
+    # override the per-strategy defaults from the quality module. Keeping
+    # tolerances in the manifest (not hardcoded in the invariant) satisfies the
+    # anti-vacuity rule: a reviewer can tighten or relax with a recorded reason.
+    policy: dict[str, Any] = Field(default_factory=dict)
+
+    # Whether to enforce grade A/B for preserve-dominant mask tables.
+    # Disabled automatically when any preserve column uses a value-changing
+    # strategy (fpe/hash) because the value-identity metric will score low by
+    # design; the cardinality guard is the correct tooth for those columns.
+    grade_floor_enabled: bool = True
 
     # 6.5 Checksum validity: fpe-checksum columns must satisfy validate(scheme, v).
     checksums: list[ChecksumSpec] = Field(default_factory=list)
