@@ -667,11 +667,18 @@ references a sibling declared later in `generate_columns`) is caught at
 evaluation time with a fail-closed error, not yet at plan-compile time.
 Declare dependencies before the columns that read them.
 
-**Carry-forwards (SP-10b, not yet built):** `case_when`, `derived_aggregate`,
-`grouped_series`, `windowed_date`; FK extensions (`cardinality`,
-`composite_depth`, `null_m2m`); layer-2/3 features (`conditioned_on`,
-`group_key`, `reconciliation_pass`). Forward-reference detection at
-plan-compile time is also deferred to SP-10b.
+**Shipped in SP-10b:** `case_when` (closed-grammar CASE WHEN conditional
+expression) and `derived_aggregate` (intra-table scalar aggregate). Neither
+implements `conditioned_on`: `case_when` is a conditional expression construct
+in the closed grammar; `conditioned_on` is a separate planned parameter on the
+`categorical` strategy (per-row nested weight tables) and is not yet built.
+
+**Carry-forwards (SP-10c and later, not yet built):** `grouped_series`,
+`windowed_date`; FK extensions (`cardinality`, `composite_depth`, `null_m2m`);
+layer-2/3 features (`conditioned_on`, `group_key`, `reconciliation_pass`). The
+FK-driven cross-table aggregate (parent.total = sum(child.amount), Gen Gap 4)
+is also not yet built; it is deferred to SP-10c. Forward-reference detection
+at plan-compile time is also deferred.
 
 ```yaml
 # Mask mode: replace an existing column value using source siblings.
@@ -701,6 +708,61 @@ generate_columns:
 
 Use it to compute a column that is a deterministic function of other columns in
 the same row, without writing a custom provider.
+
+### derived_aggregate
+
+Computes a single aggregate scalar over a named source column in the same table
+and fills every row of the target column with that scalar (SP-10b /
+ISO/IEC 9075-1 set-function semantics).
+
+**Intra-table only.** Source and target must be columns in the same table. The
+FK-driven cross-table aggregate (parent.total = sum(child.amount), closing Gen
+Gap 4) is not yet built; it is deferred to SP-10c. Do not use this strategy
+expecting cross-table or parent-from-children aggregate behaviour.
+
+Config keys:
+
+- `op` (str, required): one of `sum`, `mean`, `min`, `max`, `count`. Any other
+  value raises `PlanCompileError(derived_aggregate_op_invalid)` at config-parse
+  time before any DataFrame is touched.
+- `column` (str, required): name of the source column in the same table. A
+  missing reference raises `PlanCompileError(derived_aggregate_missing_column_ref)`
+  at plan-compile time.
+
+Works in both mask mode (`strategy: derived_aggregate` on a column with `op`
+and `column` under `provider_config:`) and generate mode (`type: derived_aggregate`
+with `op` and `column` as top-level generate-column keys).
+
+Null handling follows the SQL standard (ISO/IEC 9075-1): NULLs are excluded
+from sum / mean / min / max; count counts non-null rows only.
+
+**Privacy note on min / max.** sum, mean, and count produce aggregate scalars
+with no individual-row signal. min and max return an actual extremal value from
+the source column, broadcast to every row; that value is a real data point from
+the source. Do not assume min or max hides individual data. The GDPR technique
+class defaults to pseudonymisation (conservative assumption per Art 4(5) GDPR);
+override at the column level if the aggregate is demonstrably non-identifying.
+
+```yaml
+# Mask mode: fill every row of 'total_paid' with the sum of 'amount'.
+columns:
+  - name: total_paid
+    strategy: derived_aggregate
+    provider_config:
+      op: sum
+      column: amount
+
+# Generate mode: fill every row of 'row_count' with the count of 'id'.
+generate_columns:
+  - name: row_count
+    type: derived_aggregate
+    op: count
+    column: id
+```
+
+Use it to attach a table-level summary scalar to every row (for example: a
+grand total, a mean rate, or a non-null row count computed from a sibling
+column).
 
 ### passthrough and structural handlers
 
@@ -927,20 +989,20 @@ Three fail-closed guards (no silent data loss):
 ## Infrastructure: expression parser and reference tables (SP-06)
 
 The features in this section are infrastructure built in SP-06. `joint_mask`
-(SP-08), `code_set` (SP-09), and `derived` (SP-10) are now built and
-documented in their strategy sections above. `case_when` and
-`derived_aggregate` are deferred to SP-10b.
+(SP-08), `code_set` (SP-09), `derived` (SP-10), `case_when` (SP-10b), and
+`derived_aggregate` (SP-10b) are now built and documented in their strategy
+sections above.
 
 ### Closed-vocabulary expression parser
 
 Source: `src/decoy_engine/expressions/_lark_parser.py` + `grammar.lark`.
 
 Config-supplied expressions for the `derived` strategy (SP-10, built) and
-the future `case_when` strategy (SP-10b) route through a Lark EBNF closed
-grammar. The grammar is the
-complete security boundary: only the listed forms can parse. Any expression
-outside the set raises `ValidationError` at compile time, before any row
-data is touched. There is no `eval()` or dynamic code execution on this path.
+the `case_when` built-in (SP-10b, built) route through a Lark EBNF closed
+grammar. The grammar is the complete security boundary: only the listed forms
+can parse. Any expression outside the set raises `ValidationError` at compile
+time, before any row data is touched. There is no `eval()` or dynamic code
+execution on this path.
 
 Two safety bounds are checked before parsing:
 
@@ -956,13 +1018,14 @@ Two safety bounds are checked before parsing:
 | Logical | `and` `or` `not` |
 | String | `concat(a, b)` (exactly two arguments) |
 | Date | `days_between(start, end)` (integer days; accepts `datetime.date` or ISO-8601 strings) |
+| Conditional | `case_when(cond1, val1, ..., condN, valN, default)` -- **non-short-circuit**: all sub-expressions are evaluated before branch selection; every branch value must be safe to evaluate for all rows |
 | Ternary | `value if condition else other` |
 | Literals | integers, floats, double-quoted strings, `True`, `False`, `None` |
 | Column refs | bare identifiers (no dots, no dunders) |
 
 Anything not in the table above is rejected. This includes: function calls
-other than `concat` and `days_between`, attribute access (`.`), subscript
-syntax (`[]`), `import`, and dunder identifiers (`__class__`, etc.).
+other than `concat`, `days_between`, and `case_when`, attribute access (`.`),
+subscript syntax (`[]`), `import`, and dunder identifiers (`__class__`, etc.).
 
 String literals must use double quotes (`"hello"`); single-quoted strings
 (`'hello'`) are not in the grammar. String escape sequences are validated at

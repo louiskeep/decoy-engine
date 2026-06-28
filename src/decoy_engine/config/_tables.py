@@ -127,7 +127,14 @@ class GenerateColumnConfig(BaseModel):
     # expression over already-generated sibling columns declared before it in
     # generate_columns (declared-order sequential semantics).
     type: Literal[
-        "faker", "sequence", "categorical", "formula", "reference", "statistical", "derived"
+        "faker",
+        "sequence",
+        "categorical",
+        "formula",
+        "reference",
+        "statistical",
+        "derived",
+        "derived_aggregate",
     ]
 
     @model_validator(mode="after")

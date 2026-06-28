@@ -95,6 +95,14 @@ modules:
     pattern: Lark EBNF closed-grammar expression evaluation
     source: lark-parser/lark (MIT)
 
+  # SP-10b (2026-06-28): derived_aggregate intra-table scalar aggregate.
+  # Aggregate semantics follow the SQL standard (ISO/IEC 9075-1, clause on
+  # set functions). Null handling follows the SQL rule (NULLs excluded).
+  # pandas Series.sum / .mean / .min / .max / .count with skipna=True.
+  - path: src/decoy_engine/transforms/derived_aggregate.py
+    pattern: SQL aggregate functions (SUM/AVG/MIN/MAX/COUNT) with pandas Series
+    source: ISO/IEC 9075-1 (SQL); pandas 2.x (Apache-2.0; https://pandas.pydata.org/docs)
+
   # SP-08b (2026-06-28): H3 geospatial lat/lng generalization.
   # h3-py (Uber, Apache-2.0) encodes lat/lng pairs into H3 hexagonal cell
   # indexes at configurable resolutions (9=~150m, 7=~1km, 5=~9km).

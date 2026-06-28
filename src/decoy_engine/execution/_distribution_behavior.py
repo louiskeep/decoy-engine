@@ -102,6 +102,13 @@ _STATIC_BEHAVIOR: dict[str, DistributionBehavior] = {
     # preserve, destroy, coarsen, or shift the source distribution.
     # Cannot be resolved statically without inspecting the expression.
     "derived": "mixed",
+    # derived_aggregate (SP-10b): intra-table scalar aggregate fill.
+    # Collapses the source column's distribution to a single scalar (sum,
+    # mean, min, max, or count) and writes it to every row of the target.
+    # This is many-to-one: all source values map to the same output, which
+    # coarsens the target column's distribution (same class as bucketize and
+    # geo_generalize, which are also many-to-one mappings).
+    "derived_aggregate": "coarsens",
     # bucket_perturb (SP-08b): coarse time-bucket datetime generalization.
     # Snaps each date to a random position within its ISO week/month/quarter.
     # The distribution is coarsened: exact dates are lost; the bucket-level

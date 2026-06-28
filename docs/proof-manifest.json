@@ -2,8 +2,8 @@
   "engine_version": "0.2.0",
   "generated_at": "2026-06-14",
   "surface": {
-    "mask": 18,
-    "generate": 8,
+    "mask": 19,
+    "generate": 9,
     "providers": 34
   },
   "hero": {
@@ -800,6 +800,58 @@
         }
       ],
       "invariant": "Each row's output is a pure function of the same row's source columns evaluated via a closed-vocabulary Lark expression. The same row context always produces the same result; no RNG is involved."
+    },
+    {
+      "id": "mask.derived_aggregate",
+      "kind": "mask",
+      "title": "Intra-table aggregate (derived_aggregate)",
+      "column": "total",
+      "config_yaml": "tables:\n- name: t\n  columns:\n  - name: amount\n    strategy: passthrough\n  - name: total\n    strategy: derived_aggregate\n    provider_config:\n      op: sum\n      column: amount",
+      "input": [
+        {
+          "amount": "10.0",
+          "total": "0.0"
+        },
+        {
+          "amount": "20.0",
+          "total": "0.0"
+        },
+        {
+          "amount": "30.0",
+          "total": "0.0"
+        },
+        {
+          "amount": "40.0",
+          "total": "0.0"
+        },
+        {
+          "amount": "50.0",
+          "total": "0.0"
+        }
+      ],
+      "output": [
+        {
+          "amount": "10.0",
+          "total": "150.0"
+        },
+        {
+          "amount": "20.0",
+          "total": "150.0"
+        },
+        {
+          "amount": "30.0",
+          "total": "150.0"
+        },
+        {
+          "amount": "40.0",
+          "total": "150.0"
+        },
+        {
+          "amount": "50.0",
+          "total": "150.0"
+        }
+      ],
+      "invariant": "Every row of the target column carries the same scalar aggregate (sum, mean, min, max, or count) computed from the named source column. Deterministic: same source column -> same scalar on every run. No individual row values are exposed in the output."
     }
   ],
   "providers": [
@@ -1011,6 +1063,7 @@
   "generation_strategies": [
     "categorical",
     "derived",
+    "derived_aggregate",
     "distribution",
     "faker",
     "formula",

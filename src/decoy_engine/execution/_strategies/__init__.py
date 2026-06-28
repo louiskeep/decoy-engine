@@ -6,6 +6,7 @@ the keyed/backend strategies (faker, hash, date_shift, bucketize, categorical,
 shuffle, formula, fpe) re-keyed onto S3's `derive`/`derive_index` + S5's
 `PoolSampler`. SP-10 adds `derived` (closed-grammar row-context expression).
 SP-08b adds `bucket_perturb` (coarse time-bucket datetime generalization).
+SP-10b adds `derived_aggregate` (intra-table scalar aggregate fill).
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from decoy_engine.execution._strategies._categorical import CategoricalStrategyH
 from decoy_engine.execution._strategies._code_set import CodeSetHandler
 from decoy_engine.execution._strategies._date_shift import DateShiftStrategyHandler
 from decoy_engine.execution._strategies._derived import DerivedStrategyHandler
+from decoy_engine.execution._strategies._derived_aggregate import DerivedAggregateStrategyHandler
 from decoy_engine.execution._strategies._faker import FakerStrategyHandler
 from decoy_engine.execution._strategies._formula import FormulaStrategyHandler
 from decoy_engine.execution._strategies._fpe import FpeStrategyHandler
@@ -53,6 +55,7 @@ SCALAR_HANDLERS: dict[str, StrategyHandler] = {
         CodeSetHandler(),
         DerivedStrategyHandler(),
         BucketPerturbStrategyHandler(),
+        DerivedAggregateStrategyHandler(),
     )
 }
 
@@ -63,6 +66,7 @@ __all__ = [
     "CategoricalStrategyHandler",
     "CodeSetHandler",
     "DateShiftStrategyHandler",
+    "DerivedAggregateStrategyHandler",
     "DerivedStrategyHandler",
     "FakerStrategyHandler",
     "FormulaStrategyHandler",

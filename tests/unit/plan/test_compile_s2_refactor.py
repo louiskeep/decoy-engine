@@ -69,6 +69,9 @@ EXPECTED_S2_CHECKS_PASSED = (
     # Row 16 (SP-10 / P5.S.derived, 2026-06-28): derived column-ref existence
     # and cycle detection, appended at the tail.
     "derived_column_refs",
+    # Row 17 (SP-10b / P5.S.derived_aggregate, 2026-06-28): derived_aggregate
+    # source column ref + op validation, appended at the tail.
+    "derived_aggregate_refs",
 )
 
 
@@ -82,14 +85,15 @@ class TestChecksPassedShape:
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
         assert plan.plan_compile.checks_passed == EXPECTED_S2_CHECKS_PASSED
 
-    def test_checks_passed_contains_exactly_sixteen_entries(
+    def test_checks_passed_contains_exactly_seventeen_entries(
         self, simple_config: dict, simple_profile: Profile
     ) -> None:
         # 9 through S8, row 10 (B1/S13), row 11 (audit H5), rows 12-13
         # (capability gaps WS3 + WS2), row 14 (vault follow-up),
-        # row 15 (SP-04 fpe_checksum_scheme), row 16 (SP-10 derived_column_refs).
+        # row 15 (SP-04 fpe_checksum_scheme), row 16 (SP-10 derived_column_refs),
+        # row 17 (SP-10b derived_aggregate_refs).
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
-        assert len(plan.plan_compile.checks_passed) == 16
+        assert len(plan.plan_compile.checks_passed) == 17
 
     def test_orphan_fk_policy_completeness_at_documented_position(
         self, simple_config: dict, simple_profile: Profile
@@ -99,18 +103,19 @@ class TestChecksPassedShape:
         (deterministic_namespace_completeness) post-S6; row 10
         (null_bearing_int_unsupported) at the tail post-S13 (B1)."""
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
-        assert plan.plan_compile.checks_passed[-12] == "composite_columns_length_match"
-        assert plan.plan_compile.checks_passed[-11] == "orphan_fk_policy_completeness"
-        assert plan.plan_compile.checks_passed[-10] == "pool_capacity_pre_flight"
-        assert plan.plan_compile.checks_passed[-9] == "composite_wiring_consistent"
-        assert plan.plan_compile.checks_passed[-8] == "deterministic_namespace_completeness"
-        assert plan.plan_compile.checks_passed[-7] == "null_bearing_int_unsupported"
-        assert plan.plan_compile.checks_passed[-6] == "non_poolable_provider_with_pool_backend"
-        assert plan.plan_compile.checks_passed[-5] == "statistical_columns"
-        assert plan.plan_compile.checks_passed[-4] == "text_redact_ner_available"
-        assert plan.plan_compile.checks_passed[-3] == "vault_columns"
-        assert plan.plan_compile.checks_passed[-2] == "fpe_checksum_scheme"
-        assert plan.plan_compile.checks_passed[-1] == "derived_column_refs"
+        assert plan.plan_compile.checks_passed[-13] == "composite_columns_length_match"
+        assert plan.plan_compile.checks_passed[-12] == "orphan_fk_policy_completeness"
+        assert plan.plan_compile.checks_passed[-11] == "pool_capacity_pre_flight"
+        assert plan.plan_compile.checks_passed[-10] == "composite_wiring_consistent"
+        assert plan.plan_compile.checks_passed[-9] == "deterministic_namespace_completeness"
+        assert plan.plan_compile.checks_passed[-8] == "null_bearing_int_unsupported"
+        assert plan.plan_compile.checks_passed[-7] == "non_poolable_provider_with_pool_backend"
+        assert plan.plan_compile.checks_passed[-6] == "statistical_columns"
+        assert plan.plan_compile.checks_passed[-5] == "text_redact_ner_available"
+        assert plan.plan_compile.checks_passed[-4] == "vault_columns"
+        assert plan.plan_compile.checks_passed[-3] == "fpe_checksum_scheme"
+        assert plan.plan_compile.checks_passed[-2] == "derived_column_refs"
+        assert plan.plan_compile.checks_passed[-1] == "derived_aggregate_refs"
 
     def test_s1_check_order_preserved(self, simple_config: dict, simple_profile: Profile) -> None:
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")

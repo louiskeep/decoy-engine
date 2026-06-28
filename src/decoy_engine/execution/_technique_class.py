@@ -114,6 +114,16 @@ TECHNIQUE_CLASS_BY_STRATEGY: dict[str, TechniqueClass] = {
     # sees a classification prompt and can override at the column level if the
     # expression is actually irreversible.
     "derived": "pseudonymisation",
+    # derived_aggregate (SP-10b, 2026-06-28): intra-table scalar aggregate fill.
+    # Fills every row of the target column with a single aggregate scalar (sum,
+    # mean, min, max, or count) computed from a named source column. Cannot be
+    # classified statically: min/max preserve an exact source value (a
+    # pseudonymisation scenario); count carries no individual-level signal
+    # (more like synthetic). Default to pseudonymisation (the safer conservative
+    # assumption per Art 4(5) GDPR) so the operator reviews and overrides at
+    # the column level if the aggregate is actually non-identifying. Same
+    # conservative default as `derived` and `formula`.
+    "derived_aggregate": "pseudonymisation",
     # bucket_perturb (SP-08b, 2026-06-28): coarse time-bucket datetime generalization.
     # Replaces each date with a random date within the same ISO week/month/quarter.
     # The original date is not recoverable from the output (many-to-one mapping
