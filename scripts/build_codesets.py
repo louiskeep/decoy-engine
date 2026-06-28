@@ -250,6 +250,8 @@ HCPCS_CODES, HCPCS_CHAPTERS, HCPCS_DESCS = zip(*HCPCS_ROWS, strict=False)
 # Source: FDA National Drug Code Directory (public domain, US Federal Govt work)
 # https://www.fda.gov/drugs/drug-approvals-and-databases/national-drug-code-directory
 # NDC 11-digit format: labeler(5)-product(4)-package(2). Chapter = drug category letter.
+# NOTE: The 'chapter' column (A/B/C/D...) is a Decoy-defined therapeutic bucket,
+# not a source attribute from the FDA NDC directory. NDC has no native chapter.
 # Sample: common medications drawn from the FDA published NDC product file.
 
 NDC_ROWS = [
