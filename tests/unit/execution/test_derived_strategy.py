@@ -191,14 +191,13 @@ class TestDerivedAdapterIntegration:
         )
         assert out1["b"] == out2["b"]
 
-    def test_derived_mask_and_gen_mode_same_result(self) -> None:
-        """Derived is a pure function of row context; mask and gen are identical.
+    def test_derived_mask_mode_replaces_column_with_expression_result(self) -> None:
+        """Derived evaluates the expression against the source row and replaces the column.
 
-        Both modes execute the same expression; there is no code branching.
-        We verify this by checking that the output column contains a computed
-        value (not the original), regardless of which 'mode' is in use.
+        This drives the mask path: an existing source column is overwritten with
+        the closed-grammar expression result. The generate path is covered by the
+        integration tests in tests/unit/transforms/test_derived.py::TestDerivedGeneratePath.
         """
-        # mask-like: a column that is being 'replaced' gets the expression result
         out = _run(
             {"a": [3.0, 6.0, 9.0], "b": [1.0, 2.0, 3.0]},
             [

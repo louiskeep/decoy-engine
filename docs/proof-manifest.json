@@ -3,7 +3,7 @@
   "generated_at": "2026-06-14",
   "surface": {
     "mask": 17,
-    "generate": 7,
+    "generate": 8,
     "providers": 34
   },
   "hero": {
@@ -980,6 +980,7 @@
   ],
   "generation_strategies": [
     "categorical",
+    "derived",
     "distribution",
     "faker",
     "formula",

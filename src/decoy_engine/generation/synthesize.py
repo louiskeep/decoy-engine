@@ -251,6 +251,8 @@ def _generate_column(
         values = _reference(col, n, seed, derive_key, pools or {})
     elif kind == "statistical":
         values = _statistical(col, n, seed, derive_key, generated or {})
+    elif kind == "derived":
+        values = _derived_generate(col, n, generated or {})
     else:
         # The Literal on GenerateColumnConfig.type rejects anything outside this set
         # at validation; this branch is the defensive fallback for callers that
@@ -314,6 +316,37 @@ def _statistical(
         derive_key=derive_key, column_config=col, fallback_seed=seed
     ).base_int("np")
     return sample_column(spec, n, col_seed=col_seed, parent_values=parent_values)
+
+
+def _derived_generate(
+    col: dict[str, Any],
+    n: int,
+    generated: dict[str, list[Any]],
+) -> list[Any]:
+    """Evaluate a closed-grammar derived expression against already-generated siblings.
+
+    Processes rows inline in declared order. Row context is built from columns in
+    ``generated`` (those declared before this one). A sibling declared AFTER this
+    column will be absent from the row context and raise at evaluation time;
+    check_derived_column_refs validates ref existence at plan-compile time. The
+    declared-order constraint mirrors the ``statistical / condition_on`` pattern.
+    Deterministic by construction: same generated snapshot -> same output, no RNG.
+    """
+    from decoy_engine.transforms.derived import DerivedConfig, apply_derived
+
+    config = DerivedConfig.from_dict(
+        {
+            "expression": col.get("expression", ""),
+            "bounds": col.get("bounds"),
+            "null_propagation": col.get("null_propagation", "explicit_null"),
+        }
+    )
+    col_name = col.get("name", "?")
+    out: list[Any] = []
+    for i in range(n):
+        row_ctx = {k: vals[i] for k, vals in generated.items() if i < len(vals)}
+        out.append(apply_derived(config, row_ctx, column=col_name, row_index=i))
+    return out
 
 
 def _categorical(col: dict[str, Any], n: int, seed: int, derive_key: Any = None) -> list[Any]:

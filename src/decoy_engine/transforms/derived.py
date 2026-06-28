@@ -36,6 +36,16 @@ Bounds:
 Mask mode and gen mode both evaluate the same closed expression against the
 row context. Determinism is inherent: same row context -> same output, no RNG
 involved. There is no code branching between mask and gen.
+
+In mask mode the row context is built from the source table's existing column
+values. In generate mode the row context is built from already-generated sibling
+columns (declared-order sequential semantics, same as the statistical/condition_on
+pattern). Both modes call apply_derived with a complete row context dict.
+
+Error handling:
+  Per-row evaluation errors (e.g. ZeroDivisionError, TypeError) are wrapped in
+  ValueError and re-raised with the column name and row index for diagnosability.
+  Callers pass these via the column= and row_index= keyword arguments.
 """
 
 from __future__ import annotations
@@ -129,6 +139,16 @@ class DerivedConfig:
                 val = bounds_raw.get(key)
                 if val is not None:
                     bounds[key] = float(val)
+            if "min" in bounds and "max" in bounds and bounds["min"] > bounds["max"]:
+                raise PlanCompileError(
+                    code="derived_bounds_inverted",
+                    path="provider_config.bounds",
+                    message=(
+                        f"'bounds.min' ({bounds['min']}) must not exceed "
+                        f"'bounds.max' ({bounds['max']}). "
+                        f"Swap the values or remove one of them."
+                    ),
+                )
 
         null_propagation = str(cfg.get("null_propagation", "explicit_null"))
         if null_propagation not in _NULL_PROPAGATION_MODES:
@@ -225,7 +245,13 @@ def _apply_bounds(value: Any, bounds: dict[str, float] | None) -> Any:
     return result
 
 
-def apply_derived(config: DerivedConfig, row_context: dict[str, Any]) -> Any:
+def apply_derived(
+    config: DerivedConfig,
+    row_context: dict[str, Any],
+    *,
+    column: str | None = None,
+    row_index: int | None = None,
+) -> Any:
     """Evaluate the derived expression against one row's values.
 
     This is a pure function: same config + same row_context -> same output.
@@ -235,16 +261,32 @@ def apply_derived(config: DerivedConfig, row_context: dict[str, Any]) -> Any:
     Args:
         config: Parsed DerivedConfig with the compiled expression.
         row_context: Mapping of column name to its value for this row.
+        column: Column name for diagnostics; included in error messages.
+        row_index: Row position for diagnostics; included in error messages.
 
     Returns:
         The expression result, optionally clipped by bounds, or None when
         null_propagation is "explicit_null" and any referenced column is
         None/NaN.
+
+    Raises:
+        ValueError: Expression evaluation raised an error (e.g. ZeroDivisionError,
+            TypeError). The message names the column and row index so the operator
+            can locate the offending data without re-running.
     """
     col_refs = _get_column_refs(config.compiled)
     ctx = _coerce_context(row_context, col_refs, config.null_propagation)
     if ctx is None:
         # explicit_null mode: a referenced column was null/NaN.
         return None
-    result = evaluate(config.compiled, ctx)
+    try:
+        result = evaluate(config.compiled, ctx)
+    except Exception as exc:
+        parts: list[str] = []
+        if column is not None:
+            parts.append(f"column {column!r}")
+        if row_index is not None:
+            parts.append(f"row {row_index}")
+        ctx_str = ", ".join(parts) if parts else "unknown column"
+        raise ValueError(f"derived expression evaluation failed at {ctx_str}: {exc}") from exc
     return _apply_bounds(result, config.bounds)

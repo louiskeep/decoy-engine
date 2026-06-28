@@ -13,9 +13,11 @@ Config keys accepted via ``plan.provider_config``:
   bounds             dict  Optional. {"min": <num>, "max": <num>} clips
                            numeric output.
 
-Mask mode and gen mode: derived is a pure function of the row context
-(same input columns -> same output). There is no code branching between
-modes; both evaluate the same expression against the row's column values.
+Mask mode: derived evaluates the expression against the source table's existing
+column values passed in the DataFrame. Gen mode: generation/synthesize._derived_generate
+evaluates against already-generated sibling columns declared before this one in
+generate_columns (declared-order sequential semantics). Both modes call apply_derived
+from decoy_engine.transforms.derived with a complete row context dict.
 
 Validation timing:
   Expression syntax: parse time (DerivedConfig.from_dict via compile_expr).
@@ -58,9 +60,9 @@ class DerivedStrategyHandler:
         config = DerivedConfig.from_dict(cfg_dict)
 
         out: list[object] = []
-        for _, row in df.iterrows():
-            row_context = row.to_dict()
-            out.append(apply_derived(config, row_context))
+        for row_idx, row in enumerate(df.itertuples(index=False)):
+            row_context = row._asdict()
+            out.append(apply_derived(config, row_context, column=column, row_index=row_idx))
 
         df[column] = out
         return df, []

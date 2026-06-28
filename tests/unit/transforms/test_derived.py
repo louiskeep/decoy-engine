@@ -234,6 +234,50 @@ class TestBoundsEnforcement:
         result = self._apply("None", {}, bounds={"min": 0, "max": 10})
         assert result is None
 
+    def test_bounds_min_greater_than_max_raises(self) -> None:
+        """M1: bounds with min > max must be rejected at config-parse time."""
+        from decoy_engine.transforms.derived import DerivedConfig
+
+        with pytest.raises(PlanCompileError, match="min"):
+            DerivedConfig.from_dict({"expression": "a", "bounds": {"min": 100, "max": 0}})
+
+    def test_bounds_min_equal_max_is_accepted(self) -> None:
+        """Degenerate min==max is valid (clamps to a single value)."""
+        from decoy_engine.transforms.derived import DerivedConfig
+
+        cfg = DerivedConfig.from_dict({"expression": "a", "bounds": {"min": 5, "max": 5}})
+        assert cfg.bounds is not None
+        assert cfg.bounds["min"] == 5.0
+        assert cfg.bounds["max"] == 5.0
+
+
+class TestPerRowEvalError:
+    """M2: per-row evaluation errors must carry column context."""
+
+    def test_div_by_zero_names_column(self) -> None:
+        """A ZeroDivisionError during row evaluation must name the column."""
+        from decoy_engine.transforms.derived import DerivedConfig, apply_derived
+
+        cfg = DerivedConfig.from_dict({"expression": "a / b", "null_propagation": "default"})
+        with pytest.raises(ValueError, match="computed_col"):
+            apply_derived(cfg, {"a": 1, "b": 0}, column="computed_col", row_index=0)
+
+    def test_eval_error_includes_row_index(self) -> None:
+        """Row index appears in the error message when provided."""
+        from decoy_engine.transforms.derived import DerivedConfig, apply_derived
+
+        cfg = DerivedConfig.from_dict({"expression": "a / b", "null_propagation": "default"})
+        with pytest.raises(ValueError, match="7"):
+            apply_derived(cfg, {"a": 1, "b": 0}, column="col", row_index=7)
+
+    def test_eval_error_without_column_still_raises(self) -> None:
+        """Errors raised with no column keyword still propagate (backward-compat)."""
+        from decoy_engine.transforms.derived import DerivedConfig, apply_derived
+
+        cfg = DerivedConfig.from_dict({"expression": "a / b", "null_propagation": "default"})
+        with pytest.raises((ValueError, ZeroDivisionError)):
+            apply_derived(cfg, {"a": 1, "b": 0})
+
 
 class TestDeterminism:
     """Same row context always produces the same output (no RNG)."""
@@ -386,3 +430,144 @@ class TestCheckDerivedColumnRefs:
 
     def test_empty_config_passes(self) -> None:
         self._check({})  # no error
+
+    def test_generate_table_derived_refs_sibling_generate_column_passes(self) -> None:
+        """L1: a derived column in a generate table referencing a sibling generate_column passes."""
+        config = {
+            "tables": [
+                {
+                    "name": "t",
+                    "row_count": 3,
+                    "generate_columns": [
+                        {"name": "a", "type": "sequence", "start": 1},
+                        {"name": "b", "type": "derived", "expression": "a + 10"},
+                    ],
+                }
+            ]
+        }
+        self._check(config)  # no error
+
+    def test_generate_table_derived_missing_ref_raises(self) -> None:
+        """L1: a derived column in a generate table referencing a non-existent column raises."""
+        config = {
+            "tables": [
+                {
+                    "name": "t",
+                    "row_count": 3,
+                    "generate_columns": [
+                        {"name": "a", "type": "sequence", "start": 1},
+                        {"name": "b", "type": "derived", "expression": "a + missing_col"},
+                    ],
+                }
+            ]
+        }
+        with pytest.raises(PlanCompileError, match="missing_col"):
+            self._check(config)
+
+
+class TestDerivedGeneratePath:
+    """H1: derived column in a generate table is reachable and computes correctly."""
+
+    def _run_generate(self, generate_columns: list, row_count: int = 3) -> dict:
+        """Call generate_tables with the given generate_columns; return col->values."""
+        from decoy_engine.generation.synthesize import generate_tables
+
+        cfg = {
+            "version": 1,
+            "global_settings": {"seed": 0},
+            "sources": {},
+            "tables": [
+                {
+                    "name": "t",
+                    "row_count": row_count,
+                    "generate_columns": generate_columns,
+                }
+            ],
+            "targets": {"t": {"type": "file", "format": "csv", "path": "out.csv"}},
+        }
+        tbl = generate_tables(cfg)["t"]
+        return {col: tbl.column(col).to_pylist() for col in tbl.column_names}
+
+    def test_derived_generate_column_computes_from_sibling(self) -> None:
+        """A derived column in a generate table reads already-generated siblings."""
+        out = self._run_generate(
+            [
+                {"name": "prefix", "type": "categorical", "categories": ["ID"], "weights": [1]},
+                {"name": "label", "type": "derived", "expression": 'concat(prefix, "_ok")'},
+            ]
+        )
+        assert "label" in out
+        assert out["label"] == ["ID_ok", "ID_ok", "ID_ok"]
+
+    def test_derived_generate_numeric_arithmetic(self) -> None:
+        """Derived column in generate table: arithmetic over categorical sibling."""
+        out = self._run_generate(
+            [
+                {
+                    "name": "x",
+                    "type": "categorical",
+                    "categories": [10, 20, 30],
+                    "weights": [1, 0, 0],
+                },
+                {"name": "y", "type": "derived", "expression": "x * 2"},
+            ]
+        )
+        # x is always 10 (weight=[1,0,0]); y = 10*2 = 20
+        assert out["y"] == [20, 20, 20]
+
+    def test_derived_generate_concat_expression(self) -> None:
+        """Derived column in generate table: string concat expression."""
+        out = self._run_generate(
+            [
+                {"name": "prefix", "type": "categorical", "categories": ["hello"], "weights": [1]},
+                {"name": "greeting", "type": "derived", "expression": 'concat(prefix, "!")'},
+            ]
+        )
+        assert out["greeting"] == ["hello!", "hello!", "hello!"]
+
+    def test_derived_generate_ternary_expression(self) -> None:
+        """Derived column in generate table: ternary expression over sibling."""
+        out = self._run_generate(
+            [
+                {"name": "score", "type": "categorical", "categories": [80, 45], "weights": [1, 0]},
+                {
+                    "name": "grade",
+                    "type": "derived",
+                    "expression": '"pass" if score >= 50 else "fail"',
+                },
+            ]
+        )
+        assert out["grade"] == ["pass", "pass", "pass"]
+
+    def test_derived_generate_three_rows_correct_values(self) -> None:
+        """Integration: generate table with sequence + derived column, 3 rows."""
+        from decoy_engine.generation.synthesize import generate_tables
+
+        cfg = {
+            "version": 1,
+            "global_settings": {"seed": 0},
+            "sources": {},
+            "tables": [
+                {
+                    "name": "scores",
+                    "row_count": 3,
+                    "generate_columns": [
+                        {
+                            "name": "base",
+                            "type": "categorical",
+                            "categories": [5, 10, 15],
+                            "weights": [1, 0, 0],
+                        },
+                        {"name": "doubled", "type": "derived", "expression": "base * 2"},
+                        {"name": "tripled", "type": "derived", "expression": "base * 3"},
+                    ],
+                }
+            ],
+            "targets": {"scores": {"type": "file", "format": "csv", "path": "out.csv"}},
+        }
+        tbl = generate_tables(cfg)["scores"]
+        base_vals = tbl.column("base").to_pylist()
+        doubled_vals = tbl.column("doubled").to_pylist()
+        tripled_vals = tbl.column("tripled").to_pylist()
+        assert all(d == b * 2 for b, d in zip(base_vals, doubled_vals, strict=True))
+        assert all(t == b * 3 for b, t in zip(base_vals, tripled_vals, strict=True))

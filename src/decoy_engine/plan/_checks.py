@@ -603,37 +603,39 @@ def check_derived_column_refs(config: dict[str, Any]) -> None:
                 all_col_names.add(str(col_entry["name"]))
 
         # Collect derived column definitions: {col_name -> frozenset of refs}.
+        # Scans both mask-kind columns (strategy: derived, provider_config.expression)
+        # and generate-kind columns (type: derived, flat expression key). The
+        # generate_columns union in all_col_names is LIVE once derived works in
+        # generate tables.
         derived_refs: dict[str, frozenset[str]] = {}
-        for col_entry in table_entry.get("columns", []) or []:
-            if not isinstance(col_entry, dict):
-                continue
-            if col_entry.get("strategy") != "derived":
-                continue
-            col_name = col_entry.get("name", "?")
-            provider_config = col_entry.get("provider_config") or {}
-            if not isinstance(provider_config, dict):
-                continue
-            expr = provider_config.get("expression")
+
+        def _derived_col_entries(t: dict) -> Any:
+            """Yield (col_name, expr, col_kind) per derived column. t passed
+            explicitly to avoid capturing the loop variable (ruff B023)."""
+            for e in t.get("columns") or []:
+                if isinstance(e, dict) and e.get("strategy") == "derived":
+                    yield (
+                        e.get("name", "?"),
+                        (e.get("provider_config") or {}).get("expression"),
+                        "columns",
+                    )
+            for e in t.get("generate_columns") or []:
+                if isinstance(e, dict) and e.get("type") == "derived":
+                    yield e.get("name", "?"), e.get("expression"), "generate_columns"
+
+        for col_name, expr, col_kind in _derived_col_entries(table_entry):
             if not expr:
-                # Missing expression: check_derived_expression_missing (caught
-                # in DerivedConfig.from_dict at execution time) handles this.
-                continue
+                continue  # missing expression: DerivedConfig.from_dict catches at execution time
             try:
                 compiled = compile_expr(str(expr))
             except Exception:
-                # Invalid expression syntax: DerivedConfig.from_dict raises
-                # ValidationError at execution time. Skip ref validation here
-                # to avoid double-reporting on expressions that already fail
-                # the closed-grammar check.
-                continue
+                continue  # invalid syntax: ValidationError at execution time; skip double-report
             refs = _get_column_refs(compiled)
-
-            # Check 1: missing column refs.
             missing = refs - all_col_names
             if missing:
                 raise PlanCompileError(
                     code="derived_missing_column_ref",
-                    path=f"tables.{table_name}.columns.{col_name}.provider_config.expression",
+                    path=f"tables.{table_name}.{col_kind}.{col_name}.expression",
                     message=(
                         f"derived column {col_name!r} in table {table_name!r} "
                         f"references column(s) {sorted(missing)!r} that are not "
