@@ -18,8 +18,10 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
+from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.transforms.geo_generalize import (
     GeoGeneralizeConfig,
+    _load_restricted_zip3,
     cascade_zip_column,
     validate_geo_generalize_config,
 )
@@ -193,19 +195,19 @@ class TestEvidenceFrozen:
 class TestGeoGeneralizeConfigValidation:
     def test_invalid_type_raises(self):
         """Only 'zip' is supported as type in this sprint."""
-        with pytest.raises(ValueError, match="type"):
+        with pytest.raises(PlanCompileError, match="type"):
             validate_geo_generalize_config(
                 {"type": "latlng", "cascade": ["zip3"], "k_threshold": 20000}
             )
 
     def test_empty_cascade_raises(self):
         """An empty cascade list is invalid."""
-        with pytest.raises(ValueError, match="cascade"):
+        with pytest.raises(PlanCompileError, match="cascade"):
             validate_geo_generalize_config({"type": "zip", "cascade": [], "k_threshold": 20000})
 
     def test_missing_suppress_in_cascade_raises(self):
         """Cascade without 'suppress' as final level is invalid (no terminator)."""
-        with pytest.raises(ValueError, match="suppress"):
+        with pytest.raises(PlanCompileError, match="suppress"):
             validate_geo_generalize_config(
                 {"type": "zip", "cascade": ["zip5", "zip3"], "k_threshold": 20000}
             )
@@ -234,3 +236,156 @@ class TestDefaultThreshold:
             {"type": "zip", "cascade": ["zip5", "zip3", "state", "suppress"]}
         )
         assert cfg.k_threshold == 20000
+
+
+# ── H1.A: Restricted-set completeness ────────────────────────────────────────
+
+
+# Canonical 17 HHS Safe Harbor restricted ZIP3 prefixes.
+# Source: 45 CFR 164.514(b)(2)(i)(B), geographic units with fewer than
+# 20,000 persons per the Census-based determination.
+_CANONICAL_RESTRICTED_17: frozenset[str] = frozenset(
+    [
+        "036",
+        "059",
+        "063",
+        "102",
+        "203",
+        "556",
+        "692",
+        "790",
+        "821",
+        "823",
+        "830",
+        "831",
+        "878",
+        "879",
+        "884",
+        "890",
+        "893",
+    ]
+)
+
+
+class TestRestrictedZip3Completeness:
+    """H1.A: The shipped restricted-prefix set must equal the canonical 17 exactly.
+
+    This test is the regulatory invariant that closes B1 against regression.
+    It verifies MEMBERSHIP EQUALITY in both directions: no prefix missing,
+    no extra prefix. It will fail if any of the 17 is dropped or a new one
+    is added without updating the canonical constant here.
+    """
+
+    def test_restricted_set_equals_canonical_17(self):
+        """_load_restricted_zip3() must return exactly the 17 canonical prefixes."""
+        loaded = _load_restricted_zip3()
+        assert loaded == _CANONICAL_RESTRICTED_17, (
+            f"Restricted set mismatch.\n"
+            f"  Missing from shipped table: {sorted(_CANONICAL_RESTRICTED_17 - loaded)}\n"
+            f"  Extra in shipped table:     {sorted(loaded - _CANONICAL_RESTRICTED_17)}"
+        )
+
+    def test_restricted_set_count_is_17(self):
+        """Exactly 17 prefixes: no more, no fewer."""
+        loaded = _load_restricted_zip3()
+        assert len(loaded) == 17, (
+            f"Expected 17 restricted ZIP3 prefixes (45 CFR 164.514(b)(2)(i)(B)); "
+            f"got {len(loaded)}: {sorted(loaded)}"
+        )
+
+    def test_restricted_set_contains_890(self):
+        """890 (Nevada) must be in the restricted set (B1 regression guard)."""
+        loaded = _load_restricted_zip3()
+        assert "890" in loaded, (
+            "'890' is absent from the restricted set. "
+            "ZIP5s in the 890xx range would leak at zip3 level -- "
+            "45 CFR 164.514(b)(2)(i)(B) violation."
+        )
+
+
+# ── H1.B: Per-prefix cascade test ────────────────────────────────────────────
+
+
+class TestPerPrefixCascade:
+    """H1.B: For each of the 17 restricted prefixes, a ZIP in that range must not
+    survive at zip3 level (it must cascade to state or suppress).
+
+    Includes an explicit test for 890 to lock B1 closed.
+    """
+
+    def _assert_prefix_cascades(self, prefix: str) -> None:
+        """Assert that a ZIP starting with ``prefix`` does NOT return ``prefix`` at zip3 level."""
+        zip5 = prefix + "01"
+        config = GeoGeneralizeConfig(
+            type="zip",
+            cascade=["zip5", "zip3", "state", "suppress"],
+            k_threshold=20000,
+        )
+        # Single-row DataFrame: zip5 count = 1 (below any realistic threshold).
+        df = pd.DataFrame({"z": [zip5]})
+        result_df, evidence = cascade_zip_column(df, "z", config)
+        out = result_df["z"].iloc[0]
+        assert out != zip5, (
+            f"prefix {prefix!r}: zip5 {zip5!r} must not be retained (count=1 < k=20000)."
+        )
+        assert out != prefix, (
+            f"prefix {prefix!r}: zip3 {prefix!r} is HHS-restricted; output must not be "
+            f"the zip3 prefix. Got {out!r}. This is a 45 CFR 164.514(b)(2)(i)(B) violation."
+        )
+        # Decision must NOT be "zip3".
+        assert evidence.decisions[0] != "zip3", (
+            f"prefix {prefix!r}: cascade decision must not be 'zip3' for a restricted prefix. "
+            f"Got {evidence.decisions[0]!r}."
+        )
+
+    def test_prefix_036_cascades(self):
+        self._assert_prefix_cascades("036")
+
+    def test_prefix_059_cascades(self):
+        self._assert_prefix_cascades("059")
+
+    def test_prefix_063_cascades(self):
+        self._assert_prefix_cascades("063")
+
+    def test_prefix_102_cascades(self):
+        self._assert_prefix_cascades("102")
+
+    def test_prefix_203_cascades(self):
+        self._assert_prefix_cascades("203")
+
+    def test_prefix_556_cascades(self):
+        self._assert_prefix_cascades("556")
+
+    def test_prefix_692_cascades(self):
+        self._assert_prefix_cascades("692")
+
+    def test_prefix_790_cascades(self):
+        self._assert_prefix_cascades("790")
+
+    def test_prefix_821_cascades(self):
+        self._assert_prefix_cascades("821")
+
+    def test_prefix_823_cascades(self):
+        self._assert_prefix_cascades("823")
+
+    def test_prefix_830_cascades(self):
+        self._assert_prefix_cascades("830")
+
+    def test_prefix_831_cascades(self):
+        self._assert_prefix_cascades("831")
+
+    def test_prefix_878_cascades(self):
+        self._assert_prefix_cascades("878")
+
+    def test_prefix_879_cascades(self):
+        self._assert_prefix_cascades("879")
+
+    def test_prefix_884_cascades(self):
+        self._assert_prefix_cascades("884")
+
+    def test_prefix_890_cascades(self):
+        """890 (Nevada) - the prefix proven to leak in B1. Explicit guard."""
+        self._assert_prefix_cascades("890")
+
+    def test_prefix_893_cascades(self):
+        self._assert_prefix_cascades("893")
