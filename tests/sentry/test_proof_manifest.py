@@ -53,7 +53,8 @@ def test_surface_counts_match_capability_matrix():
     # Mask count excludes the internal `nested` wrapper, matching the matrix.
     # SP-08 (2026-06-28): added joint_mask + geo_generalize -> 13 + 2 = 15.
     # SP-09b (2026-06-28): added code_set -> 15 + 1 = 16.
-    assert surface["mask"] == 16
+    # SP-10 (2026-06-28): added derived -> 16 + 1 = 17.
+    assert surface["mask"] == 17
     assert surface["generate"] == 7
     assert surface["providers"] == 34
 

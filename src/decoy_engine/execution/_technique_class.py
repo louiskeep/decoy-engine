@@ -107,6 +107,13 @@ TECHNIQUE_CLASS_BY_STRATEGY: dict[str, TechniqueClass] = {
     # from the output (many-to-one through modular arithmetic). Anonymisation,
     # same rationale as joint_mask (which uses the same HMAC-keyed pattern).
     "code_set": "anonymisation",
+    # derived (SP-10, 2026-06-28): closed-grammar row-context expression.
+    # Cannot be classified statically: the expression may copy a source column
+    # through unchanged (e.g. "a + 0") or transform it irreversibly. Default to
+    # pseudonymisation (the safer assumption, same as formula) so the operator
+    # sees a classification prompt and can override at the column level if the
+    # expression is actually irreversible.
+    "derived": "pseudonymisation",
     # `nested` (MG-3 M2, 2026-05-31) is intentionally absent. It is a
     # wrapper -- its GDPR posture is the child strategy's posture, not
     # its own. Until the FE surfaces the child-strategy badge for

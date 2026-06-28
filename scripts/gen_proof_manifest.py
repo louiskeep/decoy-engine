@@ -671,11 +671,93 @@ def _joint_mask_proof() -> dict:
     }
 
 
+def _derived_proof() -> dict:
+    """Proof for derived: two-column table; b = a * 2 via closed-grammar expression.
+
+    The single-column _run_capability helper cannot build a multi-column source
+    table; the derived expression must reference at least one other column (the
+    grammar requires column refs to exist in the same table). This function runs
+    the full pipeline with a two-column table directly.
+    """
+    a_values = [1.0, 2.0, 3.0, 4.0, 5.0]
+    b_values = [0.0] * len(a_values)  # placeholder; overwritten by derived
+    df = pd.DataFrame({"a": a_values, "b": b_values})
+
+    with tempfile.TemporaryDirectory() as _tmp:
+        tmp = Path(_tmp)
+        csv_path = tmp / "t.csv"
+        df.to_csv(csv_path, index=False)
+
+        cfg = {
+            "version": 1,
+            "global_settings": {"seed": 1234567, "post_validation": False},
+            "sources": {"t": {"type": "file", "format": "csv", "path": str(csv_path)}},
+            "targets": {"t": {"type": "file", "format": "csv", "path": "/dev/null"}},
+            "tables": [
+                {
+                    "name": "t",
+                    "columns": [
+                        {"name": "a", "strategy": "passthrough"},
+                        {
+                            "name": "b",
+                            "strategy": "derived",
+                            "provider_config": {"expression": "a * 2"},
+                        },
+                    ],
+                }
+            ],
+        }
+        validated = PipelineConfig.model_validate(cfg).model_dump()
+        sources = {"t": pa.Table.from_pandas(df)}
+        result = run_pipeline(validated, sources, engine_version=ENGINE_VERSION)
+        out_df = result.outputs["t"].to_pandas()
+
+    # Invariant: b = a * 2 for every row; all outputs differ from the placeholder
+    # placeholder (0.0) except when a=0.
+    for _, row in out_df.iterrows():
+        expected = row["a"] * 2
+        if abs(float(row["b"]) - expected) > 1e-9:
+            raise RuntimeError(
+                f"derived proof: invariant b=a*2 failed for row a={row['a']}: "
+                f"expected b={expected}, got b={row['b']}"
+            )
+
+    inp = _records(df, n=len(df))
+    out = _records(out_df, n=len(out_df))
+    config_yaml_snippet = (
+        "tables:\n"
+        "- name: t\n"
+        "  columns:\n"
+        "  - name: a\n"
+        "    strategy: passthrough\n"
+        "  - name: b\n"
+        "    strategy: derived\n"
+        "    provider_config:\n"
+        "      expression: a * 2"
+    )
+    return {
+        "id": "mask.derived",
+        "kind": "mask",
+        "title": "Row-context expression (derived)",
+        "column": "b",
+        "config_yaml": config_yaml_snippet,
+        "input": inp,
+        "output": out,
+        "invariant": (
+            "Each row's output is a pure function of the same row's source columns "
+            "evaluated via a closed-vocabulary Lark expression. The same row context "
+            "always produces the same result; no RNG is involved."
+        ),
+    }
+
+
 def _capabilities() -> list[dict]:
     caps = [_run_capability(p) for p in CAPABILITY_PROOFS]
     # joint_mask proof runs the transforms layer directly (multi-column output
     # does not fit the single-column _run_capability helper).
     caps.append(_joint_mask_proof())
+    # derived proof uses a two-column table (expression must reference another column).
+    caps.append(_derived_proof())
     return caps
 
 

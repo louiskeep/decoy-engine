@@ -48,6 +48,7 @@ from decoy_engine.determinism import SEED_PROTOCOL_VERSION
 from decoy_engine.plan._checks import (
     check_basic_uniqueness_pre_flight,
     check_composite_columns_length_match,
+    check_derived_column_refs,
     check_fpe_checksum_scheme,
     check_non_poolable_provider_with_pool_backend,
     check_null_bearing_int_unsupported,
@@ -152,6 +153,10 @@ def compile_plan(
     # unsupported FPE checksum schemes at compile time. Config-only; both branches +
     # run_config_only_checks.
     check_fpe_checksum_scheme(config)
+    # Row 16 (SP-10 / P5.S.derived, 2026-06-28): reject derived columns whose
+    # expression references a missing column or forms a cycle. Config-only; both
+    # branches + run_config_only_checks.
+    check_derived_column_refs(config)
     check_composite_columns_length_match(profile)
     # MG-3 / M3 (2026-05-31): reject when + coherent_with combo early,
     # before composite-wiring checks. A column carrying both fields is
@@ -204,6 +209,8 @@ def compile_plan(
             "vault_columns",
             # Row 15 (SP-04): structural, tail-appended.
             "fpe_checksum_scheme",
+            # Row 16 (SP-10): derived column-ref / cycle check, tail-appended.
+            "derived_column_refs",
         )
         checks_skipped: tuple[str, ...] = (
             "basic_uniqueness_pre_flight",
@@ -244,6 +251,8 @@ def compile_plan(
             "vault_columns",
             # Row 15 (SP-04): structural, tail-appended.
             "fpe_checksum_scheme",
+            # Row 16 (SP-10): derived column-ref / cycle check, tail-appended.
+            "derived_column_refs",
         )
         checks_skipped = ()
 
@@ -324,6 +333,9 @@ def run_config_only_checks(config: dict[str, Any]) -> tuple[str, ...]:
     check_vault_columns(config)
     # Row 15 (SP-04): reject unknown or structurally unsupported FPE checksum schemes.
     check_fpe_checksum_scheme(config)
+    # Row 16 (SP-10 / P5.S.derived): reject derived expression with missing or
+    # cyclic column refs. Config-only; config + Lark parse only.
+    check_derived_column_refs(config)
     return (
         "unknown_provider",
         "when_with_coherent_with",
@@ -333,6 +345,7 @@ def run_config_only_checks(config: dict[str, Any]) -> tuple[str, ...]:
         "text_redact_ner_available",
         "vault_columns",
         "fpe_checksum_scheme",
+        "derived_column_refs",
     )
 
 
