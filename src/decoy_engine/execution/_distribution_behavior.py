@@ -85,6 +85,13 @@ _STATIC_BEHAVIOR: dict[str, DistributionBehavior] = {
     "date_shift": "varies_shape",
     "formula": "mixed",
     "nested": "inherits",
+    # joint_mask (SP-08): replaces multiple columns with a reference-table row.
+    # The output is drawn from the reference set -- cardinality is bounded by
+    # the table size. Coarsens: many source key values map to the same row.
+    "joint_mask": "coarsens",
+    # geo_generalize (SP-08): ZIP cascade with k-threshold. Many-to-one
+    # mapping (zip5 -> zip3 -> state). Coarsens geographic granularity.
+    "geo_generalize": "coarsens",
 }
 
 

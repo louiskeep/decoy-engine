@@ -16,7 +16,9 @@ from decoy_engine.execution._strategies._date_shift import DateShiftStrategyHand
 from decoy_engine.execution._strategies._faker import FakerStrategyHandler
 from decoy_engine.execution._strategies._formula import FormulaStrategyHandler
 from decoy_engine.execution._strategies._fpe import FpeStrategyHandler
+from decoy_engine.execution._strategies._geo_generalize import GeoGeneralizeHandler
 from decoy_engine.execution._strategies._hash import HashStrategyHandler
+from decoy_engine.execution._strategies._joint_mask import JointMaskHandler
 from decoy_engine.execution._strategies._nested import NestedStrategyHandler
 from decoy_engine.execution._strategies._passthrough import PassthroughHandler
 from decoy_engine.execution._strategies._redact import RedactHandler
@@ -42,6 +44,8 @@ SCALAR_HANDLERS: dict[str, StrategyHandler] = {
         TextRedactHandler(),
         TextMaskHandler(),
         NestedStrategyHandler(),
+        JointMaskHandler(),
+        GeoGeneralizeHandler(),
     )
 }
 
@@ -53,7 +57,9 @@ __all__ = [
     "FakerStrategyHandler",
     "FormulaStrategyHandler",
     "FpeStrategyHandler",
+    "GeoGeneralizeHandler",
     "HashStrategyHandler",
+    "JointMaskHandler",
     "NestedStrategyHandler",
     "PassthroughHandler",
     "RedactHandler",
