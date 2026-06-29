@@ -109,14 +109,19 @@ def make_mask_globals(rng: _random.Random) -> dict[str, Any]:
 
     The mask-side FormulaStrategy should construct a per-formula
     `random.Random(formula_seed)` and pass it to this factory. The returned
-    dict is `MASK_GLOBALS` PLUS the three RNG bindings (randint/choice/random)
+    dict is `MASK_GLOBALS` PLUS four RNG bindings (randint/choice/random/gauss)
     bound to the passed-in instance. The bare `MASK_GLOBALS` no longer carries
     them (F16a), so this factory is the only path that exposes RNG to a formula.
+
+    `gauss` is included for parity with the generation-side `_formula_scope`
+    (which also binds gauss to the per-row rng). Mask formulas that need a
+    normal-distribution draw can call `gauss(mu, sigma)` via this scope.
     """
     scope = dict(MASK_GLOBALS)
     scope["randint"] = rng.randint
     scope["choice"] = rng.choice
     scope["random"] = rng.random
+    scope["gauss"] = rng.gauss
     return scope
 
 
