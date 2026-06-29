@@ -252,6 +252,9 @@ class _FormulaMixin:
             "random": _rng.random,
             "randint": lambda a, b: _rng.randint(a, b),
             "choice": lambda lst: _rng.choice(lst),
+            # Normal-distribution draw from the per-row RNG instance.
+            # Enables formulas like gauss(mu, sigma) for numeric generation.
+            "gauss": lambda m, s: _rng.gauss(m, s),
             # Numeric / string utilities
             "round": round,
             "min": min,

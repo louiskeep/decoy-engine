@@ -2282,3 +2282,256 @@ class TestM2MCorrelationTeeth:
             faithful_df,
             strategy_map={"qty_band": "passthrough", "order_total_band": "passthrough"},
         )
+
+
+# ---------------------------------------------------------------------------
+# Phase 3b: Job C self-referential FK mutation controls (TestJobCSelfFKTeeth)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.testflight
+class TestJobCSelfFKTeeth:
+    """Mutation controls for the self-referential FK invariant (Phase 3b, Job C).
+
+    Job C topology: employees.manager_id -> employees.employee_id (same table).
+    The fk_integrity check looks up manager_id values in the employee_id pool of
+    the same table. A dangling manager_id (not in the masked employee_id set)
+    is an orphan and must trip the invariant when expected_orphans < actual_orphans.
+
+    RED: test_self_fk_closure_broken -- 1 dangling manager_id, expected 0 orphans.
+    GREEN: test_self_fk_closure_good -- all manager_ids in the masked employee_id set.
+    """
+
+    @staticmethod
+    def _build_self_fk_outputs(
+        n_employees: int = 50,
+        n_root: int = 5,
+        broken: bool = False,
+    ) -> tuple[Any, list[RelationshipSpec], list[FKIntegritySpec]]:
+        """Build a self-referential employees table with optional dangling FK.
+
+        Root employees (rows 0..n_root-1): manager_id = None.
+        Non-root employees: manager_id references a valid masked employee_id,
+        unless `broken=True`, in which case the last non-root row gets a
+        dangling manager_id "EMP-GHOST" not present in the employee_id column.
+
+        Returns:
+            (result_ns, relationships, fk_spec) ready for check_fk_integrity.
+        """
+        emp_ids = [f"M-{i:04d}" for i in range(n_employees)]
+        root_manager_ids: list[Any] = [None] * n_root
+        valid_manager_ids = [emp_ids[i % n_root] for i in range(n_employees - n_root - 1)]
+        if broken:
+            # Last non-root employee has a dangling manager_id not in emp_ids.
+            broken_manager_ids = [*valid_manager_ids, "EMP-GHOST"]
+        else:
+            broken_manager_ids = [*valid_manager_ids, emp_ids[0]]
+        manager_ids = [*root_manager_ids, *broken_manager_ids]
+
+        employees_tbl = pa.table(
+            {
+                "employee_id": emp_ids,
+                "manager_id": manager_ids,
+                "department": ["Engineering"] * n_employees,
+                "salary": [75000] * n_employees,
+            }
+        )
+
+        result = SimpleNamespace(
+            outputs={"employees": employees_tbl},
+            quality_metrics={},
+        )
+
+        relationships = [
+            RelationshipSpec(
+                parent=RelationshipEndSpec(table="employees", columns=["employee_id"]),
+                children=[RelationshipEndSpec(table="employees", columns=["manager_id"])],
+                orphan_policy="remap",
+                namespace="employee_identity",
+            )
+        ]
+        fk_spec = [
+            FKIntegritySpec(
+                relationship_name="employee_identity",
+                expected_orphans=0,
+                policy="remap",
+            )
+        ]
+        return result, relationships, fk_spec
+
+    def test_self_fk_closure_broken(self) -> None:
+        """A dangling manager_id in the self-FK table must trip check_fk_integrity.
+
+        RED: one employee references manager_id "EMP-GHOST" which is not in the
+        masked employee_id column. check_fk_integrity expects 0 orphans.
+
+        This proves the self-referential FK invariant is not vacuous: the parent
+        key pool is the SAME table's masked employee_id column, so a dangling
+        manager_id in the output is an orphan that the invariant catches.
+
+        A regression where the FK check reads the wrong key pool (e.g., skips the
+        self-reference case or uses an empty pool) would not catch this orphan.
+        """
+        result, relationships, fk_spec = self._build_self_fk_outputs(broken=True)
+
+        with pytest.raises(AssertionError, match="orphan_count=1"):
+            check_fk_integrity("c_selfref_break", fk_spec, result, relationships)
+
+    def test_self_fk_closure_good(self) -> None:
+        """All manager_ids in the masked employee_id pool must NOT raise.
+
+        GREEN: all non-null manager_id values reference a valid masked employee_id
+        in the same table. Null manager_ids (root nodes) are skipped.
+
+        Proves check_fk_integrity does not over-assert for the self-FK case: a
+        correctly masked table with a valid tree structure passes cleanly.
+        """
+        result, relationships, fk_spec = self._build_self_fk_outputs(broken=False)
+
+        # Must NOT raise: all non-null manager_ids are valid employee_ids.
+        check_fk_integrity("c_selfref_good", fk_spec, result, relationships)
+
+
+# ---------------------------------------------------------------------------
+# Phase 3b: Job C generate distribution controls (TestJobCGenerateControls)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.testflight
+class TestJobCGenerateControls:
+    """Mutation controls for Job C's generate table distribution invariant.
+
+    Job C introduces two new paths in check_distribution_generate:
+      1. List weights for categorical columns (engine format: list parallel to categories).
+      2. Formula columns with params.mean/std metadata (formula type + params).
+
+    RED controls: skewed categorical (list weights) and shifted formula mean.
+    GREEN control: correct output within tolerance passes.
+    """
+
+    def test_skewed_categorical_list_weights_raises(self) -> None:
+        """Output all-login when list weights declare 40/30/20/10 must raise.
+
+        Tests the list-weights path of check_distribution_generate. Before Phase 3b,
+        only dict weights were handled; list weights were silently skipped (no check).
+
+        TVD = 0.5*(|1.0-0.40| + |0.0-0.30| + |0.0-0.20| + |0.0-0.10|) = 0.60 >> tol.
+        """
+        config_table: dict[str, Any] = {
+            "generate_columns": [
+                {
+                    "name": "event_type",
+                    "type": "categorical",
+                    "categories": ["login", "purchase", "view", "error"],
+                    "weights": [0.40, 0.30, 0.20, 0.10],
+                }
+            ]
+        }
+        output_df = pd.DataFrame({"event_type": ["login"] * 500})
+        spec = [
+            ColumnDistributionSpec(
+                table="synthetic_events",
+                column="event_type",
+                distribution_class="synthetic",
+                tolerance=0.05,
+                joints_waived=True,
+                joints_waived_reason="generate table; no source to correlate",
+            )
+        ]
+        with pytest.raises(AssertionError, match="generate categorical TVD"):
+            check_distribution_generate(
+                "c_gen_cat", "synthetic_events", spec, output_df, config_table
+            )
+
+    def test_shifted_formula_mean_raises(self) -> None:
+        """Output mean far from declared params.mean on a formula column must raise.
+
+        Tests the formula-with-params path of check_distribution_generate. Before
+        Phase 3b, only type=statistical columns checked mean/std; type=formula with
+        params was silently skipped even when params declared a known distribution.
+
+        Output mean ~ 200 vs declared mean = 50: |200-50| = 150 > tol*50 = 5.0.
+        """
+        rng_np = np.random.default_rng(77)
+        config_table: dict[str, Any] = {
+            "generate_columns": [
+                {
+                    "name": "amount",
+                    "type": "formula",
+                    "formula": "gauss(50.0, 15.0)",
+                    "params": {"mean": 50.0, "std": 15.0},
+                }
+            ]
+        }
+        # Broken output: mean ~ 200, far outside the 5.0 band (tol=0.10 * 50 = 5).
+        output_df = pd.DataFrame({"amount": rng_np.normal(200.0, 15.0, size=1000).tolist()})
+        spec = [
+            ColumnDistributionSpec(
+                table="synthetic_events",
+                column="amount",
+                distribution_class="synthetic",
+                tolerance=0.10,
+                joints_waived=True,
+                joints_waived_reason="formula generate column; no source",
+            )
+        ]
+        with pytest.raises(AssertionError, match="generate formula mean"):
+            check_distribution_generate(
+                "c_gen_formula", "synthetic_events", spec, output_df, config_table
+            )
+
+    def test_good_generate_output_passes(self) -> None:
+        """Correct generate output (list weights + formula params within band) must pass.
+
+        Proves check_distribution_generate does not over-assert for Job C's two new paths:
+          - event_type with list weights: seeded sample within 5% TVD of declared weights.
+          - amount with formula params: sample mean/std within 10% band of declared params.
+        """
+        rng_np = np.random.default_rng(88)
+        n = 2000
+        # Categorical: sample with the declared probabilities.
+        cats = rng_np.choice(
+            ["login", "purchase", "view", "error"],
+            size=n,
+            p=[0.40, 0.30, 0.20, 0.10],
+        ).tolist()
+        # Formula: gauss(50, 15) -> mean ~ 50, std ~ 15.
+        amounts = rng_np.normal(50.0, 15.0, size=n).tolist()
+
+        output_df = pd.DataFrame({"event_type": cats, "amount": amounts})
+        config_table: dict[str, Any] = {
+            "generate_columns": [
+                {
+                    "name": "event_type",
+                    "type": "categorical",
+                    "categories": ["login", "purchase", "view", "error"],
+                    "weights": [0.40, 0.30, 0.20, 0.10],
+                },
+                {
+                    "name": "amount",
+                    "type": "formula",
+                    "formula": "gauss(50.0, 15.0)",
+                    "params": {"mean": 50.0, "std": 15.0},
+                },
+            ]
+        }
+        spec = [
+            ColumnDistributionSpec(
+                table="synthetic_events",
+                column="event_type",
+                distribution_class="synthetic",
+                tolerance=0.05,
+                joints_waived=True,
+                joints_waived_reason="generate table test; no source",
+            ),
+            ColumnDistributionSpec(
+                table="synthetic_events",
+                column="amount",
+                distribution_class="synthetic",
+                tolerance=0.10,
+                joints_waived=True,
+                joints_waived_reason="formula generate column test; no source",
+            ),
+        ]
+        # Must NOT raise: both columns within declared tolerance.
+        check_distribution_generate("c_gen_good", "synthetic_events", spec, output_df, config_table)

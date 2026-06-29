@@ -164,25 +164,41 @@ def check_distribution_mask(
     # expected kind_drift (freetext->constant) that would otherwise fail the
     # diagnostic. We suppress kind_drift failures ONLY for columns whose declared
     # strategy is text_redact so the exemption is narrow and reviewer-visible.
+    #
+    # bucketize exemption: bucketize converts numeric values to categorical bucket
+    # labels (e.g., salary float -> bucket lower-bound string "80000"). This
+    # intentional numeric->categorical dtype change trips kind_drift. Suppress it
+    # for columns declared with distribution_class=coarsen + strategy=bucketize.
     text_redact_cols: set[str] = {cs.column for cs in spec if cs.strategy == "text_redact"}
     if strategy_map:
         text_redact_cols |= {col for col, st in strategy_map.items() if st == "text_redact"}
+    bucketize_cols: set[str] = {
+        cs.column
+        for cs in spec
+        if cs.strategy == "bucketize" and cs.distribution_class == "coarsen"
+    }
+    if strategy_map:
+        bucketize_cols |= {col for col, st in strategy_map.items() if st == "bucketize"}
+    # All columns whose kind_drift is known-intentional.
+    exempt_kind_drift_cols: set[str] = text_redact_cols | bucketize_cols
 
     diag: dict[str, Any] = report.get("diagnostic") or {}
     if not diag.get("passed", True):
         failed_checks = [c for c in diag.get("checks", []) if not c.get("passed", True)]
-        # Filter out kind_drift failures caused entirely by text_redact columns.
-        if text_redact_cols:
+        # Filter out kind_drift failures caused entirely by exempted columns.
+        if exempt_kind_drift_cols:
             filtered: list[dict[str, Any]] = []
             for fc in failed_checks:
                 if fc.get("check") == "kind_drift":
-                    non_tr_drifted = [
-                        d for d in fc.get("drifted", []) if d.get("column") not in text_redact_cols
+                    non_exempt_drifted = [
+                        d
+                        for d in fc.get("drifted", [])
+                        if d.get("column") not in exempt_kind_drift_cols
                     ]
-                    if non_tr_drifted:
-                        # Clone with only the non-text_redact drifted columns.
-                        filtered.append({**fc, "drifted": non_tr_drifted})
-                    # Otherwise suppress this check (all drifted cols are text_redact).
+                    if non_exempt_drifted:
+                        # Clone with only the non-exempted drifted columns.
+                        filtered.append({**fc, "drifted": non_exempt_drifted})
+                    # Otherwise suppress this check (all drifted cols are exempted).
                 else:
                     filtered.append(fc)
             failed_checks = filtered
@@ -538,13 +554,23 @@ def check_distribution_generate(
         col_type = str(gen_col.get("type", ""))
 
         if col_type == "categorical":
-            weights: dict[str, float] = gen_col.get("weights") or {}
+            raw_weights = gen_col.get("weights") or {}
+            categories: list[Any] = gen_col.get("categories") or []
+            # Weights may be a list (parallel to categories, engine format) or a
+            # dict (name -> weight, invariant-check format). Normalise to dict so
+            # the TVD comparison has stable category names as keys.
+            if isinstance(raw_weights, list):
+                weights: dict[str, float] = {
+                    str(c): float(w) for c, w in zip(categories, raw_weights, strict=True)
+                }
+            else:
+                weights = {k: float(v) for k, v in (raw_weights or {}).items()}
             if not weights:
                 continue
-            weight_sum = sum(float(v) for v in weights.values())
+            weight_sum = sum(weights.values())
             if weight_sum <= 0:
                 continue
-            norm_weights = {k: float(v) / weight_sum for k, v in weights.items()}
+            norm_weights = {k: v / weight_sum for k, v in weights.items()}
             n_total = len(output_df)
             if n_total == 0:
                 continue
@@ -589,5 +615,41 @@ def check_distribution_generate(
                     f"[{job_name}/{table}/{col_name}] generate statistical std: "
                     f"out_std={out_std:.4f}, declared_std={d_std}, "
                     f"band={std_band:.4f} (tol={tol}). "
+                    f"Output std outside declared parameter band."
+                )
+
+        else:
+            # For any non-categorical, non-statistical type (e.g. formula), check
+            # mean and std if the column config carries them as `params` metadata.
+            # The formula type accepts an arbitrary Python expression; when the
+            # operator knows the output distribution (e.g. gauss(mu, sigma)), they
+            # declare params: {mean: mu, std: sigma} as a reviewable contract and
+            # this branch enforces it.
+            params_meta: dict[str, Any] = gen_col.get("params") or {}
+            fm_mean = params_meta.get("mean")
+            fm_std = params_meta.get("std")
+            if fm_mean is None or fm_std is None:
+                continue
+            fm_series = output_df[col_name].dropna()
+            if len(fm_series) == 0:
+                continue
+            fm_out_mean = float(fm_series.mean())
+            fm_out_std = float(fm_series.std())
+            fm_d_mean = float(fm_mean)
+            fm_d_std = float(fm_std)
+            fm_mean_band = tol * max(abs(fm_d_mean), 1.0)
+            fm_std_band = tol * max(fm_d_std, 1.0)
+            if abs(fm_out_mean - fm_d_mean) > fm_mean_band:
+                raise AssertionError(
+                    f"[{job_name}/{table}/{col_name}] generate {col_type} mean: "
+                    f"out_mean={fm_out_mean:.4f}, declared_mean={fm_d_mean}, "
+                    f"band={fm_mean_band:.4f} (tol={tol}). "
+                    f"Output mean outside declared parameter band."
+                )
+            if abs(fm_out_std - fm_d_std) > fm_std_band:
+                raise AssertionError(
+                    f"[{job_name}/{table}/{col_name}] generate {col_type} std: "
+                    f"out_std={fm_out_std:.4f}, declared_std={fm_d_std}, "
+                    f"band={fm_std_band:.4f} (tol={tol}). "
                     f"Output std outside declared parameter band."
                 )
