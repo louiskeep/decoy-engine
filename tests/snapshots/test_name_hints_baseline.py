@@ -140,6 +140,13 @@ CORPUS: list[str] = [
     "UDI",
     "fingerprint",
     "biometric_id",
+    # Telecom device identifiers added to device_id hints (SP-12 remediation).
+    "imei",
+    "imei_number",
+    "device_imei",
+    "imsi",
+    "iccid",
+    "handset_id",
     # Abbreviated / enterprise forms (the DTGEB / MBRDOB family).
     "EMP_FN",
     "EMP_LN",
