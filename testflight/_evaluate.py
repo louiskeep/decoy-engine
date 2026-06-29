@@ -28,7 +28,6 @@ from typing import Any
 import pyarrow as pa
 
 from ._invariants import (
-    FIXED_TS,  # noqa: F401  re-exported for _runner compatibility
     check_chapter_preserve,
     check_checksums,
     check_computed_columns,

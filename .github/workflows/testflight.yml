@@ -53,10 +53,17 @@ jobs:
       - name: Run test-flight suite (pandas substrate)
         run: uv run pytest testflight -m testflight --tb=short -v
 
+      - name: Generate evidence report
+        # The pytest gate above provides the mutation-control teeth; this step
+        # renders the human-readable evidence report (writes _artifacts/report.md).
+        # always() so the report is produced even when the gate fails.
+        if: always()
+        run: uv run python scripts/test_flight.py
+
       - name: Upload evidence report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: testflight-report
           path: testflight/_artifacts/report.md
-          if-no-files-found: ignore
+          if-no-files-found: warn

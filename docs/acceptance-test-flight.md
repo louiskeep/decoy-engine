@@ -97,8 +97,8 @@ called directly on source vs masked output (never output vs output), with
 declared joint pairs, followed by `apply_quality_policy` with the full
 strategy map. Explicit teeth the policy alone does not provide:
 
-- Constant-collapse guard: a preserve-class column (fpe, hash) must retain
-  at least 0.99x the source cardinality.
+- Constant-collapse guard: a preserve-class column must retain its source
+  cardinality (fpe exact 1.0x; hash >= 0.99x).
 - Real-coarsening guard: a coarsen-class column (bucketize, geo_generalize,
   bucket_perturb) must have strictly fewer distinct values than the source
   AND no value outside the allowed bucket set.
@@ -221,8 +221,9 @@ Before merging a large block of strategy, relationship, or generation work:
 3. If any invariant fails, the report names the failing job, table, column,
    family, and strategy. Fix the root cause; do not adjust tolerances without
    a recorded reason in the manifest and a comment in the PR.
-4. Commit the updated `testflight/_artifacts/report.md` with the passing run
-   as part of the merge PR.
+4. The run writes `testflight/_artifacts/report.md` (gitignored, not committed).
+   Read it for the evidence; when recording a pre-merge flight, attach it from
+   the CI run's `testflight-report` artifact.
 
 This gate is referenced in ADR-0005 (platform repo:
 `docs/architecture/adr/platform/0005-mechanical-enforcement-of-methodology.md`)
