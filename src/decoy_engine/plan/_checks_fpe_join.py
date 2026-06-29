@@ -105,8 +105,15 @@ def check_fpe_join_groups(config: dict[str, Any]) -> tuple[str, ...]:
                     "column": col_name,
                     "strategy": col_entry.get("strategy"),
                     "namespace": col_entry.get("namespace"),
-                    # Homogeneity snapshot: only the four relevant keys.
-                    "cfg_snap": {k: pc.get(k) for k in _HOMOGENEITY_KEYS},
+                    # Homogeneity snapshot with the fpe handler's defaults applied,
+                    # so an omitted key compares equal to its explicit default
+                    # (e.g. an omitted charset == charset:"digits"); both join.
+                    "cfg_snap": {
+                        "charset": pc.get("charset", "digits"),
+                        "preserve_separators": bool(pc.get("preserve_separators", True)),
+                        "validate_luhn": bool(pc.get("validate_luhn", False)),
+                        "checksum": pc.get("checksum") or None,
+                    },
                 }
             )
 

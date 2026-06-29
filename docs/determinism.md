@@ -157,8 +157,10 @@ Requirements enforced at compile time:
 **Security note:** activating a join group intentionally waives the
 per-column domain-separation guarantee (F3). The plan manifest records this
 decision explicitly as a compile-time warning. Two columns in the same group
-encrypt the same value identically; an analyst who can observe both columns
-learns that the two ciphertext domains overlap. This is the correct trade-off
+encrypt the same value identically, so an analyst who can observe both columns
+can link records across them by matching ciphertext (cross-table
+re-identification) and pool their frequency distributions - exactly the linkage
+the join enables, but also the attack surface it opens. This is the correct trade-off
 for a schema that requires cross-table joins; do not use join groups when
 columns should be cryptographically independent.
 

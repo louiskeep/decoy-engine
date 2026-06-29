@@ -58,7 +58,7 @@ ALLOWLIST: dict[str, int] = {
     # without splitting _generate_column itself; defer to SP-15 or when the
     # strategy count stabilises.
     "src/decoy_engine/generation/synthesize.py": 613,
-    # SP-46 (2026-06-29): fpe_join_group tweak mirror added 8 lines to the
+    # SP-46 (2026-06-29): fpe_join_group tweak mirror added 9 lines to the
     # V1 FPEStrategy.apply in transforms/fpe.py, pushing it over the cap.
     # The module already owns the entire Feistel cipher implementation and
     # the apply method; decompose into fpe_cipher.py + fpe_strategy.py when
