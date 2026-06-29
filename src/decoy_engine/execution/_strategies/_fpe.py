@@ -76,7 +76,14 @@ class FpeStrategyHandler:
             and bool(cfg.get("validate_luhn", False))
             and all(c in "0123456789" for c in charset)
         )
-        tweak = column.encode("utf-8", errors="replace")
+        # SP-46: opt-in fpe_join_group shares the tweak across member columns.
+        # When set, the group name replaces the column name as the tweak so two
+        # columns with identical values encrypt identically (joinable ciphertext).
+        # Default (no group) is `column` -- byte-identical to pre-SP46 behaviour
+        # (`join_group or column` evaluates to column when join_group is falsy).
+        # Key derivation is UNCHANGED; the tweak is NOT in derive()'s envelope.
+        join_group: str | None = cfg.get("fpe_join_group") or None
+        tweak = (join_group or column).encode("utf-8", errors="replace")
         namespace = plan.namespace
 
         # One key per (job_seed, namespace) -- derived once, not per cell.
@@ -101,7 +108,21 @@ class FpeStrategyHandler:
         for offset, position in enumerate(non_na_positions):
             out[int(position)] = encrypted[offset]
         df[column] = out
-        return df, []
+
+        run_warnings: list[QualityWarning] = []
+        if join_group:
+            run_warnings.append(
+                QualityWarning(
+                    code="fpe_join_group_active",
+                    provider="fpe",
+                    column=column,
+                    detail={
+                        "join_group": join_group,
+                        "security_note": ("cross-column domain separation intentionally waived"),
+                    },
+                )
+            )
+        return df, run_warnings
 
     def _encrypt_values(self, values: list[str], encrypt_one: Callable[[str], str]) -> list[str]:
         # Cap workers at the actual CPU count: the Feistel orchestration is

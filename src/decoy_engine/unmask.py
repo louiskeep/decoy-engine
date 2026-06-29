@@ -293,9 +293,14 @@ def unmask_pipeline(
                 )
             cfg = col_cfg.get("provider_config") or {}
             key = derive(job_seed, namespace, FPE_KEY_LABEL)
-            table = _decrypt_column(
-                table, col, key=key, cfg=cfg, tweak=col.encode("utf-8", errors="replace")
-            )
+            # SP-46: mirror the join-group tweak resolution from _strategies/_fpe.py.
+            # When fpe_join_group is set the tweak is the group name, not the column
+            # name; using the wrong tweak produces incorrect decryption. The config
+            # carries the same fpe_join_group value the mask run used, so this
+            # lookup is always safe (same config -> same tweak resolution).
+            join_group: str | None = cfg.get("fpe_join_group") or None
+            fpe_tweak = (join_group or col).encode("utf-8", errors="replace")
+            table = _decrypt_column(table, col, key=key, cfg=cfg, tweak=fpe_tweak)
             luhn = bool(cfg.get("validate_luhn", False))
             reports.append(
                 UnmaskColumnReport(
