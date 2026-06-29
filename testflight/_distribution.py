@@ -179,6 +179,14 @@ def check_distribution_mask(
     # kind_drift (e.g., badge_id in Phase 4 coverage-guard columns) is expected and
     # must not trip the diagnostic. Added Phase 4 when the first redact column
     # (badge_id) was introduced to the employees test fixture.
+    #
+    # joint_mask exemption: joint_mask replaces source values with rows from a
+    # shipped reference table (e.g., us_zip5_city_state). The reference table has
+    # far fewer distinct values than the source fixture (e.g., 10 distinct cities
+    # vs 49 in the source), so the output column kind shifts from freetext to
+    # categorical. This intentional coarsening is the expected SP-08 behavior and
+    # must not trip the diagnostic. The consistency invariant (check_joint_mask_
+    # consistency) is the authoritative end-to-end check for joint_mask columns.
     text_redact_cols: set[str] = {cs.column for cs in spec if cs.strategy == "text_redact"}
     if strategy_map:
         text_redact_cols |= {col for col, st in strategy_map.items() if st == "text_redact"}
@@ -192,8 +200,13 @@ def check_distribution_mask(
     redact_cols: set[str] = {cs.column for cs in spec if cs.strategy == "redact"}
     if strategy_map:
         redact_cols |= {col for col, st in strategy_map.items() if st == "redact"}
+    joint_mask_cols: set[str] = {cs.column for cs in spec if cs.strategy == "joint_mask"}
+    if strategy_map:
+        joint_mask_cols |= {col for col, st in strategy_map.items() if st == "joint_mask"}
     # All columns whose kind_drift is known-intentional.
-    exempt_kind_drift_cols: set[str] = text_redact_cols | bucketize_cols | redact_cols
+    exempt_kind_drift_cols: set[str] = (
+        text_redact_cols | bucketize_cols | redact_cols | joint_mask_cols
+    )
 
     diag: dict[str, Any] = report.get("diagnostic") or {}
     if not diag.get("passed", True):

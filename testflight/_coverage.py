@@ -16,11 +16,6 @@ Allowlisted strategies (each with a specific, reviewable reason):
   nested    -- requires a struct-typed source column. None of the three jobs in
                scope carry struct-typed columns. Will be added when a
                struct-column test data model is introduced.
-  joint_mask -- requires pre-configured reference-row lookup tables alongside
-               the source data (different mechanism from `code_set`, which uses
-               a static corpus). The current three jobs use `code_set` for all
-               reference-table remapping; `joint_mask` will be added when a
-               job includes explicit reference-row fixtures.
 
 All other SCALAR_HANDLERS keys must be exercised by at least one job manifest
 OR this module will raise AssertionError naming the uncovered strategy.
@@ -51,12 +46,6 @@ _STRATEGY_ALLOWLIST: dict[str, str] = {
         "requires a struct-typed (nested) source column; none of the current "
         "three test jobs carry struct columns; will be added when a "
         "struct-column test data model is introduced"
-    ),
-    "joint_mask": (
-        "requires pre-configured multi-column reference rows alongside the source "
-        "data (a lookup mechanism distinct from `code_set`); the current three "
-        "jobs use `code_set` for all reference-table remapping; `joint_mask` will "
-        "be added when a job includes explicit reference-row fixture tables"
     ),
 }
 

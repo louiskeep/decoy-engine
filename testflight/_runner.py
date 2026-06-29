@@ -51,6 +51,7 @@ from ._invariants import (
     check_distribution_generate,
     check_distribution_mask,
     check_fk_integrity,
+    check_joint_mask_consistency,
     check_quarantine,
     check_safe_harbor,
     check_sentinels,
@@ -443,6 +444,16 @@ def evaluate_invariants(
             inv.chapter_preserve,
             result_a,
             sources,
+        )
+
+    # SP-08 joint_mask consistency: each output tuple must be a real reference-table row.
+    if inv.joint_mask_consistency:
+        _run(
+            "joint_mask_consistency",
+            check_joint_mask_consistency,
+            job_name,
+            inv.joint_mask_consistency,
+            result_a,
         )
 
     # Phase 3c: relabel-invariant masked-correlation checks.

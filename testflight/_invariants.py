@@ -46,6 +46,7 @@ from ._fk_remap import (
 )
 from ._spec import (
     ChecksumSpec,
+    JointMaskConsistencySpec,
     MaskedCorrelationSpec,
     QuarantineSpec,
     SafeHarborSpec,
@@ -55,6 +56,7 @@ from ._spec import (
 __all__ = [
     "FIXED_TS",
     "_VALUE_CHANGING_STRATEGIES",
+    "JointMaskConsistencySpec",
     "MaskedCorrelationSpec",
     "check_chapter_preserve",
     "check_checksums",
@@ -65,6 +67,7 @@ __all__ = [
     "check_distribution_mask",
     "check_fk_integrity",
     "check_job_strategy_coverage",
+    "check_joint_mask_consistency",
     "check_quarantine",
     "check_remap_masks_orphan",
     "check_safe_harbor",
@@ -457,3 +460,80 @@ def check_strategy_coverage(
         AssertionError: If a declared strategy is not in SCALAR_HANDLERS.
     """
     check_job_strategy_coverage(job_name, declared)
+
+
+# ---------------------------------------------------------------------------
+# SP-08 joint_mask consistency
+# ---------------------------------------------------------------------------
+
+
+def check_joint_mask_consistency(
+    job_name: str,
+    spec: list[JointMaskConsistencySpec],
+    result: Any,
+) -> str:
+    """Assert each output joint_mask tuple is a real row in the reference table.
+
+    SP-08 consistency property: joint_mask replaces a group of coupled columns
+    with values from a SINGLE reference-table row. Each output tuple must
+    therefore be an actual row in the reference table; a row that mixes
+    values from different reference-table rows (a Frankenstein combination)
+    is a bug in the transform.
+
+    This check loads the shipped reference table, builds the set of all valid
+    tuples for the declared columns, then asserts every output row's tuple is
+    a member of that set.
+
+    Args:
+        job_name: Job name for error messages.
+        spec: List of JointMaskConsistencySpec entries (one per joint_mask group).
+        result: ExecutionResult carrying masked output tables.
+
+    Returns:
+        Short evidence string with per-group row counts and valid-tuple counts.
+
+    Raises:
+        AssertionError: If any output tuple is not a valid reference-table row.
+    """
+    from decoy_engine.reference_tables import load_table
+
+    evidence_parts: list[str] = []
+    for s in spec:
+        out_pa = result.outputs.get(s.table)
+        assert out_pa is not None, (
+            f"[{job_name}] joint_mask_consistency: table '{s.table}' not in result.outputs."
+        )
+
+        ref = load_table(s.reference)
+        # Build the set of valid (col_0, col_1, ...) tuples from the reference table.
+        valid_tuples: set[tuple[Any, ...]] = set()
+        for row_idx in range(ref.row_count):
+            row = ref.row(row_idx)
+            valid_tuples.add(tuple(row.get(c) for c in s.columns))
+
+        out_df = out_pa.to_pandas()
+        n_rows = len(out_df)
+        n_checked = 0
+        for i in range(n_rows):
+            values = tuple(out_df[c].iloc[i] for c in s.columns)
+            # All-null tuples occur only when key_by is null (null-key fallback);
+            # the fallback picks a seeded random row, which is a valid reference row.
+            # Skip degenerate all-null rows: they cannot be validated against the table.
+            if all(v is None or (isinstance(v, float) and v != v) for v in values):
+                continue
+            n_checked += 1
+            assert values in valid_tuples, (
+                f"[{job_name}] joint_mask_consistency: {s.table} row {i}: "
+                f"tuple {dict(zip(s.columns, values, strict=True))} is not a real row in "
+                f"reference table {s.reference!r}. "
+                f"joint_mask must write all target columns from a single reference-table "
+                f"row; mixing values from different rows (Frankenstein combination) "
+                f"violates the SP-08 consistency contract."
+            )
+
+        evidence_parts.append(
+            f"{s.table}.({','.join(s.columns)}): {n_checked}/{n_rows} rows "
+            f"all-valid ({len(valid_tuples)} valid tuples in {s.reference})"
+        )
+
+    return "; ".join(evidence_parts)
