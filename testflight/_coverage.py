@@ -184,8 +184,6 @@ def check_job_strategy_coverage(job_name: str, declared: list[str]) -> None:
 
 def check_suite_strategy_coverage(
     all_manifests: list[Any],
-    *,
-    extra_strategy_keys: set[str] | None = None,
 ) -> str:
     """Suite-level coverage guard: union of declared strategies vs live registry.
 
@@ -200,8 +198,6 @@ def check_suite_strategy_coverage(
 
     Args:
         all_manifests: List of FlightManifest objects (one per discovered job).
-        extra_strategy_keys: Optional extra keys to inject into SCALAR_HANDLERS
-            for the mutation control test (simulates a new unregistered strategy).
 
     Returns:
         A short summary string of covered vs allowlisted strategies.
@@ -213,8 +209,6 @@ def check_suite_strategy_coverage(
     from decoy_engine.execution._strategies import SCALAR_HANDLERS
 
     live_keys: set[str] = set(SCALAR_HANDLERS.keys())
-    if extra_strategy_keys:
-        live_keys = live_keys | extra_strategy_keys
 
     # -----------------------------------------------------------------------
     # 1. SCALAR_HANDLERS strategy coverage
