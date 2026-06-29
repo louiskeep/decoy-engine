@@ -88,6 +88,8 @@ class TestRunConfigOnlyChecks:
             "grouped_series_refs",
             "windowed_date_refs",
             "group_key_refs",
+            # Row 21 (SP-46): fpe_join_group structural validation.
+            "fpe_join_groups",
         )
 
     def test_raises_on_unknown_provider(self):
