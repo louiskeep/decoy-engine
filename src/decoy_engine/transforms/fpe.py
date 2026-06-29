@@ -373,6 +373,13 @@ def _fpe_value(
     if preserve_separators:
         positions = [i for i, ch in enumerate(val) if ch in charset_set]
         if not positions:
+            # BACKLOG(remap-out-of-charset): no in-charset chars -> value passes
+            # through unchanged. For orphan_policy=remap this means an all-out-of-
+            # charset orphan key (e.g. "TERMINATED", "EMP-ORPHAN") is emitted
+            # verbatim, contradicting the REMAP docstring. Real fix: the orphan
+            # resolver should mint a guaranteed in-charset masked value instead of
+            # calling the strategy blindly. Compat-contract/determinism blast radius
+            # deferred; see _orphan.py BACKLOG note and docs/what-we-cannot-prove.md.
             return val
         body = _fpe_pure_value(
             "".join(val[i] for i in positions),
