@@ -14,6 +14,7 @@ New to Decoy? Start with the quickstart, then the recipes.
 - [CLI](cli.md): the `decoy` command surface.
 - [What Decoy does not prove](what-we-cannot-prove.md): the honest limitations.
 - [ML benchmarking & privacy](ml-benchmarking-and-privacy.md): the gated standard for the field-recognition ML sprints.
+- [Acceptance test-flight](acceptance-test-flight.md): the pre-merge acceptance suite (what it proves, how to run, honest limitations).
 
 ## Top-level
 
@@ -56,6 +57,7 @@ determinism
 cli
 what-we-cannot-prove
 ml-benchmarking-and-privacy
+acceptance-test-flight
 ```
 
 ```{toctree}
