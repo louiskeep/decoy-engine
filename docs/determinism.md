@@ -93,13 +93,14 @@ that the engine rejects rather than silently mis-keying.
 
 FPE uses a single Feistel key per `(job_seed, namespace)`, derived as
 `derive(job_seed, namespace, b"fpe-key/v1")`. This is the NIST SP 800-38G FF1
-key model: one key, varying tweak per column. The tweak is the column name
-encoded as UTF-8.
+key model: one key, varying tweak per column. The default tweak is the column
+name encoded as UTF-8.
 
 This means:
 
 - Two columns in the same namespace with different names receive the same key
-  but different tweaks, so their ciphertexts are independent.
+  but different tweaks, so their ciphertexts are independent (the F3
+  domain-separation invariant).
 - A given source value in a given column always produces the same ciphertext
   within one seed and namespace: `fpe("alice", key, tweak="email")` is
   byte-stable across runs.
@@ -110,6 +111,61 @@ This means:
 
 The implementation is in `src/decoy_engine/execution/_strategies/_fpe.py`
 (key derivation) and `src/decoy_engine/transforms/fpe.py` (Feistel cipher).
+
+### FPE join groups (opt-in, SP-46)
+
+By default, two FPE columns in the same namespace encrypt the same value
+to different ciphertexts (different tweaks). This is the correct behaviour
+for independent columns.
+
+In telco and similar schemas, two columns from different tables
+(e.g. `subscribers.msisdn` and `cdr.called_msisdn`) contain the same domain
+values and must join after masking. To make that join work, both columns need
+identical ciphertext for the same plaintext -- which requires a shared tweak.
+
+Set `fpe_join_group: "<name>"` in `provider_config` on every column that must
+join. Members of the same group share the tweak (the group name replaces the
+column name), so the same plaintext encrypts to the same ciphertext and the
+join survives masking.
+
+```yaml
+columns:
+  - name: msisdn
+    strategy: fpe
+    namespace: phone_ns
+    provider_config:
+      charset: digits
+      fpe_join_group: phone_e164
+
+  - name: called_msisdn
+    strategy: fpe
+    namespace: phone_ns
+    provider_config:
+      charset: digits
+      fpe_join_group: phone_e164
+```
+
+Requirements enforced at compile time:
+
+- A group must have at least two members (a singleton group raises
+  `fpe_join_group_singleton`).
+- All members must use the `fpe` strategy (`fpe_join_group_non_fpe_member`).
+- All members must declare the same `charset`, `preserve_separators`,
+  `validate_luhn`, and `checksum` (`fpe_join_group_config_mismatch`).
+- All members must belong to the same namespace (`fpe_join_group_namespace_mismatch`).
+
+**Security note:** activating a join group intentionally waives the
+per-column domain-separation guarantee (F3). The plan manifest records this
+decision explicitly as a compile-time warning. Two columns in the same group
+encrypt the same value identically; an analyst who can observe both columns
+learns that the two ciphertext domains overlap. This is the correct trade-off
+for a schema that requires cross-table joins; do not use join groups when
+columns should be cryptographically independent.
+
+Key derivation is NOT affected by the join group. The tweak is not part of
+the `derive()` envelope, so no `SEED_PROTOCOL_VERSION` bump is required.
+Default behaviour (no `fpe_join_group`) is byte-identical to pre-SP-46
+output.
 
 ## Deterministic shuffle and column names
 
