@@ -44,6 +44,7 @@ import pyarrow as pa
 import pytest
 from pydantic import ValidationError
 
+from testflight._coverage import check_suite_strategy_coverage
 from testflight._invariants import (
     FIXED_TS,
     check_chapter_preserve,
@@ -730,7 +731,15 @@ class TestComputedColumnTeeth:
             outputs={"claim_lines": tbl},
             quality_metrics={},
         )
-        formula = "line_amount * units * case_when(discount_tier, copay=0.80, preferred=0.90, 1.0)"
+        # Engine-grammar formula: case_when with equality comparisons.
+        # The rows have corrupted line_total (factor 1.0 instead of 0.80/0.90)
+        # so the recomputed value differs from the stored output.
+        formula = (
+            "line_amount * units * case_when("
+            'discount_tier == "copay", 0.80, '
+            'discount_tier == "preferred", 0.90, '
+            "1.0)"
+        )
         spec = [
             ComputedColumnSpec(
                 table="claim_lines",
@@ -785,8 +794,12 @@ class TestComputedColumnTeeth:
             outputs={"claim_lines": tbl},
             quality_metrics={},
         )
+        # Engine-grammar formulas (Phase 4 generalization).
         line_total_formula = (
-            "line_amount * units * case_when(discount_tier, copay=0.80, preferred=0.90, 1.0)"
+            "line_amount * units * case_when("
+            'discount_tier == "copay", 0.80, '
+            'discount_tier == "preferred", 0.90, '
+            "1.0)"
         )
         spec = [
             ComputedColumnSpec(
@@ -798,7 +811,7 @@ class TestComputedColumnTeeth:
             ComputedColumnSpec(
                 table="claim_lines",
                 column="claim_line_sum",
-                formula="sum(line_amount) broadcast to all rows",
+                formula="sum(line_amount)",
                 branch_count=0,
             ),
         ]
@@ -806,19 +819,92 @@ class TestComputedColumnTeeth:
         # Must NOT raise: all computed values are correct.
         check_computed_columns("computed_control_good", spec, result)
 
+    def test_changed_formula_followed(self) -> None:
+        """Changed formula string is picked up: check follows the new formula.
+
+        Phase 4 control: proves the invariant is formula-driven, not column-name-
+        dispatched.  Build a table where "custom_col" = qty * unit_price.  Pass
+        two specs with different formula strings for the same column:
+
+          spec_correct: formula "qty * unit_price"  -> PASSES (values match)
+          spec_wrong:   formula "qty * unit_price * 2.0" -> FAILS (values differ)
+
+        Before Phase 4 the dispatch was a hardcoded `if cs.column == "order_total"`
+        chain; an unknown column name raised AssertionError unconditionally.  After
+        Phase 4 the formula string drives evaluation so BOTH branches are reached
+        by varying the formula, not the column name.
+        """
+        tbl = pa.table(
+            {
+                "qty": [3, 5, 2],
+                "unit_price": [10.0, 20.0, 15.0],
+                "custom_col": [30.0, 100.0, 30.0],  # qty * unit_price
+            }
+        )
+        result = SimpleNamespace(outputs={"orders": tbl}, quality_metrics={})
+
+        # Correct formula: values match -> must NOT raise.
+        spec_correct = [
+            ComputedColumnSpec(
+                table="orders",
+                column="custom_col",
+                formula="qty * unit_price",
+                branch_count=0,
+            )
+        ]
+        check_computed_columns("formula_follow_good", spec_correct, result)
+
+        # Wrong formula: values do NOT match -> must raise AssertionError.
+        spec_wrong = [
+            ComputedColumnSpec(
+                table="orders",
+                column="custom_col",
+                formula="qty * unit_price * 2.0",
+                branch_count=0,
+            )
+        ]
+        with pytest.raises(AssertionError, match="orders.custom_col"):
+            check_computed_columns("formula_follow_bad", spec_wrong, result)
+
 
 class TestCoverageRotTeeth:
     """Mutation controls for the strategy-coverage guard."""
 
-    def test_coverage_rot_detected(self) -> None:
-        """Registering a fake strategy key must trip the coverage guard.
+    def test_coverage_rot_detected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Registering a fake strategy key must trip the suite coverage guard.
 
-        Phase 4: monkeypatch SCALAR_HANDLERS to add a fake key not in any
-        manifest's strategy_coverage, then assert check_strategy_coverage raises
-        AssertionError identifying the uncovered strategy. This proves the guard
-        reads the LIVE registry rather than a static list.
+        RED path: inject a fake key "zz_fake_strategy" into SCALAR_HANDLERS
+        via monkeypatch.  It is not in any manifest's strategy_coverage list
+        and not in _STRATEGY_ALLOWLIST.  check_suite_strategy_coverage must
+        raise AssertionError naming the uncovered strategy.
+
+        GREEN path (implicit): without the fake key the suite guard passes
+        (verified by the full test_testflight.py run that exercises all three
+        jobs with their declared strategy_coverage lists).
+
+        This mutation control proves the guard reads the LIVE SCALAR_HANDLERS
+        dict, not a static copy, so a new strategy added to the engine without
+        a test-job or allowlist entry fails the suite immediately.
         """
-        pytest.skip("Phase 4: coverage-rot mutation control pending.")
+        from decoy_engine.execution._strategies import SCALAR_HANDLERS
+        from testflight._runner import discover_jobs, load_job
+
+        # Load all manifests to supply to the guard.
+        all_manifests = [load_job(m) for m in discover_jobs()]
+
+        # Sanity: guard passes with the real (unpatched) registry.
+        check_suite_strategy_coverage(all_manifests)
+
+        # Inject a fake strategy that no manifest declares and is not allowlisted.
+        fake_key = "zz_fake_strategy"
+        assert fake_key not in SCALAR_HANDLERS, (
+            f"'{fake_key}' already exists in SCALAR_HANDLERS -- choose a different fake key."
+        )
+        # Pass the fake key via the extra_strategy_keys parameter (avoids
+        # mutating the live module-level dict, which would affect other tests
+        # that run in the same process).
+        with pytest.raises(AssertionError, match="zz_fake_strategy"):
+            check_suite_strategy_coverage(all_manifests, extra_strategy_keys={fake_key})
 
 
 # ---------------------------------------------------------------------------

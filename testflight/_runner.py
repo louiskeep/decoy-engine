@@ -40,6 +40,7 @@ import pyarrow as pa
 
 from ._builder import assemble_config as assemble_config
 from ._builder import build_source_frames as build_source_frames
+from ._coverage import check_suite_strategy_coverage
 from ._invariants import (
     FIXED_TS,
     check_chapter_preserve,
@@ -53,6 +54,7 @@ from ._invariants import (
     check_quarantine,
     check_safe_harbor,
     check_sentinels,
+    check_strategy_coverage,
     check_value_changing_not_passthrough,
 )
 from ._spec import FlightManifest, load_manifest
@@ -427,6 +429,11 @@ def evaluate_invariants(
             result_a,
         )
 
+    # 6.10 Per-job strategy coverage: declared names must exist in SCALAR_HANDLERS.
+    # The suite-level union-coverage guard runs once in run_suite (after all jobs).
+    if inv.strategy_coverage:
+        _run("strategy_coverage", check_strategy_coverage, job_name, inv.strategy_coverage)
+
     # 6.11 chapter_preserve
     if inv.chapter_preserve:
         _run(
@@ -583,13 +590,48 @@ def run_suite(jobs_dir: Path | None = None) -> list[JobResult]:
     """Run all discovered jobs and return their results.
 
     Discovers manifest.yaml files under jobs_dir, runs each job via run_job,
-    and aggregates results. The suite passes iff every JobResult.passed is True.
+    and aggregates results.  The suite passes iff every JobResult.passed is
+    True, including the suite-level strategy-coverage guard which runs once
+    before individual jobs by reading the live SCALAR_HANDLERS registry and
+    asserting the union of declared strategies covers it minus the documented
+    allowlist in testflight/_coverage.py.
 
     Args:
         jobs_dir: Root of the jobs directory. Defaults to JOBS_DIR.
 
     Returns:
-        List of JobResult, one per discovered job.
+        List of JobResult, one per discovered job, preceded by a synthetic
+        "[suite-guard]" JobResult carrying the strategy-coverage guard result.
+        The guard result is excluded from per-job timing but counts in the
+        summary totals and appears in the evidence report.
     """
-    manifests = discover_jobs(jobs_dir)
-    return [run_job(m) for m in manifests]
+    manifest_paths = discover_jobs(jobs_dir)
+    all_manifests = [load_job(m) for m in manifest_paths]
+
+    # --- Suite-level strategy coverage guard (plan section 6.10) ---
+    # Runs once across all manifests.  Reads live SCALAR_HANDLERS registry.
+    # A new strategy added without a job or allowlist entry fails here.
+    guard_result: InvariantResult
+    try:
+        coverage_detail = check_suite_strategy_coverage(all_manifests)
+        guard_result = InvariantResult(
+            family="strategy_coverage_guard",
+            passed=True,
+            detail=coverage_detail,
+        )
+    except AssertionError as exc:
+        guard_result = InvariantResult(
+            family="strategy_coverage_guard",
+            passed=False,
+            detail=str(exc)[:800],
+        )
+
+    suite_guard_job = JobResult(
+        job_name="[suite-guard]",
+        passed=guard_result.passed,
+        elapsed_s=0.0,
+        invariant_results=[guard_result],
+    )
+
+    job_results = [run_job(m) for m in manifest_paths]
+    return [suite_guard_job, *job_results]

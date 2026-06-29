@@ -172,6 +172,13 @@ def check_distribution_mask(
     # labels (e.g., salary float -> bucket lower-bound string "80000"). This
     # intentional numeric->categorical dtype change trips kind_drift. Suppress it
     # for columns declared with distribution_class=coarsen + strategy=bucketize.
+    #
+    # redact exemption: the redact strategy replaces ALL values with a fixed
+    # redaction token (default "REDACTED"), converting any freetext source column
+    # to a constant categorical output column. This intentional freetext->constant
+    # kind_drift (e.g., badge_id in Phase 4 coverage-guard columns) is expected and
+    # must not trip the diagnostic. Added Phase 4 when the first redact column
+    # (badge_id) was introduced to the employees test fixture.
     text_redact_cols: set[str] = {cs.column for cs in spec if cs.strategy == "text_redact"}
     if strategy_map:
         text_redact_cols |= {col for col, st in strategy_map.items() if st == "text_redact"}
@@ -182,8 +189,11 @@ def check_distribution_mask(
     }
     if strategy_map:
         bucketize_cols |= {col for col, st in strategy_map.items() if st == "bucketize"}
+    redact_cols: set[str] = {cs.column for cs in spec if cs.strategy == "redact"}
+    if strategy_map:
+        redact_cols |= {col for col, st in strategy_map.items() if st == "redact"}
     # All columns whose kind_drift is known-intentional.
-    exempt_kind_drift_cols: set[str] = text_redact_cols | bucketize_cols
+    exempt_kind_drift_cols: set[str] = text_redact_cols | bucketize_cols | redact_cols
 
     diag: dict[str, Any] = report.get("diagnostic") or {}
     if not diag.get("passed", True):

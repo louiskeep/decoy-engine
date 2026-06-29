@@ -2,41 +2,66 @@
 
 Split from _invariants.py to keep both modules within the 600-line limit.
 Imported and re-exported by _invariants.py for backwards compatibility.
+
+Phase 4 generalization: column-name dispatch replaced by formula-driven
+evaluation.  Row-wise formulas are compiled and evaluated via the engine's
+closed-grammar parser (compile_expr / evaluate from
+decoy_engine.expressions._lark_parser).  Aggregate formulas are detected via
+_AGGREGATE_PATTERN and computed in pure Python.  The manifest formula string
+is the source of truth; no per-column Python helper functions remain.
+
+Supported formula patterns:
+  - Row-wise (engine grammar): arithmetic, comparison, case_when, concat,
+    days_between, column references.  compile_expr raises ValidationError if
+    the expression is outside the closed grammar.
+  - Aggregate (pure Python): sum(<col>), count(<col>), avg(<col>),
+    min(<col>), max(<col>).  Detected by _AGGREGATE_PATTERN; evaluated by
+    the corresponding Python built-in over the output column.
+
+If compile_expr raises ValidationError for a formula that is not an
+aggregate, check_computed_columns raises AssertionError immediately so the
+suite fails with a clear message (the _computed generalization hard stop
+required by the Phase 4 constraint).
 """
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from ._spec import ComputedColumnSpec
 
-
-def _recompute_line_total(row: dict[str, Any]) -> float:
-    """Pure-Python recomputation of line_total from the output row."""
-    la = row["line_amount"]
-    u = row["units"]
-    dt = row["discount_tier"]
-    if dt == "copay":
-        factor = 0.80
-    elif dt == "preferred":
-        factor = 0.90
-    else:
-        factor = 1.0
-    return la * u * factor
+# Matches aggregate-only formulas: sum(col), count(col), avg(col), min(col),
+# max(col).  Case-insensitive.  Full match only (no trailing tokens).
+_AGGREGATE_PATTERN: re.Pattern[str] = re.compile(
+    r"^\s*(sum|count|avg|min|max)\(\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\)\s*$",
+    re.IGNORECASE,
+)
 
 
-def _recompute_order_total(row: dict[str, Any]) -> float:
-    """Pure-Python recomputation of order_total = qty * unit_price."""
-    return float(row["qty"]) * float(row["unit_price"])
+def _eval_aggregate(op: str, values: list[Any]) -> float:
+    """Compute a scalar aggregate over a list of values.
 
+    Args:
+        op: Aggregate operation name (sum, count, avg, min, max).
+        values: Column values (None entries skipped for all ops except count).
 
-def _recompute_tier(order_total: float) -> str:
-    """Pure-Python recomputation of tier from order_total (case_when, 3 branches)."""
-    if order_total >= 1000.0:
-        return "premium"
-    if order_total >= 200.0:
-        return "standard"
-    return "economy"
+    Returns:
+        Scalar result as float.
+    """
+    numeric = [float(v) for v in values if v is not None]
+    op_lower = op.lower()
+    if op_lower == "sum":
+        return sum(numeric)
+    if op_lower == "count":
+        return float(len(numeric))
+    if op_lower == "avg":
+        return sum(numeric) / len(numeric) if numeric else 0.0
+    if op_lower == "min":
+        return min(numeric) if numeric else 0.0
+    if op_lower == "max":
+        return max(numeric) if numeric else 0.0
+    raise ValueError(f"Unknown aggregate op: {op!r}")  # unreachable (regex guards)
 
 
 def check_computed_columns(
@@ -46,15 +71,24 @@ def check_computed_columns(
 ) -> str:
     """Assert derived / case_when / derived_aggregate columns are correct.
 
-    For each ComputedColumnSpec, recomputes the expected value in pure Python
-    from the output's input columns and asserts equality. For case_when columns
-    with branch_count > 0, also asserts that every branch is exercised by at
-    least one output row (branch-coverage guard: an unused branch could hide a
-    bug). For derived_aggregate, asserts the single scalar equals the Python
-    aggregate of the sibling column broadcast to all rows.
+    For each ComputedColumnSpec the function determines the evaluation mode
+    from the formula string:
+      - Aggregate mode: formula matches _AGGREGATE_PATTERN (e.g. "sum(amount)").
+        Computes the Python aggregate and asserts every output row contains that
+        scalar value within 1e-4 tolerance.
+      - Row-wise mode: everything else.  Compiles via compile_expr and evaluates
+        per row.  Asserts equality within 1e-6 for numeric results, exact equality
+        for string/bool results.
 
-    Column-specific recomputation is hardcoded for Job A. Phase 4 will
-    generalise this to a formula-language interpreter.
+    For case_when formulas with branch_count > 0, also asserts that the number
+    of distinct non-null output values equals branch_count (branch-coverage
+    guard: an unused branch could hide a formula bug).
+
+    The formula string is the source of truth (from the manifest's computed_columns
+    section).  No per-column Python helper functions exist; all recomputation is
+    expression-driven.  If compile_expr raises ValidationError (expression outside
+    the closed grammar), check_computed_columns re-raises as AssertionError with
+    a diagnostic so the suite fails clearly.
 
     Args:
         job_name: Job name for error messages.
@@ -65,190 +99,108 @@ def check_computed_columns(
         Short evidence string summarising what was verified.
 
     Raises:
-        AssertionError: If a computed value is wrong or a branch is unexercised.
+        AssertionError: If a computed value is wrong, a branch is unexercised,
+            or the formula is outside the closed grammar (generalization stop).
     """
+    from decoy_engine.errors import ValidationError
+    from decoy_engine.expressions._lark_parser import compile_expr, evaluate
+
     checked: list[str] = []
+
     for cs in spec:
         tbl = result.outputs.get(cs.table)
         assert tbl is not None, (
             f"[{job_name}] computed_columns: table '{cs.table}' not in result.outputs."
         )
         col_dict = tbl.to_pydict()
+        assert cs.column in col_dict, (
+            f"[{job_name}] computed_columns: column '{cs.column}' not in "
+            f"table '{cs.table}'. Available columns: {sorted(col_dict)}."
+        )
+        out_vals = col_dict[cs.column]
 
-        if cs.column == "line_total":
-            # Derived: line_amount * units * discount_factor (case_when, 3 branches).
-            la_vals = col_dict["line_amount"]
-            un_vals = col_dict["units"]
-            dt_vals = col_dict["discount_tier"]
-            lt_vals = col_dict["line_total"]
+        formula = cs.formula.strip()
 
-            errors = []
-            for i in range(len(lt_vals)):
-                expected = _recompute_line_total(
-                    {
-                        "line_amount": la_vals[i],
-                        "units": un_vals[i],
-                        "discount_tier": dt_vals[i],
-                    }
-                )
-                actual = lt_vals[i]
-                if abs(actual - expected) > 1e-6:
-                    errors.append((i, expected, actual, dt_vals[i]))
-                    if len(errors) >= 5:
-                        break
-
-            assert not errors, (
+        # ----------------------------------------------------------------
+        # Aggregate mode: sum/count/avg/min/max over a single source column
+        # ----------------------------------------------------------------
+        agg_match = _AGGREGATE_PATTERN.match(formula)
+        if agg_match:
+            op = agg_match.group(1)
+            src_col = agg_match.group(2)
+            assert src_col in col_dict, (
                 f"[{job_name}] computed_columns: {cs.table}.{cs.column}: "
-                f"{len(errors)} incorrect values (first 5): {errors}."
+                f"aggregate formula references column '{src_col}' which is not in "
+                f"the output table. Available columns: {sorted(col_dict)}."
             )
-
-            # Branch-coverage check.
-            if cs.branch_count > 0:
-                seen_branches = set(dt_vals)
-                required_branches = {"copay", "preferred", "standard"}
-                missing = required_branches - seen_branches
-                assert not missing, (
-                    f"[{job_name}] computed_columns: {cs.table}.{cs.column}: "
-                    f"case_when branch_count={cs.branch_count} but "
-                    f"branches {missing} are not exercised by any output row. "
-                    f"Branches present: {seen_branches}. "
-                    f"A missing branch could hide a formula bug."
-                )
-            checked.append(
-                f"{cs.table}.{cs.column}(rows={len(lt_vals)},branches={cs.branch_count})"
-            )
-
-        elif cs.column == "claim_line_sum":
-            # Derived aggregate: sum(line_amount) across all rows, broadcast.
-            la_vals = col_dict["line_amount"]
-            cls_vals = col_dict["claim_line_sum"]
-
-            expected_sum = sum(la_vals)
-            for i, v in enumerate(cls_vals):
-                assert abs(v - expected_sum) < 1e-4, (
+            src_vals = col_dict[src_col]
+            scalar = _eval_aggregate(op, src_vals)
+            for i, v in enumerate(out_vals):
+                if v is None:
+                    continue
+                assert abs(float(v) - scalar) < 1e-4, (
                     f"[{job_name}] computed_columns: {cs.table}.{cs.column} "
-                    f"row {i}: value={v}, expected scalar sum={expected_sum}."
+                    f"row {i}: value={v!r}, expected {op}({src_col})={scalar:.6f}. "
+                    f"Formula: {formula!r}."
                 )
-            checked.append(f"{cs.table}.{cs.column}(sum={expected_sum:.2f},rows={len(cls_vals)})")
+            checked.append(f"{cs.table}.{cs.column}({op}={scalar:.2f},rows={len(out_vals)})")
+            continue
 
-        elif cs.column == "order_total":
-            # Derived: qty * unit_price (no case_when branches).
-            qty_vals = col_dict["qty"]
-            up_vals = col_dict["unit_price"]
-            ot_vals = col_dict["order_total"]
-
-            ot_errors: list[tuple[int, float, float]] = []
-            for i in range(len(ot_vals)):
-                ot_expected = _recompute_order_total({"qty": qty_vals[i], "unit_price": up_vals[i]})
-                ot_actual = float(ot_vals[i])
-                if abs(ot_actual - ot_expected) > 1e-4:
-                    ot_errors.append((i, ot_expected, ot_actual))
-                    if len(ot_errors) >= 5:
-                        break
-
-            assert not ot_errors, (
-                f"[{job_name}] computed_columns: {cs.table}.{cs.column}: "
-                f"{len(ot_errors)} incorrect values (first 5): {ot_errors}."
-            )
-            checked.append(f"{cs.table}.{cs.column}(rows={len(ot_vals)})")
-
-        elif cs.column == "tier":
-            # Derived: case_when(order_total >= 1000, "premium", >= 200, "standard", "economy").
-            ot_vals = col_dict["order_total"]
-            tier_vals = col_dict["tier"]
-
-            tier_errors: list[tuple[int, str, str, Any]] = []
-            for i in range(len(tier_vals)):
-                tier_expected = _recompute_tier(float(ot_vals[i]))
-                actual = tier_vals[i]
-                if actual != tier_expected:
-                    tier_errors.append((i, tier_expected, actual, ot_vals[i]))
-                    if len(tier_errors) >= 5:
-                        break
-
-            assert not tier_errors, (
-                f"[{job_name}] computed_columns: {cs.table}.{cs.column}: "
-                f"{len(tier_errors)} incorrect values (first 5): {tier_errors}."
-            )
-
-            # Branch-coverage check: all three tiers must appear in output.
-            if cs.branch_count > 0:
-                seen_tiers = set(tier_vals)
-                required_tiers = {"premium", "standard", "economy"}
-                missing = required_tiers - seen_tiers
-                assert not missing, (
-                    f"[{job_name}] computed_columns: {cs.table}.{cs.column}: "
-                    f"case_when branch_count={cs.branch_count} but "
-                    f"tier(s) {missing} are not exercised by any output row. "
-                    f"Tiers present: {seen_tiers}. "
-                    f"A missing branch could hide a formula bug."
-                )
-            checked.append(
-                f"{cs.table}.{cs.column}(rows={len(tier_vals)},branches={cs.branch_count})"
-            )
-
-        elif cs.column == "derived_flag":
-            # Derived case_when: amount > 60 -> "high", > 40 -> "mid", else "low".
-            # Used by Job C synthetic_events (generate table).
-            amount_vals = col_dict["amount"]
-            flag_vals = col_dict["derived_flag"]
-
-            flag_errors: list[tuple[int, str, str, Any]] = []
-            for i in range(len(flag_vals)):
-                a = amount_vals[i]
-                if a is None:
-                    expected_flag = "low"
-                elif float(a) > 60.0:
-                    expected_flag = "high"
-                elif float(a) > 40.0:
-                    expected_flag = "mid"
-                else:
-                    expected_flag = "low"
-                actual_flag = flag_vals[i]
-                if actual_flag != expected_flag:
-                    flag_errors.append((i, expected_flag, actual_flag, a))
-                    if len(flag_errors) >= 5:
-                        break
-
-            assert not flag_errors, (
-                f"[{job_name}] computed_columns: {cs.table}.{cs.column}: "
-                f"{len(flag_errors)} incorrect values (first 5): {flag_errors}."
-            )
-
-            # Branch-coverage check.
-            if cs.branch_count > 0:
-                seen_flags = set(flag_vals)
-                required_flags = {"high", "mid", "low"}
-                missing_flags = required_flags - seen_flags
-                assert not missing_flags, (
-                    f"[{job_name}] computed_columns: {cs.table}.{cs.column}: "
-                    f"case_when branch_count={cs.branch_count} but "
-                    f"branches {missing_flags} are not exercised by any output row."
-                )
-            checked.append(
-                f"{cs.table}.{cs.column}(rows={len(flag_vals)},branches={cs.branch_count})"
-            )
-
-        elif cs.column == "rolling_total":
-            # Derived aggregate: sum(amount) broadcast to all rows.
-            # Used by Job C synthetic_events (generate table).
-            amount_vals = col_dict["amount"]
-            rt_vals = col_dict["rolling_total"]
-
-            expected_rt = sum(float(v) for v in amount_vals if v is not None)
-            for i, v in enumerate(rt_vals):
-                assert abs(float(v) - expected_rt) < 1e-2, (
-                    f"[{job_name}] computed_columns: {cs.table}.{cs.column} "
-                    f"row {i}: value={v}, expected scalar sum={expected_rt:.4f}."
-                )
-            checked.append(f"{cs.table}.{cs.column}(sum={expected_rt:.2f},rows={len(rt_vals)})")
-
-        else:
-            # Unknown column: fail loudly rather than silently skip.
+        # ----------------------------------------------------------------
+        # Row-wise mode: compile and evaluate via the engine expression parser
+        # ----------------------------------------------------------------
+        try:
+            compiled = compile_expr(formula)
+        except ValidationError as exc:
+            # The Phase 4 hard stop: if the formula is outside the closed grammar,
+            # the generalization is incomplete.  Fail the suite with a clear
+            # diagnostic rather than silently falling back to hardcoded logic.
             raise AssertionError(
-                f"[{job_name}] computed_columns: no recomputation registered "
-                f"for {cs.table}.{cs.column}. "
-                f"Add a case to check_computed_columns for this column."
+                f"[{job_name}] computed_columns: {cs.table}.{cs.column}: "
+                f"formula {formula!r} failed to compile with the engine's "
+                f"closed-grammar parser.  This indicates a formula string in "
+                f"the manifest is not in engine expression syntax.  "
+                f"Phase 4 generalization requires all computed_column formulas "
+                f"to be either aggregate (sum/count/avg/min/max) or engine-grammar "
+                f"row-wise expressions.  Parser error: {exc}"
+            ) from exc
+
+        errors: list[tuple[int, Any, Any]] = []
+        n_rows = len(out_vals)
+        for i in range(n_rows):
+            # Build row context from all output columns.
+            row_context: dict[str, Any] = {col: col_dict[col][i] for col in col_dict}
+            expected = evaluate(compiled, row_context)
+            actual = out_vals[i]
+            # Numeric comparison with tolerance; string/bool exact.
+            try:
+                if abs(float(actual) - float(expected)) > 1e-6:
+                    errors.append((i, expected, actual))
+            except (TypeError, ValueError):
+                if actual != expected:
+                    errors.append((i, expected, actual))
+            if len(errors) >= 5:
+                break
+
+        assert not errors, (
+            f"[{job_name}] computed_columns: {cs.table}.{cs.column}: "
+            f"{len(errors)} incorrect row(s) (first 5 shown): {errors}. "
+            f"Formula: {formula!r}."
+        )
+
+        # Branch-coverage guard: distinct output values must equal branch_count.
+        if cs.branch_count > 0:
+            distinct = {v for v in out_vals if v is not None}
+            assert len(distinct) == cs.branch_count, (
+                f"[{job_name}] computed_columns: {cs.table}.{cs.column}: "
+                f"branch_count={cs.branch_count} but {len(distinct)} distinct "
+                f"output value(s) found: {sorted(str(v) for v in distinct)}. "
+                f"Expected exactly {cs.branch_count} distinct values (one per "
+                f"case_when branch).  An unexercised branch could hide a formula "
+                f"bug.  Formula: {formula!r}."
             )
+            checked.append(f"{cs.table}.{cs.column}(rows={n_rows},branches={cs.branch_count})")
+        else:
+            checked.append(f"{cs.table}.{cs.column}(rows={n_rows})")
 
     return "checked=" + ",".join(checked)

@@ -46,6 +46,25 @@ def _parse_args() -> argparse.Namespace:
         metavar="NAME",
         help="Run a single job by name (default: all discovered jobs).",
     )
+    parser.add_argument(
+        "--dump-fixtures",
+        action="store_true",
+        help=(
+            "[DEFERRED] Dump built fixture frames to Parquet in testflight/_artifacts/fixtures/. "
+            "Deferred: requires a dry-run path that bypasses pipeline execution; "
+            "the fixture builders are already callable directly via fixture.build_X(seed=N)."
+        ),
+    )
+    parser.add_argument(
+        "--mutate",
+        action="store_true",
+        help=(
+            "[DEFERRED] Run anti-vacuity mutation controls from test_testflight_teeth.py "
+            "as a standalone script step. Deferred: the teeth are already executed by "
+            "'pytest testflight -m testflight' and are the canonical gate; a separate "
+            "mutation runner would duplicate that gate without adding coverage."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -53,8 +72,21 @@ def main() -> int:
     """Run the test-flight suite and return an exit code."""
     args = _parse_args()
 
+    if args.dump_fixtures:
+        print(
+            "NOTE: --dump-fixtures is deferred. "
+            "Fixture frames can be built directly via fixture.build_X(seed=N). "
+            "Continuing with normal suite run."
+        )
+    if args.mutate:
+        print(
+            "NOTE: --mutate is deferred. "
+            "Anti-vacuity teeth run under 'pytest testflight -m testflight'. "
+            "Continuing with normal suite run."
+        )
+
     if args.job:
-        # Single job mode.
+        # Single job mode: no suite-level guard (guard needs all manifests).
         manifests = discover_jobs()
         matching = [m for m in manifests if m.parent.name == args.job]
         if not matching:
@@ -64,7 +96,7 @@ def main() -> int:
             return 1
         results = [run_job(matching[0])]
     else:
-        # Full suite mode.
+        # Full suite mode (includes suite-level strategy-coverage guard).
         results = run_suite()
 
     if not results:
@@ -74,8 +106,8 @@ def main() -> int:
     report = render_report(results)
     print(report)
 
-    # Write report to _artifacts/report.md so CI can archive it.
-    artifacts_dir = _REPO_ROOT / "_artifacts"
+    # Write report to testflight/_artifacts/report.md so CI can archive it.
+    artifacts_dir = _REPO_ROOT / "testflight" / "_artifacts"
     artifacts_dir.mkdir(exist_ok=True)
     from testflight._report import write_report
 

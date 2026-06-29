@@ -513,6 +513,8 @@ invariants:
       value: "sentinel.leak.test@b-retail-decoy-testflight.invalid"
 
   # 6.9 Computed-column correctness.
+  # formula strings are in the engine's closed-grammar expression syntax so the
+  # harness can compile and evaluate them directly (Phase 4 generalization).
   computed_columns:
     - table: orders
       column: order_total
@@ -521,8 +523,8 @@ invariants:
     - table: orders
       column: tier
       formula: >-
-        case_when(order_total >= 1000.0, "premium";
-        order_total >= 200.0, "standard"; else "economy")
+        case_when(order_total >= 1000.0, "premium",
+        order_total >= 200.0, "standard", "economy")
       branch_count: 3
 
   # Phase 3c: relabel-invariant Cramers V checks for FPE-masked correlated pairs.
