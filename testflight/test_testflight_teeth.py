@@ -3123,8 +3123,10 @@ class TestValueChangingMaskPassthroughTooth:
     only because no masking occurred).
 
     Controls:
-    A. No-op mask (BUG): alphanum charset on uppercase data -> output == input
-       -> check_value_changing_not_passthrough RAISES.
+    A. No-op mask (BUG): a value-changing mask that left output == input ->
+       check_value_changing_not_passthrough RAISES. Constructed directly: fix #42
+       closed the original FPE alphanum-on-uppercase passthrough route at the
+       engine level (the covering hash now transforms all-out-of-charset values).
     B. Real mask (FIX): ALPHANUM charset on uppercase data -> values permuted
        -> check_value_changing_not_passthrough PASSES.
     C. Non-value-changing strategy -> check is skipped (no assertion).
@@ -3155,24 +3157,26 @@ class TestValueChangingMaskPassthroughTooth:
         return [fpe_encrypt_value(v, key, charset, tweak) for v in values]
 
     def test_alphanum_charset_on_uppercase_raises(self) -> None:
-        """FPE with alphanum charset on uppercase data must raise the passthrough tooth.
+        """A value-changing mask that no-op'd (output == input) must raise the tooth.
 
-        RED (BLOCKER-1 bug): charset:alphanum is lowercase-only. Uppercase chars
-        (E, L, C, F, D, H, M, S, P) are all outside the alphanum charset.
-        FPE finds no in-charset characters and returns each value verbatim.
-        output value-set == source value-set -> check_value_changing_not_passthrough
-        RAISES.
-
-        This is the exact bug that let BLOCKER-1 ship green: 26/26 checks passed
-        while the fpe columns were actually verbatim passthroughs.
+        RED control. Originally this no-op was produced by FPE charset:alphanum on
+        uppercase data (a verbatim passthrough); fix #42's covering hash now
+        transforms all-out-of-charset values, so the no-op is constructed directly
+        below. The tooth (check_value_changing_not_passthrough) must still RAISE
+        when a value-changing strategy left every value unchanged -- the exact bug
+        that let BLOCKER-1 ship green (26/26 checks passed while fpe columns were
+        verbatim passthroughs).
         """
         cats = self._SRC_CATS * 20  # 100 rows, 5 unique values
-        out_cats = self._apply_fpe(cats, "alphanum", b"cat_code")  # all passthrough
+        # Fix #42 closed the FPE alphanum-on-uppercase passthrough route at the
+        # engine level (the covering hash now transforms all-out-of-charset
+        # values). Construct the no-op directly: a value-changing mask that left
+        # every value unchanged is exactly the bug this tooth must still detect.
+        out_cats = list(cats)
 
-        # Prove the bug: every output value equals its source value.
+        # Confirm the constructed scenario is a complete passthrough.
         assert all(o == s for o, s in zip(out_cats, cats, strict=True)), (
-            "Expected alphanum FPE to be a no-op on uppercase data (passthrough), "
-            "but at least one value changed. The test assumption is wrong."
+            "Constructed passthrough must leave every value unchanged."
         )
 
         source_df = pd.DataFrame({"cat_code": cats})
@@ -3220,18 +3224,18 @@ class TestValueChangingMaskPassthroughTooth:
         )
 
     def test_risk_flag_alphanum_charset_raises(self) -> None:
-        """FPE with alphanum charset on risk_flag (HI/MD/LO) must raise.
+        """A no-op'd value-changing mask on risk_flag (HI/MD/LO) must raise the tooth.
 
-        Mirrors test_alphanum_charset_on_uppercase_raises for the second column
-        of the BLOCKER-1 pair. Proves both columns in the masked_correlations
-        spec had the same no-op bug.
+        Mirrors test_alphanum_charset_on_uppercase_raises for the second column of
+        the BLOCKER-1 pair (constructed no-op; fix #42 closed the FPE route).
         """
         risks = self._SRC_RISKS * 33 + self._SRC_RISKS[:1]  # ~100 rows
-        out_risks = self._apply_fpe(risks, "alphanum", b"risk_flag")
+        # Fix #42: the FPE alphanum-on-uppercase passthrough route is closed; the
+        # tooth is verified against a directly-constructed no-op (see cat_code test).
+        out_risks = list(risks)
 
         assert all(o == s for o, s in zip(out_risks, risks, strict=True)), (
-            "Expected alphanum FPE to be a no-op on HI/MD/LO (uppercase), "
-            "but at least one value changed."
+            "Constructed passthrough must leave every value unchanged."
         )
 
         source_df = pd.DataFrame({"risk_flag": risks})

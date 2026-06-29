@@ -165,7 +165,7 @@ def _single_char_shift(key: bytes, tweak: bytes) -> int:
 
 def _covering_hash_to_charset(val: str, key: bytes, charset: str, tweak: bytes) -> str:
     """In-charset cover for an all-out-of-charset value (fix #42).
-    Per-position HMAC-SHA256; NIST SP 800-38G Sec. 3 domain separation.
+    Per-position keyed PRF: HMAC-SHA256 (RFC 2104), HKDF-style domain sep (RFC 5869).
     Deterministic under (key, charset, tweak, val); output never equals val."""
     if not val:
         return val

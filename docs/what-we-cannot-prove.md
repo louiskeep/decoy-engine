@@ -144,18 +144,27 @@ manifest, a green check does prove that the categorical association was preserve
 through the value-changing mask. The TVD similarity metric is explicitly NOT
 used to judge these pairs (it would falsely report 0.0 on a correct FPE run).
 
-## FPE orphan-remap with preserve_separators=False still passes through verbatim
+## FPE orphan-remap passes out-of-charset characters through (partial keys, and =False)
 
-When `orphan_policy:remap` re-applies FPE to an orphan FK key, the
-`preserve_separators=True` path (the default) is now fully safe: keys with no
-in-charset characters are routed through a deterministic covering hash
-(`_covering_hash_to_charset` in `transforms/fpe.py`, fix #42) that produces an
-in-charset string. The orphan key is never emitted verbatim under `=True`.
+When `orphan_policy:remap` re-applies FPE to an orphan FK key, the covering hash
+(`_covering_hash_to_charset` in `transforms/fpe.py`, fix #42) fires ONLY for keys
+with ZERO in-charset characters: such an all-out-of-charset key is routed to a
+deterministic in-charset string and is never emitted verbatim under the default
+`preserve_separators=True`.
 
-Remaining gap: with `preserve_separators: false` explicitly set, FPE returns the
-value verbatim when ANY character is outside the charset. This is the existing
-"out-of-charset passthrough" behavior for non-default FPE configs. Mitigations:
-- Use the default `preserve_separators: true` (the covering hash applies).
+It does NOT cover a key with a MIX of in- and out-of-charset characters. Under
+`=True`, the in-charset characters are permuted in place and every out-of-charset
+character is passed through verbatim - the standard product-wide
+`preserve_separators` behavior, where out-of-charset characters are treated as
+separators by the user's charset choice. So a partial-out-of-charset orphan key
+(e.g. `STATUS-1` under a `digits` charset) still leaks its out-of-charset
+characters (`STATUS-`) in the clear. And with `preserve_separators: false`
+explicitly set, FPE returns the whole value verbatim when ANY character is outside
+the charset.
+
+Mitigations for the partial and `=False` cases:
+- Widen the charset to cover the orphan key's alphabet (e.g. `ALPHANUM` for
+  uppercase identifiers) so every character is encrypted.
 - Use `orphan_policy:fail` to reject orphan FK values entirely.
 - Use `orphan_policy:preserve` if the source key is already non-sensitive.
 

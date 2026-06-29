@@ -75,7 +75,7 @@ ORPHAN_SOURCE_KEY = "EMP-ORPHAN"
 # output fails loudly with a re-baseline instruction.
 # Baseline: run compute_fingerprint(build_employees(seed=44)) and update here.
 # Updated (fix #42): ORPHAN_SOURCE_KEY changed from "emp99999" to "EMP-ORPHAN".
-_EMPLOYEES_FINGERPRINT = "4bcaacf02fdd6f12448775294d36fb6e5a6b98930c58c50ae89fdd48f1ee0996"
+_EMPLOYEES_FINGERPRINT = "14b9a8820ae2537587be4c01fce3ffd8b7d33422b71ded12213f21e8ce128113"
 
 # The sentinel phone number planted in the notes column of row 0.
 # text_mask with phone_number detector must redact it; sentinel scan checks absence.
@@ -132,7 +132,7 @@ def build_employees(seed: int = 44, **_kwargs: Any) -> pd.DataFrame:
 
     # Build manager_ids:
     # - Rows 0..ROOT_COUNT-1: None (root nodes).
-    # - Row ROOT_COUNT: ORPHAN_SOURCE_KEY (in-charset orphan; not in emp_ids set).
+    # - Row ROOT_COUNT: ORPHAN_SOURCE_KEY (out-of-charset orphan; not in emp_ids set).
     # - Rows ROOT_COUNT+1..: reference a root node (cycle-free depth-2 tree).
     root_ids = emp_ids[:ROOT_COUNT]
     manager_ids: list[Any] = [None] * ROOT_COUNT + [ORPHAN_SOURCE_KEY]
