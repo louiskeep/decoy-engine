@@ -215,6 +215,7 @@ Before you change something, find it in this table.
 | You want to change… | Frozen? | What to do |
 |---|---|---|
 | Add a new strategy / detector / report metric | No (additive) | Ship it. Register through the public path. New optional config only. |
+| Add `fpe_join_group` to an fpe column | No (additive opt-in) | Permitted under the additive-only rule. A manifest that USES a join group freezes its tweak resolution: if the group name changes or a member is removed from the group, the ciphertext changes and unmask against the old config will not reverse the new output. Treat a group name as part of the masking key for that column. |
 | Add an optional field to an existing artifact | No (additive) | Add it; ensure old readers ignore it; no version bump. |
 | Change the **shape** of an existing `name/vN` artifact | **Yes** | Mint `name/v(N+1)`, keep the `vN` reader. PO review. |
 | Change hashing / FPE / Faker seeding / `derive` | **Yes** | Major-version project + migration story. Not a feature PR. |

@@ -81,6 +81,9 @@ EXPECTED_S2_CHECKS_PASSED = (
     # Row 20 (SP-10c / P5.S.group_key, 2026-06-29): group_key group_by column
     # ref validation, appended at the tail.
     "group_key_refs",
+    # Row 21 (SP-46, 2026-06-29): fpe_join_group structural validation (singleton,
+    # non-fpe member, config mismatch, namespace mismatch).
+    "fpe_join_groups",
 )
 
 
@@ -94,16 +97,17 @@ class TestChecksPassedShape:
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
         assert plan.plan_compile.checks_passed == EXPECTED_S2_CHECKS_PASSED
 
-    def test_checks_passed_contains_exactly_twenty_entries(
+    def test_checks_passed_contains_exactly_twenty_one_entries(
         self, simple_config: dict, simple_profile: Profile
     ) -> None:
         # 9 through S8, row 10 (B1/S13), row 11 (audit H5), rows 12-13
         # (capability gaps WS3 + WS2), row 14 (vault follow-up),
         # row 15 (SP-04 fpe_checksum_scheme), row 16 (SP-10 derived_column_refs),
         # row 17 (SP-10b derived_aggregate_refs), rows 18-20 (SP-10c
-        # grouped_series_refs, windowed_date_refs, group_key_refs).
+        # grouped_series_refs, windowed_date_refs, group_key_refs),
+        # row 21 (SP-46 fpe_join_groups).
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
-        assert len(plan.plan_compile.checks_passed) == 20
+        assert len(plan.plan_compile.checks_passed) == 21
 
     def test_orphan_fk_policy_completeness_at_documented_position(
         self, simple_config: dict, simple_profile: Profile
@@ -112,24 +116,26 @@ class TestChecksPassedShape:
         post-S5; row 8 (composite_wiring_consistent) post-S8; row 9
         (deterministic_namespace_completeness) post-S6; row 10
         (null_bearing_int_unsupported) at the tail post-S13 (B1). SP-10c
-        (2026-06-29) adds rows 18-20 at the tail."""
+        (2026-06-29) adds rows 18-20 at the tail. SP-46 (2026-06-29) adds
+        row 21 (fpe_join_groups) at the tail."""
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
-        assert plan.plan_compile.checks_passed[-16] == "composite_columns_length_match"
-        assert plan.plan_compile.checks_passed[-15] == "orphan_fk_policy_completeness"
-        assert plan.plan_compile.checks_passed[-14] == "pool_capacity_pre_flight"
-        assert plan.plan_compile.checks_passed[-13] == "composite_wiring_consistent"
-        assert plan.plan_compile.checks_passed[-12] == "deterministic_namespace_completeness"
-        assert plan.plan_compile.checks_passed[-11] == "null_bearing_int_unsupported"
-        assert plan.plan_compile.checks_passed[-10] == "non_poolable_provider_with_pool_backend"
-        assert plan.plan_compile.checks_passed[-9] == "statistical_columns"
-        assert plan.plan_compile.checks_passed[-8] == "text_redact_ner_available"
-        assert plan.plan_compile.checks_passed[-7] == "vault_columns"
-        assert plan.plan_compile.checks_passed[-6] == "fpe_checksum_scheme"
-        assert plan.plan_compile.checks_passed[-5] == "derived_column_refs"
-        assert plan.plan_compile.checks_passed[-4] == "derived_aggregate_refs"
-        assert plan.plan_compile.checks_passed[-3] == "grouped_series_refs"
-        assert plan.plan_compile.checks_passed[-2] == "windowed_date_refs"
-        assert plan.plan_compile.checks_passed[-1] == "group_key_refs"
+        assert plan.plan_compile.checks_passed[-17] == "composite_columns_length_match"
+        assert plan.plan_compile.checks_passed[-16] == "orphan_fk_policy_completeness"
+        assert plan.plan_compile.checks_passed[-15] == "pool_capacity_pre_flight"
+        assert plan.plan_compile.checks_passed[-14] == "composite_wiring_consistent"
+        assert plan.plan_compile.checks_passed[-13] == "deterministic_namespace_completeness"
+        assert plan.plan_compile.checks_passed[-12] == "null_bearing_int_unsupported"
+        assert plan.plan_compile.checks_passed[-11] == "non_poolable_provider_with_pool_backend"
+        assert plan.plan_compile.checks_passed[-10] == "statistical_columns"
+        assert plan.plan_compile.checks_passed[-9] == "text_redact_ner_available"
+        assert plan.plan_compile.checks_passed[-8] == "vault_columns"
+        assert plan.plan_compile.checks_passed[-7] == "fpe_checksum_scheme"
+        assert plan.plan_compile.checks_passed[-6] == "derived_column_refs"
+        assert plan.plan_compile.checks_passed[-5] == "derived_aggregate_refs"
+        assert plan.plan_compile.checks_passed[-4] == "grouped_series_refs"
+        assert plan.plan_compile.checks_passed[-3] == "windowed_date_refs"
+        assert plan.plan_compile.checks_passed[-2] == "group_key_refs"
+        assert plan.plan_compile.checks_passed[-1] == "fpe_join_groups"
 
     def test_s1_check_order_preserved(self, simple_config: dict, simple_profile: Profile) -> None:
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")

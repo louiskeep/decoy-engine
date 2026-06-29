@@ -28,7 +28,7 @@ class TestCompilePlanHappyPath:
         assert plan.seed_protocol_version == 6
         assert plan.engine_version == "0.1.0"
 
-    def test_compile_records_twenty_checks_passed(
+    def test_compile_records_twenty_one_checks_passed(
         self, simple_config: dict, simple_profile: Profile
     ) -> None:
         """S2 added orphan_fk_policy_completeness at row 6; S5 added
@@ -43,7 +43,8 @@ class TestCompilePlanHappyPath:
         derived_column_refs at row 16; SP-10b (2026-06-28) added
         derived_aggregate_refs at row 17; SP-10c (2026-06-29) added
         grouped_series_refs at row 18, windowed_date_refs at row 19, and
-        group_key_refs at row 20."""
+        group_key_refs at row 20; SP-46 (2026-06-29) added fpe_join_groups
+        at row 21."""
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
         assert set(plan.plan_compile.checks_passed) == {
             "namespace_ambiguity",
@@ -66,6 +67,7 @@ class TestCompilePlanHappyPath:
             "grouped_series_refs",
             "windowed_date_refs",
             "group_key_refs",
+            "fpe_join_groups",
         }
 
     def test_compile_no_warnings_no_errors_no_skipped(

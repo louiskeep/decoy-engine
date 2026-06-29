@@ -502,7 +502,16 @@ class FPEStrategy(BaseMaskingStrategy):
             )
             validate_luhn = False
 
-        tweak = column_name.encode("utf-8", errors="replace")
+        # SP-46 (decision C): mirror the V2 join-group tweak resolution so the
+        # two paths stay in sync and a V1 caller using fpe_join_group gets the
+        # same tweak the V2 path would use. V1 rule dicts are flat; fpe_join_group
+        # may appear directly in the rule or nested under provider_config.
+        _v1_join_group: str | None = (
+            rule.get("fpe_join_group")
+            or (rule.get("provider_config") or {}).get("fpe_join_group")
+            or None
+        )
+        tweak = (_v1_join_group or column_name).encode("utf-8", errors="replace")
 
         if column_key is not None:
             key = column_key

@@ -62,7 +62,9 @@ from decoy_engine.plan._checks import (
 # module under its allowlisted ceiling. See test_module_size.py ALLOWLIST.
 from decoy_engine.plan._checks_derived_aggregate import check_derived_aggregate_refs
 
-# SP-10c: per-strategy check modules for grouped_series, windowed_date, group_key.
+# SP-10c + SP-46: per-strategy check modules (grouped_series, windowed_date,
+# group_key) and the fpe_join_group structural validation (SP-46).
+from decoy_engine.plan._checks_fpe_join import check_fpe_join_groups
 from decoy_engine.plan._checks_group_key import check_group_key_refs
 from decoy_engine.plan._checks_grouped_series import check_grouped_series_refs
 from decoy_engine.plan._checks_windowed_date import check_windowed_date_refs
@@ -179,6 +181,10 @@ def compile_plan(
     # Row 20 (SP-10c / P5.P.group_key, 2026-06-29): reject group_key columns
     # whose group_by column is missing. Config-only.
     check_group_key_refs(config)
+    # Row 21 (SP-46, 2026-06-29): validate fpe_join_group declarations and emit
+    # compile-time manifest warnings for every active group. Config-only; runs
+    # in both branches and in run_config_only_checks.
+    fpe_join_warnings = check_fpe_join_groups(config)
     check_composite_columns_length_match(profile)
     # MG-3 / M3 (2026-05-31): reject when + coherent_with combo early,
     # before composite-wiring checks. A column carrying both fields is
@@ -241,6 +247,8 @@ def compile_plan(
             "windowed_date_refs",
             # Row 20 (SP-10c): group_key group_by column ref.
             "group_key_refs",
+            # Row 21 (SP-46): fpe_join_group structural validation.
+            "fpe_join_groups",
         )
         checks_skipped: tuple[str, ...] = (
             "basic_uniqueness_pre_flight",
@@ -291,6 +299,8 @@ def compile_plan(
             "windowed_date_refs",
             # Row 20 (SP-10c): group_key group_by column ref.
             "group_key_refs",
+            # Row 21 (SP-46): fpe_join_group structural validation.
+            "fpe_join_groups",
         )
         checks_skipped = ()
 
@@ -320,7 +330,7 @@ def compile_plan(
         plan_compile=PlanCompileResult(
             checks_passed=checks_passed,
             checks_skipped=checks_skipped,
-            warnings=stamp_warnings + capacity_warnings,
+            warnings=stamp_warnings + capacity_warnings + fpe_join_warnings,
         ),
     )
 
@@ -386,6 +396,9 @@ def run_config_only_checks(config: dict[str, Any]) -> tuple[str, ...]:
     # Row 20 (SP-10c / P5.P.group_key): reject group_key columns with a missing
     # group_by column ref. Config-only.
     check_group_key_refs(config)
+    # Row 21 (SP-46 / fpe_join_group): validate fpe_join_group declarations.
+    # Warnings are discarded here (config-only callers do not build a Plan).
+    check_fpe_join_groups(config)
     return (
         "unknown_provider",
         "when_with_coherent_with",
@@ -400,6 +413,8 @@ def run_config_only_checks(config: dict[str, Any]) -> tuple[str, ...]:
         "grouped_series_refs",
         "windowed_date_refs",
         "group_key_refs",
+        # Row 21 (SP-46): fpe_join_group structural validation.
+        "fpe_join_groups",
     )
 
 
