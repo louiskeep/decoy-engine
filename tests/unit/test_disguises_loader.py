@@ -270,16 +270,19 @@ class TestDisguiseVersioning:
                 f"{d.id} version {d.version!r} is not a YYYY-MM-DD date"
             )
 
-    def test_all_eight_bundles_still_load(self):
+    def test_all_ten_bundles_still_load(self):
         # The loader skips schema-invalid files silently; a required
         # field added without updating every YAML would shrink this set.
+        # SP-12 (2026-06-29): added 'pc' (P&C insurance) and 'cpni' (telecom).
         assert {d.id for d in load_disguises()} == {
             "ccpa",
+            "cpni",
             "default",
             "ferpa",
             "gdpr",
             "glba",
             "hipaa",
+            "pc",
             "pci",
             "sox",
         }

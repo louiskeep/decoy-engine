@@ -6,7 +6,7 @@
 # is a re-organization of detector IDs; v1.1 is a content addition
 # under the same schema). The loader keys cache slots by this string.
 
-library_version: "1.0.0"
+library_version: "1.0.1"
 schema_version: "name-hints/v1"
 
 # Files load in this order. Order matters only when two files declare

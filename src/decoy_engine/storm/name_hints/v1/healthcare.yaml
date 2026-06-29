@@ -66,7 +66,12 @@ detectors:
       - member_no
 
   - detector_id: device_id
-    description: Medical / industrial device identifier column.
+    description: >-
+      Medical / industrial device identifier column, and telecom device
+      identifiers (IMEI, IMSI, ICCID, handset). Telecom identifiers route
+      here so they receive fpe-digits treatment; callers that need IMEI
+      Luhn-validity must add checksum: luhn manually (device_id also covers
+      IMSI and ICCID, which have no Luhn scheme).
     patterns:
       - device_id
       - device_serial
@@ -77,6 +82,15 @@ detectors:
       - device_code
       - asset_id
       - udi
+      # Telecom device identifiers -- added SP-12 remediation so that
+      # IMEI/IMSI/ICCID column names genuinely auto-route to device_id
+      # (fpe digits) rather than passing through unmasked.
+      - imei
+      - imei_number
+      - device_imei
+      - imsi
+      - iccid
+      - handset_id
 
   - detector_id: biometric_id
     description: >-
