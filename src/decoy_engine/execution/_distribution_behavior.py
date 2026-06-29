@@ -116,6 +116,24 @@ _STATIC_BEHAVIOR: dict[str, DistributionBehavior] = {
     # class as bucketize (numeric coarsening) and geo_generalize (geographic
     # coarsening).
     "bucket_perturb": "coarsens",
+    # grouped_series (SP-10c): per-group series (cumcount or monotone_walk).
+    # The output is a position or accumulated walk within each group; the
+    # source column's value distribution is not preserved. Destroys frequency:
+    # same class as faker (the output is generated from structure, not source
+    # distribution).
+    "grouped_series": "destroys_frequency",
+    # windowed_date (SP-10c): date within a bounded window relative to an anchor
+    # column. The distribution is shifted and coarsened (the anchor date
+    # determines the output range, but the exact date is randomly sampled
+    # within the window). Varies_shape: similar to date_shift (per-row offset
+    # within a bound).
+    "windowed_date": "varies_shape",
+    # group_key (SP-10c): HKDF-SHA256 + HMAC-SHA256 keyed per-group identifier.
+    # All rows sharing a group_by value collapse to the same key; all distinct
+    # groups get distinct keys (collision probability negligible under 32-byte
+    # HMAC output). Preserves_cardinality_only: distinct count of the group_by
+    # column is preserved in the output; individual values are replaced.
+    "group_key": "preserves_cardinality_only",
 }
 
 

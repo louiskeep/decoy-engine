@@ -131,6 +131,22 @@ TECHNIQUE_CLASS_BY_STRATEGY: dict[str, TechniqueClass] = {
     # (which maps numeric values to a band label; bucket_perturb maps dates to a
     # position in a time band).
     "bucket_perturb": "anonymisation",
+    # grouped_series (SP-10c, 2026-06-29): per-group series (cumcount or
+    # monotone_walk). The output is derived from the group_by + order_by
+    # column positions, not from the source cell value. Synthetic: the
+    # output is generated from the group structure, not from the individual
+    # source row value.
+    "grouped_series": "synthetic",
+    # windowed_date (SP-10c, 2026-06-29): date within a bounded window relative
+    # to an anchor column. The anchor is partially visible in the output (the
+    # date is close to it by design). Pseudonymisation: conservative default;
+    # an operator narrowing the window to 0 days would see passthrough semantics.
+    "windowed_date": "pseudonymisation",
+    # group_key (SP-10c, 2026-06-29): HKDF-SHA256 + HMAC-SHA256 keyed
+    # per-group identifier. The original group_by value is not recoverable from
+    # the output without the job seed. Pseudonymisation per Art 4(5) GDPR: the
+    # key held separately could reverse the mapping.
+    "group_key": "pseudonymisation",
     # `nested` (MG-3 M2, 2026-05-31) is intentionally absent. It is a
     # wrapper -- its GDPR posture is the child strategy's posture, not
     # its own. Until the FE surfaces the child-strategy badge for

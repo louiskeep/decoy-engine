@@ -61,6 +61,11 @@ from decoy_engine.plan._checks import (
 # SP-10b: derived_aggregate check extracted from _checks.py to keep that
 # module under its allowlisted ceiling. See test_module_size.py ALLOWLIST.
 from decoy_engine.plan._checks_derived_aggregate import check_derived_aggregate_refs
+
+# SP-10c: per-strategy check modules for grouped_series, windowed_date, group_key.
+from decoy_engine.plan._checks_group_key import check_group_key_refs
+from decoy_engine.plan._checks_grouped_series import check_grouped_series_refs
+from decoy_engine.plan._checks_windowed_date import check_windowed_date_refs
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._graph import _build_namespaces, _build_relationships
 
@@ -165,6 +170,15 @@ def compile_plan(
     # columns whose source column is missing or op is invalid. Config-only; both
     # branches + run_config_only_checks.
     check_derived_aggregate_refs(config)
+    # Row 18 (SP-10c / P5.S.grouped_series.1, 2026-06-29): reject grouped_series
+    # columns whose group_by or order_by column is missing. Config-only.
+    check_grouped_series_refs(config)
+    # Row 19 (SP-10c / P5.S.windowed_date, 2026-06-29): reject windowed_date
+    # columns whose anchor column is missing. Config-only.
+    check_windowed_date_refs(config)
+    # Row 20 (SP-10c / P5.P.group_key, 2026-06-29): reject group_key columns
+    # whose group_by column is missing. Config-only.
+    check_group_key_refs(config)
     check_composite_columns_length_match(profile)
     # MG-3 / M3 (2026-05-31): reject when + coherent_with combo early,
     # before composite-wiring checks. A column carrying both fields is
@@ -221,6 +235,12 @@ def compile_plan(
             "derived_column_refs",
             # Row 17 (SP-10b): derived_aggregate source-column + op check.
             "derived_aggregate_refs",
+            # Row 18 (SP-10c): grouped_series group_by + order_by column refs.
+            "grouped_series_refs",
+            # Row 19 (SP-10c): windowed_date anchor column ref.
+            "windowed_date_refs",
+            # Row 20 (SP-10c): group_key group_by column ref.
+            "group_key_refs",
         )
         checks_skipped: tuple[str, ...] = (
             "basic_uniqueness_pre_flight",
@@ -265,6 +285,12 @@ def compile_plan(
             "derived_column_refs",
             # Row 17 (SP-10b): derived_aggregate source-column + op check.
             "derived_aggregate_refs",
+            # Row 18 (SP-10c): grouped_series group_by + order_by column refs.
+            "grouped_series_refs",
+            # Row 19 (SP-10c): windowed_date anchor column ref.
+            "windowed_date_refs",
+            # Row 20 (SP-10c): group_key group_by column ref.
+            "group_key_refs",
         )
         checks_skipped = ()
 
@@ -351,6 +377,15 @@ def run_config_only_checks(config: dict[str, Any]) -> tuple[str, ...]:
     # Row 17 (SP-10b / P5.S.derived_aggregate): reject derived_aggregate source
     # column refs that are missing or have an invalid op. Config-only.
     check_derived_aggregate_refs(config)
+    # Row 18 (SP-10c / P5.S.grouped_series.1): reject grouped_series columns with
+    # missing group_by or order_by column refs. Config-only.
+    check_grouped_series_refs(config)
+    # Row 19 (SP-10c / P5.S.windowed_date): reject windowed_date columns with a
+    # missing anchor column ref. Config-only.
+    check_windowed_date_refs(config)
+    # Row 20 (SP-10c / P5.P.group_key): reject group_key columns with a missing
+    # group_by column ref. Config-only.
+    check_group_key_refs(config)
     return (
         "unknown_provider",
         "when_with_coherent_with",
@@ -362,6 +397,9 @@ def run_config_only_checks(config: dict[str, Any]) -> tuple[str, ...]:
         "fpe_checksum_scheme",
         "derived_column_refs",
         "derived_aggregate_refs",
+        "grouped_series_refs",
+        "windowed_date_refs",
+        "group_key_refs",
     )
 
 

@@ -135,6 +135,9 @@ class GenerateColumnConfig(BaseModel):
         "statistical",
         "derived",
         "derived_aggregate",
+        "grouped_series",
+        "windowed_date",
+        "group_key",
     ]
 
     @model_validator(mode="after")
@@ -183,6 +186,16 @@ class GenerateColumnConfig(BaseModel):
             raise ValueError(f"statistical column {self.name!r} requires `snapshot_file`")
         if self.type == "derived" and not extras.get("expression"):
             raise ValueError(f"derived column {self.name!r} requires `expression`")
+        if self.type == "grouped_series" and not extras.get("group_by"):
+            raise ValueError(f"grouped_series column {self.name!r} requires `group_by`")
+        if self.type == "grouped_series" and not extras.get("order_by"):
+            raise ValueError(f"grouped_series column {self.name!r} requires `order_by`")
+        if self.type == "windowed_date" and not extras.get("anchor"):
+            raise ValueError(f"windowed_date column {self.name!r} requires `anchor`")
+        if self.type == "windowed_date" and extras.get("max_days") is None:
+            raise ValueError(f"windowed_date column {self.name!r} requires `max_days`")
+        if self.type == "group_key" and not extras.get("group_by"):
+            raise ValueError(f"group_key column {self.name!r} requires `group_by`")
         return self
 
 
