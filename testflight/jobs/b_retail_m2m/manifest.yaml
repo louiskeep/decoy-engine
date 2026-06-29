@@ -20,27 +20,40 @@
 #   Mutation control (TestM2MFKIntegrityTeeth) breaks one parent's FK resolution
 #   and asserts the invariant raises. Proves both checks are active.
 #
-# PASSTHROUGH-COLUMN CORRELATION PRESERVATION (Phase 2 carry-forward: PARTIAL):
+# PASSTHROUGH-COLUMN CORRELATION PRESERVATION (value-stable columns only):
 #   qty_band and order_total_band are PASSTHROUGH columns correlated by fixture
 #   construction: products have category-driven unit_price ranges (electronics
 #   high, food low). order_total = qty * unit_price correlates with qty_band.
-#   LIMITATION (the carry-forward is NOT closed): this verifies correlation
-#   preservation for VALUE-STABLE (passthrough) columns only. Correlation THROUGH
-#   a value-changing mask (fpe/code_set/joint_mask) is NOT measurable by the
-#   engine crosstab-TVD metric - it relabels cell keys, so source and output
-#   crosstabs are disjoint and similarity is 0.0 even when the structure is
-#   perfectly preserved. See docs/what-we-cannot-prove.md. Genuinely closing the
-#   carry-forward needs a harness-side relabel-invariant statistic (Cramers V /
-#   mutual information), which is owed work, not delivered here.
 #   Both are passthrough -> source=output -> joint similarity = 1.0 in faithful run.
 #   Mutation control (TestM2MCorrelationTeeth) shuffles order_total_band in the
 #   output -> joint similarity drops below corr_tol=0.90 -> RAISES.
+#
+# FPE-MASKED CORRELATED PAIR (Phase 3c -- masked_correlations, carry-forward CLOSED):
+#   cat_code (EL/CL/FD/HM/SP) and risk_flag (HI/MD/LO) are BOTH FPE-masked.
+#   Source Cramers V = 1.0 (deterministic many-to-one: each cat_code -> one risk_flag).
+#   After FPE bijection both columns the contingency COUNTS are unchanged; V_out = 1.0.
+#   diff = |V_out - V_src| = 0.0 < tol=0.10 -> PASSES.
+#
+#   WHY THE OLD METRIC FAILS: the engine crosstab-TVD metric scores 0.0 on this pair
+#   (source label "EL"/"HI" has no overlap with output label after FPE relabeling ->
+#   TVD=1.0 -> similarity=0.0), worse than a genuinely decorrelated pair (~0.34).
+#   The new Cramers V metric sees only COUNTS, which FPE preserves, and scores it
+#   correctly as perfectly preserved (diff~0).
+#
+#   Mutation controls in test_testflight_teeth.py:
+#   - TestMaskedCorrelationTeeth.test_faithful_fpe_pair_passes: new metric PASSES,
+#     old TVD metric scores ~0.0 (proves genuine capability added, not re-test).
+#   - TestMaskedCorrelationTeeth.test_destroyed_association_raises: one column
+#     independently shuffled -> V_out drops -> new metric RAISES.
+#   - TestMaskedCorrelationTeeth.test_degenerate_column_handled: column with 1
+#     unique value -> V undefined -> no assertion, no divide-by-zero.
 #
 # Source fingerprints (SHA-256 of canonical CSV; verified by verify_fingerprint
 # inside each fixture build_* function -- update all three after any fixture change):
 #   customers: e3c28d3e27dbc27d24adc53370cbe2c4e490b6b562e70ec483c9dcf20f29dd1e
 #   products:  8b5f2816591cd58d88566b6ef5d26c41e479c591fab7a6f55df841eb61da5d34
-#   orders:    8cc526d6c5749f56a343768664e6461bc0b422820b9be4110b2666918eaf325d
+#   orders:    90cef1e6383ecba8f245d6a2a74be9a2b34a23db1202090d7d6a279f7089ddd9
+#             (Phase 3c: cat_code + risk_flag columns added)
 #
 # Strategies exercised (strategy_coverage below):
 #   fpe+checksum (luhn), text_redact, geo_generalize (Safe Harbor), date_shift,
@@ -107,6 +120,12 @@ config:
     product_identity:
       declared_by:
         - products.product_id
+    cat_code_ns:
+      declared_by:
+        - orders.cat_code
+    risk_flag_ns:
+      declared_by:
+        - orders.risk_flag
 
   tables:
     # === customers ===
@@ -239,6 +258,27 @@ config:
         # Also passthrough -> joint similarity = 1.0 in faithful run.
         - name: order_total_band
           strategy: passthrough
+
+        # cat_code: FPE-masked category code (Phase 3c masked-correlation pair).
+        # 2-char uppercase alphanum (EL/CL/FD/HM/SP). FPE permutes the 2 chars
+        # within the alphanum charset, producing a different 2-char string per
+        # unique input. Bijective: 5 unique inputs -> 5 unique outputs.
+        # Namespace cat_code_ns ensures per-value stable mapping across reruns.
+        - name: cat_code
+          strategy: fpe
+          namespace: cat_code_ns
+          provider_config:
+            charset: alphanum
+
+        # risk_flag: FPE-masked risk tier (Phase 3c masked-correlation pair).
+        # 2-char uppercase alphanum (HI/MD/LO). Same bijective FPE properties.
+        # Correlated with cat_code in source: EL/HM->HI, CL/SP->MD, FD->LO.
+        # After FPE on both columns, contingency COUNTS unchanged -> V preserved.
+        - name: risk_flag
+          strategy: fpe
+          namespace: risk_flag_ns
+          provider_config:
+            charset: alphanum
 
         # order_total: derived from qty * unit_price.
         # The computed_columns invariant verifies every row.
@@ -415,6 +455,41 @@ invariants:
         joint declared on the qty_band spec. Waiving here avoids double-declaring
         the pair and avoids inflating the non-waived preserve count.
 
+    # orders.cat_code: preserve class (fpe bijection; Phase 3c).
+    # 2-char category code. FPE is a bijection: cardinality preserved exactly.
+    # Joint is NOT declared here because the engine crosstab-TVD metric cannot
+    # measure correlation through a value-changing mask (see masked_correlations
+    # below for the relabel-invariant Cramers V check instead).
+    - table: orders
+      column: cat_code
+      distribution_class: preserve
+      strategy: fpe
+      tolerance: 0.05
+      null_pp: 2.0
+      joint_columns: []
+      joints_waived: true
+      joints_waived_reason: >-
+        cat_code is FPE-masked (value-changing bijection). The engine
+        crosstab-TVD joint metric cannot measure correlation through FPE
+        relabeling (it would score 0.0 even when structure is preserved).
+        Correlation with risk_flag is measured by the relabel-invariant
+        Cramers V check declared in masked_correlations instead.
+
+    # orders.risk_flag: preserve class (fpe bijection; Phase 3c).
+    # 2-char risk tier. Same FPE bijection properties as cat_code.
+    - table: orders
+      column: risk_flag
+      distribution_class: preserve
+      strategy: fpe
+      tolerance: 0.05
+      null_pp: 2.0
+      joint_columns: []
+      joints_waived: true
+      joints_waived_reason: >-
+        risk_flag is FPE-masked (value-changing bijection). Correlation with
+        cat_code is checked by the relabel-invariant masked_correlations
+        Cramers V invariant (Phase 3c), not the TVD joint metric.
+
   # 6.5 Checksum validity: FPE+luhn on customers.pan.
   checksums:
     - table: customers
@@ -449,6 +524,24 @@ invariants:
         case_when(order_total >= 1000.0, "premium";
         order_total >= 200.0, "standard"; else "economy")
       branch_count: 3
+
+  # Phase 3c: relabel-invariant Cramers V checks for FPE-masked correlated pairs.
+  # These pairs cannot be checked by the engine's crosstab-TVD joint metric
+  # (which scores 0.0 for any value-changing mask, even a faithful bijection).
+  # Cramers V over contingency COUNTS is bijection-invariant: V_out == V_src.
+  masked_correlations:
+    # (cat_code, risk_flag): both FPE-masked; source V = 1.0 (perfect correlation).
+    # After FPE bijection on both columns, contingency COUNTS unchanged -> V_out = 1.0.
+    # diff = |1.0 - 1.0| = 0.0 < tol=0.10. PASSES.
+    # The OLD engine TVD metric scores this pair at 0.0 (disjoint label sets after
+    # FPE relabeling), proving genuine new capability.
+    - table: orders
+      col_a: cat_code
+      col_b: risk_flag
+      strategy_a: fpe
+      strategy_b: fpe
+      tol: 0.10
+      min_assoc: 0.50
 
   # Strategy coverage declared for this job.
   strategy_coverage:

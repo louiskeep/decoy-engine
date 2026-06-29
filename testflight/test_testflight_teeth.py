@@ -48,6 +48,7 @@ from testflight._invariants import (
     FIXED_TS,
     check_chapter_preserve,
     check_computed_columns,
+    check_correlation_through_masking,
     check_distribution_generate,
     check_distribution_mask,
     check_fk_integrity,
@@ -2696,4 +2697,222 @@ class TestOrphanRemapMasksTeeth:
             result,
             relationships,
             source_frames=source_frames,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Phase 3c: masked-correlation mutation controls (Cramers V relabel-invariant)
+# ---------------------------------------------------------------------------
+
+
+class TestMaskedCorrelationTeeth:
+    """Mutation controls for the relabel-invariant masked-correlation invariant.
+
+    Phase 3c closes the carry-forward that the engine crosstab-TVD metric
+    cannot measure correlation through a value-changing mask (it scores ~0.0
+    even on a faithfully-preserved FPE pair).
+
+    Three controls:
+
+    A. Faithful FPE pair (structure preserved) -> NEW metric PASSES and the
+       OLD engine TVD metric is shown to score ~0.0 (proves genuine capability).
+    B. Association destroyed by masking (one masked col independently shuffled)
+       -> NEW metric RAISES (proves the tooth bites on real decorrelation).
+    C. Degenerate input (column with one unique value -> V undefined) -> NO
+       assertion, NO divide-by-zero (proves the guard is robust).
+    """
+
+    # ------------------------------------------------------------------
+    # A. Faithful FPE pair: new metric PASSES, old metric scores ~0.0
+    # ------------------------------------------------------------------
+
+    def test_faithful_fpe_pair_passes(self) -> None:
+        """A faithfully FPE-bijected correlated pair must PASS the new metric.
+
+        OLD metric failure (the carry-forward):
+          Source has cat_code in {EL, CL, FD, HM, SP} perfectly correlated with
+          risk_flag in {HI, MD, LO}. Source Cramers V = 1.0.
+          After FPE bijection: EL->X1, CL->X2, FD->X3, HM->X4, SP->X5 and
+          HI->Y1, MD->Y2, LO->Y3. The engine crosstab-TVD metric compares
+          value-LABELED cells. Source (EL, HI) -> count N; output (EL, HI) ->
+          count 0 (FPE relabeled). TVD = 1.0 -> similarity = 0.0. Worse than
+          a genuinely decorrelated pair (~0.34).
+
+        NEW metric correctness (Phase 3c):
+          Cramers V uses contingency COUNTS, not labels. Source (EL, HI) -> N
+          rows; output (X1, Y1) -> same N rows (bijection preserves counts).
+          V_out = 1.0 = V_src. diff = 0.0 < tol=0.10. PASSES.
+
+        This test directly proves the new capability: the old metric could not
+        distinguish a faithfully-masked pair from a decorrelated one; the new
+        metric can.
+        """
+        rng = np.random.default_rng(42)
+        n = 500
+        # Source: deterministic many-to-one mapping (5 cat_codes -> 3 risk_flags).
+        _cat_to_risk = {"EL": "HI", "CL": "MD", "FD": "LO", "HM": "HI", "SP": "MD"}
+        _cats = ["EL", "CL", "FD", "HM", "SP"]
+        _cat_weights = [0.20, 0.25, 0.20, 0.20, 0.15]
+
+        cat_codes = rng.choice(_cats, size=n, p=_cat_weights).tolist()
+        risk_flags = [_cat_to_risk[c] for c in cat_codes]
+        source_df = pd.DataFrame({"cat_code": cat_codes, "risk_flag": risk_flags})
+
+        # Simulate FPE bijection: each unique value maps to a new unique value.
+        _fpe_cat = {"EL": "X1", "CL": "X2", "FD": "X3", "HM": "X4", "SP": "X5"}
+        _fpe_risk = {"HI": "Y1", "MD": "Y2", "LO": "Y3"}
+        output_df = pd.DataFrame(
+            {
+                "cat_code": [_fpe_cat[c] for c in cat_codes],
+                "risk_flag": [_fpe_risk[r] for r in risk_flags],
+            }
+        )
+
+        # --- Prove old metric scores ~0.0 ---
+        from decoy_engine.quality.report import compute_quality_report
+
+        report = compute_quality_report(
+            source_df,
+            output_df,
+            joint_columns=[("cat_code", "risk_flag")],
+            now_iso=FIXED_TS,
+        )
+        joints = report.get("pairwise", {}).get("joints", [])
+        old_sim = None
+        for j in joints:
+            if isinstance(j, dict) and set(j.get("columns", [])) == {"cat_code", "risk_flag"}:
+                old_sim = j.get("similarity")
+                break
+
+        # The old TVD metric must score at or near 0.0 (disjoint label sets).
+        # We assert it is below 0.15 -- well below the corr_tol=0.90 the
+        # distribution spec would require, proving this pair is genuinely
+        # invisible to the old metric.
+        assert old_sim is not None, "Old metric: joint similarity not found in report"
+        assert float(old_sim) < 0.15, (
+            f"OLD engine crosstab-TVD metric scored {old_sim:.4f} on a faithfully "
+            f"FPE-masked pair. Expected < 0.15 (near 0.0 due to disjoint labels). "
+            f"If this assertion fails, the engine metric may have changed and the "
+            f"Phase 3c capability claim needs reassessment."
+        )
+
+        # --- Prove new metric PASSES ---
+        result = check_correlation_through_masking(
+            "p3c_faithful_control",
+            "orders",
+            "cat_code",
+            "risk_flag",
+            source_df,
+            output_df,
+            tol=0.10,
+            min_assoc=0.50,
+            strategy_a="fpe",
+            strategy_b="fpe",
+        )
+
+        assert result["diff"] is not None, "New metric: Cramers V undefined (degenerate)"
+        assert float(result["diff"]) < 0.01, (
+            f"New metric: FPE-masked pair drift = {result['diff']:.4f}. "
+            f"A bijection preserves contingency counts exactly; drift must be ~0."
+        )
+        assert float(result["v_src"]) >= 0.50, (
+            f"New metric: v_src={result['v_src']:.4f} < min_assoc=0.50. "
+            f"The source pair has insufficient association for a non-vacuous check."
+        )
+
+    # ------------------------------------------------------------------
+    # B. Association destroyed -> new metric RAISES
+    # ------------------------------------------------------------------
+
+    def test_destroyed_association_raises(self) -> None:
+        """Shuffling one masked column must trip the Cramers V check.
+
+        RED: source has strong cat_code/risk_flag correlation (V=1.0 on the
+        FPE-bijected output). A bug shuffles the output risk_flag column
+        independently, destroying the pairing. V_out drops to near 0.
+        abs(V_out - V_src) > tol=0.10 -> RAISES.
+
+        This proves the tooth catches real association destruction and is NOT
+        vacuous: a correct FPE run (test A) passes; an incorrectly-shuffled
+        output fails.
+        """
+        rng = np.random.default_rng(99)
+        n = 500
+        _cat_to_risk = {"EL": "HI", "CL": "MD", "FD": "LO", "HM": "HI", "SP": "MD"}
+        _cats = ["EL", "CL", "FD", "HM", "SP"]
+        cat_codes = rng.choice(_cats, size=n).tolist()
+        risk_flags = [_cat_to_risk[c] for c in cat_codes]
+        source_df = pd.DataFrame({"cat_code": cat_codes, "risk_flag": risk_flags})
+
+        # FPE bijection on cat_code (structure preserved in isolation).
+        _fpe_cat = {"EL": "X1", "CL": "X2", "FD": "X3", "HM": "X4", "SP": "X5"}
+        out_cat = [_fpe_cat[c] for c in cat_codes]
+
+        # BUG: risk_flag is independently shuffled (association destroyed).
+        _fpe_risk = {"HI": "Y1", "MD": "Y2", "LO": "Y3"}
+        out_risk_correct = [_fpe_risk[r] for r in risk_flags]
+        # Independent permutation -> destroys the joint structure.
+        out_risk_broken = rng.permutation(out_risk_correct).tolist()
+
+        output_df = pd.DataFrame({"cat_code": out_cat, "risk_flag": out_risk_broken})
+
+        with pytest.raises(AssertionError, match="masked_correlation"):
+            check_correlation_through_masking(
+                "p3c_destroyed_control",
+                "orders",
+                "cat_code",
+                "risk_flag",
+                source_df,
+                output_df,
+                tol=0.10,
+                min_assoc=0.0,
+                strategy_a="fpe",
+                strategy_b="fpe",
+            )
+
+    # ------------------------------------------------------------------
+    # C. Degenerate input: single-value column -> no assertion
+    # ------------------------------------------------------------------
+
+    def test_degenerate_column_handled(self) -> None:
+        """A column with one unique value yields V=undefined; no assertion fires.
+
+        When one column has only one unique non-null value, the contingency
+        table is degenerate (only one row or one column), min(r-1, c-1) = 0,
+        and Cramers V is undefined (0/0). The function must return
+        {v_src: None, v_out: None, diff: None} and NOT raise an AssertionError
+        or ZeroDivisionError.
+
+        Callers with degenerate data should validate their fixtures independently;
+        the degenerate guard exists to prevent the check from crashing on edge
+        cases, not to allow genuinely degenerate test data.
+        """
+        n = 100
+        # col_a has only one unique value -> contingency table is 1xM (degenerate).
+        source_df = pd.DataFrame(
+            {
+                "cat_code": ["SAME"] * n,  # all identical
+                "risk_flag": ["HI", "MD", "LO"] * (n // 3) + ["HI"] * (n % 3),
+            }
+        )
+        output_df = source_df.copy()
+        output_df["cat_code"] = ["XFPE"] * n  # FPE maps SAME -> XFPE (still 1 unique)
+
+        result = check_correlation_through_masking(
+            "p3c_degenerate_control",
+            "orders",
+            "cat_code",
+            "risk_flag",
+            source_df,
+            output_df,
+            tol=0.10,
+            min_assoc=0.0,
+        )
+
+        assert result["diff"] is None, (
+            f"Degenerate guard: expected diff=None for single-value column, "
+            f"got diff={result['diff']}."
+        )
+        assert result["v_src"] is None or result["v_out"] is None, (
+            "Degenerate guard: at least one V must be None for single-value column."
         )

@@ -91,27 +91,58 @@ fully synthetic data and its weights do not encode any real PII cell values
 (§B.4 of ml-benchmarking-and-privacy.md), but that is a training-data hygiene
 property, not a DP guarantee over the model's outputs.
 
-## The acceptance suite cannot measure correlation preserved THROUGH a value-changing mask
+## Correlation through a value-changing mask: harness-side Cramers V (Phase 3c)
 
-The acceptance test-flight (`testflight/`) asserts pairwise-correlation
-preservation using the engine quality module's joint metric, which is a Total
-Variation Distance over the joint contingency table of the two columns' actual
-values. That metric compares value-labeled cells. A value-changing strategy
+The engine quality module's joint metric (Total Variation Distance over the
+joint contingency table) compares value-LABELED cells. A value-changing strategy
 (`fpe`, `hash`, `code_set`, `joint_mask`) relabels the cells, so the source and
-output crosstabs become disjoint and the similarity collapses to 0.0 even when
-the correlation structure is preserved perfectly. Measured directly: an
-`fpe`-masked pair whose structure is identical to the source scores 0.0, which
-is lower than a genuinely decorrelated pair (about 0.34).
+output crosstabs become disjoint and the TVD similarity collapses to 0.0 even
+when the correlation structure is preserved perfectly. Measured directly: a
+faithfully FPE-masked pair whose joint structure is identical to the source
+scores 0.0 on TVD similarity, which is worse than a genuinely decorrelated pair
+(approximately 0.34).
 
-Consequence: the suite's correlation tooth can only verify that a correlation is
-preserved for columns that remain VALUE-STABLE (e.g. `passthrough`), and that
-such a correlation is not destroyed. It cannot verify that a value-changing
-masking strategy preserves a correlation, because the shipped metric cannot see
-through the relabeling. Genuinely closing that gap requires a relabel-invariant
-statistic (Cramers V, mutual information, or a rank correlation) computed by the
-harness on the masked output columns; that is owed work, not a current
-capability. Do not read a green correlation check on a value-changing column as
-proof that masking preserved its correlation.
+The engine TVD metric is NOT used for correlation checks on value-changing masked
+pairs. The test-flight suite (Phase 3c, 2026-06-29) closes this gap for
+categorical and low-cardinality column pairs via a harness-side relabel-invariant
+statistic: Cramers V computed over the contingency COUNTS (not value labels).
+
+How the Phase 3c metric works: Cramers V = sqrt(chi2 / (n * min(r-1, c-1))),
+where chi2 is the Pearson chi-square statistic computed from the observed
+contingency table vs expected counts under independence, n is the row count, and
+r and c are the numbers of distinct values in each column. A bijective strategy
+(fpe) maps every unique value in column A to a new unique value, and similarly
+for column B. Because it is a bijection (no collisions, no merges), the COUNT of
+every (A_val, B_val) pair is preserved exactly in the masked output. The
+contingency table has the same cell counts; only the labels differ. Therefore
+Cramers V of the output equals Cramers V of the source.
+
+The harness asserts abs(V_out - V_src) <= tol for declared
+`masked_correlations` pairs. An FPE pair that faithfully preserves the joint
+structure passes this check (diff approximately 0). A pair where one column was
+independently shuffled after masking fails it (V_out drops toward 0). Mutation
+controls in `testflight/test_testflight_teeth.py` prove both directions.
+
+Scope of the Phase 3c metric:
+- Covered: categorical / low-cardinality column pairs where BOTH columns are
+  masked by a bijective strategy (fpe, hash, or any strategy that remaps values
+  without merging distinct source values). Cramers V is well-defined as long as
+  each column has at least 2 unique non-null values.
+- NOT covered: high-cardinality continuous (numeric) column pairs. Cramers V
+  requires discrete categories; continuous data would need binning that
+  introduces its own distortion. For continuous paired columns, rank correlation
+  (Spearman) or a bin-based metric would be more appropriate; that extension is
+  out of scope for Phase 3c.
+- NOT covered: value-MERGING strategies (bucketize, geo_generalize, code_set
+  when the target corpus has fewer values than the source). A merging strategy
+  changes the contingency structure itself; the count preservation argument does
+  not hold. Those pairs are checked via the distribution fidelity metric with
+  strategy-aware policy bands (coarsen class).
+
+Practical consequence: for any `masked_correlations` pair declared in a job
+manifest, a green check does prove that the categorical association was preserved
+through the value-changing mask. The TVD similarity metric is explicitly NOT
+used to judge these pairs (it would falsely report 0.0 on a correct FPE run).
 
 ## orphan_policy:remap does not guarantee masking for out-of-charset keys
 
