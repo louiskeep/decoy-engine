@@ -873,18 +873,19 @@ class TestCoverageRotTeeth:
     def test_coverage_rot_detected(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Registering a fake strategy key must trip the suite coverage guard.
 
-        RED path: inject a fake key "zz_fake_strategy" into SCALAR_HANDLERS
-        via monkeypatch.  It is not in any manifest's strategy_coverage list
-        and not in _STRATEGY_ALLOWLIST.  check_suite_strategy_coverage must
+        RED path: monkeypatch.setitem injects a fake key "zz_fake_strategy"
+        into the live SCALAR_HANDLERS dict. It is not in any manifest's
+        strategy_coverage list and not in _STRATEGY_ALLOWLIST. The unpatched
+        call to check_suite_strategy_coverage (reading the live registry) must
         raise AssertionError naming the uncovered strategy.
 
         GREEN path (implicit): without the fake key the suite guard passes
         (verified by the full test_testflight.py run that exercises all three
         jobs with their declared strategy_coverage lists).
 
-        This mutation control proves the guard reads the LIVE SCALAR_HANDLERS
-        dict, not a static copy, so a new strategy added to the engine without
-        a test-job or allowlist entry fails the suite immediately.
+        monkeypatch.setitem is undone automatically after the test exits, so
+        the live registry is not permanently mutated. This proves the guard
+        reads SCALAR_HANDLERS at call time (not a module-load-time snapshot).
         """
         from decoy_engine.execution._strategies import SCALAR_HANDLERS
         from testflight._runner import discover_jobs, load_job
@@ -895,16 +896,116 @@ class TestCoverageRotTeeth:
         # Sanity: guard passes with the real (unpatched) registry.
         check_suite_strategy_coverage(all_manifests)
 
-        # Inject a fake strategy that no manifest declares and is not allowlisted.
+        # Inject a fake strategy into the live SCALAR_HANDLERS via monkeypatch.
+        # monkeypatch.setitem restores the original dict after the test.
         fake_key = "zz_fake_strategy"
         assert fake_key not in SCALAR_HANDLERS, (
             f"'{fake_key}' already exists in SCALAR_HANDLERS -- choose a different fake key."
         )
-        # Pass the fake key via the extra_strategy_keys parameter (avoids
-        # mutating the live module-level dict, which would affect other tests
-        # that run in the same process).
-        with pytest.raises(AssertionError, match="zz_fake_strategy"):
-            check_suite_strategy_coverage(all_manifests, extra_strategy_keys={fake_key})
+
+        class _FakeHandler:
+            name = fake_key
+
+            def run(
+                self,
+                df: pd.DataFrame,
+                column: str,
+                plan: Any,
+                ctx: Any,
+            ) -> tuple[pd.DataFrame, list[Any]]:
+                return df, []
+
+        monkeypatch.setitem(SCALAR_HANDLERS, fake_key, _FakeHandler())
+
+        # The guard reads the live SCALAR_HANDLERS; the fake key is not in any
+        # manifest's strategy_coverage and not in _STRATEGY_ALLOWLIST -> RAISES.
+        with pytest.raises(AssertionError, match=fake_key):
+            check_suite_strategy_coverage(all_manifests)
+
+
+# ---------------------------------------------------------------------------
+# SP-08: joint_mask consistency teeth
+# ---------------------------------------------------------------------------
+
+
+class TestJointMaskConsistencyTeeth:
+    """Mutation controls for the SP-08 joint_mask consistency invariant.
+
+    SP-08 contract: apply_joint_mask writes ALL target columns from a single
+    reference-table row. Each output (col_a, col_b, ...) tuple must therefore
+    be an actual row in the reference table. A Frankenstein combination (city
+    from one row, state from another) is a bug the invariant must catch.
+
+    Controls:
+      test_real_tuples_pass: output rows drawn directly from the reference table
+        -> invariant PASSES (proves non-vacuity: valid data passes through).
+      test_frankenstein_tuple_raises: a row with a city/state combo that does
+        not exist in the reference table -> invariant RAISES (proves the check
+        catches a Frankenstein mix, the failure mode joint_mask prevents).
+    """
+
+    def test_real_tuples_pass(self) -> None:
+        """Tuples taken directly from the reference table pass the consistency check."""
+        from decoy_engine.reference_tables import load_table
+        from testflight._invariants import check_joint_mask_consistency
+        from testflight._spec import JointMaskConsistencySpec
+
+        ref = load_table("us_zip5_city_state")
+        # Build an output DataFrame from the first 5 rows of the reference table.
+        good_rows = [ref.row(i) for i in range(min(5, ref.row_count))]
+        out_df = pd.DataFrame(
+            {
+                "city": [r["city"] for r in good_rows],
+                "state": [r["state"] for r in good_rows],
+            }
+        )
+        out_pa = pa.Table.from_pandas(out_df, preserve_index=False)
+
+        spec = [
+            JointMaskConsistencySpec(
+                table="customers",
+                columns=["city", "state"],
+                reference="us_zip5_city_state",
+            )
+        ]
+        result = SimpleNamespace(outputs={"customers": out_pa})
+
+        # PASSES: every (city, state) tuple is a real reference-table row.
+        evidence = check_joint_mask_consistency("test_job", spec, result)
+        assert "5/5" in evidence or "all-valid" in evidence
+
+    def test_frankenstein_tuple_raises(self) -> None:
+        """A (city, state) pair that is not a reference-table row raises AssertionError.
+
+        The mutation: take a real city name but combine it with a state
+        abbreviation that does not exist in the reference table ("XX").
+        This simulates a bug where city and state were selected from
+        different reference rows, producing an impossible combination.
+        The invariant must detect and reject this.
+        """
+        from decoy_engine.reference_tables import load_table
+        from testflight._invariants import check_joint_mask_consistency
+        from testflight._spec import JointMaskConsistencySpec
+
+        ref = load_table("us_zip5_city_state")
+        real_city = ref.row(0)["city"]  # a valid city from the table
+
+        # "XX" is not a US state and cannot appear in us_zip5_city_state.
+        bad_df = pd.DataFrame({"city": [real_city], "state": ["XX"]})
+        bad_pa = pa.Table.from_pandas(bad_df, preserve_index=False)
+
+        spec = [
+            JointMaskConsistencySpec(
+                table="customers",
+                columns=["city", "state"],
+                reference="us_zip5_city_state",
+            )
+        ]
+        result = SimpleNamespace(outputs={"customers": bad_pa})
+
+        # RAISES: (real_city, "XX") is not any row in us_zip5_city_state.
+        with pytest.raises(AssertionError, match="not a real row in reference table"):
+            check_joint_mask_consistency("test_job", spec, result)
 
 
 # ---------------------------------------------------------------------------

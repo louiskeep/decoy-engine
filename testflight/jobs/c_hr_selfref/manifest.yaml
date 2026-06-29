@@ -324,11 +324,17 @@ invariants:
       joints_waived_reason: >-
         hire_date is perturbed to month-bucket; no joint declared.
 
-    # Phase 4 coverage-guard columns: only badge_id needs a distribution entry.
-    # dept_code/dept_hash/dept_shuffle are all string->string without dtype change
-    # (categorical source -> categorical output) so no kind_drift fires. They are
-    # intentionally omitted from the distribution spec to avoid per-column policy
-    # checks against hash/shuffle similarity floors that would fail by design.
+    # Phase 4 coverage-guard columns: badge_id and dept_shuffle have distribution
+    # entries. dept_code is string->string (truncate; no kind_drift) and has no
+    # meaningful distribution assertion beyond the strategy_coverage guard.
+    # dept_hash is omitted: the engine value-identity policy floor (default-judged
+    # path) scores hash similarity near 0.0 vs the 0.05 floor because value-identity
+    # TVD treats the hash output values as entirely disjoint from the source values.
+    # The shape-aware metric that would correctly score hash distribution fidelity
+    # (D5b shape floor) is not the default-judged path; hash distribution fidelity
+    # cannot be proven by the default policy without a per-column shape-floor override.
+    # BACKLOG: add a per-column shape_strategy_expectations override for dept_hash
+    # once the shape-floor path is the testflight default (D5b complete).
     #
     # employees.badge_id: redact (all values -> "REDACTED").
     # Listed as synthetic because the output has no distributional relationship to
@@ -347,6 +353,25 @@ invariants:
       joints_waived_reason: >-
         badge_id is redacted to a constant string; no meaningful distribution
         to compare against source. Coverage-guard column only.
+
+    # employees.dept_shuffle: preserve class (shuffle; marginal distribution preserved exactly).
+    # Shuffle permutes values across rows without changing the value set or frequencies.
+    # Tooth A (shuffle path): marginal similarity >= 0.99. Empirically confirmed to pass
+    # because the output frequency distribution is identical to the source.
+    # joints_waived: dept_shuffle is a coverage-guard column with no meaningful
+    # correlation to other employees columns post-shuffle.
+    - table: employees
+      column: dept_shuffle
+      distribution_class: preserve
+      strategy: shuffle
+      tolerance: 0.05
+      null_pp: 2.0
+      joint_columns: []
+      joints_waived: true
+      joints_waived_reason: >-
+        dept_shuffle is shuffled across rows; the output marginal distribution
+        is identical to the source by construction. No meaningful correlation
+        joint with other employees columns survives a full shuffle permutation.
 
     # synthetic_events.event_type: synthetic (categorical generate column).
     # check_distribution_generate checks output TVD vs declared list weights.

@@ -57,7 +57,8 @@
 #
 # Strategies exercised (strategy_coverage below):
 #   fpe+checksum (luhn), text_redact, geo_generalize (Safe Harbor), date_shift,
-#   code_set (mcc), categorical, passthrough, derived (+ case_when builtin), from_parent.
+#   code_set (mcc), categorical, passthrough, derived (+ case_when builtin), from_parent,
+#   joint_mask (customers.city + customers.state via us_zip5_city_state keyed by customer_id).
 
 job_name: b_retail_m2m
 topology: many_to_many_junction
@@ -159,13 +160,27 @@ config:
           provider_config:
             detectors: [email]
 
-        # city: passthrough (no PII; used for realism only).
+        # city + state: joint_mask (SP-08 end-to-end coverage).
+        # Replaces the source city and state with a consistent (city, state) pair
+        # drawn from the shipped us_zip5_city_state reference table, keyed by
+        # customer_id via HMAC-SHA256. Both columns are written in a single pass
+        # from one reference-table row, guaranteeing mutual consistency (the output
+        # (city, state) is an actual row in the table, not a Frankenstein mix).
+        # Declared twice so each column has an explicit strategy spec; apply_joint_mask
+        # is idempotent for the same config + seed so the second call is a no-op.
         - name: city
-          strategy: passthrough
+          strategy: joint_mask
+          provider_config:
+            columns: [city, state]
+            reference: us_zip5_city_state
+            key_by: customer_id
 
-        # state: passthrough (no PII; 2-char US state abbreviation).
         - name: state
-          strategy: passthrough
+          strategy: joint_mask
+          provider_config:
+            columns: [city, state]
+            reference: us_zip5_city_state
+            key_by: customer_id
 
         # zip5: geo_generalize (HIPAA Safe Harbor ZIP cascade).
         # 15 planted rows with HHS-restricted ZIP3 prefixes are suppressed.
@@ -388,6 +403,39 @@ invariants:
         text_redact replaces all email values with "[REDACTED]" (constant output);
         no meaningful correlation joint can be declared for a constant column.
 
+    # customers.city: coarsen class (joint_mask; reference table has 10 distinct cities
+    # vs 49 in the fixture source). joint_mask is exempted from the kind_drift diagnostic
+    # because the output kind shifts from freetext to categorical (expected SP-08 coarsening).
+    # The SP-08 consistency invariant is the authoritative check (each output (city, state)
+    # tuple must be a real row in us_zip5_city_state).
+    - table: customers
+      column: city
+      distribution_class: coarsen
+      strategy: joint_mask
+      tolerance: 0.10
+      null_pp: 2.0
+      expected_coarsening: true
+      joints_waived: true
+      joints_waived_reason: >-
+        city and state are joint_mask-coarsened to a 10-city/8-state reference
+        subset; the output marginal is a much smaller value set and no
+        meaningful correlation with other customers columns exists post-mask.
+        SP-08 consistency invariant is the primary assertion for this column group.
+
+    # customers.state: coarsen class (joint_mask; reference table has 8 distinct states
+    # vs ~50 in the fixture source). Same SP-08 coarsening rationale as city above.
+    - table: customers
+      column: state
+      distribution_class: coarsen
+      strategy: joint_mask
+      tolerance: 0.10
+      null_pp: 2.0
+      expected_coarsening: true
+      joints_waived: true
+      joints_waived_reason: >-
+        state is coarsened by joint_mask to 8 US states from the reference table;
+        see city entry above for the full SP-08 joint_mask coarsening rationale.
+
     # customers.zip5: coarsen class (geo_generalize; cardinality must drop).
     - table: customers
       column: zip5
@@ -545,6 +593,15 @@ invariants:
       tol: 0.10
       min_assoc: 0.50
 
+  # SP-08 joint_mask consistency: each output (city, state) tuple must be a
+  # real row in us_zip5_city_state (not a Frankenstein combination).
+  # The runner asserts every output row against the full set of valid tuples
+  # from the shipped reference table.
+  joint_mask_consistency:
+    - table: customers
+      columns: [city, state]
+      reference: us_zip5_city_state
+
   # Strategy coverage declared for this job.
   strategy_coverage:
     - fpe
@@ -556,3 +613,4 @@ invariants:
     - passthrough
     - derived
     - from_parent
+    - joint_mask
