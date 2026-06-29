@@ -22,10 +22,10 @@ Methodology:
   Date arithmetic uses pandas.Timestamp and pandas.Timedelta (pandas
   2.x, Apache-2.0; https://pandas.pydata.org/docs). A bounded uniform
   or weighted offset within [min_days, max_days] is drawn via seeded
-  numpy.random.default_rng (NumPy 1.x; https://numpy.org/doc/stable/
-  reference/random/generator.html). Per-row seeding follows the
-  GenDeriveContext pattern (engine/generators/derivation.py) for
-  byte-identical determinism across runs.
+  numpy.random.default_rng (NumPy; https://numpy.org/doc/stable/
+  reference/random/generator.html). Per-row seeds come from
+  decoy_engine.determinism._derive.derive(seed, namespace, row_index)
+  (HKDF-SHA256 + HMAC-SHA256) for column-isolated determinism.
 
 Determinism:
   Same seed + same anchor column -> byte-identical output dates.
@@ -119,7 +119,9 @@ class TestWindowedDateBounds:
                 "distribution": distribution,
             }
         )
-        return apply_windowed_date(cfg, df, seed=b"\x12\x34\x56\x78" * 2)
+        return apply_windowed_date(
+            cfg, df, seed=b"\x12\x34\x56\x78" * 2, namespace="windowed_date/test"
+        )
 
     def test_all_dates_within_uniform_window(self) -> None:
         """Every output date is in [anchor+0, anchor+30]."""
@@ -191,7 +193,7 @@ class TestWindowedDateDeterminism:
             {"anchor": ["2024-01-01", "2024-03-15", "2023-12-31", "2024-06-01", "2024-09-10"]}
         )
         cfg = WindowedDateConfig.from_dict({"anchor": "anchor", "min_days": 0, "max_days": 30})
-        return list(apply_windowed_date(cfg, df, seed=seed))
+        return list(apply_windowed_date(cfg, df, seed=seed, namespace="windowed_date/test"))
 
     def test_same_seed_same_output(self) -> None:
         seed = b"\xab\xcd\xef\x01\x23\x45\x67\x89"
@@ -289,6 +291,94 @@ class TestWindowedDateRegistration:
         from decoy_engine.execution import PandasExecutionAdapter
 
         assert PandasExecutionAdapter().supports_strategy("windowed_date") is True
+
+
+class TestWindowedDateColumnIndependence:
+    """Two windowed_date columns with different names produce independent offsets (B1)."""
+
+    def _run_column(self, namespace: str, seed: bytes) -> list[str]:
+        import pandas as pd
+
+        from decoy_engine.transforms.windowed_date import WindowedDateConfig, apply_windowed_date
+
+        df = pd.DataFrame({"anchor": ["2024-01-01"] * 20})
+        cfg = WindowedDateConfig.from_dict({"anchor": "anchor", "min_days": 0, "max_days": 365})
+        return list(apply_windowed_date(cfg, df, seed=seed, namespace=namespace))
+
+    def test_different_column_names_produce_different_offsets(self) -> None:
+        """Two windowed_date columns with same anchor/window but different names must differ.
+
+        This is PROBE A from the dennis review (B1). Before the fix, two columns
+        with the same anchor/window produced byte-identical output because the
+        per-row seed depended only on (job_seed, row_index), not the column name.
+        After the fix, the namespace isolates each column.
+        """
+        seed = b"\xab\xcd\xef\x01\x23\x45\x67\x89"
+        col_a = self._run_column("windowed_date/discharge_date", seed)
+        col_b = self._run_column("windowed_date/follow_up_date", seed)
+        assert col_a != col_b, (
+            "Two windowed_date columns with different names produced identical output. "
+            "The namespace must be included in per-row seed derivation."
+        )
+
+    def test_same_namespace_same_output_determinism(self) -> None:
+        """Same namespace + same seed -> identical output on repeated calls."""
+        seed = b"\x01\x02\x03\x04\x05\x06\x07\x08"
+        r1 = self._run_column("windowed_date/created_at", seed)
+        r2 = self._run_column("windowed_date/created_at", seed)
+        assert r1 == r2, "Determinism must hold after the namespace fix."
+
+
+class TestWindowedDateCompileVocab:
+    """Invalid distribution rejected at plan-compile time (M1)."""
+
+    def test_bad_distribution_rejected_at_compile(self) -> None:
+        """check_windowed_date_refs raises on an unknown distribution."""
+        from decoy_engine.plan._checks_windowed_date import check_windowed_date_refs
+
+        cfg = {
+            "tables": [
+                {
+                    "name": "t",
+                    "generate_columns": [
+                        {"name": "start", "type": "faker", "faker_type": "date"},
+                        {
+                            "name": "end",
+                            "type": "windowed_date",
+                            "anchor": "start",
+                            "max_days": 30,
+                            "distribution": "normal",
+                        },
+                    ],
+                }
+            ]
+        }
+        with pytest.raises(PlanCompileError, match="normal"):
+            check_windowed_date_refs(cfg)
+
+    def test_valid_distribution_passes_compile(self) -> None:
+        """Known distributions pass the compile check."""
+        from decoy_engine.plan._checks_windowed_date import check_windowed_date_refs
+
+        for dist in ("uniform", "early", "late"):
+            cfg = {
+                "tables": [
+                    {
+                        "name": "t",
+                        "generate_columns": [
+                            {"name": "start", "type": "faker", "faker_type": "date"},
+                            {
+                                "name": "end",
+                                "type": "windowed_date",
+                                "anchor": "start",
+                                "max_days": 30,
+                                "distribution": dist,
+                            },
+                        ],
+                    }
+                ]
+            }
+            check_windowed_date_refs(cfg)  # no raise
 
 
 class TestWindowedDateGeneratePath:

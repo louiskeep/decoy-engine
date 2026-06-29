@@ -107,7 +107,7 @@ class TestGroupedSeriesCumcount:
         cfg = GroupedSeriesConfig.from_dict(
             {"group_by": "grp", "order_by": "ord", "start": start, "step": step}
         )
-        return apply_grouped_series(cfg, df, seed=b"\x00" * 8)
+        return apply_grouped_series(cfg, df, seed=b"\x00" * 8, namespace="grouped_series/test")
 
     def test_single_group_ascending(self) -> None:
         """Three rows in one group get 0, 1, 2 (cumcount starting at 0)."""
@@ -160,7 +160,7 @@ class TestGroupedSeriesMonotoneWalk:
                 "step": step,
             }
         )
-        return apply_grouped_series(cfg, df, seed=seed)
+        return apply_grouped_series(cfg, df, seed=seed, namespace="grouped_series/test")
 
     def test_single_group_non_decreasing(self) -> None:
         """All values in a single group are non-decreasing."""
@@ -171,12 +171,19 @@ class TestGroupedSeriesMonotoneWalk:
             )
 
     def test_counter_resets_per_group(self) -> None:
-        """Walk resets at group boundary (group B starts at start, not continuing A)."""
+        """Walk resets at group boundary (group B starts at start, not continuing A).
+
+        Asserts result[3] == start (the exact reset value), not just >= start.
+        A cross-group accumulation leak would produce result[3] > start, making
+        this assertion fail -- which is the bug it is designed to catch.
+        """
         result = self._apply(["A", "A", "A", "B", "B", "B"], list(range(6)), start=10)
-        # First row of group B should be >= start (10), but NOT continue from group A
-        # Group A is result[0..2], group B is result[3..5]
-        # Group B should start fresh at start (10)
-        assert result[3] >= 10, f"group B should reset to start=10, got {result[3]}"
+        # First row of group B must equal start exactly. Mirroring test_start_respected.
+        # A cross-group leak would give result[3] > 10 (continuing A's walk).
+        assert result[3] == 10, (
+            f"group B should reset to start=10, got {result[3]}; "
+            f"value > 10 indicates a cross-group accumulation leak"
+        )
 
     def test_ten_rows_per_group_all_non_decreasing(self) -> None:
         """Walk 10 rows; assert each value >= prev."""
@@ -209,7 +216,7 @@ class TestGroupedSeriesDeterminism:
         cfg = GroupedSeriesConfig.from_dict(
             {"group_by": "grp", "order_by": "ord", "generator": "monotone_walk"}
         )
-        return list(apply_grouped_series(cfg, df, seed=seed))
+        return list(apply_grouped_series(cfg, df, seed=seed, namespace="grouped_series/test"))
 
     def test_same_seed_same_output(self) -> None:
         seed = b"\x01\x02\x03\x04\x05\x06\x07\x08"
@@ -217,14 +224,170 @@ class TestGroupedSeriesDeterminism:
         r2 = self._run(seed)
         assert r1 == r2
 
-    def test_different_seeds_may_differ(self) -> None:
+    def test_different_seeds_produce_different_walks(self) -> None:
+        """Different seeds produce different monotone_walk outputs.
+
+        Uses maximally different seeds (all-zeros vs all-0xff) so the
+        derive()-seeded group RNGs are guaranteed to differ. A walk with
+        max_step=10 over 5 rows has 11^4 = 14641 possible outputs per group;
+        the probability of collision is negligible.
+        """
         r1 = self._run(b"\x00" * 8)
         r2 = self._run(b"\xff" * 8)
-        # cumcount is deterministic without seed; monotone_walk steps differ
-        # This test just verifies the seeds propagate to the walk (may be equal
-        # in degenerate cases but should differ in practice for 5 rows)
-        # We assert they run without error; actual difference is probabilistic
-        assert isinstance(r1, list) and isinstance(r2, list)
+        assert r1 != r2, (
+            "Different job seeds should produce different monotone_walk step sequences."
+        )
+
+
+class TestGroupedSeriesColumnIndependence:
+    """Two monotone_walk columns with the same groups but different names must differ (H1)."""
+
+    def _run_column(self, namespace: str, seed: bytes = b"\xab\xcd" * 4) -> list[int]:
+        import pandas as pd
+
+        from decoy_engine.transforms.grouped_series import GroupedSeriesConfig, apply_grouped_series
+
+        df = pd.DataFrame({"grp": ["A"] * 5 + ["B"] * 5, "ord": list(range(10))})
+        cfg = GroupedSeriesConfig.from_dict(
+            {"group_by": "grp", "order_by": "ord", "generator": "monotone_walk", "start": 1}
+        )
+        return list(apply_grouped_series(cfg, df, seed=seed, namespace=namespace))
+
+    def test_different_column_names_produce_different_walks(self) -> None:
+        """Two monotone_walk columns with same seed/groups but different names must differ.
+
+        Before the fix, _group_seed used sha256(seed + label + index) with no
+        column identity, so both columns produced byte-identical walks. After the
+        fix, the namespace ("grouped_series/<col>") is the HKDF info parameter,
+        giving each column its own per-group RNG key.
+        """
+        col_a = self._run_column("grouped_series/balance")
+        col_b = self._run_column("grouped_series/score")
+        assert col_a != col_b, (
+            "Two monotone_walk columns with different names produced identical output. "
+            "The namespace must be included in per-group seed derivation."
+        )
+
+    def test_same_namespace_same_output_determinism(self) -> None:
+        """Same namespace + same seed -> identical walk on repeated calls."""
+        r1 = self._run_column("grouped_series/balance")
+        r2 = self._run_column("grouped_series/balance")
+        assert r1 == r2, "Determinism must hold after the namespace fix."
+
+    def test_cumcount_namespace_independent(self) -> None:
+        """cumcount has no RNG; different namespaces produce the same cumcount output."""
+        import pandas as pd
+
+        from decoy_engine.transforms.grouped_series import GroupedSeriesConfig, apply_grouped_series
+
+        df = pd.DataFrame({"grp": ["A", "A", "B"], "ord": [1, 2, 1]})
+        cfg = GroupedSeriesConfig.from_dict({"group_by": "grp", "order_by": "ord"})
+        r1 = list(apply_grouped_series(cfg, df, seed=b"\x00" * 8, namespace="grouped_series/x"))
+        r2 = list(apply_grouped_series(cfg, df, seed=b"\x00" * 8, namespace="grouped_series/y"))
+        assert r1 == r2, "cumcount does not use RNG; namespace change must not affect output."
+
+
+class TestGroupedSeriesCompileVocab:
+    """Invalid generator rejected at plan-compile time (M1)."""
+
+    def test_bad_generator_rejected_at_compile(self) -> None:
+        """check_grouped_series_refs raises on an unknown generator name."""
+        from decoy_engine.plan._checks_grouped_series import check_grouped_series_refs
+
+        cfg = {
+            "tables": [
+                {
+                    "name": "t",
+                    "generate_columns": [
+                        {"name": "grp", "type": "categorical", "categories": ["A"]},
+                        {"name": "ord", "type": "sequence", "start": 1},
+                        {
+                            "name": "series",
+                            "type": "grouped_series",
+                            "group_by": "grp",
+                            "order_by": "ord",
+                            "generator": "exponential",
+                        },
+                    ],
+                }
+            ]
+        }
+        with pytest.raises(PlanCompileError, match="exponential"):
+            check_grouped_series_refs(cfg)
+
+    def test_valid_generators_pass_compile(self) -> None:
+        """Known generators pass the compile check."""
+        from decoy_engine.plan._checks_grouped_series import check_grouped_series_refs
+
+        for gen in ("cumcount", "monotone_walk"):
+            cfg = {
+                "tables": [
+                    {
+                        "name": "t",
+                        "generate_columns": [
+                            {"name": "grp", "type": "categorical", "categories": ["A"]},
+                            {"name": "ord", "type": "sequence", "start": 1},
+                            {
+                                "name": "series",
+                                "type": "grouped_series",
+                                "group_by": "grp",
+                                "order_by": "ord",
+                                "generator": gen,
+                            },
+                        ],
+                    }
+                ]
+            }
+            check_grouped_series_refs(cfg)  # no raise
+
+
+class TestGroupedSeriesStepValidation:
+    """step > max_step raises PlanCompileError at config-parse time (M2)."""
+
+    def test_step_greater_than_max_step_raises(self) -> None:
+        """step=15, max_step=10 is invalid; numpy integers(15, 11) would crash."""
+        from decoy_engine.transforms.grouped_series import GroupedSeriesConfig
+
+        with pytest.raises(PlanCompileError, match="step"):
+            GroupedSeriesConfig.from_dict(
+                {
+                    "group_by": "grp",
+                    "order_by": "ord",
+                    "generator": "monotone_walk",
+                    "step": 15,
+                    "max_step": 10,
+                }
+            )
+
+    def test_step_equals_max_step_allowed(self) -> None:
+        """step == max_step is valid; numpy integers(n, n+1) returns constant n."""
+        from decoy_engine.transforms.grouped_series import GroupedSeriesConfig
+
+        cfg = GroupedSeriesConfig.from_dict(
+            {
+                "group_by": "grp",
+                "order_by": "ord",
+                "generator": "monotone_walk",
+                "step": 10,
+                "max_step": 10,
+            }
+        )
+        assert cfg.step == 10 and cfg.max_step == 10
+
+    def test_step_zero_allowed(self) -> None:
+        """step=0 is valid; walk stays flat (no progress)."""
+        from decoy_engine.transforms.grouped_series import GroupedSeriesConfig
+
+        cfg = GroupedSeriesConfig.from_dict(
+            {
+                "group_by": "grp",
+                "order_by": "ord",
+                "generator": "monotone_walk",
+                "step": 0,
+                "max_step": 10,
+            }
+        )
+        assert cfg.step == 0
 
 
 class TestGroupedSeriesPlanCheck:
