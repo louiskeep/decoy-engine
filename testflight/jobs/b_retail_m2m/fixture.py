@@ -33,6 +33,26 @@ Correlations (deliberate, non-trivial for the distribution invariant):
     passthrough column (treating it as an FK column) would destroy this
     correlation; the correlation tooth catches it.
 
+Phase 3c: FPE-masked correlated pair (masked_correlation invariant):
+  - cat_code and risk_flag are BOTH FPE-masked in the pipeline.
+  - cat_code is a 2-char category code derived from the product category:
+      electronics -> "EL", clothing -> "CL", food -> "FD",
+      home -> "HM", sports -> "SP".
+  - risk_flag is a 2-char risk tier derived from cat_code:
+      "EL" or "HM" -> "HI" (high-margin product groups)
+      "CL" or "SP" -> "MD" (mid-tier)
+      "FD" -> "LO" (low-margin food)
+  - Source Cramers V is high (deterministic many-to-one mapping from 5
+    cat_codes to 3 risk_flags) -- above min_assoc=0.50.
+  - After FPE bijection on both columns, the contingency COUNTS are unchanged
+    (bijection preserves pair counts exactly), so Cramers V of the output
+    equals Cramers V of the source. diff ~ 0.
+  - The OLD engine crosstab-TVD metric scores this pair at ~0.0 (disjoint
+    label sets: source "EL"/"HI" pairs vs output "<permuted>"/"<permuted>"
+    pairs share no labels). This is the EXACT CASE the Phase 3c metric closes:
+    the old metric falsely declares a perfectly-preserved FPE pair as
+    completely decorrelated (0.0), worse than a truly decorrelated pair (~0.34).
+
 Row counts (from manifest.yaml):
   - customers: 3000
   - products: 500
@@ -55,6 +75,8 @@ Source format notes:
   - unit_price: float correlated with category
   - qty_band: "low" / "mid" / "high" (passthrough; correlated with order_total_band)
   - order_total_band: "low" / "mid" / "high" (passthrough; correlated with qty_band)
+  - cat_code: 2-char category code (FPE-masked; correlated with risk_flag)
+  - risk_flag: 2-char risk tier (FPE-masked; correlated with cat_code)
   - order_total: placeholder (derived by engine from qty * unit_price)
   - tier: placeholder (derived case_when over order_total)
 """
@@ -92,7 +114,7 @@ SENTINEL_CUSTOMER_IDX = 0  # planted in the FIRST customer row
 # Re-baseline deliberately when the fixture generator changes.
 _CUSTOMERS_FINGERPRINT = "e3c28d3e27dbc27d24adc53370cbe2c4e490b6b562e70ec483c9dcf20f29dd1e"
 _PRODUCTS_FINGERPRINT = "8b5f2816591cd58d88566b6ef5d26c41e479c591fab7a6f55df841eb61da5d34"
-_ORDERS_FINGERPRINT = "8cc526d6c5749f56a343768664e6461bc0b422820b9be4110b2666918eaf325d"
+_ORDERS_FINGERPRINT = "90cef1e6383ecba8f245d6a2a74be9a2b34a23db1202090d7d6a279f7089ddd9"
 
 # HHS-restricted ZIP3 prefixes (same set as Job A).
 _RESTRICTED_ZIP3_PREFIXES = [
@@ -243,6 +265,48 @@ _US_CITIES = [
     "Santa Ana",
     "Corpus Christi",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Phase 3c: category-code and risk-flag helpers (FPE-masked correlated pair)
+# ---------------------------------------------------------------------------
+
+# 2-char category codes (uppercase letters). The manifest uses charset:ALPHANUM
+# (includes uppercase) so FPE genuinely permutes these values. Do NOT use
+# charset:alphanum (lowercase only) -- uppercase chars fall outside that
+# charset and FPE would leave them unchanged (verbatim passthrough).
+_CAT_CODE: dict[str, str] = {
+    "electronics": "EL",
+    "clothing": "CL",
+    "food": "FD",
+    "home": "HM",
+    "sports": "SP",
+}
+
+# 2-char risk flags derived from cat_code (many-to-one; deterministic).
+# EL and HM -> "HI" (high-margin categories).
+# CL and SP -> "MD" (mid-tier).
+# FD -> "LO" (low-margin food).
+# Cramers V of (cat_code, risk_flag) = 1.0 exactly: risk_flag is a
+# deterministic function of cat_code, so knowing cat_code predicts risk_flag
+# without error. V = 1.0 regardless of the category proportions (the
+# functional dependency saturates the chi-square statistic). Matches the
+# V=1.0 claim in manifest.yaml masked_correlations.
+_RISK_FLAG: dict[str, str] = {
+    "EL": "HI",
+    "CL": "MD",
+    "FD": "LO",
+    "HM": "HI",
+    "SP": "MD",
+}
+
+
+def _cat_code(category: str) -> str:
+    return _CAT_CODE[category]
+
+
+def _risk_flag(cat_code_val: str) -> str:
+    return _RISK_FLAG[cat_code_val]
 
 
 # ---------------------------------------------------------------------------
@@ -447,7 +511,12 @@ def build_orders(
     - Exact ORPHAN_CUSTOMER_ORDER_COUNT orders with fictional customer_ids.
     - ZERO orphan product orders (all product_ids are valid).
     - Deliberate correlation: qty_band and order_total_band are correlated
-      via the category-driven unit_price model.
+      via the category-driven unit_price model (passthrough pair).
+    - Phase 3c FPE-masked pair: cat_code and risk_flag are both FPE-masked.
+      cat_code is a 2-char category abbreviation (EL/CL/FD/HM/SP).
+      risk_flag is a 2-char risk tier (HI/MD/LO) deterministically derived
+      from cat_code: EL/HM->HI, CL/SP->MD, FD->LO. Source Cramers V is
+      high (5 cat_codes -> 3 risk_flags, near-deterministic mapping).
 
     Args:
         seed: Reproducibility seed.
@@ -457,7 +526,7 @@ def build_orders(
     Returns:
         pandas DataFrame with columns:
           order_id, customer_id, product_id, qty, unit_price,
-          qty_band, order_total_band.
+          qty_band, order_total_band, cat_code, risk_flag.
         (order_total and tier are derived by the engine pipeline; the fixture
          uses placeholders 0.0 so the engine's derived strategy computes them.)
     """
@@ -496,6 +565,9 @@ def build_orders(
         qty_b = _qty_band(qty)
         total_b = _order_total_band(order_total_src)
 
+        cc = _cat_code(category)
+        rf = _risk_flag(cc)
+
         rows.append(
             {
                 "order_id": order_id,
@@ -505,6 +577,8 @@ def build_orders(
                 "unit_price": unit_price,
                 "qty_band": qty_b,
                 "order_total_band": total_b,
+                "cat_code": cc,
+                "risk_flag": rf,
             }
         )
 
@@ -525,6 +599,9 @@ def build_orders(
         unit_price = round(float(rng.uniform(price_lo, price_hi)), 2)
         order_total_src = round(qty * unit_price, 2)
 
+        cc = _cat_code(category)
+        rf = _risk_flag(cc)
+
         rows.append(
             {
                 "order_id": order_id,
@@ -534,6 +611,8 @@ def build_orders(
                 "unit_price": unit_price,
                 "qty_band": _qty_band(qty),
                 "order_total_band": _order_total_band(order_total_src),
+                "cat_code": cc,
+                "risk_flag": rf,
             }
         )
 

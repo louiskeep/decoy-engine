@@ -48,12 +48,14 @@ from testflight._invariants import (
     FIXED_TS,
     check_chapter_preserve,
     check_computed_columns,
+    check_correlation_through_masking,
     check_distribution_generate,
     check_distribution_mask,
     check_fk_integrity,
     check_quarantine,
     check_remap_masks_orphan,
     check_sentinels,
+    check_value_changing_not_passthrough,
 )
 from testflight._spec import (
     ChapterPreserveSpec,
@@ -2696,4 +2698,410 @@ class TestOrphanRemapMasksTeeth:
             result,
             relationships,
             source_frames=source_frames,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Phase 3c: masked-correlation mutation controls (Cramers V relabel-invariant)
+# ---------------------------------------------------------------------------
+
+
+class TestMaskedCorrelationTeeth:
+    """Mutation controls for the relabel-invariant masked-correlation invariant.
+
+    Phase 3c closes the carry-forward that the engine crosstab-TVD metric
+    cannot measure correlation through a value-changing mask (it scores ~0.0
+    even on a faithfully-preserved FPE pair).
+
+    Three controls:
+
+    A. Faithful FPE pair (structure preserved) -> NEW metric PASSES and the
+       OLD engine TVD metric is shown to score ~0.0 (proves genuine capability).
+    B. Association destroyed by masking (one masked col independently shuffled)
+       -> NEW metric RAISES (proves the tooth bites on real decorrelation).
+    C. Degenerate input (column with one unique value -> V undefined) -> NO
+       assertion, NO divide-by-zero (proves the guard is robust).
+    """
+
+    # ------------------------------------------------------------------
+    # A. Faithful FPE pair: new metric PASSES, old metric scores ~0.0
+    # ------------------------------------------------------------------
+
+    def test_faithful_fpe_pair_passes(self) -> None:
+        """A faithfully FPE-bijected correlated pair must PASS the new metric.
+
+        OLD metric failure (the carry-forward):
+          Source has cat_code in {EL, CL, FD, HM, SP} perfectly correlated with
+          risk_flag in {HI, MD, LO}. Source Cramers V = 1.0.
+          After FPE bijection: EL->X1, CL->X2, FD->X3, HM->X4, SP->X5 and
+          HI->Y1, MD->Y2, LO->Y3. The engine crosstab-TVD metric compares
+          value-LABELED cells. Source (EL, HI) -> count N; output (EL, HI) ->
+          count 0 (FPE relabeled). TVD = 1.0 -> similarity = 0.0. Worse than
+          a genuinely decorrelated pair (~0.34).
+
+        NEW metric correctness (Phase 3c):
+          Cramers V uses contingency COUNTS, not labels. Source (EL, HI) -> N
+          rows; output (X1, Y1) -> same N rows (bijection preserves counts).
+          V_out = 1.0 = V_src. diff = 0.0 < tol=0.10. PASSES.
+
+        This test directly proves the new capability: the old metric could not
+        distinguish a faithfully-masked pair from a decorrelated one; the new
+        metric can.
+        """
+        rng = np.random.default_rng(42)
+        n = 500
+        # Source: deterministic many-to-one mapping (5 cat_codes -> 3 risk_flags).
+        _cat_to_risk = {"EL": "HI", "CL": "MD", "FD": "LO", "HM": "HI", "SP": "MD"}
+        _cats = ["EL", "CL", "FD", "HM", "SP"]
+        _cat_weights = [0.20, 0.25, 0.20, 0.20, 0.15]
+
+        cat_codes = rng.choice(_cats, size=n, p=_cat_weights).tolist()
+        risk_flags = [_cat_to_risk[c] for c in cat_codes]
+        source_df = pd.DataFrame({"cat_code": cat_codes, "risk_flag": risk_flags})
+
+        # Simulate FPE bijection: each unique value maps to a new unique value.
+        _fpe_cat = {"EL": "X1", "CL": "X2", "FD": "X3", "HM": "X4", "SP": "X5"}
+        _fpe_risk = {"HI": "Y1", "MD": "Y2", "LO": "Y3"}
+        output_df = pd.DataFrame(
+            {
+                "cat_code": [_fpe_cat[c] for c in cat_codes],
+                "risk_flag": [_fpe_risk[r] for r in risk_flags],
+            }
+        )
+
+        # --- Prove old metric scores ~0.0 ---
+        from decoy_engine.quality.report import compute_quality_report
+
+        report = compute_quality_report(
+            source_df,
+            output_df,
+            joint_columns=[("cat_code", "risk_flag")],
+            now_iso=FIXED_TS,
+        )
+        joints = report.get("pairwise", {}).get("joints", [])
+        old_sim = None
+        for j in joints:
+            if isinstance(j, dict) and set(j.get("columns", [])) == {"cat_code", "risk_flag"}:
+                old_sim = j.get("similarity")
+                break
+
+        # The old TVD metric must score at or near 0.0 (disjoint label sets).
+        # We assert it is below 0.15 -- well below the corr_tol=0.90 the
+        # distribution spec would require, proving this pair is genuinely
+        # invisible to the old metric.
+        assert old_sim is not None, "Old metric: joint similarity not found in report"
+        assert float(old_sim) < 0.15, (
+            f"OLD engine crosstab-TVD metric scored {old_sim:.4f} on a faithfully "
+            f"FPE-masked pair. Expected < 0.15 (near 0.0 due to disjoint labels). "
+            f"If this assertion fails, the engine metric may have changed and the "
+            f"Phase 3c capability claim needs reassessment."
+        )
+
+        # --- Prove new metric PASSES ---
+        result = check_correlation_through_masking(
+            "p3c_faithful_control",
+            "orders",
+            "cat_code",
+            "risk_flag",
+            source_df,
+            output_df,
+            tol=0.10,
+            min_assoc=0.50,
+            strategy_a="fpe",
+            strategy_b="fpe",
+        )
+
+        assert result["diff"] is not None, "New metric: Cramers V undefined (degenerate)"
+        assert float(result["diff"]) < 0.01, (
+            f"New metric: FPE-masked pair drift = {result['diff']:.4f}. "
+            f"A bijection preserves contingency counts exactly; drift must be ~0."
+        )
+        assert float(result["v_src"]) >= 0.50, (
+            f"New metric: v_src={result['v_src']:.4f} < min_assoc=0.50. "
+            f"The source pair has insufficient association for a non-vacuous check."
+        )
+
+    # ------------------------------------------------------------------
+    # B. Association destroyed -> new metric RAISES
+    # ------------------------------------------------------------------
+
+    def test_destroyed_association_raises(self) -> None:
+        """Shuffling one masked column must trip the Cramers V check.
+
+        RED: source has strong cat_code/risk_flag correlation (V=1.0 on the
+        FPE-bijected output). A bug shuffles the output risk_flag column
+        independently, destroying the pairing. V_out drops to near 0.
+        abs(V_out - V_src) > tol=0.10 -> RAISES.
+
+        This proves the tooth catches real association destruction and is NOT
+        vacuous: a correct FPE run (test A) passes; an incorrectly-shuffled
+        output fails.
+        """
+        rng = np.random.default_rng(99)
+        n = 500
+        _cat_to_risk = {"EL": "HI", "CL": "MD", "FD": "LO", "HM": "HI", "SP": "MD"}
+        _cats = ["EL", "CL", "FD", "HM", "SP"]
+        cat_codes = rng.choice(_cats, size=n).tolist()
+        risk_flags = [_cat_to_risk[c] for c in cat_codes]
+        source_df = pd.DataFrame({"cat_code": cat_codes, "risk_flag": risk_flags})
+
+        # FPE bijection on cat_code (structure preserved in isolation).
+        _fpe_cat = {"EL": "X1", "CL": "X2", "FD": "X3", "HM": "X4", "SP": "X5"}
+        out_cat = [_fpe_cat[c] for c in cat_codes]
+
+        # BUG: risk_flag is independently shuffled (association destroyed).
+        _fpe_risk = {"HI": "Y1", "MD": "Y2", "LO": "Y3"}
+        out_risk_correct = [_fpe_risk[r] for r in risk_flags]
+        # Independent permutation -> destroys the joint structure.
+        out_risk_broken = rng.permutation(out_risk_correct).tolist()
+
+        output_df = pd.DataFrame({"cat_code": out_cat, "risk_flag": out_risk_broken})
+
+        with pytest.raises(AssertionError, match="masked_correlation"):
+            check_correlation_through_masking(
+                "p3c_destroyed_control",
+                "orders",
+                "cat_code",
+                "risk_flag",
+                source_df,
+                output_df,
+                tol=0.10,
+                min_assoc=0.0,
+                strategy_a="fpe",
+                strategy_b="fpe",
+            )
+
+    # ------------------------------------------------------------------
+    # C. Degenerate input: single-value column -> no assertion
+    # ------------------------------------------------------------------
+
+    def test_degenerate_column_handled(self) -> None:
+        """A column with one unique value yields V=undefined; no assertion fires.
+
+        When one column has only one unique non-null value, the contingency
+        table is degenerate (only one row or one column), min(r-1, c-1) = 0,
+        and Cramers V is undefined (0/0). The function must return
+        {v_src: None, v_out: None, diff: None} and NOT raise an AssertionError
+        or ZeroDivisionError.
+
+        Callers with degenerate data should validate their fixtures independently;
+        the degenerate guard exists to prevent the check from crashing on edge
+        cases, not to allow genuinely degenerate test data.
+        """
+        n = 100
+        # col_a has only one unique value -> contingency table is 1xM (degenerate).
+        source_df = pd.DataFrame(
+            {
+                "cat_code": ["SAME"] * n,  # all identical
+                "risk_flag": ["HI", "MD", "LO"] * (n // 3) + ["HI"] * (n % 3),
+            }
+        )
+        output_df = source_df.copy()
+        output_df["cat_code"] = ["XFPE"] * n  # FPE maps SAME -> XFPE (still 1 unique)
+
+        result = check_correlation_through_masking(
+            "p3c_degenerate_control",
+            "orders",
+            "cat_code",
+            "risk_flag",
+            source_df,
+            output_df,
+            tol=0.10,
+            min_assoc=0.0,
+        )
+
+        assert result["diff"] is None, (
+            f"Degenerate guard: expected diff=None for single-value column, "
+            f"got diff={result['diff']}."
+        )
+        assert result["v_src"] is None or result["v_out"] is None, (
+            "Degenerate guard: at least one V must be None for single-value column."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Phase 3c: value-changing-mask passthrough tooth mutation controls
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.testflight
+class TestValueChangingMaskPassthroughTooth:
+    """Mutation controls for the value-changing-mask passthrough tooth.
+
+    The tooth detects the BLOCKER-1 class of bug: an FPE column whose charset
+    does not cover the data's characters passes every value through unchanged,
+    making the mask a silent no-op. The suite previously had no check for this
+    because check_correlation_through_masking only compares Cramers V (which is
+    identical when output == input, so it scores v_src = v_out correctly -- but
+    only because no masking occurred).
+
+    Controls:
+    A. No-op mask (BUG): alphanum charset on uppercase data -> output == input
+       -> check_value_changing_not_passthrough RAISES.
+    B. Real mask (FIX): ALPHANUM charset on uppercase data -> values permuted
+       -> check_value_changing_not_passthrough PASSES.
+    C. Non-value-changing strategy -> check is skipped (no assertion).
+
+    The RED/GREEN symmetry proves the tooth catches exactly the bug it targets
+    and does not fire on a correctly-masked column.
+
+    BLOCKER-1 root cause proof:
+    - charset:alphanum is '0123456789abcdefghijklmnopqrstuvwxyz' (lowercase only).
+    - Source values 'EL', 'CL', 'FD', 'HM', 'SP' are uppercase letters.
+    - FPE finds no in-charset characters in any value, so every value passes
+      through unchanged: output value-set == source value-set.
+    - charset:ALPHANUM is '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ...' (includes
+      uppercase). FPE permutes each value to a different 2-char string.
+    """
+
+    # Reference values matching Job B fixture (uppercase 2-char codes).
+    _SRC_CATS = ["EL", "CL", "FD", "HM", "SP"]
+    _SRC_RISKS = ["HI", "MD", "LO"]
+
+    @staticmethod
+    def _apply_fpe(values: list[str], charset_name: str, tweak: bytes) -> list[str]:
+        """Apply real FPE engine with the given charset name and tweak."""
+        from decoy_engine.transforms.fpe import _CHARSETS, fpe_encrypt_value
+
+        charset = _CHARSETS[charset_name]
+        key = b"tooth-test-key-32bytes-padding--"
+        return [fpe_encrypt_value(v, key, charset, tweak) for v in values]
+
+    def test_alphanum_charset_on_uppercase_raises(self) -> None:
+        """FPE with alphanum charset on uppercase data must raise the passthrough tooth.
+
+        RED (BLOCKER-1 bug): charset:alphanum is lowercase-only. Uppercase chars
+        (E, L, C, F, D, H, M, S, P) are all outside the alphanum charset.
+        FPE finds no in-charset characters and returns each value verbatim.
+        output value-set == source value-set -> check_value_changing_not_passthrough
+        RAISES.
+
+        This is the exact bug that let BLOCKER-1 ship green: 26/26 checks passed
+        while the fpe columns were actually verbatim passthroughs.
+        """
+        cats = self._SRC_CATS * 20  # 100 rows, 5 unique values
+        out_cats = self._apply_fpe(cats, "alphanum", b"cat_code")  # all passthrough
+
+        # Prove the bug: every output value equals its source value.
+        assert all(o == s for o, s in zip(out_cats, cats, strict=True)), (
+            "Expected alphanum FPE to be a no-op on uppercase data (passthrough), "
+            "but at least one value changed. The test assumption is wrong."
+        )
+
+        source_df = pd.DataFrame({"cat_code": cats})
+        output_df = pd.DataFrame({"cat_code": out_cats})
+
+        with pytest.raises(AssertionError, match="value-changing-mask passthrough"):
+            check_value_changing_not_passthrough(
+                "tooth_test", "orders", "cat_code", "fpe", source_df, output_df
+            )
+
+    def test_ALPHANUM_charset_on_uppercase_passes(self) -> None:
+        """FPE with ALPHANUM charset on uppercase data must pass the passthrough tooth.
+
+        GREEN (BLOCKER-1 fix): charset:ALPHANUM includes uppercase letters. FPE
+        permutes each unique value to a different 2-char string over the 62-char
+        ALPHANUM set. The output value-set differs from the source value-set.
+        check_value_changing_not_passthrough must NOT raise.
+
+        This proves the fix: ALPHANUM charset -> real permutation -> tooth passes.
+        """
+        cats = self._SRC_CATS * 20  # 100 rows, 5 unique values
+        out_cats = self._apply_fpe(cats, "ALPHANUM", b"cat_code")  # real permutation
+
+        # Prove the fix: at least one output value differs from its source value.
+        assert any(o != s for o, s in zip(out_cats, cats, strict=True)), (
+            "Expected ALPHANUM FPE to permute at least one uppercase value, "
+            "but all outputs are identical to their source values. "
+            "The FPE module or test key may have changed."
+        )
+        # Additionally: source and output value-sets must be disjoint.
+        src_set = set(self._SRC_CATS)
+        out_set = set(out_cats)
+        assert src_set.isdisjoint(out_set), (
+            f"ALPHANUM FPE output value-set {sorted(out_set)} is not disjoint "
+            f"from source value-set {sorted(src_set)}. "
+            f"Expected full relabeling under this key."
+        )
+
+        source_df = pd.DataFrame({"cat_code": cats})
+        output_df = pd.DataFrame({"cat_code": out_cats})
+
+        # Must NOT raise: output set differs from source set.
+        check_value_changing_not_passthrough(
+            "tooth_test", "orders", "cat_code", "fpe", source_df, output_df
+        )
+
+    def test_risk_flag_alphanum_charset_raises(self) -> None:
+        """FPE with alphanum charset on risk_flag (HI/MD/LO) must raise.
+
+        Mirrors test_alphanum_charset_on_uppercase_raises for the second column
+        of the BLOCKER-1 pair. Proves both columns in the masked_correlations
+        spec had the same no-op bug.
+        """
+        risks = self._SRC_RISKS * 33 + self._SRC_RISKS[:1]  # ~100 rows
+        out_risks = self._apply_fpe(risks, "alphanum", b"risk_flag")
+
+        assert all(o == s for o, s in zip(out_risks, risks, strict=True)), (
+            "Expected alphanum FPE to be a no-op on HI/MD/LO (uppercase), "
+            "but at least one value changed."
+        )
+
+        source_df = pd.DataFrame({"risk_flag": risks})
+        output_df = pd.DataFrame({"risk_flag": out_risks})
+
+        with pytest.raises(AssertionError, match="value-changing-mask passthrough"):
+            check_value_changing_not_passthrough(
+                "tooth_test", "orders", "risk_flag", "fpe", source_df, output_df
+            )
+
+    def test_non_value_changing_strategy_skipped(self) -> None:
+        """A passthrough strategy column must not be checked by this tooth.
+
+        The tooth only fires for _VALUE_CHANGING_STRATEGIES (fpe, hash, code_set).
+        A passthrough column with identical source and output must NOT raise even
+        though the value-sets are equal, because passthrough is not expected to
+        change values.
+
+        This proves the tooth does not over-assert on strategies that are not
+        supposed to change values.
+        """
+        vals = ["low", "mid", "high", "low", "mid"]
+        source_df = pd.DataFrame({"qty_band": vals})
+        output_df = pd.DataFrame({"qty_band": vals})  # identical (passthrough)
+
+        # Must NOT raise: strategy=passthrough is not in _VALUE_CHANGING_STRATEGIES.
+        check_value_changing_not_passthrough(
+            "tooth_test", "orders", "qty_band", "passthrough", source_df, output_df
+        )
+
+    def test_good_fpe_with_matching_charset_passes(self) -> None:
+        """FPE with digits charset on digit-only data must pass the tooth.
+
+        GREEN control: customer_id is FPE-masked with charset:digits (correct match).
+        FPE permutes each digit string to a different digit string. The output
+        value-set differs from the source value-set.
+
+        Proves the tooth does not fire on any correctly-configured FPE column.
+        """
+        src_ids = [f"CU{i:06d}" for i in range(1, 101)]  # 100 unique IDs
+        # FPE with digits charset: only the digit part is permuted, "CU" prefix preserved.
+        out_ids = self._apply_fpe(src_ids, "digits", b"customer_id")
+
+        # With preserve_separators=True (default), "CU" prefix is unchanged.
+        # At least the digit portion is permuted so at least some outputs differ.
+        src_digit_sets = {s[2:] for s in src_ids}  # digit suffixes
+        out_digit_sets = {o[2:] for o in out_ids}
+        # The digit suffix sets should differ (FPE genuinely permuted the digits).
+        assert src_digit_sets != out_digit_sets, (
+            "Expected FPE with digits charset to permute the numeric suffix. "
+            "If all outputs match source, the FPE module may have a bug."
+        )
+
+        source_df = pd.DataFrame({"customer_id": src_ids})
+        output_df = pd.DataFrame({"customer_id": out_ids})
+
+        # Must NOT raise: some values changed.
+        check_value_changing_not_passthrough(
+            "tooth_test", "customers", "customer_id", "fpe", source_df, output_df
         )

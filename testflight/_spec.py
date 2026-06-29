@@ -303,6 +303,52 @@ class ComputedColumnSpec(BaseModel):
     branch_count: int = Field(ge=0, default=0)
 
 
+class MaskedCorrelationSpec(BaseModel):
+    """Relabel-invariant association check for a value-changing masked column pair.
+
+    Declares two columns that are both masked by a value-changing strategy
+    (fpe, code_set, hash, etc.). The harness computes Cramers V on BOTH the
+    source pair and the masked output pair and asserts::
+
+        abs(v_out - v_src) <= tol
+
+    Cramers V depends on contingency COUNTS not value labels, so an FPE
+    bijection on both columns yields v_out == v_src exactly (the bijection
+    preserves pair counts). The old engine crosstab-TVD metric scores such pairs
+    at ~0.0 because the value labels are disjoint after relabeling, making it
+    unable to distinguish a faithfully-masked pair from a decorrelated one.
+
+    Phase 3c (2026-06-29): this closes the masked-correlation carry-forward
+    documented in docs/what-we-cannot-prove.md for categorical / low-cardinality
+    column pairs masked by bijective strategies. High-cardinality continuous
+    pairs remain out of scope (Cramers V requires binning for continuous data).
+
+    Fields:
+        table: Table name containing both columns.
+        col_a: First column in the correlated pair.
+        col_b: Second column in the correlated pair.
+        strategy_a: Masking strategy applied to col_a (for error messages).
+        strategy_b: Masking strategy applied to col_b (for error messages).
+        tol: Maximum allowed absolute difference |v_out - v_src|. Default 0.10.
+            For bijective strategies (fpe) the theoretical diff is 0.0; tol
+            provides a small budget for floating-point precision.
+        min_assoc: Floor on v_src (source Cramers V). Non-zero values prove the
+            source columns are meaningfully associated (the check is non-vacuous).
+            A near-zero min_assoc means any output passes regardless of whether
+            the association was destroyed.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    table: str
+    col_a: str
+    col_b: str
+    strategy_a: str | None = None
+    strategy_b: str | None = None
+    tol: float = Field(ge=0.0, le=1.0, default=0.10)
+    min_assoc: float = Field(ge=0.0, le=1.0, default=0.0)
+
+
 # ---------------------------------------------------------------------------
 # InvariantSpec -- all expected invariants for one job
 # ---------------------------------------------------------------------------
@@ -364,6 +410,12 @@ class InvariantSpec(BaseModel):
     # 6.11 chapter_preserve: assert code_set columns with chapter_preserve:true
     # produce output codes in the same chapter as the source codes.
     chapter_preserve: list[ChapterPreserveSpec] = Field(default_factory=list)
+
+    # Phase 3c: relabel-invariant correlation check for value-changing masked pairs.
+    # Pairs declared here are checked via Cramers V (chi-square over contingency
+    # COUNTS, not value labels). FPE bijections on both columns yield v_out == v_src
+    # exactly, closing the carry-forward that crosstab-TVD cannot handle.
+    masked_correlations: list[MaskedCorrelationSpec] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

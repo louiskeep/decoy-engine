@@ -17,12 +17,14 @@ from __future__ import annotations
 
 from typing import Any
 
+import pandas as pd
 import pyarrow as pa
 
 # Re-export distribution-fidelity and chapter-preserve functions so existing
 # callers that import from _invariants continue to work without change.
 from ._chapter import check_chapter_preserve as check_chapter_preserve
 from ._computed import check_computed_columns as check_computed_columns
+from ._correlation import check_correlation_through_masking as check_correlation_through_masking
 from ._distribution import (
     FIXED_TS as FIXED_TS,
 )
@@ -35,6 +37,7 @@ from ._distribution import (
 from ._spec import (
     ChecksumSpec,
     FKIntegritySpec,
+    MaskedCorrelationSpec,
     QuarantineSpec,
     RelationshipSpec,
     SafeHarborSpec,
@@ -43,9 +46,11 @@ from ._spec import (
 
 __all__ = [
     "FIXED_TS",
+    "MaskedCorrelationSpec",
     "check_chapter_preserve",
     "check_checksums",
     "check_computed_columns",
+    "check_correlation_through_masking",
     "check_determinism",
     "check_distribution_generate",
     "check_distribution_mask",
@@ -55,7 +60,13 @@ __all__ = [
     "check_safe_harbor",
     "check_sentinels",
     "check_strategy_coverage",
+    "check_value_changing_not_passthrough",
 ]
+
+# Strategies that must change every source value they touch. An FPE/hash/code_set
+# column whose output value-set equals the source value-set is a silent no-op
+# (e.g. FPE with a charset that does not cover the data's characters).
+_VALUE_CHANGING_STRATEGIES: frozenset[str] = frozenset({"fpe", "hash", "code_set"})
 
 # HHS-restricted ZIP3 prefixes (HIPAA Safe Harbor; populations < 20,000).
 _RESTRICTED_ZIP3_PREFIXES: frozenset[str] = frozenset(
@@ -176,6 +187,64 @@ def check_remap_masks_orphan(
         f"the source key; equality means the masking strategy left it on "
         f"passthrough (out-of-charset no-op). Use an in-charset source key or "
         f"a strategy that always transforms (see docs/what-we-cannot-prove.md)."
+    )
+
+
+def check_value_changing_not_passthrough(
+    job_name: str,
+    table: str,
+    column: str,
+    strategy: str,
+    source_df: pd.DataFrame,
+    output_df: pd.DataFrame,
+) -> None:
+    """Assert that a value-changing-masked column's output value-set differs from source.
+
+    A value-changing strategy (fpe, hash, code_set) must produce output values
+    that differ from the source values at the column level. If the output
+    value-set equals the source value-set, the strategy is a silent no-op: the
+    mask left the column on passthrough.
+
+    The canonical bug this catches is FPE configured with a charset that does not
+    cover the data's actual characters. FPE extracts in-charset characters,
+    permutes them, and writes them back; if no characters are in-charset, every
+    value is returned verbatim. A column with charset:alphanum (lowercase) applied
+    to uppercase-only values (e.g. "EL", "HI") passes through unchanged.
+
+    This is a column-level set check, not a row-level check. A set equality means
+    NO value was changed at all. A single changed value passes (output_set differs
+    from source_set in at least one element), which is sufficient to prove the
+    strategy is not a complete no-op.
+
+    Only applied when strategy is in _VALUE_CHANGING_STRATEGIES. Other strategies
+    (passthrough, categorical, derived, geo_generalize, date_shift, text_redact)
+    have their own correctness teeth and are not subject to this check.
+
+    Args:
+        job_name: Job name for error messages.
+        table: Table name for error messages.
+        column: Column name to check.
+        strategy: Masking strategy declared for this column.
+        source_df: Pre-mask pandas DataFrame.
+        output_df: Post-mask pandas DataFrame.
+
+    Raises:
+        AssertionError: If output value-set equals source value-set (complete no-op).
+    """
+    if strategy not in _VALUE_CHANGING_STRATEGIES:
+        return
+    if column not in source_df.columns or column not in output_df.columns:
+        return  # Column-presence is checked by check_correlation_through_masking.
+    src_vals = set(source_df[column].dropna().unique())
+    out_vals = set(output_df[column].dropna().unique())
+    assert src_vals != out_vals, (
+        f"[{job_name}/{table}] value-changing-mask passthrough: column {column!r} "
+        f"strategy={strategy!r} output value-set equals source value-set. "
+        f"The mask is a no-op (e.g. FPE charset does not cover the data characters). "
+        f"A {strategy!r} column must produce at least one changed value. "
+        f"Source values (up to 10): {sorted(str(v) for v in src_vals)[:10]}. "
+        f"Declare charset:ALPHANUM for uppercase data, charset:alpha for lowercase, "
+        f"or charset:digits for numeric data."
     )
 
 

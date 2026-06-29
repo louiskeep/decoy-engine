@@ -45,6 +45,7 @@ from ._invariants import (
     check_chapter_preserve,
     check_checksums,
     check_computed_columns,
+    check_correlation_through_masking,
     check_determinism,
     check_distribution_generate,
     check_distribution_mask,
@@ -52,6 +53,7 @@ from ._invariants import (
     check_quarantine,
     check_safe_harbor,
     check_sentinels,
+    check_value_changing_not_passthrough,
 )
 from ._spec import FlightManifest, load_manifest
 
@@ -435,6 +437,80 @@ def evaluate_invariants(
             result_a,
             sources,
         )
+
+    # Phase 3c: relabel-invariant masked-correlation checks.
+    # Each MaskedCorrelationSpec declares a pair of value-changing-masked columns
+    # (fpe, code_set, etc.). Cramers V is computed over contingency COUNTS on
+    # both source and output; assert abs(v_out - v_src) <= tol.
+    for mc_spec in inv.masked_correlations:
+        family_name = f"masked_correlation:{mc_spec.table}:{mc_spec.col_a}:{mc_spec.col_b}"
+        try:
+            src_pa = sources.get(mc_spec.table)
+            out_pa = result_a.outputs.get(mc_spec.table)
+            if src_pa is None:
+                results.append(
+                    InvariantResult(
+                        family=family_name,
+                        passed=False,
+                        detail=f"source table '{mc_spec.table}' not in sources dict.",
+                    )
+                )
+                continue
+            if out_pa is None:
+                results.append(
+                    InvariantResult(
+                        family=family_name,
+                        passed=False,
+                        detail=f"output table '{mc_spec.table}' not in result.outputs.",
+                    )
+                )
+                continue
+            src_df = src_pa.to_pandas()
+            out_df = out_pa.to_pandas()
+            # Tooth: each value-changing-masked column must produce at least one
+            # changed value. A complete no-op (output value-set == source value-set)
+            # means the charset does not cover the data (e.g. alphanum on uppercase).
+            for _col, _strat in [
+                (mc_spec.col_a, mc_spec.strategy_a),
+                (mc_spec.col_b, mc_spec.strategy_b),
+            ]:
+                if _strat is not None:
+                    check_value_changing_not_passthrough(
+                        job_name, mc_spec.table, _col, _strat, src_df, out_df
+                    )
+            evidence = check_correlation_through_masking(
+                job_name,
+                mc_spec.table,
+                mc_spec.col_a,
+                mc_spec.col_b,
+                src_df,
+                out_df,
+                tol=mc_spec.tol,
+                min_assoc=mc_spec.min_assoc,
+                strategy_a=mc_spec.strategy_a,
+                strategy_b=mc_spec.strategy_b,
+            )
+            results.append(
+                InvariantResult(
+                    family=family_name,
+                    passed=True,
+                    detail=(
+                        f"v_src={evidence.get('v_src', '?'):.4f} "
+                        f"v_out={evidence.get('v_out', '?'):.4f} "
+                        f"diff={evidence.get('diff', '?'):.4f}"
+                        if evidence.get("diff") is not None
+                        else "degenerate (v undefined, skipped)"
+                    ),
+                )
+            )
+        except (AssertionError, ValueError) as exc:
+            results.append(
+                InvariantResult(
+                    family=family_name,
+                    passed=False,
+                    detail=str(exc)[:500],
+                )
+            )
 
     return results
 
