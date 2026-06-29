@@ -11,12 +11,12 @@ Topology: self_referential.
 Planted edge cases (match manifest.yaml invariants exactly):
   - ROOT_COUNT = 10 root-node rows with manager_id = NULL.
     Null manager_ids pass through the FK remap machinery unchanged.
-  - ORPHAN_COUNT = 1 row with manager_id = "emp99999" (not in employee_id set).
-    "emp99999" uses only lowercase letters and digits, which are all in the FPE
-    alphanum charset ("0123456789abcdefghijklmnopqrstuvwxyz"). So orphan_policy:remap
-    drives FPE and genuinely permutes every character -- the output value differs from
-    "emp99999". The fk_integrity invariant verifies expected_orphans:1 AND that the
-    remapped output value != the source key (remap genuinely masked it, not passthrough).
+  - ORPHAN_COUNT = 1 row with manager_id = "EMP-ORPHAN" (not in employee_id set).
+    "EMP-ORPHAN" uses only uppercase letters and a hyphen, which are ALL outside the
+    FPE alphanum charset ("0123456789abcdefghijklmnopqrstuvwxyz"). Fix #42 routes
+    such keys through the covering hash in transforms/fpe.py so the output differs
+    from the source key. The fk_integrity invariant verifies expected_orphans:1 AND
+    that the remapped output value != "EMP-ORPHAN" (remap genuinely masked it).
   - SENTINEL_PHONE = "800-555-0100" planted in the notes column of employee row 0.
     text_mask with phone_number detector must redact it; sentinel scan verifies absence.
 
@@ -64,19 +64,18 @@ ROOT_COUNT = 10
 # The FK remap machinery handles this via orphan_policy:remap.
 ORPHAN_COUNT = 1
 
-# Source FK value for the orphan row. Must use only FPE alphanum charset chars
-# (0-9 + a-z) so orphan_policy:remap drives FPE and genuinely permutes the value
-# instead of passing it through unchanged (the charset-gap passthrough is the
-# documented engine limitation in docs/what-we-cannot-prove.md).
-ORPHAN_SOURCE_KEY = "emp99999"
+# Source FK value for the orphan row. Uses all-uppercase + hyphen chars, which are
+# outside the FPE alphanum charset (0-9 + a-z). Fix #42 routes such keys through
+# the covering hash in transforms/fpe.py so they are never emitted verbatim.
+# This key was "emp99999" (in-charset) before fix #42 closed the gap.
+ORPHAN_SOURCE_KEY = "EMP-ORPHAN"
 
 # Source fingerprint (SHA-256 of canonical CSV). verify_fingerprint is called
 # inside build_employees so a faker/numpy version bump that shifts the fixture
 # output fails loudly with a re-baseline instruction.
 # Baseline: run compute_fingerprint(build_employees(seed=44)) and update here.
-# Updated (Phase 4): added badge_id, dept_code, dept_hash, dept_shuffle columns
-# to exercise redact, truncate, hash, shuffle strategies in the coverage guard.
-_EMPLOYEES_FINGERPRINT = "7a70ab27af7b7f33c3eddf6de354faa0a8f908d25bfc9579a260b02e5c0dcb06"
+# Updated (fix #42): ORPHAN_SOURCE_KEY changed from "emp99999" to "EMP-ORPHAN".
+_EMPLOYEES_FINGERPRINT = "14b9a8820ae2537587be4c01fce3ffd8b7d33422b71ded12213f21e8ce128113"
 
 # The sentinel phone number planted in the notes column of row 0.
 # text_mask with phone_number detector must redact it; sentinel scan checks absence.
@@ -133,7 +132,7 @@ def build_employees(seed: int = 44, **_kwargs: Any) -> pd.DataFrame:
 
     # Build manager_ids:
     # - Rows 0..ROOT_COUNT-1: None (root nodes).
-    # - Row ROOT_COUNT: ORPHAN_SOURCE_KEY (in-charset orphan; not in emp_ids set).
+    # - Row ROOT_COUNT: ORPHAN_SOURCE_KEY (out-of-charset orphan; not in emp_ids set).
     # - Rows ROOT_COUNT+1..: reference a root node (cycle-free depth-2 tree).
     root_ids = emp_ids[:ROOT_COUNT]
     manager_ids: list[Any] = [None] * ROOT_COUNT + [ORPHAN_SOURCE_KEY]

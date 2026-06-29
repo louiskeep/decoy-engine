@@ -163,6 +163,20 @@ def _single_char_shift(key: bytes, tweak: bytes) -> int:
     return int.from_bytes(hmac.new(key, msg, hashlib.sha256).digest(), "big")
 
 
+def _covering_hash_to_charset(val: str, key: bytes, charset: str, tweak: bytes) -> str:
+    """In-charset cover for an all-out-of-charset value (fix #42).
+    Per-position keyed PRF: HMAC-SHA256 (RFC 2104), HKDF-style domain sep (RFC 5869).
+    Deterministic under (key, charset, tweak, val); output never equals val."""
+    if not val:
+        return val
+    r, dom, val_b = len(charset), b"covering\xff", val.encode("utf-8", errors="replace")
+    out: list[str] = []
+    for i in range(len(val)):
+        msg = dom + struct.pack(">I", i) + b"\xff" + tweak + b"\xff" + val_b
+        out.append(charset[int.from_bytes(hmac.new(key, msg, hashlib.sha256).digest(), "big") % r])
+    return "".join(out)
+
+
 def _permute(s: str, key: bytes, charset: str, tweak: bytes, *, forward: bool) -> str:
     """Feistel-permute (or invert) a string made entirely of charset chars."""
     n = len(s)
@@ -362,25 +376,17 @@ def _fpe_value(
 ) -> str:
     """Shared encrypt/decrypt orchestration over one value.
 
-    Separator handling is symmetric: charset characters are extracted,
-    permuted as one string, and written back to their original positions,
-    so decrypt sees exactly the layout encrypt produced. Values with no
-    charset characters (or, with preserve_separators=false, any
-    out-of-charset character) pass through unchanged in both directions."""
+    With preserve_separators=True: charset chars are extracted, permuted, and
+    reinserted; zero in-charset chars invoke the covering hash (fix #42).
+    With preserve_separators=False: any out-of-charset char passes through
+    unchanged (separate behavior, not fixed here)."""
     if not val:
         return val
     charset_set = set(charset)
     if preserve_separators:
         positions = [i for i, ch in enumerate(val) if ch in charset_set]
-        if not positions:
-            # BACKLOG(remap-out-of-charset): no in-charset chars -> value passes
-            # through unchanged. For orphan_policy=remap this means an all-out-of-
-            # charset orphan key (e.g. "TERMINATED", "EMP-ORPHAN") is emitted
-            # verbatim, contradicting the REMAP docstring. Real fix: the orphan
-            # resolver should mint a guaranteed in-charset masked value instead of
-            # calling the strategy blindly. Compat-contract/determinism blast radius
-            # deferred; see _orphan.py BACKLOG note and docs/what-we-cannot-prove.md.
-            return val
+        if not positions:  # fix #42: covering hash replaces verbatim passthrough
+            return _covering_hash_to_charset(val, key, charset, tweak)
         body = _fpe_pure_value(
             "".join(val[i] for i in positions),
             key,

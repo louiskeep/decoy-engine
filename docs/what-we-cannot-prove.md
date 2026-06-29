@@ -144,35 +144,29 @@ manifest, a green check does prove that the categorical association was preserve
 through the value-changing mask. The TVD similarity metric is explicitly NOT
 used to judge these pairs (it would falsely report 0.0 on a correct FPE run).
 
-## orphan_policy:remap does not guarantee masking for out-of-charset keys
+## FPE orphan-remap passes out-of-charset characters through (partial keys, and =False)
 
-When a child FK value has no matching parent key (an orphan), `orphan_policy:remap`
-re-applies the parent column's masking strategy to produce a replacement value. For
-most strategies this makes the remapped value indistinguishable from a normally-masked
-one.
+When `orphan_policy:remap` re-applies FPE to an orphan FK key, the covering hash
+(`_covering_hash_to_charset` in `transforms/fpe.py`, fix #42) fires ONLY for keys
+with ZERO in-charset characters: such an all-out-of-charset key is routed to a
+deterministic in-charset string and is never emitted verbatim under the default
+`preserve_separators=True`.
 
-Exception: for FPE with `preserve_separators: true`, a source key whose characters
-are ALL outside the FPE charset passes through FPE unchanged. FPE extracts in-charset
-characters, permutes them, and writes them back; if there are no in-charset characters,
-there is nothing to permute and the value is returned verbatim. Concretely, against
-the alphanum charset (`0123456789abcdefghijklmnopqrstuvwxyz`), an orphan key like
-`TERMINATED`, `N/A`, `UNKNOWN`, or `EMP-ORPHAN` (all uppercase + hyphens) has no
-in-charset characters and will appear unchanged in the masked output.
+It does NOT cover a key with a MIX of in- and out-of-charset characters. Under
+`=True`, the in-charset characters are permuted in place and every out-of-charset
+character is passed through verbatim - the standard product-wide
+`preserve_separators` behavior, where out-of-charset characters are treated as
+separators by the user's charset choice. So a partial-out-of-charset orphan key
+(e.g. `STATUS-1` under a `digits` charset) still leaks its out-of-charset
+characters (`STATUS-`) in the clear. And with `preserve_separators: false`
+explicitly set, FPE returns the whole value verbatim when ANY character is outside
+the charset.
 
-Consequence: if your data contains out-of-charset sentinel strings as FK values and
-you use `orphan_policy:remap` with FPE, those strings leak into the output verbatim.
-This is a pre-existing limitation, not a guarantee Decoy makes.
-
-Mitigation options while the backlog fix is pending:
-- Use in-charset orphan keys (lowercase letters or digits) so FPE can permute them.
-- Use `orphan_policy:fail` to reject out-of-charset orphans explicitly.
+Mitigations for the partial and `=False` cases:
+- Widen the charset to cover the orphan key's alphabet (e.g. `ALPHANUM` for
+  uppercase identifiers) so every character is encrypted.
+- Use `orphan_policy:fail` to reject orphan FK values entirely.
 - Use `orphan_policy:preserve` if the source key is already non-sensitive.
-
-The backlog fix (tracked as `BACKLOG(remap-out-of-charset)` in `_orphan.py` and
-`transforms/fpe.py`) is to have the orphan resolver mint a guaranteed in-charset
-masked value when the parent strategy would no-op. That fix carries a
-compatibility-contract and determinism blast radius and is deferred past the current
-sprint boundary.
 
 ## What it does do
 

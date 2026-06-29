@@ -47,6 +47,22 @@ _STRATEGY_ALLOWLIST: dict[str, str] = {
         "three test jobs carry struct columns; will be added when a "
         "struct-column test data model is introduced"
     ),
+    "group_key": (
+        "SP-10c group-aware strategy; exercised end-to-end by "
+        "tests/unit/transforms/test_group_key.py; a dedicated test-flight job "
+        "exercising the group-aware strategies (group_key/grouped_series/"
+        "windowed_date) is a tracked backlog item"
+    ),
+    "grouped_series": (
+        "SP-10c group-aware strategy; exercised by "
+        "tests/unit/transforms/test_grouped_series.py; dedicated test-flight "
+        "coverage is a tracked backlog item (see group_key)"
+    ),
+    "windowed_date": (
+        "SP-10c group-aware strategy; exercised by "
+        "tests/unit/transforms/test_windowed_date.py; dedicated test-flight "
+        "coverage is a tracked backlog item (see group_key)"
+    ),
 }
 
 # Generate-column types (from generation/synthesize.py dispatch) that are

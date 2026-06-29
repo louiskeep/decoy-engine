@@ -71,8 +71,9 @@ def check_remap_masks_orphan(
         f"equals its output value {orphan_output_val!r}. "
         f"orphan_policy=remap must produce an output value that differs from "
         f"the source key; equality means the masking strategy left it on "
-        f"passthrough (out-of-charset no-op). Use an in-charset source key or "
-        f"a strategy that always transforms (see docs/what-we-cannot-prove.md)."
+        f"passthrough. An all-out-of-charset key is now covered by the covering "
+        f"hash under preserve_separators=True (fix #42); the residual cases are a "
+        f"partial-out-of-charset key or =False (see docs/what-we-cannot-prove.md)."
     )
 
 
