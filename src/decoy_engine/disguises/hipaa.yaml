@@ -100,9 +100,9 @@
 #  See: https://www.hhs.gov/hipaa/for-professionals/privacy/special-topics/de-identification/
 
 id: hipaa
-version: "2026-06-28"
+version: "2026-06-29"
 name: "HIPAA Safe Harbor"
-summary: "Full HIPAA Safe Harbor (45 CFR 164.514(b)(2)): all 18 identifier categories + clinical detectors. SP-11 tightened posture: NPI valid-by-construction (fpe+checksum:npi), ICD-10 chapter-preserved (code_set), ZIP Safe Harbor cascade (geo_generalize). See YAML comments for honest coverage limits: LOINC/HCPCS/NDC require manual config, free-text requires manual text_mask, M11 DP absent."
+summary: "Full HIPAA Safe Harbor (45 CFR 164.514(b)(2)): all 18 identifier categories + clinical detectors. SP-11 tightened posture: NPI valid-by-construction (fpe+checksum:npi), ICD-10 chapter-preserved (code_set), ZIP Safe Harbor cascade (geo_generalize). 2026-06-29: MRN charset widened alphanum->ALPHANUM (FPE passthrough-leak fix; covers uppercase letters in institution-specific MRN formats). See YAML comments for honest coverage limits: LOINC/HCPCS/NDC require manual config, free-text requires manual text_mask, M11 DP absent."
 regulation: "HIPAA Privacy Rule - Safe Harbor (45 CFR 164.514(b)(2))"
 primary_buyer: "Healthcare data engineers"
 
@@ -242,11 +242,22 @@ field_rules:
     why: "Safe Harbor section G: SSN -> format-preserving digits; deterministic so FK joins survive."
 
   # H: Medical record numbers
+  # charset: ALPHANUM (0-9 + A-Z + a-z) covers the full alphanumeric superset.
+  # MRN formats are institution-specific (no universal standard; 45 CFR 164.514(b)(2)
+  # Safe Harbor section H identifies MRNs as identifiers without specifying a format).
+  # Formats range from purely numeric (e.g. "0001234567" in many Epic deployments) to
+  # uppercase-containing alphanumeric (e.g. "MRN12345A", "A1234567890B").
+  # charset=alphanum (0-9+a-z, no uppercase A-Z) leaks any uppercase letter in the
+  # source value verbatim: FPE's preserve_separators mode (default: true) leaves
+  # characters outside the charset in place unchanged.  Using ALPHANUM ensures every
+  # alphanumeric character -- including uppercase -- is inside the charset and is
+  # therefore permuted, not passed through.  Conservative fix: only the charset is
+  # widened; strategy, namespace, and checksum are unchanged.
   - detectors: [mrn]
     mask: fpe
     params:
-      charset: alphanum
-    why: "Safe Harbor section H: medical record numbers -> format-preserving alphanumeric; joins survive."
+      charset: ALPHANUM
+    why: "Safe Harbor section H: medical record numbers -> format-preserving alphanumeric (ALPHANUM: 0-9+A-Z+a-z); joins survive. ALPHANUM covers the full alphanumeric superset so no character in any plausible MRN value passes through verbatim (FPE passthrough leak class, 2026-06-29). alphanum (0-9+a-z) was under-covering: uppercase letters present in the source would have been passed through in clear."
 
   # I: Health-plan beneficiary numbers (no universal format: redact)
   - detectors: [health_plan_id]
