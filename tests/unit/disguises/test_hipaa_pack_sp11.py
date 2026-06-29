@@ -143,11 +143,11 @@ class TestHipaaPackStructure:
             f"population floor (45 CFR 164.514(b)(2)(i)(B)); got k_threshold={k}"
         )
 
-    def test_H4_pack_version_is_sp11_date(self):
-        """Pack version must be bumped to 2026-06-28 for the SP-11 change."""
+    def test_H4_pack_version_is_sp11_or_later(self):
+        """Pack version must be 2026-06-28 (SP-11) or later (e.g. 2026-06-29 MRN charset fix)."""
         pack = _hipaa_pack()
-        assert pack.version == "2026-06-28", (
-            f"HIPAA pack version must be '2026-06-28' after SP-11 update; got {pack.version!r}"
+        assert pack.version >= "2026-06-28", (
+            f"HIPAA pack version must be >= '2026-06-28' after SP-11 update; got {pack.version!r}"
         )
 
 
