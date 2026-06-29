@@ -16,7 +16,11 @@
 # What this pack covers (auto-routed via STORM detectors):
 #   US phone numbers   -> faker phone_number (subscriber MSISDN; CDR calling/called
 #                         numbers in US format; detected by us_phone value-pattern)
-#   Device IDs         -> fpe digits (IMEI/device serial columns detected as device_id)
+#   Device IDs         -> fpe digits (imei / imei_number / device_imei / imsi / iccid /
+#                         handset_id columns auto-detect via device_id name hints; the
+#                         existing generic device_id / device_serial / serial_num /
+#                         serial_number / equipment_id / implant_id / udi hints also
+#                         apply; all route to fpe digits without checksum)
 #   Subscriber SSN     -> fpe digits
 #   Subscriber names   -> faker (first/last/full)
 #   Billing address    -> faker street_address
@@ -30,12 +34,15 @@
 #
 #   IMEI CHECKSUM (Luhn):
 #     IMEI (International Mobile Equipment Identity) is 15 digits with a
-#     Luhn check digit at position 15. The device_id detector may fire on
-#     IMEI columns (via device_serial / serial_num name hints), but it also
-#     fires on non-IMEI device identifiers (IMSI, ICCID, asset IDs) where
-#     checksum: luhn would be incorrect.
+#     Luhn check digit at position 15. Columns named imei / imei_number /
+#     device_imei now auto-route to device_id (via direct name hints added in
+#     SP-12 remediation) and receive fpe digits WITHOUT Luhn recomputation.
+#     This is correct because the device_id detector also covers imsi and iccid
+#     columns, where checksum: luhn would be incorrect (IMSI has no check digit;
+#     ICCID has no registered Luhn scheme in this engine).
 #
-#     If a column is definitively IMEI, add checksum: luhn in the recipe:
+#     If a column is definitively IMEI and downstream validators require a valid
+#     Luhn check digit, add checksum: luhn in the recipe:
 #
 #       columns:
 #         - name: imei
@@ -44,19 +51,17 @@
 #             charset: digits
 #             checksum: luhn
 #
-#     This pack uses fpe + charset: digits WITHOUT checksum for device_id
-#     because the device_id detector cannot distinguish IMEI from IMSI or
-#     ICCID, and applying Luhn to a non-IMEI identifier would falsely imply
-#     Luhn validity. See 47 CFR 64.2003 definition of "call detail information."
+#     The pack keeps the device_id rule checksum-free so that imsi / iccid
+#     columns that also auto-route do not receive a false Luhn claim.
+#     See 47 CFR 64.2003 definition of "call detail information."
 #
-#   IMSI / ICCID:
-#     IMSI (International Mobile Subscriber Identity, 15 digits) and ICCID
-#     (Integrated Circuit Card ID, 18-22 digits) have no registered STORM
-#     detectors. The device_id detector may fire on these columns by name
-#     hint (serial_num, device_id patterns), but columns named "imsi" or
-#     "iccid" will not auto-route unless the name hint fires. Configure
-#     manually with fpe + charset: digits (no Luhn for IMSI; ICCID can be
-#     Luhn-validated on its 18-20 digit forms but no scheme is registered).
+#   NOTE -- IMSI and ICCID now auto-route:
+#     IMSI (International Mobile Subscriber Identity) and ICCID (Integrated
+#     Circuit Card ID) columns named imsi / iccid now auto-route to device_id
+#     via name hints added in SP-12 remediation. They receive fpe digits without
+#     checksum, which is correct (IMSI has no check digit; ICCID Luhn is not
+#     a registered scheme here). No manual config is required for these column
+#     names; non-standard names (e.g. sim_id) still require manual config.
 #
 #   INTERNATIONAL MSISDN (E.164 / non-US format):
 #     The us_phone detector matches US-formatted numbers (NANP: +1-NXX-NXX-XXXX).
@@ -125,7 +130,7 @@
 id: cpni
 version: "2026-06-29"
 name: "CPNI Telecom"
-summary: "Customer Proprietary Network Information protection under 47 CFR Part 64 Subpart U / 47 U.S.C. 222: subscriber SSN, US phone numbers, device IDs (fpe digits), names, billing address, account dates. SP-12. Honest gaps: IMEI Luhn requires manual column config; international MSISDNs, IMSI, ICCID, cell tower lat/lng, call duration, and CDR non-US numbers have no STORM detectors and require manual recipe config."
+summary: "Customer Proprietary Network Information protection under 47 CFR Part 64 Subpart U / 47 U.S.C. 222: subscriber SSN, US phone numbers, device IDs (fpe digits; imei/imsi/iccid/handset_id columns auto-detect via device_id name hints), names, billing address, account dates. SP-12. Honest gaps: IMEI Luhn requires manual column config (device_id rule is checksum-free to cover IMSI/ICCID); international MSISDNs, cell tower lat/lng, call duration, and CDR non-US numbers have no STORM detectors and require manual recipe config."
 regulation: "FCC CPNI rules - 47 CFR Part 64 Subpart U (implementing 47 U.S.C. 222)"
 primary_buyer: "Telecom data engineers"
 

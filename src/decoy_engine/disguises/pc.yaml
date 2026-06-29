@@ -82,7 +82,11 @@
 #   The vehicle_id -> fpe + checksum: vin rule produces masked VINs that are
 #   valid by construction per ISO 3779 / NHTSA 49 CFR Part 565 Appendix B
 #   (position-9 check character via transliteration table + positional weights).
-#   The fpe ALPHANUM charset covers the VIN character set (0-9, A-Z minus I/O/Q).
+#   ALPHANUM (0-9, A-Z, a-z) is a superset of VIN-legal chars; checksum: vin
+#   constrains output to VIN-legal characters (0-9, A-Z minus I/O/Q per NHTSA
+#   49 CFR Part 565 Appendix B) by recomputing position 9 using the VIN
+#   transliteration table. The ALPHANUM setting drives FPE permutation; the
+#   actual output characters are VIN-legal by construction.
 #   Masked VINs pass standard VIN validators used in downstream DMV/fleet systems.
 #
 # Differential privacy note:
@@ -90,6 +94,14 @@
 #   FPE is pseudonymisation; date_shift and truncate are anonymisation
 #   techniques. If DP-grade de-identification is required for any field, this
 #   pack does not satisfy that requirement.
+#
+# Legal note (GLBA / NAIC framing):
+#   This pack assists with data engineering de-identification for testing,
+#   analytics, and development. It does not constitute legal GLBA/NAIC
+#   compliance and does not satisfy the information security program or data
+#   protection obligations under 16 CFR Part 314 or NAIC Model Insurance
+#   Data Security Law (Model 668). Consult insurance counsel before using
+#   masked policyholder data in regulatory submissions or sharing decisions.
 
 id: pc
 version: "2026-06-29"
@@ -137,10 +149,11 @@ field_rules:
       charset: digits
     why: "Policyholder SSN -> fpe digits. Format-preserving; deterministic so FK joins survive. GLBA Safeguards Rule NPI (16 CFR Part 314)."
 
-  # VIN: FPE with ISO 3779 check digit. ALPHANUM covers the VIN character
-  # set (0-9, A-Z excluding I/O/Q per NHTSA 49 CFR Part 565 Appendix B).
-  # Masked VINs pass VIN checksum validators by construction (checksum: vin
-  # recomputes position-9 after permuting the other 16 characters).
+  # VIN: FPE with ISO 3779 check digit. ALPHANUM (0-9, A-Z, a-z) is a superset
+  # of VIN-legal chars; checksum: vin constrains output to VIN-legal characters
+  # (0-9, A-Z minus I/O/Q per NHTSA 49 CFR Part 565 Appendix B) by recomputing
+  # position 9 after permuting the other 16 characters.
+  # Masked VINs pass VIN checksum validators by construction.
   # Deterministic so vehicle-level joins survive masking.
   - detectors: [vehicle_id]
     mask: fpe
