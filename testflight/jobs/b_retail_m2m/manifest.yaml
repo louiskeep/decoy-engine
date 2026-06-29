@@ -260,25 +260,25 @@ config:
           strategy: passthrough
 
         # cat_code: FPE-masked category code (Phase 3c masked-correlation pair).
-        # 2-char uppercase alphanum (EL/CL/FD/HM/SP). FPE permutes the 2 chars
-        # within the alphanum charset, producing a different 2-char string per
-        # unique input. Bijective: 5 unique inputs -> 5 unique outputs.
+        # 2-char UPPERCASE values (EL/CL/FD/HM/SP). charset:ALPHANUM includes
+        # uppercase letters so FPE genuinely permutes each value to a different
+        # 2-char string. Bijective: 5 unique inputs -> 5 unique outputs.
         # Namespace cat_code_ns ensures per-value stable mapping across reruns.
         - name: cat_code
           strategy: fpe
           namespace: cat_code_ns
           provider_config:
-            charset: alphanum
+            charset: ALPHANUM
 
         # risk_flag: FPE-masked risk tier (Phase 3c masked-correlation pair).
-        # 2-char uppercase alphanum (HI/MD/LO). Same bijective FPE properties.
+        # 2-char UPPERCASE values (HI/MD/LO). Same bijective FPE properties.
         # Correlated with cat_code in source: EL/HM->HI, CL/SP->MD, FD->LO.
         # After FPE on both columns, contingency COUNTS unchanged -> V preserved.
         - name: risk_flag
           strategy: fpe
           namespace: risk_flag_ns
           provider_config:
-            charset: alphanum
+            charset: ALPHANUM
 
         # order_total: derived from qty * unit_price.
         # The computed_columns invariant verifies every row.

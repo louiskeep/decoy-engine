@@ -271,9 +271,10 @@ _US_CITIES = [
 # Phase 3c: category-code and risk-flag helpers (FPE-masked correlated pair)
 # ---------------------------------------------------------------------------
 
-# 2-char category codes (uppercase alphanum -- within FPE alphanum charset).
-# These are determined by the product's category; lowercase FPE charset
-# would also work, but uppercase makes the source data readable.
+# 2-char category codes (uppercase letters). The manifest uses charset:ALPHANUM
+# (includes uppercase) so FPE genuinely permutes these values. Do NOT use
+# charset:alphanum (lowercase only) -- uppercase chars fall outside that
+# charset and FPE would leave them unchanged (verbatim passthrough).
 _CAT_CODE: dict[str, str] = {
     "electronics": "EL",
     "clothing": "CL",
@@ -286,10 +287,11 @@ _CAT_CODE: dict[str, str] = {
 # EL and HM -> "HI" (high-margin categories).
 # CL and SP -> "MD" (mid-tier).
 # FD -> "LO" (low-margin food).
-# This creates a strong but non-trivial source Cramers V: 5 cat_codes map
-# to 3 risk_flags, so the association is high but V < 1.0 (multiple cat_codes
-# share each risk_flag). With category proportions ~[20,25,20,20,15], the
-# empirical V is approximately 0.70-0.80.
+# Cramers V of (cat_code, risk_flag) = 1.0 exactly: risk_flag is a
+# deterministic function of cat_code, so knowing cat_code predicts risk_flag
+# without error. V = 1.0 regardless of the category proportions (the
+# functional dependency saturates the chi-square statistic). Matches the
+# V=1.0 claim in manifest.yaml masked_correlations.
 _RISK_FLAG: dict[str, str] = {
     "EL": "HI",
     "CL": "MD",
