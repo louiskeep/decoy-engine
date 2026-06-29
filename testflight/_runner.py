@@ -53,6 +53,7 @@ from ._invariants import (
     check_quarantine,
     check_safe_harbor,
     check_sentinels,
+    check_value_changing_not_passthrough,
 )
 from ._spec import FlightManifest, load_manifest
 
@@ -464,13 +465,26 @@ def evaluate_invariants(
                     )
                 )
                 continue
+            src_df = src_pa.to_pandas()
+            out_df = out_pa.to_pandas()
+            # Tooth: each value-changing-masked column must produce at least one
+            # changed value. A complete no-op (output value-set == source value-set)
+            # means the charset does not cover the data (e.g. alphanum on uppercase).
+            for _col, _strat in [
+                (mc_spec.col_a, mc_spec.strategy_a),
+                (mc_spec.col_b, mc_spec.strategy_b),
+            ]:
+                if _strat is not None:
+                    check_value_changing_not_passthrough(
+                        job_name, mc_spec.table, _col, _strat, src_df, out_df
+                    )
             evidence = check_correlation_through_masking(
                 job_name,
                 mc_spec.table,
                 mc_spec.col_a,
                 mc_spec.col_b,
-                src_pa.to_pandas(),
-                out_pa.to_pandas(),
+                src_df,
+                out_df,
                 tol=mc_spec.tol,
                 min_assoc=mc_spec.min_assoc,
                 strategy_a=mc_spec.strategy_a,
@@ -489,7 +503,7 @@ def evaluate_invariants(
                     ),
                 )
             )
-        except (AssertionError, ValueError, Exception) as exc:
+        except (AssertionError, ValueError) as exc:
             results.append(
                 InvariantResult(
                     family=family_name,
