@@ -85,6 +85,9 @@ class TestRunConfigOnlyChecks:
             "fpe_checksum_scheme",
             "derived_column_refs",
             "derived_aggregate_refs",
+            "grouped_series_refs",
+            "windowed_date_refs",
+            "group_key_refs",
         )
 
     def test_raises_on_unknown_provider(self):

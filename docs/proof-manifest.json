@@ -2,8 +2,8 @@
   "engine_version": "0.2.0",
   "generated_at": "2026-06-14",
   "surface": {
-    "mask": 19,
-    "generate": 9,
+    "mask": 22,
+    "generate": 12,
     "providers": 34
   },
   "hero": {
@@ -852,6 +852,156 @@
         }
       ],
       "invariant": "Every row of the target column carries the same scalar aggregate (sum, mean, min, max, or count) computed from the named source column. Deterministic: same source column -> same scalar on every run. No individual row values are exposed in the output."
+    },
+    {
+      "id": "mask.grouped_series",
+      "kind": "mask",
+      "title": "Per-group series (grouped_series)",
+      "column": "counter",
+      "config_yaml": "tables:\n- name: t\n  columns:\n  - name: counter\n    strategy: grouped_series\n    provider_config:\n      group_by: group_id\n      order_by: order_col\n      generator: cumcount",
+      "input": [
+        {
+          "group_id": "A",
+          "order_col": "1",
+          "counter": "0"
+        },
+        {
+          "group_id": "A",
+          "order_col": "2",
+          "counter": "0"
+        },
+        {
+          "group_id": "A",
+          "order_col": "3",
+          "counter": "0"
+        },
+        {
+          "group_id": "B",
+          "order_col": "1",
+          "counter": "0"
+        },
+        {
+          "group_id": "B",
+          "order_col": "2",
+          "counter": "0"
+        }
+      ],
+      "output": [
+        {
+          "group_id": "A",
+          "order_col": "1",
+          "counter": "0"
+        },
+        {
+          "group_id": "A",
+          "order_col": "2",
+          "counter": "1"
+        },
+        {
+          "group_id": "A",
+          "order_col": "3",
+          "counter": "2"
+        },
+        {
+          "group_id": "B",
+          "order_col": "1",
+          "counter": "0"
+        },
+        {
+          "group_id": "B",
+          "order_col": "2",
+          "counter": "1"
+        }
+      ],
+      "invariant": "Within each distinct group_by value, the counter resets and increases monotonically from the configured start. The original column value is not preserved; the output is structurally derived from the group and order columns only. Deterministic: same seed + same input -> same output."
+    },
+    {
+      "id": "mask.windowed_date",
+      "kind": "mask",
+      "title": "Anchor-relative windowed date (windowed_date)",
+      "column": "event_date",
+      "config_yaml": "tables:\n- name: t\n  columns:\n  - name: event_date\n    strategy: windowed_date\n    provider_config:\n      anchor: anchor\n      min_days: 1\n      max_days: 30\n      distribution: uniform",
+      "input": [
+        {
+          "anchor": "2024-01-15",
+          "event_date": "1900-01-01"
+        },
+        {
+          "anchor": "2024-06-30",
+          "event_date": "1900-01-01"
+        },
+        {
+          "anchor": "2024-11-02",
+          "event_date": "1900-01-01"
+        }
+      ],
+      "output": [
+        {
+          "anchor": "2024-01-15",
+          "event_date": "2024-02-10"
+        },
+        {
+          "anchor": "2024-06-30",
+          "event_date": "2024-07-16"
+        },
+        {
+          "anchor": "2024-11-02",
+          "event_date": "2024-11-29"
+        }
+      ],
+      "invariant": "Each output date falls within [min_days, max_days] of the anchor column value in the same row. The exact offset is seeded per-row from the job seed; the same input always produces the same output across runs. The original column value is not preserved."
+    },
+    {
+      "id": "mask.group_key",
+      "kind": "mask",
+      "title": "HMAC-keyed per-group identifier (group_key)",
+      "column": "key",
+      "config_yaml": "tables:\n- name: t\n  columns:\n  - name: key\n    strategy: group_key\n    provider_config:\n      group_by: cluster_id\n      length: 16\n      prefix: GK-",
+      "input": [
+        {
+          "cluster_id": "X",
+          "key": ""
+        },
+        {
+          "cluster_id": "X",
+          "key": ""
+        },
+        {
+          "cluster_id": "Y",
+          "key": ""
+        },
+        {
+          "cluster_id": "Y",
+          "key": ""
+        },
+        {
+          "cluster_id": "Z",
+          "key": ""
+        }
+      ],
+      "output": [
+        {
+          "cluster_id": "X",
+          "key": "GK-97bff3d5d569737c"
+        },
+        {
+          "cluster_id": "X",
+          "key": "GK-97bff3d5d569737c"
+        },
+        {
+          "cluster_id": "Y",
+          "key": "GK-b7ce362a7f21843a"
+        },
+        {
+          "cluster_id": "Y",
+          "key": "GK-b7ce362a7f21843a"
+        },
+        {
+          "cluster_id": "Z",
+          "key": "GK-1a3d2ec88a282ae4"
+        }
+      ],
+      "invariant": "Every row sharing the same group_by value receives the same HKDF-SHA256 derived hex key. Distinct group_by values produce distinct keys (collision probability negligible under 32-byte HMAC output). The original column value is not preserved. Deterministic: same seed + same group_by -> same key on every run."
     }
   ],
   "providers": [
@@ -1067,9 +1217,12 @@
     "distribution",
     "faker",
     "formula",
+    "group_key",
+    "grouped_series",
     "reference",
     "sequence",
-    "statistical"
+    "statistical",
+    "windowed_date"
   ],
   "benchmarks": [
     {

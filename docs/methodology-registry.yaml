@@ -119,6 +119,32 @@ modules:
     pattern: ISO 8601 calendar period partitioning
     source: ISO 8601 (https://www.iso.org/iso-8601-date-and-time-format.html); Sweeney 2002 k-anonymity
 
+  # SP-10c (2026-06-29): group_key per-group identifier.
+  # HKDF-SHA256 + HMAC-SHA256 keyed derivation via derive() with a per-column
+  # namespace "group_key/<col>". Same hash-for-joinability primitive used
+  # throughout the engine; isolates each group_key column's output space.
+  - path: src/decoy_engine/transforms/group_key.py
+    pattern: HKDF-SHA256 + HMAC-SHA256 keyed derivation
+    source: RFC 5869 (HKDF); RFC 2104 (HMAC)
+
+  # SP-10c (2026-06-29): windowed_date bounded date offset.
+  # Per-row seeds come from derive(seed, "windowed_date/<col>", row_index)
+  # (HKDF-SHA256 + HMAC-SHA256) so two windowed_date columns produce
+  # independent offset streams. Date arithmetic via pandas Timestamp +
+  # Timedelta; offset sampling via numpy.random.default_rng.
+  - path: src/decoy_engine/transforms/windowed_date.py
+    pattern: derive()-per-column namespace + bounded date offset
+    source: RFC 5869 (HKDF); RFC 2104 (HMAC); pandas 2.x (Apache-2.0)
+
+  # SP-10c (2026-06-29): grouped_series cumcount + derive()-seeded monotone walk.
+  # cumcount positions follow pandas GroupBy.cumcount() (SDV per-group
+  # sequencing). monotone_walk per-group RNG seeds come from derive(seed,
+  # "grouped_series/<col>", group_label) so two monotone_walk columns
+  # produce independent walks.
+  - path: src/decoy_engine/transforms/grouped_series.py
+    pattern: pandas groupby cumcount + derive()-seeded monotone walk
+    source: pandas 2.x (Apache-2.0); SDV (MIT); RFC 5869 (HKDF); RFC 2104 (HMAC)
+
   # Removed 2026-06-02: the entire `forecast/` module (Recommender +
   # ForecastReport + DisguiseRecommendation + FieldRecommendation +
   # RiskFlag) was deleted under the storm-reframe-C clean break

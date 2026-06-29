@@ -7,7 +7,7 @@ This is the authoritative list of what the engine can do, read straight from
 the registries in `src/decoy_engine/`. Narrative guides (strategies, connector
 support, disguises) must agree with this file; the drift-guard test enforces it.
 
-## Mask strategies (19)
+## Mask strategies (22)
 
 | Strategy | GDPR technique class | Polars-accelerated |
 | --- | --- | --- |
@@ -22,6 +22,8 @@ support, disguises) must agree with this file; the drift-guard test enforces it.
 | `formula` | pseudonymisation | yes |
 | `fpe` | pseudonymisation | yes |
 | `geo_generalize` | anonymisation | no |
+| `group_key` | pseudonymisation | no |
+| `grouped_series` | synthetic | no |
 | `hash` | pseudonymisation | yes |
 | `joint_mask` | anonymisation | no |
 | `passthrough` | passthrough | yes |
@@ -30,12 +32,13 @@ support, disguises) must agree with this file; the drift-guard test enforces it.
 | `text_mask` | pseudonymisation | no |
 | `text_redact` | anonymisation | yes |
 | `truncate` | anonymisation | yes |
+| `windowed_date` | pseudonymisation | no |
 
 `nested` is an internal wrapper, not a user-facing strategy.
 
-## Generation strategies (9)
+## Generation strategies (12)
 
-`categorical`, `derived`, `derived_aggregate`, `distribution`, `faker`, `formula`, `reference`, `sequence`, `statistical`
+`categorical`, `derived`, `derived_aggregate`, `distribution`, `faker`, `formula`, `group_key`, `grouped_series`, `reference`, `sequence`, `statistical`, `windowed_date`
 
 ## Synthetic providers (34)
 
