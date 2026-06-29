@@ -35,6 +35,32 @@ The full suite is large; running only the modules you touched plus their nearest
 - Capability changes (a new mask/generate strategy, synthetic provider, connector, STORM detector, or disguise) must regenerate the capability matrix: run `python scripts/gen_capability_matrix.py` and commit the updated `docs/capability-matrix.md`. The `tests/sentry/test_capability_matrix.py` guard fails CI if you forget, so a new capability cannot ship without its docs entry.
 - If a change is more than one PR, file an Issue describing the plan first.
 
+## Pre-merge gate for large engine blocks
+
+Before merging a large block of strategy, relationship, or generation work,
+run the acceptance test-flight suite and merge only on a PASS result:
+
+```
+python scripts/test_flight.py
+```
+
+Read the evidence report, not only the PASS banner: the expected-vs-found
+integers for every invariant family are what matter. A green banner over a
+misconfigured tolerance still hides a real regression.
+
+If a job fails, the report names the failing job, table, column, invariant
+family, and strategy. Fix the root cause; do not loosen a tolerance without
+a recorded reason in the manifest and a comment in the PR.
+
+See [docs/acceptance-test-flight.md](docs/acceptance-test-flight.md) for the
+full description of what the suite proves, how to run single jobs, and its
+honest limitations.
+
+This gate is referenced in ADR-0005 (platform repo) as the deliberate
+human-run pre-merge gate for large engine blocks. It is NOT a per-commit hook:
+the default `pytest tests` and CI regression-gate never run the test-flight
+(the `testflight` marker is excluded by `addopts` in `pyproject.toml`).
+
 ## Compatibility
 
 The [compatibility contract](docs/compatibility-contract.md) defines the frozen surface (persisted artifacts, the vault, the determinism derivation, disguises, the public API and config). Read it before changing anything under those paths. Two CI gates enforce it on PRs:

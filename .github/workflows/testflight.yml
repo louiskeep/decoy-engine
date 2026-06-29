@@ -1,0 +1,62 @@
+# Acceptance test-flight suite (on-demand).
+#
+# Runs the multi-job test-flight suite that proves Phase-5 engine strategies
+# compose, post-run distribution is intact, and relationships hold.
+#
+# Trigger: workflow_dispatch (manual one-click on any branch/PR) plus an
+# optional nightly schedule. NOT triggered on push and NOT a required status
+# check -- this is a deliberately-run pre-merge gate, not a per-commit hook.
+# Because pyproject.toml addopts excludes the testflight marker, the
+# regression-gate and substrate-matrix workflows never accidentally run it.
+#
+# Substrate: pandas only. The full strategy catalog exercised by the suite
+# (fpe, geo_generalize, code_set, joint_mask, etc.) is not implemented in the
+# polars adapter, so running under a substrate matrix is incorrect and would
+# fail on the polars leg. The existing substrate-matrix workflow covers
+# per-strategy substrate parity separately.
+#
+# Install: uv sync --extra dev --extra geo. The geo extra provides h3-py
+# (Uber, Apache-2.0) needed by geo_generalize lat/lng mode in Job A and
+# Job B. If geo is absent the geo invariants hard-fail with a clear message
+# (they never silently skip; a skip is false confidence per the plan).
+
+name: testflight
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Nightly at 02:00 UTC on main. Keeps the suite green between
+    # deliberate pre-merge runs without gating any individual commit.
+    - cron: "0 2 * * *"
+
+jobs:
+  testflight:
+    runs-on: ubuntu-latest
+    env:
+      DECOY_SUBSTRATE: pandas
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+          cache: pip
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install engine with dev and geo extras
+        # geo extra: h3-py for geo_generalize lat/lng. Required by Jobs A and B.
+        # dev extra: pytest plus test helpers (moto, hypothesis).
+        run: uv sync --extra dev --extra geo
+
+      - name: Run test-flight suite (pandas substrate)
+        run: uv run pytest testflight -m testflight --tb=short -v
+
+      - name: Upload evidence report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: testflight-report
+          path: testflight/_artifacts/report.md
+          if-no-files-found: ignore
