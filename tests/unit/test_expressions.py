@@ -91,6 +91,18 @@ class TestQA1MakeMaskGlobals:
         b1 = safe_eval("randint(1, 1000)", scope_b, {})
         assert a1 == b1
 
+    def test_make_mask_globals_gauss_deterministic(self):
+        import random
+
+        from decoy_engine.expressions import make_mask_globals, safe_eval
+
+        # gauss is bound to the isolated rng (parity with the generation-side
+        # formula scope), so the same seed gives byte-identical output.
+        a = safe_eval("gauss(0.0, 1.0)", make_mask_globals(random.Random(42)), {})
+        b = safe_eval("gauss(0.0, 1.0)", make_mask_globals(random.Random(42)), {})
+        assert a == b
+        assert isinstance(a, float)
+
     def test_make_mask_globals_isolation_from_module_global(self):
         import random
 

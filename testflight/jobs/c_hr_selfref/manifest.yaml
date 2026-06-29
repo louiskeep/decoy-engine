@@ -101,7 +101,7 @@ config:
         # and child columns; the FK coordinator resolves child values through the
         # same bijection as the parent, preserving referential integrity.
         # null -> null (root nodes), valid ref -> FPE-remapped consistently,
-        # orphan "EMP-ORPHAN" -> remapped via orphan_policy:remap.
+        # orphan "emp99999" (in-charset) -> remapped via orphan_policy:remap.
         - name: manager_id
           strategy: fpe
           namespace: employee_identity
