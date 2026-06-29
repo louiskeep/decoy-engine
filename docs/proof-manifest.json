@@ -938,15 +938,15 @@
       "output": [
         {
           "anchor": "2024-01-15",
-          "event_date": "2024-01-23"
+          "event_date": "2024-02-10"
         },
         {
           "anchor": "2024-06-30",
-          "event_date": "2024-07-21"
+          "event_date": "2024-07-16"
         },
         {
           "anchor": "2024-11-02",
-          "event_date": "2024-11-08"
+          "event_date": "2024-11-29"
         }
       ],
       "invariant": "Each output date falls within [min_days, max_days] of the anchor column value in the same row. The exact offset is seeded per-row from the job seed; the same input always produces the same output across runs. The original column value is not preserved."
