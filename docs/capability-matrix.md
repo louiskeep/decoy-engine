@@ -117,15 +117,17 @@ support, disguises) must agree with this file; the drift-guard test enforces it.
 | `us_zip` | value |
 | `vehicle_id` | value |
 
-## Disguises (8)
+## Disguises (10)
 
 | ID | Name | Field rules |
 | --- | --- | --- |
 | `ccpa` | CCPA Disguise | 10 |
+| `cpni` | CPNI Telecom | 11 |
 | `default` | Default PII Disguise | 7 |
 | `ferpa` | FERPA Disguise | 9 |
 | `gdpr` | GDPR Disguise | 10 |
 | `glba` | GLBA Disguise | 10 |
 | `hipaa` | HIPAA Safe Harbor | 21 |
+| `pc` | P&C Insurance | 12 |
 | `pci` | PCI DSS Disguise | 10 |
 | `sox` | SOX Disguise | 9 |
