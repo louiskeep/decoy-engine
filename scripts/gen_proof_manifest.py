@@ -854,6 +854,281 @@ def _derived_aggregate_proof() -> dict:
     }
 
 
+def _grouped_series_proof() -> dict:
+    """Proof for grouped_series: cumcount within two groups resets per group.
+
+    Uses a three-column table: group_id, order_col, and the target counter.
+    The grouped_series strategy (cumcount generator) assigns a monotonically
+    increasing counter starting at 0 that resets for each distinct group_id.
+    """
+    group_vals = ["A", "A", "A", "B", "B"]
+    order_vals = [1, 2, 3, 1, 2]
+    counter_vals = [0] * len(group_vals)
+    df = pd.DataFrame({"group_id": group_vals, "order_col": order_vals, "counter": counter_vals})
+
+    with tempfile.TemporaryDirectory() as _tmp:
+        tmp = Path(_tmp)
+        csv_path = tmp / "t.csv"
+        df.to_csv(csv_path, index=False)
+
+        cfg = {
+            "version": 1,
+            "global_settings": {"seed": 42, "post_validation": False},
+            "sources": {"t": {"type": "file", "format": "csv", "path": str(csv_path)}},
+            "targets": {"t": {"type": "file", "format": "csv", "path": "/dev/null"}},
+            "tables": [
+                {
+                    "name": "t",
+                    "columns": [
+                        {"name": "group_id", "strategy": "passthrough"},
+                        {"name": "order_col", "strategy": "passthrough"},
+                        {
+                            "name": "counter",
+                            "strategy": "grouped_series",
+                            "provider_config": {
+                                "group_by": "group_id",
+                                "order_by": "order_col",
+                                "generator": "cumcount",
+                                "start": 0,
+                                "step": 1,
+                            },
+                        },
+                    ],
+                }
+            ],
+        }
+        validated = PipelineConfig.model_validate(cfg).model_dump()
+        sources = {"t": pa.Table.from_pandas(df)}
+        result = run_pipeline(validated, sources, engine_version=ENGINE_VERSION)
+        out_df = result.outputs["t"].to_pandas()
+
+    # Invariant: within each group, counter values are consecutive from 0.
+    for group, gdf in out_df.groupby("group_id"):
+        sorted_counters = sorted(int(v) for v in gdf["counter"])
+        expected = list(range(len(gdf)))
+        if sorted_counters != expected:
+            raise RuntimeError(
+                f"grouped_series proof: group {group!r} counters {sorted_counters} != {expected}"
+            )
+
+    inp = _records(df, n=len(df))
+    out = _records(out_df, n=len(out_df))
+    config_yaml_snippet = (
+        "tables:\n"
+        "- name: t\n"
+        "  columns:\n"
+        "  - name: counter\n"
+        "    strategy: grouped_series\n"
+        "    provider_config:\n"
+        "      group_by: group_id\n"
+        "      order_by: order_col\n"
+        "      generator: cumcount"
+    )
+    return {
+        "id": "mask.grouped_series",
+        "kind": "mask",
+        "title": "Per-group series (grouped_series)",
+        "column": "counter",
+        "config_yaml": config_yaml_snippet,
+        "input": inp,
+        "output": out,
+        "invariant": (
+            "Within each distinct group_by value, the counter resets and increases "
+            "monotonically from the configured start. The original column value is "
+            "not preserved; the output is structurally derived from the group and "
+            "order columns only. Deterministic: same seed + same input -> same output."
+        ),
+    }
+
+
+def _windowed_date_proof() -> dict:
+    """Proof for windowed_date: output date is within [min_days, max_days] of anchor.
+
+    Uses a two-column table: an anchor date column and the target date column.
+    The windowed_date strategy samples a date offset within the configured
+    window, relative to each row's anchor date.
+    """
+    import datetime
+
+    anchor_vals = ["2024-01-15", "2024-06-30", "2024-11-02"]
+    date_vals = ["1900-01-01"] * len(anchor_vals)
+    df = pd.DataFrame({"anchor": anchor_vals, "event_date": date_vals})
+
+    with tempfile.TemporaryDirectory() as _tmp:
+        tmp = Path(_tmp)
+        csv_path = tmp / "t.csv"
+        df.to_csv(csv_path, index=False)
+
+        cfg = {
+            "version": 1,
+            "global_settings": {"seed": 99, "post_validation": False},
+            "sources": {"t": {"type": "file", "format": "csv", "path": str(csv_path)}},
+            "targets": {"t": {"type": "file", "format": "csv", "path": "/dev/null"}},
+            "tables": [
+                {
+                    "name": "t",
+                    "columns": [
+                        {"name": "anchor", "strategy": "passthrough"},
+                        {
+                            "name": "event_date",
+                            "strategy": "windowed_date",
+                            "provider_config": {
+                                "anchor": "anchor",
+                                "min_days": 1,
+                                "max_days": 30,
+                                "distribution": "uniform",
+                            },
+                        },
+                    ],
+                }
+            ],
+        }
+        validated = PipelineConfig.model_validate(cfg).model_dump()
+        sources = {"t": pa.Table.from_pandas(df)}
+        result = run_pipeline(validated, sources, engine_version=ENGINE_VERSION)
+        out_df = result.outputs["t"].to_pandas()
+
+    # Invariant: each output date is within [min_days, max_days] of its anchor.
+    for idx, row in out_df.iterrows():
+        a = datetime.date.fromisoformat(str(row["anchor"]))
+        e = datetime.date.fromisoformat(str(row["event_date"]))
+        delta = (e - a).days
+        if not (1 <= delta <= 30):
+            raise RuntimeError(
+                f"windowed_date proof: row {idx}: delta={delta} outside [1, 30]; "
+                f"anchor={row['anchor']}, event_date={row['event_date']}"
+            )
+
+    inp = _records(df, n=len(df))
+    out = _records(out_df, n=len(out_df))
+    config_yaml_snippet = (
+        "tables:\n"
+        "- name: t\n"
+        "  columns:\n"
+        "  - name: event_date\n"
+        "    strategy: windowed_date\n"
+        "    provider_config:\n"
+        "      anchor: anchor\n"
+        "      min_days: 1\n"
+        "      max_days: 30\n"
+        "      distribution: uniform"
+    )
+    return {
+        "id": "mask.windowed_date",
+        "kind": "mask",
+        "title": "Anchor-relative windowed date (windowed_date)",
+        "column": "event_date",
+        "config_yaml": config_yaml_snippet,
+        "input": inp,
+        "output": out,
+        "invariant": (
+            "Each output date falls within [min_days, max_days] of the anchor column "
+            "value in the same row. The exact offset is seeded per-row from the job "
+            "seed; the same input always produces the same output across runs. "
+            "The original column value is not preserved."
+        ),
+    }
+
+
+def _group_key_proof() -> dict:
+    """Proof for group_key: same group_by value -> same HMAC-derived key.
+
+    Uses a two-column table: a cluster_id column and the target key column.
+    The group_key strategy produces a deterministic hex key per distinct
+    cluster_id value, using HKDF-SHA256 + HMAC-SHA256.
+    """
+    cluster_vals = ["X", "X", "Y", "Y", "Z"]
+    key_vals = [""] * len(cluster_vals)
+    df = pd.DataFrame({"cluster_id": cluster_vals, "key": key_vals})
+
+    with tempfile.TemporaryDirectory() as _tmp:
+        tmp = Path(_tmp)
+        csv_path = tmp / "t.csv"
+        df.to_csv(csv_path, index=False)
+
+        cfg = {
+            "version": 1,
+            "global_settings": {"seed": 77, "post_validation": False},
+            "sources": {"t": {"type": "file", "format": "csv", "path": str(csv_path)}},
+            "targets": {"t": {"type": "file", "format": "csv", "path": "/dev/null"}},
+            "tables": [
+                {
+                    "name": "t",
+                    "columns": [
+                        {"name": "cluster_id", "strategy": "passthrough"},
+                        {
+                            "name": "key",
+                            "strategy": "group_key",
+                            "provider_config": {
+                                "group_by": "cluster_id",
+                                "length": 16,
+                                "prefix": "GK-",
+                            },
+                        },
+                    ],
+                }
+            ],
+        }
+        validated = PipelineConfig.model_validate(cfg).model_dump()
+        sources = {"t": pa.Table.from_pandas(df)}
+        result = run_pipeline(validated, sources, engine_version=ENGINE_VERSION)
+        out_df = result.outputs["t"].to_pandas()
+
+    # Invariant 1: same group_by value -> same key within the result.
+    group_keys: dict[str, str] = {}
+    for _, row in out_df.iterrows():
+        gval = str(row["cluster_id"])
+        kval = str(row["key"])
+        if gval in group_keys:
+            if group_keys[gval] != kval:
+                raise RuntimeError(
+                    f"group_key proof: cluster_id={gval!r} produced two different keys: "
+                    f"{group_keys[gval]!r} and {kval!r}"
+                )
+        else:
+            group_keys[gval] = kval
+
+    # Invariant 2: different group_by values -> different keys.
+    seen_keys = list(group_keys.values())
+    if len(seen_keys) != len(set(seen_keys)):
+        raise RuntimeError(f"group_key proof: collision detected among group keys: {group_keys}")
+
+    # Invariant 3: prefix is respected.
+    for _, row in out_df.iterrows():
+        if not str(row["key"]).startswith("GK-"):
+            raise RuntimeError(f"group_key proof: key {row['key']!r} missing expected prefix 'GK-'")
+
+    inp = _records(df, n=len(df))
+    out = _records(out_df, n=len(out_df))
+    config_yaml_snippet = (
+        "tables:\n"
+        "- name: t\n"
+        "  columns:\n"
+        "  - name: key\n"
+        "    strategy: group_key\n"
+        "    provider_config:\n"
+        "      group_by: cluster_id\n"
+        "      length: 16\n"
+        "      prefix: GK-"
+    )
+    return {
+        "id": "mask.group_key",
+        "kind": "mask",
+        "title": "HMAC-keyed per-group identifier (group_key)",
+        "column": "key",
+        "config_yaml": config_yaml_snippet,
+        "input": inp,
+        "output": out,
+        "invariant": (
+            "Every row sharing the same group_by value receives the same HKDF-SHA256 "
+            "derived hex key. Distinct group_by values produce distinct keys (collision "
+            "probability negligible under 32-byte HMAC output). The original column value "
+            "is not preserved. Deterministic: same seed + same group_by -> same key on "
+            "every run."
+        ),
+    }
+
+
 def _capabilities() -> list[dict]:
     caps = [_run_capability(p) for p in CAPABILITY_PROOFS]
     # joint_mask proof runs the transforms layer directly (multi-column output
@@ -863,6 +1138,10 @@ def _capabilities() -> list[dict]:
     caps.append(_derived_proof())
     # derived_aggregate proof uses a two-column table (source column + aggregate target).
     caps.append(_derived_aggregate_proof())
+    # SP-10c proofs use multi-column tables (group_by / order_by / anchor refs).
+    caps.append(_grouped_series_proof())
+    caps.append(_windowed_date_proof())
+    caps.append(_group_key_proof())
     return caps
 
 

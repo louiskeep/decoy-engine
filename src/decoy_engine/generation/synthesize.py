@@ -256,6 +256,19 @@ def _generate_column(
         values = _derived_generate(col, n, generated or {})
     elif kind == "derived_aggregate":
         values = generate_derived_aggregate_column(col, n, generated or {})
+    elif kind in ("grouped_series", "windowed_date", "group_key"):
+        from decoy_engine.generation._grouped_windowed_generators import (
+            _group_key_generate,
+            _grouped_series_generate,
+            _windowed_date_generate,
+        )
+
+        if kind == "grouped_series":
+            values = _grouped_series_generate(col, n, seed, generated or {})
+        elif kind == "windowed_date":
+            values = _windowed_date_generate(col, n, seed, generated or {})
+        else:
+            values = _group_key_generate(col, n, seed, generated or {})
     else:
         # The Literal on GenerateColumnConfig.type rejects anything outside this set
         # at validation; this branch is the defensive fallback for callers that

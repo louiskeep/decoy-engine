@@ -56,10 +56,12 @@ def test_surface_counts_match_capability_matrix():
     # SP-10 (2026-06-28): added derived -> 16 + 1 = 17.
     # SP-08b (2026-06-28): added bucket_perturb -> 17 + 1 = 18.
     # SP-10b (2026-06-28): added derived_aggregate -> 18 + 1 = 19.
-    assert surface["mask"] == 19
+    # SP-10c (2026-06-29): added grouped_series, windowed_date, group_key -> 19 + 3 = 22.
+    assert surface["mask"] == 22
     # SP-10 remediation (2026-06-28): derived wired into generate path -> 7 + 1 = 8.
     # SP-10b (2026-06-28): derived_aggregate wired into generate path -> 8 + 1 = 9.
-    assert surface["generate"] == 9
+    # SP-10c (2026-06-29): grouped_series, windowed_date, group_key -> 9 + 3 = 12.
+    assert surface["generate"] == 12
     assert surface["providers"] == 34
 
 
