@@ -10,15 +10,10 @@ contracts row 7; S9 spec 6.2):
 - `PRESERVE`: keep the original source key (unmasked).
 - `REMAP`: assign a fresh masked key via the parent column's strategy. For most
   strategies this makes the orphan indistinguishable from a normally-masked value.
-  LIMITATION: for FPE with preserve_separators=true, a source key with NO in-charset
-  characters (e.g. all-uppercase keys like "TERMINATED" or "EMP-ORPHAN" against the
-  alphanum charset "0-9+a-z") passes through FPE unchanged (no-op), so the remapped
-  output equals the source key verbatim. The docstring claim of "indistinguishable"
-  does not hold for such keys. Choose in-charset orphan keys to avoid this; see
-  docs/what-we-cannot-prove.md for the full limitation and the backlog note below.
-  BACKLOG(remap-out-of-charset): mint a guaranteed in-charset masked value for REMAP
-  when the parent strategy would no-op (all-out-of-charset input); requires a
-  deterministic fallback that does not break the FK determinism contract.
+  For FPE with preserve_separators=True: keys with no in-charset characters (e.g.
+  all-uppercase keys like "TERMINATED" or "EMP-ORPHAN") now route through
+  _covering_hash_to_charset in transforms/fpe.py (fix #42), which maps the key to a
+  deterministic in-charset string so it is never emitted verbatim.
 - `WARN`: PRESERVE behavior + one AGGREGATED `QualityWarning(code='orphan_fk')`
   per edge (never one-per-row: a 100k-row child must not emit 100k warnings).
 - `FAIL`: raise `ExecutionError(code='orphan_fk_violation')`.
