@@ -84,10 +84,16 @@ class TestSeparatorRoundTrip:
         dec = fpe_decrypt_value(enc, _KEY, cs, _TWEAK, preserve_separators=True)
         assert dec == val
 
-    def test_no_charset_chars_passes_through(self) -> None:
+    def test_no_charset_chars_routes_to_covering_hash(self) -> None:
+        """Fix #42: all-out-of-charset values are covered by a deterministic in-charset
+        hash rather than being returned verbatim (the old passthrough was a privacy leak
+        under orphan_policy:remap with FPE)."""
         cs = _CHARSETS["digits"]
-        assert fpe_encrypt_value("---", _KEY, cs, _TWEAK, preserve_separators=True) == "---"
-        assert fpe_decrypt_value("---", _KEY, cs, _TWEAK, preserve_separators=True) == "---"
+        enc = fpe_encrypt_value("---", _KEY, cs, _TWEAK, preserve_separators=True)
+        # Must differ from source (no verbatim leak) and be all-in-charset.
+        assert enc != "---", f"Covering hash must not return verbatim; got {enc!r}."
+        assert all(ch in cs for ch in enc), f"Output {enc!r} has non-digit chars."
+        assert len(enc) == 3
 
 
 class TestLuhnRoundTrip:
