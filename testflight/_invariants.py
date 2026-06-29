@@ -23,6 +23,7 @@ import pyarrow as pa
 # callers that import from _invariants continue to work without change.
 from ._chapter import check_chapter_preserve as check_chapter_preserve
 from ._computed import check_computed_columns as check_computed_columns
+from ._correlation import check_correlation_through_masking as check_correlation_through_masking
 from ._distribution import (
     FIXED_TS as FIXED_TS,
 )
@@ -35,6 +36,7 @@ from ._distribution import (
 from ._spec import (
     ChecksumSpec,
     FKIntegritySpec,
+    MaskedCorrelationSpec,
     QuarantineSpec,
     RelationshipSpec,
     SafeHarborSpec,
@@ -43,9 +45,11 @@ from ._spec import (
 
 __all__ = [
     "FIXED_TS",
+    "MaskedCorrelationSpec",
     "check_chapter_preserve",
     "check_checksums",
     "check_computed_columns",
+    "check_correlation_through_masking",
     "check_determinism",
     "check_distribution_generate",
     "check_distribution_mask",
