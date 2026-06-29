@@ -4,8 +4,11 @@
 #
 # PLANTED EDGE CASES (exact counts asserted by invariants):
 #   - 10 employee rows with manager_id = NULL (root nodes; pass through as NULL)
-#   - 1 employee row with manager_id = "EMP-ORPHAN" (not in employee_id set)
-#     orphan_policy:remap -> the orphan FK is remapped; expected_orphans: 1
+#   - 1 employee row with manager_id = "emp99999" (not in employee_id set)
+#     "emp99999" is all-in-charset (FPE alphanum: 0-9 + a-z) so orphan_policy:remap
+#     drives FPE and genuinely permutes it; output value != source key.
+#     The fk_integrity invariant verifies expected_orphans:1 and that the remapped
+#     value differs from the source key (remap masked it, not a passthrough).
 #   - SENTINEL_PHONE "800-555-0100" in employee row 0 notes column
 #     text_mask with us_phone detector must redact it; sentinel scan checks absence
 #
@@ -13,8 +16,9 @@
 #   employees.employee_id is both the PK (parent) and the target of manager_id
 #   (child). The FK remap machinery resolves: null -> null, valid ref ->
 #   remapped through FPE, orphan -> remapped via orphan_policy:remap.
-#   The fk_integrity invariant asserts expected_orphans=1 matches the planted count.
-#   The mutation control (TestJobCSelfFKTeeth) breaks the FK and asserts it raises.
+#   The fk_integrity invariant asserts expected_orphans=1 matches the planted count
+#   AND that the remapped orphan output value differs from its source key (remap
+#   genuinely masked it; the mutation control TestJobCSelfFKTeeth proves both checks).
 #
 # GENERATE TABLE: synthetic_events (10000 rows)
 #   Exercises: sequence, categorical (list weights), formula (gauss; mean/std params),
@@ -24,7 +28,7 @@
 #
 # Source fingerprint (SHA-256 of canonical CSV; verified by verify_fingerprint
 # inside fixture.build_employees -- update after any fixture change):
-#   employees: 3e0bb1df0a85c407d71e1ac18ec022b32dc248b487d7b127b53008b35209c875
+#   employees: 5d7be8ecc5375d824c7ac40f064bd7596b25fdf6c62a3ede9d1059830f959d24
 #
 # Strategies exercised (employees mask table):
 #   fpe (employee_id), fpe+same-namespace (manager_id self-FK), categorical (department),
@@ -82,8 +86,9 @@ config:
     - name: employees
       columns:
         # employee_id: FPE bijection. Declares the employee_identity namespace.
-        # alphanum charset + preserve_separators:true keeps the "EMP-" prefix
-        # intact and permutes only the trailing digit characters.
+        # alphanum charset (0-9 + a-z) + preserve_separators:true: non-charset
+        # characters (uppercase letters, hyphens) are treated as separators and
+        # kept in place; in-charset characters at their positions are permuted.
         - name: employee_id
           strategy: fpe
           namespace: employee_identity

@@ -251,7 +251,9 @@ def evaluate_invariants(
     if inv.determinism:
         _run("determinism", check_determinism, job_name, result_a, result_b)
 
-    # 6.4 FK integrity
+    # 6.4 FK integrity.
+    # Pass source_frames so check_fk_integrity can verify that remap-policy
+    # orphans produce output values that differ from their source keys.
     if inv.fk_integrity:
         _run(
             "fk_integrity",
@@ -260,6 +262,7 @@ def evaluate_invariants(
             inv.fk_integrity,
             result_a,
             manifest.relationships,
+            sources,  # enables remap-masks-orphan check
         )
 
     # 6.2/6.3 Distribution fidelity.

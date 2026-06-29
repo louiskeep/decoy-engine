@@ -11,9 +11,12 @@ Topology: self_referential.
 Planted edge cases (match manifest.yaml invariants exactly):
   - ROOT_COUNT = 10 root-node rows with manager_id = NULL.
     Null manager_ids pass through the FK remap machinery unchanged.
-  - ORPHAN_COUNT = 1 row with manager_id = "EMP-ORPHAN" (not in employee_id set).
-    orphan_policy:remap -> the orphan FK is remapped rather than dropped.
-    expected_orphans: 1 in the fk_integrity invariant.
+  - ORPHAN_COUNT = 1 row with manager_id = "emp99999" (not in employee_id set).
+    "emp99999" uses only lowercase letters and digits, which are all in the FPE
+    alphanum charset ("0123456789abcdefghijklmnopqrstuvwxyz"). So orphan_policy:remap
+    drives FPE and genuinely permutes every character -- the output value differs from
+    "emp99999". The fk_integrity invariant verifies expected_orphans:1 AND that the
+    remapped output value != the source key (remap genuinely masked it, not passthrough).
   - SENTINEL_PHONE = "800-555-0100" planted in the notes column of employee row 0.
     text_mask with phone_number detector must redact it; sentinel scan verifies absence.
 
@@ -57,15 +60,21 @@ EMPLOYEE_COUNT = 2500
 # Exactly 10 root employees have manager_id = NULL.
 ROOT_COUNT = 10
 
-# Exactly 1 employee has manager_id = "EMP-ORPHAN" (not in employee_id set).
+# Exactly 1 employee has manager_id = ORPHAN_SOURCE_KEY (not in employee_id set).
 # The FK remap machinery handles this via orphan_policy:remap.
 ORPHAN_COUNT = 1
+
+# Source FK value for the orphan row. Must use only FPE alphanum charset chars
+# (0-9 + a-z) so orphan_policy:remap drives FPE and genuinely permutes the value
+# instead of passing it through unchanged (the charset-gap passthrough is the
+# documented engine limitation in docs/what-we-cannot-prove.md).
+ORPHAN_SOURCE_KEY = "emp99999"
 
 # Source fingerprint (SHA-256 of canonical CSV). verify_fingerprint is called
 # inside build_employees so a faker/numpy version bump that shifts the fixture
 # output fails loudly with a re-baseline instruction.
 # Baseline: run compute_fingerprint(build_employees(seed=44)) and update here.
-_EMPLOYEES_FINGERPRINT = "3e0bb1df0a85c407d71e1ac18ec022b32dc248b487d7b127b53008b35209c875"
+_EMPLOYEES_FINGERPRINT = "5d7be8ecc5375d824c7ac40f064bd7596b25fdf6c62a3ede9d1059830f959d24"
 
 # The sentinel phone number planted in the notes column of row 0.
 # text_mask with phone_number detector must redact it; sentinel scan checks absence.
@@ -122,10 +131,10 @@ def build_employees(seed: int = 44, **_kwargs: Any) -> pd.DataFrame:
 
     # Build manager_ids:
     # - Rows 0..ROOT_COUNT-1: None (root nodes).
-    # - Row ROOT_COUNT: "EMP-ORPHAN" (orphan placeholder, not in emp_ids set).
+    # - Row ROOT_COUNT: ORPHAN_SOURCE_KEY (in-charset orphan; not in emp_ids set).
     # - Rows ROOT_COUNT+1..: reference a root node (cycle-free depth-2 tree).
     root_ids = emp_ids[:ROOT_COUNT]
-    manager_ids: list[Any] = [None] * ROOT_COUNT + ["EMP-ORPHAN"]
+    manager_ids: list[Any] = [None] * ROOT_COUNT + [ORPHAN_SOURCE_KEY]
     # For remaining rows, sample from root pool.
     n_remaining = n - ROOT_COUNT - ORPHAN_COUNT
     root_choices = rng.integers(0, ROOT_COUNT, size=n_remaining, endpoint=False)
@@ -152,13 +161,13 @@ def build_employees(seed: int = 44, **_kwargs: Any) -> pd.DataFrame:
     assert null_mgr == ROOT_COUNT, (
         f"Expected {ROOT_COUNT} root (null manager_id) rows, got {null_mgr}."
     )
-    orphan_mgr = int((df["manager_id"] == "EMP-ORPHAN").sum())
+    orphan_mgr = int((df["manager_id"] == ORPHAN_SOURCE_KEY).sum())
     assert orphan_mgr == ORPHAN_COUNT, f"Expected {ORPHAN_COUNT} orphan FK row, got {orphan_mgr}."
     # Verify all non-orphan manager refs exist in the employee_id set.
     valid_ids = set(df["employee_id"])
     bad = df[
         df["manager_id"].notna()
-        & (df["manager_id"] != "EMP-ORPHAN")
+        & (df["manager_id"] != ORPHAN_SOURCE_KEY)
         & ~df["manager_id"].isin(valid_ids)
     ]
     assert len(bad) == 0, f"Unexpected unresolved manager_ids: {bad['manager_id'].tolist()[:5]}"

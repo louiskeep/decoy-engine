@@ -52,6 +52,7 @@ from testflight._invariants import (
     check_distribution_mask,
     check_fk_integrity,
     check_quarantine,
+    check_remap_masks_orphan,
     check_sentinels,
 )
 from testflight._spec import (
@@ -2535,3 +2536,164 @@ class TestJobCGenerateControls:
         ]
         # Must NOT raise: both columns within declared tolerance.
         check_distribution_generate("c_gen_good", "synthetic_events", spec, output_df, config_table)
+
+
+# ---------------------------------------------------------------------------
+# Phase 3b: Orphan remap-masks invariant tooth (TestOrphanRemapMasksTeeth)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.testflight
+class TestOrphanRemapMasksTeeth:
+    """Mutation controls for the remap-masks-orphan invariant tooth.
+
+    HIGH-2 (Phase 3b): the suite previously had no assertion that the remapped
+    orphan output value DIFFERS from the source key. An out-of-charset orphan
+    key (e.g. all-uppercase "EMP-ORPHAN") passes through FPE unchanged; the
+    fk_integrity count still shows expected_orphans=1 so the job appeared to pass.
+
+    Fix: check_remap_masks_orphan enforces output != source key. These controls
+    prove it bites on passthrough and passes on genuine remap.
+
+    RED: test_passthrough_orphan_raises -- orphan output equals source key.
+    GREEN: test_genuinely_remapped_orphan_passes -- output differs from source.
+    Integration: test_check_fk_integrity_with_source_frames -- end-to-end wiring
+        through check_fk_integrity(source_frames=...) detects passthrough.
+    """
+
+    def test_passthrough_orphan_raises(self) -> None:
+        """Output value equal to source key must raise.
+
+        RED: an out-of-charset orphan ("EMP-ORPHAN") that FPE cannot permute
+        passes through unchanged; output == source key. The remap-masks-orphan
+        check must raise with a clear passthrough-gap message.
+        """
+        with pytest.raises(AssertionError, match="remap-masks"):
+            check_remap_masks_orphan(
+                "c_remap_control",
+                orphan_source_key="EMP-ORPHAN",
+                orphan_output_val="EMP-ORPHAN",  # unchanged passthrough
+                child_table="employees",
+                child_col="manager_id",
+            )
+
+    def test_genuinely_remapped_orphan_passes(self) -> None:
+        """Output value differing from source key must NOT raise.
+
+        GREEN: the in-charset orphan "emp99999" is permuted by FPE and produces
+        a different value. The check passes cleanly.
+        """
+        # Must NOT raise: output differs from source key.
+        check_remap_masks_orphan(
+            "c_remap_control",
+            orphan_source_key="emp99999",
+            orphan_output_val="zqm38214",  # FPE permuted
+            child_table="employees",
+            child_col="manager_id",
+        )
+
+    def test_check_fk_integrity_with_source_frames_detects_passthrough(self) -> None:
+        """check_fk_integrity with source_frames raises when remap yields passthrough.
+
+        End-to-end wiring test: source child FK "EMP-ORPHAN" is an orphan (not in
+        source parent pool), and the output child FK is also "EMP-ORPHAN" (unchanged
+        passthrough). check_fk_integrity with source_frames supplied and policy=remap
+        must raise via the remap-masks-orphan internal check.
+
+        This is the regression proof: the original Job C fixture used "EMP-ORPHAN"
+        (out-of-charset) as the orphan key. With the old code, fk_integrity counted
+        1 orphan (matching expected_orphans=1) and returned pass -- silently accepting
+        the verbatim source key in the output. This test proves the fixed path raises.
+        """
+        # Build source frames: parent has one key, child has one orphan row.
+        parent_ids = [f"EMP-{i:05d}" for i in range(1, 11)]
+        src_child_fk = [*parent_ids[:9], "EMP-ORPHAN"]  # last row is orphan
+        src_child = pa.table({"employee_id": parent_ids, "manager_id": src_child_fk})
+
+        # Broken output: orphan manager_id is EMP-ORPHAN (unchanged passthrough).
+        out_child_fk = [*[f"MK-{i:05d}" for i in range(1, 10)], "EMP-ORPHAN"]
+        out_child = pa.table(
+            {"employee_id": [f"MK-{i:05d}" for i in range(1, 11)], "manager_id": out_child_fk}
+        )
+
+        result = SimpleNamespace(
+            outputs={"employees": out_child},
+            quality_metrics={},
+        )
+        # Note: self-FK so parent and child are the same table in relationships.
+        relationships = [
+            RelationshipSpec(
+                parent=RelationshipEndSpec(table="employees", columns=["employee_id"]),
+                children=[RelationshipEndSpec(table="employees", columns=["manager_id"])],
+                orphan_policy="remap",
+                namespace="employee_identity",
+            )
+        ]
+        fk_spec = [
+            FKIntegritySpec(
+                relationship_name="employee_identity",
+                expected_orphans=1,
+                policy="remap",
+            )
+        ]
+        source_frames = {"employees": src_child}
+
+        with pytest.raises(AssertionError, match="remap-masks"):
+            check_fk_integrity(
+                "c_passthrough_control",
+                fk_spec,
+                result,
+                relationships,
+                source_frames=source_frames,
+            )
+
+    def test_check_fk_integrity_with_source_frames_good_remap_passes(self) -> None:
+        """check_fk_integrity with source_frames passes when remap output differs.
+
+        GREEN: source orphan "emp99999" is remapped to "zqm38214" (different). The
+        fk_integrity count is 1 (matches expected_orphans=1) and the remap-masks
+        check passes because the output value differs from the source key.
+        """
+        parent_ids = [f"emp{i:05d}" for i in range(1, 11)]
+        src_child_fk = [*parent_ids[:9], "emp99999"]
+        src_child = pa.table({"employee_id": parent_ids, "manager_id": src_child_fk})
+
+        # Good output: orphan remapped to a different value.
+        masked_parent_ids = [f"msk{i:05d}" for i in range(1, 11)]
+        out_child_fk = [*masked_parent_ids[:9], "zqm38214"]  # remapped != source
+        out_child = pa.table(
+            {
+                "employee_id": masked_parent_ids,
+                "manager_id": out_child_fk,
+            }
+        )
+
+        result = SimpleNamespace(
+            outputs={"employees": out_child},
+            quality_metrics={},
+        )
+        relationships = [
+            RelationshipSpec(
+                parent=RelationshipEndSpec(table="employees", columns=["employee_id"]),
+                children=[RelationshipEndSpec(table="employees", columns=["manager_id"])],
+                orphan_policy="remap",
+                namespace="employee_identity",
+            )
+        ]
+        fk_spec = [
+            FKIntegritySpec(
+                relationship_name="employee_identity",
+                expected_orphans=1,
+                policy="remap",
+            )
+        ]
+        source_frames = {"employees": src_child}
+
+        # Must NOT raise: orphan count matches and output differs from source key.
+        check_fk_integrity(
+            "c_good_remap_control",
+            fk_spec,
+            result,
+            relationships,
+            source_frames=source_frames,
+        )
