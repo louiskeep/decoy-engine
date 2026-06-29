@@ -16,20 +16,25 @@ from __future__ import annotations
 from typing import Any
 
 from decoy_engine.plan._errors import PlanCompileError
+from decoy_engine.transforms.grouped_series import GROUPED_SERIES_GENERATORS
 
 
 def check_grouped_series_refs(config: dict[str, Any]) -> None:
-    """Reject grouped_series columns whose group_by or order_by column is missing.
+    """Reject grouped_series columns with invalid generator or missing column refs.
 
     Compile-check ownership table row #18 (SP-10c / P5.S.grouped_series.1,
-    2026-06-29). Two failure modes caught here (plan-compile time, before any
+    2026-06-29). Three failure modes caught here (plan-compile time, before any
     execution):
 
-    1. Missing group_by ref: the ``group_by`` key names a column not present
+    1. Invalid generator: the ``generator`` key must be in GROUPED_SERIES_GENERATORS
+       (the closed enumeration). An unknown generator is guaranteed to raise at
+       execution time; surfacing it here gives a precise error before any run.
+
+    2. Missing group_by ref: the ``group_by`` key names a column not present
        in the same table. A missing ref is guaranteed to raise KeyError at
        execution time; rejecting here surfaces it with the exact missing name.
 
-    2. Missing order_by ref: the ``order_by`` key names a column not present
+    3. Missing order_by ref: the ``order_by`` key names a column not present
        in the same table. Same rationale.
 
     Covers both mask-kind columns (strategy: grouped_series with
@@ -73,6 +78,17 @@ def check_grouped_series_refs(config: dict[str, Any]) -> None:
             pc = col_entry.get("provider_config") or {}
             if not isinstance(pc, dict):
                 continue
+            generator = pc.get("generator")
+            if generator and str(generator) not in GROUPED_SERIES_GENERATORS:
+                raise PlanCompileError(
+                    code="grouped_series_generator_invalid",
+                    path=f"tables.{table_name}.columns.{col_name}.provider_config.generator",
+                    message=(
+                        f"grouped_series column {col_name!r} in table "
+                        f"{table_name!r} has invalid generator {generator!r}. "
+                        f"Allowed values: {sorted(GROUPED_SERIES_GENERATORS)!r}."
+                    ),
+                )
             _check_ref(
                 col_ref=pc.get("group_by"),
                 ref_key="group_by",
@@ -97,6 +113,17 @@ def check_grouped_series_refs(config: dict[str, Any]) -> None:
             if col_entry.get("type") != "grouped_series":
                 continue
             col_name = col_entry.get("name", "?")
+            generator = col_entry.get("generator")
+            if generator and str(generator) not in GROUPED_SERIES_GENERATORS:
+                raise PlanCompileError(
+                    code="grouped_series_generator_invalid",
+                    path=f"tables.{table_name}.generate_columns.{col_name}.generator",
+                    message=(
+                        f"grouped_series column {col_name!r} in table "
+                        f"{table_name!r} has invalid generator {generator!r}. "
+                        f"Allowed values: {sorted(GROUPED_SERIES_GENERATORS)!r}."
+                    ),
+                )
             _check_ref(
                 col_ref=col_entry.get("group_by"),
                 ref_key="group_by",

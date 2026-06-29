@@ -16,18 +16,24 @@ from __future__ import annotations
 from typing import Any
 
 from decoy_engine.plan._errors import PlanCompileError
+from decoy_engine.transforms.windowed_date import WINDOWED_DATE_DISTRIBUTIONS
 
 
 def check_windowed_date_refs(config: dict[str, Any]) -> None:
-    """Reject windowed_date columns whose anchor column is missing.
+    """Reject windowed_date columns with invalid distribution or missing anchor ref.
 
     Compile-check ownership table row #19 (SP-10c / P5.S.windowed_date,
-    2026-06-29). One failure mode caught here (plan-compile time, before any
+    2026-06-29). Two failure modes caught here (plan-compile time, before any
     execution):
 
-    Missing anchor ref: the ``anchor`` key names a column not present in the
-    same table. A missing ref is guaranteed to raise KeyError at execution
-    time; rejecting here surfaces it with the exact missing name.
+    1. Invalid distribution: the ``distribution`` key must be in
+       WINDOWED_DATE_DISTRIBUTIONS (closed enumeration). An unknown distribution
+       is guaranteed to raise at execution time; surfacing it here gives a
+       precise error before any run.
+
+    2. Missing anchor ref: the ``anchor`` key names a column not present in the
+       same table. A missing ref is guaranteed to raise KeyError at execution
+       time; rejecting here surfaces it with the exact missing name.
 
     Covers both mask-kind columns (strategy: windowed_date with
     provider_config.anchor) and generate-kind columns (type: windowed_date
@@ -68,6 +74,18 @@ def check_windowed_date_refs(config: dict[str, Any]) -> None:
             pc = col_entry.get("provider_config") or {}
             if not isinstance(pc, dict):
                 continue
+            distribution = pc.get("distribution")
+            if distribution and str(distribution) not in WINDOWED_DATE_DISTRIBUTIONS:
+                raise PlanCompileError(
+                    code="windowed_date_distribution_invalid",
+                    path=(f"tables.{table_name}.columns.{col_name}.provider_config.distribution"),
+                    message=(
+                        f"windowed_date column {col_name!r} in table "
+                        f"{table_name!r} has invalid distribution "
+                        f"{distribution!r}. Allowed values: "
+                        f"{sorted(WINDOWED_DATE_DISTRIBUTIONS)!r}."
+                    ),
+                )
             anchor = pc.get("anchor")
             if anchor and str(anchor) not in all_col_names:
                 raise PlanCompileError(
@@ -88,6 +106,18 @@ def check_windowed_date_refs(config: dict[str, Any]) -> None:
             if col_entry.get("type") != "windowed_date":
                 continue
             col_name = col_entry.get("name", "?")
+            distribution = col_entry.get("distribution")
+            if distribution and str(distribution) not in WINDOWED_DATE_DISTRIBUTIONS:
+                raise PlanCompileError(
+                    code="windowed_date_distribution_invalid",
+                    path=(f"tables.{table_name}.generate_columns.{col_name}.distribution"),
+                    message=(
+                        f"windowed_date column {col_name!r} in table "
+                        f"{table_name!r} has invalid distribution "
+                        f"{distribution!r}. Allowed values: "
+                        f"{sorted(WINDOWED_DATE_DISTRIBUTIONS)!r}."
+                    ),
+                )
             anchor = col_entry.get("anchor")
             if anchor and str(anchor) not in all_col_names:
                 raise PlanCompileError(
