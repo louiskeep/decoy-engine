@@ -11,15 +11,16 @@ ship in SP-10c:
                   is a seeded non-negative integer drawn from numpy RNG, so
                   the walk is deterministic under a fixed seed.
 
-Pattern: per-group sequential indexing mirrors pandas GroupBy.cumcount() and
-SDV-style per-group sequencing.
+Pattern: pandas groupby cumcount + derive()-seeded monotone walk. cumcount
+positions follow pandas GroupBy.cumcount() (SDV per-group sequencing;
+https://sdv.dev/SDV/user_guides/timeseries/index.html, MIT License). Per-
+group RNG seeds for monotone_walk come from
+decoy_engine.determinism._derive.derive(seed, namespace, group_label)
+(HKDF-SHA256 + HMAC-SHA256, RFC 5869 + RFC 2104), so two monotone_walk
+columns with the same groups produce independent walks.
 
   pandas cumcount reference: https://pandas.pydata.org/docs/reference/
   api/pandas.core.groupby.GroupBy.cumcount.html (pandas 2.x, Apache-2.0).
-
-  SDV per-group sequencing pattern: SDV TimeSeriesSynthesizer groups data
-  by an entity_columns key and generates within-group sequences independently
-  (https://sdv.dev/SDV/user_guides/timeseries/index.html, MIT License).
 
   numpy seeded RNG: numpy.random.default_rng for non-negative step sampling
   (NumPy, BSD License; https://numpy.org/doc/stable/reference/random/
@@ -43,13 +44,13 @@ Validation timing:
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 import pandas as pd
 
+from decoy_engine.determinism._derive import derive
 from decoy_engine.plan._errors import PlanCompileError
 
 # Closed enumeration of allowed generator names.
@@ -141,6 +142,16 @@ class GroupedSeriesConfig:
         step = int(cfg.get("step", 1))
         max_step = int(cfg.get("max_step", _MAX_STEP_DEFAULT))
 
+        if step < 0 or step > max_step:
+            raise PlanCompileError(
+                code="grouped_series_step_out_of_range",
+                path="provider_config.step",
+                message=(
+                    f"'step' ({step}) must be in [0, max_step ({max_step})]. "
+                    f"Both fields are in provider_config."
+                ),
+            )
+
         return cls(
             group_by=str(group_by),
             order_by=str(order_by),
@@ -151,41 +162,24 @@ class GroupedSeriesConfig:
         )
 
 
-def _group_seed(seed: bytes, group_label: Any, group_index: int) -> int:
-    """Derive a per-group integer seed from the job seed + group identity.
-
-    Uses SHA-256 over (seed_bytes || group_label_utf8 || group_index_bytes)
-    to keep group seeds independent. Not HKDF: this is a convenience helper
-    for numpy RNG seeding only, not for keyed derivation.
-
-    Args:
-        seed:        8-byte job seed.
-        group_label: The group_by column value (stringified for hashing).
-        group_index: Ordinal position of this group in the sorted group list.
-
-    Returns:
-        A non-negative 64-bit integer suitable for numpy.random.default_rng.
-    """
-    label_bytes = str(group_label).encode("utf-8", errors="replace")
-    idx_bytes = group_index.to_bytes(8, "big")
-    digest = hashlib.sha256(seed + label_bytes + idx_bytes).digest()
-    return int.from_bytes(digest[:8], "big")
-
-
 def apply_grouped_series(
     config: GroupedSeriesConfig,
     df: pd.DataFrame,
     seed: bytes,
+    namespace: str,
 ) -> pd.Series:
     """Generate a per-group series column from the group_by + order_by columns.
 
-    Pattern: pandas GroupBy.cumcount() for cumcount; seeded numpy integer RNG
-    for monotone_walk steps (SDV per-group sequencing model).
+    Pattern: pandas GroupBy.cumcount() for cumcount; derive()-seeded numpy RNG
+    for monotone_walk (SDV per-group sequencing model; see module docstring).
 
     Args:
-        config: Parsed GroupedSeriesConfig.
-        df:     DataFrame containing group_by and order_by columns.
-        seed:   8-byte job seed for RNG-backed generators (monotone_walk).
+        config:    Parsed GroupedSeriesConfig.
+        df:        DataFrame containing group_by and order_by columns.
+        seed:      8-byte job seed for RNG-backed generators (monotone_walk).
+        namespace: Per-column namespace string (e.g. "grouped_series/<col>")
+                   passed to derive() so two monotone_walk columns in the
+                   same job produce independent step streams.
 
     Returns:
         A pandas Series aligned to ``df``'s index with the series values.
@@ -205,7 +199,7 @@ def apply_grouped_series(
     if config.generator == "cumcount":
         return _apply_cumcount(config, working, group_col, order_col, pos_col, n)
     # monotone_walk
-    return _apply_monotone_walk(config, working, group_col, order_col, pos_col, n, seed)
+    return _apply_monotone_walk(config, working, group_col, order_col, pos_col, n, seed, namespace)
 
 
 def _apply_cumcount(
@@ -247,23 +241,20 @@ def _apply_monotone_walk(
     pos_col: str,
     n: int,
     seed: bytes,
+    namespace: str,
 ) -> pd.Series:
     """monotone_walk: non-decreasing values within each group.
 
     Each step is a non-negative integer drawn from a seeded
-    numpy.random.default_rng. Steps are in [0, config.max_step]. The
-    first value in each group is config.start.
+    numpy.random.default_rng. Steps are in [config.step, config.max_step].
+    The first value in each group is config.start.
 
-    Pattern: numpy.random.default_rng.integers for seeded step sampling
-    (NumPy, BSD License; https://numpy.org/doc/stable/reference/random/
-    generator.html#numpy.random.Generator.integers).
+    Per-group RNG seed: derive(seed, namespace, group_label_utf8)[:8]
+    (HKDF-SHA256 + HMAC-SHA256). The namespace includes the column name so
+    two monotone_walk columns produce independent step streams even when
+    they share the same group_by column and group labels.
     """
     sorted_df = working.sort_values([group_col, order_col], kind="stable")
-
-    # Collect groups in the order they first appear (sorted by group value
-    # so the group-seed is stable regardless of input order).
-    groups: list[Any] = sorted(working[group_col].unique(), key=str)
-    group_index_map = {g: i for i, g in enumerate(groups)}
 
     result: list[int] = [0] * n
     current_group: Any = object()
@@ -276,7 +267,10 @@ def _apply_monotone_walk(
         if g != current_group:
             current_group = g
             cumulative = config.start
-            g_seed = _group_seed(seed, g, group_index_map[g])
+            g_seed = int.from_bytes(
+                derive(seed, namespace, str(g).encode("utf-8", errors="replace"))[:8],
+                "big",
+            )
             group_rng = np.random.default_rng(g_seed)
         # First row of the group gets start; subsequent rows add a non-neg step.
         result[orig_pos] = cumulative

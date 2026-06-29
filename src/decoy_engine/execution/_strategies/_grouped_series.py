@@ -59,6 +59,7 @@ class GroupedSeriesStrategyHandler:
     ) -> tuple[pd.DataFrame, list[QualityWarning]]:
         cfg_dict = provider_config_to_dict(plan.provider_config)
         config = GroupedSeriesConfig.from_dict(cfg_dict)
-        series = apply_grouped_series(config, df, seed=ctx.job_seed)
+        namespace = f"grouped_series/{column}"
+        series = apply_grouped_series(config, df, seed=ctx.job_seed, namespace=namespace)
         df[column] = series.values
         return df, []

@@ -16,12 +16,13 @@ Three distributions are supported:
   late     - dates near the end of the window are more likely (geometric
              decay from max_days toward min_days).
 
-Pattern: pandas.Timestamp + pandas.Timedelta for date arithmetic (pandas 2.x,
-Apache-2.0; https://pandas.pydata.org/docs). Per-row seeded offset sampling
-via numpy.random.default_rng (NumPy, BSD License; https://numpy.org/doc/
-stable/reference/random/generator.html). The per-row seed uses
-decoy_engine.generators.derivation.GenDeriveContext.row_int("np", i) to keep
-output consistent with the engine-wide derivation contract.
+Pattern: derive()-per-column namespace + bounded date offset. Per-row seeded
+offset sampling via numpy.random.default_rng (NumPy, BSD License;
+https://numpy.org/doc/stable/reference/random/generator.html). The per-row
+seed comes from decoy_engine.determinism._derive.derive(seed, namespace,
+row_index.to_bytes(8, "big")) (HKDF-SHA256 + HMAC-SHA256, RFC 5869 + RFC
+2104), keyed by the column namespace so two windowed_date columns produce
+independent per-row offset streams.
 
 Security design:
   The distribution set is a CLOSED enumeration (WINDOWED_DATE_DISTRIBUTIONS).
@@ -29,8 +30,8 @@ Security design:
   exec() anywhere in this module.
 
 Determinism:
-  Same 8-byte seed + same anchor column -> byte-identical output dates on
-  every run.
+  Same 8-byte seed + same namespace + same anchor column -> byte-identical
+  output dates on every run.
 
 Validation timing:
   anchor + max_days + distribution + min <= max: config-parse time
@@ -41,13 +42,13 @@ Validation timing:
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 import pandas as pd
 
+from decoy_engine.determinism._derive import derive
 from decoy_engine.plan._errors import PlanCompileError
 
 # Closed enumeration of allowed distributions.
@@ -146,26 +147,6 @@ class WindowedDateConfig:
         )
 
 
-def _row_seed(job_seed: bytes, row_index: int) -> int:
-    """Derive a per-row integer seed for windowed_date offset sampling.
-
-    Uses SHA-256 over (job_seed || row_index_bytes) to produce a stable,
-    per-row seed without requiring a full GenDeriveContext (which needs a
-    derive_key that is not available in all call sites). This is consistent
-    with the engine pattern of per-row HMAC derivation.
-
-    Args:
-        job_seed:  8-byte job seed.
-        row_index: 0-based row index in the DataFrame.
-
-    Returns:
-        Non-negative 64-bit integer for numpy.random.default_rng seeding.
-    """
-    idx_bytes = row_index.to_bytes(8, "big")
-    digest = hashlib.sha256(job_seed + idx_bytes).digest()
-    return int.from_bytes(digest[:8], "big")
-
-
 def _sample_offset(
     rng: np.random.Generator,
     min_days: int,
@@ -201,16 +182,21 @@ def apply_windowed_date(
     config: WindowedDateConfig,
     df: pd.DataFrame,
     seed: bytes,
+    namespace: str,
 ) -> list[str]:
     """Generate one date per row within the configured window around the anchor.
 
-    Pattern: pandas Timestamp + Timedelta for date arithmetic (pandas 2.x,
-    Apache-2.0). numpy.random.default_rng for seeded per-row offset sampling.
+    Pattern: derive()-per-column namespace (HKDF-SHA256 + HMAC-SHA256) for
+    per-row per-column seed isolation; numpy.random.default_rng for seeded
+    offset sampling; pandas Timestamp + Timedelta for date arithmetic.
 
     Args:
-        config: Parsed WindowedDateConfig.
-        df:     DataFrame containing the anchor date column.
-        seed:   8-byte job seed for per-row RNG seeding.
+        config:    Parsed WindowedDateConfig.
+        df:        DataFrame containing the anchor date column.
+        seed:      8-byte job seed for per-row RNG seeding.
+        namespace: Per-column namespace string (e.g. "windowed_date/<col>")
+                   passed to derive() so two windowed_date columns in the
+                   same job produce independent offset streams.
 
     Returns:
         List of ISO-format date strings (``YYYY-MM-DD``) aligned to df rows.
@@ -220,7 +206,8 @@ def apply_windowed_date(
 
     for i, raw_anchor in enumerate(anchor_series):
         anchor_ts = pd.Timestamp(raw_anchor)
-        row_rng = np.random.default_rng(_row_seed(seed, i))
+        row_seed_int = int.from_bytes(derive(seed, namespace, i.to_bytes(8, "big"))[:8], "big")
+        row_rng = np.random.default_rng(row_seed_int)
         offset = _sample_offset(row_rng, config.min_days, config.max_days, config.distribution)
         out_ts = anchor_ts + pd.Timedelta(days=offset)
         result.append(out_ts.strftime(_DATE_FMT))

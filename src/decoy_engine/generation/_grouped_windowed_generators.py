@@ -30,7 +30,8 @@ def _grouped_series_generate(
     (declared-order sequential semantics, same as derived and statistical).
 
     Methodology: pandas groupby cumcount / SDV per-group sequencing. Per-group
-    step RNG uses numpy.random.default_rng seeded from SHA-256(seed || group).
+    step RNG uses derive(seed, namespace, group_label) (HKDF-SHA256 + HMAC-
+    SHA256); namespace = "grouped_series/<col_name>".
     See transforms/grouped_series.py for full citations.
 
     Deterministic: same seed + same generated snapshot -> same output.
@@ -39,23 +40,27 @@ def _grouped_series_generate(
 
     from decoy_engine.transforms.grouped_series import GroupedSeriesConfig, apply_grouped_series
 
-    config = GroupedSeriesConfig.from_dict(
-        {
-            "group_by": col.get("group_by", ""),
-            "order_by": col.get("order_by", ""),
-            "generator": col.get("generator", "cumcount"),
-            "start": col.get("start", 0),
-            "step": col.get("step", 1),
-            "max_step": col.get("max_step", 10),
-        }
-    )
+    cfg_dict: dict[str, Any] = {
+        "group_by": col.get("group_by", ""),
+        "order_by": col.get("order_by", ""),
+        "generator": col.get("generator", "cumcount"),
+        "step": col.get("step", 1),
+        "max_step": col.get("max_step", 10),
+    }
+    # Omit "start" when not provided so GroupedSeriesConfig.from_dict applies
+    # its generator-specific default (0 for cumcount, 1 for monotone_walk).
+    if "start" in col:
+        cfg_dict["start"] = col["start"]
+    config = GroupedSeriesConfig.from_dict(cfg_dict)
     group_vals = generated.get(config.group_by, [None] * n)
     order_vals = generated.get(config.order_by, list(range(n)))
     df = pd.DataFrame({config.group_by: group_vals, config.order_by: order_vals})
     # Convert seed int -> 8 bytes for the transform layer. The seed int from
     # _normalize_job_seed_int fits in 8 bytes (same as _normalize_job_seed).
     seed_bytes = seed.to_bytes(8, "big")
-    return list(apply_grouped_series(config, df, seed=seed_bytes))
+    col_name = col.get("name", "grouped_series_col")
+    namespace = f"grouped_series/{col_name}"
+    return list(apply_grouped_series(config, df, seed=seed_bytes, namespace=namespace))
 
 
 def _windowed_date_generate(
@@ -70,8 +75,10 @@ def _windowed_date_generate(
     then applies apply_windowed_date. The anchor column must be declared
     before this column in generate_columns.
 
-    Methodology: pandas Timestamp + Timedelta date arithmetic; numpy seeded
-    per-row offset sampling. See transforms/windowed_date.py for full citations.
+    Methodology: derive()-per-column namespace (HKDF-SHA256 + HMAC-SHA256)
+    for per-row seed isolation; pandas Timestamp + Timedelta for date
+    arithmetic. Namespace = "windowed_date/<col_name>".
+    See transforms/windowed_date.py for full citations.
 
     Deterministic: same seed + same anchor values -> byte-identical output.
     """
@@ -79,18 +86,23 @@ def _windowed_date_generate(
 
     from decoy_engine.transforms.windowed_date import WindowedDateConfig, apply_windowed_date
 
-    config = WindowedDateConfig.from_dict(
-        {
-            "anchor": col.get("anchor", ""),
-            "min_days": col.get("min_days", 0),
-            "max_days": col.get("max_days", 0),
-            "distribution": col.get("distribution", "uniform"),
-        }
-    )
+    # Build cfg_dict omitting optional keys so WindowedDateConfig.from_dict
+    # applies its own defaults and validation (avoids the L2 drift where
+    # hardcoding max_days=0 bypasses the "max_days required" check).
+    cfg_dict: dict[str, Any] = {"anchor": col.get("anchor", "")}
+    if "min_days" in col:
+        cfg_dict["min_days"] = col["min_days"]
+    if "max_days" in col:
+        cfg_dict["max_days"] = col["max_days"]
+    if "distribution" in col:
+        cfg_dict["distribution"] = col["distribution"]
+    config = WindowedDateConfig.from_dict(cfg_dict)
     anchor_vals = generated.get(config.anchor, [None] * n)
     df = pd.DataFrame({config.anchor: anchor_vals})
     seed_bytes = seed.to_bytes(8, "big")
-    return apply_windowed_date(config, df, seed=seed_bytes)
+    col_name = col.get("name", "windowed_date_col")
+    namespace = f"windowed_date/{col_name}"
+    return apply_windowed_date(config, df, seed=seed_bytes, namespace=namespace)
 
 
 def _group_key_generate(

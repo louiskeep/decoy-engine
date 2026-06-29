@@ -55,6 +55,7 @@ class WindowedDateStrategyHandler:
     ) -> tuple[pd.DataFrame, list[QualityWarning]]:
         cfg_dict = provider_config_to_dict(plan.provider_config)
         config = WindowedDateConfig.from_dict(cfg_dict)
-        date_list = apply_windowed_date(config, df, seed=ctx.job_seed)
+        namespace = f"windowed_date/{column}"
+        date_list = apply_windowed_date(config, df, seed=ctx.job_seed, namespace=namespace)
         df[column] = date_list
         return df, []
