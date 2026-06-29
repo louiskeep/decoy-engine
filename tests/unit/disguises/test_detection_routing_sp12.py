@@ -157,7 +157,7 @@ class TestCpniDetectionRouting:
         assert m is not None, "Column 'subscriber_ssn' must fire detect_ssn."
         assert m.detector_id == "ssn"
 
-    def test_DR10_calling_number_routes_to_us_phone(self):
+    def test_DR10_calling_number_is_not_a_us_phone_name_hint(self):
         """Column named 'calling_number' does NOT route to us_phone (not a US-phone hint).
 
         CDR calling/called numbers use value-pattern detection; the column name
