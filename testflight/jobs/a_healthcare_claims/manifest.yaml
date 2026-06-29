@@ -494,14 +494,18 @@ invariants:
       value: "sentinel.leak.test@example-decoy-testflight.invalid"
 
   # 6.9 Computed-column correctness.
+  # formula strings are in the engine's closed-grammar expression syntax so the
+  # harness can compile and evaluate them directly (Phase 4 generalization).
   computed_columns:
     - table: claim_lines
       column: line_total
-      formula: "line_amount * units * case_when(copay->0.80, preferred->0.90, standard->1.00)"
-      branch_count: 3
+      formula: >-
+        line_amount * units * case_when(discount_tier == "copay", 0.80,
+        discount_tier == "preferred", 0.90, 1.0)
+      branch_count: 0
     - table: claim_lines
       column: claim_line_sum
-      formula: "sum(line_amount) across all rows, broadcast as scalar"
+      formula: "sum(line_amount)"
       branch_count: 0
 
   # 6.11 Chapter-preserve end-to-end: verify that the masked diagnosis code

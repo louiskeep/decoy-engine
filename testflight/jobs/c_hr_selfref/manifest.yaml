@@ -28,11 +28,14 @@
 #
 # Source fingerprint (SHA-256 of canonical CSV; verified by verify_fingerprint
 # inside fixture.build_employees -- update after any fixture change):
-#   employees: 5d7be8ecc5375d824c7ac40f064bd7596b25fdf6c62a3ede9d1059830f959d24
+#   employees: 7a70ab27af7b7f33c3eddf6de354faa0a8f908d25bfc9579a260b02e5c0dcb06
+#   (Phase 4: fingerprint updated after adding badge_id, dept_code, dept_hash,
+#    dept_shuffle columns to exercise redact/truncate/hash/shuffle strategies)
 #
 # Strategies exercised (employees mask table):
 #   fpe (employee_id), fpe+same-namespace (manager_id self-FK), categorical (department),
-#   bucketize (salary), bucket_perturb (hire_date), text_mask (notes / us_phone).
+#   bucketize (salary), bucket_perturb (hire_date), text_mask (notes / us_phone),
+#   redact (badge_id), truncate (dept_code), hash (dept_hash), shuffle (dept_shuffle).
 
 job_name: c_hr_selfref
 topology: self_referential
@@ -80,6 +83,12 @@ config:
     employee_identity:
       declared_by:
         - employees.employee_id
+    dept_hash_ns:
+      declared_by:
+        - employees.dept_hash
+    dept_shuffle_ns:
+      declared_by:
+        - employees.dept_shuffle
 
   tables:
     # === employees (mask table) ===
@@ -147,6 +156,36 @@ config:
           strategy: text_mask
           provider_config:
             detectors: [us_phone]
+
+        # Phase 4 coverage-guard columns: exercise redact, truncate, hash, shuffle.
+        # These four columns exist solely to prove the strategy catalog is live-tested.
+        # They carry no FK, correlation, or distribution invariants; the coverage
+        # guard (check_suite_strategy_coverage) is the assertion they feed.
+
+        # badge_id: unique badge number per employee; redacted to "REDACTED" in
+        # output because the raw badge number is treated as PII.
+        - name: badge_id
+          strategy: redact
+
+        # dept_code: full department name in source; truncated to 3 characters
+        # for a short display code ("Eng", "Sal", "Mar", "HR", "Fin").
+        - name: dept_code
+          strategy: truncate
+          provider_config:
+            length: 3
+
+        # dept_hash: department name hashed to a joinability-preserving anonymous
+        # token (consistent across runs within a namespace).
+        - name: dept_hash
+          strategy: hash
+          namespace: dept_hash_ns
+
+        # dept_shuffle: department name values shuffled across the column (marginal
+        # distribution preserved exactly; row-level linkage decoupled).
+        - name: dept_shuffle
+          strategy: shuffle
+          namespace: dept_shuffle_ns
+          deterministic: true
 
     # === synthetic_events (generate table) ===
     # 10000 rows synthesised entirely by the engine; no source frame.
@@ -285,6 +324,55 @@ invariants:
       joints_waived_reason: >-
         hire_date is perturbed to month-bucket; no joint declared.
 
+    # Phase 4 coverage-guard columns: badge_id and dept_shuffle have distribution
+    # entries. dept_code is string->string (truncate; no kind_drift) and has no
+    # meaningful distribution assertion beyond the strategy_coverage guard.
+    # dept_hash is omitted: the engine value-identity policy floor (default-judged
+    # path) scores hash similarity near 0.0 vs the 0.05 floor because value-identity
+    # TVD treats the hash output values as entirely disjoint from the source values.
+    # The shape-aware metric that would correctly score hash distribution fidelity
+    # (D5b shape floor) is not the default-judged path; hash distribution fidelity
+    # cannot be proven by the default policy without a per-column shape-floor override.
+    # BACKLOG: add a per-column shape_strategy_expectations override for dept_hash
+    # once the shape-floor path is the testflight default (D5b complete).
+    #
+    # employees.badge_id: redact (all values -> "REDACTED").
+    # Listed as synthetic because the output has no distributional relationship to
+    # the source (all distinct badge IDs collapse to a single constant "REDACTED").
+    # The redact exemption in _distribution.py suppresses the expected
+    # freetext->constant kind_drift for this column; without the spec entry the
+    # exemption has no way to know badge_id uses the redact strategy.
+    - table: employees
+      column: badge_id
+      distribution_class: synthetic
+      strategy: redact
+      tolerance: 0.10
+      null_pp: 2.0
+      joint_columns: []
+      joints_waived: true
+      joints_waived_reason: >-
+        badge_id is redacted to a constant string; no meaningful distribution
+        to compare against source. Coverage-guard column only.
+
+    # employees.dept_shuffle: preserve class (shuffle; marginal distribution preserved exactly).
+    # Shuffle permutes values across rows without changing the value set or frequencies.
+    # Tooth A (shuffle path): marginal similarity >= 0.99. Empirically confirmed to pass
+    # because the output frequency distribution is identical to the source.
+    # joints_waived: dept_shuffle is a coverage-guard column with no meaningful
+    # correlation to other employees columns post-shuffle.
+    - table: employees
+      column: dept_shuffle
+      distribution_class: preserve
+      strategy: shuffle
+      tolerance: 0.05
+      null_pp: 2.0
+      joint_columns: []
+      joints_waived: true
+      joints_waived_reason: >-
+        dept_shuffle is shuffled across rows; the output marginal distribution
+        is identical to the source by construction. No meaningful correlation
+        joint with other employees columns survives a full shuffle permutation.
+
     # synthetic_events.event_type: synthetic (categorical generate column).
     # check_distribution_generate checks output TVD vs declared list weights.
     - table: synthetic_events
@@ -319,11 +407,24 @@ invariants:
   computed_columns:
     - table: synthetic_events
       column: derived_flag
-      formula: >-
-        case_when(amount > 60.0, "high", amount > 40.0, "mid", "low")
+      formula: 'case_when(amount > 60.0, "high", amount > 40.0, "mid", "low")'
       branch_count: 3
 
     - table: synthetic_events
       column: rolling_total
-      formula: "sum(amount) broadcast to all rows"
+      formula: "sum(amount)"
       branch_count: 0
+
+  # 6.10 Strategy coverage: strategies exercised by this job.
+  # Phase 4 additions (badge_id/dept_code/dept_hash/dept_shuffle) close
+  # the redact/truncate/hash/shuffle coverage gaps.
+  strategy_coverage:
+    - fpe
+    - categorical
+    - bucketize
+    - bucket_perturb
+    - text_mask
+    - redact
+    - truncate
+    - hash
+    - shuffle

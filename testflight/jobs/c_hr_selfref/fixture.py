@@ -74,7 +74,9 @@ ORPHAN_SOURCE_KEY = "emp99999"
 # inside build_employees so a faker/numpy version bump that shifts the fixture
 # output fails loudly with a re-baseline instruction.
 # Baseline: run compute_fingerprint(build_employees(seed=44)) and update here.
-_EMPLOYEES_FINGERPRINT = "5d7be8ecc5375d824c7ac40f064bd7596b25fdf6c62a3ede9d1059830f959d24"
+# Updated (Phase 4): added badge_id, dept_code, dept_hash, dept_shuffle columns
+# to exercise redact, truncate, hash, shuffle strategies in the coverage guard.
+_EMPLOYEES_FINGERPRINT = "7a70ab27af7b7f33c3eddf6de354faa0a8f908d25bfc9579a260b02e5c0dcb06"
 
 # The sentinel phone number planted in the notes column of row 0.
 # text_mask with phone_number detector must redact it; sentinel scan checks absence.
@@ -144,14 +146,40 @@ def build_employees(seed: int = 44, **_kwargs: Any) -> pd.DataFrame:
     notes = ["Standard employee record."] * n
     notes[0] = f"Contact: {SENTINEL_PHONE}. Reports directly to board."
 
+    dept_names = [_DEPT_NAMES[int(i)] for i in dept_idxs]
+
+    # Phase 4: extra columns to exercise redact, truncate, hash, and shuffle
+    # strategies in the coverage guard without changing existing FK/fidelity checks.
+    #
+    # badge_id: a unique badge number per employee; the pipeline redacts it to
+    #   "REDACTED" so the raw badge does not appear in output.
+    badge_ids = [f"BADGE-{n:05d}" for n in range(1, len(emp_ids) + 1)]
+    #
+    # dept_code: the full department name is the source; the pipeline truncates to
+    #   the first 3 characters for a short display code ("Eng", "Sal", etc.).
+    dept_codes = list(dept_names)  # same values as department
+    #
+    # dept_hash: the department name source for a one-way hash (for analytics
+    #   systems that need a consistent anonymous department token without
+    #   storing the real name).
+    dept_hash_src = list(dept_names)
+    #
+    # dept_shuffle: the department name source for a deterministic column-level
+    #   shuffle that preserves the marginal distribution but decouples assignment.
+    dept_shuffle_src = list(dept_names)
+
     df = pd.DataFrame(
         {
             "employee_id": emp_ids,
             "manager_id": manager_ids,
-            "department": [_DEPT_NAMES[int(i)] for i in dept_idxs],
+            "department": dept_names,
             "salary": salaries.tolist(),
             "hire_date": hire_dates,
             "notes": notes,
+            "badge_id": badge_ids,
+            "dept_code": dept_codes,
+            "dept_hash": dept_hash_src,
+            "dept_shuffle": dept_shuffle_src,
         }
     )
 

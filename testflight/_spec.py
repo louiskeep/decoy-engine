@@ -303,6 +303,29 @@ class ComputedColumnSpec(BaseModel):
     branch_count: int = Field(ge=0, default=0)
 
 
+class JointMaskConsistencySpec(BaseModel):
+    """SP-08 consistency assertion for a joint_mask output column group.
+
+    Each output row's tuple of values for ``columns`` must be an actual row
+    in the reference table (not a Frankenstein combination of values from
+    different rows). Consistency is guaranteed by the joint_mask transform
+    because it writes ALL columns from a single selected reference-table row.
+
+    Fields:
+        table: Output table that contains the joint_mask columns.
+        columns: The column names written by the joint_mask group (e.g.
+            ``["city", "state"]``).
+        reference: The shipped reference table name (e.g.
+            ``"us_zip5_city_state"``).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    table: str
+    columns: list[str] = Field(min_length=2)
+    reference: str
+
+
 class MaskedCorrelationSpec(BaseModel):
     """Relabel-invariant association check for a value-changing masked column pair.
 
@@ -416,6 +439,11 @@ class InvariantSpec(BaseModel):
     # COUNTS, not value labels). FPE bijections on both columns yield v_out == v_src
     # exactly, closing the carry-forward that crosstab-TVD cannot handle.
     masked_correlations: list[MaskedCorrelationSpec] = Field(default_factory=list)
+
+    # SP-08 joint_mask consistency: each output tuple must be a real reference-table row.
+    # Declared per joint_mask group; the runner checks every output row against the
+    # set of valid tuples from the shipped reference table.
+    joint_mask_consistency: list[JointMaskConsistencySpec] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

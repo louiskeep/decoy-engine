@@ -57,10 +57,14 @@ def format_job_section(result: JobResult) -> str:
     return "\n".join(lines)
 
 
+_SUITE_GUARD_JOB_NAME = "[suite-guard]"
+
+
 def format_coverage_section(results: list[JobResult]) -> str:
     """Render the strategy-coverage summary across all jobs.
 
-    Counts distinct invariant families checked and how many passed.
+    Shows the suite-level strategy-coverage guard result (if present), then
+    counts distinct invariant families checked and how many passed.
 
     Args:
         results: List of JobResult from run_suite.
@@ -69,13 +73,27 @@ def format_coverage_section(results: list[JobResult]) -> str:
         Multi-line plain-ASCII string.
     """
     all_inv: list[InvariantResult] = []
+    guard_inv: list[InvariantResult] = []
+
     for r in results:
-        all_inv.extend(r.invariant_results)
+        if r.job_name == _SUITE_GUARD_JOB_NAME:
+            guard_inv.extend(r.invariant_results)
+        else:
+            all_inv.extend(r.invariant_results)
+
+    lines = ["=== Coverage summary ==="]
+
+    # Strategy coverage guard line (suite-level check, not per-job invariant).
+    if guard_inv:
+        for gi in guard_inv:
+            guard_mark = "PASS" if gi.passed else "FAIL"
+            lines.append(f"  Strategy coverage guard : [{guard_mark}]")
+            if gi.detail:
+                lines.append(f"    {gi.detail.splitlines()[0]}")
 
     passed = sum(1 for ir in all_inv if ir.passed)
     failed = sum(1 for ir in all_inv if not ir.passed)
-    lines = [
-        "=== Coverage summary ===",
+    lines += [
         f"  Total invariant checks : {len(all_inv)}",
         f"  Passed                 : {passed}",
         f"  Failed                 : {failed}",
@@ -102,18 +120,20 @@ def render_report(results: list[JobResult], now: str | None = None) -> str:
     all_passed = all(r.passed for r in results)
     overall = "PASS" if all_passed else "FAIL"
 
+    # Separate the synthetic suite-guard entry from real jobs for the header count.
+    real_jobs = [r for r in results if r.job_name != _SUITE_GUARD_JOB_NAME]
     header = [
         "##############################################",
         "# Decoy Engine Test-Flight Evidence Report   #",
         "##############################################",
         f"# Generated : {ts}",
-        f"# Jobs run  : {len(results)}",
+        f"# Jobs run  : {len(real_jobs)}",
         f"# Verdict   : {overall}",
         "##############################################",
         "",
     ]
 
-    job_sections = [format_job_section(r) for r in results]
+    job_sections = [format_job_section(r) for r in real_jobs]
     coverage = format_coverage_section(results)
 
     parts = header + job_sections + ["", coverage, ""]

@@ -44,6 +44,7 @@ import pyarrow as pa
 import pytest
 from pydantic import ValidationError
 
+from testflight._coverage import check_suite_strategy_coverage
 from testflight._invariants import (
     FIXED_TS,
     check_chapter_preserve,
@@ -730,7 +731,15 @@ class TestComputedColumnTeeth:
             outputs={"claim_lines": tbl},
             quality_metrics={},
         )
-        formula = "line_amount * units * case_when(discount_tier, copay=0.80, preferred=0.90, 1.0)"
+        # Engine-grammar formula: case_when with equality comparisons.
+        # The rows have corrupted line_total (factor 1.0 instead of 0.80/0.90)
+        # so the recomputed value differs from the stored output.
+        formula = (
+            "line_amount * units * case_when("
+            'discount_tier == "copay", 0.80, '
+            'discount_tier == "preferred", 0.90, '
+            "1.0)"
+        )
         spec = [
             ComputedColumnSpec(
                 table="claim_lines",
@@ -785,8 +794,12 @@ class TestComputedColumnTeeth:
             outputs={"claim_lines": tbl},
             quality_metrics={},
         )
+        # Engine-grammar formulas (Phase 4 generalization).
         line_total_formula = (
-            "line_amount * units * case_when(discount_tier, copay=0.80, preferred=0.90, 1.0)"
+            "line_amount * units * case_when("
+            'discount_tier == "copay", 0.80, '
+            'discount_tier == "preferred", 0.90, '
+            "1.0)"
         )
         spec = [
             ComputedColumnSpec(
@@ -798,7 +811,7 @@ class TestComputedColumnTeeth:
             ComputedColumnSpec(
                 table="claim_lines",
                 column="claim_line_sum",
-                formula="sum(line_amount) broadcast to all rows",
+                formula="sum(line_amount)",
                 branch_count=0,
             ),
         ]
@@ -806,19 +819,193 @@ class TestComputedColumnTeeth:
         # Must NOT raise: all computed values are correct.
         check_computed_columns("computed_control_good", spec, result)
 
+    def test_changed_formula_followed(self) -> None:
+        """Changed formula string is picked up: check follows the new formula.
+
+        Phase 4 control: proves the invariant is formula-driven, not column-name-
+        dispatched.  Build a table where "custom_col" = qty * unit_price.  Pass
+        two specs with different formula strings for the same column:
+
+          spec_correct: formula "qty * unit_price"  -> PASSES (values match)
+          spec_wrong:   formula "qty * unit_price * 2.0" -> FAILS (values differ)
+
+        Before Phase 4 the dispatch was a hardcoded `if cs.column == "order_total"`
+        chain; an unknown column name raised AssertionError unconditionally.  After
+        Phase 4 the formula string drives evaluation so BOTH branches are reached
+        by varying the formula, not the column name.
+        """
+        tbl = pa.table(
+            {
+                "qty": [3, 5, 2],
+                "unit_price": [10.0, 20.0, 15.0],
+                "custom_col": [30.0, 100.0, 30.0],  # qty * unit_price
+            }
+        )
+        result = SimpleNamespace(outputs={"orders": tbl}, quality_metrics={})
+
+        # Correct formula: values match -> must NOT raise.
+        spec_correct = [
+            ComputedColumnSpec(
+                table="orders",
+                column="custom_col",
+                formula="qty * unit_price",
+                branch_count=0,
+            )
+        ]
+        check_computed_columns("formula_follow_good", spec_correct, result)
+
+        # Wrong formula: values do NOT match -> must raise AssertionError.
+        spec_wrong = [
+            ComputedColumnSpec(
+                table="orders",
+                column="custom_col",
+                formula="qty * unit_price * 2.0",
+                branch_count=0,
+            )
+        ]
+        with pytest.raises(AssertionError, match="orders.custom_col"):
+            check_computed_columns("formula_follow_bad", spec_wrong, result)
+
 
 class TestCoverageRotTeeth:
     """Mutation controls for the strategy-coverage guard."""
 
-    def test_coverage_rot_detected(self) -> None:
-        """Registering a fake strategy key must trip the coverage guard.
+    def test_coverage_rot_detected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Registering a fake strategy key must trip the suite coverage guard.
 
-        Phase 4: monkeypatch SCALAR_HANDLERS to add a fake key not in any
-        manifest's strategy_coverage, then assert check_strategy_coverage raises
-        AssertionError identifying the uncovered strategy. This proves the guard
-        reads the LIVE registry rather than a static list.
+        RED path: monkeypatch.setitem injects a fake key "zz_fake_strategy"
+        into the live SCALAR_HANDLERS dict. It is not in any manifest's
+        strategy_coverage list and not in _STRATEGY_ALLOWLIST. The unpatched
+        call to check_suite_strategy_coverage (reading the live registry) must
+        raise AssertionError naming the uncovered strategy.
+
+        GREEN path (implicit): without the fake key the suite guard passes
+        (verified by the full test_testflight.py run that exercises all three
+        jobs with their declared strategy_coverage lists).
+
+        monkeypatch.setitem is undone automatically after the test exits, so
+        the live registry is not permanently mutated. This proves the guard
+        reads SCALAR_HANDLERS at call time (not a module-load-time snapshot).
         """
-        pytest.skip("Phase 4: coverage-rot mutation control pending.")
+        from decoy_engine.execution._strategies import SCALAR_HANDLERS
+        from testflight._runner import discover_jobs, load_job
+
+        # Load all manifests to supply to the guard.
+        all_manifests = [load_job(m) for m in discover_jobs()]
+
+        # Sanity: guard passes with the real (unpatched) registry.
+        check_suite_strategy_coverage(all_manifests)
+
+        # Inject a fake strategy into the live SCALAR_HANDLERS via monkeypatch.
+        # monkeypatch.setitem restores the original dict after the test.
+        fake_key = "zz_fake_strategy"
+        assert fake_key not in SCALAR_HANDLERS, (
+            f"'{fake_key}' already exists in SCALAR_HANDLERS -- choose a different fake key."
+        )
+
+        class _FakeHandler:
+            name = fake_key
+
+            def run(
+                self,
+                df: pd.DataFrame,
+                column: str,
+                plan: Any,
+                ctx: Any,
+            ) -> tuple[pd.DataFrame, list[Any]]:
+                return df, []
+
+        monkeypatch.setitem(SCALAR_HANDLERS, fake_key, _FakeHandler())
+
+        # The guard reads the live SCALAR_HANDLERS; the fake key is not in any
+        # manifest's strategy_coverage and not in _STRATEGY_ALLOWLIST -> RAISES.
+        with pytest.raises(AssertionError, match=fake_key):
+            check_suite_strategy_coverage(all_manifests)
+
+
+# ---------------------------------------------------------------------------
+# SP-08: joint_mask consistency teeth
+# ---------------------------------------------------------------------------
+
+
+class TestJointMaskConsistencyTeeth:
+    """Mutation controls for the SP-08 joint_mask consistency invariant.
+
+    SP-08 contract: apply_joint_mask writes ALL target columns from a single
+    reference-table row. Each output (col_a, col_b, ...) tuple must therefore
+    be an actual row in the reference table. A Frankenstein combination (city
+    from one row, state from another) is a bug the invariant must catch.
+
+    Controls:
+      test_real_tuples_pass: output rows drawn directly from the reference table
+        -> invariant PASSES (proves non-vacuity: valid data passes through).
+      test_frankenstein_tuple_raises: a row with a city/state combo that does
+        not exist in the reference table -> invariant RAISES (proves the check
+        catches a Frankenstein mix, the failure mode joint_mask prevents).
+    """
+
+    def test_real_tuples_pass(self) -> None:
+        """Tuples taken directly from the reference table pass the consistency check."""
+        from decoy_engine.reference_tables import load_table
+        from testflight._invariants import check_joint_mask_consistency
+        from testflight._spec import JointMaskConsistencySpec
+
+        ref = load_table("us_zip5_city_state")
+        # Build an output DataFrame from the first 5 rows of the reference table.
+        good_rows = [ref.row(i) for i in range(min(5, ref.row_count))]
+        out_df = pd.DataFrame(
+            {
+                "city": [r["city"] for r in good_rows],
+                "state": [r["state"] for r in good_rows],
+            }
+        )
+        out_pa = pa.Table.from_pandas(out_df, preserve_index=False)
+
+        spec = [
+            JointMaskConsistencySpec(
+                table="customers",
+                columns=["city", "state"],
+                reference="us_zip5_city_state",
+            )
+        ]
+        result = SimpleNamespace(outputs={"customers": out_pa})
+
+        # PASSES: every (city, state) tuple is a real reference-table row.
+        evidence = check_joint_mask_consistency("test_job", spec, result)
+        assert "5/5" in evidence or "all-valid" in evidence
+
+    def test_frankenstein_tuple_raises(self) -> None:
+        """A (city, state) pair that is not a reference-table row raises AssertionError.
+
+        The mutation: take a real city name but combine it with a state
+        abbreviation that does not exist in the reference table ("XX").
+        This simulates a bug where city and state were selected from
+        different reference rows, producing an impossible combination.
+        The invariant must detect and reject this.
+        """
+        from decoy_engine.reference_tables import load_table
+        from testflight._invariants import check_joint_mask_consistency
+        from testflight._spec import JointMaskConsistencySpec
+
+        ref = load_table("us_zip5_city_state")
+        real_city = ref.row(0)["city"]  # a valid city from the table
+
+        # "XX" is not a US state and cannot appear in us_zip5_city_state.
+        bad_df = pd.DataFrame({"city": [real_city], "state": ["XX"]})
+        bad_pa = pa.Table.from_pandas(bad_df, preserve_index=False)
+
+        spec = [
+            JointMaskConsistencySpec(
+                table="customers",
+                columns=["city", "state"],
+                reference="us_zip5_city_state",
+            )
+        ]
+        result = SimpleNamespace(outputs={"customers": bad_pa})
+
+        # RAISES: (real_city, "XX") is not any row in us_zip5_city_state.
+        with pytest.raises(AssertionError, match="not a real row in reference table"):
+            check_joint_mask_consistency("test_job", spec, result)
 
 
 # ---------------------------------------------------------------------------
