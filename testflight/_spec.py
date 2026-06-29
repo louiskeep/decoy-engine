@@ -54,6 +54,9 @@ class TableSpec(BaseModel):
     `source_builder` is a dotted reference into the job's fixture.py module
     (e.g. "fixture.build_members") that the runner resolves at Phase 2. The
     value "csv:<relative-path>" loads a committed CSV instead.
+
+    Generate tables (kind="generate") have no source and omit source_builder.
+    The engine builds their rows from the generate_columns spec in the config.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -61,7 +64,20 @@ class TableSpec(BaseModel):
     name: str
     kind: TableKindLiteral
     row_count: int = Field(ge=1)
-    source_builder: str = Field(description="Dotted fixture function ref or 'csv:<path>'.")
+    # Required for mask tables; None for generate tables (no source to build).
+    source_builder: str | None = Field(
+        default=None,
+        description="Dotted fixture function ref or 'csv:<path>'. None for generate tables.",
+    )
+
+    @model_validator(mode="after")
+    def _source_builder_required_for_mask(self) -> TableSpec:
+        if self.kind == "mask" and not self.source_builder:
+            raise ValueError(
+                f"TableSpec {self.name!r}: kind='mask' requires a source_builder. "
+                "Generate tables (kind='generate') may omit source_builder."
+            )
+        return self
 
 
 # ---------------------------------------------------------------------------

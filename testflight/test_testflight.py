@@ -376,3 +376,24 @@ def test_job_passes_all_invariants(manifest_path: Path) -> None:
             "Check that each family is wired in evaluate_invariants() "
             "and declared in the manifest."
         )
+
+    if job_name == "c_hr_selfref":
+        # These families must ALL appear in the result for Job C (self-referential FK
+        # + generate-heavy table). fk_integrity includes the remap-masks-orphan check
+        # that verifies the in-charset orphan "emp99999" is genuinely permuted by FPE.
+        expected_families = {
+            "determinism",
+            "fk_integrity",
+            "distribution:employees",
+            "distribution:synthetic_events",
+            "sentinels",
+            "computed_columns",
+        }
+        missing = expected_families - families_run
+        assert not missing, (
+            f"Job '{job_name}': expected invariant families not found in "
+            f"result: {sorted(missing)}. "
+            f"Families actually run: {sorted(families_run)}. "
+            "Check that each family is wired in evaluate_invariants() "
+            "and declared in the manifest."
+        )

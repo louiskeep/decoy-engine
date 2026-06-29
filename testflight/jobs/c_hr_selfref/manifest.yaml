@@ -1,0 +1,329 @@
+# Test-flight Job C: HR / payroll (self-referential FK + generate-heavy table)
+# Topology: self_referential
+#   employees.manager_id -> employees.employee_id (same table, same namespace)
+#
+# PLANTED EDGE CASES (exact counts asserted by invariants):
+#   - 10 employee rows with manager_id = NULL (root nodes; pass through as NULL)
+#   - 1 employee row with manager_id = "emp99999" (not in employee_id set)
+#     "emp99999" is all-in-charset (FPE alphanum: 0-9 + a-z) so orphan_policy:remap
+#     drives FPE and genuinely permutes it; output value != source key.
+#     The fk_integrity invariant verifies expected_orphans:1 and that the remapped
+#     value differs from the source key (remap masked it, not a passthrough).
+#   - SENTINEL_PHONE "800-555-0100" in employee row 0 notes column
+#     text_mask with us_phone detector must redact it; sentinel scan checks absence
+#
+# TOPOLOGY: SELF-REFERENTIAL FK
+#   employees.employee_id is both the PK (parent) and the target of manager_id
+#   (child). The FK remap machinery resolves: null -> null, valid ref ->
+#   remapped through FPE, orphan -> remapped via orphan_policy:remap.
+#   The fk_integrity invariant asserts expected_orphans=1 matches the planted count
+#   AND that the remapped orphan output value differs from its source key (remap
+#   genuinely masked it; the mutation control TestJobCSelfFKTeeth proves both checks).
+#
+# GENERATE TABLE: synthetic_events (10000 rows)
+#   Exercises: sequence, categorical (list weights), formula (gauss; mean/std params),
+#   faker, derived (case_when), derived_aggregate (sum broadcast).
+#   Distribution invariant (config-derived only; OWNER DECISION Q3: no snapshots).
+#   Computed-column invariant: derived_flag (case_when 3-branch) + rolling_total (sum).
+#
+# Source fingerprint (SHA-256 of canonical CSV; verified by verify_fingerprint
+# inside fixture.build_employees -- update after any fixture change):
+#   employees: 5d7be8ecc5375d824c7ac40f064bd7596b25fdf6c62a3ede9d1059830f959d24
+#
+# Strategies exercised (employees mask table):
+#   fpe (employee_id), fpe+same-namespace (manager_id self-FK), categorical (department),
+#   bucketize (salary), bucket_perturb (hire_date), text_mask (notes / us_phone).
+
+job_name: c_hr_selfref
+topology: self_referential
+seed: 44
+master_key_label: testflight
+
+tables:
+  - name: employees
+    kind: mask
+    row_count: 2500
+    source_builder: "fixture.build_employees"
+  - name: synthetic_events
+    kind: generate
+    row_count: 10000
+    # No source_builder for generate tables; the engine synthesises rows from
+    # the generate_columns spec declared in config.tables below.
+
+relationships:
+  - parent:
+      table: employees
+      columns: [employee_id]
+    children:
+      - table: employees
+        columns: [manager_id]
+    orphan_policy: remap
+    namespace: employee_identity
+
+# Full PipelineConfig dict. Source/target paths for mask tables use placeholder
+# strings that the runner (assemble_config) replaces with real temp paths before
+# calling run_pipeline. Generate tables need no source path; their targets are
+# also substituted by assemble_config.
+config:
+  version: 1
+  global_settings:
+    seed: 44
+
+  sources:
+    employees: {type: file, format: parquet, path: "__PLACEHOLDER_employees__"}
+
+  targets:
+    employees: {type: file, format: parquet, path: "__PLACEHOLDER_out_employees__"}
+    synthetic_events: {type: file, format: parquet, path: "__PLACEHOLDER_out_synthetic_events__"}
+
+  namespaces:
+    employee_identity:
+      declared_by:
+        - employees.employee_id
+
+  tables:
+    # === employees (mask table) ===
+    - name: employees
+      columns:
+        # employee_id: FPE bijection. Declares the employee_identity namespace.
+        # alphanum charset (0-9 + a-z) + preserve_separators:true: non-charset
+        # characters (uppercase letters, hyphens) are treated as separators and
+        # kept in place; in-charset characters at their positions are permuted.
+        - name: employee_id
+          strategy: fpe
+          namespace: employee_identity
+          provider_config:
+            charset: alphanum
+            preserve_separators: true
+
+        # manager_id: fpe + employee_identity namespace (same as employee_id).
+        # Self-FK pattern: declare the same strategy and namespace on both parent
+        # and child columns; the FK coordinator resolves child values through the
+        # same bijection as the parent, preserving referential integrity.
+        # null -> null (root nodes), valid ref -> FPE-remapped consistently,
+        # orphan "emp99999" (in-charset) -> remapped via orphan_policy:remap.
+        - name: manager_id
+          strategy: fpe
+          namespace: employee_identity
+          provider_config:
+            charset: alphanum
+            preserve_separators: true
+
+        # department: categorical (deterministic per source value). deterministic:true
+        # + namespace ensures the same source department always maps to the same output
+        # category, making the output reproducible across runs (required by the
+        # determinism invariant). Without deterministic:true, categorical uses an
+        # unseeded RNG (M2 contract) and differs between the two pipeline runs.
+        - name: department
+          strategy: categorical
+          namespace: dept_ns
+          deterministic: true
+          provider_config:
+            categories: [Engineering, Sales, Marketing, HR, Finance]
+            weights: [0.35, 0.25, 0.20, 0.10, 0.10]
+
+        # salary: bucketize into $20k-wide bins (coarsen).
+        # Output column becomes the bucket lower-bound label (e.g. "80000").
+        # Distribution invariant: coarsen class asserts out_nunique < src_nunique.
+        - name: salary
+          strategy: bucketize
+          namespace: salary_ns
+          provider_config:
+            width: 20000
+
+        # hire_date: bucket_perturb (month bucket). Coarsens date to a
+        # deterministic position within the calendar month.
+        # Distribution invariant: coarsen class asserts out_nunique < src_nunique.
+        - name: hire_date
+          strategy: bucket_perturb
+          namespace: hire_date_ns
+          provider_config:
+            bucket: month
+
+        # notes: text_mask (span-level redaction). The us_phone detector fires
+        # on the sentinel phone "800-555-0100" planted in row 0 and replaces it.
+        # Sentinel invariant verifies the sentinel string is absent from all output.
+        - name: notes
+          strategy: text_mask
+          provider_config:
+            detectors: [us_phone]
+
+    # === synthetic_events (generate table) ===
+    # 10000 rows synthesised entirely by the engine; no source frame.
+    # Column order is DECLARED-ORDER sequential (derived columns reference
+    # already-generated siblings declared before them).
+    - name: synthetic_events
+      row_count: 10000
+      generate_columns:
+        # event_id: sequence "EVT0000001" .. "EVT0010000".
+        - name: event_id
+          type: sequence
+          start: 1
+          step: 1
+          prefix: "EVT"
+          pad_length: 7
+
+        # event_type: categorical with list weights (engine format).
+        # Distribution invariant checks output TVD vs declared weights (<= 0.05).
+        - name: event_type
+          type: categorical
+          categories: [login, purchase, view, error]
+          weights: [0.40, 0.30, 0.20, 0.10]
+
+        # amount: formula drawing from a normal distribution.
+        # gauss(mu, sigma) is available in the formula scope (added in Phase 3b).
+        # params metadata declares the distribution for check_distribution_generate.
+        # Distribution invariant checks output mean/std vs declared params (<= 0.10).
+        - name: amount
+          type: formula
+          formula: "gauss(50.0, 15.0)"
+          params:
+            mean: 50.0
+            std: 15.0
+
+        # actor: Faker-generated full name. Not distribution-checked (synthetic text).
+        - name: actor
+          type: faker
+          faker_type: name
+
+        # derived_flag: case_when over already-generated amount column.
+        # case_when(amount > 60 -> "high", amount > 40 -> "mid", else "low").
+        # Computed-column invariant verifies the case_when logic and 3-branch coverage.
+        - name: derived_flag
+          type: derived
+          expression: 'case_when(amount > 60.0, "high", amount > 40.0, "mid", "low")'
+
+        # rolling_total: sum of all amount values, broadcast to every row.
+        # Computed-column invariant verifies the scalar matches Python sum(amount).
+        - name: rolling_total
+          type: derived_aggregate
+          op: sum
+          column: amount
+
+  # FK relationship: employees.employee_id -> employees.manager_id (self-referential).
+  # Same table, same namespace. The FK coordinator resolves child FK values through
+  # the parent key mapping (source employee_id -> masked employee_id lookup).
+  # orphan_policy: remap mints a new valid employee_id for orphan manager_ids.
+  relationships:
+    - parent:   {table: employees, columns: [employee_id]}
+      children:
+        - {table: employees, columns: [manager_id]}
+      orphan_policy: remap
+      namespace: employee_identity
+
+  # Validators: no engine validators declared here. The fk_intact validator
+  # requires strict pool membership (child FK in masked parent PK set). With
+  # orphan_policy:remap, the remapped orphan value is format-compatible but NOT
+  # a masked parent PK pool member, so fk_intact would flag it. The testflight
+  # check_fk_integrity invariant with expected_orphans:1 is the correct gate.
+  # no_orphan_children is also excluded: root nodes have NULL manager_id by design.
+
+invariants:
+  determinism: true
+
+  fk_integrity:
+    - relationship_name: employee_identity
+      expected_orphans: 1
+      policy: remap
+
+  distribution:
+    # employees.employee_id: preserve class (fpe bijection).
+    # Cardinality-preserving; shape floor checked by Tooth E.
+    - table: employees
+      column: employee_id
+      distribution_class: preserve
+      strategy: fpe
+      tolerance: 0.05
+      null_pp: 2.0
+      joint_columns: []
+      joints_waived: true
+      joints_waived_reason: >-
+        employee_id is the FPE PK; no meaningful joint with any other column.
+        Self-FK correlation is checked by fk_integrity, not the distribution invariant.
+
+    # employees.department: synthetic class (categorical replacement).
+    # Output draws new categories per declared weights; TVD vs weights <= 0.10.
+    - table: employees
+      column: department
+      distribution_class: synthetic
+      strategy: categorical
+      tolerance: 0.10
+      null_pp: 2.0
+      joint_columns: []
+      joints_waived: true
+      joints_waived_reason: >-
+        department is independently drawn per row by the categorical strategy;
+        no meaningful joint with salary_bucket (salary is bucketed, not correlated
+        through value-changing masks in a way the TVD metric can track).
+
+    # employees.salary: coarsen class (bucketize -> strict cardinality reduction).
+    # Tooth B asserts out_nunique < src_nunique.
+    - table: employees
+      column: salary
+      distribution_class: coarsen
+      strategy: bucketize
+      expected_coarsening: true
+      tolerance: 0.05
+      null_pp: 2.0
+      joint_columns: []
+      joints_waived: true
+      joints_waived_reason: >-
+        salary bucket labels differ from source values; joint with department
+        not trackable through the bucketize value change via crosstab TVD.
+
+    # employees.hire_date: coarsen class (bucket_perturb -> fewer unique dates).
+    # Tooth B asserts out_nunique < src_nunique.
+    - table: employees
+      column: hire_date
+      distribution_class: coarsen
+      strategy: bucket_perturb
+      expected_coarsening: true
+      tolerance: 0.05
+      null_pp: 2.0
+      joint_columns: []
+      joints_waived: true
+      joints_waived_reason: >-
+        hire_date is perturbed to month-bucket; no joint declared.
+
+    # synthetic_events.event_type: synthetic (categorical generate column).
+    # check_distribution_generate checks output TVD vs declared list weights.
+    - table: synthetic_events
+      column: event_type
+      distribution_class: synthetic
+      tolerance: 0.05
+      null_pp: 2.0
+      joint_columns: []
+      joints_waived: true
+      joints_waived_reason: >-
+        synthetic_events is a generate table; no source frame to correlate with.
+        Only the single-column weight check applies.
+
+    # synthetic_events.amount: synthetic (formula generate column).
+    # check_distribution_generate checks output mean/std vs params metadata.
+    - table: synthetic_events
+      column: amount
+      distribution_class: synthetic
+      tolerance: 0.10
+      null_pp: 2.0
+      joint_columns: []
+      joints_waived: true
+      joints_waived_reason: >-
+        amount is formula-generated (gauss); no joint with event_type declared.
+        Mean/std verified against params metadata within 10% band.
+
+  sentinels:
+    - table: employees
+      column: notes
+      value: "800-555-0100"
+
+  computed_columns:
+    - table: synthetic_events
+      column: derived_flag
+      formula: >-
+        case_when(amount > 60.0, "high", amount > 40.0, "mid", "low")
+      branch_count: 3
+
+    - table: synthetic_events
+      column: rolling_total
+      formula: "sum(amount) broadcast to all rows"
+      branch_count: 0

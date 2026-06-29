@@ -51,6 +51,7 @@ __all__ = [
     "check_distribution_mask",
     "check_fk_integrity",
     "check_quarantine",
+    "check_remap_masks_orphan",
     "check_safe_harbor",
     "check_sentinels",
     "check_strategy_coverage",
@@ -137,11 +138,100 @@ def check_determinism(
 # ---------------------------------------------------------------------------
 
 
+def check_remap_masks_orphan(
+    job_name: str,
+    orphan_source_key: Any,
+    orphan_output_val: Any,
+    child_table: str,
+    child_col: str,
+) -> None:
+    """Assert that a remapped orphan FK value differs from its source key.
+
+    When orphan_policy=remap, the engine re-applies the parent column's masking
+    strategy to the orphan source key. For FPE with an in-charset key this
+    produces a permuted value that differs from the input. Equality means the
+    strategy left the key on passthrough (out-of-charset no-op), which is a
+    privacy gap: the orphan key is emitted verbatim in the output.
+
+    This check is the invariant tooth that enforces "remap genuinely masked it."
+    It can only run when the caller supplies both the source orphan key and the
+    corresponding output value; callers that have only output frames should call
+    check_fk_integrity with source_frames to wire this automatically.
+
+    Args:
+        job_name: Job name for error messages.
+        orphan_source_key: The FK value in the source that had no parent match.
+        orphan_output_val: The value that appears in the masked output for that row.
+        child_table: Child table name (for error messages).
+        child_col: Child FK column name (for error messages).
+
+    Raises:
+        AssertionError: If orphan_output_val equals orphan_source_key.
+    """
+    assert orphan_output_val != orphan_source_key, (
+        f"[{job_name}] fk_integrity remap-masks: "
+        f"{child_table}.{child_col} orphan source key {orphan_source_key!r} "
+        f"equals its output value {orphan_output_val!r}. "
+        f"orphan_policy=remap must produce an output value that differs from "
+        f"the source key; equality means the masking strategy left it on "
+        f"passthrough (out-of-charset no-op). Use an in-charset source key or "
+        f"a strategy that always transforms (see docs/what-we-cannot-prove.md)."
+    )
+
+
+def _check_remap_not_passthrough(
+    job_name: str,
+    parent_table: str,
+    parent_cols: list[str],
+    child_table: str,
+    child_cols: list[str],
+    source_frames: dict[str, pa.Table],
+    child_out: pa.Table,
+) -> None:
+    """Inner check: for each orphan row (source child key not in SOURCE parent pool),
+    verify that the output child FK value differs from the source key.
+
+    Orphan rows are identified by matching the SOURCE child FK values against
+    the SOURCE parent key pool (not the masked pools). Rows not in the source
+    parent pool are orphans; their output FK values are what the remap policy
+    produced. Equality means passthrough (no-op), which is the gap documented
+    in what-we-cannot-prove.md.
+
+    Only single-column FKs are checked here; composite-FK remap checks are
+    left for future extension if needed.
+    """
+    if len(child_cols) != 1 or len(parent_cols) != 1:
+        return  # Composite FK remap check not yet implemented.
+
+    child_col = child_cols[0]
+    parent_col = parent_cols[0]
+
+    src_child = source_frames.get(child_table)
+    src_parent = source_frames.get(parent_table)
+    if src_child is None or src_parent is None:
+        return  # Source frames not provided for this table.
+
+    # Build source parent key pool.
+    src_parent_keys: set[Any] = set(src_parent.column(parent_col).to_pylist())
+
+    src_child_vals = src_child.column(child_col).to_pylist()
+    out_child_vals = child_out.column(child_col).to_pylist()
+
+    for src_val, out_val in zip(src_child_vals, out_child_vals, strict=True):
+        if src_val is None:
+            continue
+        if src_val in src_parent_keys:
+            continue  # Normal FK -- not an orphan.
+        # This row is an orphan (source key not in source parent pool).
+        check_remap_masks_orphan(job_name, src_val, out_val, child_table, child_col)
+
+
 def check_fk_integrity(
     job_name: str,
     spec: list[FKIntegritySpec],
     result: Any,
     relationships: list[RelationshipSpec],
+    source_frames: dict[str, pa.Table] | None = None,
 ) -> None:
     """Assert FK integrity for all declared relationships.
 
@@ -153,6 +243,9 @@ def check_fk_integrity(
       suspenders on top of the engine's built-in fk_intact / no_orphan_children
       validators).
     - Asserts orphan count == spec.expected_orphans.
+    - When policy=remap and source_frames is supplied, also calls
+      check_remap_masks_orphan for each orphan row: the remapped output value
+      must differ from the source key (remap genuinely masked it, not passthrough).
 
     Args:
         job_name: Job name for error messages.
@@ -160,9 +253,14 @@ def check_fk_integrity(
         result: ExecutionResult (carries outputs and quality_metrics).
         relationships: List of RelationshipSpec from the manifest (used to
             look up parent/child table names and column names by namespace).
+        source_frames: Optional dict[table_name, pa.Table] of source frames.
+            When provided and a spec entry has policy=remap, the function
+            identifies orphan rows in the source and verifies that their output
+            values differ from their source keys.
 
     Raises:
-        AssertionError: If orphan count does not match expected or FK is broken.
+        AssertionError: If orphan count does not match expected or FK is broken,
+            or (with source_frames + remap) if any orphan output == source key.
     """
     # Build a namespace -> RelationshipSpec lookup.
     ns_to_rel: dict[str, RelationshipSpec] = {}
@@ -228,6 +326,21 @@ def check_fk_integrity(
                 "child FK value count: "
                 f"{len(child_fk_vals if len(child_cols) == 1 else child_fk_vals_multi)}."
             )
+
+            # When policy=remap AND source frames are available, verify that each
+            # orphan row's output value differs from its source key. This closes
+            # the passthrough gap: an out-of-charset source key that FPE cannot
+            # permute would be emitted verbatim, contradicting the remap contract.
+            if fk_spec.policy == "remap" and source_frames and fk_spec.expected_orphans > 0:
+                _check_remap_not_passthrough(
+                    job_name,
+                    parent_table,
+                    parent_cols,
+                    child_table,
+                    child_cols,
+                    source_frames,
+                    child_out,
+                )
 
 
 # ---------------------------------------------------------------------------

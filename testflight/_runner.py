@@ -46,6 +46,7 @@ from ._invariants import (
     check_checksums,
     check_computed_columns,
     check_determinism,
+    check_distribution_generate,
     check_distribution_mask,
     check_fk_integrity,
     check_quarantine,
@@ -250,7 +251,9 @@ def evaluate_invariants(
     if inv.determinism:
         _run("determinism", check_determinism, job_name, result_a, result_b)
 
-    # 6.4 FK integrity
+    # 6.4 FK integrity.
+    # Pass source_frames so check_fk_integrity can verify that remap-policy
+    # orphans produce output values that differ from their source keys.
     if inv.fk_integrity:
         _run(
             "fk_integrity",
@@ -259,10 +262,13 @@ def evaluate_invariants(
             inv.fk_integrity,
             result_a,
             manifest.relationships,
+            sources,  # enables remap-masks-orphan check
         )
 
-    # 6.2 Distribution fidelity: call check_distribution_mask ONCE PER TABLE
-    # with ALL column specs for that table. The function iterates specs internally.
+    # 6.2/6.3 Distribution fidelity.
+    # Mask tables: check_distribution_mask (quality-report based).
+    # Generate tables: check_distribution_generate (config-derived baseline only;
+    # OWNER DECISION Q3: no committed golden snapshots for generate tables).
     if inv.distribution:
         from collections import defaultdict
 
@@ -270,6 +276,17 @@ def evaluate_invariants(
         specs_by_table: dict[str, list[Any]] = defaultdict(list)
         for col_spec in inv.distribution:
             specs_by_table[col_spec.table].append(col_spec)
+
+        # Build a set of generate table names from the manifest so we can route
+        # each table to the correct check (mask vs. generate).
+        generate_table_names: set[str] = {
+            ts.name for ts in manifest.tables if ts.kind == "generate"
+        }
+        # Build a lookup of config_table dicts for generate tables (needed by
+        # check_distribution_generate to read declared weights/params).
+        config_tables: dict[str, dict[str, Any]] = {
+            t["name"]: t for t in manifest.config.get("tables", []) if isinstance(t, dict)
+        }
 
         # If quarantine is configured, we need to trim the source for the
         # quarantine-affected table so source_rows == output_rows (the
@@ -290,6 +307,39 @@ def evaluate_invariants(
 
         for table_name, table_specs in specs_by_table.items():
             try:
+                if table_name in generate_table_names:
+                    # 6.3: generate table -- no source frame; check against config.
+                    out_pa = result_a.outputs.get(table_name)
+                    if out_pa is None:
+                        results.append(
+                            InvariantResult(
+                                family=f"distribution:{table_name}",
+                                passed=False,
+                                detail=(
+                                    f"generate table '{table_name}' not in "
+                                    "result.outputs. Pipeline did not produce it."
+                                ),
+                            )
+                        )
+                        continue
+                    out_df = out_pa.to_pandas()
+                    config_table = config_tables.get(table_name, {})
+                    check_distribution_generate(
+                        job_name=job_name,
+                        table=table_name,
+                        spec=table_specs,
+                        output_df=out_df,
+                        config_table=config_table,
+                    )
+                    results.append(
+                        InvariantResult(
+                            family=f"distribution:{table_name}",
+                            passed=True,
+                        )
+                    )
+                    continue
+
+                # 6.2: mask table -- source frame required.
                 src_pa = sources.get(table_name)
                 if src_pa is None:
                     results.append(

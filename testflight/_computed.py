@@ -187,6 +187,62 @@ def check_computed_columns(
                 f"{cs.table}.{cs.column}(rows={len(tier_vals)},branches={cs.branch_count})"
             )
 
+        elif cs.column == "derived_flag":
+            # Derived case_when: amount > 60 -> "high", > 40 -> "mid", else "low".
+            # Used by Job C synthetic_events (generate table).
+            amount_vals = col_dict["amount"]
+            flag_vals = col_dict["derived_flag"]
+
+            flag_errors: list[tuple[int, str, str, Any]] = []
+            for i in range(len(flag_vals)):
+                a = amount_vals[i]
+                if a is None:
+                    expected_flag = "low"
+                elif float(a) > 60.0:
+                    expected_flag = "high"
+                elif float(a) > 40.0:
+                    expected_flag = "mid"
+                else:
+                    expected_flag = "low"
+                actual_flag = flag_vals[i]
+                if actual_flag != expected_flag:
+                    flag_errors.append((i, expected_flag, actual_flag, a))
+                    if len(flag_errors) >= 5:
+                        break
+
+            assert not flag_errors, (
+                f"[{job_name}] computed_columns: {cs.table}.{cs.column}: "
+                f"{len(flag_errors)} incorrect values (first 5): {flag_errors}."
+            )
+
+            # Branch-coverage check.
+            if cs.branch_count > 0:
+                seen_flags = set(flag_vals)
+                required_flags = {"high", "mid", "low"}
+                missing_flags = required_flags - seen_flags
+                assert not missing_flags, (
+                    f"[{job_name}] computed_columns: {cs.table}.{cs.column}: "
+                    f"case_when branch_count={cs.branch_count} but "
+                    f"branches {missing_flags} are not exercised by any output row."
+                )
+            checked.append(
+                f"{cs.table}.{cs.column}(rows={len(flag_vals)},branches={cs.branch_count})"
+            )
+
+        elif cs.column == "rolling_total":
+            # Derived aggregate: sum(amount) broadcast to all rows.
+            # Used by Job C synthetic_events (generate table).
+            amount_vals = col_dict["amount"]
+            rt_vals = col_dict["rolling_total"]
+
+            expected_rt = sum(float(v) for v in amount_vals if v is not None)
+            for i, v in enumerate(rt_vals):
+                assert abs(float(v) - expected_rt) < 1e-2, (
+                    f"[{job_name}] computed_columns: {cs.table}.{cs.column} "
+                    f"row {i}: value={v}, expected scalar sum={expected_rt:.4f}."
+                )
+            checked.append(f"{cs.table}.{cs.column}(sum={expected_rt:.2f},rows={len(rt_vals)})")
+
         else:
             # Unknown column: fail loudly rather than silently skip.
             raise AssertionError(

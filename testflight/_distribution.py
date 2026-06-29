@@ -1,12 +1,12 @@
 """Distribution-fidelity invariants for the test-flight suite (Phase 1).
 
-Implements the two public entry points from plan sections 6.2 and 6.3:
+Implements the mask-table entry point from plan section 6.2:
 
   check_distribution_mask    -- mask table quality teeth.
-  check_distribution_generate -- generate table distribution (config baseline).
 
-Both raise AssertionError on failure with a message naming job/table/column/
-strategy so triage localises to one strategy without reading the full report.
+check_distribution_generate (section 6.3) lives in _distribution_generate.py
+and is re-exported here so existing callers are unaffected (MEDIUM-2 split:
+this module was 655 LOC; splitting keeps both modules under the 600-line cap).
 
 FIXED_TS is exported here and re-exported by _invariants so external callers
 that import from _invariants continue to work unchanged.
@@ -39,6 +39,9 @@ import pandas as pd
 from decoy_engine.quality.policy import apply_quality_policy
 from decoy_engine.quality.report import compute_quality_report
 
+from ._distribution_generate import (
+    check_distribution_generate as check_distribution_generate,
+)
 from ._spec import ColumnDistributionSpec
 
 # Fixed timestamp for all compute_quality_report calls so two invocations
@@ -164,25 +167,41 @@ def check_distribution_mask(
     # expected kind_drift (freetext->constant) that would otherwise fail the
     # diagnostic. We suppress kind_drift failures ONLY for columns whose declared
     # strategy is text_redact so the exemption is narrow and reviewer-visible.
+    #
+    # bucketize exemption: bucketize converts numeric values to categorical bucket
+    # labels (e.g., salary float -> bucket lower-bound string "80000"). This
+    # intentional numeric->categorical dtype change trips kind_drift. Suppress it
+    # for columns declared with distribution_class=coarsen + strategy=bucketize.
     text_redact_cols: set[str] = {cs.column for cs in spec if cs.strategy == "text_redact"}
     if strategy_map:
         text_redact_cols |= {col for col, st in strategy_map.items() if st == "text_redact"}
+    bucketize_cols: set[str] = {
+        cs.column
+        for cs in spec
+        if cs.strategy == "bucketize" and cs.distribution_class == "coarsen"
+    }
+    if strategy_map:
+        bucketize_cols |= {col for col, st in strategy_map.items() if st == "bucketize"}
+    # All columns whose kind_drift is known-intentional.
+    exempt_kind_drift_cols: set[str] = text_redact_cols | bucketize_cols
 
     diag: dict[str, Any] = report.get("diagnostic") or {}
     if not diag.get("passed", True):
         failed_checks = [c for c in diag.get("checks", []) if not c.get("passed", True)]
-        # Filter out kind_drift failures caused entirely by text_redact columns.
-        if text_redact_cols:
+        # Filter out kind_drift failures caused entirely by exempted columns.
+        if exempt_kind_drift_cols:
             filtered: list[dict[str, Any]] = []
             for fc in failed_checks:
                 if fc.get("check") == "kind_drift":
-                    non_tr_drifted = [
-                        d for d in fc.get("drifted", []) if d.get("column") not in text_redact_cols
+                    non_exempt_drifted = [
+                        d
+                        for d in fc.get("drifted", [])
+                        if d.get("column") not in exempt_kind_drift_cols
                     ]
-                    if non_tr_drifted:
-                        # Clone with only the non-text_redact drifted columns.
-                        filtered.append({**fc, "drifted": non_tr_drifted})
-                    # Otherwise suppress this check (all drifted cols are text_redact).
+                    if non_exempt_drifted:
+                        # Clone with only the non-exempted drifted columns.
+                        filtered.append({**fc, "drifted": non_exempt_drifted})
+                    # Otherwise suppress this check (all drifted cols are exempted).
                 else:
                     filtered.append(fc)
             failed_checks = filtered
@@ -484,110 +503,5 @@ def check_distribution_mask(
                     )
 
 
-# ---------------------------------------------------------------------------
-# 6.3 Distribution fidelity (generate tables)
-# ---------------------------------------------------------------------------
-
-
-def check_distribution_generate(
-    job_name: str,
-    table: str,
-    spec: list[ColumnDistributionSpec],
-    output_df: pd.DataFrame,
-    config_table: dict[str, Any],
-) -> None:
-    """Assert distribution fidelity for one generated table.
-
-    Generate tables have no source frame; the baseline is the configured
-    weights / params (OWNER DECISION Q3: config-derived only, no committed
-    golden snapshots). Checks:
-
-    - Categorical generate columns: TVD between output value-frequency vector
-      and declared weights <= col_spec.tolerance (default 0.05). At multi-
-      thousand rows, sampling noise is small enough that this is meaningful.
-
-    - Statistical numeric generate columns: assert output mean within
-      col_spec.tolerance * max(|declared_mean|, 1.0) of declared mean, and
-      output std within col_spec.tolerance * max(declared_std, 1.0) of
-      declared std.
-
-    Args:
-        job_name: Job name for error messages.
-        table: Table name for error messages.
-        spec: ColumnDistributionSpec entries for this table.
-        output_df: Post-generate pandas DataFrame.
-        config_table: Raw pipeline config dict for this table. Must carry
-            generate_columns (list of dicts with name, type, and type-specific
-            params like weights or params.mean/std).
-
-    Raises:
-        AssertionError: If any column's output distribution deviates from its
-            declared weights / params beyond tolerance.
-    """
-    spec_by_col = {s.column: s for s in spec}
-    gen_cols: list[dict[str, Any]] = config_table.get("generate_columns", [])
-
-    for gen_col in gen_cols:
-        if not isinstance(gen_col, dict):
-            continue
-        col_name = gen_col.get("name")
-        if not isinstance(col_name, str) or col_name not in output_df.columns:
-            continue
-        col_spec = spec_by_col.get(col_name)
-        tol = col_spec.tolerance if col_spec is not None else 0.05
-        col_type = str(gen_col.get("type", ""))
-
-        if col_type == "categorical":
-            weights: dict[str, float] = gen_col.get("weights") or {}
-            if not weights:
-                continue
-            weight_sum = sum(float(v) for v in weights.values())
-            if weight_sum <= 0:
-                continue
-            norm_weights = {k: float(v) / weight_sum for k, v in weights.items()}
-            n_total = len(output_df)
-            if n_total == 0:
-                continue
-            out_freq = output_df[col_name].value_counts(normalize=True).to_dict()
-            all_keys = set(norm_weights) | set(out_freq)
-            tvd = 0.5 * sum(
-                abs(norm_weights.get(k, 0.0) - float(out_freq.get(k, 0.0))) for k in all_keys
-            )
-            if tvd > tol:
-                raise AssertionError(
-                    f"[{job_name}/{table}/{col_name}] generate categorical TVD: "
-                    f"tvd={tvd:.4f} > tolerance={tol} "
-                    f"(declared weights vs output frequencies). "
-                    f"Declared: {norm_weights}. "
-                    f"Output: { {k: round(float(v), 4) for k, v in out_freq.items()} }."
-                )
-
-        elif col_type == "statistical":
-            params: dict[str, Any] = gen_col.get("params") or {}
-            declared_mean = params.get("mean")
-            declared_std = params.get("std")
-            if declared_mean is None or declared_std is None:
-                continue
-            series = output_df[col_name].dropna()
-            if len(series) == 0:
-                continue
-            out_mean = float(series.mean())
-            out_std = float(series.std())
-            d_mean = float(declared_mean)
-            d_std = float(declared_std)
-            mean_band = tol * max(abs(d_mean), 1.0)
-            std_band = tol * max(d_std, 1.0)
-            if abs(out_mean - d_mean) > mean_band:
-                raise AssertionError(
-                    f"[{job_name}/{table}/{col_name}] generate statistical mean: "
-                    f"out_mean={out_mean:.4f}, declared_mean={d_mean}, "
-                    f"band={mean_band:.4f} (tol={tol}). "
-                    f"Output mean outside declared parameter band."
-                )
-            if abs(out_std - d_std) > std_band:
-                raise AssertionError(
-                    f"[{job_name}/{table}/{col_name}] generate statistical std: "
-                    f"out_std={out_std:.4f}, declared_std={d_std}, "
-                    f"band={std_band:.4f} (tol={tol}). "
-                    f"Output std outside declared parameter band."
-                )
+# check_distribution_generate is defined in _distribution_generate.py and
+# re-exported above via the import. Do not duplicate its body here.

@@ -74,7 +74,13 @@ def build_source_frames(
     for table_spec in manifest.tables:
         if table_spec.kind != "mask":
             continue
-        builder_name = table_spec.source_builder
+        # source_builder is guaranteed non-None for mask tables by the
+        # TableSpec model_validator; the assertion narrows the type for mypy.
+        assert table_spec.source_builder is not None, (
+            f"TableSpec {table_spec.name!r}: kind='mask' but source_builder is None. "
+            "The model_validator should have caught this."
+        )
+        builder_name: str = table_spec.source_builder
         # Support "fixture.build_X" dotted form.
         if "." in builder_name:
             _, func_name = builder_name.rsplit(".", 1)
@@ -151,7 +157,7 @@ def assemble_config(
             }
     raw["sources"] = sources_block
 
-    # Substitute target paths.
+    # Substitute target paths for mask tables (those with a source_path entry).
     targets_block = raw.get("targets", {})
     for table_name in source_paths:
         out_path = str(output_dir / f"{table_name}_out.parquet")
@@ -163,6 +169,22 @@ def assemble_config(
                 "format": "parquet",
                 "path": out_path,
             }
+
+    # Also substitute target paths for generate-kind tables; they have no source
+    # but the engine config still needs a real output path to avoid placeholder
+    # paths reaching PipelineConfig validation or the write step.
+    for table_spec in manifest.tables:
+        if table_spec.kind == "generate":
+            gen_out_path = str(output_dir / f"{table_spec.name}_out.parquet")
+            if table_spec.name in targets_block:
+                targets_block[table_spec.name]["path"] = gen_out_path
+            else:
+                targets_block[table_spec.name] = {
+                    "type": "file",
+                    "format": "parquet",
+                    "path": gen_out_path,
+                }
+
     raw["targets"] = targets_block
 
     # Substitute quarantine path if quarantine block is present.

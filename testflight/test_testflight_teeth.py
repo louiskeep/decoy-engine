@@ -52,6 +52,7 @@ from testflight._invariants import (
     check_distribution_mask,
     check_fk_integrity,
     check_quarantine,
+    check_remap_masks_orphan,
     check_sentinels,
 )
 from testflight._spec import (
@@ -2281,4 +2282,418 @@ class TestM2MCorrelationTeeth:
             source_df,
             faithful_df,
             strategy_map={"qty_band": "passthrough", "order_total_band": "passthrough"},
+        )
+
+
+# ---------------------------------------------------------------------------
+# Phase 3b: Job C self-referential FK mutation controls (TestJobCSelfFKTeeth)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.testflight
+class TestJobCSelfFKTeeth:
+    """Mutation controls for the self-referential FK invariant (Phase 3b, Job C).
+
+    Job C topology: employees.manager_id -> employees.employee_id (same table).
+    The fk_integrity check looks up manager_id values in the employee_id pool of
+    the same table. A dangling manager_id (not in the masked employee_id set)
+    is an orphan and must trip the invariant when expected_orphans < actual_orphans.
+
+    RED: test_self_fk_closure_broken -- 1 dangling manager_id, expected 0 orphans.
+    GREEN: test_self_fk_closure_good -- all manager_ids in the masked employee_id set.
+    """
+
+    @staticmethod
+    def _build_self_fk_outputs(
+        n_employees: int = 50,
+        n_root: int = 5,
+        broken: bool = False,
+    ) -> tuple[Any, list[RelationshipSpec], list[FKIntegritySpec]]:
+        """Build a self-referential employees table with optional dangling FK.
+
+        Root employees (rows 0..n_root-1): manager_id = None.
+        Non-root employees: manager_id references a valid masked employee_id,
+        unless `broken=True`, in which case the last non-root row gets a
+        dangling manager_id "EMP-GHOST" not present in the employee_id column.
+
+        Returns:
+            (result_ns, relationships, fk_spec) ready for check_fk_integrity.
+        """
+        emp_ids = [f"M-{i:04d}" for i in range(n_employees)]
+        root_manager_ids: list[Any] = [None] * n_root
+        valid_manager_ids = [emp_ids[i % n_root] for i in range(n_employees - n_root - 1)]
+        if broken:
+            # Last non-root employee has a dangling manager_id not in emp_ids.
+            broken_manager_ids = [*valid_manager_ids, "EMP-GHOST"]
+        else:
+            broken_manager_ids = [*valid_manager_ids, emp_ids[0]]
+        manager_ids = [*root_manager_ids, *broken_manager_ids]
+
+        employees_tbl = pa.table(
+            {
+                "employee_id": emp_ids,
+                "manager_id": manager_ids,
+                "department": ["Engineering"] * n_employees,
+                "salary": [75000] * n_employees,
+            }
+        )
+
+        result = SimpleNamespace(
+            outputs={"employees": employees_tbl},
+            quality_metrics={},
+        )
+
+        relationships = [
+            RelationshipSpec(
+                parent=RelationshipEndSpec(table="employees", columns=["employee_id"]),
+                children=[RelationshipEndSpec(table="employees", columns=["manager_id"])],
+                orphan_policy="remap",
+                namespace="employee_identity",
+            )
+        ]
+        fk_spec = [
+            FKIntegritySpec(
+                relationship_name="employee_identity",
+                expected_orphans=0,
+                policy="remap",
+            )
+        ]
+        return result, relationships, fk_spec
+
+    def test_self_fk_closure_broken(self) -> None:
+        """A dangling manager_id in the self-FK table must trip check_fk_integrity.
+
+        RED: one employee references manager_id "EMP-GHOST" which is not in the
+        masked employee_id column. check_fk_integrity expects 0 orphans.
+
+        This proves the self-referential FK invariant is not vacuous: the parent
+        key pool is the SAME table's masked employee_id column, so a dangling
+        manager_id in the output is an orphan that the invariant catches.
+
+        A regression where the FK check reads the wrong key pool (e.g., skips the
+        self-reference case or uses an empty pool) would not catch this orphan.
+        """
+        result, relationships, fk_spec = self._build_self_fk_outputs(broken=True)
+
+        with pytest.raises(AssertionError, match="orphan_count=1"):
+            check_fk_integrity("c_selfref_break", fk_spec, result, relationships)
+
+    def test_self_fk_closure_good(self) -> None:
+        """All manager_ids in the masked employee_id pool must NOT raise.
+
+        GREEN: all non-null manager_id values reference a valid masked employee_id
+        in the same table. Null manager_ids (root nodes) are skipped.
+
+        Proves check_fk_integrity does not over-assert for the self-FK case: a
+        correctly masked table with a valid tree structure passes cleanly.
+        """
+        result, relationships, fk_spec = self._build_self_fk_outputs(broken=False)
+
+        # Must NOT raise: all non-null manager_ids are valid employee_ids.
+        check_fk_integrity("c_selfref_good", fk_spec, result, relationships)
+
+
+# ---------------------------------------------------------------------------
+# Phase 3b: Job C generate distribution controls (TestJobCGenerateControls)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.testflight
+class TestJobCGenerateControls:
+    """Mutation controls for Job C's generate table distribution invariant.
+
+    Job C introduces two new paths in check_distribution_generate:
+      1. List weights for categorical columns (engine format: list parallel to categories).
+      2. Formula columns with params.mean/std metadata (formula type + params).
+
+    RED controls: skewed categorical (list weights) and shifted formula mean.
+    GREEN control: correct output within tolerance passes.
+    """
+
+    def test_skewed_categorical_list_weights_raises(self) -> None:
+        """Output all-login when list weights declare 40/30/20/10 must raise.
+
+        Tests the list-weights path of check_distribution_generate. Before Phase 3b,
+        only dict weights were handled; list weights were silently skipped (no check).
+
+        TVD = 0.5*(|1.0-0.40| + |0.0-0.30| + |0.0-0.20| + |0.0-0.10|) = 0.60 >> tol.
+        """
+        config_table: dict[str, Any] = {
+            "generate_columns": [
+                {
+                    "name": "event_type",
+                    "type": "categorical",
+                    "categories": ["login", "purchase", "view", "error"],
+                    "weights": [0.40, 0.30, 0.20, 0.10],
+                }
+            ]
+        }
+        output_df = pd.DataFrame({"event_type": ["login"] * 500})
+        spec = [
+            ColumnDistributionSpec(
+                table="synthetic_events",
+                column="event_type",
+                distribution_class="synthetic",
+                tolerance=0.05,
+                joints_waived=True,
+                joints_waived_reason="generate table; no source to correlate",
+            )
+        ]
+        with pytest.raises(AssertionError, match="generate categorical TVD"):
+            check_distribution_generate(
+                "c_gen_cat", "synthetic_events", spec, output_df, config_table
+            )
+
+    def test_shifted_formula_mean_raises(self) -> None:
+        """Output mean far from declared params.mean on a formula column must raise.
+
+        Tests the formula-with-params path of check_distribution_generate. Before
+        Phase 3b, only type=statistical columns checked mean/std; type=formula with
+        params was silently skipped even when params declared a known distribution.
+
+        Output mean ~ 200 vs declared mean = 50: |200-50| = 150 > tol*50 = 5.0.
+        """
+        rng_np = np.random.default_rng(77)
+        config_table: dict[str, Any] = {
+            "generate_columns": [
+                {
+                    "name": "amount",
+                    "type": "formula",
+                    "formula": "gauss(50.0, 15.0)",
+                    "params": {"mean": 50.0, "std": 15.0},
+                }
+            ]
+        }
+        # Broken output: mean ~ 200, far outside the 5.0 band (tol=0.10 * 50 = 5).
+        output_df = pd.DataFrame({"amount": rng_np.normal(200.0, 15.0, size=1000).tolist()})
+        spec = [
+            ColumnDistributionSpec(
+                table="synthetic_events",
+                column="amount",
+                distribution_class="synthetic",
+                tolerance=0.10,
+                joints_waived=True,
+                joints_waived_reason="formula generate column; no source",
+            )
+        ]
+        with pytest.raises(AssertionError, match="generate formula mean"):
+            check_distribution_generate(
+                "c_gen_formula", "synthetic_events", spec, output_df, config_table
+            )
+
+    def test_good_generate_output_passes(self) -> None:
+        """Correct generate output (list weights + formula params within band) must pass.
+
+        Proves check_distribution_generate does not over-assert for Job C's two new paths:
+          - event_type with list weights: seeded sample within 5% TVD of declared weights.
+          - amount with formula params: sample mean/std within 10% band of declared params.
+        """
+        rng_np = np.random.default_rng(88)
+        n = 2000
+        # Categorical: sample with the declared probabilities.
+        cats = rng_np.choice(
+            ["login", "purchase", "view", "error"],
+            size=n,
+            p=[0.40, 0.30, 0.20, 0.10],
+        ).tolist()
+        # Formula: gauss(50, 15) -> mean ~ 50, std ~ 15.
+        amounts = rng_np.normal(50.0, 15.0, size=n).tolist()
+
+        output_df = pd.DataFrame({"event_type": cats, "amount": amounts})
+        config_table: dict[str, Any] = {
+            "generate_columns": [
+                {
+                    "name": "event_type",
+                    "type": "categorical",
+                    "categories": ["login", "purchase", "view", "error"],
+                    "weights": [0.40, 0.30, 0.20, 0.10],
+                },
+                {
+                    "name": "amount",
+                    "type": "formula",
+                    "formula": "gauss(50.0, 15.0)",
+                    "params": {"mean": 50.0, "std": 15.0},
+                },
+            ]
+        }
+        spec = [
+            ColumnDistributionSpec(
+                table="synthetic_events",
+                column="event_type",
+                distribution_class="synthetic",
+                tolerance=0.05,
+                joints_waived=True,
+                joints_waived_reason="generate table test; no source",
+            ),
+            ColumnDistributionSpec(
+                table="synthetic_events",
+                column="amount",
+                distribution_class="synthetic",
+                tolerance=0.10,
+                joints_waived=True,
+                joints_waived_reason="formula generate column test; no source",
+            ),
+        ]
+        # Must NOT raise: both columns within declared tolerance.
+        check_distribution_generate("c_gen_good", "synthetic_events", spec, output_df, config_table)
+
+
+# ---------------------------------------------------------------------------
+# Phase 3b: Orphan remap-masks invariant tooth (TestOrphanRemapMasksTeeth)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.testflight
+class TestOrphanRemapMasksTeeth:
+    """Mutation controls for the remap-masks-orphan invariant tooth.
+
+    HIGH-2 (Phase 3b): the suite previously had no assertion that the remapped
+    orphan output value DIFFERS from the source key. An out-of-charset orphan
+    key (e.g. all-uppercase "EMP-ORPHAN") passes through FPE unchanged; the
+    fk_integrity count still shows expected_orphans=1 so the job appeared to pass.
+
+    Fix: check_remap_masks_orphan enforces output != source key. These controls
+    prove it bites on passthrough and passes on genuine remap.
+
+    RED: test_passthrough_orphan_raises -- orphan output equals source key.
+    GREEN: test_genuinely_remapped_orphan_passes -- output differs from source.
+    Integration: test_check_fk_integrity_with_source_frames -- end-to-end wiring
+        through check_fk_integrity(source_frames=...) detects passthrough.
+    """
+
+    def test_passthrough_orphan_raises(self) -> None:
+        """Output value equal to source key must raise.
+
+        RED: an out-of-charset orphan ("EMP-ORPHAN") that FPE cannot permute
+        passes through unchanged; output == source key. The remap-masks-orphan
+        check must raise with a clear passthrough-gap message.
+        """
+        with pytest.raises(AssertionError, match="remap-masks"):
+            check_remap_masks_orphan(
+                "c_remap_control",
+                orphan_source_key="EMP-ORPHAN",
+                orphan_output_val="EMP-ORPHAN",  # unchanged passthrough
+                child_table="employees",
+                child_col="manager_id",
+            )
+
+    def test_genuinely_remapped_orphan_passes(self) -> None:
+        """Output value differing from source key must NOT raise.
+
+        GREEN: the in-charset orphan "emp99999" is permuted by FPE and produces
+        a different value. The check passes cleanly.
+        """
+        # Must NOT raise: output differs from source key.
+        check_remap_masks_orphan(
+            "c_remap_control",
+            orphan_source_key="emp99999",
+            orphan_output_val="zqm38214",  # FPE permuted
+            child_table="employees",
+            child_col="manager_id",
+        )
+
+    def test_check_fk_integrity_with_source_frames_detects_passthrough(self) -> None:
+        """check_fk_integrity with source_frames raises when remap yields passthrough.
+
+        End-to-end wiring test: source child FK "EMP-ORPHAN" is an orphan (not in
+        source parent pool), and the output child FK is also "EMP-ORPHAN" (unchanged
+        passthrough). check_fk_integrity with source_frames supplied and policy=remap
+        must raise via the remap-masks-orphan internal check.
+
+        This is the regression proof: the original Job C fixture used "EMP-ORPHAN"
+        (out-of-charset) as the orphan key. With the old code, fk_integrity counted
+        1 orphan (matching expected_orphans=1) and returned pass -- silently accepting
+        the verbatim source key in the output. This test proves the fixed path raises.
+        """
+        # Build source frames: parent has one key, child has one orphan row.
+        parent_ids = [f"EMP-{i:05d}" for i in range(1, 11)]
+        src_child_fk = [*parent_ids[:9], "EMP-ORPHAN"]  # last row is orphan
+        src_child = pa.table({"employee_id": parent_ids, "manager_id": src_child_fk})
+
+        # Broken output: orphan manager_id is EMP-ORPHAN (unchanged passthrough).
+        out_child_fk = [*[f"MK-{i:05d}" for i in range(1, 10)], "EMP-ORPHAN"]
+        out_child = pa.table(
+            {"employee_id": [f"MK-{i:05d}" for i in range(1, 11)], "manager_id": out_child_fk}
+        )
+
+        result = SimpleNamespace(
+            outputs={"employees": out_child},
+            quality_metrics={},
+        )
+        # Note: self-FK so parent and child are the same table in relationships.
+        relationships = [
+            RelationshipSpec(
+                parent=RelationshipEndSpec(table="employees", columns=["employee_id"]),
+                children=[RelationshipEndSpec(table="employees", columns=["manager_id"])],
+                orphan_policy="remap",
+                namespace="employee_identity",
+            )
+        ]
+        fk_spec = [
+            FKIntegritySpec(
+                relationship_name="employee_identity",
+                expected_orphans=1,
+                policy="remap",
+            )
+        ]
+        source_frames = {"employees": src_child}
+
+        with pytest.raises(AssertionError, match="remap-masks"):
+            check_fk_integrity(
+                "c_passthrough_control",
+                fk_spec,
+                result,
+                relationships,
+                source_frames=source_frames,
+            )
+
+    def test_check_fk_integrity_with_source_frames_good_remap_passes(self) -> None:
+        """check_fk_integrity with source_frames passes when remap output differs.
+
+        GREEN: source orphan "emp99999" is remapped to "zqm38214" (different). The
+        fk_integrity count is 1 (matches expected_orphans=1) and the remap-masks
+        check passes because the output value differs from the source key.
+        """
+        parent_ids = [f"emp{i:05d}" for i in range(1, 11)]
+        src_child_fk = [*parent_ids[:9], "emp99999"]
+        src_child = pa.table({"employee_id": parent_ids, "manager_id": src_child_fk})
+
+        # Good output: orphan remapped to a different value.
+        masked_parent_ids = [f"msk{i:05d}" for i in range(1, 11)]
+        out_child_fk = [*masked_parent_ids[:9], "zqm38214"]  # remapped != source
+        out_child = pa.table(
+            {
+                "employee_id": masked_parent_ids,
+                "manager_id": out_child_fk,
+            }
+        )
+
+        result = SimpleNamespace(
+            outputs={"employees": out_child},
+            quality_metrics={},
+        )
+        relationships = [
+            RelationshipSpec(
+                parent=RelationshipEndSpec(table="employees", columns=["employee_id"]),
+                children=[RelationshipEndSpec(table="employees", columns=["manager_id"])],
+                orphan_policy="remap",
+                namespace="employee_identity",
+            )
+        ]
+        fk_spec = [
+            FKIntegritySpec(
+                relationship_name="employee_identity",
+                expected_orphans=1,
+                policy="remap",
+            )
+        ]
+        source_frames = {"employees": src_child}
+
+        # Must NOT raise: orphan count matches and output differs from source key.
+        check_fk_integrity(
+            "c_good_remap_control",
+            fk_spec,
+            result,
+            relationships,
+            source_frames=source_frames,
         )
