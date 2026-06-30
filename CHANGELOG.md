@@ -9,6 +9,53 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (FK-RI transactional sink, 2026-06-30)
+
+- **`TransactionalSink` protocol and `ParquetTransactionalSink` reference
+  implementation** (`src/decoy_engine/execution/_transactional_sink.py`).
+  Gives `run_sequential` (Option 2 FK-RI memory-scaling) an all-or-nothing
+  output guarantee. Both are now exported from `decoy_engine.execution`.
+
+  Three-method protocol (`write` / `commit` / `abort`):
+
+  - `write(table, data)`: stages one masked Arrow table, called in
+    FK-topological order by `run_sequential`.
+  - `commit()`: publishes all staged tables; called once on a successful run.
+  - `abort()`: discards all staged tables; called on any exception during the
+    run. Must be best-effort and must not raise, so the original run exception
+    always propagates.
+
+  `ParquetTransactionalSink` file-based implementation:
+
+  - Each `write()` call serializes the masked table as a Parquet file into a
+    private staging directory (prefix `_decoy_stage_`) that is a sibling of
+    the target directory, guaranteeing they share a filesystem.
+  - `commit()` publishes the entire staging directory via a single
+    `os.replace` call (POSIX rename(2)): either every Parquet file appears at
+    the target path at once or nothing is published. This is a
+    visibility-atomicity guarantee per POSIX.1-2008, not an fsync durability
+    guarantee.
+  - If `commit()` is called with no prior `write()` calls (nothing was staged),
+    an empty target directory is created directly without a rename.
+  - If the target directory already exists and is non-empty, `os.replace`
+    raises `OSError` and commit fails closed; nothing is published and the
+    staging directory remains intact for a subsequent `abort()`.
+  - `abort()` removes the staging directory before any data reaches the target.
+    If cleanup fails, the error is suppressed so the original run exception
+    propagates unmasked.
+
+  Back-compat: a plain `Callable[[str, pa.Table], None]` passed as the
+  `run_sequential` sink is wrapped transparently by `_CallableSinkAdapter`,
+  which preserves the pre-existing non-transactional contract (partial output
+  on abort is documented and pinned by test).
+
+  **Platform wiring is deferred.** `run_sequential` with a
+  `ParquetTransactionalSink` is the safe path for job-runner use, but
+  automatically routing production FK jobs through `run_sequential` is a
+  platform job-runner change and is not part of this commit.
+
+  Design doc: `docs/relationships-memory-scaling.md` sections 2 and 6.1.
+
 ### Added (SP-10 derived strategy, 2026-06-28)
 
 - **`derived` mask and generate strategy** (`src/decoy_engine/transforms/derived.py`,

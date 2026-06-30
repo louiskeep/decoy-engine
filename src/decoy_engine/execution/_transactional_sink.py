@@ -158,7 +158,9 @@ class ParquetTransactionalSink:
 
         A single os.replace (POSIX rename) makes the entire set of Parquet
         files visible at once or not at all. The target path is not created
-        or touched until the rename succeeds.
+        or touched until the rename succeeds. Exception: if no write() calls
+        were made before commit(), the staging directory was never created and
+        an empty target directory is created directly (no rename).
 
         If the target directory already exists and is non-empty, os.replace
         raises OSError and nothing is published; the staging directory remains

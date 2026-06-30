@@ -1,6 +1,6 @@
 # Masking relationships under memory constraints
 
-**Status:** Phase 0 (measurement) + Option 2 (`run_sequential`) landed 2026-06-30; see section 6. Next: wire a lazy per-table loader into `run_pipeline`/the platform job runner so production jobs take this path.
+**Status:** Phase 0 (measurement) + Option 2 (`run_sequential`) + transactional sink all landed 2026-06-30; see section 6. Next: wire `run_sequential` with a `ParquetTransactionalSink` into the platform job runner so production FK jobs take this path without caller-side opt-in.
 **Audience:** Engine tech lead / PO.
 **Scope:** How to mask FK-related tables (referential integrity preserved) without holding every table full-frame in RAM.
 **Review:** Adversarially reviewed (Dennis, 2 BLOCKER / 3 MAJOR / 3 MINOR). All findings folded in below; the §1 lever and Option 1 were corrected substantially, and the §4 sequencing was flipped to ship Option 2 first. See §5 for the review trail.
@@ -398,8 +398,15 @@ output); `run_sequential(sink=...)` emits tables incrementally, so an orphan `FA
 per-table guard rejection leaves earlier tables already delivered to the sink. The behavior is
 documented and pinned by a test, but before `run_sequential` is wired into `run_pipeline` or the
 platform job runner, the sink needs an explicit commit/abort signal (a transactional sink) so a
-failed run cannot leave a partial, complete-looking dataset. That wiring + transactional-sink design
-is the next deliverable; the engine API landed here is stable.
+failed run cannot leave a partial, complete-looking dataset. The `TransactionalSink` protocol and
+`ParquetTransactionalSink` reference implementation shipped on this branch
+(`src/decoy_engine/execution/_transactional_sink.py`). Commit is a single atomic POSIX directory
+rename (visibility-atomicity per POSIX rename(2): either every Parquet file lands at the target path
+at once or nothing is published; this is not an fsync durability guarantee). Abort removes the
+staging directory before any data reaches the target. A pre-existing non-empty target causes commit
+to fail closed. The remaining step before production use is platform job-runner wiring: automatically
+routing FK jobs through `run_sequential` with a `ParquetTransactionalSink` without caller-side
+opt-in.
 
 ---
 
