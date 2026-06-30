@@ -302,8 +302,9 @@ class PandasExecutionAdapter:
         narrow source->masked key map is built, so children still resolve and all
         orphan policies keep working. `source_loader(table)` yields one Arrow table
         on demand; with `sink`, each masked table is emitted then dropped (outputs
-        not accumulated). Byte-identical to `run` (lower peak memory). Implemented
-        in execution/_sequential.py; see docs/relationships-memory-scaling.md."""
+        not accumulated). On success, byte-identical to `run` at lower peak memory;
+        the `sink` path is non-transactional on abort. Implemented in
+        execution/_sequential.py; see docs/relationships-memory-scaling.md."""
         return _run_sequential(
             self,
             plan,

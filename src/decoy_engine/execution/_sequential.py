@@ -4,10 +4,20 @@ Masks an FK-related job one table at a time in FK-topological order instead of
 holding every table full-width at once (the full-frame `PandasExecutionAdapter.run`
 path). Each parent's narrow source->masked key map is built and retained BEFORE its
 wide frame is evicted, so children still resolve against it and all orphan policies
-keep working (unlike the streaming Option 1). Output is byte-identical to `run`
-(tests/unit/execution/test_sequential_eviction.py); the win is peak memory, one
-table plus retained narrow key maps rather than every table full-width plus all
-outputs.
+keep working (unlike the streaming Option 1). On SUCCESS, output is byte-identical
+to `run` (tests/unit/execution/test_sequential_eviction.py); the win is peak
+memory, one table plus retained narrow key maps rather than every table full-width
+plus all outputs.
+
+Sink contract (non-transactional). With a `sink`, tables are emitted incrementally
+in FK-topological order, so an abort partway through (an orphan `FAIL`, or a
+per-table guard rejection on a later table) leaves the tables emitted so far
+already delivered to the sink. `run` is atomic (it raises before returning any
+output); `run_sequential(sink=...)` is not. A durable sink MUST therefore treat an
+exception as "discard everything emitted for this run." Wiring `run_sequential`
+into a job runner requires a transactional sink (an explicit commit/abort signal)
+before it can replace `run`; that design is deferred until there is a real sink
+consumer.
 
 Lives in its own module so `_pandas_adapter.py` stays under the orchestration LOC
 cap. It reuses the adapter's per-node masking (`_dispatch_mask_node`) and parent-map
@@ -58,9 +68,18 @@ def run_sequential(
 ) -> ExecutionResult:
     """Mask an FK-related job table by table in FK-topological order.
 
-    `source_loader(table)` yields one Arrow table on demand; with `sink`, each
-    masked table is emitted then dropped (outputs not accumulated); without `sink`,
-    outputs are collected like `run`.
+    `source_loader(table)` is invoked once per table in the plan/graph table set
+    (the tables named in `plan.seed_envelope.per_table` plus any table in a graph
+    edge), and must return that table's Arrow source. Unlike `run`, which emits
+    exactly the tables in its `sources` mapping, this path is driven by the plan:
+    a table present only in the caller's sources but absent from the plan and graph
+    is neither loaded nor emitted.
+
+    With `sink`, each masked table is emitted then dropped (outputs not
+    accumulated, so `ExecutionResult.outputs` is empty); without `sink`, outputs
+    are collected like `run`. The sink is non-transactional on abort (see the
+    module docstring): a caller using a durable sink must discard everything
+    emitted for the run if this raises.
     """
     graph = relationship_graph
     ordered = order_work(build_work_list(plan, registry), graph)

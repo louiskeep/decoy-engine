@@ -390,6 +390,17 @@ fan-out (more sibling/child tables full-frame would hold at once); for the deep 
 (`tests/unit/execution/test_sequential_eviction.py`). Caveat: the probe's lazy generation adds a
 per-table build transient, so a Parquet-backed loader in production should do at least this well.
 
+**Review + production note (dennis, 2026-06-30).** Adversarial review confirmed byte-parity across
+multi-parent, diamond, composite-FK, both-parent-and-child, and self-FK shapes (not just the 3-table
+chain), and the ref-counted parent-map eviction is correct (0 blocker). One condition for production:
+the `sink` path is **non-transactional on abort**. `run` is atomic (it raises before emitting any
+output); `run_sequential(sink=...)` emits tables incrementally, so an orphan `FAIL` or a late
+per-table guard rejection leaves earlier tables already delivered to the sink. The behavior is
+documented and pinned by a test, but before `run_sequential` is wired into `run_pipeline` or the
+platform job runner, the sink needs an explicit commit/abort signal (a transactional sink) so a
+failed run cannot leave a partial, complete-looking dataset. That wiring + transactional-sink design
+is the next deliverable; the engine API landed here is stable.
+
 ---
 
 ## 5. Review trail
