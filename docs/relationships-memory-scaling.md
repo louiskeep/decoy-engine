@@ -1,6 +1,6 @@
 # Masking relationships under memory constraints
 
-**Status:** Phase 0 (measurement) landed 2026-06-30, see section 6. Option 2 implementation pending a go decision.
+**Status:** Phase 0 (measurement) + Option 2 (`run_sequential`) landed 2026-06-30; see section 6. Next: wire a lazy per-table loader into `run_pipeline`/the platform job runner so production jobs take this path.
 **Audience:** Engine tech lead / PO.
 **Scope:** How to mask FK-related tables (referential integrity preserved) without holding every table full-frame in RAM.
 **Review:** Adversarially reviewed (Dennis, 2 BLOCKER / 3 MAJOR / 3 MINOR). All findings folded in below; the §1 lever and Option 1 were corrected substantially, and the §4 sequencing was flipped to ship Option 2 first. See §5 for the review trail.
@@ -360,12 +360,35 @@ width as well as rows, so the dominant cost is genuinely "every column of every 
 once," which is exactly what Option 2 attacks; (b) even keys-only is 700 MB, because the three Arrow
 sources, their three pandas copies, and the accumulated outputs are all held concurrently and the
 `hash` strategy emits a 64-char hex string per key. Holding one table plus narrow key maps (Option 2)
-rather than three full frames plus sources plus outputs should cut the multiplier substantially; the
-real before/after number will come from re-running this probe against the Option 2 path.
+rather than three full frames plus sources plus outputs cuts the multiplier; the measured before/after
+is below.
 
 **Caveats.** The constant is schema-specific (width 16, `hash` strategy, equal-size tables); the
 robust, schema-independent finding is the linearity in rows and the all-tables-resident multiplier.
 The numbers above are single-box and indicative, not a cross-hardware budget.
+
+### 6.1 Option 2 before/after (`run_sequential`, 2026-06-30)
+
+`PandasExecutionAdapter.run_sequential` (load one table, mask, emit via a sink, evict its wide frame,
+retain only the narrow parent key maps) measured against full-frame `run` on the same chain, via
+`scripts/fk_memory_probe.py --mode full|sequential` (lazy per-table generation so the three tables
+are never resident together):
+
+| tier | full-frame peak RSS | sequential peak RSS | reduction |
+|---|---|---|---|
+| 250k x w16 | 980 MB | 737 MB | -25% |
+| 500k x w16 | 1,809 MB | 1,322 MB | -27% |
+| 250k x w48 | 1,541 MB | 1,145 MB | -26% |
+
+A consistent **~25-27% peak-RSS reduction**, holding across both scale and width. This is a real but
+**bounded** win, exactly the §2/§4 framing of Option 2: the ceiling is the largest single table plus
+the retained parent key maps, not one third of full-frame, because (a) at peak the current table's
+Arrow source, its pandas frame, its output, and one retained key map are all live, and (b) the key
+maps and 64-char `hash` output are heavy and do not shrink. The win grows with chain length and
+fan-out (more sibling/child tables full-frame would hold at once); for the deep 10M+ tier, Option 4
+(out-of-core) remains the durable answer per §4. Correctness is byte-identical to `run`
+(`tests/unit/execution/test_sequential_eviction.py`). Caveat: the probe's lazy generation adds a
+per-table build transient, so a Parquet-backed loader in production should do at least this well.
 
 ---
 
