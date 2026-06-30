@@ -39,12 +39,21 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from tests.perf_fixtures.fk_relational import build_fk_relational  # noqa: E402
+import pyarrow as pa  # noqa: E402
+from tests.perf_fixtures.fk_relational import (  # noqa: E402
+    build_fk_relational,
+    lazy_loader,
+    make_graph,
+    make_plan,
+)
 
 from decoy_engine.execution import PandasExecutionAdapter  # noqa: E402
+from decoy_engine.providers_v2 import get_default_registry  # noqa: E402
 from decoy_engine.relationships._graph import OrphanPolicy  # noqa: E402
+from decoy_engine.relationships._namespace import NamespaceRegistry  # noqa: E402
 
 _POLICIES = {p.name.lower(): p for p in OrphanPolicy}
+_N_TABLES = len(make_plan().seed_envelope.per_table)
 
 
 def _peak_rss_mb() -> float:
@@ -72,9 +81,8 @@ def _verify_fk_sample(fixture, result, sample: int = 2000) -> int:
     return checked
 
 
-def _run_one(rows: int, width: int, orphan_frac: float, policy_name: str) -> dict:
-    policy = _POLICIES[policy_name]
-
+def _run_full(rows: int, width: int, orphan_frac: float, policy) -> dict:
+    """Full-frame run: all tables built and resident, then masked at once."""
     build_t0 = time.perf_counter()
     fixture = build_fk_relational(rows=rows, width=width, orphan_frac=orphan_frac)
     build_s = time.perf_counter() - build_t0
@@ -92,24 +100,65 @@ def _run_one(rows: int, width: int, orphan_frac: float, policy_name: str) -> dic
     mask_s = time.perf_counter() - mask_t0
     _, tm_peak = tracemalloc.get_traced_memory()
     tracemalloc.stop()
-
-    checked = _verify_fk_sample(fixture, result)
-
     return {
-        "rows_per_table": rows,
-        "tables": len(fixture.sources),
-        "width": width,
-        "orphan_frac": orphan_frac,
-        "orphan_policy": policy_name,
         "build_s": round(build_s, 2),
         "mask_s": round(mask_s, 2),
         "tracemalloc_peak_mb": round(tm_peak / (1024 * 1024), 1),
-        "peak_rss_mb": round(_peak_rss_mb(), 1),
-        "fk_rows_checked": checked,
+        "fk_rows_checked": _verify_fk_sample(fixture, result),
     }
 
 
-def _sweep(sizes: list[int], width: int, orphan_frac: float, policy_name: str) -> None:
+def _run_sequential(rows: int, width: int, orphan_frac: float, policy) -> dict:
+    """Option 2: lazy per-table load + per-table emit + evict, so the three tables
+    are never resident at once. The sink discards each masked table (keeps only its
+    row count) to measure the true single-table ceiling. Correctness is proven by
+    tests/unit/execution/test_sequential_eviction.py, so no FK verify here."""
+    plan = make_plan()
+    loader = lazy_loader(rows, width=width, orphan_frac=orphan_frac)
+    rows_seen: dict[str, int] = {}
+
+    def sink(table: str, out: pa.Table) -> None:
+        rows_seen[table] = out.num_rows
+
+    gc.collect()
+    tracemalloc.start()
+    mask_t0 = time.perf_counter()
+    PandasExecutionAdapter().run_sequential(
+        plan,
+        loader,
+        registry=get_default_registry(),
+        relationship_graph=make_graph(policy),
+        namespace_registry=NamespaceRegistry(bindings=()),
+        sink=sink,
+    )
+    mask_s = time.perf_counter() - mask_t0
+    _, tm_peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    return {
+        "build_s": 0.0,  # lazy build is folded into the masked run
+        "mask_s": round(mask_s, 2),
+        "tracemalloc_peak_mb": round(tm_peak / (1024 * 1024), 1),
+        "fk_rows_checked": sum(rows_seen.values()),
+    }
+
+
+def _run_one(rows: int, width: int, orphan_frac: float, policy_name: str, mode: str) -> dict:
+    policy = _POLICIES[policy_name]
+    inner = _run_sequential if mode == "sequential" else _run_full
+    metrics = inner(rows, width, orphan_frac, policy)
+    return {
+        "mode": mode,
+        "rows_per_table": rows,
+        "tables": _N_TABLES,
+        "width": width,
+        "orphan_frac": orphan_frac,
+        "orphan_policy": policy_name,
+        "peak_rss_mb": round(_peak_rss_mb(), 1),
+        **metrics,
+    }
+
+
+def _sweep(sizes: list[int], width: int, orphan_frac: float, policy_name: str, mode: str) -> None:
     records = []
     for rows in sizes:
         cmd = [
@@ -123,6 +172,8 @@ def _sweep(sizes: list[int], width: int, orphan_frac: float, policy_name: str) -
             str(orphan_frac),
             "--orphan-policy",
             policy_name,
+            "--mode",
+            mode,
             "--json",
         ]
         proc = subprocess.run(cmd, capture_output=True, text=True)  # noqa: S603
@@ -159,6 +210,12 @@ def main() -> None:
     ap.add_argument("--width", type=int, default=16, help="payload columns per table")
     ap.add_argument("--orphan-frac", type=float, default=0.0)
     ap.add_argument("--orphan-policy", choices=sorted(_POLICIES), default="preserve")
+    ap.add_argument(
+        "--mode",
+        choices=("full", "sequential"),
+        default="full",
+        help="full-frame run (default) or Option 2 sequential load+mask+evict",
+    )
     ap.add_argument("--json", action="store_true", help="emit one JSON line")
     ap.add_argument("--sweep", type=str, help="comma-separated row counts")
     args = ap.parse_args()
@@ -166,16 +223,16 @@ def main() -> None:
     if args.sweep:
         sizes = [int(s) for s in args.sweep.split(",") if s.strip()]
         print(
-            f"FK memory sweep: width={args.width}, orphan_frac={args.orphan_frac}, "
-            f"policy={args.orphan_policy}, 3-table chain\n"
+            f"FK memory sweep: mode={args.mode}, width={args.width}, "
+            f"orphan_frac={args.orphan_frac}, policy={args.orphan_policy}, 3-table chain\n"
         )
-        _sweep(sizes, args.width, args.orphan_frac, args.orphan_policy)
+        _sweep(sizes, args.width, args.orphan_frac, args.orphan_policy, args.mode)
         return
 
     if args.rows is None:
         ap.error("provide --rows or --sweep")
 
-    rec = _run_one(args.rows, args.width, args.orphan_frac, args.orphan_policy)
+    rec = _run_one(args.rows, args.width, args.orphan_frac, args.orphan_policy, args.mode)
     if args.json:
         print(json.dumps(rec))
     else:

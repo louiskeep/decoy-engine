@@ -46,6 +46,7 @@ from decoy_engine.execution._adapter import (
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._guards import reject_null_bearing_int
 from decoy_engine.execution._runner import WorkNode, build_work_list, order_work
+from decoy_engine.execution._sequential import run_sequential as _run_sequential
 from decoy_engine.execution._strategies import SCALAR_HANDLERS
 from decoy_engine.execution._strategies._composite import CompositeHandler
 from decoy_engine.execution._strategies._fpe import FpeStrategyHandler
@@ -198,60 +199,17 @@ class PandasExecutionAdapter:
             for node in ordered:
                 if node.table not in frames:
                     continue
-                df = frames[node.table]
-                child_edges = relationship_graph.parents_of(node.table, node.columns)
-                if child_edges:
-                    with timed_strategy("fk_resolve", ",".join(node.columns)):
-                        node_warnings = self._resolve_fk_node(
-                            node,
-                            child_edges,
-                            frames,
-                            source_snapshots,
-                            parent_map_cache,
-                            node_by_key,
-                            ctx,
-                        )
-                    warnings.extend(node_warnings)
-                    continue
-                if node.kind == "composite":
-                    with timed_strategy("composite", ",".join(node.columns)):
-                        frames[node.table], node_warnings = self._composite_handler.run(
-                            df, node, ctx
-                        )
-                    warnings.extend(node_warnings)
-                    continue
-                if node.kind != "scalar":
-                    raise ExecutionError(
-                        code="composite_fk_group_no_edge",
-                        message=(
-                            f"node kind {node.kind!r} (columns={node.columns}) on table "
-                            f"{node.table!r} is not an FK child but is not a scalar/composite "
-                            "node; the relationship graph has no edge for it."
-                        ),
+                warnings.extend(
+                    self._dispatch_mask_node(
+                        node,
+                        frames,
+                        relationship_graph,
+                        source_snapshots,
+                        parent_map_cache,
+                        node_by_key,
+                        ctx,
                     )
-                handler = self._handlers.get(node.strategy)
-                if handler is None:
-                    raise ExecutionError(
-                        code="unsupported_strategy",
-                        message=f"no handler for strategy {node.strategy!r} on {node.columns}.",
-                    )
-                plan_slice = node.plan_slice
-                if not isinstance(plan_slice, ColumnSeed):  # narrows for the scalar handler
-                    raise ExecutionError(
-                        code="unsupported_strategy",
-                        message=f"scalar node {node.columns} has a non-ColumnSeed plan slice.",
-                    )
-                with timed_strategy(node.strategy, ",".join(node.columns)):
-                    # MG-3 / M3 (2026-05-31): the when_gate is a no-op
-                    # when plan_slice.when is None (byte-identical to
-                    # calling handler.run() directly). When set, it
-                    # evaluates the predicate via numexpr (scope-clamped
-                    # per Dennis C1) and routes only matching rows
-                    # through the handler.
-                    frames[node.table], node_warnings = run_with_when_gate(
-                        handler, df, node.columns[0], plan_slice, ctx
-                    )
-                warnings.extend(node_warnings)
+                )
 
         t1 = time.perf_counter()
         outputs = {t: pa.Table.from_pandas(f, preserve_index=False) for t, f in frames.items()}
@@ -263,6 +221,98 @@ class PandasExecutionAdapter:
             boundary_conversion_ms=conversion_ms,
             warnings=tuple(warnings),
             quality_metrics={},
+        )
+
+    def _dispatch_mask_node(
+        self,
+        node: WorkNode,
+        frames: dict[str, pd.DataFrame],
+        relationship_graph: RelationshipGraph,
+        source_snapshots: dict[tuple[str, str], pd.Series],
+        parent_map_cache: dict[_NodeKey, dict[_KeyTuple, _KeyTuple]],
+        node_by_key: dict[_NodeKey, WorkNode],
+        ctx: StrategyContext,
+    ) -> list[QualityWarning]:
+        """Mask one work node in place in `frames[node.table]`, returning its
+        warnings. Shared by the full-frame `run` and the sequential
+        `run_sequential` so both paths mask byte-identically. An FK child resolves
+        through the parent source->masked map + the edge's OrphanPolicy; every
+        other node masks via its scalar or composite handler."""
+        df = frames[node.table]
+        child_edges = relationship_graph.parents_of(node.table, node.columns)
+        if child_edges:
+            with timed_strategy("fk_resolve", ",".join(node.columns)):
+                return self._resolve_fk_node(
+                    node,
+                    child_edges,
+                    frames,
+                    source_snapshots,
+                    parent_map_cache,
+                    node_by_key,
+                    ctx,
+                )
+        if node.kind == "composite":
+            with timed_strategy("composite", ",".join(node.columns)):
+                frames[node.table], node_warnings = self._composite_handler.run(df, node, ctx)
+            return node_warnings
+        if node.kind != "scalar":
+            raise ExecutionError(
+                code="composite_fk_group_no_edge",
+                message=(
+                    f"node kind {node.kind!r} (columns={node.columns}) on table "
+                    f"{node.table!r} is not an FK child but is not a scalar/composite "
+                    "node; the relationship graph has no edge for it."
+                ),
+            )
+        handler = self._handlers.get(node.strategy)
+        if handler is None:
+            raise ExecutionError(
+                code="unsupported_strategy",
+                message=f"no handler for strategy {node.strategy!r} on {node.columns}.",
+            )
+        plan_slice = node.plan_slice
+        if not isinstance(plan_slice, ColumnSeed):  # narrows for the scalar handler
+            raise ExecutionError(
+                code="unsupported_strategy",
+                message=f"scalar node {node.columns} has a non-ColumnSeed plan slice.",
+            )
+        with timed_strategy(node.strategy, ",".join(node.columns)):
+            # MG-3 / M3 (2026-05-31): the when_gate is a no-op when
+            # plan_slice.when is None (byte-identical to calling handler.run()
+            # directly). When set, it evaluates the predicate via numexpr
+            # (scope-clamped per Dennis C1) and routes only matching rows through.
+            frames[node.table], node_warnings = run_with_when_gate(
+                handler, df, node.columns[0], plan_slice, ctx
+            )
+        return node_warnings
+
+    def run_sequential(
+        self,
+        plan: Plan,
+        source_loader: Callable[[str], pa.Table],
+        *,
+        registry: ProviderRegistry,
+        pool_cache: PoolCache | None = None,
+        relationship_graph: RelationshipGraph,
+        namespace_registry: NamespaceRegistry,
+        sink: Callable[[str, pa.Table], None] | None = None,
+    ) -> ExecutionResult:
+        """Option 2 (FK-RI memory-scaling): mask an FK-related job one table at a
+        time in FK-topological order, evicting each table's wide frame after its
+        narrow source->masked key map is built, so children still resolve and all
+        orphan policies keep working. `source_loader(table)` yields one Arrow table
+        on demand; with `sink`, each masked table is emitted then dropped (outputs
+        not accumulated). Byte-identical to `run` (lower peak memory). Implemented
+        in execution/_sequential.py; see docs/relationships-memory-scaling.md."""
+        return _run_sequential(
+            self,
+            plan,
+            source_loader,
+            registry=registry,
+            pool_cache=pool_cache,
+            relationship_graph=relationship_graph,
+            namespace_registry=namespace_registry,
+            sink=sink,
         )
 
     def _resolve_fk_node(
