@@ -44,9 +44,7 @@ def _sequential(adapter, plan, sources, graph, ns, registry, sink=None):
     )
 
 
-@pytest.mark.parametrize(
-    "policy", [OrphanPolicy.PRESERVE, OrphanPolicy.REMAP, OrphanPolicy.WARN]
-)
+@pytest.mark.parametrize("policy", [OrphanPolicy.PRESERVE, OrphanPolicy.REMAP, OrphanPolicy.WARN])
 def test_byte_parity_with_full_frame(policy):
     """Sequential output equals full-frame output, column for column, for each
     non-aborting orphan policy, across the parent->child->grandchild chain."""
@@ -54,7 +52,9 @@ def test_byte_parity_with_full_frame(policy):
     fx = build_fk_relational(rows=3_000, width=3, orphan_frac=0.05)
     graph = fx.graph(policy)
 
-    full = _full_frame(adapter, plan := fx.plan, fx.sources, graph, fx.namespace_registry, fx.registry)
+    full = _full_frame(
+        adapter, plan := fx.plan, fx.sources, graph, fx.namespace_registry, fx.registry
+    )
     seq = _sequential(adapter, plan, fx.sources, graph, fx.namespace_registry, fx.registry)
 
     assert set(seq.outputs) == set(full.outputs)
@@ -71,8 +71,12 @@ def test_fail_policy_aborts_in_both_paths():
     fx = build_fk_relational(rows=1_000, width=2, orphan_frac=0.05)
     graph = fx.graph(OrphanPolicy.FAIL)
     for run in (
-        lambda: _full_frame(adapter, fx.plan, fx.sources, graph, fx.namespace_registry, fx.registry),
-        lambda: _sequential(adapter, fx.plan, fx.sources, graph, fx.namespace_registry, fx.registry),
+        lambda: _full_frame(
+            adapter, fx.plan, fx.sources, graph, fx.namespace_registry, fx.registry
+        ),
+        lambda: _sequential(
+            adapter, fx.plan, fx.sources, graph, fx.namespace_registry, fx.registry
+        ),
     ):
         with pytest.raises(ExecutionError) as exc:
             run()
@@ -91,16 +95,25 @@ def test_sink_streams_each_table_and_collect_is_empty():
         seen[table] = out
 
     res = _sequential(
-        adapter, fx.plan, fx.sources, fx.graph(OrphanPolicy.PRESERVE),
-        fx.namespace_registry, fx.registry, sink=sink,
+        adapter,
+        fx.plan,
+        fx.sources,
+        fx.graph(OrphanPolicy.PRESERVE),
+        fx.namespace_registry,
+        fx.registry,
+        sink=sink,
     )
     assert set(seen) == set(fx.sources)
     assert res.outputs == {}
 
     # Sink output equals full-frame output.
     full = _full_frame(
-        adapter, fx.plan, fx.sources, fx.graph(OrphanPolicy.PRESERVE),
-        fx.namespace_registry, fx.registry,
+        adapter,
+        fx.plan,
+        fx.sources,
+        fx.graph(OrphanPolicy.PRESERVE),
+        fx.namespace_registry,
+        fx.registry,
     )
     for table in full.outputs:
         assert seen[table].equals(full.outputs[table]), f"{table} sink differs"
