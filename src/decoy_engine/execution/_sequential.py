@@ -22,9 +22,13 @@ MUST treat an exception as "discard everything emitted for this run."
 TransactionalSink: with a ``sink`` that satisfies
 ``execution._transactional_sink.TransactionalSink`` (has write/commit/abort),
 ``run_sequential`` commits on success and aborts on any exception, so the sink
-sees all tables or none. This is the safe path for job-runner wiring. See
-``execution/_transactional_sink.py`` and ``ParquetTransactionalSink`` for the
-reference file-based implementation.
+sees all tables or none. On success, commit() is called once; on any exception,
+abort() is called as a best-effort cleanup (abort errors are suppressed so the
+original exception always propagates). This is the safe path for job-runner
+wiring. See ``execution/_transactional_sink.py`` and ``ParquetTransactionalSink``
+for the reference file-based implementation, which publishes via a single atomic
+directory rename: a commit-time failure leaves the target untouched, and if the
+target already exists non-empty, commit fails closed with nothing published.
 
 Lives in its own module so `_pandas_adapter.py` stays under the orchestration LOC
 cap. It reuses the adapter's per-node masking (`_dispatch_mask_node`) and parent-map
@@ -91,10 +95,14 @@ def run_sequential(
     are collected like `run`.
 
     If `sink` satisfies `TransactionalSink` (has write/commit/abort), the run is
-    transactional: commit() is called on success, abort() on any exception, so the
-    sink sees all tables or none. A plain Callable sink is wrapped in a no-op
-    adapter that preserves the pre-existing non-transactional contract (partial
-    output on abort is documented and pinned by test).
+    transactional: commit() is called on success; abort() is called on any
+    exception as best-effort cleanup (abort errors are swallowed so the original
+    exception always propagates). For ParquetTransactionalSink specifically,
+    commit is a single atomic directory rename: a commit-time failure publishes
+    nothing, and if the target already exists non-empty, commit fails closed.
+    A plain Callable sink is wrapped in a no-op adapter that preserves the
+    pre-existing non-transactional contract (partial output on abort is documented
+    and pinned by test).
     """
     graph = relationship_graph
     ordered = order_work(build_work_list(plan, registry), graph)
@@ -206,7 +214,12 @@ def run_sequential(
 
     except BaseException:
         if _tsink is not None:
-            _tsink.abort()
+            try:
+                _tsink.abort()
+            except Exception:
+                # Abort is best-effort; swallow cleanup errors so the original
+                # exception propagates unmasked via the bare raise below.
+                pass
         raise
 
     return ExecutionResult(
