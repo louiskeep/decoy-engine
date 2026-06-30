@@ -51,6 +51,7 @@ from decoy_engine.execution._strategies import SCALAR_HANDLERS
 from decoy_engine.execution._strategies._composite import CompositeHandler
 from decoy_engine.execution._strategies._fpe import FpeStrategyHandler
 from decoy_engine.execution._strategies._orphan import resolve_fk_keys
+from decoy_engine.execution._transactional_sink import TransactionalSink
 from decoy_engine.execution._when_gate import run_with_when_gate
 from decoy_engine.generation.pool._cache import PoolCache
 from decoy_engine.generation.pool._events import QualityWarning
@@ -295,16 +296,20 @@ class PandasExecutionAdapter:
         pool_cache: PoolCache | None = None,
         relationship_graph: RelationshipGraph,
         namespace_registry: NamespaceRegistry,
-        sink: Callable[[str, pa.Table], None] | None = None,
+        sink: TransactionalSink | Callable[[str, pa.Table], None] | None = None,
     ) -> ExecutionResult:
         """Option 2 (FK-RI memory-scaling): mask an FK-related job one table at a
         time in FK-topological order, evicting each table's wide frame after its
         narrow source->masked key map is built, so children still resolve and all
         orphan policies keep working. `source_loader(table)` yields one Arrow table
         on demand; with `sink`, each masked table is emitted then dropped (outputs
-        not accumulated). On success, byte-identical to `run` at lower peak memory;
-        the `sink` path is non-transactional on abort. Implemented in
-        execution/_sequential.py; see docs/relationships-memory-scaling.md."""
+        not accumulated). On success, byte-identical to `run` at lower peak memory.
+
+        If `sink` satisfies `TransactionalSink` (has write/commit/abort), the run
+        is all-or-nothing: commit on success, abort on any exception. A plain
+        Callable sink preserves the pre-existing non-transactional contract.
+        Implemented in execution/_sequential.py; see
+        docs/relationships-memory-scaling.md."""
         return _run_sequential(
             self,
             plan,
