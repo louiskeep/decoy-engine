@@ -132,3 +132,14 @@ class TestCapabilityMatrixAccess:
 # (engine-v2 S7; closes MEDIUM-ADAPTER-CONFORMANCE-1). The bespoke
 # TestSeedStability class was re-pointed there so every adapter family runs
 # through one gate rather than per-adapter copies.
+
+
+def test_stateful_faker_names_stay_denylisted_for_determinism() -> None:
+    # P5 invariant: the reflection surface must never expose Faker names whose
+    # output depends on process/instance state (`unique`, `random`, `seed`).
+    # Poolable byte-identity across concurrent/rebuilt pools relies on this;
+    # if one leaked in, fresh-per-build isolation would change its sequence.
+    from decoy_engine.internal.faker_setup import _FAKER_DENYLIST
+
+    for name in ("unique", "random", "seed", "seed_instance"):
+        assert name in _FAKER_DENYLIST

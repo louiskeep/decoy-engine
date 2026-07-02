@@ -367,9 +367,10 @@ class TestQA7Coverage:
     def test_qa7_f1_concurrent_faker_calls_deterministic(self):
         """F1 CRITICAL: concurrent generate_tables() calls must produce
         byte-identical output across runs. Pre-fix the shared Faker
-        singleton's seed_instance mutated module-level random state
-        between threads. Post-fix the _FAKER_CALL_LOCK serializes the
-        seed_instance + provider_func pair."""
+        singleton's seed_instance raced between threads; the QA-7 fix
+        serialized the seed_instance + provider_func pair with a lock,
+        and Sprint P5 replaced the shared singleton with a thread-local
+        instance so isolation (not serialization) upholds this cell."""
         import threading
 
         col = {"name": "fn", "type": "faker", "faker_type": "first_name"}
@@ -405,6 +406,43 @@ class TestQA7Coverage:
                 f"thread {i} produced different output than thread 0; "
                 "Faker singleton thread-safety regressed"
             )
+
+    def test_p5_concurrent_different_seeds_match_serial(self):
+        """Sprint P5 non-interference: concurrent generate_tables() calls with
+        DIFFERENT seeds each match their serial reference. With any shared
+        mutable Faker state, a competing call's seed_instance would land
+        between this call's per-row seed and draw."""
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+
+        def _cfg(seed: int) -> dict[str, Any]:
+            return {
+                "version": 1,
+                "global_settings": {"seed": seed},
+                "sources": {},
+                "tables": [
+                    {
+                        "name": "t",
+                        "row_count": 50,
+                        "generate_columns": [
+                            {"name": "fn", "type": "faker", "faker_type": "first_name"}
+                        ],
+                    }
+                ],
+            }
+
+        seeds = list(range(8))
+        serial = {s: generate_tables(_cfg(s))["t"].to_pydict()["fn"] for s in seeds}
+        barrier = threading.Barrier(len(seeds))
+
+        def worker(s: int) -> list[Any]:
+            barrier.wait()
+            return generate_tables(_cfg(s))["t"].to_pydict()["fn"]
+
+        with ThreadPoolExecutor(max_workers=len(seeds)) as pool:
+            futures = {s: pool.submit(worker, s) for s in seeds}
+            for s, future in futures.items():
+                assert future.result() == serial[s], f"seed {s} diverged under concurrency"
 
     def test_qa7_f5_default_seed_is_zero(self):
         """F5: _DEFAULT_SEED must equal 0 to match plan/_compile.py

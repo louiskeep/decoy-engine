@@ -51,13 +51,6 @@ ALLOWLIST: dict[str, int] = {
     # per-strategy check sub-modules in a follow-up sprint when the check set
     # stabilises (post-SP-15 or when the next strategy batch lands).
     "src/decoy_engine/plan/_checks.py": 695,
-    # SP-10c (2026-06-29): three new generate-path helpers extracted to
-    # generation/_grouped_windowed_generators.py, but synthesize.py grew by
-    # 13 lines (dispatch routing + lazy imports for grouped_series, windowed_date,
-    # group_key). The 20-strategy dispatch table resists further decomposition
-    # without splitting _generate_column itself; defer to SP-15 or when the
-    # strategy count stabilises.
-    "src/decoy_engine/generation/synthesize.py": 613,
     # SP-46 (2026-06-29): fpe_join_group tweak mirror added 9 lines to the
     # V1 FPEStrategy.apply in transforms/fpe.py, pushing it over the cap.
     # The module already owns the entire Feistel cipher implementation and

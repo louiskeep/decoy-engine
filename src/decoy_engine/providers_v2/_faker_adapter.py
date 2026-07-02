@@ -117,16 +117,23 @@ class FakerAdapter:
         self._faker_instances: dict[str, Any] = {}
 
     def _faker(self, locale: str | None) -> Any:
+        # Cached instances serve only the UNSEEDED (non-deterministic) paths;
+        # seeded batches construct a fresh isolated instance in generate_batch
+        # so no seeded state ever lives in this shared cache. A concurrent
+        # first-populate here can construct twice and keep one, which is
+        # harmless for random-by-default output.
         effective_locale = locale or self._default_locale
         if effective_locale not in self._faker_instances:
             self._faker_instances[effective_locale] = faker_module.Faker(effective_locale)
         return self._faker_instances[effective_locale]
 
-    def _faker_call(self, provider: str, spec: ProviderSpec) -> Any:
+    def _faker_call(self, provider: str, spec: ProviderSpec, fake: Any = None) -> Any:
+        if fake is None:
+            fake = self._faker(spec.locale)
         # V2-native custom providers take precedence over the built-in
         # _FAKER_METHOD_MAP for names that match.
         if provider in _V2_CUSTOM_PROVIDERS:
-            return _V2_CUSTOM_PROVIDERS[provider](self._faker(spec.locale))
+            return _V2_CUSTOM_PROVIDERS[provider](fake)
         method_name = _FAKER_METHOD_MAP.get(provider)
         if method_name is None:
             raise AdapterError(
@@ -139,7 +146,7 @@ class FakerAdapter:
             )
         kwargs = dict(_FAKER_DEFAULT_KWARGS.get(provider, {}))
         kwargs.update(spec.extra)
-        method = getattr(self._faker(spec.locale), method_name)
+        method = getattr(fake, method_name)
         try:
             return method(**kwargs)
         except Exception as exc:
@@ -197,13 +204,25 @@ class FakerAdapter:
                 ),
             )
         # S5 F2: when the caller supplies a seed (PoolBuilder passes the
-        # derived pool_seed), seed this locale's Faker instance so the batch
-        # is reproducible across processes. `seed_instance` is per-instance
+        # derived pool_seed), seed a Faker instance so the batch is
+        # reproducible across processes. `seed_instance` is per-instance
         # (not the global `Faker.seed`, which is a footgun under parallelism).
         # Convention: 8-byte big-endian seed -> uint64. seed=None stays
         # non-deterministic, preserving the S4 random-by-default contract.
+        #
+        # The seeded instance is constructed FRESH for this batch rather than
+        # reseeding the shared per-locale cache: a shared instance races under
+        # concurrent pool builds (worker A seeds, worker B seeds, worker A
+        # draws from B's state) and interleaved draws corrupt both pools.
+        # `Faker.seed_instance` detaches the instance onto its own
+        # `random.Random`, so a fresh instance seeded with the same value
+        # yields the same sequence as a reseeded shared one; output bytes are
+        # unchanged. Mirrors the MimesisAdapter seeded-path pattern
+        # (fresh `Generic(locale, seed=...)` per seeded batch).
         if spec.seed is not None:
-            self._faker(spec.locale).seed_instance(int.from_bytes(spec.seed, "big"))
+            fake = faker_module.Faker(spec.locale or self._default_locale)
+            fake.seed_instance(int.from_bytes(spec.seed, "big"))
+            return [self._faker_call(provider, spec, fake) for _ in range(count)]
         return [self._faker_call(provider, spec) for _ in range(count)]
 
     def capability_matrix(self, provider: str) -> CapabilityMatrix:
