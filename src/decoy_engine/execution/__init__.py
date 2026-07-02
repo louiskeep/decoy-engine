@@ -46,6 +46,7 @@ from decoy_engine.execution._pandas_adapter import (
     get_default_executor,
 )
 from decoy_engine.execution._pipeline import classify_table_kinds, run_pipeline
+from decoy_engine.execution._planner import EXECUTION_MODES, ExecutionPlan, classify_job
 from decoy_engine.execution._row_errors import RowError, RowErrorRecord
 from decoy_engine.execution._runner import WorkNode, build_work_list, order_work
 from decoy_engine.execution._substrate import (
@@ -62,10 +63,12 @@ from decoy_engine.execution.polars import PolarsExecutionAdapter
 __all__ = [
     "CHUNK_CONDITIONAL_STRATEGIES",
     "CHUNK_SAFE_STRATEGIES",
+    "EXECUTION_MODES",
     "VALID_SUBSTRATES",
     "ExecutionAdapter",
     "ExecutionError",
     "ExecutionEvent",
+    "ExecutionPlan",
     "ExecutionResult",
     "PandasExecutionAdapter",
     "ParquetTransactionalSink",
@@ -79,6 +82,7 @@ __all__ = [
     "WorkNode",
     "build_work_list",
     "check_chunked_compatibility",
+    "classify_job",
     "classify_table_kinds",
     "get_default_executor",
     "order_work",

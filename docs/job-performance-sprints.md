@@ -155,6 +155,16 @@ now-discarded checkpoint). Then measurement and broader gate coverage.
 
 ### Sprint P2: Execution-Mode Planner Shell
 
+**Status:** Built on `feat/engine-efficiencies` as an observe-only surface:
+`classify_job` + frozen `ExecutionPlan` (`execution/_planner.py`), stamped
+under `quality_metrics["execution_plan"]` via
+`run_pipeline(..., explain_plan=True)` (default off; default runs stamp
+nothing and stay byte-identical). Routing is unchanged; the future
+planner-driven routing flag (`PLANNER_ROUTING_ENABLED`) is a documented
+no-op constant. Because the FK stack is not on this branch, an FK job is
+classified as a relationship-route candidate with an explicit DEFERRED
+reason instead of a pretended sequential-vs-out-of-core evaluation.
+
 **Target complete:** after P1; before changing any relationship internals.
 
 **Deliverables**

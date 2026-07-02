@@ -230,6 +230,7 @@ def run_pipeline(
     fpe_chunk_count: int = _FPE_CHUNK_COUNT_DEFAULT,
     max_workers: int = _MAX_WORKERS_DEFAULT,
     fallback_to_pandas: bool = _FALLBACK_TO_PANDAS_DEFAULT,
+    explain_plan: bool = False,
 ) -> ExecutionResult:
     """Execute a mixed mask + generate config end-to-end.
 
@@ -305,6 +306,17 @@ def run_pipeline(
     ``quality_metrics["execution_adapter"]`` so a job's performance mode
     is reproducible from its manifest; the all-default path stamps
     nothing, keeping golden fixtures byte-identical.
+
+    `explain_plan` (observe-only planner surfacing): when True, the
+    execution-mode planner (`classify_job`) classifies the job into one
+    of the five execution modes and the classification (chosen mode +
+    per-rejected-mode reasons) is stamped under
+    ``quality_metrics["execution_plan"]``. The planner NEVER changes
+    routing: execution takes exactly the same adapter path either way
+    (planner-driven routing sits behind the separate
+    ``_planner.PLANNER_ROUTING_ENABLED`` seam, hard False for now).
+    Default False stamps nothing and does no classification work, so the
+    default route stays byte-identical.
     """
     from decoy_engine.execution._substrate import resolve_substrate, select_execution_adapter
     from decoy_engine.generation.synthesize import generate_tables
@@ -560,6 +572,26 @@ def run_pipeline(
     # positionally against `sources` and must see the UNFILTERED outputs,
     # or row parity breaks and every subsequent index misattributes).
     mask_row_errors: tuple[Any, ...] = mask_result.row_errors if has_mask_table else ()
+
+    # P2 observe-only planner: classify the job and stamp the decision.
+    # Behind the default-off flag so the default path does zero planner
+    # work and stays byte-identical; the classification never routes
+    # (routing sits behind _planner.PLANNER_ROUTING_ENABLED, hard False).
+    if explain_plan:
+        from decoy_engine.execution._planner import classify_job
+
+        execution_plan = classify_job(
+            config,
+            plan=plan,
+            registry=resolved_registry,
+            relationship_graph=graph,
+            substrate=resolved_substrate,
+        )
+        quality_metrics["execution_plan"] = {
+            "mode": execution_plan.mode,
+            "reason": execution_plan.reason,
+            "rejections": dict(execution_plan.rejections),
+        }
 
     # SP-05 (2026-06-27): job-level validator framework (P5.INFRA.4).
     # Runs AFTER all column passes complete, on the UNFILTERED outputs
