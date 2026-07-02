@@ -9,6 +9,28 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (S3 engine-efficiencies x S2 routing reconciliation, 2026-07-06)
+
+Landed `feat/engine-efficiencies` (P0-P5 below) onto the integration branch
+alongside the already-merged S2 FK-sequential routing. The two routing
+layers compose in a fixed order inside `run_pipeline`, now split into
+`execution/_pipeline_routing.py` to hold the 600-LOC orchestration cap:
+S2's relationship routing (sequential vs. full_frame) decides first; S3's
+auto-chunk routing (chunked vs. full_frame) only applies on jobs that did
+not take the sequential early return, and independently excludes any
+relationship-bearing job via the planner's own FK-edge gate, so the two
+layers never overlap. Two silent-knob-ignoring gaps were closed as part of
+the reconciliation: (1) an explicit non-`"pandas"` `substrate` (or
+`DECOY_SUBSTRATE=polars`) now disqualifies sequential eligibility --
+falling through to full_frame so `select_execution_adapter` is what
+actually honors the request (previously the sequential path silently
+always ran pandas regardless of a caller's `substrate="polars"` ask); (2)
+`fpe_chunk_count` is now threaded into the sequential route's
+`PandasExecutionAdapter` (previously silently reverted to its class
+default). `explain_plan=True` also now surfaces a classification on the
+sequential route (previously it silently stamped nothing for exactly the
+relationship-route-deferred jobs where that surface is most informative).
+
 ### Changed (S2 FK-sequential default routing in run_pipeline, 2026-07-05)
 
 `run_pipeline` now routes relationship-bearing pure-mask jobs (those with
@@ -397,6 +419,93 @@ assertions, dbt relationship/aggregation tests, and the Spark
   compose in, but that path is not built here. A `decoy subset` CLI (SS6)
   and a platform UI (SS7) are follow-ons in other repos, not shipped in this
   engine sprint.
+
+### Added (engine-efficiencies P0-P5, 2026-07-01)
+
+Cross-cutting job-performance work on `feat/engine-efficiencies`
+(`docs/job-performance-sprints.md`). Scope is `run_pipeline` mask-kind
+execution only; the FK memory-scaling and out-of-core stacks live on their
+own branches and are not part of this batch.
+
+- **`run_pipeline` adapter-selection routing** (P1/P4,
+  `src/decoy_engine/execution/_pipeline.py`,
+  `src/decoy_engine/execution/_substrate.py`). Mask-kind work now routes
+  through `select_execution_adapter()` at the public entrypoint via four new
+  keyword-only knobs: `substrate` (default `"pandas"`; `"polars"` opts a
+  scalar no-FK job into the Polars-native route, FK/composite work still
+  falls back to the pandas oracle; `None` defers to the `DECOY_SUBSTRATE`
+  env var), `fpe_chunk_count` (default 4), `max_workers` (default 4,
+  polars-adapter only), and `fallback_to_pandas` (default `True`,
+  polars-adapter only). The default call with no knobs supplied is
+  byte-identical to the pre-P1 hardcoded pandas path. All four knobs are
+  validated fail-closed before any profiling or plan compilation: an unknown
+  substrate raises `ExecutionError(code="invalid_substrate")`, a bad count or
+  bool knob raises `code="invalid_execution_knob"`. `require_bool` and
+  `require_positive_int` are now public in `execution/_substrate.py`. When
+  any knob is non-default, the resolved adapter identity and every knob
+  value are stamped under `quality_metrics["execution_adapter"]`; the
+  all-default path stamps nothing, so golden and compat-corpus fixtures stay
+  byte-identical.
+
+- **Auto-chunk routing for eligible single-table mask jobs** (P3,
+  `src/decoy_engine/execution/_pipeline.py`,
+  `src/decoy_engine/execution/_chunked.py`). `run_pipeline` gained
+  `auto_chunk` (default `True`), `chunk_size_rows` (default 50,000), and
+  `auto_chunk_threshold_rows` (default 100,000). When `auto_chunk` is on and
+  the job is a single mask table with only chunk-safe value-keyed scalar
+  strategies, no FK edges, no generate tables, pandas substrate, and a
+  source at or above the threshold, the mask stage streams through
+  `run_mask_pipeline_chunked` in `chunk_size_rows`-row slices instead of one
+  full-frame adapter call. This is a memory win only, never a semantic
+  change: output is byte-identical to the full-frame path, enforced by
+  fail-closed eligibility (date_shift requires an explicit `date_format`,
+  bucketize requires a null-free numeric source, `when`-bearing/composite/
+  join-group-fpe/generate/relationship/non-pandas/below-threshold jobs all
+  fall back to full-frame) plus a strict chunk concatenation that raises
+  `code="chunked_schema_mismatch"` on any per-chunk schema disagreement
+  instead of silently promoting it away. A routed run, or any run with a
+  non-default auto-chunk knob, stamps `quality_metrics["auto_chunk"]`; the
+  all-default non-routed path stamps nothing. `auto_chunk=False` is the kill
+  switch back to the full-frame path.
+
+- **Observe-only execution-mode planner** (P2,
+  `src/decoy_engine/execution/_planner.py`: `classify_job`,
+  `ExecutionPlan`). Classifies a job into one of `polars_native`, `chunked`,
+  `sequential_relationship`, `out_of_core_relationship`, or
+  `pandas_fallback`, recording why every faster mode was rejected (the
+  `sequential_relationship`/`out_of_core_relationship` modes can only be
+  detected as FK-edge candidates on this branch; the FK stack that would
+  resolve them lives elsewhere). Surfaced via `run_pipeline(explain_plan=True)`
+  into `quality_metrics["execution_plan"]`; default `False` stamps nothing.
+  The planner does not route execution on its own; the one exception is the
+  `chunked` mode, which `run_pipeline`'s `auto_chunk` knob routes as
+  described above, using the same classification the explain surface
+  reports so the two can never disagree.
+
+- **Opt-in job-level performance gates** (P0,
+  `tests/perf/test_job_performance_gates.py`). Benchmarks scalar, faker-
+  heavy, FPE-heavy, and text-redaction-heavy jobs plus the P3 auto-chunk
+  memory route at the `run_pipeline` public entrypoint, each timing
+  assertion paired with a determinism (byte-identical output) and masking-
+  sanity check. Test-only; gated behind `pytest.mark.benchmark`, which is
+  excluded from the default test run (`addopts = "-m 'not benchmark and
+  not testflight'"`).
+
+- **Faker/provider pool parallel-readiness** (P5,
+  `src/decoy_engine/providers_v2/_faker_adapter.py`,
+  `src/decoy_engine/generation/synthesize.py`,
+  `src/decoy_engine/generation/pool/_cache.py`). Removes the shared
+  mutable Faker/RNG state and the lock that serialized it: seeded batch
+  builds now construct a fresh `Faker` instance per call
+  (`_faker_adapter.py`) instead of reseeding a shared one, and the
+  no-locale default instance used by unseeded generation is cached
+  thread-local rather than process-global (`synthesize.py`), removing the
+  `_FAKER_CALL_LOCK` critical section. `PoolCache.get`/`put`/`stats`/`clear`
+  are now internally locked so concurrent pool builds can share one cache
+  without corrupting LRU order or the bytes-accounting total; the lock
+  wraps only the cache bookkeeping, never a pool build. Output is unchanged:
+  a fresh Faker instance seeded the same way produces the same sequence as
+  a reseeded shared one, so existing faker output snapshots are unaffected.
 
 ### Added (SP-10 derived strategy, 2026-06-28)
 
