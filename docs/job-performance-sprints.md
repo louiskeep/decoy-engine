@@ -40,9 +40,10 @@ The performance gap is mostly architecture and planner selection, not absence
 of tools:
 
 - Routing `run_pipeline` mask-kind work through the selected execution adapter
-  (P1) lets scalar mask jobs honor `DECOY_SUBSTRATE=polars` at the public
-  entrypoint. FK and composite work still falls back where Polars cannot run it
-  natively.
+  (P1) lets scalar mask jobs take the Polars-native route at the public
+  entrypoint via an explicit `substrate` (or `substrate=None` to honor
+  `DECOY_SUBSTRATE`); the default stays pandas for byte-identical output. FK and
+  composite work still falls back where Polars cannot run it natively.
 - Work-node dispatch is serial.
 - FK-heavy jobs still depend on relationship memory-scaling work for the large
   wins.

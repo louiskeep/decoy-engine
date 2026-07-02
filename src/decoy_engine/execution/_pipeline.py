@@ -28,9 +28,10 @@ Sequencing contract (PO directive 2026-06-01 + FC-1 spec):
      reads. A mask table whose FK parent is a generate table reads the
      generate output as if it were a source: the generate-side value
      IS the FK pool for the mask side.
-  7. Call `PandasExecutionAdapter.run(plan, merged_sources, ...)` to
-     mask the mask-kind tables. The plan only carries mask-table seeds;
-     generate tables are not re-traversed.
+  7. Call the selected execution adapter (`select_execution_adapter`;
+     default `substrate="pandas"`) to mask the mask-kind tables. The
+     plan only carries mask-table seeds; generate tables are not
+     re-traversed.
   8. Build one `ExecutionResult` whose `outputs` covers every output
      table (generate + mask) and whose `table_kinds` dict carries the
      per-table kind for the manifest stamping at F3 / platform side.
@@ -52,7 +53,10 @@ Out of scope for FC-1 (deferred to V2.1):
   instead of a hung job at runtime.
 - Cross-substrate mixed mode. Polars falls back to pandas for FK paths
   (`_polars_adapter.py:121`); the pandas adapter is the canonical
-  mixed-mode adapter for V2 ship.
+  mixed-mode adapter for V2 ship. `run_pipeline` therefore defaults its
+  `substrate` knob to `"pandas"` rather than inheriting the S13
+  DECOY_SUBSTRATE default flip; polars is an explicit per-call opt-in
+  (`substrate="polars"` or `substrate=None` to honor the env var).
 - Per-node preview on mixed configs. Covered by F5 at the platform
   layer (`run_v2_pipeline_preview`).
 """
@@ -76,6 +80,17 @@ if TYPE_CHECKING:
 
 
 __all__ = ["classify_table_kinds", "run_pipeline"]
+
+# run_pipeline's execution-knob defaults. `substrate` pins "pandas" (NOT
+# None): resolve_substrate(None) follows DECOY_SUBSTRATE and its S13
+# default flip to polars, and run_pipeline's default route must stay
+# byte-identical to the original hardcoded pandas path. The signature
+# defaults and the non-default metadata stamp both read from here so
+# they cannot drift.
+_SUBSTRATE_DEFAULT = "pandas"
+_FPE_CHUNK_COUNT_DEFAULT = 4
+_MAX_WORKERS_DEFAULT = 4
+_FALLBACK_TO_PANDAS_DEFAULT = True
 
 
 def _has_cross_table_fk_cycle(graph: RelationshipGraph) -> bool:
@@ -211,6 +226,10 @@ def run_pipeline(
     execution_mode: Literal["auto", "sequential", "full_frame"] = "auto",
     sink: TransactionalSink | None = None,
     source_loader: Callable[[str], pa.Table] | None = None,
+    substrate: str | None = _SUBSTRATE_DEFAULT,
+    fpe_chunk_count: int = _FPE_CHUNK_COUNT_DEFAULT,
+    max_workers: int = _MAX_WORKERS_DEFAULT,
+    fallback_to_pandas: bool = _FALLBACK_TO_PANDAS_DEFAULT,
 ) -> ExecutionResult:
     """Execute a mixed mask + generate config end-to-end.
 
@@ -240,7 +259,7 @@ def run_pipeline(
     bearing PURE-MASK job (no generate tables, no validators, no
     fidelity_report, no vault_writer -- see `_sequential_eligible`) is, by
     default (`execution_mode="auto"`), routed through the bounded-memory
-    `run_sequential` path instead of the full-frame `PandasExecutionAdapter.run`
+    `run_sequential` path instead of the full-frame adapter-selected `run`
     path. `execution_mode="full_frame"` always forces full-frame (even when
     eligible); `execution_mode="sequential"` forces sequential and raises
     `ConfigError` if the job is not eligible (fail-closed: never silently
@@ -257,7 +276,37 @@ def run_pipeline(
     `sink` is explicitly passed. Non-FK / mixed / validator jobs are
     byte-identical to today: they take the untouched full-frame branch; the
     only addition is one telemetry key under `quality_metrics["execution"]`.
+    The sequential path is pandas-only by construction (`run_sequential`
+    is typed to `PandasExecutionAdapter`, matching the existing FK-paths-
+    fall-back-to-pandas contract), so it always constructs its own
+    `PandasExecutionAdapter()` regardless of the `substrate` knob below;
+    `substrate` only ever affects the full-frame mask branch.
+
+    Execution-substrate knobs (mask-kind tables only; generate tables
+    always run the synthesize path; the sequential route above is
+    unaffected -- pandas-only regardless of this knob):
+
+    - `substrate`: which execution adapter masks the mask-kind tables.
+      Default `"pandas"` keeps the original hardcoded pandas route
+      byte-identical; `"polars"` opts a scalar no-FK job into the
+      polars-native route (FK/composite work still falls back to the
+      pandas oracle exactly as `PolarsExecutionAdapter` dictates);
+      `None` defers to the `DECOY_SUBSTRATE` env contract.
+    - `fpe_chunk_count`: FPE per-value chunk parallelism (both adapters).
+    - `max_workers` / `fallback_to_pandas`: polars-adapter knobs, passed
+      through untouched; the pandas adapter ignores them.
+
+    All four forward to `select_execution_adapter`, which validates them
+    up front: an unknown substrate raises `ExecutionError`
+    (``code='invalid_substrate'``), a non-positive-int count knob raises
+    ``code='invalid_execution_knob'``, both BEFORE any profiling or plan
+    compilation. When any knob is non-default the selected adapter
+    identity and every knob value are stamped under
+    ``quality_metrics["execution_adapter"]`` so a job's performance mode
+    is reproducible from its manifest; the all-default path stamps
+    nothing, keeping golden fixtures byte-identical.
     """
+    from decoy_engine.execution._substrate import resolve_substrate, select_execution_adapter
     from decoy_engine.generation.synthesize import generate_tables
     from decoy_engine.plan import compile_plan
     from decoy_engine.profile import profile_source
@@ -267,6 +316,19 @@ def run_pipeline(
         build_namespace_registry,
         build_relationship_graph,
         check_orphan_fk_policy_completeness,
+    )
+
+    # Adapter selection runs up front, before any profiling or plan
+    # compilation, so an invalid substrate or count knob fails at submit
+    # time with a typed error instead of after the expensive stages.
+    # Construction is cheap and side-effect free for both adapters, so
+    # pure-generate jobs (which never use it) lose nothing.
+    resolved_substrate = resolve_substrate(substrate)
+    adapter = select_execution_adapter(
+        substrate=resolved_substrate,
+        fpe_chunk_count=fpe_chunk_count,
+        max_workers=max_workers,
+        fallback_to_pandas=fallback_to_pandas,
     )
 
     resolved_registry = registry if registry is not None else get_default_registry()
@@ -411,7 +473,6 @@ def run_pipeline(
         merged_sources.update(caller_sources)
         merged_sources.update(generate_outputs)
 
-        adapter = PandasExecutionAdapter()
         mask_result = adapter.run(
             plan,
             merged_sources,
@@ -419,14 +480,35 @@ def run_pipeline(
             relationship_graph=graph,
             namespace_registry=ns_registry,
         )
-        # The mask adapter returns `outputs` only for mask-kind tables (its
-        # work-list iterates over `plan.tables`); generate-kind table
-        # entries in `merged_sources` are passed-through input, not output.
+        # Adapters echo every source frame in `outputs` (generate-kind
+        # entries in `merged_sources` come back round-tripped through the
+        # substrate). Keeping them all preserves the established stitch
+        # contract below, where mask_result wins ties over the raw
+        # generate outputs.
         mask_outputs = dict(mask_result.outputs)
         mask_timings = mask_result.timings
         mask_conversion_ms = mask_result.boundary_conversion_ms
         mask_warnings = mask_result.warnings
-        mask_quality_metrics = mask_result.quality_metrics
+        mask_quality_metrics = dict(mask_result.quality_metrics)
+        # Performance-mode reproducibility: any non-default knob stamps
+        # the selected adapter identity + every knob value into the job
+        # metadata. The all-default path stamps nothing so golden and
+        # compat-corpus fixtures stay byte-identical.
+        if (substrate, fpe_chunk_count, max_workers, fallback_to_pandas) != (
+            _SUBSTRATE_DEFAULT,
+            _FPE_CHUNK_COUNT_DEFAULT,
+            _MAX_WORKERS_DEFAULT,
+            _FALLBACK_TO_PANDAS_DEFAULT,
+        ):
+            mask_quality_metrics["execution_adapter"] = {
+                "adapter_name": adapter.adapter_name,
+                "adapter_version": adapter.adapter_version,
+                "requested_substrate": substrate,
+                "resolved_substrate": resolved_substrate,
+                "fpe_chunk_count": fpe_chunk_count,
+                "max_workers": max_workers,
+                "fallback_to_pandas": fallback_to_pandas,
+            }
         # Token vault (deferred follow-up 1): collect source->masked pairs
         # for vault: true columns. Opt-in via the kwarg; the caller writes
         # the artifact.
