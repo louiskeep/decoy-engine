@@ -266,12 +266,22 @@ class TestModeClassification:
     def test_chunk_safe_single_table_on_pandas_is_chunked(self, tmp_path, monkeypatch):
         """With the substrate pinned pandas, polars_native is rejected for
         the substrate pin and the chunk-safe single-table job classifies
-        chunked (P3 will route it; P2 only observes)."""
+        chunked once it clears the P3 size threshold (P3 routes this mode;
+        the threshold knob is lowered so the 2-row fixture qualifies)."""
         cfg, sources = _scalar_chunk_safe_job(tmp_path)
-        block = _explain(cfg, sources, monkeypatch=monkeypatch)
+        block = _explain(cfg, sources, monkeypatch=monkeypatch, auto_chunk_threshold_rows=1)
         assert block["mode"] == "chunked"
         assert set(block["rejections"]) == {"polars_native"}
         assert "pandas" in block["rejections"]["polars_native"]
+
+    def test_chunk_safe_single_table_below_threshold_falls_back(self, tmp_path, monkeypatch):
+        """P3 size gate: the same chunk-admissible job under the DEFAULT
+        threshold is too small to be worth streaming and falls back, with
+        the threshold named in the chunked rejection."""
+        cfg, sources = _scalar_chunk_safe_job(tmp_path)
+        block = _explain(cfg, sources, monkeypatch=monkeypatch)
+        assert block["mode"] == "pandas_fallback"
+        assert "threshold" in block["rejections"]["chunked"]
 
     def test_non_chunk_safe_strategy_rejects_chunked_naming_strategy(self, tmp_path, monkeypatch):
         cfg, sources = _shuffle_job(tmp_path)
@@ -391,17 +401,25 @@ class TestObserveOnly:
         assert block["mode"] in EXECUTION_MODES
 
     def test_default_run_stamps_nothing_and_output_is_byte_identical(self, tmp_path, monkeypatch):
-        """The P1 golden holds: a default run carries quality_metrics == {}
-        and its output bytes match the explain run exactly (the planner
-        only ever adds the metrics block, never touches data)."""
+        """The P1 golden holds (extended by S2): a default run carries only
+        S2's always-on `execution` honesty-telemetry block -- no
+        `execution_plan` -- and its output bytes match the explain run
+        exactly (the planner only ever adds the metrics block, never
+        touches data). S2 landed on the integration branch ahead of this
+        P1 test and unconditionally stamps `quality_metrics["execution"]`
+        on every full_frame run, so the original verbatim `== {}` golden
+        no longer holds; the load-bearing claim -- explain_plan is the
+        ONLY thing that adds `execution_plan`, and never touches output
+        bytes -- still does.
+        """
         monkeypatch.delenv("DECOY_SUBSTRATE", raising=False)
         cfg, sources = _scalar_chunk_safe_job(tmp_path)
         default_result = run_pipeline(cfg, sources=sources, engine_version=_ENGINE_VERSION)
         explain_result = run_pipeline(
             cfg, sources=sources, engine_version=_ENGINE_VERSION, explain_plan=True
         )
-        assert default_result.quality_metrics == {}
-        assert set(explain_result.quality_metrics) == {"execution_plan"}
+        assert set(default_result.quality_metrics) == {"execution"}
+        assert set(explain_result.quality_metrics) == {"execution", "execution_plan"}
         assert default_result.outputs["customers"].equals(explain_result.outputs["customers"])
 
     def test_explain_plan_never_changes_routing(self, tmp_path, monkeypatch):

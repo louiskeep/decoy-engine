@@ -21,18 +21,23 @@ Sequencing contract (PO directive 2026-06-01 + FC-1 spec):
      + `build_relationship_graph` run as usual; the FK graph spans both
      kinds (a generate table can be referenced by a mask child and
      vice versa post-FC-1).
-  5. Split `tables:` into generate-kind (have `generate_columns`) and
+  5. Decide the execution route (`_pipeline_routing.decide_execution_route`):
+     a relationship-bearing pure-mask job takes the bounded-memory
+     sequential path (early return); everything else continues below.
+  6. Split `tables:` into generate-kind (have `generate_columns`) and
      mask-kind (have `columns`). Call `generate_tables(config, ...)`
      FIRST so generate outputs exist as Arrow tables.
-  6. Merge generate outputs into the `sources` dict the mask adapter
+  7. Merge generate outputs into the `sources` dict the mask adapter
      reads. A mask table whose FK parent is a generate table reads the
      generate output as if it were a source: the generate-side value
      IS the FK pool for the mask side.
-  7. Call the selected execution adapter (`select_execution_adapter`;
-     default `substrate="pandas"`) to mask the mask-kind tables. The
+  8. Call the selected execution adapter (`select_execution_adapter`;
+     default `substrate="pandas"`) to mask the mask-kind tables, unless
+     the job auto-routes to the chunked entrypoint
+     (`_pipeline_routing.decide_chunk_route` / `run_mask_chunked`). The
      plan only carries mask-table seeds; generate tables are not
      re-traversed.
-  8. Build one `ExecutionResult` whose `outputs` covers every output
+  9. Build one `ExecutionResult` whose `outputs` covers every output
      table (generate + mask) and whose `table_kinds` dict carries the
      per-table kind for the manifest stamping at F3 / platform side.
 
@@ -59,6 +64,11 @@ Out of scope for FC-1 (deferred to V2.1):
   (`substrate="polars"` or `substrate=None` to honor the env var).
 - Per-node preview on mixed configs. Covered by F5 at the platform
   layer (`run_v2_pipeline_preview`).
+
+Execution routing (S2 relationship routing + S3 auto-chunk routing) is
+documented in full on `_pipeline_routing` -- that module owns the
+decision logic; this module only calls it in the fixed order the module
+docstring describes.
 """
 
 from __future__ import annotations
@@ -68,15 +78,13 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import pyarrow as pa
 
-from decoy_engine.errors import ConfigError
+from decoy_engine.execution import _pipeline_routing
 from decoy_engine.execution._adapter import ExecutionResult
-from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
-from decoy_engine.execution._sequential import run_sequential
+from decoy_engine.execution._planner import AUTO_CHUNK_THRESHOLD_ROWS_DEFAULT
 
 if TYPE_CHECKING:
     from decoy_engine.execution._transactional_sink import TransactionalSink
     from decoy_engine.providers_v2 import ProviderRegistry
-    from decoy_engine.relationships import RelationshipGraph
 
 
 __all__ = ["classify_table_kinds", "run_pipeline"]
@@ -91,101 +99,20 @@ _SUBSTRATE_DEFAULT = "pandas"
 _FPE_CHUNK_COUNT_DEFAULT = 4
 _MAX_WORKERS_DEFAULT = 4
 _FALLBACK_TO_PANDAS_DEFAULT = True
-
-
-def _has_cross_table_fk_cycle(graph: RelationshipGraph) -> bool:
-    """True if the table-level FK graph has a cycle across DISTINCT tables.
-
-    Sequential masking orders whole tables (table_topo_order), so a
-    cross-table cycle cannot be sequenced; self-edges (self-ref FK) mask
-    within one table and are not a table-level cycle (S2 remediation guide
-    r3 section 6).
-    """
-    from collections import defaultdict
-
-    succ: dict[str, set[str]] = defaultdict(set)
-    for edge in graph.edges:
-        if edge.parent_table != edge.child_table:
-            succ[edge.parent_table].add(edge.child_table)
-    WHITE, GRAY, BLACK = 0, 1, 2
-    color: dict[str, int] = {}
-
-    def visit(node: str) -> bool:
-        color[node] = GRAY
-        for nxt in succ.get(node, ()):  # DFS back-edge = cycle
-            c = color.get(nxt, WHITE)
-            if c == GRAY or (c == WHITE and visit(nxt)):
-                return True
-        color[node] = BLACK
-        return False
-
-    return any(color.get(n, WHITE) == WHITE and visit(n) for n in list(succ))
-
-
-def _sequential_eligible(
-    profile: Any,
-    *,
-    has_generate_table: bool,
-    validators: list[Any],
-    fidelity_report: bool,
-    vault_writer: Any,
-) -> tuple[bool, str]:
-    """Decide whether a mask job may take the bounded-memory sequential path.
-
-    Returns (eligible, reason). `reason` is a stable telemetry token; when
-    eligible it is "pure_mask_fk", otherwise it names the disqualifier.
-
-    The sequential path streams/evicts table by table, so any run_pipeline
-    post-mask step that needs every masked output resident at once
-    disqualifies it: job-level validators (compare positionally against all
-    sources), the fidelity report, and the token-vault collection. Pure-generate
-    and mixed generate+mask jobs are disqualified because generate tables are
-    not masked table-by-table through this path.
-    """
-    if not profile.relationships:
-        return False, "no_relationships"
-    if has_generate_table:
-        return False, "generate_plus_mask"
-    if validators:
-        return False, "validators_present"
-    if fidelity_report:
-        return False, "fidelity_report_requested"
-    if vault_writer is not None:
-        return False, "vault_writer_requested"
-    return True, "pure_mask_fk"
-
-
-def _execution_telemetry(
-    *, route: str, route_reason: str, sink: Any, source_loader: Any, sources_resident: bool
-) -> dict[str, Any]:
-    """Per-config execution memory telemetry. Honest by construction: it never
-    claims bounded input residency unless the caller's Arrow sources are
-    actually NOT resident (a lazy source_loader supplied AND no non-empty
-    `sources` dict), and never claims streamed outputs unless a sink was
-    supplied.
-
-    MEDIUM (S2 remediation guide section 8): `run_pipeline` always builds
-    `caller_sources = dict(sources)` (L236-ish), so a non-empty `sources` dict
-    means the inputs ARE resident in memory even when a lazy `source_loader`
-    is ALSO supplied. `sources_resident` carries that fact in; bounded input
-    residency is reported ONLY for the one configuration that actually bounds
-    inputs: a lazy loader supplied AND `sources` empty/omitted.
-    """
-    if route == "full_frame":
-        return {
-            "execution_mode": "full_frame",
-            "route_reason": route_reason,
-            "eviction": "none",
-            "outputs_streamed": False,
-            "loaded_fully_in_memory": True,
-        }
-    return {
-        "execution_mode": "sequential",
-        "route_reason": route_reason,
-        "eviction": "per_table",
-        "outputs_streamed": sink is not None,
-        "loaded_fully_in_memory": sources_resident or source_loader is None,
-    }
+# Auto-chunk defaults. Default-ON is safe because identity is enforced
+# twice: the planner's fail-closed gates admit only jobs whose every
+# per-column output is a pure function of (value, config, seed) with all
+# whole-column inputs pinned (date_shift needs an explicit date_format,
+# bucketize a null-free numeric source, `when` predicates never route),
+# and the strict chunk concat refuses to merge chunks whose schemas
+# disagree (a gate miss raises rather than silently promoting); the
+# fixture matrix in tests/unit/execution/test_auto_chunk_routing.py is
+# regression evidence for that contract, not its proof. 50k-row chunks
+# bound the per-chunk pandas working set at negligible per-chunk
+# plan/adapter overhead (P0 showed wall-clock parity at 10k rows).
+_AUTO_CHUNK_DEFAULT = True
+_CHUNK_SIZE_ROWS_DEFAULT = 50_000
+_AUTO_CHUNK_THRESHOLD_DEFAULT = AUTO_CHUNK_THRESHOLD_ROWS_DEFAULT
 
 
 def classify_table_kinds(config: dict[str, Any]) -> dict[str, str]:
@@ -231,6 +158,9 @@ def run_pipeline(
     max_workers: int = _MAX_WORKERS_DEFAULT,
     fallback_to_pandas: bool = _FALLBACK_TO_PANDAS_DEFAULT,
     explain_plan: bool = False,
+    auto_chunk: bool = _AUTO_CHUNK_DEFAULT,
+    chunk_size_rows: int = _CHUNK_SIZE_ROWS_DEFAULT,
+    auto_chunk_threshold_rows: int = _AUTO_CHUNK_THRESHOLD_DEFAULT,
 ) -> ExecutionResult:
     """Execute a mixed mask + generate config end-to-end.
 
@@ -256,36 +186,22 @@ def run_pipeline(
     raw values) are never attached. First slice is mask-kind tables,
     marginal-only (no joint_columns); generate-kind tables are skipped.
 
-    S2 (engine "Finish Open-Ended Surfaces" program) routing: a relationship-
-    bearing PURE-MASK job (no generate tables, no validators, no
-    fidelity_report, no vault_writer -- see `_sequential_eligible`) is, by
-    default (`execution_mode="auto"`), routed through the bounded-memory
-    `run_sequential` path instead of the full-frame adapter-selected `run`
-    path. `execution_mode="full_frame"` always forces full-frame (even when
-    eligible); `execution_mode="sequential"` forces sequential and raises
-    `ConfigError` if the job is not eligible (fail-closed: never silently
-    ignore an explicit request). `execution_mode` is a resource policy of the
-    invocation, not a property of the data transformation, so it is a runtime
-    kwarg (matching `vault_writer` / `fidelity_report` / `now_iso`), never a
-    `config` field -- it must stay out of the profile-hashed, frozen-surface
-    data contract, and sequential vs. full-frame is byte-output-neutral (only
-    peak memory differs). `sink` and `source_loader` are passed straight
-    through to `run_sequential` when the sequential route is taken; every
-    existing caller (which passes neither) gets full-frame (unchanged) or
-    sequential-in-memory (same `result.outputs`, byte-identical, lower pandas
-    peak) -- the empty-`result.outputs` streamed path is only reachable when a
-    `sink` is explicitly passed. Non-FK / mixed / validator jobs are
-    byte-identical to today: they take the untouched full-frame branch; the
-    only addition is one telemetry key under `quality_metrics["execution"]`.
-    The sequential path is pandas-only by construction (`run_sequential`
-    is typed to `PandasExecutionAdapter`, matching the existing FK-paths-
-    fall-back-to-pandas contract), so it always constructs its own
-    `PandasExecutionAdapter()` regardless of the `substrate` knob below;
-    `substrate` only ever affects the full-frame mask branch.
+    Execution routing (`execution_mode`, `sink`, `source_loader`,
+    `auto_chunk`, `chunk_size_rows`, `auto_chunk_threshold_rows`,
+    `explain_plan`) is documented on `_pipeline_routing`, which owns the
+    routing decisions this function calls in a fixed order: relationship
+    routing (sequential vs. full_frame) first, then single-table
+    auto-chunk routing (chunked vs. full_frame). `execution_mode` /
+    `auto_chunk` are resource policies of the invocation, not properties
+    of the data transformation, so they are runtime kwargs (matching
+    `vault_writer` / `fidelity_report` / `now_iso`), never `config`
+    fields -- they must stay out of the profile-hashed, frozen-surface
+    data contract. Both routes are byte-output-neutral versus full_frame
+    (only peak memory / adapter identity differs).
 
     Execution-substrate knobs (mask-kind tables only; generate tables
-    always run the synthesize path; the sequential route above is
-    unaffected -- pandas-only regardless of this knob):
+    always run the synthesize path; the sequential route is pandas-only
+    regardless of this knob -- see `_pipeline_routing`):
 
     - `substrate`: which execution adapter masks the mask-kind tables.
       Default `"pandas"` keeps the original hardcoded pandas route
@@ -306,19 +222,13 @@ def run_pipeline(
     ``quality_metrics["execution_adapter"]`` so a job's performance mode
     is reproducible from its manifest; the all-default path stamps
     nothing, keeping golden fixtures byte-identical.
-
-    `explain_plan` (observe-only planner surfacing): when True, the
-    execution-mode planner (`classify_job`) classifies the job into one
-    of the five execution modes and the classification (chosen mode +
-    per-rejected-mode reasons) is stamped under
-    ``quality_metrics["execution_plan"]``. The planner NEVER changes
-    routing: execution takes exactly the same adapter path either way
-    (planner-driven routing sits behind the separate
-    ``_planner.PLANNER_ROUTING_ENABLED`` seam, hard False for now).
-    Default False stamps nothing and does no classification work, so the
-    default route stays byte-identical.
     """
-    from decoy_engine.execution._substrate import resolve_substrate, select_execution_adapter
+    from decoy_engine.execution._substrate import (
+        require_bool,
+        require_positive_int,
+        resolve_substrate,
+        select_execution_adapter,
+    )
     from decoy_engine.generation.synthesize import generate_tables
     from decoy_engine.plan import compile_plan
     from decoy_engine.profile import profile_source
@@ -342,6 +252,10 @@ def run_pipeline(
         max_workers=max_workers,
         fallback_to_pandas=fallback_to_pandas,
     )
+    # Auto-chunk knobs share the substrate knobs' fail-early contract.
+    require_bool("auto_chunk", auto_chunk)
+    require_positive_int("chunk_size_rows", chunk_size_rows)
+    require_positive_int("auto_chunk_threshold_rows", auto_chunk_threshold_rows)
 
     resolved_registry = registry if registry is not None else get_default_registry()
     caller_sources: dict[str, pa.Table] = dict(sources) if sources else {}
@@ -375,87 +289,60 @@ def run_pipeline(
     else:
         graph = RelationshipGraph(edges=(), ordering=())
 
-    # S2: decide the execution route once, right after the graph is built.
-    eligible, route_reason = _sequential_eligible(
+    # Routing layer 1 (S2): relationship-bearing pure-mask jobs take the
+    # bounded-memory sequential path; this is an early return.
+    route, route_reason = _pipeline_routing.decide_execution_route(
         profile,
         has_generate_table=has_generate_table,
+        has_mask_table=has_mask_table,
         validators=(config.get("validators") or []),
         fidelity_report=fidelity_report,
         vault_writer=vault_writer,
+        execution_mode=execution_mode,
+        graph=graph,
+        resolved_substrate=resolved_substrate,
     )
-    # S2 round 3: a mutual cross-table FK cycle (A -> B -> A) cannot be
-    # ordered by table_topo_order, so `auto` must not route it to
-    # sequential (it ran fine under full_frame before this program; routing
-    # it to sequential is a functional regression, not a leak -- see
-    # docs/backlog/s2-fk-leak-remediation-r3-guide.md section 6). A
-    # self-referencing table (one table, not a cross-table cycle) is NOT
-    # flagged here and still routes normally.
-    cyclic = _has_cross_table_fk_cycle(graph)
-    route: str
-    if execution_mode == "full_frame":
-        route = "full_frame"
-        route_reason = "override_full_frame"
-    elif execution_mode == "sequential":
-        if not eligible:
-            raise ConfigError(
-                f"execution_mode='sequential' requested but the job is not "
-                f"sequential-eligible ({route_reason})."
-            )
-        if cyclic:
-            raise ConfigError(
-                "execution_mode='sequential' requested but the FK graph has a "
-                "cross-table cycle, which the sequential path cannot order; "
-                "use execution_mode='full_frame' or 'auto'."
-            )
-        if not has_mask_table:
-            # NIT (S2 remediation guide section 8): without a mask-kind table
-            # the sequential branch below (`has_mask_table and route ==
-            # "sequential"`) would silently no-op and fall through to
-            # full-frame, ignoring the explicit request. Fail closed instead.
-            raise ConfigError(
-                "execution_mode='sequential' requested but the job has no "
-                "mask-kind table to run through the sequential path."
-            )
-        route = "sequential"
-    else:  # "auto"
-        if eligible and cyclic:
-            route, route_reason = "full_frame", "cross_table_cycle"
-        else:
-            route = "sequential" if eligible else "full_frame"
 
-    # S2 early-return: a relationship-bearing pure-mask job routed to
-    # sequential skips the full-frame block below entirely (adapter.run +
-    # vault + fidelity), the validators block, and the D8 quarantine/
-    # fail-loud block -- `run_sequential` (Part 2) is the sole owner of
-    # row-error enforcement on this route, so there is no double-processing.
+    # Routing layer 2 (S3 auto-chunk) classification. Computed BEFORE the
+    # layer-1 early return (not just on the full_frame side) so
+    # `explain_plan=True` surfaces a classification for EVERY route,
+    # including relationship-route-deferred FK jobs that go sequential --
+    # `classify_job` is a static plan/config read (no per-row execution
+    # work), so computing it here costs nothing beyond that read even when
+    # `route_chunked` ends up unused (the sequential branch below ignores
+    # it; only the full_frame continuation further down actually consults
+    # it for real routing). See `_pipeline_routing` module docstring for
+    # the full two-layer composition.
+    execution_plan_decision, route_chunked = _pipeline_routing.decide_chunk_route(
+        config,
+        plan=plan,
+        registry=resolved_registry,
+        graph=graph,
+        substrate=resolved_substrate,
+        caller_sources=caller_sources,
+        auto_chunk_threshold_rows=auto_chunk_threshold_rows,
+        explain_plan=explain_plan,
+        auto_chunk=auto_chunk,
+        has_mask_table=has_mask_table,
+    )
+
     if has_mask_table and route == "sequential":
         loader = source_loader if source_loader is not None else (lambda t: caller_sources[t])
-        seq_result = run_sequential(
-            PandasExecutionAdapter(),
-            plan,
-            loader,
+        return _pipeline_routing.run_sequential_route(
+            plan=plan,
+            loader=loader,
             registry=resolved_registry,
-            relationship_graph=graph,
+            graph=graph,
             namespace_registry=ns_registry,
             sink=sink,
             quarantine_config=config.get("quarantine"),
-        )
-        seq_quality_metrics = dict(seq_result.quality_metrics)
-        seq_quality_metrics["execution"] = _execution_telemetry(
-            route="sequential",
             route_reason=route_reason,
-            sink=sink,
             source_loader=source_loader,
             sources_resident=bool(caller_sources),
-        )
-        return ExecutionResult(
-            outputs=dict(seq_result.outputs),  # {} when a sink was provided
-            timings=seq_result.timings,
-            boundary_conversion_ms=seq_result.boundary_conversion_ms,
-            warnings=seq_result.warnings,
-            quality_metrics=seq_quality_metrics,
+            fpe_chunk_count=fpe_chunk_count,
             table_kinds=table_kinds,
-            row_errors=seq_result.row_errors,
+            explain_plan=explain_plan,
+            execution_plan_decision=execution_plan_decision,
         )
 
     # Step 1: generate-kind tables. The synthesize entry filters by
@@ -476,6 +363,12 @@ def run_pipeline(
     mask_warnings: tuple = ()
     mask_quality_metrics: dict[str, Any] = {}
     fidelity_reports: dict[str, Any] = {}
+    # Honesty pack (D7/D8): populated from `mask_result.row_errors` on the
+    # full-frame branch below. The chunked branch leaves this `()` by
+    # construction -- see `_pipeline_routing.run_mask_chunked`'s docstring:
+    # a routed job that reaches this point is never eligible for row-error
+    # quarantine (same policy the manual chunked entrypoint enforces).
+    mask_row_errors: tuple[Any, ...] = ()
     if has_mask_table:
         # Merge generate outputs into the sources dict the mask adapter
         # reads. A mask table whose FK parent is a generate table reads the
@@ -485,23 +378,50 @@ def run_pipeline(
         merged_sources.update(caller_sources)
         merged_sources.update(generate_outputs)
 
-        mask_result = adapter.run(
-            plan,
-            merged_sources,
-            registry=resolved_registry,
-            relationship_graph=graph,
-            namespace_registry=ns_registry,
-        )
-        # Adapters echo every source frame in `outputs` (generate-kind
-        # entries in `merged_sources` come back round-tripped through the
-        # substrate). Keeping them all preserves the established stitch
-        # contract below, where mask_result wins ties over the raw
-        # generate outputs.
-        mask_outputs = dict(mask_result.outputs)
-        mask_timings = mask_result.timings
-        mask_conversion_ms = mask_result.boundary_conversion_ms
-        mask_warnings = mask_result.warnings
-        mask_quality_metrics = dict(mask_result.quality_metrics)
+        if route_chunked:
+            # The eligible shape is exactly one mask table with no generate
+            # tables, so merged_sources holds only that table's frame; the
+            # planner's runtime gates already rejected anything else.
+            mask_table_name = next(name for name, kind in table_kinds.items() if kind == "mask")
+            mask_outputs, mask_timings, mask_conversion_ms, mask_warnings = (
+                _pipeline_routing.run_mask_chunked(
+                    config,
+                    merged_sources[mask_table_name],
+                    table=mask_table_name,
+                    engine_version=engine_version,
+                    registry=resolved_registry,
+                    adapter=adapter,
+                    vault_writer=vault_writer,
+                    chunk_size_rows=chunk_size_rows,
+                )
+            )
+        else:
+            mask_result = adapter.run(
+                plan,
+                merged_sources,
+                registry=resolved_registry,
+                relationship_graph=graph,
+                namespace_registry=ns_registry,
+            )
+            # Adapters echo every source frame in `outputs` (generate-kind
+            # entries in `merged_sources` come back round-tripped through the
+            # substrate). Keeping them all preserves the established stitch
+            # contract below, where mask_result wins ties over the raw
+            # generate outputs.
+            mask_outputs = dict(mask_result.outputs)
+            mask_timings = mask_result.timings
+            mask_conversion_ms = mask_result.boundary_conversion_ms
+            mask_warnings = mask_result.warnings
+            mask_quality_metrics = dict(mask_result.quality_metrics)
+            mask_row_errors = mask_result.row_errors
+            # Token vault (deferred follow-up 1): collect source->masked pairs
+            # for vault: true columns. Opt-in via the kwarg; the caller writes
+            # the artifact. The chunked route accumulates the same entries
+            # per chunk inside run_mask_pipeline_chunked instead.
+            if vault_writer is not None:
+                from decoy_engine.vault import collect_vault_entries
+
+                vault_writer.add(collect_vault_entries(config, merged_sources, mask_outputs))
         # Performance-mode reproducibility: any non-default knob stamps
         # the selected adapter identity + every knob value into the job
         # metadata. The all-default path stamps nothing so golden and
@@ -521,13 +441,24 @@ def run_pipeline(
                 "max_workers": max_workers,
                 "fallback_to_pandas": fallback_to_pandas,
             }
-        # Token vault (deferred follow-up 1): collect source->masked pairs
-        # for vault: true columns. Opt-in via the kwarg; the caller writes
-        # the artifact.
-        if vault_writer is not None:
-            from decoy_engine.vault import collect_vault_entries
-
-            vault_writer.add(collect_vault_entries(config, merged_sources, mask_outputs))
+        # Auto-chunk reproducibility stamp: a routed run is non-default by
+        # definition; a non-routed run stamps only when an auto-chunk knob
+        # is non-default. All-default full-frame runs stamp nothing (the
+        # P1 golden `quality_metrics == {}` contract).
+        if route_chunked or (auto_chunk, chunk_size_rows, auto_chunk_threshold_rows) != (
+            _AUTO_CHUNK_DEFAULT,
+            _CHUNK_SIZE_ROWS_DEFAULT,
+            _AUTO_CHUNK_THRESHOLD_DEFAULT,
+        ):
+            mask_quality_metrics["auto_chunk"] = _pipeline_routing.auto_chunk_stamp(
+                route_chunked=route_chunked,
+                auto_chunk=auto_chunk,
+                chunk_size_rows=chunk_size_rows,
+                auto_chunk_threshold_rows=auto_chunk_threshold_rows,
+                table_kinds=table_kinds,
+                caller_sources=caller_sources,
+                decision=execution_plan_decision,
+            )
 
         # BF1: opt-in, report-only distribution fidelity per mask table.
         # Imported lazily so the default-OFF path never pulls in the
@@ -565,32 +496,15 @@ def run_pipeline(
     if fidelity_reports:
         quality_metrics["fidelity_reports"] = fidelity_reports
 
-    # Sprint 2 honesty pack (D7/D8): per-row strategy errors recorded by
-    # bucketize/date_shift (format_error, S5) and code_set (mask_error, S6).
-    # Collected BEFORE validators run (trap T5: row-error rows are NOT
-    # filtered out here -- leak_check and every other validator compare
-    # positionally against `sources` and must see the UNFILTERED outputs,
-    # or row parity breaks and every subsequent index misattributes).
-    mask_row_errors: tuple[Any, ...] = mask_result.row_errors if has_mask_table else ()
-
-    # P2 observe-only planner: classify the job and stamp the decision.
-    # Behind the default-off flag so the default path does zero planner
-    # work and stays byte-identical; the classification never routes
-    # (routing sits behind _planner.PLANNER_ROUTING_ENABLED, hard False).
-    if explain_plan:
-        from decoy_engine.execution._planner import classify_job
-
-        execution_plan = classify_job(
-            config,
-            plan=plan,
-            registry=resolved_registry,
-            relationship_graph=graph,
-            substrate=resolved_substrate,
-        )
+    # Explain surfacing: stamp the SAME classification the routing decision
+    # used (computed once above), so the explain block and the executed
+    # route cannot drift apart. Behind the default-off flag; default runs
+    # stamp nothing here.
+    if explain_plan and execution_plan_decision is not None:
         quality_metrics["execution_plan"] = {
-            "mode": execution_plan.mode,
-            "reason": execution_plan.reason,
-            "rejections": dict(execution_plan.rejections),
+            "mode": execution_plan_decision.mode,
+            "reason": execution_plan_decision.reason,
+            "rejections": dict(execution_plan_decision.rejections),
         }
 
     # SP-05 (2026-06-27): job-level validator framework (P5.INFRA.4).
@@ -657,7 +571,7 @@ def run_pipeline(
 
     # S2: full-frame execution telemetry (the sequential route returned
     # early above with its own telemetry).
-    quality_metrics["execution"] = _execution_telemetry(
+    quality_metrics["execution"] = _pipeline_routing.execution_telemetry(
         route="full_frame",
         route_reason=route_reason,
         sink=None,

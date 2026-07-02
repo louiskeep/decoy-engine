@@ -190,6 +190,46 @@ reason instead of a pretended sequential-vs-out-of-core evaluation.
 
 ### Sprint P3: Auto-Select Chunked Execution for Eligible Single-Table Jobs
 
+**Status:** Built on `feat/engine-efficiencies`; gate set corrected after the
+adversarial review found two whole-column-state leaks (date_shift format
+detection, bucketize fall-through dtype). `run_pipeline` routes an eligible
+mask job through the existing `run_mask_pipeline_chunked` when the P2 planner
+classifies it `chunked`; the planner's chunked gate carries the P3 conditions
+(all fail-closed): single mask table, `check_chunked_compatibility` passes,
+no generate tables, no FK edges, resolved substrate pandas (the chunked route
+constructs the pandas adapter, so a polars job stays on its adapter),
+scalar-only work (composite bundles rejected), no `fpe_join_group` (its
+QualityWarning cannot ride the chunked stream), no `when`-bearing columns
+(predicates evaluate per frame), `date_shift` only with an explicit
+`provider_config.date_format` (format detection samples the whole column, so
+per-chunk detection can lock a different format), source at or above the row
+threshold, chunk-stable dtypes (integer columns must be null-free; pandas
+widens int+null per frame), `bucketize` only on a null-free numeric source
+column (null / non-numeric positions fall through to the original value,
+making the output dtype chunk-content-dependent), and no extra loaded source
+frames. Knobs on `run_pipeline`: `auto_chunk` (default ON; the kill switch),
+`chunk_size_rows` (default 50k), `auto_chunk_threshold_rows` (default 100k,
+from `_planner.AUTO_CHUNK_THRESHOLD_ROWS_DEFAULT`). Default-ON is justified
+by the gates plus strict chunk concatenation (`concat_masked_chunks`):
+identity is enforced structurally -- every admitted per-column output is a
+pure function of value + config + seed with whole-column inputs pinned in
+config or verified absent from the source, and any per-chunk schema
+disagreement raises `chunked_schema_mismatch` instead of being promoted away
+(the sole cast, an all-null chunk's null-typed column to the type the other
+chunks agree on, lands exactly where whole-frame inference does). The
+per-strategy matrix, fail-closed, and vault-equality coverage in
+`tests/unit/execution/test_auto_chunk_routing.py` is regression evidence for
+that contract, not its proof; the memory gate
+(`tests/perf/test_job_performance_gates.py::test_auto_chunk_memory_gate`)
+showed a 2x traced-peak reduction at the threshold size (more chunks, more
+win). Routed and non-default-knob runs stamp
+`quality_metrics["auto_chunk"]` (mode, chunk size, threshold, source rows,
+chunk count, reason); all-default non-routed runs stamp nothing (the P1
+golden holds). The routed ExecutionResult keeps its full surface: per-chunk
+warnings are unioned order-stably, `timings` carries a per-(strategy, column)
+rollup (elapsed summed, memory-delta max), and `boundary_conversion_ms` sums
+the per-chunk figures.
+
 **Target complete:** after P2; can land before PR #22 because it uses the
 existing chunked compatibility gate.
 
@@ -199,9 +239,10 @@ existing chunked compatibility gate.
   compatibility checks pass.
 - Keep generation out of scope.
 - Respect the existing admitted strategy set:
-  `hash`, `fpe`, `redact`, `truncate`, `text_redact`, `date_shift`,
-  `bucketize`, `passthrough`, plus conditionally admitted deterministic
-  `faker` and `categorical`.
+  `hash`, `fpe`, `redact`, `truncate`, `text_redact`, `passthrough`,
+  plus conditionally admitted deterministic `faker` and `categorical`,
+  `date_shift` (explicit `date_format` only), and `bucketize` (null-free
+  numeric source only).
 - Add a job-level chunk-size knob.
 
 **Acceptance**

@@ -16,7 +16,9 @@ stack on its own branch, not here. Covered instead:
 - faker-heavy wide table (many deterministic faker columns);
 - FPE-heavy table (many fpe columns);
 - text-redaction-heavy table (PII-bearing free text at scale);
-- chunked large single-table masking via `run_mask_pipeline_chunked`.
+- chunked large single-table masking via `run_mask_pipeline_chunked`;
+- P3 auto-chunk routing memory gate (auto-chunked `run_pipeline` vs the
+  same job forced full-frame; relative peak assertion + byte parity).
 
 Every cell benchmarks at the `run_pipeline` public entrypoint (not the
 strategy-handler layer PV-2 P5 already covers in
@@ -200,6 +202,12 @@ def test_scalar_no_fk_mask_job_gate(tmp_path: Any, adapter_spy: list[dict[str, A
     """P0: scalar no-FK mask job at 100k rows (hash/truncate/redact/
     passthrough/bucketize mix), through `run_pipeline`.
 
+    P3 note: this cell is the FULL-FRAME baseline, and this shape at
+    100k rows is exactly what P3's auto-chunk routing now takes, so the
+    kill switch (`auto_chunk=False`) pins the measured path; the
+    auto-chunked counterpart is measured by `test_auto_chunk_memory_gate`
+    below.
+
     Devbox calibration (2026-07-02): observed wall-clock 1.28s, peak
     tracemalloc 20.3 MiB (of which strategy execution ~1.25s, boundary
     conversion ~0.011s, everything else -- profile/compile/graph-build
@@ -215,7 +223,7 @@ def test_scalar_no_fk_mask_job_gate(tmp_path: Any, adapter_spy: list[dict[str, A
     sources = {"accounts": pa.Table.from_pandas(df, preserve_index=False)}
 
     def run() -> ExecutionResult:
-        return run_pipeline(cfg, sources=sources, engine_version=_ENGINE_VERSION)
+        return run_pipeline(cfg, sources=sources, engine_version=_ENGINE_VERSION, auto_chunk=False)
 
     warmup, timed, elapsed_s, peak_bytes = _measure(run)
 
@@ -533,13 +541,12 @@ def test_chunked_large_single_table_gate(tmp_path: Any) -> None:
     chunked path itself stays exactly as it shipped in WS4, which this
     sprint does not change.
 
-    Phase-split note: `run_mask_pipeline_chunked` returns a bare
-    `Iterator[pa.Table]`, not an `ExecutionResult`, so it does not
-    expose `timings`/`boundary_conversion_ms` per chunk to the caller.
-    No plumbing was added to src to recover a phase split here; only
-    total elapsed + peak RSS are recorded for this cell, per the P0
-    scope note ("if it does not [expose timings], do NOT add timing
-    plumbing to src").
+    Phase-split note: `run_mask_pipeline_chunked` yields bare
+    `pa.Table` chunks; per-chunk `ExecutionResult`s (timings, boundary
+    conversion figures) are available only via its opt-in
+    `chunk_result_sink` parameter (added by the P3 remediation for the
+    routed path). This cell keeps recording only total elapsed + peak
+    RSS, per the P0 scope note.
 
     Devbox calibration (2026-07-02): observed wall-clock 1.27s, peak
     tracemalloc 2.1 MiB -- lower peak than the equivalent full-frame
@@ -596,8 +603,11 @@ def test_chunked_large_single_table_gate(tmp_path: Any) -> None:
             )
         )
 
+    # auto_chunk=False (P3): this call is the FULL-FRAME oracle; without
+    # the kill switch the P3 auto-routing would chunk this 100k-row shape
+    # too and the diff would compare chunked against chunked.
     full_frame = run_pipeline(
-        cfg, sources={"accounts": table}, engine_version=_ENGINE_VERSION
+        cfg, sources={"accounts": table}, engine_version=_ENGINE_VERSION, auto_chunk=False
     ).outputs["accounts"]
 
     run_chunked()  # warmup: primes lazy imports, uncounted
@@ -624,4 +634,74 @@ def test_chunked_large_single_table_gate(tmp_path: Any) -> None:
     )
     assert peak_bytes < 8 * 1024 * 1024, (
         f"chunked mask job peak RSS {peak_bytes / (1024 * 1024):.1f} MiB; budget 8 MiB."
+    )
+
+
+# --------------------------------------------------------------------------
+# P3: auto-chunk routing memory gate
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.benchmark
+def test_auto_chunk_memory_gate(tmp_path: Any) -> None:
+    """P3: the AUTO-CHUNKED `run_pipeline` route peaks lower than the same
+    job forced full-frame, with byte-identical output.
+
+    The job is the P0 scalar 100k-row / 5-column shape under ALL-DEFAULT
+    knobs, which sits exactly at the default auto-chunk threshold
+    (100k rows) and therefore routes chunked (2 chunks at the default
+    50k-row chunk size); `auto_chunk=False` is the full-frame baseline.
+    Parity comes first, per the P0 discipline: the two routes must be
+    byte-identical (values and schema) before any memory number counts.
+
+    Both measurements run through the same `run_pipeline` entrypoint, so
+    the shared stages (profile sampling, plan compile) appear in both
+    peaks and the delta isolates the mask-execution working set; the
+    assertion is therefore RELATIVE (auto < 75% of full-frame) rather
+    than an absolute budget. Devbox calibration (2026-07-02): full-frame
+    20.35 MiB vs auto-chunked 10.20 MiB traced peak (ratio 0.50 -- the
+    expected ~2x for the 2-chunk split at this exact-threshold size;
+    larger jobs chunk more and win more). The 75% bound keeps headroom
+    above the observed ratio while still failing if the route stops
+    bounding the working set.
+    """
+    full = _medium_tier()
+    df = full[["ssn", "zip", "status", "customer_id", "score"]].copy()
+    source_path = _write_parquet_source(tmp_path, df, "auto_chunk_src.parquet")
+    cfg = _scalar_config(source_path)
+    sources = {"accounts": pa.Table.from_pandas(df, preserve_index=False)}
+
+    def run_auto() -> ExecutionResult:
+        return run_pipeline(cfg, sources=sources, engine_version=_ENGINE_VERSION)
+
+    def run_full() -> ExecutionResult:
+        return run_pipeline(cfg, sources=sources, engine_version=_ENGINE_VERSION, auto_chunk=False)
+
+    def traced_peak(run_fn: Any) -> tuple[ExecutionResult, int]:
+        tracemalloc.start()
+        result = run_fn()
+        _, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        return result, peak
+
+    run_auto()  # warmup: primes lazy imports for both routes, uncounted
+    auto_result, auto_peak = traced_peak(run_auto)
+    full_result, full_peak = traced_peak(run_full)
+
+    # Parity gate before any memory number counts.
+    assert auto_result.quality_metrics.get("auto_chunk", {}).get("mode") == "chunked", (
+        "the default run did not auto-chunk; this gate must measure the chunked route"
+    )
+    out_auto = auto_result.outputs["accounts"]
+    out_full = full_result.outputs["accounts"]
+    assert [str(f.type) for f in out_auto.schema] == [str(f.type) for f in out_full.schema]
+    assert out_auto.equals(out_full), "auto-chunked output diverged from full-frame"
+    assert len(out_auto) == len(df)
+    assert out_auto.column("ssn").to_pylist() != df["ssn"].tolist()
+    assert out_auto.column("customer_id").to_pylist() == df["customer_id"].tolist()
+
+    assert auto_peak < full_peak * 0.75, (
+        f"auto-chunked peak {auto_peak / (1024 * 1024):.1f} MiB is not below 75% of "
+        f"full-frame peak {full_peak / (1024 * 1024):.1f} MiB; the memory win is the "
+        "whole point of the auto-chunk route"
     )

@@ -48,7 +48,7 @@ def resolve_substrate(override: str | None = None) -> str:
     return value
 
 
-def _require_positive_int(name: str, value: int) -> None:
+def require_positive_int(name: str, value: int) -> None:
     """Fail-fast typed validation for runtime count knobs, mirroring
     `resolve_substrate`'s coded-error contract. bool is excluded explicitly
     because it passes an `isinstance(..., int)` check while being a config
@@ -61,11 +61,11 @@ def _require_positive_int(name: str, value: int) -> None:
         )
 
 
-def _require_bool(name: str, value: bool) -> None:
+def require_bool(name: str, value: bool) -> None:
     """Fail-fast typed validation for boolean knobs. A str like ``"false"`` is
     truthy, so an untyped job-payload value would silently invert the intended
     behavior (a caller wanting fail-closed would get fallback enabled); reject
-    anything that is not a real bool, mirroring `_require_positive_int`."""
+    anything that is not a real bool, mirroring `require_positive_int`."""
     if not isinstance(value, bool):
         raise ExecutionError(
             code="invalid_execution_knob",
@@ -93,9 +93,9 @@ def select_execution_adapter(
             count knob or a non-bool `fallback_to_pandas`. All raise BEFORE any
             adapter work so callers fail at selection time, not mid-job.
     """
-    _require_positive_int("fpe_chunk_count", fpe_chunk_count)
-    _require_positive_int("max_workers", max_workers)
-    _require_bool("fallback_to_pandas", fallback_to_pandas)
+    require_positive_int("fpe_chunk_count", fpe_chunk_count)
+    require_positive_int("max_workers", max_workers)
+    require_bool("fallback_to_pandas", fallback_to_pandas)
     substrate = resolve_substrate(substrate)
     if substrate == "polars":
         from decoy_engine.execution.polars._polars_adapter import PolarsExecutionAdapter
@@ -110,4 +110,10 @@ def select_execution_adapter(
     return PandasExecutionAdapter(fpe_chunk_count=fpe_chunk_count)
 
 
-__all__ = ["VALID_SUBSTRATES", "resolve_substrate", "select_execution_adapter"]
+__all__ = [
+    "VALID_SUBSTRATES",
+    "require_bool",
+    "require_positive_int",
+    "resolve_substrate",
+    "select_execution_adapter",
+]

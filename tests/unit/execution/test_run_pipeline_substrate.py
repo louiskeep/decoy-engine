@@ -228,12 +228,21 @@ class TestDefaultPandasRoute:
         assert [str(field.type) for field in out.schema] == _GOLDEN_PRE_P1_SCHEMA_TYPES
 
     def test_default_quality_metrics_carry_no_adapter_block(self, tmp_path, monkeypatch):
-        """Byte-identity extends to metadata: default knobs stamp nothing."""
+        """Byte-identity extends to metadata: default knobs stamp no
+        `execution_adapter` block. S2 (landed on the integration branch
+        ahead of this P1 test) unconditionally stamps a
+        `quality_metrics["execution"]` honesty-telemetry block on every
+        full_frame run, so the original P1 golden (`quality_metrics == {}`)
+        no longer holds verbatim; the load-bearing assertion here -- that
+        all-default knobs add no *adapter-selection* metadata -- still
+        does.
+        """
         monkeypatch.delenv("DECOY_SUBSTRATE", raising=False)
         cfg = _scalar_mask_config(tmp_path)
         sources = _scalar_mask_sources(tmp_path)
         result = run_pipeline(cfg, sources=sources, engine_version=_ENGINE_VERSION)
-        assert result.quality_metrics == {}
+        assert set(result.quality_metrics) == {"execution"}
+        assert result.quality_metrics["execution"]["execution_mode"] == "full_frame"
 
 
 class TestEnvResolvedSubstrate:

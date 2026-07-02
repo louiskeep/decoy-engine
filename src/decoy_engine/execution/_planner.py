@@ -1,13 +1,14 @@
-"""Observe-only execution-mode planner: classify a job, never route it.
+"""Execution-mode planner: classify a job; the chunked mode also routes.
 
 `classify_job` classifies a validated job into exactly one execution mode
 and records WHY every faster mode was rejected, following the EXPLAIN
 surface of SQL planners (PostgreSQL `EXPLAIN`, Spark's query-plan
-`explain()`): the decision is computed and reported from static inputs
-without executing the job, so operators can audit routing before any
-route ever changes. Established-methodology source: database EXPLAIN
-plans separate plan selection from plan execution; this module ships the
-selection surface first, execution routing stays exactly where it is.
+`explain()`): the decision is computed and reported without executing
+the job, so operators can audit routing. Established-methodology
+source: database EXPLAIN plans separate plan selection from plan
+execution, and cost-based planners switch access paths on cardinality
+(PostgreSQL's seq-scan-vs-index cost switch); the size threshold below
+is that pattern applied to chunked streaming.
 
 Modes, fastest first (the order defines "faster" for rejection
 recording):
@@ -19,8 +20,19 @@ recording):
    set (`POLARS_SCALAR_HANDLERS`), same FK-edge gate.
 2. `chunked`: a single mask table whose every strategy passes
    `check_chunked_compatibility` (the value-keyed contract), no generate
-   tables, no FK edges. Size thresholds are a routing concern and land
-   with routing, not here.
+   tables, no FK edges, resolved substrate pandas (the chunked route is
+   pandas-only), only scalar work (composite bundles carry state the
+   per-column gate cannot see), no fpe join-group (its QualityWarning
+   cannot ride the chunked stream), no `when` predicates (frame-scoped
+   evaluation), date_shift only with an explicit
+   `provider_config.date_format` (format detection samples the whole
+   column), and -- when the caller provides the loaded source tables --
+   a source at or above the size threshold with chunk-stable dtypes and
+   bucketize sources that are null-free numeric (bucketize output dtype
+   is chunk-content-dependent otherwise). `run_pipeline(auto_chunk=True)`
+   ROUTES this mode through `run_mask_pipeline_chunked` since the
+   auto-chunk sprint; without loaded sources the runtime gates are
+   skipped and the classification is admissibility-only.
 3. `sequential_relationship` / `out_of_core_relationship`: relationship
    routes for FK jobs. The FK stack (`_sequential.py`, `out_of_core/`)
    lives on its own branches, so this branch can only detect that the
@@ -32,13 +44,14 @@ recording):
 Determinism: same inputs -> same `ExecutionPlan`. The rejections mapping
 is built in the fixed mode order above, every multi-part reason joins
 sorted parts, and nothing is read from the environment or RNG beyond the
-explicit `substrate` argument.
+explicit `substrate` argument (`source_tables` contributes only row
+counts, schema types, and null counts -- all pure metadata reads).
 
-Routing seam (P3+): `PLANNER_ROUTING_ENABLED` is the documented flag a
-future sprint flips to let the plan drive routing. It is a hard `False`
-constant here and NOTHING reads it for routing yet; `run_pipeline` only
-ever stamps the classification under
-`quality_metrics["execution_plan"]` when asked (`explain_plan=True`).
+Routing seam: `PLANNER_ROUTING_ENABLED` remains the documented flag for
+FULL planner-driven routing (all modes). It stays a hard `False`
+constant: the auto-chunk sprint wired only the `chunked` mode into
+routing, behind `run_pipeline`'s `auto_chunk` knob, and the remaining
+modes still execute exactly where they did.
 """
 
 from __future__ import annotations
@@ -49,6 +62,8 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    import pyarrow as pa
+
     from decoy_engine.plan._types import Plan
     from decoy_engine.providers_v2 import ProviderRegistry
     from decoy_engine.relationships import RelationshipGraph
@@ -63,10 +78,18 @@ EXECUTION_MODES: tuple[str, ...] = (
     "pandas_fallback",
 )
 
-# Routing seam for P3+: flipping this (in a future sprint, behind its own
-# acceptance gates) is what would let classify_job drive routing. Nothing
-# reads it for routing today; it exists so the flag has one documented home.
+# Routing seam for full planner-driven routing (all modes): flipping this
+# (in a future sprint, behind its own acceptance gates) is what would let
+# classify_job drive every route. Only the chunked mode routes today, via
+# run_pipeline's auto_chunk knob; nothing reads this flag for routing.
 PLANNER_ROUTING_ENABLED: bool = False
+
+# Below this row count the full frame is small enough that per-chunk plan
+# and adapter overhead buys nothing: the P0 job-level gates put a 100k-row
+# 5-column scalar job at ~20 MiB traced peak full-frame, comfortable on any
+# supported host, while the same job chunked showed ~10x lower peak at
+# equal wall clock. 100k is where the memory win starts mattering.
+AUTO_CHUNK_THRESHOLD_ROWS_DEFAULT: int = 100_000
 
 # The honest relationship-route disposition on this branch: the FK stack
 # (sequential + out-of-core executors) lives on its own branches, so the
@@ -108,6 +131,8 @@ def classify_job(
     registry: ProviderRegistry,
     relationship_graph: RelationshipGraph,
     substrate: str,
+    source_tables: Mapping[str, pa.Table] | None = None,
+    auto_chunk_threshold_rows: int = AUTO_CHUNK_THRESHOLD_ROWS_DEFAULT,
 ) -> ExecutionPlan:
     """Classify a job into exactly one execution mode, without executing.
 
@@ -117,10 +142,19 @@ def classify_job(
     (`"pandas"` / `"polars"`), passed explicitly so the planner never
     reads the environment itself.
 
+    `source_tables` are the caller-loaded Arrow frames (what
+    `run_pipeline` receives as `sources`). When provided, the chunked
+    classification additionally applies the RUNTIME gates: the source
+    must exist, hold at least `auto_chunk_threshold_rows` rows, and
+    carry only chunk-stable dtypes. When None (a static, pre-load
+    classification) those gates are skipped and `chunked` means
+    admissible-by-contract only.
+
     Pure and deterministic: every admissibility check is a static read
     of the compiled plan / config (the chunked gate reuses
     `check_chunked_compatibility`, the polars gate mirrors the polars
-    adapter's native predicate over the same work list).
+    adapter's native predicate over the same work list); `source_tables`
+    contributes only Arrow metadata (row/null counts, schema types).
     """
     from decoy_engine.execution._pipeline import classify_table_kinds
     from decoy_engine.execution._runner import build_work_list
@@ -149,17 +183,27 @@ def classify_job(
     rejections["polars_native"] = polars_rejection
 
     chunked_rejection = _chunked_rejection(
-        config, mask_tables=mask_tables, generate_tables=generate_tables
+        config,
+        mask_tables=mask_tables,
+        generate_tables=generate_tables,
+        work=work,
+        substrate=substrate,
+        source_tables=source_tables,
+        auto_chunk_threshold_rows=auto_chunk_threshold_rows,
     )
     if chunked_rejection is None:
-        return ExecutionPlan(
-            mode="chunked",
-            rejections=rejections,
-            reason=(
-                f"single mask table {mask_tables[0]!r} with only chunk-safe "
-                "(value-keyed) strategies, no FK edges, and no generate tables."
-            ),
+        reason = (
+            f"single mask table {mask_tables[0]!r} with only chunk-safe "
+            "(value-keyed) scalar strategies, no FK edges, and no generate "
+            "tables, on the pandas substrate."
         )
+        if source_tables is not None:
+            rows = source_tables[mask_tables[0]].num_rows
+            reason += (
+                f" source holds {rows} rows, at or above the auto-chunk "
+                f"threshold ({auto_chunk_threshold_rows}), with chunk-stable dtypes."
+            )
+        return ExecutionPlan(mode="chunked", rejections=rejections, reason=reason)
     rejections["chunked"] = chunked_rejection
 
     if has_fk:
@@ -225,14 +269,21 @@ def _chunked_rejection(
     *,
     mask_tables: list[str],
     generate_tables: list[str],
+    work: list[Any],
+    substrate: str,
+    source_tables: Mapping[str, pa.Table] | None,
+    auto_chunk_threshold_rows: int,
 ) -> str | None:
     """None when the job is admissible for chunked streaming; else why not.
 
     Reuses `check_chunked_compatibility` (the real compile-time gate) for
     the single-mask-table case so the planner and the chunked entrypoint
-    cannot disagree on strategy admissibility; the job-shape gates that
-    the per-table check does not cover (generate tables elsewhere in the
-    job, more than one mask table) are evaluated here.
+    cannot disagree on strategy admissibility. On top of it sit the gates
+    the per-table check cannot see: job shape (generate tables elsewhere,
+    more than one mask table), the pandas-substrate pin, composite bundle
+    work, the fpe join-group warning, and -- when `source_tables` is
+    provided -- the size threshold and chunk-stable-dtype runtime gates.
+    All are fail-closed: any miss keeps the job on the full-frame path.
     """
     from decoy_engine.execution._chunked import check_chunked_compatibility
     from decoy_engine.plan._errors import PlanCompileError
@@ -250,6 +301,12 @@ def _chunked_rejection(
             f"chunked execution masks one table per run; job declares "
             f"{len(mask_tables)} mask tables ({', '.join(mask_tables)})"
         )
+    if substrate != "pandas":
+        reasons.append(
+            f"resolved substrate is {substrate!r}; the chunked route constructs "
+            "the pandas adapter, so routing would silently change the job's "
+            "executed substrate"
+        )
     # The relationships gate is checked here (not only via the per-table
     # call below) so multi-table FK jobs still surface it: the per-table
     # gate only runs for the single-mask-table shape.
@@ -259,14 +316,206 @@ def _chunked_rejection(
             "cannot run chunked (resolving a child key reads the whole parent frame)"
         )
     elif len(mask_tables) == 1:
+        table = mask_tables[0]
         try:
-            check_chunked_compatibility(config, table=mask_tables[0])
+            check_chunked_compatibility(config, table=table)
         except PlanCompileError as exc:
             reasons.append(f"{exc.code}: {exc.message}")
+        # Composite bundles are recognized by provider capability, not
+        # strategy name, so the per-column compat gate cannot see them;
+        # their coherent-group state is whole-bundle, not value-keyed.
+        non_scalar = sorted(
+            {str(node.kind) for node in work if node.table == table and node.kind != "scalar"}
+        )
+        if non_scalar:
+            reasons.append(
+                f"non-scalar (composite bundle) work on table {table!r}: "
+                f"{', '.join(non_scalar)}; bundle state is not value-keyed"
+            )
+        join_group_cols = _fpe_join_group_columns(config, table=table)
+        if join_group_cols:
+            reasons.append(
+                f"fpe_join_group on column(s) {', '.join(join_group_cols)}: the "
+                "full-frame run emits the fpe_join_group_active QualityWarning, "
+                "which the chunked entrypoint cannot carry"
+            )
+        reasons.extend(_whole_column_state_rejections(config, table=table))
+        if source_tables is not None:
+            reasons.extend(
+                _runtime_source_rejections(
+                    source_tables,
+                    table=table,
+                    auto_chunk_threshold_rows=auto_chunk_threshold_rows,
+                    bucketize_columns=_bucketize_columns(config, table=table),
+                )
+            )
     return "; ".join(reasons) if reasons else None
 
 
+def _table_column_entries(config: dict[str, Any], *, table: str) -> list[dict[str, Any]]:
+    """The dict column entries of `table` in the raw config, else []."""
+    tables = config.get("tables") or []
+    table_cfg = next((t for t in tables if isinstance(t, dict) and t.get("name") == table), None)
+    if table_cfg is None:
+        return []
+    return [c for c in table_cfg.get("columns") or [] if isinstance(c, dict)]
+
+
+def _whole_column_state_rejections(config: dict[str, Any], *, table: str) -> list[str]:
+    """Config-level gates for strategies whose output can depend on state
+    the whole column carries but a single chunk does not.
+
+    `check_chunked_compatibility` admits these strategies for the explicit
+    chunked entrypoint, but auto-routing must be byte-identity-safe without
+    operator judgment, so it additionally requires the whole-column input
+    to be pinned in config:
+
+    - date_shift: without an explicit `provider_config.date_format` the
+      strategy DETECTS the format from whole-column samples; disjoint
+      per-chunk samples can lock different formats and reformat the same
+      value differently.
+    - `when`: predicates evaluate against the frame they are handed, so a
+      per-chunk frame is a different evaluation scope than the whole
+      frame (schema-validated configs cannot carry `when` today, but
+      run_pipeline does not re-validate its dict input and `when` is a
+      shipped ColumnSeed field, so the gate must see it).
+    """
+    reasons: list[str] = []
+    when_cols: list[str] = []
+    undated_cols: list[str] = []
+    for col_entry in _table_column_entries(config, table=table):
+        name = str(col_entry.get("name", "?"))
+        if col_entry.get("when"):
+            when_cols.append(name)
+        if col_entry.get("strategy") == "date_shift" and not (
+            col_entry.get("provider_config") or {}
+        ).get("date_format"):
+            undated_cols.append(name)
+    if when_cols:
+        reasons.append(
+            f"when_predicate_not_chunk_stable: column(s) {', '.join(sorted(when_cols))} "
+            "carry a `when` predicate, which is evaluated per frame; per-chunk "
+            "evaluation is a different scope than the whole frame"
+        )
+    if undated_cols:
+        reasons.append(
+            f"date_shift_requires_explicit_format: column(s) {', '.join(sorted(undated_cols))} "
+            "use date_shift without provider_config.date_format; format detection "
+            "samples the whole column, so per-chunk detection can lock a different "
+            "format"
+        )
+    return reasons
+
+
+def _bucketize_columns(config: dict[str, Any], *, table: str) -> list[str]:
+    return sorted(
+        str(c.get("name", "?"))
+        for c in _table_column_entries(config, table=table)
+        if c.get("strategy") == "bucketize"
+    )
+
+
+def _fpe_join_group_columns(config: dict[str, Any], *, table: str) -> list[str]:
+    """Columns on `table` whose fpe config sets `fpe_join_group`."""
+    tables = config.get("tables") or []
+    table_cfg = next((t for t in tables if isinstance(t, dict) and t.get("name") == table), None)
+    if table_cfg is None:
+        return []
+    out: list[str] = []
+    for col_entry in table_cfg.get("columns") or []:
+        if not isinstance(col_entry, dict) or col_entry.get("strategy") != "fpe":
+            continue
+        if (col_entry.get("provider_config") or {}).get("fpe_join_group"):
+            out.append(str(col_entry.get("name", "?")))
+    return sorted(out)
+
+
+def _runtime_source_rejections(
+    source_tables: Mapping[str, pa.Table],
+    *,
+    table: str,
+    auto_chunk_threshold_rows: int,
+    bucketize_columns: list[str] | None = None,
+) -> list[str]:
+    """Runtime (loaded-source) gates: presence, size threshold, dtypes,
+    and the bucketize source shape.
+
+    All metadata reads: `num_rows` and `null_count` come from Arrow array
+    metadata and the schema walk touches no values, so this is O(columns),
+    not O(rows).
+    """
+    import pyarrow.types as pat
+
+    reasons: list[str] = []
+    extra = sorted(set(source_tables) - {table})
+    if extra:
+        # The full-frame adapter echoes every loaded source frame in its
+        # outputs; the chunked route yields only the mask table, so extra
+        # frames would silently vanish from the result.
+        reasons.append(
+            f"extra loaded source frame(s) {', '.join(extra)}: the full-frame "
+            "adapter echoes them in outputs, the chunked route would drop them"
+        )
+    src = source_tables.get(table)
+    if src is None:
+        reasons.append(f"no loaded source frame for table {table!r}")
+        return reasons
+    if src.num_rows < auto_chunk_threshold_rows:
+        reasons.append(
+            f"source holds {src.num_rows} rows, below the auto-chunk "
+            f"threshold ({auto_chunk_threshold_rows}); full-frame is cheaper "
+            "than streaming at this size"
+        )
+    unstable: list[str] = []
+    for schema_field in src.schema:
+        t = schema_field.type
+        if pat.is_integer(t):
+            # pandas widens int+null to float PER FRAME, so a null-free
+            # chunk keeps int64 while a null-bearing one becomes float64;
+            # only a null-free integer column round-trips chunk-stably.
+            if src.column(schema_field.name).null_count > 0:
+                unstable.append(f"{schema_field.name} (integer with nulls)")
+        elif not (
+            pat.is_string(t)
+            or pat.is_large_string(t)
+            or pat.is_floating(t)
+            or pat.is_boolean(t)
+            or pat.is_temporal(t)
+            or pat.is_null(t)
+        ):
+            unstable.append(f"{schema_field.name} ({t})")
+    if unstable:
+        reasons.append(
+            "column(s) with non-chunk-stable pandas round-trip dtypes: "
+            f"{', '.join(sorted(unstable))}"
+        )
+    # bucketize output dtype depends on chunk content: null / non-numeric
+    # positions fall through to the ORIGINAL value, so a null-bearing or
+    # non-numeric chunk infers a different Arrow type than a clean one.
+    # Only a null-free numeric source makes every chunk (and the full
+    # frame) format to the same all-string column.
+    bad_bucketize: list[str] = []
+    for name in bucketize_columns or []:
+        if name not in src.schema.names:
+            continue  # unknown columns are the compile stage's problem
+        t = src.schema.field(name).type
+        if not (pat.is_integer(t) or pat.is_floating(t)):
+            bad_bucketize.append(f"{name} ({t} is not numeric)")
+        elif src.column(name).null_count > 0:
+            bad_bucketize.append(f"{name} (numeric with nulls)")
+    if bad_bucketize:
+        reasons.append(
+            "bucketize_source_not_null_free_numeric: column(s) "
+            f"{', '.join(bad_bucketize)}; bucketize masks only clean numeric "
+            "values and falls through elsewhere, so its output dtype is "
+            "chunk-content-dependent unless the source column is null-free "
+            "numeric"
+        )
+    return reasons
+
+
 __all__ = [
+    "AUTO_CHUNK_THRESHOLD_ROWS_DEFAULT",
     "EXECUTION_MODES",
     "PLANNER_ROUTING_ENABLED",
     "RELATIONSHIP_ROUTE_DEFERRED",

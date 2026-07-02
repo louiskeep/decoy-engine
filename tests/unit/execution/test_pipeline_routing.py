@@ -30,7 +30,8 @@ import pytest
 
 from decoy_engine.errors import ConfigError
 from decoy_engine.execution import ParquetTransactionalSink
-from decoy_engine.execution._pipeline import _sequential_eligible, run_pipeline
+from decoy_engine.execution._pipeline import run_pipeline
+from decoy_engine.execution._pipeline_routing import _sequential_eligible
 
 _N = 20
 
@@ -339,10 +340,10 @@ class TestNonFkNoRegression:
         `generate_plus_mask`, and a job with zero tables has no relationships
         either -- so `_sequential_eligible` is monkeypatched to isolate the
         new guard from that unreachable-in-practice precondition."""
-        import decoy_engine.execution._pipeline as pipeline_mod
+        import decoy_engine.execution._pipeline_routing as pipeline_routing_mod
 
         monkeypatch.setattr(
-            pipeline_mod, "_sequential_eligible", lambda *a, **k: (True, "pure_mask_fk")
+            pipeline_routing_mod, "_sequential_eligible", lambda *a, **k: (True, "pure_mask_fk")
         )
 
         config: dict[str, Any] = {
@@ -628,7 +629,7 @@ class TestHasCrossTableFkCycleHelper:
     mutual cross-table pair of edges is True."""
 
     def test_self_edge_returns_false(self) -> None:
-        from decoy_engine.execution._pipeline import _has_cross_table_fk_cycle
+        from decoy_engine.execution._pipeline_routing import _has_cross_table_fk_cycle
         from decoy_engine.relationships._graph import (
             OrphanPolicy,
             RelationshipEdge,
@@ -647,7 +648,7 @@ class TestHasCrossTableFkCycleHelper:
         assert _has_cross_table_fk_cycle(graph) is False
 
     def test_mutual_cross_table_edges_return_true(self) -> None:
-        from decoy_engine.execution._pipeline import _has_cross_table_fk_cycle
+        from decoy_engine.execution._pipeline_routing import _has_cross_table_fk_cycle
         from decoy_engine.relationships._graph import (
             OrphanPolicy,
             RelationshipEdge,
@@ -674,7 +675,7 @@ class TestHasCrossTableFkCycleHelper:
         assert _has_cross_table_fk_cycle(graph) is True
 
     def test_acyclic_cross_table_edges_return_false(self) -> None:
-        from decoy_engine.execution._pipeline import _has_cross_table_fk_cycle
+        from decoy_engine.execution._pipeline_routing import _has_cross_table_fk_cycle
         from decoy_engine.relationships._graph import (
             OrphanPolicy,
             RelationshipEdge,
