@@ -89,7 +89,7 @@ def _compute(
     dict[str, EdgeDirection],
     ClosureResult,
 ]:
-    report = run_subset_preflight(sources=sources, relationships=relationships)
+    report = run_subset_preflight(sources=sources, relationships=relationships, seeds=seeds)
     if not report.passed:
         first = report.failures[0]
         raise SubsetPreflightError(code=first.code, report=report, message=first.message)

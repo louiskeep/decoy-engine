@@ -14,7 +14,7 @@ import pytest
 from decoy_engine.subset._edges import relationships_from_config
 from decoy_engine.subset._errors import SubsetPreflightError
 from decoy_engine.subset._preflight import run_subset_preflight
-from decoy_engine.subset._types import SubsetSource
+from decoy_engine.subset._types import SeedSpec, SubsetSource
 from tests.unit.subset.conftest import make_parquet, rel
 
 
@@ -161,3 +161,31 @@ def test_orphan_prescan_matches_fk_validity_semantics(
         assert any(f.code == "subset_source_orphans" for f in report.failures)
     if expect_warning:
         assert len(report.warnings) == 1
+
+
+def test_edgeless_seed_table_requires_parquet(tmp_path) -> None:
+    """LOW-1 (dennis review): a seed table with no relationship edge must
+    still be parquet-gated. Without this, `_keys.load_key_frames` would
+    unconditionally `scan_parquet` a csv-declared seed table and surface a
+    raw polars error instead of the clean `subset_requires_parquet` guidance.
+    """
+    standalone_path = make_parquet(tmp_path, "standalone", {"id": [1, 2]})
+    sources = {
+        "standalone": SubsetSource(path=standalone_path, format="csv"),
+    }
+    seeds = (SeedSpec(table="standalone", mode="sample", key_columns=("id",), fraction=1.0),)
+    report = run_subset_preflight(sources=sources, relationships=(), seeds=seeds)
+    assert report.passed is False
+    assert report.failures[0].code == "subset_requires_parquet"
+    assert "convert to Parquet for subsetting" in report.failures[0].message
+
+
+def test_edgeless_seed_table_with_parquet_passes(tmp_path) -> None:
+    """A disconnected but correctly-formatted seed table passes preflight cleanly."""
+    standalone_path = make_parquet(tmp_path, "standalone", {"id": [1, 2]})
+    sources = {
+        "standalone": SubsetSource(path=standalone_path, format="parquet"),
+    }
+    seeds = (SeedSpec(table="standalone", mode="sample", key_columns=("id",), fraction=1.0),)
+    report = run_subset_preflight(sources=sources, relationships=(), seeds=seeds)
+    assert report.passed is True

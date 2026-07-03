@@ -8,6 +8,7 @@ orchestration layer: `plan_subset` raises `SubsetPreflightError` and
 
 from __future__ import annotations
 
+import polars as pl
 import pytest
 
 from decoy_engine.subset import _api
@@ -45,3 +46,28 @@ def test_type_mismatch_blocks_plan_subset_and_ss3_never_runs(tmp_path, monkeypat
             engine_version="test",
         )
     assert excinfo.value.code == "subset_relationship_type_mismatch"
+
+
+def test_direct_api_edgeless_csv_seed_table_fails_closed_not_a_raw_polars_error(tmp_path) -> None:
+    """LOW-1 (dennis review): a direct `plan_subset(...)` caller with a seed
+    table in no relationship, declared as a non-Parquet format, must get the
+    clean `subset_requires_parquet` guidance -- not a raw polars error from
+    `_keys.load_key_frames` unconditionally `scan_parquet`-ing a csv file.
+    Config-driven runs were already safe via `config/_pipeline.py`; this is
+    the direct-API gap.
+    """
+    csv_path = tmp_path / "standalone.csv"
+    pl.DataFrame({"id": [1, 2]}).write_csv(csv_path)
+    sources = {"standalone": SubsetSource(path=str(csv_path), format="csv")}
+
+    with pytest.raises(SubsetPreflightError) as excinfo:
+        plan_subset(
+            sources=sources,
+            relationships=(),
+            seeds=(SeedSpec(table="standalone", mode="sample", key_columns=("id",), fraction=1.0),),
+            policy=FanOutPolicy(),
+            job_seed=JOB_SEED,
+            engine_version="test",
+        )
+    assert excinfo.value.code == "subset_requires_parquet"
+    assert "convert to Parquet for subsetting" in str(excinfo.value)

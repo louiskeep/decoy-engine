@@ -38,6 +38,7 @@ from decoy_engine.subset._types import (
     FkPreflightEdgeReport,
     FkPreflightReport,
     PreflightFailure,
+    SeedSpec,
     SubsetEdge,
     SubsetSource,
 )
@@ -54,6 +55,7 @@ def run_subset_preflight(
     *,
     sources: Mapping[str, SubsetSource],
     relationships: tuple[PlanRelationship, ...],
+    seeds: tuple[SeedSpec, ...] = (),
 ) -> FkPreflightReport:
     """Run every SS1 fail-closed check. Never raises on a check failure.
 
@@ -62,6 +64,14 @@ def run_subset_preflight(
     errors are raised by the caller before this function sees them, per
     `_edges.relationships_from_config`). An unknown table named by a
     relationship end is a preflight FAILURE, not a raised error.
+
+    `seeds` is optional so existing edge-only callers are unaffected, but
+    `_api._compute` always passes it: a seed table with no relationship edge
+    (LOW-1, dennis review) must still be format-checked here, otherwise
+    `_keys.load_key_frames` unconditionally `scan_parquet`s it and a
+    direct-API caller passing a non-Parquet format for a disconnected seed
+    table gets a raw polars error instead of the clean
+    `subset_requires_parquet` guidance.
     """
     edges = build_subset_edges(relationships)
     failures: list[PreflightFailure] = []
@@ -71,6 +81,8 @@ def run_subset_preflight(
     for edge in edges:
         tables_referenced.add(edge.parent_table)
         tables_referenced.add(edge.child_table)
+    for seed in seeds:
+        tables_referenced.add(seed.table)
 
     # 5.0: Parquet-only gate + unknown-table gate.
     unknown_table = False
