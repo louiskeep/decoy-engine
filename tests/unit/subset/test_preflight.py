@@ -9,6 +9,8 @@ not the preflight module this file exercises.
 
 from __future__ import annotations
 
+import pytest
+
 from decoy_engine.subset._edges import relationships_from_config
 from decoy_engine.subset._errors import SubsetPreflightError
 from decoy_engine.subset._preflight import run_subset_preflight

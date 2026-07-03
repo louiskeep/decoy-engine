@@ -26,6 +26,7 @@ at the per-table-kind shape).
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
 from typing import Literal
 
@@ -34,9 +35,10 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from decoy_engine.config._global_settings import GlobalSettings
 from decoy_engine.config._namespaces import NamespaceConfig
 from decoy_engine.config._relationships import RelationshipConfig
-from decoy_engine.config._sources import SourceDescriptor
+from decoy_engine.config._sources import FileSource, SourceDescriptor
+from decoy_engine.config._subset import SubsetConfig
 from decoy_engine.config._tables import TableConfig
-from decoy_engine.config._targets import TargetDescriptor
+from decoy_engine.config._targets import FileTarget, TargetDescriptor
 from decoy_engine.config._validators import QuarantineConfig, ValidatorEntry
 
 
@@ -87,6 +89,14 @@ class PipelineConfig(BaseModel):
     # output_path instead of the main output; the job continues successfully.
     # Default None -> quarantine disabled -> fail-closed on validator failures.
     quarantine: QuarantineConfig | None = None
+    # Sprint G (2026-07-03): FK-aware subsetting pre-mask stage. None means
+    # "no subsetting" (the pipeline masks its full sources, unchanged
+    # behavior). When set, `decoy_engine.subset.run_subset` runs BEFORE
+    # masking and its output becomes the mask stage's `sources`; there is no
+    # config syntax for the reverse order (subset-then-mask is structural,
+    # not a flag). See `_subset_stage_constraints` below for the one
+    # rejectable mask-then-subset shape.
+    subset: SubsetConfig | None = None
 
     @model_validator(mode="after")
     def _per_table_kind_consistency(self) -> PipelineConfig:
@@ -233,4 +243,58 @@ class PipelineConfig(BaseModel):
                     state[parent_name] = GRAY
                     path.append(parent_name)
                     stack.append((parent_name, iter(deps.get(parent_name, ()))))
+        return self
+
+    @model_validator(mode="after")
+    def _subset_stage_constraints(self) -> PipelineConfig:
+        """Sprint G: validate the `subset:` block against the rest of the config.
+
+        1. Every `subset.seeds[].table` must be a declared mask-kind table
+           with a source (subsetting operates on the same tables masking
+           reads).
+        2. Every source referenced by a subsetted or relationship-bearing
+           table must be `format == "parquet"` -- a submit-time mirror of
+           preflight check 5.0, so the operator sees the reject at
+           validation time, not at run time.
+        3. Subset-after-mask rejection: the run path is structurally
+           subset-stage -> mask-stage; there is no syntax to express
+           mask-then-subset within one config. The one shape that WOULD
+           express it is pointing the subset job's sources at this same
+           config's mask targets -- reject that.
+        """
+        if self.subset is None:
+            return self
+
+        mask_table_names = {t.name for t in self.tables if t.columns}
+        for seed in self.subset.seeds:
+            if seed.table not in mask_table_names:
+                raise ValueError(
+                    f"subset seed names table {seed.table!r}, which is not a declared "
+                    "mask-kind table with a source in this config"
+                )
+
+        tables_needing_parquet = {seed.table for seed in self.subset.seeds}
+        for rel in self.relationships:
+            tables_needing_parquet.add(rel.parent.table)
+            tables_needing_parquet.update(c.table for c in rel.children)
+        for name in tables_needing_parquet:
+            src = self.sources.get(name)
+            if src is not None and src.format != "parquet":
+                raise ValueError(
+                    f"subsetting is configured but source {name!r} is "
+                    f"{src.format!r}; convert to Parquet for subsetting"
+                )
+
+        target_paths = {
+            os.path.normpath(t.path) for t in self.targets.values() if isinstance(t, FileTarget)
+        }
+        for src in self.sources.values():
+            if not isinstance(src, FileSource):
+                continue
+            if os.path.normpath(src.path) in target_paths:
+                raise ValueError(
+                    f"subset input {src.path!r} is also a mask target of this pipeline; "
+                    "subsetting runs BEFORE masking (subset-then-mask), it cannot consume "
+                    "masked output"
+                )
         return self
