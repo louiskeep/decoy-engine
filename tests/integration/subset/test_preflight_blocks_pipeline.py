@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from decoy_engine.subset import _closure
+from decoy_engine.subset import _api
 from decoy_engine.subset._api import plan_subset
 from decoy_engine.subset._errors import SubsetPreflightError
 from decoy_engine.subset._types import FanOutPolicy, SeedSpec, SubsetSource
@@ -29,7 +29,11 @@ def test_type_mismatch_blocks_plan_subset_and_ss3_never_runs(tmp_path, monkeypat
     def _fail_if_called(*args, **kwargs):
         pytest.fail("SS3 compute_closure must not run when preflight fails")
 
-    monkeypatch.setattr(_closure, "compute_closure", _fail_if_called)
+    # Patch the binding `_api._compute` actually calls (it imported
+    # compute_closure by name into its own module namespace), not the
+    # `_closure` module -- patching `_closure.compute_closure` never touches
+    # `_api.compute_closure`, which would make this guard a silent no-op.
+    monkeypatch.setattr(_api, "compute_closure", _fail_if_called)
 
     with pytest.raises(SubsetPreflightError) as excinfo:
         plan_subset(
