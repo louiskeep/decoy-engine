@@ -109,6 +109,12 @@ def _compute(
         seed_rows=seed_rows,
         budget_check=budget_check,
     )
+    # Runs in BOTH plan_subset and run_subset (nice-to-have, dennis review):
+    # the dry-run estimate is exactly the surface an operator inspects to
+    # trust a subset before committing to it, so it deserves the same
+    # cheap, in-memory, no-I/O invariant guard as the real run, not just a
+    # guard on the write path.
+    verify_closure(edges=edges, directions=directions, key_frames=key_frames, result=closure)
     seed_specs_public = tuple(_seed_spec_public(s) for s in seeds)
     plan = build_estimate(
         engine_version=engine_version,
@@ -157,11 +163,11 @@ def run_subset(
     """Plan, verify, then materialize + write the manifest.
 
     The budget gate (inside `_compute`, via the closure's `budget_check`)
-    sits strictly before `output_dir` is ever touched. `verify_closure` is
-    the last line of defense on the upward-completeness invariant before any
-    write happens.
+    sits strictly before `output_dir` is ever touched. `verify_closure`
+    (also inside `_compute`, shared with `plan_subset`) is the last line of
+    defense on the upward-completeness invariant before any write happens.
     """
-    plan, key_frames, edges, directions, closure = _compute(
+    plan, _key_frames, _edges, _directions, closure = _compute(
         sources=sources,
         relationships=relationships,
         seeds=seeds,
@@ -169,7 +175,6 @@ def run_subset(
         job_seed=job_seed,
         engine_version=engine_version,
     )
-    verify_closure(edges=edges, directions=directions, key_frames=key_frames, result=closure)
 
     output_dir = Path(output_dir)
     output_paths = materialize_subset(
