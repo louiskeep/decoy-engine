@@ -91,3 +91,87 @@ yourself; declaring the relationship is enough.
 
 See [recipes](recipes.md) recipe (b) for a full folder-masking config, and
 [determinism](determinism.md) for what "byte-stable across runs" depends on.
+
+## Subsetting a referentially-intact slice
+
+Full-dataset relationship preservation, above, is not always what you want.
+Sometimes you need a small, referentially-intact SLICE of a multi-table
+Parquet dataset instead of the whole thing, for example "2% of `customers`,
+plus every `order`/`order_item` that belongs to them, nothing orphaned."
+`decoy_engine.subset` (Sprint G) builds that slice as a pre-mask stage: pick a
+seed, close it over the SAME `relationships` graph declared above, then write
+the filtered Parquet. Masking runs unchanged on the subsetted output.
+
+This is engine-core only in this release: there is no `decoy subset` CLI verb
+yet and no platform UI for it (both are planned follow-ons). Callers use
+`decoy_engine.subset.run_subset` / `plan_subset` directly, or add a `subset:`
+block to `PipelineConfig` (`config/_subset.py`) to run subsetting as the
+pipeline's pre-mask stage; the field is additive and optional, so existing
+configs are unaffected.
+
+### How the closure works
+
+Seed selection (a deterministic `sample`, a `filter` predicate, or an
+explicit `keys` list) picks a starting row set on one or more root tables.
+From there, the closure engine walks the same FK edges the `relationships`
+block declares, in two directions, to a fixpoint:
+
+- **Downward (cascade):** a child row whose FK key matches a surviving parent
+  row survives.
+- **Upward (parent completeness):** a parent row whose key is referenced by a
+  surviving child's non-null FK key survives too, so a child is never left
+  pointing at a parent that got left out of the slice.
+
+This is the standard graph-reachability-to-a-fixpoint pattern: semi-naive
+Datalog fixpoint evaluation, equivalently a Kleene/Knaster-Tarski monotone
+fixpoint over a finite powerset lattice. Termination follows from
+monotonicity, not from the schema being acyclic: a row already in the
+survivor set can never be re-added, so a self-reference or a mutual
+A -> B -> A cycle reaches the same no-growth exit an acyclic schema does; no
+special-casing for cycles is needed. Upward parent completeness is ON by
+default, since silently leaving a dangling FK behind is the failure mode this
+feature exists to prevent; turning it off for a given edge requires an
+explicit acknowledgement (`allow_dangling=True`) because it can orphan a
+child.
+
+### Fan-out safety: dry-run first, hard-fail on budget, never truncate
+
+A closure can fan out further than expected (a popular parent pulls in a lot
+of downstream rows). Two protections:
+
+- **Dry-run/estimate is a first-class operation, not a debug flag.** Calling
+  `plan_subset` returns the exact per-table row counts the closure would
+  produce, with no Parquet write and no read of any non-key column, so an
+  operator sees the blast radius before committing to anything.
+- **A fan-out budget hard-fails before any materialization.** The budget is
+  both a total-output-row cap and a per-table cap (a multiple of the total
+  seed row count). If the closure would exceed either cap, the run fails
+  closed with no partial Parquet written and no truncation: truncating a
+  surviving set after the fact would re-introduce the exact orphans the
+  closure exists to prevent.
+
+The subset evidence manifest (`subset-manifest.json`, written alongside the
+output) records counts, edges traversed and their direction, and the budget
+outcome, but never a raw key value and never a raw filter-predicate literal;
+a `filter`-mode seed keeps its predicate's column and operator in the
+manifest, and the literal value is redacted.
+
+### Scope
+
+- **Parquet only.** A non-Parquet source fails fast with a specific message
+  ("convert to Parquet for subsetting"), both at config-validation time and
+  at preflight; there is no degraded full-load fallback.
+- **File/batch datasets only.** Database sources are deferred, not
+  designed-for.
+- **Manual relationship declaration only**, the same `relationships` block
+  described above; there is no automatic FK/schema inference for subsetting
+  (or for masking).
+- **Polymorphic FKs are unsupported**: there is no clean `PlanRelationship`
+  representation for a column whose parent table varies row to row.
+- **Memory-bounded by the full-frame FK execution path** for this release: a
+  subsetting job holds one table at a time during materialization, but a
+  single table's frame is still loaded whole. A future sequential per-table
+  eviction path will compose with this without a redesign once it merges.
+
+See the CHANGELOG "Sprint G FK-aware subsetting core" entry for the full
+module-by-module breakdown.

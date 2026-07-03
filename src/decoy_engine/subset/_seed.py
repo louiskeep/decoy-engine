@@ -1,14 +1,15 @@
 """SS2: seed selection -- sample / filter / keys.
 
-`sample` mode uses deterministic bottom-k sampling over HMAC digests: the
-established pattern (bottom-k / KMV consistent sampling, the same family as
-MinHash bottom-k sketches) selects rows by their smallest keyed-hash value,
-which is stable under reruns and independent of any RNG library's internal
-state. `pl.DataFrame.sample(seed=...)` was REJECTED for this: it is only
-guaranteed reproducible within one polars version, and the engine's
-determinism envelope (cross-sprint contracts R3) requires cross-version
-stability -- exactly what HMAC-over-canonical-bytes already provides for
-every masked value (`decoy_engine.determinism`, `_canonicalize_source`).
+Pattern: bottom-k / KMV consistent sampling (same family as MinHash bottom-k
+sketches), keyed with HMAC-SHA256 (RFC 2104) instead of an unkeyed hash so
+selection is reproducible per job seed. `sample` mode selects rows by their
+smallest keyed-hash value, which is stable under reruns and independent of
+any RNG library's internal state. `pl.DataFrame.sample(seed=...)` was
+REJECTED for this: it is only guaranteed reproducible within one polars
+version, and the engine's determinism envelope (cross-sprint contracts R3)
+requires cross-version stability -- exactly what HMAC-over-canonical-bytes
+already provides for every masked value (`decoy_engine.determinism`,
+`_canonicalize_source`).
 
 `filter` mode maps structured `Predicate`s to `pl.Expr` and AND-reduces them.
 No string-eval surface: unlike the `expressions`/lark parser (pandas-row

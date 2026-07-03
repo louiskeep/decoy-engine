@@ -1,14 +1,13 @@
 """SS3: the closure engine. THE novel core of Sprint G.
 
-Established pattern: the classic monotone fixpoint -- semi-naive Datalog
-evaluation / Kleene fixed-point iteration over a finite powerset lattice
-(Ullman, "Principles of Database and Knowledge-Base Systems", ch. 3;
-equivalently the worklist algorithm of monotone dataflow frameworks). Each
-rule application is a relational semi-join; termination follows from
-monotonicity + finiteness (Knaster-Tarski / Kleene), NOT from graph
-acyclicity -- so cycles need no special casing beyond the no-growth exit.
-Tonic/Redgate-style subsetters describe the same two rules as
-"downstream/upstream traversal".
+Pattern: semi-naive Datalog fixpoint evaluation (Ullman, "Principles of
+Database and Knowledge-Base Systems", ch. 3; equivalently the Kleene /
+Knaster-Tarski monotone fixpoint over a finite powerset lattice, the same
+class of algorithm as the worklist algorithm in monotone dataflow
+frameworks). Each rule application is a relational semi-join; termination
+follows from monotonicity + finiteness, NOT from graph acyclicity -- so
+cycles need no special casing beyond the no-growth exit. Tonic/Redgate-style
+subsetters describe the same two rules as "downstream/upstream traversal".
 
 The two rules, in pure key-set terms, for edge `e` (parent P with columns
 `pc`, child C with columns `cc`):
