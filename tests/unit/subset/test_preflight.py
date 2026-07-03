@@ -1,19 +1,22 @@
-"""SS1 preflight tests. Includes acceptance test 4 (fail-closed preflight)."""
+"""SS1 preflight tests. Includes acceptance test 4 (fail-closed preflight).
+
+The "blocks SS2/SS3" half of acceptance test 4 (`plan_subset` raises and
+`compute_closure` never runs) lives in
+`tests/integration/subset/test_preflight_blocks_pipeline.py`: it needs
+`_api.plan_subset`, which is orchestration built in a later slice (SS4/SS5),
+not the preflight module this file exercises.
+"""
 
 from __future__ import annotations
 
-import pytest
-
-from decoy_engine.subset import _closure
-from decoy_engine.subset._api import plan_subset
 from decoy_engine.subset._edges import relationships_from_config
 from decoy_engine.subset._errors import SubsetPreflightError
 from decoy_engine.subset._preflight import run_subset_preflight
-from decoy_engine.subset._types import FanOutPolicy, SeedSpec, SubsetSource
-from tests.unit.subset.conftest import JOB_SEED, make_parquet, rel
+from decoy_engine.subset._types import SubsetSource
+from tests.unit.subset.conftest import make_parquet, rel
 
 
-def test_type_mismatch_fails_closed_and_blocks_ss3(tmp_path, monkeypatch) -> None:
+def test_type_mismatch_fails_closed(tmp_path) -> None:
     customers_path = make_parquet(tmp_path, "customers", {"id": ["007", "008"]})
     orders_path = make_parquet(tmp_path, "orders", {"customer_id": [7, 8]})
     sources = {
@@ -30,22 +33,6 @@ def test_type_mismatch_fails_closed_and_blocks_ss3(tmp_path, monkeypatch) -> Non
     assert failure.relationship == "customers.id -> orders.customer_id"
     assert "String" in failure.message
     assert "Int64" in failure.message
-
-    def _fail_if_called(*args, **kwargs):
-        pytest.fail("SS3 compute_closure must not run when preflight fails")
-
-    monkeypatch.setattr(_closure, "compute_closure", _fail_if_called)
-
-    with pytest.raises(SubsetPreflightError) as excinfo:
-        plan_subset(
-            sources=sources,
-            relationships=relationships,
-            seeds=(SeedSpec(table="customers", mode="sample", key_columns=("id",), fraction=1.0),),
-            policy=FanOutPolicy(),
-            job_seed=JOB_SEED,
-            engine_version="test",
-        )
-    assert excinfo.value.code == "subset_relationship_type_mismatch"
 
 
 def test_half_declared_composite_fails_via_relationships_from_config() -> None:
