@@ -39,11 +39,17 @@ from decoy_engine.subset._types import (
 
 
 def _seed_spec_public(spec: SeedSpec) -> dict[str, Any]:
-    """Serialize a `SeedSpec` for the plan/manifest, WITHOUT raw key values.
+    """Serialize a `SeedSpec` for the plan/manifest, WITHOUT raw data values.
 
     `keys` mode carries raw values on `spec.keys`; only the count is
-    serialized. `sample`/`filter` predicates hold CONFIG values (thresholds,
-    region codes, etc.), not data read from the table, so they may appear.
+    serialized. `sample` mode's `fraction`/`count` are config thresholds, not
+    data, so they may appear as-is. `filter` mode's predicate `column` and
+    `op` name WHAT was filtered (operator-useful, not sensitive on their
+    own), but the predicate `value` is an operator-supplied literal that can
+    itself be PII (e.g. a seed of `filter email == "victim@example.com"`) --
+    it is NEVER serialized here. `value_redacted` records only whether a
+    literal was present, so the shape of the filter stays visible without the
+    data.
     """
     if spec.mode == "keys":
         return {
@@ -62,7 +68,8 @@ def _seed_spec_public(spec: SeedSpec) -> dict[str, Any]:
         d["count"] = spec.count
     if spec.mode == "filter":
         d["predicates"] = [
-            {"column": p.column, "op": p.op, "value": p.value} for p in spec.predicates
+            {"column": p.column, "op": p.op, "value_redacted": p.value is not None}
+            for p in spec.predicates
         ]
     return d
 

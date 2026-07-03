@@ -5,10 +5,11 @@ from __future__ import annotations
 import json
 
 from decoy_engine.subset._api import run_subset
-from decoy_engine.subset._types import FanOutPolicy, SeedSpec, SubsetSource
+from decoy_engine.subset._types import FanOutPolicy, Predicate, SeedSpec, SubsetSource
 from tests.unit.subset.conftest import JOB_SEED, make_parquet, rel
 
 SENTINEL = "SENTINEL_KEY_93217"
+FILTER_SENTINEL = "FILTER_SENTINEL_PII_772104@example.com"
 
 
 def test_manifest_has_no_raw_key_values_and_is_complete(tmp_path) -> None:
@@ -80,3 +81,51 @@ def test_manifest_has_no_raw_key_values_and_is_complete(tmp_path) -> None:
 
     # Result object mirrors the manifest.
     assert result.manifest.manifest_version == 1
+
+
+def test_manifest_filter_predicate_value_is_redacted(tmp_path) -> None:
+    """MEDIUM-1 (dennis review): a filter-mode predicate literal (e.g. a PII
+    value like an email address used to seed a subset) must never reach the
+    shareable evidence manifest. Only the column + op (what was filtered)
+    survive; the literal is replaced by a `value_redacted` flag.
+    """
+    customers_path = make_parquet(
+        tmp_path,
+        "customers",
+        {"id": [1, 2, 3], "email": [FILTER_SENTINEL, "other-1@example.com", "other-2@example.com"]},
+    )
+    orders_path = make_parquet(tmp_path, "orders", {"id": [1], "customer_id": [1]})
+    sources = {
+        "customers": SubsetSource(path=customers_path, format="parquet"),
+        "orders": SubsetSource(path=orders_path, format="parquet"),
+    }
+    relationships = (rel("customers", ("id",), "orders", ("customer_id",), policy="preserve"),)
+    seeds = (
+        SeedSpec(
+            table="customers",
+            mode="filter",
+            predicates=(Predicate(column="email", op="eq", value=FILTER_SENTINEL),),
+        ),
+    )
+    out_dir = tmp_path / "out"
+
+    run_subset(
+        sources=sources,
+        relationships=relationships,
+        seeds=seeds,
+        policy=FanOutPolicy(),
+        job_seed=JOB_SEED,
+        engine_version="test-engine-version",
+        output_dir=out_dir,
+    )
+
+    manifest_path = out_dir / "subset-manifest.json"
+    raw_text = manifest_path.read_text()
+    assert FILTER_SENTINEL not in raw_text
+
+    data = json.loads(raw_text)
+    predicate = data["seed_specs_public"][0]["predicates"][0]
+    assert predicate["column"] == "email"
+    assert predicate["op"] == "eq"
+    assert "value" not in predicate
+    assert predicate["value_redacted"] is True

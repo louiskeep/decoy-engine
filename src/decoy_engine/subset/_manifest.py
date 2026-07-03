@@ -3,10 +3,13 @@
 Established contract: counts-and-identifiers-only mirrors the alerts /
 evidence no-raw-data convention (platform `docs/reference/alerts.md`) and the
 frozen-report discipline of `validation.post._types`. NO raw key value from
-`SeedSpec.keys`, `SeedSpec.predicates` values, or any table's data can appear
-anywhere in the serialized form -- the only fields that could leak one are
-`seed_specs_public` (keys mode is count-only; see `_api.py`) and error
-messages (budget/orphan messages name tables/edges/counts, never values).
+`SeedSpec.keys` and NO raw predicate literal from `SeedSpec.predicates` can
+appear anywhere in the serialized form: `seed_specs_public` serializes
+`keys` mode as count-only, and `filter` mode's predicate `value` is redacted
+to a boolean `value_redacted` flag (column + op are kept; see
+`_api.py::_seed_spec_public`). The only other fields that could otherwise
+leak a value are error messages (budget/orphan messages name tables/edges/
+counts, never values).
 """
 
 from __future__ import annotations
