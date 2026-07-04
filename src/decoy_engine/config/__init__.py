@@ -50,6 +50,12 @@ from decoy_engine.config._sources import (
     S3Source,
     SourceDescriptor,
 )
+from decoy_engine.config._subset import (
+    SubsetBudgetConfig,
+    SubsetConfig,
+    SubsetPredicateConfig,
+    SubsetSeedConfig,
+)
 from decoy_engine.config._tables import ColumnConfig, TableConfig
 from decoy_engine.config._targets import (
     FileTarget,
@@ -89,6 +95,10 @@ __all__ = [
     "S3Target",
     "SortOp",
     "SourceDescriptor",
+    "SubsetBudgetConfig",
+    "SubsetConfig",
+    "SubsetPredicateConfig",
+    "SubsetSeedConfig",
     "TableConfig",
     "TargetDescriptor",
     "TransformOp",

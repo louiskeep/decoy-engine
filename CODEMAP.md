@@ -30,6 +30,7 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | `src/decoy_engine/storm/profiler.py` | `run_storm` |
 | `src/decoy_engine/validation_result.py` | `ValidationResult` wire shape + `VALIDATION_CODES` |
 | `src/decoy_engine/sdk.py` | Public Connector SDK (`FileSource`, `FileSink`, capabilities) |
+| `src/decoy_engine/subset/__init__.py` | `run_subset_preflight` / `plan_subset` / `run_subset` (FK-aware subsetting: a pre-mask stage that carves a referentially-intact slice of a multi-table Parquet dataset; Sprint G) |
 | `src/decoy_engine/release.py` | `RELEASE_PHASE` / `is_pre_ga` (the pre-GA/GA switch the CI gates read) |
 | `tests/integration/golden/test_execution_e2e.py` | Canonical end-to-end caller shape |
 
@@ -55,6 +56,7 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | `src/decoy_engine/storm/` | Profiling and detectors; `eval/` (labeled fixtures + regex-baseline recognition harness + ML measurement substrate) and `features/` (deterministic per-column feature builder) are off-run-path field-recognition tooling (BF2 / ML0); `eval/split.py` + `eval/bands.py` are scaffolding for ML2.2; `model_pack/` holds the LightGBM pack loader + featurizer + ML3.1 classification function + ML3.2 HMAC provenance signing |
 | `src/decoy_engine/validators/` | Job-level validator framework (SP-05 / P5.INFRA.4). `validate(outputs, config)` runs all configured validators after column passes complete and returns a frozen `ValidationReport`. Six built-in validators: `luhn`, `npi`, `iban`, `vin` (delegate to SP-04 checksums), `fk_intact`, `no_orphan_children` (SDV HMA1 parent-first DAG pattern). Fail-closed by default: any failure raises `ValidatorFailedError`. |
 | `src/decoy_engine/quarantine.py` | Quarantine-row support (SP-05 / P5.B). `apply_quarantine(outputs, report, quarantine_config)` routes failing rows to a JSONL file and removes them from main output; job continues and succeeds. Three fail-closed guards: empty `output_path` raises, unwired triggers raise, misconfigured FK validators raise. |
+| `src/decoy_engine/subset/` | FK-aware row subsetting (Sprint G, SS1-SS5): a pre-mask stage that pulls a referentially-intact slice of a multi-table Parquet dataset (deterministic sample / filter / explicit keys, closed over the declared `relationships` graph). Public surface: `run_subset_preflight`, `plan_subset`, `run_subset`, `relationships_from_config`, `subset_inputs_from_config` (see `subset/__init__.py`; not re-exported from top-level `decoy_engine` this sprint). `_preflight.py` (SS1 fail-closed FK-validity pre-check, an anti-join adapter over `validation/post/_checks/_fk_validity.py`'s semantics), `_seed.py` (SS2 sample/filter/keys seed selection), `_closure.py` (SS3 downward+upward fixpoint closure engine, the novel core), `_policy.py` (SS4 fan-out budget + dry-run estimate, hard-fail-before-materialization), `_materialize.py` + `_manifest.py` (SS5 Parquet write + evidence manifest with no raw key values or filter literals), `_edges.py`/`_keys.py`/`_types.py`/`_errors.py` (support). Parquet-only, file/batch sources only, manual `relationships` declaration only; polymorphic FKs unsupported. `decoy subset` CLI (SS6) and platform UI (SS7) are follow-ons, not built here. |
 | `src/decoy_engine/validation/` | `validate_config` |
 | `src/decoy_engine/validation_result.py` | `ValidationResult`, `ValidationMessage`, `VALIDATION_CODES` |
 | `src/decoy_engine/sdk.py` | Public Connector SDK (file-shaped) |
@@ -102,6 +104,8 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | `code_set` shipped corpora (ICD-10, HCPCS, NDC, MCC) | `src/decoy_engine/codesets/` |
 | Job-level validator framework (validators: config block) | `src/decoy_engine/validators/` (entry: `validate`; types: `ValidationReport`, `ValidatorFinding`) |
 | Quarantine-row routing (quarantine: config block) | `src/decoy_engine/quarantine.py` (`apply_quarantine`, `quarantine_manifest`) |
+| FK-aware subsetting: public entrypoints, scope, config surface | `src/decoy_engine/subset/__init__.py` (public surface); `src/decoy_engine/config/_subset.py` (`subset:` PipelineConfig block); [relationships](docs/relationships.md) "Subsetting" section; CHANGELOG "Sprint G FK-aware subsetting core" entry |
+| FK-aware subsetting core logic: preflight, seed selection, closure engine, fan-out/dry-run, materialization+manifest | `src/decoy_engine/subset/_preflight.py`, `_seed.py`, `_closure.py`, `_policy.py`, `_materialize.py`, `_manifest.py` |
 | Config schema | `src/decoy_engine/config/_pipeline.py` |
 | Relationship schema | `src/decoy_engine/config/_relationships.py` (reference doc lives in the commercial platform repo) |
 | Plan compilation | `src/decoy_engine/plan/_compile.py` |

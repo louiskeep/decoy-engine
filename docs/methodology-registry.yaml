@@ -145,6 +145,22 @@ modules:
     pattern: pandas groupby cumcount + derive()-seeded monotone walk
     source: pandas 2.x (Apache-2.0); SDV (MIT); RFC 5869 (HKDF); RFC 2104 (HMAC)
 
+  # Sprint G (2026-07-03): SS3 closure engine, the novel core of FK-aware
+  # subsetting. Downward+upward fixpoint over the declared relationships
+  # graph; termination is a monotonicity argument, not a graph-acyclicity
+  # one, so cyclic FK schemas terminate the same way acyclic ones do.
+  - path: src/decoy_engine/subset/_closure.py
+    pattern: Semi-naive Datalog fixpoint evaluation
+    source: Ullman, "Principles of Database and Knowledge-Base Systems" ch. 3
+      (Kleene / Knaster-Tarski monotone fixpoint)
+
+  # Sprint G (2026-07-03): SS2 deterministic seed sampling. HMAC-SHA256-keyed
+  # bottom-k selection chosen over pl.DataFrame.sample(seed=...) specifically
+  # for cross-polars-version determinism (see the module docstring).
+  - path: src/decoy_engine/subset/_seed.py
+    pattern: Bottom-k / KMV consistent sampling
+    source: RFC 2104 (HMAC); MinHash bottom-k sketch family
+
   # Removed 2026-06-02: the entire `forecast/` module (Recommender +
   # ForecastReport + DisguiseRecommendation + FieldRecommendation +
   # RiskFlag) was deleted under the storm-reframe-C clean break
