@@ -84,6 +84,15 @@ EXPECTED_S2_CHECKS_PASSED = (
     # Row 21 (SP-46, 2026-06-29): fpe_join_group structural validation (singleton,
     # non-fpe member, config mismatch, namespace mismatch).
     "fpe_join_groups",
+    # Row 22 (Sprint 13 / coercion-13 S3, 2026-07-03): truncate length/keep/
+    # mask_char validation (the primary silent-passthrough leak, finding 0.4).
+    "truncate_config",
+    # Row 23 (Sprint 13 S3, GATE-1 Q4, 2026-07-03): bucketize width resolution
+    # (sibling silent-passthrough leak).
+    "bucketize_config",
+    # Row 24 (Sprint 13 S3, GATE-1 Q4, 2026-07-03): categorical (mask)
+    # categories shape (sibling silent-corruption leak).
+    "categorical_categories",
 )
 
 
@@ -97,7 +106,7 @@ class TestChecksPassedShape:
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
         assert plan.plan_compile.checks_passed == EXPECTED_S2_CHECKS_PASSED
 
-    def test_checks_passed_contains_exactly_twenty_one_entries(
+    def test_checks_passed_contains_exactly_twenty_four_entries(
         self, simple_config: dict, simple_profile: Profile
     ) -> None:
         # 9 through S8, row 10 (B1/S13), row 11 (audit H5), rows 12-13
@@ -105,9 +114,10 @@ class TestChecksPassedShape:
         # row 15 (SP-04 fpe_checksum_scheme), row 16 (SP-10 derived_column_refs),
         # row 17 (SP-10b derived_aggregate_refs), rows 18-20 (SP-10c
         # grouped_series_refs, windowed_date_refs, group_key_refs),
-        # row 21 (SP-46 fpe_join_groups).
+        # row 21 (SP-46 fpe_join_groups), rows 22-24 (Sprint 13 S3:
+        # truncate_config, bucketize_config, categorical_categories).
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
-        assert len(plan.plan_compile.checks_passed) == 21
+        assert len(plan.plan_compile.checks_passed) == 24
 
     def test_orphan_fk_policy_completeness_at_documented_position(
         self, simple_config: dict, simple_profile: Profile
@@ -117,25 +127,30 @@ class TestChecksPassedShape:
         (deterministic_namespace_completeness) post-S6; row 10
         (null_bearing_int_unsupported) at the tail post-S13 (B1). SP-10c
         (2026-06-29) adds rows 18-20 at the tail. SP-46 (2026-06-29) adds
-        row 21 (fpe_join_groups) at the tail."""
+        row 21 (fpe_join_groups) at the tail. Sprint 13 S3 (2026-07-03) adds
+        rows 22-24 (truncate_config, bucketize_config, categorical_categories)
+        at the tail."""
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
-        assert plan.plan_compile.checks_passed[-17] == "composite_columns_length_match"
-        assert plan.plan_compile.checks_passed[-16] == "orphan_fk_policy_completeness"
-        assert plan.plan_compile.checks_passed[-15] == "pool_capacity_pre_flight"
-        assert plan.plan_compile.checks_passed[-14] == "composite_wiring_consistent"
-        assert plan.plan_compile.checks_passed[-13] == "deterministic_namespace_completeness"
-        assert plan.plan_compile.checks_passed[-12] == "null_bearing_int_unsupported"
-        assert plan.plan_compile.checks_passed[-11] == "non_poolable_provider_with_pool_backend"
-        assert plan.plan_compile.checks_passed[-10] == "statistical_columns"
-        assert plan.plan_compile.checks_passed[-9] == "text_redact_ner_available"
-        assert plan.plan_compile.checks_passed[-8] == "vault_columns"
-        assert plan.plan_compile.checks_passed[-7] == "fpe_checksum_scheme"
-        assert plan.plan_compile.checks_passed[-6] == "derived_column_refs"
-        assert plan.plan_compile.checks_passed[-5] == "derived_aggregate_refs"
-        assert plan.plan_compile.checks_passed[-4] == "grouped_series_refs"
-        assert plan.plan_compile.checks_passed[-3] == "windowed_date_refs"
-        assert plan.plan_compile.checks_passed[-2] == "group_key_refs"
-        assert plan.plan_compile.checks_passed[-1] == "fpe_join_groups"
+        assert plan.plan_compile.checks_passed[-20] == "composite_columns_length_match"
+        assert plan.plan_compile.checks_passed[-19] == "orphan_fk_policy_completeness"
+        assert plan.plan_compile.checks_passed[-18] == "pool_capacity_pre_flight"
+        assert plan.plan_compile.checks_passed[-17] == "composite_wiring_consistent"
+        assert plan.plan_compile.checks_passed[-16] == "deterministic_namespace_completeness"
+        assert plan.plan_compile.checks_passed[-15] == "null_bearing_int_unsupported"
+        assert plan.plan_compile.checks_passed[-14] == "non_poolable_provider_with_pool_backend"
+        assert plan.plan_compile.checks_passed[-13] == "statistical_columns"
+        assert plan.plan_compile.checks_passed[-12] == "text_redact_ner_available"
+        assert plan.plan_compile.checks_passed[-11] == "vault_columns"
+        assert plan.plan_compile.checks_passed[-10] == "fpe_checksum_scheme"
+        assert plan.plan_compile.checks_passed[-9] == "derived_column_refs"
+        assert plan.plan_compile.checks_passed[-8] == "derived_aggregate_refs"
+        assert plan.plan_compile.checks_passed[-7] == "grouped_series_refs"
+        assert plan.plan_compile.checks_passed[-6] == "windowed_date_refs"
+        assert plan.plan_compile.checks_passed[-5] == "group_key_refs"
+        assert plan.plan_compile.checks_passed[-4] == "fpe_join_groups"
+        assert plan.plan_compile.checks_passed[-3] == "truncate_config"
+        assert plan.plan_compile.checks_passed[-2] == "bucketize_config"
+        assert plan.plan_compile.checks_passed[-1] == "categorical_categories"
 
     def test_s1_check_order_preserved(self, simple_config: dict, simple_profile: Profile) -> None:
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")

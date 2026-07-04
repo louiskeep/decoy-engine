@@ -55,6 +55,139 @@ minimum engine version it was tested against via its
   platform job-runner change and is not part of this commit.
 
   Design doc: `docs/relationships-memory-scaling.md` sections 2 and 6.1.
+### Fixed (Sprint 13 / coercion-13 S3, 2026-07-03, engine version 0.2.0)
+
+Fail-closed fix for a live PII leak plus its same-class siblings (PO
+GATE-1 Q4, coercion-13 sprint 13, root-caused by the Sprint F capability
+registry's execution-verified audit).
+
+- **`truncate` no longer silently passes the source value through on a bad
+  config** (finding 0.4, CONFIRMED live on `main`). `TruncateHandler.run`
+  (`execution/_strategies/_truncate.py`) and its polars twin
+  (`execution/polars/_strategies/_truncate.py`) had three silent
+  passthrough exits: a non-int/sub-1 `length`, an unrecognized `keep`,
+  and an invalid `mask_char`. Each now raises `StrategyError` (codes
+  `truncate_length_invalid`, `truncate_keep_invalid`,
+  `truncate_mask_char_invalid`). A new plan-compile check,
+  `check_truncate_config` (`plan/_checks_truncate.py`, compile-check
+  ownership table row 22), rejects the same shapes before a run starts,
+  and runs in `run_config_only_checks` too. BEHAVIOR CHANGE: a truncate
+  column with an invalid `length`/`keep`/`mask_char` now fails the
+  pipeline instead of emitting the unmasked source value. The valid
+  config path is byte-identical (nulls preserved, head/tail, mask_char).
+- **`bucketize` no longer silently passes the source column through on an
+  unresolvable width** (GATE-1 Q4 sibling). `_resolve_width` returning
+  `None` (an unknown/unresolved `preset`, or a missing/non-numeric/
+  non-positive `width`) now makes `BucketizeStrategyHandler.run` raise
+  `StrategyError(code="bucketize_width_unresolvable")` instead of
+  passing the column through. New compile check
+  `check_bucketize_config` (`plan/_checks_bucketize.py`, row 23).
+- **`categorical` (mask) no longer silently corrupts output when
+  `categories` is a string** (GATE-1 Q4 sibling). `list(cfg["categories"])`
+  iterated the characters of a plain-string `categories` value, replacing
+  the column with resampled single characters instead of the intended
+  category set. Both `CategoricalStrategyHandler.run`
+  (`execution/_strategies/_categorical.py`) and its polars twin now raise
+  `StrategyError(code="categorical_categories_not_list")`. New compile
+  check `check_categorical_categories` (`plan/_checks_categorical.py`,
+  row 24; also rejects missing/empty categories as
+  `categorical_categories_missing`). `from_profile: true` columns are
+  exempt (the authoring layer resolves categories before the engine sees
+  the config).
+- **`joint_mask` investigated and found already safe**: the guide's
+  concern that `tuple(cfg["columns"])` iterates characters when
+  `columns` is a string does not reach a silent leak in practice --
+  `validate_joint_mask_config` already checks each element against the
+  reference table's real (multi-character) column names, so a string
+  value fails loud (`joint_mask_column_not_in_reference`) on its first
+  character before any row is masked. No new check added; a regression
+  test locks the existing behavior in place
+  (`tests/unit/transforms/test_joint_mask.py::test_string_columns_already_rejected`).
+- **Engine version bumped 0.1.0 -> 0.2.0** so `decoy-platform` can pin a
+  floor and guarantee `truncate` is only surfaced against a fail-closed
+  engine (GATE-1 Q1).
+
+### Added (Sprint G FK-aware subsetting core, 2026-07-03)
+
+- **FK-aware row subsetting** (`src/decoy_engine/subset/`, 11 modules; Sprint
+  G SS1-SS5). Pulls a referentially-intact slice of a multi-table Parquet
+  dataset: select a seed (deterministic sample, filter predicate, or explicit
+  key list) from one or more root tables, then close the seed over the
+  declared `relationships` graph so every surviving child row has a
+  surviving parent, and every parent a surviving child needs is pulled in
+  too ("2% of `customers`, plus every `order`/`order_item` that belongs to
+  them, nothing orphaned"). Narrow public surface: `run_subset_preflight`,
+  `plan_subset` (dry-run/estimate), `run_subset` (materialize), plus the
+  config adapters `relationships_from_config` / `subset_inputs_from_config`
+  and the frozen dataclass types, all under `decoy_engine.subset`. Not
+  re-exported from the top-level `decoy_engine` package this sprint; SS6's
+  CLI will import the subpackage directly.
+
+  - **SS1 preflight** (`_preflight.py`): fail-closed FK-validity pre-check
+    over the declared `relationships` and the actual Parquet schemas/key
+    columns, before any row is selected. Reuses
+    `validation/post/_checks/_fk_validity.py`'s per-edge classification
+    semantics (null keys neither match nor orphan; a non-null child key
+    absent from the parent key set is a source orphan) via a schema/key-only
+    anti-join adapter, since `run_fk_validity` itself needs a compiled `Plan`
+    and masked outputs that do not exist yet at this stage. Fails on:
+    non-Parquet source ("convert to Parquet for subsetting"), column-type
+    mismatch (a float FK key is rejected outright), a half-declared
+    composite key, and a dangling/reserved target column.
+  - **SS2 seed selection** (`_seed.py`): `sample` (deterministic bottom-k
+    HMAC-digest selection over the job seed, chosen over
+    `pl.DataFrame.sample(seed=...)` for cross-polars-version stability),
+    `filter` (a structured, AND-ed predicate; no string-eval surface), or
+    `keys` (an explicit key list), over one or more root tables.
+  - **SS3 closure engine** (`_closure.py`), the novel core of the sprint: a
+    downward (cascade) + upward (parent-completeness) fixpoint walk over the
+    declared FK edges, run to a monotone no-growth exit. Pattern: semi-naive
+    Datalog fixpoint evaluation / Kleene-Knaster-Tarski monotone fixpoint
+    over a finite powerset lattice (graph reachability closure); termination
+    follows from monotonicity, not from the schema being acyclic, so a
+    self-reference or a mutual cycle terminates the same way an acyclic
+    schema does. An independent `verify_closure` no-orphan re-check runs
+    after the fixpoint in both `plan_subset` (dry-run) and `run_subset`.
+  - **SS4 fan-out policy + dry-run** (`_policy.py`): per-edge traversal
+    direction (`both`/`downward`/`upward`/`none`; disabling upward traversal
+    on an edge requires an explicit `allow_dangling=True`, since it can
+    orphan a child FK); a fan-out budget that is both a total-output-row cap
+    AND a per-table cap expressed as a multiple of the global seed row
+    total. A budget breach hard-fails BEFORE any materialization and never
+    truncates, since truncating a surviving set would re-introduce the exact
+    orphans the feature exists to prevent. `plan_subset` is a first-class
+    dry-run: it returns the exact projected per-table row counts with no
+    write and no read of any non-key column.
+  - **SS5 materialization + manifest** (`_materialize.py`, `_manifest.py`):
+    semi-joins each source Parquet to its surviving row-index set and writes
+    one filtered Parquet per table (row-index filtering, not a re-derived
+    key join, so the dry-run estimate and the materialized counts are equal
+    by construction). Writes a `subset-manifest.json` evidence artifact
+    (counts, edges traversed and their direction, budget outcome, preflight
+    summary) with NO raw key values and NO raw filter-predicate literals: a
+    `filter`-mode seed keeps its predicate's `column` and `op` in the
+    manifest, but the literal value is replaced with a `value_redacted`
+    boolean (dennis review, MEDIUM-1: the first cut of `_seed_spec_public`
+    wrote the raw predicate value, e.g. a `filter email ==
+    "victim@example.com"` seed, straight into the shareable manifest).
+  - **`subset:` on `PipelineConfig`** (`config/_subset.py`): additive,
+    optional (`None` by default; unset means unchanged full-source masking
+    behavior). Enforces subset-then-mask ordering structurally: there is no
+    config syntax for the reverse order, and pointing a subset job's sources
+    at the same config's mask targets is a validation-time error.
+
+  **Scope for this build:** Parquet input only (a non-Parquet source is a
+  validation-time and preflight-time reject, not a degraded full-load
+  fallback); file/batch sources only (DB sources are deferred, not
+  designed-for); manual `relationships` declaration only (no automatic
+  FK/schema inference for subsetting); polymorphic FKs are unsupported (no
+  clean `PlanRelationship` representation for a column whose parent table
+  varies row to row). Built against the current full-frame FK execution
+  path; `_materialize.py` marks where the `_sequential.py` per-table
+  eviction plug-in point (once `feat/fk-ri-memory-scaling` merges) would
+  compose in, but that path is not built here. A `decoy subset` CLI (SS6)
+  and a platform UI (SS7) are follow-ons in other repos, not shipped in this
+  engine sprint.
 
 ### Added (SP-10 derived strategy, 2026-06-28)
 

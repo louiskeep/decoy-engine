@@ -2,14 +2,21 @@
 
 Mirrors the pandas `TruncateHandler` (S9): keep the first (or last, if
 `from_end`) `length` characters of each stringified non-null value; nulls
-preserved; an invalid length passes through. The pandas path stringifies via
-`astype(str)`; the Polars path casts to Utf8. Output values match for string
-sources (the fixtures); the parity harness accepts Arrow-type differences.
+preserved. The pandas path stringifies via `astype(str)`; the Polars path
+casts to Utf8. Output values match for string sources (the fixtures); the
+parity harness accepts Arrow-type differences.
 
 MG-1 S3 extension (2026-06-01): adds `mask_char` + `keep` so the V1
 "keep last 4, replace rest with *" use case works. Mirrors the pandas
 extension byte-for-byte; the parity harness verifies both backends
 produce identical strings for the new shape.
+
+Sprint 13 / coercion-13 S3 (2026-07-03, finding 0.4): the invalid-config
+branches used to `return frame, []` (silent passthrough). They now raise
+`StrategyError`, mirroring the pandas handler exactly (same codes, same
+messages minus the container). `check_truncate_config`
+(plan/_checks_truncate.py) rejects the same three shapes at compile time;
+this is the defense-in-depth backstop.
 """
 
 from __future__ import annotations
@@ -17,6 +24,7 @@ from __future__ import annotations
 import polars as pl
 
 from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
+from decoy_engine.execution._errors import StrategyError
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._types import ColumnSeed
 
@@ -41,8 +49,17 @@ class PolarsTruncateHandler:
         cfg = provider_config_to_dict(plan.provider_config)
         length = cfg.get("length")
         if not isinstance(length, int) or length < 1:
-            # Invalid config -> passthrough (one bad rule does not abort the run).
-            return frame, []
+            # Invalid config: fail closed (Sprint 13 finding 0.4). A masking
+            # strategy must never silently pass the source value through.
+            raise StrategyError(
+                code="truncate_length_invalid",
+                strategy="truncate",
+                message=(
+                    f"column {column!r} uses truncate with invalid length "
+                    f"{length!r} ({type(length).__name__}); length must be an "
+                    "integer >= 1."
+                ),
+            )
         # MG-1/S3: keep + mask_char. Legacy from_end maps to keep="tail";
         # explicit keep wins. mask_char None preserves V1 byte identity.
         from_end_legacy = bool(cfg.get("from_end", False))
@@ -50,11 +67,23 @@ class PolarsTruncateHandler:
         if keep is None:
             keep = "tail" if from_end_legacy else "head"
         if keep not in ("head", "tail"):
-            return frame, []
+            raise StrategyError(
+                code="truncate_keep_invalid",
+                strategy="truncate",
+                message=f"column {column!r} uses truncate with invalid keep {keep!r}.",
+            )
         mask_char = cfg.get("mask_char")
         if mask_char is not None:
             if not isinstance(mask_char, str) or len(mask_char) != 1:
-                return frame, []  # rejected at plan-compile, defensive
+                raise StrategyError(
+                    code="truncate_mask_char_invalid",
+                    strategy="truncate",
+                    message=(
+                        f"column {column!r} uses truncate with invalid mask_char "
+                        f"{mask_char!r} ({type(mask_char).__name__}); mask_char "
+                        "must be a single character."
+                    ),
+                )  # rejected at plan-compile too; this is the defensive backstop
         as_str = pl.col(column).cast(pl.Utf8)
         if mask_char is None:
             # V1 path; byte-identical.

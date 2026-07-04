@@ -58,6 +58,13 @@ from decoy_engine.plan._checks import (
     check_vault_columns,
 )
 
+# Sprint 13 / coercion-13 S3 (2026-07-03): fail-closed checks for truncate
+# (the primary leak, finding 0.4) and its GATE-1 Q4 siblings (bucketize
+# custom-width, categorical char-iteration). Per-strategy modules for the
+# same _checks.py size-ceiling reason as the SP-10c/SP-46 block above.
+from decoy_engine.plan._checks_bucketize import check_bucketize_config
+from decoy_engine.plan._checks_categorical import check_categorical_categories
+
 # SP-10b: derived_aggregate check extracted from _checks.py to keep that
 # module under its allowlisted ceiling. See test_module_size.py ALLOWLIST.
 from decoy_engine.plan._checks_derived_aggregate import check_derived_aggregate_refs
@@ -67,6 +74,7 @@ from decoy_engine.plan._checks_derived_aggregate import check_derived_aggregate_
 from decoy_engine.plan._checks_fpe_join import check_fpe_join_groups
 from decoy_engine.plan._checks_group_key import check_group_key_refs
 from decoy_engine.plan._checks_grouped_series import check_grouped_series_refs
+from decoy_engine.plan._checks_truncate import check_truncate_config
 from decoy_engine.plan._checks_windowed_date import check_windowed_date_refs
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._graph import _build_namespaces, _build_relationships
@@ -185,6 +193,20 @@ def compile_plan(
     # compile-time manifest warnings for every active group. Config-only; runs
     # in both branches and in run_config_only_checks.
     fpe_join_warnings = check_fpe_join_groups(config)
+    # Row 22 (Sprint 13 / coercion-13 S3, 2026-07-03): reject truncate columns
+    # whose length/keep/mask_char cannot mask the column (the primary silent-
+    # passthrough leak, finding 0.4). Config-only; both branches +
+    # run_config_only_checks.
+    check_truncate_config(config)
+    # Row 23 (Sprint 13 / coercion-13 S3, GATE-1 Q4, 2026-07-03): reject
+    # bucketize columns whose width cannot be resolved (sibling silent-
+    # passthrough leak). Config-only; both branches + run_config_only_checks.
+    check_bucketize_config(config)
+    # Row 24 (Sprint 13 / coercion-13 S3, GATE-1 Q4, 2026-07-03): reject
+    # categorical (mask) columns whose categories is not a proper non-empty
+    # list (sibling silent-corruption leak). Config-only; both branches +
+    # run_config_only_checks.
+    check_categorical_categories(config)
     check_composite_columns_length_match(profile)
     # MG-3 / M3 (2026-05-31): reject when + coherent_with combo early,
     # before composite-wiring checks. A column carrying both fields is
@@ -249,6 +271,12 @@ def compile_plan(
             "group_key_refs",
             # Row 21 (SP-46): fpe_join_group structural validation.
             "fpe_join_groups",
+            # Row 22 (Sprint 13 S3): truncate length/keep/mask_char validation.
+            "truncate_config",
+            # Row 23 (Sprint 13 S3, GATE-1 Q4): bucketize width resolution.
+            "bucketize_config",
+            # Row 24 (Sprint 13 S3, GATE-1 Q4): categorical categories shape.
+            "categorical_categories",
         )
         checks_skipped: tuple[str, ...] = (
             "basic_uniqueness_pre_flight",
@@ -301,6 +329,12 @@ def compile_plan(
             "group_key_refs",
             # Row 21 (SP-46): fpe_join_group structural validation.
             "fpe_join_groups",
+            # Row 22 (Sprint 13 S3): truncate length/keep/mask_char validation.
+            "truncate_config",
+            # Row 23 (Sprint 13 S3, GATE-1 Q4): bucketize width resolution.
+            "bucketize_config",
+            # Row 24 (Sprint 13 S3, GATE-1 Q4): categorical categories shape.
+            "categorical_categories",
         )
         checks_skipped = ()
 
@@ -399,6 +433,13 @@ def run_config_only_checks(config: dict[str, Any]) -> tuple[str, ...]:
     # Row 21 (SP-46 / fpe_join_group): validate fpe_join_group declarations.
     # Warnings are discarded here (config-only callers do not build a Plan).
     check_fpe_join_groups(config)
+    # Row 22 (Sprint 13 / coercion-13 S3): truncate length/keep/mask_char
+    # validation. Config-only: safe for decoy validate / validate-yaml.
+    check_truncate_config(config)
+    # Row 23 (Sprint 13 S3, GATE-1 Q4): bucketize width resolution.
+    check_bucketize_config(config)
+    # Row 24 (Sprint 13 S3, GATE-1 Q4): categorical (mask) categories shape.
+    check_categorical_categories(config)
     return (
         "unknown_provider",
         "when_with_coherent_with",
@@ -415,6 +456,12 @@ def run_config_only_checks(config: dict[str, Any]) -> tuple[str, ...]:
         "group_key_refs",
         # Row 21 (SP-46): fpe_join_group structural validation.
         "fpe_join_groups",
+        # Row 22 (Sprint 13 S3): truncate length/keep/mask_char validation.
+        "truncate_config",
+        # Row 23 (Sprint 13 S3, GATE-1 Q4): bucketize width resolution.
+        "bucketize_config",
+        # Row 24 (Sprint 13 S3, GATE-1 Q4): categorical categories shape.
+        "categorical_categories",
     )
 
 

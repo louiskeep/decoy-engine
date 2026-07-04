@@ -165,7 +165,12 @@ class TestPlanCompileStampsField:
     def test_plan_compile_stamps_distribution_behavior(self, strategy, expected):
         from decoy_engine.plan import compile_plan
 
-        profile, config = self._profile_and_config(strategy)
+        # Sprint 13 / coercion-13 S3 (2026-07-03): check_truncate_config now
+        # rejects a truncate column with no length at compile time (finding
+        # 0.4); this test only cares about distribution_behavior stamping,
+        # so give truncate a valid length rather than an empty config.
+        provider_config = {"length": 3} if strategy == "truncate" else None
+        profile, config = self._profile_and_config(strategy, provider_config)
         plan = compile_plan(config, profile, decoy_engine_version="0.1.0")
         col_seed = plan.seed_envelope.per_table[0][1].per_column[0][1]
         assert col_seed.distribution_behavior == expected
