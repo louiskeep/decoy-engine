@@ -100,8 +100,12 @@ class TestBucketize:
         out = _run(_plan("age", seed), src).output.column("age").to_pylist()
         assert out == ["30"]
 
-    def test_invalid_width_passthrough(self) -> None:
+    def test_invalid_width_raises(self) -> None:
+        """Sprint 13 / coercion-13 S3, GATE-1 Q4 (2026-07-03): an
+        unresolvable width now fails closed instead of passing the source
+        column through unmasked."""
         src = pa.table({"age": [23]})
         seed = _col("bucketize", provider_config=(("width", 0),))
-        out = _run(_plan("age", seed), src).output.column("age").to_pylist()
-        assert out == [23]
+        with pytest.raises(ExecutionError) as exc:
+            _run(_plan("age", seed), src)
+        assert exc.value.code == "bucketize_width_unresolvable"

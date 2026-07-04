@@ -118,6 +118,27 @@ _CASES: list[tuple[str, Any, dict[str, pa.Table]]] = [
         {"t": pa.table({"c": _NUMS})},
     ),
     (
+        # Sprint 13 / coercion-13 S3 (2026-07-03): the valid keep + mask_char
+        # path must stay byte-identical across both substrates after the
+        # fail-closed fix (truncate_length_invalid / truncate_keep_invalid /
+        # truncate_mask_char_invalid only fire on invalid config; this case
+        # proves the VALID config path is untouched by that change).
+        "truncate-keep-tail-mask-char",
+        _plan(
+            "t",
+            (
+                (
+                    "c",
+                    _col(
+                        "truncate",
+                        provider_config=(("length", 4), ("keep", "tail"), ("mask_char", "*")),
+                    ),
+                ),
+            ),
+        ),
+        {"t": pa.table({"c": ["1234567890", None, "abc"]})},
+    ),
+    (
         "shuffle-deterministic-small",
         _plan("t", (("c", _col("shuffle", namespace="s_ns", deterministic=True)),)),
         {"t": pa.table({"c": _SMALL})},
@@ -474,6 +495,74 @@ def test_strategy_int_null_rejected_both_substrates(
                 namespace_registry=_NS,
             )
         assert exc.value.code == "null_bearing_int_unsupported"
+
+
+# --------------------------------------------------------------------------
+# Sprint 13 / coercion-13 S3 (2026-07-03): fail-closed handler backstop parity.
+#
+# truncate/bucketize/categorical each had a silent-passthrough or silent-
+# corruption exit on a bad config (finding 0.4 + GATE-1 Q4 siblings). Both the
+# pandas AND polars handlers now raise the SAME typed StrategyError on the
+# same invalid config, mirroring the null_bearing_int pattern above: the
+# handler-level backstop is defense-in-depth (check_truncate_config /
+# check_bucketize_config / check_categorical_categories already reject these
+# shapes at plan-compile), so this proves neither substrate can be reached
+# with an unvalidated config that would silently leak or corrupt.
+# --------------------------------------------------------------------------
+
+_FAIL_CLOSED_BOTH_SUBSTRATES: list[tuple[str, Any, dict[str, pa.Table], str]] = [
+    (
+        "truncate-invalid-length-both-substrates",
+        _plan("t", (("c", _col("truncate", provider_config=(("length", 0),))),)),
+        {"t": pa.table({"c": ["a", "b"]})},
+        "truncate_length_invalid",
+    ),
+    (
+        "bucketize-unresolvable-width-both-substrates",
+        _plan("t", (("c", _col("bucketize", provider_config=(("width", 0),))),)),
+        {"t": pa.table({"c": pa.array([1, 2], type=pa.int64())})},
+        "bucketize_width_unresolvable",
+    ),
+    (
+        "categorical-string-categories-both-substrates",
+        _plan(
+            "t",
+            (
+                (
+                    "c",
+                    _col(
+                        "categorical",
+                        namespace="cat_ns",
+                        deterministic=True,
+                        provider_config=(("categories", "gold,silver"),),
+                    ),
+                ),
+            ),
+        ),
+        {"t": pa.table({"c": ["a", "b"]})},
+        "categorical_categories_not_list",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "plan,sources,expected_code",
+    [(c[1], c[2], c[3]) for c in _FAIL_CLOSED_BOTH_SUBSTRATES],
+    ids=[c[0] for c in _FAIL_CLOSED_BOTH_SUBSTRATES],
+)
+def test_fail_closed_sibling_leaks_both_substrates(
+    plan: Any, sources: dict[str, pa.Table], expected_code: str
+) -> None:
+    for adapter in (PandasExecutionAdapter(), PolarsExecutionAdapter()):
+        with pytest.raises(ExecutionError) as exc:
+            adapter.run(
+                plan,
+                sources,
+                registry=_REG,
+                relationship_graph=_GRAPH,
+                namespace_registry=_NS,
+            )
+        assert exc.value.code == expected_code
 
 
 # --------------------------------------------------------------------------

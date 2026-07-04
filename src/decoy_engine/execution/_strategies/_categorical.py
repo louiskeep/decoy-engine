@@ -21,6 +21,17 @@ MG-1 S5 extension (2026-06-01): `weights` and `from_profile`.
   the actual ``categories`` + ``weights`` are already set; the
   plan-compile change lives in ``decoy_engine.plan._compile``.
 
+Sprint 13 / coercion-13 S3 (2026-07-03, GATE-1 Q4 sibling of the truncate
+fail-closed fix): ``categories = list(cfg.get("categories", []))`` used to
+silently iterate the CHARACTERS of a plain-string ``categories`` value
+(e.g. a Studio free-text field submitted with no coercion), corrupting
+the output to single resampled characters instead of masking with the
+intended category set. `run` now raises `StrategyError` when
+``categories`` is present and not a list/tuple (unless ``from_profile``
+is set, per D5). `check_categorical_categories`
+(plan/_checks_categorical.py) rejects the same shape at compile time;
+this is the defense-in-depth backstop.
+
 The deterministic + weighted path uses a CDF over a fixed integer
 resolution so ``derive_index(..., pool_size=_WEIGHTED_CDF_RES)`` picks
 a uniform integer that maps through the CDF to a weighted category.
@@ -112,6 +123,25 @@ class CategoricalStrategyHandler:
         ctx: StrategyContext,
     ) -> tuple[pd.DataFrame, list[QualityWarning]]:
         cfg = provider_config_to_dict(plan.provider_config)
+        raw_categories = cfg.get("categories")
+        if (
+            not cfg.get("from_profile")
+            and raw_categories is not None
+            and not isinstance(raw_categories, (list, tuple))
+        ):
+            # Invalid shape: fail closed (Sprint 13 GATE-1 Q4). A string
+            # value would iterate as characters below, silently corrupting
+            # the output instead of masking with the intended categories.
+            raise StrategyError(
+                code="categorical_categories_not_list",
+                strategy="categorical",
+                message=(
+                    f"column {column!r} uses categorical with "
+                    f"categories={raw_categories!r} ({type(raw_categories).__name__}), "
+                    "which is not a list. A string value iterates as individual "
+                    "characters at runtime; provide categories as a list."
+                ),
+            )
         categories = list(cfg.get("categories", []))
         if not categories:
             raise StrategyError(
