@@ -267,10 +267,20 @@ def validate_leak_check(
             is_transformative = strategy in TRANSFORMATIVE or provider in _COMPOSITE_PROVIDERS
             is_shape_preserving = strategy in SHAPE_PRESERVING
             if not is_transformative and not is_shape_preserving:
-                # Unclassified strategy reaching here would mean the drift
-                # sentry test was bypassed; defensively skip rather than
-                # produce a spurious finding on an unrecognised shape.
-                continue
+                # LOW L1 (dennis review 2026-07-04): fail CLOSED, not open.
+                # An unclassified strategy reaching here means the drift
+                # sentry (test_leak_check.py) was bypassed and this is a
+                # privacy product: silently skipping the column would
+                # manufacture false confidence that it was leak-checked. The
+                # sentry guarantees every strategy is classified, so this can
+                # only fire on a genuine gap -- raise so it is fixed, never
+                # shipped unchecked.
+                raise ValueError(
+                    f"leak_check: strategy {strategy!r} on {table_name}.{col_name} is not "
+                    "classified as TRANSFORMATIVE, SHAPE_PRESERVING, or EXCLUDED. leak_check "
+                    "cannot verify a strategy it does not know how to interpret; classify it "
+                    "in decoy_engine.validators._leak_check (and its drift sentry) before use."
+                )
 
             src_vals = src_table.column(col_name).to_pylist()
             out_vals = out_table.column(col_name).to_pylist()

@@ -33,11 +33,14 @@ from __future__ import annotations
 
 import logging
 import warnings
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
 import pandas as pd
 
 from decoy_engine.execution._errors import StrategyError
+from decoy_engine.execution._row_errors import RowError
 
 _log = logging.getLogger(__name__)
 
@@ -50,6 +53,39 @@ if TYPE_CHECKING:
     )
     from decoy_engine.generation.pool._events import QualityWarning
     from decoy_engine.plan._types import ColumnSeed
+
+
+def _remap_gated_row_errors(
+    ctx: StrategyContext,
+    err_start: int,
+    full_positions: Sequence[int],
+) -> None:
+    """Rewrite subset-relative RowError indices to full-table positions.
+
+    BLOCKER B1 (dennis review 2026-07-04): the `when:` gate hands the
+    handler a SUBSET frame (`df.loc[mask]` / `frame.filter(mask)`), so the
+    handler records ``RowError.row_index`` positional in that subset. The
+    pipeline + quarantine machinery (`_pipeline.py` D8, `quarantine.py` D9)
+    consume ``row_index`` as a FULL-TABLE position. Left unremapped, a gated
+    format/mask error quarantines/deletes the WRONG row and ships the raw
+    source value of the real bad row -- exactly the silent leak this sprint
+    exists to kill.
+
+    Only the errors appended during THIS handler call (indices
+    ``err_start..``) are remapped; ``RowError`` is frozen, so each entry is
+    replaced in place with a copy carrying the full-table index. Preserving
+    the sink's identity is required (the adapter drains it by reference,
+    trap T6). ``full_positions[k]`` is the full-table row position of the
+    k-th gated (mask-True) row, in mask order.
+    """
+    for j in range(err_start, len(ctx.row_errors)):
+        e = ctx.row_errors[j]
+        ctx.row_errors[j] = RowError(
+            column=e.column,
+            row_index=int(full_positions[e.row_index]),
+            trigger=e.trigger,
+            reason=e.reason,
+        )
 
 
 def _eval_predicate(
@@ -160,7 +196,16 @@ def run_with_when_gate(
         return df, []
 
     sub_df = df.loc[mask].copy()
+    err_start = len(ctx.row_errors)
     sub_df, warnings = handler.run(sub_df, column, plan, ctx)
+    # B1: remap subset-relative row-error indices to full-table positions
+    # BEFORE they leave the gate (see _remap_gated_row_errors). The k-th
+    # mask-True row's full-table position is np.flatnonzero(mask)[k], and
+    # the handler records positions 0..len(sub_df)-1 into the subset in the
+    # same order (our row-error producers preserve row order).
+    if len(ctx.row_errors) > err_start:
+        # `.tolist()` (only on the rare error path) gives a plain Sequence.
+        _remap_gated_row_errors(ctx, err_start, np.flatnonzero(mask.to_numpy()).tolist())
     df.loc[mask, column] = sub_df[column]
     return df, warnings
 
@@ -208,7 +253,17 @@ def run_with_when_gate_polars(
     positions = pl.Series(anchor_col, range(frame.height), dtype=pl.Int64)
     frame_with_anchor = frame.with_columns(positions)
     sub_frame = frame_with_anchor.filter(mask_pl)
+    err_start = len(ctx.row_errors)
     sub_frame, warnings = handler.run(sub_frame, column, plan, ctx)
+    # B1: remap subset-relative row-error indices to full-table positions,
+    # reusing the same positional anchor the value writeback below relies on
+    # (`_decoy_when_row_pos` carries each surviving row's original position).
+    # `sub_frame[anchor_col][k]` is the full-table position of the k-th gated
+    # row, so it is exactly the full_positions mapping _remap_gated_row_errors
+    # needs -- the row-error attribution and the value writeback share one
+    # anchor, so they cannot disagree.
+    if len(ctx.row_errors) > err_start:
+        _remap_gated_row_errors(ctx, err_start, sub_frame.get_column(anchor_col).to_list())
 
     # Stitch via pandas. The eval already paid a `.to_pandas()` on the
     # full frame; we reuse `pdf` and write back to the rows the anchor
