@@ -4,12 +4,20 @@ The V1 byte-identical path is preserved when both new keys are unset.
 The new `keep` + `mask_char` shape unlocks the canonical "keep last 4,
 mask the rest with *" pattern (cc_last4 / SSN-last-4 / phone-last-4
 use cases).
+
+Sprint 13 / coercion-13 S3 (2026-07-03, finding 0.4): the invalid-config
+cells below used to assert silent passthrough (a masking strategy leaking
+the source value on a bad config). They now assert `StrategyError`
+(fail-closed); see `plan/_checks_truncate.py` for the compile-time half of
+the same fix.
 """
 
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
+from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution._strategies._truncate import TruncateHandler
 from decoy_engine.plan._types import ColumnSeed
 
@@ -47,11 +55,14 @@ class TestTruncateV1ByteIdentity:
         out, _ = handler.run(df.copy(), "col", _seed({"length": 2, "from_end": True}), _FakeCtx())
         assert out["col"].tolist() == ["lo", "ld", "ab"]
 
-    def test_invalid_length_passes_through(self):
+    def test_invalid_length_raises(self):
+        """Sprint 13 finding 0.4: an invalid length now fails closed instead
+        of silently passing the source value through."""
         df = pd.DataFrame({"col": ["hello", "world"]})
         handler = TruncateHandler()
-        out, _ = handler.run(df.copy(), "col", _seed({"length": 0}), _FakeCtx())
-        assert out["col"].tolist() == ["hello", "world"]
+        with pytest.raises(StrategyError) as exc:
+            handler.run(df.copy(), "col", _seed({"length": 0}), _FakeCtx())
+        assert exc.value.code == "truncate_length_invalid"
 
 
 class TestTruncateNewKeepShape:
@@ -89,16 +100,18 @@ class TestTruncateNewKeepShape:
         )
         assert out["col"].tolist() == ["hel"]
 
-    def test_unknown_keep_value_passes_through(self):
+    def test_unknown_keep_value_raises(self):
+        """Sprint 13 finding 0.4: an unrecognized keep now fails closed."""
         df = pd.DataFrame({"col": ["hello"]})
         handler = TruncateHandler()
-        out, _ = handler.run(
-            df.copy(),
-            "col",
-            _seed({"length": 3, "keep": "middle"}),
-            _FakeCtx(),
-        )
-        assert out["col"].tolist() == ["hello"]
+        with pytest.raises(StrategyError) as exc:
+            handler.run(
+                df.copy(),
+                "col",
+                _seed({"length": 3, "keep": "middle"}),
+                _FakeCtx(),
+            )
+        assert exc.value.code == "truncate_keep_invalid"
 
 
 class TestTruncateMaskChar:
@@ -142,27 +155,30 @@ class TestTruncateMaskChar:
         assert len(out["col"][0]) == 10
 
     def test_mask_char_rejects_multi_char(self):
-        """A 2-char mask_char passes through with no mutation."""
+        """Sprint 13 finding 0.4: a 2-char mask_char now fails closed
+        instead of passing the source value through unmutated."""
         df = pd.DataFrame({"col": ["hello"]})
         handler = TruncateHandler()
-        out, _ = handler.run(
-            df.copy(),
-            "col",
-            _seed({"length": 2, "keep": "tail", "mask_char": "XY"}),
-            _FakeCtx(),
-        )
-        assert out["col"].tolist() == ["hello"]
+        with pytest.raises(StrategyError) as exc:
+            handler.run(
+                df.copy(),
+                "col",
+                _seed({"length": 2, "keep": "tail", "mask_char": "XY"}),
+                _FakeCtx(),
+            )
+        assert exc.value.code == "truncate_mask_char_invalid"
 
     def test_mask_char_rejects_non_string(self):
         df = pd.DataFrame({"col": ["hello"]})
         handler = TruncateHandler()
-        out, _ = handler.run(
-            df.copy(),
-            "col",
-            _seed({"length": 2, "keep": "tail", "mask_char": 42}),
-            _FakeCtx(),
-        )
-        assert out["col"].tolist() == ["hello"]
+        with pytest.raises(StrategyError) as exc:
+            handler.run(
+                df.copy(),
+                "col",
+                _seed({"length": 2, "keep": "tail", "mask_char": 42}),
+                _FakeCtx(),
+            )
+        assert exc.value.code == "truncate_mask_char_invalid"
 
     def test_mask_char_with_short_string(self):
         """When the string is shorter than keep-length, mask_char

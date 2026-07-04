@@ -1,11 +1,21 @@
 """truncate strategy (engine-v2 S9): keep the first (or last) N characters.
 
 Logic carried from V1 `transforms/truncate.py` (config keys `length` >= 1,
-`from_end` bool; nulls preserved; invalid length -> passthrough). No backend.
+`from_end` bool; nulls preserved). No backend.
 
 MG-1 S3 extension (2026-06-01): adds `mask_char` + `keep` so the
 V1 "keep last 4, replace rest with *" use case works. When both new
 fields are unset, the byte-identical V1 behavior is preserved.
+
+Sprint 13 / coercion-13 S3 (2026-07-03, finding 0.4): the invalid-config
+branches used to `return df, []` (silent passthrough of the source
+value -- a masking strategy leaking source PII on a bad config). They now
+raise `StrategyError`. `check_truncate_config` (plan/_checks_truncate.py)
+rejects the same three shapes at compile time, so this is a defense-in-
+depth backstop: unreachable through a compiled plan, but a masking
+primitive must never silently emit source values even if some future
+caller invokes the handler directly with an unvalidated config. Follows
+the `hash_requires_namespace` pattern in `_hash.py`.
 """
 
 from __future__ import annotations
@@ -13,6 +23,7 @@ from __future__ import annotations
 import pandas as pd
 
 from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
+from decoy_engine.execution._errors import StrategyError
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._types import ColumnSeed
 
@@ -43,9 +54,17 @@ class TruncateHandler:
         cfg = provider_config_to_dict(plan.provider_config)
         length = cfg.get("length")
         if not isinstance(length, int) or length < 1:
-            # Invalid config -> passthrough (V1 behavior: one bad rule does not
-            # abort the run).
-            return df, []
+            # Invalid config: fail closed (Sprint 13 finding 0.4). A masking
+            # strategy must never silently pass the source value through.
+            raise StrategyError(
+                code="truncate_length_invalid",
+                strategy="truncate",
+                message=(
+                    f"column {column!r} uses truncate with invalid length "
+                    f"{length!r} ({type(length).__name__}); length must be an "
+                    "integer >= 1."
+                ),
+            )
         # MG-1/S3: keep + mask_char. Legacy from_end maps to keep="tail";
         # explicit keep wins. mask_char None preserves V1 byte identity.
         from_end_legacy = bool(cfg.get("from_end", False))
@@ -53,11 +72,23 @@ class TruncateHandler:
         if keep is None:
             keep = "tail" if from_end_legacy else "head"
         if keep not in ("head", "tail"):
-            return df, []
+            raise StrategyError(
+                code="truncate_keep_invalid",
+                strategy="truncate",
+                message=f"column {column!r} uses truncate with invalid keep {keep!r}.",
+            )
         mask_char = cfg.get("mask_char")
         if mask_char is not None:
             if not isinstance(mask_char, str) or len(mask_char) != 1:
-                return df, []  # rejected at plan-compile, defensive
+                raise StrategyError(
+                    code="truncate_mask_char_invalid",
+                    strategy="truncate",
+                    message=(
+                        f"column {column!r} uses truncate with invalid mask_char "
+                        f"{mask_char!r} ({type(mask_char).__name__}); mask_char "
+                        "must be a single character."
+                    ),
+                )  # rejected at plan-compile too; this is the defensive backstop
         col = df[column]
         na_mask = col.isna()
         result = col.copy().astype(object)

@@ -66,6 +66,7 @@ quality-shape-fidelity/v1  storm-post-mask/v1    name-hints/v1
 ssn/v1  npi/v1  pan/v1  iban/v1  ein/v1  mrn/v1  ndc/v1  icd10/v1
 cusip/v1  address/v1  locality/v1  person/v1  provider/v1
 composite/v1  custom/v1   ... (every disguise spec)
+subset-manifest/v1
 ```
 
 A user runs `decoy fit`, keeps the `distribution-snapshot/v1` artifact, and
@@ -83,6 +84,16 @@ feeds it to a later engine version. That artifact is a **contract**.
 - **New fields are additive and optional.** Adding an optional field to a `/v1`
   artifact that old readers safely ignore is allowed and preferred over a version
   bump. Removing or repurposing a field is not.
+
+**New in Sprint G (2026-07-03):** FK-aware subsetting (`decoy_engine.subset`)
+writes a `subset-manifest.json` evidence artifact tagged `subset-manifest/v1`
+(`SubsetManifest.manifest_version`). It is counts-and-identifiers-only by
+design (no raw key value, no raw filter-predicate literal), so it carries no
+re-identification risk on its own, but the same rule applies: a shape change
+mints `subset-manifest/v2` with a kept `v1` reader. The `subset:` block added
+to `PipelineConfig` (`config/_subset.py`) is additive and optional (`None` by
+default, unchanged behavior for every existing config); it is part of the
+§3.4 config contract like any other optional block.
 
 ### 3.2 The vault (the catastrophic one)
 

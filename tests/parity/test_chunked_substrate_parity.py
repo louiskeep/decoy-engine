@@ -48,9 +48,18 @@ _COLUMNS = [
     {"name": "secret", "strategy": "redact"},
     {"name": "memo", "strategy": "passthrough"},
     {
+        # Sprint 13 / coercion-13 S3 (2026-07-03): this used to declare
+        # `"bins": [0, 25, 50, 75, 100]`, a key `BucketizeStrategyHandler`
+        # has never read (it reads `width` or `preset`). That meant this
+        # column was SILENTLY UNMASKED in this parity fixture the whole
+        # time (finding 0.4's exact leak class, hiding in the test suite
+        # itself): `_resolve_width` returned None and the handler passed
+        # `score` through byte-identical to the source. Now that the
+        # invalid-config path fails closed, the fixture must declare a
+        # real, resolvable `width` (25, matching the old bin spacing).
         "name": "score",
         "strategy": "bucketize",
-        "provider_config": {"bins": [0, 25, 50, 75, 100]},
+        "provider_config": {"width": 25},
     },
     {
         "name": "contact",
