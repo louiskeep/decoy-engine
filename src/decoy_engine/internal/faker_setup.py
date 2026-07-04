@@ -438,6 +438,37 @@ def get_faker_providers(faker_instance: Faker) -> dict[str, Callable[..., Any]]:
     return providers
 
 
+def list_generate_faker_providers(locale: str | list[str] | None = None) -> tuple[str, ...]:
+    """Return the sorted, flat, authoritative list of generate-kind Faker
+    provider names (Sprint 2 honesty pack follow-up #11, 2026-07-04).
+
+    Established methodology: reuses `get_faker_providers`'s existing
+    reflection + denylist machinery (no second denylist, per CLAUDE.md's
+    "use established methodology" rule and trap T8). The result is exactly
+    `sorted(get_faker_providers(make_faker(locale)))`: the reflected public
+    provider methods of a seeded `Faker` instance, filtered through
+    `_FAKER_DENYLIST`, plus any currently registered custom providers
+    (`register_faker_provider` / `register_faker_list_provider`), which
+    `get_faker_providers` already merges in under its existing lock.
+
+    This closes the acceptance gap the guide's follow-up #11 exists for:
+    `platform-main-merge/web/src/studio/strategyCatalog.ts`'s `GEN_FAKER`
+    is a hand-maintained catalog with no authoritative engine source; this
+    function IS that source. Taxonomy/categorization (GEN_FAKER's 21
+    categories) stays a frontend concern -- this function publishes the
+    flat name list only.
+
+    Args:
+        locale: Optional Faker locale (single string or list). `None`
+            (default) uses `en_US`, matching `make_faker`'s own default.
+
+    Returns:
+        Sorted tuple of provider names.
+    """
+    fake = make_faker(locale)
+    return tuple(sorted(get_faker_providers(fake)))
+
+
 def make_faker(locale: str | list[str] | None = None) -> Faker:
     """Construct a `Faker` instance with optional locale override. Locale
     can be a single string (`'en_GB'`) or a list of strings -- Faker mixes

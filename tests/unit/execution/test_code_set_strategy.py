@@ -19,7 +19,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pyarrow as pa
-import pytest
 
 from decoy_engine.execution import PandasExecutionAdapter
 from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
@@ -167,18 +166,25 @@ class TestCodeSetAdapterIntegration:
 
 
 class TestCodeSetChapterPreserveUnknownChapter:
-    """H2: chapter_preserve with an unknown input chapter must fail closed."""
+    """H2: chapter_preserve with an unknown input chapter must fail closed.
 
-    def test_unknown_chapter_raises_via_adapter(self) -> None:
-        """When chapter_preserve=True and the input's chapter is not in the
-        corpus, the adapter run must raise PlanCompileError (fail-closed).
-        Falls-back to full-corpus was the old (wrong) behavior."""
+    Sprint 2 honesty pack (2026-07-04, S6, intentional hard cutover): fail
+    closed is now a PIPELINE-level guarantee (RowErrorsFailedError from
+    `run_pipeline`, unless quarantine is enabled with the `mask_error`
+    trigger), not an ADAPTER-level raise. Calling the adapter directly (as
+    this test does, with no pipeline/quarantine machinery around it) no
+    longer raises PlanCompileError -- it records a RowError (trigger
+    "mask_error") and keeps the original value in the frame. See
+    `tests/unit/execution/test_code_set_mask_error.py` for the handler-level
+    coverage and `tests/integration/test_row_errors_e2e.py` for the
+    pipeline-level fail-closed / quarantine coverage.
+    """
+
+    def test_unknown_chapter_records_mask_error_via_adapter(self) -> None:
         import pathlib
         import tempfile
 
         import pyarrow.parquet as pq
-
-        from decoy_engine.plan._errors import PlanCompileError
 
         with tempfile.TemporaryDirectory() as tmp:
             path = pathlib.Path(tmp) / "two_chapters.parquet"
@@ -190,14 +196,22 @@ class TestCodeSetChapterPreserveUnknownChapter:
             )
             pq.write_table(tbl, str(path))
 
-            with pytest.raises(PlanCompileError, match="chapter"):
-                _run(
-                    "code_col",
-                    ["U07.1"],  # U chapter absent from corpus
-                    (
-                        ("code_set", "two_chapters"),
-                        ("chapter_preserve", True),
-                        ("corpus_source", f"customer:{path}"),
-                        ("mode", "mask"),
-                    ),
-                )
+            table = pa.table({"code_col": pa.array(["U07.1"], type=pa.string())})
+            provider_config = (
+                ("code_set", "two_chapters"),
+                ("chapter_preserve", True),
+                ("corpus_source", f"customer:{path}"),
+                ("mode", "mask"),
+            )
+            plan = _plan("code_col", _col("code_set", provider_config=provider_config))
+            result = PandasExecutionAdapter().run_single(
+                plan, table, registry=_REG, relationship_graph=_GRAPH, namespace_registry=_NS
+            )
+
+            assert len(result.row_errors) == 1
+            rec = result.row_errors[0]
+            assert rec.trigger == "mask_error"
+            assert rec.column == "code_col"
+            # The original (unmasked) value stays in the output; the
+            # pipeline layer, not the adapter, decides its fate (D8).
+            assert result.output.column("code_col").to_pylist() == ["U07.1"]

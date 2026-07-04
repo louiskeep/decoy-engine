@@ -9,6 +9,80 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added / Changed (Sprint 2 engine honesty pack, 2026-07-04)
+
+Engine bumped to 0.3.0. Closes several silent-leak paths the validator and
+quarantine framework (SP-05) did not yet cover, and adds five new post-mask
+validators. Established methodology cited throughout: Delphix/Informatica
+masking-verification pre/post comparisons, Great Expectations column
+assertions, dbt relationship/aggregation tests, and the Spark
+`badRecordsPath` / pandas `on_bad_lines` side-channel bad-row pattern.
+
+- **`leak_check` validator**: compares masked output values against their
+  source values per column and flags residual source values above a
+  threshold. Fail-closed (no warn tier): a column tier catches a strategy
+  that had NO effect at all (`identical_ratio == 1.0`); a cell tier (default
+  `max_identical_ratio = 0.02`, TRANSFORMATIVE strategies only) catches
+  partial per-row leaks and makes them quarantinable under the existing
+  `validation_fail` trigger. `passthrough`, FK-child, and `when:`-gated
+  columns are excluded by construction; a `params.exempt` knob covers
+  legitimate coincidences the operator wants to allow. Requires the pipeline's
+  pre-mask source tables; a leak_check scoped at a table with no source
+  raises rather than silently skipping.
+- **Four sibling validators** (`p5-j-validators-extended`): `regex_match`
+  (whole-cell pattern match), `column_in_set` (allowed-value membership),
+  `parent_window_respected` (child date within its parent's declared window;
+  pairs with `windowed_date`), and `reconciliation_holds` (parent aggregate
+  reconciles with child rows under an absolute tolerance; pairs with
+  `derived_aggregate`). The validator registry grows from 6 to 11 entries.
+- **`ValidatorEntry.params`**: a free-form per-validator config dict,
+  additive alongside the existing `columns` field. Each validator validates
+  its own `params` at run time.
+- **Per-row strategy-error channel** (`execution/_row_errors.py`): a new
+  `RowError` / `RowErrorRecord` side channel, threaded through
+  `StrategyContext` and drained by both the pandas and polars execution
+  adapters after every node dispatch. `ExecutionResult.row_errors` carries
+  the table-attributed records; `quality_metrics["row_errors"]` persists
+  per-table/column/trigger counts (no cell values) to the evidence manifest.
+- **BEHAVIOR CHANGE (pre-GA hard cutover, no flag):** `bucketize` and
+  `date_shift` columns with a non-null cell that fails numeric/date coercion
+  used to silently keep the ORIGINAL source value in the masked output
+  (discovery 0.1, the sibling of the #13 bucketize/truncate/categorical
+  fix). They now record a `format_error` row error instead. A `code_set`
+  `chapter_preserve` value that cannot be masked (input chapter absent from
+  the corpus, or a sole-member chapter bucket) now records a `mask_error`
+  row error instead of killing the whole job with no row attribution.
+  **The job now either fails loud by default (`RowErrorsFailedError`,
+  naming counts by table/column/trigger, no cell values) or, when
+  quarantine is enabled with the matching trigger, the offending rows are
+  removed into the quarantine JSONL and the job succeeds. There is no flag
+  to restore the previous silent-leak behavior.**
+- **Quarantine generalized to row errors** (`quarantine.apply_quarantine`):
+  now accepts an optional `row_errors` tuple alongside the `ValidationReport`
+  and builds one normalized worklist so a row that fails both a validator
+  and a strategy row error is deduplicated exactly once. Existing
+  `validation_fail`-only callers (the default `row_errors=()`) get
+  byte-identical behavior. `quarantine.triggers` now accepts `format_error`
+  and `mask_error` in addition to `validation_fail`.
+- **`fpe` degenerate-charset compile check** (`check_fpe_charset_config`,
+  `PlanCompileError` code `fpe_charset_degenerate`): a resolved fpe charset
+  with fewer than 2 distinct characters used to silently pass the whole
+  column through unmasked (the last known #13-class whole-column
+  passthrough, discovery 0.1). Rejected at compile time; `FpeStrategyHandler`
+  also raises `StrategyError` on the same shape as an execution-time
+  backstop.
+- **Public faker-provider accessor** (follow-up #11):
+  `decoy_engine.list_generate_faker_providers(locale=None) -> tuple[str, ...]`,
+  the sorted, flat, authoritative list of generate-kind Faker provider names
+  (reflection + the existing denylist + registered custom providers). Closes
+  the acceptance gap behind the platform's hand-maintained `GEN_FAKER`
+  catalog; platform/web consumption is separate follow-up work in the
+  platform lane.
+- `validate()` (the validator-framework entry point) gained an additive,
+  keyword-only `sources` parameter carrying the pipeline's pre-mask source
+  tables, threaded from `run_pipeline`'s `caller_sources`. All pre-existing
+  validators accept and ignore it.
+
 ### Added (Sprint G FK-aware subsetting core, 2026-07-03)
 
 - **FK-aware row subsetting** (`src/decoy_engine/subset/`, 11 modules; Sprint

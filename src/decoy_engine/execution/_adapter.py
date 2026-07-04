@@ -23,6 +23,7 @@ import pandas as pd
 import pyarrow as pa
 
 from decoy_engine.execution._errors import ExecutionError
+from decoy_engine.execution._row_errors import RowError, RowErrorRecord
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.instrumentation.timing import StrategyTimingRecord
 
@@ -58,6 +59,11 @@ class ExecutionResult:
     warnings: tuple[QualityWarning, ...] = ()
     quality_metrics: dict[str, Any] = field(default_factory=dict)
     table_kinds: dict[str, str] = field(default_factory=dict)
+    # Sprint 2 honesty pack (D7): per-row failures recorded by strategy
+    # handlers (bucketize/date_shift format_error, code_set mask_error),
+    # table-attributed by the adapter's drain point. Additive; default empty
+    # tuple leaves every existing ExecutionResult construction unchanged.
+    row_errors: tuple[RowErrorRecord, ...] = ()
 
     @property
     def output(self) -> pa.Table:
@@ -87,6 +93,13 @@ class StrategyContext:
     relationship_graph: RelationshipGraph
     namespace_registry: NamespaceRegistry
     job_seed: bytes
+    # Sprint 2 honesty pack (D7): the shared per-row-error sink. The
+    # dataclass is frozen, but a mutable field's CONTENTS may still be
+    # mutated: handlers append RowError instances here; nothing reassigns
+    # the field (trap T6 -- `ctx.row_errors = [...]` would raise
+    # FrozenInstanceError and, more importantly, would break the drain
+    # point's identity-based reference to this list).
+    row_errors: list[RowError] = field(default_factory=list)
 
 
 class StrategyHandler(Protocol):

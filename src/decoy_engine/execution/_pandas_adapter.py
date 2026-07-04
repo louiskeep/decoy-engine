@@ -45,6 +45,7 @@ from decoy_engine.execution._adapter import (
 )
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._guards import reject_null_bearing_int
+from decoy_engine.execution._row_errors import RowErrorRecord, drain_row_errors
 from decoy_engine.execution._runner import WorkNode, build_work_list, order_work
 from decoy_engine.execution._strategies import SCALAR_HANDLERS
 from decoy_engine.execution._strategies._composite import CompositeHandler
@@ -193,6 +194,7 @@ class PandasExecutionAdapter:
         # FPE's per-value chunked parallelism is independent of this (pure per-row
         # derive) and stays live via fpe_chunk_count.
         warnings: list[QualityWarning] = []
+        row_error_records: list[RowErrorRecord] = []
         collector = TimingCollector()
         with use_collector(collector):
             for node in ordered:
@@ -212,6 +214,10 @@ class PandasExecutionAdapter:
                             ctx,
                         )
                     warnings.extend(node_warnings)
+                    # Sprint 2 honesty pack (D7): drain after EVERY node
+                    # dispatch, including fk_resolve (REMAP can invoke a
+                    # parent column's own handler, which could append here).
+                    row_error_records.extend(drain_row_errors(ctx.row_errors, table=node.table))
                     continue
                 if node.kind == "composite":
                     with timed_strategy("composite", ",".join(node.columns)):
@@ -219,6 +225,7 @@ class PandasExecutionAdapter:
                             df, node, ctx
                         )
                     warnings.extend(node_warnings)
+                    row_error_records.extend(drain_row_errors(ctx.row_errors, table=node.table))
                     continue
                 if node.kind != "scalar":
                     raise ExecutionError(
@@ -252,6 +259,9 @@ class PandasExecutionAdapter:
                         handler, df, node.columns[0], plan_slice, ctx
                     )
                 warnings.extend(node_warnings)
+                # Sprint 2 honesty pack (D7): drain the shared row_errors sink
+                # right after this node's dispatch, attributing to node.table.
+                row_error_records.extend(drain_row_errors(ctx.row_errors, table=node.table))
 
         t1 = time.perf_counter()
         outputs = {t: pa.Table.from_pandas(f, preserve_index=False) for t, f in frames.items()}
@@ -263,6 +273,7 @@ class PandasExecutionAdapter:
             boundary_conversion_ms=conversion_ms,
             warnings=tuple(warnings),
             quality_metrics={},
+            row_errors=tuple(row_error_records),
         )
 
     def _resolve_fk_node(

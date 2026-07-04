@@ -69,6 +69,11 @@ from decoy_engine.plan._checks_categorical import check_categorical_categories
 # module under its allowlisted ceiling. See test_module_size.py ALLOWLIST.
 from decoy_engine.plan._checks_derived_aggregate import check_derived_aggregate_refs
 
+# Sprint 2 honesty pack (2026-07-04, S6, GATE-1 Q4): fpe degenerate-charset
+# whole-column passthrough (discovery 0.1, DISCOVERY 2). Its own module for
+# the same _checks.py size-ceiling reason as the blocks above.
+from decoy_engine.plan._checks_fpe import check_fpe_charset_config
+
 # SP-10c + SP-46: per-strategy check modules (grouped_series, windowed_date,
 # group_key) and the fpe_join_group structural validation (SP-46).
 from decoy_engine.plan._checks_fpe_join import check_fpe_join_groups
@@ -207,6 +212,11 @@ def compile_plan(
     # list (sibling silent-corruption leak). Config-only; both branches +
     # run_config_only_checks.
     check_categorical_categories(config)
+    # Row 25 (Sprint 2 honesty pack, S6, GATE-1 Q4, 2026-07-04): reject fpe
+    # columns whose resolved charset has fewer than 2 distinct characters
+    # (whole-column silent passthrough, discovery 0.1). Config-only; both
+    # branches + run_config_only_checks.
+    check_fpe_charset_config(config)
     check_composite_columns_length_match(profile)
     # MG-3 / M3 (2026-05-31): reject when + coherent_with combo early,
     # before composite-wiring checks. A column carrying both fields is
@@ -277,6 +287,8 @@ def compile_plan(
             "bucketize_config",
             # Row 24 (Sprint 13 S3, GATE-1 Q4): categorical categories shape.
             "categorical_categories",
+            # Row 25 (Sprint 2 honesty pack S6, GATE-1 Q4): fpe charset resolution.
+            "fpe_charset_config",
         )
         checks_skipped: tuple[str, ...] = (
             "basic_uniqueness_pre_flight",
@@ -335,6 +347,8 @@ def compile_plan(
             "bucketize_config",
             # Row 24 (Sprint 13 S3, GATE-1 Q4): categorical categories shape.
             "categorical_categories",
+            # Row 25 (Sprint 2 honesty pack S6, GATE-1 Q4): fpe charset resolution.
+            "fpe_charset_config",
         )
         checks_skipped = ()
 
@@ -440,6 +454,9 @@ def run_config_only_checks(config: dict[str, Any]) -> tuple[str, ...]:
     check_bucketize_config(config)
     # Row 24 (Sprint 13 S3, GATE-1 Q4): categorical (mask) categories shape.
     check_categorical_categories(config)
+    # Row 25 (Sprint 2 honesty pack S6, GATE-1 Q4): fpe degenerate-charset
+    # whole-column passthrough. Config-only: safe for decoy validate.
+    check_fpe_charset_config(config)
     return (
         "unknown_provider",
         "when_with_coherent_with",
@@ -462,6 +479,8 @@ def run_config_only_checks(config: dict[str, Any]) -> tuple[str, ...]:
         "bucketize_config",
         # Row 24 (Sprint 13 S3, GATE-1 Q4): categorical categories shape.
         "categorical_categories",
+        # Row 25 (Sprint 2 honesty pack S6, GATE-1 Q4): fpe charset resolution.
+        "fpe_charset_config",
     )
 
 

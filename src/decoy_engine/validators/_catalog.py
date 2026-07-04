@@ -100,6 +100,8 @@ def validate_luhn(
     outputs: dict[str, pa.Table],
     entry: dict[str, Any],
     config: dict[str, Any],
+    *,
+    sources: dict[str, pa.Table] | None = None,
 ) -> tuple[ValidatorFinding, ...]:
     """luhn: validates Luhn-checksum integrity per column.
 
@@ -111,6 +113,7 @@ def validate_luhn(
         outputs: Read-only pipeline outputs.
         entry: Config block for this validator instance.
         config: Full pipeline config dict (unused by this validator).
+        sources: Unused by this validator (registry contract, D2).
 
     Returns:
         Tuple of ValidatorFinding for each column with Luhn failures.
@@ -122,6 +125,8 @@ def validate_npi(
     outputs: dict[str, pa.Table],
     entry: dict[str, Any],
     config: dict[str, Any],
+    *,
+    sources: dict[str, pa.Table] | None = None,
 ) -> tuple[ValidatorFinding, ...]:
     """npi: validates US National Provider Identifier check digit per column.
 
@@ -133,6 +138,7 @@ def validate_npi(
         outputs: Read-only pipeline outputs.
         entry: Config block for this validator instance.
         config: Full pipeline config dict (unused by this validator).
+        sources: Unused by this validator (registry contract, D2).
 
     Returns:
         Tuple of ValidatorFinding for each column with NPI failures.
@@ -144,6 +150,8 @@ def validate_iban(
     outputs: dict[str, pa.Table],
     entry: dict[str, Any],
     config: dict[str, Any],
+    *,
+    sources: dict[str, pa.Table] | None = None,
 ) -> tuple[ValidatorFinding, ...]:
     """iban: validates IBAN mod-97 check digits per column.
 
@@ -155,6 +163,7 @@ def validate_iban(
         outputs: Read-only pipeline outputs.
         entry: Config block for this validator instance.
         config: Full pipeline config dict (unused by this validator).
+        sources: Unused by this validator (registry contract, D2).
 
     Returns:
         Tuple of ValidatorFinding for each column with IBAN failures.
@@ -166,6 +175,8 @@ def validate_vin(
     outputs: dict[str, pa.Table],
     entry: dict[str, Any],
     config: dict[str, Any],
+    *,
+    sources: dict[str, pa.Table] | None = None,
 ) -> tuple[ValidatorFinding, ...]:
     """vin: validates VIN ISO 3779 check character per column.
 
@@ -177,6 +188,7 @@ def validate_vin(
         outputs: Read-only pipeline outputs.
         entry: Config block for this validator instance.
         config: Full pipeline config dict (unused by this validator).
+        sources: Unused by this validator (registry contract, D2).
 
     Returns:
         Tuple of ValidatorFinding for each column with VIN failures.

@@ -151,6 +151,8 @@ def validate_fk_intact(
     outputs: dict[str, pa.Table],
     entry: dict[str, Any],
     config: dict[str, Any],
+    *,
+    sources: dict[str, pa.Table] | None = None,
 ) -> tuple[ValidatorFinding, ...]:
     """fk_intact: every non-null child FK value resolves to a parent PK.
 
@@ -170,6 +172,7 @@ def validate_fk_intact(
         outputs: Read-only pipeline outputs keyed by table name.
         entry: Per-validator config block (no extra keys expected here).
         config: Full pipeline config dict; relationships are read from it.
+        sources: Unused by this validator (registry contract, D2).
 
     Returns:
         Tuple of ValidatorFinding for each FK pair that has broken references.
@@ -233,6 +236,8 @@ def validate_no_orphan_children(
     outputs: dict[str, pa.Table],
     entry: dict[str, Any],
     config: dict[str, Any],
+    *,
+    sources: dict[str, pa.Table] | None = None,
 ) -> tuple[ValidatorFinding, ...]:
     """no_orphan_children: every child row must have a non-null FK value.
 
@@ -250,6 +255,7 @@ def validate_no_orphan_children(
         outputs: Read-only pipeline outputs keyed by table name.
         entry: Per-validator config block (no extra keys expected here).
         config: Full pipeline config dict; relationships are read from it.
+        sources: Unused by this validator (registry contract, D2).
 
     Returns:
         Tuple of ValidatorFinding for each FK pair that has orphaned children.

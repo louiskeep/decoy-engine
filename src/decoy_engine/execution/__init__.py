@@ -46,6 +46,7 @@ from decoy_engine.execution._pandas_adapter import (
     get_default_executor,
 )
 from decoy_engine.execution._pipeline import classify_table_kinds, run_pipeline
+from decoy_engine.execution._row_errors import RowError, RowErrorRecord
 from decoy_engine.execution._runner import WorkNode, build_work_list, order_work
 from decoy_engine.execution._substrate import (
     VALID_SUBSTRATES,
@@ -64,6 +65,8 @@ __all__ = [
     "ExecutionResult",
     "PandasExecutionAdapter",
     "PolarsExecutionAdapter",
+    "RowError",
+    "RowErrorRecord",
     "StrategyContext",
     "StrategyError",
     "StrategyHandler",
