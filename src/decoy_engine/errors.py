@@ -287,6 +287,44 @@ class ValidatorFailedError(DecoyError):
         )
 
 
+class RowErrorsFailedError(DecoyError):
+    """Raised when per-row strategy errors exist and quarantine does not
+    cover their trigger (Sprint 2 honesty pack, D8).
+
+    Sibling of ``ValidatorFailedError``: the engine is fail-closed by
+    default for row-level format/mask errors exactly as it is for validator
+    findings. A bucketize/date_shift cell that fails coercion, or a
+    code_set value that cannot be masked, used to silently keep the source
+    value in the output; after this sprint the job either fails loud (this
+    exception) or the offending rows are quarantined under their trigger
+    (``format_error`` / ``mask_error``) -- there is no third silent option.
+
+    Carries the tuple of ``RowErrorRecord`` on ``.records`` so error handlers
+    can inspect which rows failed without re-running the mask pass. The
+    message summarizes counts by ``(table, column, trigger)`` and never
+    embeds a cell value (the records themselves carry no cell values either;
+    see ``execution._row_errors.RowError``).
+    """
+
+    def __init__(self, records: tuple[Any, ...]) -> None:
+        self.records = records
+        counts: dict[tuple[str, str, str], int] = {}
+        for r in records:
+            key = (r.table, r.column, r.trigger)
+            counts[key] = counts.get(key, 0) + 1
+        summary = ", ".join(
+            f"{table}.{column} [{trigger}]: {n}"
+            for (table, column, trigger), n in sorted(counts.items())
+        )
+        triggers = sorted({r.trigger for r in records})
+        super().__init__(
+            f"row-error framework: {len(records)} row(s) failed strategy execution and are "
+            f"not covered by an enabled quarantine trigger. Counts by (table, column, "
+            f"trigger): {summary}. Enable quarantine with trigger(s) {triggers} to route "
+            "failing rows to a separate output instead of failing the job."
+        )
+
+
 __all__ = [
     "ConfigError",
     "ConnectorAuthError",
@@ -301,6 +339,7 @@ __all__ = [
     "MaskKeyDerivationError",
     "PKDuplicatesError",
     "PipelineValidationError",
+    "RowErrorsFailedError",
     "UnknownFKColumnError",
     "ValidationError",
     "ValidatorFailedError",

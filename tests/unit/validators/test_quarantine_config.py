@@ -141,27 +141,29 @@ class TestB1Backstop:
 
 
 class TestM2TriggerValidation:
-    """Unimplemented triggers (format_error, mask_error) are rejected at config validation."""
+    """Unimplemented triggers are rejected at config validation.
 
-    def test_format_error_trigger_raises(self) -> None:
-        with pytest.raises(ValidationError) as exc_info:
-            QuarantineConfig(
-                enabled=True,
-                output_path="/tmp/q.jsonl",
-                triggers=["format_error"],
-            )
-        err_text = str(exc_info.value)
-        assert "format_error" in err_text
+    Sprint 2 honesty pack: format_error was wired in S5 (bucketize +
+    date_shift row-error producers) and mask_error in S6 (code_set
+    row-error producer). Both are now accepted triggers; only a genuinely
+    unknown trigger name still raises.
+    """
 
-    def test_mask_error_trigger_raises(self) -> None:
-        with pytest.raises(ValidationError) as exc_info:
-            QuarantineConfig(
-                enabled=True,
-                output_path="/tmp/q.jsonl",
-                triggers=["mask_error"],
-            )
-        err_text = str(exc_info.value)
-        assert "mask_error" in err_text
+    def test_format_error_trigger_accepted(self) -> None:
+        cfg = QuarantineConfig(
+            enabled=True,
+            output_path="/tmp/q.jsonl",
+            triggers=["format_error"],
+        )
+        assert cfg.triggers == ["format_error"]
+
+    def test_mask_error_trigger_accepted(self) -> None:
+        cfg = QuarantineConfig(
+            enabled=True,
+            output_path="/tmp/q.jsonl",
+            triggers=["mask_error"],
+        )
+        assert cfg.triggers == ["mask_error"]
 
     def test_unknown_trigger_raises(self) -> None:
         with pytest.raises(ValidationError) as exc_info:

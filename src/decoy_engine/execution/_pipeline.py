@@ -263,32 +263,68 @@ def run_pipeline(
     if fidelity_reports:
         quality_metrics["fidelity_reports"] = fidelity_reports
 
+    # Sprint 2 honesty pack (D7/D8): per-row strategy errors recorded by
+    # bucketize/date_shift (format_error, S5) and code_set (mask_error, S6).
+    # Collected BEFORE validators run (trap T5: row-error rows are NOT
+    # filtered out here -- leak_check and every other validator compare
+    # positionally against `sources` and must see the UNFILTERED outputs,
+    # or row parity breaks and every subsequent index misattributes).
+    mask_row_errors: tuple[Any, ...] = mask_result.row_errors if has_mask_table else ()
+
     # SP-05 (2026-06-27): job-level validator framework (P5.INFRA.4).
-    # Runs AFTER all column passes complete. Fail-closed by default:
-    # a validator failure raises ValidatorFailedError unless quarantine
-    # is enabled with the validation_fail trigger.
+    # Runs AFTER all column passes complete, on the UNFILTERED outputs
+    # (trap T5). Fail-closed by default: a validator failure raises
+    # ValidatorFailedError unless quarantine is enabled with the
+    # validation_fail trigger.
     validators_config: list[Any] = config.get("validators") or []
+    v_report: Any = None
     if validators_config:
         import dataclasses
 
-        from decoy_engine.errors import ValidatorFailedError
         from decoy_engine.validators._registry import validate as _run_validators
 
-        v_report = _run_validators(outputs, config)
+        v_report = _run_validators(outputs, config, sources=caller_sources)
         quality_metrics["validation"] = {"validators": dataclasses.asdict(v_report)}
 
-        if not v_report.passed:
-            quarantine_cfg: dict[str, Any] = config.get("quarantine") or {}
-            q_enabled = bool(quarantine_cfg.get("enabled", False))
-            raw_triggers: Any = quarantine_cfg.get("triggers") or []
-            q_triggers: list[str] = list(raw_triggers)
-            if q_enabled and "validation_fail" in q_triggers:
-                from decoy_engine.quarantine import apply_quarantine, quarantine_manifest
+    if mask_row_errors:
+        # Additive manifest key, counts only (no cell values -- trap T3).
+        row_error_counts: dict[str, int] = {}
+        for rec in mask_row_errors:
+            key = f"{rec.table}.{rec.column}[{rec.trigger}]"
+            row_error_counts[key] = row_error_counts.get(key, 0) + 1
+        quality_metrics["row_errors"] = row_error_counts
 
-                outputs, q_summary = apply_quarantine(outputs, v_report, quarantine_cfg)
-                quality_metrics["quarantine"] = quarantine_manifest(q_summary)
-            else:
-                raise ValidatorFailedError(v_report)
+    validator_failed = v_report is not None and not v_report.passed
+
+    # D8: one combined quarantine pass over validator findings + row errors,
+    # then a fail-closed remainder rule for anything quarantine did not
+    # cover. Same precedence as before for validation_fail alone; row
+    # errors get the identical treatment via their own trigger.
+    if validator_failed or mask_row_errors:
+        from decoy_engine.errors import RowErrorsFailedError, ValidatorFailedError
+
+        quarantine_cfg: dict[str, Any] = config.get("quarantine") or {}
+        q_enabled = bool(quarantine_cfg.get("enabled", False))
+        q_triggers: list[str] = list(quarantine_cfg.get("triggers") or [])
+
+        validation_covered = q_enabled and validator_failed and "validation_fail" in q_triggers
+        row_errors_covered = tuple(
+            r for r in mask_row_errors if q_enabled and r.trigger in q_triggers
+        )
+        row_errors_uncovered = tuple(r for r in mask_row_errors if r not in row_errors_covered)
+
+        if validation_covered or row_errors_covered:
+            from decoy_engine.quarantine import apply_quarantine, quarantine_manifest
+
+            outputs, q_summary = apply_quarantine(
+                outputs, v_report, quarantine_cfg, row_errors=mask_row_errors
+            )
+            quality_metrics["quarantine"] = quarantine_manifest(q_summary)
+
+        if validator_failed and not validation_covered:
+            raise ValidatorFailedError(v_report)
+        if row_errors_uncovered:
+            raise RowErrorsFailedError(row_errors_uncovered)
 
     return ExecutionResult(
         outputs=outputs,
@@ -297,4 +333,5 @@ def run_pipeline(
         warnings=mask_warnings,
         quality_metrics=quality_metrics,
         table_kinds=table_kinds,
+        row_errors=mask_row_errors,
     )

@@ -96,6 +96,8 @@ class TestRunConfigOnlyChecks:
             "bucketize_config",
             # Row 24 (Sprint 13 S3, GATE-1 Q4): categorical categories shape.
             "categorical_categories",
+            # Row 25 (Sprint 2 honesty pack, S6, GATE-1 Q4): fpe charset resolution.
+            "fpe_charset_config",
         )
 
     def test_raises_on_unknown_provider(self):

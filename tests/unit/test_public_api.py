@@ -116,6 +116,9 @@ def test_all_lists_every_public_name():
         "register_faker_list_provider",
         "unregister_faker_provider",
         "load_custom_providers",
+        # Sprint 2 honesty pack follow-up #11 (2026-07-04): public faker-
+        # provider accessor for capability introspection.
+        "list_generate_faker_providers",
         # Connector SDK (Sprint G Week 1).
         "SDK_VERSION",
         "CAP_STREAMING",

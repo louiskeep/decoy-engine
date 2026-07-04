@@ -19,6 +19,15 @@ processed in worker threads, then concatenated. Each value's encryption is
 independent + deterministic under the shared key, so chunked and serial
 output are byte-identical by construction -- the non-negotiable parity gate.
 The lift is wall-clock, not output.
+
+Sprint 2 honesty pack (2026-07-04, S6, GATE-1 Q4, discovery 0.1): a
+degenerate charset (fewer than 2 distinct characters after dedup) used to
+`return df, []` -- a silent whole-column passthrough (V1 behavior), the same
+fail-open shape #13 closed for truncate/bucketize/categorical.
+`check_fpe_charset_config` (plan/_checks_fpe.py) rejects the same shape at
+compile time; `run` now raises `StrategyError` instead of passing through,
+as the defense-in-depth backstop if the compile check is ever bypassed
+(e.g. a raw-dict caller that skips `compile_plan`'s checks entirely).
 """
 
 from __future__ import annotations
@@ -67,7 +76,19 @@ class FpeStrategyHandler:
         charset_spec = cfg.get("charset", "digits")
         charset = "".join(dict.fromkeys(_CHARSETS.get(charset_spec, charset_spec)))
         if len(charset) < 2:
-            return df, []  # degenerate charset -> passthrough (V1 behavior)
+            # Sprint 2 honesty pack (S6, GATE-1 Q4): fail closed instead of
+            # the V1 passthrough. `check_fpe_charset_config` rejects this at
+            # compile time; this is the execution-time backstop.
+            raise StrategyError(
+                code="fpe_charset_degenerate",
+                strategy="fpe",
+                message=(
+                    f"column {column!r} uses fpe but its resolved charset "
+                    f"{charset_spec!r} -> {charset!r} has fewer than 2 distinct "
+                    "characters. A degenerate charset has nothing to permute over "
+                    "and would leave the column unmasked."
+                ),
+            )
         preserve_sep = bool(cfg.get("preserve_separators", True))
         # checksum takes priority over validate_luhn when both are configured.
         checksum: str | None = cfg.get("checksum") or None

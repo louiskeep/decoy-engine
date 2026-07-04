@@ -139,6 +139,7 @@ from decoy_engine.plan.validate import (
 )
 from decoy_engine.providers import (
     atomic_swap_db_providers,
+    list_generate_faker_providers,
     load_custom_providers,
     register_faker_list_provider,
     register_faker_provider,
@@ -258,7 +259,7 @@ _F9_KEPT_BINDINGS = (
     SsnValidator,
 )
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "CAP_DRY_RUN",
@@ -376,6 +377,7 @@ __all__ = [
     "get_default_registry",
     "is_pre_ga",
     "job_seed_for_config",
+    "list_generate_faker_providers",
     "load_custom_providers",
     "load_vault",
     "make_key_resolver",

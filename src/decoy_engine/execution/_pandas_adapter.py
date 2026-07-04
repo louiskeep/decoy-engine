@@ -45,6 +45,7 @@ from decoy_engine.execution._adapter import (
 )
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._guards import reject_null_bearing_int
+from decoy_engine.execution._row_errors import RowErrorRecord, drain_row_errors
 from decoy_engine.execution._runner import WorkNode, build_work_list, order_work
 from decoy_engine.execution._sequential import run_sequential as _run_sequential
 from decoy_engine.execution._strategies import SCALAR_HANDLERS
@@ -195,6 +196,7 @@ class PandasExecutionAdapter:
         # FPE's per-value chunked parallelism is independent of this (pure per-row
         # derive) and stays live via fpe_chunk_count.
         warnings: list[QualityWarning] = []
+        row_error_records: list[RowErrorRecord] = []
         collector = TimingCollector()
         with use_collector(collector):
             for node in ordered:
@@ -211,6 +213,12 @@ class PandasExecutionAdapter:
                         ctx,
                     )
                 )
+                # Sprint 2 honesty pack (D7): drain the shared row_errors sink
+                # right after EVERY node dispatch (scalar, composite, and
+                # fk_resolve all route through `_dispatch_mask_node`),
+                # attributing to node.table, so no row error is ever silently
+                # dropped regardless of which node produced it.
+                row_error_records.extend(drain_row_errors(ctx.row_errors, table=node.table))
 
         t1 = time.perf_counter()
         outputs = {t: pa.Table.from_pandas(f, preserve_index=False) for t, f in frames.items()}
@@ -222,6 +230,7 @@ class PandasExecutionAdapter:
             boundary_conversion_ms=conversion_ms,
             warnings=tuple(warnings),
             quality_metrics={},
+            row_errors=tuple(row_error_records),
         )
 
     def _dispatch_mask_node(
