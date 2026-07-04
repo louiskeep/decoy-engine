@@ -11,6 +11,12 @@ module, one source of truth, so the substrates cannot drift).
 Non-deterministic mode picks via an UNSEEDED rng (varies per run, by
 contract), weighted when `weights` is set. Null positions preserved. Only the
 container changes (pl.Series in/out).
+
+Sprint 13 / coercion-13 S3 (2026-07-03, GATE-1 Q4 sibling of the truncate
+fail-closed fix): mirrors the pandas handler's `categorical_categories_not_list`
+guard (same code, same message) so a plain-string `categories` value raises
+`StrategyError` instead of silently iterating characters. See the pandas
+module's docstring for the full rationale.
 """
 
 from __future__ import annotations
@@ -42,6 +48,24 @@ class PolarsCategoricalStrategyHandler:
         ctx: StrategyContext,
     ) -> tuple[pl.DataFrame, list[QualityWarning]]:
         cfg = provider_config_to_dict(plan.provider_config)
+        raw_categories = cfg.get("categories")
+        if (
+            not cfg.get("from_profile")
+            and raw_categories is not None
+            and not isinstance(raw_categories, (list, tuple))
+        ):
+            # Invalid shape: fail closed (Sprint 13 GATE-1 Q4). Mirrors the
+            # pandas handler exactly (same code, same message).
+            raise StrategyError(
+                code="categorical_categories_not_list",
+                strategy="categorical",
+                message=(
+                    f"column {column!r} uses categorical with "
+                    f"categories={raw_categories!r} ({type(raw_categories).__name__}), "
+                    "which is not a list. A string value iterates as individual "
+                    "characters at runtime; provide categories as a list."
+                ),
+            )
         categories = list(cfg.get("categories", []))
         if not categories:
             raise StrategyError(

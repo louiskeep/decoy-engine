@@ -90,6 +90,12 @@ class TestRunConfigOnlyChecks:
             "group_key_refs",
             # Row 21 (SP-46): fpe_join_group structural validation.
             "fpe_join_groups",
+            # Row 22 (Sprint 13 S3): truncate length/keep/mask_char validation.
+            "truncate_config",
+            # Row 23 (Sprint 13 S3, GATE-1 Q4): bucketize width resolution.
+            "bucketize_config",
+            # Row 24 (Sprint 13 S3, GATE-1 Q4): categorical categories shape.
+            "categorical_categories",
         )
 
     def test_raises_on_unknown_provider(self):

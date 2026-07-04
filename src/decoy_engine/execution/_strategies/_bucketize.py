@@ -4,7 +4,17 @@ No backend, no determinism keying (deterministic by construction: same value ->
 same bucket). Logic carried from V1 `transforms/bucketize.py`: floor(value/width)
 * width, formatted per `format` (lower / range / midpoint); width from
 `provider_config["width"]` or a `preset` shortcut; non-numeric / NaN fall through
-to the original value.
+to the original value (per-VALUE fallback, unrelated to the per-COLUMN config
+fallback removed below).
+
+Sprint 13 / coercion-13 S3 (2026-07-03, GATE-1 Q4 sibling of the truncate
+fail-closed fix): `_resolve_width` returning `None` used to make `run`
+`return df, []` (silent passthrough of the whole column unmasked) on an
+unresolved `preset` (including the Studio picker's `"(custom)"` sentinel
+reaching the engine unresolved) or a non-numeric/non-positive `width`. It now
+raises `StrategyError`. `check_bucketize_config` (plan/_checks_bucketize.py)
+rejects the same shapes at compile time; this is the defense-in-depth
+backstop.
 """
 
 from __future__ import annotations
@@ -15,6 +25,7 @@ import numpy as np
 import pandas as pd
 
 from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
+from decoy_engine.execution._errors import StrategyError
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._types import ColumnSeed
 
@@ -45,7 +56,17 @@ class BucketizeStrategyHandler:
         cfg = provider_config_to_dict(plan.provider_config)
         width = self._resolve_width(cfg)
         if width is None:
-            return df, []  # invalid config -> passthrough (V1 behavior)
+            # Invalid config: fail closed (Sprint 13 GATE-1 Q4). A masking
+            # strategy must never silently pass the source column through.
+            raise StrategyError(
+                code="bucketize_width_unresolvable",
+                strategy="bucketize",
+                message=(
+                    f"column {column!r} uses bucketize but neither a known "
+                    f"preset ({cfg.get('preset')!r}) nor a resolvable numeric "
+                    f"width ({cfg.get('width')!r}) is configured."
+                ),
+            )
         fmt = str(cfg.get("format", "lower")).lower()
         if fmt not in _FORMATS:
             fmt = "lower"

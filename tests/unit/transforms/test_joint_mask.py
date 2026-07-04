@@ -286,6 +286,24 @@ class TestConfigValidation:
         with pytest.raises(PlanCompileError):
             JointMaskConfig.from_dict(bad)
 
+    def test_string_columns_already_rejected(self):
+        """Sprint 13 / coercion-13 S3 investigation (GATE-1 Q4 sibling audit,
+        2026-07-03): the guide's D5/D7 flags `tuple(cfg["columns"])`
+        iterating characters when `columns` is a plain string, mirroring the
+        truncate/bucketize/categorical silent-leak class. Verified NOT
+        reachable here: `validate_joint_mask_config` iterates `columns`
+        per-element against the reference table's real (multi-character)
+        column names, so a string like "zip,city,state" fails on its first
+        character ('z' is not a column of any shipped reference table)
+        before any row is ever masked. No new engine check is added for
+        joint_mask; this test locks the existing fail-closed behavior in
+        place as a regression guard, and documents that this sibling was
+        found already-safe rather than fixed."""
+        bad = _make_config(columns="zip,city,state")
+        with pytest.raises(PlanCompileError) as exc:
+            validate_joint_mask_config(bad)
+        assert exc.value.code == "joint_mask_column_not_in_reference"
+
 
 # ── A.5: SP-06 keyed-access caveat ───────────────────────────────────────────
 
