@@ -9,6 +9,58 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Fixed (Sprint 13 / coercion-13 S3, 2026-07-03, engine version 0.2.0)
+
+Fail-closed fix for a live PII leak plus its same-class siblings (PO
+GATE-1 Q4, coercion-13 sprint 13, root-caused by the Sprint F capability
+registry's execution-verified audit).
+
+- **`truncate` no longer silently passes the source value through on a bad
+  config** (finding 0.4, CONFIRMED live on `main`). `TruncateHandler.run`
+  (`execution/_strategies/_truncate.py`) and its polars twin
+  (`execution/polars/_strategies/_truncate.py`) had three silent
+  passthrough exits: a non-int/sub-1 `length`, an unrecognized `keep`,
+  and an invalid `mask_char`. Each now raises `StrategyError` (codes
+  `truncate_length_invalid`, `truncate_keep_invalid`,
+  `truncate_mask_char_invalid`). A new plan-compile check,
+  `check_truncate_config` (`plan/_checks_truncate.py`, compile-check
+  ownership table row 22), rejects the same shapes before a run starts,
+  and runs in `run_config_only_checks` too. BEHAVIOR CHANGE: a truncate
+  column with an invalid `length`/`keep`/`mask_char` now fails the
+  pipeline instead of emitting the unmasked source value. The valid
+  config path is byte-identical (nulls preserved, head/tail, mask_char).
+- **`bucketize` no longer silently passes the source column through on an
+  unresolvable width** (GATE-1 Q4 sibling). `_resolve_width` returning
+  `None` (an unknown/unresolved `preset`, or a missing/non-numeric/
+  non-positive `width`) now makes `BucketizeStrategyHandler.run` raise
+  `StrategyError(code="bucketize_width_unresolvable")` instead of
+  passing the column through. New compile check
+  `check_bucketize_config` (`plan/_checks_bucketize.py`, row 23).
+- **`categorical` (mask) no longer silently corrupts output when
+  `categories` is a string** (GATE-1 Q4 sibling). `list(cfg["categories"])`
+  iterated the characters of a plain-string `categories` value, replacing
+  the column with resampled single characters instead of the intended
+  category set. Both `CategoricalStrategyHandler.run`
+  (`execution/_strategies/_categorical.py`) and its polars twin now raise
+  `StrategyError(code="categorical_categories_not_list")`. New compile
+  check `check_categorical_categories` (`plan/_checks_categorical.py`,
+  row 24; also rejects missing/empty categories as
+  `categorical_categories_missing`). `from_profile: true` columns are
+  exempt (the authoring layer resolves categories before the engine sees
+  the config).
+- **`joint_mask` investigated and found already safe**: the guide's
+  concern that `tuple(cfg["columns"])` iterates characters when
+  `columns` is a string does not reach a silent leak in practice --
+  `validate_joint_mask_config` already checks each element against the
+  reference table's real (multi-character) column names, so a string
+  value fails loud (`joint_mask_column_not_in_reference`) on its first
+  character before any row is masked. No new check added; a regression
+  test locks the existing behavior in place
+  (`tests/unit/transforms/test_joint_mask.py::test_string_columns_already_rejected`).
+- **Engine version bumped 0.1.0 -> 0.2.0** so `decoy-platform` can pin a
+  floor and guarantee `truncate` is only surfaced against a fail-closed
+  engine (GATE-1 Q1).
+
 ### Added (Sprint G FK-aware subsetting core, 2026-07-03)
 
 - **FK-aware row subsetting** (`src/decoy_engine/subset/`, 11 modules; Sprint
