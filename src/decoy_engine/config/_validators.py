@@ -82,14 +82,17 @@ class QuarantineConfig(BaseModel):
     offending row is written to ``output_path`` instead of the main output.
     The job continues and completes successfully.
 
-    Wired triggers (SP-05):
-      - ``validation_fail``: row failed a job-level validator.
+    Wired triggers (all three accepted by ``_WIRED_TRIGGERS``):
+      - ``validation_fail`` (SP-05): row failed a job-level validator.
+      - ``format_error`` (Sprint 2 honesty pack S5): a ``bucketize`` /
+        ``date_shift`` cell could not be coerced/parsed under its declared
+        strategy.
+      - ``mask_error`` (Sprint 2 honesty pack S6): a ``code_set``
+        ``chapter_preserve`` value could not be masked (input chapter absent
+        from the corpus, or a sole-member chapter bucket).
 
-    Reserved (not yet wired - see carry-forward in p5-b-quarantine-rows.md):
-      - ``format_error``: reserved for future wiring (malformed value at
-        format conversion). Rejected at config validation until wired.
-      - ``mask_error``: reserved for future wiring (error during mask phase).
-        Rejected at config validation until wired.
+    Any trigger name outside ``_WIRED_TRIGGERS`` is rejected at config
+    validation (a silent no-op is refused up front).
 
     Example YAML::
 
@@ -98,6 +101,8 @@ class QuarantineConfig(BaseModel):
           output_path: /mnt/quarantine/run-2026-06-27.jsonl
           triggers:
             - validation_fail
+            - format_error
+            - mask_error
     """
 
     model_config = ConfigDict(extra="forbid")

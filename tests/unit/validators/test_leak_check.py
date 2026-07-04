@@ -16,6 +16,7 @@ import pytest
 
 from decoy_engine.validators import validate
 from decoy_engine.validators._leak_check import (
+    _COMPOSITE_PROVIDERS,
     EXCLUDED,
     SHAPE_PRESERVING,
     TRANSFORMATIVE,
@@ -61,6 +62,31 @@ class TestDriftSentry:
     def test_fake_unclassified_handler_is_not_silently_accepted(self) -> None:
         """A hypothetical new handler name must not already be classified."""
         assert "totally_new_strategy_xyz" not in (TRANSFORMATIVE | SHAPE_PRESERVING | EXCLUDED)
+
+    def test_composite_providers_match_registry(self) -> None:
+        """MEDIUM M1 (dennis review 2026-07-04): the composite drift ratchet.
+
+        `_COMPOSITE_PROVIDERS` is a hardcoded mirror of the composite
+        dispatch. Assert it equals the ACTUAL set of composite providers in
+        the registry (every provider whose capability backend_type is
+        "composite" -- the same signal `build_work_list` uses to route a
+        node to the composite handler). A future composite provider added
+        without updating `_COMPOSITE_PROVIDERS` would otherwise fall into
+        leak_check's defensive branch unchecked; this fails the build first.
+        """
+        from decoy_engine.providers_v2 import get_default_registry
+
+        reg = get_default_registry()
+        actual_composites = {
+            name
+            for name in reg.known_providers()
+            if reg.get_capabilities(name).backend_type == "composite"
+        }
+        assert actual_composites == _COMPOSITE_PROVIDERS, (
+            "leak_check._COMPOSITE_PROVIDERS is out of sync with the registry's "
+            f"composite providers. Missing: {actual_composites - _COMPOSITE_PROVIDERS}; "
+            f"stale: {_COMPOSITE_PROVIDERS - actual_composites}"
+        )
 
 
 class TestRealLeakDetection:
@@ -256,6 +282,22 @@ class TestNoValuesInFindings:
         assert report.passed is False
         for finding in report.findings:
             assert "111-22-3333-secret" not in finding.detail
+
+
+class TestUnclassifiedStrategyFailsClosed:
+    """LOW L1 (dennis review 2026-07-04): an unclassified strategy must RAISE,
+    not silently skip the column (fail-closed, consistent with the sprint's
+    theme). This can only happen if the drift sentry was bypassed."""
+
+    def test_unclassified_strategy_raises(self) -> None:
+        outputs = {"t": pa.table({"c": ["alice", "bob"]})}
+        sources = {"t": pa.table({"c": ["alice", "bob"]})}
+        # A strategy name that is not in any classification set.
+        config = _cfg(
+            [{"name": "t", "columns": [{"name": "c", "strategy": "made_up_strategy_zzz"}]}]
+        )
+        with pytest.raises(ValueError, match="leak_check"):
+            validate(outputs, config, sources=sources)
 
 
 class TestQuarantineComposition:

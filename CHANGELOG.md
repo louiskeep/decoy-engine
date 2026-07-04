@@ -150,11 +150,14 @@ assertions, dbt relationship/aggregation tests, and the Spark
   `chapter_preserve` value that cannot be masked (input chapter absent from
   the corpus, or a sole-member chapter bucket) now records a `mask_error`
   row error instead of killing the whole job with no row attribution.
-  **The job now either fails loud by default (`RowErrorsFailedError`,
-  naming counts by table/column/trigger, no cell values) or, when
-  quarantine is enabled with the matching trigger, the offending rows are
-  removed into the quarantine JSONL and the job succeeds. There is no flag
-  to restore the previous silent-leak behavior.**
+  **On the full-frame `run_pipeline` path the job now either fails loud by
+  default (`RowErrorsFailedError`, naming counts by table/column/trigger, no
+  cell values) or, when quarantine is enabled with the matching trigger, the
+  offending rows are removed into the quarantine JSONL and the job succeeds.
+  On the chunked/streaming path (`run_mask_pipeline_chunked`), which has no
+  quarantine machinery, the job fails CLOSED: any chunk with a row error
+  raises `RowErrorsFailedError`. Either way, the previous silent
+  keep-the-source-value behavior is gone.**
 - **Quarantine generalized to row errors** (`quarantine.apply_quarantine`):
   now accepts an optional `row_errors` tuple alongside the `ValidationReport`
   and builds one normalized worklist so a row that fails both a validator

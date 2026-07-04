@@ -313,6 +313,19 @@ def run_mask_pipeline_chunked(
                 relationship_graph=graph,
                 namespace_registry=ns_registry,
             )
+            # Sprint 2 honesty pack H1 (dennis review 2026-07-04): the
+            # chunked/streaming path has no quarantine machinery, so a
+            # per-row strategy error (bucketize/date_shift format_error,
+            # code_set mask_error -- though code_set is not chunk-admitted)
+            # cannot be routed anywhere. Discarding it would silently keep
+            # the raw source value in the streamed output (the exact leak the
+            # full-frame path closes). Fail CLOSED: raise the moment any chunk
+            # reports a row error. This is correct and cheap here; opt-in
+            # quarantine is a full-frame-only feature.
+            if result.row_errors:
+                from decoy_engine.errors import RowErrorsFailedError
+
+                raise RowErrorsFailedError(result.row_errors)
             masked = result.outputs[table]
             if vault_writer is not None:
                 from decoy_engine.vault import collect_vault_entries
