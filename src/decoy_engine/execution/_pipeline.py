@@ -111,11 +111,21 @@ def _sequential_eligible(
 
 
 def _execution_telemetry(
-    *, route: str, route_reason: str, sink: Any, source_loader: Any
+    *, route: str, route_reason: str, sink: Any, source_loader: Any, sources_resident: bool
 ) -> dict[str, Any]:
     """Per-config execution memory telemetry. Honest by construction: it never
-    claims bounded input residency unless a lazy source_loader was actually
-    supplied, and never claims streamed outputs unless a sink was supplied."""
+    claims bounded input residency unless the caller's Arrow sources are
+    actually NOT resident (a lazy source_loader supplied AND no non-empty
+    `sources` dict), and never claims streamed outputs unless a sink was
+    supplied.
+
+    MEDIUM (S2 remediation guide section 8): `run_pipeline` always builds
+    `caller_sources = dict(sources)` (L236-ish), so a non-empty `sources` dict
+    means the inputs ARE resident in memory even when a lazy `source_loader`
+    is ALSO supplied. `sources_resident` carries that fact in; bounded input
+    residency is reported ONLY for the one configuration that actually bounds
+    inputs: a lazy loader supplied AND `sources` empty/omitted.
+    """
     if route == "full_frame":
         return {
             "execution_mode": "full_frame",
@@ -129,10 +139,7 @@ def _execution_telemetry(
         "route_reason": route_reason,
         "eviction": "per_table",
         "outputs_streamed": sink is not None,
-        # Arrow inputs are only bounded when a lazy loader replaces the fully
-        # materialized sources dict. Without one, all inputs are resident even
-        # though the pandas working set is bounded to one table.
-        "loaded_fully_in_memory": source_loader is None,
+        "loaded_fully_in_memory": sources_resident or source_loader is None,
     }
 
 
@@ -282,6 +289,15 @@ def run_pipeline(
                 f"execution_mode='sequential' requested but the job is not "
                 f"sequential-eligible ({route_reason})."
             )
+        if not has_mask_table:
+            # NIT (S2 remediation guide section 8): without a mask-kind table
+            # the sequential branch below (`has_mask_table and route ==
+            # "sequential"`) would silently no-op and fall through to
+            # full-frame, ignoring the explicit request. Fail closed instead.
+            raise ConfigError(
+                "execution_mode='sequential' requested but the job has no "
+                "mask-kind table to run through the sequential path."
+            )
         route = "sequential"
     else:  # "auto"
         route = "sequential" if eligible else "full_frame"
@@ -309,6 +325,7 @@ def run_pipeline(
             route_reason=route_reason,
             sink=sink,
             source_loader=source_loader,
+            sources_resident=bool(caller_sources),
         )
         return ExecutionResult(
             outputs=dict(seq_result.outputs),  # {} when a sink was provided
@@ -444,6 +461,8 @@ def run_pipeline(
     # then a fail-closed remainder rule for anything quarantine did not
     # cover. Same precedence as before for validation_fail alone; row
     # errors get the identical treatment via their own trigger.
+    # Quarantine JSONL is durable only on a successful (fully covered) run; a
+    # fail-loud run publishes nothing.
     if validator_failed or mask_row_errors:
         from decoy_engine.errors import RowErrorsFailedError, ValidatorFailedError
 
@@ -457,6 +476,16 @@ def run_pipeline(
         )
         row_errors_uncovered = tuple(r for r in mask_row_errors if r not in row_errors_covered)
 
+        # LOW-1 (S2 remediation guide section 8): raise BEFORE writing the
+        # quarantine JSONL, matching the sequential path (which raises before
+        # its single post-loop write). A fail-loud run must publish nothing
+        # durable, including a partial quarantine JSONL from the covered
+        # remainder of a mixed covered+uncovered run.
+        if validator_failed and not validation_covered:
+            raise ValidatorFailedError(v_report)
+        if row_errors_uncovered:
+            raise RowErrorsFailedError(row_errors_uncovered)
+
         if validation_covered or row_errors_covered:
             from decoy_engine.quarantine import apply_quarantine, quarantine_manifest
 
@@ -465,15 +494,14 @@ def run_pipeline(
             )
             quality_metrics["quarantine"] = quarantine_manifest(q_summary)
 
-        if validator_failed and not validation_covered:
-            raise ValidatorFailedError(v_report)
-        if row_errors_uncovered:
-            raise RowErrorsFailedError(row_errors_uncovered)
-
     # S2: full-frame execution telemetry (the sequential route returned
     # early above with its own telemetry).
     quality_metrics["execution"] = _execution_telemetry(
-        route="full_frame", route_reason=route_reason, sink=None, source_loader=None
+        route="full_frame",
+        route_reason=route_reason,
+        sink=None,
+        source_loader=None,
+        sources_resident=True,
     )
 
     return ExecutionResult(

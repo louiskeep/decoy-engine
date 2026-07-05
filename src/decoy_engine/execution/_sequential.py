@@ -53,6 +53,23 @@ validator findings to reconcile here; only per-row `format_error` /
 after the loop (across all tables), not per-table, to avoid the truncating
 `_write_jsonl("w")` clobbering earlier tables' entries.
 
+Quarantine-aware FK resolution (S2 remediation, EXCLUDE-then-CASCADE): a
+row-errored parent-key row must never leak its raw value through a child FK,
+even though the parent's key-map is built from the FULL pre-filter frame. This
+module folds each table's drained row-error records into a `key_error_rows`
+index (table -> column -> {row_index: trigger}) and threads it, plus a
+matching `errored_keys_cache`, through `adapter._parent_map` (excludes a
+row-errored parent-key row from the map) and `adapter._dispatch_mask_node`
+(so a child's `_resolve_fk_node` reads the excluded-key cache and cascades a
+synthetic `RowError` onto the affected child rows). The parent table iterates
+before its children (FK-topo order), so its `key_error_rows`/`errored_keys_cache`
+entries are populated -- and its own uncovered-record raise has already
+short-circuited if unhealthy -- before any child dispatch reads them. The
+cascaded child `RowError`s drain on the CHILD's own per-table drain (same loop
+iteration semantics as this module's D8 fail-loud/quarantine block above), so
+they are classified and quarantine-filtered exactly like any other row error,
+with no separate code path. See docs/backlog/s2-fk-leak-remediation-guide.md.
+
 Design: docs/relationships-memory-scaling.md, sections 4 and 6.
 """
 
@@ -179,6 +196,11 @@ def run_sequential(
     )
 
     parent_map_cache: dict[_NodeKey, dict[_KeyTuple, _KeyTuple]] = {}
+    # S2 (quarantine-aware FK resolution): errored_keys_cache mirrors
+    # parent_map_cache (same cache_key); key_error_rows is the incrementally
+    # folded per-table/per-column row-error index that feeds both.
+    errored_keys_cache: dict[_NodeKey, dict[_KeyTuple, str]] = {}
+    key_error_rows: dict[str, dict[str, dict[int, str]]] = {}
     source_snapshots: dict[tuple[str, str], pd.Series] = {}
     frames: dict[str, pd.DataFrame] = {}
     outputs: dict[str, pa.Table] = {}
@@ -226,6 +248,8 @@ def run_sequential(
                             parent_map_cache,
                             node_by_key,
                             ctx,
+                            key_error_rows=key_error_rows,
+                            errored_keys_cache=errored_keys_cache,
                         )
                     )
 
@@ -240,6 +264,14 @@ def run_sequential(
                 # already staged) before re-raising.
                 table_records = drain_row_errors(ctx.row_errors, table=table)
                 all_row_errors.extend(table_records)
+                # S2: fold this table's records into the key-error index BEFORE
+                # the fail-loud classification, so an uncovered raise below still
+                # leaves the (correct, excluded) index state -- though the raise
+                # short-circuits before any child of THIS table is ever dispatched.
+                for rec in table_records:
+                    key_error_rows.setdefault(rec.table, {}).setdefault(rec.column, {})[
+                        rec.row_index
+                    ] = rec.trigger
                 if table_records:
                     uncovered = tuple(
                         r for r in table_records if not (q_enabled and r.trigger in q_triggers)
@@ -251,10 +283,19 @@ def run_sequential(
                 # This reads the FULL pre-filter frame, so children resolve
                 # against the complete key map exactly as in full-frame `run()`;
                 # quarantine-filtering the OUTPUT below never perturbs FK
-                # resolution (byte-parity, see module docstring).
+                # resolution (byte-parity, see module docstring). S2: threading
+                # key_error_rows/errored_keys_cache here excludes any row-errored
+                # parent-key row from the map and records it for child cascade.
                 for edge in graph.edges:
                     if edge.parent_table == table:
-                        adapter._parent_map(edge, frames, source_snapshots, parent_map_cache)
+                        adapter._parent_map(
+                            edge,
+                            frames,
+                            source_snapshots,
+                            parent_map_cache,
+                            key_error_rows=key_error_rows,
+                            errored_keys_cache=errored_keys_cache,
+                        )
 
                 t1 = time.perf_counter()
                 out = pa.Table.from_pandas(frames[table], preserve_index=False)
@@ -289,12 +330,15 @@ def run_sequential(
                             consumers.discard(table)
                             if not consumers:
                                 parent_map_cache.pop(ck, None)
+                                errored_keys_cache.pop(ck, None)
 
         # Finalize row-error / quarantine evidence AFTER every table has masked
         # and BEFORE commit, still inside this try so a failure here also
         # triggers abort() rather than a partial, uncommitted publish. A
         # single JSONL write covers every table's quarantined rows (avoiding
         # the truncating `_write_jsonl("w")` clobbering earlier tables').
+        # Quarantine JSONL is durable only on a successful (fully covered) run;
+        # a fail-loud run publishes nothing.
         quality_metrics: dict[str, Any] = {}
         if all_row_errors:
             row_error_counts: dict[str, int] = {}

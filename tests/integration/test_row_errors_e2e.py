@@ -317,3 +317,76 @@ class TestCodeSetMaskErrorFailLoud:
         records = [json.loads(line) for line in Path(qpath).read_text().splitlines()]
         assert records[0]["code"] == "U07.1"
         assert records[0]["_quarantine_trigger"] == "mask_error"
+
+
+class TestQuarantineWriteTimingParity:
+    """LOW-1 (S2 remediation guide section 8): full-frame `run_pipeline` must
+    raise BEFORE writing the quarantine JSONL, matching the sequential path
+    (which already raises before its single post-loop write). A job with BOTH
+    a covered row-error (bucketize `format_error`, quarantine covers it) AND
+    an uncovered row-error (code_set `mask_error`, NOT covered) must raise
+    `RowErrorsFailedError` and publish NO quarantine JSONL at all -- not even
+    a partial file for the covered remainder."""
+
+    def _corpus(self, tmp_path: Path) -> str:
+        path = tmp_path / "two_chapters.parquet"
+        tbl = pa.table(
+            {
+                "code": pa.array(["A01", "A02", "B01", "B02"], type=pa.string()),
+                "chapter": pa.array(["A", "A", "B", "B"], type=pa.string()),
+            }
+        )
+        pq.write_table(tbl, path)
+        return str(path)
+
+    def test_mixed_covered_and_uncovered_raises_and_writes_no_jsonl(self, tmp_path: Path) -> None:
+        corpus_path = self._corpus(tmp_path)
+        src = pa.table(
+            {
+                "age": pa.array(["23", "bad-age", "47"], type=pa.string()),
+                "code": pa.array(["A01", "A02", "U07.1"], type=pa.string()),
+            }
+        )
+        src_path = _write_source(tmp_path, src)
+        qpath = str(tmp_path / "quarantine.jsonl")
+        config: dict[str, Any] = {
+            "version": 1,
+            "global_settings": {"job_name": "sp2-write-timing", "seed": 42},
+            "sources": {"t": {"type": "file", "path": src_path, "format": "parquet"}},
+            "targets": {
+                "t": {"type": "file", "path": str(tmp_path / "t.out.parquet"), "format": "parquet"}
+            },
+            "tables": [
+                {
+                    "name": "t",
+                    "columns": [
+                        {"name": "age", "strategy": "bucketize", "provider_config": {"width": 10}},
+                        {
+                            "name": "code",
+                            "strategy": "code_set",
+                            "provider_config": {
+                                "code_set": "two_chapters",
+                                "chapter_preserve": True,
+                                "corpus_source": f"customer:{corpus_path}",
+                                "mode": "mask",
+                            },
+                        },
+                    ],
+                }
+            ],
+            "relationships": [],
+            # Covers format_error (bucketize) only; mask_error (code_set) is
+            # deliberately left uncovered.
+            "quarantine": {"enabled": True, "output_path": qpath, "triggers": ["format_error"]},
+        }
+        sources = {"t": pq.read_table(src_path)}
+
+        with pytest.raises(RowErrorsFailedError) as exc_info:
+            run_pipeline(config, sources, engine_version="0.1.0")
+
+        uncovered = [r for r in exc_info.value.records if r.trigger == "mask_error"]
+        assert len(uncovered) == 1
+        # No partial JSONL from the covered format_error remainder: a
+        # fail-loud run publishes nothing durable.
+        assert not Path(qpath).exists()
+        assert not (tmp_path / "t.out.parquet").exists()

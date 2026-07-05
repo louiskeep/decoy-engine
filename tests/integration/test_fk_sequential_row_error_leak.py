@@ -241,3 +241,339 @@ class TestFkSequentialLeakClosureWhenGated:
         assert len(recs) == 1
         # The full-table position of "badX" is 5, not the gated-subset position 2.
         assert recs[0].row_index == 5
+
+
+_KEY_DATES = [
+    "2020-01-01",
+    "2020-02-01",
+    "2020-03-01",
+    "2020-04-01",
+    "2020-05-01",
+    "notadate",
+]
+
+
+def _key_error_config(
+    tmp_path: Path,
+    *,
+    orphan_policy: str = "preserve",
+    quarantine: dict[str, Any] | None = None,
+    extra_orphan_child: bool = False,
+) -> dict[str, Any]:
+    """S2 remediation guide 7.1: the FK KEY column itself (`id`) is masked by
+    `date_shift` (a row-error-emitting strategy), unlike the SAFE cases above
+    which mask the key via faker (never errors). One child row per parent row,
+    `parent_id` carrying the same values, so the child leaks the raw errored
+    key 1:1 if the EXCLUDE-then-CASCADE fix is not in place."""
+    child_parent_ids = list(_KEY_DATES)
+    child_ids = [f"c{i}" for i in range(len(_KEY_DATES))]
+    if extra_orphan_child:
+        # A genuine orphan: a child key that exists in NO parent row at all.
+        child_ids.append("c_orphan")
+        child_parent_ids.append("2099-12-31")
+
+    parent = pa.table({"id": pa.array(_KEY_DATES, type=pa.string())})
+    child = pa.table(
+        {
+            "id": pa.array(child_ids, type=pa.string()),
+            "parent_id": pa.array(child_parent_ids, type=pa.string()),
+        }
+    )
+    parent_src = _write_source(tmp_path, parent, "parent")
+    child_src = _write_source(tmp_path, child, "child")
+
+    id_col: dict[str, Any] = {
+        "name": "id",
+        "strategy": "date_shift",
+        "provider_config": {"min_days": 1, "max_days": 30},
+        "namespace": "parent_ns",
+    }
+    cfg: dict[str, Any] = {
+        "version": 1,
+        "global_settings": {"job_name": "s2-fk-key-error-leak", "seed": 42},
+        "sources": {
+            "parent": {"type": "file", "path": parent_src, "format": "parquet"},
+            "child": {"type": "file", "path": child_src, "format": "parquet"},
+        },
+        "targets": {
+            "parent": {
+                "type": "file",
+                "path": str(tmp_path / "parent.out.parquet"),
+                "format": "parquet",
+            },
+            "child": {
+                "type": "file",
+                "path": str(tmp_path / "child.out.parquet"),
+                "format": "parquet",
+            },
+        },
+        "tables": [
+            {"name": "parent", "columns": [id_col]},
+            {"name": "child", "columns": [_faker_col("parent_id", "parent_ns")]},
+        ],
+        "relationships": [
+            {
+                "parent": {"table": "parent", "columns": ["id"]},
+                "children": [{"table": "child", "columns": ["parent_id"]}],
+                "orphan_policy": orphan_policy,
+                "namespace": "parent_ns",
+            }
+        ],
+    }
+    if quarantine is not None:
+        cfg["quarantine"] = quarantine
+    return cfg
+
+
+class TestFkKeyColumnErrorLeakClosure:
+    """S2 remediation guide 7.1: THE blocker proof. A row-errored FK KEY
+    column (not a non-key column, as in the SAFE cases above) must never
+    leak its raw value through a child FK, on either execution path."""
+
+    @pytest.mark.parametrize("execution_mode", ["full_frame", "sequential"])
+    def test_raw_key_absent_from_both_outputs(self, tmp_path: Path, execution_mode: str) -> None:
+        qpath = str(tmp_path / "quarantine.jsonl")
+        config = _key_error_config(
+            tmp_path,
+            orphan_policy="preserve",
+            quarantine={"enabled": True, "output_path": qpath, "triggers": ["format_error"]},
+        )
+        sources = _sources(config)
+        sink = (
+            ParquetTransactionalSink(tmp_path / "out") if execution_mode == "sequential" else None
+        )
+
+        result = run_pipeline(
+            config,
+            sources,
+            engine_version="0.1.0",
+            execution_mode=execution_mode,
+            sink=sink,
+        )
+
+        if execution_mode == "sequential":
+            parent_ids = pq.read_table(tmp_path / "out" / "parent.parquet").column("id").to_pylist()
+            child_parent_ids = (
+                pq.read_table(tmp_path / "out" / "child.parquet").column("parent_id").to_pylist()
+            )
+        else:
+            parent_ids = result.outputs["parent"].column("id").to_pylist()
+            child_parent_ids = result.outputs["child"].column("parent_id").to_pylist()
+
+        # (a) leak closed on the parent side (pre-existing quarantine behavior).
+        assert "notadate" not in parent_ids
+        # (b) THE assertion: raw errored key absent from the CHILD output too.
+        # This is the one that FAILS on 56ca3a9 before the fix.
+        assert "notadate" not in child_parent_ids
+        # (c) exactly one parent row and one child row removed.
+        assert len(parent_ids) == 5
+        assert len(child_parent_ids) == 5
+
+        # (d) quarantine JSONL carries both a parent entry and a cascaded
+        # child entry (masked=None, same trigger, attributed to "child").
+        records = [json.loads(line) for line in Path(qpath).read_text().splitlines()]
+        parent_recs = [r for r in records if r["_source_table"] == "parent"]
+        child_recs = [r for r in records if r["_source_table"] == "child"]
+        assert len(parent_recs) == 1
+        assert parent_recs[0]["id"] == "notadate"
+        assert parent_recs[0]["_quarantine_trigger"] == "format_error"
+        assert len(child_recs) == 1
+        assert child_recs[0]["parent_id"] is None
+        assert child_recs[0]["_quarantine_trigger"] == "format_error"
+        assert "parent-key" in child_recs[0]["_quarantine_reason"]
+
+    @pytest.mark.parametrize("execution_mode", ["full_frame", "sequential"])
+    def test_fail_loud_without_quarantine_no_raw_key_in_exception(
+        self, tmp_path: Path, execution_mode: str
+    ) -> None:
+        config = _key_error_config(tmp_path, orphan_policy="preserve")  # no quarantine block
+        sources = _sources(config)
+        target = tmp_path / "out2"
+        sink = ParquetTransactionalSink(target) if execution_mode == "sequential" else None
+
+        with pytest.raises(RowErrorsFailedError) as exc_info:
+            run_pipeline(
+                config,
+                sources,
+                engine_version="0.1.0",
+                execution_mode=execution_mode,
+                sink=sink,
+            )
+
+        if execution_mode == "sequential":
+            assert not target.exists()
+        # Trap T3: no cell value leaks into the exception message.
+        assert "notadate" not in str(exc_info.value)
+        parent_recs = [r for r in exc_info.value.records if r.table == "parent"]
+        assert len(parent_recs) == 1
+        assert parent_recs[0].row_index == 5
+        assert parent_recs[0].trigger == "format_error"
+
+    @pytest.mark.parametrize("orphan_policy", ["fail", "remap"])
+    @pytest.mark.parametrize("execution_mode", ["full_frame", "sequential"])
+    def test_policy_sweep_raw_key_absent_from_child(
+        self, tmp_path: Path, execution_mode: str, orphan_policy: str
+    ) -> None:
+        """S2 remediation guide section 4: for EVERY orphan_policy, a child of
+        a row-errored parent key is cascade-quarantined (covered), never
+        raised as an orphan_fk_violation and never remapped through the
+        failing strategy."""
+        qpath = str(tmp_path / "quarantine.jsonl")
+        config = _key_error_config(
+            tmp_path,
+            orphan_policy=orphan_policy,
+            quarantine={"enabled": True, "output_path": qpath, "triggers": ["format_error"]},
+        )
+        sources = _sources(config)
+        sink = (
+            ParquetTransactionalSink(tmp_path / "out") if execution_mode == "sequential" else None
+        )
+
+        result = run_pipeline(
+            config,
+            sources,
+            engine_version="0.1.0",
+            execution_mode=execution_mode,
+            sink=sink,
+        )
+
+        if execution_mode == "sequential":
+            child_parent_ids = (
+                pq.read_table(tmp_path / "out" / "child.parquet").column("parent_id").to_pylist()
+            )
+        else:
+            child_parent_ids = result.outputs["child"].column("parent_id").to_pylist()
+
+        assert "notadate" not in child_parent_ids
+        assert len(child_parent_ids) == 5
+
+    @pytest.mark.parametrize("orphan_policy", ["preserve", "remap", "fail"])
+    def test_genuine_orphan_untouched_by_the_fix(self, tmp_path: Path, orphan_policy: str) -> None:
+        """A genuine orphan (a child key absent from EVERY parent row, not a
+        row-errored one) must keep its pre-fix behavior exactly: PRESERVE
+        keeps it, REMAP masks it via the parent strategy, FAIL raises."""
+        config = _key_error_config(
+            tmp_path,
+            orphan_policy=orphan_policy,
+            quarantine={
+                "enabled": True,
+                "output_path": str(tmp_path / "quarantine.jsonl"),
+                "triggers": ["format_error"],
+            },
+            extra_orphan_child=True,
+        )
+        sources = _sources(config)
+
+        if orphan_policy == "fail":
+            from decoy_engine.execution._errors import ExecutionError
+
+            with pytest.raises(ExecutionError) as exc_info:
+                run_pipeline(config, sources, engine_version="0.1.0", execution_mode="full_frame")
+            assert exc_info.value.code == "orphan_fk_violation"
+            return
+
+        result = run_pipeline(config, sources, engine_version="0.1.0", execution_mode="full_frame")
+        child_parent_ids = result.outputs["child"].column("parent_id").to_pylist()
+        # The row-errored key is still absent (the fix holds alongside a
+        # genuine orphan in the same job).
+        assert "notadate" not in child_parent_ids
+        if orphan_policy == "preserve":
+            # PRESERVE keeps the genuine orphan's source key unmasked.
+            assert "2099-12-31" in child_parent_ids
+        else:  # remap
+            # REMAP masks the genuine orphan via the parent's date_shift
+            # strategy; it must NOT equal the source key.
+            assert "2099-12-31" not in child_parent_ids
+
+
+class TestSequentialMultiTableQuarantineJsonlNotClobbered:
+    """LOW-2 (S2 remediation guide section 7.5/8): the sequential path writes
+    ONE quarantine JSONL after the whole loop (not per-table), specifically to
+    avoid the truncating `_write_jsonl("w")` clobbering an earlier table's
+    entries. A parent table with its own covered `format_error` (on a NON-key
+    column) AND a child table with its own covered `format_error` (on a
+    non-FK column) must BOTH appear in the single output file."""
+
+    def test_both_tables_entries_present_in_one_jsonl(self, tmp_path: Path) -> None:
+        parent = pa.table(
+            {
+                "id": pa.array(_IDS, type=pa.string()),
+                "age": pa.array(_AGE, type=pa.string()),  # bad cell "badX" at index 5
+            }
+        )
+        child = pa.table(
+            {
+                "id": pa.array([f"c{i}" for i in range(len(_IDS))], type=pa.string()),
+                "parent_id": pa.array(_IDS, type=pa.string()),
+                # A second, non-FK column with its own bad cell.
+                "note": pa.array(["1", "2", "3", "4", "5", "badY"], type=pa.string()),
+            }
+        )
+        parent_src = _write_source(tmp_path, parent, "parent")
+        child_src = _write_source(tmp_path, child, "child")
+        qpath = str(tmp_path / "quarantine.jsonl")
+
+        config: dict[str, Any] = {
+            "version": 1,
+            "global_settings": {"job_name": "s2-multi-table-quarantine", "seed": 42},
+            "sources": {
+                "parent": {"type": "file", "path": parent_src, "format": "parquet"},
+                "child": {"type": "file", "path": child_src, "format": "parquet"},
+            },
+            "targets": {
+                "parent": {
+                    "type": "file",
+                    "path": str(tmp_path / "parent.out.parquet"),
+                    "format": "parquet",
+                },
+                "child": {
+                    "type": "file",
+                    "path": str(tmp_path / "child.out.parquet"),
+                    "format": "parquet",
+                },
+            },
+            "tables": [
+                {
+                    "name": "parent",
+                    "columns": [
+                        _faker_col("id", "parent_ns"),
+                        {"name": "age", "strategy": "bucketize", "provider_config": {"width": 10}},
+                    ],
+                },
+                {
+                    "name": "child",
+                    "columns": [
+                        _faker_col("parent_id", "parent_ns"),
+                        {
+                            "name": "note",
+                            "strategy": "bucketize",
+                            "provider_config": {"width": 10},
+                        },
+                    ],
+                },
+            ],
+            "relationships": [
+                {
+                    "parent": {"table": "parent", "columns": ["id"]},
+                    "children": [{"table": "child", "columns": ["parent_id"]}],
+                    "orphan_policy": "preserve",
+                    "namespace": "parent_ns",
+                }
+            ],
+            "quarantine": {"enabled": True, "output_path": qpath, "triggers": ["format_error"]},
+        }
+        sources = _sources(config)
+        sink = ParquetTransactionalSink(tmp_path / "out")
+
+        result = run_pipeline(config, sources, engine_version="0.1.0", sink=sink)
+        assert result.quality_metrics["execution"]["execution_mode"] == "sequential"
+
+        records = [json.loads(line) for line in Path(qpath).read_text().splitlines()]
+        source_tables = {r["_source_table"] for r in records}
+        assert source_tables == {"parent", "child"}
+        parent_recs = [r for r in records if r["_source_table"] == "parent"]
+        child_recs = [r for r in records if r["_source_table"] == "child"]
+        assert len(parent_recs) == 1
+        assert parent_recs[0]["age"] == "badX"
+        assert len(child_recs) == 1
+        assert child_recs[0]["note"] == "badY"

@@ -328,6 +328,46 @@ class TestNonFkNoRegression:
         with pytest.raises(ConfigError, match="no_relationships"):
             run_pipeline(config, sources, engine_version="0.1.0", execution_mode="sequential")
 
+    def test_forced_sequential_without_mask_table_raises_config_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """NIT (S2 remediation guide section 8): `execution_mode='sequential'`
+        must fail closed rather than silently falling through to full-frame
+        when the job has no mask-kind table. This combination (eligible per
+        `_sequential_eligible` AND zero mask tables) cannot arise through the
+        public schema -- a generate table already disqualifies via
+        `generate_plus_mask`, and a job with zero tables has no relationships
+        either -- so `_sequential_eligible` is monkeypatched to isolate the
+        new guard from that unreachable-in-practice precondition."""
+        import decoy_engine.execution._pipeline as pipeline_mod
+
+        monkeypatch.setattr(
+            pipeline_mod, "_sequential_eligible", lambda *a, **k: (True, "pure_mask_fk")
+        )
+
+        config: dict[str, Any] = {
+            "version": 1,
+            "global_settings": {"job_name": "s2-routing-nit", "seed": 7},
+            "sources": {},
+            "targets": {
+                "seq": {
+                    "type": "file",
+                    "path": str(tmp_path / "seq.out.parquet"),
+                    "format": "parquet",
+                }
+            },
+            "tables": [
+                {
+                    "name": "seq",
+                    "row_count": 3,
+                    "generate_columns": [{"name": "n", "type": "sequence", "start": 1, "step": 1}],
+                }
+            ],
+            "relationships": [],
+        }
+        with pytest.raises(ConfigError, match="no mask-kind table"):
+            run_pipeline(config, {}, engine_version="0.1.0", execution_mode="sequential")
+
 
 # --------------------------------------------------------------------------
 # 3.4 telemetry honesty (dennis hot-spot)
@@ -357,7 +397,14 @@ class TestTelemetryHonesty:
         assert exec_meta["outputs_streamed"] is False
         assert exec_meta["loaded_fully_in_memory"] is True
 
-    def test_sequential_with_lazy_loader_and_sink_claims_bounded(self, tmp_path: Path) -> None:
+    def test_sequential_with_lazy_loader_and_nonempty_sources_still_resident(
+        self, tmp_path: Path
+    ) -> None:
+        """MEDIUM (S2 remediation guide section 8): `run_pipeline` always builds
+        `caller_sources = dict(sources)`, so a NON-empty `sources` dict means the
+        inputs ARE resident even though a lazy `source_loader` was ALSO supplied
+        (the loader is simply unused in this call shape). The honesty fix reports
+        residency from `sources`, not merely from whether a loader was passed."""
         config = _fk_pure_mask_config(tmp_path)
         sources = _fk_sources(config)
 
@@ -374,5 +421,70 @@ class TestTelemetryHonesty:
             source_loader=lazy_loader,
         )
         exec_meta = result.quality_metrics["execution"]
+        assert exec_meta["loaded_fully_in_memory"] is True
+        assert exec_meta["outputs_streamed"] is True
+
+    def test_sequential_with_lazy_loader_and_empty_sources_claims_bounded(
+        self, tmp_path: Path
+    ) -> None:
+        """The one configuration that actually bounds input residency: a lazy
+        `source_loader` supplied AND `sources` empty/omitted."""
+        config = _fk_pure_mask_config(tmp_path)
+        sources = _fk_sources(config)
+
+        def lazy_loader(table: str) -> pa.Table:
+            return sources[table]
+
+        sink = ParquetTransactionalSink(tmp_path / "bounded_out")
+        result = run_pipeline(
+            config,
+            sources=None,
+            engine_version="0.1.0",
+            execution_mode="sequential",
+            sink=sink,
+            source_loader=lazy_loader,
+        )
+        exec_meta = result.quality_metrics["execution"]
         assert exec_meta["loaded_fully_in_memory"] is False
         assert exec_meta["outputs_streamed"] is True
+
+
+# --------------------------------------------------------------------------
+# byte-parity: _parent_map(key_error_rows=None) is a strict no-op
+# --------------------------------------------------------------------------
+
+
+class TestParentMapKeyErrorExclusionNoOp:
+    """S2 remediation guide sections 5 and 7.2: `_parent_map` must build the
+    byte-identical map to before the fix when there is no key-error index
+    (the overwhelmingly common case -- no parent-key row-errors)."""
+
+    def test_no_op_when_key_error_rows_none_or_empty(self) -> None:
+        import pandas as pd
+
+        from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
+        from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge
+
+        adapter = PandasExecutionAdapter()
+        edge = RelationshipEdge(
+            parent_table="parent",
+            parent_columns=("id",),
+            child_table="child",
+            child_columns=("parent_id",),
+            namespace="ns",
+            orphan_policy=OrphanPolicy.PRESERVE,
+        )
+        frame = pd.DataFrame({"id": ["p0", "p1", "p2"]})
+        frames = {"parent": frame}
+        source_snapshots = {("parent", "id"): frame["id"].copy()}
+
+        pre_fix_shape = adapter._parent_map(edge, frames, source_snapshots, {})
+        with_none = adapter._parent_map(
+            edge, frames, source_snapshots, {}, key_error_rows=None, errored_keys_cache=None
+        )
+        with_empty = adapter._parent_map(
+            edge, frames, source_snapshots, {}, key_error_rows={}, errored_keys_cache={}
+        )
+
+        assert pre_fix_shape == with_none == with_empty
+        assert pre_fix_shape == {("p0",): ("p0",), ("p1",): ("p1",), ("p2",): ("p2",)}
