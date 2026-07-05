@@ -306,6 +306,7 @@ class PandasExecutionAdapter:
         relationship_graph: RelationshipGraph,
         namespace_registry: NamespaceRegistry,
         sink: TransactionalSink | Callable[[str, pa.Table], None] | None = None,
+        quarantine_config: dict[str, object] | None = None,
     ) -> ExecutionResult:
         """Option 2 (FK-RI memory-scaling): mask an FK-related job one table at a
         time in FK-topological order, evicting each table's wide frame after its
@@ -317,7 +318,9 @@ class PandasExecutionAdapter:
         If `sink` satisfies `TransactionalSink` (has write/commit/abort), the run
         is all-or-nothing: commit on success, abort on any exception. A plain
         Callable sink preserves the pre-existing non-transactional contract.
-        Implemented in execution/_sequential.py; see
+        `quarantine_config` (S2, default None) enforces the same per-row D8
+        fail-loud/quarantine rule `run()` enforces, per table, before that
+        table's write/eviction. Implemented in execution/_sequential.py; see
         docs/relationships-memory-scaling.md."""
         return _run_sequential(
             self,
@@ -328,6 +331,7 @@ class PandasExecutionAdapter:
             relationship_graph=relationship_graph,
             namespace_registry=namespace_registry,
             sink=sink,
+            quarantine_config=quarantine_config,
         )
 
     def _resolve_fk_node(

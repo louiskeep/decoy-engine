@@ -18,7 +18,7 @@ from pathlib import Path
 import pyarrow as pa
 
 from decoy_engine.execution._row_errors import RowErrorRecord
-from decoy_engine.quarantine import apply_quarantine
+from decoy_engine.quarantine import apply_quarantine, compute_quarantine
 from decoy_engine.validators._types import ValidationReport
 
 
@@ -132,3 +132,35 @@ class TestRegressionPinValidationFailOnlyUnchanged:
         assert filtered["t"].num_rows == 1
         assert summary.total_quarantined == 1
         assert summary.counts_by_trigger == {"validation_fail": 1}
+
+
+class TestComputeQuarantineCore:
+    """S2: direct unit coverage of the pure compute+filter core extracted from
+    `apply_quarantine` (single-table dict, row_errors covering one row). No
+    file I/O -- `run_sequential` calls this per table and defers the JSONL
+    write to a single end-of-run write (see `_sequential.py`)."""
+
+    def test_single_table_row_error_filtered_no_io(self, tmp_path: Path) -> None:
+        table = pa.table({"age": ["23", "bad", "47"]})
+        outputs = {"t": table}
+        row_errors = (
+            RowErrorRecord(
+                table="t", column="age", row_index=1, trigger="format_error", reason="not numeric"
+            ),
+        )
+        quarantine_cfg = {"triggers": ["format_error"]}  # no output_path: no I/O should occur
+
+        filtered, entries, counts, total = compute_quarantine(
+            outputs, None, quarantine_cfg, row_errors=row_errors
+        )
+
+        assert filtered["t"].num_rows == 2
+        assert filtered["t"].column("age").to_pylist() == ["23", "47"]
+        assert total == 1
+        assert counts == {"format_error": 1}
+        assert len(entries) == 1
+        assert entries[0]["age"] == "bad"
+        assert entries[0]["_quarantine_trigger"] == "format_error"
+        assert entries[0]["_quarantine_reason"] == "not numeric"
+        # No file written: this is the pure core, not apply_quarantine.
+        assert list(tmp_path.iterdir()) == []

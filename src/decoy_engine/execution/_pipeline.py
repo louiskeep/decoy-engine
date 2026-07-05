@@ -59,18 +59,81 @@ Out of scope for FC-1 (deferred to V2.1):
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, Literal
 
 import pyarrow as pa
 
+from decoy_engine.errors import ConfigError
 from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
+from decoy_engine.execution._sequential import run_sequential
 
 if TYPE_CHECKING:
+    from decoy_engine.execution._transactional_sink import TransactionalSink
     from decoy_engine.providers_v2 import ProviderRegistry
 
 
 __all__ = ["classify_table_kinds", "run_pipeline"]
+
+
+def _sequential_eligible(
+    profile: Any,
+    *,
+    has_generate_table: bool,
+    validators: list[Any],
+    fidelity_report: bool,
+    vault_writer: Any,
+) -> tuple[bool, str]:
+    """Decide whether a mask job may take the bounded-memory sequential path.
+
+    Returns (eligible, reason). `reason` is a stable telemetry token; when
+    eligible it is "pure_mask_fk", otherwise it names the disqualifier.
+
+    The sequential path streams/evicts table by table, so any run_pipeline
+    post-mask step that needs every masked output resident at once
+    disqualifies it: job-level validators (compare positionally against all
+    sources), the fidelity report, and the token-vault collection. Pure-generate
+    and mixed generate+mask jobs are disqualified because generate tables are
+    not masked table-by-table through this path.
+    """
+    if not profile.relationships:
+        return False, "no_relationships"
+    if has_generate_table:
+        return False, "generate_plus_mask"
+    if validators:
+        return False, "validators_present"
+    if fidelity_report:
+        return False, "fidelity_report_requested"
+    if vault_writer is not None:
+        return False, "vault_writer_requested"
+    return True, "pure_mask_fk"
+
+
+def _execution_telemetry(
+    *, route: str, route_reason: str, sink: Any, source_loader: Any
+) -> dict[str, Any]:
+    """Per-config execution memory telemetry. Honest by construction: it never
+    claims bounded input residency unless a lazy source_loader was actually
+    supplied, and never claims streamed outputs unless a sink was supplied."""
+    if route == "full_frame":
+        return {
+            "execution_mode": "full_frame",
+            "route_reason": route_reason,
+            "eviction": "none",
+            "outputs_streamed": False,
+            "loaded_fully_in_memory": True,
+        }
+    return {
+        "execution_mode": "sequential",
+        "route_reason": route_reason,
+        "eviction": "per_table",
+        "outputs_streamed": sink is not None,
+        # Arrow inputs are only bounded when a lazy loader replaces the fully
+        # materialized sources dict. Without one, all inputs are resident even
+        # though the pandas working set is bounded to one table.
+        "loaded_fully_in_memory": source_loader is None,
+    }
 
 
 def classify_table_kinds(config: dict[str, Any]) -> dict[str, str]:
@@ -108,6 +171,9 @@ def run_pipeline(
     vault_writer: Any = None,
     fidelity_report: bool = False,
     now_iso: str | None = None,
+    execution_mode: Literal["auto", "sequential", "full_frame"] = "auto",
+    sink: TransactionalSink | None = None,
+    source_loader: Callable[[str], pa.Table] | None = None,
 ) -> ExecutionResult:
     """Execute a mixed mask + generate config end-to-end.
 
@@ -132,6 +198,28 @@ def run_pipeline(
     emitted; the intermediate snapshots (which carry category labels /
     raw values) are never attached. First slice is mask-kind tables,
     marginal-only (no joint_columns); generate-kind tables are skipped.
+
+    S2 (engine "Finish Open-Ended Surfaces" program) routing: a relationship-
+    bearing PURE-MASK job (no generate tables, no validators, no
+    fidelity_report, no vault_writer -- see `_sequential_eligible`) is, by
+    default (`execution_mode="auto"`), routed through the bounded-memory
+    `run_sequential` path instead of the full-frame `PandasExecutionAdapter.run`
+    path. `execution_mode="full_frame"` always forces full-frame (even when
+    eligible); `execution_mode="sequential"` forces sequential and raises
+    `ConfigError` if the job is not eligible (fail-closed: never silently
+    ignore an explicit request). `execution_mode` is a resource policy of the
+    invocation, not a property of the data transformation, so it is a runtime
+    kwarg (matching `vault_writer` / `fidelity_report` / `now_iso`), never a
+    `config` field -- it must stay out of the profile-hashed, frozen-surface
+    data contract, and sequential vs. full-frame is byte-output-neutral (only
+    peak memory differs). `sink` and `source_loader` are passed straight
+    through to `run_sequential` when the sequential route is taken; every
+    existing caller (which passes neither) gets full-frame (unchanged) or
+    sequential-in-memory (same `result.outputs`, byte-identical, lower pandas
+    peak) -- the empty-`result.outputs` streamed path is only reachable when a
+    `sink` is explicitly passed. Non-FK / mixed / validator jobs are
+    byte-identical to today: they take the untouched full-frame branch; the
+    only addition is one telemetry key under `quality_metrics["execution"]`.
     """
     from decoy_engine.generation.synthesize import generate_tables
     from decoy_engine.plan import compile_plan
@@ -175,6 +263,62 @@ def run_pipeline(
         )
     else:
         graph = RelationshipGraph(edges=(), ordering=())
+
+    # S2: decide the execution route once, right after the graph is built.
+    eligible, route_reason = _sequential_eligible(
+        profile,
+        has_generate_table=has_generate_table,
+        validators=(config.get("validators") or []),
+        fidelity_report=fidelity_report,
+        vault_writer=vault_writer,
+    )
+    route: str
+    if execution_mode == "full_frame":
+        route = "full_frame"
+        route_reason = "override_full_frame"
+    elif execution_mode == "sequential":
+        if not eligible:
+            raise ConfigError(
+                f"execution_mode='sequential' requested but the job is not "
+                f"sequential-eligible ({route_reason})."
+            )
+        route = "sequential"
+    else:  # "auto"
+        route = "sequential" if eligible else "full_frame"
+
+    # S2 early-return: a relationship-bearing pure-mask job routed to
+    # sequential skips the full-frame block below entirely (adapter.run +
+    # vault + fidelity), the validators block, and the D8 quarantine/
+    # fail-loud block -- `run_sequential` (Part 2) is the sole owner of
+    # row-error enforcement on this route, so there is no double-processing.
+    if has_mask_table and route == "sequential":
+        loader = source_loader if source_loader is not None else (lambda t: caller_sources[t])
+        seq_result = run_sequential(
+            PandasExecutionAdapter(),
+            plan,
+            loader,
+            registry=resolved_registry,
+            relationship_graph=graph,
+            namespace_registry=ns_registry,
+            sink=sink,
+            quarantine_config=config.get("quarantine"),
+        )
+        seq_quality_metrics = dict(seq_result.quality_metrics)
+        seq_quality_metrics["execution"] = _execution_telemetry(
+            route="sequential",
+            route_reason=route_reason,
+            sink=sink,
+            source_loader=source_loader,
+        )
+        return ExecutionResult(
+            outputs=dict(seq_result.outputs),  # {} when a sink was provided
+            timings=seq_result.timings,
+            boundary_conversion_ms=seq_result.boundary_conversion_ms,
+            warnings=seq_result.warnings,
+            quality_metrics=seq_quality_metrics,
+            table_kinds=table_kinds,
+            row_errors=seq_result.row_errors,
+        )
 
     # Step 1: generate-kind tables. The synthesize entry filters by
     # `generate_columns` presence already (synthesize.py:113), so passing
@@ -325,6 +469,12 @@ def run_pipeline(
             raise ValidatorFailedError(v_report)
         if row_errors_uncovered:
             raise RowErrorsFailedError(row_errors_uncovered)
+
+    # S2: full-frame execution telemetry (the sequential route returned
+    # early above with its own telemetry).
+    quality_metrics["execution"] = _execution_telemetry(
+        route="full_frame", route_reason=route_reason, sink=None, source_loader=None
+    )
 
     return ExecutionResult(
         outputs=outputs,

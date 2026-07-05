@@ -102,25 +102,23 @@ def _normalize_worklist(
     return items
 
 
-def apply_quarantine(
+def compute_quarantine(
     outputs: dict[str, pa.Table],
     report: ValidationReport | None,
     quarantine_config: dict[str, Any],
     *,
     row_errors: tuple[RowErrorRecord, ...] = (),
-) -> tuple[dict[str, pa.Table], QuarantineSummary]:
-    """Route failing rows to the quarantine output; return filtered main outputs.
+) -> tuple[dict[str, pa.Table], list[dict[str, Any]], dict[str, int], int]:
+    """Pure compute+filter core of quarantine (S2 sequential-path extraction).
 
-    Sprint 2 honesty pack (D9): builds one normalized worklist of
-    ``(table, row_index, trigger, reason)`` from ``report.findings`` (each
-    tagged ``"validation_fail"``) and ``row_errors`` (each tagged with its
-    own trigger), then runs the existing dedup/write/filter machinery once
-    over the worklist. Callers that only pass ``report`` (``row_errors=()``,
-    the default) get byte-identical behavior to the pre-D9 implementation --
-    the existing quarantine test suite pins this.
-
-    If no rows are quarantined, the quarantine file is NOT written and the
-    outputs are returned unchanged.
+    Builds the normalized worklist (see ``_normalize_worklist``), produces the
+    quarantine entry dicts and per-trigger counts, and returns the outputs
+    with bad rows removed. Does NO file I/O (unlike ``apply_quarantine``, its
+    only caller pre-extraction), so a caller that needs to defer the JSONL
+    write (e.g. ``run_sequential``, which quarantines one table at a time but
+    writes exactly one JSONL file across the whole run to avoid the
+    truncating ``_write_jsonl`` clobbering earlier tables) can compose it per
+    call and write once at the end.
 
     This function does not mutate any input ``pa.Table``; it builds new tables
     via ``pa.Table.filter`` which returns a new Arrow object.
@@ -134,9 +132,10 @@ def apply_quarantine(
             Default empty tuple: existing callers are unaffected.
 
     Returns:
-        Tuple of (filtered outputs dict, QuarantineSummary).
+        Tuple of (filtered_outputs, entries, counts_by_trigger, total).
+        ``total`` is the count of distinct (table, row_index) pairs removed;
+        ``counts_by_trigger`` may sum higher when a row fails multiple triggers.
     """
-    output_path: str = quarantine_config.get("output_path") or ""
     triggers: list[str] = quarantine_config.get("triggers") or []
 
     worklist = _normalize_worklist(report, row_errors, triggers)
@@ -189,6 +188,50 @@ def apply_quarantine(
         keep_mask = pa.array([i not in bad_rows for i in range(n)], type=pa.bool_())
         filtered_outputs[table_name] = table.filter(keep_mask)
 
+    return filtered_outputs, quarantine_entries, dict(counts_by_trigger), total
+
+
+def apply_quarantine(
+    outputs: dict[str, pa.Table],
+    report: ValidationReport | None,
+    quarantine_config: dict[str, Any],
+    *,
+    row_errors: tuple[RowErrorRecord, ...] = (),
+) -> tuple[dict[str, pa.Table], QuarantineSummary]:
+    """Route failing rows to the quarantine output; return filtered main outputs.
+
+    Sprint 2 honesty pack (D9): builds one normalized worklist of
+    ``(table, row_index, trigger, reason)`` from ``report.findings`` (each
+    tagged ``"validation_fail"``) and ``row_errors`` (each tagged with its
+    own trigger), then runs the existing dedup/write/filter machinery once
+    over the worklist (now factored into ``compute_quarantine``). Callers
+    that only pass ``report`` (``row_errors=()``, the default) get
+    byte-identical behavior to the pre-D9 implementation -- the existing
+    quarantine test suite pins this.
+
+    If no rows are quarantined, the quarantine file is NOT written and the
+    outputs are returned unchanged.
+
+    This function does not mutate any input ``pa.Table``; it builds new tables
+    via ``pa.Table.filter`` which returns a new Arrow object.
+
+    Args:
+        outputs: Pipeline output tables keyed by table name.
+        report: Frozen ValidationReport from the validator framework, or
+            None when no validators are configured (row-errors-only calls).
+        quarantine_config: The ``quarantine:`` config dict (validated dump).
+        row_errors: Table-attributed per-row strategy errors (D7/D8).
+            Default empty tuple: existing callers are unaffected.
+
+    Returns:
+        Tuple of (filtered outputs dict, QuarantineSummary).
+    """
+    output_path: str = quarantine_config.get("output_path") or ""
+
+    filtered_outputs, quarantine_entries, counts_by_trigger, total = compute_quarantine(
+        outputs, report, quarantine_config, row_errors=row_errors
+    )
+
     # Fail-closed backstop: if rows need to be written but output_path is
     # absent, raise rather than silently dropping rows (data loss). Pydantic
     # config validation (QuarantineConfig._fail_closed_when_enabled) catches
@@ -208,7 +251,7 @@ def apply_quarantine(
     summary = QuarantineSummary(
         enabled=True,
         output_path=output_path,
-        counts_by_trigger=dict(counts_by_trigger),
+        counts_by_trigger=counts_by_trigger,
         total_quarantined=total,
     )
     return filtered_outputs, summary
