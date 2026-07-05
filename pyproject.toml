@@ -597,6 +597,11 @@ module = [
     "duckdb.*",
     "faker",
     "faker.*",
+    # h3 (Uber, Apache-2.0) is the optional geospatial backend for
+    # geo_generalize (the `geo` extra); imported function-locally, not
+    # installed in default-extras CI, and ships no stubs when it is.
+    "h3",
+    "h3.*",
     # mimesis (MIT) is an optional alternative provider backend (the
     # `mimesis` extra); imported at module top in providers_v2.mimesis,
     # not installed in default-extras CI.
