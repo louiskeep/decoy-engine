@@ -52,6 +52,54 @@ class TestDefaultRegistry:
         assert cap.provider == "person_email"
 
 
+class TestFakerProviders:
+    """`ProviderRegistry.faker_providers()` (engine #11 public accessor).
+
+    Lets a caller enumerate the Faker-backed subset of the registry --
+    the same providers `strategy: faker` columns resolve against -- without
+    importing `_real_registry` or `internal.faker_setup` directly.
+    """
+
+    def test_returns_tuple_of_capability_matrix(self) -> None:
+        result = get_default_registry().faker_providers()
+        assert isinstance(result, tuple)
+        assert all(isinstance(cap, CapabilityMatrix) for cap in result)
+
+    def test_known_faker_provider_present(self) -> None:
+        names = {cap.provider for cap in get_default_registry().faker_providers()}
+        assert "person_email" in names
+        assert "person_name" in names
+
+    def test_every_entry_backend_type_is_faker(self) -> None:
+        for cap in get_default_registry().faker_providers():
+            assert cap.backend_type == "faker"
+
+    def test_excludes_non_faker_providers(self) -> None:
+        names = {cap.provider for cap in get_default_registry().faker_providers()}
+        # decoy_native-backed and composite-backed providers must not appear.
+        assert "synthetic_ssn" not in names
+        assert "composite_name_email" not in names
+
+    def test_sorted_by_provider_name(self) -> None:
+        names = [cap.provider for cap in get_default_registry().faker_providers()]
+        assert names == sorted(names)
+
+    def test_stable_shape_matches_known_providers_subset(self) -> None:
+        """Every faker_providers() entry is also in known_providers(), and
+        its capability matches get_capabilities() for the same name --
+        this is a filtered view, not a divergent second source of truth."""
+        registry = get_default_registry()
+        known = registry.known_providers()
+        for cap in registry.faker_providers():
+            assert cap.provider in known
+            assert registry.get_capabilities(cap.provider) == cap
+
+    def test_returns_new_tuple_each_call_no_shared_mutable_state(self) -> None:
+        r1 = get_default_registry().faker_providers()
+        r2 = get_default_registry().faker_providers()
+        assert r1 == r2
+
+
 # MG-8 Step 5 (2026-05-31): single canonical canary cell.
 #
 # The 4 downstream allowlist tests (this file's per-count cell +

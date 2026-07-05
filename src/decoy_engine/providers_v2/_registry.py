@@ -87,6 +87,37 @@ class ProviderRegistry:
         """Frozenset of every registered provider name."""
         return frozenset(self._bindings.keys())
 
+    def faker_providers(self) -> tuple[CapabilityMatrix, ...]:
+        """Return the `CapabilityMatrix` for every Faker-backed provider,
+        sorted by provider name.
+
+        Public introspection accessor (engine #11): the `faker` strategy's
+        `provider:` field resolves against this same registry (see
+        `check_unknown_provider` in `decoy_engine.plan._checks`), so this is
+        the stable way for a caller -- e.g. the platform's capability
+        registry -- to enumerate the Faker-backed subset without importing
+        `decoy_engine.providers_v2._real_registry` or
+        `decoy_engine.internal.faker_setup` directly. Mirrors
+        `known_providers()` / `get_capabilities()` above: read-only, no
+        registry mutation, stable for an unchanged registry instance.
+
+        This is the engine's CURATED catalog (19 entries in the default
+        registry as of this writing), not the ~200-method Faker reflection
+        surface that `internal.faker_setup.get_faker_providers` builds for
+        the legacy V1 `faker_type:` masking path -- that reflection surface
+        has no stable identity and is not part of this contract. Each
+        `CapabilityMatrix` carries the metadata a picker needs per entry:
+        `provider` (identifier/label), `poolable` / `supports_deterministic`
+        (whether it can back a deterministic column), `supported_locales`,
+        and `participates_in_fk_pk`.
+        """
+        return tuple(
+            sorted(
+                (cap for _, cap in self._bindings.values() if cap.backend_type == "faker"),
+                key=lambda cap: cap.provider,
+            )
+        )
+
     def override(
         self,
         provider: str,
