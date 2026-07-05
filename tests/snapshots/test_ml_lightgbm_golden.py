@@ -200,6 +200,9 @@ def test_lightgbm_regression_retrain(tmp_path: Path) -> None:
     """
     import pytest
 
+    pytest.importorskip("lightgbm")  # ml extra; trainer needs sklearn + lightgbm
+    pytest.importorskip("sklearn")
+
     if not _LIVE_PACK.exists():
         pytest.skip("lgbm-v1 pack not found; run UPDATE_SNAPSHOTS=1 first")
     if not _REPORT_PATH.exists():
@@ -269,6 +272,9 @@ def test_predict_column_band_accuracy() -> None:
     """
     import pandas as pd
     import pytest
+
+    pytest.importorskip("lightgbm")  # ml extra; trainer needs sklearn + lightgbm
+    pytest.importorskip("sklearn")
 
     if not _LIVE_PACK.exists():
         pytest.skip("lgbm-v1 pack not found; run UPDATE_SNAPSHOTS=1 first")

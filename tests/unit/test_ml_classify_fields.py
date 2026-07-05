@@ -25,10 +25,28 @@ import pytest
 _LIVE_PACK = Path(__file__).parents[2] / "docs" / "v2" / "ml" / "packs" / "lgbm-v1"
 
 
+def _ml_extra_available() -> bool:
+    """True when the optional `ml` extra (scikit-learn + lightgbm) is installed.
+    classify_fields degrades to None without it, so live-pack tests that assert a
+    real result must skip rather than fail in a base `.[dev]` CI install."""
+    try:
+        import lightgbm  # noqa: F401
+        import sklearn  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+_needs_live_pack = pytest.mark.skipif(
+    not _LIVE_PACK.exists() or not _ml_extra_available(),
+    reason="lgbm-v1 pack or ml extra (scikit-learn/lightgbm) not installed",
+)
+
+
 # ── §B.4 no-raw-values asserting test ────────────────────────────────────────
 
 
-@pytest.mark.skipif(not _LIVE_PACK.exists(), reason="lgbm-v1 pack not found")
+@_needs_live_pack
 def test_classify_fields_output_contains_no_raw_cell_values() -> None:
     """§B.4: classify_fields output must not contain any raw input cell values.
 
@@ -103,7 +121,7 @@ _EXPECTED_KEYS = {
 }
 
 
-@pytest.mark.skipif(not _LIVE_PACK.exists(), reason="lgbm-v1 pack not found")
+@_needs_live_pack
 def test_classify_fields_output_shape() -> None:
     """Each column result has exactly the required keys (no extra, no missing)."""
     from decoy_engine.storm.model_pack.classify import classify_fields
@@ -145,7 +163,7 @@ def test_classify_fields_output_shape() -> None:
 # ── Empty DataFrame ───────────────────────────────────────────────────────────
 
 
-@pytest.mark.skipif(not _LIVE_PACK.exists(), reason="lgbm-v1 pack not found")
+@_needs_live_pack
 def test_classify_fields_empty_dataframe_returns_empty_dict() -> None:
     """An empty DataFrame (0 columns) returns {} not None."""
     from decoy_engine.storm.model_pack.classify import classify_fields
@@ -158,7 +176,7 @@ def test_classify_fields_empty_dataframe_returns_empty_dict() -> None:
 # ── Determinism ───────────────────────────────────────────────────────────────
 
 
-@pytest.mark.skipif(not _LIVE_PACK.exists(), reason="lgbm-v1 pack not found")
+@_needs_live_pack
 def test_classify_fields_is_deterministic() -> None:
     """Same DataFrame + same pack -> identical result on two calls."""
     from decoy_engine.storm.model_pack.classify import classify_fields
