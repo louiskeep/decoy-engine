@@ -157,7 +157,14 @@ assertions, dbt relationship/aggregation tests, and the Spark
   On the chunked/streaming path (`run_mask_pipeline_chunked`), which has no
   quarantine machinery, the job fails CLOSED: any chunk with a row error
   raises `RowErrorsFailedError`. Either way, the previous silent
-  keep-the-source-value behavior is gone.**
+  keep-the-source-value behavior is gone on these paths.**
+  
+  **Note: `run_sequential` (the bounded-memory FK path from PR #29) does NOT
+  yet drain or surface row errors.** FK jobs routed through `run_sequential`
+  silently pass through rows that would otherwise quarantine or fail. Closing
+  this gap (wiring row-error draining into `run_sequential`) is a precondition
+  of Sprint S2, which makes `run_sequential` the default path for eligible FK
+  jobs.
 - **Quarantine generalized to row errors** (`quarantine.apply_quarantine`):
   now accepts an optional `row_errors` tuple alongside the `ValidationReport`
   and builds one normalized worklist so a row that fails both a validator
