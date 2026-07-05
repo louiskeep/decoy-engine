@@ -52,6 +52,10 @@ from decoy_engine.execution._substrate import (
     resolve_substrate,
     select_execution_adapter,
 )
+from decoy_engine.execution._transactional_sink import (
+    ParquetTransactionalSink,
+    TransactionalSink,
+)
 from decoy_engine.execution.polars import PolarsExecutionAdapter
 
 __all__ = [
@@ -63,10 +67,12 @@ __all__ = [
     "ExecutionEvent",
     "ExecutionResult",
     "PandasExecutionAdapter",
+    "ParquetTransactionalSink",
     "PolarsExecutionAdapter",
     "StrategyContext",
     "StrategyError",
     "StrategyHandler",
+    "TransactionalSink",
     "WorkNode",
     "build_work_list",
     "check_chunked_compatibility",

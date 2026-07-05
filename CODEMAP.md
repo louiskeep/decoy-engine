@@ -46,7 +46,8 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | `src/decoy_engine/_MAP.md` | Engine package navigation map |
 | `src/decoy_engine/config/` | `PipelineConfig`, `RelationshipConfig`, `TableConfig`, source/target descriptors |
 | `src/decoy_engine/plan/` | `compile_plan` + frozen `Plan`; `_seed.py` holds the shared seed validator used by the compiler, pipeline profile path, and generation; `_graph.py` builds plan-side relationship and namespace tuples; `_seed_envelope.py` builds per-table/column/group `SeedEnvelope` (split from `_compile.py`, F11d) |
-| `src/decoy_engine/execution/` | `ExecutionAdapter` Protocol, `PandasExecutionAdapter`, `select_execution_adapter`, `_strategies/` (column-strategy handlers), `polars/` (Polars adapter) |
+| `src/decoy_engine/execution/` | `ExecutionAdapter` Protocol, `PandasExecutionAdapter`, `select_execution_adapter`, `_strategies/` (column-strategy handlers), `polars/` (Polars adapter), `_transactional_sink.py` (all-or-nothing sink protocol + Parquet reference implementation) |
+| `src/decoy_engine/execution/_transactional_sink.py` | `TransactionalSink` three-method protocol (write/commit/abort; `abort` is best-effort and must not raise) and `ParquetTransactionalSink` file-based reference implementation. `commit()` publishes via a single atomic POSIX directory rename (`os.replace`, POSIX rename(2)); either every Parquet file lands at once or nothing is published (visibility-atomicity, not fsync durability). A pre-existing non-empty target causes commit to fail closed. Both are exported from `decoy_engine.execution`. Used by `run_sequential` (`_sequential.py`) for FK jobs that require all-or-nothing output. |
 | `src/decoy_engine/generation/` | `generate_tables` + composite + pool helpers; `_referenced_formula.py` runs the cross-column formula post-pass (lazy-imported) |
 | `src/decoy_engine/relationships/` | `build_relationship_graph`, `build_namespace_registry`, `check_orphan_fk_policy_completeness`, `OrphanPolicy` |
 | `src/decoy_engine/providers_v2/` | `ProviderRegistry`, identifier adapters |
@@ -125,6 +126,7 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | `derived` generate-mode wiring (synthesize path) | `src/decoy_engine/generation/synthesize.py::_derived_generate` |
 | Substrate selection | `src/decoy_engine/execution/_substrate.py` |
 | Pandas adapter | `src/decoy_engine/execution/_pandas_adapter.py` |
+| Transactional sink protocol and Parquet reference implementation | `src/decoy_engine/execution/_transactional_sink.py` (`TransactionalSink`, `ParquetTransactionalSink`; both exported from `decoy_engine.execution`) |
 | Polars adapter | `src/decoy_engine/execution/polars/_polars_adapter.py` |
 | Generation | `src/decoy_engine/generation/synthesize.py` |
 | Relationships and namespace | `src/decoy_engine/relationships/_graph.py`, `_namespace.py` |
