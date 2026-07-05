@@ -22,9 +22,7 @@ import io
 import json
 from pathlib import Path
 
-import joblib  # type: ignore[import]
 import pytest
-from sklearn.feature_extraction import DictVectorizer
 
 from decoy_engine.storm.model_pack.loader import ModelPackLoader, ModelPackLoadError
 from decoy_engine.storm.model_pack.types import (
@@ -32,6 +30,11 @@ from decoy_engine.storm.model_pack.types import (
     PACK_FORMAT,
     ModelPackManifest,
 )
+
+# Optional ML extra (joblib / scikit-learn); skip this module when absent so a
+# base `.[dev]` CI install (no ml extra) does not fail collection.
+joblib = pytest.importorskip("joblib")
+DictVectorizer = pytest.importorskip("sklearn.feature_extraction").DictVectorizer
 
 _LIVE_PACK = Path(__file__).parents[2] / "docs" / "v2" / "ml" / "packs" / "lgbm-v1"
 
