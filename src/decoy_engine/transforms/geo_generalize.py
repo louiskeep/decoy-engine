@@ -439,7 +439,7 @@ def _require_h3() -> Any:
         ImportError: h3 is not installed; names the [geo] extra.
     """
     try:
-        import h3 as _h3  # type: ignore[import-untyped]
+        import h3 as _h3
 
         return _h3
     except (ImportError, TypeError):
