@@ -10,7 +10,8 @@ guarantees the dict is well-formed.
 Per the PO-ratified six axes (advisory 2026-05-27):
 - Strict validation (extra="forbid" at every level).
 - Closed-Literal pins on `orphan_policy` (preserve | remap | warn | fail)
-  and source/target `format` (csv | parquet).
+  and source/target `format` (csv | parquet; `FileSource.format` additionally
+  allows `fixed_width` per S4, engine-finish-open-ended program).
 - Single pipeline per file (no `pipelines: [...]` top-level).
 - `SourceDescriptor` AND `TargetDescriptor` discriminated unions support
   `file` + `s3` + `gcs` variants in V1 (S14-CLOUD-SRC-S3GCS +
@@ -35,6 +36,7 @@ ships the real binding).
 from __future__ import annotations
 
 from decoy_engine.config._errors import PipelineConfigError
+from decoy_engine.config._fixed_width import FixedWidthColumn, FixedWidthLayout
 from decoy_engine.config._global_settings import GlobalSettings
 from decoy_engine.config._namespaces import NamespaceConfig
 from decoy_engine.config._override import override_sources
@@ -81,6 +83,8 @@ __all__ = [
     "FileSource",
     "FileTarget",
     "FilterOp",
+    "FixedWidthColumn",
+    "FixedWidthLayout",
     "GCSSource",
     "GCSTarget",
     "GlobalSettings",

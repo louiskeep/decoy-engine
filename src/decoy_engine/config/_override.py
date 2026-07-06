@@ -8,7 +8,7 @@ and the runner cannot leave a stale binding in place.
 
 The replacement is validated by re-running `PipelineConfig.model_validate`
 on the result, so the new sources still have to pass Pydantic strict
-checks (extras forbidden, type=file format=csv|parquet, etc.).
+checks (extras forbidden, type=file format=csv|parquet|fixed_width, etc.).
 """
 
 from __future__ import annotations

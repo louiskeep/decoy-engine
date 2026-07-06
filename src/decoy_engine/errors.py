@@ -325,6 +325,22 @@ class RowErrorsFailedError(DecoyError):
         )
 
 
+class FixedWidthParseError(DecoyError):
+    """Raised when a fixed-width data file cannot be parsed against its
+    `FixedWidthLayout` column-spec (S4, engine-finish-open-ended program).
+
+    Covers two fail-closed cases: a record shorter than a column's
+    `start + width` extent (row-width mismatch), and a sliced value
+    that cannot cast to its column's declared type. Neither case
+    truncates the short record or coerces the bad value -- both raise
+    here instead. Per the row-error framework's convention (see
+    `RowErrorsFailedError`), the message never embeds the offending
+    cell value -- only the file path, 1-based line number, and column
+    name -- since the file being parsed may itself carry the PII this
+    is a masking product for.
+    """
+
+
 __all__ = [
     "ConfigError",
     "ConnectorAuthError",
@@ -332,6 +348,7 @@ __all__ = [
     "DecoyError",
     "EmptyParentPoolError",
     "FKPreservationError",
+    "FixedWidthParseError",
     "FlagPauseSignal",
     "FpeChecksumError",
     "LicenseError",
