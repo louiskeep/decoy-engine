@@ -310,6 +310,9 @@ def _chunked_rejection(
     # The relationships gate is checked here (not only via the per-table
     # call below) so multi-table FK jobs still surface it: the per-table
     # gate only runs for the single-mask-table shape.
+    # Future hardening: accept has_fk as an explicit parameter so direct
+    # callers (not run_pipeline) can pass a graph that's known to be consistent
+    # with config["relationships"], defense-in-depth against inconsistent inputs.
     if config.get("relationships"):
         reasons.append(
             "chunked_relationships_unsupported: configs with FK relationships "

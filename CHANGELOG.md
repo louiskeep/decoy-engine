@@ -21,7 +21,7 @@ not take the sequential early return, and independently excludes any
 relationship-bearing job via the planner's own FK-edge gate, so the two
 layers never overlap. Two silent-knob-ignoring gaps were closed as part of
 the reconciliation: (1) an explicit non-`"pandas"` `substrate` (or
-`DECOY_SUBSTRATE=polars`) now disqualifies sequential eligibility --
+`DECOY_SUBSTRATE=polars`) now disqualifies sequential eligibility,
 falling through to full_frame so `select_execution_adapter` is what
 actually honors the request (previously the sequential path silently
 always ran pandas regardless of a caller's `substrate="polars"` ask); (2)
