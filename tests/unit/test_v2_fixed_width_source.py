@@ -13,6 +13,7 @@ embeds the offending cell value (source files may carry PII; see
 
 from __future__ import annotations
 
+import traceback
 from pathlib import Path
 from typing import Any
 
@@ -265,18 +266,76 @@ class TestFixedWidthSourceEndToEnd:
         with pytest.raises(FixedWidthParseError, match="row-width mismatch"):
             read_fixed_width(str(data), layout)
 
+    def test_read_fixed_width_zero_padded_numeric_parses(self, tmp_path: Path) -> None:
+        """A genuine zero-padded numeric (a common fixed-width convention)
+        parses to its numeric value, not a `FixedWidthParseError` -- the
+        pad-stripped `""` is retried against the raw slice."""
+        layout = FixedWidthLayout.model_validate(
+            {
+                "columns": [
+                    {
+                        "name": "id",
+                        "start": 0,
+                        "width": 5,
+                        "type": "int",
+                        "pad": "0",
+                        "align": "right",
+                    },
+                ]
+            }
+        )
+        data = tmp_path / "zero_padded.txt"
+        data.write_text("00000\n00042\n", encoding="utf-8")
+
+        df = read_fixed_width(str(data), layout)
+
+        assert df["id"].tolist() == [0, 42]
+
+    def test_read_fixed_width_all_space_numeric_field_raises_honestly(self, tmp_path: Path) -> None:
+        """A numeric field that is genuinely blank in the source data (all
+        pad character, no digits) must still raise -- never silently
+        coerced to `0`. Only an actual zero-padded numeric parses."""
+        layout = FixedWidthLayout.model_validate(
+            {"columns": [{"name": "id", "start": 0, "width": 4, "type": "int"}]}
+        )
+        data = tmp_path / "blank_numeric.txt"
+        data.write_text("    \n", encoding="utf-8")
+
+        with pytest.raises(FixedWidthParseError, match="cannot cast"):
+            read_fixed_width(str(data), layout)
+
     def test_read_fixed_width_bad_cast_raises_without_leaking_value(self, tmp_path: Path) -> None:
-        layout = FixedWidthLayout.model_validate(_simple_layout())
-        data = tmp_path / "bad_age.txt"
-        secret_value = "notanum"
-        data.write_text(f"alice    {secret_value}12.50\n", encoding="utf-8")
+        """The bad-cast path must never leak the raw cell value -- not in
+        the exception's message, not via a chained `__cause__`, and not
+        in a fully rendered traceback (the surfaces `logging.exception`/
+        `exc_info=True` and an uncaught-exception printout actually use).
+
+        The CAST column here (`code`, an `int` field) wholly contains the
+        secret token, so the token is the exact string handed to `int()`
+        and actually appears in the vector under test. A layout that only
+        slices *part* of a would-be secret into the cast column (or casts
+        a `str` column, which never calls `int()`/`float()`) would let this
+        assertion pass trivially without exercising the leak at all.
+        """
+        secret_token = "SECRET-9f3a1c2bXYZ"
+        layout = FixedWidthLayout.model_validate(
+            {"columns": [{"name": "code", "start": 0, "width": len(secret_token), "type": "int"}]}
+        )
+        data = tmp_path / "bad_code.txt"
+        data.write_text(f"{secret_token}\n", encoding="utf-8")
 
         with pytest.raises(FixedWidthParseError, match="cannot cast") as excinfo:
             read_fixed_width(str(data), layout)
 
-        assert "age" in str(excinfo.value)
-        # PII safety: the raw offending value must never appear in the message.
-        assert secret_value not in str(excinfo.value)
+        exc = excinfo.value
+        rendered_traceback = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+
+        assert "code" in str(exc)
+        # PII safety: the raw offending value must never appear anywhere --
+        # not the message, not the chained cause, not a rendered traceback.
+        assert secret_token not in str(exc)
+        assert secret_token not in str(exc.__cause__)
+        assert secret_token not in rendered_traceback
 
     def test_profile_source_end_to_end_fixed_width(self, tmp_path: Path) -> None:
         from decoy_engine.profile import profile_source

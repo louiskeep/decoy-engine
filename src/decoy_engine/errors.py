@@ -337,7 +337,12 @@ class FixedWidthParseError(DecoyError):
     `RowErrorsFailedError`), the message never embeds the offending
     cell value -- only the file path, 1-based line number, and column
     name -- since the file being parsed may itself carry the PII this
-    is a masking product for.
+    is a masking product for. The bad-cast case is also raised with
+    `from None` (see `profile._fixed_width_reader._cast_value`) so the
+    caught `ValueError`/`TypeError` -- whose own text embeds the raw
+    value -- never rides along as `__cause__`/`__context__`, where a
+    traceback or `logging.exception` would surface it despite the
+    clean message.
     """
 
 

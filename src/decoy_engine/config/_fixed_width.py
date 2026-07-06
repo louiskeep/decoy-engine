@@ -24,6 +24,32 @@ Design decisions (pin these; do not silently redefine them elsewhere):
   rejected as malformed -- this single rule catches both overlapping
   ranges and out-of-order columns in one check. Gaps between columns
   (unused byte ranges) are allowed.
+
+Known gaps -- documented, not fixed here (S4 scope; flagged for S7):
+
+- **Trailing bytes past the last column's end are tolerated by
+  design.** The reader only rejects a record *shorter* than
+  `record_width` (row-width mismatch); a record *longer* than that has
+  its extra trailing bytes silently ignored, matching the plain
+  `(start, width)`-slicing convention this layout uses (there is no
+  "record length" field to violate). This is NOT the same thing as
+  detecting a **misaligned** layout: a layout whose columns are too
+  narrow, or offset by a constant amount, for the actual data will
+  still slice and cast "successfully" -- it will simply read the wrong
+  bytes into each column, with no error. There is no structural way to
+  detect this from the spec alone (a too-narrow layout looks identical
+  to a correct one that happens to have a shorter `record_width`). The
+  S7 authoring UI is the intended mitigation: render a parse-preview
+  (a handful of sample records rendered through the candidate layout)
+  so a human can visually catch misalignment before saving it, rather
+  than the engine trying to infer it.
+- **An all-pad/whitespace numeric field is an honest parse error, not
+  a zero.** A genuine zero-padded numeric (e.g. pad="0", "0000")
+  parses to `0`; a numeric field that is blank in the source data
+  (all spaces, or all of whatever `pad` character is declared, with no
+  digits) still raises `FixedWidthParseError` rather than being
+  silently coerced to `0` -- see
+  `profile._fixed_width_reader._cast_value` for the exact rule.
 """
 
 from __future__ import annotations
