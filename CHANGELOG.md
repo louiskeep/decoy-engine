@@ -9,6 +9,48 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Fixed (S2 round-3 FK-topology leak remediation, 2026-07-05)
+
+- **Self-referential FK raw-key leak on the sequential path (BLOCKER).** A
+  table that is its own FK parent (e.g. `employees.id` referenced by
+  `employees.manager_id`) leaked the raw errored key into the child column on
+  the default `execution_mode="auto"` sequential path, because
+  `run_sequential` drained and folded row errors into the key-error index
+  once PER TABLE, after the whole table's mask-node loop, so an intra-table
+  FK-child node resolved before its own parent-key node's error was folded.
+  Fixed by moving the drain + fold to PER NODE, inside the loop, mirroring
+  full-frame `run()`. Full-frame and sequential now both close the
+  self-referential case (the table empties: the failing parent row and its
+  cascaded referrer are both quarantined) and are row-equivalent.
+- **Cross-table FK cycle routing regression (functional, non-leak).** A
+  mutual cross-table FK cycle (A references B, B references A) ran under
+  full-frame before this program but, under the S2 `auto` router, was routed
+  to `run_sequential`, which cannot order a cross-table cycle and raised
+  `relationship_cycle`. Added `_has_cross_table_fk_cycle`; `auto` now falls
+  back to full-frame for a cyclic table graph (`route_reason =
+  "cross_table_cycle"`), restoring pre-S2 behavior. An explicit
+  `execution_mode="sequential"` request on a cyclic graph now raises a clear
+  `ConfigError` instead of the raw `relationship_cycle` error. A self-ref
+  table (one table, not a cross-table cycle) is unaffected and still routes
+  to `sequential` under `auto`.
+
+**Accepted limitation (when-gated duplicate parent key), documented not
+enforced.** When a `when` gate leaves a parent FK-key row unmasked AND that
+same raw key value also appears on a different parent row that row-errored, a
+child referencing that key value resolves (via the identity-map contract,
+FK-resolution precedence 1) to the raw value carried by the when-gate-unmasked
+parent row. This is NOT a quarantine escape: the raw value is present in the
+child ONLY because the user's `when` gate deliberately left that duplicate
+parent row unmasked, so it is ALREADY present in the parent output. Net-new
+exposure is NIL. Enforcing "cascade even on a when-gated duplicate" would
+break referential integrity: the child would point to null/quarantine while
+the parent row survives with the raw key, producing a dangling reference for
+a row the user intentionally chose to leave unmasked. The identity-map
+contract (an unmasked parent key maps to itself, and children mirror it) is
+the correct behavior; this case is documented and pinned by test, not
+enforced. See `docs/relationships-memory-scaling.md` and
+`docs/backlog/s2-fk-leak-remediation-r3-guide.md` section 5.
+
 ### Added (FK-RI transactional sink, 2026-06-30)
 
 - **`TransactionalSink` protocol and `ParquetTransactionalSink` reference

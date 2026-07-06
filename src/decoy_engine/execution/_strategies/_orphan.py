@@ -35,16 +35,35 @@ Precedence per child row: (1) mapped in `parent_map` -> normal resolution;
 (2) key present in `errored_parent_keys` -> cascade (masked=None); (3)
 otherwise -> genuine orphan, `orphan_policy` applies unchanged. `orphan_policy`
 NEVER sees a cascaded key.
+
+Accepted limitation (S2 round 3, when-gated duplicate key): precedence (1) is
+a normal resolution only in the sense that it is not a cascade or an orphan;
+it does not guarantee a MASKED value. When a `when` gate leaves a parent
+FK-key row unmasked and that same raw key value also appears on a different
+row that row-errored, precedence (1) resolves the child to the RAW value
+carried by the when-gate-unmasked row. This is not a quarantine escape (the
+raw value is already present in the parent output because the user's `when`
+gate deliberately left it unmasked); net-new exposure is nil. Accepted and
+documented, not enforced -- see docs/relationships-memory-scaling.md and the
+inline NOTE at the precedence-1 branch below.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import TYPE_CHECKING
+
+import pandas as pd
 
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._row_errors import RowError
 from decoy_engine.generation.pool._events import QualityWarning
+from decoy_engine.plan._types import ColumnSeed
 from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge
+
+if TYPE_CHECKING:
+    from decoy_engine.execution._adapter import StrategyContext, StrategyHandler
+    from decoy_engine.execution._runner import WorkNode
 
 _KeyTuple = tuple[object, ...]
 _NodeKey = tuple[str, tuple[str, ...]]
@@ -73,6 +92,12 @@ def resolve_fk_keys(
     key), recorded for the caller to emit a `RowError`; (3) otherwise -> genuine
     orphan, `orphan_policy` applies exactly as before. A cascaded key is consumed
     in branch 2 and never reaches the orphan-policy branch.
+
+    CORRECTION (round 3): branch (1) is a "normal resolution" in the sense that
+    it is neither a cascade nor an orphan; it is NOT guaranteed to be a masked
+    value. A `parent_map` entry can carry a raw when-gate-unmasked value (the
+    identity-map contract), so branch (1) can yield raw data. See the accepted
+    when-gate limitation NOTE below and docs/relationships-memory-scaling.md.
     """
     masked: list[_KeyTuple | None] = [None] * len(child_keys)
     orphan_positions: list[int] = []
@@ -83,6 +108,17 @@ def resolve_fk_keys(
             continue  # null FK: preserved as null
         mapped = parent_map.get(key)
         if mapped is not None:
+            # NOTE (S2 remediation guide r3 section 5, accepted limitation):
+            # a parent_map entry is not always a masked value. When a `when`
+            # gate leaves a parent FK-key row unmasked, that row's identity
+            # entry (raw -> raw) lands here too. If that same raw key value
+            # also appears on a different parent row that row-errored, the
+            # child resolves via THIS branch to the raw when-gate-unmasked
+            # value, not a cascade. This is not a quarantine escape: the raw
+            # value is already present in the parent output because the
+            # user's own `when` gate deliberately left it unmasked; net-new
+            # exposure is nil. Accepted and pinned (do not "fix" without a
+            # product decision; see docs/relationships-memory-scaling.md).
             masked[i] = mapped
             continue
         if errored_parent_keys is not None and key in errored_parent_keys:
@@ -182,3 +218,47 @@ def cascade_row_errors(cascade: list[tuple[int, str]], column: str) -> list[RowE
         )
         for pos, trigger in cascade
     ]
+
+
+def make_remap_fn(
+    edge: RelationshipEdge,
+    node_by_key: dict[_NodeKey, WorkNode],
+    ctx: StrategyContext,
+    handlers: dict[str, StrategyHandler],
+) -> Callable[[list[_KeyTuple]], list[_KeyTuple]]:
+    """A REMAP closure: mask orphan source keys via the PARENT columns' own
+    strategies, so a remapped orphan is indistinguishable from a real masked
+    value (S9 spec section 6.2 REMAP + Dennis slice-2h brief section G).
+    Extracted from `_pandas_adapter.py` (S2 remediation guide r3 section 9,
+    LOW pre-emptive extraction to regain module-size headroom); `handlers`
+    is the caller's `self._handlers` table, passed in rather than captured
+    via `self` since this is now a free function."""
+    ptable = edge.parent_table
+    pcols = edge.parent_columns
+
+    def remap(orphan_keys: list[_KeyTuple]) -> list[_KeyTuple]:
+        if not orphan_keys:
+            return []
+        masked_cols: list[list[object]] = []
+        for j, pcol in enumerate(pcols):
+            pnode = node_by_key.get((ptable, (pcol,)))
+            if pnode is None or not isinstance(pnode.plan_slice, ColumnSeed):
+                raise ExecutionError(
+                    code="orphan_remap_parent_missing",
+                    message=(
+                        f"REMAP needs the parent column {ptable}.{pcol} to be a "
+                        "masked scalar node, but it is absent from the work list."
+                    ),
+                )
+            handler = handlers.get(pnode.strategy)
+            if handler is None:
+                raise ExecutionError(
+                    code="unsupported_strategy",
+                    message=f"REMAP found no handler for parent strategy {pnode.strategy!r}.",
+                )
+            tmp = pd.DataFrame({pcol: [k[j] for k in orphan_keys]})
+            tmp, _ = handler.run(tmp, pcol, pnode.plan_slice, ctx)
+            masked_cols.append(list(tmp[pcol]))
+        return [tuple(col[i] for col in masked_cols) for i in range(len(orphan_keys))]
+
+    return remap

@@ -577,3 +577,308 @@ class TestSequentialMultiTableQuarantineJsonlNotClobbered:
         assert parent_recs[0]["age"] == "badX"
         assert len(child_recs) == 1
         assert child_recs[0]["note"] == "badY"
+
+
+def _self_fk_config(
+    tmp_path: Path,
+    *,
+    ids: list[str],
+    manager_ids: list[str | None],
+    orphan_policy: str = "preserve",
+    quarantine: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """S2 remediation guide r3 section 8: one table `employees` whose FK
+    child (`manager_id`) references its own parent key (`id`) -- a
+    self-referential FK. `id` is masked by `date_shift` (a row-error-emitting
+    strategy); `manager_id` is declared as an FK child of `employees.id`."""
+    employees = pa.table(
+        {
+            "id": pa.array(ids, type=pa.string()),
+            "manager_id": pa.array(manager_ids, type=pa.string()),
+        }
+    )
+    src = _write_source(tmp_path, employees, "employees")
+    cfg: dict[str, Any] = {
+        "version": 1,
+        "global_settings": {"job_name": "s2-self-fk-leak", "seed": 42},
+        "sources": {"employees": {"type": "file", "path": src, "format": "parquet"}},
+        "targets": {
+            "employees": {
+                "type": "file",
+                "path": str(tmp_path / "employees.out.parquet"),
+                "format": "parquet",
+            }
+        },
+        "tables": [
+            {
+                "name": "employees",
+                "columns": [
+                    {
+                        "name": "id",
+                        "strategy": "date_shift",
+                        "provider_config": {"min_days": 1, "max_days": 30},
+                        "namespace": "employee_ns",
+                    },
+                    _faker_col("manager_id", "employee_ns"),
+                ],
+            }
+        ],
+        "relationships": [
+            {
+                "parent": {"table": "employees", "columns": ["id"]},
+                "children": [{"table": "employees", "columns": ["manager_id"]}],
+                "orphan_policy": orphan_policy,
+                "namespace": "employee_ns",
+            }
+        ],
+    }
+    if quarantine is not None:
+        cfg["quarantine"] = quarantine
+    return cfg
+
+
+class TestSelfRefFkKeyErrorLeakClosure:
+    """S2 remediation guide r3 section 8.1: THE round-3 blocker proof. A
+    table that is its own FK parent (`employees.id` <- `employees.manager_id`)
+    must never leak its raw errored key through the self-FK, on either
+    execution path. This FAILED on `10e8ade` for `execution_mode="sequential"`
+    (manager_id resolved to the raw "notadate") before the section-3 per-node
+    fold fix; it PASSES after."""
+
+    _IDS = ["notadate", "2020-01-01"]
+    _MANAGER_IDS: list[str | None] = [None, "notadate"]
+
+    @pytest.mark.parametrize("execution_mode", ["full_frame", "sequential"])
+    def test_self_ref_leak_closed_both_modes(self, tmp_path: Path, execution_mode: str) -> None:
+        qpath = str(tmp_path / "quarantine.jsonl")
+        config = _self_fk_config(
+            tmp_path,
+            ids=self._IDS,
+            manager_ids=self._MANAGER_IDS,
+            quarantine={"enabled": True, "output_path": qpath, "triggers": ["format_error"]},
+        )
+        sources = _sources(config)
+        sink = (
+            ParquetTransactionalSink(tmp_path / "out") if execution_mode == "sequential" else None
+        )
+
+        result = run_pipeline(
+            config, sources, engine_version="0.1.0", execution_mode=execution_mode, sink=sink
+        )
+
+        if execution_mode == "sequential":
+            out = pq.read_table(tmp_path / "out" / "employees.parquet")
+        else:
+            out = result.outputs["employees"]
+        ids = out.column("id").to_pylist()
+        manager_ids = out.column("manager_id").to_pylist()
+
+        # Raw errored key absent from BOTH the parent key column and the
+        # self-referencing FK child column.
+        assert "notadate" not in ids
+        assert "notadate" not in manager_ids
+        # The failing parent row and its only referrer are both removed
+        # (Cam decision 1 / guide section 2): the table empties.
+        assert out.num_rows == 0
+
+        records = [json.loads(line) for line in Path(qpath).read_text().splitlines()]
+        assert len(records) == 2
+        direct_error = [r for r in records if r["id"] == "notadate"]
+        cascaded = [r for r in records if "parent-key" in r["_quarantine_reason"]]
+        assert len(direct_error) == 1
+        assert direct_error[0]["_quarantine_trigger"] == "format_error"
+        assert len(cascaded) == 1
+        assert cascaded[0]["manager_id"] is None
+        assert cascaded[0]["_quarantine_trigger"] == "format_error"
+
+    def test_self_ref_full_frame_sequential_equivalence(self, tmp_path: Path) -> None:
+        """Cam MEDIUM (guide section 8.2): full_frame and sequential must
+        agree on the self-ref case, not just each be individually leak-free.
+        Both paths run in-memory (no sink) so `ExecutionResult.outputs` is
+        directly comparable."""
+        quarantine = {
+            "enabled": True,
+            "output_path": str(tmp_path / "quarantine.jsonl"),
+            "triggers": ["format_error"],
+        }
+        config_full = _self_fk_config(
+            tmp_path, ids=self._IDS, manager_ids=self._MANAGER_IDS, quarantine=quarantine
+        )
+        sources_full = _sources(config_full)
+        result_full = run_pipeline(
+            config_full, sources_full, engine_version="0.1.0", execution_mode="full_frame"
+        )
+
+        tmp_path_seq = tmp_path / "seq"
+        tmp_path_seq.mkdir()
+        quarantine_seq = {
+            "enabled": True,
+            "output_path": str(tmp_path_seq / "quarantine.jsonl"),
+            "triggers": ["format_error"],
+        }
+        config_seq = _self_fk_config(
+            tmp_path_seq, ids=self._IDS, manager_ids=self._MANAGER_IDS, quarantine=quarantine_seq
+        )
+        sources_seq = _sources(config_seq)
+        result_seq = run_pipeline(
+            config_seq, sources_seq, engine_version="0.1.0", execution_mode="sequential"
+        )
+
+        assert result_full.outputs["employees"].equals(result_seq.outputs["employees"])
+        assert result_full.outputs["employees"].num_rows == 0
+
+    @pytest.mark.parametrize("execution_mode", ["full_frame", "sequential"])
+    @pytest.mark.parametrize("orphan_policy", ["preserve", "warn", "fail", "remap"])
+    def test_self_ref_orphan_policy_sweep_only_errored_referrer_cascades(
+        self, tmp_path: Path, execution_mode: str, orphan_policy: str
+    ) -> None:
+        """S2 remediation guide section 4 + r3 section 8.3: a variant that
+        does NOT empty the table. Row 1 references a CLEAN parent key (in
+        fact its own, self-referencing) and must survive with its correctly
+        masked value under every orphan_policy; only row 2 (which references
+        the errored key) cascades. Row 0 (its own key errored) is always
+        removed."""
+        qpath = str(tmp_path / "quarantine.jsonl")
+        config = _self_fk_config(
+            tmp_path,
+            ids=["notadate", "2020-01-01", "2020-03-01"],
+            manager_ids=[None, "2020-01-01", "notadate"],
+            orphan_policy=orphan_policy,
+            quarantine={"enabled": True, "output_path": qpath, "triggers": ["format_error"]},
+        )
+        sources = _sources(config)
+        sink = (
+            ParquetTransactionalSink(tmp_path / "out") if execution_mode == "sequential" else None
+        )
+
+        result = run_pipeline(
+            config, sources, engine_version="0.1.0", execution_mode=execution_mode, sink=sink
+        )
+
+        if execution_mode == "sequential":
+            out = pq.read_table(tmp_path / "out" / "employees.parquet")
+        else:
+            out = result.outputs["employees"]
+        ids = out.column("id").to_pylist()
+        manager_ids = out.column("manager_id").to_pylist()
+
+        # Raw errored key never leaks, under any orphan_policy.
+        assert "notadate" not in ids
+        assert "notadate" not in manager_ids
+        # Only row 1 (the clean, self-referencing row) survives; row 0 (its
+        # own key errored) and row 2 (references the errored key) cascade.
+        assert out.num_rows == 1
+        assert ids[0] == manager_ids[0]  # the surviving row's self-reference resolved correctly
+
+
+def _dupwhen_config(tmp_path: Path) -> dict[str, Any]:
+    """S2 remediation guide r3 section 5.1 / 8.4 shape: parent `id` has TWO
+    rows sharing the raw value "notadate" -- row 0 errors under `date_shift`
+    (uncoercible, quarantined out), row 1 is `when`-gate-SKIPPED (keep=0) and
+    survives with its raw "notadate" untouched by the user's own choice. A
+    child FK references "notadate" and resolves via the identity-map
+    contract to the surviving when-gate-unmasked row's raw value."""
+    parent = pa.table(
+        {
+            "id": pa.array(["notadate", "notadate", "2020-01-01"], type=pa.string()),
+            "keep": pa.array([1, 0, 1], type=pa.int64()),
+        }
+    )
+    child = pa.table({"parent_id": pa.array(["notadate"], type=pa.string())})
+    parent_src = _write_source(tmp_path, parent, "parent")
+    child_src = _write_source(tmp_path, child, "child")
+    return {
+        "version": 1,
+        "global_settings": {"job_name": "s2-dupwhen-accepted-limitation", "seed": 42},
+        "sources": {
+            "parent": {"type": "file", "path": parent_src, "format": "parquet"},
+            "child": {"type": "file", "path": child_src, "format": "parquet"},
+        },
+        "targets": {
+            "parent": {
+                "type": "file",
+                "path": str(tmp_path / "parent.out.parquet"),
+                "format": "parquet",
+            },
+            "child": {
+                "type": "file",
+                "path": str(tmp_path / "child.out.parquet"),
+                "format": "parquet",
+            },
+        },
+        "tables": [
+            {
+                "name": "parent",
+                "columns": [
+                    {
+                        "name": "id",
+                        "strategy": "date_shift",
+                        "provider_config": {"min_days": 1, "max_days": 30},
+                        "namespace": "dup_ns",
+                        "when": "keep == 1",
+                    },
+                    {"name": "keep", "strategy": "passthrough"},
+                ],
+            },
+            {"name": "child", "columns": [_faker_col("parent_id", "dup_ns")]},
+        ],
+        "relationships": [
+            {
+                "parent": {"table": "parent", "columns": ["id"]},
+                "children": [{"table": "child", "columns": ["parent_id"]}],
+                "orphan_policy": "preserve",
+                "namespace": "dup_ns",
+            }
+        ],
+        "quarantine": {
+            "enabled": True,
+            "output_path": str(tmp_path / "quarantine.jsonl"),
+            "triggers": ["format_error"],
+        },
+    }
+
+
+class TestWhenGatedDuplicateKeyAcceptedLimitation:
+    """S2 remediation guide r3 section 5 / 8.4 (Cam decision 2c): PINS the
+    accepted when-gate limitation as intentional, not a bug. When a `when`
+    gate leaves a parent FK-key row unmasked AND that same raw key value
+    ALSO appears on a different parent row that row-errored, a child
+    referencing that key resolves to the raw when-gate-unmasked value via
+    the identity-map contract (FK-resolution precedence 1). This is NOT a
+    quarantine escape: the raw value is present in the child ONLY because
+    it is ALSO present in the PARENT output (the user's own `when` gate left
+    it unmasked), so net-new exposure is NIL. If a future change makes the
+    child value absent, THIS test fails and forces a conscious decision --
+    do not "fix" it without a product/security call (see the guide)."""
+
+    @pytest.mark.parametrize("execution_mode", ["full_frame", "sequential"])
+    def test_child_inherits_raw_value_already_present_in_parent(
+        self, tmp_path: Path, execution_mode: str
+    ) -> None:
+        config = _dupwhen_config(tmp_path)
+        sources = _sources(config)
+        sink = (
+            ParquetTransactionalSink(tmp_path / "out") if execution_mode == "sequential" else None
+        )
+
+        result = run_pipeline(
+            config, sources, engine_version="0.1.0", execution_mode=execution_mode, sink=sink
+        )
+
+        if execution_mode == "sequential":
+            parent_out = pq.read_table(tmp_path / "out" / "parent.parquet").column("id").to_pylist()
+            child_out = (
+                pq.read_table(tmp_path / "out" / "child.parquet").column("parent_id").to_pylist()
+            )
+        else:
+            parent_out = result.outputs["parent"].column("id").to_pylist()
+            child_out = result.outputs["child"].column("parent_id").to_pylist()
+
+        # The accepted behavior (a PIN, not a bug): the child inherits the
+        # raw when-gate-unmasked value.
+        assert "notadate" in child_out
+        # Proof of NIL net exposure: the same raw value is ALSO present in
+        # the PARENT output (row 1, when-gate-skipped) -- the child value is
+        # not new information, it mirrors what the user already chose to
+        # leave unmasked in the parent.
+        assert "notadate" in parent_out

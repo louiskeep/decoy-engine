@@ -135,6 +135,12 @@ Precedence 1-before-2 also correctly handles the degenerate non-unique-parent-ke
 both errors in one row and masks cleanly in another): if a clean parent row supplies the key, the child
 resolves to the real masked value and is NOT cascaded. Only keys present ONLY in the errored set cascade.
 
+> CORRECTION (round 3): precedence-1 yields a "real masked value" only when the surviving parent row was
+> actually masked. When the surviving duplicate row is unmasked because a `when` gate skipped it,
+> precedence-1 yields the RAW (when-gate-unmasked) value. See the accepted when-gate limitation in
+> `s2-fk-leak-remediation-r3-guide.md` section 5: this is nil-net-exposure (the raw value is already in
+> the parent output) and is accepted + documented + pinned, not enforced.
+
 ---
 
 ## 3. The exclusion + cascade algorithm (both paths share one implementation)

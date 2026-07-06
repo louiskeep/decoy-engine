@@ -54,6 +54,7 @@ from decoy_engine.execution._strategies._fpe import FpeStrategyHandler
 from decoy_engine.execution._strategies._orphan import (
     cascade_row_errors,
     gather_errored_parent_keys,
+    make_remap_fn,
     resolve_fk_keys,
 )
 from decoy_engine.execution._transactional_sink import TransactionalSink
@@ -440,7 +441,7 @@ class PandasExecutionAdapter:
             else:
                 child_keys.append(tuple(_fk_key_value(col[i]) for col in col_vals_lists))
 
-        remap_fn = self._make_remap_fn(edge, node_by_key, ctx)
+        remap_fn = make_remap_fn(edge, node_by_key, ctx, self._handlers)
         masked_keys, warnings, cascade = resolve_fk_keys(
             child_keys,
             parent_map,
@@ -533,45 +534,6 @@ class PandasExecutionAdapter:
         if errored_keys_cache is not None:
             errored_keys_cache[cache_key] = errored
         return out
-
-    def _make_remap_fn(
-        self,
-        edge: RelationshipEdge,
-        node_by_key: dict[_NodeKey, WorkNode],
-        ctx: StrategyContext,
-    ) -> Callable[[list[_KeyTuple]], list[_KeyTuple]]:
-        """A REMAP closure: mask orphan source keys via the PARENT columns' own
-        strategies, so a remapped orphan is indistinguishable from a real masked
-        value (S9 spec §6.2 REMAP + Dennis slice-2h brief §G)."""
-        ptable = edge.parent_table
-        pcols = edge.parent_columns
-
-        def remap(orphan_keys: list[_KeyTuple]) -> list[_KeyTuple]:
-            if not orphan_keys:
-                return []
-            masked_cols: list[list[object]] = []
-            for j, pcol in enumerate(pcols):
-                pnode = node_by_key.get((ptable, (pcol,)))
-                if pnode is None or not isinstance(pnode.plan_slice, ColumnSeed):
-                    raise ExecutionError(
-                        code="orphan_remap_parent_missing",
-                        message=(
-                            f"REMAP needs the parent column {ptable}.{pcol} to be a "
-                            "masked scalar node, but it is absent from the work list."
-                        ),
-                    )
-                handler = self._handlers.get(pnode.strategy)
-                if handler is None:
-                    raise ExecutionError(
-                        code="unsupported_strategy",
-                        message=f"REMAP found no handler for parent strategy {pnode.strategy!r}.",
-                    )
-                tmp = pd.DataFrame({pcol: [k[j] for k in orphan_keys]})
-                tmp, _ = handler.run(tmp, pcol, pnode.plan_slice, ctx)
-                masked_cols.append(list(tmp[pcol]))
-            return [tuple(col[i] for col in masked_cols) for i in range(len(orphan_keys))]
-
-        return remap
 
 
 _DEFAULT_EXECUTORS: dict[str, ExecutionAdapter] = {}

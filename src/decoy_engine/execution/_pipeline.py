@@ -72,9 +72,39 @@ from decoy_engine.execution._sequential import run_sequential
 if TYPE_CHECKING:
     from decoy_engine.execution._transactional_sink import TransactionalSink
     from decoy_engine.providers_v2 import ProviderRegistry
+    from decoy_engine.relationships import RelationshipGraph
 
 
 __all__ = ["classify_table_kinds", "run_pipeline"]
+
+
+def _has_cross_table_fk_cycle(graph: RelationshipGraph) -> bool:
+    """True if the table-level FK graph has a cycle across DISTINCT tables.
+
+    Sequential masking orders whole tables (table_topo_order), so a
+    cross-table cycle cannot be sequenced; self-edges (self-ref FK) mask
+    within one table and are not a table-level cycle (S2 remediation guide
+    r3 section 6).
+    """
+    from collections import defaultdict
+
+    succ: dict[str, set[str]] = defaultdict(set)
+    for edge in graph.edges:
+        if edge.parent_table != edge.child_table:
+            succ[edge.parent_table].add(edge.child_table)
+    WHITE, GRAY, BLACK = 0, 1, 2
+    color: dict[str, int] = {}
+
+    def visit(node: str) -> bool:
+        color[node] = GRAY
+        for nxt in succ.get(node, ()):  # DFS back-edge = cycle
+            c = color.get(nxt, WHITE)
+            if c == GRAY or (c == WHITE and visit(nxt)):
+                return True
+        color[node] = BLACK
+        return False
+
+    return any(color.get(n, WHITE) == WHITE and visit(n) for n in list(succ))
 
 
 def _sequential_eligible(
@@ -279,6 +309,14 @@ def run_pipeline(
         fidelity_report=fidelity_report,
         vault_writer=vault_writer,
     )
+    # S2 round 3: a mutual cross-table FK cycle (A -> B -> A) cannot be
+    # ordered by table_topo_order, so `auto` must not route it to
+    # sequential (it ran fine under full_frame before this program; routing
+    # it to sequential is a functional regression, not a leak -- see
+    # docs/backlog/s2-fk-leak-remediation-r3-guide.md section 6). A
+    # self-referencing table (one table, not a cross-table cycle) is NOT
+    # flagged here and still routes normally.
+    cyclic = _has_cross_table_fk_cycle(graph)
     route: str
     if execution_mode == "full_frame":
         route = "full_frame"
@@ -288,6 +326,12 @@ def run_pipeline(
             raise ConfigError(
                 f"execution_mode='sequential' requested but the job is not "
                 f"sequential-eligible ({route_reason})."
+            )
+        if cyclic:
+            raise ConfigError(
+                "execution_mode='sequential' requested but the FK graph has a "
+                "cross-table cycle, which the sequential path cannot order; "
+                "use execution_mode='full_frame' or 'auto'."
             )
         if not has_mask_table:
             # NIT (S2 remediation guide section 8): without a mask-kind table
@@ -300,7 +344,10 @@ def run_pipeline(
             )
         route = "sequential"
     else:  # "auto"
-        route = "sequential" if eligible else "full_frame"
+        if eligible and cyclic:
+            route, route_reason = "full_frame", "cross_table_cycle"
+        else:
+            route = "sequential" if eligible else "full_frame"
 
     # S2 early-return: a relationship-bearing pure-mask job routed to
     # sequential skips the full-frame block below entirely (adapter.run +

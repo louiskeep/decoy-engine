@@ -488,3 +488,206 @@ class TestParentMapKeyErrorExclusionNoOp:
 
         assert pre_fix_shape == with_none == with_empty
         assert pre_fix_shape == {("p0",): ("p0",), ("p1",): ("p1",), ("p2",): ("p2",)}
+
+
+# --------------------------------------------------------------------------
+# S2 round-3 (guide section 6 / 8.5): mutual cross-table FK cycle routing guard
+# --------------------------------------------------------------------------
+
+
+def _cycle_config(tmp_path: Path) -> dict[str, Any]:
+    """A mutual cross-table FK cycle: table `a` references table `b`, and
+    table `b` references table `a` (a -> b, b -> a at the table level). Ran
+    fine under full_frame before S2; under S2's `auto` router this raised
+    `relationship_cycle` because `table_topo_order` cannot order a
+    cross-table cycle (guide r3 section 6, finding 3)."""
+    a = pa.table(
+        {
+            "id": pa.array(["a0", "a1"], type=pa.string()),
+            "ref_b": pa.array(["b0", "b1"], type=pa.string()),
+        }
+    )
+    b = pa.table(
+        {
+            "id": pa.array(["b0", "b1"], type=pa.string()),
+            "ref_a": pa.array(["a0", "a1"], type=pa.string()),
+        }
+    )
+    a_src = _write_source(tmp_path, a, "a")
+    b_src = _write_source(tmp_path, b, "b")
+    return {
+        "version": 1,
+        "global_settings": {"job_name": "s2-cycle-routing", "seed": 7},
+        "sources": {
+            "a": {"type": "file", "path": a_src, "format": "parquet"},
+            "b": {"type": "file", "path": b_src, "format": "parquet"},
+        },
+        "targets": {
+            "a": {"type": "file", "path": str(tmp_path / "a.out.parquet"), "format": "parquet"},
+            "b": {"type": "file", "path": str(tmp_path / "b.out.parquet"), "format": "parquet"},
+        },
+        "tables": [
+            {"name": "a", "columns": [_faker_col("id", "na"), _faker_col("ref_b", "nb")]},
+            {"name": "b", "columns": [_faker_col("id", "nb"), _faker_col("ref_a", "na")]},
+        ],
+        "relationships": [
+            {
+                "parent": {"table": "a", "columns": ["id"]},
+                "children": [{"table": "b", "columns": ["ref_a"]}],
+                "orphan_policy": "preserve",
+                "namespace": "na",
+            },
+            {
+                "parent": {"table": "b", "columns": ["id"]},
+                "children": [{"table": "a", "columns": ["ref_b"]}],
+                "orphan_policy": "preserve",
+                "namespace": "nb",
+            },
+        ],
+    }
+
+
+class TestCrossTableFkCycleRoutingGuard:
+    def test_auto_falls_back_to_full_frame_for_cyclic_graph(self, tmp_path: Path) -> None:
+        config = _cycle_config(tmp_path)
+        sources = _fk_sources(config)
+
+        result = run_pipeline(config, sources, engine_version="0.1.0")  # execution_mode="auto"
+
+        assert result.quality_metrics["execution"]["execution_mode"] == "full_frame"
+        assert result.quality_metrics["execution"]["route_reason"] == "cross_table_cycle"
+        assert set(result.outputs) == {"a", "b"}
+
+    def test_explicit_sequential_on_cyclic_graph_raises_clear_config_error(
+        self, tmp_path: Path
+    ) -> None:
+        config = _cycle_config(tmp_path)
+        sources = _fk_sources(config)
+
+        with pytest.raises(ConfigError, match="cross-table cycle"):
+            run_pipeline(config, sources, engine_version="0.1.0", execution_mode="sequential")
+
+    def test_explicit_full_frame_on_cyclic_graph_is_unaffected(self, tmp_path: Path) -> None:
+        config = _cycle_config(tmp_path)
+        sources = _fk_sources(config)
+
+        result = run_pipeline(config, sources, engine_version="0.1.0", execution_mode="full_frame")
+        assert result.quality_metrics["execution"]["execution_mode"] == "full_frame"
+        assert set(result.outputs) == {"a", "b"}
+
+    def test_self_ref_config_unaffected_still_routes_sequential_under_auto(
+        self, tmp_path: Path
+    ) -> None:
+        """A self-referencing table (one table, not a cross-table cycle) must
+        NOT be flagged by the guard: it still routes to sequential under
+        `auto`."""
+        employees = pa.table(
+            {
+                "id": pa.array(["e0", "e1"], type=pa.string()),
+                "manager_id": pa.array([None, "e0"], type=pa.string()),
+            }
+        )
+        src = _write_source(tmp_path, employees, "employees")
+        config: dict[str, Any] = {
+            "version": 1,
+            "global_settings": {"job_name": "s2-selfref-routing", "seed": 7},
+            "sources": {"employees": {"type": "file", "path": src, "format": "parquet"}},
+            "targets": {
+                "employees": {
+                    "type": "file",
+                    "path": str(tmp_path / "employees.out.parquet"),
+                    "format": "parquet",
+                }
+            },
+            "tables": [
+                {
+                    "name": "employees",
+                    "columns": [_faker_col("id", "ns"), _faker_col("manager_id", "ns")],
+                }
+            ],
+            "relationships": [
+                {
+                    "parent": {"table": "employees", "columns": ["id"]},
+                    "children": [{"table": "employees", "columns": ["manager_id"]}],
+                    "orphan_policy": "preserve",
+                    "namespace": "ns",
+                }
+            ],
+        }
+        sources = _fk_sources(config)
+
+        result = run_pipeline(config, sources, engine_version="0.1.0")  # execution_mode="auto"
+
+        assert result.quality_metrics["execution"]["execution_mode"] == "sequential"
+        assert result.quality_metrics["execution"]["route_reason"] == "pure_mask_fk"
+
+
+class TestHasCrossTableFkCycleHelper:
+    """Unit assertion on `_has_cross_table_fk_cycle` in isolation: a self-edge
+    is False (self-ref masks within one table, not a table-level cycle); a
+    mutual cross-table pair of edges is True."""
+
+    def test_self_edge_returns_false(self) -> None:
+        from decoy_engine.execution._pipeline import _has_cross_table_fk_cycle
+        from decoy_engine.relationships._graph import (
+            OrphanPolicy,
+            RelationshipEdge,
+            RelationshipGraph,
+        )
+
+        edge = RelationshipEdge(
+            parent_table="employees",
+            parent_columns=("id",),
+            child_table="employees",
+            child_columns=("manager_id",),
+            namespace="ns",
+            orphan_policy=OrphanPolicy.PRESERVE,
+        )
+        graph = RelationshipGraph(edges=(edge,), ordering=())
+        assert _has_cross_table_fk_cycle(graph) is False
+
+    def test_mutual_cross_table_edges_return_true(self) -> None:
+        from decoy_engine.execution._pipeline import _has_cross_table_fk_cycle
+        from decoy_engine.relationships._graph import (
+            OrphanPolicy,
+            RelationshipEdge,
+            RelationshipGraph,
+        )
+
+        edge_ab = RelationshipEdge(
+            parent_table="a",
+            parent_columns=("id",),
+            child_table="b",
+            child_columns=("ref_a",),
+            namespace="na",
+            orphan_policy=OrphanPolicy.PRESERVE,
+        )
+        edge_ba = RelationshipEdge(
+            parent_table="b",
+            parent_columns=("id",),
+            child_table="a",
+            child_columns=("ref_b",),
+            namespace="nb",
+            orphan_policy=OrphanPolicy.PRESERVE,
+        )
+        graph = RelationshipGraph(edges=(edge_ab, edge_ba), ordering=())
+        assert _has_cross_table_fk_cycle(graph) is True
+
+    def test_acyclic_cross_table_edges_return_false(self) -> None:
+        from decoy_engine.execution._pipeline import _has_cross_table_fk_cycle
+        from decoy_engine.relationships._graph import (
+            OrphanPolicy,
+            RelationshipEdge,
+            RelationshipGraph,
+        )
+
+        edge = RelationshipEdge(
+            parent_table="parent",
+            parent_columns=("id",),
+            child_table="child",
+            child_columns=("parent_id",),
+            namespace="ns",
+            orphan_policy=OrphanPolicy.PRESERVE,
+        )
+        graph = RelationshipGraph(edges=(edge,), ordering=())
+        assert _has_cross_table_fk_cycle(graph) is False

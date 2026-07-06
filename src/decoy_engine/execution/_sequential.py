@@ -38,20 +38,24 @@ Row-error enforcement (S2, engine "Finish Open-Ended Surfaces" program):
 `run_sequential` owns the SAME D8 fail-loud/quarantine rule as `run()` for the
 WHOLE sequential path (both sink and no-sink), because the routing added in
 `_pipeline.py` makes this the default FK mask path reachable from the public
-entry point. Per table, immediately after that table's mask-node loop:
-drain + clear `ctx.row_errors` (fixing unbounded accumulation across tables),
-then classify: any record not covered by an enabled quarantine trigger raises
-`RowErrorsFailedError` BEFORE the parent key-map is built, BEFORE the table is
-written to the sink, and BEFORE its frame is evicted -- so a failing table
-never stages or commits a leaked value (the exception propagates to the
-existing abort() handler, which discards any transactional sink staging).
-Covered records are quarantine-filtered out of that table's Arrow output
-(via `compute_quarantine`) before write/collect. Because the routing
-predicate excludes job-level validators from this path, there are no
-validator findings to reconcile here; only per-row `format_error` /
-`mask_error` records are handled. The single quarantine JSONL is written once
-after the loop (across all tables), not per-table, to avoid the truncating
-`_write_jsonl("w")` clobbering earlier tables' entries.
+entry point. The drain + `key_error_rows` fold happen PER NODE, inside that
+table's mask-node loop, immediately after each node dispatches (round 3: this
+is what lets an intra-table FK-child node -- a self-referential FK -- see its
+parent-key node's error before it resolves; see section 3 of
+s2-fk-leak-remediation-r3-guide.md). The fail-loud CLASSIFICATION and the
+quarantine filter stay PER TABLE, after the node loop: any record not covered
+by an enabled quarantine trigger raises `RowErrorsFailedError` BEFORE the
+parent key-map is built, BEFORE the table is written to the sink, and BEFORE
+its frame is evicted -- so a failing table never stages or commits a leaked
+value (the exception propagates to the existing abort() handler, which
+discards any transactional sink staging). Covered records are
+quarantine-filtered out of that table's Arrow output (via `compute_quarantine`)
+before write/collect. Because the routing predicate excludes job-level
+validators from this path, there are no validator findings to reconcile here;
+only per-row `format_error` / `mask_error` records are handled. The single
+quarantine JSONL is written once after the loop (across all tables), not
+per-table, to avoid the truncating `_write_jsonl("w")` clobbering earlier
+tables' entries.
 
 Quarantine-aware FK resolution (S2 remediation, EXCLUDE-then-CASCADE): a
 row-errored parent-key row must never leak its raw value through a child FK,
@@ -238,6 +242,7 @@ def run_sequential(
                             if col in df.columns and (table, col) not in source_snapshots:
                                 source_snapshots[(table, col)] = df[col].copy()
 
+                table_records_list: list[RowErrorRecord] = []
                 for node in nodes_by_table.get(table, ()):
                     warnings.extend(
                         adapter._dispatch_mask_node(
@@ -252,26 +257,31 @@ def run_sequential(
                             errored_keys_cache=errored_keys_cache,
                         )
                     )
+                    # S2 self-ref FK (round 3): drain + fold per node, BEFORE the
+                    # next node in this table dispatches, so an intra-table
+                    # FK-child node (a self-referential FK) sees the parent-key
+                    # node's errors when it builds the parent map. Mirrors
+                    # full-frame run() (_pandas_adapter.py per-node drain). For
+                    # every non-self-ref topology no FK child dispatches inside
+                    # a parent table's node loop, so this is byte-identical to
+                    # the prior per-table drain.
+                    batch = drain_row_errors(ctx.row_errors, table=table)
+                    table_records_list.extend(batch)
+                    for rec in batch:
+                        key_error_rows.setdefault(rec.table, {}).setdefault(rec.column, {})[
+                            rec.row_index
+                        ] = rec.trigger
 
-                # S2 D8: drain + clear ctx.row_errors for THIS table right after
-                # its mask-node loop (fixes unbounded cross-table accumulation),
-                # then fail loud on anything not covered by an enabled quarantine
-                # trigger, BEFORE the parent map is built, BEFORE this table is
-                # written to the sink, and BEFORE its frame is evicted. A
+                # Per-table fail-loud classification stays here (after the loop),
+                # so a table raises on any uncovered record BEFORE its parent map
+                # is pre-built, BEFORE it is written to the sink, and BEFORE its
+                # frame is evicted (timing unchanged from the prior code). A
                 # failing table therefore never stages or commits a leaked
                 # value: the raise below propagates to the except clause,
                 # which aborts the transactional sink (discarding any tables
                 # already staged) before re-raising.
-                table_records = drain_row_errors(ctx.row_errors, table=table)
+                table_records = tuple(table_records_list)
                 all_row_errors.extend(table_records)
-                # S2: fold this table's records into the key-error index BEFORE
-                # the fail-loud classification, so an uncovered raise below still
-                # leaves the (correct, excluded) index state -- though the raise
-                # short-circuits before any child of THIS table is ever dispatched.
-                for rec in table_records:
-                    key_error_rows.setdefault(rec.table, {}).setdefault(rec.column, {})[
-                        rec.row_index
-                    ] = rec.trigger
                 if table_records:
                     uncovered = tuple(
                         r for r in table_records if not (q_enabled and r.trigger in q_triggers)

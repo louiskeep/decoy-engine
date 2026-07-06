@@ -54,6 +54,34 @@ on the relationship decides what happens:
 Every relationship must name one of these four policies; the config is rejected
 if a relationship omits it.
 
+## Row errors and referential integrity
+
+A row-level masking error (for example an uncoercible `date_shift` cell) on a
+FK parent-key column is quarantined out of the parent output. A child row that
+references exactly that errored key is cascade-quarantined too, regardless of
+`orphan_policy`: the child's masked value is never the raw errored key, and the
+child row is removed (covered) or the job fails loud (uncovered), consistently
+with the parent's own disposition. This holds for cross-table FK relationships,
+composite keys, multi-hop chains, and self-referencing keys alike; a
+self-referencing table where one row errors and another row references it will
+have both rows removed together (the failing parent and its only referrer),
+which keeps the two dispositions consistent rather than leaving a dangling
+self-reference.
+
+**Accepted limitation (when-gated duplicate parent key).** When a `when` gate
+leaves a parent FK-key row unmasked AND that same raw key value ALSO appears on
+a different parent row that row-errored, a child referencing that key value
+resolves (via the identity-map contract) to the raw value carried by the
+when-gate-unmasked parent row. This is NOT a quarantine escape: the raw value
+is present in the child ONLY because the user's `when` gate deliberately left
+that duplicate parent row unmasked, so it is ALREADY present in the parent
+output. Net-new exposure is NIL. Enforcing "cascade even on a when-gated
+duplicate" would break referential integrity: the child would point to
+null/quarantine while the parent row survives with the raw key, producing a
+dangling reference for a row the user intentionally chose to leave unmasked.
+The identity-map contract (an unmasked parent key maps to itself, and children
+mirror it) is the correct behavior; this case is documented, not enforced.
+
 ## Declaring relationships
 
 Add a `relationships` block to the config. Each entry names a parent (table plus
