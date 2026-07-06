@@ -203,3 +203,26 @@ manifest, and the literal value is redacted.
 
 See the CHANGELOG "Sprint G FK-aware subsetting core" entry for the full
 module-by-module breakdown.
+
+## Known limitations and follow-ups (S2+)
+
+**RI-consistency audit (non-blocking).** When a row is cascade-quarantined for a
+masking error on one FK parent-key column, it is excluded from that column's
+parent key-map. However, a DIFFERENT parent-key column on the same table might
+see that row as a valid parent (because the error was in a different column).
+This is not a quarantine escape (the errored row is removed from output), but it
+is a semantic gap: a child referencing the second column would resolve to a row
+that does not exist in the parent output (dangling reference). The design intent
+is that an entire row erroring on ANY parent-key column should exclude it from
+ALL parent maps on that table. An audit + fix is needed; see
+`docs/backlog/s2-fk-leak-remediation-r3-guide.md` section 7.
+
+**Cross-table FK cycles support (Cam decision pending).** A mutual cycle
+(A references B, B references A) ran successfully under full-frame before S2.
+`run_pipeline`'s S2 routing now detects such cycles and falls back to full-frame
+automatically (non-regressing via the `execution_mode="auto"` heuristic). However,
+the question of whether cross-table FK cycles should be a *supported* topology
+at all is unresolved: they are neither forbidden by the schema validation layer
+nor embraced by the sequential execution path. Deciding on support/rejection is a
+product call; until then, the auto fallback keeps behavior stable. See
+`docs/backlog/s2-fk-leak-remediation-r3-guide.md` section 6.

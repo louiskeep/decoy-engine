@@ -9,6 +9,89 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (S2 FK-sequential default routing in run_pipeline, 2026-07-05)
+
+`run_pipeline` now routes relationship-bearing pure-mask jobs (those with
+`relationships`, no `generate_columns`, no validators/fidelity_report/vault_writer)
+through the bounded-memory `run_sequential` path by default. Non-FK and mixed
+generate+mask jobs take the full-frame path unchanged. Output is byte-identical;
+the only difference is peak memory.
+
+- **Default routing: `execution_mode="auto"`** (new kwarg in `run_pipeline`).
+  Eligible pure-mask FK jobs route to `run_sequential` + `ParquetTransactionalSink`;
+  all others route to full-frame. Disqualifiers are captured in telemetry as a
+  stable `route_reason` token: `no_relationships`, `generate_plus_mask`,
+  `validators_present`, `fidelity_report_requested`, `vault_writer_requested`.
+  When `validators` or `fidelity_report` are present, the job takes full-frame and
+  skips `run_sequential` entirely, since the sequential path cannot satisfy the
+  post-mask compute requirements (all outputs must be resident at once). This
+  exclusion also keeps the sequential path's row-error enforcement (Part 2 below)
+  as the sole owner, with no double-processing.
+
+- **Explicit overrides.** `execution_mode="full_frame"` forces full-frame regardless
+  of eligibility. `execution_mode="sequential"` forces sequential and raises
+  `ConfigError` (with the `route_reason` as context) if the job is not eligible,
+  or if the FK table graph has a mutual cross-table cycle that cannot be ordered
+  (see Fixed section below).
+
+- **Transparent parameters.** `sink` and `source_loader` kwargs are passed through
+  to `run_sequential` when the sequential route is taken. The default (neither
+  supplied) routes to sequential-in-memory with byte-identical output; no existing
+  caller breaks. The empty-outputs streamed path is only reachable when a `sink`
+  is explicitly supplied.
+
+- **Honest memory telemetry.** A new `quality_metrics["execution"]` dict records:
+  `execution_mode` ("sequential" or "full_frame"), `route_reason` (the disqualifier
+  or override used), `eviction` (per-table vs none), `outputs_streamed` (true only
+  when a sink was provided), and `loaded_fully_in_memory` (false only when a lazy
+  `source_loader` was supplied and no resident `sources` dict was provided).
+
+### Added (S2 row-error draining on run_sequential, 2026-07-05)
+
+`run_sequential` closes the S1 MEDIUM-2 precondition: it now drains strategy
+errors (`format_error`, `mask_error`) from each masked table and
+enforces the same fail-loud/quarantine rule as `run_pipeline` on the full-frame
+path. This guarantees that the bounded-memory path (which is now the default for
+eligible FK jobs, see Changed section above) delivers the same safety as full-frame.
+
+- **Per-node drain, per-table fail-loud.** Row errors are drained and folded into
+  a per-table index immediately after each node dispatch (inside the table's
+  mask-node loop). This is critical for self-referential FK handling (see Fixed
+  section below): a child node that references the same table must see the parent
+  node's errors before it resolves the FK, which happens in the very next loop
+  iteration. The fail-loud classification stays per-table (after all nodes of that
+  table have dispatched), so any uncovered error raises `RowErrorsFailedError`
+  before the table is written to the sink or evicted. A failing table therefore
+  never publishes a leaked value; the exception propagates to `abort()` if using
+  a transactional sink.
+
+- **Quarantine-aware FK resolution (EXCLUDE-then-CASCADE).** A parent-key row that
+  produced a `format_error` or `mask_error` must never leak its raw key value
+  through a child FK, even though FK resolution reads from the full pre-filter
+  parent frame. Row-errored parent-key rows are excluded from the parent key-map
+  via a per-table error index (`key_error_rows`), and child rows that reference an
+  excluded key are automatically cascade-quarantined (marked with a synthetic
+  `RowError` on their own table's subsequent dispatch). Cascaded child errors
+  drain and classify on the child table's own per-table drain, so they follow the
+  same fail-loud/quarantine rule without separate code. This holds across
+  self-referential, multi-hop, and composite-key chains.
+
+- **Single quarantine JSONL write.** Unlike full-frame (which can write the JSONL
+  incrementally), the sequential path writes one JSONL after every table has
+  dispatched, avoiding truncation (`"w"` mode) and clobbering earlier tables'
+  entries. The quarantine JSONL is durable only on a successful run (no uncovered
+  errors); a fail-loud run publishes nothing.
+
+- **Optional quarantine routing via `quarantine_config` kwarg** (default None).
+  When `run_sequential(..., quarantine_config=...)` is supplied, covered rows
+  (those whose `trigger` matches an enabled quarantine trigger) are filtered
+  from that table's Arrow output before write and written to the quarantine JSONL.
+  Uncovered rows raise `RowErrorsFailedError` before the write.
+
+- **`ExecutionResult.row_errors` and `quality_metrics["row_errors"]`** now carry
+  drained records on the sequential path (same surface as full-frame). No row-error
+  records are silently dropped.
+
 ### Fixed (S2 round-3 FK-topology leak remediation, 2026-07-05)
 
 - **Self-referential FK raw-key leak on the sequential path (BLOCKER).** A
