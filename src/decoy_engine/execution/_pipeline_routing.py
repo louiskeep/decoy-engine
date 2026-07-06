@@ -64,12 +64,12 @@ if TYPE_CHECKING:
     from decoy_engine.relationships import RelationshipGraph
 
 __all__ = [
+    "auto_chunk_stamp",
     "decide_chunk_route",
     "decide_execution_route",
     "execution_telemetry",
     "run_mask_chunked",
     "run_sequential_route",
-    "auto_chunk_stamp",
 ]
 
 
