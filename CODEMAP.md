@@ -53,7 +53,7 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | `src/decoy_engine/generation/` | `generate_tables` + composite + pool helpers; `_referenced_formula.py` runs the cross-column formula post-pass (lazy-imported) |
 | `src/decoy_engine/relationships/` | `build_relationship_graph`, `build_namespace_registry`, `check_orphan_fk_policy_completeness`, `OrphanPolicy` |
 | `src/decoy_engine/providers_v2/` | `ProviderRegistry`, identifier adapters |
-| `src/decoy_engine/profile/` | Profile types + `profile_source` |
+| `src/decoy_engine/profile/` | Profile types + `profile_source`; `_fixed_width_reader.py` (`read_fixed_width`, fixed-width file parsing per layout spec) |
 | `src/decoy_engine/storm/` | Profiling, detectors, and post-mask integrity checks (`postmask/residual_pii.py`, `postmask/fk_preservation.py`) |
 | `src/decoy_engine/storm/` | Profiling and detectors; `_classification.py` holds column-shape classification helpers; `_distributions.py` holds distribution-snapshot builders; `_patterns.py` holds the detector regex catalog; `_validators.py` holds detector validation helpers (all split from `profiler.py`/`detectors.py`, F11b/F11c) |
 | `src/decoy_engine/storm/` | Profiling and detectors; `eval/` (labeled fixtures + regex-baseline recognition harness + ML measurement substrate) and `features/` (deterministic per-column feature builder) are off-run-path field-recognition tooling (BF2 / ML0); `eval/split.py` + `eval/bands.py` are scaffolding for ML2.2; `model_pack/` holds the LightGBM pack loader + featurizer + ML3.1 classification function + ML3.2 HMAC provenance signing |
@@ -112,6 +112,7 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | FK-aware subsetting core logic: preflight, seed selection, closure engine, fan-out/dry-run, materialization+manifest | `src/decoy_engine/subset/_preflight.py`, `_seed.py`, `_closure.py`, `_policy.py`, `_materialize.py`, `_manifest.py` |
 | Config schema | `src/decoy_engine/config/_pipeline.py` |
 | Relationship schema | `src/decoy_engine/config/_relationships.py` (reference doc lives in the commercial platform repo) |
+| Fixed-width format config (S4) | `src/decoy_engine/config/_fixed_width.py` (`FixedWidthColumn`, `FixedWidthLayout`, column-spec for fixed-width file parsing) |
 | Plan compilation | `src/decoy_engine/plan/_compile.py` |
 | Seed normalization (shared validator) | `src/decoy_engine/plan/_seed.py` |
 | Execution strategies | `src/decoy_engine/execution/_strategies/` |

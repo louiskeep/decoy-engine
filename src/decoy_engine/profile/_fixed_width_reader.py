@@ -87,11 +87,13 @@ def _cast_value(
         # here either -- it still attaches the original as `__context__`,
         # which the same log/traceback surfaces leak through just as
         # readily. Only the caster's type name is safe to disclose.
-        raise FixedWidthParseError(
+        exc_to_raise = FixedWidthParseError(
             f"{path}: line {line_no}: column {column.name!r} "
             f"(value length {len(candidate)}) cannot cast to type {column.type!r} "
             f"(caster raised {type(exc).__name__})"
-        ) from None
+        )
+        exc_to_raise.__context__ = None
+        raise exc_to_raise from None
 
 
 def read_fixed_width(path: str, layout: FixedWidthLayout | dict[str, Any]) -> pd.DataFrame:

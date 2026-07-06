@@ -114,6 +114,38 @@ eligible FK jobs, see Changed section above) delivers the same safety as full-fr
   drained records on the sequential path (same surface as full-frame). No row-error
   records are silently dropped.
 
+### Added (S4 fixed-width file format support, 2026-07-06)
+
+Fixed-width file parsing is now a first-class `v2.FileSource.format`, alongside
+`"csv"` and `"parquet"`. Records are sliced by `(start, width)` column-spec with
+full control over padding and casting, fail-closed and PII-safe (see below).
+
+- **Format identifier: `format="fixed_width"`** in `FileSource`.
+
+- **Column-spec via `FixedWidthLayout`** (`config._fixed_width.py`). Each column declares:
+  `name`, 0-based `start` byte offset, `width` in bytes, `type` (str/int/float), `pad`
+  character, and `align` (left/right). Record width is the maximum `start + width` across
+  all columns. Over-long records are tolerated (trailing bytes ignored); under-length
+  records raise `FixedWidthParseError` (row-width mismatch).
+
+- **PII-safe error reporting.** No cell values appear in exceptions or tracebacks,
+  even on bad casts. `FixedWidthParseError` messages disclose only the file path,
+  1-based line number, column name, and the caster's type name. The caught
+  `ValueError`/`TypeError` (which embeds the raw value) is not chained as
+  `__cause__` or `__context__`, and the exception's context chain is explicitly
+  cleared, so raw values are never surfaced via `logging.exception` or inspection.
+
+- **Zero-padded numeric handling.** An int/float column that strips to an empty
+  string is retried against the raw (unstripped) slice, so a genuine zero-padded
+  numeric (e.g., `pad="0"`, `align="right"`, raw `"0000"`) parses to `0` rather
+  than failing. An honestly-blank numeric field (pure whitespace or pad characters
+  with no digits) still raises a cast error. Whitespace is never silently coerced
+  to zero.
+
+- **Parser: `profile._fixed_width_reader.read_fixed_width`** Parses a file into a
+  pandas DataFrame per layout spec. Blank lines (zero characters after newline strip)
+  are skipped. All other non-blank lines must meet the record width or raise.
+
 ### Fixed (S2 round-3 FK-topology leak remediation, 2026-07-05)
 
 - **Self-referential FK raw-key leak on the sequential path (BLOCKER).** A
