@@ -185,7 +185,7 @@ _GOLDEN_PRE_P1 = {
 }
 # Arrow's string-width label (`string` vs `large_string`) is pandas-major-version
 # dependent (pandas 2 emits `string`, pandas 3 `large_string`) for wide columns and
-# carries no semantic meaning — the same drift the polars-parity test below accepts.
+# carries no semantic meaning; it is the same drift the polars-parity test accepts.
 # The suite runs across both (CI Python 3.10 -> pandas 2; local 3.11+ -> pandas 3), so
 # normalize the width before comparing while still catching real type changes.
 _GOLDEN_PRE_P1_SCHEMA_TYPES = ["string", "string", "string"]
