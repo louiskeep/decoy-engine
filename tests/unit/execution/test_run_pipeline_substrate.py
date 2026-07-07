@@ -183,7 +183,16 @@ _GOLDEN_PRE_P1 = {
     "zip": ["902", "100", "606"],
     "secret": ["REDACTED", "REDACTED", "REDACTED"],
 }
-_GOLDEN_PRE_P1_SCHEMA_TYPES = ["large_string", "string", "string"]
+# Arrow's string-width label (`string` vs `large_string`) is pandas-major-version
+# dependent (pandas 2 emits `string`, pandas 3 `large_string`) for wide columns and
+# carries no semantic meaning — the same drift the polars-parity test below accepts.
+# The suite runs across both (CI Python 3.10 -> pandas 2; local 3.11+ -> pandas 3), so
+# normalize the width before comparing while still catching real type changes.
+_GOLDEN_PRE_P1_SCHEMA_TYPES = ["string", "string", "string"]
+
+
+def _schema_type_names(table):
+    return [str(field.type).replace("large_string", "string") for field in table.schema]
 
 
 # --------------------------------------------------------------------------
@@ -214,7 +223,7 @@ class TestDefaultPandasRoute:
         result = run_pipeline(cfg, sources=sources, engine_version=_ENGINE_VERSION)
         out = result.outputs["customers"]
         assert out.to_pydict() == _GOLDEN_PRE_P1
-        assert [str(field.type) for field in out.schema] == _GOLDEN_PRE_P1_SCHEMA_TYPES
+        assert _schema_type_names(out) == _GOLDEN_PRE_P1_SCHEMA_TYPES
 
     def test_default_output_unchanged_when_env_requests_polars(self, tmp_path, monkeypatch):
         """The S13 DECOY_SUBSTRATE default flip must not leak into the
@@ -225,7 +234,7 @@ class TestDefaultPandasRoute:
         result = run_pipeline(cfg, sources=sources, engine_version=_ENGINE_VERSION)
         out = result.outputs["customers"]
         assert out.to_pydict() == _GOLDEN_PRE_P1
-        assert [str(field.type) for field in out.schema] == _GOLDEN_PRE_P1_SCHEMA_TYPES
+        assert _schema_type_names(out) == _GOLDEN_PRE_P1_SCHEMA_TYPES
 
     def test_default_quality_metrics_carry_no_adapter_block(self, tmp_path, monkeypatch):
         """Byte-identity extends to metadata: default knobs stamp no
