@@ -142,7 +142,9 @@ def mask_child_fk(
         # NOT be used for this (a legitimate mask, e.g. redact, can produce
         # null for a matched parent), or a matched-but-null-masked child would
         # be misclassified as an orphan.
-        select_list.append(f"p.{_q(parent_relation.join_key_column)} AS {_q('__decoy_parent_match')}")
+        select_list.append(
+            f"p.{_q(parent_relation.join_key_column)} AS {_q('__decoy_parent_match')}"
+        )
         for idx, masked_column in enumerate(parent_relation.masked_key_columns):
             select_list.append(f"p.{_q(masked_column)} AS {_q(f'__decoy_parent_masked_{idx}')}")
         query = f"""
