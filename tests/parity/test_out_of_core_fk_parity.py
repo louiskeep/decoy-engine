@@ -208,6 +208,7 @@ _ARROW_TYPE = {
     "float": pa.float64(),
     "str": pa.string(),
     "decimal": pa.decimal128(20, 4),
+    "bool": pa.bool_(),
 }
 
 
@@ -218,6 +219,10 @@ def _key_value(kind: str, i: int) -> object:
         return float(i)
     if kind == "decimal":
         return Decimal(i)
+    if kind == "bool":
+        # Only 2 distinct bool values exist; callers cap row counts to 2 for a
+        # "bool" PARENT kind so parent keys stay unique (see `_single_edge_case`).
+        return bool(i % 2)
     return f"k{i}"
 
 
@@ -228,6 +233,13 @@ def _orphan_value(kind: str, i: int) -> object:
         return float(10_000 + i)
     if kind == "decimal":
         return Decimal(10_000 + i)
+    if kind == "bool":
+        # No 3rd bool value exists to serve as a guaranteed non-match, so the
+        # generator disallows orphans whenever "bool" is the parent or child
+        # kind (see `bool_involved` in `_single_edge_case`); this branch
+        # existing only to fail loudly, not silently produce a wrong type
+        # (a string into a bool-typed array), if that invariant is ever broken.
+        raise AssertionError("bool FK keys have no orphan value; disallow via allow_orphan")
     return f"orphan{i}"
 
 
@@ -319,19 +331,29 @@ def _single_edge_case(draw: st.DrawFn) -> tuple[Any, dict[str, pa.Table], Relati
     # A float PARENT key under hash canonicalizes to a hard error on both paths
     # (float_canonicalization_unsupported); allow it (both-raised is asserted),
     # but bias toward parent kinds that yield real parity so most examples
-    # exercise value equality rather than the shared raise.
-    parent_kinds = ["int", "str"] if strategy == "hash" else ["int", "float", "str"]
+    # exercise value equality rather than the shared raise. "bool" canonicalizes
+    # fine under hash (derive-input canonicalization has a dedicated bool byte
+    # rule), so it is offered under every strategy.
+    parent_kinds = ["int", "str", "bool"] if strategy == "hash" else ["int", "float", "str", "bool"]
     parent_kind = draw(st.sampled_from(parent_kinds))
-    # Child kind: same family, or the normalize-equal int<->float split.
+    # Child kind: same family, the normalize-equal int<->float split, or (Codex
+    # round-4 Finding A) the normalize-equal bool<->int split (True/False vs 1/0).
     if parent_kind == "int":
-        child_kind = draw(st.sampled_from(["int", "float"]))
+        child_kind = draw(st.sampled_from(["int", "float", "bool"]))
     elif parent_kind == "float":
         child_kind = draw(st.sampled_from(["float", "int"]))
+    elif parent_kind == "bool":
+        child_kind = draw(st.sampled_from(["bool", "int"]))
     else:
         child_kind = "str"
     policy = draw(st.sampled_from(list(OrphanPolicy)))
 
     parent_rows = draw(st.integers(min_value=2, max_value=8))
+    if parent_kind == "bool":
+        # Only 2 distinct bool values exist; more rows would duplicate parent
+        # keys, a different (untested-here) scenario from the dtype-collision
+        # this case targets.
+        parent_rows = 2
     child_rows = draw(st.integers(min_value=1, max_value=14))
 
     # A NaN in a masked float PARENT key row (unreferenceable) exercises the
@@ -341,8 +363,12 @@ def _single_edge_case(draw: st.DrawFn) -> tuple[Any, dict[str, pa.Table], Relati
     if parent_kind == "float" and strategy != "hash" and draw(st.booleans()):
         parent_nan_row = draw(st.integers(min_value=0, max_value=parent_rows - 1))
 
-    allow_null = child_kind in ("str", "float", "int")
-    allow_orphan = policy is not OrphanPolicy.FAIL or draw(st.booleans())
+    bool_involved = parent_kind == "bool" or child_kind == "bool"
+    allow_null = child_kind in ("str", "float", "int", "bool")
+    # No 3rd bool value exists to serve as a guaranteed non-match (both True
+    # and False are always valid parent keys once parent_rows >= 2), so an
+    # orphan is unrepresentable whenever "bool" is on either side of the edge.
+    allow_orphan = (policy is not OrphanPolicy.FAIL or draw(st.booleans())) and not bool_involved
     choices = list(range(parent_rows))
     child_refs: list[int | None] = []
     for _ in range(child_rows):
@@ -472,6 +498,226 @@ def _chain_case(draw: st.DrawFn) -> tuple[Any, dict[str, pa.Table], Relationship
 )
 @given(_chain_case())
 def test_chain_fk_parity(
+    case: tuple[Any, dict[str, pa.Table], RelationshipGraph, str],
+) -> None:
+    plan, sources, graph, label = case
+    _assert_parity_or_faithful_rejection(plan, sources, graph, label)
+
+
+# ---------------------------------------------------------------------------
+# Deeper chain (4-5 levels) property test -- widening beyond the fixed
+# parent -> child -> grandchild depth above.
+# ---------------------------------------------------------------------------
+
+
+def _build_chain_n(
+    *, strategy: str, policy: OrphanPolicy, depth: int, refs: list[list[int | None]]
+) -> tuple[Any, dict[str, pa.Table], RelationshipGraph]:
+    """A `depth`-level parent -> child -> ... -> leaf FK chain, generalizing
+    `_build_chain` past 3 levels. `refs[i]` is the child-row-reference list for
+    level `i + 1` against level `i` (same -1/None/index convention as
+    `_build_chain`); `len(refs) == depth - 1`.
+    """
+    assert depth >= 2
+    tables = [f"t{i}" for i in range(depth)]
+    namespaces = [f"ns{i}" for i in range(depth)]
+    seeds = [_seed_for(strategy, namespaces[i]) for i in range(depth)]
+
+    n0 = 4
+    frames: dict[str, pa.Table] = {
+        tables[0]: pa.table({"k": pa.array([f"t0_{j}" for j in range(n0)], type=pa.string())})
+    }
+    per_table: list[tuple[str, TableSeed]] = [
+        (tables[0], TableSeed(per_column=(("k", seeds[0]),), per_group=()))
+    ]
+    edges: list[RelationshipEdge] = []
+
+    for i in range(1, depth):
+        this_refs = refs[i - 1]
+        fk_vals: list[str | None] = []
+        orphan_ct = 0
+        for r in this_refs:
+            if r is None:
+                fk_vals.append(None)
+            elif r == -1:
+                fk_vals.append(f"orphan{tables[i]}_{orphan_ct}")
+                orphan_ct += 1
+            else:
+                fk_vals.append(f"{tables[i - 1]}_{r}")
+        frames[tables[i]] = pa.table(
+            {
+                "k": pa.array(
+                    [f"{tables[i]}_{j}" for j in range(len(this_refs))], type=pa.string()
+                ),
+                "fk": pa.array(fk_vals, type=pa.string()),
+            }
+        )
+        per_table.append(
+            (
+                tables[i],
+                TableSeed(per_column=(("k", seeds[i]), ("fk", seeds[i - 1])), per_group=()),
+            )
+        )
+        edges.append(
+            RelationshipEdge(
+                parent_table=tables[i - 1],
+                parent_columns=("k",),
+                child_table=tables[i],
+                child_columns=("fk",),
+                namespace=namespaces[i - 1],
+                orphan_policy=policy,
+            )
+        )
+
+    plan = _plan(tuple(per_table))
+    graph = RelationshipGraph(edges=tuple(edges), ordering=())
+    return plan, frames, graph
+
+
+@st.composite
+def _deep_chain_case(draw: st.DrawFn) -> tuple[Any, dict[str, pa.Table], RelationshipGraph, str]:
+    strategy = draw(st.sampled_from(["hash", "redact", "truncate", "passthrough"]))
+    policy = draw(st.sampled_from(list(OrphanPolicy)))
+    allow_orphan = policy is not OrphanPolicy.FAIL or draw(st.booleans())
+    depth = draw(st.integers(min_value=4, max_value=5))  # deeper than the 3-level chain above
+
+    def _refs(n: int, hi: int) -> list[int | None]:
+        out: list[int | None] = []
+        for _ in range(n):
+            r = draw(st.integers(min_value=0, max_value=3))
+            if r == 0:
+                out.append(None)
+            elif r == 1 and allow_orphan:
+                out.append(-1)
+            else:
+                out.append(draw(st.integers(min_value=0, max_value=hi)))
+        return out
+
+    refs: list[list[int | None]] = []
+    prev_n = 4  # root row count (n0 in _build_chain_n)
+    for _ in range(depth - 1):
+        n = draw(st.integers(2, 5))  # keep per-example sizes small
+        refs.append(_refs(n, max(0, prev_n - 1)))
+        prev_n = n
+
+    plan, sources, graph = _build_chain_n(strategy=strategy, policy=policy, depth=depth, refs=refs)
+    return plan, sources, graph, f"deepchain/{strategy}/{policy.name}/depth={depth}"
+
+
+@settings(
+    max_examples=60,
+    deadline=None,
+    suppress_health_check=[HealthCheck.too_slow, HealthCheck.data_too_large],
+)
+@given(_deep_chain_case())
+def test_deep_chain_fk_parity(
+    case: tuple[Any, dict[str, pa.Table], RelationshipGraph, str],
+) -> None:
+    plan, sources, graph, label = case
+    _assert_parity_or_faithful_rejection(plan, sources, graph, label)
+
+
+# ---------------------------------------------------------------------------
+# Fan-out (multiple FK edges to one parent) property test
+# ---------------------------------------------------------------------------
+
+
+def _build_fanout(
+    *,
+    strategy: str,
+    policy: OrphanPolicy,
+    parent_rows: int,
+    refs_a: list[int | None],
+    refs_b: list[int | None],
+) -> tuple[Any, dict[str, pa.Table], RelationshipGraph]:
+    """One parent, two DISTINCT child tables each with their own FK edge to it
+    (not the `out_of_core_multi_parent_child_unsupported` shape, which is two
+    parents for one child)."""
+    ns = "ns_fanout"
+    seed = _seed_for(strategy, ns)
+    parent = pa.table({"pk": pa.array([f"p{i}" for i in range(parent_rows)], type=pa.string())})
+
+    def _child_frame(name: str, refs: list[int | None]) -> pa.Table:
+        vals: list[str | None] = []
+        orphan_ct = 0
+        for r in refs:
+            if r is None:
+                vals.append(None)
+            elif r == -1:
+                vals.append(f"orphan_{name}_{orphan_ct}")
+                orphan_ct += 1
+            else:
+                vals.append(f"p{r}")
+        return pa.table({"fk": pa.array(vals, type=pa.string())})
+
+    child_a = _child_frame("a", refs_a)
+    child_b = _child_frame("b", refs_b)
+
+    plan = _plan(
+        (
+            ("parent", TableSeed(per_column=(("pk", seed),), per_group=())),
+            ("child_a", TableSeed(per_column=(("fk", seed),), per_group=())),
+            ("child_b", TableSeed(per_column=(("fk", seed),), per_group=())),
+        )
+    )
+    graph = RelationshipGraph(
+        edges=(
+            RelationshipEdge(
+                parent_table="parent",
+                parent_columns=("pk",),
+                child_table="child_a",
+                child_columns=("fk",),
+                namespace=ns,
+                orphan_policy=policy,
+            ),
+            RelationshipEdge(
+                parent_table="parent",
+                parent_columns=("pk",),
+                child_table="child_b",
+                child_columns=("fk",),
+                namespace=ns,
+                orphan_policy=policy,
+            ),
+        ),
+        ordering=(),
+    )
+    return plan, {"parent": parent, "child_a": child_a, "child_b": child_b}, graph
+
+
+@st.composite
+def _fanout_case(draw: st.DrawFn) -> tuple[Any, dict[str, pa.Table], RelationshipGraph, str]:
+    strategy = draw(st.sampled_from(["hash", "redact", "truncate", "passthrough"]))
+    policy = draw(st.sampled_from(list(OrphanPolicy)))
+    allow_orphan = policy is not OrphanPolicy.FAIL or draw(st.booleans())
+    parent_rows = draw(st.integers(min_value=2, max_value=6))
+
+    def _refs(n: int) -> list[int | None]:
+        out: list[int | None] = []
+        for _ in range(n):
+            r = draw(st.integers(min_value=0, max_value=3))
+            if r == 0:
+                out.append(None)
+            elif r == 1 and allow_orphan:
+                out.append(-1)
+            else:
+                out.append(draw(st.integers(min_value=0, max_value=parent_rows - 1)))
+        return out
+
+    refs_a = _refs(draw(st.integers(1, 6)))
+    refs_b = _refs(draw(st.integers(1, 6)))
+    plan, sources, graph = _build_fanout(
+        strategy=strategy, policy=policy, parent_rows=parent_rows, refs_a=refs_a, refs_b=refs_b
+    )
+    return plan, sources, graph, f"fanout/{strategy}/{policy.name}"
+
+
+@settings(
+    max_examples=80,
+    deadline=None,
+    suppress_health_check=[HealthCheck.too_slow, HealthCheck.data_too_large],
+)
+@given(_fanout_case())
+def test_fanout_multi_child_fk_parity(
     case: tuple[Any, dict[str, pa.Table], RelationshipGraph, str],
 ) -> None:
     plan, sources, graph, label = case
