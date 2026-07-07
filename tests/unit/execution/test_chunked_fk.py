@@ -72,8 +72,8 @@ def _fk_config(
     rel_ns: str | None = "cust_ns",
     parent_provider_config: dict | None = None,
     child_provider_config: dict | None = None,
-    parent_dtype: str | None = None,
-    child_dtype: str | None = None,
+    parent_dtype: str | None = "string",
+    child_dtype: str | None = "string",
 ) -> dict:
     """Minimal two-table FK config with configurable gate knobs.
 
@@ -84,8 +84,10 @@ def _fk_config(
     `child_provider_config` let a test declare differing value-affecting
     settings (e.g. redact_with, truncate length) under the same strategy name.
     `parent_dtype` / `child_dtype` declare each column's optional "dtype"
-    field (condition (f), the dtype gate); omitted by default since no other
-    test in this module depends on it.
+    field (condition (f), the dtype gate). They default to "string" (the FK
+    keys these configs use are string keys) because the fail-closed dtype gate
+    now REJECTS a value-sensitive strategy whose FK key dtypes are not both
+    declared and same-family; pass None explicitly to exercise that rejection.
     """
     parent_col: dict = {"name": "id", "strategy": parent_strategy}
     if parent_ns is not None:
@@ -500,7 +502,7 @@ class TestFailClosedRejections:
                 self._items: list[pa.Table] = [pa.table({"customer_id": [1.0, 2.0]})]
                 self.consumed = 0
 
-            def __iter__(self) -> "_LazyTracker":
+            def __iter__(self) -> _LazyTracker:
                 return self
 
             def __next__(self) -> pa.Table:
@@ -511,11 +513,7 @@ class TestFailClosedRejections:
 
         tracker = _LazyTracker()
         with pytest.raises(PlanCompileError) as exc:
-            list(
-                run_mask_pipeline_chunked(
-                    config, tracker, table="orders", engine_version=_ENGINE
-                )
-            )
+            list(run_mask_pipeline_chunked(config, tracker, table="orders", engine_version=_ENGINE))
         assert exc.value.code == "chunked_fk_child_key_dtype_mismatch"
         assert tracker.consumed == 0
 
@@ -532,11 +530,60 @@ class TestFailClosedRejections:
         # Must not raise.
         check_chunked_compatibility(config, table="orders")
 
-    def test_child_key_dtype_undeclared_does_not_regress_existing_admission(self) -> None:
-        """No dtype declared on either side (the default for every other test
-        in this module) must not newly reject -- the gate only fires when a
-        mismatch is actually knowable from a declared dtype."""
-        config = _fk_config()
+    def test_child_key_dtype_undeclared_rejected_fail_closed(self) -> None:
+        """Fail-closed dtype gate (2026-07-07): a value-sensitive strategy with
+        an undeclared dtype on either side can NOT be proven to self-mask to the
+        parent's value, so it is REJECTED (was fail-open before the fix -- the
+        common int-parent/float-child mismatch slipped through undeclared).
+
+        The child's chunked run never sees the parent's data, so the mismatch is
+        not recoverable at runtime either; full-frame / run_sequential handle it.
+        """
+        # hash is value-sensitive; neither side declares a dtype.
+        config = _fk_config(parent_dtype=None, child_dtype=None)
+        with pytest.raises(PlanCompileError) as exc:
+            check_chunked_compatibility(config, table="orders")
+        assert exc.value.code == "chunked_fk_child_key_dtype_unprovable"
+
+    def test_child_key_dtype_one_side_undeclared_rejected(self) -> None:
+        """Declaring the dtype on only one side is still unprovable -> reject."""
+        for parent_dtype, child_dtype in (("int64", None), (None, "int64")):
+            config = _fk_config(parent_dtype=parent_dtype, child_dtype=child_dtype)
+            with pytest.raises(PlanCompileError) as exc:
+                check_chunked_compatibility(config, table="orders")
+            assert exc.value.code == "chunked_fk_child_key_dtype_unprovable"
+
+    def test_truncate_undeclared_dtype_rejected(self) -> None:
+        """truncate is the silent-divergence case (str(1) != str(1.0)); with an
+        undeclared dtype it must fail closed."""
+        config = _fk_config(
+            parent_strategy="truncate",
+            child_strategy="truncate",
+            parent_ns=None,
+            child_ns=None,
+            rel_ns=None,
+            parent_provider_config={"length": 3},
+            child_provider_config={"length": 3},
+            parent_dtype=None,
+            child_dtype=None,
+        )
+        with pytest.raises(PlanCompileError) as exc:
+            check_chunked_compatibility(config, table="orders")
+        assert exc.value.code == "chunked_fk_child_key_dtype_unprovable"
+
+    def test_redact_undeclared_dtype_admitted_value_independent(self) -> None:
+        """redact is the one value-INDEPENDENT strategy: it emits a constant for
+        every non-null input regardless of dtype, so parent and child provably
+        mask to the same value even with no dtype declared. It must be admitted."""
+        config = _fk_config(
+            parent_strategy="redact",
+            child_strategy="redact",
+            parent_ns=None,
+            child_ns=None,
+            rel_ns=None,
+            parent_dtype=None,
+            child_dtype=None,
+        )
         # Must not raise.
         check_chunked_compatibility(config, table="orders")
 

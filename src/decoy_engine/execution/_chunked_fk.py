@@ -40,6 +40,17 @@ CHUNK_SAFE_STRATEGIES: frozenset[str] = frozenset(
 # FK gate are skipped for them.
 NAMESPACE_REQUIRING_STRATEGIES: frozenset[str] = frozenset({"hash", "fpe", "date_shift"})
 
+# Strategies whose masked output does NOT depend on the key's value (only on
+# its null-ness), so parent and child provably mask to identical values for the
+# same logical key REGARDLESS of dtype. `redact` emits a constant replacement
+# for every non-null input (condition (e) already forces an identical
+# `redact_with` on both sides); a null stays null on both. Every OTHER
+# chunk-safe strategy is value-sensitive: its output depends on the raw key's
+# representation, which differs across dtype families for equal logical keys
+# (int 1 vs float 1.0 stringify/canonicalize/FPE to different bytes), so it can
+# only be proven safe when both sides declare the same dtype family.
+DTYPE_INVARIANT_STRATEGIES: frozenset[str] = frozenset({"redact"})
+
 
 def _dtype_family(dtype: str) -> str:
     """Coarse dtype family for the chunked-FK dtype gate (condition (f)).
@@ -146,6 +157,11 @@ def gate_fk_child_edges(config: dict[str, Any], *, table: str) -> None:
                 float), so self-masking the child's own value independently
                 cannot be guaranteed to reproduce the parent's masked value
                 even when strategy, namespace, and provider_config all match.
+            chunked_fk_child_key_dtype_unprovable: a value-sensitive strategy
+                (anything but redact) does not have BOTH FK key dtypes declared,
+                so identical masked values cannot be proven. Fail closed: an
+                undeclared dtype is not knowable, and the child's chunked run
+                never sees the parent's data to check at runtime.
     """
     col_index = _col_index_from_config(config)
 
@@ -357,7 +373,7 @@ def gate_fk_child_edges(config: dict[str, Any], *, table: str) -> None:
                 )
 
             # Condition (f): parent and child FK key column dtypes must be
-            # identical (families), or self-masking cannot be guaranteed to
+            # PROVABLY compatible, or self-masking cannot be guaranteed to
             # reproduce the parent's masked value. `run_mask_pipeline_chunked`
             # masks the child's OWN value independently of the parent (there
             # is no parent-map lookup): matching strategy + namespace +
@@ -367,36 +383,61 @@ def gate_fk_child_edges(config: dict[str, Any], *, table: str) -> None:
             # logical value (1 vs 1.0) hash/truncate/FPE to DIFFERENT bytes
             # (the kernels key on the value's own representation, not on the
             # normalized-equal FK identity the full-frame/out-of-core parent-
-            # map routes use), silently breaking referential integrity. This
-            # is a rejection, not a normalize-then-self-mask fix: dtype is
-            # only knowable here when the caller declares it up front via
-            # each column's optional "dtype" config field (no chunk is read
-            # before this gate fires, so real data dtypes are not available
-            # yet). An undeclared dtype on either side cannot be compared and
-            # does not widen admission beyond what conditions (a)-(e) allow.
-            parent_dtype = parent_cfg.get("dtype")
-            child_dtype = child_cfg.get("dtype")
-            if (
-                parent_dtype is not None
-                and child_dtype is not None
-                and _dtype_family(parent_dtype) != _dtype_family(child_dtype)
-            ):
-                raise PlanCompileError(
-                    code="chunked_fk_child_key_dtype_mismatch",
-                    path=f"tables.{child_table}.columns.{child_col}.dtype",
-                    message=(
-                        f"FK edge {parent_table}.{parent_col}"
-                        f"->{child_table}.{child_col}: "
-                        f"child dtype {child_dtype!r} is not the same family as "
-                        f"parent dtype {parent_dtype!r}. Chunked self-masking hashes/"
-                        "truncates/FPEs the child's own value independently of the "
-                        "parent, with no parent-map lookup to normalize FK key "
-                        "equality; a dtype-family mismatch (e.g. parent int vs child "
-                        "float) means the child's raw value differs byte-for-byte "
-                        "from the parent's even when both represent the 'same' "
-                        "logical key, so self-masking cannot be guaranteed to "
-                        "reproduce the parent's masked value. Use run_pipeline or "
-                        "run_sequential instead, or normalize both columns to the "
-                        "same dtype before masking."
-                    ),
-                )
+            # map routes use), silently breaking referential integrity.
+            #
+            # FAIL CLOSED (fix, 2026-07-07): a value-sensitive strategy is
+            # admitted ONLY when both sides declare the SAME dtype family. The
+            # child's chunked run never sees the parent's data (the parent is
+            # not a source here), so the parent's real dtype is not knowable at
+            # runtime either -- there is no first-chunk check that can recover
+            # it. The prior guard fired ONLY when BOTH dtypes were declared, so
+            # an undeclared dtype (the common case) let an int-parent/float-
+            # child mismatch through fail-OPEN. An undeclared dtype on either
+            # side is now unprovable and is REJECTED; full-frame / run_sequential
+            # (which normalize FK key equality via the parent map) handle it.
+            # The one exception is a value-independent strategy (redact emits a
+            # constant, condition (e) pins it identical on both sides), which
+            # masks to the same value under any dtype.
+            if parent_strategy not in DTYPE_INVARIANT_STRATEGIES:
+                parent_dtype = parent_cfg.get("dtype")
+                child_dtype = child_cfg.get("dtype")
+                if parent_dtype is None or child_dtype is None:
+                    raise PlanCompileError(
+                        code="chunked_fk_child_key_dtype_unprovable",
+                        path=f"tables.{child_table}.columns.{child_col}.dtype",
+                        message=(
+                            f"FK edge {parent_table}.{parent_col}"
+                            f"->{child_table}.{child_col}: "
+                            f"strategy {parent_strategy!r} is value-sensitive, so "
+                            "chunked self-masking reproduces the parent's masked "
+                            "value only when the parent and child FK key columns "
+                            "share a dtype family. That cannot be proven here: "
+                            f"parent dtype {parent_dtype!r}, child dtype "
+                            f"{child_dtype!r} (an undeclared dtype is not knowable "
+                            "at compile time, and the child's chunked run never "
+                            "sees the parent's data to check at runtime). Declare a "
+                            "matching 'dtype' on both FK key columns, or use "
+                            "run_pipeline / run_sequential (which normalize FK key "
+                            "equality via the parent map)."
+                        ),
+                    )
+                if _dtype_family(parent_dtype) != _dtype_family(child_dtype):
+                    raise PlanCompileError(
+                        code="chunked_fk_child_key_dtype_mismatch",
+                        path=f"tables.{child_table}.columns.{child_col}.dtype",
+                        message=(
+                            f"FK edge {parent_table}.{parent_col}"
+                            f"->{child_table}.{child_col}: "
+                            f"child dtype {child_dtype!r} is not the same family as "
+                            f"parent dtype {parent_dtype!r}. Chunked self-masking "
+                            "hashes/truncates/FPEs the child's own value "
+                            "independently of the parent, with no parent-map lookup "
+                            "to normalize FK key equality; a dtype-family mismatch "
+                            "(e.g. parent int vs child float) means the child's raw "
+                            "value differs byte-for-byte from the parent's even when "
+                            "both represent the 'same' logical key, so self-masking "
+                            "cannot be guaranteed to reproduce the parent's masked "
+                            "value. Use run_pipeline or run_sequential instead, or "
+                            "normalize both columns to the same dtype before masking."
+                        ),
+                    )
