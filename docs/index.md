@@ -10,6 +10,7 @@ New to Decoy? Start with the quickstart, then the recipes.
 - [Recipes](recipes.md): five runnable recipes (CSV, folder + FKs, generate, detect PII, CI).
 - [Strategy catalog](strategies.md): every mask and generation strategy.
 - [Relationships](relationships.md): foreign-key and referential-integrity preservation.
+- [Relationship out-of-core sprint plan](relationships-out-of-core-sprints.md): Option 4 implementation plan for large FK graphs.
 - [Determinism](determinism.md): the seed and key protocol; what is and is not deterministic.
 - [CLI](cli.md): the `decoy` command surface.
 - [What Decoy does not prove](what-we-cannot-prove.md): the honest limitations.
@@ -53,6 +54,7 @@ quickstart
 recipes
 strategies
 relationships
+relationships-out-of-core-sprints
 determinism
 cli
 what-we-cannot-prove
