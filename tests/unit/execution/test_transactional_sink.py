@@ -156,6 +156,52 @@ def test_file_sink_abort_with_no_writes_is_safe(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_three_method_sink_without_write_batches_is_transactional(tmp_path: Path) -> None:
+    """P2 advisory (Codex review): adding write_batches to the runtime_checkable
+    TransactionalSink Protocol means a custom sink implementing only
+    write/commit/abort (the pre-SC1 shape) no longer satisfies
+    isinstance(sink, TransactionalSink). Before the fix, run_sequential then
+    fell through to `_CallableSinkAdapter(sink)`, which calls the sink object
+    AS a function (`self._fn(table, data)`) and raises TypeError. run_sequential
+    itself never calls write_batches (only the out-of-core streaming runner
+    does), so such a sink is fully usable here; it must be dispatched as
+    transactional (write per table, one commit), not wrapped as a callable.
+    """
+
+    class ThreeMethodSink:
+        def __init__(self) -> None:
+            self.written: dict[str, pa.Table] = {}
+            self.committed = False
+            self.aborted = False
+
+        def write(self, table: str, data: pa.Table) -> None:
+            self.written[table] = data
+
+        def commit(self) -> None:
+            self.committed = True
+
+        def abort(self) -> None:
+            self.aborted = True
+
+    adapter = PandasExecutionAdapter()
+    fx = build_fk_relational(rows=50, width=2, orphan_frac=0.0)
+    sink = ThreeMethodSink()
+
+    res = adapter.run_sequential(
+        fx.plan,
+        _loader(fx.sources),
+        registry=fx.registry,
+        relationship_graph=fx.graph(OrphanPolicy.PRESERVE),
+        namespace_registry=fx.namespace_registry,
+        sink=sink,
+    )
+
+    assert set(sink.written) == set(fx.sources)
+    assert sink.committed is True
+    assert sink.aborted is False
+    assert res.outputs == {}
+
+
 def test_callable_sink_back_compat(tmp_path: Path) -> None:
     """A plain Callable sink passed to run_sequential still streams tables out
     exactly once per table (the existing contract) and res.outputs is empty."""
