@@ -72,6 +72,8 @@ def _fk_config(
     rel_ns: str | None = "cust_ns",
     parent_provider_config: dict | None = None,
     child_provider_config: dict | None = None,
+    parent_dtype: str | None = None,
+    child_dtype: str | None = None,
 ) -> dict:
     """Minimal two-table FK config with configurable gate knobs.
 
@@ -81,12 +83,17 @@ def _fk_config(
     and test missing-declaration rejections). `parent_provider_config` /
     `child_provider_config` let a test declare differing value-affecting
     settings (e.g. redact_with, truncate length) under the same strategy name.
+    `parent_dtype` / `child_dtype` declare each column's optional "dtype"
+    field (condition (f), the dtype gate); omitted by default since no other
+    test in this module depends on it.
     """
     parent_col: dict = {"name": "id", "strategy": parent_strategy}
     if parent_ns is not None:
         parent_col["namespace"] = parent_ns
     if parent_provider_config is not None:
         parent_col["provider_config"] = parent_provider_config
+    if parent_dtype is not None:
+        parent_col["dtype"] = parent_dtype
 
     child_col: dict = {"name": "customer_id"}
     if child_strategy is not None:
@@ -95,6 +102,8 @@ def _fk_config(
         child_col["namespace"] = child_ns
     if child_provider_config is not None:
         child_col["provider_config"] = child_provider_config
+    if child_dtype is not None:
+        child_col["dtype"] = child_dtype
 
     cfg: dict = {
         "global_settings": {"seed": 7},
@@ -461,6 +470,73 @@ class TestFailClosedRejections:
             parent_provider_config={"redact_with": "X"},
             child_provider_config={"redact_with": "X"},
         )
+        # Must not raise.
+        check_chunked_compatibility(config, table="orders")
+
+    def test_child_key_dtype_mismatch_rejected(self) -> None:
+        """Codex round-2 Finding B: dtype-mismatched FK keys are gated out.
+
+        Even with identical strategy + namespace + provider_config,
+        `run_mask_pipeline_chunked` masks the child's own value
+        independently of the parent (no parent-map lookup). A parent int64
+        key and a child float64 FK key holding the "same" logical value
+        (1 vs 1.0) hash to DIFFERENT bytes -- the kernel canonicalizer hard-
+        errors on float for hash/fpe/date_shift, and even for strategies
+        that don't (truncate), a float's string form differs from an int's
+        ("1.0" vs "1") -- so self-masking cannot be guaranteed to reproduce
+        the parent's masked value. The gate must reject before any output.
+        """
+        config = _fk_config(parent_dtype="int64", child_dtype="float64")
+        with pytest.raises(PlanCompileError) as exc:
+            check_chunked_compatibility(config, table="orders")
+        assert exc.value.code == "chunked_fk_child_key_dtype_mismatch"
+
+    def test_child_key_dtype_mismatch_rejected_before_any_chunk_pulled(self) -> None:
+        """The dtype gate fires eagerly, like every other chunked-FK gate."""
+        config = _fk_config(parent_dtype="int64", child_dtype="float64")
+
+        class _LazyTracker:
+            def __init__(self) -> None:
+                self._items: list[pa.Table] = [pa.table({"customer_id": [1.0, 2.0]})]
+                self.consumed = 0
+
+            def __iter__(self) -> "_LazyTracker":
+                return self
+
+            def __next__(self) -> pa.Table:
+                if not self._items:
+                    raise StopIteration
+                self.consumed += 1
+                return self._items.pop(0)
+
+        tracker = _LazyTracker()
+        with pytest.raises(PlanCompileError) as exc:
+            list(
+                run_mask_pipeline_chunked(
+                    config, tracker, table="orders", engine_version=_ENGINE
+                )
+            )
+        assert exc.value.code == "chunked_fk_child_key_dtype_mismatch"
+        assert tracker.consumed == 0
+
+    def test_child_key_dtype_matching_is_admitted(self) -> None:
+        """Matching declared dtypes (same family) are admitted."""
+        config = _fk_config(parent_dtype="int64", child_dtype="int64")
+        # Must not raise.
+        check_chunked_compatibility(config, table="orders")
+
+    def test_child_key_dtype_matching_family_widths_admitted(self) -> None:
+        """Different widths within the same family (int32 vs int64) are fine:
+        the kernel canonicalizer encodes any-width int identically."""
+        config = _fk_config(parent_dtype="int32", child_dtype="int64")
+        # Must not raise.
+        check_chunked_compatibility(config, table="orders")
+
+    def test_child_key_dtype_undeclared_does_not_regress_existing_admission(self) -> None:
+        """No dtype declared on either side (the default for every other test
+        in this module) must not newly reject -- the gate only fires when a
+        mismatch is actually knowable from a declared dtype."""
+        config = _fk_config()
         # Must not raise.
         check_chunked_compatibility(config, table="orders")
 

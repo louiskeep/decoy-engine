@@ -41,6 +41,38 @@ CHUNK_SAFE_STRATEGIES: frozenset[str] = frozenset(
 NAMESPACE_REQUIRING_STRATEGIES: frozenset[str] = frozenset({"hash", "fpe", "date_shift"})
 
 
+def _dtype_family(dtype: str) -> str:
+    """Coarse dtype family for the chunked-FK dtype gate (condition (f)).
+
+    Widths within a family (int32 vs int64) reproduce identical masked bytes
+    for equal values -- the kernel canonicalizer encodes any-width integers
+    as a length-prefixed minimal two's complement form regardless of storage
+    width (kernel/_canonicalize.py) -- so only the family needs to agree, not
+    the exact dtype string. `decimal`/`numeric` is kept as its own family
+    (never folded into `int` or `float`): a decimal value can be integral or
+    fractional, so it is not provably interchangeable with either without
+    inspecting the data this gate never sees. Unrecognized strings pass
+    through lowercased and unmodified, so an unknown dtype only ever matches
+    another occurrence of that exact same string.
+    """
+    family = dtype.strip().lower()
+    if family.startswith(("int", "uint")):
+        return "int"
+    if family.startswith(("float", "double")):
+        return "float"
+    if family.startswith(("decimal", "numeric")):
+        return "decimal"
+    if family.startswith("bool"):
+        return "bool"
+    if family.startswith(("str", "string", "object", "utf8", "large_string")):
+        return "string"
+    if family.startswith(("date", "timestamp", "datetime")):
+        return "datetime"
+    if family.startswith(("bytes", "binary", "large_binary")):
+        return "bytes"
+    return family
+
+
 def _col_index_from_config(config: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]]:
     """Build a (table_name, col_name) -> col_entry lookup from config.tables."""
     idx: dict[tuple[str, str], dict[str, Any]] = {}
@@ -109,6 +141,11 @@ def gate_fk_child_edges(config: dict[str, Any], *, table: str) -> None:
                 value-affecting settings, e.g. redact_with, truncate length,
                 hash truncation), so self-masking would NOT reproduce the
                 parent's masked value even though the strategy name matches.
+            chunked_fk_child_key_dtype_mismatch: parent and child FK key
+                columns declare different dtype families (e.g. int vs
+                float), so self-masking the child's own value independently
+                cannot be guaranteed to reproduce the parent's masked value
+                even when strategy, namespace, and provider_config all match.
     """
     col_index = _col_index_from_config(config)
 
@@ -316,5 +353,50 @@ def gate_fk_child_edges(config: dict[str, Any], *, table: str) -> None:
                         "independently would not reproduce the parent's masked "
                         "value. Make the child provider_config identical to the "
                         "parent's."
+                    ),
+                )
+
+            # Condition (f): parent and child FK key column dtypes must be
+            # identical (families), or self-masking cannot be guaranteed to
+            # reproduce the parent's masked value. `run_mask_pipeline_chunked`
+            # masks the child's OWN value independently of the parent (there
+            # is no parent-map lookup): matching strategy + namespace +
+            # provider_config only guarantees the same masked BYTES when the
+            # two sides feed the SAME raw value through that strategy. A
+            # parent int64 key and a child float64 FK key holding the "same"
+            # logical value (1 vs 1.0) hash/truncate/FPE to DIFFERENT bytes
+            # (the kernels key on the value's own representation, not on the
+            # normalized-equal FK identity the full-frame/out-of-core parent-
+            # map routes use), silently breaking referential integrity. This
+            # is a rejection, not a normalize-then-self-mask fix: dtype is
+            # only knowable here when the caller declares it up front via
+            # each column's optional "dtype" config field (no chunk is read
+            # before this gate fires, so real data dtypes are not available
+            # yet). An undeclared dtype on either side cannot be compared and
+            # does not widen admission beyond what conditions (a)-(e) allow.
+            parent_dtype = parent_cfg.get("dtype")
+            child_dtype = child_cfg.get("dtype")
+            if (
+                parent_dtype is not None
+                and child_dtype is not None
+                and _dtype_family(parent_dtype) != _dtype_family(child_dtype)
+            ):
+                raise PlanCompileError(
+                    code="chunked_fk_child_key_dtype_mismatch",
+                    path=f"tables.{child_table}.columns.{child_col}.dtype",
+                    message=(
+                        f"FK edge {parent_table}.{parent_col}"
+                        f"->{child_table}.{child_col}: "
+                        f"child dtype {child_dtype!r} is not the same family as "
+                        f"parent dtype {parent_dtype!r}. Chunked self-masking hashes/"
+                        "truncates/FPEs the child's own value independently of the "
+                        "parent, with no parent-map lookup to normalize FK key "
+                        "equality; a dtype-family mismatch (e.g. parent int vs child "
+                        "float) means the child's raw value differs byte-for-byte "
+                        "from the parent's even when both represent the 'same' "
+                        "logical key, so self-masking cannot be guaranteed to "
+                        "reproduce the parent's masked value. Use run_pipeline or "
+                        "run_sequential instead, or normalize both columns to the "
+                        "same dtype before masking."
                     ),
                 )
