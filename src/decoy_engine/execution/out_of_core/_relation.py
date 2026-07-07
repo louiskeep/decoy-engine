@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, TypeAlias
@@ -437,7 +438,7 @@ def _build_relation(
     )
     temp_dir.mkdir(parents=True, exist_ok=True)
     out_path = temp_dir / (
-        f"{edge.parent_table}_{'_'.join(edge.parent_columns)}_key_relation.parquet"
+        f"{edge.parent_table}_{_column_tuple_slug(edge.parent_columns)}_key_relation.parquet"
     )
     conn = connect_duckdb(temp_dir=temp_dir / "duckdb", memory_limit=memory_limit)
     try:
@@ -460,6 +461,22 @@ def _build_relation(
     finally:
         conn.close()
     return ParentKeyRelation(path=out_path, masked_key_columns=masked_columns)
+
+
+def _column_tuple_slug(columns: tuple[str, ...]) -> str:
+    """A collision-free filename slug for a parent-column tuple.
+
+    A plain ``'_'.join(columns)`` is NOT injective: the tuples ('a_b', 'c')
+    and ('a', 'b_c') both render 'a_b_c', so two distinct relations from the
+    same parent table (different column tuples that underscore-collide) would
+    stage to the same Parquet path and the second build would clobber the
+    first. A length-prefixed encoding (the same injective framing
+    `fk_join_key_tuple` uses) hashed to a fixed-width hex digest is stable and
+    unambiguous for arbitrary column names, including names carrying
+    filesystem-unsafe characters.
+    """
+    encoded = "".join(f"{len(col)}:{col}\x00" for col in columns).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()[:16]
 
 
 def _column_seed(plan: Plan, table: str, column: str) -> ColumnSeed | None:
