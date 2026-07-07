@@ -59,4 +59,17 @@ def test_derive_canonicalization_rejects_float_but_fk_match_key_accepts_it() -> 
 def test_fk_match_key_has_null_sentinel_for_arrow_join_semantics() -> None:
     assert fk_key_value(None) is NULL_FK_KEY
     assert fk_key_value(math.nan) is NULL_FK_KEY
-    assert fk_key_value(True) is True
+    # Codex round-4 Finding A: the oracle's parent_map is a plain Python dict,
+    # where `True`/`False` already hash and compare equal to `1`/`0` (bool is
+    # an int subtype). fk_key_value normalizes bool to int so `fk_join_key`'s
+    # string encoding (which cannot rely on Python's object equality) reaches
+    # the same collision instead of tagging bool and int keys distinctly.
+    assert fk_key_value(True) == 1
+    assert type(fk_key_value(True)) is int
+    assert fk_key_value(False) == 0
+    assert type(fk_key_value(False)) is int
+    assert fk_key_value(True) == fk_key_value(1)
+    assert fk_key_value(False) == fk_key_value(0)
+    # Not a blanket collapse: a bool key stays distinct from an int it is not
+    # equal to.
+    assert fk_key_value(True) != fk_key_value(2)

@@ -26,11 +26,14 @@ def fk_key_value(value: object) -> object:
     if value is None:
         return NULL_FK_KEY
     if isinstance(value, bool):
-        # Accepted divergence: pandas's parent_map dict collides True with 1
-        # (hash(True) == hash(1)) while fk_join_key tags them distinctly
-        # (BOOL:1 vs INT:1). Only reachable for bool-typed FK keys, which is
-        # pathological, and a masked bool vs. int token differs anyway.
-        return value
+        # The oracle's parent_map is a plain Python dict; `True`/`False` hash
+        # and compare equal to `1`/`0` (bool is an int subtype), so a bool
+        # parent key and a 0/1 int child key collide there for free. This
+        # normalization makes that same collision reachable through
+        # `fk_join_key`'s string encoding (which cannot rely on Python's
+        # object equality), so a bool parent key and a 0/1 int child key mint
+        # the identical join token the oracle's dict already produces.
+        return int(value)
     if isinstance(value, numbers.Integral):
         return int(value)
     if isinstance(value, float):
@@ -76,8 +79,9 @@ def fk_join_key(value: object) -> str:
     normalized = fk_key_value(value)
     if normalized is NULL_FK_KEY:
         return "\x00NULL"
-    if isinstance(normalized, bool):
-        return f"\x00BOOL:{int(normalized)}"
+    # `fk_key_value` normalizes bool to int above, so `normalized` is never a
+    # bool here; no separate BOOL: tag is needed (or correct -- it would give
+    # bool and 0/1 int keys different tokens, undoing the normalization).
     if isinstance(normalized, int):
         return f"\x00INT:{normalized}"
     if isinstance(normalized, float):

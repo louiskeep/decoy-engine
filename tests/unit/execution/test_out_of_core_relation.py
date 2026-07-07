@@ -1148,3 +1148,85 @@ def test_child_fk_join_decimal_parent_does_not_over_normalize_distinct_keys(tmp_
     with pytest.raises(ExecutionError) as ooc_exc:
         mask_child_fk_fail(child=child, edge=edge, parent_relation=relation, temp_dir=tmp_path)
     assert ooc_exc.value.code == "orphan_fk_violation"
+
+
+@pytest.mark.parametrize(
+    "policy",
+    [OrphanPolicy.FAIL, OrphanPolicy.WARN, OrphanPolicy.PRESERVE, OrphanPolicy.REMAP],
+)
+def test_child_fk_join_bool_parent_matches_int_child(tmp_path, policy: OrphanPolicy) -> None:
+    """Codex round-4 Finding A regression test.
+
+    A bool parent key must join against an equal 0/1 int child key the same
+    way the pandas oracle's dict-keyed parent_map does: Python's own bool/int
+    equality (`True == 1`, `hash(True) == hash(1)`, bool is an int subtype)
+    already folds them together in a plain dict, with no explicit
+    normalization needed on the oracle side. Before the fix, `fk_key_value`
+    kept bool distinct from int, so the out-of-core join-key encoder tagged
+    a bool parent key `BOOL:1` and an int child key `INT:1` -- different
+    tokens -- and the LEFT JOIN missed every row: FAIL raised a false orphan
+    violation instead of returning output, and WARN/PRESERVE/REMAP would have
+    minted a wrong REMAP token / misclassified a matched row as an orphan
+    (a real RI break) instead of resolving to the matched parent's masked
+    value.
+    """
+    plan = _decimal_passthrough_plan()
+    edge = _rel("customers", "customer_id", "orders", "customer_id", "cust", policy)
+    graph = RelationshipGraph(edges=(edge,), ordering=())
+    parent = pa.table({"customer_id": pa.array([True, False, True], type=pa.bool_())})
+    child = pa.table({"customer_id": pa.array([1, 0, 1], type=pa.int64())})
+    sources = {"customers": parent, "orders": child}
+
+    pandas = PandasExecutionAdapter().run(
+        plan,
+        sources,
+        registry=_REG,
+        relationship_graph=graph,
+        namespace_registry=_NS,
+    )
+    relation = build_parent_key_relation(plan=plan, parent=parent, edge=edge, temp_dir=tmp_path)
+    remap_values = None
+    if policy is OrphanPolicy.REMAP:
+        remap_values = _out_of_core_runner._remap_values(plan, edge, child)
+    out, warnings = mask_child_fk(
+        child=child,
+        edge=edge,
+        parent_relation=relation,
+        temp_dir=tmp_path,
+        remap_values=remap_values,
+    )
+
+    out_col = out.column("customer_id").to_pylist()
+    pandas_col = pandas.outputs["orders"].column("customer_id").to_pylist()
+    assert out_col == pandas_col
+    assert warnings == ()
+
+
+def test_child_fk_join_bool_parent_does_not_over_normalize_distinct_keys(tmp_path) -> None:
+    """Codex round-4 Finding A: prove the bool->int normalization is not a
+    blanket collapse. A child key with no Python-equal bool parent key (2, vs.
+    parent keys True/False i.e. 1/0) must still orphan on both routes -- FAIL
+    raises identically on the pandas oracle and the out-of-core join,
+    matched-row 1 notwithstanding.
+    """
+    plan = _decimal_passthrough_plan()
+    edge = _rel("customers", "customer_id", "orders", "customer_id", "cust", OrphanPolicy.FAIL)
+    graph = RelationshipGraph(edges=(edge,), ordering=())
+    parent = pa.table({"customer_id": pa.array([True, False], type=pa.bool_())})
+    child = pa.table({"customer_id": pa.array([1, 2], type=pa.int64())})
+    sources = {"customers": parent, "orders": child}
+
+    with pytest.raises(ExecutionError) as pandas_exc:
+        PandasExecutionAdapter().run(
+            plan,
+            sources,
+            registry=_REG,
+            relationship_graph=graph,
+            namespace_registry=_NS,
+        )
+    assert pandas_exc.value.code == "orphan_fk_violation"
+
+    relation = build_parent_key_relation(plan=plan, parent=parent, edge=edge, temp_dir=tmp_path)
+    with pytest.raises(ExecutionError) as ooc_exc:
+        mask_child_fk_fail(child=child, edge=edge, parent_relation=relation, temp_dir=tmp_path)
+    assert ooc_exc.value.code == "orphan_fk_violation"
