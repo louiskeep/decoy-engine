@@ -21,9 +21,12 @@ the `hash_requires_namespace` pattern in `_hash.py`.
 from __future__ import annotations
 
 import pandas as pd
-import pyarrow as pa
 
-from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
+from decoy_engine.execution._adapter import (
+    StrategyContext,
+    pandas_column_to_kernel_input,
+    provider_config_to_dict,
+)
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.kernel import truncate_array
@@ -97,7 +100,7 @@ class TruncateHandler:
         # one source of truth. Byte-identical to the prior inline pandas
         # implementation for every (length, keep, mask_char) combination.
         masked = truncate_array(
-            pa.array(df[column], from_pandas=True),
+            pandas_column_to_kernel_input(df[column]),
             length=length,
             keep=keep,
             mask_char=mask_char,

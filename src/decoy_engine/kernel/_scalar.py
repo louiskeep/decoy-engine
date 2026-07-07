@@ -10,10 +10,24 @@ from decoy_engine.determinism import derive
 from decoy_engine.kernel._canonicalize import canonicalize_derive_source
 
 
-def _array_to_pylist(values: pa.Array | pa.ChunkedArray) -> list[Any]:
+def _array_to_pylist(values: pa.Array | pa.ChunkedArray | list[Any]) -> list[Any]:
+    """Normalize the kernel's input to a plain Python list of scalars.
+
+    A real Arrow array/chunked-array is the common (fast) path. A caller may
+    also pass a plain list of raw Python scalars: mixed-type pandas object
+    columns (str and int values in one column) have no single Arrow type, so
+    `pa.array(..., from_pandas=True)` can raise before ever reaching the
+    kernel; the caller falls back to a raw Python list in that case (see
+    `_hash.py`/`_truncate.py`) instead of duplicating the per-value logic
+    below. Every kernel here is already per-value dispatch (canonicalize by
+    Python type, or `str(value)`), so operating on raw scalars is no
+    different from operating on `to_pylist()` output.
+    """
     if isinstance(values, pa.ChunkedArray):
         return values.combine_chunks().to_pylist()
-    return values.to_pylist()
+    if isinstance(values, pa.Array):
+        return values.to_pylist()
+    return list(values)
 
 
 def passthrough_array(values: pa.Array | pa.ChunkedArray) -> pa.Array:
@@ -24,7 +38,7 @@ def passthrough_array(values: pa.Array | pa.ChunkedArray) -> pa.Array:
 
 
 def hash_array(
-    values: pa.Array | pa.ChunkedArray,
+    values: pa.Array | pa.ChunkedArray | list[Any],
     *,
     seed: bytes,
     namespace: str,
@@ -52,7 +66,7 @@ def redact_array(
 
 
 def truncate_array(
-    values: pa.Array | pa.ChunkedArray,
+    values: pa.Array | pa.ChunkedArray | list[Any],
     *,
     length: int,
     keep: str = "head",

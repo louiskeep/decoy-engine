@@ -14,10 +14,13 @@ keyed on it); a hash column without one is a wiring error.
 from __future__ import annotations
 
 import pandas as pd
-import pyarrow as pa
 
 from decoy_engine.determinism import derive
-from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
+from decoy_engine.execution._adapter import (
+    StrategyContext,
+    pandas_column_to_kernel_input,
+    provider_config_to_dict,
+)
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.kernel import hash_array
@@ -47,7 +50,7 @@ class HashStrategyHandler:
         truncate = raw_truncate if isinstance(raw_truncate, int) and raw_truncate > 0 else None
 
         masked = hash_array(
-            pa.array(df[column], from_pandas=True),
+            pandas_column_to_kernel_input(df[column]),
             seed=ctx.job_seed,
             namespace=plan.namespace,
             truncate=truncate,

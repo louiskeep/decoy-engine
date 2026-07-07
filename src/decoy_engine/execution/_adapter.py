@@ -149,3 +149,23 @@ class ExecutionAdapter(Protocol):
 def provider_config_to_dict(provider_config: Sequence[tuple[str, Any]]) -> dict[str, Any]:
     """Flatten a `ColumnSeed.provider_config` tuple-of-pairs into a dict."""
     return dict(provider_config)
+
+
+def pandas_column_to_kernel_input(column: pd.Series) -> pa.Array | list[Any]:
+    """Convert one pandas column to the masking kernel's expected input.
+
+    The fast path is a whole-column Arrow conversion. A pandas object column
+    can legitimately mix Python scalar types (e.g. str and int identifiers in
+    one column); Arrow has no single type for that, so
+    `pa.array(column, from_pandas=True)` raises. Falling back to a plain
+    Python list of scalars (None-normalized for NaN/NaT/None) lets the
+    kernel's per-value dispatch (`decoy_engine.kernel._scalar._array_to_pylist`)
+    mask every value anyway, matching the pre-kernel per-value handlers this
+    replaced (SC1 port) instead of raising on a column shape that used to
+    mask successfully.
+    """
+    try:
+        return pa.array(column, from_pandas=True)
+    except pa.ArrowException:
+        na_mask = column.isna().to_numpy()
+        return [None if is_na else value for is_na, value in zip(na_mask, column, strict=True)]
