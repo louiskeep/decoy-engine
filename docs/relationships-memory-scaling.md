@@ -1,9 +1,10 @@
 # Masking relationships under memory constraints
 
-**Status:** Phase 0 (measurement) + Option 2 (`run_sequential`) + transactional sink all landed 2026-06-30; see section 6. Next: wire `run_sequential` with a `ParquetTransactionalSink` into the platform job runner so production FK jobs take this path without caller-side opt-in.
+**Status:** Phase 0 (measurement) + Option 2 (`run_sequential`) + `TransactionalSink` + Option 1 (chunked FK self-masking, qualifying configs only) all landed 2026-06-30; see section 6. Option 4's Phase 0 (masking kernel, FK match-key normalization), Phase 1 Sprints 1.1-1.4 (admission gate, parent key relation, child left join, graph-wide transactional staged output), and Sprint 1.5 (memory + throughput probe, section 6.2) also landed 2026-06-30, dennis-approved, gates green, unmerged, opt-in only (`PolarsExecutionAdapter(enable_out_of_core=False)` by default); see `relationships-out-of-core-sprints.md` §8. S1.5 measured the pre-streaming route and found it did not yet deliver a memory win (section 6.2, historical record). The capability track (Sprints C1-C5, 2026-07-01/02) has since closed that: the route streams end to end (bounded input batches via `LazySource`, DuckDB-owned spill, batch-streamed sink output), takes a host-sized memory budget (C4, `out_of_core/_budget.py`), and **the C5 capability proof is measured and pinned: at a 1,024 MB hard memory cap, the out-of-core route completes a 400k-rows/table FK chain that OOMs both full-frame `run` and `run_sequential`** (section 6.3). Next: wire `run_sequential` with a `ParquetTransactionalSink` into the platform job runner so production FK jobs take this path without caller-side opt-in. Option 1 is a narrow first cut: see the Option 1 section in §2 for what qualifies and what is intentionally rejected. Whole-stack FK-RI memory-scaling merge stays gated on engine PR #22.
 **Audience:** Engine tech lead / PO.
 **Scope:** How to mask FK-related tables (referential integrity preserved) without holding every table full-frame in RAM.
 **Review:** Adversarially reviewed (Dennis, 2 BLOCKER / 3 MAJOR / 3 MINOR). All findings folded in below; the §1 lever and Option 1 were corrected substantially, and the §4 sequencing was flipped to ship Option 2 first. See §5 for the review trail.
+**Option 4 sprint plan:** See [Option 4 Sprint Plan: Out-of-Core Relationship Backend](relationships-out-of-core-sprints.md) for the implementation breakdown.
 
 ---
 
@@ -11,11 +12,16 @@
 
 When a config declares `relationships`, the engine takes its most memory-hungry path:
 
-- **Chunked/streaming execution is rejected outright** for any config with relationships
-  (`src/decoy_engine/execution/_chunked.py:155-164`, error `chunked_relationships_unsupported`).
-  The code's stated rationale, "resolving a child key reads the parent's complete source->masked
-  map, which needs the whole parent frame", is itself slightly overstated: it needs only the
-  parent **key** columns, not the whole frame (see §1.2).
+- **Chunked/streaming execution was originally rejected outright** for any config with
+  relationships, on the rationale that "resolving a child key reads the parent's complete
+  source->masked map, which needs the whole parent frame". That rationale is overstated: it needs
+  only the parent **key** columns, not the whole frame (see §1.2). That blanket ban no longer
+  exists. Option 1 (landed 2026-06-30) admits qualifying FK edges to the chunked path via
+  `gate_fk_child_edges` (`src/decoy_engine/execution/_chunked_fk.py`, called from
+  `_chunked.py:189`); see the Option 1 section in §2 for the four admission conditions. Configs that
+  do not qualify still take the full-frame path below, and a non-value-keyed FK key column (e.g.
+  `shuffle`) hard-errors `strategy_not_chunk_safe` (`_chunked.py:206`). The full-frame memory cost
+  that remains for non-qualifying configs is what Options 2 and 4 attack.
 - **All tables load full-frame, simultaneously.** The adapter builds `frames` from a
   **fully-materialized** `sources: Mapping[str, pa.Table]` handed in by the caller
   (`_pandas_adapter.py:157`), masks in FK-topological order, and only converts back to Arrow at
@@ -144,6 +150,49 @@ To be correct, Option 1 must:
 **Effort.** Small-Medium (S/M) once the gate + orphan decision are settled (the original "S" was
 optimistic). **Memory ceiling after:** one chunk per admitted table.
 
+**LANDED (2026-06-30).** `gate_fk_child_edges` in
+`src/decoy_engine/execution/_chunked_fk.py` is called from
+`check_chunked_compatibility` when the config declares relationships. An FK
+edge where the current table is the child is admitted for chunked self-masking
+when all four conditions hold. Any failure raises `PlanCompileError` (fail
+closed; the blanket ban stays for non-qualifying configs):
+
+- **(a)** Parent key strategy is in `CHUNK_SAFE_STRATEGIES` (value-keyed,
+  deterministic). Error code: `chunked_fk_parent_strategy_not_safe`.
+- **(b)** Child FK column explicitly declares the same value-keyed strategy.
+  The by-reference model (no child strategy) would stream raw FK keys.
+  Error codes: `chunked_fk_child_strategy_missing`,
+  `chunked_fk_child_strategy_mismatch`.
+- **(c)** Namespace consistency, conditioned on strategy type.
+  For **namespace-requiring strategies** (`hash`, `fpe`, `date_shift`): parent
+  column must declare a namespace; child must declare the same namespace; if the
+  relationship entry also names a namespace it must agree with the parent-column
+  namespace. Error codes: `chunked_fk_parent_namespace_missing`,
+  `chunked_fk_parent_namespace_mismatch`, `chunked_fk_child_namespace_missing`,
+  `chunked_fk_child_namespace_mismatch`.
+  For **namespace-agnostic strategies** (`redact`, `truncate`, `text_redact`,
+  `bucketize`, `passthrough`): namespace sub-checks are skipped entirely.
+  These strategies are pure(value, config) and byte-identical regardless of
+  whether a namespace is declared; imposing namespace checks would over-reject
+  configs the full-frame path accepts without restriction.
+- **(d)** `orphan_policy` is `remap`. REMAP mints orphan values via
+  `parent_strategy(seed, namespace, orphan_key)`, byte-identical to self-masking
+  the orphan key under the same strategy and namespace. `warn`, `fail`, and
+  `preserve` require the full parent key set resident.
+  Error code: `chunked_fk_orphan_policy_not_remap`.
+
+**Intentionally not admitted (first cut):** composite FK edges
+(`chunked_fk_composite_unsupported`); any orphan policy other than `remap`;
+parent key strategies outside `CHUNK_SAFE_STRATEGIES`; child columns without
+an explicit strategy or namespace declaration. Tables that are FK parents but
+not children are not gated: the parent chunks normally.
+
+Implementation note: admitted FK child columns are treated as scalar columns
+in the chunked pass. The runner passes an empty `RelationshipGraph`; no
+parent-map lookup occurs. Byte-parity with the full-frame path follows from
+the pure-function property of chunk-safe strategies: `derive(seed, namespace,
+value)` is independent of row position and chunk boundary.
+
 ---
 
 ### Option 2: Sequential table processing with eviction  *(recommended first step)*
@@ -271,7 +320,7 @@ not a footnote.
 
 | # | Option | Effort | Orphan policies kept | Memory ceiling | Key caveat |
 |---|--------|--------|----------------------|----------------|-----------|
-| 1 | Streaming FK children (self-mask) | S/M | structurally-no-orphan only (NOT `preserve`) | one chunk / table | behavioral change + PII-leak/orphan footguns |
+| 1 | Streaming FK children (self-mask) **[landed]** | S/M | `remap` only (self-mask and REMAP are byte-identical) | one chunk / table | narrow first cut: deterministic value-keyed parent key, child declares same strategy and namespace (namespace-requiring strategies), single-column edges only, composite and non-`remap` policies rejected |
 | 2 | Sequential + eviction | M | all | largest table + key maps | changes adapter input contract / `run()` signature |
 | 3 | Spill key map to disk | M/L | all | one chunk + map page-cache | KV dep + int/float key normalization |
 | 4 | Out-of-core backend | L/XL | all *(orphan lowering unproven)* | engine-managed (unbounded) | byte-identical strategy lowering required |
@@ -407,6 +456,197 @@ staging directory before any data reaches the target. A pre-existing non-empty t
 to fail closed. The remaining step before production use is platform job-runner wiring: automatically
 routing FK jobs through `run_sequential` with a `ParquetTransactionalSink` without caller-side
 opt-in.
+
+### 6.2 Option 4 out-of-core (S1.4/S1.5 memory and throughput probe, 2026-06-30)
+
+`run_fk_out_of_core` with a `ParquetTransactionalSink` (Sprint 1.4: each masked table is staged to
+Parquet and evicted from the Python `outputs` accumulator right after its outgoing parent-key
+relations are built) measured against `full` (`PandasExecutionAdapter.run`) and `sequential`
+(`run_sequential`, section 6.1) on the same 3-table chain, via `scripts/fk_memory_probe.py --mode
+out_of_core` (same 8 GB Linux box, Py 3.11, pyarrow 24, DuckDB; width 16, `preserve`, 2% orphans,
+one fresh subprocess per tier for a clean RSS high-water mark):
+
+| rows/table | full peak RSS | sequential peak RSS | out-of-core peak RSS | out-of-core vs full | out-of-core scratch disk (peak) | out-of-core mask time | parity |
+|---|---|---|---|---|---|---|---|
+| 250k | 984 MB | 735 MB | 965 MB | -1.9% | 34 MB | 69.9 s | ok |
+| 500k | 1,813 MB | 1,306 MB | 1,696 MB | -6.5% | 69 MB | 134.8 s | ok |
+| 1M | 3,418 MB | 2,479 MB | 3,028 MB | -11.4% | 137 MB | 268.6 s | ok |
+
+All three modes were measured in one session on the same 8 GB Linux box for this table, one fresh
+subprocess per cell (mask time in `mask_s`, for comparison: full 50.3 / 101.3 / 208.0 s, sequential
+52.5 / 99.4 / 207.7 s across 250k/500k/1M). **"Scratch disk" is the runner's transient working set
+only**: the FK-key-column parent-key relation files and DuckDB spill staged under the run's
+`temp_dir` (`runner/relations`, `runner/joins`), which `run_fk_out_of_core` wipes in its `finally`
+block. It is sampled by a background thread that walks only that scratch root every 100ms and keeps
+the max (a polled high-water mark, not an exact peak: a short write/delete burst between two samples
+can be missed). It deliberately **excludes** the `ParquetTransactionalSink`'s committed full-width
+output (the deliverable, reported separately by the probe as `committed_output_mb`), which is not
+temp disk; an earlier revision of this probe rooted the sampler at the whole work directory and so
+mis-reported the committed output size as "temp disk". The scratch figure is small because only FK
+key columns, never payload, are staged. Parity is checked by reading back only the FK key columns
+(not the full `width`-wide table) from the committed Parquet output, building the parent map over the
+**full** parent key column, and resolving a 2,000-row child sample (~1,959 real FK links per tier,
+not a vacuous pass) via `_verify_fk_sample`, so closing out the measurement does not reintroduce the
+cost the route exists to avoid.
+
+**The yardstick (objective correction, 2026-07-01).** Option 4's goal is *capability*: not
+OOMing on relational tables too large for RAM, spilling to disk sized to the host. It is not a lower
+peak RSS at scales that already fit in memory. The peak-RSS deltas below are therefore *not* the verdict
+on Option 4; they are an in-RAM-scale side measurement. What they usefully prove is a **capability
+defect**: because `_relation.py`/`_join.py` still materialize whole key columns (and the runner takes
+a fully-resident `sources` dict), the route holds O(total rows) in RAM and would OOM at the very
+scales it exists to unlock: it does not yet have the out-of-core capability. Closing that (the
+"Capability track" in `relationships-out-of-core-sprints.md`) is the priority; making the route also
+*cheaper* than `run_sequential` is a deferred efficiency sprint. Read the numbers below in that light.
+
+**Honest read of these numbers (an in-RAM-scale measurement, not the capability verdict).**
+
+- **Out-of-core peak RSS is barely below full-frame, and clearly above sequential, across the whole
+  measured range.** At 250k it is statistically a wash (-1.9%); the gap only opens to a still-modest
+  -11.4% at 1M. Sequential beats full-frame by 25-28% at every tier (section 6.1) using a much simpler
+  mechanism (no DuckDB, no on-disk relation/join staging) and stays meaningfully ahead of out-of-core
+  at every measured tier. **At the current S1.4 state, out-of-core is not the memory win its Phase 1
+  framing implies; Option 2 is still the better default for the row counts measured here.**
+- **Below 250k rows/table, out-of-core is consistently *worse* than full-frame, not better**, e.g. at
+  5,000 rows/table: full-frame 166 MB vs out-of-core 215 MB (+30%); at 50,000: 315 MB vs 360 MB
+  (+14%); at 100,000: 477 MB vs 530 MB (+11%). A small/fixed per-run DuckDB connection overhead
+  (`out_of_core/_duckdb.py`, opened once per FK edge for the relation build and again per edge for
+  the join) dominates at small scale, before eviction savings have anything to amortize against.
+- **Root cause, traced to the code, matches the sprint plan's own Tier-1 risk-register prediction**
+  ("no Python structure may be sized by total key cardinality", section 706 of
+  `relationships-out-of-core-sprints.md`). `_relation.py::build_parent_key_relation_from_tables` calls
+  `.to_pylist()` on every parent key column and builds a Python list of `(row_nr, join_key,
+  masked_key)` tuples sized by the **whole parent table**, then hands it to DuckDB as a staging table.
+  `_join.py::mask_child_fk` does the same for the child: `.to_pylist()` on every FK column, a Python
+  list of join keys sized by the **whole child table**, and a Python list-of-lists accumulator
+  (`output_fk`) walked row-by-row in a Python loop after the join. So the per-edge cost is, in
+  practice, "one table's columns resident as Arrow, the same columns resident again as Python lists,
+  plus DuckDB's own copy for the join", not "one bounded chunk". `run_fk_out_of_core` does evict a
+  *finished* table's `outputs` entry once its sink write completes (S1.4's actual contribution), which
+  is why the route still beats full-frame's "every table and every output resident together" cost at
+  scale, but it has not yet realized the "DuckDB owns the spill, Python never holds anything sized by
+  cardinality" architecture this doc and the sprint plan describe. That remains future work (Phase 2's
+  topology/strategy sprints and beyond), not something S1.5 was scoped to fix; this section exists to
+  measure and report it accurately rather than assume the architecture doc's intent was already true.
+- **Out-of-core is also slower than both other paths at every tier** (e.g. 1M: 268.6s vs full-frame's
+  208.0s, +29%, and sequential's 207.7s, +29%), consistent with the same root cause: two DuckDB
+  connections per FK edge, plus duplicate Arrow-to-Python-to-Arrow conversions that full-frame and
+  sequential do not pay.
+- **Scratch disk is small and scales with key cardinality, not payload**: 34 MB to 137 MB across
+  250k-1M, because only FK key columns (the relation files) and DuckDB spill are staged, never the
+  payload. The committed full-width output is a separate, larger footprint reported as
+  `committed_output_mb`, not counted in the scratch column above.
+
+**1M-tier memory budget and 10M disposition.** The Sprint 1.5 acceptance criterion ("out-of-core path
+stays under a documented memory budget on the 1M tier") is set at **4,000 MB peak RSS** for this
+3-table, width-16, 2%-orphan chain (measured 3,028 MB, ~32% headroom for cross-box variance). 10M
+rows/table was **skipped (time)**: the 1M out-of-core tier took 268.6s, well over the sprint brief's
+"comfortably under ~2 min" bar for 10M to be opt-in, and the per-1k-rows slope (2.66-2.92 MB/1k rows,
+below full-frame's 3.2-3.3 MB/1k) projects a 10M peak RSS of roughly **28 GB**, in the same range as
+full-frame's already-documented ~33 GB extrapolation (section 6), i.e. not yet a materially different
+ceiling. Wall time at the measured ~0.27 s/1k-rows slope projects to **roughly 45 minutes** at 10M,
+which would itself need a longer, explicitly-scheduled run, not a default sweep tier. Both projections
+are linear extrapolations from the 250k-1M data above, not measurements.
+
+**Sentinel test.** `tests/perf/test_out_of_core_memory_sentinel.py` adds a fast, default-gate
+(`perf`-marked) sentinel at 5,000 rows/table asserting (a) out-of-core peak RSS stays under a
+documented 450 MB budget (measured ~215 MB, ~2x headroom), (b) out-of-core does not regress to
+more than 2x full-frame's peak RSS at that tier (measured ratio ~1.3x; per the finding above,
+out-of-core is *not* asserted to be below full-frame at this small scale, because it measurably is
+not), and (c) the parity sample resolved real FK links (`fk_rows_checked > 0`), so a future
+fixture/key-layout change cannot let the parity assertion pass vacuously. A separate
+`benchmark`-marked (opt-in, `pytest -m benchmark`, excluded from the default gate)
+test proves the real win at the tier it actually appears, 1M rows/table. *Post-C3 re-measurement
+(2026-07-02): with the probe streaming its inputs (section 6.3), the 5k tier measures ~224 MB
+out-of-core vs ~196 MB full-frame (ratio ~1.15, down from ~1.3); the 450 MB budget and 2.0x bound
+were re-validated against those numbers and kept.*
+
+### 6.3 Option 4 capability proof (Sprints C4/C5, 2026-07-02)
+
+The capability the track exists for, now measured instead of argued: **at a hard per-process memory
+cap, the out-of-core route completes a relational FK job that OOMs both in-memory routes.** Runner:
+`scripts/fk_memory_probe.py --capability` (one shared chunk-written Parquet source chain, then each
+route in a fresh capped subprocess); pinned by the opt-in `benchmark`-marked test
+`test_out_of_core_completes_where_in_memory_routes_oom` in
+`tests/perf/test_out_of_core_memory_sentinel.py`.
+
+**What changed since 6.2 (which measured the pre-streaming route):**
+
+- **C1-C3 (streaming).** The probe's `--mode out_of_core` now measures the real streaming shape:
+  sources are written to Parquet one bounded chunk at a time (`write_large_fk_chain`) and enter
+  `run_fk_out_of_core` as `LazySource`s, so no input table is ever whole-resident; output streams
+  batch-wise into the `ParquetTransactionalSink`. The 6.2 numbers (resident `sources` dict) stand as
+  the historical record.
+- **C4 (host-sized budget and spill knob).** `out_of_core/_budget.py::resolve_budget` turns one byte
+  budget (explicit, or a conservative 1/4 of detected host RAM; sysconf with a /proc/meminfo
+  fallback, floored at 64 MB) into the DuckDB `memory_limit` string plus a `batch_rows` for the
+  streaming passes (floored at 1,024, capped at the pinned 65,536 default, never sized by table
+  cardinality). `run_fk_out_of_core` accepts `batch_rows` (byte-transparent on output, pinned by
+  test) and `temp_disk_budget_bytes` (spill-footprint guard, checked at table boundaries, fails
+  closed with `out_of_core_temp_disk_exceeded` and aborts the sink).
+- **C5 (hard cap).** The probe gained `--mem-cap-mb` (worker applies `resource.setrlimit` before
+  running) and `--capability` (the three-route comparison). Under a cap, the out-of-core worker
+  derives its DuckDB `memory_limit` and `batch_rows` from the cap via `resolve_budget` (cap/4 to
+  DuckDB, because the interpreter and Arrow batch buffers live outside DuckDB's accounting).
+
+**Cap mechanics (measured on this box, both rlimits tried per the sprint brief).** `RLIMIT_AS`
+proved too blunt: pyarrow's default allocator plus glibc's per-thread arenas reserve ~2.9-3.3 GB of
+address space at a ~400 MB RSS, so an AS cap trips on reservations, not usage. `RLIMIT_DATA`
+(Linux >= 4.7: brk plus private anonymous mmaps) tracks real allocation once the allocators are
+pinned; unpinned, it also counts the reservations (a 400 MB DATA cap aborted inside DuckDB thread
+creation). The capability driver therefore runs every capped worker with
+`ARROW_DEFAULT_MEMORY_POOL=system` and `MALLOC_ARENA_MAX=2` (same environment for all three routes,
+so the comparison stays fair) and caps `RLIMIT_DATA`. Capped workers report a controlled
+`completed: false` on `MemoryError`/`ArrowMemoryError`/DuckDB `OutOfMemoryException`/`ENOMEM`, plus
+two message-shaped signatures observed only under a cap and never on an uncapped control run of the
+same job: OpenSSL's EVP ctx-copy failure and Arrow's value-wrap allocation failure
+(`ArrowException: Unknown error: Wrapping <value> failed`, emitted by arrow-to-pandas when a single
+value's PyObject allocation returns NULL under the rlimit; the marker matches that full emission
+shape, never a bare `Unknown error`). The driver classifies any other crash as `failed`, never as
+the expected OOM, so a genuine bug (corrupt input, coded engine error, bad plan) cannot masquerade
+as the baseline result; both directions are pinned by
+`tests/unit/test_fk_memory_probe_classifier.py`.
+
+**Operating point (tuned on the 8 GB dev box, 2026-07-02).** 400,000 rows/table x 3 tables
+(parent to child to grandchild), width 16, 2% orphans, `preserve`, shared source chain 58.6 MB
+Parquet on disk, **cap 1,024 MB RLIMIT_DATA per worker**. Chosen because the in-memory routes'
+resident working set at 400k (~1.4-1.5 GB full-frame, ~1.1+ GB sequential, extrapolated from the
+section 6/6.1 slopes) sits comfortably above the cap while the streaming route's measured peak
+(~430 MB) sits comfortably below it, giving >= ~40% margin on both sides of the cap so the outcome
+is reliable, not knife-edge: 3/3 capability runs at this point returned PROVEN. 300,000 rows/table
+at the same cap is NOT a pinned point: the baselines still die of memory there, but the death site
+varies run to run (measured on the full baseline: one run raised the Arrow value-wrap shape above,
+two aborted in C++ `bad_alloc`; the same job uncapped completes at ~1,195 MB peak RSS with no such
+message, and the pinned 400k point dies as a clean `MemoryError`/`ArrowMemoryError`), so a death
+site the classifier does not recognize can flake a 300k run RED even though nothing is wrong. The
+classifier fails closed by design; the operating point, not the marker list, is what carries the
+reliability guarantee.
+
+| route | outcome at the 1,024 MB cap | peak RSS at death/completion | detail |
+|---|---|---|---|
+| full (`PandasExecutionAdapter.run`) | **OOM** (`MemoryError`) | ~797 MB (died) | whole-chain resident load + mask |
+| sequential (`run_sequential`) | **OOM** (`ArrowMemoryError: malloc ... failed`) | ~764 MB (died) | single-table residency still exceeds the cap at this width |
+| out_of_core (`run_fk_out_of_core`) | **completed** | **~427 MB** | parity ok on both FK edges, 1,960 links resolved per edge (non-vacuous), temp-disk peak 106 MB, committed output 240 MB, DuckDB `memory_limit` 256 MB, `batch_rows` 8,192, mask ~78 s |
+
+Peak RSS is the worker's own `VmHWM`; the probe previously read `getrusage().ru_maxrss`, which on
+Linux survives execve and so reports the PARENT's high-water mark when the parent is bigger than
+the child (measured: a worker of a 600 MB parent reported ~610 MB vs a true ~9 MB). The
+out-of-core peak varies ~7 MB across pinned-point runs (424.3-431.0 MB measured).
+
+The parity close-out itself is memory-bounded (a head-window check valid for the chunk-written
+fixture's positional keys, `O(sample)` not `O(rows)`) and covers BOTH FK edges: parent->child, and
+child->grandchild, whose parent relation the runner builds from the child's already-rewritten
+staged keys, so a cap- or spill-specific break of that rewrite cannot hide behind a healthy first
+edge. The proof requires real resolved links on each edge separately. An earlier full-parent-map
+close-out was itself the largest allocation of the capped run and OOMed the otherwise-successful
+route, which would have defeated the proof from inside the measurement.
+
+**Read of the result.** This is the Option 4 acceptance: out-of-core is demonstrably the *only*
+route that completes the capped workload, with FK integrity verified on the committed output. The
+peak-RSS efficiency story at in-RAM scales (6.2) is unchanged in spirit: below ~250k rows/table the
+fixed DuckDB per-edge overhead still makes out-of-core cost more than full-frame (~1.15x at 5k,
+re-measured post-C3), and closing that overhead remains the deferred efficiency sprint. Capability
+first, efficiency later, per the track's objective.
 
 ---
 
