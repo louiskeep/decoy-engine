@@ -128,13 +128,21 @@ def mask_child_fk(
                 LEFT JOIN parent_keys p
                   ON c.__decoy_fk_join_key = p.{_q(parent_relation.join_key_column)}
                 WHERE c.__decoy_fk_join_key IS NOT NULL
-                  AND p.{_q(parent_relation.masked_key_columns[0])} IS NULL
+                  AND p.{_q(parent_relation.join_key_column)} IS NULL
                 """
             ).fetchone()[0]
             if fail_count:
                 raise orphan_fk_error(edge, fail_count)
         select_list = [f"c.{_q('__decoy_row_nr')}", f"c.{_q('__decoy_fk_join_key')}"]
         select_list += [f"c.{_q(f'__decoy_src_{idx}')}" for idx in range(len(edge.child_columns))]
+        # Explicit LEFT JOIN match indicator: parent_keys only ever holds rows
+        # whose join key was non-null (null-key parent rows never enter the
+        # relation, see _relation.py), so p.join_key_column is NULL if and
+        # only if the join found no parent row. The masked value itself must
+        # NOT be used for this (a legitimate mask, e.g. redact, can produce
+        # null for a matched parent), or a matched-but-null-masked child would
+        # be misclassified as an orphan.
+        select_list.append(f"p.{_q(parent_relation.join_key_column)} AS {_q('__decoy_parent_match')}")
         for idx, masked_column in enumerate(parent_relation.masked_key_columns):
             select_list.append(f"p.{_q(masked_column)} AS {_q(f'__decoy_parent_masked_{idx}')}")
         query = f"""
@@ -259,13 +267,19 @@ def _append_output_batch(
     masked_components = [
         batch.column(f"__decoy_parent_masked_{idx}").to_pylist() for idx in range(n_components)
     ]
+    # Whether the LEFT JOIN found a parent row, NOT whether the masked value
+    # is null: a parent key that legitimately masks to null (e.g. redact
+    # producing null, or an upstream FK rewrite yielding null) is still a
+    # match, and must resolve to that masked (null) value rather than being
+    # treated as an orphan.
+    matched = batch.column("__decoy_parent_match").to_pylist()
     orphans = 0
     out: list[list[object]] = [[] for _ in range(n_components)]
     for row, join_key in enumerate(join_keys):
         if join_key is None:
             for component in out:
                 component.append(None)
-        elif masked_components[0][row] is not None:
+        elif matched[row] is not None:
             for idx, component in enumerate(out):
                 component.append(masked_components[idx][row])
         else:

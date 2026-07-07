@@ -21,15 +21,20 @@ from types import SimpleNamespace
 from typing import Any
 
 import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
 from decoy_engine.execution import ExecutionError
+from decoy_engine.execution._fk_keys import fk_join_key_tuple
 from decoy_engine.execution.out_of_core import _batch_join as batch_join_mod
 from decoy_engine.execution.out_of_core import _runner as runner_mod
 from decoy_engine.execution.out_of_core._batch_join import ChildFkBatchJoiner
 from decoy_engine.execution.out_of_core._join import mask_child_fk
 from decoy_engine.execution.out_of_core._mask import mask_table
-from decoy_engine.execution.out_of_core._relation import build_parent_key_relation_from_tables
+from decoy_engine.execution.out_of_core._relation import (
+    ParentKeyRelation,
+    build_parent_key_relation_from_tables,
+)
 from decoy_engine.plan._types import ColumnSeed, GroupSeed, SeedEnvelope, TableSeed
 from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge
 
@@ -455,6 +460,73 @@ def test_remap_masks_per_batch_not_per_child(tmp_path, monkeypatch) -> None:
 
     assert lengths
     assert max(lengths) <= _BATCH
+
+
+def _hand_built_relation(tmp_path) -> ParentKeyRelation:
+    """A parent relation with ONE key masking to null and the other masking
+    to a normal string, built directly (not through `mask_table`) so the
+    masked-key column is string-typed with a null entry rather than an
+    all-null column. An all-null masked column hits an unrelated
+    DuckDB/Parquet round-trip type-inference quirk in `_resolve_output_types`
+    (an all-null Arrow column's on-disk type is not guaranteed to read back
+    as null); using a mixed column isolates the P1 match-vs-orphan sentinel
+    behavior under test from that orthogonal concern.
+    """
+    join_keys = [fk_join_key_tuple(("c0",)), fk_join_key_tuple(("c1",))]
+    masked = pa.array([None, "MASKED_C1"], type=pa.string())
+    parent_table = pa.table({"__decoy_fk_join_key": join_keys, "__decoy_masked_key": masked})
+    rel_path = tmp_path / "relation.parquet"
+    rel_path.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(parent_table, rel_path)
+    return ParentKeyRelation(path=rel_path)
+
+
+def test_masked_null_parent_key_is_not_treated_as_orphan(tmp_path) -> None:
+    """P1 regression (shared _append_output_batch with C2's mask_child_fk):
+    a parent key that legitimately masks to null (e.g. redact with
+    redact_with=None) must resolve a MATCHED child row to that masked null
+    value, not fall through to the orphan branch. Before the fix, the batch
+    joiner's match check used the masked column's nullness, so a
+    matched-but-null-masked row leaked the raw child key under PRESERVE/WARN.
+    """
+    edge = _edge(OrphanPolicy.PRESERVE)
+    relation = _hand_built_relation(tmp_path / "rel")
+    child = pa.table({"customer_id": ["c0", "orphan1", "c1"], "amount": [1, 2, 3]})
+
+    with ChildFkBatchJoiner(
+        edge=edge,
+        parent_relation=relation,
+        child_key_types=(pa.string(),),
+        temp_dir=tmp_path / "join",
+    ) as joiner:
+        out, orphans = joiner.join_batch(child.to_batches()[0])
+
+    result = pa.Table.from_batches([out])
+    assert result.column("customer_id").to_pylist() == [None, "orphan1", "MASKED_C1"]
+    assert orphans == 1
+
+
+def test_masked_null_parent_key_fail_policy_does_not_false_positive(tmp_path) -> None:
+    """Same repro under FAIL: every child key matches a parent row (one of
+    whose masked values happens to be null), so FAIL must not raise. Before
+    the fix, the anti-join count used the masked column's nullness, so the
+    matched-but-null-masked row was counted as an orphan and raised falsely.
+    """
+    edge = _edge(OrphanPolicy.FAIL)
+    relation = _hand_built_relation(tmp_path / "rel")
+    child = pa.table({"customer_id": ["c0", "c1", "c0"], "amount": [1, 2, 3]})
+
+    with ChildFkBatchJoiner(
+        edge=edge,
+        parent_relation=relation,
+        child_key_types=(pa.string(),),
+        temp_dir=tmp_path / "join",
+    ) as joiner:
+        out, orphans = joiner.join_batch(child.to_batches()[0])
+
+    result = pa.Table.from_batches([out])
+    assert result.column("customer_id").to_pylist() == [None, "MASKED_C1", None]
+    assert orphans == 0
 
 
 def test_empty_batch_yields_empty_output_with_fixed_type(tmp_path) -> None:

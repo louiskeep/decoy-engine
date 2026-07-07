@@ -391,3 +391,95 @@ def test_cross_batch_orphans_fail_with_total_count(tmp_path, monkeypatch) -> Non
 
     assert exc.value.code == "orphan_fk_violation"
     assert "3 orphan FK row(s)" in str(exc.value)
+
+
+def _redact_to_null_plan() -> Any:
+    """A parent key strategy that legitimately masks every non-null value to
+    null (redact with redact_with=None), so a MATCHED child row's masked
+    output is null too. This is the P1 masked-null-sentinel repro shape: the
+    join must not use the masked value's nullness to decide orphan vs matched.
+    """
+    redact_null = ColumnSeed(
+        namespace=None,
+        strategy="redact",
+        provider="redact",
+        backend_type="decoy_native",
+        backend_version="v",
+        cardinality_mode="reuse",
+        deterministic=False,
+        provider_config=(("redact_with", None),),
+        coherent_with=(),
+    )
+    return SimpleNamespace(
+        seed_envelope=SeedEnvelope(
+            job_seed=_SEED,
+            per_table=(
+                ("customers", TableSeed(per_column=(("customer_id", redact_null),), per_group=())),
+                ("orders", TableSeed(per_column=(("customer_id", redact_null),), per_group=())),
+            ),
+        )
+    )
+
+
+def test_masked_null_parent_key_is_not_treated_as_orphan(tmp_path) -> None:
+    """P1 regression: a parent key that masks to null (e.g. redact producing
+    null) must still resolve a matched child row to that masked null value,
+    not be misclassified as an orphan. Before the fix, `_append_output_batch`
+    used `masked_components[0][row] is not None` as the match indicator, so
+    every matched-but-null-masked row fell through to the orphan branch:
+    under WARN/PRESERVE it published the RAW child FK key (a leak), and under
+    FAIL it inflated the orphan count for rows that actually matched.
+    """
+    plan = _redact_to_null_plan()
+    edge = _edge(OrphanPolicy.PRESERVE)
+    parent = pa.table({"customer_id": ["c0", "c1"]})
+    # c0/c1 match (and mask to null); "orphan1" has no parent row at all.
+    child = pa.table({"customer_id": ["c0", "orphan1", "c1"], "amount": [1, 2, 3]})
+    relation = build_parent_key_relation(plan=plan, parent=parent, edge=edge, temp_dir=tmp_path / "rel")
+
+    out, warnings = join_mod.mask_child_fk(
+        child=child, edge=edge, parent_relation=relation, temp_dir=tmp_path / "join"
+    )
+
+    # Matched rows resolve to the masked (null) parent value, NOT the raw
+    # child key; the true orphan keeps its source key under PRESERVE.
+    assert out.column("customer_id").to_pylist() == [None, "orphan1", None]
+    assert warnings == ()
+
+
+def test_masked_null_parent_key_fail_policy_does_not_false_positive(tmp_path) -> None:
+    """Same repro under FAIL: with every child key actually matching a parent
+    row (whose masked value happens to be null), FAIL must not raise. Before
+    the fix, the FAIL anti-join count used the masked column's nullness, so
+    every matched-but-null-masked row was counted as an orphan and raised.
+    """
+    plan = _redact_to_null_plan()
+    edge = _edge(OrphanPolicy.FAIL)
+    parent = pa.table({"customer_id": ["c0", "c1"]})
+    child = pa.table({"customer_id": ["c0", "c1", "c0"], "amount": [1, 2, 3]})
+    relation = build_parent_key_relation(plan=plan, parent=parent, edge=edge, temp_dir=tmp_path / "rel")
+
+    out, warnings = join_mod.mask_child_fk(
+        child=child, edge=edge, parent_relation=relation, temp_dir=tmp_path / "join"
+    )
+
+    assert out.column("customer_id").to_pylist() == [None, None, None]
+    assert warnings == ()
+
+
+def test_masked_null_parent_key_warn_counts_only_true_orphans(tmp_path) -> None:
+    """WARN's orphan count must reflect only the genuine orphan, not the
+    matched-but-null-masked rows."""
+    plan = _redact_to_null_plan()
+    edge = _edge(OrphanPolicy.WARN)
+    parent = pa.table({"customer_id": ["c0", "c1"]})
+    child = pa.table({"customer_id": ["c0", "orphan1", "c1"], "amount": [1, 2, 3]})
+    relation = build_parent_key_relation(plan=plan, parent=parent, edge=edge, temp_dir=tmp_path / "rel")
+
+    out, warnings = join_mod.mask_child_fk(
+        child=child, edge=edge, parent_relation=relation, temp_dir=tmp_path / "join"
+    )
+
+    assert out.column("customer_id").to_pylist() == [None, "orphan1", None]
+    assert len(warnings) == 1
+    assert warnings[0].detail["orphan_rows"] == 1

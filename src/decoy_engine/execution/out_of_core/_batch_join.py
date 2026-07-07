@@ -222,6 +222,14 @@ class ChildFkBatchJoiner:
                 self._raise_on_batch_orphans()
             select_list = [f"c.{_q('__decoy_row_nr')}", f"c.{_q('__decoy_fk_join_key')}"]
             select_list += [f"c.{_q(f'__decoy_src_{idx}')}" for idx in range(n_components)]
+            # Explicit LEFT JOIN match indicator, mirroring _join.py: the
+            # relation only ever holds non-null join keys, so p's join-key
+            # column is NULL iff no parent row matched. Using the masked
+            # value's nullness instead would misclassify a matched parent
+            # whose key legitimately masks to null as an orphan.
+            select_list.append(
+                f"p.{_q(self._relation.join_key_column)} AS {_q('__decoy_parent_match')}"
+            )
             for idx, masked_column in enumerate(self._relation.masked_key_columns):
                 select_list.append(f"p.{_q(masked_column)} AS {_q(f'__decoy_parent_masked_{idx}')}")
             query = f"""
@@ -287,7 +295,7 @@ class ChildFkBatchJoiner:
             LEFT JOIN parent_keys p
               ON c.__decoy_fk_join_key = p.{_q(self._relation.join_key_column)}
             WHERE c.__decoy_fk_join_key IS NOT NULL
-              AND p.{_q(self._relation.masked_key_columns[0])} IS NULL
+              AND p.{_q(self._relation.join_key_column)} IS NULL
             """
         ).fetchone()[0]
         return int(count)
