@@ -944,6 +944,82 @@ def test_check_out_of_core_compatibility_accepts_fully_covered_composite_group()
     assert result.accepted
 
 
+def _self_referential_plan() -> Any:
+    return SimpleNamespace(
+        seed_envelope=SeedEnvelope(
+            job_seed=_SEED,
+            per_table=(
+                (
+                    "employees",
+                    TableSeed(
+                        per_column=(
+                            ("id", _hash_col("emp")),
+                            ("manager_id", _strategy_col("passthrough")),
+                        ),
+                        per_group=(),
+                    ),
+                ),
+            ),
+        )
+    )
+
+
+def test_check_out_of_core_compatibility_rejects_self_referential_fk() -> None:
+    """Codex round-4 Finding B regression test.
+
+    A self-referential edge (same table both ends, e.g. employees.id ->
+    employees.manager_id) makes the table its own dependency in
+    `out_of_core/_runner.py::_table_order`, which sequences whole TABLES (not
+    columns), so it always raises `out_of_core_relationship_cycle` -- even
+    though the full-frame oracle handles this shape natively (its ordering is
+    per-COLUMN work node, so `id` and `manager_id` are different nodes with no
+    cycle). The gate must reject this fail-closed so the job falls back to
+    full-frame instead of the out-of-core route crashing on an admitted
+    config.
+    """
+    plan = _self_referential_plan()
+    edge = _rel("employees", "id", "employees", "manager_id", "emp", OrphanPolicy.PRESERVE)
+    graph = RelationshipGraph(edges=(edge,), ordering=())
+    work = order_work(build_work_list(plan, _REG), graph)
+
+    result = check_out_of_core_compatibility(plan, work, graph)
+
+    assert not result.accepted
+    assert "out_of_core_self_referential_fk_unsupported" in {r.code for r in result.rejections}
+
+
+def test_run_fk_out_of_core_self_referential_fk_fails_closed(tmp_path) -> None:
+    """The gate rejection above must actually stop `run_fk_out_of_core` (not
+    just the standalone gate check) with the same fail-closed code, on a
+    config the full-frame oracle successfully runs."""
+    plan = _self_referential_plan()
+    edge = _rel("employees", "id", "employees", "manager_id", "emp", OrphanPolicy.PRESERVE)
+    graph = RelationshipGraph(edges=(edge,), ordering=())
+    sources = {
+        "employees": pa.table(
+            {
+                "id": pa.array(["e1", "e2", "e3"], type=pa.string()),
+                "manager_id": pa.array([None, "e1", "e1"], type=pa.string()),
+            }
+        )
+    }
+
+    # The oracle handles the self-reference fine.
+    PandasExecutionAdapter().run(
+        plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
+    )
+
+    with pytest.raises(ExecutionError) as exc:
+        run_fk_out_of_core(
+            plan,
+            sources,
+            registry=_REG,
+            relationship_graph=graph,
+            temp_dir=tmp_path / "work",
+        )
+    assert exc.value.code == "out_of_core_self_referential_fk_unsupported"
+
+
 @pytest.mark.parametrize("policy", [OrphanPolicy.PRESERVE, OrphanPolicy.WARN])
 def test_run_fk_out_of_core_orphan_preserves_normalized_float_key(
     tmp_path, policy: OrphanPolicy

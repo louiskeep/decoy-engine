@@ -158,6 +158,23 @@ def _check_edge(
                 "parent and child FK column counts must match.",
             )
         )
+    if edge.parent_table == edge.child_table:
+        # `_table_order` (out_of_core/_runner.py) sequences whole TABLES, so a
+        # self-referential edge makes a table depend on itself and always
+        # raises `out_of_core_relationship_cycle` -- even though the column-
+        # level dependency (parent column masked before the FK column resolves
+        # against it) has no cycle and the full-frame oracle handles it fine.
+        # Reject fail-closed here instead of letting the route crash on an
+        # admitted config; the job falls back to full-frame, which supports
+        # this shape natively.
+        rejections.append(
+            OutOfCoreRejection(
+                "out_of_core_self_referential_fk_unsupported",
+                f"{edge.parent_table}: self-referential FK edges are not supported "
+                "out-of-core (table-level dependency ordering cannot express a "
+                "table depending on itself); falls back to full-frame.",
+            )
+        )
     for parent_column in edge.parent_columns:
         parent_seed = _column_seed(plan, edge.parent_table, parent_column)
         if parent_seed is None:

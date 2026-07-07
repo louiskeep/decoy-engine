@@ -661,3 +661,53 @@ def test_fail_policy_both_raise_same_code() -> None:
         _run_ooc(plan, sources, graph)
     assert oracle_exc.value.code == "orphan_fk_violation"
     assert ooc_exc.value.code == "orphan_fk_violation"
+
+
+def test_self_referential_fk_gate_rejects() -> None:
+    """Codex round-4 Finding B regression test.
+
+    A self-referential FK edge (same table both ends, e.g. employees.id ->
+    employees.manager_id) is a config the full-frame oracle handles natively
+    (its work-node ordering is per-COLUMN, so `id` and `manager_id` are
+    different, acyclic nodes) but the out-of-core route cannot: its
+    `_table_order` sequences whole TABLES, so a self-referential edge makes a
+    table its own dependency and always raised `out_of_core_relationship_cycle`
+    before this fix, on a config the gate had admitted. The gate must reject it
+    fail-closed instead, which `_assert_parity_or_faithful_rejection` accepts
+    as a "gate-rejected" outcome (the route never runs, so it can never emit
+    wrong output; the job falls back to full-frame).
+    """
+    ns = "ns_self"
+    id_seed = _seed_for("hash", ns)
+    mgr_seed = _seed_for("passthrough", ns)
+    plan = _plan(
+        (
+            (
+                "employees",
+                TableSeed(per_column=(("id", id_seed), ("manager_id", mgr_seed)), per_group=()),
+            ),
+        )
+    )
+    graph = RelationshipGraph(
+        edges=(
+            RelationshipEdge(
+                parent_table="employees",
+                parent_columns=("id",),
+                child_table="employees",
+                child_columns=("manager_id",),
+                namespace=ns,
+                orphan_policy=OrphanPolicy.PRESERVE,
+            ),
+        ),
+        ordering=(),
+    )
+    sources = {
+        "employees": pa.table(
+            {
+                "id": pa.array(["e1", "e2", "e3"], type=pa.string()),
+                "manager_id": pa.array([None, "e1", "e1"], type=pa.string()),
+            }
+        )
+    }
+    outcome = _assert_parity_or_faithful_rejection(plan, sources, graph, "self-referential")
+    assert outcome == "gate-rejected"
