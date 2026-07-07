@@ -70,23 +70,31 @@ def _fk_config(
     child_ns: str | None = "cust_ns",
     orphan_policy: str = "remap",
     rel_ns: str | None = "cust_ns",
+    parent_provider_config: dict | None = None,
+    child_provider_config: dict | None = None,
 ) -> dict:
     """Minimal two-table FK config with configurable gate knobs.
 
     Builds a customers(id) -> orders(customer_id) FK config. The parent
     always has `parent_strategy` + `parent_ns`. The child gets
     `child_strategy` + `child_ns` (either can be None to omit the field
-    and test missing-declaration rejections).
+    and test missing-declaration rejections). `parent_provider_config` /
+    `child_provider_config` let a test declare differing value-affecting
+    settings (e.g. redact_with, truncate length) under the same strategy name.
     """
     parent_col: dict = {"name": "id", "strategy": parent_strategy}
     if parent_ns is not None:
         parent_col["namespace"] = parent_ns
+    if parent_provider_config is not None:
+        parent_col["provider_config"] = parent_provider_config
 
     child_col: dict = {"name": "customer_id"}
     if child_strategy is not None:
         child_col["strategy"] = child_strategy
     if child_ns is not None:
         child_col["namespace"] = child_ns
+    if child_provider_config is not None:
+        child_col["provider_config"] = child_provider_config
 
     cfg: dict = {
         "global_settings": {"seed": 7},
@@ -427,6 +435,34 @@ class TestFailClosedRejections:
         with pytest.raises(PlanCompileError) as exc:
             check_chunked_compatibility(config, table="orders")
         assert exc.value.code == "chunked_fk_child_namespace_mismatch"
+
+    def test_child_provider_config_mismatch_rejected(self) -> None:
+        """P1: same strategy NAME is not enough. A parent redacting to 'P'
+        and a child redacting to 'C' would self-mask to different bytes even
+        though both declare strategy='redact', silently breaking FK RI.
+        """
+        config = _fk_config(
+            parent_strategy="redact",
+            child_strategy="redact",
+            parent_provider_config={"redact_with": "P"},
+            child_provider_config={"redact_with": "C"},
+        )
+        with pytest.raises(PlanCompileError) as exc:
+            check_chunked_compatibility(config, table="orders")
+        assert exc.value.code == "chunked_fk_child_config_mismatch"
+        # No PII in the error message body beyond the config values themselves.
+        assert "provider_config" in exc.value.message
+
+    def test_child_provider_config_matching_is_admitted(self) -> None:
+        """Same strategy name AND identical provider_config is admitted."""
+        config = _fk_config(
+            parent_strategy="redact",
+            child_strategy="redact",
+            parent_provider_config={"redact_with": "X"},
+            child_provider_config={"redact_with": "X"},
+        )
+        # Must not raise.
+        check_chunked_compatibility(config, table="orders")
 
     def test_composite_fk_rejected(self) -> None:
         """Composite FK (multi-column key) is out of scope for first cut."""

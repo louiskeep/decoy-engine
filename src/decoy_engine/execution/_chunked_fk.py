@@ -104,6 +104,11 @@ def gate_fk_child_edges(config: dict[str, Any], *, table: str) -> None:
             chunked_fk_child_strategy_missing: child column has no strategy.
             chunked_fk_child_strategy_mismatch: child strategy differs from
                 the parent strategy.
+            chunked_fk_child_config_mismatch: child provider_config differs
+                from the parent's (same strategy name but different
+                value-affecting settings, e.g. redact_with, truncate length,
+                hash truncation), so self-masking would NOT reproduce the
+                parent's masked value even though the strategy name matches.
     """
     col_index = _col_index_from_config(config)
 
@@ -282,5 +287,34 @@ def gate_fk_child_edges(config: dict[str, Any], *, table: str) -> None:
                         f"child strategy {child_strategy!r} != parent strategy "
                         f"{parent_strategy!r}. Self-masking requires identical strategies. "
                         f"Update the child strategy to {parent_strategy!r}."
+                    ),
+                )
+
+            # Condition (e): child provider_config must be IDENTICAL to the
+            # parent's, not just the same strategy name. Matching names alone
+            # is not enough: e.g. redact_with='P' on the parent vs 'C' on the
+            # child, or different truncate lengths / hash truncation, produce
+            # different masked bytes even though both sides say "redact" or
+            # "truncate". run_mask_pipeline_chunked self-masks the child
+            # independently of the parent, so unless the two configs are
+            # byte-for-byte identical, self-masking cannot be guaranteed to
+            # reproduce the parent's masked value and FK referential
+            # integrity would silently break.
+            parent_provider_cfg = parent_cfg.get("provider_config") or {}
+            child_provider_cfg = child_cfg.get("provider_config") or {}
+            if parent_provider_cfg != child_provider_cfg:
+                raise PlanCompileError(
+                    code="chunked_fk_child_config_mismatch",
+                    path=f"tables.{child_table}.columns.{child_col}.provider_config",
+                    message=(
+                        f"FK edge {parent_table}.{parent_col}"
+                        f"->{child_table}.{child_col}: "
+                        f"child provider_config {child_provider_cfg!r} != parent "
+                        f"provider_config {parent_provider_cfg!r}. Both declare "
+                        f"strategy {parent_strategy!r} but with different "
+                        "value-affecting settings, so self-masking the child "
+                        "independently would not reproduce the parent's masked "
+                        "value. Make the child provider_config identical to the "
+                        "parent's."
                     ),
                 )
