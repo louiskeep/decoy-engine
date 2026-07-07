@@ -40,7 +40,11 @@ class _ReversingHandler:
 
 
 class _FakeCtx:
-    pass
+    # Mirror the real StrategyContext's row_errors sink (Sprint 2 honesty
+    # pack B1): the polars when-gate reads ctx.row_errors to remap gated
+    # row-error indices. This fake handler never appends, so it stays empty.
+    def __init__(self) -> None:
+        self.row_errors: list = []
 
 
 def _seed(when: str) -> ColumnSeed:

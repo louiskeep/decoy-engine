@@ -5,6 +5,14 @@ R1 marketed scope (`decoy_release_1_scope` memory: file + cloud object
 storage). Adds `S3Source` and `GCSSource` next to the existing
 `FileSource`; the discriminator is the literal `type` field.
 
+S4-FIXED-WIDTH (finish-open-ended program): `FileSource.format` grows a
+`fixed_width` variant alongside `csv` / `parquet`, backed by the
+declarative `FixedWidthLayout` column-spec (`config._fixed_width`).
+Additive-only change (compatibility-contract §5: new Literal member,
+new optional field with a default) -- existing `csv` / `parquet`
+configs are unaffected. `layout` is required iff `format=="fixed_width"`
+and forbidden otherwise, enforced below.
+
 Credentials: `credentials_ref` is OPAQUE to the engine. The engine treats
 it as a string identifier the platform layer resolves against its
 credentials store at run time before issuing the SDK call. The engine
@@ -22,17 +30,42 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from decoy_engine.config._fixed_width import FixedWidthLayout
 
 
 class FileSource(BaseModel):
-    """A local-filesystem CSV or Parquet source."""
+    """A local-filesystem CSV, Parquet, or fixed-width source.
+
+    `layout` carries the column-spec for `format=="fixed_width"` (see
+    `FixedWidthLayout` for the schema contract); it is required for
+    that format and forbidden for `csv` / `parquet`.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["file"]
-    format: Literal["csv", "parquet"]
+    format: Literal["csv", "parquet", "fixed_width"]
     path: str
+    layout: FixedWidthLayout | None = Field(
+        default=None,
+        description=(
+            "Column-spec for format=='fixed_width'; required for that "
+            "format, forbidden (must be omitted/None) for csv/parquet."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _validate_layout_matches_format(self) -> FileSource:
+        if self.format == "fixed_width" and self.layout is None:
+            raise ValueError("FileSource: format='fixed_width' requires a `layout` column-spec")
+        if self.format != "fixed_width" and self.layout is not None:
+            raise ValueError(
+                "FileSource: `layout` is only valid when format='fixed_width' "
+                f"(got format={self.format!r})"
+            )
+        return self
 
 
 class S3Source(BaseModel):

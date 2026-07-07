@@ -37,7 +37,12 @@ def _seed(*, when: str | None = None, provider_config: dict | None = None) -> Co
 
 
 class _FakeCtx:
-    pass
+    # Mirror the real StrategyContext's row_errors sink (Sprint 2 honesty
+    # pack): the when-gate reads ctx.row_errors to remap gated row-error
+    # indices to full-table positions (B1). These fake handlers never append,
+    # so the list stays empty, but the attribute must exist.
+    def __init__(self) -> None:
+        self.row_errors: list = []
 
 
 # ── basic row-level gating ────────────────────────────────────────────

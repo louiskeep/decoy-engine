@@ -12,28 +12,47 @@ rest of the config schema).
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-# Triggers that are fully wired in this SP release (SP-05).
-# format_error and mask_error are reserved names for future wiring;
-# they are NOT accepted yet so operators get a clear error rather than
-# a silent no-op. See the carry-forward in the platform quarantine-rows
-# backlog doc (decoy-platform phase5-gaps).
-_WIRED_TRIGGERS: frozenset[str] = frozenset({"validation_fail"})
+# Triggers that are fully wired in this release. format_error was wired in
+# Sprint 2 honesty pack S5 (bucketize + date_shift row-error producers);
+# mask_error was wired in S6 (code_set row-error producer). A trigger is
+# added here ONLY in the same slice that wires and tests its producer(s)
+# (trap T9, SP-05's own honesty rule): a trigger name accepted before its
+# producer exists would appear to quarantine those rows but do nothing,
+# which is exactly the silent no-op this whole framework exists to reject.
+_WIRED_TRIGGERS: frozenset[str] = frozenset({"validation_fail", "format_error", "mask_error"})
 
 
 class ValidatorEntry(BaseModel):
     """One validator in the ``validators:`` list.
 
     ``name`` must match one of the built-in validator names (luhn, npi, iban,
-    vin, fk_intact, no_orphan_children). Unknown names are rejected at runtime
-    by the validator registry with a ``ValueError`` naming the offending
-    validator and listing the known names.
+    vin, fk_intact, no_orphan_children, leak_check, regex_match,
+    column_in_set, parent_window_respected, reconciliation_holds). Unknown
+    names are rejected at runtime by the validator registry with a
+    ``ValueError`` naming the offending validator and listing the known
+    names.
 
     ``columns`` carries the per-table column lists for check-digit validators
-    (luhn, npi, iban, vin). FK validators (fk_intact, no_orphan_children) read
+    (luhn, npi, iban, vin) and the generic validators (regex_match,
+    column_in_set). FK and relationship validators (fk_intact,
+    no_orphan_children, parent_window_respected, reconciliation_holds) read
     the ``relationships:`` block from the top-level config; ``columns`` is
     unused for them.
+
+    ``params`` (Sprint 2 honesty pack, D5) is a free-form per-validator knob
+    bag: leak_check's ``exempt``/``max_identical_ratio``/``min_rows``,
+    regex_match's ``pattern``, column_in_set's ``allowed_values``/
+    ``allow_null``, and the relationship validators' edge + tolerance
+    parameters all live here. Each validator validates its own ``params`` at
+    run time with a loud ``ValueError`` naming the validator and the
+    offending key -- a discriminated per-validator pydantic schema would
+    couple the config schema to the registry contents and force a schema
+    release for every future validator (D5 rationale). Additive: existing
+    configs with no ``params`` key are unaffected (default empty dict).
 
     Example YAML::
 
@@ -42,12 +61,18 @@ class ValidatorEntry(BaseModel):
             columns:
               orders: [credit_card_number]
           - name: fk_intact
+          - name: leak_check
+            columns:
+              orders: [card_number, email]
+            params:
+              max_identical_ratio: 0.02
     """
 
     model_config = ConfigDict(extra="forbid")
 
     name: str
     columns: dict[str, list[str]] = Field(default_factory=dict)
+    params: dict[str, Any] = Field(default_factory=dict)
 
 
 class QuarantineConfig(BaseModel):
@@ -57,14 +82,17 @@ class QuarantineConfig(BaseModel):
     offending row is written to ``output_path`` instead of the main output.
     The job continues and completes successfully.
 
-    Wired triggers (SP-05):
-      - ``validation_fail``: row failed a job-level validator.
+    Wired triggers (all three accepted by ``_WIRED_TRIGGERS``):
+      - ``validation_fail`` (SP-05): row failed a job-level validator.
+      - ``format_error`` (Sprint 2 honesty pack S5): a ``bucketize`` /
+        ``date_shift`` cell could not be coerced/parsed under its declared
+        strategy.
+      - ``mask_error`` (Sprint 2 honesty pack S6): a ``code_set``
+        ``chapter_preserve`` value could not be masked (input chapter absent
+        from the corpus, or a sole-member chapter bucket).
 
-    Reserved (not yet wired - see carry-forward in p5-b-quarantine-rows.md):
-      - ``format_error``: reserved for future wiring (malformed value at
-        format conversion). Rejected at config validation until wired.
-      - ``mask_error``: reserved for future wiring (error during mask phase).
-        Rejected at config validation until wired.
+    Any trigger name outside ``_WIRED_TRIGGERS`` is rejected at config
+    validation (a silent no-op is refused up front).
 
     Example YAML::
 
@@ -73,6 +101,8 @@ class QuarantineConfig(BaseModel):
           output_path: /mnt/quarantine/run-2026-06-27.jsonl
           triggers:
             - validation_fail
+            - format_error
+            - mask_error
     """
 
     model_config = ConfigDict(extra="forbid")

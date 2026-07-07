@@ -1,8 +1,8 @@
 """profile_source: orchestrate profile generation from a pipeline config.
 
 Reads `config["sources"]`, loads each table via the per-source-type
-reader (file/csv or file/parquet in V1), walks each DataFrame via
-`walk_dataframe`, and composes a Profile.
+reader (file/csv, file/parquet, or file/fixed_width in V1), walks each
+DataFrame via `walk_dataframe`, and composes a Profile.
 
 The caller (CLI or platform runner) hands in a config dict that has
 already been validated through `PipelineConfig.model_validate(...).model_dump()`.
@@ -29,6 +29,7 @@ from typing import Any
 
 import pandas as pd
 
+from decoy_engine.profile._fixed_width_reader import read_fixed_width
 from decoy_engine.profile._types import Profile, Relationship, TableProfile
 from decoy_engine.profile._walk import walk_dataframe
 
@@ -159,8 +160,16 @@ def _load_file_source(source_descriptor: dict[str, Any]) -> pd.DataFrame:
         return pd.read_csv(path)
     if fmt == "parquet":
         return pd.read_parquet(path)
+    if fmt == "fixed_width":
+        layout = source_descriptor.get("layout")
+        if not isinstance(layout, dict):
+            raise ValueError(
+                f"profile_source: fixed_width file source missing `layout`, got {layout!r}"
+            )
+        return read_fixed_width(path, layout)
     raise NotImplementedError(
-        f"profile_source: unsupported file format {fmt!r}. V1 supports csv | parquet only."
+        f"profile_source: unsupported file format {fmt!r}. "
+        "V1 supports csv | parquet | fixed_width only."
     )
 
 

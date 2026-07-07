@@ -32,6 +32,11 @@ def resolve_substrate(override: str | None = None) -> str:
         ExecutionError: ``code='invalid_substrate'`` when the resolved
             value is not one of ``VALID_SUBSTRATES``.
     """
+    if override is not None and not isinstance(override, str):
+        raise ExecutionError(
+            code="invalid_substrate",
+            message=f"substrate override must be a str or None; got {override!r}.",
+        )
     raw = override if override is not None else os.environ.get("DECOY_SUBSTRATE")
     value = (raw if raw is not None else _DEFAULT_SUBSTRATE).strip().lower()
     if value not in VALID_SUBSTRATES:
@@ -41,6 +46,31 @@ def resolve_substrate(override: str | None = None) -> str:
             message=f"{source} must be one of {VALID_SUBSTRATES}; got {value!r}.",
         )
     return value
+
+
+def require_positive_int(name: str, value: int) -> None:
+    """Fail-fast typed validation for runtime count knobs, mirroring
+    `resolve_substrate`'s coded-error contract. bool is excluded explicitly
+    because it passes an `isinstance(..., int)` check while being a config
+    mistake (`fpe_chunk_count: true`), the same silent-coercion trap the
+    job-seed normalizer closes."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ExecutionError(
+            code="invalid_execution_knob",
+            message=f"{name} must be a positive int; got {value!r}.",
+        )
+
+
+def require_bool(name: str, value: bool) -> None:
+    """Fail-fast typed validation for boolean knobs. A str like ``"false"`` is
+    truthy, so an untyped job-payload value would silently invert the intended
+    behavior (a caller wanting fail-closed would get fallback enabled); reject
+    anything that is not a real bool, mirroring `require_positive_int`."""
+    if not isinstance(value, bool):
+        raise ExecutionError(
+            code="invalid_execution_knob",
+            message=f"{name} must be a bool; got {value!r}.",
+        )
 
 
 def select_execution_adapter(
@@ -56,7 +86,16 @@ def select_execution_adapter(
     pandas adapter ignores them (it has no fallback and no runner-level
     parallelism knob at S11). An explicit `substrate` overrides the env var;
     None keeps the env-resolved behavior unchanged.
+
+    Raises:
+        ExecutionError: ``code='invalid_substrate'`` for an unknown or non-str
+            substrate; ``code='invalid_execution_knob'`` for a non-positive-int
+            count knob or a non-bool `fallback_to_pandas`. All raise BEFORE any
+            adapter work so callers fail at selection time, not mid-job.
     """
+    require_positive_int("fpe_chunk_count", fpe_chunk_count)
+    require_positive_int("max_workers", max_workers)
+    require_bool("fallback_to_pandas", fallback_to_pandas)
     substrate = resolve_substrate(substrate)
     if substrate == "polars":
         from decoy_engine.execution.polars._polars_adapter import PolarsExecutionAdapter
@@ -71,4 +110,10 @@ def select_execution_adapter(
     return PandasExecutionAdapter(fpe_chunk_count=fpe_chunk_count)
 
 
-__all__ = ["VALID_SUBSTRATES", "resolve_substrate", "select_execution_adapter"]
+__all__ = [
+    "VALID_SUBSTRATES",
+    "require_bool",
+    "require_positive_int",
+    "resolve_substrate",
+    "select_execution_adapter",
+]

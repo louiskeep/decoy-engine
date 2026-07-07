@@ -21,6 +21,16 @@ set is exactly those:
 | bucketize    | bin of the value |
 | passthrough  | identity |
 
+Two of those rows carry whole-column caveats the per-value story hides:
+date_shift's offset is value-keyed, but its date FORMAT is detected from
+whole-column samples unless `provider_config.date_format` is explicit,
+so byte parity holds only with an explicit format; bucketize falls
+through to the original value on null / non-numeric positions, so its
+output dtype is chunk-content-dependent unless the source column is
+null-free numeric. The auto-chunk planner gates enforce both before
+routing (`_planner._whole_column_state_rejections` and the bucketize
+runtime source gate); callers of this entrypoint own that judgment.
+
 CONDITIONALLY admitted (deferred follow-up 2, 2026-06-12): faker and
 categorical, exactly when their deterministic value-keyed path is the
 one that runs and every whole-run input is declared in config rather
@@ -250,6 +260,7 @@ def run_mask_pipeline_chunked(
     registry: Any = None,
     adapter: Any = None,
     vault_writer: Any = None,
+    chunk_result_sink: list[Any] | None = None,
 ) -> Iterator[pa.Table]:
     """Mask `table`'s rows chunk-by-chunk under `config`.
 
@@ -269,6 +280,13 @@ def run_mask_pipeline_chunked(
     `vault_writer` (a `decoy_engine.vault.VaultWriter`) collects each
     chunk's source->masked pairs for `vault: true` columns as the chunk
     masks; the caller writes the artifact after the stream drains.
+
+    `chunk_result_sink` (optional list) receives each chunk's full
+    `ExecutionResult` as it is produced, so callers that need the
+    non-output surface (per-chunk warnings, timings, boundary conversion
+    figures) can aggregate it without this iterator changing its yielded
+    type. The auto-chunk route in `run_pipeline` uses it to keep
+    warnings and timings from being dropped on routed jobs.
 
     Validation and plan compile happen EAGERLY at call time; only the
     per-chunk masking is lazy.
@@ -313,6 +331,28 @@ def run_mask_pipeline_chunked(
                 relationship_graph=graph,
                 namespace_registry=ns_registry,
             )
+            if chunk_result_sink is not None:
+                chunk_result_sink.append(result)
+            # Sprint 2 honesty pack H1 (dennis review 2026-07-04): the
+            # chunked/streaming path has no quarantine machinery, so a
+            # per-row strategy error (bucketize/date_shift format_error,
+            # code_set mask_error -- though code_set is not chunk-admitted)
+            # cannot be routed anywhere. Discarding it would silently keep
+            # the raw source value in the streamed output (the exact leak the
+            # full-frame path closes). Fail CLOSED: raise the moment any chunk
+            # reports a row error. This is correct and cheap here; opt-in
+            # quarantine is a full-frame-only feature. Applies identically to
+            # BOTH callers of this generator (the manual streaming entrypoint
+            # and the S3 auto-chunk route in run_pipeline via
+            # chunk_result_sink): a routed job is never eligible for
+            # row-error quarantine, matching the pre-existing manual-path
+            # policy -- `run_pipeline`'s `mask_row_errors` therefore treats
+            # any auto-chunked job that reaches that point as error-free by
+            # construction (this raise already fired otherwise).
+            if result.row_errors:
+                from decoy_engine.errors import RowErrorsFailedError
+
+                raise RowErrorsFailedError(result.row_errors)
             masked = result.outputs[table]
             if vault_writer is not None:
                 from decoy_engine.vault import collect_vault_entries
@@ -376,6 +416,116 @@ def _warm_faker_pools(
                 namespace=col_entry.get("namespace"),
             )
         )
+
+
+def concat_masked_chunks(chunks: list[pa.Table], *, table: str) -> pa.Table:
+    """Concatenate masked chunks under the byte-identity contract: equal
+    schemas, no type promotion.
+
+    Chunk-identical strategies produce the same column types on every
+    chunk, so a schema disagreement here means an eligibility gate
+    admitted a chunk-variant job; that must surface loudly (a coded
+    error) rather than be papered over by `promote_options="default"`.
+
+    ONE promotion is performed, precisely because full-frame inference
+    performs it too: a chunk whose column is entirely null converts back
+    from pandas as Arrow `null` type, while the full frame -- which
+    contains the other chunks' non-null values -- infers their real
+    type. Casting the null-typed column to the single type the non-null
+    chunks agree on is lossless and lands exactly where whole-frame
+    inference does; when every chunk is null the column stays `null`,
+    again matching the full frame.
+
+    Raises:
+        ExecutionError: ``code='chunked_schema_mismatch'`` when chunk
+            column names differ or two chunks hold different non-null
+            types for the same column.
+    """
+    from decoy_engine.execution._errors import ExecutionError
+
+    names = chunks[0].schema.names
+    for chunk in chunks[1:]:
+        if chunk.schema.names != names:
+            raise ExecutionError(
+                code="chunked_schema_mismatch",
+                message=(
+                    f"masked chunks of table {table!r} disagree on column names "
+                    f"({names} vs {chunk.schema.names}); the auto-chunk "
+                    "eligibility gates admitted a chunk-variant job."
+                ),
+            )
+    fields = []
+    for idx, name in enumerate(names):
+        non_null_types: list[pa.DataType] = []
+        for chunk in chunks:
+            t = chunk.schema.field(idx).type
+            if not pa.types.is_null(t) and t not in non_null_types:
+                non_null_types.append(t)
+        if len(non_null_types) > 1:
+            raise ExecutionError(
+                code="chunked_schema_mismatch",
+                message=(
+                    f"masked chunks of table {table!r} disagree on column "
+                    f"{name!r} type ({', '.join(str(t) for t in non_null_types)}); "
+                    "the auto-chunk eligibility gates admitted a chunk-variant "
+                    "job. Re-run with auto_chunk=False and report the config."
+                ),
+            )
+        fields.append(pa.field(name, non_null_types[0] if non_null_types else pa.null()))
+    target = pa.schema(fields)
+    normalized = [c if c.schema.equals(target) else c.cast(target) for c in chunks]
+    return pa.concat_tables(normalized).combine_chunks()
+
+
+def aggregate_chunk_warnings(chunk_results: list[Any]) -> tuple[Any, ...]:
+    """Order-stable union of per-chunk QualityWarnings.
+
+    The same warning re-emitted by every chunk (they all run the same
+    plan) collapses to one, exactly what the full-frame run would have
+    emitted; genuinely distinct warnings keep first-emission order.
+    Equality-based dedup because QualityWarning carries a dict detail
+    (unhashable); warning counts are tiny, so O(n^2) is irrelevant.
+    """
+    seen: list[Any] = []
+    for result in chunk_results:
+        for warning in result.warnings:
+            if warning not in seen:
+                seen.append(warning)
+    return tuple(seen)
+
+
+def aggregate_chunk_timings(chunk_results: list[Any]) -> tuple[Any, ...]:
+    """Coarse per-(strategy, column) rollup of per-chunk timing records.
+
+    Elapsed times sum (the chunks really ran serially); memory deltas
+    take the max, because per-chunk peaks measure the same bounded
+    working set repeatedly -- summing them would fabricate a peak no run
+    ever had. One record per (strategy, column), the same shape the
+    full-frame result carries.
+    """
+    from decoy_engine.instrumentation.timing import StrategyTimingRecord
+
+    order: list[tuple[str, str]] = []
+    elapsed: dict[tuple[str, str], float] = {}
+    peak: dict[tuple[str, str], int] = {}
+    for result in chunk_results:
+        for record in result.timings:
+            key = (record.strategy_type, record.column)
+            if key not in elapsed:
+                order.append(key)
+                elapsed[key] = 0.0
+                peak[key] = 0
+            elapsed[key] += record.elapsed_ms
+            peak[key] = max(peak[key], record.peak_memory_delta_kb)
+    return tuple(
+        StrategyTimingRecord(
+            strategy_type=strategy,
+            column=column,
+            elapsed_ms=elapsed[(strategy, column)],
+            peak_memory_delta_kb=peak[(strategy, column)],
+        )
+        for strategy, column in order
+    )
 
 
 def _chain_first(first: pa.Table, rest: Iterator[pa.Table]) -> Iterator[pa.Table]:

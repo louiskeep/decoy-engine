@@ -386,3 +386,61 @@ class TestConditionalStrategies:
         assert after_first.entries >= 1
         assert after_second.hits > after_first.hits
         assert after_second.misses == after_first.misses
+
+
+class TestChunkedRowErrorsFailClosed:
+    """HIGH H1 remediation (dennis review 2026-07-04).
+
+    The chunked/streaming entry point has no quarantine machinery. A
+    bucketize/date_shift chunk that produces per-row `format_error`s used to
+    silently discard `ExecutionResult.row_errors`, keeping the raw source
+    value in the streamed output. `run_mask_pipeline_chunked` now FAILS
+    CLOSED: any chunk with non-empty row_errors raises
+    `RowErrorsFailedError` (fail-closed is correct and cheap here; the
+    chunked path has no opt-in quarantine).
+    """
+
+    def _row_error_config(self, tmp_path, strategy: str) -> dict:
+        if strategy == "bucketize":
+            columns = [{"name": "age", "strategy": "bucketize", "provider_config": {"width": 10}}]
+        else:
+            columns = [
+                {
+                    "name": "age",
+                    "strategy": "date_shift",
+                    "namespace": "age_ns",
+                    "provider_config": {"min_days": 30, "max_days": 60},
+                }
+            ]
+        return _config(tmp_path, columns)
+
+    @pytest.mark.parametrize("strategy", ["bucketize", "date_shift"])
+    def test_uncoercible_cell_fails_closed(self, tmp_path, strategy: str) -> None:
+        from decoy_engine.errors import RowErrorsFailedError
+
+        cfg = self._row_error_config(tmp_path, strategy)
+        # A chunk whose second row is uncoercible under the strategy.
+        bad_value = "not-a-number" if strategy == "bucketize" else "not-a-date"
+        good = "23" if strategy == "bucketize" else "2020-01-01"
+        chunk = pa.table({"age": pa.array([good, bad_value], type=pa.string())})
+
+        with pytest.raises(RowErrorsFailedError) as exc_info:
+            list(
+                run_mask_pipeline_chunked(
+                    cfg, [chunk], table="accounts", engine_version=_ENGINE_VERSION
+                )
+            )
+        assert exc_info.value.records[0].trigger == "format_error"
+        # THE LEAK TEST: no cell value leaks into the error message.
+        assert bad_value not in str(exc_info.value)
+
+    def test_clean_chunks_still_stream(self, tmp_path) -> None:
+        """A fully-coercible run is unaffected (no false positives)."""
+        cfg = self._row_error_config(tmp_path, "bucketize")
+        chunk = pa.table({"age": pa.array(["23", "47"], type=pa.string())})
+        out = list(
+            run_mask_pipeline_chunked(
+                cfg, [chunk], table="accounts", engine_version=_ENGINE_VERSION
+            )
+        )
+        assert pa.concat_tables(out).column("age").to_pylist() == ["20", "40"]

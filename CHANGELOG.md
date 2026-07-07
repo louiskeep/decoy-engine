@@ -9,6 +9,185 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (S3 engine-efficiencies x S2 routing reconciliation, 2026-07-06)
+
+Landed `feat/engine-efficiencies` (P0-P5 below) onto the integration branch
+alongside the already-merged S2 FK-sequential routing. The two routing
+layers compose in a fixed order inside `run_pipeline`, now split into
+`execution/_pipeline_routing.py` to hold the 600-LOC orchestration cap:
+S2's relationship routing (sequential vs. full_frame) decides first; S3's
+auto-chunk routing (chunked vs. full_frame) only applies on jobs that did
+not take the sequential early return, and independently excludes any
+relationship-bearing job via the planner's own FK-edge gate, so the two
+layers never overlap. Two silent-knob-ignoring gaps were closed as part of
+the reconciliation: (1) an explicit non-`"pandas"` `substrate` (or
+`DECOY_SUBSTRATE=polars`) now disqualifies sequential eligibility,
+falling through to full_frame so `select_execution_adapter` is what
+actually honors the request (previously the sequential path silently
+always ran pandas regardless of a caller's `substrate="polars"` ask); (2)
+`fpe_chunk_count` is now threaded into the sequential route's
+`PandasExecutionAdapter` (previously silently reverted to its class
+default). `explain_plan=True` also now surfaces a classification on the
+sequential route (previously it silently stamped nothing for exactly the
+relationship-route-deferred jobs where that surface is most informative).
+
+### Changed (S2 FK-sequential default routing in run_pipeline, 2026-07-05)
+
+`run_pipeline` now routes relationship-bearing pure-mask jobs (those with
+`relationships`, no `generate_columns`, no validators/fidelity_report/vault_writer)
+through the bounded-memory `run_sequential` path by default. Non-FK and mixed
+generate+mask jobs take the full-frame path unchanged. Output is byte-identical;
+the only difference is peak memory.
+
+- **Default routing: `execution_mode="auto"`** (new kwarg in `run_pipeline`).
+  Eligible pure-mask FK jobs route to `run_sequential` + `ParquetTransactionalSink`;
+  all others route to full-frame. Disqualifiers are captured in telemetry as a
+  stable `route_reason` token: `no_relationships`, `generate_plus_mask`,
+  `validators_present`, `fidelity_report_requested`, `vault_writer_requested`.
+  When `validators` or `fidelity_report` are present, the job takes full-frame and
+  skips `run_sequential` entirely, since the sequential path cannot satisfy the
+  post-mask compute requirements (all outputs must be resident at once). This
+  exclusion also keeps the sequential path's row-error enforcement (Part 2 below)
+  as the sole owner, with no double-processing.
+
+- **Explicit overrides.** `execution_mode="full_frame"` forces full-frame regardless
+  of eligibility. `execution_mode="sequential"` forces sequential and raises
+  `ConfigError` (with the `route_reason` as context) if the job is not eligible,
+  or if the FK table graph has a mutual cross-table cycle that cannot be ordered
+  (see Fixed section below).
+
+- **Transparent parameters.** `sink` and `source_loader` kwargs are passed through
+  to `run_sequential` when the sequential route is taken. The default (neither
+  supplied) routes to sequential-in-memory with byte-identical output; no existing
+  caller breaks. The empty-outputs streamed path is only reachable when a `sink`
+  is explicitly supplied.
+
+- **Honest memory telemetry.** A new `quality_metrics["execution"]` dict records:
+  `execution_mode` ("sequential" or "full_frame"), `route_reason` (the disqualifier
+  or override used), `eviction` (per-table vs none), `outputs_streamed` (true only
+  when a sink was provided), and `loaded_fully_in_memory` (false only when a lazy
+  `source_loader` was supplied and no resident `sources` dict was provided).
+
+### Added (S2 row-error draining on run_sequential, 2026-07-05)
+
+`run_sequential` closes the S1 MEDIUM-2 precondition: it now drains strategy
+errors (`format_error`, `mask_error`) from each masked table and
+enforces the same fail-loud/quarantine rule as `run_pipeline` on the full-frame
+path. This guarantees that the bounded-memory path (which is now the default for
+eligible FK jobs, see Changed section above) delivers the same safety as full-frame.
+
+- **Per-node drain, per-table fail-loud.** Row errors are drained and folded into
+  a per-table index immediately after each node dispatch (inside the table's
+  mask-node loop). This is critical for self-referential FK handling (see Fixed
+  section below): a child node that references the same table must see the parent
+  node's errors before it resolves the FK, which happens in the very next loop
+  iteration. The fail-loud classification stays per-table (after all nodes of that
+  table have dispatched), so any uncovered error raises `RowErrorsFailedError`
+  before the table is written to the sink or evicted. A failing table therefore
+  never publishes a leaked value; the exception propagates to `abort()` if using
+  a transactional sink.
+
+- **Quarantine-aware FK resolution (EXCLUDE-then-CASCADE).** A parent-key row that
+  produced a `format_error` or `mask_error` must never leak its raw key value
+  through a child FK, even though FK resolution reads from the full pre-filter
+  parent frame. Row-errored parent-key rows are excluded from the parent key-map
+  via a per-table error index (`key_error_rows`), and child rows that reference an
+  excluded key are automatically cascade-quarantined (marked with a synthetic
+  `RowError` on their own table's subsequent dispatch). Cascaded child errors
+  drain and classify on the child table's own per-table drain, so they follow the
+  same fail-loud/quarantine rule without separate code. This holds across
+  self-referential, multi-hop, and composite-key chains.
+
+- **Single quarantine JSONL write.** Unlike full-frame (which can write the JSONL
+  incrementally), the sequential path writes one JSONL after every table has
+  dispatched, avoiding truncation (`"w"` mode) and clobbering earlier tables'
+  entries. The quarantine JSONL is durable only on a successful run (no uncovered
+  errors); a fail-loud run publishes nothing.
+
+- **Optional quarantine routing via `quarantine_config` kwarg** (default None).
+  When `run_sequential(..., quarantine_config=...)` is supplied, covered rows
+  (those whose `trigger` matches an enabled quarantine trigger) are filtered
+  from that table's Arrow output before write and written to the quarantine JSONL.
+  Uncovered rows raise `RowErrorsFailedError` before the write.
+
+- **`ExecutionResult.row_errors` and `quality_metrics["row_errors"]`** now carry
+  drained records on the sequential path (same surface as full-frame). No row-error
+  records are silently dropped.
+
+### Added (S4 fixed-width file format support, 2026-07-06)
+
+Fixed-width file parsing is now a first-class `v2.FileSource.format`, alongside
+`"csv"` and `"parquet"`. Records are sliced by `(start, width)` column-spec with
+full control over padding and casting, fail-closed and PII-safe (see below).
+
+- **Format identifier: `format="fixed_width"`** in `FileSource`.
+
+- **Column-spec via `FixedWidthLayout`** (`config._fixed_width.py`). Each column declares:
+  `name`, 0-based `start` byte offset, `width` in bytes, `type` (str/int/float), `pad`
+  character, and `align` (left/right). Record width is the maximum `start + width` across
+  all columns. Over-long records are tolerated (trailing bytes ignored); under-length
+  records raise `FixedWidthParseError` (row-width mismatch).
+
+- **PII-safe error reporting.** No cell values appear in exceptions or tracebacks,
+  even on bad casts. `FixedWidthParseError` messages disclose only the file path,
+  1-based line number, column name, and the caster's type name. The caught
+  `ValueError`/`TypeError` (which embeds the raw value) is not chained as
+  `__cause__` or `__context__`, and the exception's context chain is explicitly
+  cleared, so raw values are never surfaced via `logging.exception` or inspection.
+
+- **Zero-padded numeric handling.** An int/float column that strips to an empty
+  string is retried against the raw (unstripped) slice, so a genuine zero-padded
+  numeric (e.g., `pad="0"`, `align="right"`, raw `"0000"`) parses to `0` rather
+  than failing. An honestly-blank numeric field (pure whitespace or pad characters
+  with no digits) still raises a cast error. Whitespace is never silently coerced
+  to zero.
+
+- **Parser: `profile._fixed_width_reader.read_fixed_width`** Parses a file into a
+  pandas DataFrame per layout spec. Blank lines (zero characters after newline strip)
+  are skipped. All other non-blank lines must meet the record width or raise.
+
+### Fixed (S2 round-3 FK-topology leak remediation, 2026-07-05)
+
+- **Self-referential FK raw-key leak on the sequential path (BLOCKER).** A
+  table that is its own FK parent (e.g. `employees.id` referenced by
+  `employees.manager_id`) leaked the raw errored key into the child column on
+  the default `execution_mode="auto"` sequential path, because
+  `run_sequential` drained and folded row errors into the key-error index
+  once PER TABLE, after the whole table's mask-node loop, so an intra-table
+  FK-child node resolved before its own parent-key node's error was folded.
+  Fixed by moving the drain + fold to PER NODE, inside the loop, mirroring
+  full-frame `run()`. Full-frame and sequential now both close the
+  self-referential case (the table empties: the failing parent row and its
+  cascaded referrer are both quarantined) and are row-equivalent.
+- **Cross-table FK cycle routing regression (functional, non-leak).** A
+  mutual cross-table FK cycle (A references B, B references A) ran under
+  full-frame before this program but, under the S2 `auto` router, was routed
+  to `run_sequential`, which cannot order a cross-table cycle and raised
+  `relationship_cycle`. Added `_has_cross_table_fk_cycle`; `auto` now falls
+  back to full-frame for a cyclic table graph (`route_reason =
+  "cross_table_cycle"`), restoring pre-S2 behavior. An explicit
+  `execution_mode="sequential"` request on a cyclic graph now raises a clear
+  `ConfigError` instead of the raw `relationship_cycle` error. A self-ref
+  table (one table, not a cross-table cycle) is unaffected and still routes
+  to `sequential` under `auto`.
+
+**Accepted limitation (when-gated duplicate parent key), documented not
+enforced.** When a `when` gate leaves a parent FK-key row unmasked AND that
+same raw key value also appears on a different parent row that row-errored, a
+child referencing that key value resolves (via the identity-map contract,
+FK-resolution precedence 1) to the raw value carried by the when-gate-unmasked
+parent row. This is NOT a quarantine escape: the raw value is present in the
+child ONLY because the user's `when` gate deliberately left that duplicate
+parent row unmasked, so it is ALREADY present in the parent output. Net-new
+exposure is NIL. Enforcing "cascade even on a when-gated duplicate" would
+break referential integrity: the child would point to null/quarantine while
+the parent row survives with the raw key, producing a dangling reference for
+a row the user intentionally chose to leave unmasked. The identity-map
+contract (an unmasked parent key maps to itself, and children mirror it) is
+the correct behavior; this case is documented and pinned by test, not
+enforced. See `docs/relationships-memory-scaling.md` and
+`docs/backlog/s2-fk-leak-remediation-r3-guide.md` section 5.
+
 ### Added (FK-RI transactional sink, 2026-06-30)
 
 - **`TransactionalSink` protocol and `ParquetTransactionalSink` reference
@@ -107,6 +286,90 @@ registry's execution-verified audit).
   floor and guarantee `truncate` is only surfaced against a fail-closed
   engine (GATE-1 Q1).
 
+### Added / Changed (Sprint 2 engine honesty pack, 2026-07-04)
+
+Engine bumped to 0.3.0. Closes several silent-leak paths the validator and
+quarantine framework (SP-05) did not yet cover, and adds five new post-mask
+validators. Established methodology cited throughout: Delphix/Informatica
+masking-verification pre/post comparisons, Great Expectations column
+assertions, dbt relationship/aggregation tests, and the Spark
+`badRecordsPath` / pandas `on_bad_lines` side-channel bad-row pattern.
+
+- **`leak_check` validator**: compares masked output values against their
+  source values per column and flags residual source values above a
+  threshold. Fail-closed (no warn tier): a column tier catches a strategy
+  that had NO effect at all (`identical_ratio == 1.0`); a cell tier (default
+  `max_identical_ratio = 0.02`, TRANSFORMATIVE strategies only) catches
+  partial per-row leaks and makes them quarantinable under the existing
+  `validation_fail` trigger. `passthrough`, FK-child, and `when:`-gated
+  columns are excluded by construction; a `params.exempt` knob covers
+  legitimate coincidences the operator wants to allow. Requires the pipeline's
+  pre-mask source tables; a leak_check scoped at a table with no source
+  raises rather than silently skipping.
+- **Four sibling validators** (`p5-j-validators-extended`): `regex_match`
+  (whole-cell pattern match), `column_in_set` (allowed-value membership),
+  `parent_window_respected` (child date within its parent's declared window;
+  pairs with `windowed_date`), and `reconciliation_holds` (parent aggregate
+  reconciles with child rows under an absolute tolerance; pairs with
+  `derived_aggregate`). The validator registry grows from 6 to 11 entries.
+- **`ValidatorEntry.params`**: a free-form per-validator config dict,
+  additive alongside the existing `columns` field. Each validator validates
+  its own `params` at run time.
+- **Per-row strategy-error channel** (`execution/_row_errors.py`): a new
+  `RowError` / `RowErrorRecord` side channel, threaded through
+  `StrategyContext` and drained by both the pandas and polars execution
+  adapters after every node dispatch. `ExecutionResult.row_errors` carries
+  the table-attributed records; `quality_metrics["row_errors"]` persists
+  per-table/column/trigger counts (no cell values) to the evidence manifest.
+- **BEHAVIOR CHANGE (pre-GA hard cutover, no flag):** `bucketize` and
+  `date_shift` columns with a non-null cell that fails numeric/date coercion
+  used to silently keep the ORIGINAL source value in the masked output
+  (discovery 0.1, the sibling of the #13 bucketize/truncate/categorical
+  fix). They now record a `format_error` row error instead. A `code_set`
+  `chapter_preserve` value that cannot be masked (input chapter absent from
+  the corpus, or a sole-member chapter bucket) now records a `mask_error`
+  row error instead of killing the whole job with no row attribution.
+  **On the full-frame `run_pipeline` path the job now either fails loud by
+  default (`RowErrorsFailedError`, naming counts by table/column/trigger, no
+  cell values) or, when quarantine is enabled with the matching trigger, the
+  offending rows are removed into the quarantine JSONL and the job succeeds.
+  On the chunked/streaming path (`run_mask_pipeline_chunked`), which has no
+  quarantine machinery, the job fails CLOSED: any chunk with a row error
+  raises `RowErrorsFailedError`. Either way, the previous silent
+  keep-the-source-value behavior is gone on these paths.**
+  
+  **Note: `run_sequential` (the bounded-memory FK path from PR #29) does NOT
+  yet drain or surface row errors.** FK jobs routed through `run_sequential`
+  silently pass through rows that would otherwise quarantine or fail. Closing
+  this gap (wiring row-error draining into `run_sequential`) is a precondition
+  of Sprint S2, which makes `run_sequential` the default path for eligible FK
+  jobs.
+- **Quarantine generalized to row errors** (`quarantine.apply_quarantine`):
+  now accepts an optional `row_errors` tuple alongside the `ValidationReport`
+  and builds one normalized worklist so a row that fails both a validator
+  and a strategy row error is deduplicated exactly once. Existing
+  `validation_fail`-only callers (the default `row_errors=()`) get
+  byte-identical behavior. `quarantine.triggers` now accepts `format_error`
+  and `mask_error` in addition to `validation_fail`.
+- **`fpe` degenerate-charset compile check** (`check_fpe_charset_config`,
+  `PlanCompileError` code `fpe_charset_degenerate`): a resolved fpe charset
+  with fewer than 2 distinct characters used to silently pass the whole
+  column through unmasked (the last known #13-class whole-column
+  passthrough, discovery 0.1). Rejected at compile time; `FpeStrategyHandler`
+  also raises `StrategyError` on the same shape as an execution-time
+  backstop.
+- **Public faker-provider accessor** (follow-up #11):
+  `decoy_engine.list_generate_faker_providers(locale=None) -> tuple[str, ...]`,
+  the sorted, flat, authoritative list of generate-kind Faker provider names
+  (reflection + the existing denylist + registered custom providers). Closes
+  the acceptance gap behind the platform's hand-maintained `GEN_FAKER`
+  catalog; platform/web consumption is separate follow-up work in the
+  platform lane.
+- `validate()` (the validator-framework entry point) gained an additive,
+  keyword-only `sources` parameter carrying the pipeline's pre-mask source
+  tables, threaded from `run_pipeline`'s `caller_sources`. All pre-existing
+  validators accept and ignore it.
+
 ### Added (Sprint G FK-aware subsetting core, 2026-07-03)
 
 - **FK-aware row subsetting** (`src/decoy_engine/subset/`, 11 modules; Sprint
@@ -188,6 +451,93 @@ registry's execution-verified audit).
   compose in, but that path is not built here. A `decoy subset` CLI (SS6)
   and a platform UI (SS7) are follow-ons in other repos, not shipped in this
   engine sprint.
+
+### Added (engine-efficiencies P0-P5, 2026-07-01)
+
+Cross-cutting job-performance work on `feat/engine-efficiencies`
+(`docs/job-performance-sprints.md`). Scope is `run_pipeline` mask-kind
+execution only; the FK memory-scaling and out-of-core stacks live on their
+own branches and are not part of this batch.
+
+- **`run_pipeline` adapter-selection routing** (P1/P4,
+  `src/decoy_engine/execution/_pipeline.py`,
+  `src/decoy_engine/execution/_substrate.py`). Mask-kind work now routes
+  through `select_execution_adapter()` at the public entrypoint via four new
+  keyword-only knobs: `substrate` (default `"pandas"`; `"polars"` opts a
+  scalar no-FK job into the Polars-native route, FK/composite work still
+  falls back to the pandas oracle; `None` defers to the `DECOY_SUBSTRATE`
+  env var), `fpe_chunk_count` (default 4), `max_workers` (default 4,
+  polars-adapter only), and `fallback_to_pandas` (default `True`,
+  polars-adapter only). The default call with no knobs supplied is
+  byte-identical to the pre-P1 hardcoded pandas path. All four knobs are
+  validated fail-closed before any profiling or plan compilation: an unknown
+  substrate raises `ExecutionError(code="invalid_substrate")`, a bad count or
+  bool knob raises `code="invalid_execution_knob"`. `require_bool` and
+  `require_positive_int` are now public in `execution/_substrate.py`. When
+  any knob is non-default, the resolved adapter identity and every knob
+  value are stamped under `quality_metrics["execution_adapter"]`; the
+  all-default path stamps nothing, so golden and compat-corpus fixtures stay
+  byte-identical.
+
+- **Auto-chunk routing for eligible single-table mask jobs** (P3,
+  `src/decoy_engine/execution/_pipeline.py`,
+  `src/decoy_engine/execution/_chunked.py`). `run_pipeline` gained
+  `auto_chunk` (default `True`), `chunk_size_rows` (default 50,000), and
+  `auto_chunk_threshold_rows` (default 100,000). When `auto_chunk` is on and
+  the job is a single mask table with only chunk-safe value-keyed scalar
+  strategies, no FK edges, no generate tables, pandas substrate, and a
+  source at or above the threshold, the mask stage streams through
+  `run_mask_pipeline_chunked` in `chunk_size_rows`-row slices instead of one
+  full-frame adapter call. This is a memory win only, never a semantic
+  change: output is byte-identical to the full-frame path, enforced by
+  fail-closed eligibility (date_shift requires an explicit `date_format`,
+  bucketize requires a null-free numeric source, `when`-bearing/composite/
+  join-group-fpe/generate/relationship/non-pandas/below-threshold jobs all
+  fall back to full-frame) plus a strict chunk concatenation that raises
+  `code="chunked_schema_mismatch"` on any per-chunk schema disagreement
+  instead of silently promoting it away. A routed run, or any run with a
+  non-default auto-chunk knob, stamps `quality_metrics["auto_chunk"]`; the
+  all-default non-routed path stamps nothing. `auto_chunk=False` is the kill
+  switch back to the full-frame path.
+
+- **Observe-only execution-mode planner** (P2,
+  `src/decoy_engine/execution/_planner.py`: `classify_job`,
+  `ExecutionPlan`). Classifies a job into one of `polars_native`, `chunked`,
+  `sequential_relationship`, `out_of_core_relationship`, or
+  `pandas_fallback`, recording why every faster mode was rejected (the
+  `sequential_relationship`/`out_of_core_relationship` modes can only be
+  detected as FK-edge candidates on this branch; the FK stack that would
+  resolve them lives elsewhere). Surfaced via `run_pipeline(explain_plan=True)`
+  into `quality_metrics["execution_plan"]`; default `False` stamps nothing.
+  The planner does not route execution on its own; the one exception is the
+  `chunked` mode, which `run_pipeline`'s `auto_chunk` knob routes as
+  described above, using the same classification the explain surface
+  reports so the two can never disagree.
+
+- **Opt-in job-level performance gates** (P0,
+  `tests/perf/test_job_performance_gates.py`). Benchmarks scalar, faker-
+  heavy, FPE-heavy, and text-redaction-heavy jobs plus the P3 auto-chunk
+  memory route at the `run_pipeline` public entrypoint, each timing
+  assertion paired with a determinism (byte-identical output) and masking-
+  sanity check. Test-only; gated behind `pytest.mark.benchmark`, which is
+  excluded from the default test run (`addopts = "-m 'not benchmark and
+  not testflight'"`).
+
+- **Faker/provider pool parallel-readiness** (P5,
+  `src/decoy_engine/providers_v2/_faker_adapter.py`,
+  `src/decoy_engine/generation/synthesize.py`,
+  `src/decoy_engine/generation/pool/_cache.py`). Removes the shared
+  mutable Faker/RNG state and the lock that serialized it: seeded batch
+  builds now construct a fresh `Faker` instance per call
+  (`_faker_adapter.py`) instead of reseeding a shared one, and the
+  no-locale default instance used by unseeded generation is cached
+  thread-local rather than process-global (`synthesize.py`), removing the
+  `_FAKER_CALL_LOCK` critical section. `PoolCache.get`/`put`/`stats`/`clear`
+  are now internally locked so concurrent pool builds can share one cache
+  without corrupting LRU order or the bytes-accounting total; the lock
+  wraps only the cache bookkeeping, never a pool build. Output is unchanged:
+  a fresh Faker instance seeded the same way produces the same sequence as
+  a reseeded shared one, so existing faker output snapshots are unaffected.
 
 ### Added (SP-10 derived strategy, 2026-06-28)
 

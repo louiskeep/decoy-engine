@@ -29,6 +29,12 @@ What's public here:
   - load_custom_providers:          scan a directory of .txt / .json
                                      files and register each as a
                                      custom.<stem> provider.
+  - list_generate_faker_providers:  (Sprint 2 honesty pack, follow-up #11)
+                                     the sorted, flat, authoritative list
+                                     of generate-kind Faker provider names
+                                     (reflection + denylist + custom
+                                     providers), for capability
+                                     introspection.
 """
 
 from __future__ import annotations
@@ -37,6 +43,7 @@ from decoy_engine.internal.faker_setup import (
     atomic_swap_db_providers,
     get_custom_faker_provider_values,
     list_custom_faker_list_providers,
+    list_generate_faker_providers,
     load_custom_providers,
     register_faker_list_provider,
     register_faker_provider,
@@ -47,6 +54,7 @@ __all__ = [
     "atomic_swap_db_providers",
     "get_custom_faker_provider_values",
     "list_custom_faker_list_providers",
+    "list_generate_faker_providers",
     "load_custom_providers",
     "register_faker_list_provider",
     "register_faker_provider",

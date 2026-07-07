@@ -65,6 +65,7 @@ acceptance-test-flight
 :caption: Development
 
 ci-regression-gate
+job-performance-sprints
 ```
 
 ```{toctree}

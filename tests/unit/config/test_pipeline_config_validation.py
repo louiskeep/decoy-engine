@@ -178,7 +178,7 @@ class TestStrictValidationCatchesTypos:
             PipelineConfig.model_validate(bad)
 
     def test_unknown_source_format_fails_loud(self) -> None:
-        """FileSource.format is Literal['csv', 'parquet'] only."""
+        """FileSource.format is Literal['csv', 'parquet', 'fixed_width'] only."""
         bad = base_config()
         bad["sources"]["customers"]["format"] = "tsv"
         with pytest.raises(ValidationError, match="format"):

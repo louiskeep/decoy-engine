@@ -45,12 +45,18 @@ from decoy_engine.execution._adapter import (
 )
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._guards import reject_null_bearing_int
+from decoy_engine.execution._row_errors import RowErrorRecord, drain_row_errors
 from decoy_engine.execution._runner import WorkNode, build_work_list, order_work
 from decoy_engine.execution._sequential import run_sequential as _run_sequential
 from decoy_engine.execution._strategies import SCALAR_HANDLERS
 from decoy_engine.execution._strategies._composite import CompositeHandler
 from decoy_engine.execution._strategies._fpe import FpeStrategyHandler
-from decoy_engine.execution._strategies._orphan import resolve_fk_keys
+from decoy_engine.execution._strategies._orphan import (
+    cascade_row_errors,
+    gather_errored_parent_keys,
+    make_remap_fn,
+    resolve_fk_keys,
+)
 from decoy_engine.execution._transactional_sink import TransactionalSink
 from decoy_engine.execution._when_gate import run_with_when_gate
 from decoy_engine.generation.pool._cache import PoolCache
@@ -66,6 +72,11 @@ if TYPE_CHECKING:
 
 _NodeKey = tuple[str, tuple[str, ...]]
 _KeyTuple = tuple[object, ...]
+# S2 (quarantine-aware FK resolution): table -> column -> {row_index: trigger},
+# folded incrementally as each table's row-errors are drained. Only KEY columns
+# matter to `_parent_map`, but every drained record is folded (cheap; `_parent_map`
+# intersects with `edge.parent_columns`).
+_KeyErrorRows = dict[str, dict[str, dict[int, str]]]
 
 
 def _fk_key_value(value: object) -> object:
@@ -185,6 +196,9 @@ class PandasExecutionAdapter:
             if col in frames[table].columns
         }
         parent_map_cache: dict[_NodeKey, dict[_KeyTuple, _KeyTuple]] = {}
+        # S2: mirrors parent_map_cache with row-errored parent keys excluded.
+        errored_keys_cache: dict[_NodeKey, dict[_KeyTuple, str]] = {}
+        key_error_rows: _KeyErrorRows = {}
 
         # Serial dispatch in dependency order: FK parents (scalar/composite) mask
         # before FK children resolve. Runner-level per-column (Faker) parallelism
@@ -195,6 +209,7 @@ class PandasExecutionAdapter:
         # FPE's per-value chunked parallelism is independent of this (pure per-row
         # derive) and stays live via fpe_chunk_count.
         warnings: list[QualityWarning] = []
+        row_error_records: list[RowErrorRecord] = []
         collector = TimingCollector()
         with use_collector(collector):
             for node in ordered:
@@ -209,8 +224,23 @@ class PandasExecutionAdapter:
                         parent_map_cache,
                         node_by_key,
                         ctx,
+                        key_error_rows=key_error_rows,
+                        errored_keys_cache=errored_keys_cache,
                     )
                 )
+                # Sprint 2 honesty pack (D7): drain the shared row_errors sink
+                # right after EVERY node dispatch (scalar, composite, and
+                # fk_resolve all route through `_dispatch_mask_node`),
+                # attributing to node.table, so no row error is ever silently
+                # dropped regardless of which node produced it.
+                batch = drain_row_errors(ctx.row_errors, table=node.table)
+                row_error_records.extend(batch)
+                # S2: fold into the key-error index; parents mask+drain before
+                # children dispatch (order_work), so this is populated in time.
+                for rec in batch:
+                    key_error_rows.setdefault(rec.table, {}).setdefault(rec.column, {})[
+                        rec.row_index
+                    ] = rec.trigger
 
         t1 = time.perf_counter()
         outputs = {t: pa.Table.from_pandas(f, preserve_index=False) for t, f in frames.items()}
@@ -222,6 +252,7 @@ class PandasExecutionAdapter:
             boundary_conversion_ms=conversion_ms,
             warnings=tuple(warnings),
             quality_metrics={},
+            row_errors=tuple(row_error_records),
         )
 
     def _dispatch_mask_node(
@@ -233,12 +264,17 @@ class PandasExecutionAdapter:
         parent_map_cache: dict[_NodeKey, dict[_KeyTuple, _KeyTuple]],
         node_by_key: dict[_NodeKey, WorkNode],
         ctx: StrategyContext,
+        *,
+        key_error_rows: _KeyErrorRows | None = None,
+        errored_keys_cache: dict[_NodeKey, dict[_KeyTuple, str]] | None = None,
     ) -> list[QualityWarning]:
         """Mask one work node in place in `frames[node.table]`, returning its
         warnings. Shared by the full-frame `run` and the sequential
         `run_sequential` so both paths mask byte-identically. An FK child resolves
         through the parent source->masked map + the edge's OrphanPolicy; every
-        other node masks via its scalar or composite handler."""
+        other node masks via its scalar or composite handler. `key_error_rows`/
+        `errored_keys_cache` (S2, default None) thread the quarantine-aware FK
+        caches to `_resolve_fk_node`; non-FK nodes ignore them."""
         df = frames[node.table]
         child_edges = relationship_graph.parents_of(node.table, node.columns)
         if child_edges:
@@ -251,6 +287,8 @@ class PandasExecutionAdapter:
                     parent_map_cache,
                     node_by_key,
                     ctx,
+                    key_error_rows=key_error_rows,
+                    errored_keys_cache=errored_keys_cache,
                 )
         if node.kind == "composite":
             with timed_strategy("composite", ",".join(node.columns)):
@@ -297,6 +335,7 @@ class PandasExecutionAdapter:
         relationship_graph: RelationshipGraph,
         namespace_registry: NamespaceRegistry,
         sink: TransactionalSink | Callable[[str, pa.Table], None] | None = None,
+        quarantine_config: dict[str, object] | None = None,
     ) -> ExecutionResult:
         """Option 2 (FK-RI memory-scaling): mask an FK-related job one table at a
         time in FK-topological order, evicting each table's wide frame after its
@@ -308,7 +347,9 @@ class PandasExecutionAdapter:
         If `sink` satisfies `TransactionalSink` (has write/commit/abort), the run
         is all-or-nothing: commit on success, abort on any exception. A plain
         Callable sink preserves the pre-existing non-transactional contract.
-        Implemented in execution/_sequential.py; see
+        `quarantine_config` (S2, default None) enforces the same per-row D8
+        fail-loud/quarantine rule `run()` enforces, per table, before that
+        table's write/eviction. Implemented in execution/_sequential.py; see
         docs/relationships-memory-scaling.md."""
         return _run_sequential(
             self,
@@ -319,6 +360,7 @@ class PandasExecutionAdapter:
             relationship_graph=relationship_graph,
             namespace_registry=namespace_registry,
             sink=sink,
+            quarantine_config=quarantine_config,
         )
 
     def _resolve_fk_node(
@@ -330,6 +372,9 @@ class PandasExecutionAdapter:
         parent_map_cache: dict[_NodeKey, dict[_KeyTuple, _KeyTuple]],
         node_by_key: dict[_NodeKey, WorkNode],
         ctx: StrategyContext,
+        *,
+        key_error_rows: _KeyErrorRows | None = None,
+        errored_keys_cache: dict[_NodeKey, dict[_KeyTuple, str]] | None = None,
     ) -> list[QualityWarning]:
         """Mask an FK child node by mapping its source key through the parent
         source->masked map(s) and applying the OrphanPolicy. Serves scalar FK
@@ -342,16 +387,37 @@ class PandasExecutionAdapter:
         and a row is an orphan only when absent from EVERY parent map.
         The graph guarantees the edges share one orphan policy
         (orphan_policy_conflict); remap minting routes through the first
-        edge's parent strategy."""
+        edge's parent strategy.
+
+        S2 (quarantine-aware FK resolution): gathers errored parent keys for
+        these edges, passes them to `resolve_fk_keys`, and emits one cascaded
+        `RowError` per child row whose key was excluded from the parent map
+        (parent row-errored) -- drained by the same drain point as any other
+        row error on this node."""
         edge = edges[0]
-        parent_map = self._parent_map(edge, frames, source_snapshots, parent_map_cache)
+        parent_map = self._parent_map(
+            edge,
+            frames,
+            source_snapshots,
+            parent_map_cache,
+            key_error_rows=key_error_rows,
+            errored_keys_cache=errored_keys_cache,
+        )
         if len(edges) > 1:
             merged: dict[_KeyTuple, _KeyTuple] = dict(parent_map)
             for extra_edge in edges[1:]:
-                extra_map = self._parent_map(extra_edge, frames, source_snapshots, parent_map_cache)
+                extra_map = self._parent_map(
+                    extra_edge,
+                    frames,
+                    source_snapshots,
+                    parent_map_cache,
+                    key_error_rows=key_error_rows,
+                    errored_keys_cache=errored_keys_cache,
+                )
                 for key, value in extra_map.items():
                     merged.setdefault(key, value)
             parent_map = merged
+        errored_parent_keys = gather_errored_parent_keys(edges, errored_keys_cache)
         child_frame = frames[node.table]
         child_cols = edge.child_columns
         n = len(child_frame)
@@ -375,11 +441,23 @@ class PandasExecutionAdapter:
             else:
                 child_keys.append(tuple(_fk_key_value(col[i]) for col in col_vals_lists))
 
-        remap_fn = self._make_remap_fn(edge, node_by_key, ctx)
-        masked_keys, warnings = resolve_fk_keys(child_keys, parent_map, edge, remap_fn=remap_fn)
+        remap_fn = make_remap_fn(edge, node_by_key, ctx, self._handlers)
+        masked_keys, warnings, cascade = resolve_fk_keys(
+            child_keys,
+            parent_map,
+            edge,
+            remap_fn=remap_fn,
+            errored_parent_keys=errored_parent_keys or None,
+        )
 
         for j, c in enumerate(child_cols):
             child_frame[c] = [None if mk is None else mk[j] for mk in masked_keys]
+        # S2: emit one cascaded RowError per child row whose key was excluded
+        # from the parent map (parent key row-errored). The masked cell is
+        # already None (set above), so even a downstream bug in quarantine
+        # wiring can never durably publish the raw key. Extracted to
+        # _orphan.py to keep this module under the LOC cap.
+        ctx.row_errors.extend(cascade_row_errors(cascade, child_cols[0]))
         return warnings
 
     def _parent_map(
@@ -388,6 +466,9 @@ class PandasExecutionAdapter:
         frames: dict[str, pd.DataFrame],
         source_snapshots: dict[tuple[str, str], pd.Series],
         parent_map_cache: dict[_NodeKey, dict[_KeyTuple, _KeyTuple]],
+        *,
+        key_error_rows: _KeyErrorRows | None = None,
+        errored_keys_cache: dict[_NodeKey, dict[_KeyTuple, str]] | None = None,
     ) -> dict[_KeyTuple, _KeyTuple]:
         """Build (cached) the parent source-key -> masked-key map for an edge.
 
@@ -395,14 +476,24 @@ class PandasExecutionAdapter:
         column masked; masked values from the now-mutated parent frame. A parent
         column never masked (no snapshot) maps identity (source == current), which
         is the correct RI behavior for an unmasked parent key.
+
+        S2: `key_error_rows` (default None) is the per-table/per-column row-error
+        index. A parent row whose key column row-errored is EXCLUDED from the map
+        (never resolves to its raw value); its raw key + trigger goes into
+        `errored_keys_cache` (keyed like `parent_map_cache`) for the caller to
+        cascade onto referencing children. Byte-parity: empty `key_error_rows`
+        for this edge's columns builds the identical pre-fix map.
         """
         cache_key: _NodeKey = (edge.parent_table, edge.parent_columns)
         cached = parent_map_cache.get(cache_key)
         if cached is not None:
+            # errored_keys_cache[cache_key] stays in lockstep (same prior call).
             return cached
         ptable = edge.parent_table
         if ptable not in frames:
             parent_map_cache[cache_key] = {}
+            if errored_keys_cache is not None:
+                errored_keys_cache[cache_key] = {}
             return {}
         masked_frame = frames[ptable]
         pcols = edge.parent_columns
@@ -417,54 +508,32 @@ class PandasExecutionAdapter:
         # calls. QA Q7 + ISO/IEC 25010 §5.2.2 (performance efficiency).
         src_lists = [s.tolist() for s in src_series]
         masked_lists = [s.tolist() for s in masked_series]
+
+        # S2: row -> trigger for rows excluded by a key-column row-error
+        # (first key-column error wins the trigger for a composite key).
+        excluded: dict[int, str] = {}
+        if key_error_rows:
+            tbl_errs = key_error_rows.get(ptable, {})
+            for c in pcols:
+                for ridx, trig in tbl_errs.get(c, {}).items():
+                    excluded.setdefault(ridx, trig)
+
         out: dict[_KeyTuple, _KeyTuple] = {}
+        errored: dict[_KeyTuple, str] = {}
         for i in range(n):
             raw = [col[i] for col in src_lists]
             if any(pd.isna(x) for x in raw):
                 continue  # parent key with a null component cannot be referenced
             src_t = tuple(_fk_key_value(x) for x in raw)
+            if i in excluded:
+                # EXCLUDE: a row-errored key never enters the resolution map.
+                errored.setdefault(src_t, excluded[i])
+                continue
             out[src_t] = tuple(col[i] for col in masked_lists)
         parent_map_cache[cache_key] = out
+        if errored_keys_cache is not None:
+            errored_keys_cache[cache_key] = errored
         return out
-
-    def _make_remap_fn(
-        self,
-        edge: RelationshipEdge,
-        node_by_key: dict[_NodeKey, WorkNode],
-        ctx: StrategyContext,
-    ) -> Callable[[list[_KeyTuple]], list[_KeyTuple]]:
-        """A REMAP closure: mask orphan source keys via the PARENT columns' own
-        strategies, so a remapped orphan is indistinguishable from a real masked
-        value (S9 spec §6.2 REMAP + Dennis slice-2h brief §G)."""
-        ptable = edge.parent_table
-        pcols = edge.parent_columns
-
-        def remap(orphan_keys: list[_KeyTuple]) -> list[_KeyTuple]:
-            if not orphan_keys:
-                return []
-            masked_cols: list[list[object]] = []
-            for j, pcol in enumerate(pcols):
-                pnode = node_by_key.get((ptable, (pcol,)))
-                if pnode is None or not isinstance(pnode.plan_slice, ColumnSeed):
-                    raise ExecutionError(
-                        code="orphan_remap_parent_missing",
-                        message=(
-                            f"REMAP needs the parent column {ptable}.{pcol} to be a "
-                            "masked scalar node, but it is absent from the work list."
-                        ),
-                    )
-                handler = self._handlers.get(pnode.strategy)
-                if handler is None:
-                    raise ExecutionError(
-                        code="unsupported_strategy",
-                        message=f"REMAP found no handler for parent strategy {pnode.strategy!r}.",
-                    )
-                tmp = pd.DataFrame({pcol: [k[j] for k in orphan_keys]})
-                tmp, _ = handler.run(tmp, pcol, pnode.plan_slice, ctx)
-                masked_cols.append(list(tmp[pcol]))
-            return [tuple(col[i] for col in masked_cols) for i in range(len(orphan_keys))]
-
-        return remap
 
 
 _DEFAULT_EXECUTORS: dict[str, ExecutionAdapter] = {}

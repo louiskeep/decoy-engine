@@ -237,6 +237,13 @@ nitpick_ignore = [
     # convention for private-module-sourced types (see ExecutionError above).
     ("py:class", "decoy_engine.validators._types.ValidationReport"),
     ("py:class", "decoy_engine.validators._types.QuarantineSummary"),
+    # Sprint 2 honesty pack (2026-07-04): quarantine.py references
+    # RowErrorRecord via TYPE_CHECKING from the private
+    # `execution._row_errors` module. Same private-module-sourced-type
+    # pattern as ValidationReport/QuarantineSummary above; RowErrorRecord is
+    # also re-exported publicly from `decoy_engine.execution`, but autoapi
+    # renders the cross-reference against its defining (private) module.
+    ("py:class", "decoy_engine.execution._row_errors.RowErrorRecord"),
     # SP-06 (2026-06-27): expressions.py converted to a package. The public
     # API functions (safe_eval, make_mask_globals) are now defined in the
     # private `_safe_eval.py` submodule (autoapi_ignore pattern */_*.py) and

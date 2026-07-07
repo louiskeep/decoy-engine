@@ -17,12 +17,14 @@ under the same ``derive_key`` (always ``None`` in ENG-2; ENG-4 wires the real ke
 Thread-safety: all explicit RNG use here is instance-local (``random.Random(seed)``)
 so two ``generate_tables`` calls in different threads do not corrupt each other's
 draws. ``random.Random(s)`` produces the same sequence as ``random.seed(s)``, so
-V1 byte-parity is preserved. The Faker dependency mutates module-level
-``random`` state via ``seed_instance`` (Faker library limitation): QA-7 F1
-(2026-06-01) added an intra-process lock (``_FAKER_CALL_LOCK``) around the
-seed_instance + provider_func call so concurrent generate_tables calls cannot
-corrupt each other's seed state. V2.1 throughput optimization: replace the
-shared cached instance with a per-call fresh Faker to remove the lock entirely.
+V1 byte-parity is preserved. Faker state is likewise isolated per worker: the
+no-locale default instance is thread-local and the locale paths construct fresh
+instances per call. ``Faker.seed_instance`` detaches the instance onto its own
+``random.Random`` and re-seeds it, so a per-thread instance seeded per row
+produces the exact sequence a reseeded shared instance did; output bytes are
+unchanged. This replaces the QA-7 F1 (2026-06-01) ``_FAKER_CALL_LOCK`` that
+serialized every seed_instance + provider_func pair across threads: isolation
+makes the race structurally impossible instead of locked away.
 """
 
 from __future__ import annotations
@@ -51,36 +53,24 @@ if TYPE_CHECKING:
 _DEFAULT_SEED = 0
 
 # F-5 fix: Faker() construction loads locale data + registers ~200 providers
-# (50-200ms per construction). The instance is re-seeded per call via
-# `seed_instance`, so caching one shared no-locale instance is safe + cheap.
-_DEFAULT_FAKER: Faker | None = None
-_DEFAULT_FAKER_LOCK = threading.Lock()
-
-# QA-7 F1 (2026-06-01, CRITICAL determinism): Faker.seed_instance() mutates
-# module-level `random` state internally (Faker library limitation, all
-# versions through 2026). Two concurrent generate_tables calls sharing the
-# `_DEFAULT_FAKER` singleton (or any cached locale instance) will clobber
-# each other's seed between seed_instance + provider_func: thread A seeds,
-# then thread B seeds before thread A draws, and thread A's row is now
-# derived from B's seed. Violates the same-seed -> same-output contract.
-#
-# Fix: serialize the seed_instance + provider_func pair across threads
-# with a process-level lock. Acceptable throughput cost for V1 (single-
-# worker generation); a per-call fresh Faker instance is the throughput-
-# friendly alternative scoped for V2.1 when concurrent generation lands.
-# Intra-process scope: serializes threads within a single Python process;
-# does NOT serialize across separate worker processes (each has its own
-# Faker singleton + own random state, no cross-process interference).
-_FAKER_CALL_LOCK = threading.Lock()
+# (50-200ms), so the no-locale instance is cached per THREAD, not per process
+# (memory scales with live worker threads). A shared instance re-seeded via
+# `seed_instance` races under concurrent generate_tables calls; QA-7 F1 masked
+# that by locking every seed_instance + provider_func pair. Per-thread
+# instances remove the race and the lock. Seed-derived output is unchanged:
+# per-row seed_instance detaches onto an instance-local random.Random, so a
+# fresh instance seeded the same yields the same sequence as a reseeded shared
+# one. (A custom provider drawing from process-global state like fake.unique
+# was already non-deterministic and is outside the seeded-draw contract.)
+_THREAD_LOCAL = threading.local()
 
 
 def _get_default_faker() -> Faker:
-    global _DEFAULT_FAKER
-    if _DEFAULT_FAKER is None:
-        with _DEFAULT_FAKER_LOCK:
-            if _DEFAULT_FAKER is None:
-                _DEFAULT_FAKER = Faker()
-    return _DEFAULT_FAKER
+    fake = getattr(_THREAD_LOCAL, "default_faker", None)
+    if fake is None:
+        fake = Faker()
+        _THREAD_LOCAL.default_faker = fake
+    return fake
 
 
 def generate_tables(
@@ -420,8 +410,9 @@ def _faker(
         faker_inst = make_faker(instance_default_locale)
         pre_seed = seed
     else:
-        # F-5 fix: cache the no-locale instance at module level. Per-row
-        # seed_instance below overrides the initial seed, so sharing is safe.
+        # F-5 fix: cache the no-locale instance per thread. Per-row
+        # seed_instance below overrides the initial seed, so per-thread reuse
+        # is output-identical to a fresh instance.
         faker_inst = _get_default_faker()
         pre_seed = seed
     providers = get_faker_providers(faker_inst)
@@ -432,19 +423,15 @@ def _faker(
         derive_key=derive_key, column_config=col, fallback_seed=seed
     )
     out: list[Any] = []
-    # QA-7 F1 + C1 (2026-06-01): both seed_instance call sites are in
-    # the critical section. The pre-loop seed_instance(seed) used to
-    # live OUTSIDE the lock (Dennis QA-7 gate carry C1) which left a
-    # window where thread B's pre-seed could race thread A's row-seed.
-    # Now the pre-seed + per-row seeds + provider_func calls are all
-    # inside one lock acquisition; different-seed concurrency is also
-    # safe.
-    with _FAKER_CALL_LOCK:
-        if pre_seed is not None:
-            faker_inst.seed_instance(pre_seed)
-        for i in range(n):
-            faker_inst.seed_instance(gen_ctx.row_int("faker", i))
-            out.append(provider_func(**faker_kwargs))
+    # No lock: every path above yields an instance no other thread touches
+    # (thread-local default, or a fresh make_faker construction), so the
+    # seed_instance + provider_func pair cannot race. The QA-7 F1/C1 lock
+    # existed only because the default instance was a process-wide singleton.
+    if pre_seed is not None:
+        faker_inst.seed_instance(pre_seed)
+    for i in range(n):
+        faker_inst.seed_instance(gen_ctx.row_int("faker", i))
+        out.append(provider_func(**faker_kwargs))
     return out
 
 

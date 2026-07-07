@@ -872,7 +872,7 @@ source column's distribution.
   `top_values` + `other_count`; `datetime` needs `year_bins` + `min` + `max`.
   This matches `compute_distribution_snapshot`'s output.
 
-## Job-level config: validators and quarantine (SP-05)
+## Job-level config: validators and quarantine (SP-05, extended Sprint 2 honesty pack)
 
 These two top-level blocks run after all column passes complete. They operate on
 the assembled output tables, not on individual columns mid-run.
@@ -899,9 +899,42 @@ validators:
       vehicles: [vin_number]
   - name: fk_intact
   - name: no_orphan_children
+  - name: leak_check
+    columns:
+      orders: [card_number, email]
+    params:
+      exempt: {orders: [status_code]}
+      max_identical_ratio: 0.02
+      min_rows: 1
+  - name: regex_match
+    columns:
+      orders: [order_code]
+    params:
+      pattern: "[A-Z]{2}\\d{4}"
+  - name: column_in_set
+    columns:
+      orders: [status]
+    params:
+      allowed_values: [active, inactive, pending]
+      allow_null: true
+  - name: parent_window_respected
+    params:
+      child_table: events
+      child_column: event_date
+      parent_table: subscriptions
+      window_start_column: window_start
+      window_end_column: window_end
+  - name: reconciliation_holds
+    params:
+      parent_table: orders
+      parent_column: total
+      child_table: order_items
+      child_column: amount
+      op: sum
+      tolerance: 0.01
 ```
 
-Built-in validators:
+Built-in validators (11):
 
 - `luhn`: Luhn mod-10 check digit per column. Delegates to
   `checksums.validate('luhn', value)` (SP-04).
@@ -915,14 +948,48 @@ Built-in validators:
   `relationships:` block. Uses the SDV HMA1 parent-first DAG pattern.
 - `no_orphan_children`: Every child row has a non-null FK value. Uses the SDV
   HMA1 parent-first DAG pattern.
+- `leak_check` (Sprint 2 honesty pack): compares masked output values against
+  their source values per column and flags residual source values. Established
+  methodology: the Delphix/Informatica "masking verification" pre/post-value
+  comparison pattern and the Great Expectations
+  `expect_column_pair_values_A_to_not_equal_B` check. Two tiers: a COLUMN tier
+  (every non-excluded column; `identical_ratio == 1.0` over non-null cells means
+  the strategy had no effect at all) and a CELL tier (TRANSFORMATIVE strategies
+  only -- `hash`, `fpe`, `redact`, `text_redact`, `faker`, `code_set`, and
+  composite-bundle columns -- `identical_ratio > max_identical_ratio` flags
+  residual per-row leaks, quarantinable row-by-row). `passthrough` columns,
+  FK-child columns, and `when:`-gated columns are excluded by construction.
+  Requires the pre-mask source table for every table in scope (passed by
+  `run_pipeline` automatically); a table in scope with no source raises rather
+  than silently skipping.
+- `regex_match`: every non-null value in the named columns matches
+  `params.pattern` via `re.fullmatch` (whole-cell; GE
+  `expect_column_values_to_match_regex` semantics).
+- `column_in_set`: every value in the named columns belongs to
+  `params.allowed_values` (str-canonicalized; GE
+  `expect_column_values_to_be_in_set` semantics). `params.allow_null` (default
+  `true`) controls whether null cells are findings.
+- `parent_window_respected`: every child date falls within its parent's
+  declared window (inclusive bounds; pairs with the `windowed_date` generate
+  strategy). Reads the matching `relationships:` edge the same way `fk_intact`
+  does.
+- `reconciliation_holds`: a parent aggregate cell reconciles with its child
+  rows under an absolute `params.tolerance` (default `1e-6`; pairs with the
+  `derived_aggregate` strategy). `params.op` is `sum` (default) or `count`.
 
 Parameters:
 
-- `name` (required): one of the six built-in validator names above. Unknown
+- `name` (required): one of the 11 built-in validator names above. Unknown
   names raise `ValueError` at the `validate()` call.
-- `columns` (optional for FK validators): dict mapping table name to a list of
-  column names. Required for `luhn`, `npi`, `iban`, and `vin`. Unused for
-  `fk_intact` and `no_orphan_children`, which read `relationships:` instead.
+- `columns` (optional for FK/relationship validators): dict mapping table name
+  to a list of column names. Required for `luhn`, `npi`, `iban`, `vin`,
+  `regex_match`, `column_in_set`; optional scope-narrowing for `leak_check`
+  (default: all non-excluded columns of every mask-kind table). Unused for
+  `fk_intact`, `no_orphan_children`, `parent_window_respected`, and
+  `reconciliation_holds`, which read `relationships:` instead.
+- `params` (Sprint 2 honesty pack): free-form per-validator knob bag. Each
+  validator validates its own `params` at run time with a loud `ValueError`
+  naming the validator and the offending key.
 
 Results are persisted to the evidence manifest under
 `quality_metrics["validation"]["validators"]` as a serialised `ValidationReport`
@@ -933,11 +1000,34 @@ Fail-closed by default: any validator failure raises `ValidatorFailedError`
 inspection. Enable `quarantine:` with the `validation_fail` trigger to route
 failing rows to a JSONL file instead of failing the job.
 
+### Per-row strategy errors (Sprint 2 honesty pack, D7/D8)
+
+Independent of the `validators:` block, `bucketize`, `date_shift`, and
+`code_set` can each produce PER-ROW errors during masking itself (not a
+post-mask check): a non-null `bucketize`/`date_shift` cell that fails
+numeric/date coercion (`format_error`), or a `code_set` `chapter_preserve`
+value that cannot be masked -- input chapter absent from the corpus, or a
+sole-member chapter bucket (`mask_error`).
+
+**Behavior change (pre-GA hard cutover, no flag):** before this sprint, such a
+cell silently kept its ORIGINAL source value in the masked output -- a silent
+per-row leak. Now the job either fails loud by default (`RowErrorsFailedError`,
+exported from `decoy_engine.errors`, naming counts by table/column/trigger with
+no cell values) or, when quarantine is enabled with the matching trigger, the
+offending rows are removed from the main output and written to the quarantine
+JSONL exactly like a validator finding. There is no way to restore the old
+silent-leak behavior.
+
+Row-error counts are persisted to the evidence manifest under
+`quality_metrics["row_errors"]` (counts by `table.column[trigger]`, no cell
+values). `ExecutionResult.row_errors` carries the full `RowErrorRecord` tuple
+for callers that want per-row detail before quarantine/fail-closed disposition.
+
 ### quarantine:
 
-Routes rows that fail validation to a separate JSONL file instead of failing the
-job. When active, the job continues and completes successfully; only the failing
-rows are removed from the main output.
+Routes rows that fail validation OR hit a per-row strategy error to a separate
+JSONL file instead of failing the job. When active, the job continues and
+completes successfully; only the failing rows are removed from the main output.
 
 ```yaml
 quarantine:
@@ -945,6 +1035,8 @@ quarantine:
   output_path: /mnt/quarantine/run-2026-06-27.jsonl
   triggers:
     - validation_fail
+    - format_error
+    - mask_error
 ```
 
 Parameters:
@@ -954,37 +1046,45 @@ Parameters:
   file. Must be non-empty and non-whitespace when `enabled` is `true`; an empty
   path with `enabled: true` raises at config validation to prevent silent data
   loss.
-- `triggers` (list): which conditions route rows to quarantine. Only
-  `validation_fail` is wired in SP-05. Two names are reserved for future
-  wiring but not yet active:
-  - `format_error`: reserved, not wired. Rejected at config validation.
-  - `mask_error`: reserved, not wired. Rejected at config validation.
+- `triggers` (list): which conditions route rows to quarantine. Three triggers
+  are wired:
+  - `validation_fail` (SP-05): row failed a job-level validator.
+  - `format_error` (Sprint 2 honesty pack S5): a `bucketize`/`date_shift` cell
+    could not be coerced/parsed.
+  - `mask_error` (Sprint 2 honesty pack S6): a `code_set` value could not be
+    masked under `chapter_preserve`.
+  A trigger name is accepted ONLY once its producer is wired and tested (no
+  pre-added names); an unrecognised trigger raises at config validation.
 
 Each quarantined row is written as one JSON object containing all original column
 values plus three metadata fields: `_quarantine_trigger` (name of the first
 trigger that fired), `_quarantine_reason` (human-readable explanation from the
-first `ValidatorFinding`), and `_source_table` (output table name).
+first finding/row-error), and `_source_table` (output table name).
 
-Deduplication: a row that fails multiple validators appears once in the JSONL
-file (first finding wins for `_quarantine_trigger` and `_quarantine_reason`).
-`total_quarantined` counts distinct rows removed from the main output.
-`counts_by_trigger` tallies per finding and may sum higher when a row fails
-multiple validators. The JSONL file is not written when no rows are quarantined.
+Deduplication: a row that fails multiple validators/triggers appears once in the
+JSONL file (first entry wins for `_quarantine_trigger` and `_quarantine_reason`;
+validator findings are ordered before row errors). `total_quarantined` counts
+distinct rows removed from the main output. `counts_by_trigger` tallies per
+finding/row-error and may sum higher when a row fails multiple triggers. The
+JSONL file is not written when no rows are quarantined.
 
 Quarantine state is persisted to the evidence manifest under
 `quality_metrics["quarantine"]` as a serialised `QuarantineSummary` (frozen
 dataclass with `enabled`, `output_path`, `counts_by_trigger`, `total_quarantined`).
 
-Three fail-closed guards (no silent data loss):
+Fail-closed guards (no silent data loss):
 
 1. `enabled: true` with an empty or whitespace `output_path` raises at config
    validation. A backstop in `apply_quarantine` covers callers that bypass
    Pydantic config validation.
-2. An unwired trigger (`format_error`, `mask_error`) raises at config
-   validation. A silent no-op is rejected up front.
-3. A misconfigured FK validator (unknown parent table or column in
-   `relationships:`) raises at `validate()` call time rather than
-   mass-flagging every row.
+2. An unwired trigger name raises at config validation. A silent no-op is
+   rejected up front.
+3. A misconfigured FK/relationship validator (unknown parent table or column
+   in `relationships:`, or an ambiguous/missing relationship edge) raises at
+   `validate()` call time rather than mass-flagging every row.
+4. A per-row strategy error whose trigger is NOT quarantine-enabled fails the
+   job with `RowErrorsFailedError` rather than silently keeping the leaked
+   value in the output (D8).
 
 ## Infrastructure: expression parser and reference tables (SP-06)
 

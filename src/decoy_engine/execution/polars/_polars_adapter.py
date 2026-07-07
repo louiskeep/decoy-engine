@@ -51,6 +51,7 @@ from decoy_engine.execution._adapter import ExecutionResult, StrategyContext
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._guards import reject_null_bearing_int
 from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
+from decoy_engine.execution._row_errors import RowErrorRecord, drain_row_errors
 from decoy_engine.execution._runner import build_work_list, order_work
 from decoy_engine.execution._when_gate import run_with_when_gate_polars
 from decoy_engine.execution.polars._conversion_boundary import ConversionBoundary
@@ -198,6 +199,7 @@ class PolarsExecutionAdapter:
             job_seed=plan.seed_envelope.job_seed,
         )
         warnings: list[QualityWarning] = []
+        row_error_records: list[RowErrorRecord] = []
         collector = TimingCollector()
         with use_collector(collector):
             for node in work:
@@ -218,6 +220,12 @@ class PolarsExecutionAdapter:
                         handler, frames[node.table], node.columns[0], plan_slice, ctx
                     )
                 warnings.extend(node_warnings)
+                # Sprint 2 honesty pack (D7): mirrors the pandas adapter's
+                # drain point. `PandasStrategyPort`-wrapped handlers
+                # (bucketize/date_shift) share the SAME `ctx` instance, so
+                # this drains their row errors too (trap T7: one fix, both
+                # substrates).
+                row_error_records.extend(drain_row_errors(ctx.row_errors, table=node.table))
 
         outputs = {table: boundary.to_arrow(frame) for table, frame in frames.items()}
         return ExecutionResult(
@@ -229,6 +237,7 @@ class PolarsExecutionAdapter:
                 "conversion_breakdown": boundary.as_dict(),
                 "executed_substrate": {node.strategy: "polars" for node in work},
             },
+            row_errors=tuple(row_error_records),
         )
 
     def _run_via_pandas_oracle(

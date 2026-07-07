@@ -29,6 +29,24 @@ fk_intact
 no_orphan_children
     Every child row has a non-null FK value. Uses the SDV HMA1
     parent-first DAG pattern.
+leak_check
+    Compares output values against source values per column and flags
+    residual source values above a ratio threshold (Sprint 2 honesty pack).
+regex_match
+    Every non-null value matches an operator-supplied regex (whole-cell).
+column_in_set
+    Every value belongs to an operator-supplied allowed set.
+parent_window_respected
+    Every child date falls within its parent's declared window (pairs with
+    the ``windowed_date`` generate strategy).
+reconciliation_holds
+    A parent aggregate cell reconciles with its child rows (pairs with the
+    ``derived_aggregate`` strategy).
+
+Sprint 2 honesty pack (2026-07-04, D2): ``validate()`` gained a keyword-only
+``sources`` parameter carrying the caller-loaded pre-mask source tables, so
+validators that compare output against source (leak_check) can do so without
+a second plumbing mechanism. Additive; existing callers are unaffected.
 
 Design constraints
 ------------------
