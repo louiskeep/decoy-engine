@@ -365,9 +365,18 @@ def _single_edge_case(draw: st.DrawFn) -> tuple[Any, dict[str, pa.Table], Relati
 
     bool_involved = parent_kind == "bool" or child_kind == "bool"
     allow_null = child_kind in ("str", "float", "int", "bool")
-    # No 3rd bool value exists to serve as a guaranteed non-match (both True
-    # and False are always valid parent keys once parent_rows >= 2), so an
-    # orphan is unrepresentable whenever "bool" is on either side of the edge.
+    # This generator's bool parent is always the 2-row, both-values-present
+    # shape (`_key_value("bool", i) = bool(i % 2)` for i in 0, 1), so no 3rd
+    # bool value exists here to serve as a guaranteed non-match: an orphan is
+    # unrepresentable whenever "bool" is on either side of THIS shape's edge.
+    # The single-VALUE bool-parent shape (Codex round-5 Finding B: a parent
+    # covering only one of True/False, so the OTHER value is a genuine
+    # orphan) is a structurally different parent construction than this
+    # generator's uniform `_key_value`/`_orphan_value` protocol supports, and
+    # is covered instead by dedicated pinned regressions:
+    # `test_bool_orphan_publishes_int_not_bool` and
+    # `test_bool_orphan_and_match_cross_batch_casts_to_int`
+    # (tests/unit/execution/test_out_of_core_runner_streaming.py).
     allow_orphan = (policy is not OrphanPolicy.FAIL or draw(st.booleans())) and not bool_involved
     choices = list(range(parent_rows))
     child_refs: list[int | None] = []
@@ -790,6 +799,102 @@ def test_int_float_decimal_normalize_equal_match(child_kind: str) -> None:
     # Every child row matched a parent, so its masked FK is the parent's token.
     assert child_masked == [parent_masked[i] for i in (0, 1, 2, 0)]
     _assert_value_equal(oracle.outputs["child"], ooc.outputs["child"], f"normeq-{child_kind}")
+
+
+@pytest.mark.parametrize("strategy", ["hash", "redact", "truncate"])
+def test_decimal_fractional_scale_mismatch_matches_oracle(strategy: str) -> None:
+    """Codex round-5 Finding A: a parent Decimal('1.20') (decimal128 scale 2)
+    and a child Decimal('1.2') (decimal128 scale 1) are ONE logical FK key --
+    Python's Decimal equality/hash fold exponent-only (trailing-zero)
+    differences, so the pandas oracle's plain-dict parent_map already
+    resolves them as a match. Before the fix, `fk_join_key` encoded the raw
+    Decimal's `repr()`, which differs by scale, so the out-of-core route
+    minted different DuckDB join tokens for the two sides and misreported
+    every matching child as an orphan (FAIL raised `orphan_fk_violation`
+    where the oracle succeeds).
+
+    hash/redact/truncate (not passthrough) are required to reach the bug: a
+    passthrough parent key stays decimal-typed end to end, which the
+    fixed-schema output-type resolver (`_batch_join.py::_resolve_output_types`)
+    already rejects fail-closed for ANY orphan policy (a decimal masked type
+    has no fixed Python round-trip image) -- a real, unrelated, pre-existing
+    fail-closed path, not this bug. hash/redact/truncate mask the parent
+    DECIMAL key to a STRING, sidestepping that reject, so FAIL/no-orphans
+    reaches the actual join-token comparison this test pins.
+    """
+    ns = "ns_dec_scale"
+    seed = _seed_for(strategy, ns)
+    parent = pa.table(
+        {"pk": pa.array([Decimal("1.20"), Decimal("2.20")], type=pa.decimal128(20, 2))}
+    )
+    child = pa.table(
+        {
+            "fk": pa.array(
+                [Decimal("1.2"), Decimal("2.2"), Decimal("1.2")], type=pa.decimal128(20, 1)
+            )
+        }
+    )
+    plan = _plan(
+        (
+            ("parent", TableSeed(per_column=(("pk", seed),), per_group=())),
+            ("child", TableSeed(per_column=(("fk", seed),), per_group=())),
+        )
+    )
+    graph = RelationshipGraph(
+        edges=(
+            RelationshipEdge(
+                parent_table="parent",
+                parent_columns=("pk",),
+                child_table="child",
+                child_columns=("fk",),
+                namespace=ns,
+                orphan_policy=OrphanPolicy.FAIL,
+            ),
+        ),
+        ordering=(),
+    )
+    sources = {"parent": parent, "child": child}
+    outcome = _assert_parity_or_faithful_rejection(
+        plan, sources, graph, f"decimal-scale-mismatch-{strategy}"
+    )
+    assert outcome == "parity"
+
+
+def test_decimal_fractional_scale_mismatch_still_detects_real_orphans() -> None:
+    """The scale-fold fix must not paper over a GENUINE mismatch: a child
+    Decimal('1.30') (scale 2) that equals no parent key is still a real
+    orphan on both routes -- both must raise the same `orphan_fk_violation`
+    under FAIL, never a false match."""
+    ns = "ns_dec_scale_orphan"
+    seed = _seed_for("hash", ns)
+    parent = pa.table(
+        {"pk": pa.array([Decimal("1.20"), Decimal("2.20")], type=pa.decimal128(20, 2))}
+    )
+    child = pa.table(
+        {"fk": pa.array([Decimal("1.2"), Decimal("1.3")], type=pa.decimal128(20, 1))}
+    )
+    plan = _plan(
+        (
+            ("parent", TableSeed(per_column=(("pk", seed),), per_group=())),
+            ("child", TableSeed(per_column=(("fk", seed),), per_group=())),
+        )
+    )
+    graph = RelationshipGraph(
+        edges=(
+            RelationshipEdge(
+                parent_table="parent",
+                parent_columns=("pk",),
+                child_table="child",
+                child_columns=("fk",),
+                namespace=ns,
+                orphan_policy=OrphanPolicy.FAIL,
+            ),
+        ),
+        ordering=(),
+    )
+    sources = {"parent": parent, "child": child}
+    outcome = _assert_parity_or_faithful_rejection(plan, sources, graph, "decimal-scale-real-orphan")
+    assert outcome == "both-raised"
 
 
 def test_underscore_column_staged_path_non_collision() -> None:

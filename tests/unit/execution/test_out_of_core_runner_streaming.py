@@ -222,6 +222,134 @@ def test_all_null_redact_batch_publishes_fixed_type(tmp_path, monkeypatch) -> No
     assert published.to_pydict() == in_memory.outputs["orders"].to_pydict()
 
 
+def test_bool_orphan_publishes_int_not_bool(tmp_path, monkeypatch) -> None:
+    """Codex round-5 Finding B regression test.
+
+    A bool PARENT key that covers only one of True/False (here: only False)
+    makes the other value (True) a genuine orphan under PRESERVE. An orphan's
+    preserved value goes through `fk_key_value`, which unconditionally
+    normalizes bool -> int (0/1); with every child row an orphan (no parent
+    row is ever False's counterpart here), the pandas oracle's whole column is
+    int64. Before the fix, `_resolve_output_types` declared the FIXED sink
+    schema type as plain `bool` (treating the orphan candidate as staying
+    bool, like every other type family), so the streaming ParquetWriter cast
+    the orphan's int64 value back to bool and published True/True where the
+    oracle's value is 1/1 -- a real wrong-output divergence on the ONE path
+    this bug can only show up on (`emit_to_sink`'s fixed-schema write; the
+    no-sink resident path accidentally self-heals via
+    `ChildFkBatchJoiner.observed_types`, so a sink is required to catch this).
+
+    A small `_JOIN_BATCH_ROWS` splits the (here, uniformly orphan) rows
+    across multiple batches, proving the fixed int64 type is applied
+    consistently batch to batch, not just within one.
+    """
+    monkeypatch.setattr(join_mod, "_JOIN_BATCH_ROWS", 2, raising=False)
+    ns = "cust_bool"
+    plan = SimpleNamespace(
+        seed_envelope=SeedEnvelope(
+            job_seed=_SEED,
+            per_table=(
+                ("customers", TableSeed(per_column=(("id", _col("passthrough")),), per_group=())),
+                ("orders", TableSeed(per_column=(("id", _col("passthrough")),), per_group=())),
+            ),
+        )
+    )
+    edge = RelationshipEdge(
+        parent_table="customers",
+        parent_columns=("id",),
+        child_table="orders",
+        child_columns=("id",),
+        namespace=ns,
+        orphan_policy=OrphanPolicy.PRESERVE,
+    )
+    graph = RelationshipGraph(edges=(edge,), ordering=())
+    sources = {
+        "customers": pa.table({"id": pa.array([False, False], type=pa.bool_())}),
+        # No row references False: every child row is an orphan, split
+        # across 2 batches (_JOIN_BATCH_ROWS=2) that are each homogeneous.
+        "orders": pa.table({"id": pa.array([True, True, True, True], type=pa.bool_())}),
+    }
+    target = tmp_path / "published"
+
+    run_fk_out_of_core(
+        plan,
+        sources,
+        registry=_REG,
+        relationship_graph=graph,
+        sink=ParquetTransactionalSink(target),
+        temp_dir=tmp_path / "work-sink",
+    )
+    in_memory = run_fk_out_of_core(
+        plan, sources, registry=_REG, relationship_graph=graph, temp_dir=tmp_path / "work-mem"
+    )
+    pandas = PandasExecutionAdapter().run(
+        plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
+    )
+
+    published = pq.read_table(target / "orders.parquet")
+    assert published.column("id").type == pa.int64()
+    assert published.column("id").to_pylist() == [1, 1, 1, 1]
+    assert pandas.outputs["orders"].column("id").type == pa.int64()
+    assert pandas.outputs["orders"].column("id").to_pylist() == [1, 1, 1, 1]
+    assert published.to_pydict() == in_memory.outputs["orders"].to_pydict()
+    assert published.to_pydict() == pandas.outputs["orders"].to_pydict()
+
+
+def test_bool_orphan_and_match_cross_batch_casts_to_int(tmp_path) -> None:
+    """A bool FK edge whose rows split across batches such that ONE batch is
+    all matched (bool, untouched) and another is all orphan (fk_key_value's
+    int normalization) must resolve its per-batch chunks to ONE int64 column,
+    not raise and not silently keep a mixed bool/int64 type list. This is the
+    per-batch mechanism `_unified_chunk_type`'s bool/int64 case fixes
+    (Codex round-5 Finding B sibling): unlike the whole-column pandas oracle
+    (which sees matched and orphan rows in the SAME unbatched Python list and
+    would raise ArrowInvalid on the genuine bool/int mix -- out of this
+    parity suite's declared scope, see the module-level docstring), the
+    streaming route never builds that single mixed list: each per-batch
+    `component` list is internally homogeneous (all-matched or all-orphan),
+    so only the FIXED TYPE resolved ahead of time needs to reconcile bool with
+    int64 across batches.
+    """
+    ns = "cust_bool_mixed"
+    plan = SimpleNamespace(
+        seed_envelope=SeedEnvelope(
+            job_seed=_SEED,
+            per_table=(
+                ("customers", TableSeed(per_column=(("id", _col("passthrough")),), per_group=())),
+                ("orders", TableSeed(per_column=(("id", _col("passthrough")),), per_group=())),
+            ),
+        )
+    )
+    edge = RelationshipEdge(
+        parent_table="customers",
+        parent_columns=("id",),
+        child_table="orders",
+        child_columns=("id",),
+        namespace=ns,
+        orphan_policy=OrphanPolicy.PRESERVE,
+    )
+    graph = RelationshipGraph(edges=(edge,), ordering=())
+    sources = {
+        "customers": pa.table({"id": pa.array([False, False], type=pa.bool_())}),
+        # Rows 0-1: matched (False). Rows 2-3: orphan (True). Batches of 2
+        # (below) keep each batch internally homogeneous.
+        "orders": pa.table({"id": pa.array([False, False, True, True], type=pa.bool_())}),
+    }
+    target = tmp_path / "published"
+    run_fk_out_of_core(
+        plan,
+        sources,
+        registry=_REG,
+        relationship_graph=graph,
+        sink=ParquetTransactionalSink(target),
+        temp_dir=tmp_path / "work-sink",
+        batch_rows=2,
+    )
+    published = pq.read_table(target / "orders.parquet")
+    assert published.column("id").type == pa.int64()
+    assert published.column("id").to_pylist() == [0, 0, 1, 1]
+
+
 def _shared_key_chain_plan(orders_namespace: str) -> Any:
     """A->B->C chain where orders.customer_id is BOTH an incoming FK child
     column and the outgoing parent key of the payments edge."""

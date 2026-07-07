@@ -364,21 +364,25 @@ def _resolve_output_types(
     for idx in range(len(edge.child_columns)):
         candidates = {_python_roundtrip_type(masked_types[idx])}
         if policy in (OrphanPolicy.PRESERVE, OrphanPolicy.WARN):
-            # fk_key_value preserves every supported type family (its only
-            # cross-family move, whole float -> int, is the documented
-            # narrowing divergence), so the normalized key type is the
-            # round-trip type of the source column.
-            candidates.add(_python_roundtrip_type(child_key_types[idx]))
+            # The orphan's OWN value goes through fk_key_value (`_append_
+            # output_batch`'s PRESERVE/WARN branch), unlike a matched row's
+            # value (the parent's masked value, verbatim, never fk_key_value'd)
+            # -- so the round-trip type here must be the type fk_key_value
+            # ACTUALLY produces, not the source column's own type.
+            candidates.add(_fk_key_value_roundtrip_type(child_key_types[idx]))
         elif policy is OrphanPolicy.REMAP:
             if remap_seeds is None:
                 raise AssertionError("remap seeds checked at construction")
             # The parent strategy's analytic output type over the normalized
             # child keys; re-round-tripped because remapped orphan values are
             # rebuilt from Python scalars like every other FK output value.
+            # `_batch_remap_values` feeds fk_key_value-normalized values into
+            # `mask_column`, so the "source type" a strategy like passthrough
+            # sees is also the fk_key_value round-trip type, not the raw one.
             candidates.add(
                 _python_roundtrip_type(
                     masked_output_type(
-                        remap_seeds[idx], _python_roundtrip_type(child_key_types[idx])
+                        remap_seeds[idx], _fk_key_value_roundtrip_type(child_key_types[idx])
                     )
                 )
             )
@@ -391,10 +395,24 @@ def _fixed_component_type(candidates: set[pa.DataType]) -> pa.DataType:
     if len(non_null) <= 1:
         merged = _unified_chunk_type(candidates)
         return merged if merged is not None else pa.null()
+    if non_null == {pa.bool_(), pa.int64()}:
+        # Codex round-5 Finding B: a matched row's masked value is a real
+        # bool, verbatim; an orphan/REMAP-minted value went through
+        # fk_key_value's unconditional bool -> int normalization, so a bool
+        # parent covering only one of True/False makes the fixed type for
+        # that edge genuinely int64, not bool. This is a LOCAL rule, not
+        # delegated to `_unified_chunk_type` (which deliberately still
+        # refuses bool/int64, matching a genuinely mixed whole column's own
+        # pa.array() crash -- see that function's docstring): the schema
+        # here must commit to one type before any data is seen, so it cannot
+        # defer to "would the whole column actually crash." bool -> int64 is
+        # always a lossless cast (True/False are exactly 1/0), so int64 is
+        # the one type that represents every sub-case's values correctly
+        # (all-matched, all-orphan, or a per-batch split of both).
+        return pa.int64()
     if non_null <= {pa.int64(), pa.float64()}:
-        # The one multi-type mix the whole-child path pins: its permissive
-        # merge resolves an int64/float64 split to float64 whether or not the
-        # data mixes, so the fixed type reproduces it either way.
+        # The whole-child path's own multi-type mix: an int64/float64 split
+        # permissively merges to float64 whether or not the data mixes.
         merged = _unified_chunk_type(candidates)
         if merged is not None:
             return merged
@@ -406,12 +424,36 @@ def _fixed_component_type(candidates: set[pa.DataType]) -> pa.DataType:
             "schema must pick one type before any data is seen, and a "
             "permissive promotion reproduces whole-column inference only when "
             "the data actually mixes the candidates. Only int64 with float64 "
-            "(the pinned whole-float narrowing) is allowed; any other mix, "
-            "e.g. string with binary, would silently drift scalar values "
-            "whenever a run exercises only the narrower candidate, so it is "
-            "rejected before any output exists."
+            "(the pinned whole-float narrowing) or bool with int64 (the pinned "
+            "bool-orphan normalization) is allowed; any other mix, e.g. string "
+            "with binary, would silently drift scalar values whenever a run "
+            "exercises only the narrower candidate, so it is rejected before "
+            "any output exists."
         ),
     )
+
+
+def _fk_key_value_roundtrip_type(dtype: pa.DataType) -> pa.DataType:
+    """The round-trip type of a value AFTER it passes through `fk_key_value`.
+
+    Used only for the two call sites whose value genuinely goes through
+    `fk_key_value` before becoming FK output: a PRESERVE/WARN orphan
+    (`_append_output_batch`) and a REMAP mint's input (`_batch_remap_values`).
+    A MATCHED row's value never does (it is the parent's masked value,
+    verbatim), which is why `_resolve_output_types`'s masked_types candidate
+    stays on the plain `_python_roundtrip_type` below.
+
+    bool is the one type family `fk_key_value` unconditionally moves
+    cross-family (`int(value)` in its bool branch, with no int-equality
+    check gating it, unlike the whole-float narrowing) -- so a bool source
+    column's fk_key_value round-trip type is int64, not bool (Codex round-5
+    Finding B). Every other type is untouched by fk_key_value in a way that
+    would change its round-trip image, so this defers to
+    `_python_roundtrip_type` for everything else.
+    """
+    if pa.types.is_boolean(dtype):
+        return pa.int64()
+    return _python_roundtrip_type(dtype)
 
 
 def _python_roundtrip_type(dtype: pa.DataType) -> pa.DataType:
@@ -421,7 +463,11 @@ def _python_roundtrip_type(dtype: pa.DataType) -> pa.DataType:
     parity requires candidate types in that same inference image. Types whose
     round-trip inference depends on the values (decimals digit-fit precision
     and scale; uint64 lands in int64 or uint64 by magnitude) have no fixed
-    image and are rejected fail closed, as is anything unverified.
+    image and are rejected fail closed, as is anything unverified. This is the
+    MATCHED-row image (a masked_types candidate, or REMAP's `masked_output_type`
+    result); an orphan/REMAP-input value that passes through `fk_key_value`
+    first needs `_fk_key_value_roundtrip_type` instead (its bool handling
+    genuinely differs).
     """
     if pa.types.is_null(dtype):
         return dtype

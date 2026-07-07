@@ -7,9 +7,11 @@ seed protocol and reject floats.
 
 from __future__ import annotations
 
+import decimal
 import math
 import numbers
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Final
 
 
@@ -74,6 +76,41 @@ def fk_key_value(value: object) -> object:
     return value
 
 
+# Explicit, wide-precision context for `_decimal_join_token`'s `.normalize()`
+# call: normalize() rounds using its context's precision, and the *ambient*
+# default context caps at 28 significant digits. Arrow's decimal128/decimal256
+# key types go up to 38/76 significant digits, so normalizing under the
+# default context could silently round a legitimate high-precision key -- a
+# correctness bug worse than the one being fixed. 200 digits is comfortably
+# above decimal256's ceiling with headroom to spare, so normalize() only ever
+# strips trailing-zero exponent, never rounds a real value.
+_DECIMAL_JOIN_CONTEXT: Final = decimal.Context(prec=200)
+
+
+def _decimal_join_token(value: Decimal) -> str:
+    """Canonical join-token text for a Decimal, matching the oracle's dict.
+
+    `Decimal('1.20') == Decimal('1.2')` and they hash equal -- the decimal
+    module deliberately satisfies the hash/eq contract across exponent-only
+    (trailing-zero) differences -- so the pandas oracle's plain-dict
+    `parent_map` already resolves a parent masked under one scale and a child
+    read under another as the SAME key. `repr()` does not: it renders the
+    coefficient and exponent verbatim, so those two equal Decimals would mint
+    different DuckDB join tokens without this step. `.normalize()` collapses
+    the exponent difference (`Decimal('1.20').normalize() ==
+    Decimal('1.2').normalize()`, and both repr identically); zero is also
+    canonicalized to a non-negative sign, since `Decimal('-0') ==
+    Decimal('0')` but `.normalize()` alone preserves an all-zero value's sign.
+    This is a JOIN-KEY-ONLY normalization: `fk_key_value`'s return value (what
+    PRESERVE/WARN write back for an orphan) is untouched, so a preserved
+    child keeps its own source scale exactly like the oracle does.
+    """
+    canonical = value.normalize(context=_DECIMAL_JOIN_CONTEXT)
+    if canonical.is_zero():
+        canonical = abs(canonical)
+    return repr(canonical)
+
+
 def fk_join_key(value: object) -> str:
     """Encode one normalized FK key component for relational joins."""
     normalized = fk_key_value(value)
@@ -88,6 +125,12 @@ def fk_join_key(value: object) -> str:
         return f"\x00FLOAT:{normalized!r}"
     if isinstance(normalized, str):
         return f"\x00STR:{len(normalized)}:{normalized}"
+    if isinstance(normalized, Decimal):
+        # A fractional Decimal (not int-equal, see `fk_key_value` above) is
+        # returned unchanged by `fk_key_value` so PRESERVE/WARN keep the
+        # child's own scale; the join token still must fold scale-only
+        # differences the oracle's dict already folds for free.
+        return f"\x00DEC:{_decimal_join_token(normalized)}"
     return f"\x00OBJ:{type(normalized).__qualname__}:{normalized!r}"
 
 
