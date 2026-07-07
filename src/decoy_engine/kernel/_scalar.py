@@ -10,6 +10,27 @@ from decoy_engine.determinism import derive
 from decoy_engine.kernel._canonicalize import canonicalize_derive_source
 
 
+def _is_missing(value: Any) -> bool:
+    """True for a value the masking kernels must treat as missing (null).
+
+    None and IEEE NaN both count, matching pandas ``isna()`` and the
+    ``pa.array(..., from_pandas=True)`` conversion the full-frame pandas path
+    runs BEFORE a value ever reaches these kernels (that conversion folds NaN
+    to null). The out-of-core route feeds raw Arrow values straight in, so a
+    float column carrying an actual NaN would otherwise be hashed / redacted /
+    stringified ("nan") here where the oracle emitted null. Only NaN-like
+    values are unequal to themselves, so ``value != value`` detects float,
+    numpy-float, and Decimal('NaN') alike without special-casing each type; a
+    non-comparable object simply is not missing.
+    """
+    if value is None:
+        return True
+    try:
+        return bool(value != value)
+    except Exception:
+        return False
+
+
 def _array_to_pylist(values: pa.Array | pa.ChunkedArray | list[Any]) -> list[Any]:
     """Normalize the kernel's input to a plain Python list of scalars.
 
@@ -48,7 +69,7 @@ def hash_array(
     """Mask non-null values with derive(seed, namespace, canonical(value)).hex()."""
     out: list[str | None] = []
     for value in _array_to_pylist(values):
-        if value is None:
+        if _is_missing(value):
             out.append(None)
             continue
         token = derive_func(seed, namespace, canonicalize_derive_source(value)).hex()
@@ -62,7 +83,9 @@ def redact_array(
     redact_with: Any = "REDACTED",
 ) -> pa.Array:
     """Replace every non-null value with ``redact_with``."""
-    return pa.array([None if value is None else redact_with for value in _array_to_pylist(values)])
+    return pa.array(
+        [None if _is_missing(value) else redact_with for value in _array_to_pylist(values)]
+    )
 
 
 def truncate_array(
@@ -75,7 +98,7 @@ def truncate_array(
     """Apply the truncate strategy to non-null values."""
     out: list[str | None] = []
     for value in _array_to_pylist(values):
-        if value is None:
+        if _is_missing(value):
             out.append(None)
             continue
         text = str(value)
