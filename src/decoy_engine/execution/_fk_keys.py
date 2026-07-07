@@ -37,6 +37,37 @@ def fk_key_value(value: object) -> object:
         if math.isnan(value):
             return NULL_FK_KEY
         return int(value) if value.is_integer() else value
+    if isinstance(value, numbers.Number):
+        # Non-Integral, non-float numeric types (decimal.Decimal is the
+        # reachable one; it registers as numbers.Number but not
+        # numbers.Integral/Real) that Python's own == / hash already fold
+        # onto int above: hash(Decimal("1")) == hash(1) and Decimal("1") == 1
+        # (the PEP 3141 numeric tower), which is exactly the equality a plain
+        # dict-keyed parent_map (the pandas adapter's _parent_map) relies on
+        # without ever calling this function's int/float branches. Collapse
+        # the whole-valued case the same way the float branch above does, so
+        # the join-key encoder's token matches; a NaN-valued Number collapses
+        # to NULL_FK_KEY the same way float NaN does (pandas' `pd.isna`
+        # treats both as missing). A genuinely fractional value (e.g.
+        # Decimal("2.5")) is returned unchanged rather than guessed at: it
+        # stays distinct from any int it is not equal to, so this never
+        # collapses two values full-frame would keep apart.
+        try:
+            is_nan = value != value  # only NaN is unequal to itself
+        except Exception:
+            return value
+        if is_nan:
+            return NULL_FK_KEY
+        try:
+            # numbers.Number does not declare __int__/__trunc__ in the
+            # typeshed stubs (only its Integral/Real/Rational subtypes do),
+            # so the static type is widened to Any here; the runtime
+            # TypeError branch below still catches a Number that has no
+            # such conversion (e.g. complex).
+            as_int = int(value)  # type: ignore[call-overload]
+        except (TypeError, ValueError, OverflowError):
+            return value
+        return as_int if value == as_int else value
     return value
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any
 
@@ -16,6 +17,7 @@ from decoy_engine.execution.out_of_core import _runner as _out_of_core_runner
 from decoy_engine.execution.out_of_core import (
     build_parent_key_relation,
     check_out_of_core_compatibility,
+    mask_child_fk,
     mask_child_fk_fail,
     run_fk_out_of_core,
 )
@@ -1020,3 +1022,129 @@ def test_run_fk_out_of_core_wipes_staging_subtrees_for_caller_temp_dir(tmp_path)
     assert not (work_dir / "relations").exists()
     assert not (work_dir / "joins").exists()
     assert work_dir.exists()
+
+
+def _decimal_passthrough_plan() -> Any:
+    # passthrough (not hash): derive-input canonicalization hard-errors on
+    # float and Decimal keys never reach the derive path either way, so a
+    # Decimal/float-mixed FK key can only flow through a parent strategy that
+    # never canonicalizes the value (same reasoning as the existing whole-
+    # number-float test above).
+    seed = _strategy_col("passthrough")
+    return SimpleNamespace(
+        seed_envelope=SeedEnvelope(
+            job_seed=_SEED,
+            per_table=(
+                ("customers", TableSeed(per_column=(("customer_id", seed),), per_group=())),
+                ("orders", TableSeed(per_column=(("customer_id", seed),), per_group=())),
+            ),
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "policy",
+    [OrphanPolicy.FAIL, OrphanPolicy.WARN, OrphanPolicy.PRESERVE, OrphanPolicy.REMAP],
+)
+def test_child_fk_join_normalizes_decimal_parent_against_numeric_child(
+    tmp_path, policy: OrphanPolicy
+) -> None:
+    """Codex round-2 Finding A regression test.
+
+    A Decimal parent key must join against an equal int/float child key the
+    same way the pandas oracle's dict-keyed parent_map does: Python's own
+    numeric equality already folds `Decimal("1")`, `1`, and `1.0` together
+    (`hash(Decimal("1")) == hash(1)`), which is exactly what a plain
+    dict-keyed parent_map relies on with no explicit normalization. Before the
+    fix, the out-of-core join-key encoder tagged the Decimal parent key
+    `OBJ:Decimal:...` while the int/float child key encoded `INT:1`/`FLOAT:...`,
+    so the LEFT JOIN silently missed every row: FAIL raised a false orphan
+    violation instead of returning output, and WARN/PRESERVE/REMAP would have
+    misclassified matched rows as orphans (a real RI break) had they not hit a
+    downstream Arrow error while building the mismatched-type output column.
+
+    Every child value here (int 1, whole-number float 2.0, int 3) is equal
+    under Python's numeric tower to one of the Decimal parent keys, so every
+    policy must see zero orphans and produce identical output to the oracle.
+    """
+    plan = _decimal_passthrough_plan()
+    edge = _rel("customers", "customer_id", "orders", "customer_id", "cust", policy)
+    graph = RelationshipGraph(edges=(edge,), ordering=())
+    parent = pa.table(
+        {
+            "customer_id": pa.array(
+                [Decimal("1"), Decimal("2"), Decimal("3")], type=pa.decimal128(4, 0)
+            )
+        }
+    )
+    child = pa.table({"customer_id": pa.array([1, 2.0, 3], type=pa.float64())})
+    sources = {"customers": parent, "orders": child}
+
+    pandas = PandasExecutionAdapter().run(
+        plan,
+        sources,
+        registry=_REG,
+        relationship_graph=graph,
+        namespace_registry=_NS,
+    )
+    relation = build_parent_key_relation(plan=plan, parent=parent, edge=edge, temp_dir=tmp_path)
+    remap_values = None
+    if policy is OrphanPolicy.REMAP:
+        remap_values = _out_of_core_runner._remap_values(plan, edge, child)
+    out, warnings = mask_child_fk(
+        child=child,
+        edge=edge,
+        parent_relation=relation,
+        temp_dir=tmp_path,
+        remap_values=remap_values,
+    )
+
+    out_col = out.column("customer_id").to_pylist()
+    pandas_col = pandas.outputs["orders"].column("customer_id").to_pylist()
+    assert out_col == pandas_col
+    # Structural equality alone would pass even for the pre-fix bug (Python's
+    # own `1 == Decimal("1")` masks a type-level divergence), so also pin the
+    # per-value TYPE: a false orphan under PRESERVE would surface the raw
+    # normalized child key (an int/float) where the oracle returns the
+    # matched parent's masked Decimal.
+    for ooc_val, oracle_val in zip(out_col, pandas_col, strict=True):
+        assert type(ooc_val) is type(oracle_val), (
+            f"type mismatch: {ooc_val!r} ({type(ooc_val)}) vs {oracle_val!r} ({type(oracle_val)})"
+        )
+    assert warnings == ()
+
+
+def test_child_fk_join_decimal_parent_does_not_over_normalize_distinct_keys(tmp_path) -> None:
+    """Codex round-2 Finding A: prove the Decimal normalization is not a
+    blanket collapse. A child key with no Python-equal Decimal parent key
+    (99, vs. parent keys 1/2/3) must still orphan on both routes -- FAIL
+    raises identically on the pandas oracle and the out-of-core join,
+    matched-row 1 notwithstanding.
+    """
+    plan = _decimal_passthrough_plan()
+    edge = _rel("customers", "customer_id", "orders", "customer_id", "cust", OrphanPolicy.FAIL)
+    graph = RelationshipGraph(edges=(edge,), ordering=())
+    parent = pa.table(
+        {
+            "customer_id": pa.array(
+                [Decimal("1"), Decimal("2"), Decimal("3")], type=pa.decimal128(4, 0)
+            )
+        }
+    )
+    child = pa.table({"customer_id": pa.array([1, 99], type=pa.int64())})
+    sources = {"customers": parent, "orders": child}
+
+    with pytest.raises(ExecutionError) as pandas_exc:
+        PandasExecutionAdapter().run(
+            plan,
+            sources,
+            registry=_REG,
+            relationship_graph=graph,
+            namespace_registry=_NS,
+        )
+    assert pandas_exc.value.code == "orphan_fk_violation"
+
+    relation = build_parent_key_relation(plan=plan, parent=parent, edge=edge, temp_dir=tmp_path)
+    with pytest.raises(ExecutionError) as ooc_exc:
+        mask_child_fk_fail(child=child, edge=edge, parent_relation=relation, temp_dir=tmp_path)
+    assert ooc_exc.value.code == "orphan_fk_violation"
