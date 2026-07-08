@@ -295,6 +295,76 @@ def test_bool_orphan_publishes_int_not_bool(tmp_path, monkeypatch) -> None:
     assert published.to_pydict() == pandas.outputs["orders"].to_pydict()
 
 
+def test_large_whole_float_orphan_sink_matches_oracle(tmp_path, monkeypatch) -> None:
+    """SC1 round-6 P2 (int/float sink-parity) regression.
+
+    An int PARENT (passthrough) with a float CHILD whose orphan key is a whole
+    number beyond +/-2**53. `fk_key_value` folds the whole float to int, so an
+    orphan batch's FK chunk is int64 while the fixed sink schema types the
+    column float64 (a fractional float was possible). Before the fix, the
+    per-batch cast to the fixed float64 type used pyarrow's SAFE cast, which
+    rejects every integer beyond +/-2**53 -- even one exactly representable as a
+    double -- so `emit_to_sink`'s fixed-schema write crashed (ArrowInvalid) on a
+    config the pandas oracle accepts. The guarded cast now takes the lossless
+    unsafe cast, so the published value equals the oracle's exact integer
+    (9007199254740994 == 9007199254740994.0). A small batch size splits the
+    matched and orphan rows so the int64 orphan chunk is cast in isolation.
+    """
+    monkeypatch.setattr(join_mod, "_JOIN_BATCH_ROWS", 2, raising=False)
+    ns = "cust_bigfloat"
+    plan = SimpleNamespace(
+        seed_envelope=SeedEnvelope(
+            job_seed=_SEED,
+            per_table=(
+                ("customers", TableSeed(per_column=(("id", _col("passthrough")),), per_group=())),
+                ("orders", TableSeed(per_column=(("id", _col("passthrough")),), per_group=())),
+            ),
+        )
+    )
+    edge = RelationshipEdge(
+        parent_table="customers",
+        parent_columns=("id",),
+        child_table="orders",
+        child_columns=("id",),
+        namespace=ns,
+        orphan_policy=OrphanPolicy.PRESERVE,
+    )
+    graph = RelationshipGraph(edges=(edge,), ordering=())
+    sources = {
+        "customers": pa.table({"id": pa.array([1, 2], type=pa.int64())}),
+        # Rows 0-1 match parents 1/2; rows 2-3 are whole-float orphans, one of
+        # them beyond the safe-cast range (2**53 + 2, exactly representable).
+        "orders": pa.table(
+            {"id": pa.array([1.0, 2.0, 9007199254740994.0, 8.0], type=pa.float64())}
+        ),
+    }
+    target = tmp_path / "published"
+    run_fk_out_of_core(
+        plan,
+        sources,
+        registry=_REG,
+        relationship_graph=graph,
+        sink=ParquetTransactionalSink(target),
+        temp_dir=tmp_path / "work-sink",
+    )
+    in_memory = run_fk_out_of_core(
+        plan, sources, registry=_REG, relationship_graph=graph, temp_dir=tmp_path / "work-mem"
+    )
+    pandas = PandasExecutionAdapter().run(
+        plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
+    )
+
+    published = pq.read_table(target / "orders.parquet")
+    # The sink commits to float64 (a fractional float was possible); values must
+    # equal the oracle's exact-integer output row for row (folded across int/float).
+    assert published.column("id").to_pylist() == [1.0, 2.0, 9007199254740994.0, 8.0]
+    assert pandas.outputs["orders"].column("id").to_pylist() == [1, 2, 9007199254740994, 8]
+    assert published.to_pydict() == pandas.outputs["orders"].to_pydict()
+    # The no-sink path narrows the all-integral column back to int64, exactly
+    # like the oracle, and stays value-equal.
+    assert in_memory.outputs["orders"].to_pydict() == pandas.outputs["orders"].to_pydict()
+
+
 def test_bool_orphan_and_match_cross_batch_casts_to_int(tmp_path) -> None:
     """A bool FK edge whose rows split across batches such that ONE batch is
     all matched (bool, untouched) and another is all orphan (fk_key_value's

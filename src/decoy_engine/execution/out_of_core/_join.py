@@ -343,8 +343,53 @@ def _concat_fk_chunks(chunks: list[pa.Array]) -> pa.Array:
     if len(types) > 1:
         target = _unified_chunk_type(types)
         if target is not None:
-            chunks = [chunk.cast(target) for chunk in chunks]
+            chunks = [cast_fk_chunk(chunk, target) for chunk in chunks]
     return pa.concat_arrays(chunks)
+
+
+def cast_fk_chunk(chunk: pa.Array, target: pa.DataType) -> pa.Array:
+    """Cast one FK output chunk to the column's unified type without silent drift.
+
+    pyarrow's default (safe) cast rejects EVERY int64 -> float64 conversion for a
+    value outside [-2**53, 2**53], even one that is exactly representable (it
+    guards the whole doubtful range, not per value). This route reaches that cast
+    whenever an all-integral chunk -- a matched int key, or a whole-valued float
+    orphan that `fk_key_value` normalized to int -- lands in a column the unified
+    type made float64 because a fractional float was also possible. The pandas
+    oracle types that same all-integral column int64 and keeps the exact value,
+    so a bare `chunk.cast(target)` crash there (ArrowInvalid) is a parity gap on
+    a config the oracle accepts, not a real error.
+
+    Resolve it by value: an int -> float cast whose float image round-trips back
+    to the original int is lossless and byte-parity with the oracle (both hold
+    the same numeric value), so take the unsafe cast. A value that does NOT
+    round-trip (a > 2**53 odd integer key) cannot live in the float column
+    without drifting from the oracle's exact int64, and neither a streamed fixed
+    schema nor this after-the-fact merge can narrow the column back, so fail
+    closed (`out_of_core_fk_key_dtype_unsupported`) rather than publish a
+    silently rounded FK key. Non int -> float casts keep the safe default.
+    """
+    if chunk.type.equals(target):
+        return chunk
+    if pa.types.is_integer(chunk.type) and pa.types.is_floating(target):
+        widened = chunk.cast(target, safe=False)
+        # Round-trip back to the source integer type: `Array.equals` is exact on
+        # both values and null positions, so a drifted (rounded) key makes it
+        # False while a lossless widening leaves it True.
+        if not widened.cast(chunk.type, safe=False).equals(chunk):
+            raise ExecutionError(
+                code="out_of_core_fk_key_dtype_unsupported",
+                message=(
+                    f"out-of-core FK output has an integer key outside the "
+                    f"exactly-representable float range casting {chunk.type} -> "
+                    f"{target}; the whole-column type is float only because a "
+                    "fractional value was possible, and rounding the key would "
+                    "drift from the pandas oracle's exact integer, so it is "
+                    "rejected rather than published rounded."
+                ),
+            )
+        return widened
+    return chunk.cast(target)
 
 
 def _unified_chunk_type(types: set[pa.DataType]) -> pa.DataType | None:

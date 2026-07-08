@@ -64,6 +64,7 @@ from decoy_engine.execution.out_of_core._join import (
     _q,
     _sql_string,
     _unified_chunk_type,
+    cast_fk_chunk,
     orphan_fk_error,
 )
 from decoy_engine.execution.out_of_core._mask import mask_column, masked_output_type
@@ -507,7 +508,12 @@ def _dtype_unsupported(dtype: pa.DataType, reason: str) -> ExecutionError:
 def _cast_chunks(chunks: list[pa.Array], target: pa.DataType) -> pa.Array:
     if not chunks:
         return pa.array([], type=target)
-    return pa.concat_arrays([chunk.cast(target) for chunk in chunks])
+    # cast_fk_chunk: an int64 chunk widened into a float64 fixed type (a whole
+    # float orphan `fk_key_value` normalized to int, or a matched int key) uses
+    # a representability-guarded unsafe cast rather than pyarrow's safe cast,
+    # which would crash (ArrowInvalid) on any value beyond +/-2**53 even when it
+    # is exactly representable -- a parity gap with the oracle's int64 output.
+    return pa.concat_arrays([cast_fk_chunk(chunk, target) for chunk in chunks])
 
 
 __all__ = ["ChildFkBatchJoiner"]

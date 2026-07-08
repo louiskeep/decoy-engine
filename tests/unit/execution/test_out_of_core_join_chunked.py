@@ -276,7 +276,6 @@ _CONCAT_BOTH_RAISE_CASES = {
     "str_then_int_batches": ([_H, _H, _H], [5, 6]),
     "int_then_str_batches": ([5, 6], [_H, _H, _H]),
     "str_int_within_batch": ([_H, 5], [_H, _H]),
-    "bigint_beyond_double_then_float": ([2**53 + 1, 2**53 + 3], [0.5]),
     "bigint_float_within_batch": ([2**53 + 1, 0.5], [1.5]),
     "uint64_beyond_int64_then_int": ([2**63 + 1], [1, 2]),
     "uint64_beyond_int64_then_float": ([2**63 + 1], [0.5]),
@@ -327,6 +326,31 @@ def test_concat_fk_chunks_rejects_decimal_nondecimal_mix_fail_closed(batches) ->
     # coerces decimal+float64 to double where whole-column inference raises.
     # Neither can be byte-identical, so the helper must reject fail closed with
     # a clear code instead of drifting or crashing deep inside Arrow.
+    chunks = [pa.array(batch, from_pandas=True) for batch in batches]
+    with pytest.raises(ExecutionError) as exc:
+        join_mod._concat_fk_chunks(chunks)
+    assert exc.value.code == "out_of_core_fk_key_dtype_unsupported"
+
+
+@pytest.mark.parametrize(
+    "batches",
+    [
+        ([2**53 + 1, 2**53 + 3], [0.5]),
+        ([0.5], [2**53 + 1, 2**53 + 3]),
+    ],
+    ids=["bigint_then_float", "float_then_bigint"],
+)
+def test_concat_fk_chunks_rejects_int_beyond_float_range_fail_closed(batches) -> None:
+    # A whole-integer chunk that lands in a float64 column (the unified type is
+    # float only because a fractional value was possible) whose key exceeds
+    # +/-2**53 cannot be represented in float without rounding away from the
+    # pandas oracle's exact int64. The whole-column oracle itself rejects this
+    # (ArrowInvalid); the batched build must also reject, and does so with a
+    # clean coded error instead of a bare Arrow crash so `run_fk_out_of_core`
+    # fails closed with an attributable code rather than leaking ArrowInvalid.
+    values = [value for batch in batches for value in batch]
+    with pytest.raises(pa.ArrowException):
+        pa.array(values, from_pandas=True)
     chunks = [pa.array(batch, from_pandas=True) for batch in batches]
     with pytest.raises(ExecutionError) as exc:
         join_mod._concat_fk_chunks(chunks)
@@ -435,7 +459,9 @@ def test_masked_null_parent_key_is_not_treated_as_orphan(tmp_path) -> None:
     parent = pa.table({"customer_id": ["c0", "c1"]})
     # c0/c1 match (and mask to null); "orphan1" has no parent row at all.
     child = pa.table({"customer_id": ["c0", "orphan1", "c1"], "amount": [1, 2, 3]})
-    relation = build_parent_key_relation(plan=plan, parent=parent, edge=edge, temp_dir=tmp_path / "rel")
+    relation = build_parent_key_relation(
+        plan=plan, parent=parent, edge=edge, temp_dir=tmp_path / "rel"
+    )
 
     out, warnings = join_mod.mask_child_fk(
         child=child, edge=edge, parent_relation=relation, temp_dir=tmp_path / "join"
@@ -457,7 +483,9 @@ def test_masked_null_parent_key_fail_policy_does_not_false_positive(tmp_path) ->
     edge = _edge(OrphanPolicy.FAIL)
     parent = pa.table({"customer_id": ["c0", "c1"]})
     child = pa.table({"customer_id": ["c0", "c1", "c0"], "amount": [1, 2, 3]})
-    relation = build_parent_key_relation(plan=plan, parent=parent, edge=edge, temp_dir=tmp_path / "rel")
+    relation = build_parent_key_relation(
+        plan=plan, parent=parent, edge=edge, temp_dir=tmp_path / "rel"
+    )
 
     out, warnings = join_mod.mask_child_fk(
         child=child, edge=edge, parent_relation=relation, temp_dir=tmp_path / "join"
@@ -474,7 +502,9 @@ def test_masked_null_parent_key_warn_counts_only_true_orphans(tmp_path) -> None:
     edge = _edge(OrphanPolicy.WARN)
     parent = pa.table({"customer_id": ["c0", "c1"]})
     child = pa.table({"customer_id": ["c0", "orphan1", "c1"], "amount": [1, 2, 3]})
-    relation = build_parent_key_relation(plan=plan, parent=parent, edge=edge, temp_dir=tmp_path / "rel")
+    relation = build_parent_key_relation(
+        plan=plan, parent=parent, edge=edge, temp_dir=tmp_path / "rel"
+    )
 
     out, warnings = join_mod.mask_child_fk(
         child=child, edge=edge, parent_relation=relation, temp_dir=tmp_path / "join"

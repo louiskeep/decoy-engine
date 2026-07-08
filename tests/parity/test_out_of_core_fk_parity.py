@@ -870,9 +870,7 @@ def test_decimal_fractional_scale_mismatch_still_detects_real_orphans() -> None:
     parent = pa.table(
         {"pk": pa.array([Decimal("1.20"), Decimal("2.20")], type=pa.decimal128(20, 2))}
     )
-    child = pa.table(
-        {"fk": pa.array([Decimal("1.2"), Decimal("1.3")], type=pa.decimal128(20, 1))}
-    )
+    child = pa.table({"fk": pa.array([Decimal("1.2"), Decimal("1.3")], type=pa.decimal128(20, 1))})
     plan = _plan(
         (
             ("parent", TableSeed(per_column=(("pk", seed),), per_group=())),
@@ -893,8 +891,106 @@ def test_decimal_fractional_scale_mismatch_still_detects_real_orphans() -> None:
         ordering=(),
     )
     sources = {"parent": parent, "child": child}
-    outcome = _assert_parity_or_faithful_rejection(plan, sources, graph, "decimal-scale-real-orphan")
+    outcome = _assert_parity_or_faithful_rejection(
+        plan, sources, graph, "decimal-scale-real-orphan"
+    )
     assert outcome == "both-raised"
+
+
+@pytest.mark.parametrize("policy", [OrphanPolicy.PRESERVE, OrphanPolicy.WARN])
+def test_large_whole_float_orphan_int_parent_matches_oracle(policy: OrphanPolicy) -> None:
+    """int/float sink-parity boundary (SC1 round-6 P2): an int PARENT
+    (passthrough int64) with a float CHILD whose orphan keys are whole numbers
+    beyond +/-2**53. `fk_key_value` normalizes each whole float to int, so the
+    FK output column is all-integral -- the pandas oracle types it int64 and
+    keeps the exact value. The out-of-core route's FK output type is float64
+    (a fractional float was possible), and before the fix `chunk.cast(float64)`
+    used pyarrow's SAFE cast, which rejects every integer beyond +/-2**53 even
+    when it IS exactly representable, crashing (ArrowInvalid) on a config the
+    oracle accepts. The guarded cast now takes the lossless unsafe cast for a
+    round-trip-representable integer, so both routes agree on the value
+    (9007199254740994 == 9007199254740994.0).
+    """
+    ns = "ns_big_whole_float"
+    seed = _seed("passthrough")
+    parent = pa.table({"pk": pa.array([1, 2], type=pa.int64())})
+    child = pa.table(
+        {
+            "fk": pa.array(
+                # 9007199254740994.0 = 2**53 + 2: an even integer beyond the safe
+                # cast range but exactly representable as a double; an orphan
+                # (no int parent equals it) that fk_key_value folds to int.
+                [1.0, 9007199254740994.0, 8.0],
+                type=pa.float64(),
+            )
+        }
+    )
+    plan = _plan(
+        (
+            ("parent", TableSeed(per_column=(("pk", seed),), per_group=())),
+            ("child", TableSeed(per_column=(("fk", seed),), per_group=())),
+        )
+    )
+    graph = RelationshipGraph(
+        edges=(
+            RelationshipEdge(
+                parent_table="parent",
+                parent_columns=("pk",),
+                child_table="child",
+                child_columns=("fk",),
+                namespace=ns,
+                orphan_policy=policy,
+            ),
+        ),
+        ordering=(),
+    )
+    sources = {"parent": parent, "child": child}
+    outcome = _assert_parity_or_faithful_rejection(
+        plan, sources, graph, f"big-whole-float-{policy.name}"
+    )
+    assert outcome == "parity"
+
+
+@pytest.mark.parametrize("policy", [OrphanPolicy.PRESERVE, OrphanPolicy.WARN])
+def test_non_representable_int_orphan_float_parent_fails_closed(policy: OrphanPolicy) -> None:
+    """Companion to the whole-float boundary: a float PARENT (passthrough
+    float64) with an int CHILD whose orphan keys are odd integers beyond
+    +/-2**53 -- NOT exactly representable as a double. With every child row an
+    orphan, the pandas oracle types the column int64 and keeps the exact value,
+    but the out-of-core FK output type is float64 (the parent side is float), so
+    rounding the key into float would drift from the oracle's exact int. The
+    route cannot narrow a streamed float column after the fact, so it must fail
+    closed with `out_of_core_fk_key_dtype_unsupported` (reject rather than
+    publish a rounded key), never crash and never emit the drifted value.
+    """
+    ns = "ns_nonrep_int"
+    seed = _seed("passthrough")
+    parent = pa.table({"pk": pa.array([1.0, 2.0], type=pa.float64())})
+    child = pa.table({"fk": pa.array([9007199254740993, 9007199254740995], type=pa.int64())})
+    plan = _plan(
+        (
+            ("parent", TableSeed(per_column=(("pk", seed),), per_group=())),
+            ("child", TableSeed(per_column=(("fk", seed),), per_group=())),
+        )
+    )
+    graph = RelationshipGraph(
+        edges=(
+            RelationshipEdge(
+                parent_table="parent",
+                parent_columns=("pk",),
+                child_table="child",
+                child_columns=("fk",),
+                namespace=ns,
+                orphan_policy=policy,
+            ),
+        ),
+        ordering=(),
+    )
+    sources = {"parent": parent, "child": child}
+    outcome = _assert_parity_or_faithful_rejection(
+        plan, sources, graph, f"nonrep-int-{policy.name}"
+    )
+    assert outcome == "ooc-fail-closed"
 
 
 def test_underscore_column_staged_path_non_collision() -> None:
