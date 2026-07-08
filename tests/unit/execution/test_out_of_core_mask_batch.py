@@ -16,7 +16,8 @@ from typing import Any
 import pyarrow as pa
 import pytest
 
-from decoy_engine.execution.out_of_core._mask import mask_batch, mask_table
+from decoy_engine.execution._errors import StrategyError
+from decoy_engine.execution.out_of_core._mask import mask_batch, mask_column, mask_table
 from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
 
 _SEED = b"\x00" * 8
@@ -149,3 +150,31 @@ def test_mask_batch_table_absent_from_plan_returns_batch_unchanged() -> None:
     masked = mask_batch(plan, "not_in_plan", batch, skip_columns=frozenset())
 
     assert masked.equals(batch)
+
+
+@pytest.mark.parametrize(
+    ("provider_config", "code"),
+    [
+        ((("length", 0),), "truncate_length_invalid"),
+        ((("length", -1),), "truncate_length_invalid"),
+        ((("length", "x"),), "truncate_length_invalid"),
+        ((("length", None),), "truncate_length_invalid"),
+        ((("length", 3), ("keep", "middle")), "truncate_keep_invalid"),
+        ((("length", 3), ("mask_char", "**")), "truncate_mask_char_invalid"),
+    ],
+)
+def test_truncate_invalid_config_fails_closed_not_raw_passthrough(provider_config, code) -> None:
+    """SC1 round-6 P1 (raw-leak backstop) regression.
+
+    An invalid truncate config (bad length/keep/mask_char) previously fell back
+    to `passthrough_array`, publishing the RAW, unmasked column -- a PII / raw-FK
+    leak. It must instead raise `StrategyError` with the SAME code the pandas
+    oracle (`_strategies/_truncate.py`) raises for that shape, never emit the
+    source values.
+    """
+    seed = _col("truncate", provider_config=provider_config)
+    values = pa.array(["raw-secret-0", "raw-secret-1"])
+    with pytest.raises(StrategyError) as exc:
+        mask_column(values, seed, _SEED)
+    assert exc.value.code == code
+    assert exc.value.strategy == "truncate"

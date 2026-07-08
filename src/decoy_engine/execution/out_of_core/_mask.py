@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 
 from decoy_engine.execution._adapter import provider_config_to_dict
-from decoy_engine.execution._errors import ExecutionError
+from decoy_engine.execution._errors import ExecutionError, StrategyError
 from decoy_engine.kernel import hash_array, passthrough_array, redact_array, truncate_array
 
 if TYPE_CHECKING:
@@ -38,24 +38,46 @@ def table_seed(plan: Plan, table_name: str) -> TableSeed | None:
     return None
 
 
-def truncate_params(cfg: dict[str, Any]) -> tuple[int, str, str | None] | None:
-    """Validated truncate kernel params, or None when the config is invalid.
+def truncate_params(cfg: dict[str, Any]) -> tuple[int, str, str | None]:
+    """Validated truncate kernel params, or raise on an invalid config.
 
-    An invalid config falls back to passthrough (the pandas adapter's lenient
-    behavior); centralizing the validation here keeps the mask dispatch and the
-    batch join's output typing agreeing on when that fallback happens.
+    Fail-closed, matching the pandas oracle (`_strategies/_truncate.py`): an
+    invalid length/keep/mask_char raises `StrategyError` with the SAME codes the
+    oracle raises (`truncate_length_invalid`, `truncate_keep_invalid`,
+    `truncate_mask_char_invalid`), never a silent fallback. A masking primitive
+    must never publish the raw source value on a bad config; centralizing the
+    validation here keeps the mask dispatch and the batch join's output typing
+    agreeing on exactly when the config is rejected.
     """
     length = cfg.get("length")
     if not isinstance(length, int) or length < 1:
-        return None
+        raise StrategyError(
+            code="truncate_length_invalid",
+            strategy="truncate",
+            message=(
+                f"truncate has invalid length {length!r} ({type(length).__name__}); "
+                "length must be an integer >= 1."
+            ),
+        )
     keep = cfg.get("keep")
     if keep is None:
         keep = "tail" if bool(cfg.get("from_end", False)) else "head"
     if keep not in ("head", "tail"):
-        return None
+        raise StrategyError(
+            code="truncate_keep_invalid",
+            strategy="truncate",
+            message=f"truncate has invalid keep {keep!r}.",
+        )
     mask_char = cfg.get("mask_char")
     if mask_char is not None and (not isinstance(mask_char, str) or len(mask_char) != 1):
-        return None
+        raise StrategyError(
+            code="truncate_mask_char_invalid",
+            strategy="truncate",
+            message=(
+                f"truncate has invalid mask_char {mask_char!r} ({type(mask_char).__name__}); "
+                "mask_char must be a single character."
+            ),
+        )
     return length, keep, mask_char
 
 
@@ -67,10 +89,9 @@ def mask_column(values: pa.Array | pa.ChunkedArray, seed: ColumnSeed, job_seed: 
     if seed.strategy == "redact":
         return redact_array(values, redact_with=cfg.get("redact_with", "REDACTED"))
     if seed.strategy == "truncate":
-        params = truncate_params(cfg)
-        if params is None:
-            return passthrough_array(values)
-        length, keep, mask_char = params
+        # Fail-closed: truncate_params raises on an invalid config rather than
+        # letting the raw column pass through unmasked.
+        length, keep, mask_char = truncate_params(cfg)
         return truncate_array(values, length=length, keep=keep, mask_char=mask_char)
     if seed.strategy == "hash":
         if seed.namespace is None:
@@ -102,9 +123,10 @@ def masked_output_type(seed: ColumnSeed, source_type: pa.DataType | None = None)
     if seed.strategy == "hash":
         return pa.string()
     if seed.strategy == "truncate":
-        if truncate_params(cfg) is not None:
-            return pa.string()
-        return _required_source_type(source_type, seed.strategy)
+        # Validate fail-closed (raises on an invalid config, exactly as the
+        # mask would); a valid truncate always emits string.
+        truncate_params(cfg)
+        return pa.string()
     if seed.strategy == "redact":
         # from_pandas matches redact_array's own inference, which treats
         # degenerate scalars (None, NaN) as nulls rather than typed values.
