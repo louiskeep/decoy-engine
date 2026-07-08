@@ -85,6 +85,25 @@ def check_out_of_core_compatibility(
     for edge in relationship_graph.edges:
         _check_edge(edge, plan, rejections)
 
+    if _table_graph_has_cycle(relationship_graph):
+        # `_table_order` (out_of_core/_runner.py) sequences whole TABLES, so any
+        # table-level FK cycle across two or more tables (A.id->B.x, B.id->A.y)
+        # makes `_table_order` raise `out_of_core_relationship_cycle` at run
+        # time -- even when the COLUMN-level dependency the full-frame oracle
+        # orders on is acyclic and the oracle succeeds. Reject fail-closed here
+        # (the multi-table generalization of the self-referential edge rule
+        # above) so the route never runs on a config it would crash on; the job
+        # falls back to full-frame, which handles it natively.
+        rejections.append(
+            OutOfCoreRejection(
+                "out_of_core_relationship_cycle_unsupported",
+                "out-of-core route requires an acyclic table-level FK graph; a "
+                "multi-table FK cycle cannot be expressed by table-level dependency "
+                "ordering (even when column-level ordering is acyclic). Falls back "
+                "to full-frame.",
+            )
+        )
+
     for node in work:
         # GroupSeed (composite_fk_group) has no `when` field; getattr handles
         # both plan_slice shapes without a kind-based isinstance branch.
@@ -133,6 +152,41 @@ def check_out_of_core_compatibility(
             )
 
     return OutOfCoreCompatibility(accepted=not rejections, rejections=tuple(rejections))
+
+
+def _table_graph_has_cycle(relationship_graph: RelationshipGraph) -> bool:
+    """True if the child->parent TABLE dependency graph has a multi-table cycle.
+
+    Mirrors `_table_order`'s Kahn topological sort (out_of_core/_runner.py) at
+    gate time, so a cycle the runner would crash on is rejected before it runs.
+    Self-edges (parent_table == child_table) are excluded: those are reported
+    separately by `_check_edge`'s self-referential rejection, and a self-loop is
+    not the multi-table shape this check owns.
+    """
+    tables: set[str] = set()
+    deps: dict[str, set[str]] = {}
+    children: dict[str, set[str]] = {}
+    for edge in relationship_graph.edges:
+        tables.add(edge.parent_table)
+        tables.add(edge.child_table)
+        deps.setdefault(edge.parent_table, set())
+        deps.setdefault(edge.child_table, set())
+        children.setdefault(edge.parent_table, set())
+        children.setdefault(edge.child_table, set())
+        if edge.parent_table == edge.child_table:
+            continue
+        deps[edge.child_table].add(edge.parent_table)
+        children[edge.parent_table].add(edge.child_table)
+    ready = [table for table in tables if not deps[table]]
+    ordered = 0
+    while ready:
+        table = ready.pop()
+        ordered += 1
+        for child in children[table]:
+            deps[child].discard(table)
+            if not deps[child]:
+                ready.append(child)
+    return ordered != len(tables)
 
 
 def _composite_group_join_covered(node: WorkNode, relationship_graph: RelationshipGraph) -> bool:

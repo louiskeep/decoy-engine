@@ -1158,3 +1158,79 @@ def test_self_referential_fk_gate_rejects() -> None:
     }
     outcome = _assert_parity_or_faithful_rejection(plan, sources, graph, "self-referential")
     assert outcome == "gate-rejected"
+
+
+def test_multi_table_fk_cycle_gate_rejects() -> None:
+    """SC1 round-6 P3 compat-gate audit finding: the multi-table generalization
+    of the self-referential edge above.
+
+    Two tables in an FK cycle -- A.id -> B.a_fk and B.id -> A.b_fk -- are a
+    config the full-frame oracle handles (its work-node ordering is per COLUMN:
+    A.id, B.id, then A.b_fk, B.a_fk is acyclic) but the out-of-core route cannot:
+    `_table_order` sequences whole TABLES, so A and B each depend on the other
+    and it raises `out_of_core_relationship_cycle` at run time -- on a config the
+    gate used to ADMIT. The gate must reject it fail-closed instead (never run,
+    so never emit wrong output; the job falls back to full-frame), which
+    `_assert_parity_or_faithful_rejection` accepts as "gate-rejected".
+    """
+    plan = _plan(
+        (
+            (
+                "A",
+                TableSeed(
+                    per_column=(
+                        ("id", _seed("hash", namespace="ns_a")),
+                        ("b_fk", _seed("passthrough")),
+                    ),
+                    per_group=(),
+                ),
+            ),
+            (
+                "B",
+                TableSeed(
+                    per_column=(
+                        ("id", _seed("hash", namespace="ns_b")),
+                        ("a_fk", _seed("passthrough")),
+                    ),
+                    per_group=(),
+                ),
+            ),
+        )
+    )
+    graph = RelationshipGraph(
+        edges=(
+            RelationshipEdge(
+                parent_table="A",
+                parent_columns=("id",),
+                child_table="B",
+                child_columns=("a_fk",),
+                namespace="ns_a",
+                orphan_policy=OrphanPolicy.PRESERVE,
+            ),
+            RelationshipEdge(
+                parent_table="B",
+                parent_columns=("id",),
+                child_table="A",
+                child_columns=("b_fk",),
+                namespace="ns_b",
+                orphan_policy=OrphanPolicy.PRESERVE,
+            ),
+        ),
+        ordering=(),
+    )
+    sources = {
+        "A": pa.table(
+            {
+                "id": pa.array(["a0", "a1"], type=pa.string()),
+                "b_fk": pa.array([None, "b0"], type=pa.string()),
+            }
+        ),
+        "B": pa.table(
+            {
+                "id": pa.array(["b0", "b1"], type=pa.string()),
+                "a_fk": pa.array(["a0", None], type=pa.string()),
+            }
+        ),
+    }
+    outcome = _assert_parity_or_faithful_rejection(plan, sources, graph, "multi-table-cycle")
+    assert outcome == "gate-rejected"
