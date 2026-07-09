@@ -80,7 +80,11 @@ import pyarrow as pa
 
 from decoy_engine.execution import _pipeline_routing
 from decoy_engine.execution._adapter import ExecutionResult
-from decoy_engine.execution._planner import AUTO_CHUNK_THRESHOLD_ROWS_DEFAULT
+from decoy_engine.execution._planner import (
+    AUTO_CHUNK_THRESHOLD_ROWS_DEFAULT,
+    FULL_FRAME_REJECT_ROWS_DEFAULT,
+    OUT_OF_CORE_THRESHOLD_ROWS_DEFAULT,
+)
 
 if TYPE_CHECKING:
     from decoy_engine.execution._transactional_sink import TransactionalSink
@@ -113,6 +117,12 @@ _FALLBACK_TO_PANDAS_DEFAULT = True
 _AUTO_CHUNK_DEFAULT = True
 _CHUNK_SIZE_ROWS_DEFAULT = 50_000
 _AUTO_CHUNK_THRESHOLD_DEFAULT = AUTO_CHUNK_THRESHOLD_ROWS_DEFAULT
+# SC2 out-of-core auto-routing thresholds (per largest mask table). Defaults
+# target the 32 GB deployment box; see `_planner` for the memory-model
+# reasoning. Plumbed as run_pipeline kwargs so the platform SC5 estimator can
+# override them with box+schema-calibrated values.
+_OUT_OF_CORE_THRESHOLD_DEFAULT = OUT_OF_CORE_THRESHOLD_ROWS_DEFAULT
+_FULL_FRAME_REJECT_DEFAULT = FULL_FRAME_REJECT_ROWS_DEFAULT
 
 
 def classify_table_kinds(config: dict[str, Any]) -> dict[str, str]:
@@ -150,7 +160,7 @@ def run_pipeline(
     vault_writer: Any = None,
     fidelity_report: bool = False,
     now_iso: str | None = None,
-    execution_mode: Literal["auto", "sequential", "full_frame"] = "auto",
+    execution_mode: Literal["auto", "sequential", "full_frame", "out_of_core"] = "auto",
     sink: TransactionalSink | None = None,
     source_loader: Callable[[str], pa.Table] | None = None,
     substrate: str | None = _SUBSTRATE_DEFAULT,
@@ -161,6 +171,9 @@ def run_pipeline(
     auto_chunk: bool = _AUTO_CHUNK_DEFAULT,
     chunk_size_rows: int = _CHUNK_SIZE_ROWS_DEFAULT,
     auto_chunk_threshold_rows: int = _AUTO_CHUNK_THRESHOLD_DEFAULT,
+    out_of_core_threshold_rows: int = _OUT_OF_CORE_THRESHOLD_DEFAULT,
+    full_frame_reject_rows: int = _FULL_FRAME_REJECT_DEFAULT,
+    out_of_core_budget_bytes: int | None = None,
 ) -> ExecutionResult:
     """Execute a mixed mask + generate config end-to-end.
 
@@ -188,16 +201,34 @@ def run_pipeline(
 
     Execution routing (`execution_mode`, `sink`, `source_loader`,
     `auto_chunk`, `chunk_size_rows`, `auto_chunk_threshold_rows`,
-    `explain_plan`) is documented on `_pipeline_routing`, which owns the
-    routing decisions this function calls in a fixed order: relationship
-    routing (sequential vs. full_frame) first, then single-table
+    `out_of_core_threshold_rows`, `full_frame_reject_rows`,
+    `out_of_core_budget_bytes`, `explain_plan`) is documented on
+    `_pipeline_routing`, which owns the routing decisions this function
+    calls in a fixed order: relationship routing (out-of-core vs.
+    sequential vs. full_frame, with a fail-closed reject-before-read for a
+    too-big FK job no bounded route can take) first, then single-table
     auto-chunk routing (chunked vs. full_frame). `execution_mode` /
     `auto_chunk` are resource policies of the invocation, not properties
     of the data transformation, so they are runtime kwargs (matching
     `vault_writer` / `fidelity_report` / `now_iso`), never `config`
     fields -- they must stay out of the profile-hashed, frozen-surface
-    data contract. Both routes are byte-output-neutral versus full_frame
+    data contract. Every route is byte-output-neutral versus full_frame
     (only peak memory / adapter identity differs).
+
+    SC2 out-of-core auto-routing: a relationship-bearing pure-mask FK job
+    that the out-of-core compat gate admits and whose largest mask table
+    is at/above `out_of_core_threshold_rows` routes to the bounded-RAM
+    DuckDB route (`run_fk_out_of_core`); below that, or when not
+    out-of-core-compatible, it keeps taking the sequential route. A large
+    FK job that no bounded route can take (not out-of-core-eligible, and
+    disqualified from sequential) is REJECTED before the mask step with a
+    coded `ExecutionError` (`fk_full_frame_oom_risk_rejected`) once its
+    largest mask table reaches `full_frame_reject_rows`, rather than
+    risking a silent full-frame OOM. Both thresholds default to
+    32 GB-box-calibrated constants (see `_planner`) and are kwargs so the
+    platform admission estimator can override them. `execution_mode`
+    gains `"out_of_core"` as an explicit force (fail-closed if the job is
+    not out-of-core-compatible), mirroring `"sequential"`.
 
     Execution-substrate knobs (mask-kind tables only; generate tables
     always run the synthesize path; the sequential route is pandas-only
@@ -256,6 +287,11 @@ def run_pipeline(
     require_bool("auto_chunk", auto_chunk)
     require_positive_int("chunk_size_rows", chunk_size_rows)
     require_positive_int("auto_chunk_threshold_rows", auto_chunk_threshold_rows)
+    # SC2 out-of-core routing thresholds share the same fail-early contract.
+    require_positive_int("out_of_core_threshold_rows", out_of_core_threshold_rows)
+    require_positive_int("full_frame_reject_rows", full_frame_reject_rows)
+    if out_of_core_budget_bytes is not None:
+        require_positive_int("out_of_core_budget_bytes", out_of_core_budget_bytes)
 
     resolved_registry = registry if registry is not None else get_default_registry()
     caller_sources: dict[str, pa.Table] = dict(sources) if sources else {}
@@ -289,8 +325,26 @@ def run_pipeline(
     else:
         graph = RelationshipGraph(edges=(), ordering=())
 
-    # Routing layer 1 (S2): relationship-bearing pure-mask jobs take the
-    # bounded-memory sequential path; this is an early return.
+    # Routing layer 1 (S2 + SC2): relationship-bearing pure-mask jobs take a
+    # bounded-memory route (out-of-core when large + compatible, else
+    # sequential); a large FK job no bounded route can take is rejected before
+    # read. This is an early return / a fail-closed raise.
+    #
+    # Out-of-core admission (compat gate) + the size signal are computed only
+    # for relationship jobs with a mask table -- a static plan/metadata read, so
+    # non-FK jobs pay nothing. `largest_table_rows` is None on a lazy-source
+    # path (empty caller_sources); the size gates then never fire and routing
+    # falls back to the pre-SC2 sequential/full-frame decision.
+    out_of_core_compatible = False
+    out_of_core_reject_code: str | None = None
+    largest_table_rows: int | None = None
+    if profile.relationships and has_mask_table:
+        out_of_core_compatible, out_of_core_reject_code = _pipeline_routing.out_of_core_admission(
+            plan, registry=resolved_registry, graph=graph
+        )
+        largest_table_rows = _pipeline_routing.largest_mask_table_rows(
+            caller_sources, table_kinds=table_kinds
+        )
     route, route_reason = _pipeline_routing.decide_execution_route(
         profile,
         has_generate_table=has_generate_table,
@@ -301,6 +355,11 @@ def run_pipeline(
         execution_mode=execution_mode,
         graph=graph,
         resolved_substrate=resolved_substrate,
+        out_of_core_compatible=out_of_core_compatible,
+        out_of_core_reject_code=out_of_core_reject_code,
+        largest_table_rows=largest_table_rows,
+        out_of_core_threshold_rows=out_of_core_threshold_rows,
+        full_frame_reject_rows=full_frame_reject_rows,
     )
 
     # Routing layer 2 (S3 auto-chunk) classification. Computed BEFORE the
@@ -341,6 +400,27 @@ def run_pipeline(
             sources_resident=bool(caller_sources),
             fpe_chunk_count=fpe_chunk_count,
             table_kinds=table_kinds,
+            explain_plan=explain_plan,
+            execution_plan_decision=execution_plan_decision,
+        )
+
+    # SC2: the bounded-RAM out-of-core FK route. Same early-return shape as the
+    # sequential branch; `run_fk_out_of_core` re-asserts compat fail-closed and
+    # is pandas-oracle byte-parity for every admitted plan. The resident
+    # caller_sources feed the runner directly (the pure-mask FK shape has every
+    # parent + child table present); a sink, when supplied, streams the output.
+    if has_mask_table and route == "out_of_core":
+        return _pipeline_routing.run_out_of_core_route(
+            plan=plan,
+            sources=caller_sources,
+            registry=resolved_registry,
+            graph=graph,
+            sink=sink,
+            route_reason=route_reason,
+            table_kinds=table_kinds,
+            source_loader=source_loader,
+            sources_resident=bool(caller_sources),
+            budget_bytes=out_of_core_budget_bytes,
             explain_plan=explain_plan,
             execution_plan_decision=execution_plan_decision,
         )
