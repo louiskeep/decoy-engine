@@ -71,9 +71,14 @@ def check_out_of_core_compatibility(
         )
 
     child_targets: dict[tuple[str, tuple[str, ...]], int] = {}
+    composite_fk_child_columns: dict[str, set[str]] = {}
     for edge in relationship_graph.edges:
         key = (edge.child_table, edge.child_columns)
         child_targets[key] = child_targets.get(key, 0) + 1
+        if len(edge.child_columns) > 1:
+            composite_fk_child_columns.setdefault(edge.child_table, set()).update(
+                edge.child_columns
+            )
     if any(count > 1 for count in child_targets.values()):
         rejections.append(
             OutOfCoreRejection(
@@ -133,6 +138,34 @@ def check_out_of_core_compatibility(
                 OutOfCoreRejection(
                     "out_of_core_non_scalar_work_unsupported",
                     f"out-of-core route does not yet support {node.kind} work nodes.",
+                )
+            )
+            continue
+        if any(col in composite_fk_child_columns.get(node.table, ()) for col in node.columns):
+            # A COMPOSITE FK child column masked as an independent scalar strategy
+            # (rather than as one composite_fk_group over the whole key) is the
+            # one composite shape that diverges from the pandas oracle. The oracle
+            # masks each such column with its own strategy BEFORE resolving the FK
+            # (FK children resolve last), so a PRESERVE/WARN orphan keeps the
+            # scalar-MASKED value; the out-of-core route joins on and preserves the
+            # RAW source value for the same orphan -- a raw-value leak (and, for a
+            # partial-null key, a null-vs-masked divergence). The canonical
+            # composite_fk_group shape (a single GroupSeed over the FK columns) is
+            # oracle-parity across orphans, partial-nulls, and every policy, and
+            # stays admitted; single-column scalar FK children stay admitted too
+            # (they are FK-resolution-owned, not double-masked). Reject fail-closed
+            # so the job falls back to full-frame instead of leaking. See CF2 in
+            # docs/plans/2026-07-07-next-up-roadmap.md and
+            # tests/parity/SEMANTIC_DIFFERENCES.md.
+            rejections.append(
+                OutOfCoreRejection(
+                    "out_of_core_composite_fk_scalar_child_unsupported",
+                    f"{node.table}.{node.columns} is a child column of a composite "
+                    "FK edge but is masked as an independent scalar strategy; the "
+                    "out-of-core route preserves the RAW source value for orphans "
+                    "here while the pandas oracle preserves the scalar-masked value "
+                    "(a raw-value leak divergence). Use a composite_fk_group over "
+                    "the FK columns, which is oracle-parity; falls back to full-frame.",
                 )
             )
             continue

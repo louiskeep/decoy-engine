@@ -37,14 +37,21 @@ Known divergences (documented; the first two are pinned in tests):
   whole-child output null-typed, while the joiner emits the fixed type with
   nulls. Values are identical; the fixed type is the writable schema a
   streaming sink needs.
-- Composite partial-null keys vs the pandas oracle: for a composite FK edge,
-  a child row whose key tuple is only PARTLY null is an orphan on every
-  route, but when the child also carries a fully orphaned row the pandas
-  adapter masks the partial-null row's non-null components under the parent
-  seed while the out-of-core route applies the orphan policy to them (nulls
-  or preserves them). Pre-existing whole-table out-of-core behavior, not a
-  streaming artifact: sink, no-sink, and whole-table runs all agree with
-  each other. Pending its own triage; the compat gate does not reject it.
+- Composite FK child masked as independent SCALAR seeds (SC2 CF2, GATED): the
+  one composite shape that diverges from the pandas oracle. When a composite FK
+  edge's child columns carry their own scalar strategies (rather than one
+  composite_fk_group over the key), the oracle scalar-masks each column BEFORE
+  resolving the FK (FK children resolve last), so a PRESERVE/WARN orphan -- and
+  a partial-null key row -- keeps the scalar-MASKED value, while the out-of-core
+  route joins on and preserves the RAW source key (a raw-value leak; nulls a
+  partial-null key). The compat gate now rejects this shape fail-closed with
+  `out_of_core_composite_fk_scalar_child_unsupported` (the job falls back to
+  full-frame). The canonical composite_fk_group shape (a single GroupSeed over
+  the FK columns) is oracle-parity across orphans, partial-nulls, and every
+  policy -- both routes treat a partial-null composite key as fully null -- and
+  stays admitted. Pinned in tests/parity/test_out_of_core_fk_parity.py
+  (`test_composite_fk_group_orphan_and_partial_null_parity`,
+  `test_composite_fk_scalar_child_gate_rejected`).
 """
 
 from __future__ import annotations

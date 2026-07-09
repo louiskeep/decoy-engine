@@ -320,6 +320,40 @@ class TestModeClassification:
         assert "fk" in block["rejections"]["polars_native"].lower()
         assert "relationship" in block["rejections"]["chunked"].lower()
 
+    def test_fk_relationships_keep_chunked_self_masking_gate_unreachable(self, tmp_path):
+        """SC2 CF1 pin: the engine guard that keeps the chunked-FK self-masking
+        gate (`check_chunked_compatibility` / `run_mask_pipeline_chunked`'s
+        relaxed FK-child admission) UNREACHABLE via the planner.
+
+        `_planner._chunked_rejection` short-circuits on `config['relationships']`
+        and appends `chunked_relationships_unsupported` WITHOUT ever calling
+        `check_chunked_compatibility` -- so a config with FK edges can never be
+        routed to the chunked path by `classify_job`, no matter how chunk-safe
+        its per-table strategies are. `_fk_job`'s child masks with `hash` (a
+        chunk-safe strategy), so the ONLY thing rejecting chunked here is the
+        relationships guard, not strategy incompatibility.
+
+        This is one of the two independent guards recorded on PR #34 (the other
+        is the platform's `plan_streaming_route`, which appends
+        `relationships_not_supported` and returns before `check_chunked_
+        compatibility`, in the decoy-platform repo). SC1 did not touch
+        `_planner.py`, so the guard is unchanged; this test locks it so a future
+        SC2/SC3 relaxation of `_chunked_rejection` cannot silently make the
+        relaxed FK admission reachable.
+        """
+        cfg, _sources = _fk_job(tmp_path)
+        # Static classification (no loaded sources): the relationships guard is
+        # an admissibility gate that fires before any runtime source check.
+        plan = _classify(cfg, substrate="pandas")
+        assert plan.mode == "pandas_fallback"
+        assert "chunked_relationships_unsupported" in plan.rejections["chunked"]
+        # The guard fires on the relationships key alone; drop it and the same
+        # hash-masked child would no longer be blocked by THIS reason (proving
+        # it is the relationships guard doing the rejecting, not strategies).
+        cfg_no_rel = {k: v for k, v in cfg.items() if k != "relationships"}
+        plan_no_rel = _classify(cfg_no_rel, substrate="pandas")
+        assert "chunked_relationships_unsupported" not in plan_no_rel.rejections.get("chunked", "")
+
     def test_pandas_fallback_populates_every_faster_mode_rejection(self, tmp_path, monkeypatch):
         cfg, sources = _shuffle_job(tmp_path)
         block = _explain(cfg, sources, monkeypatch=monkeypatch)
