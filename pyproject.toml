@@ -719,7 +719,7 @@ disable_error_code = ["assignment"]
 
 # consultant-2026-07-09 F8: internal.validator (V1 MaskerConfigValidator +
 # GeneratorConfigValidator; its replacement was decoy_engine.graph.validators,
-# which the F8 mypy-override cleanup above also removed as dangling — the
+# which the F8 mypy-override cleanup above also removed as dangling, the
 # whole V1 validator generation is gone) was removed by the S9.5 V1
 # bulk-delete; override left dangling.
 

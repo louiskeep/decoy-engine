@@ -8,20 +8,27 @@ CLI/platform code needs the symbols importable, but nothing currently stops
 exported, which would ship silently-fake behavior on the public surface. See
 docs/engine-consultant-findings-2026-07-09.md.
 
-This sentry is the release gate: pre-GA it just pins the current stub
-registry; the moment GA is flipped, it fails unless every entry below has
-been resolved (implemented, moved to an experimental namespace, or dropped
-from `decoy_engine.__all__`) and removed from `STUB_EXPORTS`.
+dennis review caught that a dict-driven gate (`STUB_EXPORTS`) is gameable:
+emptying the dict satisfies the assertion without touching the actual stub
+behavior. So the GA-phase check below does not read `STUB_EXPORTS` at all;
+it directly re-derives each stub's exact current fake behavior and asserts
+it is gone by GA. The only way to pass at GA is to actually change the
+behavior. `STUB_EXPORTS` still exists as a pre-GA documentation/registry
+(kept in sync with `decoy_engine.__all__` by the first test below) but is
+not load-bearing for the release gate itself.
 """
 
 from __future__ import annotations
 
 import decoy_engine
+from decoy_engine.license import LicenseVerifier
 from decoy_engine.release import is_pre_ga
+from decoy_engine.schema import SchemaInspector
 
 # name -> why it's still a stub / where the real implementation is tracked.
-# Resolve the export, THEN delete the entry here. Do not delete the entry
-# to make this test pass without actually resolving the stub.
+# Purely documentation pre-GA; the GA gate below does not consult this dict,
+# so emptying it does not weaken the gate. Resolve the export, THEN delete
+# the entry here to keep the registry accurate.
 STUB_EXPORTS: dict[str, str] = {
     "SchemaInspector": (
         "raises NotImplementedError; connector schema introspection, "
@@ -45,9 +52,23 @@ def test_stub_exports_are_still_exported_pre_ga() -> None:
 def test_no_unresolved_public_stubs_at_ga() -> None:
     if is_pre_ga():
         return
-    assert not STUB_EXPORTS, (
-        "decoy_engine.RELEASE_PHASE is 'ga' but STUB_EXPORTS still lists "
-        f"unresolved public stubs: {sorted(STUB_EXPORTS)}. Implement, move "
-        "behind an experimental namespace, or remove from "
+
+    still_stub: list[str] = []
+
+    try:
+        SchemaInspector()
+    except NotImplementedError:
+        still_stub.append("SchemaInspector still raises NotImplementedError")
+
+    result = LicenseVerifier.verify()
+    if result == {"tier": "free", "features": [], "expires_at": None}:
+        still_stub.append(
+            "LicenseVerifier.verify() still returns the exact hardcoded stub response"
+        )
+
+    assert not still_stub, (
+        "decoy_engine.RELEASE_PHASE is 'ga' but the following public exports "
+        f"still exhibit their pre-GA stub behavior: {still_stub}. Implement, "
+        "move behind an experimental namespace, or remove from "
         "decoy_engine.__all__ before shipping GA."
     )

@@ -34,9 +34,16 @@ def _load() -> dict:
 
 def _module_paths(dotted: str) -> list[Path]:
     """Candidate filesystem paths for a dotted module path: a package dir
-    (`__init__.py`) or a plain module file (`.py`)."""
+    (`__init__.py`), a plain module file (`.py`), or a stub-only module
+    (`.pyi`). No `src/decoy_engine` override currently targets a `.pyi`-only
+    or PEP 420 namespace-package module, but checking `.pyi` here is cheap
+    and avoids a false "dangling" flag if one is ever added."""
     rel = Path(*dotted.split("."))
-    return [SRC / rel / "__init__.py", SRC / rel.with_suffix(".py")]
+    return [
+        SRC / rel / "__init__.py",
+        SRC / rel.with_suffix(".py"),
+        SRC / rel.with_suffix(".pyi"),
+    ]
 
 
 def test_mypy_override_modules_resolve_to_real_files() -> None:
