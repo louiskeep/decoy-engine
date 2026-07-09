@@ -30,7 +30,7 @@ prevention. Full spec + GATE-1 decisions: the 100M program doc (PR #33).
 | **SC0** | Land the routing spine (`run_pipeline` substrate selection + auto-chunk + `_planner.classify_job` + P0 perf gates) | **DONE** - landed via engine PR #31 (engine main 0.3.0) |
 | **SC1** | Land the out-of-core FK runner as an **opt-in, unwired sibling** (`run_fk_out_of_core`, DuckDB-gated, budgeted); initial strategy set `hash/redact/truncate/passthrough`; parity harness | **DONE** - merged 2026-07-09 via engine PR #34 (fail-closed hardening pass, dennis APPROVE 0 BLOCKER/0 HIGH). See "SC1 status" below. |
 | **SC2** | Wire auto-routing: the live router selects out-of-core for eligible large FK jobs; ineligible-but-large jobs reroute-to-sequential or reject-before-read with a reason (never silent OOM) | **DONE** - part 1 (CF1/CF2/CF3 hardening) merged via PR #37; part 2 (the auto-routing wire) merged 2026-07-09 via PR #38 (dennis re-review APPROVE, 0 BLOCKER/0 HIGH). See "SC2 status" below. |
-| **SC3** | Widen out-of-core to Group (b) strategies (`fpe`, `text_redact`, `date_shift`, `bucketize` + conditional `faker`/`categorical`), each with byte-parity vs full-frame | **QUEUED** |
+| **SC3** | Widen out-of-core to Group (b) strategies (`fpe`, `text_redact`, `date_shift`, `bucketize` + conditional `faker`/`categorical`), each with byte-parity vs full-frame | **DONE (branch `sc3/widen-oocgroup-b`)** - `fpe`, `text_redact`, `categorical` (deterministic) ported with proven byte-parity; `date_shift`, `bucketize`, `faker` are documented fail-closed routing MISSes. M1 carry-forward test added. See "SC3 status" below. |
 | **SC4** | Widen out-of-core to Group (c) strategies (`text_mask`, `geo_generalize`, `code_set`, `bucket_perturb`, `formula`/`derived`/`nested` where batch-local) - in v1 critical path per Cam | **QUEUED** |
 | **SC5** | Platform Sprint E: peak-MB estimator + admission gate (measure-only default; over-hard-ceiling reject before read; reroute OOC-eligible jobs to streaming). OOM **prevention**. | **DONE** - merged 2026-07-09 via engine PR #40 (public eligibility-query export) + platform PR #20 (FK-aware admission discount), dennis APPROVE after one fix round. **Surfaced a significant gap: the engine's out-of-core route is not reachable through the platform's job runner today for any config shape** - see "SC5 status" below. |
 | **SC6** | Validate 100M on GCP (32 GB) with the built `scripts/gcp-bench/engine-bench.sh` battery; commit the run that backs the "100M+ on 32 GB" claim | **QUEUED** - needs gcloud auth + spend confirmation. Overlaps Part B item 1. |
@@ -175,6 +175,96 @@ wiring (SC2 part 2) begins.
   full `table_topo_order` set and reaches byte-parity with the resident
   oracle. Do this before or alongside SC3 so the branch isn't shipped
   untested indefinitely.
+  **RESOLVED (SC3, branch `sc3/widen-oocgroup-b`):** added
+  `test_out_of_core_group_b_routing.py::test_m1_forced_out_of_core_lazy_source_loader`
+  exactly as specced (loader invoked for the full `table_topo_order` set +
+  byte-parity with the resident oracle). See "SC3 status" below.
+
+### SC3 status - DONE (branch `sc3/widen-oocgroup-b`, PR pending)
+
+Widened the out-of-core FK route's masked-column (payload) strategy surface from
+SC1's `hash/redact/truncate/passthrough`. New per-value kernels live in
+`src/decoy_engine/execution/out_of_core/_mask_group_b.py` (split out of `_mask.py`
+to hold the ~600 LOC cap); dispatch wired in `_mask.py` (`mask_column` gained a
+`column` kwarg for fpe's per-column tweak) and admission widened in `_compat.py`.
+
+**Ported with proven byte-parity (3 of 6):**
+- **`fpe`** - reuses `transforms.fpe.fpe_encrypt_value` + the `_fpe` handler's exact
+  key model (`derive(job_seed, namespace, FPE_KEY_LABEL)`, column/`fpe_join_group`
+  tweak). Per-value, chunks cleanly.
+- **`text_redact`** - reuses `storm.detectors.iter_spans` + `_text_redact._splice`
+  (incl. the NER model-version pin). Per-cell, chunks cleanly.
+- **`categorical` (deterministic)** - reuses `derive_index` over the plan's category
+  pool, incl. the weighted-CDF path. Source-conditioned per-value ("conditional"
+  = the deterministic source→category remap). Non-deterministic categorical is a
+  gate MISS (unseeded RNG has no cross-route parity).
+
+**Scope of admission:** Group (b) strategies are admitted for **masked payload
+columns only**. The FK **parent-key** surface (`_check_edge`) stays
+`hash/redact/truncate/passthrough` - an FK edge keyed on a Group (b) strategy is a
+fail-closed MISS (the join/remap key path is not ported for them). This is the
+common case (fpe on an SSN payload, categorical on a status payload, etc.); a
+Group (b) join key is rare and falls back to full-frame.
+
+**Documented fail-closed routing MISSes (3 of 6):**
+- **`faker`** (`out_of_core_faker_pool_unsupported`) - needs a registry-backed
+  `ValuePool` + a cross-batch pool cache; the out-of-core mask kernel is
+  deliberately registry-free (backend-neutral per-value). Only deterministic+REUSE
+  mode is even parity-able (UNIQUE/MATCH/SCALE/non-deterministic carry cross-row or
+  unseeded state). Porting it = threading the registry + a pool cache through the
+  streaming rewrite path, a distinct capability beyond dispatch-widening.
+- **`bucketize`** and **`date_shift`** (`out_of_core_row_error_strategy_unsupported`)
+  - both record **per-value format errors** (uncoercible numeric / unparseable date)
+  that the full-frame path removes via the D8 quarantine pass. The out-of-core route
+  returns from `run_pipeline` **before** that pass (`_pipeline.py` early-return) and
+  `run_fk_out_of_core` has no row-error/quarantine channel, so admitting them would
+  make dirty data produce **route-dependent** output (OOC silently keeps the
+  original - the exact per-value leak the honesty pack closed - while full-frame
+  quarantines). `date_shift` additionally needs whole-column format detection that
+  does not chunk. **Reviewer adjudication point:** the clean-data case IS byte-parity;
+  the blocker is dirty data + the missing quarantine channel. The correct fix is to
+  give the streaming OOC runner a row-error/quarantine channel (its own capability,
+  recommend as SC3-followup / an SC4 precondition), after which both admit cleanly.
+
+**M1 carry-forward - RESOLVED.** Added
+`tests/parity/test_out_of_core_group_b_routing.py::test_m1_forced_out_of_core_lazy_source_loader`:
+`run_pipeline(config, sources={}, execution_mode="out_of_core", source_loader=…)`
+asserts the loader is invoked for exactly the `table_topo_order(plan, graph)` set
+and the run reaches byte-parity with the resident full-frame oracle.
+
+**Tests:** `tests/parity/test_out_of_core_group_b_parity.py` (adapter-boundary
+parity for all 3 ports across orphan policies + a no-op guard + gate-MISS pins for
+parent-key/non-deterministic/deferred shapes) and
+`tests/parity/test_out_of_core_group_b_routing.py` (run_pipeline routes an fpe
+payload to OOC with full-frame parity + M1). Mutation-verified (a shifted
+categorical index fails parity). Full `tests/unit` + `tests/parity` green on the
+CI-pinned stack (Python 3.10, pandas 2.3.3, numpy 2.2.6) - 0 failures; ruff /
+ruff format / mypy / module-size sentry clean.
+
+dennis adversarial review: **APPROVE, 0 BLOCKER / 0 HIGH / 1 MEDIUM / 3 LOW.**
+Independently re-verified the fail-closed MISS gating is airtight (positive
+whitelist in `_compat.py`, gate/runner enumeration proven identical, defense-in-depth
+at runtime) and re-proved byte-parity via live mutation (categorical off-by-one and
+fpe tweak-poisoning both correctly fail the parity suite). Endorsed the
+defer-3-strategies call as the correct engineering decision. 2 LOW findings (dead
+import, doc overstatement) fixed inline. Remaining findings tracked below rather
+than blocking merge, per dennis's own "acceptable as carry-forward" framing.
+
+**Carry-forward into SC4 (tracked, not a blocker):**
+- **MEDIUM** - the parity suite pins the common config shapes (charset=digits,
+  preserve_separators, default/label tokens, plain/weighted categorical) but not
+  every live branch of the ported kernels: fpe `validate_luhn`/`checksum`/non-digit
+  charsets/`fpe_join_group` tweak; text_redact NER path/detector-subset/non-string
+  token; categorical `from_profile`. These reuse identical primitives so almost
+  certainly correct today, but a future edit could diverge one branch without the
+  parity suite catching it. Fix: extend `_PAYLOADS` with configs exercising each of
+  these branches.
+- **LOW** - `fpe_join_group` on an out-of-core payload column silently drops the
+  full-frame `fpe_join_group_active` QualityWarning (informational only, no data/PII
+  impact - `outputs` stay byte-identical). Documented as an accepted gap in
+  `_mask_group_b.py`'s module docstring; wiring it needs a static per-column
+  emission pass before `_stream_table`'s batch loop, mirroring how
+  `orphan_fk_warning` aggregates today.
 
 ### SC5 status - DONE (engine PR #40, platform PR #20, both merged 2026-07-09)
 

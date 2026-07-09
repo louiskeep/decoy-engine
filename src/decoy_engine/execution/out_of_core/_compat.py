@@ -27,6 +27,42 @@ _CROSS_ROW_STRATEGIES = frozenset(
     }
 )
 _INITIAL_SUPPORTED_STRATEGIES = frozenset({"hash", "redact", "truncate", "passthrough"})
+# SC3 Group (b): per-value / source-conditioned strategies ported onto the
+# out-of-core kernel with proven byte-parity (see `_mask_group_b.py`). Admitted
+# for masked (payload) columns only; the PARENT-KEY surface (`_check_edge`)
+# stays `_INITIAL_SUPPORTED_STRATEGIES` because none of these are ported for the
+# join/remap key path, so an FK edge keyed on one is a fail-closed MISS.
+_GROUP_B_SUPPORTED_STRATEGIES = frozenset({"fpe", "text_redact", "categorical"})
+_SUPPORTED_WORK_STRATEGIES = _INITIAL_SUPPORTED_STRATEGIES | _GROUP_B_SUPPORTED_STRATEGIES
+# SC3 deferred Group (b): investigated and NOT ported, each for a concrete
+# reason that would otherwise cause a route-dependent divergence. A MISS here
+# means the job falls back to sequential/full-frame (which handle them), never a
+# wrong output. `faker` needs a registry-backed ValuePool + a cross-batch pool
+# cache the registry-free out-of-core kernel has no channel for. `bucketize` and
+# `date_shift` record per-value format errors (uncoercible numeric / unparseable
+# date) that the full-frame path removes via the D8 quarantine pass, but the
+# out-of-core route returns before that pass and has no row-error channel;
+# `date_shift` additionally needs whole-column format detection that does not
+# chunk. See docs/plans/2026-07-07-next-up-roadmap.md (SC3) + `_mask_group_b.py`.
+_DEFERRED_GROUP_B: dict[str, tuple[str, str]] = {
+    "faker": (
+        "out_of_core_faker_pool_unsupported",
+        "faker needs a registry-backed value pool + cross-batch pool cache the "
+        "out-of-core kernel has no channel for; falls back to sequential/full-frame.",
+    ),
+    "bucketize": (
+        "out_of_core_row_error_strategy_unsupported",
+        "bucketize records per-value format errors that full-frame quarantines "
+        "(D8) but the out-of-core route has no row-error/quarantine channel; "
+        "falls back to sequential/full-frame.",
+    ),
+    "date_shift": (
+        "out_of_core_row_error_strategy_unsupported",
+        "date_shift records per-value format errors (D8-quarantined full-frame) "
+        "and needs whole-column format detection that does not chunk; the "
+        "out-of-core route has neither, so it falls back to sequential/full-frame.",
+    ),
+}
 
 # Public alias (SC5, decoy-platform cross-repo query surface): the strategy
 # set this gate currently admits, re-exported at `decoy_engine.execution` so
@@ -185,15 +221,40 @@ def check_out_of_core_compatibility(
                     f"strategy {node.strategy!r} needs a bounded relational lowering.",
                 )
             )
-        elif node.strategy not in _INITIAL_SUPPORTED_STRATEGIES:
+        elif node.strategy in _DEFERRED_GROUP_B:
+            code, reason = _DEFERRED_GROUP_B[node.strategy]
+            rejections.append(OutOfCoreRejection(code, f"{node.table}.{node.columns}: {reason}"))
+        elif node.strategy == "categorical" and not _is_deterministic(node.plan_slice):
+            # Non-deterministic categorical draws from an unseeded RNG, so it has
+            # no cross-run/cross-route parity; only the source-conditioned
+            # deterministic path is ported. Reject fail-closed -> full-frame.
+            rejections.append(
+                OutOfCoreRejection(
+                    "out_of_core_categorical_nondeterministic_unsupported",
+                    f"{node.table}.{node.columns}: non-deterministic categorical has no "
+                    "cross-route parity (unseeded RNG); only deterministic categorical "
+                    "is out-of-core-supported. Falls back to full-frame.",
+                )
+            )
+        elif node.strategy not in _SUPPORTED_WORK_STRATEGIES:
             rejections.append(
                 OutOfCoreRejection(
                     "out_of_core_strategy_unsupported",
-                    f"strategy {node.strategy!r} is not in the initial out-of-core slice.",
+                    f"strategy {node.strategy!r} is not in the out-of-core strategy surface.",
                 )
             )
 
     return OutOfCoreCompatibility(accepted=not rejections, rejections=tuple(rejections))
+
+
+def _is_deterministic(plan_slice: object) -> bool:
+    """True if a scalar work node's seed is in deterministic mode.
+
+    Only scalar (ColumnSeed) nodes carry `deterministic`; a categorical node is
+    always scalar (a group node's strategy is `<group>`, never `categorical`),
+    so the getattr default is a safety net, not a live path.
+    """
+    return bool(getattr(plan_slice, "deterministic", False))
 
 
 def _table_graph_has_cycle(relationship_graph: RelationshipGraph) -> bool:
