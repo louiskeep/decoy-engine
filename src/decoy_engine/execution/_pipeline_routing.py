@@ -105,6 +105,7 @@ __all__ = [
     "execution_telemetry",
     "largest_mask_table_rows",
     "out_of_core_admission",
+    "out_of_core_routing_signals",
     "run_mask_chunked",
     "run_out_of_core_route",
     "run_sequential_route",
@@ -156,6 +157,30 @@ def largest_mask_table_rows(
         src.num_rows for name, src in caller_sources.items() if table_kinds.get(name) == "mask"
     ]
     return max(mask_rows) if mask_rows else None
+
+
+def out_of_core_routing_signals(
+    profile: Any,
+    *,
+    plan: Plan,
+    registry: ProviderRegistry,
+    graph: RelationshipGraph,
+    caller_sources: dict[str, pa.Table],
+    table_kinds: dict[str, str],
+    has_mask_table: bool,
+) -> tuple[bool, str | None, int | None]:
+    """The `(out_of_core_compatible, reject_code, largest_table_rows)` triple
+    `decide_execution_route`'s SC2 gates consume.
+
+    Computed only for relationship jobs with a mask table -- a static plan +
+    Arrow-metadata read, so non-FK jobs pay nothing and keep the pre-SC2
+    routing. Off that shape the triple is the inert `(False, None, None)`
+    default, which makes every SC2 gate a no-op.
+    """
+    if not (getattr(profile, "relationships", None) and has_mask_table):
+        return False, None, None
+    compatible, reject_code = out_of_core_admission(plan, registry=registry, graph=graph)
+    return compatible, reject_code, largest_mask_table_rows(caller_sources, table_kinds=table_kinds)
 
 
 def _has_cross_table_fk_cycle(graph: RelationshipGraph) -> bool:

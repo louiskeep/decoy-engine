@@ -202,33 +202,21 @@ def run_pipeline(
     Execution routing (`execution_mode`, `sink`, `source_loader`,
     `auto_chunk`, `chunk_size_rows`, `auto_chunk_threshold_rows`,
     `out_of_core_threshold_rows`, `full_frame_reject_rows`,
-    `out_of_core_budget_bytes`, `explain_plan`) is documented on
-    `_pipeline_routing`, which owns the routing decisions this function
-    calls in a fixed order: relationship routing (out-of-core vs.
-    sequential vs. full_frame, with a fail-closed reject-before-read for a
-    too-big FK job no bounded route can take) first, then single-table
-    auto-chunk routing (chunked vs. full_frame). `execution_mode` /
-    `auto_chunk` are resource policies of the invocation, not properties
-    of the data transformation, so they are runtime kwargs (matching
-    `vault_writer` / `fidelity_report` / `now_iso`), never `config`
-    fields -- they must stay out of the profile-hashed, frozen-surface
-    data contract. Every route is byte-output-neutral versus full_frame
-    (only peak memory / adapter identity differs).
-
-    SC2 out-of-core auto-routing: a relationship-bearing pure-mask FK job
-    that the out-of-core compat gate admits and whose largest mask table
-    is at/above `out_of_core_threshold_rows` routes to the bounded-RAM
-    DuckDB route (`run_fk_out_of_core`); below that, or when not
-    out-of-core-compatible, it keeps taking the sequential route. A large
-    FK job that no bounded route can take (not out-of-core-eligible, and
-    disqualified from sequential) is REJECTED before the mask step with a
-    coded `ExecutionError` (`fk_full_frame_oom_risk_rejected`) once its
-    largest mask table reaches `full_frame_reject_rows`, rather than
-    risking a silent full-frame OOM. Both thresholds default to
+    `out_of_core_budget_bytes`, `explain_plan`) is documented in full on
+    `_pipeline_routing`, which owns the decisions this function calls in a
+    fixed order: relationship routing (out-of-core vs. sequential vs.
+    full_frame, with a fail-closed reject-before-read for a too-big FK job
+    no bounded route can take -- SC2) first, then single-table auto-chunk
+    routing (chunked vs. full_frame). `execution_mode` / `auto_chunk` are
+    resource policies of the invocation, not properties of the data
+    transformation, so they are runtime kwargs (matching `vault_writer` /
+    `fidelity_report` / `now_iso`), never `config` fields -- they must
+    stay out of the profile-hashed, frozen-surface data contract. Every
+    route is byte-output-neutral versus full_frame (only peak memory /
+    adapter identity differs). The SC2 size thresholds default to
     32 GB-box-calibrated constants (see `_planner`) and are kwargs so the
-    platform admission estimator can override them. `execution_mode`
-    gains `"out_of_core"` as an explicit force (fail-closed if the job is
-    not out-of-core-compatible), mirroring `"sequential"`.
+    platform admission estimator can override them; `execution_mode` gains
+    `"out_of_core"` as an explicit fail-closed force.
 
     Execution-substrate knobs (mask-kind tables only; generate tables
     always run the synthesize path; the sequential route is pandas-only
@@ -328,23 +316,20 @@ def run_pipeline(
     # Routing layer 1 (S2 + SC2): relationship-bearing pure-mask jobs take a
     # bounded-memory route (out-of-core when large + compatible, else
     # sequential); a large FK job no bounded route can take is rejected before
-    # read. This is an early return / a fail-closed raise.
-    #
-    # Out-of-core admission (compat gate) + the size signal are computed only
-    # for relationship jobs with a mask table -- a static plan/metadata read, so
-    # non-FK jobs pay nothing. `largest_table_rows` is None on a lazy-source
-    # path (empty caller_sources); the size gates then never fire and routing
-    # falls back to the pre-SC2 sequential/full-frame decision.
-    out_of_core_compatible = False
-    out_of_core_reject_code: str | None = None
-    largest_table_rows: int | None = None
-    if profile.relationships and has_mask_table:
-        out_of_core_compatible, out_of_core_reject_code = _pipeline_routing.out_of_core_admission(
-            plan, registry=resolved_registry, graph=graph
+    # read. This is an early return / a fail-closed raise. The SC2 admission +
+    # size signals are inert (False/None/None) off the relationship+mask shape,
+    # so non-FK jobs keep the pre-SC2 routing.
+    out_of_core_compatible, out_of_core_reject_code, largest_table_rows = (
+        _pipeline_routing.out_of_core_routing_signals(
+            profile,
+            plan=plan,
+            registry=resolved_registry,
+            graph=graph,
+            caller_sources=caller_sources,
+            table_kinds=table_kinds,
+            has_mask_table=has_mask_table,
         )
-        largest_table_rows = _pipeline_routing.largest_mask_table_rows(
-            caller_sources, table_kinds=table_kinds
-        )
+    )
     route, route_reason = _pipeline_routing.decide_execution_route(
         profile,
         has_generate_table=has_generate_table,
@@ -404,11 +389,9 @@ def run_pipeline(
             execution_plan_decision=execution_plan_decision,
         )
 
-    # SC2: the bounded-RAM out-of-core FK route. Same early-return shape as the
-    # sequential branch; `run_fk_out_of_core` re-asserts compat fail-closed and
-    # is pandas-oracle byte-parity for every admitted plan. The resident
-    # caller_sources feed the runner directly (the pure-mask FK shape has every
-    # parent + child table present); a sink, when supplied, streams the output.
+    # SC2: the bounded-RAM out-of-core FK route (same early-return shape as the
+    # sequential branch). The resident caller_sources feed the runner directly
+    # (the pure-mask FK shape has every parent + child present); a sink streams.
     if has_mask_table and route == "out_of_core":
         return _pipeline_routing.run_out_of_core_route(
             plan=plan,
