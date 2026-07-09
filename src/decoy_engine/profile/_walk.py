@@ -44,6 +44,7 @@ def walk_dataframe(
     sample_rows: int | None,
     rng: random.Random,
     run_pii_detection: bool = False,
+    total_row_count: int | None = None,
 ) -> TableProfile:
     """Return a TableProfile for the given DataFrame.
 
@@ -68,6 +69,14 @@ def walk_dataframe(
             pii_class=None. When True, the walker runs STORM once against
             the full DataFrame and tags columns whose high-confidence
             built-in detector match maps to a PIIClass enum value.
+        total_row_count: SC7a bounded-profiling hook. When set, `df` is a
+            bounded sample of a larger source and this is the source's true
+            total row count (from cheap metadata); row_count on the table and
+            every column reports this total, and columns are flagged
+            `sampled=True` because their null/distinct come from the sample,
+            not the whole column. Default None means `df` IS the whole frame
+            (the historical behavior): row_count is `len(df)` and internal
+            reservoir sampling applies exactly as before.
 
     Returns:
         TableProfile with one ColumnProfile per DataFrame column.
@@ -97,13 +106,22 @@ def walk_dataframe(
     # pii_class=None, preserving slice-2 behavior exactly.
     pii_tags: dict[str, PIIClass] = detect_pii_classes(df, table_name) if run_pii_detection else {}
 
-    row_count = len(df)
-    if sample_rows is not None and row_count > sample_rows:
-        will_sample = True
-        sample_indices = rng.sample(range(row_count), sample_rows)
+    frame_len = len(df)
+    # The reported total: the source's true count when `df` is a bounded
+    # sample (total_row_count set), else the frame length (df is the whole
+    # table). Two independent sampling triggers:
+    #   internal -- df is a full frame larger than sample_rows: reservoir-
+    #     sample here, exactly as before.
+    #   external -- df is already a bounded sample of a larger source
+    #     (total_row_count > frame_len): treat df itself as the sample.
+    row_count = total_row_count if total_row_count is not None else frame_len
+    internal_sample = sample_rows is not None and frame_len > sample_rows
+    external_sample = total_row_count is not None and total_row_count > frame_len
+    will_sample = internal_sample or external_sample
+    if sample_rows is not None and internal_sample:
+        sample_indices = rng.sample(range(frame_len), sample_rows)
         sample_df = df.iloc[sample_indices]
     else:
-        will_sample = False
         sample_df = df
 
     columns: list[ColumnProfile] = []
@@ -137,10 +155,13 @@ def _walk_column(
 ) -> ColumnProfile:
     """Build a ColumnProfile for one column.
 
-    null_count comes from the full series (always). distinct_count comes
-    from sample_series, which equals series when not sampling. pii_class
-    is resolved by the caller (walk_dataframe) from a STORM scan when
-    run_pii_detection=True; otherwise None.
+    null_count comes from `series` (the frame walk_dataframe was given: the
+    whole table under residency="full", or already just the bounded sample
+    under residency="bounded" -- see GATE-F #5 in
+    docs/plans/2026-07-09-consultant-f1-f2-bounded-profiling.md). distinct_count
+    comes from sample_series, which equals series when not further sampling
+    within that frame. pii_class is resolved by the caller (walk_dataframe)
+    from a STORM scan when run_pii_detection=True; otherwise None.
     """
     null_count = int(series.isna().sum())
     distinct_count_raw = sample_series.dropna().nunique()

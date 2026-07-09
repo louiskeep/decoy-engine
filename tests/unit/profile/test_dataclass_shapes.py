@@ -92,7 +92,8 @@ class TestRelationship:
 class TestTableProfile:
     def test_has_expected_fields(self, sample_table: TableProfile) -> None:
         field_names = {f.name for f in fields(sample_table)}
-        assert field_names == {"name", "row_count", "columns"}
+        # SC7a added the additive row_count_exact provenance flag.
+        assert field_names == {"name", "row_count", "columns", "row_count_exact"}
 
     def test_columns_is_tuple(self, sample_table: TableProfile) -> None:
         assert isinstance(sample_table.columns, tuple)

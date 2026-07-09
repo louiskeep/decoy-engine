@@ -22,6 +22,12 @@ hash-scope decision (resolution of B1 in the Dennis review).
 from __future__ import annotations
 
 from decoy_engine.profile._hash import profile_hash
+from decoy_engine.profile._readers import (
+    LazySource,
+    ProfileSource,
+    RowCount,
+    build_profile_source,
+)
 from decoy_engine.profile._serialize import profile_from_json, profile_to_json
 from decoy_engine.profile._source import profile_source
 from decoy_engine.profile._types import (
@@ -34,10 +40,14 @@ from decoy_engine.profile._types import (
 
 __all__ = [
     "ColumnProfile",
+    "LazySource",
     "PIIClass",
     "Profile",
+    "ProfileSource",
     "Relationship",
+    "RowCount",
     "TableProfile",
+    "build_profile_source",
     "profile_from_json",
     "profile_hash",
     "profile_source",

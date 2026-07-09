@@ -201,38 +201,99 @@ class TestCloudSourceEndToEnd:
         assert len(profile.tables) == 1
         assert profile.tables[0].name == "customers"
 
-    def test_read_s3_source_to_arrow_via_moto(self, _moto_s3):
-        """The platform's _read_sources_as_arrow + _fetch_s3_to_bytesio dispatch
-        on type='s3' and return a real pa.Table loaded from moto."""
-        import sys
+    def test_profile_s3_source_via_moto_parquet_uses_footer(self, _moto_s3):
+        """SC7a: an S3 Parquet source is profiled from the footer via ranged
+        reads. row_count is the exact footer count and is flagged exact; the
+        object is never downloaded whole (pd.read_parquet is monkeypatched to
+        raise to prove the bounded path)."""
+        import io
 
-        # Allow this engine test to reach the platform's v2_runner via path.
-        platform_root = __import__("pathlib").Path(__file__).resolve().parents[3] / "decoy-platform"
-        sys.path.insert(0, str(platform_root))
-        try:
-            from api.jobs.v2_runner import _read_sources_as_arrow
-        except ImportError:
-            pytest.skip("platform api.jobs.v2_runner not importable from engine tests")
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        from decoy_engine.profile import profile_source
 
         client, bucket = _moto_s3
-        key = "data/customers.csv"
-        client.put_object(
-            Bucket=bucket,
-            Key=key,
-            Body=b"email\na@x.com\nb@y.com\nc@z.com\n",
+        key = "data/customers.parquet"
+        buf = io.BytesIO()
+        pq.write_table(
+            pa.table({"id": list(range(120)), "email": [f"u{i}@x.com" for i in range(120)]}), buf
         )
-        config = {
-            "sources": {
+        client.put_object(Bucket=bucket, Key=key, Body=buf.getvalue())
+
+        import pandas as pd
+
+        def _boom(*args, **kwargs):
+            raise AssertionError(
+                "whole-object parquet download must not happen on the bounded path"
+            )
+
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(pd, "read_parquet", _boom)
+        try:
+            config = _base_config()
+            config["sources"] = {
                 "customers": {
                     "type": "s3",
-                    "format": "csv",
+                    "format": "parquet",
                     "bucket": bucket,
                     "key": key,
                     "region": "us-east-1",
                 },
-            },
-        }
-        tables = _read_sources_as_arrow(config)
+            }
+            config["tables"][0]["name"] = "customers"
+            config["tables"][0]["columns"][0]["name"] = "email"
+
+            profile = profile_source(config)
+        finally:
+            monkeypatch.undo()
+
+        assert profile.tables[0].row_count == 120
+        assert profile.tables[0].row_count_exact is True
+
+    def test_read_s3_source_to_arrow_via_moto(self, _moto_s3, monkeypatch):
+        """The platform's _read_sources_as_arrow + _fetch_s3_to_bytesio dispatch
+        on type='s3' and return a real pa.Table loaded from moto."""
+        # Allow this engine test to reach the platform's v2_runner via path.
+        # dennis review 2026-07-09 (SC7a): a bare sys.path.insert here leaked
+        # ../decoy-platform onto sys.path for the rest of the pytest session
+        # whenever this test ran (including on ImportError/skip), corrupting
+        # fixture resolution for any tests/unit/profile/ file collected
+        # afterward (both repos ship a top-level `tests` package). monkeypatch
+        # auto-reverts on teardown regardless of how the test exits.
+        platform_root = __import__("pathlib").Path(__file__).resolve().parents[3] / "decoy-platform"
+        monkeypatch.syspath_prepend(str(platform_root))
+        # _read_sources_as_arrow only imports api.config (which needs the
+        # platform-only `pydantic-settings` dependency, not installed in the
+        # engine's venv) lazily on call, deep inside _staging_dir_for -- not
+        # at the top-level import above. The try/except below therefore has
+        # to wrap the call too, or a missing platform dependency surfaces as
+        # a real test FAILURE instead of the intended skip.
+        try:
+            from api.jobs.v2_runner import _read_sources_as_arrow
+
+            client, bucket = _moto_s3
+            key = "data/customers.csv"
+            client.put_object(
+                Bucket=bucket,
+                Key=key,
+                Body=b"email\na@x.com\nb@y.com\nc@z.com\n",
+            )
+            config = {
+                "sources": {
+                    "customers": {
+                        "type": "s3",
+                        "format": "csv",
+                        "bucket": bucket,
+                        "key": key,
+                        "region": "us-east-1",
+                    },
+                },
+            }
+            tables = _read_sources_as_arrow(config)
+        except ImportError:
+            pytest.skip("platform api.jobs.v2_runner not importable from engine tests")
+
         assert "customers" in tables
         assert tables["customers"].num_rows == 3
         assert "email" in tables["customers"].column_names
@@ -246,8 +307,20 @@ class TestCloudSourceEndToEnd:
         fake_csv = b"email\nx@a.com\ny@b.com\n"
 
         class _FakeBlob:
-            def download_as_bytes(self):
-                return fake_csv
+            # SC7a: the bounded GCS reader reads `blob.size` (a metadata fetch,
+            # not a download) for the CSV row estimate and ranged
+            # `download_as_bytes(start, end)` for the bounded sample window; the
+            # fake mirrors that surface (end is inclusive, matching GCS).
+            def __init__(self):
+                self.size = len(fake_csv)
+
+            def reload(self):
+                pass
+
+            def download_as_bytes(self, start=None, end=None):
+                if start is None:
+                    return fake_csv
+                return fake_csv[start : (end + 1 if end is not None else None)]
 
         class _FakeBucket:
             def blob(self, name):
