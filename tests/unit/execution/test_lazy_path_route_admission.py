@@ -75,11 +75,35 @@ def _fk_relationships() -> list[dict[str, Any]]:
     ]
 
 
-def _ooc_eligible_config(tmp_path: Path, src_fmt: str) -> dict[str, Any]:
+def _sized_parent_child(parent_rows: int, child_rows: int) -> tuple[pa.Table, pa.Table]:
+    """A parent/child pair at arbitrary sizes with a VALID FK (every child
+    `parent_id` references a real parent `id`, cycling mod parent_rows). Lets a
+    test make the child larger than the parent -- the mixed partial-residency
+    shape the H1 fix must size correctly."""
+    parent = pa.table(
+        {
+            "id": pa.array([f"p{i}" for i in range(parent_rows)], type=pa.string()),
+            "note": pa.array([f"secret{i}" for i in range(parent_rows)], type=pa.string()),
+        }
+    )
+    child = pa.table(
+        {
+            "cid": pa.array([f"c{i}" for i in range(child_rows)], type=pa.string()),
+            "parent_id": pa.array(
+                [f"p{i % parent_rows}" for i in range(child_rows)], type=pa.string()
+            ),
+        }
+    )
+    return parent, child
+
+
+def _ooc_eligible_config(
+    tmp_path: Path, src_fmt: str, *, tables: tuple[pa.Table, pa.Table] | None = None
+) -> dict[str, Any]:
     """A pure-mask FK job whose every strategy is in the out-of-core supported
     set (hash keys + a redact payload), so `check_out_of_core_compatibility`
     ADMITS it -- the shape that auto-routes to out-of-core once it is large."""
-    parent, child = _parent_child_tables()
+    parent, child = tables if tables is not None else _parent_child_tables()
     if src_fmt == "parquet":
         parent_src = _write_parquet(tmp_path, parent, "parent")
         child_src = _write_parquet(tmp_path, child, "child")
@@ -116,11 +140,13 @@ def _ooc_eligible_config(tmp_path: Path, src_fmt: str) -> dict[str, Any]:
     }
 
 
-def _ineligible_config(tmp_path: Path, src_fmt: str) -> dict[str, Any]:
+def _ineligible_config(
+    tmp_path: Path, src_fmt: str, *, tables: tuple[pa.Table, pa.Table] | None = None
+) -> dict[str, Any]:
     """A generate+mask FK job: the compat gate admits the FK structure (hash
     keys), but the job is NOT sequential-eligible (a generate table) and
     out-of-core cannot generate -- the reject case, no bounded route applies."""
-    parent, child = _parent_child_tables()
+    parent, child = tables if tables is not None else _parent_child_tables()
     if src_fmt == "parquet":
         parent_src = _write_parquet(tmp_path, parent, "parent")
         child_src = _write_parquet(tmp_path, child, "child")
@@ -297,3 +323,105 @@ def test_resident_path_below_threshold_stays_sequential(tmp_path: Path) -> None:
     sources = {name: pq.read_table(spec["path"]) for name, spec in config["sources"].items()}
     result = run_pipeline(config, sources, engine_version="0.1.0", out_of_core_threshold_rows=1_000)
     assert result.quality_metrics["execution"]["execution_mode"] == "sequential"
+
+
+# ---------------------------------------------------------------------------
+# H1 (dennis BLOCK): mixed partial-residency -- a SMALL resident table plus a
+#       LARGE lazy table resolved through `source_loader` -- must size the gate
+#       off the large lazy table, not the small resident one. Before the fix
+#       `_resolve_largest_mask_table_rows` returned the resident max (a single
+#       scalar) whenever ANY mask table was resident, throwing the huge lazy
+#       table's exact profile count away and re-opening the F2 full-frame OOM
+#       hole for this supported shape (`run_out_of_core_route` explicitly
+#       resolves missing tables through the loader). The fix reconciles PER
+#       mask table: each table uses its resident count if resident, else its
+#       profile count, and the signal is the max across them.
+# ---------------------------------------------------------------------------
+
+_CHILD_BIG = 100  # the lazy child is 2.5x the resident parent (_N == 40)
+
+
+def test_h1_mixed_residency_large_lazy_child_not_hidden_by_small_resident_parent(
+    tmp_path: Path,
+) -> None:
+    # parent resident (40 rows), child lazy via loader (100 rows on disk),
+    # generate+mask so no bounded route applies. reject threshold = 50 sits
+    # BETWEEN the two: pre-fix the resident parent's 40 hid the child's 100, the
+    # gate saw 40 < 50, the job wrongly routed full_frame, and the runner would
+    # have loaded + full-frame-masked the 100-row child (the exact F2 OOM). The
+    # fix sizes off the child's 100 >= 50 and rejects BEFORE the loader is called.
+    parent, child = _sized_parent_child(_N, _CHILD_BIG)
+    config = _ineligible_config(tmp_path, "parquet", tables=(parent, child))
+    # A spy that RAISES if invoked: proves the reject fired before any child read
+    # (pre-fix this loader WOULD be called for the full-frame child load).
+    loader = mock.Mock(side_effect=AssertionError("source_loader must not be called"))
+    with pytest.raises(ExecutionError) as exc:
+        run_pipeline(
+            config,
+            sources={"parent": parent},  # MIXED: parent resident, child lazy
+            engine_version="0.1.0",
+            source_loader=loader,
+            full_frame_reject_rows=50,  # 40 (parent) < 50 <= 100 (child)
+        )
+    assert exc.value.code == "fk_full_frame_oom_risk_rejected"
+    # Rejected on the CHILD's 100 rows, not the resident parent's 40.
+    assert f"{_CHILD_BIG:,}" in exc.value.message
+    loader.assert_not_called()
+
+
+def test_h1_mixed_residency_large_lazy_child_reroutes_to_out_of_core(tmp_path: Path) -> None:
+    # Same mixed shape but OOC-eligible: the large lazy child must divert the job
+    # to out_of_core. Pre-fix the gate saw the resident parent's 40 < threshold
+    # 50 and stayed sequential (never seeing the child's 100); post-fix it sizes
+    # off the child's 100 >= 50 and reroutes to out_of_core.
+    parent, child = _sized_parent_child(_N, _CHILD_BIG)
+    config = _ooc_eligible_config(tmp_path, "parquet", tables=(parent, child))
+    result = run_pipeline(
+        config,
+        sources={"parent": parent},  # MIXED: parent resident, child lazy
+        engine_version="0.1.0",
+        source_loader=_file_loader(config),
+        out_of_core_threshold_rows=50,  # 40 (parent) < 50 <= 100 (child)
+        full_frame_reject_rows=1_000,  # well above 100: nothing rejects here
+    )
+    assert result.quality_metrics["execution"]["execution_mode"] == "out_of_core"
+    assert result.quality_metrics["execution"]["route_reason"] == "out_of_core_large_fk"
+    assert set(result.outputs) == {"parent", "child"}
+
+
+# ---------------------------------------------------------------------------
+# M1 (dennis MEDIUM): the warn-vs-assert deviation gets positive coverage. A
+#       RESIDENT table legitimately smaller than its exact on-disk profile (a
+#       pre-filtered source `profile_source` never sees) must WARN and route on
+#       the resident count -- not hard-assert (which would break the legitimate
+#       pre-filtered case) and not crash.
+# ---------------------------------------------------------------------------
+
+
+def test_m1_resident_smaller_than_exact_profile_warns_and_routes_on_resident(
+    tmp_path: Path,
+) -> None:
+    parent_disk, _ = _sized_parent_child(60, 1)  # parent.parquet on disk: 60 rows
+    parent_resident, child = _sized_parent_child(40, 40)  # resident parent 40 + FK-valid child 40
+    # Write the 60-row parent + 40-row child to disk (what profile_source reads),
+    # but hand run_pipeline a resident parent pre-filtered to 40 rows.
+    config = _ooc_eligible_config(tmp_path, "parquet", tables=(parent_disk, child))
+    sources = {"parent": parent_resident, "child": child}
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = run_pipeline(
+            config,
+            sources,
+            engine_version="0.1.0",
+            out_of_core_threshold_rows=10,
+        )
+    # Exactly one cross-check warning, for the parent (resident 40 != exact 60);
+    # the child (resident 40 == exact 40) does not warn.
+    disagree = [w for w in caught if "row count disagrees" in str(w.message)]
+    assert len(disagree) == 1, f"expected one resident/profile mismatch warning, got {disagree}"
+    assert issubclass(disagree[0].category, RuntimeWarning)
+    assert "parent" in str(disagree[0].message)
+    # Routed on the RESIDENT count (max(parent 40, child 40) == 40 >= 10) and ran
+    # cleanly -- no hard assert, no crash.
+    assert result.quality_metrics["execution"]["execution_mode"] == "out_of_core"
+    assert set(result.outputs) == {"parent", "child"}

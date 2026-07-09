@@ -117,43 +117,80 @@ def _resolve_largest_mask_table_rows(
     table_kinds: dict[str, str],
 ) -> tuple[int | None, bool]:
     """Reconcile the resident and profile-metadata size signals into the
-    `(rows, exact)` the SC2 gates key off.
+    `(rows, exact)` the SC2 gates key off, RECONCILING PER MASK TABLE (H1).
 
-    - LAZY path (`sources={}`): only the profile's cheap `row_count` exists;
-      it is the size signal, closing the pre-SC7b `largest_mask_table_rows() is
-      None` hole so the reject/reroute gates fire.
-    - RESIDENT path (`sources` populated): the resident Arrow `num_rows` is the
-      TRUE count of the data that will actually be masked (the runner consumes
-      those resident tables), so it stays the routing signal -- preserving the
-      pre-SC7b resident-path routing exactly. The profile count is kept as a
-      cross-check: when it is EXACT (Parquet/fixed_width metadata) it should
-      match the resident count, and a mismatch is surfaced with a warning
-      rather than a hard raise. A raise would be wrong here because a caller may
-      legitimately pass resident `sources` that differ from the on-disk
-      descriptors the profile read (e.g. pre-filtered/transformed input, which
-      run_pipeline masks as given); the resident count is authoritative for
-      such a run. A CSV *estimate* is expected to differ from the resident exact
-      count, so it is reconciled silently.
+    The reconciliation is per-table, keyed by table identity -- NOT a single
+    scalar comparison of the two aggregate maxes. That distinction is the H1
+    fix: partial residency is a first-class supported shape (`run_out_of_core_route`
+    resolves *missing* tables through `source_loader`), so a job can pass a tiny
+    resident parent while relying on a lazy loader for a huge child. A scalar
+    "any resident source exists -> trust the resident max" rule threw the huge
+    lazy table's exact profile count away and let it hide behind the tiny
+    resident one, re-opening the F2 full-frame OOM hole. Instead, for EACH mask
+    table we pick the count that table actually has:
+
+    - RESIDENT table (present in `caller_sources`): its Arrow `num_rows` is the
+      TRUE count of the data that will be masked (the runner consumes that
+      resident table), so it is that table's routing count and is always exact.
+      The profile count is kept as a per-table cross-check: when it is EXACT
+      (Parquet/fixed_width metadata) it should match the resident count, and a
+      mismatch is surfaced with a warning rather than a hard raise. A raise would
+      be wrong because a caller may legitimately pass a resident source that
+      differs from the on-disk descriptor the profile read (e.g.
+      pre-filtered/transformed input, which run_pipeline masks as given, and
+      which profile_source never sees -- it reads config-path descriptors only);
+      the resident count is authoritative for such a run. A CSV *estimate* is
+      expected to differ from a resident exact count, so it is reconciled
+      silently.
+    - LAZY table (absent from `caller_sources`): only the profile's cheap
+      `row_count` exists, so it is that table's routing count, carrying its
+      `row_count_exact` flag (False for a CSV byte-estimate). This closes the
+      pre-SC7b `largest_mask_table_rows() is None` hole.
+
+    The final signal is the MAX across mask tables of each table's resolved
+    count, threading through the `row_count_exact` of whichever table produced
+    that max (the downstream estimated-CSV-reject branch keys off it). So a
+    fully-resident job routes on resident counts (unchanged from pre-SC7b), a
+    fully-lazy job routes on profile counts, and a MIXED job routes on whichever
+    count each table individually has -- a huge lazy table can no longer hide
+    behind a small resident one.
+
+    `profile.tables` is the authoritative full set of mask tables: profile_source
+    reads every config-declared source descriptor (it never sees resident
+    `sources`), so iterating profile mask tables covers every table an FK+mask
+    job can route on.
     """
-    resident_rows = largest_mask_table_rows(caller_sources, table_kinds=table_kinds)
-    profile_result = largest_mask_table_rows_from_profile(profile, table_kinds=table_kinds)
-    if profile_result is None:
-        return resident_rows, True
-    profile_rows, profile_exact = profile_result
-    if resident_rows is None:
-        return profile_rows, profile_exact
-    if profile_exact and resident_rows != profile_rows:
-        warnings.warn(
-            f"Largest mask-table row count disagrees between the resident "
-            f"sources ({resident_rows:,}) and the exact profile metadata "
-            f"({profile_rows:,}); routing on the resident count. This is "
-            f"expected only when the caller passes resident sources that differ "
-            f"from the on-disk descriptors; otherwise it may indicate a "
-            f"profile-reader bug.",
-            RuntimeWarning,
-            stacklevel=2,
-        )
-    return resident_rows, True
+    mask_tables = [t for t in profile.tables if table_kinds.get(t.name) == "mask"]
+    if not mask_tables:
+        # No mask table in the profile: defensively fall back to any resident
+        # mask signal. Off the FK+mask shape this resolver is not consulted, so
+        # this branch is belt-and-suspenders rather than a live routing path.
+        return largest_mask_table_rows(caller_sources, table_kinds=table_kinds), True
+
+    best_rows: int | None = None
+    best_exact = True
+    for table in mask_tables:
+        resident = caller_sources.get(table.name)
+        if resident is not None:
+            table_rows = resident.num_rows
+            table_exact = True
+            if table.row_count_exact and table_rows != table.row_count:
+                warnings.warn(
+                    f"Mask-table row count disagrees for table {table.name!r} "
+                    f"between the resident source ({table_rows:,}) and the exact "
+                    f"profile metadata ({table.row_count:,}); routing on the "
+                    f"resident count. This is expected only when the caller "
+                    f"passes a resident source that differs from the on-disk "
+                    f"descriptor; otherwise it may indicate a profile-reader bug.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+        else:
+            table_rows = table.row_count
+            table_exact = table.row_count_exact
+        if best_rows is None or table_rows > best_rows:
+            best_rows, best_exact = table_rows, table_exact
+    return best_rows, best_exact
 
 
 def out_of_core_routing_signals(

@@ -190,8 +190,11 @@ In `run_pipeline`, the sequence stays in the same order but the eager read is go
 3. `out_of_core_routing_signals(...)` / `decide_execution_route(...)` — unchanged **logic**, but the
    size signal now comes from the profile's `row_count` (via a new
    `largest_mask_table_rows_from_profile(profile, table_kinds)`) instead of only from resident
-   `caller_sources`. When `caller_sources` is populated its `num_rows` still agrees (belt + suspenders);
-   when it is empty (lazy path) the profile row-count is used — closing the `None` hole.
+   `caller_sources`. The reconciliation is per mask table (H1): a resident table uses its `num_rows`,
+   a lazy table uses its profile `row_count`, and the size signal is the max across them — so a mixed
+   job with a huge lazy table plus a tiny resident one cannot under-size the gate. On a resident table
+   an exact profile-count disagreement warns (does not hard-assert) and routes on the resident count;
+   when `caller_sources` is empty (lazy path) the profile row-count is used — closing the `None` hole.
 4. The reject-before-read raise (`fk_full_frame_oom_risk_rejected`) now fires *before any full
    materialization has happened anywhere in the lifecycle*, because profiling no longer materialized
    and the masking runner has not yet been called. That is the F2 semantic fix, achieved without a
@@ -262,7 +265,19 @@ Add `largest_mask_table_rows_from_profile(profile, table_kinds)` and feed it int
 (`sources={}`) path. Thread `row_count_exact` through so an **estimated** CSV largest table at/above
 `full_frame_reject_rows` raises the distinct `fk_full_frame_oom_risk_rejected_estimated` code with the
 "convert to Parquet or set execution_mode" message; an estimated OOC-eligible table still reroutes.
-Keep resident `caller_sources.num_rows` as a cross-check when present (assert agreement).
+Reconcile PER MASK TABLE (not a single scalar max): for each mask table use its resident
+`caller_sources[name].num_rows` when that table is resident, else its profile `row_count`
+(carrying that table's `row_count_exact`), then take the max across tables. This is required for the
+mixed partial-residency shape (`run_out_of_core_route` resolves *missing* tables through
+`source_loader`): a scalar "any resident source -> trust the resident max" rule would let a huge lazy
+child hide behind a tiny resident parent and re-open the F2 OOM hole. **Implemented behavior note
+(deviates from an earlier "assert agreement" sketch):** for a RESIDENT table whose resident count
+disagrees with its EXACT profile count, the build emits a `RuntimeWarning` and routes on the resident
+count rather than hard-asserting. A hard assert would be wrong: a caller may legitimately pass a
+resident source that differs from the on-disk descriptor the profile read (pre-filtered/transformed
+input, which run_pipeline masks as given and which `profile_source` never sees), and the resident
+count is authoritative for that run. The warn is scoped to resident tables only; a lazy table's
+profile count is trusted without cross-check (there is no resident count to compare).
 - **AC:** a lazy-path (`sources={}`, `source_loader` set) FK job whose largest Parquet source is
   >= `full_frame_reject_rows` and is *not* OOC-eligible now raises `fk_full_frame_oom_risk_rejected`
   **before** `source_loader` is ever called (assert the loader is untouched); the same job with a

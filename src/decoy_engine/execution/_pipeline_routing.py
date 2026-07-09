@@ -261,6 +261,25 @@ def decide_execution_route(
     so `select_execution_adapter` -- not the pandas-only sequential path --
     is what actually decides polars-native-vs-fallback and stamps the
     caller-visible `executed_substrate` / `execution_adapter` telemetry.
+
+    Threshold ordering (L2): the reject-before-read branch reads most naturally
+    when `out_of_core_threshold_rows <= full_frame_reject_rows`, and that is the
+    default (5M <= 7.5M). The two knobs are validated positive+typed at the
+    `run_pipeline` submit choke point but their ORDERING is deliberately NOT
+    force-validated, because an inverted override
+    (`full_frame_reject_rows < out_of_core_threshold_rows`) is a legitimate,
+    SAFE config -- e.g. a small-RAM host that rejects full-frame-bound FK jobs
+    early while leaving the out-of-core reroute at its default. The reject
+    branch's correctness does not actually depend on the ordering: an
+    out-of-core-eligible job can NEVER reach the reject branch regardless of
+    threshold order, because out-of-core eligibility is a strict subset of
+    sequential eligibility, and a sequential-eligible non-cyclic job takes the
+    `sequential` early return above before the reject test is evaluated. The
+    reject branch is reached ONLY by full-frame-bound jobs (not
+    sequential-eligible, or a cyclic FK graph), which no bounded route can take
+    at any threshold ordering. So the ordering is an explanatory expectation,
+    not a load-bearing invariant, and is left to the operator rather than
+    rejected at submit time.
     """
     eligible, route_reason = _sequential_eligible(
         profile,
@@ -349,20 +368,24 @@ def decide_execution_route(
     # Reject before read (fail-closed): a LARGE relationship job that no bounded
     # route can take would risk a silent full-frame OOM. Divert to a clean typed
     # error instead of the OOM-killer (GATE-1 #4 prevention half). Reaching this
-    # branch at reject scale ALREADY implies no bounded route applies: an
-    # out-of-core-eligible job (pure-mask FK + compat-admitted) would have been
-    # routed to out_of_core above (its size threshold is below the reject
-    # threshold), so it never lands here. That is why the condition does NOT
-    # re-test `out_of_core_compatible`: the compat GATE can admit an FK structure
+    # branch ALREADY implies no bounded route applies -- and this holds at ANY
+    # threshold ordering (L2), not because of one: out-of-core eligibility is a
+    # strict subset of sequential eligibility, and a sequential-eligible
+    # non-cyclic job took the `sequential` early return above before this test,
+    # so an out-of-core-eligible job can never land here regardless of whether
+    # `out_of_core_threshold_rows` sits below `full_frame_reject_rows`. That is
+    # why the condition does NOT re-test `out_of_core_compatible`: the compat GATE
+    # can admit an FK structure
     # (edges/strategies) for a job whose SHAPE still bars out-of-core (a
     # generate+mask FK the route cannot generate), and re-testing the flag would
     # wrongly let such a job fall through to a full-frame OOM. No-relationship
     # jobs are never rejected here: a large flat single table is the layer-2
     # auto-chunk route's concern, not a full-frame FK OOM.
     if has_relationships and largest_table_rows is not None and rows >= full_frame_reject_rows:
-        # An OOC-eligible job never lands here (it routed to out_of_core above,
-        # whose threshold is below this one), so an ESTIMATED (CSV) count that
-        # is good enough to prefer the bounded route already did so. Reaching
+        # An OOC-eligible job never lands here (it is sequential-eligible and so
+        # took the out_of_core / sequential early return above), so an ESTIMATED
+        # (CSV) count that is good enough to prefer the bounded route already did
+        # so. Reaching
         # the reject branch on an estimate means the job is full-frame-bound and
         # the estimate says "too big" -- but a CSV byte-estimate can be wrong in
         # both directions, so we fail toward an operator-visible choice with a
