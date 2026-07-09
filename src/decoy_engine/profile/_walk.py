@@ -155,10 +155,13 @@ def _walk_column(
 ) -> ColumnProfile:
     """Build a ColumnProfile for one column.
 
-    null_count comes from the full series (always). distinct_count comes
-    from sample_series, which equals series when not sampling. pii_class
-    is resolved by the caller (walk_dataframe) from a STORM scan when
-    run_pii_detection=True; otherwise None.
+    null_count comes from `series` (the frame walk_dataframe was given: the
+    whole table under residency="full", or already just the bounded sample
+    under residency="bounded" -- see GATE-F #5 in
+    docs/plans/2026-07-09-consultant-f1-f2-bounded-profiling.md). distinct_count
+    comes from sample_series, which equals series when not further sampling
+    within that frame. pii_class is resolved by the caller (walk_dataframe)
+    from a STORM scan when run_pii_detection=True; otherwise None.
     """
     null_count = int(series.isna().sum())
     distinct_count_raw = sample_series.dropna().nunique()

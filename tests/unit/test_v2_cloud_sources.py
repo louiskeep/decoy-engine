@@ -251,14 +251,18 @@ class TestCloudSourceEndToEnd:
         assert profile.tables[0].row_count == 120
         assert profile.tables[0].row_count_exact is True
 
-    def test_read_s3_source_to_arrow_via_moto(self, _moto_s3):
+    def test_read_s3_source_to_arrow_via_moto(self, _moto_s3, monkeypatch):
         """The platform's _read_sources_as_arrow + _fetch_s3_to_bytesio dispatch
         on type='s3' and return a real pa.Table loaded from moto."""
-        import sys
-
         # Allow this engine test to reach the platform's v2_runner via path.
+        # dennis review 2026-07-09 (SC7a): a bare sys.path.insert here leaked
+        # ../decoy-platform onto sys.path for the rest of the pytest session
+        # whenever this test ran (including on ImportError/skip), corrupting
+        # fixture resolution for any tests/unit/profile/ file collected
+        # afterward (both repos ship a top-level `tests` package). monkeypatch
+        # auto-reverts on teardown regardless of how the test exits.
         platform_root = __import__("pathlib").Path(__file__).resolve().parents[3] / "decoy-platform"
-        sys.path.insert(0, str(platform_root))
+        monkeypatch.syspath_prepend(str(platform_root))
         try:
             from api.jobs.v2_runner import _read_sources_as_arrow
         except ImportError:
