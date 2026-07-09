@@ -313,7 +313,11 @@ class TestModeClassification:
         assert block["rejections"]["sequential_relationship"] == RELATIONSHIP_ROUTE_DEFERRED
         assert block["rejections"]["out_of_core_relationship"] == RELATIONSHIP_ROUTE_DEFERRED
         assert "DEFERRED" in RELATIONSHIP_ROUTE_DEFERRED
-        assert "FK stack" in RELATIONSHIP_ROUTE_DEFERRED
+        # SC2: the disposition now points at the LIVE router (the FK stack landed
+        # via SC1, so the old "FK stack lives on another branch" story is gone);
+        # the planner stays explain-only and does not route relationship jobs.
+        assert "decide_execution_route" in RELATIONSHIP_ROUTE_DEFERRED
+        assert "not by this planner" in RELATIONSHIP_ROUTE_DEFERRED
         # The chosen-mode reason declares the job a relationship-route candidate.
         assert "relationship-route candidate" in block["reason"]
         # FK also rejects the non-relationship fast modes.
