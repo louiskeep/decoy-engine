@@ -9,6 +9,22 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Fixed (SC7b lazy-path route admission with bounded OOM prevention, 2026-07-09)
+
+SC7a made profiling itself bounded by reading only cheap metadata + a sample, but the SC2 size gates (`out_of_core_threshold_rows`, `full_frame_reject_rows`) remained blind on the lazy-path input shape (`sources={}`, `source_loader` set), where `largest_mask_table_rows()` returned None and never fired the reject-before-read or out-of-core reroute that protect bounded-memory jobs. This commit wires the bounded `TableProfile.row_count` into the route-admission decision so lazy-path FK jobs get the same OOM-prevention gates as resident-path jobs.
+
+**New `largest_mask_table_rows_from_profile()` helper** (`src/decoy_engine/execution/_pipeline_routing_signals.py`): recovers row count from SC7a's `TableProfile.row_count` when resident sources are not available. Reconciles per-table (not a single scalar max): each mask table sources its row-count from the resident `caller_sources[name].num_rows` if resident, else its profile `row_count` (with that table's `row_count_exact` flag). The largest-table signal is the max across tables. This per-table reconciliation closes the H1 correctness gap in mixed partial-residency shapes (small resident parent + large lazy child via `source_loader`), where the old rule would let the huge lazy table hide behind the tiny resident one and re-open the F2 OOM hole.
+
+**Per-table size-signal routing**: `out_of_core_routing_signals` now returns a 4-tuple including `largest_table_rows_exact` (bool). In `decide_execution_route`, an ESTIMATED (CSV) table at/above `full_frame_reject_rows` raises the distinct `fk_full_frame_oom_risk_rejected_estimated` code with the message "convert to Parquet or set execution_mode", guiding operators toward an exact count. An estimated OOC-eligible table still reroutes to streaming with a warning. Exact Parquet/fixed_width counts route with the unqualified `fk_full_frame_oom_risk_rejected` code.
+
+**Resident vs. profile count reconciliation**: for a RESIDENT table whose exact profile count disagrees with its resident row count, the build emits a `RuntimeWarning` naming the table and routes on the resident count (authoritative for that run, since callers may legitimately pass pre-filtered/transformed resident sources). No hard assert (a supported shape, not a bug).
+
+**Instrumentation**: the decision + reason land in `ExecutionResult.quality_metrics["execution"]` as before (SC2's telemetry unchanged in surface).
+
+**New module**: extracted the size and admission signal helpers into `src/decoy_engine/execution/_pipeline_routing_signals.py` (re-exported from `_pipeline_routing`) to hold the 600-LOC orchestration cap.
+
+**Note: SC7b makes lazy-path jobs get the same reject-before-read gate as resident-path, but `run_pipeline()` is not yet provably bounded-memory end-to-end.** SC7c (end-to-end memory-cap proof via the public `run_pipeline()` surface) has not landed. Profiling touches only cheap metadata and a bounded sample on the lazy path now, and route admission fires before `source_loader` is called, but the overall memory profile of `run_pipeline` awaits SC7c's sentinel proofs.
+
 ### Fixed (SC7a consultant-findings remediation, 2026-07-09)
 
 External architecture review (`docs/engine-consultant-findings-2026-07-09.md`, committed at commit `02b18cc` on `main`) identified nine findings (F1-F9). This commit addresses F8 and F4; F1/F2 are the subject of ongoing design work; F3/F5-F9 are logged as backlog.
