@@ -32,7 +32,7 @@ prevention. Full spec + GATE-1 decisions: the 100M program doc (PR #33).
 | **SC2** | Wire auto-routing: the live router selects out-of-core for eligible large FK jobs; ineligible-but-large jobs reroute-to-sequential or reject-before-read with a reason (never silent OOM) | **DONE** - part 1 (CF1/CF2/CF3 hardening) merged via PR #37; part 2 (the auto-routing wire) merged 2026-07-09 via PR #38 (dennis re-review APPROVE, 0 BLOCKER/0 HIGH). See "SC2 status" below. |
 | **SC3** | Widen out-of-core to Group (b) strategies (`fpe`, `text_redact`, `date_shift`, `bucketize` + conditional `faker`/`categorical`), each with byte-parity vs full-frame | **QUEUED** |
 | **SC4** | Widen out-of-core to Group (c) strategies (`text_mask`, `geo_generalize`, `code_set`, `bucket_perturb`, `formula`/`derived`/`nested` where batch-local) - in v1 critical path per Cam | **QUEUED** |
-| **SC5** | Platform Sprint E: peak-MB estimator + admission gate (measure-only default; over-hard-ceiling reject before read; reroute OOC-eligible jobs to streaming). OOM **prevention**. | **QUEUED** (platform) |
+| **SC5** | Platform Sprint E: peak-MB estimator + admission gate (measure-only default; over-hard-ceiling reject before read; reroute OOC-eligible jobs to streaming). OOM **prevention**. | **DONE** - merged 2026-07-09 via engine PR #40 (public eligibility-query export) + platform PR #20 (FK-aware admission discount), dennis APPROVE after one fix round. **Surfaced a significant gap: the engine's out-of-core route is not reachable through the platform's job runner today for any config shape** - see "SC5 status" below. |
 | **SC6** | Validate 100M on GCP (32 GB) with the built `scripts/gcp-bench/engine-bench.sh` battery; commit the run that backs the "100M+ on 32 GB" claim | **QUEUED** - needs gcloud auth + spend confirmation. Overlaps Part B item 1. |
 
 **Critical path to a shippable, auto-routed, OOM-safe 100M:**
@@ -176,6 +176,62 @@ wiring (SC2 part 2) begins.
   oracle. Do this before or alongside SC3 so the branch isn't shipped
   untested indefinitely.
 
+### SC5 status - DONE (engine PR #40, platform PR #20, both merged 2026-07-09)
+
+- **Engine side (PR #40):** thin, additive public re-export at
+  `decoy_engine.execution` - `check_out_of_core_compatibility`,
+  `OutOfCoreCompatibility`/`OutOfCoreRejection`, `OUT_OF_CORE_THRESHOLD_ROWS_DEFAULT`,
+  `FULL_FRAME_REJECT_ROWS_DEFAULT`, `OUT_OF_CORE_SUPPORTED_STRATEGIES`. Zero
+  behavior change (identity-verified against the internals the live router
+  already calls); additive-only per `docs/compatibility-contract.md` §4.1, no
+  version bump needed.
+- **Platform side (PR #20):** `api/jobs/admission_fk.py` extends the Sprint
+  E/E2 pre-claim admission gate (`api/jobs/admission.py`) with a config-only,
+  zero-read structural proxy for "pure-mask FK job that takes platform's
+  bounded eviction route." Investigated calling the engine's real
+  `check_out_of_core_compatibility` directly and rejected it:
+  `decoy_engine/profile/_source.py::_load_file_source` does an unbounded
+  full-file read regardless of sample size, which would defeat the point of
+  a *pre-read* admission gate. The proxy checks config-visible facts only
+  (relationships present, no generate+mask overlap, no validators, no vault
+  columns, no self-referential FK edge) and applies a 0.75x multiplier
+  discount (the low/conservative end of the measured 25-27% `run_sequential`
+  peak-RSS reduction band, `docs/relationships-memory-scaling.md` §6.1).
+  GATE-1 invariants (measure-only always runs, fail-open on every new error
+  path, admin override untouched, non-FK estimation byte-for-byte unchanged)
+  verified intact by dennis.
+
+**Significant finding (dennis-verified, not just asserted):** decoy-platform's
+own `v2_sequential.py` (`_should_use_sequential_relationship_path`) already
+intercepts *every* pure-mask FK job before `run_pipeline` is ever called,
+routing it through the engine's `run_sequential` table-by-table eviction
+instead. The only relationship shape that *does* reach `run_pipeline`
+(generate+mask FK) is disqualified from the engine's out-of-core route by the
+engine's own eligibility rules (`_sequential_eligible`'s `has_generate_table`
+check - out-of-core eligibility is a strict subset of sequential eligibility).
+**Net effect: decoy-engine's SC1/SC2/SC3 out-of-core route is not reachable
+through this platform's job runner today, for any config shape.** The SC5
+admission discount is therefore pinned to the already-realized sequential-tier
+number, not the engine's stronger but currently-unreachable out-of-core bound
+- the honest number for what actually runs in production today.
+
+**New follow-up surfaced (not started, not part of SC0-SC6):** wire platform
+to route large, out-of-core-eligible FK jobs through the engine's DuckDB
+route instead of always taking the sequential-eviction path first. Until this
+lands, all of SC1/SC2/SC3's out-of-core engineering investment delivers zero
+production value through this platform - it's real, tested, and byte-parity
+proven at the engine level, but currently unreachable end-to-end. Flag for
+Cam: this is arguably higher-priority than SC4/SC6 once the current program
+finishes, since it's what makes SC1-SC3 actually matter in production.
+
+**Known accuracy gaps tracked for GATE-2** (dennis review, fixed where cheap,
+tracked where not): the 25% discount is measured only on >=3-table FK chains
+and may be optimistic for the more common 2-table parent-child shape; the
+underlying `CSV_MEMORY_MULTIPLIER` (6.0x) is itself provisional against a
+single 8.05x real sample. Both compound in the same direction (under-estimate
+risk) and are mitigated today by measure-only-by-default + fail-open, but
+must be closed before `admission_control_enabled` enforcement is turned on.
+
 ### Deliverables already shipped alongside this program
 - **PR #33** - the 100M program doc (`docs/plans/2026-07-06-100m-row-scaling-program.md`).
 - **PR #19 (platform)** - the GCP benchmark harness (`scripts/gcp-bench/`:
@@ -237,6 +293,9 @@ panel). Includes visual/interaction QA.
    carried forward, see "SC2 status" above.
 3. **SC3 → SC4** - widen the strategy surface (parity-tested). Fold in the
    M1 test carry-forward.
-4. **SC5** (parallel) - platform estimator + admission gate, measure-only.
+4. ~~**SC5** (parallel) - platform estimator + admission gate, measure-only.~~
+   **DONE** (engine PR #40, platform PR #20, both merged). Surfaced a new,
+   unscoped follow-up: wire platform to actually route large FK jobs through
+   the engine's out-of-core execution mode - see "SC5 status" above.
 5. **SC6 / Part B item 1** - GCP 100M benchmark run (needs auth + spend).
 6. **Part B items 2-4** - UI-to-engine wiring, CLI testing, web UI/UX.
