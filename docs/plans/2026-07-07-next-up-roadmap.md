@@ -62,26 +62,49 @@ below.
 **Carry-forwards tracked into SC2 (must be resolved before the route is wired):**
 - **CF1** - chunked-FK self-masking gate reachability: re-review before relaxing
   `_planner._chunked_rejection` or the platform gate.
+  **RE-CONFIRMED (SC2 part 1, 2026-07-09):** still holds. `git show --stat`
+  confirms SC1 (`c14aa7e`) did not touch `_planner.py`, so the engine guard
+  (`_chunked_rejection`'s `if config.get("relationships")` short-circuit, which
+  skips `check_chunked_compatibility` entirely) is unchanged. The relaxed
+  FK-child admission remains reachable only by a direct caller of
+  `check_chunked_compatibility` / `run_mask_pipeline_chunked` with an FK config,
+  of which none exists in engine or platform. No code change. Pinned by
+  `test_execution_planner.py::...::test_fk_relationships_keep_chunked_self_masking_gate_unreachable`
+  so a future SC2/SC3 relaxation cannot silently make it reachable. (The second
+  guard, platform `plan_streaming_route`, lives in decoy-platform and is
+  unchanged by SC1; its re-review is recorded here for the cross-repo record.)
 - **CF2** - `out_of_core/_batch_join.py` composite partial-null orphan parity
   divergence (documented, module docstring lines ~40-47): gate or explicitly
   accept before SC2 wires the route.
-- **CF3** (new, dennis SC1 review) - intra-batch int-beyond-2^53 + float FK
-  output crashes with an **uncoded** `ArrowInvalid` at `_join.py:304`
+  **RESOLVED → GATED (SC2 part 1, 2026-07-09):** the docstring divergence does
+  not reproduce in the canonical `composite_fk_group` shape (proven oracle-parity
+  by a 400-trial fuzz + pinned tests across orphans/partial-nulls/all policies).
+  It only reproduces when composite-FK child columns are masked as independent
+  `scalar` nodes (double-masking): the oracle keeps the scalar-masked value on
+  orphans while out-of-core preserved the **raw** value - a raw-value leak.
+  Orphans can't be excluded statically, so per the fail-closed default that
+  shape is now gated (`out_of_core_composite_fk_scalar_child_unsupported`); the
+  parity-proven group shape and single-column scalar children stay admitted.
+- **CF3** (dennis SC1 review) - intra-batch int-beyond-2^53 + float FK output
+  crashed with an **uncoded** `ArrowInvalid` at `_join.py:304`
   (`_append_output_batch`). The gate admits float-parent/int-child FK edges with
   no dtype check (`_compat.py` `_check_edge`); a batch mixing a matched float
-  value with an orphan int key beyond float-precision hits `pa.array(...,
-  from_pandas=True)` before `cast_fk_chunk` (CF3's sibling fix from SC1) is ever
-  reached. Production-reachable on a gate-admitted config, not just a
-  parity-harness gap. Fix by either (a) rejecting the numeric parent/child dtype
-  mismatch at `_check_edge`, or (b) guarding `_append_output_batch` the same way
-  `cast_fk_chunk` guards the cross-batch cast. **Must be closed before the route
-  is wired into the default path.**
-  - Related LOW (informational, no fix needed): on this same config the pandas
-    oracle silently rounds the FK key (`9007199254740993` → `9007199254740992.0`,
-    a silent referential-integrity drift) rather than crashing - so treating the
-    oracle as ground truth here is itself suspect; the out-of-core route
-    crashing is arguably safer. Worth a `SEMANTIC_DIFFERENCES.md` note when CF3
-    is fixed.
+  value with an orphan int key beyond float-precision hit `pa.array(...,
+  from_pandas=True)` before `cast_fk_chunk` (CF3's sibling fix from SC1) was
+  ever reached. Production-reachable on a gate-admitted config, not just a
+  parity-harness gap.
+  **RESOLVED (SC2 part 1, 2026-07-09):** chose option (b) - guarded
+  `_append_output_batch` the same way `cast_fk_chunk` guards the cross-batch
+  cast (the compat gate never sees source dtypes/value ranges, so it can't
+  reject this at admission time), raising the coded
+  `out_of_core_fk_key_dtype_unsupported` fail-closed rejection instead of the
+  raw crash. The pandas oracle's silent rounding on this same shape
+  (`9007199254740993` → `9007199254740992.0`, not authoritative) is recorded in
+  `tests/parity/SEMANTIC_DIFFERENCES.md`.
+
+All three carry-forwards resolved on PR #37 (branch `sc2/carryforward-hardening`,
+open); dennis review pending before merge and before the actual auto-routing
+wiring (SC2 part 2) begins.
 
 ### Deliverables already shipped alongside this program
 - **PR #33** - the 100M program doc (`docs/plans/2026-07-06-100m-row-scaling-program.md`).
