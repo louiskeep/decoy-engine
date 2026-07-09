@@ -471,7 +471,11 @@ re-verified file:line by Claude before any of this was actioned). Status:
 | F8 | LOW | Stale `decoy_engine.graph.*` mypy overrides for a removed module tree. | **DONE, and widened** - the sentry test written to guard this (`tests/sentry/test_mypy_override_targets.py`) found 13 MORE dangling overrides beyond the graph.* ones the review sampled (V1 `connectors`/`generators`/`masker`/`transforms`/`plan` modules deleted by the S9.5 bulk-delete, never cleaned from `pyproject.toml`). All removed, verified against `git log --diff-filter=D`, mypy still clean (327 files). Branch `sc7/consultant-f8-f4-cleanup`. |
 | F9 | LOW | Module-size ratchet allowlist has 5 large files in risk-heavy areas (detection, quality reporting, training, plan checks). | Backlog - ratchet already prevents further growth (see `tests/sentry/test_module_size.py`); this is "decompose eventually," not urgent. Prioritize `plan/_checks.py` if picked up (compile checks are fail-closed-safety-central per the review). |
 
-### SC7a status - F8 + F4 cleanup - DONE, branch `sc7/consultant-f8-f4-cleanup`
+### F8+F4 cleanup status - DONE, branch `sc7/consultant-f8-f4-cleanup` (PR #45)
+
+Naming note: this cleanup predates the design doc's SC7a/b/c numbering below
+(the design doc's SC7a/b/c refers only to the F1/F2 build). Kept unnumbered
+here to avoid colliding with that scheme.
 
 Two independent, low-risk, mechanical fixes bundled into one branch since both
 are sentry-test additions with no behavior change:
@@ -489,13 +493,59 @@ are sentry-test additions with no behavior change:
 Verification: `mypy src/decoy_engine` clean (327 files), full `tests/sentry/`
 suite green (1403 passed / 1 skipped), ruff + ruff format clean.
 
-### SC7b status - F1/F2 bounded-memory profiling fix - IN PROGRESS
+### SC7 (F1/F2 bounded-memory profiling) status - SC7a DONE, SC7b/c NOT STARTED
 
-Design pass in flight (Opus tech-lead), scoped to F1/F2 only (not F3's broader
-routing consolidation, even though they touch adjacent modules - kept separate
-so the fix that actually matters for the proof-page claim isn't blocked on a
-bigger refactor). See the design doc once written:
-`docs/plans/2026-07-09-consultant-f1-f2-bounded-profiling.md`.
+Design doc `docs/plans/2026-07-09-consultant-f1-f2-bounded-profiling.md`
+(Opus tech-lead pass), scoped to F1/F2 only (not F3's broader routing
+consolidation, even though they touch adjacent modules - kept separate so
+the fix that actually matters for the proof-page claim isn't blocked on a
+bigger refactor). GATE-F approved by Cam 2026-07-09 (all 6 proposed design
+decisions accepted as-is).
+
+**SC7a (bounded `profile_source()` + `ProfileSource` readers) - DONE**,
+branch `sc7/consultant-f8-f4-cleanup`, commits `a0c2173`..`0e20504`, not yet
+merged (awaiting Cam GATE-2). New `profile/_readers.py` (local Parquet/
+fixed_width/CSV readers, `LazySource` promoted from the out-of-core module
+as the shared lazy-Parquet reader) and `profile/_cloud_readers.py` (S3/GCS
+ranged-read variants, never a whole-object download for Parquet).
+`profile_source()` defaults to `residency="bounded"`: cheap `row_count()` +
+a `<=10k`-row `sample_frame()`, with the true row count (exact for Parquet/
+fixed_width, a flagged estimate for CSV) riding on the new additive
+`TableProfile.row_count_exact` field. `out_of_core/_source.py` is now a
+pure re-export shim - the live OOC runner path (what the GCP 50M/100M
+benchmarks are exercising right now) is unaffected.
+
+dennis adversarial review: **APPROVE, 0 BLOCKER / 0 HIGH / 1 MEDIUM
+(pre-existing, not caused by SC7a) / 3 LOW.** Notably, dennis root-caused a
+test-pollution bug I'd found and mis-bisected during my own pre-review
+verification pass (see `tests/unit/test_v2_cloud_sources.py`): an unbalanced
+`sys.path.insert` in a pre-existing test, present on `main` since before this
+work, that corrupts fixture resolution for subsequently-collected
+`tests/unit/profile/` files whenever it runs first in a non-default
+collection order. Confirmed **not** SC7a-introduced (reproduces identically
+on base `53852e1` with any `profile/` test standing in for the new
+`test_bounded_profiling.py`) and **not** currently CI-breaking (real
+alphabetical collection order runs `profile/` before this test). Partially
+remediated (`monkeypatch.syspath_prepend` instead of a bare insert - real
+hygiene improvement, auto-cleans on every exit path) but the repro still
+occurs after that fix: the pollution outlives `sys.path` restoration,
+pointing at a deeper `sys.modules`-level collision (both `decoy-engine` and
+`decoy-platform` ship a top-level `tests` package). Left as a documented,
+still-latent, non-blocking known issue - a full fix needs `sys.modules`-aware
+test cleanup or a package rename, out of scope for SC7a. 3 LOW findings (a
+row-group-boundedness caveat for SC7c's memory-cap fixtures, a stale
+docstring, a CSV-estimate-can-overshoot-on-small-files edge case) noted for
+SC7b/c, no code change needed now.
+
+Verification: `ruff check`/`ruff format --check` clean, `mypy` clean (329
+files), full non-perf regression run 2499 passed / 2 skipped / 1 failed (the
+pre-existing `pydantic_settings`-missing-in-venv failure above, unrelated).
+
+**SC7b (wire profile row-count into route admission) and SC7c (end-to-end
+`run_pipeline()` memory proof) - NOT STARTED.** Do not claim `run_pipeline()`
+is bounded-memory on the proof page until SC7b/c land - SC7a alone makes
+profiling itself bounded but does not yet feed that into the route decision
+or prove the composed result end-to-end.
 
 ## Resume checklist
 
