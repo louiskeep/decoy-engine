@@ -35,10 +35,16 @@ recording):
    skipped and the classification is admissibility-only.
 3. `sequential_relationship` / `out_of_core_relationship`: relationship
    routes for FK jobs. The FK stack (`_sequential.py`, `out_of_core/`)
-   lives on its own branches, so this branch can only detect that the
-   job HAS FK edges (a relationship-route candidate); the
-   sequential-vs-out-of-core decision is honestly DEFERRED rather than
-   pretended (`RELATIONSHIP_ROUTE_DEFERRED`). No off-branch imports.
+   now lives on this branch, but the LIVE relationship-route decision
+   (sequential vs. out-of-core vs. full-frame) is owned by
+   `run_pipeline`'s `_pipeline_routing.decide_execution_route`, NOT by
+   this planner: that decision reads job size + out-of-core compatibility
+   at dispatch time, and `run_pipeline` calls it as an early return
+   BEFORE this classifier ever routes (SC2 auto-routing). This branch
+   therefore only DETECTS that the job has FK edges (a relationship-route
+   candidate) and points at the live router for the actual disposition
+   (`RELATIONSHIP_ROUTE_DEFERRED`), so the EXPLAIN surface never claims a
+   route the planner does not itself take.
 4. `pandas_fallback`: the universal substrate; always admissible.
 
 Determinism: same inputs -> same `ExecutionPlan`. The rejections mapping
@@ -50,8 +56,10 @@ counts, schema types, and null counts -- all pure metadata reads).
 Routing seam: `PLANNER_ROUTING_ENABLED` remains the documented flag for
 FULL planner-driven routing (all modes). It stays a hard `False`
 constant: the auto-chunk sprint wired only the `chunked` mode into
-routing, behind `run_pipeline`'s `auto_chunk` knob, and the remaining
-modes still execute exactly where they did.
+routing, behind `run_pipeline`'s `auto_chunk` knob, and the relationship
+routes (sequential / out-of-core) are routed by
+`_pipeline_routing.decide_execution_route`, not by flipping this flag.
+This classifier stays the static EXPLAIN + chunked-admissibility surface.
 """
 
 from __future__ import annotations
@@ -91,15 +99,54 @@ PLANNER_ROUTING_ENABLED: bool = False
 # equal wall clock. 100k is where the memory win starts mattering.
 AUTO_CHUNK_THRESHOLD_ROWS_DEFAULT: int = 100_000
 
-# The honest relationship-route disposition on this branch: the FK stack
-# (sequential + out-of-core executors) lives on its own branches, so the
-# planner can detect candidacy (FK edges exist) but must not pretend it
-# evaluated route compatibility it cannot see.
+# The honest relationship-route disposition: this planner detects FK
+# candidacy (edges exist) but does not itself route relationship jobs -- the
+# live sequential-vs-out-of-core-vs-full-frame decision is made at dispatch
+# time by run_pipeline's decide_execution_route (SC2 auto-routing), reading
+# job size + out-of-core compatibility this static classifier deliberately
+# does not evaluate. Pointing at the live router keeps the EXPLAIN surface
+# from claiming a route the planner does not take.
 RELATIONSHIP_ROUTE_DEFERRED: str = (
-    "DEFERRED: job has FK relationship edges (relationship-route candidate); "
-    "sequential-vs-out-of-core compatibility is evaluated when the FK stack "
-    "is present, not on this branch."
+    "DEFERRED to the live router: job has FK relationship edges "
+    "(relationship-route candidate); the sequential-vs-out-of-core-vs-full-frame "
+    "decision is made by run_pipeline's decide_execution_route from job size + "
+    "out-of-core compatibility, not by this planner "
+    "(PLANNER_ROUTING_ENABLED stays False)."
 )
+
+# SC2 auto-routing thresholds (per LARGEST mask table's row count), consumed by
+# _pipeline_routing.decide_execution_route. Defaults target the 32 GB
+# deployment box (Cam's stated goal + the GCP n2-standard-8 bench box) and the
+# documented full-frame FK memory model in docs/relationships-memory-scaling.md
+# section 6: peak_RSS ~= 144 MB + 3.3 MB * (rows_per_table / 1000) for a
+# 3-table width-16 hash chain, so full-frame FK OOMs near ~9M rows/table
+# (~30 GB) on 32 GB. Both are conservative, schema-specific interim constants,
+# plumbed as run_pipeline kwargs so the platform SC5 estimator can override
+# them with box+schema-calibrated values (the memory-scaling doc is explicit
+# that precise MB prediction is SC5's calibrated job, not a fixed constant's).
+#
+# OUT_OF_CORE: at/above this, an out-of-core-ELIGIBLE FK job routes to the
+# bounded-RAM DuckDB route instead of sequential. 5M projects to ~16.6 GB
+# full-frame (~half a 32 GB box) -- entering the risk zone -- and is well clear
+# of BOTH measured out-of-core cost zones from section 6.2: sub-250k rows/table
+# is the memory-overhead zone (out-of-core is +11% to +30% HEAVIER than
+# full-frame there -- fixed per-run DuckDB overhead dominates at that scale),
+# and 250k-1M rows/table is the wall-clock-tax zone (out-of-core is actually
+# -1.9% to -11.4% LIGHTER on peak RSS there, but ~29% SLOWER wall-clock). 5M is
+# past both zones, so the route is only chosen once a job is large enough that
+# full-frame's memory risk outweighs the wall-clock tax.
+OUT_OF_CORE_THRESHOLD_ROWS_DEFAULT: int = 5_000_000
+
+# REJECT: at/above this, a large relationship job that can ONLY run full-frame
+# (not out-of-core-eligible, and not helped by the bounded sequential path) is
+# rejected BEFORE the mask step rather than risking a silent OOM. 7.5M projects
+# to ~24.9 GB full-frame (~78% of a 32 GB box) -- the hard-ceiling danger zone
+# just below the documented ~9M/~30 GB cliff, with margin so a wider-than-16
+# payload (which cliffs earlier) is caught before the OOM-killer. Set above
+# OUT_OF_CORE_THRESHOLD so an out-of-core-eligible job at this size is routed
+# to streaming, never rejected (GATE-1 #4: reroute OOC-eligible, reject only
+# the hard ceiling).
+FULL_FRAME_REJECT_ROWS_DEFAULT: int = 7_500_000
 
 _NO_RELATIONSHIP_ROUTE: str = "no FK relationship edges; relationship routes do not apply."
 
@@ -210,8 +257,10 @@ def classify_job(
         rejections["sequential_relationship"] = RELATIONSHIP_ROUTE_DEFERRED
         rejections["out_of_core_relationship"] = RELATIONSHIP_ROUTE_DEFERRED
         reason = (
-            "job has FK relationship edges (relationship-route candidate); "
-            "FK resolution runs on the pandas substrate on this branch."
+            "job has FK relationship edges (relationship-route candidate); the "
+            "live relationship route is chosen by run_pipeline's "
+            "decide_execution_route (sequential / out-of-core / full-frame), "
+            "not by this planner."
         )
     else:
         rejections["sequential_relationship"] = _NO_RELATIONSHIP_ROUTE
@@ -520,6 +569,8 @@ def _runtime_source_rejections(
 __all__ = [
     "AUTO_CHUNK_THRESHOLD_ROWS_DEFAULT",
     "EXECUTION_MODES",
+    "FULL_FRAME_REJECT_ROWS_DEFAULT",
+    "OUT_OF_CORE_THRESHOLD_ROWS_DEFAULT",
     "PLANNER_ROUTING_ENABLED",
     "RELATIONSHIP_ROUTE_DEFERRED",
     "ExecutionPlan",

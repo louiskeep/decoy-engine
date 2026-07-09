@@ -34,9 +34,9 @@ Sequencing contract (PO directive 2026-06-01 + FC-1 spec):
   8. Call the selected execution adapter (`select_execution_adapter`;
      default `substrate="pandas"`) to mask the mask-kind tables, unless
      the job auto-routes to the chunked entrypoint
-     (`_pipeline_routing.decide_chunk_route` / `run_mask_chunked`). The
-     plan only carries mask-table seeds; generate tables are not
-     re-traversed.
+     (`_pipeline_routing.decide_chunk_route` /
+     `_pipeline_route_exec.run_mask_chunked`). The plan only carries
+     mask-table seeds; generate tables are not re-traversed.
   9. Build one `ExecutionResult` whose `outputs` covers every output
      table (generate + mask) and whose `table_kinds` dict carries the
      per-table kind for the manifest stamping at F3 / platform side.
@@ -78,9 +78,14 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import pyarrow as pa
 
-from decoy_engine.execution import _pipeline_routing
+from decoy_engine.execution import _pipeline_finalize, _pipeline_routing
+from decoy_engine.execution import _pipeline_route_exec as _route_exec
 from decoy_engine.execution._adapter import ExecutionResult
-from decoy_engine.execution._planner import AUTO_CHUNK_THRESHOLD_ROWS_DEFAULT
+from decoy_engine.execution._planner import (
+    AUTO_CHUNK_THRESHOLD_ROWS_DEFAULT,
+    FULL_FRAME_REJECT_ROWS_DEFAULT,
+    OUT_OF_CORE_THRESHOLD_ROWS_DEFAULT,
+)
 
 if TYPE_CHECKING:
     from decoy_engine.execution._transactional_sink import TransactionalSink
@@ -113,6 +118,12 @@ _FALLBACK_TO_PANDAS_DEFAULT = True
 _AUTO_CHUNK_DEFAULT = True
 _CHUNK_SIZE_ROWS_DEFAULT = 50_000
 _AUTO_CHUNK_THRESHOLD_DEFAULT = AUTO_CHUNK_THRESHOLD_ROWS_DEFAULT
+# SC2 out-of-core auto-routing thresholds (per largest mask table). Defaults
+# target the 32 GB deployment box; see `_planner` for the memory-model
+# reasoning. Plumbed as run_pipeline kwargs so the platform SC5 estimator can
+# override them with box+schema-calibrated values.
+_OUT_OF_CORE_THRESHOLD_DEFAULT = OUT_OF_CORE_THRESHOLD_ROWS_DEFAULT
+_FULL_FRAME_REJECT_DEFAULT = FULL_FRAME_REJECT_ROWS_DEFAULT
 
 
 def classify_table_kinds(config: dict[str, Any]) -> dict[str, str]:
@@ -150,7 +161,7 @@ def run_pipeline(
     vault_writer: Any = None,
     fidelity_report: bool = False,
     now_iso: str | None = None,
-    execution_mode: Literal["auto", "sequential", "full_frame"] = "auto",
+    execution_mode: Literal["auto", "sequential", "full_frame", "out_of_core"] = "auto",
     sink: TransactionalSink | None = None,
     source_loader: Callable[[str], pa.Table] | None = None,
     substrate: str | None = _SUBSTRATE_DEFAULT,
@@ -161,6 +172,9 @@ def run_pipeline(
     auto_chunk: bool = _AUTO_CHUNK_DEFAULT,
     chunk_size_rows: int = _CHUNK_SIZE_ROWS_DEFAULT,
     auto_chunk_threshold_rows: int = _AUTO_CHUNK_THRESHOLD_DEFAULT,
+    out_of_core_threshold_rows: int = _OUT_OF_CORE_THRESHOLD_DEFAULT,
+    full_frame_reject_rows: int = _FULL_FRAME_REJECT_DEFAULT,
+    out_of_core_budget_bytes: int | None = None,
 ) -> ExecutionResult:
     """Execute a mixed mask + generate config end-to-end.
 
@@ -188,16 +202,22 @@ def run_pipeline(
 
     Execution routing (`execution_mode`, `sink`, `source_loader`,
     `auto_chunk`, `chunk_size_rows`, `auto_chunk_threshold_rows`,
-    `explain_plan`) is documented on `_pipeline_routing`, which owns the
-    routing decisions this function calls in a fixed order: relationship
-    routing (sequential vs. full_frame) first, then single-table
-    auto-chunk routing (chunked vs. full_frame). `execution_mode` /
-    `auto_chunk` are resource policies of the invocation, not properties
-    of the data transformation, so they are runtime kwargs (matching
-    `vault_writer` / `fidelity_report` / `now_iso`), never `config`
-    fields -- they must stay out of the profile-hashed, frozen-surface
-    data contract. Both routes are byte-output-neutral versus full_frame
-    (only peak memory / adapter identity differs).
+    `out_of_core_threshold_rows`, `full_frame_reject_rows`,
+    `out_of_core_budget_bytes`, `explain_plan`) is documented in full on
+    `_pipeline_routing`, which owns the decisions this function calls in a
+    fixed order: relationship routing (out-of-core vs. sequential vs.
+    full_frame, with a fail-closed reject-before-read for a too-big FK job
+    no bounded route can take -- SC2) first, then single-table auto-chunk
+    routing (chunked vs. full_frame). `execution_mode` / `auto_chunk` are
+    resource policies of the invocation, not properties of the data
+    transformation, so they are runtime kwargs (matching `vault_writer` /
+    `fidelity_report` / `now_iso`), never `config` fields -- they must
+    stay out of the profile-hashed, frozen-surface data contract. Every
+    route is byte-output-neutral versus full_frame (only peak memory /
+    adapter identity differs). The SC2 size thresholds default to
+    32 GB-box-calibrated constants (see `_planner`) and are kwargs so the
+    platform admission estimator can override them; `execution_mode` gains
+    `"out_of_core"` as an explicit fail-closed force.
 
     Execution-substrate knobs (mask-kind tables only; generate tables
     always run the synthesize path; the sequential route is pandas-only
@@ -256,6 +276,11 @@ def run_pipeline(
     require_bool("auto_chunk", auto_chunk)
     require_positive_int("chunk_size_rows", chunk_size_rows)
     require_positive_int("auto_chunk_threshold_rows", auto_chunk_threshold_rows)
+    # SC2 out-of-core routing thresholds share the same fail-early contract.
+    require_positive_int("out_of_core_threshold_rows", out_of_core_threshold_rows)
+    require_positive_int("full_frame_reject_rows", full_frame_reject_rows)
+    if out_of_core_budget_bytes is not None:
+        require_positive_int("out_of_core_budget_bytes", out_of_core_budget_bytes)
 
     resolved_registry = registry if registry is not None else get_default_registry()
     caller_sources: dict[str, pa.Table] = dict(sources) if sources else {}
@@ -289,8 +314,23 @@ def run_pipeline(
     else:
         graph = RelationshipGraph(edges=(), ordering=())
 
-    # Routing layer 1 (S2): relationship-bearing pure-mask jobs take the
-    # bounded-memory sequential path; this is an early return.
+    # Routing layer 1 (S2 + SC2): relationship-bearing pure-mask jobs take a
+    # bounded-memory route (out-of-core when large + compatible, else
+    # sequential); a large FK job no bounded route can take is rejected before
+    # read. This is an early return / a fail-closed raise. The SC2 admission +
+    # size signals are inert (False/None/None) off the relationship+mask shape,
+    # so non-FK jobs keep the pre-SC2 routing.
+    out_of_core_compatible, out_of_core_reject_code, largest_table_rows = (
+        _pipeline_routing.out_of_core_routing_signals(
+            profile,
+            plan=plan,
+            registry=resolved_registry,
+            graph=graph,
+            caller_sources=caller_sources,
+            table_kinds=table_kinds,
+            has_mask_table=has_mask_table,
+        )
+    )
     route, route_reason = _pipeline_routing.decide_execution_route(
         profile,
         has_generate_table=has_generate_table,
@@ -301,6 +341,11 @@ def run_pipeline(
         execution_mode=execution_mode,
         graph=graph,
         resolved_substrate=resolved_substrate,
+        out_of_core_compatible=out_of_core_compatible,
+        out_of_core_reject_code=out_of_core_reject_code,
+        largest_table_rows=largest_table_rows,
+        out_of_core_threshold_rows=out_of_core_threshold_rows,
+        full_frame_reject_rows=full_frame_reject_rows,
     )
 
     # Routing layer 2 (S3 auto-chunk) classification. Computed BEFORE the
@@ -328,7 +373,7 @@ def run_pipeline(
 
     if has_mask_table and route == "sequential":
         loader = source_loader if source_loader is not None else (lambda t: caller_sources[t])
-        return _pipeline_routing.run_sequential_route(
+        return _route_exec.run_sequential_route(
             plan=plan,
             loader=loader,
             registry=resolved_registry,
@@ -341,6 +386,25 @@ def run_pipeline(
             sources_resident=bool(caller_sources),
             fpe_chunk_count=fpe_chunk_count,
             table_kinds=table_kinds,
+            explain_plan=explain_plan,
+            execution_plan_decision=execution_plan_decision,
+        )
+
+    # SC2: the bounded-RAM out-of-core FK route (same early-return shape as the
+    # sequential branch). The resident caller_sources feed the runner directly
+    # (the pure-mask FK shape has every parent + child present); a sink streams.
+    if has_mask_table and route == "out_of_core":
+        return _route_exec.run_out_of_core_route(
+            plan=plan,
+            sources=caller_sources,
+            registry=resolved_registry,
+            graph=graph,
+            sink=sink,
+            route_reason=route_reason,
+            table_kinds=table_kinds,
+            source_loader=source_loader,
+            sources_resident=bool(caller_sources),
+            budget_bytes=out_of_core_budget_bytes,
             explain_plan=explain_plan,
             execution_plan_decision=execution_plan_decision,
         )
@@ -365,7 +429,7 @@ def run_pipeline(
     fidelity_reports: dict[str, Any] = {}
     # Honesty pack (D7/D8): populated from `mask_result.row_errors` on the
     # full-frame branch below. The chunked branch leaves this `()` by
-    # construction -- see `_pipeline_routing.run_mask_chunked`'s docstring:
+    # construction -- see `_pipeline_route_exec.run_mask_chunked`'s docstring:
     # a routed job that reaches this point is never eligible for row-error
     # quarantine (same policy the manual chunked entrypoint enforces).
     mask_row_errors: tuple[Any, ...] = ()
@@ -384,7 +448,7 @@ def run_pipeline(
             # planner's runtime gates already rejected anything else.
             mask_table_name = next(name for name, kind in table_kinds.items() if kind == "mask")
             mask_outputs, mask_timings, mask_conversion_ms, mask_warnings = (
-                _pipeline_routing.run_mask_chunked(
+                _route_exec.run_mask_chunked(
                     config,
                     merged_sources[mask_table_name],
                     table=mask_table_name,
@@ -422,65 +486,46 @@ def run_pipeline(
                 from decoy_engine.vault import collect_vault_entries
 
                 vault_writer.add(collect_vault_entries(config, merged_sources, mask_outputs))
-        # Performance-mode reproducibility: any non-default knob stamps
-        # the selected adapter identity + every knob value into the job
-        # metadata. The all-default path stamps nothing so golden and
-        # compat-corpus fixtures stay byte-identical.
-        if (substrate, fpe_chunk_count, max_workers, fallback_to_pandas) != (
+        # Reproducibility stamps (selected adapter identity + auto-chunk
+        # decision) and the BF1 fidelity report are finalize-only concerns;
+        # see `_pipeline_finalize` for the full "why" on each.
+        adapter_non_default = (substrate, fpe_chunk_count, max_workers, fallback_to_pandas) != (
             _SUBSTRATE_DEFAULT,
             _FPE_CHUNK_COUNT_DEFAULT,
             _MAX_WORKERS_DEFAULT,
             _FALLBACK_TO_PANDAS_DEFAULT,
-        ):
-            mask_quality_metrics["execution_adapter"] = {
-                "adapter_name": adapter.adapter_name,
-                "adapter_version": adapter.adapter_version,
-                "requested_substrate": substrate,
-                "resolved_substrate": resolved_substrate,
-                "fpe_chunk_count": fpe_chunk_count,
-                "max_workers": max_workers,
-                "fallback_to_pandas": fallback_to_pandas,
-            }
-        # Auto-chunk reproducibility stamp: a routed run is non-default by
-        # definition; a non-routed run stamps only when an auto-chunk knob
-        # is non-default. All-default full-frame runs stamp nothing (the
-        # P1 golden `quality_metrics == {}` contract).
-        if route_chunked or (auto_chunk, chunk_size_rows, auto_chunk_threshold_rows) != (
+        )
+        auto_chunk_non_default = (auto_chunk, chunk_size_rows, auto_chunk_threshold_rows) != (
             _AUTO_CHUNK_DEFAULT,
             _CHUNK_SIZE_ROWS_DEFAULT,
             _AUTO_CHUNK_THRESHOLD_DEFAULT,
-        ):
-            mask_quality_metrics["auto_chunk"] = _pipeline_routing.auto_chunk_stamp(
-                route_chunked=route_chunked,
-                auto_chunk=auto_chunk,
-                chunk_size_rows=chunk_size_rows,
-                auto_chunk_threshold_rows=auto_chunk_threshold_rows,
-                table_kinds=table_kinds,
-                caller_sources=caller_sources,
-                decision=execution_plan_decision,
-            )
+        )
+        _pipeline_finalize.stamp_execution_metrics(
+            mask_quality_metrics,
+            adapter=adapter,
+            substrate=substrate,
+            resolved_substrate=resolved_substrate,
+            fpe_chunk_count=fpe_chunk_count,
+            max_workers=max_workers,
+            fallback_to_pandas=fallback_to_pandas,
+            adapter_non_default=adapter_non_default,
+            route_chunked=route_chunked,
+            auto_chunk=auto_chunk,
+            chunk_size_rows=chunk_size_rows,
+            auto_chunk_threshold_rows=auto_chunk_threshold_rows,
+            auto_chunk_non_default=auto_chunk_non_default,
+            table_kinds=table_kinds,
+            caller_sources=caller_sources,
+            execution_plan_decision=execution_plan_decision,
+        )
 
-        # BF1: opt-in, report-only distribution fidelity per mask table.
-        # Imported lazily so the default-OFF path never pulls in the
-        # quality stack. SECURITY: emit ONLY the assembled report
-        # (aggregate, label-free); the snapshots that carry raw category
-        # values stay inside compute_quality_report and are never attached.
         if fidelity_report:
-            from decoy_engine.quality.report import compute_quality_report
-
-            for table_name, out_table in mask_outputs.items():
-                if table_kinds.get(table_name) != "mask":
-                    continue  # first slice: mask-kind tables only
-                src_table = merged_sources.get(table_name)
-                if src_table is None:
-                    continue
-                fidelity_reports[table_name] = compute_quality_report(
-                    src_table.to_pandas(),
-                    out_table.to_pandas(),
-                    expect_row_parity=True,
-                    joint_columns=None,
-                    now_iso=now_iso,
-                )
+            fidelity_reports = _pipeline_finalize.compute_fidelity_reports(
+                mask_outputs,
+                merged_sources,
+                table_kinds=table_kinds,
+                now_iso=now_iso,
+            )
 
     # Step 3: stitch the outputs together. Mask wins ties (every name in
     # the config maps to one kind by construction, so no real conflicts).
@@ -507,71 +552,22 @@ def run_pipeline(
             "rejections": dict(execution_plan_decision.rejections),
         }
 
-    # SP-05 (2026-06-27): job-level validator framework (P5.INFRA.4).
-    # Runs AFTER all column passes complete, on the UNFILTERED outputs
-    # (trap T5). Fail-closed by default: a validator failure raises
-    # ValidatorFailedError unless quarantine is enabled with the
-    # validation_fail trigger.
-    validators_config: list[Any] = config.get("validators") or []
-    v_report: Any = None
-    if validators_config:
-        import dataclasses
-
-        from decoy_engine.validators._registry import validate as _run_validators
-
-        v_report = _run_validators(outputs, config, sources=caller_sources)
-        quality_metrics["validation"] = {"validators": dataclasses.asdict(v_report)}
-
-    if mask_row_errors:
-        # Additive manifest key, counts only (no cell values -- trap T3).
-        row_error_counts: dict[str, int] = {}
-        for rec in mask_row_errors:
-            key = f"{rec.table}.{rec.column}[{rec.trigger}]"
-            row_error_counts[key] = row_error_counts.get(key, 0) + 1
-        quality_metrics["row_errors"] = row_error_counts
-
-    validator_failed = v_report is not None and not v_report.passed
-
-    # D8: one combined quarantine pass over validator findings + row errors,
-    # then a fail-closed remainder rule for anything quarantine did not
-    # cover. Same precedence as before for validation_fail alone; row
-    # errors get the identical treatment via their own trigger.
-    # Quarantine JSONL is durable only on a successful (fully covered) run; a
-    # fail-loud run publishes nothing.
-    if validator_failed or mask_row_errors:
-        from decoy_engine.errors import RowErrorsFailedError, ValidatorFailedError
-
-        quarantine_cfg: dict[str, Any] = config.get("quarantine") or {}
-        q_enabled = bool(quarantine_cfg.get("enabled", False))
-        q_triggers: list[str] = list(quarantine_cfg.get("triggers") or [])
-
-        validation_covered = q_enabled and validator_failed and "validation_fail" in q_triggers
-        row_errors_covered = tuple(
-            r for r in mask_row_errors if q_enabled and r.trigger in q_triggers
-        )
-        row_errors_uncovered = tuple(r for r in mask_row_errors if r not in row_errors_covered)
-
-        # LOW-1 (S2 remediation guide section 8): raise BEFORE writing the
-        # quarantine JSONL, matching the sequential path (which raises before
-        # its single post-loop write). A fail-loud run must publish nothing
-        # durable, including a partial quarantine JSONL from the covered
-        # remainder of a mixed covered+uncovered run.
-        if validator_failed and not validation_covered:
-            raise ValidatorFailedError(v_report)
-        if row_errors_uncovered:
-            raise RowErrorsFailedError(row_errors_uncovered)
-
-        if validation_covered or row_errors_covered:
-            from decoy_engine.quarantine import apply_quarantine, quarantine_manifest
-
-            outputs, q_summary = apply_quarantine(
-                outputs, v_report, quarantine_cfg, row_errors=mask_row_errors
-            )
-            quality_metrics["quarantine"] = quarantine_manifest(q_summary)
+    # SP-05 job-level validators (P5.INFRA.4) + D8 combined quarantine pass;
+    # see `_pipeline_finalize.finalize_validators_and_quarantine` for the
+    # full "why" (trap T5, LOW-1 raise-before-write ordering, etc). Mutates
+    # `quality_metrics` in place and returns the (possibly quarantine
+    # -filtered) outputs.
+    outputs = _pipeline_finalize.finalize_validators_and_quarantine(
+        outputs,
+        config=config,
+        caller_sources=caller_sources,
+        mask_row_errors=mask_row_errors,
+        quality_metrics=quality_metrics,
+    )
 
     # S2: full-frame execution telemetry (the sequential route returned
     # early above with its own telemetry).
-    quality_metrics["execution"] = _pipeline_routing.execution_telemetry(
+    quality_metrics["execution"] = _route_exec.execution_telemetry(
         route="full_frame",
         route_reason=route_reason,
         sink=None,
