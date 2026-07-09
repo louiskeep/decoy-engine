@@ -28,6 +28,15 @@ _CROSS_ROW_STRATEGIES = frozenset(
 )
 _INITIAL_SUPPORTED_STRATEGIES = frozenset({"hash", "redact", "truncate", "passthrough"})
 
+# Public alias (SC5, decoy-platform cross-repo query surface): the strategy
+# set this gate currently admits, re-exported at `decoy_engine.execution` so
+# an external caller (e.g. a platform-side coarse eligibility proxy that
+# cannot afford to compile a real Plan pre-read) can consult the CURRENT
+# admitted set instead of hardcoding a copy that would drift the moment
+# SC3/SC4 widen it. Same object as `_INITIAL_SUPPORTED_STRATEGIES`; this name
+# is the stable one external callers should import.
+SUPPORTED_STRATEGIES = _INITIAL_SUPPORTED_STRATEGIES
+
 
 @dataclass(frozen=True)
 class OutOfCoreRejection:
