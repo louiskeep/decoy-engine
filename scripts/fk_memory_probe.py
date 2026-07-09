@@ -135,6 +135,17 @@ _MEMORY_ERROR_MARKERS = ("not able to copy ctx", "digital envelope routines")
 # "Unknown error", so an unrelated UnknownError status stays classified failed.
 _MEMORY_ERROR_PATTERNS = (re.compile(r"Unknown error: Wrapping \S+ failed"),)
 
+# Third observed under-cap-only shape, same evidence discipline. When the
+# ceiling-hitting allocation is glibc's own thread-local-storage setup for a
+# freshly spawned thread (a pyarrow/duckdb worker thread), glibc cannot raise a
+# Python MemoryError -- it aborts the process with `__libc_message`
+# "cannot allocate memory for thread-local data: ABORT" (exit 127), which the
+# capital-C "Cannot allocate" marker above does not match. Reproduced only under
+# the cap (400k rows / 1024 MB, full/sequential baselines); an uncapped run never
+# emits it. Anchored on the full glibc phrase (not a bare "cannot allocate"), so
+# it stays a memory classification and cannot absorb an unrelated failure.
+_GLIBC_TLS_OOM_MARKER = "cannot allocate memory for thread-local data"
+
 # The share of a hard process cap handed to DuckDB's buffer manager on the
 # capped out-of-core route. The interpreter plus the pandas/pyarrow/duckdb
 # imports and the route's own bounded Arrow batches live OUTSIDE DuckDB's
@@ -728,6 +739,7 @@ def _classify_capability_outcome(returncode: int, rec: dict | None, stderr: str)
         "Cannot allocate",
         "ENOMEM",
         "arrow::Status OutOfMemory",
+        _GLIBC_TLS_OOM_MARKER,
         *_MEMORY_ERROR_MARKERS,
     )
     if any(marker in stderr for marker in memory_markers):
