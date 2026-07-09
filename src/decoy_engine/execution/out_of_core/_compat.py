@@ -117,14 +117,26 @@ _DEFERRED_GROUP_C: dict[str, tuple[str, str]] = {
     ),
 }
 
-# Public alias (SC5, decoy-platform cross-repo query surface): the strategy
-# set this gate currently admits, re-exported at `decoy_engine.execution` so
-# an external caller (e.g. a platform-side coarse eligibility proxy that
-# cannot afford to compile a real Plan pre-read) can consult the CURRENT
-# admitted set instead of hardcoding a copy that would drift the moment
-# SC3/SC4 widen it. Same object as `_INITIAL_SUPPORTED_STRATEGIES`; this name
-# is the stable one external callers should import.
-SUPPORTED_STRATEGIES = _INITIAL_SUPPORTED_STRATEGIES
+# Public alias (SC5, decoy-platform cross-repo query surface): the PAYLOAD
+# (non-key) strategy set this gate currently admits, re-exported at
+# `decoy_engine.execution` so an external caller (e.g. a platform-side coarse
+# eligibility proxy that cannot afford to compile a real Plan pre-read) can
+# consult the CURRENT admitted set instead of hardcoding a copy that would
+# drift the moment SC3/SC4 widen it -- tracks `_SUPPORTED_WORK_STRATEGIES`,
+# not `_INITIAL_SUPPORTED_STRATEGIES` alone, so it does not understate
+# admission after a widening sprint.
+#
+# Two things this constant deliberately does NOT capture, by design: (1) the
+# FK PARENT-KEY surface is narrower and independently gated by `_check_edge`
+# against `_INITIAL_SUPPORTED_STRATEGIES` directly (never this alias) -- a
+# strategy in this set may still be a fail-closed MISS as a join/remap key;
+# (2) `code_set`/`bucket_perturb` are members here but only admitted for the
+# config shapes `_group_c_conditional_rejection` allows, and each deferred
+# strategy (`_DEFERRED_GROUP_B`/`_DEFERRED_GROUP_C`) plus the when-predicate/
+# composite-fk/cycle checks above still apply per-job. This is a coarse,
+# necessary-but-not-sufficient membership check; only
+# `check_out_of_core_compatibility` is the authoritative decision.
+SUPPORTED_STRATEGIES = _SUPPORTED_WORK_STRATEGIES
 
 
 @dataclass(frozen=True)

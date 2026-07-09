@@ -191,7 +191,7 @@ def _payload_edge_job(
 
 @pytest.mark.parametrize("kind", list(_PAYLOADS))
 @pytest.mark.parametrize("policy", [OrphanPolicy.PRESERVE, OrphanPolicy.WARN, OrphanPolicy.FAIL])
-@pytest.mark.parametrize("batch_rows", [None, 2])
+@pytest.mark.parametrize("batch_rows", [None, 2, 1])
 def test_group_c_payload_parity(kind: str, policy: OrphanPolicy, batch_rows: int | None) -> None:
     payload_seed, payload_vals = _PAYLOADS[kind]
     plan, sources, graph = _payload_edge_job(payload_seed, payload_vals, policy=policy)
@@ -224,6 +224,32 @@ def test_group_c_payload_actually_transforms(kind: str) -> None:
     out = ooc.outputs["parent"].column("pay").to_pylist()
     changed = [o for s, o in zip(src, out, strict=True) if s is not None and o != s]
     assert changed, f"{kind}: masked payload never differs from source (no-op port?)"
+
+
+@pytest.mark.parametrize("kind", list(_PAYLOADS))
+@pytest.mark.parametrize("batch_rows", [None, 2, 1])
+def test_group_c_all_null_column_parity(kind: str, batch_rows: int | None) -> None:
+    """An entirely-null payload column must reconcile null-typed/all-null against
+    the oracle, at whole-column, multi-batch, and single-row batch sizes -- a
+    fully-null batch has no non-null value to drive the per-value kernel, which
+    is where a batch-local assumption (e.g. an implicit dtype inferred from the
+    first non-null value) would silently diverge from the oracle."""
+    payload_seed, payload_vals = _PAYLOADS[kind]
+    all_null_vals: list[str | None] = [None] * len(payload_vals)
+    plan, sources, graph = _payload_edge_job(
+        payload_seed, all_null_vals, policy=OrphanPolicy.PRESERVE
+    )
+    assert _gate_admits(plan, graph), f"{kind}: expected gate to admit an all-null payload"
+    oracle = PandasExecutionAdapter().run(
+        plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
+    )
+    ooc = run_fk_out_of_core(
+        plan, sources, registry=_REG, relationship_graph=graph, batch_rows=batch_rows
+    )
+    for table in oracle.outputs:
+        _assert_value_equal(
+            oracle.outputs[table], ooc.outputs[table], f"{kind}/all_null/batch={batch_rows}:{table}"
+        )
 
 
 # ---------------------------------------------------------------------------

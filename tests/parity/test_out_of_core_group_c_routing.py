@@ -30,30 +30,38 @@ def _src(tmp_path: Path, table: pa.Table, name: str) -> str:
 
 
 # Per case: (payload column strategy, provider_config, per-row source values, namespace-required).
-_CASES: dict[str, tuple[str, dict[str, Any], list[str], bool]] = {
+# Every 10th value is None (row index % 10 == 0) so the router-level parity
+# proof also pins nulls, not just the direct run_fk_out_of_core path.
+_CASES: dict[str, tuple[str, dict[str, Any], list[str | None], bool]] = {
     "text_mask": (
         "text_mask",
         {"token": "[X]"},
-        [f"ssn {100000000 + i}-{i:02d} call 415-555-{1000 + i}" for i in range(_N)],
+        [
+            None if i % 10 == 0 else f"ssn {100000000 + i}-{i:02d} call 415-555-{1000 + i}"
+            for i in range(_N)
+        ],
         False,
     ),
     "code_set": (
         "code_set",
         {"code_set": "mcc"},
-        [f"src-value-{i}" for i in range(_N)],
+        [None if i % 10 == 0 else f"src-value-{i}" for i in range(_N)],
         True,
     ),
     "bucket_perturb": (
         "bucket_perturb",
         {"bucket": "month", "date_format": "%Y-%m-%d"},
-        [f"20{20 + (i % 4)}-0{1 + (i % 9)}-{10 + (i % 18):02d}" for i in range(_N)],
+        [
+            None if i % 10 == 0 else f"20{20 + (i % 4)}-0{1 + (i % 9)}-{10 + (i % 18):02d}"
+            for i in range(_N)
+        ],
         True,
     ),
 }
 
 
 def _payload_fk_config(
-    tmp_path: Path, strategy: str, provider_config: dict[str, Any], values: list[str]
+    tmp_path: Path, strategy: str, provider_config: dict[str, Any], values: list[str | None]
 ) -> dict[str, Any]:
     parent = pa.table(
         {
