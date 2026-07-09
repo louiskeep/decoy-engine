@@ -224,6 +224,11 @@ proven at the engine level, but currently unreachable end-to-end. Flag for
 Cam: this is arguably higher-priority than SC4/SC6 once the current program
 finishes, since it's what makes SC1-SC3 actually matter in production.
 
+**Cam's call (2026-07-09):** backlog this - finish SC3 → SC4 → SC6 on the
+original critical path first, then scope/build the platform-wiring follow-up
+as its own item once this program wraps and SC6's real GCP numbers exist to
+design against, rather than inserting it ahead of SC4 now.
+
 **Known accuracy gaps tracked for GATE-2** (dennis review, fixed where cheap,
 tracked where not): the 25% discount is measured only on >=3-table FK chains
 and may be optimistic for the more common 2-table parent-child shape; the
