@@ -32,6 +32,7 @@ from __future__ import annotations
 import os
 import shutil
 import tempfile
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -39,8 +40,14 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 
-# NOTE: isinstance(obj, TransactionalSink) matches write/commit/abort by name
-# only, not by signature -- a consequence of runtime_checkable Protocol.
+# NOTE: isinstance(obj, TransactionalSink) matches write/write_batches/commit/
+# abort by name only, not by signature -- a consequence of runtime_checkable
+# Protocol. Because isinstance checks ALL protocol members, a sink object that
+# implements only write/commit/abort (the pre-SC1 three-method shape) no
+# longer matches this Protocol now that write_batches is a member; see
+# `_sequential.run_sequential`'s dispatch comment. Both shipped
+# implementations below (`_CallableSinkAdapter`, `ParquetTransactionalSink`)
+# implement all four, so existing callers of those two classes are unaffected.
 @runtime_checkable
 class TransactionalSink(Protocol):
     """All-or-nothing table sink protocol.
@@ -57,6 +64,18 @@ class TransactionalSink(Protocol):
 
     def write(self, table: str, data: pa.Table) -> None:
         """Accept one masked table; called in FK-topological order."""
+        ...
+
+    def write_batches(
+        self, table: str, batches: Iterable[pa.RecordBatch], *, schema: pa.Schema
+    ) -> None:
+        """Stream-append one masked table as record batches.
+
+        Used by the out-of-core runner (SC1), which produces each table as a
+        batch stream so the whole table is never resident. Must honor the
+        same atomic commit/abort contract as write(): nothing staged here is
+        visible until commit() runs.
+        """
         ...
 
     def commit(self) -> None:
@@ -83,6 +102,16 @@ class _CallableSinkAdapter:
         self._fn = fn
 
     def write(self, table: str, data: pa.Table) -> None:
+        self._fn(table, data)  # type: ignore[operator]
+
+    def write_batches(
+        self, table: str, batches: Iterable[pa.RecordBatch], *, schema: pa.Schema
+    ) -> None:
+        """Non-streaming fallback: this callable's contract is one whole
+        pa.Table per call, so the batch stream is materialized once here
+        before the single legacy call. The out-of-core streaming path is
+        ParquetTransactionalSink.write_batches, not this adapter."""
+        data = pa.Table.from_batches(list(batches), schema=schema)
         self._fn(table, data)  # type: ignore[operator]
 
     def commit(self) -> None:
@@ -136,6 +165,64 @@ class ParquetTransactionalSink:
                 file cannot be written.
             pa.lib.ArrowInvalid: If ``data`` cannot be serialized as Parquet.
         """
+        self._validate_table_name(table)
+        dest = self._stage_dest(table)
+        pq.write_table(data, dest)
+
+    def write_batches(
+        self, table: str, batches: Iterable[pa.RecordBatch], *, schema: pa.Schema
+    ) -> None:
+        """Stream-append one masked table as record batches via ParquetWriter.
+
+        Used by the out-of-core runner (SC1) so the whole table is never
+        resident: each batch is written to the staged Parquet file as it
+        arrives. This staged file lands in the same staging directory, under
+        the same table-name validation and same-filesystem invariant, as
+        write(); the commit()/abort() atomic-rename contract is unchanged.
+        Follows the pyarrow.parquet.ParquetWriter incremental-write pattern
+        (Apache Arrow docs: "Reading and Writing Single Files").
+
+        Args:
+            table: Table name used as the Parquet file stem. Same validation
+                as write(): must be a single path component, no separators
+                or ``..``.
+            batches: Record batches to append, in order. Each batch becomes one
+                Parquet row group, so callers own row-group sizing by choosing
+                their batch size (the out-of-core runner uses a bounded batch of
+                tens of thousands of rows). An empty iterable still produces a
+                valid, readable zero-row Parquet file with ``schema``.
+            schema: Arrow schema for the staged file. Must match the schema
+                of every batch in ``batches``.
+
+        Raises:
+            ValueError: If ``table`` is not a single valid path component.
+            OSError: If the staging directory or file cannot be created or
+                written.
+            pa.lib.ArrowInvalid: If a batch does not match ``schema``.
+
+        If the batch iterator raises partway through, the in-flight exception
+        is preserved (a close() failure while unwinding is suppressed so it
+        cannot mask it) and the partially staged file is never published: it
+        exists only under the staging directory, which abort() removes
+        wholesale. On the success path a close() failure (for example a footer
+        flush hitting ENOSPC) is a real write error and does surface.
+        """
+        self._validate_table_name(table)
+        dest = self._stage_dest(table)
+        writer = pq.ParquetWriter(dest, schema)
+        try:
+            for batch in batches:
+                writer.write_batch(batch)
+        except BaseException:
+            # Close best-effort so a close error cannot mask the original.
+            try:
+                writer.close()
+            except Exception:
+                pass
+            raise
+        writer.close()
+
+    def _validate_table_name(self, table: str) -> None:
         if (
             os.sep in table
             or (os.altsep is not None and os.altsep in table)
@@ -146,12 +233,13 @@ class ParquetTransactionalSink:
                 f"table name {table!r} is not a single path component; "
                 "must not contain path separators or '..'"
             )
+
+    def _stage_dest(self, table: str) -> Path:
         if self._staging is None:
             # Staging lives in target.parent to guarantee same-filesystem rename.
             self._target.parent.mkdir(parents=True, exist_ok=True)
             self._staging = Path(tempfile.mkdtemp(prefix="_decoy_stage_", dir=self._target.parent))
-        dest = self._staging / f"{table}.parquet"
-        pq.write_table(data, dest)
+        return self._staging / f"{table}.parquet"
 
     def commit(self) -> None:
         """Atomically publish the staging directory as the target.

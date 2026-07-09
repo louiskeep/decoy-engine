@@ -14,6 +14,7 @@ section 6.1 (Option 2 production note).
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
 from pathlib import Path
 
 import pyarrow as pa
@@ -24,6 +25,7 @@ from decoy_engine.execution import ExecutionError, PandasExecutionAdapter
 from decoy_engine.execution._transactional_sink import (
     ParquetTransactionalSink,
     TransactionalSink,
+    _CallableSinkAdapter,
 )
 from decoy_engine.relationships._graph import OrphanPolicy
 from tests.perf_fixtures.fk_relational import build_fk_relational
@@ -154,6 +156,52 @@ def test_file_sink_abort_with_no_writes_is_safe(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_three_method_sink_without_write_batches_is_transactional(tmp_path: Path) -> None:
+    """P2 advisory (Codex review): adding write_batches to the runtime_checkable
+    TransactionalSink Protocol means a custom sink implementing only
+    write/commit/abort (the pre-SC1 shape) no longer satisfies
+    isinstance(sink, TransactionalSink). Before the fix, run_sequential then
+    fell through to `_CallableSinkAdapter(sink)`, which calls the sink object
+    AS a function (`self._fn(table, data)`) and raises TypeError. run_sequential
+    itself never calls write_batches (only the out-of-core streaming runner
+    does), so such a sink is fully usable here; it must be dispatched as
+    transactional (write per table, one commit), not wrapped as a callable.
+    """
+
+    class ThreeMethodSink:
+        def __init__(self) -> None:
+            self.written: dict[str, pa.Table] = {}
+            self.committed = False
+            self.aborted = False
+
+        def write(self, table: str, data: pa.Table) -> None:
+            self.written[table] = data
+
+        def commit(self) -> None:
+            self.committed = True
+
+        def abort(self) -> None:
+            self.aborted = True
+
+    adapter = PandasExecutionAdapter()
+    fx = build_fk_relational(rows=50, width=2, orphan_frac=0.0)
+    sink = ThreeMethodSink()
+
+    res = adapter.run_sequential(
+        fx.plan,
+        _loader(fx.sources),
+        registry=fx.registry,
+        relationship_graph=fx.graph(OrphanPolicy.PRESERVE),
+        namespace_registry=fx.namespace_registry,
+        sink=sink,
+    )
+
+    assert set(sink.written) == set(fx.sources)
+    assert sink.committed is True
+    assert sink.aborted is False
+    assert res.outputs == {}
+
+
 def test_callable_sink_back_compat(tmp_path: Path) -> None:
     """A plain Callable sink passed to run_sequential still streams tables out
     exactly once per table (the existing contract) and res.outputs is empty."""
@@ -228,10 +276,19 @@ def test_run_sequential_abort_error_does_not_mask_original(tmp_path: Path) -> No
     exception must propagate, not the abort error."""
 
     class _RaisyAbortSink:
-        """Sink that fails on write and also fails on abort."""
+        """Sink that fails on write and also fails on abort.
+
+        Implements write_batches (unused by run_sequential's whole-table
+        path) only so isinstance(sink, TransactionalSink) still matches the
+        full Protocol shape; run_sequential must treat this as a
+        TransactionalSink, not wrap it as a plain callable.
+        """
 
         def write(self, table: str, data: pa.Table) -> None:
             raise RuntimeError("original error")
+
+        def write_batches(self, table: str, batches: object, *, schema: pa.Schema) -> None:
+            raise AssertionError("run_sequential must not call write_batches")
 
         def commit(self) -> None:
             pass
@@ -271,3 +328,108 @@ def test_write_rejects_path_traversal_table_name(tmp_path: Path) -> None:
     # No staging directories must have been created on a rejected write.
     staging_dirs = list(tmp_path.glob("_decoy_stage_*"))
     assert staging_dirs == [], f"staging created on rejected write: {staging_dirs}"
+
+
+# ---------------------------------------------------------------------------
+# SC1 port: streaming batch-append (write_batches)
+# ---------------------------------------------------------------------------
+
+
+def _batches(t: pa.Table, chunk: int) -> Iterator[pa.RecordBatch]:
+    return iter(t.to_batches(max_chunksize=chunk))
+
+
+def test_write_batches_streams_and_matches_whole_table_write(tmp_path: Path) -> None:
+    """write_batches() staged via ParquetWriter must publish a Parquet file
+    identical in schema and values to write() of the equivalent whole table,
+    for the same data split across several batches."""
+    t = pa.table({"a": list(range(97)), "b": [str(i) for i in range(97)]})
+
+    target_a = tmp_path / "out_a"
+    sink_a = ParquetTransactionalSink(target_a)
+    sink_a.write_batches("t", _batches(t, chunk=10), schema=t.schema)
+    sink_a.commit()
+
+    target_b = tmp_path / "out_b"
+    sink_b = ParquetTransactionalSink(target_b)
+    sink_b.write("t", t)
+    sink_b.commit()
+
+    streamed = pq.read_table(target_a / "t.parquet")
+    whole = pq.read_table(target_b / "t.parquet")
+    assert streamed.schema.equals(whole.schema, check_metadata=False)
+    assert streamed.equals(whole, check_metadata=False)
+
+
+def test_write_batches_abort_after_partial_stream_publishes_nothing(tmp_path: Path) -> None:
+    """If the batch iterator raises partway through write_batches(), the
+    partially staged file must not leak: abort() must remove staging and the
+    target must remain absent."""
+    schema = pa.schema([("x", pa.int64())])
+
+    def _raising_batches() -> Iterator[pa.RecordBatch]:
+        yield pa.record_batch({"x": [1, 2, 3]}, schema=schema)
+        raise RuntimeError("boom mid-stream")
+
+    target = tmp_path / "out"
+    sink = ParquetTransactionalSink(target)
+    with pytest.raises(RuntimeError, match="boom mid-stream"):
+        sink.write_batches("t", _raising_batches(), schema=schema)
+
+    sink.abort()
+    assert not target.exists()
+    staging_dirs = list(tmp_path.glob("_decoy_stage_*"))
+    assert staging_dirs == [], f"staging not cleaned up after abort: {staging_dirs}"
+
+
+def test_write_batches_empty_stream_publishes_readable_empty_table(tmp_path: Path) -> None:
+    """An empty batch stream must still stage and publish a valid, readable
+    zero-row Parquet file with the given schema (matching what write() of an
+    empty pa.Table produces)."""
+    schema = pa.schema([("x", pa.int64()), ("y", pa.string())])
+
+    target = tmp_path / "out"
+    sink = ParquetTransactionalSink(target)
+    sink.write_batches("t", iter([]), schema=schema)
+    sink.commit()
+
+    published = pq.read_table(target / "t.parquet")
+    assert published.num_rows == 0
+    assert published.schema.equals(schema, check_metadata=False)
+
+
+def test_write_batches_rejects_path_traversal_table_name(tmp_path: Path) -> None:
+    """write_batches() must apply the same table-name validation as write()."""
+    schema = pa.schema([("x", pa.int64())])
+    target = tmp_path / "out"
+    sink = ParquetTransactionalSink(target)
+
+    with pytest.raises(ValueError, match="not a single path component"):
+        sink.write_batches("../escape", iter([]), schema=schema)
+    with pytest.raises(ValueError, match="not a single path component"):
+        sink.write_batches("a/b", iter([]), schema=schema)
+
+    staging_dirs = list(tmp_path.glob("_decoy_stage_*"))
+    assert staging_dirs == [], f"staging created on rejected write_batches: {staging_dirs}"
+
+
+def test_callable_sink_adapter_write_batches_calls_once_with_reassembled_table(
+    tmp_path: Path,
+) -> None:
+    """_CallableSinkAdapter.write_batches is a non-streaming fallback: it must
+    accumulate the batch stream into one pa.Table and invoke the legacy
+    callable exactly once."""
+    t = pa.table({"a": [1, 2, 3, 4], "b": ["w", "x", "y", "z"]})
+    calls: list[tuple[str, pa.Table]] = []
+
+    def legacy_sink(table: str, out: pa.Table) -> None:
+        calls.append((table, out))
+
+    adapter = _CallableSinkAdapter(legacy_sink)
+    adapter.write_batches("t", _batches(t, chunk=1), schema=t.schema)
+
+    assert len(calls) == 1
+    name, out = calls[0]
+    assert name == "t"
+    assert out.schema.equals(t.schema, check_metadata=False)
+    assert out.equals(t, check_metadata=False)

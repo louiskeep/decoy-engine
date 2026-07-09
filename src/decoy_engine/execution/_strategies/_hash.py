@@ -16,10 +16,14 @@ from __future__ import annotations
 import pandas as pd
 
 from decoy_engine.determinism import derive
-from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
+from decoy_engine.execution._adapter import (
+    StrategyContext,
+    pandas_column_to_kernel_input,
+    provider_config_to_dict,
+)
 from decoy_engine.execution._errors import StrategyError
-from decoy_engine.generation.pool._canonicalize import _canonicalize_source
 from decoy_engine.generation.pool._events import QualityWarning
+from decoy_engine.kernel import hash_array
 from decoy_engine.plan._types import ColumnSeed
 
 
@@ -45,14 +49,12 @@ class HashStrategyHandler:
         raw_truncate = cfg.get("truncate")
         truncate = raw_truncate if isinstance(raw_truncate, int) and raw_truncate > 0 else None
 
-        source = df[column]
-        na_mask = source.isna().to_numpy()
-        out: list[str | None] = []
-        for i, value in enumerate(source):
-            if na_mask[i]:
-                out.append(None)
-                continue
-            token = derive(ctx.job_seed, plan.namespace, _canonicalize_source(value)).hex()
-            out.append(token[:truncate] if truncate is not None else token)
-        df[column] = out
+        masked = hash_array(
+            pandas_column_to_kernel_input(df[column]),
+            seed=ctx.job_seed,
+            namespace=plan.namespace,
+            truncate=truncate,
+            derive_func=derive,
+        )
+        df[column] = masked.to_pylist()
         return df, []

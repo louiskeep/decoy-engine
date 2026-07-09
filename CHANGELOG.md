@@ -146,6 +146,58 @@ full control over padding and casting, fail-closed and PII-safe (see below).
   pandas DataFrame per layout spec. Blank lines (zero characters after newline strip)
   are skipped. All other non-blank lines must meet the record width or raise.
 
+### Added (SC1 out-of-core FK execution, 2026-07-07)
+
+Opt-in bounded-batch out-of-core DuckDB FK route (`run_fk_out_of_core`) enables
+masking of multi-table FK jobs where no single table fits in memory. Batches stream
+through a deterministic kernel, spilling intermediate state to local disk, and
+reconstruct final outputs without ever materializing a full table. The route is
+capability-gated on DuckDB, strictly opt-in (not auto-routed), and does not change
+`run_pipeline` behavior. Byte-identical output to in-memory execution.
+
+- **Opt-in entrypoint: `decoy_engine.execution.out_of_core.run_fk_out_of_core`**.
+  Sibling to `run_sequential` (S2 in-memory bounded route), not reached by
+  `run_pipeline`. Accepts resident `pa.Table` sources or lazy `LazySource` readers
+  (file-backed, avoids whole-file loads). Signature mirrors `run_sequential`
+  (compatible `TransactionalSink` + `source_loader` support).
+
+- **Bounded-batch execution.** Configurable `batch_rows` parameter streams tables
+  through the masking kernel in fixed-size record batches. Each batch is
+  independently rewritten (non-FK columns masked, FK columns resolved from
+  staged parent-key relations) then appended to the output sink. No row limit
+  is enforced beyond available temp disk (configurable `temp_disk_budget_bytes`,
+  `memory_limit` knobs).
+
+- **Backend-neutral deterministic kernel** (`src/decoy_engine/kernel/`). Shared
+  Arrow-native scalar masking logic (hash, redact, truncate, passthrough) with
+  no backend coupling. Called by both out-of-core batch logic and the chunked-FK
+  gate (S3). Exports: `hash_array`, `redact_array`, `truncate_array`,
+  `passthrough_array`, `canonicalize_derive_source`, `encode_int`.
+
+- **Chunked-FK self-masking gate** (`src/decoy_engine/execution/_chunked_fk.py`).
+  Validates FK job eligibility for chunked/batched execution. Strategy slice
+  (hash, fpe, redact, truncate, text_redact, date_shift, bucketize, passthrough)
+  are chunk-safe (value-keyed output independent of row position or batch
+  boundary). Gate enforces namespace requirements (hash, fpe, date_shift) at
+  compile time, raising a typed error if the plan declares no namespace.
+  Re-exported symbol: `CHUNK_SAFE_STRATEGIES`.
+
+- **Additive `write_batches` verb on `TransactionalSink`** (four-method protocol
+  now; see relations-out-of-core-sprints.md for the design). Streaming
+  counterpart to `write(table, data)` for out-of-core batch append: accepts one
+  masked table as an iterable of Arrow `RecordBatch` objects (never materializes
+  a full table) plus a shared schema. Called by `run_fk_out_of_core` and
+  `run_mask_pipeline_chunked` (S3). The transactional commit/abort contract
+  (all-or-nothing durability) applies to `write_batches` the same as `write`.
+
+- **Staged parent-key relations.** Out-of-core joins cache post-rewrite parent
+  keys as a narrow Parquet copy (staging directory) during the rewrite pass.
+  Each downstream child FK resolves from the staged copy (rather than
+  re-reading+re-masking the raw source), ensuring the join sees the final
+  published key value (critical for intra-table self-referential FK handling
+  and overlapping-edge shared columns, where a later edge's rewrite would
+  produce a value a re-mask of the raw stream cannot reproduce).
+
 ### Fixed (S2 round-3 FK-topology leak remediation, 2026-07-05)
 
 - **Self-referential FK raw-key leak on the sequential path (BLOCKER).** A

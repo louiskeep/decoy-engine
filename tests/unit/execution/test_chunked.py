@@ -265,7 +265,10 @@ class TestChunkedCompatibility:
         assert exc.value.code == "chunked_strategy_conditions_unmet"
         assert "from_profile" in str(exc.value)
 
-    def test_relationships_rejected(self, tmp_path) -> None:
+    def test_relationships_with_preserve_policy_rejected(self, tmp_path) -> None:
+        # PRESERVE policy cannot be reproduced by child self-masking (detecting an
+        # orphan requires the parent key set resident). Gate raises a specific code
+        # rather than the old blanket chunked_relationships_unsupported.
         cfg = _config(tmp_path, [{"name": "ssn", "strategy": "hash", "namespace": "n"}])
         cfg["relationships"] = [
             {
@@ -279,7 +282,7 @@ class TestChunkedCompatibility:
             list(
                 run_mask_pipeline_chunked(cfg, [], table="accounts", engine_version=_ENGINE_VERSION)
             )
-        assert exc.value.code == "chunked_relationships_unsupported"
+        assert exc.value.code == "chunked_fk_orphan_policy_not_remap"
 
     def test_generate_tables_rejected(self, tmp_path) -> None:
         cfg = {

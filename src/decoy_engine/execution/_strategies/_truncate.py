@@ -22,9 +22,14 @@ from __future__ import annotations
 
 import pandas as pd
 
-from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
+from decoy_engine.execution._adapter import (
+    StrategyContext,
+    pandas_column_to_kernel_input,
+    provider_config_to_dict,
+)
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.generation.pool._events import QualityWarning
+from decoy_engine.kernel import truncate_array
 from decoy_engine.plan._types import ColumnSeed
 
 
@@ -89,25 +94,16 @@ class TruncateHandler:
                         "must be a single character."
                     ),
                 )  # rejected at plan-compile too; this is the defensive backstop
-        col = df[column]
-        na_mask = col.isna()
-        result = col.copy().astype(object)
-        non_na = col[~na_mask].astype(str)
-        if mask_char is None:
-            # V1 path; byte-identical.
-            result.loc[~na_mask] = non_na.str[-length:] if keep == "tail" else non_na.str[:length]
-        else:
-            # New path: replace truncated portion with mask_char repeated.
-            def _mask_one(s: str) -> str:
-                if keep == "tail":
-                    keep_part = s[-length:]
-                    drop_part = s[:-length] if length < len(s) else ""
-                    return (mask_char * len(drop_part)) + keep_part
-                else:
-                    keep_part = s[:length]
-                    drop_part = s[length:] if length < len(s) else ""
-                    return keep_part + (mask_char * len(drop_part))
-
-            result.loc[~na_mask] = non_na.apply(_mask_one)
-        df[column] = result
+        # SC1 port (2026-07-07): computation now runs through the shared
+        # Arrow kernel (`decoy_engine.kernel.truncate_array`) so this handler
+        # and the out-of-core route apply byte-identical truncate logic from
+        # one source of truth. Byte-identical to the prior inline pandas
+        # implementation for every (length, keep, mask_char) combination.
+        masked = truncate_array(
+            pandas_column_to_kernel_input(df[column]),
+            length=length,
+            keep=keep,
+            mask_char=mask_char,
+        )
+        df[column] = masked.to_pylist()
         return df, []

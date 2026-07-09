@@ -5,10 +5,15 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
+import pandas as pd
 import pyarrow as pa
 import pytest
 
+from decoy_engine.determinism import derive
 from decoy_engine.execution import ExecutionError, ExecutionResult, PandasExecutionAdapter
+from decoy_engine.execution._strategies._hash import HashStrategyHandler
+from decoy_engine.execution._strategies._truncate import TruncateHandler
+from decoy_engine.generation.pool._canonicalize import _canonicalize_source
 from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.relationships._graph import RelationshipGraph
@@ -109,3 +114,68 @@ class TestBucketize:
         with pytest.raises(ExecutionError) as exc:
             _run(_plan("age", seed), src)
         assert exc.value.code == "bucketize_width_unresolvable"
+
+
+class _FakeCtx:
+    """Minimal StrategyContext stand-in for direct handler.run() calls."""
+
+    job_seed = _SEED
+
+
+class TestMixedObjectColumnRegression:
+    """P2 (Codex review): the SC1 kernel port converts a pandas column to
+    ONE Arrow array up front (`pa.array(df[column], from_pandas=True)`)
+    before handing it to `hash_array`/`truncate_array`. A pandas object
+    column that legitimately mixes Python scalar types (str and int
+    identifiers in one column -- a real shape for loosely-typed source data)
+    has no single Arrow type, so that conversion raises `ArrowTypeError`
+    where the pre-kernel per-value handlers masked the column successfully.
+
+    These pin byte-identical output to the pre-kernel oracle: `derive` +
+    `_canonicalize_source` for hash (the exact pre-kernel formula), and
+    `str(value)[:length]` for truncate (the exact pre-kernel `astype(str)`
+    behavior). The handler must go through the normal (arrow-array) path,
+    NOT this fallback, whenever the whole column IS one Arrow type: only the
+    genuinely-mixed column exercises the fallback.
+    """
+
+    def test_hash_masks_mixed_str_int_object_column(self) -> None:
+        df = pd.DataFrame({"col": ["alice", 42, "bob"]})
+        assert df["col"].dtype == object
+        seed = _col("hash", namespace="ids")
+        out, warnings = HashStrategyHandler().run(df.copy(), "col", seed, _FakeCtx())
+
+        expected = [
+            derive(_SEED, "ids", _canonicalize_source(value)).hex()
+            for value in ["alice", 42, "bob"]
+        ]
+        assert out["col"].tolist() == expected
+        assert warnings == []
+
+    def test_hash_mixed_object_column_preserves_null(self) -> None:
+        df = pd.DataFrame({"col": ["alice", None, 7]})
+        seed = _col("hash", namespace="ids")
+        out, _ = HashStrategyHandler().run(df.copy(), "col", seed, _FakeCtx())
+
+        assert out["col"].iloc[1] is None
+        assert out["col"].iloc[0] == derive(_SEED, "ids", _canonicalize_source("alice")).hex()
+        assert out["col"].iloc[2] == derive(_SEED, "ids", _canonicalize_source(7)).hex()
+
+    def test_truncate_masks_mixed_str_int_object_column(self) -> None:
+        df = pd.DataFrame({"col": ["hello", 123, "ab"]})
+        assert df["col"].dtype == object
+        seed = _col("truncate", provider_config=(("length", 2),))
+        out, warnings = TruncateHandler().run(df.copy(), "col", seed, _FakeCtx())
+
+        # Pre-kernel oracle: non_na.astype(str).str[:length].
+        assert out["col"].tolist() == ["he", "12", "ab"]
+        assert warnings == []
+
+    def test_truncate_mixed_object_column_preserves_null(self) -> None:
+        df = pd.DataFrame({"col": ["hello", None, 999]})
+        seed = _col("truncate", provider_config=(("length", 2),))
+        out, _ = TruncateHandler().run(df.copy(), "col", seed, _FakeCtx())
+
+        assert pd.isna(out["col"].iloc[1])
+        assert out["col"].iloc[0] == "he"
+        assert out["col"].iloc[2] == "99"

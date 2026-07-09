@@ -56,8 +56,40 @@ Rejected at compile time (`check_chunked_compatibility`):
   `strategy_not_chunk_safe`;
 - faker / categorical with the conditions above unmet:
   `chunked_strategy_conditions_unmet`, naming each unmet condition;
-- configs with relationships (FK resolution reads whole parent frames);
+- FK child edges that fail the self-mask gate (see below);
 - generate tables (generation is not masking; row_count is whole-run).
+
+FK child self-masking (SC1 port, Option 1, docs/relationships-memory-scaling.md
+§2):
+
+An FK edge where the current table is the child is ADMITTED for chunked
+execution -- the child self-masks via its own value-keyed strategy under the
+shared namespace rather than resolving by parent-map lookup -- ONLY WHEN all
+four gate conditions hold (`_chunked_fk.gate_fk_child_edges`). Any failure
+raises PlanCompileError (fail closed):
+
+  (a) Parent key strategy is in CHUNK_SAFE_STRATEGIES.
+  (b) Child FK column explicitly declares the same value-keyed strategy
+      (no 'by-reference' model; the child must own its masking).
+  (c) Child FK column explicitly declares the same namespace as the parent
+      COLUMN, for namespace-requiring strategies only (hash, fpe,
+      date_shift). The parent-column namespace is the authoritative masking
+      key: ColumnSeed.namespace = col_entry.get("namespace")
+      (_seed_envelope.py:260); the FK namespace auto-binding
+      (_namespace.py:225-253) updates the NamespaceRegistry but not the
+      ColumnSeed. A config whose edge (relationship) namespace disagrees
+      with the parent-column namespace is rejected with
+      chunked_fk_parent_namespace_mismatch; a parent column with no
+      namespace is rejected with chunked_fk_parent_namespace_missing.
+  (d) orphan_policy is 'remap'. REMAP mints orphan values via
+      parent_strategy(seed, ns, orphan_key), which is identical to self-
+      masking the orphan key under the same strategy and namespace.
+      WARN/FAIL/PRESERVE all require the parent key set resident and are
+      rejected with chunked_fk_orphan_policy_not_remap.
+
+First cut: single-column FK edges only (composite FK rejected with
+chunked_fk_composite_unsupported). Tables that are FK parents but not
+children are unaffected by this gate.
 
 Each chunk runs through the SAME compiled plan, one execution adapter
 (pandas by default; polars via the `adapter` parameter), and one shared
@@ -77,18 +109,7 @@ import pyarrow as pa
 
 from decoy_engine.plan._errors import PlanCompileError
 
-CHUNK_SAFE_STRATEGIES: frozenset[str] = frozenset(
-    {
-        "hash",
-        "fpe",
-        "redact",
-        "truncate",
-        "text_redact",
-        "date_shift",
-        "bucketize",
-        "passthrough",
-    }
-)
+from ._chunked_fk import CHUNK_SAFE_STRATEGIES, gate_fk_child_edges
 
 # Admitted only when the column's config pins the deterministic
 # value-keyed path (see module docstring for the per-strategy rules).
@@ -138,10 +159,19 @@ def _conditional_admission_failures(col_entry: dict[str, Any]) -> list[str]:
 def check_chunked_compatibility(config: dict[str, Any], *, table: str) -> None:
     """Reject configs whose chunked run could not match a full-frame run.
 
-    Raises PlanCompileError with codes `chunked_table_unknown`,
-    `chunked_generate_unsupported`, `chunked_relationships_unsupported`,
-    `strategy_not_chunk_safe`, or `chunked_strategy_conditions_unmet`
-    naming the offending columns.
+    Raises PlanCompileError with codes:
+        chunked_table_unknown: `table` is not in config.tables.
+        chunked_generate_unsupported: `table` is a generate-kind table.
+        chunked_fk_orphan_policy_not_remap: FK child edge with non-REMAP policy.
+        chunked_fk_composite_unsupported: FK child edge with a composite key.
+        chunked_fk_parent_strategy_not_safe: parent key strategy not chunk-safe.
+        chunked_fk_child_namespace_missing: child column has no explicit namespace.
+        chunked_fk_child_namespace_mismatch: child namespace != parent namespace.
+        chunked_fk_child_strategy_missing: child column has no explicit strategy.
+        chunked_fk_child_strategy_mismatch: child strategy != parent strategy.
+        strategy_not_chunk_safe: a non-FK column uses a non-chunk-safe strategy.
+        chunked_strategy_conditions_unmet: faker/categorical admission conditions
+            are not met; message names each unmet condition.
     """
     tables = config.get("tables") or []
     table_cfg = next((t for t in tables if isinstance(t, dict) and t.get("name") == table), None)
@@ -162,16 +192,12 @@ def check_chunked_compatibility(config: dict[str, Any], *, table: str) -> None:
                 "state)."
             ),
         )
+    # Gate FK edges where `table` is the child. Admitted edges self-mask via the
+    # child's own value-keyed strategy under the shared namespace. Rejected edges
+    # raise PlanCompileError (fail closed). Edges where `table` is a parent only
+    # are not constrained here; the parent chunks normally.
     if config.get("relationships"):
-        raise PlanCompileError(
-            code="chunked_relationships_unsupported",
-            path="relationships",
-            message=(
-                "configs with FK relationships cannot run chunked: resolving a "
-                "child key reads the parent's complete source->masked map, which "
-                "needs the whole parent frame. Run without --chunked."
-            ),
-        )
+        gate_fk_child_edges(config, table=table)
     offending: list[tuple[str, str]] = []
     conditions_unmet: list[tuple[str, str, list[str]]] = []
     for col_entry in table_cfg.get("columns") or []:

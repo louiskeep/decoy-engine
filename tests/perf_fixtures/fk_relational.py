@@ -21,13 +21,17 @@ regression test.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
 import pyarrow as pa
+import pyarrow.parquet as pq
 
+from decoy_engine.execution.out_of_core._source import LazySource
 from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.relationships._graph import (
@@ -267,3 +271,176 @@ def build_fk_relational(
         rows=rows,
         orphan_rows=n_orphan,
     )
+
+
+# Row-chunk size for `write_large_fk_chain`'s own writer loop, independent of the
+# out-of-core runner's batch sizing. Small enough that a modest `rows` count still
+# spans several row groups (so "never whole-table-resident" is exercised by tests
+# rather than incidental), large enough not to dominate write time at scale.
+_CHUNK_ROWS = 50_000
+
+
+def write_table_parquet(
+    name: str,
+    rows: int,
+    path: Any,
+    *,
+    width: int = _DEFAULT_WIDTH,
+    orphan_frac: float = 0.0,
+    seed: int = 20260630,
+) -> Path:
+    """Write `build_table`'s output straight to Parquet, byte-equal on read-back.
+
+    Backs parity tests that need an on-disk (`LazySource`) input which is
+    otherwise identical to the in-memory fixture the byte-parity suite already
+    exercises.
+    """
+    out_path = Path(path)
+    table = build_table(name, rows, width=width, orphan_frac=orphan_frac, seed=seed)
+    pq.write_table(table, out_path)
+    return out_path
+
+
+def _chunked_schema(name: str, width: int) -> pa.Schema:
+    payload_fields = [pa.field(f"payload_{i:02d}", pa.string()) for i in range(width)]
+    if name == "parent":
+        return pa.schema([pa.field("id", pa.string()), *payload_fields])
+    if name == "child":
+        return pa.schema(
+            [pa.field("id", pa.string()), pa.field("parent_id", pa.string()), *payload_fields]
+        )
+    return pa.schema([pa.field("child_id", pa.string()), *payload_fields])
+
+
+def _keys_from_idx(prefix: str, idx: np.ndarray) -> np.ndarray:
+    """Vectorized `{prefix}{i}` keys for an arbitrary (not necessarily 0-based)
+    row-index array, the same positional scheme `_keys` uses for a full range."""
+    return (prefix + idx.astype("U")).astype(object)
+
+
+def _fk_from_idx(
+    prefix: str,
+    idx: np.ndarray,
+    rows: int,
+    orphan_every: int,
+    orphan_prefix: str,
+) -> np.ndarray:
+    """FK values computed from the child/grandchild row index alone.
+
+    `idx % rows` always lands on an existing parent index (parents are indexed
+    0..rows-1), so referential integrity holds by construction without the
+    parent's key array resident to sample from, and without any RNG state that
+    must replay identically across chunks. Every `orphan_every`-th row is
+    planted with a key that has no parent, giving an exact, chunk-boundary-
+    independent orphan fraction.
+    """
+    keys = _keys_from_idx(prefix, idx % rows)
+    if orphan_every:
+        is_orphan = (idx % orphan_every) == 0
+        if is_orphan.any():
+            keys = keys.copy()
+            keys[is_orphan] = _keys_from_idx(orphan_prefix, idx[is_orphan])
+    return keys
+
+
+def _chunk_table(
+    name: str,
+    start: int,
+    length: int,
+    rows: int,
+    width: int,
+    orphan_every: int,
+    rng: np.random.Generator,
+    pool: np.ndarray,
+) -> pa.Table:
+    idx = np.arange(start, start + length)
+    cols: dict[str, Any] = {}
+    if name == "parent":
+        cols["id"] = _keys_from_idx("p", idx)
+    elif name == "child":
+        cols["id"] = _keys_from_idx("c", idx)
+        cols["parent_id"] = _fk_from_idx("p", idx, rows, orphan_every, "orphan_p")
+    else:
+        cols["child_id"] = _fk_from_idx("c", idx, rows, orphan_every, "orphan_c")
+    for i in range(width):
+        take = rng.integers(0, len(pool), size=length)
+        cols[f"payload_{i:02d}"] = pool[take]
+    return pa.table(cols, schema=_chunked_schema(name, width))
+
+
+def _write_table_chunked(
+    name: str,
+    rows: int,
+    path: Path,
+    *,
+    width: int,
+    orphan_every: int,
+    batch_rows: int,
+    seed: int,
+) -> None:
+    """Generate and write one table's rows in `batch_rows`-sized chunks.
+
+    Each chunk is built, written, and dropped before the next is built, so
+    Python/Arrow never holds more than one chunk of this table at a time
+    (unlike `build_table`, which returns the whole table at once).
+    """
+    rng = np.random.default_rng(seed + _TABLE_SEED_OFFSET[name])
+    pool = _string_pool(rng, _FILLER_POOL)
+    schema = _chunked_schema(name, width)
+    writer = pq.ParquetWriter(path, schema)
+    try:
+        for start in range(0, rows, batch_rows):
+            length = min(batch_rows, rows - start)
+            writer.write_table(
+                _chunk_table(name, start, length, rows, width, orphan_every, rng, pool)
+            )
+    finally:
+        writer.close()
+
+
+def write_large_fk_chain(
+    dir_path: Any,
+    rows: int,
+    *,
+    width: int = _DEFAULT_WIDTH,
+    orphan_frac: float = 0.0,
+    batch_rows: int = _CHUNK_ROWS,
+    seed: int = 20260630,
+) -> dict[str, Path]:
+    """Write a parent->child->grandchild FK chain straight to Parquet, one
+    row-chunk at a time, so no whole table is ever resident.
+
+    This is what lets a capability-proof test build a dataset larger than a
+    memory cap: unlike `build_fk_relational` (which returns whole in-memory
+    tables) this generator's peak residency is one `batch_rows` chunk per
+    table, regardless of `rows`. Column schema (id/parent_id/child_id plus
+    payload_NN filler) matches `build_table`, so the same plan/graph in this
+    module applies unchanged. Byte-parity to `build_table` is not a goal here:
+    keys are a row-index formula rather than a sampled draw (see
+    `_fk_from_idx`), because FK integrity at a scale where the pandas oracle
+    would OOM is what this generator is for, not byte-for-byte match against
+    the eager fixture.
+    """
+    if not 0.0 <= orphan_frac < 1.0:
+        raise ValueError("orphan_frac must be in [0, 1)")
+    out_dir = Path(dir_path)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    orphan_every = round(1 / orphan_frac) if orphan_frac > 0 else 0
+
+    paths = {name: out_dir / f"{name}.parquet" for name in _TABLE_NAMES}
+    for name in _TABLE_NAMES:
+        _write_table_chunked(
+            name,
+            rows,
+            paths[name],
+            width=width,
+            orphan_every=orphan_every,
+            batch_rows=batch_rows,
+            seed=seed,
+        )
+    return paths
+
+
+def lazy_sources(paths: Mapping[str, Any]) -> dict[str, LazySource]:
+    """Wrap written table paths as `LazySource`s for the out-of-core runner."""
+    return {name: LazySource(path=Path(path)) for name, path in paths.items()}
