@@ -9,6 +9,27 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (SC4 Group (c) out-of-core strategies, 2026-07-09)
+
+Out-of-core FK route now admits Group (c) payload strategies with proven byte-parity:
+- **`text_mask`** unconditionally (per-value HMAC-SHA256 keyed span masking, RFC 2104).
+- **`code_set`** conditionally (mask mode only, without `chapter_preserve`; gen mode threads a global row index the streaming kernel lacks).
+- **`bucket_perturb`** conditionally (explicit `date_format` only; whole-column format auto-detection does not chunk).
+
+Four Group (c) strategies are documented fail-closed routing MISSes: `geo_generalize` (thresholds on whole-dataset k-anonymity counts), `formula` and `derived` (output type not analytically determinable from plan), `nested` (requires full pandas child-strategy dispatch per batch, an architectural port beyond dispatch-widening).
+
+All ported strategies reuse the SAME primitive as the full-frame oracle handlers (HMAC-SHA256 span masking for `text_mask`, HMAC-SHA256-keyed modular selection for `code_set`, HKDF-SHA256 keyed offset for `bucket_perturb`), so output is byte-identical, not merely similar. Byte-parity verified against full-frame oracle across all supported config shapes. New module: `src/decoy_engine/execution/out_of_core/_mask_group_c.py` (split out of `_mask.py` to hold the ~600 LOC orchestration cap).
+
+**Bug fix: Fixed stale `SUPPORTED_STRATEGIES` public export.** The constant (re-exported as `OUT_OF_CORE_SUPPORTED_STRATEGIES` at `decoy_engine.execution`) was hardcoded to the narrow FK-parent-key set (`_INITIAL_SUPPORTED_STRATEGIES`) and never widened as SC3/SC4 landed, silently understating what's admitted to decoy-platform's cross-repo query surface. Now correctly tracks `_SUPPORTED_WORK_STRATEGIES` (the full payload-admitted set) with corrected docstrings distinguishing it from the separately-gated parent-key surface at `_check_edge`. This fix closes the SC4 remediation commit.
+
+### Added (SC3 Group (b) out-of-core strategies, 2026-07-09)
+
+Out-of-core FK route now admits Group (b) payload strategies with proven byte-parity: `fpe`, `text_redact`, and `categorical` (deterministic mode only). Three strategies are documented fail-closed routing MISSes: `faker` (needs registry-backed value pool + cross-batch pool cache), `bucketize` and `date_shift` (record per-value format errors that full-frame quarantines via D8 but the out-of-core route has no row-error/quarantine channel).
+
+Each ported strategy reuses the exact primitive the full-frame handler cites (HMAC-SHA256 permutation for `fpe`, PII detectors + `_splice` for `text_redact`, deterministic category pool sampling for `categorical`), ensuring byte-identical output. New module: `src/decoy_engine/execution/out_of_core/_mask_group_b.py` (split from `_mask.py` for orchestration cap compliance).
+
+Scope: Group (b) strategies admitted for masked (payload) columns only; FK parent-key surface remains `hash/redact/truncate/passthrough`. Tests: new parity and routing suites (`test_out_of_core_group_b_parity.py`, `test_out_of_core_group_b_routing.py`). Carry-forward resolved: M1 (lazy-source loader, fully tested).
+
 ### Changed (S3 engine-efficiencies x S2 routing reconciliation, 2026-07-06)
 
 Landed `feat/engine-efficiencies` (P0-P5 below) onto the integration branch

@@ -31,14 +31,14 @@ prevention. Full spec + GATE-1 decisions: the 100M program doc (PR #33).
 | **SC1** | Land the out-of-core FK runner as an **opt-in, unwired sibling** (`run_fk_out_of_core`, DuckDB-gated, budgeted); initial strategy set `hash/redact/truncate/passthrough`; parity harness | **DONE** - merged 2026-07-09 via engine PR #34 (fail-closed hardening pass, dennis APPROVE 0 BLOCKER/0 HIGH). See "SC1 status" below. |
 | **SC2** | Wire auto-routing: the live router selects out-of-core for eligible large FK jobs; ineligible-but-large jobs reroute-to-sequential or reject-before-read with a reason (never silent OOM) | **DONE** - part 1 (CF1/CF2/CF3 hardening) merged via PR #37; part 2 (the auto-routing wire) merged 2026-07-09 via PR #38 (dennis re-review APPROVE, 0 BLOCKER/0 HIGH). See "SC2 status" below. |
 | **SC3** | Widen out-of-core to Group (b) strategies (`fpe`, `text_redact`, `date_shift`, `bucketize` + conditional `faker`/`categorical`), each with byte-parity vs full-frame | **DONE (branch `sc3/widen-oocgroup-b`)** - `fpe`, `text_redact`, `categorical` (deterministic) ported with proven byte-parity; `date_shift`, `bucketize`, `faker` are documented fail-closed routing MISSes. M1 carry-forward test added. See "SC3 status" below. |
-| **SC4** | Widen out-of-core to Group (c) strategies (`text_mask`, `geo_generalize`, `code_set`, `bucket_perturb`, `formula`/`derived`/`nested` where batch-local) - in v1 critical path per Cam | **QUEUED** |
+| **SC4** | Widen out-of-core to Group (c) strategies (`text_mask`, `code_set`, `bucket_perturb` with conditional config shapes; `geo_generalize`, `formula`, `derived`, `nested` documented fail-closed) - in v1 critical path per Cam | **DONE** - merged 2026-07-09 via engine PR #43 (SC4 + remediation commit), dennis APPROVE 0 BLOCKER/0 HIGH/1 MEDIUM/3 LOW. See "SC4 status" below. |
 | **SC5** | Platform Sprint E: peak-MB estimator + admission gate (measure-only default; over-hard-ceiling reject before read; reroute OOC-eligible jobs to streaming). OOM **prevention**. | **DONE** - merged 2026-07-09 via engine PR #40 (public eligibility-query export) + platform PR #20 (FK-aware admission discount), dennis APPROVE after one fix round. **Surfaced a significant gap: the engine's out-of-core route is not reachable through the platform's job runner today for any config shape** - see "SC5 status" below. |
 | **SC6** | Validate 100M on GCP (32 GB) with the built `scripts/gcp-bench/engine-bench.sh` battery; commit the run that backs the "100M+ on 32 GB" claim | **QUEUED** - needs gcloud auth + spend confirmation. Overlaps Part B item 1. |
 
 **Critical path to a shippable, auto-routed, OOM-safe 100M:**
-SC0 → SC1 → SC2 → SC3 → SC6, with SC5 built in parallel (measure-only) and
-calibrated from SC6's early baseline. SC4 is the GA-completeness item Cam put in
-the v1 critical path.
+SC0 → SC1 → SC2 → SC3 → SC4 → SC6, with SC5 built in parallel (measure-only) and
+calibrated from SC6's early baseline. SC4 (GA-completeness: Group c strategies)
+landed 2026-07-09.
 
 ### SC1 status - DONE (merged 2026-07-09, PR #34)
 
@@ -266,6 +266,80 @@ than blocking merge, per dennis's own "acceptable as carry-forward" framing.
   emission pass before `_stream_table`'s batch loop, mirroring how
   `orphan_fk_warning` aggregates today.
 
+### SC4 status - DONE (engine PR #43, merged 2026-07-09)
+
+Widened the out-of-core FK route's masked-column (payload) strategy surface from
+SC3's `hash/redact/truncate/passthrough/fpe/text_redact/categorical`. New
+per-value kernels for Group (c) live in
+`src/decoy_engine/execution/out_of_core/_mask_group_c.py` (split out of `_mask.py`
+to hold the ~600 LOC orchestration cap).
+
+**Ported with proven byte-parity (3 of 7):**
+- **`text_mask`** - reuses `transforms.text_mask.mask_cell` (HMAC-SHA256 keyed
+  span masking, RFC 2104; the exact primitive `_strategies/_text_mask.TextMaskHandler`
+  calls). Per-value, chunks cleanly, unconditionally admitted.
+- **`code_set` (mask mode, no chapter_preserve)** - reuses
+  `transforms.code_set.apply_code_set` (HMAC-SHA256-keyed modular selection over
+  the code-sorted corpus). Mask mode is per-value; compat gate restricts admission
+  to mask mode without chapter_preserve (gen mode threads a global row index the
+  streaming kernel lacks; chapter_preserve records per-value errors the route
+  cannot quarantine).
+- **`bucket_perturb` (explicit date_format)** - reuses
+  `transforms.bucket_perturb.apply_bucket_perturb` (HKDF-SHA256 keyed offset).
+  Per-value once the strptime format is fixed; compat gate requires an explicit
+  `date_format` so no whole-column format detection is needed.
+
+**Documented fail-closed routing MISSes (4 of 7):**
+- **`geo_generalize`** (`out_of_core_whole_column_aggregation_unsupported`) -
+  k-anonymity cascade thresholds each row on whole-dataset counts, not batch-local.
+- **`formula`** (`out_of_core_dynamic_output_type_unsupported`) - emits a value
+  whose Arrow type is not determinable from the plan; carries an order-dependent
+  RNG channel.
+- **`derived`** (`out_of_core_dynamic_output_type_unsupported`) - emits a value
+  whose Arrow type is not determinable; needs same-row sibling-column context.
+- **`nested`** (`out_of_core_child_dispatch_unsupported`) - reuses the full pandas
+  child-strategy dispatch (SCALAR_HANDLERS) plus per-cell JSON; porting needs the
+  pandas handler stack per batch with child strategy statically bounded, beyond
+  dispatch-widening.
+
+**Scope of admission:** Group (c) strategies are admitted for **masked payload
+columns only**. The FK **parent-key** surface stays `hash/redact/truncate/passthrough`
+- an FK edge keyed on a Group (c) strategy is a fail-closed MISS (join/remap key path
+not ported). This is consistent with SC3 Group (b) scoping.
+
+**Additional change:** Fixed a stale `SUPPORTED_STRATEGIES` public export in
+`src/decoy_engine/execution/out_of_core/_compat.py` that was hardcoded to the narrow
+FK-parent-key set (`_INITIAL_SUPPORTED_STRATEGIES`) and never widened as SC3/SC4
+landed, silently understating what's admitted to decoy-platform's cross-repo query
+surface. Now correctly tracks `_SUPPORTED_WORK_STRATEGIES` (the full payload-admitted
+set) with corrected docstrings distinguishing it from the separately-gated parent-key
+surface at `_check_edge`. This surfaces as the re-exported `OUT_OF_CORE_SUPPORTED_STRATEGIES`
+at `decoy_engine.execution` (SC5's platform query surface).
+
+**Tests:** `tests/parity/test_out_of_core_group_c_parity.py` (adapter-boundary parity
+for all 3 ported strategies across shapes + gate-MISS pins for deferred strategies) and
+`tests/parity/test_out_of_core_group_c_routing.py` (run_pipeline routes ported Group (c)
+with full-frame parity + carries M1 and SC3's live-branch coverage work forward).
+
+dennis adversarial review: **APPROVE, 0 BLOCKER / 0 HIGH / 1 MEDIUM / 3 LOW.**
+Independently verified fail-closed MISS gating is airtight and re-proved byte-parity.
+MEDIUM: fixed the stale `SUPPORTED_STRATEGIES` export (see above); docstrings now
+distinguish payload-admitted from parent-key-gated surfaces. 3 LOW coverage gaps
+(all-null column, single-row batch, router-level null coverage) added as test
+assertions. Full mirror gates green: 5941 tests (3 pre-existing unrelated failures),
+ruff/mypy clean, regression-gate green.
+
+**Carry-forwards tracked for SC6 (not blockers):**
+- **MEDIUM (SC3 carry, resolved SC4)** - the parity suite now covers live branches
+  added by SC4 (text_mask span variations, code_set config shapes, bucket_perturb
+  format handling) in addition to SC3's prior coverage.
+- **LOW** - quality-warning surface (QualityWarning emissions from `text_mask`'s
+  per-detector strategy dispatch, `bucket_perturb`'s timezone inference) are
+  intentionally suppressed in the out-of-core route as documented in
+  `_mask_group_c.py` (informational only, data parity intact). Wiring them needs
+  static per-column aggregation before batch streaming, deferred to a future
+  capability enhancement (not a data-correctness issue).
+
 ### SC5 status - DONE (engine PR #40, platform PR #20, both merged 2026-07-09)
 
 - **Engine side (PR #40):** thin, additive public re-export at
@@ -386,8 +460,9 @@ panel). Includes visual/interaction QA.
 2. ~~**SC2** - resolve CF1 + CF2 + CF3, wire auto-routing.~~ **DONE** (part 1
    PR #37; part 2 PR #38, both merged). M1 (untested lazy-loader branch)
    carried forward, see "SC2 status" above.
-3. **SC3 → SC4** - widen the strategy surface (parity-tested). Fold in the
-   M1 test carry-forward.
+3. ~~**SC3 → SC4** - widen the strategy surface (parity-tested).~~ **DONE** (SC3
+   branch `sc3/widen-oocgroup-b` merged; SC4 PR #43 merged 2026-07-09). M1 carried
+   forward and resolved.
 4. ~~**SC5** (parallel) - platform estimator + admission gate, measure-only.~~
    **DONE** (engine PR #40, platform PR #20, both merged). Surfaced a new,
    unscoped follow-up: wire platform to actually route large FK jobs through

@@ -125,12 +125,24 @@ strategy = a batch-kernel + a byte-parity test vs full-frame on the value-keyed 
   FK parity intact; the `_compat` gate admits them and still rejects everything in (c)/(d).
 
 ### SC4 - Widen out-of-core: Group (c), needs-proof  ·  tier: **Opus** (fast-follow; see GATE-1 #3)
-Vet and admit where provably row-local: `text_mask, geo_generalize, code_set, bucket_perturb`,
-and the same-row-column-set family (`formula, derived, nested`) **only if all referenced columns
-travel in the same batch** (batch-locality analysis required per strategy). Explicitly reject
-what can't be proven this sprint, with a reason string in `_compat`.
-- **AC:** each admitted strategy carries a chunk-invariance proof + parity test; each deferred
-  one has a documented `_compat` rejection reason; no over-masking regression.
+**DONE (2026-07-09, engine PR #43):** Ported 3 of 7 Group (c) strategies with proven byte-parity:
+- **`text_mask`** - unconditional (per-value HMAC span masking, no cross-row state).
+- **`code_set`** - conditional (mask mode only, without chapter_preserve; gen mode and
+  chapter_preserve are documented fail-closed MISSes).
+- **`bucket_perturb`** - conditional (explicit date_format only; whole-column format detection
+  is not batch-local).
+
+Explicitly rejected the remaining 4 with documented `_compat` rejection codes:
+- **`geo_generalize`** - k-anonymity cascade thresholds on whole-dataset counts, not batch-local.
+- **`formula`** - output type not determinable from plan; carries order-dependent RNG.
+- **`derived`** - output type not determinable; needs same-row sibling-column context.
+- **`nested`** - requires full pandas child-strategy dispatch per batch, beyond dispatch-widening.
+
+- **AC met:** ported strategies carry byte-parity tests vs full-frame; deferred strategies have
+  documented rejection reasons (`_compat` gate enforcement); no over-masking regression. Fixed
+  stale `SUPPORTED_STRATEGIES` export (was narrow parent-key set, now tracks full payload-admitted
+  set) that would have silently understate admission to platform-side query surface. Full
+  regression gate green (5941 tests, 3 pre-existing unrelated), ruff/mypy clean.
 
 ### SC5 - Prevention: promote platform Sprint E (estimator + admission gate)  ·  platform · tier: **Sonnet** (Opus review)
 Promote the parked `sprint-e/execution-metrics`. **E1:** additive/nullable `Job` metrics
