@@ -56,7 +56,7 @@ from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._runner import build_work_list, order_work
 from decoy_engine.execution.out_of_core import run_fk_out_of_core
 from decoy_engine.execution.out_of_core._compat import check_out_of_core_compatibility
-from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
+from decoy_engine.plan._types import ColumnSeed, GroupSeed, SeedEnvelope, TableSeed
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge, RelationshipGraph
 from decoy_engine.relationships._namespace import NamespaceRegistry
@@ -1063,6 +1063,13 @@ def test_underscore_column_staged_path_non_collision() -> None:
     stage to DISTINCT parquet relations. The old `'_'.join(columns)` path shared
     one file, so the second relation clobbered the first and the joins crossed.
     Truncate keys make a cross-wired join produce visibly wrong values.
+
+    The child FK columns are a composite_fk_group (a single GroupSeed over each
+    key), the canonical composite shape -- NOT independent scalar seeds. SC2 CF2
+    gates the scalar-composite shape fail-closed
+    (`out_of_core_composite_fk_scalar_child_unsupported`) because it leaks raw
+    orphan values; the composite_fk_group shape here is oracle-parity and stays
+    admitted, so it is the shape that exercises the staging path end to end.
     """
     ns = "ns_key"
     kseed = _seed("truncate", provider_config=(("length", 5),))
@@ -1097,8 +1104,20 @@ def test_underscore_column_staged_path_non_collision() -> None:
                     per_group=(),
                 ),
             ),
-            ("child1", TableSeed(per_column=(("x", kseed), ("y", kseed)), per_group=())),
-            ("child2", TableSeed(per_column=(("m", kseed), ("n", kseed)), per_group=())),
+            (
+                "child1",
+                TableSeed(
+                    per_column=(),
+                    per_group=(("g1", GroupSeed(namespace=ns, coherent_columns=("x", "y"))),),
+                ),
+            ),
+            (
+                "child2",
+                TableSeed(
+                    per_column=(),
+                    per_group=(("g2", GroupSeed(namespace=ns, coherent_columns=("m", "n"))),),
+                ),
+            ),
         )
     )
     graph = RelationshipGraph(
@@ -1133,6 +1152,160 @@ def test_underscore_column_staged_path_non_collision() -> None:
         _run_ooc(plan, sources, graph).outputs["child2"],
         "collision-child2",
     )
+
+
+# ---------------------------------------------------------------------------
+# SC2 CF2: composite FK edge parity + fail-closed gate
+# ---------------------------------------------------------------------------
+
+
+def _composite_group_case(
+    *,
+    strategy: str,
+    policy: OrphanPolicy,
+    child_rows: list[tuple[str | None, str | None]],
+) -> tuple[Any, dict[str, pa.Table], RelationshipGraph]:
+    """A 2-column composite FK as a composite_fk_group (GroupSeed on the child):
+    the canonical, compiler-produced composite shape. Parent key columns carry
+    per-column seeds; the child key is one coherent group over both columns.
+    """
+    ns = "ns_grp"
+    a_seed = _seed_for(strategy, ns + "_a")
+    b_seed = _seed_for(strategy, ns + "_b")
+    parent = pa.table(
+        {
+            "a": pa.array(["a0", "a1", "a2"], type=pa.string()),
+            "b": pa.array(["b0", "b1", "b2"], type=pa.string()),
+        }
+    )
+    child = pa.table(
+        {
+            "x": pa.array([r[0] for r in child_rows], type=pa.string()),
+            "y": pa.array([r[1] for r in child_rows], type=pa.string()),
+        }
+    )
+    plan = _plan(
+        (
+            ("parent", TableSeed(per_column=(("a", a_seed), ("b", b_seed)), per_group=())),
+            (
+                "child",
+                TableSeed(
+                    per_column=(),
+                    per_group=(("grp", GroupSeed(namespace=ns, coherent_columns=("x", "y"))),),
+                ),
+            ),
+        )
+    )
+    graph = RelationshipGraph(
+        edges=(
+            RelationshipEdge(
+                parent_table="parent",
+                parent_columns=("a", "b"),
+                child_table="child",
+                child_columns=("x", "y"),
+                namespace=ns,
+                orphan_policy=policy,
+            ),
+        ),
+        ordering=(),
+    )
+    return plan, {"parent": parent, "child": child}, graph
+
+
+@pytest.mark.parametrize("strategy", ["hash", "redact", "truncate", "passthrough"])
+@pytest.mark.parametrize("policy", [OrphanPolicy.PRESERVE, OrphanPolicy.WARN])
+def test_composite_fk_group_orphan_and_partial_null_parity(
+    strategy: str, policy: OrphanPolicy
+) -> None:
+    """SC2 CF2: the canonical composite_fk_group shape is oracle-parity even with
+    the exact rows CF2's stale docstring flagged -- a matched row, a PARTIAL-null
+    key (one component null), a fully-null key, and a full orphan, together.
+
+    Both routes treat any partial-null composite key as fully null (the pandas
+    adapter via `.isna().any(axis=1)`, the out-of-core route via a null join
+    key), and both preserve a full orphan's raw key under PRESERVE/WARN. This is
+    the surface that STAYS admitted after CF2 gates the divergent scalar shape.
+    """
+    plan, sources, graph = _composite_group_case(
+        strategy=strategy,
+        policy=policy,
+        child_rows=[
+            ("a0", "b0"),  # matched
+            ("a1", None),  # partial null -> fully null on both routes
+            (None, None),  # fully null
+            ("zx", "zy"),  # full orphan -> preserved raw on both routes
+            ("a2", "b2"),  # matched
+        ],
+    )
+    outcome = _assert_parity_or_faithful_rejection(
+        plan, sources, graph, f"composite-group-{strategy}-{policy.name}"
+    )
+    assert outcome == "parity"
+
+
+@pytest.mark.parametrize("policy", [OrphanPolicy.PRESERVE, OrphanPolicy.WARN])
+def test_composite_fk_scalar_child_gate_rejected(policy: OrphanPolicy) -> None:
+    """SC2 CF2 pin: a composite FK edge whose child columns are masked as
+    INDEPENDENT scalar strategies (not a composite_fk_group) is gate-rejected
+    fail-closed. This is the one composite shape that diverges from the oracle:
+    the oracle scalar-masks each child column before resolving the FK (FK
+    children resolve last), so a PRESERVE/WARN orphan keeps the scalar-MASKED
+    value, while the out-of-core route joins on and preserves the RAW source key
+    -- a raw-value leak. The gate rejects it with
+    `out_of_core_composite_fk_scalar_child_unsupported` so the job falls back to
+    full-frame instead of leaking; `_assert_parity_or_faithful_rejection`
+    accepts a gate rejection (the route never runs, so it can never emit the
+    divergent output).
+    """
+    ns = "ns_scalar_comp"
+    kseed = _seed_for("truncate", ns)
+    parent = pa.table(
+        {
+            "a": pa.array(["a0zzz", "a1zzz"], type=pa.string()),
+            "b": pa.array(["b0zzz", "b1zzz"], type=pa.string()),
+        }
+    )
+    # Row 0 matches; row 1 is a full orphan whose RAW value would leak on the
+    # out-of-core route (oracle would emit the truncated value instead).
+    child = pa.table(
+        {
+            "x": pa.array(["a0zzz", "orphzzz"], type=pa.string()),
+            "y": pa.array(["b0zzz", "orphzzz"], type=pa.string()),
+        }
+    )
+    plan = _plan(
+        (
+            ("parent", TableSeed(per_column=(("a", kseed), ("b", kseed)), per_group=())),
+            # Child FK columns masked as independent scalar seeds -- the divergent
+            # shape, NOT a composite_fk_group.
+            ("child", TableSeed(per_column=(("x", kseed), ("y", kseed)), per_group=())),
+        )
+    )
+    graph = RelationshipGraph(
+        edges=(
+            RelationshipEdge(
+                parent_table="parent",
+                parent_columns=("a", "b"),
+                child_table="child",
+                child_columns=("x", "y"),
+                namespace=ns,
+                orphan_policy=policy,
+            ),
+        ),
+        ordering=(),
+    )
+    sources = {"parent": parent, "child": child}
+
+    # The gate must reject this shape (never admit it).
+    assert not _gate_admits(plan, graph)
+    work = order_work(build_work_list(plan, _REG), graph)
+    codes = {r.code for r in check_out_of_core_compatibility(plan, work, graph).rejections}
+    assert "out_of_core_composite_fk_scalar_child_unsupported" in codes
+
+    outcome = _assert_parity_or_faithful_rejection(
+        plan, sources, graph, f"scalar-composite-{policy.name}"
+    )
+    assert outcome == "gate-rejected"
 
 
 @pytest.mark.parametrize("policy", list(OrphanPolicy))

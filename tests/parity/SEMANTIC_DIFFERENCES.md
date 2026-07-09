@@ -46,6 +46,15 @@ For an FK output column whose type resolves to `float64` (because a float value 
 
 Pinned by `test_out_of_core_fk_parity.py::test_matched_float_and_int_orphan_beyond_precision_fails_closed` (matched-float + int-orphan in one batch) and `test_non_representable_int_orphan_float_parent_fails_closed` (all-orphan, cross-batch cast). Fixing the oracle's silent rounding is out of scope for CF3; this note records that the divergence is deliberate (reject-rather-than-drift) and that the oracle should not be treated as authoritative here.
 
+### Composite FK child masked as independent scalar seeds is gated, not admitted (SC2 CF2)
+
+A composite (multi-column) FK edge can reach the out-of-core route in two shapes:
+
+- **`composite_fk_group` (canonical, compiler-produced):** one `GroupSeed` over the whole child key. **Full oracle-parity** across matched / orphan / partial-null / fully-null rows under every orphan policy (both routes treat a partial-null composite key as fully null). Admitted. Pinned by `test_composite_fk_group_orphan_and_partial_null_parity`.
+- **Independent `scalar` seeds on the child FK columns (double-masking):** each child FK column carries its own scalar strategy AND is a composite-FK child. Here the routes **diverge**: the pandas oracle scalar-masks each column *before* resolving the FK (FK children resolve last), so a PRESERVE/WARN orphan (and a partial-null key's non-null components) keeps the **scalar-masked** value, while the out-of-core route joins on and preserves the **raw** source key -- a **raw-value leak**. This is NOT admitted: the compat gate rejects it fail-closed with `out_of_core_composite_fk_scalar_child_unsupported`, so the job falls back to full-frame. Pinned by `test_composite_fk_scalar_child_gate_rejected`.
+
+This supersedes the earlier "composite partial-null orphan parity divergence" note in `out_of_core/_batch_join.py`: the divergence is real only for the scalar-double-masking shape, which is now gated; the canonical group shape is parity. Single-column scalar FK children are unaffected (they are FK-resolution-owned, not double-masked, and are covered by the single-edge parity property test).
+
 ### v2 output-FILE-bytes drift (S11 review M1; S13 disposition)
 
 The value-level parity above covers in-memory `outputs`. The platform's evidence manifest, however, hashes the WRITTEN output-file bytes (the manifest's `outputs[].hash` is a tamper-evident byte-hash of the file THIS run produced, not a cross-substrate logical-equality digest). Polars 1.x widens five Arrow types on `from_arrow`/`to_arrow` (`large_string`, `large_binary`, `large_list`, `dictionary<uint32,..>`, `time64[ns]`), so a file written by the polars writer can carry a different parquet/IPC schema than the pandas-path file for the SAME logical data, and the manifest hash therefore differs across substrates for those types.
