@@ -22,7 +22,6 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from decoy_engine.execution._pipeline import run_pipeline
-from decoy_engine.execution._runner import build_work_list
 from decoy_engine.execution._sequential import table_topo_order
 
 _N = 40
@@ -168,7 +167,6 @@ def test_m1_forced_out_of_core_lazy_source_loader(tmp_path: Path) -> None:
     graph = build_relationship_graph(
         profile.relationships, namespace_registry=ns_registry, orphan_policy_lookup=lookup
     )
-    _ = build_work_list  # keep import meaningful/stable
     expected_tables = set(table_topo_order(plan, graph))
     assert set(loaded) == expected_tables, f"loader tables {set(loaded)} != topo {expected_tables}"
 

@@ -28,6 +28,19 @@ that the full-frame path quarantines via the D8 pass but the out-of-core route
 has no row-error/quarantine channel for; date_shift additionally needs
 whole-column format detection). Admitting any of them would risk a
 route-dependent divergence, so they stay a fail-closed MISS.
+
+Known accepted gap (dennis review, 2026-07-09): the full-frame `fpe` handler
+emits a `fpe_join_group_active` QualityWarning (`_strategies/_fpe.py`) once per
+column when `fpe_join_group` is configured -- informational only (cross-column
+domain-separation waiver notice), no data/PII impact. `fpe_array` here has no
+static per-column emission point wired to the runner's `warnings` list (the
+runner only aggregates per-batch/per-edge totals, e.g. orphan-FK warnings), so
+a job using `fpe_join_group` on the out-of-core route gets no warning where
+full-frame would emit one -- a route-dependent `warnings` divergence (not an
+output-data divergence; `outputs` stay byte-identical, proven by parity).
+Tracked as a carry-forward, not fixed here: wiring it requires a static
+per-column pass before `_stream_table`'s batch loop, mirroring how
+`orphan_fk_warning` aggregates today.
 """
 
 from __future__ import annotations

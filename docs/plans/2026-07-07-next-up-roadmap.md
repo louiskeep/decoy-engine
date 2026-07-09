@@ -237,8 +237,34 @@ parity for all 3 ports across orphan policies + a no-op guard + gate-MISS pins f
 parent-key/non-deterministic/deferred shapes) and
 `tests/parity/test_out_of_core_group_b_routing.py` (run_pipeline routes an fpe
 payload to OOC with full-frame parity + M1). Mutation-verified (a shifted
-categorical index fails parity). Full `tests/unit` + `tests/parity` green; ruff /
+categorical index fails parity). Full `tests/unit` + `tests/parity` green on the
+CI-pinned stack (Python 3.10, pandas 2.3.3, numpy 2.2.6) - 0 failures; ruff /
 ruff format / mypy / module-size sentry clean.
+
+dennis adversarial review: **APPROVE, 0 BLOCKER / 0 HIGH / 1 MEDIUM / 3 LOW.**
+Independently re-verified the fail-closed MISS gating is airtight (positive
+whitelist in `_compat.py`, gate/runner enumeration proven identical, defense-in-depth
+at runtime) and re-proved byte-parity via live mutation (categorical off-by-one and
+fpe tweak-poisoning both correctly fail the parity suite). Endorsed the
+defer-3-strategies call as the correct engineering decision. 2 LOW findings (dead
+import, doc overstatement) fixed inline. Remaining findings tracked below rather
+than blocking merge, per dennis's own "acceptable as carry-forward" framing.
+
+**Carry-forward into SC4 (tracked, not a blocker):**
+- **MEDIUM** - the parity suite pins the common config shapes (charset=digits,
+  preserve_separators, default/label tokens, plain/weighted categorical) but not
+  every live branch of the ported kernels: fpe `validate_luhn`/`checksum`/non-digit
+  charsets/`fpe_join_group` tweak; text_redact NER path/detector-subset/non-string
+  token; categorical `from_profile`. These reuse identical primitives so almost
+  certainly correct today, but a future edit could diverge one branch without the
+  parity suite catching it. Fix: extend `_PAYLOADS` with configs exercising each of
+  these branches.
+- **LOW** - `fpe_join_group` on an out-of-core payload column silently drops the
+  full-frame `fpe_join_group_active` QualityWarning (informational only, no data/PII
+  impact - `outputs` stay byte-identical). Documented as an accepted gap in
+  `_mask_group_b.py`'s module docstring; wiring it needs a static per-column
+  emission pass before `_stream_table`'s batch loop, mirroring how
+  `orphan_fk_warning` aggregates today.
 
 ### Deliverables already shipped alongside this program
 - **PR #33** - the 100M program doc (`docs/plans/2026-07-06-100m-row-scaling-program.md`).
