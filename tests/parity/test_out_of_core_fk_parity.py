@@ -1213,7 +1213,7 @@ def _composite_group_case(
 
 
 @pytest.mark.parametrize("strategy", ["hash", "redact", "truncate", "passthrough"])
-@pytest.mark.parametrize("policy", [OrphanPolicy.PRESERVE, OrphanPolicy.WARN])
+@pytest.mark.parametrize("policy", [OrphanPolicy.PRESERVE, OrphanPolicy.WARN, OrphanPolicy.REMAP])
 def test_composite_fk_group_orphan_and_partial_null_parity(
     strategy: str, policy: OrphanPolicy
 ) -> None:

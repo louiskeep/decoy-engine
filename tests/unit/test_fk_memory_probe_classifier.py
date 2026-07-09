@@ -77,6 +77,13 @@ class TestClassifyCapabilityOutcome:
         stderr = "Traceback ...\nMemoryError: Unable to allocate 1.2 GiB"
         assert probe._classify_capability_outcome(1, None, stderr) == "oom"
 
+    def test_glibc_tls_abort_is_oom(self) -> None:
+        # glibc's TLS allocator aborts lowercase and exits 127, not via a
+        # Python traceback or a memory-pressure signal - the case the
+        # classifier missed before the `_GLIBC_TLS_OOM_MARKER` fix.
+        stderr = "fatal error: cannot allocate memory for thread-local data\n"
+        assert probe._classify_capability_outcome(127, None, stderr) == "oom"
+
     def test_traceback_with_arrow_wrap_failure_is_oom(self) -> None:
         stderr = (
             "Traceback (most recent call last):\n"
