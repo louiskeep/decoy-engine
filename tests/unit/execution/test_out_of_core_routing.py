@@ -389,15 +389,22 @@ class TestRunPipelineRejectBeforeRead:
     def test_ineligible_large_fk_job_rejects_before_read(self, tmp_path: Path) -> None:
         config = _generate_plus_mask_hash_config(tmp_path)
         sources = _sources(config)
+        # A sink proves "rejected before read" is not just an exception-timing
+        # claim: if the job had reached any write step, the sink would have
+        # created its target directory.
+        sink = ParquetTransactionalSink(tmp_path / "reject_out")
         # Lower the reject threshold so the 20-row fixture is "too big to
         # full-frame safely"; this stands in for a real 8M+-row FK job that
         # would OOM full-frame on a 32 GB box.
         with pytest.raises(ExecutionError) as exc:
-            run_pipeline(config, sources, engine_version="0.1.0", full_frame_reject_rows=10)
+            run_pipeline(
+                config, sources, engine_version="0.1.0", full_frame_reject_rows=10, sink=sink
+            )
         assert exc.value.code == "fk_full_frame_oom_risk_rejected"
         # The generate table is NOT produced: rejected BEFORE the mask/generate
         # step, not after (no partial work).
         assert "not sequential-eligible" in exc.value.message
+        assert not (tmp_path / "reject_out").exists()
 
     def test_full_frame_override_runs_instead_of_rejecting(self, tmp_path: Path) -> None:
         config = _generate_plus_mask_hash_config(tmp_path)

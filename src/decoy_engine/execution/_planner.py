@@ -127,10 +127,14 @@ RELATIONSHIP_ROUTE_DEFERRED: str = (
 #
 # OUT_OF_CORE: at/above this, an out-of-core-ELIGIBLE FK job routes to the
 # bounded-RAM DuckDB route instead of sequential. 5M projects to ~16.6 GB
-# full-frame (~half a 32 GB box) -- entering the risk zone -- and is 5-20x past
-# the measured out-of-core overhead-regression zone (250k-1M rows/table, where
-# the route is slower/heavier than full-frame, section 6.2), so the ~29%
-# out-of-core wall-clock tax is only paid once tables are genuinely large.
+# full-frame (~half a 32 GB box) -- entering the risk zone -- and is well clear
+# of BOTH measured out-of-core cost zones from section 6.2: sub-250k rows/table
+# is the memory-overhead zone (out-of-core is +11% to +30% HEAVIER than
+# full-frame there -- fixed per-run DuckDB overhead dominates at that scale),
+# and 250k-1M rows/table is the wall-clock-tax zone (out-of-core is actually
+# -1.9% to -11.4% LIGHTER on peak RSS there, but ~29% SLOWER wall-clock). 5M is
+# past both zones, so the route is only chosen once a job is large enough that
+# full-frame's memory risk outweighs the wall-clock tax.
 OUT_OF_CORE_THRESHOLD_ROWS_DEFAULT: int = 5_000_000
 
 # REJECT: at/above this, a large relationship job that can ONLY run full-frame
