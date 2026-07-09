@@ -29,7 +29,7 @@ prevention. Full spec + GATE-1 decisions: the 100M program doc (PR #33).
 |--------|------|--------|
 | **SC0** | Land the routing spine (`run_pipeline` substrate selection + auto-chunk + `_planner.classify_job` + P0 perf gates) | **DONE** - landed via engine PR #31 (engine main 0.3.0) |
 | **SC1** | Land the out-of-core FK runner as an **opt-in, unwired sibling** (`run_fk_out_of_core`, DuckDB-gated, budgeted); initial strategy set `hash/redact/truncate/passthrough`; parity harness | **DONE** - merged 2026-07-09 via engine PR #34 (fail-closed hardening pass, dennis APPROVE 0 BLOCKER/0 HIGH). See "SC1 status" below. |
-| **SC2** | Wire auto-routing: `classify_job` selects out-of-core for eligible large FK jobs; ineligible-but-large jobs reroute-to-sequential or reject-before-read with a reason (never silent OOM) | **QUEUED** - blocked on carry-forwards CF1/CF2/CF3 |
+| **SC2** | Wire auto-routing: the live router selects out-of-core for eligible large FK jobs; ineligible-but-large jobs reroute-to-sequential or reject-before-read with a reason (never silent OOM) | **DONE** - part 1 (CF1/CF2/CF3 hardening) merged via PR #37; part 2 (the actual auto-routing wire) on branch `sc2/wire-auto-routing`. See "SC2 status" below. |
 | **SC3** | Widen out-of-core to Group (b) strategies (`fpe`, `text_redact`, `date_shift`, `bucketize` + conditional `faker`/`categorical`), each with byte-parity vs full-frame | **QUEUED** |
 | **SC4** | Widen out-of-core to Group (c) strategies (`text_mask`, `geo_generalize`, `code_set`, `bucket_perturb`, `formula`/`derived`/`nested` where batch-local) - in v1 critical path per Cam | **QUEUED** |
 | **SC5** | Platform Sprint E: peak-MB estimator + admission gate (measure-only default; over-hard-ceiling reject before read; reroute OOC-eligible jobs to streaming). OOM **prevention**. | **QUEUED** (platform) |
@@ -106,6 +106,53 @@ All three carry-forwards resolved on PR #37 (branch `sc2/carryforward-hardening`
 open); dennis review pending before merge and before the actual auto-routing
 wiring (SC2 part 2) begins.
 
+### SC2 status - DONE (part 1 PR #37 merged; part 2 branch `sc2/wire-auto-routing`)
+
+**Part 1** (PR #37, merged): the CF1/CF2/CF3 fail-closed hardening above.
+
+**Part 2** (this branch): the actual auto-routing wire.
+
+- **Reconciliation of the two routing mechanisms.** The repo had two: the
+  planner's `classify_job` (whose `out_of_core_relationship` mode only ever
+  recorded `RELATIONSHIP_ROUTE_DEFERRED` and fell through to `pandas_fallback`)
+  and `_pipeline_routing.decide_execution_route` (the S2 mechanism that ALREADY
+  decides sequential-vs-full_frame for pure-mask FK jobs and is the live surface
+  `run_pipeline` early-returns on). Investigation confirmed `decide_execution_route`
+  is the **sole live router** for FK jobs -- `classify_job`'s FK branch never
+  routes. Decision: **extend `decide_execution_route`** with a third
+  `out_of_core` route + a fail-closed reject-before-read; leave `classify_job`
+  as the static EXPLAIN/chunked classifier but update its now-stale "FK stack on
+  another branch" disposition to point at the live router (`PLANNER_ROUTING_ENABLED`
+  stays `False`). Activating the planner's dormant FK branch as a second router
+  was rejected: it would duplicate the live decision and drift.
+- **Priority order** (`execution_mode="auto"`, pure-mask FK): **out_of_core**
+  (`check_out_of_core_compatibility` admits AND largest mask table
+  >= `out_of_core_threshold_rows`) > **sequential** (bounded but O(cardinality))
+  > **full_frame**. A large relationship job that no bounded route can take
+  (not out-of-core-eligible, disqualified from sequential) is **rejected before
+  the mask step** with coded `ExecutionError` `fk_full_frame_oom_risk_rejected`,
+  never left to a silent full-frame OOM. `execution_mode="out_of_core"` added as
+  an explicit fail-closed force (mirrors `"sequential"`); `"full_frame"` still
+  forces full-frame and bypasses the reject (operator escape hatch).
+- **Thresholds** (per largest mask table, in `_planner`, kwarg-overridable for
+  the SC5 estimator): `OUT_OF_CORE_THRESHOLD_ROWS_DEFAULT = 5_000_000`,
+  `FULL_FRAME_REJECT_ROWS_DEFAULT = 7_500_000`. Anchored to the documented
+  full-frame FK memory model (`docs/relationships-memory-scaling.md` §6:
+  `peak_RSS ~= 144 MB + 3.3 MB * rows/1000` for a 3-table width-16 hash chain,
+  OOM near ~9M rows/table / ~30 GB on 32 GB). 5M projects to ~16.6 GB (half the
+  32 GB box, past the measured 250k-1M out-of-core overhead-regression zone);
+  7.5M to ~24.9 GB (~78%, the danger zone below the ~9M cliff with margin for
+  wider payloads). Conservative interim constants; the memory-scaling doc is
+  explicit that precise box+schema-calibrated MB prediction is SC5's job.
+- **Strategy surface unchanged** (SC1's `hash/redact/truncate/passthrough`): an
+  unsupported strategy is a routing MISS (stays sequential/full_frame), never a
+  run failure. Widening is SC3/SC4.
+- **Verification:** ruff / ruff format / mypy clean; full `tests/unit` +
+  `tests/parity` green (new: `test_out_of_core_routing.py`,
+  `test_out_of_core_routing_parity.py` proving eligible-large routes to
+  out-of-core with byte-parity vs the oracle, ineligible-large rejects before
+  read, ineligible-small unchanged); memory sentinel unchanged.
+
 ### Deliverables already shipped alongside this program
 - **PR #33** - the 100M program doc (`docs/plans/2026-07-06-100m-row-scaling-program.md`).
 - **PR #19 (platform)** - the GCP benchmark harness (`scripts/gcp-bench/`:
@@ -162,7 +209,8 @@ panel). Includes visual/interaction QA.
 
 1. ~~**SC1** - execute the prove-or-reject hardening pass on PR #34~~ **DONE**,
    merged 2026-07-09.
-2. **SC2** - resolve CF1 + CF2 + CF3, wire auto-routing.
+2. ~~**SC2** - resolve CF1 + CF2 + CF3, wire auto-routing.~~ **DONE** (part 1
+   PR #37; part 2 branch `sc2/wire-auto-routing`).
 3. **SC3 → SC4** - widen the strategy surface (parity-tested).
 4. **SC5** (parallel) - platform estimator + admission gate, measure-only.
 5. **SC6 / Part B item 1** - GCP 100M benchmark run (needs auth + spend).
