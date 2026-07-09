@@ -118,8 +118,7 @@ def walk_dataframe(
     internal_sample = sample_rows is not None and frame_len > sample_rows
     external_sample = total_row_count is not None and total_row_count > frame_len
     will_sample = internal_sample or external_sample
-    if internal_sample:
-        assert sample_rows is not None  # internal_sample implies sample_rows is set
+    if sample_rows is not None and internal_sample:
         sample_indices = rng.sample(range(frame_len), sample_rows)
         sample_df = df.iloc[sample_indices]
     else:
