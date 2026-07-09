@@ -318,18 +318,23 @@ def run_pipeline(
     # bounded-memory route (out-of-core when large + compatible, else
     # sequential); a large FK job no bounded route can take is rejected before
     # read. This is an early return / a fail-closed raise. The SC2 admission +
-    # size signals are inert (False/None/None) off the relationship+mask shape,
-    # so non-FK jobs keep the pre-SC2 routing.
-    out_of_core_compatible, out_of_core_reject_code, largest_table_rows = (
-        _pipeline_routing.out_of_core_routing_signals(
-            profile,
-            plan=plan,
-            registry=resolved_registry,
-            graph=graph,
-            caller_sources=caller_sources,
-            table_kinds=table_kinds,
-            has_mask_table=has_mask_table,
-        )
+    # size signals are inert (False/None/None/True) off the relationship+mask
+    # shape, so non-FK jobs keep the pre-SC2 routing. The size signal now comes
+    # from the (SC7a bounded) profile metadata, so the gates fire on the lazy
+    # `source_loader` path too (SC7b, closing the F2 reject-before-read hole).
+    (
+        out_of_core_compatible,
+        out_of_core_reject_code,
+        largest_table_rows,
+        largest_table_rows_exact,
+    ) = _pipeline_routing.out_of_core_routing_signals(
+        profile,
+        plan=plan,
+        registry=resolved_registry,
+        graph=graph,
+        caller_sources=caller_sources,
+        table_kinds=table_kinds,
+        has_mask_table=has_mask_table,
     )
     route, route_reason = _pipeline_routing.decide_execution_route(
         profile,
@@ -344,6 +349,7 @@ def run_pipeline(
         out_of_core_compatible=out_of_core_compatible,
         out_of_core_reject_code=out_of_core_reject_code,
         largest_table_rows=largest_table_rows,
+        largest_table_rows_exact=largest_table_rows_exact,
         out_of_core_threshold_rows=out_of_core_threshold_rows,
         full_frame_reject_rows=full_frame_reject_rows,
     )

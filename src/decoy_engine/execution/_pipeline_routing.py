@@ -89,6 +89,16 @@ import pyarrow as pa
 
 from decoy_engine.errors import ConfigError
 from decoy_engine.execution._errors import ExecutionError
+
+# The size + out-of-core-admission signal helpers live in a sibling module to
+# hold the 600-LOC orchestration cap; re-exported here so `run_pipeline` keeps a
+# single `_pipeline_routing.<name>` call surface for the routing seam.
+from decoy_engine.execution._pipeline_routing_signals import (
+    largest_mask_table_rows,
+    largest_mask_table_rows_from_profile,
+    out_of_core_admission,
+    out_of_core_routing_signals,
+)
 from decoy_engine.execution._planner import (
     FULL_FRAME_REJECT_ROWS_DEFAULT,
     OUT_OF_CORE_THRESHOLD_ROWS_DEFAULT,
@@ -105,80 +115,10 @@ __all__ = [
     "decide_chunk_route",
     "decide_execution_route",
     "largest_mask_table_rows",
+    "largest_mask_table_rows_from_profile",
     "out_of_core_admission",
     "out_of_core_routing_signals",
 ]
-
-
-def out_of_core_admission(
-    plan: Plan,
-    *,
-    registry: ProviderRegistry,
-    graph: RelationshipGraph,
-) -> tuple[bool, str | None]:
-    """Static out-of-core compatibility check: `(compatible, primary_code)`.
-
-    Delegates to `check_out_of_core_compatibility` (the same fail-closed gate
-    SC1/SC2-part-1 hardened and the parity harness pins) so routing and the
-    runner's own pre-flight guard cannot disagree on the admitted surface. Pure
-    and cheap: a static read of the compiled plan + relationship graph (no
-    per-row work), safe to call on the dispatch path. `primary_code` names the
-    first rejection so the reject-before-read message and the forced-mode error
-    can explain WHY the route declined.
-    """
-    from decoy_engine.execution._runner import build_work_list, order_work
-    from decoy_engine.execution.out_of_core._compat import check_out_of_core_compatibility
-
-    work = order_work(build_work_list(plan, registry), graph)
-    compat = check_out_of_core_compatibility(plan, work, graph)
-    return compat.accepted, compat.primary_code
-
-
-def largest_mask_table_rows(
-    caller_sources: dict[str, pa.Table],
-    *,
-    table_kinds: dict[str, str],
-) -> int | None:
-    """Row count of the largest RESIDENT mask-kind source, or None if unknown.
-
-    The out-of-core / reject size gate keys off the largest mask table because
-    the full-frame FK memory model (docs/relationships-memory-scaling.md §6) is
-    linear in rows-per-table and dominated by the widest/tallest resident
-    frame. Returns None when no mask source is resident (e.g. a lazy
-    `source_loader` path with an empty `sources` dict): the caller then cannot
-    size-gate and falls back to the existing sequential/full-frame behavior
-    rather than guessing (an explicit `execution_mode='out_of_core'` remains the
-    escape hatch on the lazy path). `num_rows` is Arrow array metadata, so this
-    is O(tables), not O(rows).
-    """
-    mask_rows = [
-        src.num_rows for name, src in caller_sources.items() if table_kinds.get(name) == "mask"
-    ]
-    return max(mask_rows) if mask_rows else None
-
-
-def out_of_core_routing_signals(
-    profile: Any,
-    *,
-    plan: Plan,
-    registry: ProviderRegistry,
-    graph: RelationshipGraph,
-    caller_sources: dict[str, pa.Table],
-    table_kinds: dict[str, str],
-    has_mask_table: bool,
-) -> tuple[bool, str | None, int | None]:
-    """The `(out_of_core_compatible, reject_code, largest_table_rows)` triple
-    `decide_execution_route`'s SC2 gates consume.
-
-    Computed only for relationship jobs with a mask table -- a static plan +
-    Arrow-metadata read, so non-FK jobs pay nothing and keep the pre-SC2
-    routing. Off that shape the triple is the inert `(False, None, None)`
-    default, which makes every SC2 gate a no-op.
-    """
-    if not (getattr(profile, "relationships", None) and has_mask_table):
-        return False, None, None
-    compatible, reject_code = out_of_core_admission(plan, registry=registry, graph=graph)
-    return compatible, reject_code, largest_mask_table_rows(caller_sources, table_kinds=table_kinds)
 
 
 def _has_cross_table_fk_cycle(graph: RelationshipGraph) -> bool:
@@ -273,6 +213,7 @@ def decide_execution_route(
     out_of_core_compatible: bool = False,
     out_of_core_reject_code: str | None = None,
     largest_table_rows: int | None = None,
+    largest_table_rows_exact: bool = True,
     out_of_core_threshold_rows: int = OUT_OF_CORE_THRESHOLD_ROWS_DEFAULT,
     full_frame_reject_rows: int = FULL_FRAME_REJECT_ROWS_DEFAULT,
 ) -> tuple[str, str]:
@@ -294,10 +235,17 @@ def decide_execution_route(
     taking the existing sequential route; only large, fully-supported FK jobs
     divert to streaming.
 
-    `largest_table_rows` is None when no mask source is resident (a lazy
-    loader path): the size gates then never fire and routing falls back to the
-    pre-SC2 sequential/full-frame decision (an explicit
-    `execution_mode='out_of_core'` is the escape hatch there).
+    `largest_table_rows` carries the largest mask table's row count from the
+    (SC7a bounded) profile metadata even on the lazy `source_loader` path where
+    no source is resident -- so the SC2 size gates fire there too, closing the
+    F2 `None`-on-lazy-path hole. `largest_table_rows_exact` is False when that
+    count is a CSV byte-size estimate (CSV has no footer); an estimated
+    full-frame-bound table at/above `full_frame_reject_rows` is rejected with
+    the distinct `fk_full_frame_oom_risk_rejected_estimated` code (convert to
+    Parquet or set `execution_mode`), while an estimated OOC-eligible table
+    still reroutes to out-of-core as usual. `largest_table_rows` is None only
+    when there is genuinely no size signal (no mask table); the size gates then
+    never fire.
 
     A mutual cross-table FK cycle (A -> B -> A) cannot be ordered by
     table_topo_order, so `auto` must not route it to sequential (it ran
@@ -412,6 +360,31 @@ def decide_execution_route(
     # jobs are never rejected here: a large flat single table is the layer-2
     # auto-chunk route's concern, not a full-frame FK OOM.
     if has_relationships and largest_table_rows is not None and rows >= full_frame_reject_rows:
+        # An OOC-eligible job never lands here (it routed to out_of_core above,
+        # whose threshold is below this one), so an ESTIMATED (CSV) count that
+        # is good enough to prefer the bounded route already did so. Reaching
+        # the reject branch on an estimate means the job is full-frame-bound and
+        # the estimate says "too big" -- but a CSV byte-estimate can be wrong in
+        # both directions, so we fail toward an operator-visible choice with a
+        # distinct code rather than silently rejecting a source that might be
+        # fine, and point at the exact-count fix (Parquet) or the escape hatch.
+        if not largest_table_rows_exact:
+            raise ExecutionError(
+                code="fk_full_frame_oom_risk_rejected_estimated",
+                message=(
+                    f"FK job rejected before read: the largest mask table's row "
+                    f"count is a CSV size estimate (~{rows:,} rows), at or above "
+                    f"the full-frame reject threshold ({full_frame_reject_rows:,}); "
+                    f"full-frame FK masking at this scale would risk an "
+                    f"out-of-memory kill and no bounded route applies -- the job "
+                    f"is not out-of-core-eligible "
+                    f"({out_of_core_reject_code or 'not a pure-mask FK recipe'}) "
+                    f"and not sequential-eligible ({full_frame_reason}). Convert "
+                    f"the source to Parquet for an exact count or pass an explicit "
+                    f"`execution_mode` (e.g. 'full_frame' to override at your own "
+                    f"memory risk)."
+                ),
+            )
         raise ExecutionError(
             code="fk_full_frame_oom_risk_rejected",
             message=(
