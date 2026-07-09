@@ -29,7 +29,7 @@ prevention. Full spec + GATE-1 decisions: the 100M program doc (PR #33).
 |--------|------|--------|
 | **SC0** | Land the routing spine (`run_pipeline` substrate selection + auto-chunk + `_planner.classify_job` + P0 perf gates) | **DONE** - landed via engine PR #31 (engine main 0.3.0) |
 | **SC1** | Land the out-of-core FK runner as an **opt-in, unwired sibling** (`run_fk_out_of_core`, DuckDB-gated, budgeted); initial strategy set `hash/redact/truncate/passthrough`; parity harness | **DONE** - merged 2026-07-09 via engine PR #34 (fail-closed hardening pass, dennis APPROVE 0 BLOCKER/0 HIGH). See "SC1 status" below. |
-| **SC2** | Wire auto-routing: the live router selects out-of-core for eligible large FK jobs; ineligible-but-large jobs reroute-to-sequential or reject-before-read with a reason (never silent OOM) | **DONE** - part 1 (CF1/CF2/CF3 hardening) merged via PR #37; part 2 (the actual auto-routing wire) on branch `sc2/wire-auto-routing`. See "SC2 status" below. |
+| **SC2** | Wire auto-routing: the live router selects out-of-core for eligible large FK jobs; ineligible-but-large jobs reroute-to-sequential or reject-before-read with a reason (never silent OOM) | **DONE** - part 1 (CF1/CF2/CF3 hardening) merged via PR #37; part 2 (the auto-routing wire) merged 2026-07-09 via PR #38 (dennis re-review APPROVE, 0 BLOCKER/0 HIGH). See "SC2 status" below. |
 | **SC3** | Widen out-of-core to Group (b) strategies (`fpe`, `text_redact`, `date_shift`, `bucketize` + conditional `faker`/`categorical`), each with byte-parity vs full-frame | **QUEUED** |
 | **SC4** | Widen out-of-core to Group (c) strategies (`text_mask`, `geo_generalize`, `code_set`, `bucket_perturb`, `formula`/`derived`/`nested` where batch-local) - in v1 critical path per Cam | **QUEUED** |
 | **SC5** | Platform Sprint E: peak-MB estimator + admission gate (measure-only default; over-hard-ceiling reject before read; reroute OOC-eligible jobs to streaming). OOM **prevention**. | **QUEUED** (platform) |
@@ -106,11 +106,11 @@ All three carry-forwards resolved on PR #37 (branch `sc2/carryforward-hardening`
 open); dennis review pending before merge and before the actual auto-routing
 wiring (SC2 part 2) begins.
 
-### SC2 status - DONE (part 1 PR #37 merged; part 2 branch `sc2/wire-auto-routing`)
+### SC2 status - DONE (part 1 PR #37 merged; part 2 PR #38 merged 2026-07-09)
 
 **Part 1** (PR #37, merged): the CF1/CF2/CF3 fail-closed hardening above.
 
-**Part 2** (this branch): the actual auto-routing wire.
+**Part 2** (PR #38, merged 2026-07-09): the actual auto-routing wire.
 
 - **Reconciliation of the two routing mechanisms.** The repo had two: the
   planner's `classify_job` (whose `out_of_core_relationship` mode only ever
@@ -152,6 +152,29 @@ wiring (SC2 part 2) begins.
   `test_out_of_core_routing_parity.py` proving eligible-large routes to
   out-of-core with byte-parity vs the oracle, ineligible-large rejects before
   read, ineligible-small unchanged); memory sentinel unchanged.
+- **Module-size BLOCKER (dennis first pass) - RESOLVED.** `_pipeline.py` and
+  `_pipeline_routing.py` both breached the ~600 LOC orchestration cap on the
+  first fix attempt (653 / 773 LOC). Fixed via genuine decomposition, not an
+  allowlist: `_pipeline_route_exec.py` (route executors, 324 LOC) and
+  `_pipeline_finalize.py` (post-mask finalize: reproducibility stamps, BF1
+  fidelity report, D8 validator/quarantine, 210 LOC) split out. Final sizes
+  all ≤600, dennis re-review confirmed the split is a clean separation of
+  concerns (decision logic vs execution vs finalize), not a mechanical dodge.
+
+**Carry-forward into SC3 (tracked, not a blocker):**
+- **M1** - the `source_loader` lazy-load branch in
+  `_pipeline_route_exec.py` (~line 212, reached only via the
+  `execution_mode="out_of_core"` forced escape hatch when sources are not yet
+  resident) is dennis-verified correct - it resolves the same table set the
+  sequential path loads (`table_topo_order(plan, graph)`), the static compat
+  gate can't be invalidated by lazy-vs-resident sources, and a loader
+  exception fails closed before any sink opens - but **no test exercises it**;
+  every current forced-OOC test passes fully-resident sources. Fix: one test
+  driving `run_pipeline(..., sources={}, execution_mode="out_of_core",
+  source_loader=<fixture loader>)` asserting the loader is invoked for the
+  full `table_topo_order` set and reaches byte-parity with the resident
+  oracle. Do this before or alongside SC3 so the branch isn't shipped
+  untested indefinitely.
 
 ### Deliverables already shipped alongside this program
 - **PR #33** - the 100M program doc (`docs/plans/2026-07-06-100m-row-scaling-program.md`).
@@ -210,8 +233,10 @@ panel). Includes visual/interaction QA.
 1. ~~**SC1** - execute the prove-or-reject hardening pass on PR #34~~ **DONE**,
    merged 2026-07-09.
 2. ~~**SC2** - resolve CF1 + CF2 + CF3, wire auto-routing.~~ **DONE** (part 1
-   PR #37; part 2 branch `sc2/wire-auto-routing`).
-3. **SC3 → SC4** - widen the strategy surface (parity-tested).
+   PR #37; part 2 PR #38, both merged). M1 (untested lazy-loader branch)
+   carried forward, see "SC2 status" above.
+3. **SC3 → SC4** - widen the strategy surface (parity-tested). Fold in the
+   M1 test carry-forward.
 4. **SC5** (parallel) - platform estimator + admission gate, measure-only.
 5. **SC6 / Part B item 1** - GCP 100M benchmark run (needs auth + spend).
 6. **Part B items 2-4** - UI-to-engine wiring, CLI testing, web UI/UX.
