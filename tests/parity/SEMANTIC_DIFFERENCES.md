@@ -37,6 +37,15 @@ The v2 parity gate is **value-level**: `assert_frames_semantically_equal` compar
 
 Non-deterministic strategies (unseeded `shuffle`, etc.) are NOT in the parity set: their output varies per run by design, so a cross-adapter equality assertion is meaningless. Parity fixtures use deterministic mode.
 
+### Pandas FK oracle is NOT authoritative for an int key past float precision (SC2 CF3)
+
+For an FK output column whose type resolves to `float64` (because a float value was possible on either side), a whole-number integer key beyond `2**53` cannot live in a double without loss. The two routes handle this differently, and **the pandas oracle is the one that silently corrupts**:
+
+- **Pandas oracle:** rounds the key on the pandas round trip (e.g. `9007199254740993` -> `9007199254740992.0`). This is a silent **referential-integrity drift** -- the emitted FK key no longer equals the source key -- not a crash. So the oracle is not a clean "ground truth" for this exact shape.
+- **Out-of-core route:** fails closed with `ExecutionError(code="out_of_core_fk_key_dtype_unsupported")` rather than publish a rounded (drifted) key. This is enforced in two places: the cross-batch cast (`_join.py::cast_fk_chunk`) and, since CF3, the per-batch build (`_join.py::_append_output_batch`, where a matched-float + orphan-int-past-`2**53` mix in one batch would otherwise raise a raw, uncoded `ArrowInvalid` from `pa.array(..., from_pandas=True)`).
+
+Pinned by `test_out_of_core_fk_parity.py::test_matched_float_and_int_orphan_beyond_precision_fails_closed` (matched-float + int-orphan in one batch) and `test_non_representable_int_orphan_float_parent_fails_closed` (all-orphan, cross-batch cast). Fixing the oracle's silent rounding is out of scope for CF3; this note records that the divergence is deliberate (reject-rather-than-drift) and that the oracle should not be treated as authoritative here.
+
 ### v2 output-FILE-bytes drift (S11 review M1; S13 disposition)
 
 The value-level parity above covers in-memory `outputs`. The platform's evidence manifest, however, hashes the WRITTEN output-file bytes (the manifest's `outputs[].hash` is a tamper-evident byte-hash of the file THIS run produced, not a cross-substrate logical-equality digest). Polars 1.x widens five Arrow types on `from_arrow`/`to_arrow` (`large_string`, `large_binary`, `large_list`, `dictionary<uint32,..>`, `time64[ns]`), so a file written by the polars writer can carry a different parquet/IPC schema than the pandas-path file for the SAME logical data, and the manifest hash therefore differs across substrates for those types.

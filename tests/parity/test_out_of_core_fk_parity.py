@@ -993,6 +993,70 @@ def test_non_representable_int_orphan_float_parent_fails_closed(policy: OrphanPo
     assert outcome == "ooc-fail-closed"
 
 
+@pytest.mark.parametrize("policy", [OrphanPolicy.PRESERVE, OrphanPolicy.WARN])
+def test_matched_float_and_int_orphan_beyond_precision_fails_closed(policy: OrphanPolicy) -> None:
+    """SC2 CF3: a single result batch that mixes a MATCHED float parent value
+    with an orphan integer key past float precision (> 2**53) must fail closed
+    with the coded `out_of_core_fk_key_dtype_unsupported`, not crash with a raw
+    ArrowInvalid.
+
+    Distinct from `test_non_representable_int_orphan_float_parent_fails_closed`
+    above (every child row an orphan): here row 0 is a MATCH (child int 1 folds
+    to the float parent key 1.0, resolving to the parent's masked float value)
+    while row 1 is an orphan int 9007199254740993 that `fk_key_value` keeps as
+    int. Both land in ONE batch's output list, so `_append_output_batch`'s
+    per-batch `pa.array([1.0, 9007199254740993], from_pandas=True)` raises
+    ArrowInvalid during type inference -- BEFORE the cross-batch cast where
+    `cast_fk_chunk`'s guard lives. Without the fix the route surfaces that raw,
+    uncoded ArrowInvalid; the fix converts it to the same coded fail-closed
+    rejection the cross-batch path already raises.
+
+    The pandas oracle is NOT a clean ground truth for this shape: it silently
+    ROUNDS the orphan key (9007199254740993 -> 9007199254740992.0), a referential-
+    integrity drift, rather than crashing. Fixing the oracle is out of scope; the
+    route's contract here is "reject rather than drift", so it fails closed while
+    the oracle quietly rounds. See tests/parity/SEMANTIC_DIFFERENCES.md.
+    """
+    ns = "ns_matched_float_int_orphan"
+    seed = _seed("passthrough")
+    parent = pa.table({"pk": pa.array([1.0, 2.0], type=pa.float64())})
+    # Row 0 matches parent 1.0 (int 1 folds to 1.0); row 1 is an orphan odd int
+    # beyond 2**53 that stays int under fk_key_value.
+    child = pa.table({"fk": pa.array([1, 9007199254740993], type=pa.int64())})
+    plan = _plan(
+        (
+            ("parent", TableSeed(per_column=(("pk", seed),), per_group=())),
+            ("child", TableSeed(per_column=(("fk", seed),), per_group=())),
+        )
+    )
+    graph = RelationshipGraph(
+        edges=(
+            RelationshipEdge(
+                parent_table="parent",
+                parent_columns=("pk",),
+                child_table="child",
+                child_columns=("fk",),
+                namespace=ns,
+                orphan_policy=policy,
+            ),
+        ),
+        ordering=(),
+    )
+    sources = {"parent": parent, "child": child}
+
+    # The oracle succeeds by silently rounding the orphan key (documented drift,
+    # not authoritative): pin that it does NOT crash, so the divergence is
+    # explicit rather than assumed.
+    oracle_fk = _run_oracle(plan, sources, graph).outputs["child"].column("fk").to_pylist()
+    assert oracle_fk == [1.0, 9007199254740992.0]
+
+    # The out-of-core route must fail closed with the coded rejection, never a
+    # raw ArrowInvalid.
+    with pytest.raises(ExecutionError) as exc:
+        _run_ooc(plan, sources, graph)
+    assert exc.value.code == "out_of_core_fk_key_dtype_unsupported"
+
+
 def test_underscore_column_staged_path_non_collision() -> None:
     """Two composite FK edges from the SAME parent whose parent-column tuples
     underscore-collide -- ('a_b','c') and ('a','b_c') both render 'a_b_c' -- must

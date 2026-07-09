@@ -301,7 +301,30 @@ def _append_output_batch(
                 for idx, component in enumerate(out):
                     component.append(fk_key_value(source_components[idx][row]))
     for idx, component in enumerate(out):
-        output_chunks[idx].append(pa.array(component, from_pandas=True))
+        try:
+            output_chunks[idx].append(pa.array(component, from_pandas=True))
+        except (pa.ArrowInvalid, pa.ArrowTypeError) as exc:
+            # Same fail-closed contract as `cast_fk_chunk`'s cross-batch guard,
+            # pulled forward to the per-batch build: a SINGLE result batch can
+            # already mix FK output values Arrow cannot reconcile into one array
+            # -- a matched float parent value beside an orphan integer key past
+            # exactly-representable float precision (> 2**53), for one -- so
+            # `pa.array` inference raises a raw ArrowInvalid here, before any
+            # cross-batch cast is reached. Surface the existing coded rejection
+            # instead of the uncoded crash. The pandas oracle silently ROUNDS
+            # this key rather than crashing, so it is not a clean ground truth
+            # for this shape; the route rejects rather than drift (see
+            # tests/parity/SEMANTIC_DIFFERENCES.md).
+            raise ExecutionError(
+                code="out_of_core_fk_key_dtype_unsupported",
+                message=(
+                    "out-of-core FK output batch mixes key values Arrow cannot "
+                    "reconcile into one array (e.g. a matched float parent value "
+                    "with an orphan integer child key beyond exactly-representable "
+                    "float precision, > 2**53); rejected rather than crashing with "
+                    "a raw ArrowInvalid."
+                ),
+            ) from exc
     return orphans
 
 
