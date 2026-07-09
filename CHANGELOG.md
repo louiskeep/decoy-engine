@@ -19,6 +19,29 @@ External architecture review (`docs/engine-consultant-findings-2026-07-09.md`, c
 
 **F1/F2: Bounded-memory profiling design approved, build pending.** `run_pipeline()` profiles sources before making the execution route decision, so a large job can OOM during profiling before reaching the bounded-memory out-of-core route. Design doc `docs/plans/2026-07-09-consultant-f1-f2-bounded-profiling.md` proposes introducing lazy profiling abstractions and rejecting large jobs before eager source reads. GATE-F approval is in place; build (SC7a/b/c) is separate work on a different track.
 
+### Added (SC7a bounded-profiling core, 2026-07-09)
+
+Consultant-2026-07-09 F1 identifies a critical gap: `run_pipeline()` eagerly materializes every declared source into a full pandas DataFrame during profiling before the execution route (full-frame, sequential, or out-of-core) is even decided, so a large job can OOM during profiling *before* reaching the bounded-memory routes the SC0-SC6 program built. This commit makes profiling itself bounded-memory (SC7a of a 3-sprint program; SC7b wires the profile's row-count into route admission, SC7c validates end-to-end `run_pipeline()` boundedness).
+
+**New `ProfileSource` protocol** (`src/decoy_engine/profile/_readers.py`): separates the three things profiling needs from the full-frame load they are entangled in today. Four methods: `row_count()` (returns exact count for Parquet/fixed_width via cheap metadata, flags CSV estimates), `schema()` (footer/header read), `sample_frame(n)` (bounded read of up to n rows), `to_frame()` (full eager read for small-job opt-out). Implementations:
+
+- **File/Parquet:** `row_count()` via `pyarrow.parquet.read_metadata().num_rows` (footer only, exact), `schema()` via footer, `sample_frame(n)` via `ParquetFile.iter_batches` (bounded batch streaming).
+- **File/fixed_width:** `row_count()` via `filesize // record_length` from the declared layout (O(1), exact), `schema()` from `FixedWidthLayout`, `sample_frame(n)` via layout-based byte slicing.
+- **File/CSV:** `row_count()` via `stat().st_size // mean_row_bytes` (O(1) byte estimate, flagged non-exact), `schema()` from header + sampled dtypes, `sample_frame(n)` via `pd.read_csv(nrows=n)`.
+- **S3/GCS equivalents:** Parquet footer and row groups fetched via ranged byte reads (never whole-object download); CSV estimates via `head_object`/`blob.size`.
+
+`LazySource` (previously internal to the out-of-core runner) is **promoted** to the shared profile location as the Parquet-file `ProfileSource` implementation. The out-of-core runner now imports from the new home (`src/decoy_engine/profile/_readers.py`), eliminating duplication risk between the two lazy readers.
+
+**`profile_source()` now defaults to bounded residency.** New kwarg `residency="bounded"` (default): for each descriptor, build its `ProfileSource`, read `row_count()` (cheap) and `schema()`, then feed `sample_frame(sample_rows=10_000)` (bounded, default 10k-row sample) to `walk_dataframe`. The `TableProfile.row_count` is set from `row_count().value` (the *true total*, exact or estimated per source type), not `len(sample_frame)`; `distinct_count` and `null_count` remain sample-derived, so the quality profile is unchanged in *meaning* from the existing sampled default. The new additive `TableProfile.row_count_exact: bool` field (excluded from `profile_hash` since it is provenance, not data shape) lets downstream code tell an exact Parquet/fixed_width count from a CSV estimate.
+
+`residency="full"` (explicit opt-out) preserves the historical path (`to_frame()` per source) for callers that need whole-column statistics on a source small enough to hold. `sample_rows=None` + `residency="bounded"` (a contradictory request) degrades to a bounded scan with a `UserWarning` (`warnings.warn`, the same mechanism `profile_source` already uses for its seed warning) rather than OOMing on a large source.
+
+**Profiling no longer eagerly materializes large sources.** Parquet profiling of a 50M-row source (the current benchmark target) now reads only the footer + a 10k-row batch sample, never calls `pd.read_parquet` on the whole file, and stays bounded-memory. A monkeypatch test (`tests/unit/profile/test_bounded_profiling.py`) proves Parquet paths never call full-frame reads on the profiling path.
+
+**`out_of_core/_source.py` is now a pure re-export shim.** The module re-exports `LazySource` from the new shared home; the out-of-core execution path is **entirely unmodified** (verified: this is the same code path the live 50M-row GCP benchmark validation run exercises, and it is untouched).
+
+**Note: SC7a makes profiling bounded, not `run_pipeline()` end-to-end.** SC7b (wiring the profile's row-count into the route-admission decision) and SC7c (end-to-end `run_pipeline()` memory-cap proof) have not landed. The "reject before read" gate (`fk_full_frame_oom_risk_rejected`) still fires after profiling completes; once SC7b lands, it will fire after profiling touches only cheap metadata and a bounded sample. `run_pipeline()` is not yet provably bounded-memory on the whole stack.
+
 ### Added (SC4 Group (c) out-of-core strategies, 2026-07-09)
 
 Out-of-core FK route now admits Group (c) payload strategies with proven byte-parity:
