@@ -453,6 +453,50 @@ panel). Includes visual/interaction QA.
 
 ---
 
+## Part C - External consultant review findings (2026-07-09)
+
+An external architecture review (`docs/engine-consultant-findings-2026-07-09.md`,
+Codex/gpt-5.5, reviewed at main `02b18cc`) surfaced 9 findings. Every finding
+spot-checked against the code was accurate (F1, F3, F4, F8 independently
+re-verified file:line by Claude before any of this was actioned). Status:
+
+| Finding | Severity | What | Status |
+|---------|----------|------|--------|
+| **F1/F2** | HIGH | `run_pipeline()` profiles (eagerly, full pandas read) BEFORE route selection, so a huge file/S3/GCS-backed FK job can OOM during profiling before ever reaching the bounded-memory out-of-core route. **Confirms and generalizes the SC5 platform finding above** ("`_load_file_source` does an unbounded full-file read... would defeat the point of a pre-read admission gate") - that was platform working around this exact engine-level gap rather than it being fixed at the source. Note: the GCP bench harness (SC6 / this program) calls `run_fk_out_of_core`/`run_fk_sequential` directly, bypassing `profile_source()` entirely, so the 50M/100M benchmark numbers are NOT proof this is fixed - they validate the execution route, not the public `run_pipeline()` entrypoint most callers use. | **IN PROGRESS** - design doc being written (Opus tech-lead pass) at `docs/plans/2026-07-09-consultant-f1-f2-bounded-profiling.md`. Do not claim `run_pipeline()` is bounded-memory on the proof page until this lands. |
+| F3 | MEDIUM | Execution routing decision surface is split across `classify_job()` (mostly inert, `PLANNER_ROUTING_ENABLED=False`) and `decide_execution_route()` (the actual live router) - drift risk as more strategies/substrates land. | Backlog. Real refactor (consolidate into one `ExecutionPlanner`), not a quick fix; scope as its own sprint after F1/F2 lands (touches the same modules). |
+| F4 | MEDIUM | `SchemaInspector`/`LicenseVerifier` are public stub exports with no GA release gate. | **DONE** - `tests/sentry/test_ga_stub_exports.py` added; fails at GA flip unless resolved. Branch `sc7/consultant-f8-f4-cleanup`. |
+| F5 | MEDIUM | Polars is not a full native execution substrate; many strategies port through pandas (`PandasStrategyPort`), which affects performance expectations if surfaced as "Polars substrate" without qualification. | Backlog. Needs a machine-readable per-strategy substrate matrix + telemetry distinguishing native/ported/fallback. |
+| F6 | MEDIUM | Out-of-core is a well-gated strategy subset, not a general route; external callers could overestimate eligibility from strategy membership alone. | Backlog, but low-urgency - this accurately describes the deliberate SC1→SC3→SC4 incremental widening, not a design mistake. Worth a public admission API once the strategy surface stabilizes. |
+| F7 | MEDIUM | No DB/SFTP sources/targets (file/S3/GCS only) - explicitly deferred in code comments already ("SFTP rides S18; DB rides V2.1"). | Backlog, already-known scope boundary, not new information. |
+| F8 | LOW | Stale `decoy_engine.graph.*` mypy overrides for a removed module tree. | **DONE, and widened** - the sentry test written to guard this (`tests/sentry/test_mypy_override_targets.py`) found 13 MORE dangling overrides beyond the graph.* ones the review sampled (V1 `connectors`/`generators`/`masker`/`transforms`/`plan` modules deleted by the S9.5 bulk-delete, never cleaned from `pyproject.toml`). All removed, verified against `git log --diff-filter=D`, mypy still clean (327 files). Branch `sc7/consultant-f8-f4-cleanup`. |
+| F9 | LOW | Module-size ratchet allowlist has 5 large files in risk-heavy areas (detection, quality reporting, training, plan checks). | Backlog - ratchet already prevents further growth (see `tests/sentry/test_module_size.py`); this is "decompose eventually," not urgent. Prioritize `plan/_checks.py` if picked up (compile checks are fail-closed-safety-central per the review). |
+
+### SC7a status - F8 + F4 cleanup - DONE, branch `sc7/consultant-f8-f4-cleanup`
+
+Two independent, low-risk, mechanical fixes bundled into one branch since both
+are sentry-test additions with no behavior change:
+- F8: removed 21 total dangling `[[tool.mypy.overrides]]` entries (7 `graph.*`
+  from the review + 13 more the new sentry test found: `connectors.{csv_connector,
+  database,factory,fixed_width}`, `generators.{generator,relationships}`,
+  `internal.{large_file_processor,validator}`, `masker.masker`,
+  `plan._registry_stub`, `transforms.{categorical,faker_based,hash,registry}`).
+  Every removed entry verified against `git log --diff-filter=D` before deletion.
+  New sentry: `tests/sentry/test_mypy_override_targets.py`.
+- F4: new sentry `tests/sentry/test_ga_stub_exports.py` - pins the current
+  `SchemaInspector`/`LicenseVerifier` stub registry pre-GA, fails hard at the
+  `RELEASE_PHASE` flip to `"ga"` unless each entry is resolved and removed.
+
+Verification: `mypy src/decoy_engine` clean (327 files), full `tests/sentry/`
+suite green (1403 passed / 1 skipped), ruff + ruff format clean.
+
+### SC7b status - F1/F2 bounded-memory profiling fix - IN PROGRESS
+
+Design pass in flight (Opus tech-lead), scoped to F1/F2 only (not F3's broader
+routing consolidation, even though they touch adjacent modules - kept separate
+so the fix that actually matters for the proof-page claim isn't blocked on a
+bigger refactor). See the design doc once written:
+`docs/plans/2026-07-09-consultant-f1-f2-bounded-profiling.md`.
+
 ## Resume checklist
 
 1. ~~**SC1** - execute the prove-or-reject hardening pass on PR #34~~ **DONE**,

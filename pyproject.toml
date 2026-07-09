@@ -396,21 +396,11 @@ strict_equality = true
 module = [
     # SP-04 / P5.INFRA.1: checksum registry (new public module).
     "decoy_engine.checksums",
-    # V2.0-A Sprint A modules (runner decomposition).
-    "decoy_engine.graph.run_state",
-    "decoy_engine.graph.memory_monitor",
-    "decoy_engine.graph._fk_validators",
-    "decoy_engine.graph.executor",
-    "decoy_engine.graph.planner",
-    "decoy_engine.graph.runner",
-    # V2.0-B Sprint B modules (validator split + normalize_config).
-    "decoy_engine.graph.normalize",
-    "decoy_engine.graph.validators",
-    "decoy_engine.graph.validators._shared",
-    "decoy_engine.graph.validators.top_level",
-    "decoy_engine.graph.validators.nodes",
-    "decoy_engine.graph.validators.edges",
-    "decoy_engine.graph.validators.cross_node",
+    # consultant-2026-07-09 F8: the V2.0-A/B `decoy_engine.graph.*` runner
+    # decomposition modules these overrides targeted were removed; a strict
+    # override pointing at a nonexistent module resolves silently, which
+    # made this allowlist look like live strict coverage when it was dead
+    # config. See docs/engine-consultant-findings-2026-07-09.md.
     # V2.0-C Sprint C modules (public boundary + helpers split).
     "decoy_engine.errors",
     "decoy_engine.providers",
@@ -451,7 +441,6 @@ module = [
     "decoy_engine.plan",
     "decoy_engine.plan._types",
     "decoy_engine.plan._errors",
-    "decoy_engine.plan._registry_stub",
     "decoy_engine.plan._checks",
     "decoy_engine.plan._compile",
     "decoy_engine.plan._serialize",
@@ -675,19 +664,10 @@ ignore_missing_imports = true
 # V2.0-B/C entries shrink as those sprints land.
 # ---------------------------------------------------------------------------
 
-# masker.masker — V2.1 hard delete (legacy IOHandler-bound Masker).
-[[tool.mypy.overrides]]
-module = ["decoy_engine.masker.masker"]
-disable_error_code = ["attr-defined"]
-
-# generators.* — V2.1 hard delete (legacy DataGenerator).
-[[tool.mypy.overrides]]
-module = ["decoy_engine.generators.generator"]
-disable_error_code = ["var-annotated"]
-
-[[tool.mypy.overrides]]
-module = ["decoy_engine.generators.relationships"]
-disable_error_code = ["call-arg"]
+# consultant-2026-07-09 F8: masker.masker and generators.{generator,
+# relationships} were removed by the S9.5 V1 bulk-delete; their overrides
+# below were left dangling (a dangling override resolves silently under
+# mypy). See docs/engine-consultant-findings-2026-07-09.md.
 
 # generators.columns — V2.1 hard delete. `index` debt surfaced by
 # V2.0-C tightening deterministic_hash to return str | None; the
@@ -716,21 +696,8 @@ disable_error_code = ["attr-defined", "arg-type"]
 module = ["decoy_engine.generators._formula"]
 disable_error_code = ["attr-defined", "index"]
 
-# transforms.{hash,categorical,faker_based} — V2.1 candidates for the
-# legacy V1 Masker stack. `index` / `return-value` debt is the same
-# str|None pattern surfaced by the V2.0-C deterministic_hash tightening;
-# the V2.0-D transform-pipeline refactor clears them.
-[[tool.mypy.overrides]]
-module = ["decoy_engine.transforms.hash"]
-disable_error_code = ["index"]
-
-[[tool.mypy.overrides]]
-module = ["decoy_engine.transforms.categorical"]
-disable_error_code = ["return-value"]
-
-[[tool.mypy.overrides]]
-module = ["decoy_engine.transforms.faker_based"]
-disable_error_code = ["index"]
+# consultant-2026-07-09 F8: transforms.{hash,categorical,faker_based}
+# were removed by the S9.5 V1 bulk-delete; overrides left dangling.
 
 # internal.* type-debt allowlist. V2.0-C split internal/helpers.py into
 # crypto/fs/faker_setup (now strict-gated). What remains in internal/
@@ -741,10 +708,8 @@ disable_error_code = ["index"]
 module = ["decoy_engine.internal.base"]
 disable_error_code = ["import-untyped"]
 
-# V1 legacy Masker large-file path. V2.1 delete.
-[[tool.mypy.overrides]]
-module = ["decoy_engine.internal.large_file_processor"]
-disable_error_code = ["assignment"]
+# consultant-2026-07-09 F8: internal.large_file_processor was removed by
+# the S9.5 V1 bulk-delete; override left dangling.
 
 # V1 legacy logging wrapper. V2.0-D / V2.1 audits replacement with the
 # context.Logger Protocol everywhere.
@@ -752,12 +717,11 @@ disable_error_code = ["assignment"]
 module = ["decoy_engine.internal.logging"]
 disable_error_code = ["assignment"]
 
-# V1 legacy MaskerConfigValidator + GeneratorConfigValidator. V2.1
-# delete; the V2 graph validator stack (decoy_engine.graph.validators)
-# is the replacement.
-[[tool.mypy.overrides]]
-module = ["decoy_engine.internal.validator"]
-disable_error_code = ["attr-defined", "index"]
+# consultant-2026-07-09 F8: internal.validator (V1 MaskerConfigValidator +
+# GeneratorConfigValidator; its replacement was decoy_engine.graph.validators,
+# which the F8 mypy-override cleanup above also removed as dangling — the
+# whole V1 validator generation is gone) was removed by the S9.5 V1
+# bulk-delete; override left dangling.
 
 # connectors.* — V1.5 DB-connector cleanup + V2.0-C boundary; for now
 # every connector enumerates its own debt categories independently so the
@@ -766,21 +730,9 @@ disable_error_code = ["attr-defined", "index"]
 module = ["decoy_engine.connectors"]
 disable_error_code = ["misc"]
 
-[[tool.mypy.overrides]]
-module = ["decoy_engine.connectors.csv_connector"]
-disable_error_code = ["arg-type"]
-
-[[tool.mypy.overrides]]
-module = ["decoy_engine.connectors.database"]
-disable_error_code = ["assignment"]
-
-[[tool.mypy.overrides]]
-module = ["decoy_engine.connectors.factory"]
-disable_error_code = ["assignment"]
-
-[[tool.mypy.overrides]]
-module = ["decoy_engine.connectors.fixed_width"]
-disable_error_code = ["arg-type", "no-redef", "return-value", "var-annotated"]
+# consultant-2026-07-09 F8: connectors.{csv_connector,database,factory,
+# fixed_width} were removed by the S9.5 V1 bulk-delete; overrides left
+# dangling. connectors.{gcs,s3,sftp} below are current and stay.
 
 [[tool.mypy.overrides]]
 module = ["decoy_engine.connectors.gcs"]
@@ -794,11 +746,8 @@ disable_error_code = ["import-untyped"]
 module = ["decoy_engine.connectors.sftp"]
 disable_error_code = ["attr-defined", "call-arg", "import-untyped"]
 
-# transforms.registry — V2.0-B validator-split sprint refactors the
-# strategy registry; abstract + var-annotated debt clears with it.
-[[tool.mypy.overrides]]
-module = ["decoy_engine.transforms.registry"]
-disable_error_code = ["abstract", "assignment", "attr-defined", "var-annotated"]
+# consultant-2026-07-09 F8: transforms.registry was removed by the S9.5
+# V1 bulk-delete; override left dangling.
 
 [tool.coverage.run]
 source = ["src/decoy_engine"]
