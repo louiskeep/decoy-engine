@@ -191,7 +191,7 @@ In `run_pipeline`, the sequence stays in the same order but the eager read is go
    size signal now comes from the profile's `row_count` (via a new
    `largest_mask_table_rows_from_profile(profile, table_kinds)`) instead of only from resident
    `caller_sources`. The reconciliation is per mask table (H1): a resident table uses its `num_rows`,
-   a lazy table uses its profile `row_count`, and the size signal is the max across them — so a mixed
+   a lazy table uses its profile `row_count`, and the size signal is the max across them, so a mixed
    job with a huge lazy table plus a tiny resident one cannot under-size the gate. On a resident table
    an exact profile-count disagreement warns (does not hard-assert) and routes on the resident count;
    when `caller_sources` is empty (lazy path) the profile row-count is used — closing the `None` hole.
