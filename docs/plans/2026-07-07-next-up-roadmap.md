@@ -541,11 +541,9 @@ Verification: `ruff check`/`ruff format --check` clean, `mypy` clean (329
 files), full non-perf regression run 2499 passed / 2 skipped / 1 failed (the
 pre-existing `pydantic_settings`-missing-in-venv failure above, unrelated).
 
-**SC7b (wire profile row-count into route admission) and SC7c (end-to-end
-`run_pipeline()` memory proof) - NOT STARTED.** Do not claim `run_pipeline()`
-is bounded-memory on the proof page until SC7b/c land - SC7a alone makes
-profiling itself bounded but does not yet feed that into the route decision
-or prove the composed result end-to-end.
+**SC7b (wire profile row-count into route admission) - DONE**, commits `16305ae`..`8a46b3e`, dennis-approved 2026-07-09, PR open awaiting Cam GATE-2. Lazy-path FK jobs (`sources={}`, `source_loader` set) now get the same OOM-prevention size gates as resident-path jobs. New helper `largest_mask_table_rows_from_profile()` feeds SC7a's bounded `TableProfile.row_count` into the route-admission decision. Per-table reconciliation (H1 correctness fix): each mask table sources its row-count from resident `caller_sources[name].num_rows` if resident, else its profile `row_count`, and the largest-table signal is the max across tables - this closes the H1 gap where a large lazy child could hide behind a tiny resident parent and re-open the F2 OOM hole. Estimated (CSV) full-frame-bound tables raise `fk_full_frame_oom_risk_rejected_estimated` with a Parquet-conversion message; estimated OOC-eligible tables still reroute. New module `src/decoy_engine/execution/_pipeline_routing_signals.py` holds size and admission helpers. dennis review: APPROVE 0 BLOCKER / 0 HIGH / 2 LOW. Tests: `tests/unit/execution/test_lazy_path_route_admission.py` covers all five SC7b acceptance criteria. Full regression run 5926 passed / 38 skipped / 0 failed.
+
+**SC7c (end-to-end `run_pipeline()` memory proof) - NOT STARTED.** Do not claim `run_pipeline()` is bounded-memory on the proof page until SC7c lands. SC7b wires the bounded-profile row-count into the route decision, and profiling now touches only cheap metadata and a sample on the lazy path, but end-to-end boundedness proof awaits SC7c's sentinel tests (public `run_pipeline()` under resource limits + proof profiling did not materialize).
 
 ## Resume checklist
 
