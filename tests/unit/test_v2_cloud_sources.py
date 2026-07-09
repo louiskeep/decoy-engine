@@ -263,30 +263,37 @@ class TestCloudSourceEndToEnd:
         # auto-reverts on teardown regardless of how the test exits.
         platform_root = __import__("pathlib").Path(__file__).resolve().parents[3] / "decoy-platform"
         monkeypatch.syspath_prepend(str(platform_root))
+        # _read_sources_as_arrow only imports api.config (which needs the
+        # platform-only `pydantic-settings` dependency, not installed in the
+        # engine's venv) lazily on call, deep inside _staging_dir_for -- not
+        # at the top-level import above. The try/except below therefore has
+        # to wrap the call too, or a missing platform dependency surfaces as
+        # a real test FAILURE instead of the intended skip.
         try:
             from api.jobs.v2_runner import _read_sources_as_arrow
+
+            client, bucket = _moto_s3
+            key = "data/customers.csv"
+            client.put_object(
+                Bucket=bucket,
+                Key=key,
+                Body=b"email\na@x.com\nb@y.com\nc@z.com\n",
+            )
+            config = {
+                "sources": {
+                    "customers": {
+                        "type": "s3",
+                        "format": "csv",
+                        "bucket": bucket,
+                        "key": key,
+                        "region": "us-east-1",
+                    },
+                },
+            }
+            tables = _read_sources_as_arrow(config)
         except ImportError:
             pytest.skip("platform api.jobs.v2_runner not importable from engine tests")
 
-        client, bucket = _moto_s3
-        key = "data/customers.csv"
-        client.put_object(
-            Bucket=bucket,
-            Key=key,
-            Body=b"email\na@x.com\nb@y.com\nc@z.com\n",
-        )
-        config = {
-            "sources": {
-                "customers": {
-                    "type": "s3",
-                    "format": "csv",
-                    "bucket": bucket,
-                    "key": key,
-                    "region": "us-east-1",
-                },
-            },
-        }
-        tables = _read_sources_as_arrow(config)
         assert "customers" in tables
         assert tables["customers"].num_rows == 3
         assert "email" in tables["customers"].column_names
