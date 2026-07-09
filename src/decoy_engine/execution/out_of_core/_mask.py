@@ -24,6 +24,13 @@ import pyarrow as pa
 
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError, StrategyError
+from decoy_engine.execution.out_of_core._mask_group_b import (
+    GROUP_B_STRATEGIES,
+    categorical_array,
+    fpe_array,
+    group_b_output_type,
+    text_redact_array,
+)
 from decoy_engine.kernel import hash_array, passthrough_array, redact_array, truncate_array
 
 if TYPE_CHECKING:
@@ -81,9 +88,36 @@ def truncate_params(cfg: dict[str, Any]) -> tuple[int, str, str | None]:
     return length, keep, mask_char
 
 
-def mask_column(values: pa.Array | pa.ChunkedArray, seed: ColumnSeed, job_seed: bytes) -> pa.Array:
-    """Apply one admitted strategy to one column (or column slice)."""
+def mask_column(
+    values: pa.Array | pa.ChunkedArray,
+    seed: ColumnSeed,
+    job_seed: bytes,
+    *,
+    column: str | None = None,
+) -> pa.Array:
+    """Apply one admitted strategy to one column (or column slice).
+
+    `column` carries the column name for strategies whose output depends on it
+    (fpe's per-column tweak). It is None only on the FK parent-key / remap call
+    paths, which the compat gate restricts to the column-independent strategies
+    (hash/redact/truncate/passthrough), so a None column never reaches a
+    strategy that needs it.
+    """
     cfg = provider_config_to_dict(seed.provider_config)
+    if seed.strategy in GROUP_B_STRATEGIES:
+        if seed.strategy == "fpe":
+            return fpe_array(
+                values, job_seed=job_seed, namespace=seed.namespace, column=column, cfg=cfg
+            )
+        if seed.strategy == "text_redact":
+            return text_redact_array(values, plan=seed)
+        return categorical_array(
+            values,
+            job_seed=job_seed,
+            namespace=seed.namespace,
+            deterministic=seed.deterministic,
+            cfg=cfg,
+        )
     if seed.strategy == "passthrough":
         return passthrough_array(values)
     if seed.strategy == "redact":
@@ -120,6 +154,8 @@ def masked_output_type(seed: ColumnSeed, source_type: pa.DataType | None = None)
     may be None only for strategies whose output type does not depend on it.
     """
     cfg = provider_config_to_dict(seed.provider_config)
+    if seed.strategy in GROUP_B_STRATEGIES:
+        return group_b_output_type(seed, cfg, source_type)
     if seed.strategy == "hash":
         return pa.string()
     if seed.strategy == "truncate":
@@ -173,7 +209,9 @@ def mask_table(
             continue
         if column not in out.column_names:
             continue
-        masked = mask_column(out.column(column), column_seed, plan.seed_envelope.job_seed)
+        masked = mask_column(
+            out.column(column), column_seed, plan.seed_envelope.job_seed, column=column
+        )
         out = out.set_column(out.schema.get_field_index(column), column, masked)
     return out
 
@@ -207,7 +245,7 @@ def mask_batch(
         idx = batch.schema.get_field_index(column)
         if idx < 0:
             continue
-        masked = mask_column(arrays[idx], column_seed, plan.seed_envelope.job_seed)
+        masked = mask_column(arrays[idx], column_seed, plan.seed_envelope.job_seed, column=column)
         arrays[idx] = masked
         # Same field semantics as Table.set_column with a bare name: the field
         # type follows the masked array, prior field metadata is not carried.
