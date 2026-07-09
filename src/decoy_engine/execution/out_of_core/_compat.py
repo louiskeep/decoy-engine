@@ -33,7 +33,19 @@ _INITIAL_SUPPORTED_STRATEGIES = frozenset({"hash", "redact", "truncate", "passth
 # stays `_INITIAL_SUPPORTED_STRATEGIES` because none of these are ported for the
 # join/remap key path, so an FK edge keyed on one is a fail-closed MISS.
 _GROUP_B_SUPPORTED_STRATEGIES = frozenset({"fpe", "text_redact", "categorical"})
-_SUPPORTED_WORK_STRATEGIES = _INITIAL_SUPPORTED_STRATEGIES | _GROUP_B_SUPPORTED_STRATEGIES
+# SC4 Group (c): `text_mask` ports unconditionally (per-value HMAC span mask, no
+# cross-row state). `code_set` and `bucket_perturb` are admitted only for the
+# config shapes the out-of-core kernel reproduces byte-for-byte -- code_set in
+# mask mode without chapter_preserve, bucket_perturb with an explicit date_format
+# (`_group_c_conditional_rejection` below; see `_mask_group_c.py`). Admitted for
+# masked (payload) columns only; the PARENT-KEY surface (`_check_edge`) stays
+# `_INITIAL_SUPPORTED_STRATEGIES`, so a Group (c) FK key is a fail-closed MISS.
+_GROUP_C_ALWAYS_SUPPORTED = frozenset({"text_mask"})
+_GROUP_C_CONDITIONAL = frozenset({"code_set", "bucket_perturb"})
+_GROUP_C_SUPPORTED_STRATEGIES = _GROUP_C_ALWAYS_SUPPORTED | _GROUP_C_CONDITIONAL
+_SUPPORTED_WORK_STRATEGIES = (
+    _INITIAL_SUPPORTED_STRATEGIES | _GROUP_B_SUPPORTED_STRATEGIES | _GROUP_C_SUPPORTED_STRATEGIES
+)
 # SC3 deferred Group (b): investigated and NOT ported, each for a concrete
 # reason that would otherwise cause a route-dependent divergence. A MISS here
 # means the job falls back to sequential/full-frame (which handle them), never a
@@ -64,14 +76,67 @@ _DEFERRED_GROUP_B: dict[str, tuple[str, str]] = {
     ),
 }
 
-# Public alias (SC5, decoy-platform cross-repo query surface): the strategy
-# set this gate currently admits, re-exported at `decoy_engine.execution` so
-# an external caller (e.g. a platform-side coarse eligibility proxy that
-# cannot afford to compile a real Plan pre-read) can consult the CURRENT
-# admitted set instead of hardcoding a copy that would drift the moment
-# SC3/SC4 widen it. Same object as `_INITIAL_SUPPORTED_STRATEGIES`; this name
-# is the stable one external callers should import.
-SUPPORTED_STRATEGIES = _INITIAL_SUPPORTED_STRATEGIES
+# SC4 deferred Group (c): investigated and NOT ported, each for a concrete reason
+# that would otherwise cause a route-dependent divergence. A MISS here means the
+# job falls back to sequential/full-frame (which handle them), never a wrong
+# output. `geo_generalize`'s k-anonymity cascade thresholds each row on WHOLE-
+# DATASET counts, which a chunk cannot see. `formula` and `derived` emit a value
+# whose Arrow type is not analytically determinable from the plan (the expression
+# can change the column type), which the fixed-output-schema route cannot satisfy;
+# `formula` additionally carries an order-dependent RNG channel and `derived`
+# additionally needs same-row sibling-column context the per-column kernel does
+# not receive. `nested` reuses the full pandas child-strategy dispatch plus a
+# per-cell JSON round-trip, an architectural port beyond dispatch-widening (like
+# SC3's faker). See docs/plans/2026-07-07-next-up-roadmap.md (SC4) + `_mask_group_c.py`.
+_DEFERRED_GROUP_C: dict[str, tuple[str, str]] = {
+    "geo_generalize": (
+        "out_of_core_whole_column_aggregation_unsupported",
+        "geo_generalize thresholds each row's cascade level on whole-dataset "
+        "k-anonymity counts (ZIP5/ZIP3/state or H3 resolutions), which a chunk "
+        "cannot see; not batch-local. Falls back to sequential/full-frame.",
+    ),
+    "formula": (
+        "out_of_core_dynamic_output_type_unsupported",
+        "formula emits a value whose Arrow type is not determinable from the plan "
+        "(the expression can change the column type) and carries an order-dependent "
+        "RNG channel; neither fits the fixed-schema streaming route. Falls back to "
+        "sequential/full-frame.",
+    ),
+    "derived": (
+        "out_of_core_dynamic_output_type_unsupported",
+        "derived emits a value whose Arrow type is not determinable from the plan "
+        "and needs same-row sibling-column context the per-column out-of-core mask "
+        "kernel does not receive. Falls back to sequential/full-frame.",
+    ),
+    "nested": (
+        "out_of_core_child_dispatch_unsupported",
+        "nested reuses the full pandas child-strategy dispatch (SCALAR_HANDLERS) "
+        "plus a per-cell JSON round-trip; porting needs the pandas handler stack "
+        "per batch with the child strategy statically bounded to the batch-local "
+        "set, beyond dispatch-widening. Falls back to sequential/full-frame.",
+    ),
+}
+
+# Public alias (SC5, decoy-platform cross-repo query surface): the PAYLOAD
+# (non-key) strategy set this gate currently admits, re-exported at
+# `decoy_engine.execution` so an external caller (e.g. a platform-side coarse
+# eligibility proxy that cannot afford to compile a real Plan pre-read) can
+# consult the CURRENT admitted set instead of hardcoding a copy that would
+# drift the moment SC3/SC4 widen it -- tracks `_SUPPORTED_WORK_STRATEGIES`,
+# not `_INITIAL_SUPPORTED_STRATEGIES` alone, so it does not understate
+# admission after a widening sprint.
+#
+# Two things this constant deliberately does NOT capture, by design: (1) the
+# FK PARENT-KEY surface is narrower and independently gated by `_check_edge`
+# against `_INITIAL_SUPPORTED_STRATEGIES` directly (never this alias) -- a
+# strategy in this set may still be a fail-closed MISS as a join/remap key;
+# (2) `code_set`/`bucket_perturb` are members here but only admitted for the
+# config shapes `_group_c_conditional_rejection` allows, and each deferred
+# strategy (`_DEFERRED_GROUP_B`/`_DEFERRED_GROUP_C`) plus the when-predicate/
+# composite-fk/cycle checks above still apply per-job. This is a coarse,
+# necessary-but-not-sufficient membership check; only
+# `check_out_of_core_compatibility` is the authoritative decision.
+SUPPORTED_STRATEGIES = _SUPPORTED_WORK_STRATEGIES
 
 
 @dataclass(frozen=True)
@@ -224,6 +289,15 @@ def check_out_of_core_compatibility(
         elif node.strategy in _DEFERRED_GROUP_B:
             code, reason = _DEFERRED_GROUP_B[node.strategy]
             rejections.append(OutOfCoreRejection(code, f"{node.table}.{node.columns}: {reason}"))
+        elif node.strategy in _DEFERRED_GROUP_C:
+            code, reason = _DEFERRED_GROUP_C[node.strategy]
+            rejections.append(OutOfCoreRejection(code, f"{node.table}.{node.columns}: {reason}"))
+        elif node.strategy in _GROUP_C_CONDITIONAL:
+            # code_set / bucket_perturb are ported only for the config shapes the
+            # out-of-core kernel reproduces byte-for-byte; other shapes MISS.
+            conditional = _group_c_conditional_rejection(node)
+            if conditional is not None:
+                rejections.append(conditional)
         elif node.strategy == "categorical" and not _is_deterministic(node.plan_slice):
             # Non-deterministic categorical draws from an unseeded RNG, so it has
             # no cross-run/cross-route parity; only the source-conditioned
@@ -245,6 +319,36 @@ def check_out_of_core_compatibility(
             )
 
     return OutOfCoreCompatibility(accepted=not rejections, rejections=tuple(rejections))
+
+
+def _group_c_conditional_rejection(node: WorkNode) -> OutOfCoreRejection | None:
+    """Reject a conditionally-supported Group (c) node whose config shape the
+    out-of-core kernel does not reproduce byte-for-byte; None admits it.
+
+    code_set: mask mode without chapter_preserve only (gen mode threads a global
+    row index the streaming kernel has no offset for; chapter_preserve records
+    per-value errors the route has no quarantine channel to remove). bucket_perturb:
+    an explicit date_format only (whole-column format auto-detection does not chunk).
+    """
+    cfg = dict(getattr(node.plan_slice, "provider_config", ()) or ())
+    if node.strategy == "code_set":
+        mode = str(cfg.get("mode", "mask"))
+        if mode != "mask" or cfg.get("chapter_preserve"):
+            return OutOfCoreRejection(
+                "out_of_core_code_set_shape_unsupported",
+                f"{node.table}.{node.columns}: out-of-core code_set supports mask mode "
+                "without chapter_preserve only (gen mode needs a global row index the "
+                "streaming kernel lacks; chapter_preserve records per-value errors the "
+                "route cannot quarantine). Falls back to full-frame.",
+            )
+    elif node.strategy == "bucket_perturb" and not cfg.get("date_format"):
+        return OutOfCoreRejection(
+            "out_of_core_bucket_perturb_autodetect_unsupported",
+            f"{node.table}.{node.columns}: out-of-core bucket_perturb requires an "
+            "explicit date_format; whole-column format auto-detection does not chunk. "
+            "Falls back to full-frame.",
+        )
+    return None
 
 
 def _is_deterministic(plan_slice: object) -> bool:

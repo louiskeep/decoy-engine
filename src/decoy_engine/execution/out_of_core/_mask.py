@@ -31,6 +31,11 @@ from decoy_engine.execution.out_of_core._mask_group_b import (
     group_b_output_type,
     text_redact_array,
 )
+from decoy_engine.execution.out_of_core._mask_group_c import (
+    GROUP_C_STRATEGIES,
+    group_c_array,
+    group_c_output_type,
+)
 from decoy_engine.kernel import hash_array, passthrough_array, redact_array, truncate_array
 
 if TYPE_CHECKING:
@@ -118,6 +123,8 @@ def mask_column(
             deterministic=seed.deterministic,
             cfg=cfg,
         )
+    if seed.strategy in GROUP_C_STRATEGIES:
+        return group_c_array(values, seed, job_seed, column=column, cfg=cfg)
     if seed.strategy == "passthrough":
         return passthrough_array(values)
     if seed.strategy == "redact":
@@ -156,6 +163,8 @@ def masked_output_type(seed: ColumnSeed, source_type: pa.DataType | None = None)
     cfg = provider_config_to_dict(seed.provider_config)
     if seed.strategy in GROUP_B_STRATEGIES:
         return group_b_output_type(seed, cfg, source_type)
+    if seed.strategy in GROUP_C_STRATEGIES:
+        return group_c_output_type(seed, cfg)
     if seed.strategy == "hash":
         return pa.string()
     if seed.strategy == "truncate":

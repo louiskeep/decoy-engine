@@ -146,6 +146,76 @@ _PAYLOADS: dict[str, tuple[ColumnSeed, list[str | None]]] = {
         ),
         ["one", "two", None, "three", "four", "five"],
     ),
+    # SC4 carry-forward (SC3 MEDIUM): exercise the live kernel branches the
+    # SC3 suite did not pin -- fpe validate_luhn / checksum / non-digit charset /
+    # fpe_join_group tweak, text_redact detector-subset, categorical from_profile.
+    # Each reuses the same primitive the full-frame handler cites, so parity holds;
+    # pinning them stops a future edit from diverging one branch unnoticed.
+    "fpe_validate_luhn": (
+        _seed(
+            "fpe",
+            namespace="pvl",
+            provider_config=(("charset", "digits"), ("validate_luhn", True)),
+        ),
+        [
+            "4111111111111111",
+            "5555555555554444",
+            None,
+            "4012888888881881",
+            "6011111111111117",
+            "38520000023237",
+        ],
+    ),
+    "fpe_checksum_luhn": (
+        _seed(
+            "fpe",
+            namespace="pcl",
+            provider_config=(("charset", "digits"), ("checksum", "luhn")),
+        ),
+        [
+            "4111111111111111",
+            "5555555555554444",
+            None,
+            "4012888888881881",
+            "6011111111111117",
+            "38520000023237",
+        ],
+    ),
+    "fpe_alphanum": (
+        _seed("fpe", namespace="pan", provider_config=(("charset", "ALPHANUM"),)),
+        ["Abc123", "Xyz789", None, "Test42", "Data99", "Code77"],
+    ),
+    "fpe_join_group": (
+        _seed(
+            "fpe",
+            namespace="pjg",
+            provider_config=(("charset", "digits"), ("fpe_join_group", "grp")),
+        ),
+        ["123456789", "000111222", None, "999", "42", "7654321"],
+    ),
+    "text_redact_detector_subset": (
+        _seed("text_redact", provider_config=(("detectors", ("ssn",)), ("token", "[S]"))),
+        [
+            "ssn 123-45-6789 and phone 415-555-1234",
+            "just 987-65-4321 here",
+            None,
+            "no id at all",
+            "two 111-22-3333 x 222-33-4444",
+            "plain text",
+        ],
+    ),
+    "categorical_from_profile": (
+        _seed(
+            "categorical",
+            namespace="cfp",
+            provider_config=(
+                ("from_profile", True),
+                ("categories", ("A", "B", "C")),
+                ("weights", (0.5, 0.3, 0.2)),
+            ),
+        ),
+        ["alpha", "beta", None, "gamma", "delta", "epsilon"],
+    ),
 }
 
 
@@ -222,6 +292,49 @@ def test_group_b_payload_actually_transforms(kind: str) -> None:
     out = ooc.outputs["parent"].column("pay").to_pylist()
     changed = [o for s, o in zip(src, out, strict=True) if s is not None and o != s]
     assert changed, f"{kind}: masked payload never differs from source (no-op port?)"
+
+
+def test_text_redact_non_string_token_passthrough_parity() -> None:
+    """SC4 carry-forward (SC3 MEDIUM): a non-string token makes the text_redact
+    handler pass the column through unchanged. Pin that the out-of-core kernel's
+    passthrough matches the oracle rather than, e.g., stringifying the token."""
+    seed = _seed("text_redact", provider_config=(("token", 0),))
+    plan, sources, graph = _payload_edge_job(
+        seed,
+        ["ssn 123-45-6789", "x", None, "415-555-1234", "plain", "y"],
+        policy=OrphanPolicy.PRESERVE,
+    )
+    assert _gate_admits(plan, graph)
+    oracle = PandasExecutionAdapter().run(
+        plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
+    )
+    ooc = run_fk_out_of_core(plan, sources, registry=_REG, relationship_graph=graph)
+    for table in oracle.outputs:
+        _assert_value_equal(oracle.outputs[table], ooc.outputs[table], f"nonstr_token:{table}")
+
+
+def test_text_redact_ner_path_parity() -> None:
+    """SC4 carry-forward (SC3 MEDIUM): the NER-augmented text_redact path. Skipped
+    unless spaCy + the model are installed (the model is not pip-resolvable, so this
+    is environment-gated); when present, the out-of-core kernel reuses the same
+    `iter_ner_spans` the oracle does, so parity must hold."""
+    from decoy_engine.storm.ner import model_installed, spacy_installed
+
+    if not (spacy_installed() and model_installed()):
+        pytest.skip("NER spaCy model not installed; text_redact NER path not exercisable here")
+    seed = _seed("text_redact", provider_config=(("ner", {"model": "en_core_web_sm"}),))
+    plan, sources, graph = _payload_edge_job(
+        seed,
+        ["John Smith lives in Boston", "call 415-555-1234", None, "no entities", "Jane Doe", "x"],
+        policy=OrphanPolicy.PRESERVE,
+    )
+    assert _gate_admits(plan, graph)
+    oracle = PandasExecutionAdapter().run(
+        plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
+    )
+    ooc = run_fk_out_of_core(plan, sources, registry=_REG, relationship_graph=graph)
+    for table in oracle.outputs:
+        _assert_value_equal(oracle.outputs[table], ooc.outputs[table], f"ner:{table}")
 
 
 # ---------------------------------------------------------------------------

@@ -30,7 +30,7 @@ from decoy_engine.execution._pipeline_routing import (
 )
 from decoy_engine.execution.out_of_core import check_out_of_core_compatibility as _internal_check
 from decoy_engine.execution.out_of_core._compat import (
-    _INITIAL_SUPPORTED_STRATEGIES,
+    _SUPPORTED_WORK_STRATEGIES,
 )
 from decoy_engine.relationships import RelationshipGraph
 
@@ -50,10 +50,14 @@ def test_thresholds_match_the_live_routing_defaults():
 
 
 def test_supported_strategies_is_the_same_set_the_gate_admits():
-    assert OUT_OF_CORE_SUPPORTED_STRATEGIES == _INITIAL_SUPPORTED_STRATEGIES
-    assert (
-        frozenset({"hash", "redact", "truncate", "passthrough"}) == OUT_OF_CORE_SUPPORTED_STRATEGIES
-    )
+    # Tracks the PAYLOAD-admitted set (widens as SC3/SC4/... land), not the
+    # narrower FK parent-key surface (_check_edge gates that against
+    # _INITIAL_SUPPORTED_STRATEGIES directly, independent of this export) --
+    # see out_of_core._compat.SUPPORTED_STRATEGIES's docstring.
+    assert OUT_OF_CORE_SUPPORTED_STRATEGIES == _SUPPORTED_WORK_STRATEGIES
+    assert {"hash", "redact", "truncate", "passthrough"}.issubset(OUT_OF_CORE_SUPPORTED_STRATEGIES)
+    assert {"fpe", "text_redact", "categorical"}.issubset(OUT_OF_CORE_SUPPORTED_STRATEGIES)
+    assert {"text_mask", "code_set", "bucket_perturb"}.issubset(OUT_OF_CORE_SUPPORTED_STRATEGIES)
 
 
 def test_no_relationships_is_rejected_through_the_public_entrypoint():

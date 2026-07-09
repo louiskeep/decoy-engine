@@ -36,6 +36,10 @@ its docstring and `_pipeline_routing.out_of_core_admission` for the
 recipe); a caller that cannot afford to compile one pre-read (e.g. an
 admission-time estimator that must not read source data) can still consult
 the threshold/strategy-set constants for a coarser, config-only proxy.
+`OUT_OF_CORE_SUPPORTED_STRATEGIES` tracks the current PAYLOAD-column admitted
+set (widens as SC3/SC4/... land); it does not capture the narrower FK
+parent-key surface or per-strategy conditional config shapes -- see
+`out_of_core._compat.SUPPORTED_STRATEGIES`'s docstring for what it omits.
 
 Spec: docs/v2/sprints/engine-v2/sprint-09-execution-adapter-pandas.md in decoy-platform.
 """
