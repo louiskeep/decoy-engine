@@ -9,6 +9,16 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Fixed (SC7a consultant-findings remediation, 2026-07-09)
+
+External architecture review (`docs/engine-consultant-findings-2026-07-09.md`, committed at commit `02b18cc` on `main`) identified nine findings (F1-F9). This commit addresses F8 and F4; F1/F2 are the subject of ongoing design work; F3/F5-F9 are logged as backlog.
+
+**F8: Stale mypy overrides for removed V1 modules.** The S9.5 V1 bulk-delete commit removed `src/decoy_engine/graph` and thirteen other V1 modules (`connectors`, `generators`, `internal`, `masker`, `plan`, `transforms` subtrees), but `pyproject.toml`'s `[[tool.mypy.overrides]]` accumulated 21 dangling entries for these removed modules. Dangling overrides resolve silently under mypy, so the allowlist appeared to provide live strict coverage when it was dead config. Every removed entry was spot-checked via `git log --diff-filter=D` to confirm the module's deletion before removal from `pyproject.toml`. New sentry test `tests/sentry/test_mypy_override_targets.py` parses `pyproject.toml` and fails CI if any override module does not resolve to a real file on disk, preventing recurrence.
+
+**F4: Public stub exports lack a GA-phase gate.** `SchemaInspector` (raises `NotImplementedError`) and `LicenseVerifier` (hardcoded free-tier dict) are exported from `decoy_engine.__all__` as intentional pre-GA stubs, but nothing prevented `RELEASE_PHASE` from flipping to `"ga"` while these remained top-level public, which would ship silently-fake behavior at launch. New sentry test `tests/sentry/test_ga_stub_exports.py` directly re-derives each stub's exact current fake behavior (`SchemaInspector() -> NotImplementedError`, `LicenseVerifier.verify() -> {tier: free, features: [], expires_at: None}`) and asserts both behaviors are gone once `is_pre_ga()` flips to False (dennis review corrected an earlier dict-driven version by requiring the test to check actual runtime behavior, not a configuration dict that could be emptied without fixing anything).
+
+**F1/F2: Bounded-memory profiling design approved, build pending.** `run_pipeline()` profiles sources before making the execution route decision, so a large job can OOM during profiling before reaching the bounded-memory out-of-core route. Design doc `docs/plans/2026-07-09-consultant-f1-f2-bounded-profiling.md` proposes introducing lazy profiling abstractions and rejecting large jobs before eager source reads. GATE-F approval is in place; build (SC7a/b/c) is separate work on a different track.
+
 ### Added (SC4 Group (c) out-of-core strategies, 2026-07-09)
 
 Out-of-core FK route now admits Group (c) payload strategies with proven byte-parity:
