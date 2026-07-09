@@ -55,7 +55,12 @@ def _data_shape_bytes(profile: Profile) -> bytes:
     """
     payload = {
         "schema_version": profile.schema_version,
-        "tables": [_table_to_dict(t) for t in profile.tables],
+        # SC7a: `row_count_exact` is a provenance flag (how row_count was
+        # obtained), not a data-shape value, so it is deliberately excluded
+        # from the hash: two profiles over identical source data must still
+        # hash equal, and the pinned hash stays stable. It IS carried in the
+        # full serialization below so a round-tripped profile keeps the flag.
+        "tables": [_table_to_dict(t, include_row_count_exact=False) for t in profile.tables],
         "relationships": [_relationship_to_dict(r) for r in profile.relationships],
     }
     return json.dumps(
@@ -77,12 +82,15 @@ def _profile_to_dict(profile: Profile) -> dict[str, Any]:
     }
 
 
-def _table_to_dict(table: TableProfile) -> dict[str, Any]:
-    return {
+def _table_to_dict(table: TableProfile, *, include_row_count_exact: bool = True) -> dict[str, Any]:
+    out: dict[str, Any] = {
         "name": table.name,
         "row_count": table.row_count,
         "columns": [_column_to_dict(c) for c in table.columns],
     }
+    if include_row_count_exact:
+        out["row_count_exact"] = table.row_count_exact
+    return out
 
 
 def _column_to_dict(column: ColumnProfile) -> dict[str, Any]:
@@ -131,6 +139,8 @@ def _table_from_dict(data: dict[str, Any]) -> TableProfile:
         name=data["name"],
         row_count=data["row_count"],
         columns=tuple(_column_from_dict(c) for c in data["columns"]),
+        # Default True for older JSON written before the field existed.
+        row_count_exact=data.get("row_count_exact", True),
     )
 
 

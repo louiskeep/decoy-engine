@@ -169,6 +169,12 @@ class TableProfile:
     name: str
     row_count: int
     columns: tuple[ColumnProfile, ...]
+    # SC7a: whether row_count is an exact metadata count (Parquet footer,
+    # fixed_width filesize/record) or a byte-size estimate (CSV, which has no
+    # footer). Additive, defaulted True so existing constructions -- and any
+    # source read in full -- are unaffected; route admission (SC7b) keys off
+    # this to avoid trusting an estimated count at a hard reject threshold.
+    row_count_exact: bool = True
 
     def __post_init__(self) -> None:
         names = [c.name for c in self.columns]

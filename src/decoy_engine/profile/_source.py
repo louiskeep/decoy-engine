@@ -1,8 +1,14 @@
 """profile_source: orchestrate profile generation from a pipeline config.
 
-Reads `config["sources"]`, loads each table via the per-source-type
-reader (file/csv, file/parquet, or file/fixed_width in V1), walks each
-DataFrame via `walk_dataframe`, and composes a Profile.
+Reads `config["sources"]`, builds each table's `ProfileSource` reader
+(`profile._readers.build_profile_source`), and -- under the default
+`residency="bounded"` -- profiles it from cheap `row_count()` metadata
+plus a `<= sample_rows` `sample_frame()` instead of a full-frame
+materialization, then walks the bounded frame via `walk_dataframe` and
+composes a Profile. This is the F1/F2 fix (consultant-2026-07-09):
+profiling no longer full-reads a large source before the route decision
+runs, so the admission/reject sequence in `run_pipeline` becomes
+genuinely pre-expensive-read.
 
 The caller (CLI or platform runner) hands in a config dict that has
 already been validated through `PipelineConfig.model_validate(...).model_dump()`.
@@ -24,12 +30,15 @@ from __future__ import annotations
 
 import random
 import warnings
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any
 
-import pandas as pd
-
-from decoy_engine.profile._fixed_width_reader import read_fixed_width
+from decoy_engine.profile._readers import (
+    BOUNDED_FALLBACK_ROWS,
+    ProfileSource,
+    build_profile_source,
+)
 from decoy_engine.profile._types import Profile, Relationship, TableProfile
 from decoy_engine.profile._walk import walk_dataframe
 
@@ -39,6 +48,7 @@ def profile_source(
     *,
     sample_rows: int | None = 10_000,
     seed: int | None = None,
+    residency: str = "bounded",
 ) -> Profile:
     """Profile every source declared in `config["sources"]`.
 
@@ -46,17 +56,33 @@ def profile_source(
         config: a validated pipeline-config dict (must be the output of
             `PipelineConfig.model_validate(...).model_dump()`; profile_source
             does not re-validate).
-        sample_rows: passed through to `walk_dataframe`. None means full
-            scan; default 10k caps cardinality work on large tables.
+        sample_rows: cap on cardinality work. None means full scan; default
+            10k caps cardinality work on large tables. Under
+            residency="bounded", None degrades to a bounded scan with a loud
+            warning (a genuine whole-column scan requires residency="full").
         seed: passed through to the RNG that drives reservoir sampling.
             None means non-deterministic sampling (test mode + interactive
             use); explicit int means cross-run reproducibility.
+        residency: SC7a source-read mode.
+            - "bounded" (default): read cheap `row_count()` metadata (exact for
+              Parquet/fixed_width, an estimate for CSV) plus a `<= sample_rows`
+              `sample_frame()`, never materializing the whole source. This is
+              what makes admission genuinely pre-expensive-read: profiling no
+              longer full-reads a large table before the route decision.
+            - "full": the historical whole-source read (`to_frame()` per
+              source), for callers that pass `sample_rows=None` and genuinely
+              need whole-column distincts on a source small enough to hold.
 
     Returns:
         A frozen `Profile` covering every table declared in
         `config["sources"]`. The `tables` tuple order mirrors
         `config["sources"]` iteration order (Python 3.7+ dict order).
     """
+    if residency not in ("bounded", "full"):
+        raise ValueError(
+            f"profile_source: residency must be 'bounded' or 'full', got {residency!r}."
+        )
+
     from decoy_engine import __version__ as engine_version
 
     # Q15 fix (Option B, defensive fallback): if the caller did not pass
@@ -100,17 +126,17 @@ def profile_source(
     sources = config.get("sources", {}) or {}
     tables: list[TableProfile] = []
     for table_name, source_descriptor in sources.items():
-        df = _load_source(source_descriptor)
-        tables.append(
-            walk_dataframe(
-                df,
-                table_name=table_name,
-                declared_pk_cols=pk_cols_per_table.get(table_name, frozenset()),
-                fk_specs=fk_specs_per_table.get(table_name, {}),
-                sample_rows=sample_rows,
-                rng=rng,
-            )
+        reader = build_profile_source(source_descriptor)
+        table = _profile_one_source(
+            reader,
+            table_name=table_name,
+            declared_pk_cols=pk_cols_per_table.get(table_name, frozenset()),
+            fk_specs=fk_specs_per_table.get(table_name, {}),
+            sample_rows=sample_rows,
+            residency=residency,
+            rng=rng,
         )
+        tables.append(table)
 
     return Profile(
         schema_version=1,
@@ -126,170 +152,76 @@ def profile_source(
 
 
 # ---------------------------------------------------------------------
-# Source-type dispatch
+# Per-source bounded profiling
 # ---------------------------------------------------------------------
 
 
-def _load_source(source_descriptor: dict[str, Any]) -> pd.DataFrame:
-    """Dispatch on `type` + `format` to the per-source-type reader.
+def _profile_one_source(
+    reader: ProfileSource,
+    *,
+    table_name: str,
+    declared_pk_cols: frozenset[str],
+    fk_specs: dict[str, tuple[str, str]],
+    sample_rows: int | None,
+    residency: str,
+    rng: random.Random,
+) -> TableProfile:
+    """Profile one source into a TableProfile via its `ProfileSource` reader.
 
-    V1 supports `type: "file" | "s3" | "gcs"`. S14-CLOUD-SRC-S3GCS added the
-    cloud variants. The Pydantic adapter has already rejected other types at
-    validation time; this NotImplementedError is defensive (e.g., a caller that
-    skipped the adapter would land here). SFTP rides S18; DB rides V2.1.
+    residency="full" reads the whole source (`to_frame()`) and profiles it as
+    the historical code did -- exact whole-column distincts, `row_count_exact`
+    True. residency="bounded" reads only cheap `row_count()` metadata plus a
+    `<= sample_rows` `sample_frame()`: `TableProfile.row_count` is the true
+    total (exact for Parquet/fixed_width, estimated for CSV), while
+    null/distinct come from the bounded sample and the columns are flagged
+    `sampled`.
     """
-    src_type = source_descriptor.get("type")
-    if src_type == "file":
-        return _load_file_source(source_descriptor)
-    if src_type == "s3":
-        return _load_s3_source(source_descriptor)
-    if src_type == "gcs":
-        return _load_gcs_source(source_descriptor)
-    raise NotImplementedError(
-        f"profile_source: unsupported source type {src_type!r}. "
-        "Supported types: file, s3, gcs (S18 adds sftp; V2.1 adds db)."
+    if residency == "full":
+        df = reader.to_frame()
+        # A full read yields an exact count regardless of source type.
+        return walk_dataframe(
+            df,
+            table_name=table_name,
+            declared_pk_cols=declared_pk_cols,
+            fk_specs=fk_specs,
+            sample_rows=sample_rows,
+            rng=rng,
+        )
+
+    if sample_rows is None:
+        # GATE-F #5: a whole-column scan on a source too big to hold is exactly
+        # what bounded profiling removes; degrade to a bounded scan loudly
+        # rather than OOM. residency="full" remains the honest whole-scan path.
+        warnings.warn(
+            "profile_source(sample_rows=None, residency='bounded'): a full "
+            "column scan would materialize the whole source, which bounded "
+            f"profiling avoids. Degrading to a bounded {BOUNDED_FALLBACK_ROWS}-row "
+            "scan. Pass residency='full' for a genuine whole-column scan on a "
+            "source small enough to hold.",
+            stacklevel=2,
+        )
+        effective_sample_rows = BOUNDED_FALLBACK_ROWS
+    else:
+        effective_sample_rows = sample_rows
+
+    row_count = reader.row_count()
+    sample_df = reader.sample_frame(effective_sample_rows)
+    # Clamp the reported total to at least the rows actually sampled so a
+    # coarse CSV estimate can never fall below the sample and break the
+    # ColumnProfile `distinct_count <= row_count` invariant. Exact counts
+    # (Parquet/fixed_width) already dominate the sample, so this is a no-op
+    # for them.
+    effective_total = max(row_count.value, len(sample_df))
+    table = walk_dataframe(
+        sample_df,
+        table_name=table_name,
+        declared_pk_cols=declared_pk_cols,
+        fk_specs=fk_specs,
+        sample_rows=effective_sample_rows,
+        rng=rng,
+        total_row_count=effective_total,
     )
-
-
-def _load_file_source(source_descriptor: dict[str, Any]) -> pd.DataFrame:
-    fmt = source_descriptor.get("format")
-    path = source_descriptor.get("path")
-    if not isinstance(path, str):
-        raise ValueError(f"profile_source: file source missing string `path`, got {path!r}")
-    if fmt == "csv":
-        return pd.read_csv(path)
-    if fmt == "parquet":
-        return pd.read_parquet(path)
-    if fmt == "fixed_width":
-        layout = source_descriptor.get("layout")
-        if not isinstance(layout, dict):
-            raise ValueError(
-                f"profile_source: fixed_width file source missing `layout`, got {layout!r}"
-            )
-        return read_fixed_width(path, layout)
-    raise NotImplementedError(
-        f"profile_source: unsupported file format {fmt!r}. "
-        "V1 supports csv | parquet | fixed_width only."
-    )
-
-
-def _load_s3_source(source_descriptor: dict[str, Any]) -> pd.DataFrame:
-    """Read an S3 object into a DataFrame. The engine never sees raw secrets:
-    `credentials_ref` is opaque and ignored here (the platform resolves it before
-    the descriptor reaches the engine, or the SDK walks its default credential
-    chain). `endpoint_url` is supported for S3-compatible services (MinIO, R2)
-    and moto-S3 in CI.
-
-    Pattern lessons applied from QA Q1, Q3, Q4, Q10 (legacy DB connector):
-    - The boto3 client is constructed inside a function call (no shared global).
-    - The object is fetched once + held in BytesIO for the pandas reader.
-    - No string-interpolated query fragments (boto3's get_object is parameterized).
-    - SDK exceptions surface as the SDK's own typed errors; this layer adds
-      no `str(e)` cell-value leakage into log messages.
-    """
-    import io
-
-    import boto3
-    from botocore.config import Config as BotoConfig
-    from botocore.exceptions import (
-        ClientError,
-        ConnectTimeoutError,
-        EndpointConnectionError,
-        ReadTimeoutError,
-    )
-
-    fmt = source_descriptor.get("format")
-    bucket = source_descriptor.get("bucket")
-    key = source_descriptor.get("key")
-    if not isinstance(bucket, str) or not bucket:
-        raise ValueError(f"profile_source: s3 source missing bucket, got {bucket!r}")
-    if not isinstance(key, str) or not key:
-        raise ValueError(f"profile_source: s3 source missing key, got {key!r}")
-
-    client_kwargs: dict[str, Any] = {}
-    region = source_descriptor.get("region")
-    if isinstance(region, str) and region:
-        client_kwargs["region_name"] = region
-    endpoint_url = source_descriptor.get("endpoint_url")
-    if isinstance(endpoint_url, str) and endpoint_url:
-        client_kwargs["endpoint_url"] = endpoint_url
-
-    # QA-7 F2 (2026-06-01): connect + read timeouts so a misconfigured
-    # endpoint URL or routing black hole does not hang the worker
-    # indefinitely. Mirrors the S3FileSource connector's BotoConfig at
-    # connectors/s3.py:150-157.
-    client_kwargs["config"] = BotoConfig(
-        connect_timeout=5,
-        read_timeout=60,
-        retries={"max_attempts": 1, "mode": "standard"},
-    )
-    client = boto3.client("s3", **client_kwargs)
-    try:
-        response = client.get_object(Bucket=bucket, Key=key)
-    except (EndpointConnectionError, ConnectTimeoutError, ReadTimeoutError) as exc:
-        # QA-7 F2: wrap network-class errors so the raw exception
-        # string (which may contain endpoint URLs or partial
-        # credentials in some botocore versions) does not propagate
-        # into job logs / manifest entries.
-        raise RuntimeError(
-            f"profile_source s3: transient network error ({type(exc).__name__})"
-        ) from exc
-    except ClientError as exc:
-        # QA-7 F2: wrap auth + permission errors so the error CODE
-        # (NoSuchKey, AccessDenied, etc.) surfaces but the raw
-        # request metadata + access key ID stays out of the log.
-        code = exc.response.get("Error", {}).get("Code", "Unknown")
-        raise RuntimeError(f"profile_source s3: client error {code}") from exc
-    # Q17 fix: StreamingBody backs an HTTP connection; .read() drains the
-    # body but does not close the underlying socket. Closing explicitly
-    # returns the connection to urllib3's pool. Without this, a multi-S3-
-    # source pipeline can exhaust the 10-connection default and stall.
-    with response["Body"] as stream:
-        body = io.BytesIO(stream.read())
-
-    if fmt == "csv":
-        return pd.read_csv(body)
-    if fmt == "parquet":
-        return pd.read_parquet(body)
-    raise NotImplementedError(
-        f"profile_source: unsupported s3 format {fmt!r}. V1 supports csv | parquet only."
-    )
-
-
-def _load_gcs_source(source_descriptor: dict[str, Any]) -> pd.DataFrame:
-    """Read a GCS object into a DataFrame. Mirror of `_load_s3_source` with GCS
-    semantics. The engine never sees raw secrets; `credentials_ref` is opaque
-    and the SDK uses Application Default Credentials when not set.
-    """
-    import io
-
-    from google.cloud import storage
-
-    fmt = source_descriptor.get("format")
-    bucket_name = source_descriptor.get("bucket")
-    object_name = source_descriptor.get("object")
-    if not isinstance(bucket_name, str) or not bucket_name:
-        raise ValueError(f"profile_source: gcs source missing bucket, got {bucket_name!r}")
-    if not isinstance(object_name, str) or not object_name:
-        raise ValueError(f"profile_source: gcs source missing object, got {object_name!r}")
-
-    # Q18 fix: storage.Client holds an internal HTTP transport; close it
-    # so the connection is released rather than waiting for GC. Multi-
-    # source pipelines that share a single resource pool accumulate idle
-    # transports across runs without the explicit close.
-    with storage.Client() as client:
-        bucket = client.bucket(bucket_name)
-        blob = bucket.blob(object_name)
-        data = blob.download_as_bytes()
-    body = io.BytesIO(data)
-
-    if fmt == "csv":
-        return pd.read_csv(body)
-    if fmt == "parquet":
-        return pd.read_parquet(body)
-    raise NotImplementedError(
-        f"profile_source: unsupported gcs format {fmt!r}. V1 supports csv | parquet only."
-    )
+    return replace(table, row_count_exact=row_count.exact)
 
 
 # ---------------------------------------------------------------------

@@ -96,7 +96,12 @@ def _cast_value(
         raise exc_to_raise from None
 
 
-def read_fixed_width(path: str, layout: FixedWidthLayout | dict[str, Any]) -> pd.DataFrame:
+def read_fixed_width(
+    path: str,
+    layout: FixedWidthLayout | dict[str, Any],
+    *,
+    max_records: int | None = None,
+) -> pd.DataFrame:
     """Parse a fixed-width file at `path` into a DataFrame per `layout`.
 
     Args:
@@ -107,6 +112,9 @@ def read_fixed_width(path: str, layout: FixedWidthLayout | dict[str, Any]) -> pd
             are re-validated through `FixedWidthLayout.model_validate`,
             so a caller handing in a malformed dict fails loud here too
             rather than propagating a raw `KeyError`/`AttributeError`.
+        max_records: SC7a bounded-read cap. When set, parsing stops after
+            this many data records so a bounded profiling sample never reads
+            the whole file. None (default) reads every record, unchanged.
 
     Returns:
         One row per non-blank line, one column per `layout.columns`
@@ -128,6 +136,8 @@ def read_fixed_width(path: str, layout: FixedWidthLayout | dict[str, Any]) -> pd
     records: list[dict[str, Any]] = []
     with open(path, encoding="utf-8") as fh:
         for line_no, raw_line in enumerate(fh, start=1):
+            if max_records is not None and len(records) >= max_records:
+                break
             line = raw_line.rstrip("\r\n")
             if line == "":
                 continue

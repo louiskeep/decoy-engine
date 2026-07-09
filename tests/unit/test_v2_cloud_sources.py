@@ -201,6 +201,56 @@ class TestCloudSourceEndToEnd:
         assert len(profile.tables) == 1
         assert profile.tables[0].name == "customers"
 
+    def test_profile_s3_source_via_moto_parquet_uses_footer(self, _moto_s3):
+        """SC7a: an S3 Parquet source is profiled from the footer via ranged
+        reads. row_count is the exact footer count and is flagged exact; the
+        object is never downloaded whole (pd.read_parquet is monkeypatched to
+        raise to prove the bounded path)."""
+        import io
+
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        from decoy_engine.profile import profile_source
+
+        client, bucket = _moto_s3
+        key = "data/customers.parquet"
+        buf = io.BytesIO()
+        pq.write_table(
+            pa.table({"id": list(range(120)), "email": [f"u{i}@x.com" for i in range(120)]}), buf
+        )
+        client.put_object(Bucket=bucket, Key=key, Body=buf.getvalue())
+
+        import pandas as pd
+
+        def _boom(*args, **kwargs):
+            raise AssertionError(
+                "whole-object parquet download must not happen on the bounded path"
+            )
+
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(pd, "read_parquet", _boom)
+        try:
+            config = _base_config()
+            config["sources"] = {
+                "customers": {
+                    "type": "s3",
+                    "format": "parquet",
+                    "bucket": bucket,
+                    "key": key,
+                    "region": "us-east-1",
+                },
+            }
+            config["tables"][0]["name"] = "customers"
+            config["tables"][0]["columns"][0]["name"] = "email"
+
+            profile = profile_source(config)
+        finally:
+            monkeypatch.undo()
+
+        assert profile.tables[0].row_count == 120
+        assert profile.tables[0].row_count_exact is True
+
     def test_read_s3_source_to_arrow_via_moto(self, _moto_s3):
         """The platform's _read_sources_as_arrow + _fetch_s3_to_bytesio dispatch
         on type='s3' and return a real pa.Table loaded from moto."""
@@ -246,8 +296,20 @@ class TestCloudSourceEndToEnd:
         fake_csv = b"email\nx@a.com\ny@b.com\n"
 
         class _FakeBlob:
-            def download_as_bytes(self):
-                return fake_csv
+            # SC7a: the bounded GCS reader reads `blob.size` (a metadata fetch,
+            # not a download) for the CSV row estimate and ranged
+            # `download_as_bytes(start, end)` for the bounded sample window; the
+            # fake mirrors that surface (end is inclusive, matching GCS).
+            def __init__(self):
+                self.size = len(fake_csv)
+
+            def reload(self):
+                pass
+
+            def download_as_bytes(self, start=None, end=None):
+                if start is None:
+                    return fake_csv
+                return fake_csv[start : (end + 1 if end is not None else None)]
 
         class _FakeBucket:
             def blob(self, name):
