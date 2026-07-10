@@ -60,6 +60,8 @@ from decoy_engine.execution._chunked import (
 )
 from decoy_engine.execution._errors import ExecutionError, StrategyError
 from decoy_engine.execution._events import ExecutionEvent
+from decoy_engine.execution._isolated_common import IsolatedRunResult
+from decoy_engine.execution._isolated_run import run_pipeline_isolated
 from decoy_engine.execution._pandas_adapter import (
     PandasExecutionAdapter,
     get_default_executor,
@@ -106,6 +108,7 @@ __all__ = [
     "ExecutionEvent",
     "ExecutionPlan",
     "ExecutionResult",
+    "IsolatedRunResult",
     "OutOfCoreCompatibility",
     "OutOfCoreRejection",
     "PandasExecutionAdapter",
@@ -128,5 +131,6 @@ __all__ = [
     "resolve_substrate",
     "run_mask_pipeline_chunked",
     "run_pipeline",
+    "run_pipeline_isolated",
     "select_execution_adapter",
 ]
