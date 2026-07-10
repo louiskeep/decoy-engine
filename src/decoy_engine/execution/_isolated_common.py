@@ -33,10 +33,13 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import duckdb
 
+from decoy_engine.execution._row_errors import RowErrorRecord
+
 if TYPE_CHECKING:
     import pyarrow as pa
 
 __all__ = [
+    "RESULT_FILENAME",
     "RLIMIT_KINDS",
     "IsolatedRunOutcome",
     "IsolatedRunResult",
@@ -45,6 +48,19 @@ __all__ = [
     "is_memory_failure",
     "peak_rss_mb",
 ]
+
+# The envelope transport contract (dennis review HIGH-1): a known FILE in
+# work_root, never the last line of stdout. Any extra child stdout (atexit
+# handlers, BLAS/OpenMP teardown chatter, a chatty provider, a stray user
+# print inside a strategy) used to be able to push the real envelope off
+# the "last line" a naive parser expected, silently turning a COMPLETED job
+# into a `crashed` misclassification whose staged output then got rmtree'd
+# (the SC7b stdout-contamination class). stdout/stderr are still captured
+# by the driver, but purely for diagnostics now -- never parsed as the
+# result transport. Both worker and driver derive this path the same way:
+# `payload_path.parent / RESULT_FILENAME` (work_root is the payload's own
+# parent directory).
+RESULT_FILENAME = "result.json"
 
 IsolatedRunOutcome = Literal["completed", "oom_killed", "crashed"]
 
@@ -205,8 +221,26 @@ class IsolatedRunResult:
     envelope rather than the object itself (an `ExecutionResult` carries
     non-JSON-safe fields -- `StrategyTimingRecord`, `QualityWarning` -- that
     do not need to cross the process boundary for the isolation primitive to
-    be useful; `timings`/`warnings`/`row_errors` are dropped for this first
-    cut, a known part-1 scope limitation, not an oversight).
+    be useful; `timings`/`warnings` are dropped for this first cut, a known
+    part-1 scope limitation, not an oversight).
+
+    `row_errors` (dennis review MED-4) is the exception: it IS carried
+    across the boundary, unlike `timings`/`warnings`, because it is the
+    user-facing quarantine surface (bucketize/date_shift `format_error`,
+    code_set `mask_error`) -- silently dropping it would make a job's
+    quarantine reporting depend on whether it happened to run isolated.
+    The worker stages it as `row_errors.json` alongside the output Parquet
+    (same staging directory, read back before commit-or-discard, same
+    discipline as `outputs`); each `RowErrorRecord` field is a plain
+    str/int, so unlike `StrategyTimingRecord`/`QualityWarning` it needs no
+    richer serialization.
+
+    Caveat for B5 (LOW-1): `outputs` round-trips through a Parquet
+    write-then-read rather than being the in-memory `pa.Table` `run_pipeline`
+    produced directly, so exotic schema metadata (e.g. pandas index
+    metadata, some dictionary-encoding choices) is not guaranteed byte-
+    identical to the in-process result -- callers doing strict schema
+    comparison against the in-process path should be aware of this.
     """
 
     outcome: IsolatedRunOutcome
@@ -225,4 +259,8 @@ class IsolatedRunResult:
     # staging contract is that nothing lands here unless the run completed
     # cleanly (spec §12 ruling 3).
     committed_output_dir: str | None = None
+    # MED-4: table-attributed per-row strategy failures, carried across the
+    # process boundary (see docstring above). Empty on any non-`completed`
+    # outcome -- there is nothing to attribute a row error to.
+    row_errors: tuple[RowErrorRecord, ...] = ()
     extra: dict[str, Any] = field(default_factory=dict)
