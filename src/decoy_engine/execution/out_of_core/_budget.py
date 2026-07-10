@@ -81,9 +81,12 @@ _CGROUP_V1_MEMORY_MOUNT = Path("/sys/fs/cgroup/memory")
 
 # cgroup v1 has no literal "unlimited" string like v2's "max"; it instead
 # sets memory.limit_in_bytes to LLONG_MAX rounded down to the page size
-# (cgroup-v1/memory.txt). Any value at or above this band means "no limit
-# set at this level", not a real 8 EiB budget.
-_CGROUP_V1_UNLIMITED_SENTINEL = 9_223_372_036_854_771_712
+# (cgroup-v1/memory.txt). That rounding is page-size-specific -- 4 KiB on
+# x86-64, up to 64 KiB on ppc64le / some arm64 -- so a single 4 KiB constant
+# would keep the 64 KiB-page sentinel as a real ~8 EiB limit and let a job run
+# uncapped. Treat any value within one max-plausible page (64 KiB) of LLONG_MAX
+# as "no limit set at this level"; no real limit is ever set that high.
+_CGROUP_V1_UNLIMITED_THRESHOLD = (1 << 63) - 1 - 65_536
 
 # We deliberately do NOT add memory.swap.max (v2) / memory.memsw.limit_in_bytes
 # (v1) to widen the ceiling. Swap raises the kernel's kill point, but only by
@@ -187,7 +190,7 @@ def _cgroup_v1_effective_limit_bytes(leaf: Path, root: Path) -> int | None:
         value
         for directory in _cgroup_ancestor_dirs(leaf, root)
         if (value := _read_cgroup_bytes_value(directory / "memory.limit_in_bytes")) is not None
-        and value < _CGROUP_V1_UNLIMITED_SENTINEL
+        and value < _CGROUP_V1_UNLIMITED_THRESHOLD
     ]
     return min(values) if values else None
 

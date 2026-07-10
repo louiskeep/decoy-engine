@@ -220,17 +220,50 @@ class TestCgroupV1Read:
         monkeypatch.setattr(budget_mod, "_PROC_SELF_CGROUP", proc_self_cgroup)
         assert budget_mod.detect_cgroup_memory_limit_bytes() == 512 * _MIB
 
-    def test_unlimited_sentinel_is_treated_as_no_limit(self, tmp_path, monkeypatch) -> None:
+    @pytest.mark.parametrize(
+        "sentinel",
+        [
+            "9223372036854771712",  # LLONG_MAX & ~(4 KiB - 1), x86-64
+            "9223372036854710272",  # LLONG_MAX & ~(64 KiB - 1), ppc64le / some arm64
+            "9223372036854775807",  # raw LLONG_MAX
+        ],
+    )
+    def test_unlimited_sentinel_is_treated_as_no_limit(
+        self, tmp_path, monkeypatch, sentinel
+    ) -> None:
+        # The v1 "unlimited" sentinel is page-size-specific; every page-size
+        # variant must read as "no limit", not an ~8 EiB real budget.
         v1_mount = tmp_path / "cgroup_v1_memory"
         leaf = v1_mount / "docker" / "abc123"
         leaf.mkdir(parents=True)
-        (leaf / "memory.limit_in_bytes").write_text("9223372036854771712\n")
+        (leaf / "memory.limit_in_bytes").write_text(f"{sentinel}\n")
         proc_self_cgroup = tmp_path / "self_cgroup"
         proc_self_cgroup.write_text("5:memory:/docker/abc123\n")
         monkeypatch.setattr(budget_mod, "_CGROUP_V2_MOUNT", tmp_path / "no-v2")
         monkeypatch.setattr(budget_mod, "_CGROUP_V1_MEMORY_MOUNT", v1_mount)
         monkeypatch.setattr(budget_mod, "_PROC_SELF_CGROUP", proc_self_cgroup)
         assert budget_mod.detect_cgroup_memory_limit_bytes() is None
+
+    def test_a_real_large_limit_below_the_sentinel_is_kept(self, tmp_path, monkeypatch) -> None:
+        # A genuine (if large) limit must NOT be swallowed by the sentinel band.
+        v1_mount = tmp_path / "cgroup_v1_memory"
+        leaf = v1_mount / "docker" / "abc123"
+        leaf.mkdir(parents=True)
+        (leaf / "memory.limit_in_bytes").write_text("34359738368\n")  # 32 GiB
+        proc_self_cgroup = tmp_path / "self_cgroup"
+        proc_self_cgroup.write_text("5:memory:/docker/abc123\n")
+        monkeypatch.setattr(budget_mod, "_CGROUP_V2_MOUNT", tmp_path / "no-v2")
+        monkeypatch.setattr(budget_mod, "_CGROUP_V1_MEMORY_MOUNT", v1_mount)
+        monkeypatch.setattr(budget_mod, "_PROC_SELF_CGROUP", proc_self_cgroup)
+        assert budget_mod.detect_cgroup_memory_limit_bytes() == 32 * 1024 * _MIB
+
+    def test_unreadable_cgroup_file_falls_back_to_no_limit(self, tmp_path) -> None:
+        # A permission-denied / unreadable cgroup file must degrade to None
+        # (host-RAM fallback), never raise out of budget detection. Reading a
+        # directory raises IsADirectoryError (an OSError), exercising that branch.
+        unreadable = tmp_path / "memory.max"
+        unreadable.mkdir()
+        assert budget_mod._read_cgroup_bytes_value(unreadable) is None
 
 
 class TestCgroupNestedHierarchyMin:
