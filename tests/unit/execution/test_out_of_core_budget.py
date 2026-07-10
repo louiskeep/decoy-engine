@@ -73,6 +73,8 @@ class TestDetectHostMemory:
 
 class TestResolveBudget:
     def test_auto_budget_is_conservative_fraction_of_host_ram(self, monkeypatch) -> None:
+        # No cgroup limit present: falls through to the host-RAM fraction.
+        monkeypatch.setattr(budget_mod, "detect_cgroup_memory_limit_bytes", lambda: None)
         monkeypatch.setattr(budget_mod, "detect_host_memory_bytes", lambda: 8 * _GIB)
         budget = resolve_budget()
         assert budget.budget_bytes == 2 * _GIB
@@ -83,11 +85,13 @@ class TestResolveBudget:
             raise AssertionError("explicit budget must not trigger host detection")
 
         monkeypatch.setattr(budget_mod, "detect_host_memory_bytes", no_detection)
+        monkeypatch.setattr(budget_mod, "detect_cgroup_memory_limit_bytes", no_detection)
         budget = resolve_budget(budget_bytes=512 * _MIB)
         assert budget.budget_bytes == 512 * _MIB
         assert budget.memory_limit == "512MB"
 
     def test_budget_floor_never_returns_absurdly_small_values(self, monkeypatch) -> None:
+        monkeypatch.setattr(budget_mod, "detect_cgroup_memory_limit_bytes", lambda: None)
         monkeypatch.setattr(budget_mod, "detect_host_memory_bytes", lambda: 64 * _MIB)
         for budget in (resolve_budget(), resolve_budget(budget_bytes=1)):
             assert budget.budget_bytes >= 64 * _MIB
@@ -108,6 +112,187 @@ class TestResolveBudget:
         with pytest.raises(ExecutionError) as excinfo:
             resolve_budget(budget_bytes=0)
         assert excinfo.value.code == "out_of_core_budget_invalid"
+
+
+class TestResolveBudgetPrefersCgroup:
+    """Sprint 1b: `resolve_budget`'s auto-detect path prefers the cgroup
+    effective limit over raw host RAM (plan §3.1)."""
+
+    def test_auto_budget_uses_cgroup_limit_when_present(self, monkeypatch) -> None:
+        monkeypatch.setattr(budget_mod, "detect_cgroup_memory_limit_bytes", lambda: 4 * _GIB)
+
+        def no_host_detection() -> int:
+            raise AssertionError("cgroup limit present: host RAM must not be consulted")
+
+        monkeypatch.setattr(budget_mod, "detect_host_memory_bytes", no_host_detection)
+        budget = resolve_budget()
+        assert budget.budget_bytes == 1 * _GIB  # 0.25 fraction of the 4 GiB cgroup limit
+
+    def test_auto_budget_falls_back_to_host_ram_without_a_cgroup_limit(self, monkeypatch) -> None:
+        monkeypatch.setattr(budget_mod, "detect_cgroup_memory_limit_bytes", lambda: None)
+        monkeypatch.setattr(budget_mod, "detect_host_memory_bytes", lambda: 16 * _GIB)
+        budget = resolve_budget()
+        assert budget.budget_bytes == 4 * _GIB
+
+
+class TestResolveBudgetSlotAware:
+    """Sprint 1b: `reserved_bytes` charges co-running slots so the return is
+    this job's SLOT budget, not the whole cgroup (plan §6, Sprint 1b)."""
+
+    def test_reserved_bytes_shrinks_the_slot_budget(self) -> None:
+        whole = resolve_budget(budget_bytes=8 * _GIB)
+        slot = resolve_budget(budget_bytes=8 * _GIB, reserved_bytes=2 * _GIB)
+        assert slot.budget_bytes == whole.budget_bytes - 2 * _GIB
+
+    def test_reserved_bytes_defaults_to_zero_for_backward_compatibility(self) -> None:
+        assert resolve_budget(budget_bytes=1 * _GIB) == resolve_budget(
+            budget_bytes=1 * _GIB, reserved_bytes=0
+        )
+
+    def test_floor_holds_when_reserved_nearly_exhausts_the_budget(self) -> None:
+        budget = resolve_budget(budget_bytes=100 * _MIB, reserved_bytes=99 * _MIB)
+        assert budget.budget_bytes == 64 * _MIB
+        assert budget.memory_limit == "64MB"
+
+    def test_rejects_negative_reserved_bytes(self) -> None:
+        with pytest.raises(ExecutionError) as excinfo:
+            resolve_budget(budget_bytes=1 * _GIB, reserved_bytes=-1)
+        assert excinfo.value.code == "out_of_core_reserved_bytes_invalid"
+
+
+class TestCgroupV2Read:
+    """v2 `memory.max`: numeric bytes, or the literal `"max"` for unlimited
+    (cgroup-v2.txt), read from a process's resolved leaf directory."""
+
+    def test_reads_numeric_memory_max(self, tmp_path, monkeypatch) -> None:
+        mount = tmp_path / "cgroup_v2"
+        leaf = mount / "user.slice"
+        leaf.mkdir(parents=True)
+        (leaf / "memory.max").write_text("1073741824\n")
+        proc_self_cgroup = tmp_path / "self_cgroup"
+        proc_self_cgroup.write_text("0::/user.slice\n")
+        monkeypatch.setattr(budget_mod, "_CGROUP_V2_MOUNT", mount)
+        monkeypatch.setattr(budget_mod, "_PROC_SELF_CGROUP", proc_self_cgroup)
+        assert budget_mod.detect_cgroup_memory_limit_bytes() == 1 * _GIB
+
+    def test_literal_max_is_unlimited_and_yields_no_cgroup_limit(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        mount = tmp_path / "cgroup_v2"
+        leaf = mount / "user.slice"
+        leaf.mkdir(parents=True)
+        (leaf / "memory.max").write_text("max\n")
+        proc_self_cgroup = tmp_path / "self_cgroup"
+        proc_self_cgroup.write_text("0::/user.slice\n")
+        monkeypatch.setattr(budget_mod, "_CGROUP_V2_MOUNT", mount)
+        monkeypatch.setattr(budget_mod, "_PROC_SELF_CGROUP", proc_self_cgroup)
+        monkeypatch.setattr(budget_mod, "_CGROUP_V1_MEMORY_MOUNT", tmp_path / "no-v1")
+        assert budget_mod.detect_cgroup_memory_limit_bytes() is None
+
+    def test_unlimited_v2_falls_back_to_host_ram_end_to_end(self, tmp_path, monkeypatch) -> None:
+        mount = tmp_path / "cgroup_v2"
+        leaf = mount / "user.slice"
+        leaf.mkdir(parents=True)
+        (leaf / "memory.max").write_text("max\n")
+        proc_self_cgroup = tmp_path / "self_cgroup"
+        proc_self_cgroup.write_text("0::/user.slice\n")
+        monkeypatch.setattr(budget_mod, "_CGROUP_V2_MOUNT", mount)
+        monkeypatch.setattr(budget_mod, "_PROC_SELF_CGROUP", proc_self_cgroup)
+        monkeypatch.setattr(budget_mod, "_CGROUP_V1_MEMORY_MOUNT", tmp_path / "no-v1")
+        monkeypatch.setattr(budget_mod, "detect_host_memory_bytes", lambda: 8 * _GIB)
+        assert budget_mod.detect_effective_memory_bytes() == 8 * _GIB
+
+
+class TestCgroupV1Read:
+    """v1 `memory.limit_in_bytes`: numeric bytes, or a near-LLONG_MAX
+    sentinel for unlimited (cgroup-v1/memory.txt), used only when no v2
+    limit is found."""
+
+    def test_reads_numeric_limit_in_bytes(self, tmp_path, monkeypatch) -> None:
+        v1_mount = tmp_path / "cgroup_v1_memory"
+        leaf = v1_mount / "docker" / "abc123"
+        leaf.mkdir(parents=True)
+        (leaf / "memory.limit_in_bytes").write_text("536870912\n")
+        proc_self_cgroup = tmp_path / "self_cgroup"
+        proc_self_cgroup.write_text("5:memory:/docker/abc123\n")
+        monkeypatch.setattr(budget_mod, "_CGROUP_V2_MOUNT", tmp_path / "no-v2")
+        monkeypatch.setattr(budget_mod, "_CGROUP_V1_MEMORY_MOUNT", v1_mount)
+        monkeypatch.setattr(budget_mod, "_PROC_SELF_CGROUP", proc_self_cgroup)
+        assert budget_mod.detect_cgroup_memory_limit_bytes() == 512 * _MIB
+
+    def test_unlimited_sentinel_is_treated_as_no_limit(self, tmp_path, monkeypatch) -> None:
+        v1_mount = tmp_path / "cgroup_v1_memory"
+        leaf = v1_mount / "docker" / "abc123"
+        leaf.mkdir(parents=True)
+        (leaf / "memory.limit_in_bytes").write_text("9223372036854771712\n")
+        proc_self_cgroup = tmp_path / "self_cgroup"
+        proc_self_cgroup.write_text("5:memory:/docker/abc123\n")
+        monkeypatch.setattr(budget_mod, "_CGROUP_V2_MOUNT", tmp_path / "no-v2")
+        monkeypatch.setattr(budget_mod, "_CGROUP_V1_MEMORY_MOUNT", v1_mount)
+        monkeypatch.setattr(budget_mod, "_PROC_SELF_CGROUP", proc_self_cgroup)
+        assert budget_mod.detect_cgroup_memory_limit_bytes() is None
+
+
+class TestCgroupNestedHierarchyMin:
+    """A parent cgroup's `memory.max` bounds every descendant, so the
+    effective limit is the min across the leaf..root chain, not just the
+    leaf's own file."""
+
+    def test_min_up_the_hierarchy_wins(self, tmp_path) -> None:
+        root = tmp_path / "cgroup"
+        parent = root / "parent"
+        child = parent / "child"
+        child.mkdir(parents=True)
+        (parent / "memory.max").write_text("536870912")  # 512 MiB, tighter
+        (child / "memory.max").write_text("1073741824")  # 1 GiB, looser
+        assert budget_mod._cgroup_v2_effective_max_bytes(child, root) == 512 * _MIB
+
+    def test_unlimited_levels_are_skipped_in_the_min(self, tmp_path) -> None:
+        root = tmp_path / "cgroup"
+        parent = root / "parent"
+        child = parent / "child"
+        child.mkdir(parents=True)
+        (parent / "memory.max").write_text("max")
+        (child / "memory.max").write_text("734003200")
+        assert budget_mod._cgroup_v2_effective_max_bytes(child, root) == 734003200
+
+    def test_all_unlimited_yields_none(self, tmp_path) -> None:
+        root = tmp_path / "cgroup"
+        parent = root / "parent"
+        child = parent / "child"
+        child.mkdir(parents=True)
+        (parent / "memory.max").write_text("max")
+        (child / "memory.max").write_text("max")
+        assert budget_mod._cgroup_v2_effective_max_bytes(child, root) is None
+
+
+class TestDiskSpillPreflight:
+    """Additive preflight (not yet wired into routing): does the scratch
+    path's free disk cover a predicted spill?"""
+
+    def test_passes_with_headroom_when_free_space_covers_the_spill(self, tmp_path) -> None:
+        result = budget_mod.check_disk_spill_preflight(tmp_path, predicted_spill_bytes=1024)
+        assert result.ok is True
+        assert result.headroom_bytes == result.free_bytes - 1024
+        assert result.predicted_bytes == 1024
+
+    def test_fails_when_predicted_spill_exceeds_free_space(self, tmp_path) -> None:
+        huge = budget_mod.shutil.disk_usage(tmp_path).free + (10 * _GIB)
+        result = budget_mod.check_disk_spill_preflight(tmp_path, predicted_spill_bytes=huge)
+        assert result.ok is False
+        assert result.headroom_bytes < 0
+
+    def test_checks_the_nearest_existing_ancestor_when_path_does_not_exist_yet(
+        self, tmp_path
+    ) -> None:
+        not_yet_created = tmp_path / "job-scratch" / "nested"
+        result = budget_mod.check_disk_spill_preflight(not_yet_created, predicted_spill_bytes=0)
+        assert result.ok is True
+
+    def test_rejects_negative_predicted_spill_bytes(self, tmp_path) -> None:
+        with pytest.raises(ExecutionError) as excinfo:
+            budget_mod.check_disk_spill_preflight(tmp_path, predicted_spill_bytes=-1)
+        assert excinfo.value.code == "out_of_core_predicted_spill_bytes_invalid"
 
 
 class TestTempDiskGuard:
