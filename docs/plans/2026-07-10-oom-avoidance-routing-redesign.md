@@ -259,3 +259,24 @@ Fable reviewed the draft against both repos. Headline: the spec undercounted the
 1. **Decide the process model first (Sprint 1a).** The governor's clean abort (B4), the probe's peak measurement (B2), and telemetry's per-job actual peak (B5) all silently assume per-job process isolation the platform default (in-process asyncio) does not provide and `memory_ceiling.py` already documents as an open gap. Make subprocess-per-job / H7 external worker an explicit prerequisite, or redesign those three sprints around its absence.
 2. **Fix the probe method (§3.3):** two-point / baseline-subtracted extrapolation (single-point misreads slope ~70% at 100k against our own B1 data), run in a fresh subprocess so it doesn't read a warm worker's historical peak.
 3. **Re-scope the reject deletion + sequencing:** the contract migration fires at B1/A1 (not B3); Track A needs the same test/contract/parity work as Track B and is ~2× under-budgeted; ineligible+too-big remains an irreducible reject class §3.6 currently routes into a guaranteed OOM; and ship Sprint 1 (cgroup budget + disk preflight, process model) unconditionally *first*.
+
+---
+
+## 12. Sprint 1a decision — RATIFIED (2026-07-10)
+
+**Decision (per the Sprint 1a research memo):** Option **(b)** — a subprocess-per-job execution wrapper in the engine — running inside Option **(a)** as its deployment shell. Port `scripts/fk_memory_probe.py`'s already-proven isolation primitive (fresh `execve` per job; peak read from `/proc/self/status` **VmHWM**, not `ru_maxrss`; `resource.setrlimit` cap applied in-child *before* workload allocation; self-classifying exit-code/stderr-marker OOM detection) from benchmark harness into a production execution primitive `run_pipeline_isolated(...)`. The platform worker (inline or external) invokes it instead of calling `run_pipeline` in-process, behind a rollback flag `isolated_execution_enabled` (mirroring `admission_control_enabled`).
+
+**Why:** it is the only option that delivers all three things B2/B4/B5 require — a clean per-job peak, an externally SIGKILL-able unit, and fresh-`execve` HWM semantics — and it is largely extraction of ~1,100 LOC of already-working probe code, not new design. H7 `worker_mode="external"` alone isolates per-*worker*, not per-*job* (contamination reappears at `worker_concurrency>1` and across a worker's sequential jobs), so it is the shell, not the mechanism. Option (c) in-process concedes §9's acceptance criteria are unreachable and lets B5 telemetry corrupt its own `k_path`.
+
+**Orchestrator rulings on the memo's open questions:**
+1. **Concurrency:** pin `worker_concurrency=1` per external worker for Sprint 1a; subprocess-per-slot at `>1` is explicit future work, not this sprint.
+2. **SQLite/inline:** the wrapper **degrades gracefully** — SQLite/inline deployments fall back to in-process execution, explicitly labeled "no governor/telemetry (option c)". Isolation is NOT a hard Postgres requirement; dev/local keep working.
+3. **Artifact-write on kill:** child writes to a **staging** location; the parent commits to the final target only on clean child exit; a SIGKILL discards staging → no partial output lands at the target. Confirm `TransactionalSink` survives SIGKILL specifically; full abort-cleanup ownership is B4.
+4. **WorkerBudget:** stays a pre-spawn gate for Sprint 1a; a child-reported "actual RSS, still running" update path is deferred to B5.
+5. **Gate exemption:** confirmed — Sprint 1 (1a+1b) is exempt from Sprint 0's speed-ratio gate (§6 frames it unconditional). It does not wait on the benchmark.
+
+**Sprint 1a acceptance additions:** the isolation path actually **runs** with `isolated_execution_enabled=True` in at least one lane (CI or a deployment target), producing a clean per-job VmHWM — not merely compiles. `_CAPPED_ENV` (`MALLOC_ARENA_MAX` / `ARROW_DEFAULT_MEMORY_POOL`) must be set **driver-side** via the subprocess `env=`, before the child's memory-pool init.
+
+**Scope split:** Sprint 1a-part-1 (first build) = the engine `run_pipeline_isolated` primitive + worker entrypoint + result contract + unit tests. Sprint 1a-part-2 = platform wiring (`queue_worker` → wrapper behind the flag).
+
+**Program sequencing (per Cam, 2026-07-10):** OOM redesign (this spec) → **Test-Flight Golden-Gate Hardening TH-1..TH-4** (`docs/plans/2026-07-10-testflight-golden-gate-hardening.md`, already authored) → revisit a trimmed 50M/100M run (validates auto-routing + yields the Sprint 0 speed ratio). The 50M revisit is also TH's out-of-scope item #2.
