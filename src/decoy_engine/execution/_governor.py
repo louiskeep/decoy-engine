@@ -66,14 +66,11 @@ finish to start recording misses.
 
 from __future__ import annotations
 
-import logging
-import os
-import signal
-import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
+from decoy_engine.execution._governor_monitor import _RssMonitor
 from decoy_engine.execution._isolated_common import IsolatedRunResult
 from decoy_engine.execution._isolated_run import run_pipeline_isolated
 from decoy_engine.execution._substrate import require_bool
@@ -88,8 +85,6 @@ __all__ = [
     "GovernorTripRecord",
     "run_job_with_governor",
 ]
-
-_logger = logging.getLogger(__name__)
 
 GovernorRoute = Literal["full_frame", "out_of_core", "sequential"]
 
@@ -153,95 +148,6 @@ def _is_route_ineligible_error(route: GovernorRoute, error: str | None) -> bool:
     return any(marker in error for marker in _INELIGIBLE_ROUTE_MARKERS.get(route, ()))
 
 
-def _read_child_vmrss_bytes(pid: int) -> int | None:
-    """This CHILD pid's current VmRSS in bytes, or `None` once it is gone.
-
-    Must be robust to the process exiting between us learning its pid and
-    this read (normal completion racing the poll, or a kill already in
-    flight) -- `/proc/<pid>/status` disappearing mid-read is the expected
-    steady-state end condition for this poller, never an error to raise.
-    """
-    try:
-        with open(f"/proc/{pid}/status", encoding="utf-8") as fh:
-            for line in fh:
-                if line.startswith("VmRSS:"):
-                    # proc(5): "VmRSS" is reported in kB regardless of the
-                    # host page size.
-                    return int(line.split()[1]) * 1024
-    except (OSError, ValueError, IndexError):
-        return None
-    return None  # no VmRSS line at all (kernel/zombie edge case) -- treat as gone
-
-
-class _RssMonitor:
-    """Supervisor-side poller for ONE child pid. Runs in a background thread
-    in the DRIVER process (not the child), so it can `SIGKILL` the child from
-    outside its address space regardless of what the child's own interpreter
-    is doing at the moment the threshold is crossed (see module docstring).
-
-    Never raises out of its polling loop: a child that exits mid-poll (normal
-    completion, or a kill already delivered by someone else) just ends the
-    loop, matching `run_pipeline_isolated`'s own contract that a vanished
-    child is a normal, cleanly-classified outcome, not a driver exception.
-    """
-
-    def __init__(self, pid: int, hard_threshold_bytes: int, poll_interval_s: float) -> None:
-        self._pid = pid
-        self._hard_threshold_bytes = hard_threshold_bytes
-        self._poll_interval_s = poll_interval_s
-        self._stop_event = threading.Event()
-        self._tripped_event = threading.Event()
-        self._peak_bytes = 0
-        self._thread = threading.Thread(
-            target=self._run, name=f"decoy-governor-rss-{pid}", daemon=True
-        )
-
-    def start(self) -> None:
-        self._thread.start()
-
-    def stop(self) -> None:
-        """Idempotent, bounded join -- called unconditionally once the run
-        this monitor was watching has returned, whether or not it tripped."""
-        self._stop_event.set()
-        self._thread.join(timeout=self._poll_interval_s + 5.0)
-
-    @property
-    def tripped(self) -> bool:
-        return self._tripped_event.is_set()
-
-    @property
-    def peak_observed_bytes(self) -> int:
-        """The highest VmRSS this monitor actually sampled. May under-report
-        the child's true peak between polls (point-in-time sampling, same
-        limitation `out_of_core._budget.check_temp_disk_budget` documents for
-        its own poll-at-boundaries disk check) -- the hard-threshold kill is
-        the safety property; this number is diagnostic/telemetry only."""
-        return self._peak_bytes
-
-    def _run(self) -> None:
-        while not self._stop_event.is_set():
-            rss = _read_child_vmrss_bytes(self._pid)
-            if rss is None:
-                return  # child is gone -- stop cleanly, nothing left to poll
-            if rss > self._peak_bytes:
-                self._peak_bytes = rss
-            if rss >= self._hard_threshold_bytes:
-                self._kill_child()
-                return
-            self._stop_event.wait(self._poll_interval_s)
-
-    def _kill_child(self) -> None:
-        # The threshold-cross decision is made from the read above,
-        # independent of whether the kill itself lands: a race where the
-        # child exits between that read and this call still means we
-        # correctly detected a hard-threshold cross and tried to act on it.
-        self._tripped_event.set()
-        try:
-            os.kill(self._pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass  # already gone -- nothing left to kill, not an error
-
-
 @dataclass(frozen=True)
 class GovernorTripRecord:
     """One estimator/probe miss: a route attempt that did not complete
@@ -271,7 +177,14 @@ class GovernorResult:
     """What `run_job_with_governor` returns: either a completed run (with the
     route that finally succeeded and the full trip history that preceded
     it), or an exhausted ladder with a human-readable diagnostic -- NEVER a
-    bare subprocess return code standing in for "the job died."""
+    bare subprocess return code standing in for "the job died."
+
+    `result` is `None` when the reroute ladder itself exhausted (every rung
+    tried, per-rung failures recorded in `trips`). LOW-1: the flag-off
+    (`use_runtime_governor=False`) exhausted path has no trip history, so
+    it carries the ONE rung's own `IsolatedRunResult` here instead --
+    callers keep its `outcome`/`peak_rss_mb`/`error` rather than losing it.
+    """
 
     outcome: GovernorOutcome
     final_route: GovernorRoute | None
@@ -369,18 +282,21 @@ def run_job_with_governor(
     Returns:
         A `GovernorResult`. `outcome="completed"` carries the successful
         `IsolatedRunResult` and which rung produced it; `outcome="exhausted"`
-        carries `diagnostic` (a human-readable explanation naming every route
-        tried and why) and a `None` result -- the caller-visible failure is
-        always this typed, diagnosed shape, never a bare subprocess exit
-        code.
+        carries `diagnostic` (naming every route tried and why) -- never a
+        bare subprocess exit code. `result` is `None` for a ladder-exhausted
+        failure (`trips` holds the per-rung detail); the flag-off exhausted
+        path (LOW-1) instead carries the one attempted rung's own
+        `IsolatedRunResult` there, since it has no `trips`.
 
     Raises:
-        ValueError: `on_spawn` or `execution_mode` was passed in
-            `isolated_kwargs` (this function owns both), `ladder` is empty,
-            or `budget_bytes` is not a positive int.
+        ValueError: `on_spawn`, `execution_mode`, or `isolate=False` (MED-2 --
+            the governor cannot supervise an in-process run) was passed in
+            `isolated_kwargs`; `ladder` is empty; `budget_bytes` is not a
+            positive int; `hard_threshold_fraction` is not in `(0, 1]`; or
+            `poll_interval_s` is not > 0.
     """
     require_bool("use_runtime_governor", use_runtime_governor)
-    _validate_call(ladder, budget_bytes, isolated_kwargs)
+    _validate_call(ladder, budget_bytes, hard_threshold_fraction, poll_interval_s, isolated_kwargs)
 
     if not use_runtime_governor:
         return _run_flag_off(config, sources, ladder[0], isolated_kwargs)
@@ -487,7 +403,11 @@ def run_job_with_governor(
 
 
 def _validate_call(
-    ladder: tuple[GovernorRoute, ...], budget_bytes: int, isolated_kwargs: dict[str, Any]
+    ladder: tuple[GovernorRoute, ...],
+    budget_bytes: int,
+    hard_threshold_fraction: float,
+    poll_interval_s: float,
+    isolated_kwargs: dict[str, Any],
 ) -> None:
     if not ladder:
         raise ValueError("run_job_with_governor: ladder must be non-empty.")
@@ -495,11 +415,43 @@ def _validate_call(
         raise ValueError(
             f"run_job_with_governor: budget_bytes must be a positive int, got {budget_bytes!r}."
         )
+    # LOW-2: 0 trips the kill immediately (VmRSS is never negative); above 1
+    # can never be crossed by a live process -- neither is a usable threshold.
+    if (
+        isinstance(hard_threshold_fraction, bool)
+        or not isinstance(hard_threshold_fraction, (int, float))
+        or not (0 < hard_threshold_fraction <= 1)
+    ):
+        raise ValueError(
+            "run_job_with_governor: hard_threshold_fraction must be in (0, 1], "
+            f"got {hard_threshold_fraction!r}."
+        )
+    # LOW-2: non-positive either busy-loops the monitor thread (0) or is
+    # nonsensical (negative) -- neither is a usable sample cadence.
+    if (
+        isinstance(poll_interval_s, bool)
+        or not isinstance(poll_interval_s, (int, float))
+        or poll_interval_s <= 0
+    ):
+        raise ValueError(
+            f"run_job_with_governor: poll_interval_s must be > 0, got {poll_interval_s!r}."
+        )
     collisions = {"on_spawn", "execution_mode"} & isolated_kwargs.keys()
     if collisions:
         raise ValueError(
             f"run_job_with_governor owns {sorted(collisions)} -- do not pass "
             f"{'them' if len(collisions) > 1 else 'it'} via isolated_kwargs."
+        )
+    # MED-2: isolate=False runs the job IN this process -- on_spawn is never
+    # called, so no monitor ever attaches, and a real OOM kills the driver
+    # itself (the exact rc137 this module exists to prevent). Fail closed.
+    if isolated_kwargs.get("isolate") is False:
+        raise ValueError(
+            "run_job_with_governor: isolate=False cannot be combined with the "
+            "runtime governor -- no child pid is ever spawned, so on_spawn is "
+            "never called and no monitor attaches. Leave isolate at its "
+            "default (True), or call run_pipeline_isolated directly if you "
+            "deliberately want the unsupervised in-process fallback."
         )
 
 
@@ -515,7 +467,10 @@ def _run_flag_off(
     return GovernorResult(
         outcome="exhausted",
         final_route=None,
-        result=None,
+        # LOW-1: surface the underlying result rather than dropping it -- no
+        # trip history exists here to hold this diagnostic, so the one
+        # rung's own result is the only place a caller can recover it from.
+        result=result,
         trips=(),
         diagnostic=(
             f"route={route} did not complete (outcome={result.outcome}); "
