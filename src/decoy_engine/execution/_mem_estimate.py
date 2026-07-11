@@ -1,6 +1,7 @@
 """Pure, schema-derived peak-memory estimator (OOM-avoidance routing redesign,
 Sprint B1a -- docs/plans/2026-07-10-oom-avoidance-routing-redesign.md §3.2/§3.3/
-§3.6, corrected per §11).
+§3.6, corrected per §11; k-constant premise corrected again per the dennis BLOCK
+on the initial B1a pass, 2026-07-11 -- see `K_FULL_FRAME_COLD_START` below).
 
 This module computes bytes; it does not route. `decide_execution_route`
 (`_pipeline_routing.py`) and the reject constants are untouched here --
@@ -8,11 +9,10 @@ wiring this estimator into routing is Sprint B1b. No pandas/DuckDB/platform
 imports: the arithmetic is plain Python over small dataclasses, so it is
 callable from a router, a CLI dry-run, or a test with zero execution cost.
 
-Two-factor model (§3.2), kept as two separate, separately-calibrated terms
-because collapsing them into one row-count constant is exactly what made the
-prior design (`OUT_OF_CORE_THRESHOLD_ROWS_DEFAULT` /
-`FULL_FRAME_REJECT_ROWS_DEFAULT`) mis-route on any schema unlike its one
-calibration shape:
+Two-factor model (§3.2), kept as two separate terms because collapsing them
+into one row-count constant is exactly what made the prior design
+(`OUT_OF_CORE_THRESHOLD_ROWS_DEFAULT` / `FULL_FRAME_REJECT_ROWS_DEFAULT`)
+mis-route on any schema unlike its one calibration shape:
 
   1. `raw_data_bytes` -- schema-derived, computed (never calibrated): per
      table, rows times the sum of each column's byte cost. Fixed-width
@@ -23,14 +23,40 @@ calibration shape:
      need a per-cell byte cost that "shallow" memory_usage does NOT
      capture -- that gap is exactly why `deep=True` exists on
      `memory_usage()`, and why this module never treats a string column as
-     "free": see `_STR_OBJECT_OVERHEAD_BYTES` below.
+     "free": see `_STR_OBJECT_OVERHEAD_BYTES` below. IMPORTANT: this
+     per-cell pricing is itself a worst-case assumption, not a measurement
+     of what any given run will actually hold resident -- see point 2.
 
-  2. `k_path` -- a per-execution-path multiplier calibrated ONCE from a real
-     measurement (`peak_RSS / raw_data_bytes` on a known schema), not
-     per-schema. `raw_data_bytes` absorbs width/table-count/dtype-mix
-     differences across schemas; `k_path` absorbs everything a byte-level
-     schema description cannot see for a GIVEN path (extra copies, join
-     staging, generator temporaries, allocator overhead).
+  2. `k_path` -- a per-execution-path multiplier meant to translate
+     `raw_data_bytes` into a peak-RSS prediction. It is NOT schema-invariant,
+     and it CANNOT be made schema-invariant from a single calibration run:
+     `raw_data_bytes` prices every string cell independently (pointer +
+     object header + payload, see `_STR_OBJECT_OVERHEAD_BYTES`), but real
+     interpreters/columnar engines share memory for repeated string values
+     (pooling/interning/dictionary-encoding) whenever cardinality is low
+     relative to row count. A fixture built on a small shared string pool
+     (the B1 calibration schema below) therefore has a raw_bytes that is
+     inflated relative to its OWN true peak by however much pooling actually
+     saved it -- and a `k = true_peak / raw_bytes` derived from that fixture
+     silently bakes the fixture's OWN pooling ratio into a number this
+     module then applies to every other schema, including ones with no
+     pooling at all (numeric columns, high-cardinality/unique strings). A
+     byte-level static description cannot know a future run's value
+     cardinality, so there is no schema-invariant k this module can compute
+     -- only a conservative one. See `K_FULL_FRAME_COLD_START`'s docstring
+     for the concrete numbers and the resulting operational constant.
+
+  B1b PRECONDITION (binding on whoever wires this into routing): because
+  `k_path` is a coarse, conservative filter and not a precise predictor,
+  B1b must NEVER statically route a job onto `full_frame` on the strength
+  of a bare `estimate_peak_bytes(..., "full_frame")` call alone unless that
+  conservative estimate clears the configured budget with the full
+  asymmetric margin (`fits`'s `error_band`). Any estimate near the
+  boundary -- or for a schema shape the static estimator cannot confidently
+  bound (unpriceable columns, or priceable columns whose true cardinality
+  is unknown) -- MUST be routed to the probe (B2) or a bounded path instead
+  of trusted for full_frame admission. The probe and B5 telemetry measure
+  the real per-schema peak; this module only filters out the clear cases.
 
 Sequential is modeled separately (`estimate_peak_bytes` path="sequential"):
 it is O(cardinality), and a `raw_bytes * k` model is structurally wrong for
@@ -106,14 +132,26 @@ def is_fixed_width_dtype(dtype: str) -> bool:
 # regardless of length (measured: `sys.getsizeof("")` is 49 on CPython
 # 3.10-3.13 x86-64; PEP 393's flexible string representation keeps the
 # per-object header constant and adds 1 byte/char for the common
-# latin1-storage case), and the numpy/pandas "object" ndarray that holds it
-# stores an 8-byte PyObject* reference per cell on TOP of that (numpy's
-# object-array docs: elements are references, not inline data). Both costs
-# are real and neither goes away when strings are pooled/interned -- the
-# reference itself is never shared. This is precisely the accounting gap
-# pandas' own `DataFrame.memory_usage(deep=True)` flag exists to close: the
-# shallow (default) count only sees the 8-byte pointers and silently drops
-# the string payload.
+# latin1-storage case). The numpy/pandas "object" ndarray that holds a
+# string stores an 8-byte PyObject* reference per cell on TOP of that
+# (numpy's object-array docs: elements are references, not inline data),
+# and THAT reference is never shared -- every cell needs its own slot in
+# the array regardless of what it points to. The 49-byte header + payload,
+# however, is NOT necessarily per-cell: when the SAME string object is
+# reused across cells (pooling/interning, or a columnar engine's
+# dictionary encoding for a low-cardinality column), that header and its
+# character bytes are paid ONCE for the whole column, and every other cell
+# just holds another 8-byte pointer to it. This module cannot know at
+# estimate time whether a given column's runtime values will end up pooled
+# -- that depends on value cardinality and on the specific execution
+# path's copy behavior, neither of which a static schema description
+# carries -- so it prices the full per-cell cost (pointer + header +
+# payload) as a conservative default rather than assuming pooling that may
+# not happen. This is precisely the accounting gap pandas' own
+# `DataFrame.memory_usage(deep=True)` flag exists to close: the shallow
+# (default) count only sees the 8-byte pointers and silently drops the
+# string payload. See `K_FULL_FRAME_COLD_START`'s docstring for how this
+# per-cell pricing interacts with the k-constant when a column IS pooled.
 _STR_OBJECT_POINTER_BYTES = 8
 _STR_OBJECT_HEADER_BYTES = 49
 _STR_OBJECT_OVERHEAD_BYTES = _STR_OBJECT_POINTER_BYTES + _STR_OBJECT_HEADER_BYTES  # 57
@@ -247,21 +285,23 @@ def raw_data_bytes(tables: Sequence[TableSizeSpec]) -> RawBytesResult:
 
 
 # ---------------------------------------------------------------------------
-# Path multipliers -- COLD-START constants (2026-07-10)
+# Path multipliers -- COLD-START constants (2026-07-10, k premise corrected
+# 2026-07-11 per the dennis BLOCK on the initial B1a pass)
 # ---------------------------------------------------------------------------
 #
-# k_full_frame = peak_RSS / raw_data_bytes(same schema), derived from the B1
-# full_frame sweep (docs/plans/2026-07-10-oom-avoidance-routing-redesign.md
-# §1): the parent/child/grandchild FK chain in
-# tests/perf_fixtures/fk_relational.py (`build_table`, width=16 payload
-# columns/table -- 48 payload columns total across the 3 tables, plus 4
-# string key columns: parent.id, child.id, child.parent_id,
-# grandchild.child_id). Every column is variable-width ("object"). Payload
-# width is the fixture's own declared pool width (12 chars,
-# `_string_pool(..., width=12)`); key width is the exact average length of
-# a base-10 stringified index in [0, rows) plus a 1-char prefix (computed,
-# not guessed, via the closed-form digit-count sum -- see the calibration
-# test for the reproduction).
+# --- Evidence: what was actually measured -----------------------------------
+#
+# The B1 full_frame sweep (docs/plans/2026-07-10-oom-avoidance-routing-
+# redesign.md §1) measured peak_RSS / raw_data_bytes(same schema) on the
+# parent/child/grandchild FK chain in tests/perf_fixtures/fk_relational.py
+# (`build_table`, width=16 payload columns/table -- 48 payload columns total
+# across the 3 tables, plus 4 string key columns: parent.id, child.id,
+# child.parent_id, grandchild.child_id). Every column is variable-width
+# ("object"). Payload width is the fixture's own declared pool width
+# (12 chars, `_string_pool(..., width=12)`); key width is the exact average
+# length of a base-10 stringified index in [0, rows) plus a 1-char prefix
+# (computed, not guessed, via the closed-form digit-count sum -- see the
+# calibration test for the reproduction).
 #
 #   rows/table | peak RSS (measured) | raw_data_bytes (this formula) |   k
 #   ---------- | -------------------  | ------------------------------ | ------
@@ -272,22 +312,63 @@ def raw_data_bytes(tables: Sequence[TableSizeSpec]) -> RawBytesResult:
 #
 # k converges toward ~1.156 as rows grow (the B1 sweep has a ~0.3-0.4 GB
 # fixed intercept -- interpreter/pandas/Arrow baseline -- that a per-row
-# multiplier cannot represent; it matters less at larger N). The pinned
-# constant below uses the LARGEST (6M) sample, the anchor furthest from
-# that intercept distortion and closest to real job sizes.
+# multiplier cannot represent; it matters less at larger N). This measured
+# value is pinned below as `K_FULL_FRAME_MEASURED_POOLED` -- EVIDENCE ONLY,
+# not the operational constant. Do not use it for routing.
 #
-# This lands far below the ~10-11x Fable's planning-doc pass estimated
-# (§3.2/§11): that guess implicitly used a much cruder "raw bytes" basis
-# (closer to an on-disk file-size proxy, e.g. Parquet's dictionary-encoded
-# footprint for this fixture's low-cardinality payload pool, which is far
-# smaller than the in-memory Python-object cost). This module's
-# `raw_data_bytes` already prices realistic per-object overhead
-# (`_STR_OBJECT_OVERHEAD_BYTES`), so its k is correspondingly smaller and
-# closer to 1x -- a MORE accurate raw-bytes term needs a SMALLER
-# multiplier to reach the same peak, not a bigger one. B5 telemetry is the
-# real fix either way; this is a documented placeholder, not a guess.
-K_FULL_FRAME_COLD_START = 1.156
+# --- Why the measured value is NOT schema-invariant (the dennis BLOCK) ------
+#
+# The B1 fixture's payload AND key columns are drawn from a shared pool of
+# only `_FILLER_POOL = 4096` distinct strings (see `fk_relational.py`) --
+# i.e. deliberately low cardinality relative to millions of rows, so CPython
+# reuses/interns the same string objects across cells. `raw_data_bytes`,
+# however, has no way to see that reuse: it prices every cell independently
+# at `width + _STR_OBJECT_OVERHEAD_BYTES` (57 B), so on THIS fixture it
+# over-prices the resident bytes by roughly 8.5x relative to what is
+# actually held in memory (measured true peak/raw for the pooled-string
+# shape: ~0.117). A schema with unique strings (no reuse) instead measures
+# ~1.400 true-peak/raw, and a schema of plain numeric (fixed-width) columns
+# is plausibly 2-3x once allocator/copy overhead is accounted for (dennis +
+# Codex's reasoned range, pending its own B1-equivalent sweep) -- both far
+# above 1.156. Applying 1.156 (the pooled-fixture's k) to a numeric or
+# unique-string schema therefore UNDER-predicts peak, which is the
+# dangerous direction: it can route a job onto full_frame that then OOMs.
+# There is no single number this module can compute from a static schema
+# description that is simultaneously accurate for pooled, unique, and
+# numeric shapes -- k is fundamentally per-schema, not per-path.
+#
+# K_FULL_FRAME_MEASURED_POOLED: the raw B1 measurement above, kept for
+# provenance/telemetry comparison ONLY -- e.g. so B5 can sanity-check a
+# real pooled-string job's measured k against the number this sprint
+# derived from the same fixture shape. Never read this constant for a
+# routing decision; `_K_PATH` does not reference it.
+K_FULL_FRAME_MEASURED_POOLED = 1.156
 
+# K_FULL_FRAME_COLD_START: the OPERATIONAL constant `_K_PATH["full_frame"]`
+# actually uses. Deliberately conservative -- picked to cover the numeric/
+# unique-string worst case (the reasoned 2-3x range above) plus headroom,
+# NOT the pooled-fixture measurement. This intentionally OVER-prices a
+# pooled-string schema like the B1 fixture (predicting ~26x its raw bytes
+# against a true ~0.117x) -- that is the SAFE direction: an over-priced
+# pooled-string job still gets routed correctly (it will simply also fit
+# comfortably, or in a near-boundary case get bumped to the probe/bounded
+# path per the B1b precondition above, where B2/B5 measure its real, much
+# smaller peak and it is recovered). The alternative -- staying near 1.156
+# -- is not recoverable the same way: it silently admits a numeric/unique
+# schema into full_frame that then OOMs. This constant is a coarse
+# conservative filter, not a prediction, and is REPLACED by a measured
+# per-schema k (probe result or B5 telemetry) wherever one is available;
+# see the B1b precondition above for the binding rule on when a bare
+# estimate under this constant may be trusted for full_frame admission.
+K_FULL_FRAME_COLD_START = 3.0
+
+# HARD PRECONDITION (both constants below): no production benchmark backs
+# either of these yet, and B1b MUST NOT route a job onto out_of_core or
+# sequential on the strength of a bare estimate using them before Sprint 0's
+# speed-ratio gate (§7) and/or B5 telemetry have actually run. They exist so
+# `estimate_peak_bytes`/`fits` are callable end-to-end today; they are not a
+# green light to wire unconditional routing on top of them.
+#
 # No production out_of_core benchmark exists yet in this repo (Sprint 0's
 # speed-ratio gate, §7, has not run) -- this is a deliberately conservative
 # placeholder, NOT derived from a measurement, pending that number. The
@@ -334,14 +415,17 @@ def default_fk_key_size_bytes(key_width_bytes: float) -> int:
 @dataclass(frozen=True)
 class FkCardinalityInput:
     """Sequential-path sizing input (§11 §3.2a): sequential is O(cardinality),
-    not O(raw_bytes) -- `run_sequential` streams/evicts table by table but
-    holds one table's FK dedup/lookup working set resident at a time, sized
-    by the number of DISTINCT keys live at once, not by total rows processed.
+    not O(raw_bytes) -- `run_sequential` streams/evicts table by table.
 
-    `working_set_bytes` is the largest single table's raw bytes (sequential
-    never holds more than one table fully resident -- see
-    `estimate_peak_bytes`'s "sequential" branch, which derives this from
-    `tables` itself rather than requiring the caller to pre-compute it).
+    `working_set_bytes` (computed by `estimate_peak_bytes`'s "sequential"
+    branch from `tables` itself, not by the caller) is currently the SUM of
+    the two largest tables' raw bytes, not a single table's -- an RI join
+    can hold the parent's key set resident while it streams the child table
+    that references it, so two tables concurrently resident is the safe
+    (conservative) assumption pending verification of the tighter
+    single-table bound. That tightening is gated on PR #22 (`run_sequential`
+    rework, §3.2a) landing and its actual concurrent-table behavior being
+    measured -- do not narrow this back to a single table before then.
     `distinct_key_count` and `key_size_bytes` price the FK dedup table on
     top of that: `distinct_key_count * key_size_bytes` bytes, scaling with
     key CARDINALITY, never with row count directly -- a wide table with a
@@ -393,10 +477,17 @@ def estimate_peak_bytes(
     full_frame / out_of_core: `raw_data_bytes(tables) * k_path` -- the
     two-factor model. sequential: a cardinality term, NOT `raw_bytes *
     k_seq` (§11 §3.2a: sequential streams table-by-table, so its cost is
-    the single largest resident table plus FK dedup working set, not the
-    SUM of every table's bytes -- summing would make it scale with total
-    row volume across every table, which is exactly the O(raw_bytes) model
-    the plan says is structurally wrong for this path).
+    bounded by a SMALL, FIXED number of concurrently-resident tables plus
+    FK dedup working set, not the SUM of every table's bytes -- summing
+    every table would make it scale with total row volume across every
+    table, which is exactly the O(raw_bytes) model the plan says is
+    structurally wrong for this path).
+
+    The working set is conservatively modeled as the SUM of the two
+    LARGEST tables' raw bytes (an RI join can hold a parent's key set
+    resident while streaming its child), not a single table's -- see
+    `FkCardinalityInput`'s docstring for why, and for the PR #22 gate on
+    tightening this to a single table.
     """
     if path in ("full_frame", "out_of_core"):
         raw = raw_data_bytes(tables)
@@ -409,7 +500,12 @@ def estimate_peak_bytes(
         unpriceable = tuple(c for r in per_table_raw for c in r.unpriceable_columns)
         if unpriceable:
             return PeakEstimate(estimated_bytes=None, unpriceable_columns=unpriceable)
-        working_set_bytes = max((r.priceable_bytes for r in per_table_raw), default=0)
+        # Sum of the two largest tables, not `max()` of one: conservative
+        # cover for an RI join holding parent-keys + child concurrently.
+        # Narrowing this to a single table is gated on PR #22 (`run_sequential`
+        # rework) landing and its concurrency behavior being verified.
+        largest_two = sorted((r.priceable_bytes for r in per_table_raw), reverse=True)[:2]
+        working_set_bytes = sum(largest_two)
         fk_bytes = 0
         if fk_cardinality is not None:
             fk_bytes = fk_cardinality.distinct_key_count * fk_cardinality.key_size_bytes
@@ -462,6 +558,7 @@ def fits(
 
 __all__ = [
     "K_FULL_FRAME_COLD_START",
+    "K_FULL_FRAME_MEASURED_POOLED",
     "K_OUT_OF_CORE_COLD_START",
     "K_SEQUENTIAL_COLD_START",
     "ColumnSizeSpec",

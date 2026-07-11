@@ -5,8 +5,12 @@ docs/plans/2026-07-10-oom-avoidance-routing-redesign.md §3.2/§3.3/§3.6, §11.
 No routing wiring here -- `decide_execution_route` and the reject constants
 are untouched (Sprint B1b). These tests pin: the fixed-width dtype cost
 table; string-width sourcing (declared / sampled / provider-metadata /
-UNPRICEABLE); the B1-calibrated `k_full_frame` constant against the real B1
-peak-RSS sweep; the sequential path's cardinality (not raw-bytes) shape; the
+UNPRICEABLE); `K_FULL_FRAME_MEASURED_POOLED` (evidence-only) against the
+real B1 peak-RSS sweep on its pooled-string schema; the safety property
+that the OPERATIONAL `K_FULL_FRAME_COLD_START` never under-predicts a lean
+numeric/unique-string schema (the dennis BLOCK this sprint remediates --
+see `TestFullFrameSafetyMargin`); the sequential path's cardinality (not
+raw-bytes) shape, including the two-largest-tables working-set bound; the
 `fits` asymmetric-margin boundary; and UNPRICEABLE propagation through
 `estimate_peak_bytes` and `fits`.
 """
@@ -19,6 +23,7 @@ import pytest
 from decoy_engine.config._tables import GenerateColumnConfig, TableConfig
 from decoy_engine.execution._mem_estimate import (
     K_FULL_FRAME_COLD_START,
+    K_FULL_FRAME_MEASURED_POOLED,
     ColumnSizeSpec,
     FkCardinalityInput,
     TableSizeSpec,
@@ -324,7 +329,17 @@ _B1_MEASURED_PEAK_MB = {
 }
 
 
-class TestFullFrameCalibration:
+class TestFullFramePooledFixtureReproduction:
+    """`K_FULL_FRAME_MEASURED_POOLED` is EVIDENCE ONLY (see the module and
+    constant docstrings in `_mem_estimate.py`): it reproduces the B1
+    pooled-string sweep and nothing more. These tests pin that reproduction
+    -- they intentionally do NOT test `K_FULL_FRAME_COLD_START` (the
+    OPERATIONAL constant `estimate_peak_bytes` actually uses), because that
+    constant is deliberately conservative and is NOT expected to land near
+    this fixture's measured peak. Its safety property (over-, never
+    under-predicts, on a lean schema) is covered separately in
+    `TestFullFrameSafetyMargin` below."""
+
     def test_raw_data_bytes_reproduces_the_derivation_at_6m_rows(self) -> None:
         tables = _b1_calibration_tables(6_000_000)
         result = raw_data_bytes(tables)
@@ -332,32 +347,43 @@ class TestFullFrameCalibration:
         # Pinned in the module docstring: ~21.428 GB at 6M rows/table.
         assert result.priceable_bytes == pytest.approx(21_427_555_560, rel=1e-6)
 
-    def test_pinned_k_full_frame_predicts_the_6m_peak_within_15_percent(self) -> None:
+    def test_measured_pooled_k_predicts_the_6m_peak_within_15_percent(self) -> None:
         tables = _b1_calibration_tables(6_000_000)
         raw = raw_data_bytes(tables)
-        predicted_bytes = raw.priceable_bytes * K_FULL_FRAME_COLD_START
+        predicted_bytes = raw.priceable_bytes * K_FULL_FRAME_MEASURED_POOLED
         measured_bytes = _B1_MEASURED_PEAK_MB[6_000_000] * _MB
         assert predicted_bytes == pytest.approx(measured_bytes, rel=0.15)
 
     @pytest.mark.parametrize("rows_per_table", sorted(_B1_MEASURED_PEAK_MB))
-    def test_pinned_k_full_frame_predicts_every_b1_sweep_point_within_15_percent(
+    def test_measured_pooled_k_predicts_every_b1_sweep_point_within_15_percent(
         self, rows_per_table: int
     ) -> None:
-        """The single COLD-START constant, calibrated at the 6M anchor,
-        still predicts the smaller B1 points within the stated tolerance --
-        this is the linearity claim (§1) that justifies a constant
-        multiplier at all, not a per-row-count-tier lookup."""
+        """The measured-pooled constant, calibrated at the 6M anchor, still
+        predicts the smaller B1 points within the stated tolerance -- this
+        is a ROW-COUNT linearity claim about ONE fixed schema shape (the B1
+        pooled-string fixture), not a claim that this k generalizes to a
+        DIFFERENT schema shape. See `test_row_linearity_..._extrapolates`
+        below for why that distinction matters."""
         tables = _b1_calibration_tables(rows_per_table)
         raw = raw_data_bytes(tables)
-        predicted_bytes = raw.priceable_bytes * K_FULL_FRAME_COLD_START
+        predicted_bytes = raw.priceable_bytes * K_FULL_FRAME_MEASURED_POOLED
         measured_bytes = _B1_MEASURED_PEAK_MB[rows_per_table] * _MB
         assert predicted_bytes == pytest.approx(measured_bytes, rel=0.15)
 
-    def test_k_derived_from_a_small_point_extrapolates_to_the_large_point(self) -> None:
-        """Derive k from the SMALLEST B1 sample (1M rows/table, the worst
-        case per §11's small-probe-overestimate warning) and confirm it
-        still extrapolates to the largest (6M) within tolerance -- a genuine
-        extrapolation check, not a same-point tautology."""
+    def test_row_linearity_k_derived_from_small_point_extrapolates_to_large_point(
+        self,
+    ) -> None:
+        """Proves ROW-linearity, not schema-invariance: a k derived from the
+        SMALLEST B1 sample (1M rows/table, the worst case per §11's
+        small-probe-overestimate warning) still predicts the LARGEST (6M)
+        sample of the SAME schema shape within tolerance. This says nothing
+        about applying that k to a DIFFERENT schema shape (numeric,
+        unique-string columns) -- the dennis BLOCK on the initial B1a pass
+        found exactly that generalization false (a k measured on this
+        pooled-string fixture under-predicts a lean numeric/unique schema by
+        ~5x). That cross-schema safety property is asserted separately by
+        `TestFullFrameSafetyMargin`, using the OPERATIONAL constant, not
+        this measured-pooled one."""
         small = _b1_calibration_tables(1_000_000)
         raw_small = raw_data_bytes(small)
         k_from_small = (_B1_MEASURED_PEAK_MB[1_000_000] * _MB) / raw_small.priceable_bytes
@@ -377,6 +403,81 @@ class TestFullFrameCalibration:
 
 
 # ---------------------------------------------------------------------------
+# Safety property (dennis BLOCK remediation): the OPERATIONAL constant must
+# OVER-predict, never under-predict, for a lean (numeric/unique-string)
+# schema -- the OOM-direction failure the pooled-fixture k could not avoid.
+# ---------------------------------------------------------------------------
+
+
+class TestFullFrameSafetyMargin:
+    def test_operational_k_over_predicts_the_pooled_b1_fixture_itself(self) -> None:
+        """The safe direction, demonstrated on the fixture the BLOCK
+        concerned: applying the OPERATIONAL constant to the pooled-string
+        B1 schema must predict AT LEAST the real measured peak (never
+        under), even though it is not calibrated to be tight on this
+        schema -- over-prediction here just means an unnecessary probe/
+        bounded-path detour, never a silent OOM."""
+        tables = _b1_calibration_tables(6_000_000)
+        raw = raw_data_bytes(tables)
+        predicted_bytes = raw.priceable_bytes * K_FULL_FRAME_COLD_START
+        measured_bytes = _B1_MEASURED_PEAK_MB[6_000_000] * _MB
+        assert predicted_bytes >= measured_bytes
+
+    def test_full_frame_estimate_never_undershoots_a_lean_numeric_schema(self) -> None:
+        """The core safety property this BLOCK exists to fix: a lean,
+        NON-pooled schema (plain int64 columns -- no strings, so no pooling
+        question even arises) must not be under-priced by the OPERATIONAL
+        constant. dennis + Codex's reasoned/measured range for a numeric
+        schema's true peak/raw ratio is ~2-3x (see the module's
+        `K_FULL_FRAME_COLD_START` docstring); this test pins the LOW end of
+        that range (2x raw_bytes) as a documented conservative floor on the
+        true peak and asserts the estimate clears it. If a future change to
+        `K_FULL_FRAME_COLD_START` drops it below 2.0, this test fails --
+        that is the point: it is the regression guard against
+        re-introducing the OOM-direction under-estimate this BLOCK found."""
+        rows = 1_000_000
+        num_cols = 20
+        table = TableSizeSpec(
+            name="numeric",
+            row_count=rows,
+            columns=tuple(ColumnSizeSpec(name=f"c{i}", dtype="int64") for i in range(num_cols)),
+        )
+        raw = raw_data_bytes((table,))
+        estimate = estimate_peak_bytes((table,), "full_frame")
+        assert not estimate.unpriceable
+        assert estimate.estimated_bytes is not None
+
+        # Documented conservative lower bound on true peak for a numeric
+        # schema: 2x raw_bytes (the low end of the measured/reasoned 2-3x
+        # range) -- NOT a tight prediction, just the floor this estimator
+        # must never fall under for full_frame admission to stay safe.
+        conservative_true_peak_floor = raw.priceable_bytes * 2.0
+        assert estimate.estimated_bytes >= conservative_true_peak_floor
+
+    def test_full_frame_estimate_never_undershoots_a_unique_string_schema(self) -> None:
+        """Same safety property, for the OTHER lean shape the BLOCK named:
+        unique (non-pooled) strings, measured true peak/raw ~1.400 -- well
+        above the pooled fixture's ~0.117 and still above the pooled
+        fixture's own measured k (1.156). Pins a conservative floor at that
+        measured ratio and confirms the operational constant clears it."""
+        rows = 1_000_000
+        table = TableSizeSpec(
+            name="unique_strings",
+            row_count=rows,
+            columns=(ColumnSizeSpec(name="u", dtype="object", string_width_bytes=16.0),),
+        )
+        raw = raw_data_bytes((table,))
+        estimate = estimate_peak_bytes((table,), "full_frame")
+        assert not estimate.unpriceable
+        assert estimate.estimated_bytes is not None
+
+        # Documented conservative lower bound: the measured unique-string
+        # true-peak/raw ratio (~1.400) named in the module docstring.
+        conservative_true_peak_floor = raw.priceable_bytes * 1.400
+        assert estimate.estimated_bytes >= conservative_true_peak_floor
+
+
+# ---------------------------------------------------------------------------
 # Sequential: O(cardinality), not raw_bytes * k (§11 §3.2a)
 # ---------------------------------------------------------------------------
 
@@ -389,18 +490,33 @@ class TestSequentialCardinality:
             columns=(ColumnSizeSpec(name="s", dtype="object", string_width_bytes=12.0),),
         )
 
-    def test_sequential_estimate_does_not_scale_with_table_count(self) -> None:
+    def test_sequential_working_set_is_two_largest_tables_not_all_tables_summed(
+        self,
+    ) -> None:
         """The defining structural difference from full_frame/out_of_core:
-        adding more equally-sized tables must NOT multiply the sequential
-        estimate, because sequential streams one table at a time -- it is
-        never all of them summed. full_frame, by contrast, DOES scale with
-        table count (it holds everything resident at once)."""
+        the sequential working set is the SUM of the two LARGEST tables (an
+        RI join can hold a parent's key set resident while streaming its
+        child, §3.2a) -- conservative, but never the sum of EVERY table.
+        A second table DOES add to the estimate; a THIRD (or more)
+        equally-sized table must NOT add further, because sequential never
+        holds more than two tables concurrently resident. full_frame, by
+        contrast, DOES scale with every additional table (it holds
+        everything resident at once) -- this contrast is the point of the
+        test, not an incidental check."""
         one_table = (self._one_table(1_000),)
+        two_tables = (self._one_table(1_000),) * 2
         three_tables = (self._one_table(1_000),) * 3
 
         seq_one = estimate_peak_bytes(one_table, "sequential")
+        seq_two = estimate_peak_bytes(two_tables, "sequential")
         seq_three = estimate_peak_bytes(three_tables, "sequential")
-        assert seq_one.estimated_bytes == seq_three.estimated_bytes
+
+        # A second table adds to the working set (two concurrently resident,
+        # conservative for an RI join) ...
+        assert seq_two.estimated_bytes > seq_one.estimated_bytes
+        # ... but a third (or more) identical table does not add further --
+        # capped at the two largest, never summed across all tables.
+        assert seq_three.estimated_bytes == seq_two.estimated_bytes
 
         full_one = estimate_peak_bytes(one_table, "full_frame")
         full_three = estimate_peak_bytes(three_tables, "full_frame")
@@ -408,6 +524,21 @@ class TestSequentialCardinality:
         # estimate can differ by a rounding hair; the scaling claim itself
         # (not exact integer equality) is what matters here.
         assert full_three.estimated_bytes == pytest.approx(3 * full_one.estimated_bytes, rel=1e-4)
+
+    def test_sequential_working_set_sums_the_two_largest_when_sizes_differ(self) -> None:
+        """Confirms the sum is of the two LARGEST tables specifically, not
+        an arbitrary pair: adding a small third table alongside two large
+        ones must not change the estimate versus just the two large ones,
+        and the two-large estimate must exceed a single large table's."""
+        large = self._one_table(1_000_000)
+        small = self._one_table(10)
+
+        one_large = estimate_peak_bytes((large,), "sequential")
+        two_large = estimate_peak_bytes((large, large), "sequential")
+        two_large_plus_small = estimate_peak_bytes((large, large, small), "sequential")
+
+        assert two_large.estimated_bytes > one_large.estimated_bytes
+        assert two_large_plus_small.estimated_bytes == two_large.estimated_bytes
 
     def test_sequential_estimate_scales_with_distinct_fk_key_count_not_row_count(self) -> None:
         table = (self._one_table(1_000_000),)
