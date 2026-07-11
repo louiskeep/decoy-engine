@@ -244,7 +244,7 @@ def _load_corpus_rows(name: str, path: Path | None) -> list[dict[str, Any]]:
         )
 
     try:
-        tbl = pq.read_table(str(path))  # type: ignore[no-untyped-call]
+        tbl = pq.read_table(str(path))  # type: ignore[no-untyped-call, unused-ignore]
     except Exception as exc:
         raise PlanCompileError(
             code="code_set_corpus_read_error",
