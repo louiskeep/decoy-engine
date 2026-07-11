@@ -176,6 +176,7 @@ def run_pipeline(
     full_frame_reject_rows: int = _FULL_FRAME_REJECT_DEFAULT,
     out_of_core_budget_bytes: int | None = None,
     use_byte_estimate_routing: bool = False,
+    use_probe_routing: bool = False,
 ) -> ExecutionResult:
     """Execute a mixed mask + generate config end-to-end.
 
@@ -219,6 +220,13 @@ def run_pipeline(
     32 GB-box-calibrated constants (see `_planner`) and are kwargs so the
     platform admission estimator can override them; `execution_mode` gains
     `"out_of_core"` as an explicit fail-closed force.
+
+    Sprint B2 (docs/plans/2026-07-10-oom-avoidance-routing-redesign.md
+    §3.3/§11/§13): `use_probe_routing` (default `False`, composes with --
+    has NO effect without -- `use_byte_estimate_routing=True`) is the
+    two-point micro-probe's fast-path RECOVERY for a job the static
+    estimate over-downgrades. See `_pipeline_routing.decide_execution_route`
+    and `_pipeline_routing_signals.resolve_probe_recovery`.
 
     Execution-substrate knobs (mask-kind tables only; generate tables
     always run the synthesize path; the sequential route is pandas-only
@@ -283,6 +291,7 @@ def run_pipeline(
     if out_of_core_budget_bytes is not None:
         require_positive_int("out_of_core_budget_bytes", out_of_core_budget_bytes)
     require_bool("use_byte_estimate_routing", use_byte_estimate_routing)
+    require_bool("use_probe_routing", use_probe_routing)
 
     resolved_registry = registry if registry is not None else get_default_registry()
     caller_sources: dict[str, pa.Table] = dict(sources) if sources else {}
@@ -324,12 +333,7 @@ def run_pipeline(
     # shape, so non-FK jobs keep the pre-SC2 routing. The size signal now comes
     # from the (SC7a bounded) profile metadata, so the gates fire on the lazy
     # `source_loader` path too (SC7b, closing the F2 reject-before-read hole).
-    (
-        out_of_core_compatible,
-        out_of_core_reject_code,
-        largest_table_rows,
-        largest_table_rows_exact,
-    ) = _pipeline_routing.out_of_core_routing_signals(
+    route, route_reason = _pipeline_routing.resolve_execution_route(
         profile,
         plan=plan,
         registry=resolved_registry,
@@ -337,28 +341,19 @@ def run_pipeline(
         caller_sources=caller_sources,
         table_kinds=table_kinds,
         has_mask_table=has_mask_table,
-    )
-    full_frame_fits_estimate = _pipeline_routing.resolve_full_frame_fits_estimate(
-        use_byte_estimate_routing, profile, caller_sources, table_kinds, out_of_core_budget_bytes
-    )
-    route, route_reason = _pipeline_routing.decide_execution_route(
-        profile,
         has_generate_table=has_generate_table,
-        has_mask_table=has_mask_table,
         validators=(config.get("validators") or []),
         fidelity_report=fidelity_report,
         vault_writer=vault_writer,
         execution_mode=execution_mode,
-        graph=graph,
         resolved_substrate=resolved_substrate,
-        out_of_core_compatible=out_of_core_compatible,
-        out_of_core_reject_code=out_of_core_reject_code,
-        largest_table_rows=largest_table_rows,
-        largest_table_rows_exact=largest_table_rows_exact,
         out_of_core_threshold_rows=out_of_core_threshold_rows,
         full_frame_reject_rows=full_frame_reject_rows,
+        out_of_core_budget_bytes=out_of_core_budget_bytes,
         use_byte_estimate_routing=use_byte_estimate_routing,
-        full_frame_fits_estimate=full_frame_fits_estimate,
+        use_probe_routing=use_probe_routing,
+        config=config,
+        engine_version=engine_version,
     )
 
     # Routing layer 2 (S3 auto-chunk) classification. Computed BEFORE the

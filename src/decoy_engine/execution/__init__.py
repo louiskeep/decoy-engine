@@ -74,6 +74,7 @@ from decoy_engine.execution._planner import (
     ExecutionPlan,
     classify_job,
 )
+from decoy_engine.execution._probe import ProbePoint, ProbeResult, probe_fits, probe_peak_bytes
 from decoy_engine.execution._row_errors import RowError, RowErrorRecord
 from decoy_engine.execution._runner import WorkNode, build_work_list, order_work
 from decoy_engine.execution._substrate import (
@@ -114,6 +115,8 @@ __all__ = [
     "PandasExecutionAdapter",
     "ParquetTransactionalSink",
     "PolarsExecutionAdapter",
+    "ProbePoint",
+    "ProbeResult",
     "RowError",
     "RowErrorRecord",
     "StrategyContext",
@@ -128,6 +131,8 @@ __all__ = [
     "classify_table_kinds",
     "get_default_executor",
     "order_work",
+    "probe_fits",
+    "probe_peak_bytes",
     "resolve_substrate",
     "run_mask_pipeline_chunked",
     "run_pipeline",
