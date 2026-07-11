@@ -15,6 +15,89 @@ from typing import Any
 
 from ._spec import FlightManifest
 
+# Sentinel prefix for a statistical-column snapshot_file that the runner builds
+# at run time from a fixture function. "snapshot:<func>" means "call
+# fixture.<func>(seed), write the returned distribution-snapshot dict to a temp
+# JSON file, and substitute its path here" (see build_snapshot_files). This
+# keeps the snapshot a deterministic, in-repo fixture artifact (built fresh each
+# run under the pinned numpy) rather than a committed binary blob that can rot.
+_SNAPSHOT_PREFIX = "snapshot:"
+
+
+def _load_fixture_module(manifest: FlightManifest, job_dir: Path) -> Any:
+    """Import the job's fixture.py module and return it.
+
+    Shared by build_source_frames and build_snapshot_files so both resolve the
+    same module object with a stable, job-scoped module name.
+    """
+    fixture_path = job_dir / "fixture.py"
+    if not fixture_path.exists():
+        raise FileNotFoundError(
+            f"Fixture module not found at {fixture_path}. "
+            f"Each job requires a fixture.py with source builders."
+        )
+    mod_name = f"_testflight_fixture_{manifest.job_name}"
+    spec_obj = importlib.util.spec_from_file_location(mod_name, fixture_path)
+    assert spec_obj is not None
+    fixture_mod = importlib.util.module_from_spec(spec_obj)
+    sys.modules[mod_name] = fixture_mod
+    loader = spec_obj.loader
+    assert loader is not None
+    loader.exec_module(fixture_mod)
+    return fixture_mod
+
+
+def build_snapshot_files(
+    manifest: FlightManifest,
+    job_dir: Path,
+    output_dir: Path,
+) -> dict[str, str]:
+    """Build distribution-snapshot JSON files for `statistical` generate columns.
+
+    Scans the manifest config for generate columns whose ``snapshot_file`` is a
+    ``snapshot:<func>`` placeholder, calls ``fixture.<func>(seed)`` once per
+    unique placeholder, writes the returned snapshot dict to
+    ``output_dir/<func>.json``, and returns a mapping
+    {placeholder -> absolute JSON path} for assemble_config to substitute.
+
+    Returns an empty dict for jobs with no statistical snapshot placeholders,
+    so the runner can call it unconditionally.
+
+    Args:
+        manifest: Validated FlightManifest.
+        job_dir: Directory containing the job's fixture.py.
+        output_dir: Directory to write the snapshot JSON files into.
+
+    Returns:
+        dict[placeholder_string, absolute_json_path].
+    """
+    import json
+
+    placeholders: set[str] = set()
+    for table in manifest.config.get("tables", []):
+        if not isinstance(table, dict):
+            continue
+        for gcol in table.get("generate_columns", []):
+            if not isinstance(gcol, dict):
+                continue
+            sf = gcol.get("snapshot_file")
+            if isinstance(sf, str) and sf.startswith(_SNAPSHOT_PREFIX):
+                placeholders.add(sf)
+
+    if not placeholders:
+        return {}
+
+    fixture_mod = _load_fixture_module(manifest, job_dir)
+    mapping: dict[str, str] = {}
+    for placeholder in sorted(placeholders):
+        func_name = placeholder[len(_SNAPSHOT_PREFIX) :]
+        builder = getattr(fixture_mod, func_name)
+        snapshot = builder(manifest.seed)
+        out_path = output_dir / f"snapshot_{func_name}.json"
+        out_path.write_text(json.dumps(snapshot), encoding="utf-8")
+        mapping[placeholder] = str(out_path)
+    return mapping
+
 
 def build_source_frames(
     manifest: FlightManifest,
@@ -51,22 +134,7 @@ def build_source_frames(
 
     import pandas as pd
 
-    fixture_path = job_dir / "fixture.py"
-    if not fixture_path.exists():
-        raise FileNotFoundError(
-            f"Fixture module not found at {fixture_path}. "
-            f"Each job requires a fixture.py with source builders."
-        )
-
-    # Dynamic import of job-specific fixture module.
-    mod_name = f"_testflight_fixture_{manifest.job_name}"
-    spec_obj = importlib.util.spec_from_file_location(mod_name, fixture_path)
-    assert spec_obj is not None
-    fixture_mod = importlib.util.module_from_spec(spec_obj)
-    sys.modules[mod_name] = fixture_mod
-    loader = spec_obj.loader
-    assert loader is not None
-    loader.exec_module(fixture_mod)
+    fixture_mod = _load_fixture_module(manifest, job_dir)
 
     seed = manifest.seed
     frames: dict[str, Any] = {}
@@ -117,11 +185,13 @@ def assemble_config(
     source_paths: dict[str, str],
     output_dir: Path,
     quarantine_path: str,
+    snapshot_paths: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Step 3: Assemble and validate the pipeline config dict.
 
     Starts from manifest.config, substitutes placeholder source/target/quarantine
-    paths with the actual temp-file paths, then validates through
+    paths (and `snapshot:<func>` statistical-column snapshot placeholders) with
+    the actual temp-file paths, then validates through
     PipelineConfig.model_validate(raw).model_dump() to use the real engine
     choke-point. Any invalid config shape raises pydantic.ValidationError before
     the pipeline is invoked.
@@ -131,6 +201,9 @@ def assemble_config(
         source_paths: dict[table_name, parquet_path] of written source files.
         output_dir: Directory to write output parquet files.
         quarantine_path: Path to write the quarantine JSONL file.
+        snapshot_paths: Optional dict[placeholder, json_path] from
+            build_snapshot_files. Each generate-column `snapshot_file` equal to a
+            key is replaced with the corresponding real path before validation.
 
     Returns:
         Validated, dumped pipeline config dict suitable for run_pipeline.
@@ -143,6 +216,20 @@ def assemble_config(
     from decoy_engine.config._pipeline import PipelineConfig
 
     raw = copy.deepcopy(manifest.config)
+
+    # Substitute statistical-column snapshot placeholders with real JSON paths
+    # BEFORE validation so the config the engine sees already points at a
+    # readable snapshot file.
+    if snapshot_paths:
+        for table in raw.get("tables", []):
+            if not isinstance(table, dict):
+                continue
+            for gcol in table.get("generate_columns", []):
+                if not isinstance(gcol, dict):
+                    continue
+                sf = gcol.get("snapshot_file")
+                if isinstance(sf, str) and sf in snapshot_paths:
+                    gcol["snapshot_file"] = snapshot_paths[sf]
 
     # Substitute source paths.
     sources_block = raw.get("sources", {})

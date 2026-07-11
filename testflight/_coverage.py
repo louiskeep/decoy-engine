@@ -53,20 +53,23 @@ _STRATEGY_ALLOWLIST: dict[str, str] = {
         "struct-column test data model is introduced"
     ),
     "group_key": (
-        "SP-10c group-aware strategy; exercised end-to-end by "
-        "tests/unit/transforms/test_group_key.py; a dedicated test-flight job "
-        "exercising the group-aware strategies (group_key/grouped_series/"
-        "windowed_date) is a tracked backlog item"
+        "SP-10c group-aware SCALAR (mask) strategy: applies group_key to an "
+        "existing source column. Job D (TH-3.2) exercises group_key as a GENERATE "
+        "type, not as a mask strategy, so this scalar-handler path stays "
+        "unexercised; also covered by tests/unit/transforms/test_group_key.py. A "
+        "mask-mode group-aware job is a tracked backlog item."
     ),
     "grouped_series": (
-        "SP-10c group-aware strategy; exercised by "
-        "tests/unit/transforms/test_grouped_series.py; dedicated test-flight "
-        "coverage is a tracked backlog item (see group_key)"
+        "SP-10c group-aware SCALAR (mask) strategy; Job D (TH-3.2) exercises it as "
+        "a GENERATE type, not a mask strategy. Mask-mode coverage is a tracked "
+        "backlog item (see group_key); also unit-tested in "
+        "tests/unit/transforms/test_grouped_series.py."
     ),
     "windowed_date": (
-        "SP-10c group-aware strategy; exercised by "
-        "tests/unit/transforms/test_windowed_date.py; dedicated test-flight "
-        "coverage is a tracked backlog item (see group_key)"
+        "SP-10c group-aware SCALAR (mask) strategy; Job D (TH-3.2) exercises it as "
+        "a GENERATE type, not a mask strategy. Mask-mode coverage is a tracked "
+        "backlog item (see group_key); also unit-tested in "
+        "tests/unit/transforms/test_windowed_date.py."
     ),
 }
 
@@ -79,27 +82,11 @@ _GENERATE_TYPE_ALLOWLIST: dict[str, str] = {
         "no current job has a reference-pool generate column; will be added in "
         "a future job that exercises the lookup-reference generation path"
     ),
-    "statistical": (
-        "similar distribution coverage is provided by the formula+gauss path in "
-        "Job C synthetic_events; the statistical type uses SDV-style parameterized "
-        "distributions and will be explicitly exercised in a future job (TH-3.2)"
-    ),
-    "group_key": (
-        "SP-10c group-aware generate type; exercised end-to-end by "
-        "tests/unit/transforms/test_group_key.py; a dedicated test-flight job "
-        "composing the group-aware generate trio inside run_pipeline is a tracked "
-        "backlog item (TH-3.2)"
-    ),
-    "grouped_series": (
-        "SP-10c group-aware generate type; exercised by "
-        "tests/unit/transforms/test_grouped_series.py; dedicated test-flight "
-        "coverage is a tracked backlog item (TH-3.2; see group_key)"
-    ),
-    "windowed_date": (
-        "SP-10c group-aware generate type; exercised by "
-        "tests/unit/transforms/test_windowed_date.py; dedicated test-flight "
-        "coverage is a tracked backlog item (TH-3.2; see group_key)"
-    ),
+    # statistical, group_key, grouped_series, and windowed_date were allowlisted
+    # here in TH-1.2 (only unit-tested). TH-3.2 removed them: Job D
+    # (jobs/d_longitudinal_visits) now exercises all four end-to-end as
+    # generate_columns inside run_pipeline, so the live-registry guard REQUIRES
+    # them to be covered by a job and Job D satisfies that.
 }
 
 # Checksum schemes from decoy_engine.checksums that are not exercised by a job.
@@ -160,16 +147,17 @@ _VALIDATOR_ALLOWLIST: dict[str, str] = {
         "(TH-3)"
     ),
     "parent_window_respected": (
-        "relationship validator that pairs with the windowed_date generate "
-        "strategy (child date within parent window). No current job drives a "
-        "windowed_date parent/child edge; covered end-to-end by the group-aware "
-        "Job D backlog item (TH-3.2)"
+        "relationship validator that asserts a child date falls within a parent "
+        "window across an FK edge. Job D (TH-3.2) exercises windowed_date within a "
+        "single generate table (anchor + offset), NOT across a parent/child FK "
+        "edge, so this relationship validator stays undriven; a cross-table "
+        "windowed_date parent/child job is a tracked backlog item."
     ),
     "reconciliation_holds": (
         "relationship validator that reconciles a parent aggregate against its "
-        "child rows across an FK edge. Job A's derived_aggregate is a single-table "
-        "sum (no parent/child reconciliation edge); a job driving cross-table "
-        "reconciliation is a tracked backlog item (TH-3.2)"
+        "child rows across an FK edge. No current job (Job D included) drives a "
+        "cross-table parent-aggregate/child reconciliation edge; a job that does "
+        "is a tracked backlog item."
     ),
 }
 

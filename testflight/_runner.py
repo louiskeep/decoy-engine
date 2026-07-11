@@ -44,6 +44,7 @@ from typing import Any
 import pyarrow as pa
 
 from ._builder import assemble_config as assemble_config
+from ._builder import build_snapshot_files as build_snapshot_files
 from ._builder import build_source_frames as build_source_frames
 from ._coverage import check_suite_strategy_coverage
 from ._evaluate import InvariantResult as InvariantResult
@@ -225,9 +226,12 @@ def run_job(manifest_path: Path) -> JobResult:
                 source_paths[table_name] = str(p)
                 pa_sources[table_name] = pa.Table.from_pandas(df)
 
-            # Step 3: assemble and validate config.
+            # Step 3: assemble and validate config. Build any statistical-column
+            # snapshot files first (no-op for jobs without them) so their real
+            # paths are substituted into the config before validation.
             quarantine_path = str(td / "quarantine.jsonl")
-            config = assemble_config(manifest, source_paths, td, quarantine_path)
+            snapshot_paths = build_snapshot_files(manifest, job_dir, td)
+            config = assemble_config(manifest, source_paths, td, quarantine_path, snapshot_paths)
 
             # Step 4: build key resolver.
             key_resolver = build_key_resolver(manifest)

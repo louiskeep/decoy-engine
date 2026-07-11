@@ -1,0 +1,353 @@
+# Test-flight Job D: longitudinal patient visits (group-aware family + statistical generation)
+# Topology: mixed
+#   providers -> patients via provider_identity (patients.provider_id FK, one-to-many)
+#   visits is a standalone GENERATE table (no FK; longitudinal per-patient shapes)
+#
+# WHY THIS JOB EXISTS (TH-3.2 / P1-8):
+#   The group-aware generate family (group_key / grouped_series / windowed_date)
+#   and the `statistical` generate type were previously allowlisted out of the
+#   coverage guard and only unit-tested. This job drives all four END-TO-END
+#   through run_pipeline, COMPOSED with relationships (providers -> patients),
+#   quarantine (luhn on patients.card_no), and quality reporting (distribution
+#   invariants) -- the composition unit tests do not prove. Once this job lands,
+#   the four generate-type allowlist entries in testflight/_coverage.py are
+#   removed so the live-registry guard REQUIRES them to be exercised.
+#
+# PLANTED EDGE CASES (exact counts asserted by invariants):
+#   - 12 patient rows with invalid-Luhn card_no (LAST 12 rows) -> quarantined by
+#     the luhn validator. They carry a VALID provider_id so removing them creates
+#     no new FK orphans.
+#   - 8 patient rows referencing fictional provider_ids (PRV999900..PRV999907)
+#     not in the providers pool -> orphan_policy:warn keeps them; fk_integrity
+#     asserts exactly 8 orphans. They carry a VALID Luhn card_no so they survive
+#     quarantine.
+#
+# GENERATE TABLE: visits (6000 rows) -- the group-aware + statistical surface.
+#   Declared-order sequential columns (each group-aware / windowed column reads
+#   siblings declared BEFORE it):
+#     event_idx     sequence      -- monotone order_by for grouped_series
+#     patient_ref   categorical   -- the group label (30 synthetic patients)
+#     visit_num     grouped_series-- per-patient visit counter (cumcount)
+#     episode_key   group_key     -- one deterministic key per patient_ref group
+#     admit_date    statistical   -- datetime sampled from the snapshot (anchor)
+#     followup_date windowed_date -- date within [admit+1, admit+30] days
+#     charge_amount statistical   -- numeric sampled from the snapshot (mean/std)
+#   The two statistical columns read a distribution-snapshot/v1 artifact built at
+#   run time from fixture.build_charge_snapshot (see the snapshot: placeholder).
+#
+# Source fingerprints (SHA-256 of canonical CSV; verified by verify_fingerprint
+# inside each fixture build_* function -- update both after any fixture change):
+#   providers: ff3a99b1ed020641c339a04ae9613416264de9a59c623cd69ca266c56ed14483
+#   patients:  20ca676a20e421730171853cdb1e2bce97198d8d02d9eaf87fee7f654cbc5d72
+#
+# Strategies exercised (mask side): fpe, from_parent, passthrough, categorical.
+# Generate types exercised: sequence, categorical, grouped_series, group_key,
+#   statistical, windowed_date (the last four were previously allowlisted-out).
+
+job_name: d_longitudinal_visits
+topology: mixed
+seed: 45
+master_key_label: testflight
+
+tables:
+  - name: providers
+    kind: mask
+    row_count: 60
+    source_builder: "fixture.build_providers"
+  - name: patients
+    kind: mask
+    row_count: 900
+    source_builder: "fixture.build_patients"
+  - name: visits
+    kind: generate
+    row_count: 6000
+    # No source_builder; the engine synthesises rows from generate_columns below.
+
+relationships:
+  - parent:
+      table: providers
+      columns: [provider_id]
+    children:
+      - table: patients
+        columns: [provider_id]
+    orphan_policy: warn
+    namespace: provider_identity
+
+config:
+  version: 1
+  global_settings:
+    seed: 45
+
+  sources:
+    providers: {type: file, format: parquet, path: "__PLACEHOLDER_providers__"}
+    patients:  {type: file, format: parquet, path: "__PLACEHOLDER_patients__"}
+
+  targets:
+    providers: {type: file, format: parquet, path: "__PLACEHOLDER_out_providers__"}
+    patients:  {type: file, format: parquet, path: "__PLACEHOLDER_out_patients__"}
+    visits:    {type: file, format: parquet, path: "__PLACEHOLDER_out_visits__"}
+
+  namespaces:
+    provider_identity:
+      declared_by:
+        - providers.provider_id
+    patient_identity:
+      declared_by:
+        - patients.patient_id
+
+  tables:
+    # === providers (mask table, FK parent) ===
+    - name: providers
+      columns:
+        # provider_id: FPE PK. Declares the provider_identity namespace/FK.
+        # charset digits + preserve_separators: "PRV" prefix preserved, the
+        # 6-digit body is permuted (genuinely value-changing).
+        - name: provider_id
+          strategy: fpe
+          namespace: provider_identity
+          provider_config:
+            charset: digits
+            preserve_separators: true
+
+        # specialty: categorical (deterministic per source value + namespace so
+        # the two determinism reruns agree). Quality-reporting mask column.
+        - name: specialty
+          strategy: categorical
+          namespace: specialty_ns
+          deterministic: true
+          provider_config:
+            categories: [Cardiology, Oncology, Pediatrics, Neurology, Radiology]
+            weights: [0.20, 0.20, 0.20, 0.20, 0.20]
+
+    # === patients (mask table, FK child) ===
+    - name: patients
+      columns:
+        # patient_id: FPE PK.
+        - name: patient_id
+          strategy: fpe
+          namespace: patient_identity
+          provider_config:
+            charset: digits
+            preserve_separators: true
+
+        # provider_id: from_parent (FK to providers.provider_id via
+        # provider_identity). 8 orphan rows (fictional provider_ids) pass through
+        # under orphan_policy:warn.
+        - name: provider_id
+          strategy: from_parent
+
+        # card_no: passthrough so invalid-Luhn rows survive to the validator.
+        # The luhn validator (below) fires on the 12 planted bad rows and
+        # quarantine removes them.
+        - name: card_no
+          strategy: passthrough
+
+        # region: categorical (deterministic). Quality-reporting mask column.
+        - name: region
+          strategy: categorical
+          namespace: region_ns
+          deterministic: true
+          provider_config:
+            categories: [North, South, East, West, Central]
+            weights: [0.20, 0.20, 0.20, 0.20, 0.20]
+
+    # === visits (generate table) -- group-aware + statistical surface ===
+    - name: visits
+      row_count: 6000
+      generate_columns:
+        # event_idx: global monotone sequence. Used as the order_by for the
+        # grouped_series visit counter (sortable within each patient group).
+        - name: event_idx
+          type: sequence
+          start: 1
+          step: 1
+          pad_length: 7
+
+        # patient_ref: categorical group label (30 synthetic patients). Uniform
+        # weights; ~200 rows per group so grouped_series/group_key groups are
+        # well populated. Distribution invariant checks output TVD vs weights.
+        - name: patient_ref
+          type: categorical
+          categories: [P000, P001, P002, P003, P004, P005, P006, P007, P008, P009,
+                       P010, P011, P012, P013, P014, P015, P016, P017, P018, P019,
+                       P020, P021, P022, P023, P024, P025, P026, P027, P028, P029]
+          weights: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+                    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+                    1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+
+        # visit_num: grouped_series (cumcount). Per-patient 0-based visit counter,
+        # resetting at each patient_ref group boundary, ordered by event_idx.
+        # Longitudinal shape: proves the group-aware sequencing composes in-pipeline.
+        - name: visit_num
+          type: grouped_series
+          group_by: patient_ref
+          order_by: event_idx
+          generator: cumcount
+
+        # episode_key: group_key. One deterministic key per patient_ref group
+        # (all visits of a patient share one HKDF-derived episode key). Prefix
+        # "EP-" prepended.
+        - name: episode_key
+          type: group_key
+          group_by: patient_ref
+          prefix: "EP-"
+
+        # admit_date: statistical (datetime). Sampled from the snapshot's
+        # admit_ts column (year-bin + uniform-within-year). Serves as the anchor
+        # for the windowed follow-up date below.
+        - name: admit_date
+          type: statistical
+          snapshot_file: "snapshot:build_charge_snapshot"
+          source_column: admit_ts
+
+        # followup_date: windowed_date. A date within [admit_date + 1, admit_date
+        # + 30] days -- the time-series window shape anchored on admit_date.
+        - name: followup_date
+          type: windowed_date
+          anchor: admit_date
+          min_days: 1
+          max_days: 30
+
+        # charge_amount: statistical (numeric). Sampled from the snapshot's
+        # charge_amount histogram (inverse-CDF). params declares the source
+        # mean/std so check_distribution_generate enforces the shape band.
+        - name: charge_amount
+          type: statistical
+          snapshot_file: "snapshot:build_charge_snapshot"
+          params:
+            mean: 340.0
+            std: 90.0
+
+  relationships:
+    - parent:   {table: providers, columns: [provider_id]}
+      children:
+        - {table: patients, columns: [provider_id]}
+      orphan_policy: warn
+      namespace: provider_identity
+
+  # Validators: luhn fires on the 12 invalid-Luhn card_no rows and triggers
+  # quarantine. fk_intact / no_orphan_children are intentionally omitted: 8
+  # orphan patients are planted (orphan_policy:warn), so those validators would
+  # fail the pipeline before the testflight invariant phase. The testflight
+  # check_fk_integrity invariant is the FK gate for this job.
+  validators:
+    - name: luhn
+      columns:
+        patients: [card_no]
+
+  # Quarantine: rows failing luhn on card_no are quarantined to a JSONL file.
+  # The runner sets the actual output_path via the assembled config before running.
+  quarantine:
+    enabled: true
+    output_path: "__PLACEHOLDER_quarantine__"
+    triggers: [validation_fail]
+
+invariants:
+  determinism: true
+
+  # 6.4 FK integrity: 8 orphan patients (fictional provider_ids) under warn.
+  fk_integrity:
+    - relationship_name: provider_identity
+      expected_orphans: 8
+      policy: warn
+
+  # grade_floor_enabled: false because the FPE PK columns (value-identity ~0 by
+  # design) pull the grade down; the cardinality + shape teeth are the correct
+  # checks for those columns.
+  grade_floor_enabled: false
+
+  distribution:
+    # providers.provider_id: preserve class (fpe bijection; cardinality+shape).
+    - table: providers
+      column: provider_id
+      distribution_class: preserve
+      strategy: fpe
+      tolerance: 0.05
+      null_pp: 2.0
+      joint_columns: []
+      joints_waived: true
+      joints_waived_reason: >-
+        provider_id is the FPE PK; FPE permutes values without altering their
+        frequency distribution and no meaningful correlation with specialty
+        survives the independent per-value remap.
+
+    # providers.specialty: synthetic class (categorical replacement).
+    - table: providers
+      column: specialty
+      distribution_class: synthetic
+      strategy: categorical
+      tolerance: 0.10
+      null_pp: 2.0
+      joint_columns: []
+      joints_waived: true
+      joints_waived_reason: >-
+        specialty is independently drawn per row by the categorical strategy;
+        no meaningful joint with provider_id (the FPE PK) is expected.
+
+    # patients.patient_id: preserve class (fpe bijection).
+    - table: patients
+      column: patient_id
+      distribution_class: preserve
+      strategy: fpe
+      tolerance: 0.05
+      null_pp: 2.0
+      joint_columns: []
+      joints_waived: true
+      joints_waived_reason: >-
+        patient_id is the FPE PK; no meaningful joint with region. FK linkage to
+        providers is checked by fk_integrity, not the distribution invariant.
+
+    # patients.region: synthetic class (categorical replacement).
+    - table: patients
+      column: region
+      distribution_class: synthetic
+      strategy: categorical
+      tolerance: 0.10
+      null_pp: 2.0
+      joint_columns: []
+      joints_waived: true
+      joints_waived_reason: >-
+        region is independently drawn per row by the categorical strategy; no
+        meaningful joint with the FPE patient_id is expected.
+
+    # visits.patient_ref: synthetic (categorical generate column). TVD vs the
+    # declared uniform weights over 30 groups (~200 rows each) at 6000 rows.
+    - table: visits
+      column: patient_ref
+      distribution_class: synthetic
+      tolerance: 0.10
+      null_pp: 2.0
+      joint_columns: []
+      joints_waived: true
+      joints_waived_reason: >-
+        visits is a generate table; no source frame to correlate with. Only the
+        single-column categorical weight check applies to patient_ref.
+
+    # visits.charge_amount: synthetic (statistical generate column). Output
+    # mean/std checked against the declared params band (see generate_columns).
+    - table: visits
+      column: charge_amount
+      distribution_class: synthetic
+      tolerance: 0.10
+      null_pp: 2.0
+      joint_columns: []
+      joints_waived: true
+      joints_waived_reason: >-
+        charge_amount is statistical-sampled from the snapshot histogram; no
+        joint declared. Mean/std verified against the params band.
+
+  # 6.7 Quarantine: 12 invalid-Luhn card_no rows removed by the luhn validator.
+  quarantine:
+    planted_bad_row_count: 12
+    expected_total_quarantined: 12
+    expected_validator: luhn
+
+  # 6.10 Strategy coverage: mask strategies exercised by this job. (The union
+  # coverage guard across all jobs is what removes the group-aware / statistical
+  # GENERATE-type allowlist entries; those are generate types, not scalar
+  # strategies, and are covered by the visits generate_columns above.)
+  strategy_coverage:
+    - fpe
+    - from_parent
+    - passthrough
+    - categorical
