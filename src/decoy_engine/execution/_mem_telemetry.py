@@ -25,13 +25,15 @@ erratum and §13's k-is-not-schema-invariant finding:
      multiplier for a giant schema class in the general case, and the ONE
      failure mode this loop must never produce is a `k` that under-shoots a
      future job's real peak (§13: "the naive calibration errs in the OOM
-     direction" is exactly the mistake being guarded against here). A high
-     percentile (default: the true maximum, `percentile=1.0`) means a
-     single high sample -- one wide/unique-string/numeric-heavy job, or one
+     direction" is exactly the mistake being guarded against here). The
+     true maximum -- one wide/unique-string/numeric-heavy job, or one
      governor trip -- pins the suggestion at that sample's level regardless
-     of how many low, pooled-string samples surround it. A mean or median
-     would dilute exactly that one dangerous sample into the noise floor,
-     which is the one thing this function must not do.
+     of how many low, pooled-string samples surround it; a mean or median
+     would dilute it into the noise floor instead. `recalibrate_k` PINS
+     `percentile` to `1.0` (rejects any other value) and hard-clamps
+     `suggested_k` to never fall below the pool's own true `max(observed_k)`
+     on every return path -- the invariant is enforced in code, not left for
+     a caller-tunable aggregation knob to preserve.
 
 Raising `k` (the estimate needs to go UP to stay safe) is adopted the
 instant the evidence supports it -- no minimum sample count, no margin.
@@ -71,7 +73,7 @@ __all__ = [
     "telemetry_record_from_isolated_run",
 ]
 
-MemoryTelemetryOutcome = Literal["completed", "self_oom", "governor_trip"]
+MemoryTelemetryOutcome = Literal["completed", "self_oom", "governor_trip", "crashed"]
 
 
 # ---------------------------------------------------------------------------
@@ -94,12 +96,14 @@ class MemoryTelemetryRecord:
 
     `isolated` is carried through unchanged from `IsolatedRunResult.isolated`
     / the governor's own isolation guarantee -- see the module docstring's
-    safety property 1. `outcome` records WHY this sample exists (a clean
-    completion, a self-detected OOM with a still-recoverable peak, or a
-    governor kill) for diagnostics; `recalibrate_k` does not branch on it
-    directly (both `self_oom` and `governor_trip` naturally produce a HIGH
-    `k = actual_peak_bytes / raw_bytes`, which the max-percentile aggregation
-    already surfaces on its own).
+    safety property 1. `outcome` records WHY this sample exists for
+    diagnostics; `recalibrate_k` filters `outcome == "crashed"` out of every
+    recalibration (a process that died of an unrelated bug at low RSS never
+    demonstrated the schema "fits" there -- mirrors `_MEMORY_MISS_TRIP_KINDS`'s
+    exclusion of the same failure class for governor trips). The other three
+    outcomes all count; `self_oom`/`governor_trip` naturally produce a HIGH
+    `k = actual_peak_bytes / raw_bytes`, which the max aggregation surfaces
+    on its own.
     """
 
     schema_fingerprint: str
@@ -204,17 +208,25 @@ def telemetry_record_from_isolated_run(
     path: ExecutionPath,
     raw_bytes: int,
     predicted_bytes: int,
+    mem_cap_bytes: int | None = None,
 ) -> MemoryTelemetryRecord:
-    """Build a `MemoryTelemetryRecord` from a completed (or self-OOM'd)
-    `run_pipeline_isolated` result.
+    """Build a `MemoryTelemetryRecord` from a `run_pipeline_isolated` result.
 
     `result.isolated` is carried through unchanged -- an in-process fallback
-    run (§12 ruling 2, "option c") produces a contaminated `peak_rss_mb` that
-    this function still wraps into a record (so it is visible for
-    diagnostics/telemetry-coverage reporting), but `isolated=False` on that
-    record means `recalibrate_k` will filter it out before it ever
+    run (§12 ruling 2, "option c") produces a contaminated `peak_rss_mb`
+    that this function still wraps into a record (visible for diagnostics),
+    but `isolated=False` means `recalibrate_k` filters it out before it
     contributes to a `k` suggestion -- see the module docstring's safety
     property 1.
+
+    `result.outcome` maps to three different treatments (MEDIUM remediation
+    fixing the asymmetry this used to have with
+    `telemetry_record_from_governor_trip`): `"completed"` -> `"completed"`
+    as-is; `"oom_killed"` -> `"self_oom"`, with `actual_peak_bytes` FLOORED
+    at `mem_cap_bytes` (when given) since a self-OOM means the true peak
+    was AT LEAST the cap that triggered it, even if the last sample came in
+    under it; `"crashed"` -> `"crashed"`, still recorded for diagnostics but
+    excluded from every `recalibrate_k` sample (see `_NON_EVIDENCE_OUTCOMES`).
 
     Raises:
         ValueError: `result.peak_rss_mb` is `None` -- the run never reported
@@ -229,13 +241,28 @@ def telemetry_record_from_isolated_run(
             "run never reported a peak (e.g. an unrecoverable abnormal exit) and "
             "there is nothing trustworthy to record."
         )
-    outcome: MemoryTelemetryOutcome = "completed" if result.outcome == "completed" else "self_oom"
+    reported_peak_bytes = int(result.peak_rss_mb * 1024 * 1024)
+    outcome: MemoryTelemetryOutcome
+    actual_peak_bytes: int
+    if result.outcome == "completed":
+        outcome = "completed"
+        actual_peak_bytes = reported_peak_bytes
+    elif result.outcome == "oom_killed":
+        outcome = "self_oom"
+        actual_peak_bytes = (
+            max(reported_peak_bytes, mem_cap_bytes)
+            if mem_cap_bytes is not None
+            else reported_peak_bytes
+        )
+    else:  # "crashed" -- not a memory-miss kind, see docstring above.
+        outcome = "crashed"
+        actual_peak_bytes = reported_peak_bytes
     return MemoryTelemetryRecord(
         schema_fingerprint=schema_fingerprint,
         path=path,
         raw_bytes=raw_bytes,
         predicted_bytes=predicted_bytes,
-        actual_peak_bytes=int(result.peak_rss_mb * 1024 * 1024),
+        actual_peak_bytes=actual_peak_bytes,
         isolated=result.isolated,
         outcome=outcome,
     )
@@ -249,6 +276,10 @@ def telemetry_record_from_isolated_run(
 # for a reason that has nothing to do with the estimator's byte math being
 # wrong, corrupting `k` on unrelated noise.
 _MEMORY_MISS_TRIP_KINDS = frozenset({"governor_kill", "self_oom"})
+
+# `outcome` values `recalibrate_k` never counts as evidence -- mirrors
+# `_MEMORY_MISS_TRIP_KINDS`'s exclusion of non-memory failures.
+_NON_EVIDENCE_OUTCOMES: frozenset[MemoryTelemetryOutcome] = frozenset({"crashed"})
 
 
 def telemetry_record_from_governor_trip(
@@ -391,66 +422,68 @@ def recalibrate_k(
     Conservative by construction, in the OOM-safe direction (module
     docstring):
 
-      1. Filters to `isolated == True` records for `path` only (and, if
-         `schema_fingerprint` is given, further to that one schema shape --
-         "optionally per schema-class" per the task brief). A non-isolated
-         record is silently excluded from the sample count and the
-         percentile, never treated as a weak/discounted signal -- it is
-         simply not evidence.
-      2. Aggregates the filtered records' `observed_k` at `percentile`
-         (default: the true max) -- never a mean or median.
+      1. Filters to `isolated == True` records for `path`, excludes any
+         `outcome` in `_NON_EVIDENCE_OUTCOMES` (currently `"crashed"` --
+         see `MemoryTelemetryRecord`'s docstring), and (if
+         `schema_fingerprint` is given) further restricts to that one shape.
+         An excluded record is dropped from the sample count and the
+         percentile entirely -- it is not weak evidence, it is not evidence.
+      2. Aggregates the filtered `observed_k` at `percentile` -- never a
+         mean or median. `percentile` MUST be exactly `1.0` (the true max);
+         see the `percentile` arg doc for why this is enforced rather than
+         left as a caller-tunable knob.
       3. Raising (`percentile_k > current_k`) is adopted immediately: no
-         minimum sample count, no margin. A single qualifying record is
-         sufficient, because under-shooting `k` is the one unacceptable
-         error and there is no safe reason to wait for more evidence before
-         correcting an under-prediction upward.
-      4. Lowering (`percentile_k < current_k`) is gated: `sample_count` must
-         be `>= min_samples_for_lower`, AND the percentile-`k` must clear
-         `current_k` by `lower_margin` (`percentile_k * (1 + lower_margin) <
-         current_k`) so a same-ballpark measurement never trims the constant
-         on noise alone. Either gate failing means `direction="hold"` and
-         `suggested_k == current_k` -- the cold-start constant is kept.
-      5. The suggestion is NEVER allowed below `floor_k`
-         (`_K_FLOOR_DEFAULT[path]` if not given explicitly) regardless of
-         what the percentile says -- clamped, not merely gated, so a floor
-         breach cannot slip through even if the sample/margin gates
-         mistakenly passed.
+         minimum sample count, no margin -- under-shooting `k` is the one
+         unacceptable error.
+      4. Lowering (`percentile_k < current_k`) is gated: `sample_count`
+         must be `>= min_samples_for_lower`, AND `percentile_k * (1 +
+         lower_margin) < current_k`, so a same-ballpark measurement never
+         trims the constant on noise alone. Either gate failing means
+         `direction="hold"` and `suggested_k == current_k`.
+      5. The suggestion is NEVER allowed below `safety_bound = max(floor_k,
+         true_max_observed_k)`, clamped on BOTH the raise and lower paths --
+         so neither a floor breach nor an under-shoot of the pool's own
+         observed maximum can slip through even if every other gate
+         mistakenly passed (HIGH remediation: enforced in code, not
+         delegated to `percentile`).
 
     Args:
-        records: telemetry pool. Not required to be pre-filtered by the
-            caller -- filtering to `path`/`isolated`/`schema_fingerprint` is
+        records: telemetry pool. Not required to be pre-filtered -- all of
+            `path`/`isolated`/`outcome`/`schema_fingerprint` filtering is
             this function's own job.
         path: the execution path to recalibrate.
         current_k: the constant in force today (e.g.
             `_mem_estimate.K_FULL_FRAME_COLD_START`).
         floor_k: overrides `_K_FLOOR_DEFAULT[path]`. Must be `<= current_k`
-            (a floor above the current constant is a contradiction: it would
-            mean the constant already in force is "unsafely low" by this
-            function's own floor, which should never happen for a value this
-            module itself produced or was seeded with).
+            (a floor above the constant already in force is a
+            contradiction).
         min_samples_for_lower: minimum sample count before ANY lowering is
             considered. Never gates a raise.
-        percentile: aggregation quantile in `(0.0, 1.0]`. Default `1.0`
-            (true max) -- see module docstring safety property 2 for why a
-            lower percentile risks diluting a single dangerous sample.
+        percentile: MUST be exactly `1.0` (the true max observed `k`). Kept
+            for API stability but validated, not trusted: see the module
+            docstring's safety property 2.
         lower_margin: required fractional headroom between the observed
             high-percentile `k` and `current_k` before a lowering is
             adopted.
         schema_fingerprint: if given, further restricts the sample to this
-            one schema shape (a tighter, per-shape recalibration) rather
-            than every schema that has ever hit `path`.
+            one schema shape rather than every schema that has hit `path`.
 
     Returns:
         A `KRecalibration` -- a suggestion, never a mutation of any live
         constant.
 
     Raises:
-        ValueError: `percentile` not in `(0.0, 1.0]`, `lower_margin < 0`,
+        ValueError: `percentile != 1.0`, `lower_margin < 0`,
             `min_samples_for_lower < 1`, or `floor_k` (resolved) is greater
             than `current_k`.
     """
-    if not (0.0 < percentile <= 1.0):
-        raise ValueError(f"percentile must be in (0.0, 1.0], got {percentile}.")
+    if percentile != 1.0:
+        raise ValueError(
+            f"percentile must be exactly 1.0, got {percentile}. Sub-max aggregation "
+            "dilutes the one dangerous sample this loop exists to respect and can "
+            "suggest a k below a schema's true worst observed case; kept for API "
+            "stability but pinned to the true maximum."
+        )
     if lower_margin < 0:
         raise ValueError(f"lower_margin must be >= 0, got {lower_margin}.")
     if min_samples_for_lower < 1:
@@ -467,6 +500,7 @@ def recalibrate_k(
         for record in records
         if record.path == path
         and record.isolated
+        and record.outcome not in _NON_EVIDENCE_OUTCOMES
         and (schema_fingerprint is None or record.schema_fingerprint == schema_fingerprint)
     ]
     sample_count = len(filtered)
@@ -482,11 +516,16 @@ def recalibrate_k(
             percentile=percentile,
         )
 
-    percentile_k = _percentile([record.observed_k for record in filtered], percentile)
+    observed_ks = [record.observed_k for record in filtered]
+    true_max_observed_k = max(observed_ks)
+    percentile_k = _percentile(observed_ks, percentile)
+    # Hard backstop (HIGH remediation): computed independently of
+    # `percentile_k`, applied on every return path below.
+    safety_bound = max(resolved_floor, true_max_observed_k)
 
     if percentile_k > current_k:
         # Raising is immediate -- no gates, no sample-count floor.
-        suggested = max(percentile_k, resolved_floor)
+        suggested = max(percentile_k, safety_bound)
         return KRecalibration(
             path=path,
             current_k=current_k,
@@ -513,9 +552,10 @@ def recalibrate_k(
                 floor_k=resolved_floor,
                 percentile=percentile,
             )
-        # Clamped to the floor even after the gates pass: the floor is a
-        # hard backstop, not merely another gate that can be satisfied away.
-        suggested = max(percentile_k, resolved_floor)
+        # Clamped to the safety bound even after the gates pass: the floor
+        # (and the pool's own true max) are a hard backstop, not merely
+        # another gate that can be satisfied away.
+        suggested = max(percentile_k, safety_bound)
         direction: RecalibrationDirection = "lower" if suggested < current_k else "hold"
         return KRecalibration(
             path=path,

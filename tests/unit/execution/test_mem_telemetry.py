@@ -280,6 +280,94 @@ class TestGovernorTripsPushKUp:
             )
 
 
+class TestPercentileMustBeMax:
+    """HIGH remediation: `percentile < 1.0` has no safe semantics on the
+    lowering side -- it must be rejected outright, not merely "allowed but
+    risky". This is the dangerous path that previously had zero coverage:
+    99 low samples + one real high outlier, recalibrated with a sub-max
+    percentile, used to silently suggest a `k` 50x under the true peak.
+    """
+
+    def test_sub_max_percentile_is_rejected_even_with_a_high_outlier(self) -> None:
+        records = [_record(raw_bytes=_GB, actual_peak_bytes=1 * _GB) for _ in range(99)]
+        records.append(_record(raw_bytes=_GB, actual_peak_bytes=100 * _GB))
+        with pytest.raises(ValueError, match="percentile"):
+            recalibrate_k(records, "full_frame", current_k=3.0, percentile=0.99)
+
+    def test_sub_max_percentile_rejected_even_when_it_would_only_raise(self) -> None:
+        # Not just the "lowering" case -- the parameter is rejected
+        # regardless of which direction the (never-computed) suggestion
+        # would have gone, since the loop must not depend on the caller
+        # picking the safe direction correctly.
+        records = [_record(raw_bytes=_GB, actual_peak_bytes=10 * _GB)]
+        with pytest.raises(ValueError, match="percentile"):
+            recalibrate_k(records, "full_frame", current_k=3.0, percentile=0.5)
+
+    def test_percentile_exactly_one_still_works(self) -> None:
+        records = [_record(raw_bytes=_GB, actual_peak_bytes=10 * _GB)]
+        result = recalibrate_k(records, "full_frame", current_k=3.0, percentile=1.0)
+        assert result.direction == "raise"
+
+
+class TestIsolatedOutcomeClassification:
+    """MEDIUM remediation: a `crashed` (non-memory) isolated run must not be
+    counted as evidence a schema fits at a low k -- it is excluded, mirroring
+    `_MEMORY_MISS_TRIP_KINDS`'s governor-trip exclusion of the same failure
+    class. `oom_killed` is a real memory observation and is floored at the
+    mem cap (peak >= cap by construction), mirroring the governor trip's
+    budget-floor.
+    """
+
+    def test_crashed_isolated_run_does_not_count_toward_recalibration(self) -> None:
+        crashed_result = _isolated_result(peak_rss_mb=512.0, outcome="crashed", isolated=True)
+        crashed_record = telemetry_record_from_isolated_run(
+            crashed_result,
+            schema_fingerprint="fp-a",
+            path="full_frame",
+            raw_bytes=1 * _GB,
+            predicted_bytes=1 * _GB,
+        )
+        assert crashed_record.outcome == "crashed"
+
+        low_k_records = [
+            _record(raw_bytes=_GB, actual_peak_bytes=int(0.5 * _GB)) for _ in range(25)
+        ]
+        records = [*low_k_records, crashed_record]
+        result = recalibrate_k(records, "full_frame", current_k=3.0, floor_k=0.1)
+        # The crashed record must not have inflated the lowering sample count.
+        assert result.sample_count == 25
+
+    def test_oom_killed_isolated_run_is_floored_at_the_mem_cap(self) -> None:
+        result_obj = _isolated_result(peak_rss_mb=4000.0, outcome="oom_killed", isolated=True)
+        record = telemetry_record_from_isolated_run(
+            result_obj,
+            schema_fingerprint="fp-a",
+            path="full_frame",
+            raw_bytes=1 * _GB,
+            predicted_bytes=3 * _GB,
+            mem_cap_bytes=8 * _GB,
+        )
+        assert record.outcome == "self_oom"
+        # 4000 MB was merely the last-sampled reading -- a self-OOM means
+        # the true peak was AT LEAST the cap that triggered the kill.
+        assert record.actual_peak_bytes == 8 * _GB
+
+        result = recalibrate_k([record], "full_frame", current_k=3.0)
+        assert result.direction == "raise"
+        assert result.suggested_k >= 8.0
+
+    def test_oom_killed_without_a_mem_cap_uses_the_reported_peak(self) -> None:
+        result_obj = _isolated_result(peak_rss_mb=8192.0, outcome="oom_killed", isolated=True)
+        record = telemetry_record_from_isolated_run(
+            result_obj,
+            schema_fingerprint="fp-a",
+            path="full_frame",
+            raw_bytes=1 * _GB,
+            predicted_bytes=3 * _GB,
+        )
+        assert record.actual_peak_bytes == int(8192.0 * _MB)
+
+
 class TestMinSampleGateAndFloor:
     def test_too_few_records_never_lowers(self) -> None:
         # All observed k well below current_k, but only 3 samples -- far
@@ -337,6 +425,28 @@ class TestMinSampleGateAndFloor:
             result = recalibrate_k(records, "full_frame", current_k=3.0, floor_k=min(floor, 3.0))
             assert result.suggested_k >= min(observed_high, result.floor_k)
             assert result.suggested_k >= result.floor_k
+
+
+class TestMinSampleBoundary:
+    """LOW-1: pin the `>=` boundary on `min_samples_for_lower` exactly, not
+    just "well above" / "well below" it.
+    """
+
+    def test_exactly_min_samples_lowers_when_other_gates_pass(self) -> None:
+        n = 20  # _DEFAULT_MIN_SAMPLES_FOR_LOWER
+        records = [_record(raw_bytes=_GB, actual_peak_bytes=int(1.0 * _GB)) for _ in range(n)]
+        result = recalibrate_k(records, "full_frame", current_k=3.0, floor_k=0.5)
+        assert result.sample_count == n
+        assert result.direction == "lower"
+        assert result.gates_passed is True
+
+    def test_one_below_min_samples_holds(self) -> None:
+        n = 19
+        records = [_record(raw_bytes=_GB, actual_peak_bytes=int(1.0 * _GB)) for _ in range(n)]
+        result = recalibrate_k(records, "full_frame", current_k=3.0, floor_k=0.5)
+        assert result.sample_count == n
+        assert result.direction == "hold"
+        assert result.gates_passed is False
 
 
 class TestRaiseVsLowerAsymmetry:

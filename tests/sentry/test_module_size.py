@@ -57,6 +57,15 @@ ALLOWLIST: dict[str, int] = {
     # the apply method; decompose into fpe_cipher.py + fpe_strategy.py when
     # additional checksum schemes or a second cipher mode lands.
     "src/decoy_engine/transforms/fpe.py": 609,
+    # B5 dennis-remediation (2026-07-11): the HIGH (percentile-knob
+    # under-shoot) and MEDIUM (crashed-run miscount) fixes each needed a
+    # safety invariant documented in the module's docstrings, not just
+    # enforced in code -- this is the safety-critical self-calibration
+    # loop, and the invariant text IS part of the fix. Decompose the
+    # emission helpers (telemetry_record_from_isolated_run /
+    # _from_governor_trip) into their own module when B5's production
+    # wiring sprint lands and gives them real callers to organize around.
+    "src/decoy_engine/execution/_mem_telemetry.py": 628,
 }
 
 
