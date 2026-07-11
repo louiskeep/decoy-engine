@@ -325,10 +325,13 @@ invariants:
 
     # visits.charge_amount: synthetic (statistical generate column). Output
     # mean/std checked against the declared params band (see generate_columns).
+    # tolerance 0.05 (TH-3.2 dennis LOW): observed mean 340.4 vs declared 340
+    # (0.1% off), std 91.9 vs 90 (2.1% off); the tighter band still passes with
+    # the std check at ~42% of the band, so the statistical check bites harder.
     - table: visits
       column: charge_amount
       distribution_class: synthetic
-      tolerance: 0.10
+      tolerance: 0.05
       null_pp: 2.0
       joint_columns: []
       joints_waived: true

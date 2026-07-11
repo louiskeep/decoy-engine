@@ -147,3 +147,59 @@ class TestFreshAndUnkeyed:
         assert a.base_int("py") == b.base_int("py")  # name excluded, seed equal
         c = _ctx({"strategy": "categorical", "values": ["a"]}, fallback_seed=8)
         assert a.base_int("py") != c.base_int("py")  # different fallback seed
+
+
+class TestSnapshotFileContentHash:
+    """TH-3.2 (dennis BLOCKER 1): ``snapshot_file`` is fingerprinted by file
+    CONTENT, not path. The statistical harness stages the snapshot in a fresh
+    per-run temp dir, so a path-based fingerprint produced a different seed
+    every process (cross-process determinism drift) -- and in production,
+    renaming/date-stamping a snapshot would silently change synthetic output.
+    """
+
+    @staticmethod
+    def _write_snapshot(tmp_path, name: str, content: bytes) -> str:
+        p = tmp_path / name
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(content)
+        return str(p)
+
+    def test_same_content_different_path_same_fingerprint(self, tmp_path):
+        content = b'{"schema_version": "distribution-snapshot/v1", "x": 1}'
+        p1 = self._write_snapshot(tmp_path, "run_a/snap.json", content)
+        # different directory AND different filename, identical bytes
+        p2 = self._write_snapshot(tmp_path, "run_b/other_name.json", content)
+        cfg1 = {"name": "charge", "type": "statistical", "snapshot_file": p1}
+        cfg2 = {"name": "charge", "type": "statistical", "snapshot_file": p2}
+        assert strategy_config_fingerprint(cfg1) == strategy_config_fingerprint(cfg2)
+
+    def test_same_content_different_path_same_column_seed_and_output(self, tmp_path):
+        # End-to-end determinism guarantee: identical snapshot content at two
+        # different paths -> identical per-column seed -> byte-identical draws.
+        content = b'{"schema_version": "distribution-snapshot/v1", "x": 1}'
+        p1 = self._write_snapshot(tmp_path, "dir_one/snap.json", content)
+        p2 = self._write_snapshot(tmp_path, "dir_two/renamed.json", content)
+        dk = _resolver()
+        a = _ctx({"type": "statistical", "snapshot_file": p1}, derive_key=dk)
+        b = _ctx({"type": "statistical", "snapshot_file": p2}, derive_key=dk)
+        for fam in GEN_FAMILIES:
+            assert a.base_int(fam) == b.base_int(fam)
+            assert [a.row_int(fam, i) for i in range(8)] == [b.row_int(fam, i) for i in range(8)]
+
+    def test_different_content_different_seed(self, tmp_path):
+        # Two genuinely different snapshots must NOT collide onto one seed
+        # (the failure mode of simply excluding snapshot_file).
+        p1 = self._write_snapshot(tmp_path, "a.json", b'{"schema_version": "v1", "mean": 340}')
+        p2 = self._write_snapshot(tmp_path, "b.json", b'{"schema_version": "v1", "mean": 999}')
+        cfg1 = {"type": "statistical", "snapshot_file": p1}
+        cfg2 = {"type": "statistical", "snapshot_file": p2}
+        assert strategy_config_fingerprint(cfg1) != strategy_config_fingerprint(cfg2)
+        dk = _resolver()
+        assert _ctx(cfg1, derive_key=dk).base_int("np") != _ctx(cfg2, derive_key=dk).base_int("np")
+
+    def test_missing_snapshot_fails_loud(self, tmp_path):
+        # Edge case: unreadable/missing file must raise, not silently fall back
+        # to the path string (which would reintroduce the path-coupling bug).
+        cfg = {"type": "statistical", "snapshot_file": str(tmp_path / "does_not_exist.json")}
+        with pytest.raises(RuntimeError, match="missing or unreadable"):
+            strategy_config_fingerprint(cfg)

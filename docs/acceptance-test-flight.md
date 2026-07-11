@@ -311,7 +311,14 @@ Limitations specific to the test-flight:
 
 Before merging a large block of strategy, relationship, or generation work:
 
-1. Run `python scripts/test_flight.py` and confirm all jobs PASS.
+1. Run `python scripts/test_flight.py` and confirm the process **EXITS 0**
+   (`echo $?`), not merely that it prints the `N/N` invariant line. The
+   process exit code is the gate: it goes non-zero on a failed invariant AND
+   on cross-process fingerprint drift, and the `FINGERPRINTS: x/x match golden`
+   line must be present. A green `41/41` line with a non-zero exit is a FAIL
+   (that exact split is how TH-3.2's determinism bug hid). The same
+   cross-process check is also asserted by `pytest testflight -m testflight`
+   (`test_fingerprint_gate.py`), so a determinism regression fails CI too.
 2. Read the evidence report: inspect the expected-vs-found integers for every
    invariant family, not only the PASS banner.
 3. If any invariant fails, the report names the failing job, table, column,

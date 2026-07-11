@@ -55,6 +55,39 @@ _EXCLUDED_FROM_FINGERPRINT = frozenset(
     }
 )
 
+# ``snapshot_file`` (statistical columns) is a FILESYSTEM PATH, not a
+# generation input. Hashing the path string couples the derived seed to a
+# UI/ops-mutable location: renaming or date-stamping a snapshot silently
+# shifts synthetic output, and a harness that stages the snapshot in a
+# fresh temp dir per run gets a different seed every process (breaking the
+# cross-process determinism gate). We substitute the path with the SHA-256
+# of the file's CONTENT before fingerprinting, so the same distribution at
+# ANY path yields the same seed, and two genuinely different snapshots
+# yield different seeds. Excluding it outright (dropping it) would instead
+# collide two different snapshots onto one seed -- the wrong direction.
+_SNAPSHOT_FILE_KEY = "snapshot_file"
+
+
+def _snapshot_content_digest(path: str) -> str:
+    """SHA-256 hex of a snapshot file's raw bytes, for use in the fingerprint.
+
+    Content, not path: the same snapshot at any location fingerprints
+    identically. Raises RuntimeError (fail loud) when the file is missing
+    or unreadable rather than silently falling back to the path string,
+    which would reintroduce the path-coupling bug.
+    """
+    try:
+        with open(path, "rb") as fh:
+            data = fh.read()
+    except OSError as exc:
+        raise RuntimeError(
+            f"strategy_config_fingerprint: snapshot_file {path!r} is missing or "
+            f"unreadable ({type(exc).__name__}: {exc}); cannot derive a stable "
+            f"content-based seed. Fix the path or file rather than falling back "
+            f"to the path string (which would silently change synthetic output)."
+        ) from exc
+    return "sha256:" + hashlib.sha256(data).hexdigest()
+
 
 def strategy_config_fingerprint(column_config: dict[str, Any]) -> str:
     """SHA-256 hex of canonical JSON of the strategy-relevant config.
@@ -63,10 +96,18 @@ def strategy_config_fingerprint(column_config: dict[str, Any]) -> str:
     so the bytes are identical regardless of locale or Python build.
     Returns the full 64-char hex; callers that want a shorter label can
     truncate.
+
+    ``snapshot_file`` is fingerprinted by CONTENT, not path (see
+    ``_SNAPSHOT_FILE_KEY``): its value in the payload is replaced with the
+    SHA-256 of the referenced file's bytes so the seed follows the
+    distribution, not the filesystem location.
     """
     payload = {
         k: v for k, v in (column_config or {}).items() if k not in _EXCLUDED_FROM_FINGERPRINT
     }
+    snapshot_file = payload.get(_SNAPSHOT_FILE_KEY)
+    if snapshot_file:
+        payload[_SNAPSHOT_FILE_KEY] = _snapshot_content_digest(str(snapshot_file))
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
