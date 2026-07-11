@@ -132,6 +132,7 @@ def evaluate_invariants(
     # retention check.
     def _run_value_changing_guard() -> str:
         checked: list[str] = []
+        skipped: list[str] = []
         for t in manifest.config.get("tables", []):
             if not isinstance(t, dict):
                 continue
@@ -151,11 +152,18 @@ def evaluate_invariants(
                 col_name = col.get("name")
                 if strat not in _VALUE_CHANGING_STRATEGIES or not isinstance(col_name, str):
                     continue
-                check_value_changing_not_passthrough(
+                status = check_value_changing_not_passthrough(
                     job_name, table_name, col_name, strat, src_df_v, out_df_v
                 )
                 checked.append(f"{table_name}.{col_name}({strat})")
-        return "checked=" + ",".join(checked) if checked else "no value-changing columns"
+                if status.startswith("SKIP"):
+                    skipped.append(f"{table_name}.{col_name}: {status}")
+        if not checked:
+            return "no value-changing columns"
+        evidence = "checked=" + ",".join(checked)
+        if skipped:
+            evidence += " | " + "; ".join(skipped)
+        return evidence
 
     _run("value_changing_passthrough", _run_value_changing_guard)
 

@@ -70,8 +70,9 @@ _STRATEGY_ALLOWLIST: dict[str, str] = {
     ),
 }
 
-# Generate-column types (from the live generation.synthesize.GENERATE_TYPES
-# registry) that are intentionally not exercised by the current three jobs.
+# Generate-column types (from the live config._tables.GENERATE_TYPES set,
+# derived from the GenerateColumnConfig.type Literal) that are intentionally
+# not exercised by the current three jobs.
 _GENERATE_TYPE_ALLOWLIST: dict[str, str] = {
     "reference": (
         "requires a reference pool table configured alongside the generate table; "

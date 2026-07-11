@@ -157,11 +157,21 @@ fires).
 value-changing (`fpe`, `hash`, `code_set`) must genuinely change its data,
 checked for *every* such column in the pipeline config (not only the columns
 named in the distribution spec). A complete no-op (output value-set equals
-source value-set) fails the value-set check; an FPE charset that covers only
-some of the data's characters -- leaving the rest verbatim while permuting one
-character per value -- fails a positional character-retention check (TH-1.1 /
-P0-1). One job additionally declares the engine's `leak_check` validator over
-its FPE-masked identity columns as a structural "forgot to mask" net.
+source value-set) fails the value-set check. An FPE charset that covers only
+some of the data's characters -- leaving the out-of-charset ones verbatim while
+permuting the rest -- fails a per-position across-row retention check (TH-1.1 /
+P0-1): for each character position, the fraction of rows whose output character
+equals the source character is measured independently, and any *informative*
+position (source alphabet >= 4 distinct characters, so low-entropy structural
+positions such as an NPI leading `1`/`2` digit are excluded) retained verbatim
+in >= 50% of rows is a leak. Testing each position independently catches a
+*narrow* leak -- even a single informative position emitted verbatim among many
+correctly-permuted ones, at any value width -- that an averaged whole-value
+statistic would dilute below the floor. On an FPE column with too few
+comparable rows to evaluate positionally the check reports an explicit SKIP (not
+a silent pass). One job additionally declares the engine's `leak_check`
+validator over its FPE-masked identity columns as a structural "forgot to mask"
+net.
 
 **chapter_preserve.** For code_set columns with `chapter_preserve: true`, the
 ICD chapter bucket of each output code must match the chapter bucket of the
@@ -177,9 +187,11 @@ allowlist entry fails the suite guard. Every coverage axis is derived from a
 live engine registry, not a static snapshot (TH-1.2 / P0-2): strategies from
 `SCALAR_HANDLERS`, validators from `validators._registry._REGISTRY`, checksum
 schemes from `checksums._VALIDATORS`, and generate types from
-`generation.synthesize.GENERATE_TYPES`. Adding an entry to any of these
-registries without a job or allowlist entry fails the guard, and the guard
-summary reports the true live count for each axis.
+`config._tables.GENERATE_TYPES` (derived from the `GenerateColumnConfig.type`
+Literal via `get_args`, the single validation authority for generate types).
+Adding an entry to any of these registries without a job or allowlist entry
+fails the guard, and the guard summary reports the true live count for each
+axis.
 
 ## Honest limitations
 

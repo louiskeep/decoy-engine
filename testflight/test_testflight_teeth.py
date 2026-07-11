@@ -1018,13 +1018,16 @@ class TestValueChangingPassthroughTeeth:
         """An fpe column that leaks most characters in position raises (mrn bug).
 
         RED: source values are uppercase-plus-digit (like the fixture MRNs);
-        the output permutes ONLY the digit and leaves every uppercase letter in
-        place. Each whole value differs (so the set check passes) but ~7/8 of
-        the characters are retained in position, so the positional-retention
-        check raises. This reproduces the charset=alphanum uppercase-MRN leak.
+        the output permutes ONLY the two digits and leaves every uppercase
+        letter in place. Each whole value differs (so the set check passes) but
+        the six uppercase positions are retained verbatim across all rows, so
+        the per-position leak check raises. This reproduces the charset=alphanum
+        uppercase-MRN leak.
         """
-        # 8-char values: 6 uppercase letters + 2 digits. Output keeps the
-        # uppercase letters, changes the digits -> retention 6/8 = 0.75 > 0.5.
+        # 8-char values: 6 uppercase letters (positions 0-5) + 2 digits
+        # (positions 6-7). The output keeps every uppercase letter and changes
+        # only the two digits, so positions 0-5 each have identical_fraction=1.0
+        # (informative: k=26 distinct uppercase) -> the per-position check fires.
         rng = np.random.default_rng(3)
         letters = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
         src_vals: list[str] = []
@@ -1039,6 +1042,104 @@ class TestValueChangingPassthroughTeeth:
         out = pd.DataFrame({"mrn": out_vals})
         with pytest.raises(AssertionError, match="partial-passthrough"):
             check_value_changing_not_passthrough("control", "members", "mrn", "fpe", src, out)
+
+    def test_narrow_minority_leak_detected(self) -> None:
+        """A MINORITY of verbatim positions among many permuted ones raises (TH-1).
+
+        This is dennis's concrete false-negative that shipped GREEN under the
+        old mean-over-positions metric: an "AB123456"-shaped column (2 per-
+        subject-varying uppercase + 6 digits) masked with charset:alphanum. The
+        two uppercase characters leak VERBATIM in every row (per-position
+        identical fraction 1.0) while the six digits permute (~0.1 each).
+
+        RED-BEFORE / GREEN-AFTER pinning: the old metric averaged the eight
+        positions to ~(2*1.0 + 6*0.1)/8 = 0.33, under the 0.5 floor, so two
+        informative PII characters per subject leaked and the gate stayed green.
+        The per-position metric flags position 0 (identical 1.0, k=26 distinct
+        uppercase, well above the 1/26 genuine baseline) and raises. Two
+        informative positions leaking can no longer ship green at any value
+        width.
+        """
+        rng = np.random.default_rng(11)
+        upper = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+        digits = list("0123456789")
+        src_vals: list[str] = []
+        out_vals: list[str] = []
+        for _ in range(200):
+            # 2 varying uppercase (out-of-charset for alphanum -> verbatim) +
+            # 6 varying digits (in-charset -> permuted).
+            u = "".join(rng.choice(upper, 2).tolist())
+            d = [int(x) for x in rng.choice(digits, 6).tolist()]
+            src_vals.append(u + "".join(str(x) for x in d))
+            # uppercase preserved verbatim; digits permuted (+3 mod 10).
+            out_vals.append(u + "".join(str((x + 3) % 10) for x in d))
+        src = pd.DataFrame({"acct": src_vals})
+        out = pd.DataFrame({"acct": out_vals})
+        with pytest.raises(AssertionError, match="partial-passthrough"):
+            check_value_changing_not_passthrough("control", "members", "acct", "fpe", src, out)
+
+    def test_narrow_leak_corrected_passes(self) -> None:
+        """The SAME narrow shape passes once every position is permuted (charset fixed).
+
+        GREEN-after companion to test_narrow_minority_leak_detected: with the
+        charset corrected (ALPHANUM), the two uppercase characters are now
+        in-charset and permuted too, so no position is retained verbatim. The
+        guard must NOT raise -- proving the fix is a targeted leak detector, not
+        a blanket rejection of the shape.
+        """
+        rng = np.random.default_rng(11)
+        upper = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+        digits = list("0123456789")
+        src_vals: list[str] = []
+        out_vals: list[str] = []
+        for _ in range(200):
+            u = [x for x in rng.choice(upper, 2).tolist()]
+            d = [int(x) for x in rng.choice(digits, 6).tolist()]
+            src_vals.append("".join(u) + "".join(str(x) for x in d))
+            # ALL positions permuted: uppercase shifted A->B..Z->A, digits +3.
+            u_out = "".join(chr((ord(c) - 65 + 1) % 26 + 65) for c in u)
+            out_vals.append(u_out + "".join(str((x + 3) % 10) for x in d))
+        src = pd.DataFrame({"acct": src_vals})
+        out = pd.DataFrame({"acct": out_vals})
+        # Must NOT raise: every informative position is permuted.
+        check_value_changing_not_passthrough("control", "members", "acct", "fpe", src, out)
+
+    def test_low_entropy_structural_position_not_flagged(self) -> None:
+        """A deterministically-preserved LOW-ENTROPY position is not a leak (no false positive).
+
+        The live members.npi column exposes this trap: NPI numbers always start
+        with digit 1 or 2 (source alphabet k=2 at position 0), and the
+        checksum-aware FPE legitimately preserves that leading digit
+        (identical_fraction ~1.0 there) while permuting every other position.
+        That is FORMAT, not a subject-identifying character, so the informative-
+        alphabet gate (k >= 4) must exclude it and the guard must NOT raise.
+        """
+        rng = np.random.default_rng(5)
+        digits = list("0123456789")
+        src_vals: list[str] = []
+        out_vals: list[str] = []
+        for _ in range(200):
+            lead = rng.choice(["1", "2"]).item()  # k=2 leading digit
+            body = [int(x) for x in rng.choice(digits, 9).tolist()]
+            src_vals.append(lead + "".join(str(x) for x in body))
+            # lead preserved verbatim (structural); body fully permuted.
+            out_vals.append(lead + "".join(str((x + 5) % 10) for x in body))
+        src = pd.DataFrame({"npi": src_vals})
+        out = pd.DataFrame({"npi": out_vals})
+        # Must NOT raise: position 0 is k=2 (excluded); all other positions permute.
+        check_value_changing_not_passthrough("control", "members", "npi", "fpe", src, out)
+
+    def test_small_table_emits_skip_not_silent_pass(self) -> None:
+        """An fpe column with < _FPE_RETENTION_MIN_ROWS rows returns an explicit SKIP (LOW-1).
+
+        A silent pass on a small table would let the positional privacy floor
+        evaporate. The guard runs the set check (still enforced) but reports a
+        distinct SKIP status for the positional check instead of a silent PASS.
+        """
+        src = pd.DataFrame({"mrn": [f"AB{i:02d}CD" for i in range(5)]})  # 5 < 20
+        out = pd.DataFrame({"mrn": [f"zx{i:02d}wq" for i in range(5)]})
+        status = check_value_changing_not_passthrough("control", "members", "mrn", "fpe", src, out)
+        assert status.startswith("SKIP"), f"expected an explicit SKIP status, got {status!r}"
 
     def test_good_fpe_passes(self) -> None:
         """A genuinely permuted fpe column passes both checks (no over-assertion).
@@ -1078,8 +1179,14 @@ class TestIndependentRecomputationTeeth:
         """
         import decoy_engine.expressions._lark_parser as lp
 
-        # Confirm the circular blind spot exists: the sabotaged evaluator agrees
-        # with the buggy stored output, so a same-evaluator harness would pass.
+        # NARRATIVE-ONLY patch (LOW-2): the harness recompute path in _computed.py
+        # now calls only compile_expr (smoke check) and its OWN ast evaluator --
+        # it no longer calls lp.evaluate at all, so this patch does not alter the
+        # code under test. It is retained to make the blind-spot argument concrete:
+        # the stored all-zeros output is exactly what this sabotaged evaluator
+        # would emit, so a hypothetical same-evaluator harness would agree and
+        # pass. The independent ast evaluator recomputes the true nonzero values
+        # and raises -- which is what the assertion below proves.
         monkeypatch.setattr(lp, "evaluate", lambda compiled, ctx: 0)
 
         tbl = pa.table(
