@@ -89,7 +89,7 @@ run looks like:
 DECOY TEST-FLIGHT  (engine 0.1.0, seed 42, substrate pandas)   RESULT: PASS
 
 == Job a_healthcare_claims  [one_to_many_multilevel]  ... ==
-  determinism      : MATCH   hash ...  (2 runs byte-identical)
+  determinism      : MATCH   hash ...  (2 runs equal)
   tables           : members ... claims ... claim_lines ...
   fk integrity     : OK  ...
   quality grade    : members A  claims B  ...
@@ -145,7 +145,8 @@ strategy map. Explicit teeth the policy alone does not provide:
   stay within the declared threshold.
 - Grade floor: preserve-dominant tables must achieve grade A or B.
 
-For generate tables: output categorical frequencies are compared to declared
+For generate tables: row count is asserted to equal the declared `TableSpec.row_count`
+(TH-4.3); output categorical frequencies are compared to declared
 weights within TVD tolerance; numeric mean and std are checked against
 declared params.
 

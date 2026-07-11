@@ -538,7 +538,7 @@ invariants:
       formula: >-
         line_amount * units * case_when(discount_tier == "copay", 0.80,
         discount_tier == "preferred", 0.90, 1.0)
-      branch_count: 0
+      branch_count: 3
     - table: claim_lines
       column: claim_line_sum
       formula: "sum(line_amount)"
