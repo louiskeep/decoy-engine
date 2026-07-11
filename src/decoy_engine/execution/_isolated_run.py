@@ -89,6 +89,7 @@ from decoy_engine.execution._isolated_common import (
     CAPPED_ENV,
     RESULT_FILENAME,
     RLIMIT_KINDS,
+    IsolatedRunOutcome,
     IsolatedRunResult,
     classify_abnormal_exit,
     is_memory_failure,
@@ -235,7 +236,7 @@ def _run_in_process(
     try:
         result = run_pipeline(config, sources, **run_pipeline_kwargs)
     except BaseException as exc:
-        outcome = "oom_killed" if is_memory_failure(exc) else "crashed"
+        outcome: IsolatedRunOutcome = "oom_killed" if is_memory_failure(exc) else "crashed"
         return IsolatedRunResult(
             outcome=outcome,
             peak_rss_mb=round(peak_rss_mb(), 1),

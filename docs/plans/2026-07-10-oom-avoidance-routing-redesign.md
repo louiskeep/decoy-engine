@@ -280,3 +280,20 @@ Fable reviewed the draft against both repos. Headline: the spec undercounted the
 **Scope split:** Sprint 1a-part-1 (first build) = the engine `run_pipeline_isolated` primitive + worker entrypoint + result contract + unit tests. Sprint 1a-part-2 = platform wiring (`queue_worker` → wrapper behind the flag).
 
 **Program sequencing (per Cam, 2026-07-10):** OOM redesign (this spec) → **Test-Flight Golden-Gate Hardening TH-1..TH-4** (`docs/plans/2026-07-10-testflight-golden-gate-hardening.md`, already authored) → revisit a trimmed 50M/100M run (validates auto-routing + yields the Sprint 0 speed ratio). The 50M revisit is also TH's out-of-scope item #2.
+
+---
+
+## 13. B1a calibration finding — the static estimator is a CONSERVATIVE FILTER, not a precise predictor (2026-07-11)
+
+dennis + Codex (empirical RSS measurement) disproved the §3.2 assumption that `k_path` is schema-invariant, and showed the naive calibration errs in the OOM direction:
+
+- The B1 calibration fixture draws most columns from a **shared string pool**, so `raw_data_bytes` (pricing each string cell at width+57) over-prices pooled cells ~8.5×. The fixture's raw_bytes is a ~5× inflated proxy → the measured `k=1.156` is an artifact. Applying 1.156 to a lean schema (all-numeric, or unique-string) **under-predicts → routes full_frame → OOM.**
+- Measured true peak/raw: pooled-string ~0.12, unique-string ~1.4, numeric ~2–3× (reasoned).
+
+**Ruling (refines §3.2 / §3.3):** the static estimator is a **coarse, conservative first-pass filter** — it must only ever OVER-predict full_frame peak, never under. Near-boundary accuracy comes from the probe (B2) + telemetry (B5). Concretely:
+- Operational `K_FULL_FRAME_COLD_START = 3.0` (covers the numeric worst case; over-prices pooled-string schemas, which is the safe side — the probe recovers their fast path). The measured 1.156 is kept as evidence only.
+- Sequential working-set = **sum of the two largest tables** (tighter single-table bound gated on PR #22).
+- `K_OUT_OF_CORE` / `K_SEQUENTIAL` cold-starts are **unmeasured placeholders** — B1b must NOT route on them before Sprint 0 / B5.
+- **B1b routing rule:** full_frame only when the conservative estimate clears the budget with margin; otherwise route bounded. The probe (B2) is a fast-path RECOVERY, not a safety requirement — so **B1b is safe to ship before B2** (it over-downgrades near-boundary jobs to bounded until B2 recovers them).
+
+**Process note:** the CI `mypy` gate was not runnable in the venv during the 1a/1b/B1a reviews (mypy uninstalled), so a `Literal`-type error slipped into `_isolated_run.py` (Sprint 1a remediation) and was only caught at B1a re-verify. Fixed. Sprint self-checks now run mypy via `uv run --with mypy==2.1.0 -- mypy src/decoy_engine testflight`.
