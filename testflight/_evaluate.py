@@ -28,6 +28,7 @@ from typing import Any
 import pyarrow as pa
 
 from ._invariants import (
+    _VALUE_CHANGING_STRATEGIES,
     check_chapter_preserve,
     check_checksums,
     check_computed_columns,
@@ -120,6 +121,43 @@ def evaluate_invariants(
             manifest.relationships,
             sources,  # enables remap-masks-orphan check
         )
+
+    # 6.4b Value-changing-passthrough guard (TH-1.1).
+    # Every mask column whose declared strategy is value-changing (fpe, hash,
+    # code_set) must genuinely change its data.  Derived from the LIVE pipeline
+    # config columns (not the hand-declared distribution spec) so EVERY such
+    # column is covered -- including columns absent from the distribution spec
+    # (e.g. members.mrn in Job A).  A COMPLETE no-op trips the value-set check;
+    # an FPE charset-undercoverage partial passthrough trips the positional
+    # retention check.
+    def _run_value_changing_guard() -> str:
+        checked: list[str] = []
+        for t in manifest.config.get("tables", []):
+            if not isinstance(t, dict):
+                continue
+            table_name = t.get("name")
+            if not isinstance(table_name, str):
+                continue
+            src_pa = sources.get(table_name)
+            out_pa = result_a.outputs.get(table_name)
+            if src_pa is None or out_pa is None:
+                continue  # generate tables have no source; nothing to compare
+            src_df_v = src_pa.to_pandas()
+            out_df_v = out_pa.to_pandas()
+            for col in t.get("columns", []):
+                if not isinstance(col, dict):
+                    continue
+                strat = col.get("strategy")
+                col_name = col.get("name")
+                if strat not in _VALUE_CHANGING_STRATEGIES or not isinstance(col_name, str):
+                    continue
+                check_value_changing_not_passthrough(
+                    job_name, table_name, col_name, strat, src_df_v, out_df_v
+                )
+                checked.append(f"{table_name}.{col_name}({strat})")
+        return "checked=" + ",".join(checked) if checked else "no value-changing columns"
+
+    _run("value_changing_passthrough", _run_value_changing_guard)
 
     # 6.2/6.3 Distribution fidelity.
     # Mask tables: check_distribution_mask (quality-report based).

@@ -28,7 +28,7 @@ first-class `deterministic: bool` field, composed orthogonally with
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -197,6 +197,17 @@ class GenerateColumnConfig(BaseModel):
         if self.type == "group_key" and not extras.get("group_by"):
             raise ValueError(f"group_key column {self.name!r} requires `group_by`")
         return self
+
+
+# Live registry of valid generate-column ``type`` values, derived from the
+# ``GenerateColumnConfig.type`` Literal above (the single validation authority
+# the ``generation.synthesize._generate_column`` dispatch mirrors).  Adding a
+# generator type to the Literal surfaces it here automatically -- no second
+# hand-maintained list.  The test-flight coverage guard reads this as the live
+# source of its generate-type axis (TH-1.2 / P0-2).
+GENERATE_TYPES: frozenset[str] = frozenset(
+    get_args(GenerateColumnConfig.model_fields["type"].annotation)
+)
 
 
 class TableConfig(BaseModel):

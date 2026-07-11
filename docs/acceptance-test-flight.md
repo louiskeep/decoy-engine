@@ -136,10 +136,32 @@ main output. The JSONL quarantine file line count matches.
 known SSN, email, free-text phone inside notes) must not appear in any output
 column of any table. Covers text_mask and text_redact spans.
 
-**Computed-column correctness.** `derived` and `derived_aggregate` outputs
-are recomputed in pure Python from the output's input columns and asserted
-equal. For `case_when` expressions, every branch must be exercised by at
-least one row (branch-coverage check catches a broken branch that never fires).
+**Computed-column correctness.** `derived` and `derived_aggregate` outputs are
+recomputed independently of the engine from the output's input columns and
+asserted equal. Aggregate formulas (`sum`/`count`/`avg`/`min`/`max`) are
+computed with Python built-ins. Row-wise formulas (arithmetic, comparison,
+`case_when`) are recomputed by a harness evaluator built on Python's own `ast`
+module, sharing no code with the engine's expression evaluator
+(`decoy_engine.expressions._lark_parser.evaluate`). This closes a former
+circular blind spot (TH-1.3 / P0-3): until this change the harness recomputed
+row-wise formulas with the *same* evaluator the engine's `derived` strategy
+used, so a bug in that shared evaluator produced the same wrong value on both
+sides and the invariant passed vacuously. Only the aggregate path was
+independent before; row-wise is now independent too. The engine's `compile_expr`
+is retained solely as a secondary smoke check that the manifest formula is valid
+engine grammar. For `case_when` expressions, every branch must be exercised by
+at least one row (branch-coverage check catches a broken branch that never
+fires).
+
+**Value-changing passthrough.** Every mask column whose strategy is
+value-changing (`fpe`, `hash`, `code_set`) must genuinely change its data,
+checked for *every* such column in the pipeline config (not only the columns
+named in the distribution spec). A complete no-op (output value-set equals
+source value-set) fails the value-set check; an FPE charset that covers only
+some of the data's characters -- leaving the rest verbatim while permuting one
+character per value -- fails a positional character-retention check (TH-1.1 /
+P0-1). One job additionally declares the engine's `leak_check` validator over
+its FPE-masked identity columns as a structural "forgot to mask" net.
 
 **chapter_preserve.** For code_set columns with `chapter_preserve: true`, the
 ICD chapter bucket of each output code must match the chapter bucket of the
@@ -151,7 +173,13 @@ a row that exists in the reference table (NDC, MCC, etc.).
 **Strategy coverage.** The union of strategies declared across all job
 manifests must equal the live `SCALAR_HANDLERS` registry minus an explicit
 documented allowlist. A new strategy added without a corresponding job or
-allowlist entry fails the suite guard.
+allowlist entry fails the suite guard. Every coverage axis is derived from a
+live engine registry, not a static snapshot (TH-1.2 / P0-2): strategies from
+`SCALAR_HANDLERS`, validators from `validators._registry._REGISTRY`, checksum
+schemes from `checksums._VALIDATORS`, and generate types from
+`generation.synthesize.GENERATE_TYPES`. Adding an entry to any of these
+registries without a job or allowlist entry fails the guard, and the guard
+summary reports the true live count for each axis.
 
 ## Honest limitations
 

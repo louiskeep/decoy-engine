@@ -29,6 +29,48 @@ from ._spec import FKIntegritySpec, RelationshipSpec
 # (shuffle, categorical, derived) have their own correctness teeth.
 _VALUE_CHANGING_STRATEGIES: frozenset[str] = frozenset({"fpe", "hash", "code_set"})
 
+# Maximum tolerated mean positional-character retention for an FPE column.
+# FPE is format-preserving: output has the same length as the source, so a
+# character-position comparison is meaningful.  A correctly-charset'd FPE
+# permutes (nearly) every in-charset character, so the mean fraction of
+# in-position identical characters is low (empirically <=0.23 for the
+# test-flight identity columns).  The canonical charset-undercoverage bug
+# (charset=alphanum applied to uppercase-containing values) leaves every
+# out-of-charset character in place: the whole value still differs by the one
+# permuted character, so the value-set check above passes, but the mean
+# positional retention is high (empirically ~0.65 for the uppercase-MRN no-op).
+# The 0.5 floor sits in the wide gap between the two regimes.
+_FPE_MAX_POSITIONAL_RETENTION: float = 0.5
+
+# Minimum comparable (equal-length, non-null) rows before the positional-
+# retention check is statistically meaningful.  Below this the check is skipped
+# to avoid noise on tiny or ragged columns.
+_FPE_RETENTION_MIN_ROWS: int = 20
+
+
+def _fpe_positional_retention(source_vals: pd.Series, output_vals: pd.Series) -> tuple[float, int]:
+    """Return (mean in-position character retention, comparable row count).
+
+    For each aligned (source, output) pair that is non-null and equal-length,
+    compute the fraction of character positions holding an identical character,
+    then average across rows.  Rows with differing lengths or nulls are not
+    comparable (FPE preserves length, so a length change is a different signal)
+    and are excluded from both the numerator and the denominator.
+    """
+    total = 0.0
+    n = 0
+    for src_val, out_val in zip(source_vals, output_vals, strict=False):
+        if src_val is None or out_val is None:
+            continue
+        s = str(src_val)
+        o = str(out_val)
+        if len(s) == 0 or len(s) != len(o):
+            continue
+        same = sum(1 for a, b in zip(s, o, strict=True) if a == b) / len(s)
+        total += same
+        n += 1
+    return (total / n if n else 0.0), n
+
 
 # ---------------------------------------------------------------------------
 # check_remap_masks_orphan
@@ -103,10 +145,21 @@ def check_value_changing_not_passthrough(
     value is returned verbatim.  A column with charset:alphanum (lowercase) applied
     to uppercase-only values (e.g. "EL", "HI") passes through unchanged.
 
-    This is a column-level set check, not a row-level check.  A set equality means
-    NO value was changed at all.  A single changed value passes (output_set differs
-    from source_set in at least one element), which is sufficient to prove the
-    strategy is not a complete no-op.
+    Two checks (TH-1.1 / P0-1):
+
+    1. Column-level set check (all value-changing strategies).  A set equality
+       means NO value was changed at all -- a complete no-op.  A single changed
+       value passes this check.
+
+    2. Positional character-retention check (FPE only).  The set check above is
+       blind to a PARTIAL passthrough: a charset that covers only some of the
+       data's characters (e.g. charset=alphanum on an uppercase-plus-digit MRN)
+       permutes one character while emitting the rest verbatim, so every whole
+       value differs (set check passes) yet most characters leak in place.  FPE
+       is format-preserving, so a per-position character comparison detects this:
+       the mean fraction of in-position identical characters must stay below
+       _FPE_MAX_POSITIONAL_RETENTION.  This is the exact members.mrn
+       (charset=alphanum) live bug.
 
     Only applied when strategy is in _VALUE_CHANGING_STRATEGIES.  Other strategies
     (passthrough, categorical, derived, geo_generalize, date_shift, text_redact)
@@ -121,7 +174,9 @@ def check_value_changing_not_passthrough(
         output_df: Post-mask pandas DataFrame.
 
     Raises:
-        AssertionError: If output value-set equals source value-set (complete no-op).
+        AssertionError: If output value-set equals source value-set (complete
+            no-op), or if an FPE column retains too many source characters in
+            position (partial passthrough / charset undercoverage).
     """
     if strategy not in _VALUE_CHANGING_STRATEGIES:
         return
@@ -138,6 +193,30 @@ def check_value_changing_not_passthrough(
         f"Declare charset:ALPHANUM for uppercase data, charset:alpha for lowercase, "
         f"or charset:digits for numeric data."
     )
+
+    # Partial-passthrough guard (FPE only).  The value-set check above only
+    # catches a COMPLETE no-op; a charset that covers *some* of the data (e.g.
+    # charset=alphanum masking the digits of an uppercase-plus-digit MRN)
+    # permutes one character while leaving the rest in place, so every whole
+    # value differs and the set check passes even though most characters leak
+    # verbatim.  FPE is format-preserving, so a positional character comparison
+    # detects this: a correctly-charset'd FPE retains few in-position
+    # characters; the undercovered-charset bug retains most of them.
+    if strategy == "fpe":
+        mean_retention, n_comparable = _fpe_positional_retention(
+            source_df[column], output_df[column]
+        )
+        if n_comparable >= _FPE_RETENTION_MIN_ROWS:
+            assert mean_retention < _FPE_MAX_POSITIONAL_RETENTION, (
+                f"[{job_name}/{table}] fpe partial-passthrough: column {column!r} "
+                f"retains {mean_retention:.1%} of source characters in position "
+                f"(> {_FPE_MAX_POSITIONAL_RETENTION:.0%} floor) across "
+                f"{n_comparable} rows.  The configured FPE charset does not cover "
+                f"the data's characters, so out-of-charset characters are emitted "
+                f"verbatim (only in-charset characters are permuted).  Declare "
+                f"charset:ALPHANUM to cover uppercase+digits, or the specific "
+                f"charset that spans every character class present in {column!r}."
+            )
 
 
 # ---------------------------------------------------------------------------

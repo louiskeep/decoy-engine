@@ -122,12 +122,17 @@ config:
             charset: digits
             checksum: npi
 
-        # MRN: FPE, alphanumeric.
+        # MRN: FPE, alphanumeric. charset MUST be ALPHANUM (0-9 + A-Z + a-z):
+        # the fixture builds uppercase-plus-digit MRNs, and charset=alphanum
+        # (0-9 + a-z only) leaves every uppercase letter out-of-charset, so FPE
+        # emits it verbatim -- a partial-passthrough privacy leak (TH-1.1;
+        # mirrors the 2026-06-29 hipaa.yaml alphanum->ALPHANUM fix). The
+        # value-changing-passthrough guard enforces this.
         - name: mrn
           strategy: fpe
           namespace: mrn_ns
           provider_config:
-            charset: alphanum
+            charset: ALPHANUM
 
         # card_no: passthrough so invalid-Luhn rows survive to the validator.
         # The luhn validator (below) fires on these rows; quarantine catches them.
@@ -305,6 +310,14 @@ config:
         members: [card_no]
     - name: fk_intact
     - name: no_orphan_children
+    # leak_check: the engine's purpose-built "forgot to mask" net (TH-1.1).
+    # Scoped to the FPE-masked identity columns; asserts each was genuinely
+    # transformed (no source value survives beyond the max_identical_ratio).
+    # A complete mask no-op (or a charset that permutes nothing) would leave
+    # these columns identical to source and trip the column tier.
+    - name: leak_check
+      columns:
+        members: [ssn, npi, mrn]
 
   # Quarantine: rows failing luhn on card_no are quarantined to a JSONL file.
   # The runner sets the actual output_path via the assembled config before running.

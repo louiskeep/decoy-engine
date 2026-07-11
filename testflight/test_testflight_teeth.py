@@ -922,6 +922,199 @@ class TestCoverageRotTeeth:
         with pytest.raises(AssertionError, match=fake_key):
             check_suite_strategy_coverage(all_manifests)
 
+    def test_fake_validator_detected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Registering a fake validator in the LIVE registry trips the guard (TH-1.2).
+
+        RED: monkeypatch.setitem injects "zz_fake_validator" into the live
+        validators._registry._REGISTRY. It is exercised by no job and absent
+        from _VALIDATOR_ALLOWLIST, so the coverage guard -- which now reads the
+        live registry, not a static frozenset -- must raise naming it. This
+        proves the validator axis is derived live (P0-2 anti-rot).
+        """
+        from decoy_engine.validators import _registry
+        from testflight._runner import discover_jobs, load_job
+
+        all_manifests = [load_job(m) for m in discover_jobs()]
+        check_suite_strategy_coverage(all_manifests)  # baseline passes
+
+        fake = "zz_fake_validator"
+        assert fake not in _registry._REGISTRY
+        monkeypatch.setitem(_registry._REGISTRY, fake, lambda *a, **k: ())
+        with pytest.raises(AssertionError, match=fake):
+            check_suite_strategy_coverage(all_manifests)
+
+    def test_fake_checksum_scheme_detected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Registering a fake checksum scheme in the LIVE registry trips the guard (TH-1.2).
+
+        RED: inject "zz_fake_scheme" into the live checksums._VALIDATORS dict.
+        Not declared by any job, not in _CHECKSUM_SCHEME_ALLOWLIST -> the guard
+        (reading the live scheme registry) raises. Proves the checksum axis is
+        live.
+        """
+        from decoy_engine import checksums
+        from testflight._runner import discover_jobs, load_job
+
+        all_manifests = [load_job(m) for m in discover_jobs()]
+        check_suite_strategy_coverage(all_manifests)  # baseline passes
+
+        fake = "zz_fake_scheme"
+        assert fake not in checksums._VALIDATORS
+        monkeypatch.setitem(checksums._VALIDATORS, fake, lambda v: True)
+        with pytest.raises(AssertionError, match=fake):
+            check_suite_strategy_coverage(all_manifests)
+
+    def test_fake_generate_type_detected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Registering a fake generate type in the LIVE registry trips the guard (TH-1.2).
+
+        RED: extend the live config._tables.GENERATE_TYPES set (derived from the
+        GenerateColumnConfig.type Literal) with "zz_fake_gen". Not declared by
+        any job, not in _GENERATE_TYPE_ALLOWLIST -> the guard (reading the live
+        generate-type registry) raises. Proves the generate-type axis is live.
+        """
+        from decoy_engine.config import _tables
+        from testflight._runner import discover_jobs, load_job
+
+        all_manifests = [load_job(m) for m in discover_jobs()]
+        check_suite_strategy_coverage(all_manifests)  # baseline passes
+
+        fake = "zz_fake_gen"
+        assert fake not in _tables.GENERATE_TYPES
+        monkeypatch.setattr(_tables, "GENERATE_TYPES", _tables.GENERATE_TYPES | {fake})
+        with pytest.raises(AssertionError, match=fake):
+            check_suite_strategy_coverage(all_manifests)
+
+
+# ---------------------------------------------------------------------------
+# TH-1.1: value-changing-passthrough teeth (P0-1)
+# ---------------------------------------------------------------------------
+
+
+class TestValueChangingPassthroughTeeth:
+    """Mutation controls for the value-changing-passthrough guard (TH-1.1).
+
+    The guard runs for every mask column whose strategy is value-changing
+    (fpe, hash, code_set). Two failure modes:
+      - COMPLETE no-op: output value-set equals source value-set (the charset
+        covers nothing) -> the set check raises.
+      - PARTIAL passthrough (fpe only): a charset that covers *some* characters
+        (e.g. alphanum on uppercase-plus-digit values) permutes one character
+        while leaving the rest verbatim; every whole value differs so the set
+        check passes, but the positional-retention check raises. This is the
+        exact members.mrn (charset=alphanum) live bug.
+    """
+
+    def test_complete_noop_detected(self) -> None:
+        """An fpe column whose output equals its source (complete no-op) raises.
+
+        RED: output value-set == source value-set. A value-changing strategy
+        that changes nothing is a silent passthrough; the set check catches it.
+        """
+        src = pd.DataFrame({"mrn": [f"ID{i:04d}" for i in range(50)]})
+        out = src.copy()  # complete no-op: identical
+        with pytest.raises(AssertionError, match="value-changing-mask passthrough"):
+            check_value_changing_not_passthrough("control", "members", "mrn", "fpe", src, out)
+
+    def test_fpe_partial_passthrough_detected(self) -> None:
+        """An fpe column that leaks most characters in position raises (mrn bug).
+
+        RED: source values are uppercase-plus-digit (like the fixture MRNs);
+        the output permutes ONLY the digit and leaves every uppercase letter in
+        place. Each whole value differs (so the set check passes) but ~7/8 of
+        the characters are retained in position, so the positional-retention
+        check raises. This reproduces the charset=alphanum uppercase-MRN leak.
+        """
+        # 8-char values: 6 uppercase letters + 2 digits. Output keeps the
+        # uppercase letters, changes the digits -> retention 6/8 = 0.75 > 0.5.
+        rng = np.random.default_rng(3)
+        letters = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+        src_vals: list[str] = []
+        out_vals: list[str] = []
+        for _ in range(60):
+            body = "".join(rng.choice(letters, 6).tolist())
+            d0, d1 = int(rng.integers(0, 5)), int(rng.integers(0, 5))
+            src_vals.append(f"{body}{d0}{d1}")
+            # change the two digits (uppercase preserved verbatim)
+            out_vals.append(f"{body}{d0 + 4}{d1 + 4}")
+        src = pd.DataFrame({"mrn": src_vals})
+        out = pd.DataFrame({"mrn": out_vals})
+        with pytest.raises(AssertionError, match="partial-passthrough"):
+            check_value_changing_not_passthrough("control", "members", "mrn", "fpe", src, out)
+
+    def test_good_fpe_passes(self) -> None:
+        """A genuinely permuted fpe column passes both checks (no over-assertion).
+
+        Every character position is remapped (retention ~0), and the value-set
+        differs. The guard must NOT raise.
+        """
+        src = pd.DataFrame({"mrn": [f"AB{i:04d}CD" for i in range(60)]})
+        # Fully different values, no in-position character retained.
+        out = pd.DataFrame({"mrn": [f"zx{(i * 7) % 10000:04d}wq"[::-1] for i in range(60)]})
+        check_value_changing_not_passthrough("control", "members", "mrn", "fpe", src, out)
+
+
+# ---------------------------------------------------------------------------
+# TH-1.3: independent computed-column recomputation (P0-3)
+# ---------------------------------------------------------------------------
+
+
+class TestIndependentRecomputationTeeth:
+    """Mutation controls proving row-wise recomputation is engine-independent.
+
+    Before TH-1.3 the harness recomputed row-wise formulas with the engine's
+    own evaluate(), so a bug in that shared evaluator produced the same wrong
+    value on both sides and the invariant passed vacuously. The harness now uses
+    an independent Python-ast evaluator, so an engine-evaluator bug is caught.
+    """
+
+    def test_independent_of_engine_evaluator(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A sabotaged engine evaluator does not blind the harness (TH-1.3).
+
+        RED-first construction: monkeypatch the engine's evaluate() to always
+        return 0 (a stand-in for any shared-evaluator bug). The stored output
+        column is what that buggy engine would emit (all zeros). A CIRCULAR
+        harness would recompute with the same evaluate(), get 0, and match the
+        stored 0 -> pass (blind spot). The independent ast evaluator recomputes
+        qty * unit_price = the true nonzero values -> mismatch -> RAISES.
+        """
+        import decoy_engine.expressions._lark_parser as lp
+
+        # Confirm the circular blind spot exists: the sabotaged evaluator agrees
+        # with the buggy stored output, so a same-evaluator harness would pass.
+        monkeypatch.setattr(lp, "evaluate", lambda compiled, ctx: 0)
+
+        tbl = pa.table(
+            {"qty": [3, 5, 2], "unit_price": [10.0, 20.0, 15.0], "order_total": [0.0, 0.0, 0.0]}
+        )
+        result = SimpleNamespace(outputs={"orders": tbl}, quality_metrics={})
+        spec = [
+            ComputedColumnSpec(
+                table="orders", column="order_total", formula="qty * unit_price", branch_count=0
+            )
+        ]
+        with pytest.raises(AssertionError, match="orders.order_total"):
+            check_computed_columns("th13_control", spec, result)
+
+    def test_case_when_independent_recomputation(self) -> None:
+        """A wrong case_when branch value is caught by the independent evaluator.
+
+        RED: stored tier uses the wrong threshold labels; the independent
+        evaluator recomputes the correct case_when result and the mismatch
+        raises. GREEN: the correct output (below) passes.
+        """
+        formula = 'case_when(order_total >= 1000.0, "premium", order_total >= 200.0, "standard", "economy")'
+        # order_total 1500 -> premium, 500 -> standard, 50 -> economy
+        good = pa.table(
+            {"order_total": [1500.0, 500.0, 50.0], "tier": ["premium", "standard", "economy"]}
+        )
+        spec = [ComputedColumnSpec(table="orders", column="tier", formula=formula, branch_count=3)]
+        check_computed_columns("th13_good", spec, SimpleNamespace(outputs={"orders": good}))
+
+        bad = pa.table(
+            {"order_total": [1500.0, 500.0, 50.0], "tier": ["economy", "economy", "economy"]}
+        )
+        with pytest.raises(AssertionError, match="orders.tier"):
+            check_computed_columns("th13_bad", spec, SimpleNamespace(outputs={"orders": bad}))
+
 
 # ---------------------------------------------------------------------------
 # SP-08: joint_mask consistency teeth

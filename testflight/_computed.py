@@ -4,21 +4,31 @@ Split from _invariants.py to keep both modules within the 600-line limit.
 Imported and re-exported by _invariants.py for backwards compatibility.
 
 Phase 4 generalization: column-name dispatch replaced by formula-driven
-evaluation.  Row-wise formulas are compiled and evaluated via the engine's
-closed-grammar parser (compile_expr / evaluate from
-decoy_engine.expressions._lark_parser).  Aggregate formulas are detected via
-_AGGREGATE_PATTERN and computed in pure Python.  The manifest formula string
-is the source of truth; no per-column Python helper functions remain.
+evaluation.  The manifest formula string is the source of truth; no per-column
+Python helper functions remain.
+
+TH-1.3 / P0-3 (independent recomputation): the expected value for a row-wise
+formula is computed by an INDEPENDENT harness evaluator built on Python's own
+``ast`` module (see ``_compile_independent`` / ``_eval_independent`` below),
+NOT the engine's ``evaluate`` from ``decoy_engine.expressions._lark_parser``.
+Before this change the harness recomputed with the exact evaluator the engine's
+``derived`` strategy uses, so a bug in that shared evaluator produced the same
+wrong value on both sides and the invariant passed vacuously (a self-graded
+computed column).  The engine's ``compile_expr`` is retained only as a SECONDARY
+smoke check that the manifest formula is valid engine-grammar; it never supplies
+the expected value.
 
 Supported formula patterns:
-  - Row-wise (engine grammar): arithmetic, comparison, case_when, concat,
-    days_between, column references.  compile_expr raises ValidationError if
-    the expression is outside the closed grammar.
+  - Row-wise (independent ast evaluator): arithmetic (+, -, *, /), comparison
+    (==, !=, <, <=, >, >=), ``case_when(cond, val, ..., default)``, string /
+    numeric literals, and column references.  Covers every row-wise formula in
+    the three jobs.  A form outside this set raises so the gap is loud, never
+    a silent fallback to the engine evaluator.
   - Aggregate (pure Python): sum(<col>), count(<col>), avg(<col>),
     min(<col>), max(<col>).  Detected by _AGGREGATE_PATTERN; evaluated by
     the corresponding Python built-in over the output column.
 
-If compile_expr raises ValidationError for a formula that is not an
+If ``compile_expr`` raises ValidationError for a formula that is not an
 aggregate, check_computed_columns raises AssertionError immediately so the
 suite fails with a clear message (the _computed generalization hard stop
 required by the Phase 4 constraint).
@@ -26,10 +36,113 @@ required by the Phase 4 constraint).
 
 from __future__ import annotations
 
+import ast
 import re
 from typing import Any
 
 from ._spec import ComputedColumnSpec
+
+
+class _IndependentEvalError(Exception):
+    """The independent harness evaluator cannot parse/evaluate a formula form.
+
+    Raised for any construct outside the closed set the harness supports so the
+    gap surfaces loudly instead of silently deferring to the engine evaluator.
+    """
+
+
+# AST node -> Python operator for the independent evaluator.  Deliberately a
+# small whitelist: anything not here raises _IndependentEvalError.
+def _apply_binop(op: ast.operator, left: Any, right: Any) -> Any:
+    if isinstance(op, ast.Mult):
+        return left * right
+    if isinstance(op, ast.Add):
+        return left + right
+    if isinstance(op, ast.Sub):
+        return left - right
+    if isinstance(op, ast.Div):
+        return left / right
+    raise _IndependentEvalError(f"unsupported binary operator: {type(op).__name__}")
+
+
+def _apply_compare(op: ast.cmpop, left: Any, right: Any) -> bool:
+    if isinstance(op, ast.Eq):
+        return bool(left == right)
+    if isinstance(op, ast.NotEq):
+        return bool(left != right)
+    if isinstance(op, ast.Lt):
+        return bool(left < right)
+    if isinstance(op, ast.LtE):
+        return bool(left <= right)
+    if isinstance(op, ast.Gt):
+        return bool(left > right)
+    if isinstance(op, ast.GtE):
+        return bool(left >= right)
+    raise _IndependentEvalError(f"unsupported comparison operator: {type(op).__name__}")
+
+
+def _compile_independent(formula: str) -> ast.expr:
+    """Parse ``formula`` with Python's own grammar (independent of the engine).
+
+    Returns the root expression node.  Raises _IndependentEvalError if the string
+    is not a single Python expression.  ``case_when`` parses as a plain
+    ``ast.Call`` (a valid Python call), evaluated by _eval_independent.
+    """
+    try:
+        tree = ast.parse(formula, mode="eval")
+    except SyntaxError as exc:
+        raise _IndependentEvalError(f"not a parseable expression: {exc}") from exc
+    return tree.body
+
+
+def _eval_independent(node: ast.expr, row: dict[str, Any]) -> Any:
+    """Evaluate an ast expression node against a row context, independently.
+
+    Handles only the closed set of node types the three jobs' row-wise formulas
+    use.  Any other node type raises _IndependentEvalError so an unsupported form
+    fails loudly rather than deferring to the engine's evaluator.
+    """
+    if isinstance(node, ast.Constant):
+        return node.value
+    if isinstance(node, ast.Name):
+        if node.id not in row:
+            raise _IndependentEvalError(f"column reference {node.id!r} not in row context")
+        return row[node.id]
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+        return -_eval_independent(node.operand, row)
+    if isinstance(node, ast.BinOp):
+        return _apply_binop(
+            node.op,
+            _eval_independent(node.left, row),
+            _eval_independent(node.right, row),
+        )
+    if isinstance(node, ast.Compare):
+        # Single comparison only (a OP b); chained comparisons are not used.
+        if len(node.ops) != 1 or len(node.comparators) != 1:
+            raise _IndependentEvalError("chained comparisons are not supported")
+        return _apply_compare(
+            node.ops[0],
+            _eval_independent(node.left, row),
+            _eval_independent(node.comparators[0], row),
+        )
+    if isinstance(node, ast.Call):
+        func = node.func
+        if not isinstance(func, ast.Name) or func.id != "case_when":
+            fname = func.id if isinstance(func, ast.Name) else type(func).__name__
+            raise _IndependentEvalError(f"unsupported function call: {fname!r}")
+        args = node.args
+        if len(args) < 1 or len(args) % 2 != 1:
+            raise _IndependentEvalError(
+                "case_when requires an odd number of args: "
+                "(cond, val)+ pairs followed by a single default"
+            )
+        # Evaluate (cond, value) pairs left-to-right; last arg is the default.
+        for i in range(0, len(args) - 1, 2):
+            if bool(_eval_independent(args[i], row)):
+                return _eval_independent(args[i + 1], row)
+        return _eval_independent(args[-1], row)
+    raise _IndependentEvalError(f"unsupported expression node: {type(node).__name__}")
+
 
 # Matches aggregate-only formulas: sum(col), count(col), avg(col), min(col),
 # max(col).  Case-insensitive.  Full match only (no trailing tokens).
@@ -103,7 +216,7 @@ def check_computed_columns(
             or the formula is outside the closed grammar (generalization stop).
     """
     from decoy_engine.errors import ValidationError
-    from decoy_engine.expressions._lark_parser import compile_expr, evaluate
+    from decoy_engine.expressions._lark_parser import compile_expr
 
     checked: list[str] = []
 
@@ -147,10 +260,15 @@ def check_computed_columns(
             continue
 
         # ----------------------------------------------------------------
-        # Row-wise mode: compile and evaluate via the engine expression parser
+        # Row-wise mode.
+        #
+        # SECONDARY smoke check: the formula must still compile under the
+        # engine's closed grammar (proves the manifest formula is engine-valid).
+        # Its result is intentionally discarded; it never supplies an expected
+        # value.
         # ----------------------------------------------------------------
         try:
-            compiled = compile_expr(formula)
+            compile_expr(formula)  # smoke only -- NOT used for the expected value
         except ValidationError as exc:
             # The Phase 4 hard stop: if the formula is outside the closed grammar,
             # the generalization is incomplete.  Fail the suite with a clear
@@ -165,12 +283,33 @@ def check_computed_columns(
                 f"row-wise expressions.  Parser error: {exc}"
             ) from exc
 
+        # PRIMARY correctness: recompute the expected value with the INDEPENDENT
+        # harness evaluator (Python ast), sharing zero code with the engine's
+        # evaluate().  A bug in the engine's shared evaluator therefore cannot
+        # hide behind a circular recomputation (TH-1.3 / P0-3).
+        try:
+            indep_tree = _compile_independent(formula)
+        except _IndependentEvalError as exc:
+            raise AssertionError(
+                f"[{job_name}] computed_columns: {cs.table}.{cs.column}: "
+                f"formula {formula!r} is not supported by the independent harness "
+                f"evaluator (TH-1.3).  Row-wise correctness must be checked without "
+                f"the engine's evaluator; extend testflight._computed's independent "
+                f"evaluator to cover this form.  Detail: {exc}"
+            ) from exc
+
         errors: list[tuple[int, Any, Any]] = []
         n_rows = len(out_vals)
         for i in range(n_rows):
             # Build row context from all output columns.
             row_context: dict[str, Any] = {col: col_dict[col][i] for col in col_dict}
-            expected = evaluate(compiled, row_context)
+            try:
+                expected = _eval_independent(indep_tree, row_context)
+            except _IndependentEvalError as exc:
+                raise AssertionError(
+                    f"[{job_name}] computed_columns: {cs.table}.{cs.column} row {i}: "
+                    f"independent evaluation of {formula!r} failed: {exc}"
+                ) from exc
             actual = out_vals[i]
             # Numeric comparison with tolerance; string/bool exact.
             try:
