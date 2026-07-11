@@ -72,6 +72,7 @@ from testflight._spec import (
     RelationshipSpec,
     SafeHarborSpec,
     SentinelSpec,
+    TableSpec,
 )
 
 pytestmark = pytest.mark.testflight
@@ -870,6 +871,30 @@ class TestComputedColumnTeeth:
         ]
         with pytest.raises(AssertionError, match="orders.custom_col"):
             check_computed_columns("formula_follow_bad", spec_wrong, result)
+
+
+class TestSpecValidationTeeth:
+    """Mutation controls for TableSpec cross-field validators."""
+
+    def test_zero_row_mask_table_rejected(self) -> None:
+        """A 0-row MASK table asserts nothing (vacuous invariants) -> reject.
+
+        Only generate tables legitimately have no source rows; a 0-row mask
+        table would pass every value-changing/shape check green with empty-set
+        comparisons. Guards the ge=0 relaxation from TH-3.3 (dennis LOW-1).
+        """
+        with pytest.raises(ValidationError, match="row_count=0 is only allowed"):
+            TableSpec(name="t", kind="mask", row_count=0, source_builder="fixture.build_t")
+
+    def test_zero_row_generate_table_allowed(self) -> None:
+        """A 0-row GENERATE table is a real engine-supported shape (Job E)."""
+        spec = TableSpec(name="empty_table", kind="generate", row_count=0)
+        assert spec.row_count == 0
+
+    def test_nonzero_mask_table_still_allowed(self) -> None:
+        """The new validator must not reject ordinary >=1-row mask tables."""
+        spec = TableSpec(name="t", kind="mask", row_count=5, source_builder="fixture.build_t")
+        assert spec.row_count == 5
 
 
 class TestCoverageRotTeeth:
