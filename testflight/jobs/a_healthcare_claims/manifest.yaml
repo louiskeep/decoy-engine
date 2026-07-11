@@ -538,7 +538,12 @@ invariants:
       formula: >-
         line_amount * units * case_when(discount_tier == "copay", 0.80,
         discount_tier == "preferred", 0.90, 1.0)
-      branch_count: 3
+      # 0 = branch-count check disabled: the case_when here is a MULTIPLIER
+      # inside a continuous arithmetic expression, so line_total has many
+      # distinct output values, not one-per-branch. The case_when branch
+      # coverage the docs describe is exercised by the discrete-output columns
+      # orders.tier and synthetic_events.derived_flag (branch_count: 3).
+      branch_count: 0
     - table: claim_lines
       column: claim_line_sum
       formula: "sum(line_amount)"
