@@ -60,6 +60,13 @@ from decoy_engine.execution._chunked import (
 )
 from decoy_engine.execution._errors import ExecutionError, StrategyError
 from decoy_engine.execution._events import ExecutionEvent
+from decoy_engine.execution._governor import (
+    GovernorResult,
+    GovernorRoute,
+    GovernorTripKind,
+    GovernorTripRecord,
+    run_job_with_governor,
+)
 from decoy_engine.execution._isolated_common import IsolatedRunResult
 from decoy_engine.execution._isolated_run import run_pipeline_isolated
 from decoy_engine.execution._pandas_adapter import (
@@ -109,6 +116,10 @@ __all__ = [
     "ExecutionEvent",
     "ExecutionPlan",
     "ExecutionResult",
+    "GovernorResult",
+    "GovernorRoute",
+    "GovernorTripKind",
+    "GovernorTripRecord",
     "IsolatedRunResult",
     "OutOfCoreCompatibility",
     "OutOfCoreRejection",
@@ -134,6 +145,7 @@ __all__ = [
     "probe_fits",
     "probe_peak_bytes",
     "resolve_substrate",
+    "run_job_with_governor",
     "run_mask_pipeline_chunked",
     "run_pipeline",
     "run_pipeline_isolated",
