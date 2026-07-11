@@ -92,6 +92,7 @@ class _PositionalLeak(NamedTuple):
     worst_k: int
     n_comparable: int
     n_informative: int
+    n_low_entropy: int
     max_group_rows: int
 
 
@@ -131,6 +132,7 @@ def _fpe_positional_leak(source_vals: pd.Series, output_vals: pd.Series) -> _Pos
     worst_position = -1
     worst_k = 0
     n_informative = 0
+    n_low_entropy = 0
     max_group_rows = 0
     for length, rows in groups.items():
         n = len(rows)
@@ -140,7 +142,12 @@ def _fpe_positional_leak(source_vals: pd.Series, output_vals: pd.Series) -> _Pos
         for pos in range(length):
             k = len({s[pos] for s, _ in rows})
             if k < _FPE_MIN_INFORMATIVE_ALPHABET:
-                continue  # low-entropy structural position (e.g. NPI leading digit)
+                # Excluded: at low k, a legitimately-preserved structural char
+                # (e.g. NPI leading digit) is indistinguishable from a leak by
+                # retention fraction alone. Counted + disclosed, never silently
+                # dropped (see what-we-cannot-prove.md).
+                n_low_entropy += 1
+                continue
             n_informative += 1
             frac = sum(1 for s, o in rows if s[pos] == o[pos]) / n
             if worst_fraction is None or frac > worst_fraction:
@@ -148,7 +155,13 @@ def _fpe_positional_leak(source_vals: pd.Series, output_vals: pd.Series) -> _Pos
                 worst_position = pos
                 worst_k = k
     return _PositionalLeak(
-        worst_fraction, worst_position, worst_k, n_comparable, n_informative, max_group_rows
+        worst_fraction,
+        worst_position,
+        worst_k,
+        n_comparable,
+        n_informative,
+        n_low_entropy,
+        max_group_rows,
     )
 
 
@@ -331,9 +344,18 @@ def check_value_changing_not_passthrough(
         f"uppercase+digits, or the specific charset that spans every character "
         f"class present in {column!r}."
     )
+    # MED (dennis re-verify): a mixed column with some informative and some
+    # low-entropy positions must NOT read as fully vetted -- disclose the
+    # excluded low-k positions the positional check could not evaluate.
+    excluded = (
+        f"; {leak.n_low_entropy} low-entropy pos (k<{_FPE_MIN_INFORMATIVE_ALPHABET}) "
+        f"NOT leak-checked (see what-we-cannot-prove.md)"
+        if leak.n_low_entropy
+        else ""
+    )
     return (
         f"checked (worst pos {leak.worst_position}: "
-        f"{leak.worst_fraction:.0%} retained, k={leak.worst_k})"
+        f"{leak.worst_fraction:.0%} retained, k={leak.worst_k}){excluded}"
     )
 
 

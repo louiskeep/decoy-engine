@@ -168,6 +168,25 @@ Mitigations for the partial and `=False` cases:
 - Use `orphan_policy:fail` to reject orphan FK values entirely.
 - Use `orphan_policy:preserve` if the source key is already non-sensitive.
 
+## The test-flight value-changing-passthrough check has a low-alphabet blind spot
+
+The acceptance test-flight's per-position FPE leak check (`testflight/_fk_remap.py`)
+flags a column when any character position is emitted verbatim across rows at an
+*informative* position - one whose source takes at least
+`_FPE_MIN_INFORMATIVE_ALPHABET` (4) distinct characters. Positions with fewer
+distinct source characters are excluded, because a low-entropy position that is
+legitimately preserved (e.g. an NPI's leading digit, always 1 or 2, kept by the
+checksum-aware FPE) is indistinguishable by retention fraction alone from one that
+leaks. Consequence: a verbatim leak confined to positions with fewer than 4 distinct
+source characters is NOT caught by the positional check. It is never a silent green -
+an all-low-entropy column is surfaced as an explicit SKIP, and a mixed column
+discloses "N low-entropy pos NOT leak-checked" in its status. No column in the
+current jobs is exposed (the only all-low-entropy column, `orders.risk_flag`, is
+protected by the complete-no-op set check and cannot partial-leak under a named
+charset), but a custom-charset or mixed-low-alphabet column would fall in this gap.
+Mitigation: cover the column's full alphabet with the charset (e.g. `ALPHANUM`), the
+same fix as the orphan-remap case above.
+
 ## What it does do
 
 To be clear about the other side: Decoy does give you deterministic,
