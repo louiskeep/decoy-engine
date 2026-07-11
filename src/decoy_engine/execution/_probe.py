@@ -60,6 +60,7 @@ from decoy_engine.execution._probe_scale import (
 
 __all__ = [
     "DEFAULT_PROBE_FRACTIONS",
+    "DEFAULT_PROBE_TIMEOUT_S",
     "MIN_PLAUSIBLE_K_FULL_FRAME",
     "UNIQUENESS_SATURATION_THRESHOLD",
     "ProbePoint",
@@ -71,12 +72,40 @@ __all__ = [
 
 _MIB = 1024 * 1024
 
-# ~1% / ~2% of the target row count (§3.3, corrected per §11 to be a PAIR,
-# not a single point). Both fractions are cheap relative to a full run (the
-# design doc's "~1-2% of a full run" framing), and the ratio between them
-# (2x) is generous enough that floor-rounding noise at the low end does not
-# dominate the measured slope.
-DEFAULT_PROBE_FRACTIONS: tuple[float, float] = (0.01, 0.02)
+# ~2% / ~10% of the target row count (§3.3, corrected per §11 to be a PAIR,
+# not a single point; widened again per dennis's Sprint B2 MED-1 review).
+# The two-point slope is `(high.peak - low.peak) / delta_rows` -- a small
+# difference of two individually-noisy single-shot peak-RSS measurements.
+# The original (0.01, 0.02) pair's narrow spread meant realistic allocator/
+# GC variance on either read could move the fitted slope by roughly +/-50%
+# (a small numerator noise term divided by a small `delta_rows`
+# denominator). Widening the spread does not reduce the ABSOLUTE noise on
+# either single-shot read, but it raises `delta_rows`, which raises the
+# slope's signal-to-noise ratio for the same absolute noise -- the same
+# reason a longer baseline improves any two-point rate estimate. The
+# tradeoff: the high-fraction point costs more (10% of target rows is 5x
+# the previous 2% high point), so this is still well under the design
+# doc's "~1-2% of a full run" framing at the LOW point, with a materially
+# more expensive but far more reliable HIGH point. Backstopped either way
+# by the `raw_floor_bytes` physical floor below (MED-1 fix 1).
+DEFAULT_PROBE_FRACTIONS: tuple[float, float] = (0.02, 0.10)
+
+# MED-2 (dennis's Sprint B2 review): `run_pipeline_isolated`'s own default
+# (`_DEFAULT_TIMEOUT_S`, 1800s / 30 minutes) is an unconditional safety
+# bound sized for a FULL job, not a probe. Before this constant existed,
+# `probe_peak_bytes` defaulted its own `timeout_s` param to `None` and
+# forwarded that `None` straight through -- which OVERRIDES the primitive's
+# own 1800s default with an actual absence of a timeout, so a hung probe
+# blocked `run_pipeline` forever (the isolation primitive's timeout guard
+# was silently disabled, not merely inherited). A probe run is sized at
+# `DEFAULT_PROBE_FRACTIONS` (2%-10%) of the target row count, so it should
+# complete far faster than a full run; 10 minutes is generous headroom for
+# even a large target's 10%-scale point while keeping the worst-case total
+# block (two sequential probe runs) bounded at ~20 minutes instead of
+# unbounded. Not a tuned per-shape budget -- a documented, deliberately
+# shorter-than-the-primitive-default ceiling; a caller with a specific
+# reason may still override it explicitly.
+DEFAULT_PROBE_TIMEOUT_S: float = 600.0
 
 # A column whose distinct-count is at/above this fraction of its FULL-SCALE
 # (target) row count is flagged as an uniqueness-saturation risk (§11): pool
@@ -118,10 +147,15 @@ class ProbePoint:
 class ProbeResult:
     """The two-point probe's verdict.
 
-    `conclusive=False` -- an OOM/crash/timeout on either probe run, a
+    `conclusive=False` -- an OOM/crash/timeout on either probe run (the
+    timeout case is only reachable because `probe_peak_bytes` now defaults
+    `timeout_s` to `DEFAULT_PROBE_TIMEOUT_S`, never `None`: MED-2), a
     contaminated (non-isolated) measurement, a degenerate or non-positive
-    fitted slope, a uniqueness-saturation risk, or an opaque/nonlinear
-    generator -- MUST route bounded, exactly like `_mem_estimate.
+    fitted slope, an extrapolated estimate below the physical raw-bytes
+    floor (MED-1 -- peak RSS cannot be less than the resident input bytes,
+    so a fit below that floor means noise drove the slope below its true
+    value), a uniqueness-saturation risk, or an opaque/nonlinear generator
+    -- MUST route bounded, exactly like `_mem_estimate.
     PeakEstimate.unpriceable` (§3.5's rule, applied here to a MEASUREMENT
     instead of a static model). `reason` is a human-readable diagnostic,
     always populated. The numeric fields are populated if and only if
@@ -252,7 +286,8 @@ def probe_peak_bytes(
     opaque_generator_tables: Sequence[str] = (),
     run_isolated: Callable[..., IsolatedRunResult] = run_pipeline_isolated,
     mem_cap_bytes: int | None = None,
-    timeout_s: float | None = None,
+    timeout_s: float | None = DEFAULT_PROBE_TIMEOUT_S,
+    raw_floor_bytes: int | None = None,
     **run_pipeline_kwargs: Any,
 ) -> ProbeResult:
     """Measure `config`'s real full_frame peak RSS at two small scales of
@@ -266,7 +301,22 @@ def probe_peak_bytes(
     "full_frame"` forced -- passing `execution_mode` in `run_pipeline_kwargs`
     is rejected up front rather than silently overridden, since a caller
     doing that almost certainly does not understand what this function
-    measures.
+    measures. `timeout_s` defaults to `DEFAULT_PROBE_TIMEOUT_S` (MED-2) --
+    NEVER pass `None` here unless you have deliberately decided an
+    unbounded hang is acceptable; `None` is forwarded straight through to
+    `run_isolated` and OVERRIDES that primitive's own safety-net default
+    with an actual absence of a timeout.
+
+    `raw_floor_bytes`, when given, is the job's raw resident-input byte
+    total at `target_rows` scale (`_mem_estimate.raw_data_bytes` -- the
+    same figure `_pipeline_routing_signals.resolve_probe_recovery` already
+    computes one frame up to decide whether to even run a probe). MED-1:
+    peak RSS is PHYSICALLY bounded below by the resident input bytes, so an
+    extrapolated estimate under this floor is impossible for a genuine
+    measurement to produce -- it means allocator/GC noise on the two
+    single-shot peak-RSS reads pushed the fitted slope below its true
+    value. `None` (default) disables the check entirely (no floor to
+    apply, e.g. a caller with no raw-bytes figure at hand).
 
     Guards, evaluated in order (each short-circuits to `conclusive=False`,
     never runs a subprocess it does not need to):
@@ -276,6 +326,12 @@ def probe_peak_bytes(
       2. `opaque_generator_tables` non-empty -- a nonlinear/data-dependent
          generator (e.g. `statistical`, `derived_aggregate`) whose behavior
          at small N is not representative of its behavior at full scale.
+         Defense-in-depth: the current routing caller
+         (`_pipeline_routing_signals.resolve_probe_recovery`) only reaches
+         this function on the `not has_generate_table` shape, so it never
+         actually passes a non-empty `opaque_generator_tables` today --
+         this guard exists for a direct/future caller of `probe_peak_bytes`
+         itself, or a routing extension that admits generate tables.
       3. Either probe run OOMs/crashes/times out, or is not a clean
          isolated measurement.
       4. The two achieved row counts are equal (a degenerate pair, usually
@@ -283,6 +339,8 @@ def probe_peak_bytes(
       5. The fitted slope is <= 0 (noise, or a genuinely flat/nonlinear
          relationship the model does not support).
       6. The extrapolated estimate is negative (an untrustworthy fit).
+      7. `raw_floor_bytes` is given and the extrapolated estimate falls
+         below it (MED-1's physical floor).
 
     `estimated_peak_bytes` is the raw extrapolation with NO margin applied
     -- `probe_fits` is where the asymmetric error_band margin (mirroring
@@ -374,6 +432,26 @@ def probe_peak_bytes(
         return ProbeResult(
             conclusive=False,
             reason=f"extrapolated estimate is negative ({estimated!r}); fit is not trustworthy",
+            low_point=low_point,
+            high_point=high_point,
+        )
+
+    if raw_floor_bytes is not None and estimated < raw_floor_bytes:
+        # MED-1's physical floor: peak RSS can never be less than the
+        # resident input bytes it must hold, so a fit landing below that
+        # floor is not a genuinely low measurement -- it is noise
+        # (allocator/GC variance across the two single-shot peak-RSS
+        # reads) having pushed the fitted slope below its true value. Treat
+        # exactly like every other untrustworthy-fit guard above: route
+        # bounded rather than trust an implausible number.
+        return ProbeResult(
+            conclusive=False,
+            reason=(
+                f"extrapolated estimate ({estimated!r} B) is below the physical "
+                f"raw-bytes floor ({raw_floor_bytes:,} B): peak RSS cannot be less "
+                "than the resident input bytes, so this fit is noise-driven, not a "
+                "genuine measurement -- routing bounded (MED-1)"
+            ),
             low_point=low_point,
             high_point=high_point,
         )

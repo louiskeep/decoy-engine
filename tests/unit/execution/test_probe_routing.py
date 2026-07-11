@@ -34,7 +34,12 @@ import pytest
 from decoy_engine.execution._pipeline import run_pipeline
 from decoy_engine.execution._pipeline_routing import decide_execution_route
 from decoy_engine.execution._pipeline_routing_signals import resolve_probe_recovery
-from decoy_engine.execution._probe import MIN_PLAUSIBLE_K_FULL_FRAME, ProbePoint, ProbeResult
+from decoy_engine.execution._probe import (
+    DEFAULT_PROBE_TIMEOUT_S,
+    MIN_PLAUSIBLE_K_FULL_FRAME,
+    ProbePoint,
+    ProbeResult,
+)
 from decoy_engine.profile._types import ColumnProfile, TableProfile
 from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge, RelationshipGraph
 
@@ -317,6 +322,14 @@ class TestResolveProbeRecovery:
         assert captured["uniqueness_risk_columns"] == (("t", "id"),)
         assert captured["reference_table"] == "t"
         assert captured["target_rows"] == row_count
+        # MED-2: an explicit probe-appropriate timeout and a mem_cap (the
+        # slot budget is a natural cap) must be threaded through -- never
+        # left at the primitive-disabling `None` default.
+        assert captured["timeout_s"] == DEFAULT_PROBE_TIMEOUT_S
+        assert captured["mem_cap_bytes"] == 1 * _GB
+        # MED-1: the raw_bytes physical floor, computed from the SAME
+        # profile at full (target) scale -- two int64 columns, 1,000 rows.
+        assert captured["raw_floor_bytes"] == row_count * 8 * 2
 
     def test_conclusive_fit_propagates_true(self, monkeypatch: pytest.MonkeyPatch) -> None:
         def _fake_probe(*args: Any, **kwargs: Any) -> ProbeResult:

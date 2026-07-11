@@ -37,7 +37,10 @@ import pytest
 
 from decoy_engine.config import PipelineConfig
 from decoy_engine.execution._isolated_common import IsolatedRunResult
+from decoy_engine.execution._mem_estimate import ColumnSizeSpec, TableSizeSpec, raw_data_bytes
 from decoy_engine.execution._probe import (
+    DEFAULT_PROBE_FRACTIONS,
+    DEFAULT_PROBE_TIMEOUT_S,
     ProbePoint,
     ProbeResult,
     probe_fits,
@@ -350,6 +353,163 @@ class TestGuards:
 
 
 # ---------------------------------------------------------------------------
+# MED-1 (dennis remediation): a physical raw_bytes floor backstops a
+# noise-driven under-predicting slope, and the default fractions are widened
+# for slope signal-to-noise.
+# ---------------------------------------------------------------------------
+
+
+class TestRawBytesFloor:
+    def test_default_probe_fractions_are_widened_for_slope_snr(self) -> None:
+        """MED-1 fix 2: (0.01, 0.02) is too narrow a spread -- allocator/GC
+        noise on two individually-noisy single-shot peak-RSS reads can move
+        the slope by ~50%. A wider spread raises the denominator
+        (`delta_rows`) in the slope calculation, which raises
+        signal-to-noise on the fitted slope for the same absolute noise."""
+        low, high = DEFAULT_PROBE_FRACTIONS
+        assert low < high
+        assert high - low >= 0.05, (
+            "the high/low fraction spread should be widened well past the "
+            "original (0.01, 0.02) pair to raise slope SNR"
+        )
+
+    def test_noisy_underpredicting_slope_is_caught_by_the_raw_floor(self) -> None:
+        """The MED-1 defect: a mildly-low positive slope (noise, not a
+        genuine measurement) passes the only pre-existing guard (`slope >
+        0`) and would extrapolate to an implausible peak BELOW the
+        resident input bytes -- physically impossible, since peak RSS is
+        always >= the raw bytes resident in memory. The raw_bytes floor
+        must catch this and force `conclusive=False`."""
+        # A genuinely-linear job would need peak >> raw bytes (allocator
+        # overhead, copies, intermediate buffers) -- pick a raw floor far
+        # above what this (deliberately noise-suppressed, near-flat) slope
+        # would extrapolate to, simulating an under-predicting measurement.
+        low_peak = 210 * _MIB
+        high_peak = 220 * _MIB  # a nearly-flat slope -- noise, not signal
+        fake = _QueueRunIsolated(
+            [_fake_result(peak_rss_mb=low_peak / _MIB), _fake_result(peak_rss_mb=high_peak / _MIB)]
+        )
+        config, sources = _resident_job(1_000_000)
+        raw_floor_bytes = 50 * _GB  # far above where this noisy slope would land
+        result = probe_peak_bytes(
+            config,
+            sources,
+            reference_table="t",
+            target_rows=1_000_000,
+            probe_fractions=(0.01, 0.02),
+            floor_rows=0,
+            run_isolated=fake,
+            raw_floor_bytes=raw_floor_bytes,
+            engine_version="test",
+        )
+        assert not result.conclusive
+        assert "floor" in result.reason.lower()
+        assert probe_fits(result, 100 * _GB) is None
+
+    def test_a_genuinely_fitting_noiseless_case_still_recovers_full_frame(self) -> None:
+        """The floor must not reject a legitimate, well-above-floor fit --
+        only implausibly-low ones."""
+        intercept = 300 * _MIB
+        slope = 4_000.0
+        target_rows = 1_000_000
+        low_rows, high_rows = 20_000, 100_000  # the widened (0.02, 0.10) pair
+        low_peak = intercept + slope * low_rows
+        high_peak = intercept + slope * high_rows
+        fake = _QueueRunIsolated(
+            [_fake_result(peak_rss_mb=low_peak / _MIB), _fake_result(peak_rss_mb=high_peak / _MIB)]
+        )
+        config, sources = _resident_job(target_rows)
+        # A floor comfortably below the true estimate (intercept + slope*target).
+        raw_floor_bytes = 100 * _MIB
+        result = probe_peak_bytes(
+            config,
+            sources,
+            reference_table="t",
+            target_rows=target_rows,
+            probe_fractions=(0.02, 0.10),
+            floor_rows=0,
+            run_isolated=fake,
+            raw_floor_bytes=raw_floor_bytes,
+            engine_version="test",
+        )
+        assert result.conclusive
+        expected = intercept + slope * target_rows
+        assert result.estimated_peak_bytes == pytest.approx(expected, rel=1e-6)
+        assert probe_fits(result, 10 * _GB) is True
+
+    def test_raw_floor_bytes_none_disables_the_check(self) -> None:
+        """The default (`None`) must not change any pre-existing conclusive
+        result -- the floor is an additive guard, not a behavior change for
+        callers that do not supply it."""
+        intercept = 300 * _MIB
+        slope = 4_000.0
+        target_rows = 1_000_000
+        low_rows, high_rows = 10_000, 20_000
+        low_peak = intercept + slope * low_rows
+        high_peak = intercept + slope * high_rows
+        fake = _QueueRunIsolated(
+            [_fake_result(peak_rss_mb=low_peak / _MIB), _fake_result(peak_rss_mb=high_peak / _MIB)]
+        )
+        config, sources = _resident_job(target_rows)
+        result = probe_peak_bytes(
+            config,
+            sources,
+            reference_table="t",
+            target_rows=target_rows,
+            probe_fractions=(0.01, 0.02),
+            floor_rows=0,
+            run_isolated=fake,
+            engine_version="test",
+        )
+        assert result.conclusive
+
+
+# ---------------------------------------------------------------------------
+# MED-2 (dennis remediation): the probe must not silently disable the
+# isolation primitive's timeout, and must supply a mem_cap.
+# ---------------------------------------------------------------------------
+
+
+class TestProbeTimeout:
+    def test_default_timeout_is_not_none_and_is_forwarded_to_run_isolated(self) -> None:
+        """Before the fix, `probe_peak_bytes`'s own `timeout_s=None` default
+        was forwarded straight to `run_pipeline_isolated`, which OVERRIDES
+        that primitive's own 1800s safety default with an actual `None` --
+        no timeout at all, so a hung probe blocks `run_pipeline` forever.
+        The default must be a concrete, sane ceiling."""
+        assert DEFAULT_PROBE_TIMEOUT_S is not None
+        assert DEFAULT_PROBE_TIMEOUT_S > 0
+        fake = _QueueRunIsolated([_fake_result(peak_rss_mb=100.0), _fake_result(peak_rss_mb=110.0)])
+        probe_peak_bytes(
+            *_resident_job(100_000),
+            reference_table="t",
+            target_rows=1_000_000,
+            probe_fractions=(0.01, 0.02),
+            floor_rows=0,
+            run_isolated=fake,
+            engine_version="test",
+        )
+        assert len(fake.calls) == 2
+        for call in fake.calls:
+            assert call["timeout_s"] == DEFAULT_PROBE_TIMEOUT_S
+            assert call["timeout_s"] is not None
+
+    def test_explicit_timeout_still_overrides_the_default(self) -> None:
+        fake = _QueueRunIsolated([_fake_result(peak_rss_mb=100.0), _fake_result(peak_rss_mb=110.0)])
+        probe_peak_bytes(
+            *_resident_job(100_000),
+            reference_table="t",
+            target_rows=1_000_000,
+            probe_fractions=(0.01, 0.02),
+            floor_rows=0,
+            run_isolated=fake,
+            timeout_s=45.0,
+            engine_version="test",
+        )
+        assert all(call["timeout_s"] == 45.0 for call in fake.calls)
+
+
+# ---------------------------------------------------------------------------
 # Mechanics: forced execution_mode, reference-table resolution
 # ---------------------------------------------------------------------------
 
@@ -567,3 +727,185 @@ class TestRealIntegration:
             assert result.estimated_peak_bytes is not None
             assert result.estimated_peak_bytes > 0
             assert result.slope_bytes_per_row is not None
+
+
+# ---------------------------------------------------------------------------
+# MED-2 real integration: a genuinely slow probe run hits the REAL
+# `run_pipeline_isolated` timeout (not a mocked crash) and is reported
+# inconclusive -- proves the wiring, not just that a `crashed`-shaped
+# `IsolatedRunResult` is handled correctly (already covered by `TestGuards`).
+# ---------------------------------------------------------------------------
+
+
+class TestRealTimeoutIntegration:
+    def test_real_subprocess_probe_that_times_out_is_inconclusive(self, tmp_path: Path) -> None:
+        rows = 5_000
+        config, sources = _real_probe_config(tmp_path, rows)
+        # A real subprocess spawn (python -m worker) + import + run_pipeline
+        # cannot possibly complete in 1 millisecond -- this timeout WILL
+        # fire for real, through the actual primitive, not a mock.
+        result = probe_peak_bytes(
+            config,
+            sources,
+            reference_table="t",
+            target_rows=rows,
+            probe_fractions=(0.1, 0.5),
+            floor_rows=100,
+            timeout_s=0.001,
+            engine_version="probe-timeout-integration-test",
+        )
+        assert not result.conclusive
+        assert "did not yield a clean measured peak" in result.reason
+
+
+# ---------------------------------------------------------------------------
+# MED-3 real integration: head-slicing every table by the SAME fraction
+# preserves the per-table ROW-COUNT RATIO, not referential (FK) closure -- a
+# sliced child row's FK key may point outside the sliced parent's key range.
+# This proves that does not translate into an unsafe under-prediction: HKDF-
+# stateless masking means peak RSS tracks row COUNT per table, not whether
+# keys happen to resolve, and the raw_bytes floor (MED-1) backstops any
+# residual risk regardless.
+# ---------------------------------------------------------------------------
+
+
+def _non_aligned_fk_config(
+    tmp_path: Path, n: int
+) -> tuple[dict[str, Any], dict[str, pa.Table], int]:
+    """A parent/child FK job where `child.parent_id` is REVERSED relative to
+    `parent.id` -- the worst-case non-alignment for a head slice: slicing
+    the first `k` rows of `child` yields `parent_id`s drawn from the TAIL of
+    `parent`'s key range, none of which survive a head slice of `parent`
+    at the same fraction. Returns `(config, sources, raw_floor_bytes)` --
+    the floor computed the same way `_pipeline_routing_signals.
+    resolve_probe_recovery` computes it, from `raw_data_bytes` at full
+    (target) scale.
+    """
+    parent_ids = [f"parent-{i:07d}" for i in range(n)]
+    child_ids = [f"child-{i:07d}" for i in range(n)]
+    # Reversed: child row 0 references the LAST parent id, so a head slice
+    # of the first k child rows references the LAST k parent ids -- exactly
+    # the ids NOT present in a head slice of the first k parent rows.
+    child_parent_ids = list(reversed(parent_ids))
+
+    parent = pa.table({"id": pa.array(parent_ids, type=pa.string())})
+    child = pa.table(
+        {
+            "id": pa.array(child_ids, type=pa.string()),
+            "parent_id": pa.array(child_parent_ids, type=pa.string()),
+        }
+    )
+    parent_src = tmp_path / "parent.parquet"
+    child_src = tmp_path / "child.parquet"
+    pq.write_table(parent, parent_src)
+    pq.write_table(child, child_src)
+
+    config = {
+        "version": 1,
+        "global_settings": {"seed": 3},
+        "sources": {
+            "parent": {"type": "file", "path": str(parent_src), "format": "parquet"},
+            "child": {"type": "file", "path": str(child_src), "format": "parquet"},
+        },
+        "targets": {
+            "parent": {
+                "type": "file",
+                "path": str(tmp_path / "parent.out.parquet"),
+                "format": "parquet",
+            },
+            "child": {
+                "type": "file",
+                "path": str(tmp_path / "child.out.parquet"),
+                "format": "parquet",
+            },
+        },
+        "tables": [
+            {
+                "name": "parent",
+                "columns": [
+                    {
+                        "name": "id",
+                        "strategy": "faker",
+                        "provider": "person_email",
+                        "deterministic": True,
+                        "namespace": "ns",
+                    }
+                ],
+            },
+            {
+                "name": "child",
+                "columns": [
+                    {
+                        "name": "id",
+                        "strategy": "faker",
+                        "provider": "person_email",
+                        "deterministic": True,
+                        "namespace": "ns2",
+                    },
+                    {
+                        "name": "parent_id",
+                        "strategy": "faker",
+                        "provider": "person_email",
+                        "deterministic": True,
+                        "namespace": "ns",
+                    },
+                ],
+            },
+        ],
+        "relationships": [
+            {
+                "parent": {"table": "parent", "columns": ["id"]},
+                "children": [{"table": "child", "columns": ["parent_id"]}],
+                "orphan_policy": "preserve",
+                "namespace": "ns",
+            }
+        ],
+    }
+    validated = PipelineConfig.model_validate(config).model_dump()
+
+    # The raw floor, computed the same way resolve_probe_recovery does: sum
+    # of rows * per-column byte cost across every mask table, at FULL
+    # (target) scale -- both id columns here are fixed-width 12-char
+    # strings ("parent-NNNNNNN" / "child-NNNNNNN").
+    specs = (
+        TableSizeSpec(
+            name="parent",
+            row_count=n,
+            columns=(ColumnSizeSpec(name="id", dtype="string", string_width_bytes=13.0),),
+        ),
+        TableSizeSpec(
+            name="child",
+            row_count=n,
+            columns=(
+                ColumnSizeSpec(name="id", dtype="string", string_width_bytes=12.0),
+                ColumnSizeSpec(name="parent_id", dtype="string", string_width_bytes=13.0),
+            ),
+        ),
+    )
+    raw_floor_bytes = raw_data_bytes(specs).priceable_bytes
+    return validated, {"parent": parent, "child": child}, raw_floor_bytes
+
+
+class TestFKRepresentativenessRealIntegration:
+    def test_non_aligned_fk_head_slice_does_not_unsafely_underpredict(self, tmp_path: Path) -> None:
+        n = 4_000
+        config, sources, raw_floor_bytes = _non_aligned_fk_config(tmp_path, n)
+        result = probe_peak_bytes(
+            config,
+            sources,
+            reference_table="parent",
+            target_rows=n,
+            probe_fractions=(0.25, 0.75),
+            floor_rows=100,
+            raw_floor_bytes=raw_floor_bytes,
+            engine_version="probe-fk-representativeness-test",
+        )
+        # Either the floor rejected an implausible fit (safe: routes
+        # bounded) or the fit is conclusive -- and if conclusive, MUST be
+        # at/above the physical raw-bytes floor by construction (MED-1).
+        if result.conclusive:
+            assert result.estimated_peak_bytes is not None
+            assert result.estimated_peak_bytes >= raw_floor_bytes
+        else:
+            # Inconclusive is always the safe direction (-> bounded).
+            assert result.reason

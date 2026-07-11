@@ -392,6 +392,7 @@ def resolve_probe_recovery(
     from decoy_engine.execution._mem_estimate import raw_data_bytes
     from decoy_engine.execution._mem_estimate_schema import table_size_spec_from_profile
     from decoy_engine.execution._probe import (
+        DEFAULT_PROBE_TIMEOUT_S,
         MIN_PLAUSIBLE_K_FULL_FRAME,
         probe_fits,
         probe_peak_bytes,
@@ -415,6 +416,14 @@ def resolve_probe_recovery(
         return None
 
     largest = max(mask_tables, key=lambda t: t.row_count)
+    # LOW-2 (dennis's Sprint B2 review): `ColumnProfile.distinct_count` may
+    # itself be SAMPLED (see `ColumnProfile.sampled`) rather than a
+    # definitive full-scan count -- a sampled undercount could miss a
+    # column that is actually near its full-scale cardinality ceiling,
+    # silently defeating this uniqueness-saturation guard for exactly the
+    # column it exists to catch. Not fixed here (would require threading
+    # `sampled` through this dict and deciding what a "possibly saturated"
+    # sampled column should do); flagged for B5 telemetry tightening.
     distinct_counts = {
         (t.name, c.name): c.distinct_count
         for t in mask_tables
@@ -430,6 +439,17 @@ def resolve_probe_recovery(
         reference_table=largest.name,
         target_rows=largest.row_count,
         uniqueness_risk_columns=risk_columns,
+        # MED-1: the physical raw-bytes floor computed from the SAME specs
+        # (at full/target scale) used for the pre-filter above -- `None`
+        # only when a variable-width mask column could not be priced at
+        # all (no floor to apply rather than a wrong one).
+        raw_floor_bytes=raw.priceable_bytes if raw.is_priceable else None,
+        # MED-2: an explicit probe-appropriate timeout (never the
+        # primitive-disabling `None`) and a mem_cap -- the slot budget is a
+        # natural cap for a job that is, by construction, only being
+        # probed because it might not fit that same budget.
+        mem_cap_bytes=budget.budget_bytes,
+        timeout_s=DEFAULT_PROBE_TIMEOUT_S,
         engine_version=engine_version,
     )
     return probe_fits(result, budget.budget_bytes, error_band=error_band)

@@ -13,9 +13,24 @@ fraction, never a single table in isolation. A relationship-bearing job's
 child tables typically have a fixed fan-out per parent row (e.g. 5 orders
 per customer); scaling only the parent (or only the child) would change
 that ratio and measure a shape the full-scale job never has. Scaling all
-tables by one fraction keeps the ratio intact at every probe point, which is
-exactly what makes the two probe points comparable and their slope
-meaningful.
+tables by one fraction preserves each table's ROW-COUNT RATIO to the others
+at every probe point, which is exactly what makes the two probe points
+comparable and their slope meaningful.
+
+That guarantee is about the RATIO of row counts, not referential (FK)
+closure (dennis's Sprint B2 MED-3 finding): `downscale_sources` head-slices
+each table independently, so a sliced child row's FK key can fall outside
+the sliced parent's key range (e.g. a child table not sorted to align with
+its parent's row order). This is safe in practice for the peak-RSS
+measurement the probe needs, for two independent reasons: masking is
+HKDF-stateless (a row's masked value never depends on any OTHER row, FK-
+matched or not), so peak RSS tracks row COUNT per table regardless of
+whether keys happen to resolve; and `_probe.probe_peak_bytes`'s
+`raw_floor_bytes` physical floor backstops any residual risk of an
+under-prediction regardless of its cause. See
+`tests/unit/execution/test_probe.py::TestFKRepresentativenessRealIntegration`
+for a real-subprocess test against a deliberately NON-row-aligned FK
+distribution.
 
 Two independent halves of one job need scaling:
 
@@ -110,8 +125,12 @@ def downscale_sources(
     sources: dict[str, pa.Table], fraction: float, *, floor_rows: int = DEFAULT_PROBE_FLOOR_ROWS
 ) -> dict[str, pa.Table]:
     """Every resident table in `sources`, head-sliced to `scale_row_count`
-    rows (same `fraction` + `floor_rows` for every table -- fan-out
-    preservation per this module's docstring).
+    rows (same `fraction` + `floor_rows` for every table -- preserves each
+    table's ROW-COUNT RATIO to the others, per this module's docstring; NOT
+    a guarantee of referential/FK closure -- a sliced child row's FK key
+    may point outside the sliced parent's key range. See this module's
+    docstring for why that does not translate into an unsafe probe
+    under-prediction.
 
     A head slice (`pa.Table.slice(0, n)`), not a random sample: deterministic
     (two probe runs of the same job at the same fraction measure the exact
