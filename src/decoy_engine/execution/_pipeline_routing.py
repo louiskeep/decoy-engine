@@ -79,6 +79,14 @@ check (`_chunked.py`) raises `RowErrorsFailedError` the moment ANY chunk
 reports a row error, so `run_pipeline` never sees row errors to
 quarantine on that route (same policy the pre-existing manual chunked
 entrypoint already enforced).
+
+Sprint B1b (OOM-avoidance routing redesign, docs/plans/2026-07-10-oom-
+avoidance-routing-redesign.md §13): `decide_execution_route`'s
+`use_byte_estimate_routing` flag (default OFF) wires the B1a byte-level
+estimator (`_mem_estimate.fits`) into the "auto" full_frame-admission
+decision, additively -- see the flag's docstring on `decide_execution_route`
+for the exact scope and rule. OFF (the default), this module's routing is
+BYTE-FOR-BYTE the pre-B1b row-count logic described above.
 """
 
 from __future__ import annotations
@@ -94,10 +102,12 @@ from decoy_engine.execution._errors import ExecutionError
 # hold the 600-LOC orchestration cap; re-exported here so `run_pipeline` keeps a
 # single `_pipeline_routing.<name>` call surface for the routing seam.
 from decoy_engine.execution._pipeline_routing_signals import (
+    byte_estimate_full_frame_fits,
     largest_mask_table_rows,
     largest_mask_table_rows_from_profile,
     out_of_core_admission,
     out_of_core_routing_signals,
+    resolve_full_frame_fits_estimate,
 )
 from decoy_engine.execution._planner import (
     FULL_FRAME_REJECT_ROWS_DEFAULT,
@@ -112,12 +122,14 @@ if TYPE_CHECKING:
 
 __all__ = [
     "auto_chunk_stamp",
+    "byte_estimate_full_frame_fits",
     "decide_chunk_route",
     "decide_execution_route",
     "largest_mask_table_rows",
     "largest_mask_table_rows_from_profile",
     "out_of_core_admission",
     "out_of_core_routing_signals",
+    "resolve_full_frame_fits_estimate",
 ]
 
 
@@ -216,9 +228,29 @@ def decide_execution_route(
     largest_table_rows_exact: bool = True,
     out_of_core_threshold_rows: int = OUT_OF_CORE_THRESHOLD_ROWS_DEFAULT,
     full_frame_reject_rows: int = FULL_FRAME_REJECT_ROWS_DEFAULT,
+    use_byte_estimate_routing: bool = False,
+    full_frame_fits_estimate: bool | None = None,
 ) -> tuple[str, str]:
     """Decide `(route, route_reason)` -- `"out_of_core"`, `"sequential"`, or
     `"full_frame"` -- or RAISE a fail-closed reject-before-read.
+
+    `use_byte_estimate_routing` (Sprint B1b, default `False`, additive): OFF,
+    this function is BYTE-FOR-BYTE the row-count logic below --
+    `full_frame_fits_estimate` is never read, so the SC5 contract and every
+    existing routing test stay green unmodified. ON, for a job IN SCOPE
+    (`has_relationships and has_mask_table and not has_generate_table` --
+    see `byte_estimate_full_frame_fits`'s docstring for why generate+mask is
+    excluded), the "auto" decision is REPLACED by the §13 conservative-filter
+    ruling: full_frame only when `full_frame_fits_estimate is True` (the
+    caller precomputes this via `byte_estimate_full_frame_fits` +
+    `resolve_budget`); otherwise -- UNPRICEABLE (`None`) treated identically
+    to `False`, per §13 -- the job routes to whichever BOUNDED path
+    eligibility admits (out_of_core when compat-admitted, else sequential),
+    or the existing reject when NEITHER applies (§13's one irreducible reject
+    class). The choice AMONG bounded routes stays eligibility-based, never an
+    estimate of out_of_core/sequential peak (unmeasured placeholders, §13);
+    `out_of_core_threshold_rows` is not consulted in this mode. Out of scope,
+    the flag has NO effect, even when `full_frame_fits_estimate` is set.
 
     Priority (SC2), for a relationship-bearing PURE-MASK job under `auto`:
     out-of-core (when compat-admitted AND large) > sequential (bounded but
@@ -357,6 +389,58 @@ def decide_execution_route(
         return "sequential", route_reason
 
     # "auto"
+    # B1b (§13): flag-gated byte-estimate admission, scoped to
+    # relationship-bearing PURE-MASK jobs. `use_byte_estimate_routing`
+    # defaults False, so this branch can never fire unless a caller opts
+    # in -- the row-count logic below it is untouched and unreachable-
+    # bypassed only when the flag is explicitly on AND the job is in scope.
+    byte_estimate_in_scope = (
+        use_byte_estimate_routing
+        and has_relationships
+        and has_mask_table
+        and not has_generate_table
+    )
+    if byte_estimate_in_scope:
+        # §13's ruling: admit full_frame ONLY when the conservative
+        # estimate clears the budget with margin (`fits` already applied
+        # the asymmetric error_band). UNPRICEABLE (`None`) is treated
+        # exactly like "does not fit" -- never admit an unknown estimate to
+        # full_frame; B2's probe is the future fast-path recovery for it.
+        if full_frame_fits_estimate is True:
+            return "full_frame", "byte_estimate_full_frame_fits"
+        # Does not fit (or UNPRICEABLE): route bounded by ELIGIBILITY alone,
+        # never by an estimate of out_of_core/sequential peak -- their k's
+        # are unmeasured placeholders (§13), and out_of_core's own runtime
+        # budget (Sprint 1b) caps it regardless of how this job got routed
+        # there.
+        if eligible and not cyclic and out_of_core_compatible:
+            return "out_of_core", "byte_estimate_bounded_out_of_core"
+        if eligible and not cyclic:
+            return "sequential", route_reason
+        # Irreducible reject class (§13): no bounded route applies (a
+        # cross-table FK cycle, or a job disqualified from sequential for
+        # another reason) AND the byte estimate does not confirm full_frame
+        # fits either. Reuse the EXISTING reject mechanism/code
+        # (`fk_full_frame_oom_risk_rejected`) rather than inventing a new
+        # one -- retiring this code is the B3 contract migration, not this
+        # sprint.
+        byte_estimate_full_frame_reason = (
+            "cross_table_cycle" if (eligible and cyclic) else route_reason
+        )
+        raise ExecutionError(
+            code="fk_full_frame_oom_risk_rejected",
+            message=(
+                "FK job rejected before read: the byte-level memory estimator "
+                "(docs/plans/2026-07-10-oom-avoidance-routing-redesign.md §13) "
+                "predicts this job would not fit the full_frame budget within "
+                "margin, and no bounded route applies -- the job is not "
+                f"out-of-core-eligible ({out_of_core_reject_code or 'not a pure-mask FK recipe'}) "
+                f"and not sequential-eligible ({byte_estimate_full_frame_reason}). Reduce "
+                "the job size, make it out-of-core-eligible (supported "
+                "strategies + an acyclic single-parent FK graph), or force "
+                "execution_mode='full_frame' to override at your own memory risk."
+            ),
+        )
     if out_of_core_ready:
         return "out_of_core", "out_of_core_large_fk"
     if eligible and not cyclic:

@@ -175,6 +175,7 @@ def run_pipeline(
     out_of_core_threshold_rows: int = _OUT_OF_CORE_THRESHOLD_DEFAULT,
     full_frame_reject_rows: int = _FULL_FRAME_REJECT_DEFAULT,
     out_of_core_budget_bytes: int | None = None,
+    use_byte_estimate_routing: bool = False,
 ) -> ExecutionResult:
     """Execute a mixed mask + generate config end-to-end.
 
@@ -281,6 +282,7 @@ def run_pipeline(
     require_positive_int("full_frame_reject_rows", full_frame_reject_rows)
     if out_of_core_budget_bytes is not None:
         require_positive_int("out_of_core_budget_bytes", out_of_core_budget_bytes)
+    require_bool("use_byte_estimate_routing", use_byte_estimate_routing)
 
     resolved_registry = registry if registry is not None else get_default_registry()
     caller_sources: dict[str, pa.Table] = dict(sources) if sources else {}
@@ -336,6 +338,9 @@ def run_pipeline(
         table_kinds=table_kinds,
         has_mask_table=has_mask_table,
     )
+    full_frame_fits_estimate = _pipeline_routing.resolve_full_frame_fits_estimate(
+        use_byte_estimate_routing, profile, caller_sources, table_kinds, out_of_core_budget_bytes
+    )
     route, route_reason = _pipeline_routing.decide_execution_route(
         profile,
         has_generate_table=has_generate_table,
@@ -352,6 +357,8 @@ def run_pipeline(
         largest_table_rows_exact=largest_table_rows_exact,
         out_of_core_threshold_rows=out_of_core_threshold_rows,
         full_frame_reject_rows=full_frame_reject_rows,
+        use_byte_estimate_routing=use_byte_estimate_routing,
+        full_frame_fits_estimate=full_frame_fits_estimate,
     )
 
     # Routing layer 2 (S3 auto-chunk) classification. Computed BEFORE the

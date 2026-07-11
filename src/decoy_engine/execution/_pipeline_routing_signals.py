@@ -25,15 +25,17 @@ import pyarrow as pa
 
 if TYPE_CHECKING:
     from decoy_engine.plan._types import Plan
-    from decoy_engine.profile._types import Profile
+    from decoy_engine.profile._types import Profile, TableProfile
     from decoy_engine.providers_v2 import ProviderRegistry
     from decoy_engine.relationships import RelationshipGraph
 
 __all__ = [
+    "byte_estimate_full_frame_fits",
     "largest_mask_table_rows",
     "largest_mask_table_rows_from_profile",
     "out_of_core_admission",
     "out_of_core_routing_signals",
+    "resolve_full_frame_fits_estimate",
 ]
 
 
@@ -225,3 +227,98 @@ def out_of_core_routing_signals(
         profile, caller_sources=caller_sources, table_kinds=table_kinds
     )
     return compatible, reject_code, rows, exact
+
+
+def _resident_column_arrays(
+    resident: pa.Table | None, profile_table: TableProfile
+) -> dict[str, pa.Array | pa.ChunkedArray]:
+    """`{column_name: array}` for `profile_table`'s columns present in a
+    RESIDENT source, or `{}` for a lazy (not-yet-loaded) table.
+
+    Zero-copy: `pa.Table.column` returns a view into the existing Arrow
+    buffer, not a copy, so building this mapping costs nothing per row.
+    """
+    if resident is None:
+        return {}
+    names = set(resident.column_names)
+    return {
+        col.name: resident.column(col.name) for col in profile_table.columns if col.name in names
+    }
+
+
+def byte_estimate_full_frame_fits(
+    profile: Any,
+    *,
+    caller_sources: dict[str, pa.Table],
+    table_kinds: dict[str, str],
+    budget_bytes: int,
+    error_band: float = 0.30,
+) -> bool | None:
+    """Byte-level full_frame admission signal (Sprint B1b, docs/plans/
+    2026-07-10-oom-avoidance-routing-redesign.md §13's conservative-filter
+    ruling): whether `_mem_estimate.fits` confirms full_frame fits
+    `budget_bytes` for this job's MASK-kind tables.
+
+    Scoped to mask-kind tables only. A caller with a generate-kind table in
+    the job (`has_generate_table`) must NOT call this for that job: the
+    estimate would omit the generate tables' bytes entirely, which
+    under-counts a generate+mask job's true full_frame footprint -- the
+    unsafe (under-predicting) direction §13 exists to forbid. That is a
+    documented scope limit of B1b (`decide_execution_route`'s
+    `use_byte_estimate_routing` keeps such jobs on the pre-existing
+    row-count path), not a bug here; a later sprint can extend
+    `table_size_spec_from_generate_table` into this signal once its
+    `TableConfig` plumbing is threaded through `run_pipeline`.
+
+    Returns the SAME tri-state `fits` does: `True` (confirmed fit),
+    `False` (confirmed does not fit), or `None` (UNPRICEABLE -- a
+    variable-width mask column with no resident sample to measure, or no
+    mask table at all). `decide_execution_route` treats `None` identically
+    to `False`: §13 forbids trusting an unknown estimate for full_frame
+    admission. A variable-width column only prices when its table is
+    RESIDENT in `caller_sources` (a lazy `source_loader` table has nothing
+    to sample, and `ColumnProfile` does not yet carry a string-length
+    statistic -- see `_mem_estimate_schema`'s module docstring); this is
+    the safe direction, not a hole -- an unsampleable string column routes
+    bounded until B2's probe recovers the fast path.
+    """
+    from decoy_engine.execution._mem_estimate import fits
+    from decoy_engine.execution._mem_estimate_schema import table_size_spec_from_profile
+
+    mask_tables = [t for t in profile.tables if table_kinds.get(t.name) == "mask"]
+    if not mask_tables:
+        return None
+    specs = tuple(
+        table_size_spec_from_profile(
+            table, sample=_resident_column_arrays(caller_sources.get(table.name), table)
+        )
+        for table in mask_tables
+    )
+    return fits(specs, "full_frame", budget_bytes, error_band=error_band)
+
+
+def resolve_full_frame_fits_estimate(
+    use_byte_estimate_routing: bool,
+    profile: Any,
+    caller_sources: dict[str, pa.Table],
+    table_kinds: dict[str, str],
+    out_of_core_budget_bytes: int | None,
+) -> bool | None:
+    """`run_pipeline`'s one call site for the B1b signal: `None` (flag-gated
+    no-op -- no cgroup read, no estimator call) when
+    `use_byte_estimate_routing` is False, else `byte_estimate_full_frame_fits`
+    against the SAME `resolve_budget`-derived budget the out-of-core route
+    itself uses (`out_of_core_budget_bytes`, or the detected cgroup/host
+    ceiling when left `None`), so one budget serves both decisions.
+    """
+    if not use_byte_estimate_routing:
+        return None
+    from decoy_engine.execution.out_of_core import resolve_budget
+
+    budget = resolve_budget(out_of_core_budget_bytes)
+    return byte_estimate_full_frame_fits(
+        profile,
+        caller_sources=caller_sources,
+        table_kinds=table_kinds,
+        budget_bytes=budget.budget_bytes,
+    )
