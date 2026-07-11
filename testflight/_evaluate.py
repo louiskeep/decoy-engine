@@ -88,19 +88,42 @@ def _masked_correlation_result(family_name: str, evidence: dict[str, Any]) -> In
             keys v_src, v_out, diff; diff is None iff degenerate).
 
     Returns:
-        A passed InvariantResult with skipped=True when V was undefined, or
-        an ordinary passed InvariantResult carrying the v_src/v_out/diff
-        detail otherwise.
+        SKIP (passed=True, skipped=True) only when the SOURCE pair is
+        degenerate; FAIL (passed=False) when the source had association but the
+        OUTPUT column collapsed; an ordinary passed InvariantResult otherwise.
     """
+    v_src = evidence.get("v_src")
+    v_out = evidence.get("v_out")
     if evidence.get("diff") is None:
+        # diff is None iff v_src or v_out is undefined. The two cases are NOT
+        # equivalent and must not share an outcome:
+        #  - v_src is None (incl. both None): the SOURCE pair is degenerate, so
+        #    there is no association to preserve and the check genuinely cannot
+        #    run -> SKIP.
+        #  - v_src defined but v_out is None: the mask COLLAPSED the output column
+        #    to a single constant, destroying all association -- the single worst
+        #    outcome a masked_correlations pair exists to catch -> FAIL, never a
+        #    counted-as-passed SKIP.
+        if v_src is None:
+            return InvariantResult(
+                family=family_name,
+                passed=True,
+                skipped=True,
+                detail=(
+                    "SKIP: Cramers V undefined -- SOURCE pair degenerate (a "
+                    f"declared source column has <2 distinct non-null values). "
+                    f"v_src={v_src} v_out={v_out}"
+                ),
+            )
         return InvariantResult(
             family=family_name,
-            passed=True,
-            skipped=True,
+            passed=False,
             detail=(
-                "SKIP: Cramers V undefined (degenerate: a declared column has "
-                f"<2 distinct non-null values). v_src={evidence.get('v_src')} "
-                f"v_out={evidence.get('v_out')}"
+                f"masked_correlation OUTPUT column collapsed: v_src={v_src:.4f} "
+                f"but v_out is undefined (output has <2 distinct non-null "
+                "values). The mask destroyed all association -- this is the "
+                "failure a masked_correlations pair exists to catch, not a "
+                "skippable degenerate case."
             ),
         )
     return InvariantResult(

@@ -325,7 +325,10 @@ def check_distribution_mask(
             shape_sim = (
                 shape_entry.get("shape_similarity") if isinstance(shape_entry, dict) else None
             )
-            if shape_sim is None:
+            # A missing entry is a hard failure ONLY when the column has values to
+            # profile (src_nunique>=1). An all-null / un-profilable column has no
+            # computable shape_similarity, so a missing entry there is legitimate.
+            if shape_sim is None and src_nunique >= 1:
                 raise AssertionError(
                     f"[{job_name}/{table}/{col_name}] shape-floor guard "
                     f"(strategy=fpe): no shape_similarity entry in the quality "
@@ -333,7 +336,7 @@ def check_distribution_mask(
                     f"value-changing column. This floor cannot silently evaporate "
                     f"if compute_quality_report stops emitting the entry."
                 )
-            if float(shape_sim) < _FPE_HASH_SHAPE_FLOOR:
+            if shape_sim is not None and float(shape_sim) < _FPE_HASH_SHAPE_FLOOR:
                 raise AssertionError(
                     f"[{job_name}/{table}/{col_name}] shape-floor guard "
                     f"(strategy=fpe): shape_similarity={shape_sim:.4f} < "
@@ -358,7 +361,8 @@ def check_distribution_mask(
             shape_sim = (
                 shape_entry.get("shape_similarity") if isinstance(shape_entry, dict) else None
             )
-            if shape_sim is None:
+            # Missing entry hard-fails only when the column has values (see fpe).
+            if shape_sim is None and src_nunique >= 1:
                 raise AssertionError(
                     f"[{job_name}/{table}/{col_name}] shape-floor guard "
                     f"(strategy=hash): no shape_similarity entry in the quality "
@@ -366,7 +370,7 @@ def check_distribution_mask(
                     f"value-changing column. This floor cannot silently evaporate "
                     f"if compute_quality_report stops emitting the entry."
                 )
-            if float(shape_sim) < _FPE_HASH_SHAPE_FLOOR:
+            if shape_sim is not None and float(shape_sim) < _FPE_HASH_SHAPE_FLOOR:
                 raise AssertionError(
                     f"[{job_name}/{table}/{col_name}] shape-floor guard "
                     f"(strategy=hash): shape_similarity={shape_sim:.4f} < "
@@ -376,8 +380,22 @@ def check_distribution_mask(
 
         elif strategy in _MARGINAL_PRESERVING:
             # Shuffle: same value set + same frequencies; marginal similarity >= 0.99.
+            # TH-4.2 (dennis MEDIUM-1): marginal similarity is shuffle's ONLY tooth
+            # (unlike passthrough, which has the cardinality-fraction backstop
+            # above), so a missing entry evaporates it entirely. A declared
+            # shuffle column with no similarity entry hard-fails, mirroring the
+            # fpe/hash branches -- a profiler regression cannot silently disable it.
             entry = col_entry_by_name.get(col_name)
             sim = entry.get("similarity") if isinstance(entry, dict) else None
+            # Missing entry hard-fails only when the column has values (see fpe).
+            if sim is None and src_nunique >= 1:
+                raise AssertionError(
+                    f"[{job_name}/{table}/{col_name}] marginal-similarity guard "
+                    f"(strategy=shuffle): no similarity entry in the quality "
+                    f"report for a declared marginal-preserving column. This "
+                    f"floor cannot silently evaporate if compute_quality_report "
+                    f"stops emitting the entry."
+                )
             if sim is not None and float(sim) < 0.99:
                 raise AssertionError(
                     f"[{job_name}/{table}/{col_name}] constant-collapse guard "
@@ -405,8 +423,24 @@ def check_distribution_mask(
             # HIGH-1: passthrough must be near-identical to the source.
             # A doubled, shifted, or otherwise altered column fails the
             # value-identity floor even though cardinality may be unchanged.
+            # TH-4.2 (dennis MEDIUM-1): a missing similarity entry evaporates this
+            # floor. The cardinality guard above still catches a collapse, but a
+            # same-cardinality SHIFT would slip through -- so hard-fail on a
+            # missing entry, mirroring the fpe/hash branches.
             entry = col_entry_by_name.get(col_name)
             sim = entry.get("similarity") if isinstance(entry, dict) else None
+            # Missing entry hard-fails only when the column has values to profile
+            # (src_nunique>=1). An all-null passthrough column has no computable
+            # similarity, so a missing entry there is legitimate -- it falls
+            # through to the joint (Tooth C) check for a declared-but-uncomputed
+            # pair rather than hard-failing here.
+            if sim is None and src_nunique >= 1:
+                raise AssertionError(
+                    f"[{job_name}/{table}/{col_name}] passthrough value-identity "
+                    f"floor: no similarity entry in the quality report for a "
+                    f"declared passthrough column. This floor cannot silently "
+                    f"evaporate if compute_quality_report stops emitting the entry."
+                )
             if sim is not None and float(sim) < _PASSTHROUGH_VALUE_IDENTITY_FLOOR:
                 raise AssertionError(
                     f"[{job_name}/{table}/{col_name}] passthrough value-identity "

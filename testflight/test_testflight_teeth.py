@@ -4382,6 +4382,42 @@ class TestDegenerateCorrelationSkipTeeth:
         )
         assert corr.passed is True  # SKIP does not fail the job by itself.
 
+    def test_output_collapse_fails_not_skips(self) -> None:
+        """v_src defined but v_out undefined = OUTPUT collapse -> FAIL, not SKIP.
+
+        RED (TH-4.1 as first shipped): the guard fired on `diff is None`, which
+        _correlation.py returns when EITHER side is undefined. So a mask that
+        collapsed the output column to one constant (v_src=1.0, v_out=None) was
+        marked skipped=True, passed=True -- a false green in the very check
+        being hardened. This is the single worst outcome a masked_correlations
+        pair exists to catch (dennis HIGH-1).
+
+        GREEN: the asymmetric case is a hard FAIL that names the collapse.
+        """
+        evidence = {"v_src": 1.0, "v_out": None, "diff": None}
+        result = _masked_correlation_result("masked_correlation:t:a:b", evidence)
+
+        assert result.passed is False, (
+            "An output-column collapse (v_src defined, v_out undefined) must "
+            f"FAIL -- it must not be a counted-as-passed SKIP. Got: {result}"
+        )
+        assert result.skipped is False, "An output collapse is a real failure, not a skip."
+        assert "collapsed" in result.detail.lower()
+
+    def test_source_degenerate_still_skips_even_if_output_defined(self) -> None:
+        """v_src undefined = SOURCE degenerate -> SKIP even if v_out is defined.
+
+        The check genuinely cannot run without a source baseline association, so
+        this remains a legitimate SKIP; the detail must name the SOURCE side so
+        a reader can tell it apart from the output-collapse FAIL (LOW-1).
+        """
+        evidence = {"v_src": None, "v_out": 0.5, "diff": None}
+        result = _masked_correlation_result("masked_correlation:t:a:b", evidence)
+
+        assert result.skipped is True
+        assert result.passed is True
+        assert "SOURCE" in result.detail
+
 
 # ---------------------------------------------------------------------------
 # TH-4.2 (P2): missing shape/similarity entry for a declared fpe/hash column
@@ -4469,6 +4505,83 @@ class TestMissingShapeEntryHardFailTeeth:
         with pytest.raises(AssertionError, match="no shape_similarity entry"):
             check_distribution_mask(
                 "th42_hash_control", "t", spec, source_df, output_df, strategy_map={"id": "hash"}
+            )
+
+    @staticmethod
+    def _strip_marginal_column(monkeypatch: pytest.MonkeyPatch, column: str) -> None:
+        """Drop one column's top-level marginal entry (the section the shuffle
+        and passthrough floors read via col_entry_by_name), leaving the rest of
+        an otherwise-real report intact."""
+        import testflight._distribution as dist_mod
+
+        real_compute = dist_mod.compute_quality_report
+
+        def _wrapped(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            report = real_compute(*args, **kwargs)
+            marginal = report.get("marginal")
+            if marginal and "columns" in marginal:
+                marginal["columns"] = [c for c in marginal["columns"] if c.get("column") != column]
+            return report
+
+        monkeypatch.setattr(dist_mod, "compute_quality_report", _wrapped)
+
+    def test_missing_marginal_entry_for_shuffle_column_raises(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A declared shuffle column with no similarity entry must FAIL (MEDIUM-1).
+
+        RED (TH-4.2 as first shipped): the shuffle branch kept `if sim is not
+        None and ... < 0.99`. Marginal similarity is shuffle's ONLY tooth, so a
+        stripped entry evaporated it entirely and the column stayed green.
+        GREEN: a missing entry for a declared shuffle column is a hard failure.
+        """
+        self._strip_marginal_column(monkeypatch, "tag")
+
+        rng = np.random.default_rng(5)
+        n = 200
+        src = rng.integers(0, 5, size=n).astype(str).tolist()
+        source_df = pd.DataFrame({"tag": src})
+        output_df = pd.DataFrame({"tag": rng.permutation(src).tolist()})
+        spec = [
+            ColumnDistributionSpec(
+                table="t", column="tag", distribution_class="preserve", strategy="shuffle"
+            )
+        ]
+
+        with pytest.raises(AssertionError, match="no similarity entry"):
+            check_distribution_mask(
+                "th42_shuffle", "t", spec, source_df, output_df, strategy_map={"tag": "shuffle"}
+            )
+
+    def test_missing_marginal_entry_for_passthrough_column_raises(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A declared passthrough column with no similarity entry must FAIL.
+
+        The cardinality-fraction guard above still catches a collapse, but a
+        same-cardinality SHIFT with the value-identity floor evaporated would
+        slip through -- so a missing entry is itself a hard failure (MEDIUM-1).
+        """
+        self._strip_marginal_column(monkeypatch, "code")
+
+        n = 200
+        vals = [f"C{i:04d}" for i in range(n)]
+        source_df = pd.DataFrame({"code": vals})
+        output_df = pd.DataFrame({"code": vals})  # genuine passthrough
+        spec = [
+            ColumnDistributionSpec(
+                table="t", column="code", distribution_class="preserve", strategy="passthrough"
+            )
+        ]
+
+        with pytest.raises(AssertionError, match="no similarity entry"):
+            check_distribution_mask(
+                "th42_passthrough",
+                "t",
+                spec,
+                source_df,
+                output_df,
+                strategy_map={"code": "passthrough"},
             )
 
     def test_missing_overall_shape_score_raises_at_tooth_e(
