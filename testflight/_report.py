@@ -7,8 +7,12 @@ for ASCII-clean files.
 
 Report format (section 10):
   - Header: job name, topology, timestamp, elapsed.
-  - Per-invariant-family result rows (PASS / FAIL) with detail lines.
-  - Summary: total invariants, passed, failed; overall PASS/FAIL verdict.
+  - Per-invariant-family result rows (PASS / FAIL / SKIP) with detail lines.
+  - Summary: total invariants, passed, skipped, failed; overall PASS/FAIL verdict.
+    SKIP (TH-4.1) marks a check that could not actually be evaluated (e.g. a
+    degenerate Cramers V input); it counts toward the pass verdict (an
+    un-evaluable check is not itself a regression) but is called out
+    separately so it is never mistaken for a check that ran and passed.
 
 The report is returned as a string and optionally written to a file via
 write_report. `python scripts/test_flight.py` calls render_report(run_job(...))
@@ -45,7 +49,7 @@ def format_job_section(result: JobResult) -> str:
         return "\n".join(lines)
 
     for ir in result.invariant_results:
-        mark = "[PASS]" if ir.passed else "[FAIL]"
+        mark = "[SKIP]" if ir.skipped else ("[PASS]" if ir.passed else "[FAIL]")
         # Show detail for both PASS (expected-vs-found counts) and FAIL cases.
         if ir.detail:
             lines.append(f"  {mark}  {ir.family}  ({ir.detail.splitlines()[0]})")
@@ -91,13 +95,20 @@ def format_coverage_section(results: list[JobResult]) -> str:
             if gi.detail:
                 lines.append(f"    {gi.detail.splitlines()[0]}")
 
-    passed = sum(1 for ir in all_inv if ir.passed)
+    skipped = sum(1 for ir in all_inv if ir.skipped)
+    passed = sum(1 for ir in all_inv if ir.passed and not ir.skipped)
     failed = sum(1 for ir in all_inv if not ir.passed)
     lines += [
         f"  Total invariant checks : {len(all_inv)}",
         f"  Passed                 : {passed}",
+        f"  Skipped                : {skipped}",
         f"  Failed                 : {failed}",
     ]
+    if skipped:
+        lines.append("  Skipped families (not evaluated -- see detail above):")
+        for ir in all_inv:
+            if ir.skipped:
+                lines.append(f"    - {ir.family}")
     if failed:
         lines.append("  Failed families:")
         for ir in all_inv:

@@ -45,6 +45,7 @@ import pytest
 from pydantic import ValidationError
 
 from testflight._coverage import check_suite_strategy_coverage
+from testflight._evaluate import _masked_correlation_result, evaluate_invariants
 from testflight._invariants import (
     FIXED_TS,
     check_chapter_preserve,
@@ -55,6 +56,7 @@ from testflight._invariants import (
     check_distribution_generate,
     check_distribution_mask,
     check_fk_integrity,
+    check_generate_row_count,
     check_quarantine,
     check_remap_masks_orphan,
     check_safe_harbor,
@@ -67,6 +69,9 @@ from testflight._spec import (
     ColumnDistributionSpec,
     ComputedColumnSpec,
     FKIntegritySpec,
+    FlightManifest,
+    InvariantSpec,
+    MaskedCorrelationSpec,
     QuarantineSpec,
     RelationshipEndSpec,
     RelationshipSpec,
@@ -4258,3 +4263,375 @@ class TestSafeHarborPrefixAnyLengthTeeth:
             )
         ]
         check_safe_harbor("safe_harbor_mixed_good", spec, result)
+
+
+# ---------------------------------------------------------------------------
+# TH-4.1 (P2): degenerate Cramers V must SKIP, never silently PASS
+# ---------------------------------------------------------------------------
+
+
+class TestDegenerateCorrelationSkipTeeth:
+    """Mutation controls for TH-4.1: a degenerate masked_correlation pair must
+    surface as a distinct SKIP, not fold into an ordinary PASS.
+
+    Before this fix, evaluate_invariants turned a degenerate pair (Cramers V
+    undefined because a declared column has <2 distinct non-null values) into
+    an InvariantResult with passed=True and only a prose detail string. The
+    evidence report rendered that as an ordinary [PASS] line -- identical to a
+    pair that was genuinely computed. A future correlation pair declared on a
+    synthetic/coarsen column that degenerates could vanish from coverage
+    without anyone noticing.
+    """
+
+    def test_degenerate_evidence_is_not_a_silent_pass(self) -> None:
+        """A degenerate evidence dict must produce a distinctly-marked SKIP.
+
+        RED (pre-fix): the InvariantResult produced here had no `skipped`
+        field at all (or, before that field existed, no way to distinguish
+        this outcome from a genuine PASS at the report layer).
+        """
+        evidence = {"v_src": None, "v_out": None, "diff": None}
+        result = _masked_correlation_result("masked_correlation:t:a:b", evidence)
+
+        assert result.skipped is True, (
+            "Degenerate Cramers V must set skipped=True -- it must not be "
+            "indistinguishable from a genuine PASS."
+        )
+        assert result.passed is True, "A SKIP is not itself a regression; it must not fail the job."
+        assert result.detail.startswith("SKIP"), (
+            f"Degenerate result detail must start with 'SKIP', got: {result.detail!r}"
+        )
+
+    def test_computed_evidence_is_an_ordinary_pass_not_skipped(self) -> None:
+        """A genuinely-computed pair must NOT be marked skipped.
+
+        Proves the fix does not over-mark: a real v_src/v_out/diff result is
+        an ordinary passed check, not a SKIP. Without this control, a broken
+        fix that marks EVERY result skipped would still pass the test above.
+        """
+        evidence = {"v_src": 0.8, "v_out": 0.82, "diff": 0.02}
+        result = _masked_correlation_result("masked_correlation:t:a:b", evidence)
+
+        assert result.skipped is False
+        assert result.passed is True
+        assert "v_src=0.8000" in result.detail
+
+    def test_evaluate_invariants_surfaces_skip_end_to_end(self) -> None:
+        """Full evaluate_invariants wiring: a degenerate declared pair -> SKIP.
+
+        RED (pre-fix): the masked_correlations loop in evaluate_invariants
+        produced a passed=True InvariantResult with detail "degenerate (v
+        undefined, skipped)" -- prose only, no first-class status. A caller
+        reading `ir.passed` alone (as the report and job-verdict aggregation
+        both do) could not distinguish it from a real pass.
+
+        GREEN (post-fix): InvariantResult.skipped makes the SKIP a first-class
+        outcome the runner and report can act on.
+
+        cat_code is constant ("SAME"/"MASKED") on both sides -- degenerate
+        (r=1) regardless of risk_flag's cardinality, so Cramers V is undefined
+        for this declared pair.
+        """
+        n = 50
+        source_tbl = pa.table(
+            {
+                "cat_code": ["SAME"] * n,
+                "risk_flag": ["HI", "MD"] * (n // 2),
+            }
+        )
+        output_tbl = pa.table(
+            {
+                "cat_code": ["MASKED"] * n,
+                "risk_flag": ["X1", "X2"] * (n // 2),
+            }
+        )
+
+        manifest = FlightManifest(
+            job_name="th41_degenerate",
+            topology="mixed",
+            seed=1,
+            master_key_label="th41",
+            tables=[TableSpec(name="orders", kind="mask", row_count=n, source_builder="x")],
+            invariants=InvariantSpec(
+                determinism=False,
+                masked_correlations=[
+                    MaskedCorrelationSpec(
+                        table="orders",
+                        col_a="cat_code",
+                        col_b="risk_flag",
+                        strategy_a="fpe",
+                        strategy_b="fpe",
+                    )
+                ],
+            ),
+        )
+        result_a = SimpleNamespace(outputs={"orders": output_tbl}, quality_metrics={})
+        result_b = SimpleNamespace(outputs={"orders": output_tbl}, quality_metrics={})
+        sources = {"orders": source_tbl}
+
+        inv_results = evaluate_invariants(manifest, result_a, result_b, sources)
+        corr_results = [r for r in inv_results if r.family.startswith("masked_correlation:")]
+        assert len(corr_results) == 1, (
+            f"Expected exactly one masked_correlation result, got {corr_results}"
+        )
+        corr = corr_results[0]
+
+        assert corr.skipped is True, (
+            f"A degenerate declared pair (cat_code has 1 unique value on both "
+            f"sides) must be SKIP, not a silent PASS. Got: {corr}"
+        )
+        assert corr.passed is True  # SKIP does not fail the job by itself.
+
+
+# ---------------------------------------------------------------------------
+# TH-4.2 (P2): missing shape/similarity entry for a declared fpe/hash column
+# must FAIL, not silently pass through a None-guard
+# ---------------------------------------------------------------------------
+
+
+class TestMissingShapeEntryHardFailTeeth:
+    """Mutation controls for TH-4.2: a declared fpe/hash column with no
+    shape_similarity entry must FAIL, never silently pass.
+
+    The pre-fix guards read `if shape_sim is not None and shape_sim < FLOOR:
+    raise` -- if `compute_quality_report` ever stopped emitting a
+    shape_fidelity entry for a column (e.g. a profiler regression), the floor
+    simply never fired and the table stayed GREEN. These controls monkeypatch
+    the REAL `compute_quality_report` return value to strip exactly the
+    target column's shape_fidelity entry (everything else -- diagnostic,
+    policy-relevant marginal columns, etc. -- is genuinely computed), which
+    reproduces precisely the hole: an entry silently absent.
+    """
+
+    @staticmethod
+    def _strip_shape_column(monkeypatch: pytest.MonkeyPatch, column: str) -> None:
+        """Monkeypatch _distribution.compute_quality_report to drop one column's
+        shape_fidelity marginal entry from an otherwise-real report."""
+        import testflight._distribution as dist_mod
+
+        real_compute = dist_mod.compute_quality_report
+
+        def _wrapped(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            report = real_compute(*args, **kwargs)
+            shape = report.get("shape_fidelity")
+            if shape:
+                shape["marginal"]["columns"] = [
+                    c for c in shape["marginal"]["columns"] if c.get("column") != column
+                ]
+            return report
+
+        monkeypatch.setattr(dist_mod, "compute_quality_report", _wrapped)
+
+    def test_missing_shape_entry_for_fpe_column_raises(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A declared fpe column with no shape_similarity entry must FAIL.
+
+        RED (pre-fix): the None-guard silently skipped the floor entirely.
+        GREEN (post-fix): a missing entry for a declared value-changing (fpe)
+        column is itself a hard failure.
+        """
+        self._strip_shape_column(monkeypatch, "id")
+
+        n = 200
+        source_df = pd.DataFrame({"id": [f"ID{i:04d}" for i in range(n)]})
+        output_df = pd.DataFrame({"id": [f"MASKED{i:04d}" for i in range(n)]})
+        spec = [
+            ColumnDistributionSpec(
+                table="t", column="id", distribution_class="preserve", strategy="fpe"
+            )
+        ]
+
+        with pytest.raises(AssertionError, match="no shape_similarity entry"):
+            check_distribution_mask(
+                "th42_fpe_control", "t", spec, source_df, output_df, strategy_map={"id": "fpe"}
+            )
+
+    def test_missing_shape_entry_for_hash_column_raises(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A declared hash column with no shape_similarity entry must FAIL.
+
+        Same hole as the fpe case, in the hash branch (TH-4.2 covers both
+        declared value-changing strategies).
+        """
+        self._strip_shape_column(monkeypatch, "id")
+
+        n = 200
+        source_df = pd.DataFrame({"id": [f"ID{i:04d}" for i in range(n)]})
+        output_df = pd.DataFrame({"id": [f"HASHED{i:04d}" for i in range(n)]})
+        spec = [
+            ColumnDistributionSpec(
+                table="t", column="id", distribution_class="preserve", strategy="hash"
+            )
+        ]
+
+        with pytest.raises(AssertionError, match="no shape_similarity entry"):
+            check_distribution_mask(
+                "th42_hash_control", "t", spec, source_df, output_df, strategy_map={"id": "hash"}
+            )
+
+    def test_missing_overall_shape_score_raises_at_tooth_e(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A missing overall_shape_score on an fpe-bearing table must FAIL Tooth E.
+
+        Isolates the Tooth E (grade-floor) guard specifically: per-column
+        shape entries are left genuinely intact (so Tooth A passes cleanly)
+        but `overall_shape_score` itself is stripped, reproducing a case
+        where the per-column shape data is present yet the aggregate score
+        that Tooth E reads is missing.
+        """
+        import testflight._distribution as dist_mod
+
+        real_compute = dist_mod.compute_quality_report
+
+        def _wrapped(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            report = real_compute(*args, **kwargs)
+            shape = report.get("shape_fidelity")
+            if shape:
+                shape["overall_shape_score"] = None
+            return report
+
+        monkeypatch.setattr(dist_mod, "compute_quality_report", _wrapped)
+
+        rng = np.random.default_rng(77)
+        n = 200
+        src_ids = [f"ID{i:04d}" for i in range(n)]
+        src_amounts = rng.integers(1, 1000, size=n).astype(float).tolist()
+        source_df = pd.DataFrame({"id": src_ids, "amount": src_amounts})
+        output_df = source_df.copy()
+        output_df["id"] = [f"MASKED_{v}" for v in source_df["id"]]
+        spec = [
+            ColumnDistributionSpec(
+                table="t",
+                column="id",
+                distribution_class="preserve",
+                strategy="fpe",
+                joints_waived=True,
+                joints_waived_reason="fpe id has no meaningful correlation with amount",
+            ),
+            ColumnDistributionSpec(
+                table="t", column="amount", distribution_class="preserve", strategy="passthrough"
+            ),
+        ]
+
+        with pytest.raises(AssertionError, match="no overall_shape_score"):
+            check_distribution_mask(
+                "th42_toothe_control",
+                "t",
+                spec,
+                source_df,
+                output_df,
+                strategy_map={"id": "fpe", "amount": "passthrough"},
+            )
+
+    def test_good_fpe_table_with_real_shape_entry_still_passes(self) -> None:
+        """A genuine (unmocked) fpe table with a real shape entry must NOT raise.
+
+        Companion control proving the hard-fail does not over-assert: when
+        compute_quality_report DOES emit the entry (the normal case), nothing
+        changes versus pre-TH-4.2 behavior.
+        """
+        n = 200
+        source_df = pd.DataFrame({"id": [f"ID{i:04d}" for i in range(n)]})
+        output_df = pd.DataFrame({"id": [f"MASKED{i:04d}" for i in range(n)]})
+        spec = [
+            ColumnDistributionSpec(
+                table="t", column="id", distribution_class="preserve", strategy="fpe"
+            )
+        ]
+        check_distribution_mask(
+            "th42_good_control", "t", spec, source_df, output_df, strategy_map={"id": "fpe"}
+        )
+
+
+# ---------------------------------------------------------------------------
+# TH-4.3 (P2): generate-table row count vs declared TableSpec.row_count
+# ---------------------------------------------------------------------------
+
+
+class TestGenerateRowCountTeeth:
+    """Mutation controls for TH-4.3: a generate table's produced row count is
+    compared against its declared TableSpec.row_count.
+
+    Before this fix, nothing compared a generate table's actual output row
+    count to anything -- every other invariant just operates on whatever rows
+    happen to exist, so a 0-row (or any wrong-count) generate table passed
+    the whole suite incidentally. This is the RUNTIME counterpart to
+    TableSpec's own schema validator (a 0-row table must declare
+    kind=generate): that validator only proves the SPEC is well-formed, not
+    that the ENGINE actually produced the declared count.
+    """
+
+    def test_wrong_row_count_raises(self) -> None:
+        """A generate table producing 40 rows against a declared 50 must raise."""
+        output_df = pd.DataFrame({"x": list(range(40))})
+        with pytest.raises(AssertionError, match="generate_row_count"):
+            check_generate_row_count("th43_control", "events", 50, output_df)
+
+    def test_zero_actual_rows_against_nonzero_declared_raises(self) -> None:
+        """A 0-row output against a nonzero declared row_count must raise.
+
+        This is exactly the false-green the plan calls out: "a 0-row generate
+        passes only incidentally" when nothing checks the count.
+        """
+        output_df = pd.DataFrame({"x": []})
+        with pytest.raises(AssertionError, match="produced 0 rows"):
+            check_generate_row_count("th43_control", "events", 100, output_df)
+
+    def test_matching_row_count_passes(self) -> None:
+        """A generate table whose output matches its declared row_count must NOT raise."""
+        output_df = pd.DataFrame({"x": list(range(50))})
+        check_generate_row_count("th43_control", "events", 50, output_df)
+
+    def test_evaluate_invariants_wires_generate_row_count_end_to_end(self) -> None:
+        """Full evaluate_invariants wiring: a wrong generate row count must FAIL.
+
+        RED (pre-fix): evaluate_invariants had no code path comparing a
+        generate TableSpec.row_count to the actual produced row count -- this
+        mismatch was invisible to the whole evaluation no matter what other
+        invariants ran.
+        """
+        wrong_table = pa.table({"x": list(range(30))})  # declared row_count=100
+
+        manifest = FlightManifest(
+            job_name="th43_wiring",
+            topology="mixed",
+            seed=1,
+            master_key_label="th43",
+            tables=[TableSpec(name="events", kind="generate", row_count=100)],
+            invariants=InvariantSpec(determinism=False),
+        )
+        result_a = SimpleNamespace(outputs={"events": wrong_table}, quality_metrics={})
+        result_b = SimpleNamespace(outputs={"events": wrong_table}, quality_metrics={})
+
+        inv_results = evaluate_invariants(manifest, result_a, result_b, {})
+        gen_results = [r for r in inv_results if r.family == "generate_row_count:events"]
+        assert len(gen_results) == 1, (
+            f"Expected exactly one generate_row_count result, got {inv_results}"
+        )
+        assert gen_results[0].passed is False, (
+            f"A generate table producing 30 rows against a declared "
+            f"row_count=100 must FAIL the suite. Got: {gen_results[0]}"
+        )
+
+    def test_evaluate_invariants_generate_row_count_passes_when_matching(self) -> None:
+        """A generate table whose output matches its declared row_count must PASS."""
+        right_table = pa.table({"x": list(range(100))})
+
+        manifest = FlightManifest(
+            job_name="th43_wiring_good",
+            topology="mixed",
+            seed=1,
+            master_key_label="th43",
+            tables=[TableSpec(name="events", kind="generate", row_count=100)],
+            invariants=InvariantSpec(determinism=False),
+        )
+        result_a = SimpleNamespace(outputs={"events": right_table}, quality_metrics={})
+        result_b = SimpleNamespace(outputs={"events": right_table}, quality_metrics={})
+
+        inv_results = evaluate_invariants(manifest, result_a, result_b, {})
+        gen_results = [r for r in inv_results if r.family == "generate_row_count:events"]
+        assert len(gen_results) == 1
+        assert gen_results[0].passed is True

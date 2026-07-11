@@ -69,6 +69,7 @@ __all__ = [
     "check_distribution_generate",
     "check_distribution_mask",
     "check_fk_integrity",
+    "check_generate_row_count",
     "check_job_strategy_coverage",
     "check_joint_mask_consistency",
     "check_quarantine",
@@ -194,6 +195,49 @@ def check_quarantine(
         f"found={actual_quarantined} "
         f"(validator={spec.expected_validator})"
     )
+
+
+# ---------------------------------------------------------------------------
+# 6.3b Generate-table row count (TH-4.3 / P2)
+# ---------------------------------------------------------------------------
+
+
+def check_generate_row_count(
+    job_name: str,
+    table: str,
+    expected_row_count: int,
+    output_df: Any,
+) -> str:
+    """Assert a generate table's produced row count matches its declared TableSpec.
+
+    A generate table has no source frame, so no other invariant compares its
+    row count against anything -- every other check operates on whatever rows
+    the table happens to have. Without this, a 0-row (or any wrong-count)
+    generate table passes the whole suite incidentally. This is the RUNTIME
+    counterpart to TableSpec's own schema validator (a 0-row table must
+    declare kind=generate): that validator only proves the SPEC is
+    well-formed, not that the ENGINE actually produced the declared count.
+
+    Args:
+        job_name: Job name for error messages.
+        table: Table name for error messages.
+        expected_row_count: TableSpec.row_count declared in the manifest.
+        output_df: Generated output DataFrame for this table.
+
+    Returns:
+        Short evidence string with expected/found counts.
+
+    Raises:
+        AssertionError: If the produced row count does not equal
+            expected_row_count.
+    """
+    actual = len(output_df)
+    assert actual == expected_row_count, (
+        f"[{job_name}/{table}] generate_row_count: produced {actual} rows, "
+        f"manifest declares row_count={expected_row_count}. A generate "
+        f"table's output must match its declared shape exactly."
+    )
+    return f"expected={expected_row_count} found={actual}"
 
 
 # ---------------------------------------------------------------------------

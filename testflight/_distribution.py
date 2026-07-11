@@ -317,11 +317,23 @@ def check_distribution_mask(
             # HIGH-1: FPE must also preserve the frequency shape of the source.
             # A bijection that scrambles frequencies would produce a
             # shape_similarity below the floor even though cardinality is intact.
+            # TH-4.2: a MISSING entry is not "nothing to check" -- fpe is a
+            # declared value-changing strategy, so a hole here means the shape
+            # floor evaporated silently if compute_quality_report stops
+            # emitting it. Hard-fail rather than pass-through.
             shape_entry = shape_col_by_name.get(col_name)
             shape_sim = (
                 shape_entry.get("shape_similarity") if isinstance(shape_entry, dict) else None
             )
-            if shape_sim is not None and float(shape_sim) < _FPE_HASH_SHAPE_FLOOR:
+            if shape_sim is None:
+                raise AssertionError(
+                    f"[{job_name}/{table}/{col_name}] shape-floor guard "
+                    f"(strategy=fpe): no shape_similarity entry in the quality "
+                    f"report's shape_fidelity section for a declared "
+                    f"value-changing column. This floor cannot silently evaporate "
+                    f"if compute_quality_report stops emitting the entry."
+                )
+            if float(shape_sim) < _FPE_HASH_SHAPE_FLOOR:
                 raise AssertionError(
                     f"[{job_name}/{table}/{col_name}] shape-floor guard "
                     f"(strategy=fpe): shape_similarity={shape_sim:.4f} < "
@@ -340,11 +352,21 @@ def check_distribution_mask(
                     f"Column may have collapsed to a constant."
                 )
             # HIGH-1: hash must also preserve frequency shape.
+            # TH-4.2: same hard-fail-on-missing-entry rationale as the fpe
+            # branch above -- hash is also a declared value-changing strategy.
             shape_entry = shape_col_by_name.get(col_name)
             shape_sim = (
                 shape_entry.get("shape_similarity") if isinstance(shape_entry, dict) else None
             )
-            if shape_sim is not None and float(shape_sim) < _FPE_HASH_SHAPE_FLOOR:
+            if shape_sim is None:
+                raise AssertionError(
+                    f"[{job_name}/{table}/{col_name}] shape-floor guard "
+                    f"(strategy=hash): no shape_similarity entry in the quality "
+                    f"report's shape_fidelity section for a declared "
+                    f"value-changing column. This floor cannot silently evaporate "
+                    f"if compute_quality_report stops emitting the entry."
+                )
+            if float(shape_sim) < _FPE_HASH_SHAPE_FLOOR:
                 raise AssertionError(
                     f"[{job_name}/{table}/{col_name}] shape-floor guard "
                     f"(strategy=hash): shape_similarity={shape_sim:.4f} < "
@@ -505,9 +527,21 @@ def check_distribution_mask(
                 # near 0 by design, dragging the overall grade below B even for a
                 # correct run. Shape-only score is the correct tooth: a bijection
                 # must preserve the frequency distribution shape.
+                # TH-4.2: a table with fpe/hash columns is exactly the case this
+                # floor exists to guard; a missing overall_shape_score is not a
+                # legitimate absence here (unlike the else-branch's grade, which
+                # only applies when there is no value-changing strategy at all).
                 s_report: dict[str, Any] = report.get("shape_fidelity") or {}
                 shape_score = s_report.get("overall_shape_score")
-                if shape_score is not None and float(shape_score) < _SHAPE_FLOOR_FPE_TABLE:
+                if shape_score is None:
+                    raise AssertionError(
+                        f"[{job_name}/{table}] shape-floor (Tooth E): preserve-dominant "
+                        f"table with fpe/hash columns has no overall_shape_score in "
+                        f"the quality report's shape_fidelity section. This floor "
+                        f"cannot silently evaporate if compute_quality_report stops "
+                        f"emitting shape_fidelity."
+                    )
+                if float(shape_score) < _SHAPE_FLOOR_FPE_TABLE:
                     raise AssertionError(
                         f"[{job_name}/{table}] shape-floor (Tooth E): preserve-dominant "
                         f"table with fpe/hash columns has "
