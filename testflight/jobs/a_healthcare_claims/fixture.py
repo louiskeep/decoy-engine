@@ -21,6 +21,11 @@ Correlations (deliberate, non-trivial for the distribution invariant):
     >55 -> Gold/Platinum.
   - claim_amount correlates with ICD-10 chapter: chapters I/E/N have higher
     average amounts; chapters A/B have lower amounts.
+  - diagnosis_secondary is drawn from the SAME chapter as diagnosis (TH-3.4):
+    a real chapter-level clinical association, checked post-mask via the
+    relabel-invariant masked_correlations Cramers V pair (both columns are
+    code_set/chapter_preserve:true, a value-changing mask family the old
+    crosstab-TVD joint metric cannot see through).
 
 Row counts (from manifest.yaml):
   - members: 2000
@@ -44,6 +49,8 @@ Source format notes:
   - email: lowercase email string.
   - claim_id: "C{n:07d}".
   - diagnosis: 5-char ICD-10 code from the shipped corpus.
+  - diagnosis_secondary: ICD-10 code drawn from the SAME chapter as diagnosis
+    (TH-3.4 code_set-chapter masked_correlations partner).
   - drug_ndc: 11-digit NDC code.
   - claim_amount: float; correlated with diagnosis chapter.
   - service_date: ISO date string YYYY-MM-DD; one per month over 24 months.
@@ -87,7 +94,7 @@ QUARANTINE_MEMBER_COUNT = INVALID_LUHN_COUNT  # alias for clarity
 # Re-baseline deliberately by running compute_fingerprint() on the new output
 # and updating these constants + the manifest.yaml comment block.
 _MEMBERS_FINGERPRINT = "f0a05c63ddfd74c9625f44800ffa87f26cfe8e9e6927cb8ad6907b3b8032c281"
-_CLAIMS_FINGERPRINT = "f1728aef9f060f176da6af8a9621e0e009a33512ea1d193c06a524d55a08889c"
+_CLAIMS_FINGERPRINT = "cdd55a057c1537482c614941f09533f561021f5bb38e8d392bb058e5978ca3a3"
 _CLAIM_LINES_FINGERPRINT = "3678e5ce5ac37add2d3bf66fc274875282297f038a4a6ebec246ed79b6ecb0f3"
 
 # Orphan claims: reference quarantine member IDs so they become orphans in the
@@ -358,6 +365,21 @@ def build_members(seed: int = 42) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 
+def _group_codes_by_chapter(codes: list[str], chapters: list[str]) -> dict[str, list[str]]:
+    """Group (code, chapter) pairs into {chapter: [codes]}, preserving list order.
+
+    Iterates the parallel `codes`/`chapters` lists (deterministic parquet-row
+    order, not a hash-ordered structure) and appends into a plain dict, so
+    the resulting per-chapter code lists are process-stable regardless of
+    PYTHONHASHSEED -- required for the TH-3.4 diagnosis_secondary draw below
+    to be reproducible across processes (cross-process fingerprint gate).
+    """
+    grouped: dict[str, list[str]] = {}
+    for code, chapter in zip(codes, chapters, strict=True):
+        grouped.setdefault(chapter, []).append(code)
+    return grouped
+
+
 def build_claims(seed: int = 42, members_df: pd.DataFrame | None = None) -> pd.DataFrame:
     """Build the claims source DataFrame.
 
@@ -390,6 +412,9 @@ def build_claims(seed: int = 42, members_df: pd.DataFrame | None = None) -> pd.D
 
     # Load ICD-10 codes from shipped corpus
     icd10_codes, icd10_chapters = _load_icd10_corpus()
+    # TH-3.4 (P1-9): chapter -> codes lookup for diagnosis_secondary (drawn from
+    # the SAME chapter as the primary diagnosis; see the column below).
+    icd10_by_chapter = _group_codes_by_chapter(icd10_codes, icd10_chapters)
     # NDC corpus: cap at 20 codes. Known boundary (MEDIUM-2):
     # Using all 38 shipped NDC codes makes the source freetext (38 > 30)
     # but code_set's HMAC-deterministic mapping produces ~23 distinct output
@@ -410,6 +435,17 @@ def build_claims(seed: int = 42, members_df: pd.DataFrame | None = None) -> pd.D
         diag_idx = int(rng.integers(0, len(icd10_codes)))
         diagnosis = icd10_codes[diag_idx]
         chapter = icd10_chapters[diag_idx]
+
+        # diagnosis_secondary: TH-3.4 code_set-chapter masked_correlations
+        # partner for diagnosis. Drawn UNIFORMLY from the SAME chapter as the
+        # primary diagnosis -- a real chapter-level clinical association
+        # (comorbidity within the same body system), not a synthetic
+        # coincidence. Both columns are chapter_preserve:true code_set, so
+        # each masks to a DIFFERENT code within its own (preserved) chapter;
+        # the pairing is chapter-level, exercised at the same granularity the
+        # masking guarantees.
+        secondary_pool = icd10_by_chapter[chapter]
+        diagnosis_secondary = secondary_pool[int(rng.integers(0, len(secondary_pool)))]
 
         # Drug NDC
         ndc_idx = int(rng.integers(0, len(ndc_codes)))
@@ -450,6 +486,7 @@ def build_claims(seed: int = 42, members_df: pd.DataFrame | None = None) -> pd.D
                 "claim_id": claim_id,
                 "member_id": member_id,
                 "diagnosis": diagnosis,
+                "diagnosis_secondary": diagnosis_secondary,
                 "drug_ndc": drug_ndc,
                 "claim_amount": round(claim_amount, 2),
                 "amount_band": amount_band,
@@ -473,6 +510,8 @@ def build_claims(seed: int = 42, members_df: pd.DataFrame | None = None) -> pd.D
         orphan_diag_idx = int(rng.integers(0, len(icd10_codes)))
         orphan_diag = icd10_codes[orphan_diag_idx]
         orphan_chapter = icd10_chapters[orphan_diag_idx]
+        orphan_pool = icd10_by_chapter[orphan_chapter]
+        orphan_diag_secondary = orphan_pool[int(rng.integers(0, len(orphan_pool)))]
         if orphan_chapter in _HIGH_COST_CHAPTERS:
             orphan_amount = float(rng.uniform(5000, 25000))
             orphan_band = "high"
@@ -494,6 +533,7 @@ def build_claims(seed: int = 42, members_df: pd.DataFrame | None = None) -> pd.D
                 "claim_id": orphan_claim_id,
                 "member_id": orphan_member_id,
                 "diagnosis": orphan_diag,
+                "diagnosis_secondary": orphan_diag_secondary,
                 "drug_ndc": orphan_ndc,
                 "claim_amount": round(orphan_amount, 2),
                 "amount_band": orphan_band,

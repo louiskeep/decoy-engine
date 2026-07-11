@@ -63,7 +63,14 @@ class TableSpec(BaseModel):
 
     name: str
     kind: TableKindLiteral
-    row_count: int = Field(ge=1)
+    # ge=0 (TH-3.3 / P1-10): the engine's own generate-table validator accepts
+    # row_count=0 (config._pipeline.py requires only a non-negative integer),
+    # so a 0-row GENERATE table is a real, engine-supported shape worth
+    # exercising (Job E's empty_table). Mask tables in practice always declare
+    # row_count>=1 (a 0-row mask source has no established fixture pattern
+    # here); the floor is relaxed for both kinds rather than only generate
+    # tables to keep one shared field validator.
+    row_count: int = Field(ge=0)
     # Required for mask tables; None for generate tables (no source to build).
     source_builder: str | None = Field(
         default=None,

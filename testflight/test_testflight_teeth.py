@@ -988,6 +988,55 @@ class TestCoverageRotTeeth:
         with pytest.raises(AssertionError, match=fake):
             check_suite_strategy_coverage(all_manifests)
 
+    def test_config_drift_from_declared_list_detected(self) -> None:
+        """TH-3.1 (P1-7): a manifest strategy_coverage list stale vs its config raises.
+
+        RED: the scalar-strategy coverage axis previously trusted the hand-
+        maintained `invariants.strategy_coverage` list as authoritative. Deleting
+        a strategy's only column from a job's `config` while leaving the name in
+        that job's declared list used to pass silently (the list itself never
+        changed). Job A's `members.dob` column is the ONLY `date_shift` column in
+        Job A's config (Job B also uses date_shift on a different table/job, so
+        the SUITE-WIDE union would still be covered -- proving this is a genuine
+        PER-JOB check, not a restatement of the suite-union guard).
+
+        Deep-copies Job A's real manifest, drops the `dob` column from the copy's
+        config (config-derived set for Job A loses "date_shift"), and leaves
+        `invariants.strategy_coverage` untouched (still lists "date_shift"). The
+        per-job assertion `_assert_declared_matches_config` must raise naming the
+        stale entry.
+
+        GREEN (implicit): the unmutated manifest set passes at the top of this
+        test and in the full suite run.
+        """
+        from testflight._runner import discover_jobs, load_job
+
+        all_manifests = [load_job(m) for m in discover_jobs()]
+        check_suite_strategy_coverage(all_manifests)  # baseline passes
+
+        job_a = next(m for m in all_manifests if m.job_name == "a_healthcare_claims")
+        assert "date_shift" in job_a.invariants.strategy_coverage
+        date_shift_cols = [
+            (t["name"], c["name"])
+            for t in job_a.config["tables"]
+            for c in t.get("columns", [])
+            if c.get("strategy") == "date_shift"
+        ]
+        assert date_shift_cols == [("members", "dob")], (
+            f"Expected exactly one date_shift column (members.dob) in Job A's "
+            f"config; found {date_shift_cols}. Tooth assumption changed -- "
+            f"pick a different sole-use strategy/column to mutate."
+        )
+
+        mutated = job_a.model_copy(deep=True)
+        for t in mutated.config["tables"]:
+            if t["name"] == "members":
+                t["columns"] = [c for c in t["columns"] if c.get("name") != "dob"]
+
+        mutated_manifests = [mutated if m is job_a else m for m in all_manifests]
+        with pytest.raises(AssertionError, match="date_shift"):
+            check_suite_strategy_coverage(mutated_manifests)
+
 
 # ---------------------------------------------------------------------------
 # TH-1.1: value-changing-passthrough teeth (P0-1)
@@ -3409,6 +3458,185 @@ class TestMaskedCorrelationTeeth:
         assert result["v_src"] is None or result["v_out"] is None, (
             "Degenerate guard: at least one V must be None for single-value column."
         )
+
+
+# ---------------------------------------------------------------------------
+# TH-3.4 (P1-9): masked_correlation multi-family mutation controls
+# ---------------------------------------------------------------------------
+
+
+class TestMaskedCorrelationMultiFamilyTeeth:
+    """Prove the masked_correlation tooth bites across MULTIPLE strategy families.
+
+    Before TH-3.4, `masked_correlations` had exactly one entry in the whole
+    suite: Job B's fpe-fpe (cat_code, risk_flag) pair. Job A's ONLY declared
+    joint was (amount_band, diagnosis_chapter) in `distribution.joint_columns`
+    -- both PASSTHROUGH, so source == output for both columns and the "check"
+    is a tautology that tests the crosstab-TVD metric, not a mask. TH-3.4
+    added a hash-hash pair (Job C: dept_hash/division_hash) and a code_set-
+    chapter pair (Job A: diagnosis/diagnosis_secondary).
+
+    Each control here builds the REAL masked output using the engine's own
+    primitives (`decoy_engine.kernel.hash_array`, `decoy_engine.transforms
+    .code_set.apply_code_set` -- the SAME functions the hash and code_set
+    strategy handlers call), on the REAL fixture data for these jobs, so the
+    faithful case is grounded in the actual masking behaviour rather than a
+    hand-rolled relabeling dict. Each then independently shuffles ONE masked
+    column (simulating a masking bug that decorrelates the pair) and asserts
+    `check_correlation_through_masking` RAISES -- proving the tooth bites for
+    TWO MORE families beyond fpe, on data shaped like the real jobs.
+    """
+
+    def test_hash_hash_destroyed_raises(self) -> None:
+        """Job C's (dept_hash, division_hash) pair: faithful passes, shuffled raises.
+
+        Builds the REAL hash tokens via `hash_array` (the exact function
+        `HashStrategyHandler.run` calls) with the SAME namespaces declared in
+        jobs/c_hr_selfref/manifest.yaml (dept_hash_ns, division_hash_ns).
+        department fully determines division (fixture._DIVISION_MAP), so
+        v_src = 1.0; hash is a namespace-keyed relabeling with no truncation
+        (collision-astronomically-unlikely), so v_out == v_src on the
+        faithful output. Independently shuffling division_hash's masked
+        values destroys the pairing -> RAISES.
+        """
+        from decoy_engine.determinism import derive
+        from decoy_engine.kernel import hash_array
+        from testflight.jobs.c_hr_selfref import fixture as job_c_fixture
+
+        employees = job_c_fixture.build_employees(seed=44)
+        source_df = employees[["dept_hash", "division_hash"]].reset_index(drop=True)
+
+        job_seed = b"\x01" * 8
+        faithful_output = pd.DataFrame(
+            {
+                "dept_hash": hash_array(
+                    pa.array(source_df["dept_hash"]),
+                    seed=job_seed,
+                    namespace="dept_hash_ns",
+                    derive_func=derive,
+                ).to_pylist(),
+                "division_hash": hash_array(
+                    pa.array(source_df["division_hash"]),
+                    seed=job_seed,
+                    namespace="division_hash_ns",
+                    derive_func=derive,
+                ).to_pylist(),
+            }
+        )
+
+        # Faithful: real hash masking on both columns -> PASSES, near-zero drift.
+        result = check_correlation_through_masking(
+            "th34_hash_faithful_control",
+            "employees",
+            "dept_hash",
+            "division_hash",
+            source_df,
+            faithful_output,
+            tol=0.10,
+            min_assoc=0.50,
+            strategy_a="hash",
+            strategy_b="hash",
+        )
+        assert result["diff"] is not None and result["diff"] < 0.01, (
+            f"Faithful hash-hash pair: expected near-zero drift, got {result['diff']}."
+        )
+
+        # BUG: division_hash independently shuffled after masking -> destroys
+        # the joint structure -> RAISES.
+        rng = np.random.default_rng(11)
+        broken_output = faithful_output.copy()
+        broken_output["division_hash"] = rng.permutation(broken_output["division_hash"].to_numpy())
+
+        with pytest.raises(AssertionError, match="masked_correlation"):
+            check_correlation_through_masking(
+                "th34_hash_destroyed_control",
+                "employees",
+                "dept_hash",
+                "division_hash",
+                source_df,
+                broken_output,
+                tol=0.10,
+                min_assoc=0.0,
+                strategy_a="hash",
+                strategy_b="hash",
+            )
+
+    def test_code_set_chapter_destroyed_raises(self) -> None:
+        """Job A's (diagnosis, diagnosis_secondary) pair: faithful passes, shuffled raises.
+
+        Builds the REAL code_set/chapter_preserve masked output via
+        `apply_code_set` (the exact function `CodeSetHandler` calls) against
+        the shipped icd10 corpus, on the REAL Job A claims fixture.
+        diagnosis_secondary is drawn from the SAME icd10 chapter as diagnosis
+        (fixture.build_claims), giving a real (non-vacuous) source association
+        that survives two INDEPENDENT chapter_preserve masks (mirrors the
+        observed live full-pipeline diff of ~0.06 -- see
+        jobs/a_healthcare_claims/manifest.yaml masked_correlations). code_set
+        mask-mode selection depends only on (value, corpus) -- not job_seed or
+        column identity -- so a single value->masked-value map applies to
+        both columns identically, matching the engine's own per-value
+        determinism.
+        """
+        from decoy_engine.transforms.code_set import CodeSetConfig, apply_code_set
+        from testflight.jobs.a_healthcare_claims import fixture as job_a_fixture
+
+        claims = job_a_fixture.build_claims(seed=42)
+        source_df = claims[["diagnosis", "diagnosis_secondary"]].reset_index(drop=True)
+
+        cfg = CodeSetConfig(code_set="icd10", chapter_preserve=True)
+        job_seed = b"\x00" * 8
+        unique_codes = sorted(set(source_df["diagnosis"]) | set(source_df["diagnosis_secondary"]))
+        masked_map = {
+            v: apply_code_set(v, cfg, mode="mask", job_seed=job_seed) for v in unique_codes
+        }
+
+        faithful_output = pd.DataFrame(
+            {
+                "diagnosis": source_df["diagnosis"].map(masked_map),
+                "diagnosis_secondary": source_df["diagnosis_secondary"].map(masked_map),
+            }
+        )
+
+        # Faithful: real code_set/chapter_preserve masking on both columns ->
+        # PASSES within the manifest's declared tolerance (real observed drift
+        # ~0.06, well under tol=0.20 here).
+        result = check_correlation_through_masking(
+            "th34_code_set_faithful_control",
+            "claims",
+            "diagnosis",
+            "diagnosis_secondary",
+            source_df,
+            faithful_output,
+            tol=0.20,
+            min_assoc=0.30,
+            strategy_a="code_set",
+            strategy_b="code_set",
+        )
+        assert result["diff"] is not None and result["diff"] < 0.20
+
+        # BUG: diagnosis_secondary independently shuffled after masking ->
+        # destroys the joint structure -> RAISES. Third independent strategy
+        # family (fpe: Job B, hash: Job C, code_set: Job A) proving the tooth
+        # is not fpe-specific.
+        rng = np.random.default_rng(7)
+        broken_output = faithful_output.copy()
+        broken_output["diagnosis_secondary"] = rng.permutation(
+            broken_output["diagnosis_secondary"].to_numpy()
+        )
+
+        with pytest.raises(AssertionError, match="masked_correlation"):
+            check_correlation_through_masking(
+                "th34_code_set_destroyed_control",
+                "claims",
+                "diagnosis",
+                "diagnosis_secondary",
+                source_df,
+                broken_output,
+                tol=0.20,
+                min_assoc=0.0,
+                strategy_a="code_set",
+                strategy_b="code_set",
+            )
 
 
 # ---------------------------------------------------------------------------

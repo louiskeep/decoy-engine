@@ -10,14 +10,15 @@ a PASS result.
 ## What the test-flight is
 
 Each job drives the real `run_pipeline` spine with a realistic multi-table
-config, then evaluates a full set of invariants against the output. Three
-jobs are included in the initial set:
+config, then evaluates a full set of invariants against the output.
 
 | Job | Topology | Tables |
 |---|---|---|
 | `a_healthcare_claims` | one-to-many, 3-level | members, claims, claim_lines |
 | `b_retail_m2m` | many-to-many via junction | customers, products, orders |
 | `c_hr_selfref` | self-referential FK + generate | employees, synthetic_events |
+| `d_longitudinal_visits` | mixed (FK + standalone generate) | providers, patients, visits |
+| `e_hostile_edge_cases` | mixed (FK + standalone single-row + empty generate) | people, accounts, singleton, empty_table |
 
 The suite lives in `testflight/` at the repo root. It is excluded from the
 default `pytest tests` collection by `addopts` in `pyproject.toml` and by the
@@ -148,14 +149,18 @@ For generate tables: output categorical frequencies are compared to declared
 weights within TVD tolerance; numeric mean and std are checked against
 declared params.
 
-**Correlation through masking (Phase 3c).** For column pairs masked by a
-value-changing strategy (fpe, hash, code_set), the engine TVD joint metric
-scores 0.0 even when the joint structure is perfectly preserved (value labels
-become disjoint). The suite uses a harness-side relabel-invariant metric:
-Cramers V computed over contingency COUNTS (not value labels). The assertion
-is `abs(V_out - V_src) <= tol`. A faithfully FPE-masked correlated pair
+**Correlation through masking (Phase 3c / TH-3.4).** For column pairs masked
+by a value-changing strategy (fpe, hash, code_set), the engine TVD joint
+metric scores 0.0 even when the joint structure is perfectly preserved (value
+labels become disjoint). The suite uses a harness-side relabel-invariant
+metric: Cramers V computed over contingency COUNTS (not value labels). The
+assertion is `abs(V_out - V_src) <= tol`. A faithfully-masked correlated pair
 passes; a pair where one column was independently shuffled after masking
-fails.
+fails. Declared across three independent strategy families so the tooth is
+proven to bite generally, not only for one mask type: an fpe-fpe pair (Job B:
+cat_code/risk_flag), a hash-hash pair (Job C: dept_hash/division_hash), and a
+code_set-chapter pair (Job A: diagnosis/diagnosis_secondary, both
+chapter_preserve:true).
 
 **Checksums.** For every fpe-checksum column, every output value is validated
 independently of the engine (TH-2.4 / P1-4): `luhn` is validated by calling
@@ -240,14 +245,20 @@ a row that exists in the reference table (NDC, MCC, etc.).
 manifests must equal the live `SCALAR_HANDLERS` registry minus an explicit
 documented allowlist. A new strategy added without a corresponding job or
 allowlist entry fails the suite guard. Every coverage axis is derived from a
-live engine registry, not a static snapshot (TH-1.2 / P0-2): strategies from
-`SCALAR_HANDLERS`, validators from `validators._registry._REGISTRY`, checksum
-schemes from `checksums._VALIDATORS`, and generate types from
-`config._tables.GENERATE_TYPES` (derived from the `GenerateColumnConfig.type`
-Literal via `get_args`, the single validation authority for generate types).
-Adding an entry to any of these registries without a job or allowlist entry
-fails the guard, and the guard summary reports the true live count for each
-axis.
+live source, not a static snapshot: strategies from a live SCAN of each job's
+`config["tables"][*]["columns"][*]["strategy"]` (TH-3.1 / P1-7 -- the same
+config dict `run_pipeline` executes, not the hand-maintained
+`invariants.strategy_coverage` manifest list, which is demoted to an
+assertion TARGET checked against that scan), validators from
+`validators._registry._REGISTRY`, checksum schemes from
+`checksums._VALIDATORS`, and generate types from `config._tables.GENERATE_TYPES`
+(derived from the `GenerateColumnConfig.type` Literal via `get_args`, the
+single validation authority for generate types). Adding an entry to any of
+these registries without a job or allowlist entry fails the guard, and the
+guard summary reports the true live count for each axis. Deleting a
+strategy's only column from a job's config while leaving the name in that
+job's `strategy_coverage` list also fails the guard (a per-job assertion, not
+only the suite-wide union).
 
 ## Honest limitations
 

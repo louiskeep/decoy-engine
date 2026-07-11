@@ -12,6 +12,19 @@ Every coverage axis reads a LIVE engine registry, not a static snapshot
 Adding an entry to any of these registries without adding it to a job manifest
 OR the matching allowlist below FAILS the suite (anti-rot).
 
+TH-3.1 (P1-7): the SCALAR-STRATEGY axis specifically was, until this change,
+trusted from the hand-maintained `InvariantSpec.strategy_coverage` manifest
+list -- unlike the generate-type/validator/checksum axes, which already read
+live sources (config columns / live registries). A manifest list drifts
+silently: delete the one column using a strategy and the list still claims
+it is covered. `_config_declared_scalar_strategies` derives the covered set
+by scanning `manifest.config["tables"][*]["columns"][*]["strategy"]` directly
+-- the SAME ground truth `run_pipeline` reads -- and `check_suite_strategy_coverage`
+now computes the SCALAR_HANDLERS union from that scan. The manifest
+`strategy_coverage` list is demoted to an assertion TARGET: each job's list is
+asserted to equal that job's own config-derived set (`_assert_declared_matches_config`),
+so a drifted list fails loudly instead of silently rotting.
+
 Allowlisted strategies (each with a specific, reviewable reason):
   formula   -- superseded by the `derived` strategy (SP-10). The `derived`
                strategy uses the same closed-grammar expression language and is
@@ -194,6 +207,63 @@ def _live_checksum_schemes() -> set[str]:
     return set(_VALIDATORS.keys())
 
 
+def _config_declared_scalar_strategies(manifest: Any) -> set[str]:
+    """Return the set of mask-column `strategy` values in a job's LIVE config.
+
+    Scans `manifest.config["tables"][*]["columns"][*]["strategy"]` (mask
+    tables only; generate tables have `generate_columns`, not `columns`, and
+    are covered by the separate generate-type axis). "from_parent" is an FK
+    marker, not a SCALAR_HANDLERS key, and is excluded here exactly as the
+    per-job `check_job_strategy_coverage` and the old manifest-list scan both
+    already excluded it -- this keeps the two axes comparable.
+
+    This is the ground-truth source for the scalar-strategy coverage axis
+    (TH-3.1 / P1-7): the same config dict `run_pipeline` executes, not a
+    hand-maintained list that can drift from it.
+    """
+    declared: set[str] = set()
+    for t in manifest.config.get("tables", []):
+        if not isinstance(t, dict):
+            continue
+        for col in t.get("columns", []):
+            if isinstance(col, dict) and "strategy" in col and col["strategy"] != "from_parent":
+                declared.add(col["strategy"])
+    return declared
+
+
+def _assert_declared_matches_config(manifest: Any) -> None:
+    """Assert a job's declared `strategy_coverage` list == its config-derived set.
+
+    TH-3.1 (P1-7): demotes the manifest `strategy_coverage` list from
+    authoritative source to assertion TARGET. Red-first tooth this guards
+    against: delete a strategy's only column from `manifest.config` while
+    leaving the (now-stale) strategy name in `invariants.strategy_coverage`
+    -- the config-derived set no longer contains it, the declared list still
+    does, and this assertion fails naming the exact mismatch.
+
+    Args:
+        manifest: A FlightManifest (or duck-typed equivalent) with `.job_name`,
+            `.config`, and `.invariants.strategy_coverage`.
+
+    Raises:
+        AssertionError: If the declared list and the config-derived set differ
+            in either direction (stale entry OR a config strategy missing from
+            the declared list).
+    """
+    declared_list = {s for s in manifest.invariants.strategy_coverage if s != "from_parent"}
+    config_derived = _config_declared_scalar_strategies(manifest)
+    assert declared_list == config_derived, (
+        f"[{manifest.job_name}] strategy_coverage manifest list does not match "
+        f"the LIVE config-derived strategy set. "
+        f"declared={sorted(declared_list)} config_derived={sorted(config_derived)}. "
+        f"stale_in_declared={sorted(declared_list - config_derived)} "
+        f"missing_from_declared={sorted(config_derived - declared_list)}. "
+        f"The manifest strategy_coverage list is an assertion TARGET (TH-3.1), "
+        f"not the source of truth: update it to match the actual column "
+        f"strategies in manifest.config['tables'][*]['columns']."
+    )
+
+
 def _live_generate_types() -> set[str]:
     """Return the live generate-type set from config._tables.GENERATE_TYPES.
 
@@ -276,13 +346,19 @@ def check_suite_strategy_coverage(
     live_keys: set[str] = set(SCALAR_HANDLERS.keys())
 
     # -----------------------------------------------------------------------
-    # 1. SCALAR_HANDLERS strategy coverage
+    # 1. SCALAR_HANDLERS strategy coverage (TH-3.1 / P1-7: config-derived, not
+    #    the hand-maintained manifest list). Each job's declared
+    #    strategy_coverage list is asserted to match its OWN config-derived
+    #    set (assertion target, not source of truth) BEFORE the union is
+    #    computed, so a per-job drift is named precisely rather than only
+    #    surfacing as a suite-wide uncovered/extra mismatch.
     # -----------------------------------------------------------------------
+    for m in all_manifests:
+        _assert_declared_matches_config(m)
+
     declared_union: set[str] = set()
     for m in all_manifests:
-        for s in m.invariants.strategy_coverage:
-            if s != "from_parent":  # FK marker, not a handler
-                declared_union.add(s)
+        declared_union |= _config_declared_scalar_strategies(m)
 
     expected_covered = live_keys - set(_STRATEGY_ALLOWLIST.keys())
     uncovered = expected_covered - declared_union

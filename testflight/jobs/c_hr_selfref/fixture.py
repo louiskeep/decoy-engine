@@ -39,6 +39,8 @@ Source format notes:
   - salary: float; department-correlated.
   - hire_date: ISO date string YYYY-MM-DD; spread over 2014..2023.
   - notes: short free-text string; row 0 has SENTINEL_PHONE embedded.
+  - division_hash: department mapped through _DIVISION_MAP (TH-3.4 hash-hash
+    masked_correlations partner for dept_hash).
 """
 
 from __future__ import annotations
@@ -75,7 +77,8 @@ ORPHAN_SOURCE_KEY = "EMP-ORPHAN"
 # output fails loudly with a re-baseline instruction.
 # Baseline: run compute_fingerprint(build_employees(seed=44)) and update here.
 # Updated (fix #42): ORPHAN_SOURCE_KEY changed from "emp99999" to "EMP-ORPHAN".
-_EMPLOYEES_FINGERPRINT = "14b9a8820ae2537587be4c01fce3ffd8b7d33422b71ded12213f21e8ce128113"
+# Updated (TH-3.4): added division_hash column (hash-hash masked_correlations pair).
+_EMPLOYEES_FINGERPRINT = "83bb2c2250f7c1d7a61017d89243fb30351553ea1959568d0ba68c237ada3323"
 
 # The sentinel phone number planted in the notes column of row 0.
 # text_mask with phone_number detector must redact it; sentinel scan checks absence.
@@ -87,6 +90,19 @@ _DEPT_NAMES = ["Engineering", "Sales", "Marketing", "HR", "Finance"]
 _DEPT_WEIGHTS = np.array([0.35, 0.25, 0.20, 0.10, 0.10])
 _DEPT_SALARY_LO = np.array([90_000.0, 55_000.0, 50_000.0, 45_000.0, 60_000.0])
 _DEPT_SALARY_HI = np.array([180_000.0, 110_000.0, 100_000.0, 80_000.0, 120_000.0])
+
+# TH-3.4 (P1-9): division is a deterministic many-to-one function of department
+# (a real organisational grouping), giving (dept_hash, division_hash) genuine
+# source association to survive through TWO INDEPENDENT hash masks -- the
+# hash-hash masked_correlations pair. A fixed dict (not a set) keeps iteration
+# order process-stable regardless of PYTHONHASHSEED.
+_DIVISION_MAP: dict[str, str] = {
+    "Engineering": "Product",
+    "Sales": "Product",
+    "Marketing": "GTM",
+    "HR": "Corporate",
+    "Finance": "Corporate",
+}
 
 # Hire date range: 2014-01-01 .. 2023-12-31 (3651 days).
 _HIRE_BASE = datetime.date(2014, 1, 1)
@@ -167,6 +183,12 @@ def build_employees(seed: int = 44, **_kwargs: Any) -> pd.DataFrame:
     #   shuffle that preserves the marginal distribution but decouples assignment.
     dept_shuffle_src = list(dept_names)
 
+    # division_hash: TH-3.4 hash-hash masked_correlations pair partner for
+    # dept_hash. division is a deterministic function of department (see
+    # _DIVISION_MAP), so (dept_hash, division_hash) carries the SAME real
+    # association as (department, division) before either is masked.
+    division_hash_src = [_DIVISION_MAP[d] for d in dept_names]
+
     df = pd.DataFrame(
         {
             "employee_id": emp_ids,
@@ -179,6 +201,7 @@ def build_employees(seed: int = 44, **_kwargs: Any) -> pd.DataFrame:
             "dept_code": dept_codes,
             "dept_hash": dept_hash_src,
             "dept_shuffle": dept_shuffle_src,
+            "division_hash": division_hash_src,
         }
     )
 

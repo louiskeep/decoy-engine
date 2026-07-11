@@ -29,14 +29,29 @@
 #
 # Source fingerprint (SHA-256 of canonical CSV; verified by verify_fingerprint
 # inside fixture.build_employees -- update after any fixture change):
-#   employees: 14b9a8820ae2537587be4c01fce3ffd8b7d33422b71ded12213f21e8ce128113
+#   employees: 83bb2c2250f7c1d7a61017d89243fb30351553ea1959568d0ba68c237ada3323
 #   (Phase 4: badge_id/dept_code/dept_hash/dept_shuffle columns for redact/truncate/
-#    hash/shuffle; fix #42: re-fingerprinted after the orphan key became "EMP-ORPHAN")
+#    hash/shuffle; fix #42: re-fingerprinted after the orphan key became "EMP-ORPHAN";
+#    TH-3.4: added division_hash column)
 #
 # Strategies exercised (employees mask table):
 #   fpe (employee_id), fpe+same-namespace (manager_id self-FK), categorical (department),
 #   bucketize (salary), bucket_perturb (hire_date), text_mask (notes / us_phone),
-#   redact (badge_id), truncate (dept_code), hash (dept_hash), shuffle (dept_shuffle).
+#   redact (badge_id), truncate (dept_code), hash (dept_hash, division_hash), shuffle (dept_shuffle).
+#
+# TH-3.4 (P1-9) HASH-HASH MASKED_CORRELATION PAIR:
+#   division_hash's source value is a deterministic function of department
+#   (see fixture._DIVISION_MAP: Engineering/Sales -> Product, Marketing -> GTM,
+#   HR/Finance -> Corporate) -- a real organisational grouping, not a synthetic
+#   coincidence. Both dept_hash and division_hash are masked with the SAME
+#   hash strategy (a joinability-preserving deterministic token: same source
+#   value -> same token within a namespace, no truncation so collisions are
+#   astronomically unlikely). Masking each column independently relabels its
+#   own value set without merging any equivalence classes, so the (dept_hash,
+#   division_hash) contingency COUNTS after masking equal the (department,
+#   division) counts before masking -- the same bijection-preserves-counts
+#   argument as the Job B fpe-fpe pair, applied to a DIFFERENT strategy family
+#   (hash instead of fpe).
 
 job_name: c_hr_selfref
 topology: self_referential
@@ -90,6 +105,9 @@ config:
     dept_shuffle_ns:
       declared_by:
         - employees.dept_shuffle
+    division_hash_ns:
+      declared_by:
+        - employees.division_hash
 
   tables:
     # === employees (mask table) ===
@@ -187,6 +205,17 @@ config:
           strategy: shuffle
           namespace: dept_shuffle_ns
           deterministic: true
+
+        # division_hash: TH-3.4 hash-hash masked_correlations pair partner for
+        # dept_hash. Source value is department mapped through _DIVISION_MAP
+        # (a real many-to-one organisational grouping). Hashed with a
+        # DIFFERENT namespace than dept_hash so the two tokens are
+        # independently keyed (S9 contract: cross-column linkage broken by
+        # the namespace tweak) -- the correlation must survive through two
+        # genuinely independent hash keys, not a shared one.
+        - name: division_hash
+          strategy: hash
+          namespace: division_hash_ns
 
     # === synthetic_events (generate table) ===
     # 10000 rows synthesised entirely by the engine; no source frame.
@@ -328,14 +357,18 @@ invariants:
     # Phase 4 coverage-guard columns: badge_id and dept_shuffle have distribution
     # entries. dept_code is string->string (truncate; no kind_drift) and has no
     # meaningful distribution assertion beyond the strategy_coverage guard.
-    # dept_hash is omitted: the engine value-identity policy floor (default-judged
-    # path) scores hash similarity near 0.0 vs the 0.05 floor because value-identity
-    # TVD treats the hash output values as entirely disjoint from the source values.
-    # The shape-aware metric that would correctly score hash distribution fidelity
-    # (D5b shape floor) is not the default-judged path; hash distribution fidelity
-    # cannot be proven by the default policy without a per-column shape-floor override.
-    # BACKLOG: add a per-column shape_strategy_expectations override for dept_hash
+    # dept_hash and division_hash are omitted: the engine value-identity policy
+    # floor (default-judged path) scores hash similarity near 0.0 vs the 0.05
+    # floor because value-identity TVD treats the hash output values as entirely
+    # disjoint from the source values. The shape-aware metric that would
+    # correctly score hash distribution fidelity (D5b shape floor) is not the
+    # default-judged path; hash distribution fidelity cannot be proven by the
+    # default policy without a per-column shape-floor override.
+    # BACKLOG: add a per-column shape_strategy_expectations override for these
     # once the shape-floor path is the testflight default (D5b complete).
+    # division_hash's real correlation with dept_hash IS checked -- via the
+    # relabel-invariant masked_correlations Cramers V pair below, not this
+    # crosstab-TVD joint metric (which cannot see through a value-changing mask).
     #
     # employees.badge_id: redact (all values -> "REDACTED").
     # Listed as synthetic because the output has no distributional relationship to
@@ -399,6 +432,23 @@ invariants:
       joints_waived_reason: >-
         amount is formula-generated (gauss); no joint with event_type declared.
         Mean/std verified against params metadata within 10% band.
+
+  # TH-3.4 (P1-9): relabel-invariant Cramers V check for the hash-hash pair.
+  # Source V(department, division_hash) = 1.0 (deterministic many-to-one
+  # organisational mapping, see fixture._DIVISION_MAP). Both dept_hash and
+  # division_hash are masked independently by the hash strategy (joinability-
+  # preserving deterministic token, no truncation); each mask relabels its own
+  # value set without merging any equivalence classes, so the masked contingency
+  # COUNTS -- and therefore V -- are unchanged. This is the FIRST hash-hash
+  # masked_correlations pair in the suite (previously only fpe-fpe, Job B).
+  masked_correlations:
+    - table: employees
+      col_a: dept_hash
+      col_b: division_hash
+      strategy_a: hash
+      strategy_b: hash
+      tol: 0.10
+      min_assoc: 0.50
 
   sentinels:
     - table: employees

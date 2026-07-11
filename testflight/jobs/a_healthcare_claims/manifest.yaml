@@ -25,15 +25,27 @@
 # Source fingerprints (SHA-256 of canonical CSV; verified by verify_fingerprint
 # inside each fixture build_* function -- update all three after any fixture change):
 #   members:     f0a05c63ddfd74c9625f44800ffa87f26cfe8e9e6927cb8ad6907b3b8032c281
-#   claims:      f1728aef9f060f176da6af8a9621e0e009a33512ea1d193c06a524d55a08889c
+#   claims:      cdd55a057c1537482c614941f09533f561021f5bb38e8d392bb058e5978ca3a3
 #   claim_lines: 3678e5ce5ac37add2d3bf66fc274875282297f038a4a6ebec246ed79b6ecb0f3
+#   (TH-3.4: claims re-fingerprinted after adding the diagnosis_secondary column)
 #
 # Strategies exercised (strategy_coverage below):
 #   fpe+checksum (luhn, npi), geo_generalize (Safe Harbor), date_shift,
-#   bucket_perturb, code_set (icd10 with chapter_preserve, hcpcs, ndc[:20]),
-#   categorical, passthrough, derived (+ case_when builtin), derived_aggregate,
-#   from_parent, faker, validators (luhn, fk_intact, no_orphan_children), quarantine.
+#   bucket_perturb, code_set (icd10 with chapter_preserve on diagnosis AND
+#   diagnosis_secondary, hcpcs, ndc[:20]), categorical, passthrough,
+#   derived (+ case_when builtin), derived_aggregate, from_parent, faker,
+#   validators (luhn, fk_intact, no_orphan_children), quarantine.
 # NDC capped at 20 codes (known boundary; see MEDIUM-2 note in distribution spec).
+#
+# TH-3.4 (P1-9) CODE_SET-CHAPTER MASKED_CORRELATION PAIR:
+#   diagnosis_secondary is drawn from the SAME icd10 chapter as diagnosis (real
+#   chapter-level clinical co-occurrence, see fixture.build_claims). Both
+#   columns are code_set/chapter_preserve:true, so each masks to a DIFFERENT
+#   code within ITS OWN (preserved) chapter -- a genuinely value-changing mask
+#   on both sides, unlike the (amount_band, diagnosis_chapter) passthrough-
+#   passthrough joint below (which tests the crosstab-TVD metric, not a mask).
+#   Replaces/supplements that trivial pair with a value-CHANGING
+#   masked_correlations entry (see the block near the end of `invariants:`).
 
 job_name: a_healthcare_claims
 topology: one_to_many_multilevel
@@ -196,6 +208,17 @@ config:
         # code stays in the same ICD chapter as the source code. Verified by
         # the chapter_preserve invariant (6.11).
         - name: diagnosis
+          strategy: code_set
+          provider_config:
+            code_set: icd10
+            chapter_preserve: true
+
+        # diagnosis_secondary: TH-3.4 code_set-chapter masked_correlations
+        # partner for diagnosis. Also icd10/chapter_preserve:true; drawn from
+        # the SAME chapter as diagnosis in the fixture (real chapter-level
+        # clinical association). Checked via the relabel-invariant Cramers V
+        # masked_correlations entry below, not the crosstab-TVD joint metric.
+        - name: diagnosis_secondary
           strategy: code_set
           provider_config:
             code_set: icd10
@@ -528,6 +551,24 @@ invariants:
   chapter_preserve:
     - table: claims
       column: diagnosis
+    - table: claims
+      column: diagnosis_secondary
+
+  # TH-3.4 (P1-9): relabel-invariant Cramers V check for the code_set-chapter
+  # pair. Source V(diagnosis, diagnosis_secondary) is a real (non-vacuous)
+  # clinical chapter-level association (see fixture.build_claims). Both
+  # columns are masked independently by code_set/chapter_preserve:true, a
+  # DIFFERENT value-changing strategy family than Job B's fpe-fpe pair and
+  # Job C's hash-hash pair -- this is the THIRD independent family proving
+  # the tooth bites across masks, not just one.
+  masked_correlations:
+    - table: claims
+      col_a: diagnosis
+      col_b: diagnosis_secondary
+      strategy_a: code_set
+      strategy_b: code_set
+      tol: 0.15
+      min_assoc: 0.30
 
   # Strategy coverage declared for this job.
   strategy_coverage:
