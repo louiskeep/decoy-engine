@@ -49,6 +49,35 @@ Install it first:
 If the geo extra is absent, the geo invariants hard-fail with a clear message.
 They never silently skip: a skipped geo check is false confidence.
 
+Full-suite runs (not `--job`) also check each job's output against a
+committed cross-process determinism fingerprint (see below); a drift there
+fails the run just like an invariant failure. Record a new golden
+deliberately after an intentional fixture/engine change:
+
+    python scripts/test_flight.py --update-fingerprints
+
+## Cross-process determinism fingerprint (TH-2.2 / P1-5)
+
+`check_determinism` runs both pipeline calls in the SAME process
+(`_runner.run_pipeline_twice`), so it cannot see a hash-seed- or
+dict/set-iteration-order-dependent nondeterminism bug: both calls share one
+`PYTHONHASHSEED` and therefore agree with each other even if a *different*
+process would produce different output. That class of bug previously only
+resurfaced by accident, noticed as a diff between separate CI runs.
+
+`testflight/_fingerprint.py` closes the gap mechanically: every full-suite
+run computes a SHA-256 fingerprint of each job's output tables (arrow schema
++ data) and compares it to a committed golden value in
+`testflight/golden_fingerprints.json`. A mismatch means the identical seeded
+config produced different output in a different process -- exactly the
+cross-process nondeterminism class the in-process double-run cannot see. The
+golden file is committed and updated only deliberately
+(`--update-fingerprints`), never silently rewritten by a normal run; a
+first-time-missing golden file is reported as a bootstrap NOTE, not a
+failure. A single-job run (`--job`) skips this check for the same reason it
+skips the strategy-coverage guard: a partial run cannot speak for the whole
+golden set.
+
 ## Evidence report
 
 The evidence report produced by `scripts/test_flight.py` names the job,
@@ -83,8 +112,15 @@ when all booleans pass.
 The suite asserts the following invariant families:
 
 **Determinism.** Two identical pipeline calls with the same seed produce
-byte-identical output tables and quality-metrics blocks. Catches any
-non-deterministic strategy or ordering bug.
+output tables and quality-metrics blocks that compare EQUAL as Python values
+(`pa.Table.to_pydict()` dict equality plus arrow schema equality per table,
+plus full `quality_metrics` dict equality minus known wall-clock timing keys)
+-- this is value-equality, **not byte-identical** output (the former "byte-
+identical" wording here was inaccurate; corrected TH-2.2). The two calls run
+in the SAME process, so this in-process check cannot see a hash-seed- or
+set-iteration-dependent ordering bug that only differs ACROSS processes; a
+separate, always-on cross-process fingerprint check closes that gap (see
+"Cross-process determinism fingerprint" below).
 
 **FK integrity.** For every declared relationship, every non-null child key
 in the output exists in the parent masked key set (belt-and-suspenders: both
@@ -121,12 +157,32 @@ is `abs(V_out - V_src) <= tol`. A faithfully FPE-masked correlated pair
 passes; a pair where one column was independently shuffled after masking
 fails.
 
-**Checksums.** For every fpe-checksum column (luhn, npi, vin, isbn13, ean13,
-gtin), every output value is validated by `decoy_engine.checksums.validate`.
+**Checksums.** For every fpe-checksum column, every output value is validated
+independently of the engine (TH-2.4 / P1-4): `luhn` is validated by calling
+`stdnum.luhn.is_valid` directly, and `npi` by a from-spec reimplementation of
+the CMS NPPES check-digit procedure built on the same `stdnum.luhn` primitive
+-- **not** `decoy_engine.checksums.validate`. Before this change the harness
+asked the engine's own validator whether the engine's own masked output was
+valid, so a bug that broke both check-digit computation and validation the
+same way would agree with itself and ship green. `iban`/`vin`/`isbn13`/
+`ean13`/`gtin` have no independent harness implementation yet and are not
+currently declared by any job (tracked in the checksum-scheme allowlist,
+`testflight/_coverage.py`); calling `check_checksums` with one of those
+schemes raises `NotImplementedError` rather than silently trusting the
+engine's own validator.
 
-**Safe Harbor suppression.** No restricted ZIP3 prefix survives at zip5
-resolution. The count of suppressed rows equals the planted count. The
-`geo_generalize_cascade` warning is present.
+**Safe Harbor suppression.** No output value **starts with** a restricted
+ZIP3 prefix at any length >= 3 (TH-2.3 / P1-6) -- a full ZIP5, a bare zip3, or
+a zip+4 shape ("03601-1234") alike. The prior check only scanned values of
+exactly length 5; with this suite's row counts, non-restricted rows resolve
+at the geo_generalize zip3 cascade level (a 3-character output), so a
+restricted-skip regression could have leaked a 3-character or zip+4-shaped
+prefix invisibly under the old check. The count of suppressed rows is
+computed independently from the actual output data (counting the literal `""`
+suppression marker in the column, not the engine's self-reported
+`cascade_decisions` detail) and cross-checked against both the planted count
+and the engine's `geo_generalize_cascade` warning, which must also be
+present.
 
 **Quarantine counts.** `result.quality_metrics["quarantine"].total_quarantined`
 equals the planted invalid-row count. Quarantined rows are absent from the
@@ -264,6 +320,13 @@ Before merging a large block of strategy, relationship, or generation work:
 4. The run writes `testflight/_artifacts/report.md` (gitignored, not committed).
    Read it for the evidence; when recording a pre-merge flight, attach it from
    the CI run's `testflight-report` artifact.
+5. If a change intentionally alters job output (a fixture change, a new
+   strategy default, ...), re-record the cross-process determinism
+   fingerprint deliberately: `python scripts/test_flight.py
+   --update-fingerprints`, then commit the updated
+   `testflight/golden_fingerprints.json` alongside the change. An
+   unexplained fingerprint drift is a nondeterminism bug, not a stale golden
+   -- investigate before updating it.
 
 This gate is referenced in ADR-0005 (platform repo:
 `docs/architecture/adr/platform/0005-mechanical-enforcement-of-methodology.md`)
@@ -283,6 +346,10 @@ To add a new job:
 3. Run `python scripts/test_flight.py --job <name>` to verify it passes.
 4. Confirm the suite-level strategy coverage guard still passes with the
    updated manifest set.
+5. Run a full-suite `python scripts/test_flight.py --update-fingerprints` and
+   commit the updated `testflight/golden_fingerprints.json` -- a new job has
+   no golden entry yet, and the next full-suite run fails loudly on the
+   missing entry rather than silently skipping it.
 
 No edits to the runner, invariant library, or test files are needed for a
 new job unless it exercises a genuinely new invariant family.

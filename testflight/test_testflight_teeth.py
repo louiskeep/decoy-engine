@@ -48,24 +48,29 @@ from testflight._coverage import check_suite_strategy_coverage
 from testflight._invariants import (
     FIXED_TS,
     check_chapter_preserve,
+    check_checksums,
     check_computed_columns,
     check_correlation_through_masking,
+    check_determinism,
     check_distribution_generate,
     check_distribution_mask,
     check_fk_integrity,
     check_quarantine,
     check_remap_masks_orphan,
+    check_safe_harbor,
     check_sentinels,
     check_value_changing_not_passthrough,
 )
 from testflight._spec import (
     ChapterPreserveSpec,
+    ChecksumSpec,
     ColumnDistributionSpec,
     ComputedColumnSpec,
     FKIntegritySpec,
     QuarantineSpec,
     RelationshipEndSpec,
     RelationshipSpec,
+    SafeHarborSpec,
     SentinelSpec,
 )
 
@@ -3596,3 +3601,407 @@ class TestValueChangingMaskPassthroughTooth:
         check_value_changing_not_passthrough(
             "tooth_test", "customers", "customer_id", "fpe", source_df, output_df
         )
+
+
+# ---------------------------------------------------------------------------
+# TH-2.1 / TH-2.2: determinism mutation teeth
+# ---------------------------------------------------------------------------
+
+
+class TestDeterminismTeeth:
+    """Mutation controls for the determinism invariant family (TH-2.1 / TH-2.2).
+
+    Before this sprint the determinism family (unlike checksums and
+    safe_harbor) had NO mutation control at all -- no test proved
+    check_determinism actually raises on a genuine cross-run difference. The
+    controls below plant a difference between the two runs and assert the
+    check catches it, then prove the TH-2.2 hardening (schema compare, full
+    quality_metrics compare, timing-key exclusion) each add real bite without
+    introducing flakiness.
+    """
+
+    def test_mutated_second_run_detected(self) -> None:
+        """A single differing cell between the two runs must raise (TH-2.1).
+
+        RED: result_b's 'claims' table has row 2's amount changed relative to
+        result_a -- standing in for a hash-seed / set-iteration nondeterminism
+        bug that alters output on some rows. check_determinism must raise
+        naming the differing table.
+        """
+        tbl_a = pa.table({"id": [1, 2, 3], "amount": [10.0, 20.0, 30.0]})
+        tbl_b = pa.table({"id": [1, 2, 3], "amount": [10.0, 20.0, 31.0]})  # row 2 differs
+        result_a = SimpleNamespace(
+            outputs={"claims": tbl_a}, quality_metrics={"fidelity_reports": {}}
+        )
+        result_b = SimpleNamespace(
+            outputs={"claims": tbl_b}, quality_metrics={"fidelity_reports": {}}
+        )
+        with pytest.raises(AssertionError, match="claims"):
+            check_determinism("determinism_control", result_a, result_b)
+
+    def test_schema_drift_detected(self) -> None:
+        """A dtype-only drift between runs must raise (TH-2.2 / P1-5b).
+
+        RED: both runs carry IDENTICAL cell values (to_pydict() would agree:
+        pyarrow renders both int32 and int64 as plain Python ints), but
+        result_b's 'id' column is int64 while result_a's is int32 -- a
+        regression a to_pydict()-only comparison could never see. The schema
+        compare must catch it independently of the value compare.
+        """
+        tbl_a = pa.table({"id": pa.array([1, 2, 3], type=pa.int32())})
+        tbl_b = pa.table({"id": pa.array([1, 2, 3], type=pa.int64())})
+        assert tbl_a.to_pydict() == tbl_b.to_pydict(), (
+            "Fixture invariant: values must agree so only the schema differs."
+        )
+        result_a = SimpleNamespace(outputs={"members": tbl_a}, quality_metrics={})
+        result_b = SimpleNamespace(outputs={"members": tbl_b}, quality_metrics={})
+        with pytest.raises(AssertionError, match="schema differs"):
+            check_determinism("determinism_control_schema", result_a, result_b)
+
+    def test_quality_metrics_drift_detected(self) -> None:
+        """A quality_metrics difference OUTSIDE fidelity_reports must raise (TH-2.2 / P1-5c).
+
+        RED: fidelity_reports is identical (empty) on both sides -- the OLD
+        check (fidelity_reports-only) would have passed vacuously -- but the
+        'execution' block's execution_mode differs between runs. The full-
+        block compare must catch this drift the old narrower check could not.
+        """
+        tbl = pa.table({"id": [1, 2, 3]})
+        result_a = SimpleNamespace(
+            outputs={"members": tbl},
+            quality_metrics={
+                "fidelity_reports": {},
+                "execution": {"execution_mode": "full_frame"},
+            },
+        )
+        result_b = SimpleNamespace(
+            outputs={"members": tbl},
+            quality_metrics={
+                "fidelity_reports": {},
+                "execution": {"execution_mode": "sequential"},
+            },
+        )
+        with pytest.raises(AssertionError, match="quality_metrics differ"):
+            check_determinism("determinism_control_qm", result_a, result_b)
+
+    def test_timing_keys_ignored(self) -> None:
+        """Wall-clock timing-only differences must NOT raise (no false positive).
+
+        GREEN companion: quality_metrics differs ONLY in elapsed_ms /
+        timing_per_phase values -- real scheduler jitter that varies even for
+        a perfectly deterministic pipeline. Comparing these verbatim would
+        make the gate flaky; check_determinism must ignore them while still
+        comparing everything else exactly.
+        """
+        tbl = pa.table({"id": [1, 2, 3]})
+        result_a = SimpleNamespace(
+            outputs={"members": tbl},
+            quality_metrics={
+                "fidelity_reports": {},
+                "validation": {"validators": {"elapsed_ms": 5.2, "validators_run": 1}},
+                "quality_summary": {"timing_per_phase": {"post_validation_phase_ms": 3.1}},
+            },
+        )
+        result_b = SimpleNamespace(
+            outputs={"members": tbl},
+            quality_metrics={
+                "fidelity_reports": {},
+                "validation": {"validators": {"elapsed_ms": 9.7, "validators_run": 1}},
+                "quality_summary": {"timing_per_phase": {"post_validation_phase_ms": 4.4}},
+            },
+        )
+        # Must NOT raise: only timing keys differ.
+        check_determinism("determinism_control_timing", result_a, result_b)
+
+    def test_good_determinism_passes(self) -> None:
+        """Two byte-identical runs must NOT raise (no over-assertion)."""
+        tbl = pa.table({"id": [1, 2, 3], "amount": [10.0, 20.0, 30.0]})
+        result_a = SimpleNamespace(
+            outputs={"claims": tbl}, quality_metrics={"fidelity_reports": {"grade": "A"}}
+        )
+        result_b = SimpleNamespace(
+            outputs={"claims": tbl}, quality_metrics={"fidelity_reports": {"grade": "A"}}
+        )
+        check_determinism("determinism_control_good", result_a, result_b)
+
+
+# ---------------------------------------------------------------------------
+# TH-2.1 / TH-2.4: checksum mutation teeth
+# ---------------------------------------------------------------------------
+
+
+class TestChecksumTeeth:
+    """Mutation controls for the checksum invariant family (TH-2.1)."""
+
+    def test_corrupted_luhn_check_digit_detected(self) -> None:
+        """A Luhn-valid number with a flipped last digit must raise.
+
+        RED: "4111111111111111" is a valid Luhn test PAN (standard Visa test
+        number). Flipping its last digit breaks the check digit.
+        check_checksums must raise.
+        """
+        valid = "4111111111111111"
+        corrupted = valid[:-1] + str((int(valid[-1]) + 1) % 10)
+        tbl = pa.table({"card_no": [corrupted]})
+        result = SimpleNamespace(outputs={"members": tbl})
+        spec = [ChecksumSpec(table="members", column="card_no", scheme="luhn")]
+        with pytest.raises(AssertionError, match="checksums"):
+            check_checksums("checksum_control", spec, result)
+
+    def test_corrupted_npi_check_digit_detected(self) -> None:
+        """An NPI with a corrupted check digit must raise.
+
+        RED: "1234567893" is a valid NPI (CMS NPPES example: body '123456789'
+        -> check '3'). Changing the check digit breaks it.
+        """
+        valid_npi = "1234567893"
+        corrupted = valid_npi[:-1] + str((int(valid_npi[-1]) + 1) % 10)
+        tbl = pa.table({"npi": [corrupted]})
+        result = SimpleNamespace(outputs={"members": tbl})
+        spec = [ChecksumSpec(table="members", column="npi", scheme="npi")]
+        with pytest.raises(AssertionError, match="checksums"):
+            check_checksums("checksum_control_npi", spec, result)
+
+    def test_good_checksum_passes(self) -> None:
+        """Valid Luhn and NPI values must NOT raise (no over-assertion)."""
+        tbl = pa.table({"card_no": ["4111111111111111"], "npi": ["1234567893"]})
+        result = SimpleNamespace(outputs={"members": tbl})
+        spec = [
+            ChecksumSpec(table="members", column="card_no", scheme="luhn"),
+            ChecksumSpec(table="members", column="npi", scheme="npi"),
+        ]
+        check_checksums("checksum_control_good", spec, result)
+
+
+# ---------------------------------------------------------------------------
+# TH-2.4: independent checksum validation teeth
+# ---------------------------------------------------------------------------
+
+
+class TestIndependentChecksumValidationTeeth:
+    """Mutation controls proving checksum validation is engine-independent (TH-2.4).
+
+    Before TH-2.4 the harness called decoy_engine.checksums.validate directly,
+    so a bug that broke BOTH the engine's check-digit computation AND its own
+    validate() function the same way would agree with itself and ship green
+    (the engine grading its own homework). The harness now validates luhn/npi
+    directly against python-stdnum, bypassing decoy_engine.checksums entirely.
+    """
+
+    def test_independent_of_engine_checksum_module(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A sabotaged engine validate() does not blind the harness.
+
+        RED-first construction: monkeypatch decoy_engine.checksums.validate to
+        always return True (a stand-in for a compute/validate bug that agrees
+        with itself). A genuinely corrupted Luhn value would pass the
+        sabotaged engine validator but must still be caught, because
+        check_checksums no longer calls decoy_engine.checksums.validate at all.
+        """
+        import decoy_engine.checksums as engine_checksums
+
+        monkeypatch.setattr(engine_checksums, "validate", lambda scheme, value: True)
+
+        valid = "4111111111111111"
+        corrupted = valid[:-1] + str((int(valid[-1]) + 1) % 10)
+        tbl = pa.table({"card_no": [corrupted]})
+        result = SimpleNamespace(outputs={"members": tbl})
+        spec = [ChecksumSpec(table="members", column="card_no", scheme="luhn")]
+        with pytest.raises(AssertionError, match="checksums"):
+            check_checksums("th24_control", spec, result)
+
+    def test_unimplemented_scheme_raises_not_silently_trusts_engine(self) -> None:
+        """A scheme with no independent harness implementation fails loudly.
+
+        Proves the harness never silently falls back to
+        decoy_engine.checksums.validate for a scheme it has not independently
+        implemented -- that would reintroduce the exact anti-pattern TH-2.4
+        closes. 'iban' has no harness-side implementation (TH-2.4 scopes to
+        luhn/npi, the two schemes any current job declares).
+        """
+        tbl = pa.table({"acct": ["GB33BUKB20201555555555"]})
+        result = SimpleNamespace(outputs={"members": tbl})
+        spec = [ChecksumSpec(table="members", column="acct", scheme="iban")]
+        with pytest.raises(NotImplementedError, match="iban"):
+            check_checksums("th24_unimplemented", spec, result)
+
+
+# ---------------------------------------------------------------------------
+# TH-2.1 / TH-2.3: safe_harbor mutation teeth
+# ---------------------------------------------------------------------------
+
+
+def _geo_cascade_warning(column: str, cascade_decisions: dict[str, str]) -> Any:
+    """Build a QualityWarning matching the real geo_generalize_cascade shape."""
+    from decoy_engine.generation.pool._events import QualityWarning
+
+    return QualityWarning(
+        code="geo_generalize_cascade",
+        provider="geo_generalize",
+        column=column,
+        detail={"cascade_decisions": cascade_decisions},
+    )
+
+
+class TestSafeHarborTeeth:
+    """Mutation controls for the safe_harbor invariant family (TH-2.1)."""
+
+    def test_surviving_restricted_zip5_detected(self) -> None:
+        """A restricted-prefix ZIP5 surviving in the output must raise.
+
+        RED: "03601" (prefix "036" is HHS-restricted) survives verbatim in the
+        output zip5 column instead of being generalized or suppressed.
+        """
+        out_tbl = pa.table({"zip5": ["03601", "941", "606"]})
+        warning = _geo_cascade_warning("zip5", {"row_1": "zip3", "row_2": "zip3"})
+        result = SimpleNamespace(outputs={"members": out_tbl}, warnings=[warning])
+        spec = [
+            SafeHarborSpec(
+                table="members",
+                column="zip5",
+                planted_restricted_zip3_count=1,
+                expected_suppressions=1,
+            )
+        ]
+        with pytest.raises(AssertionError, match="leaked into output"):
+            check_safe_harbor("safe_harbor_control", spec, result)
+
+    def test_stripped_cascade_decision_detected(self) -> None:
+        """A cascade decision silently dropped from the warning must raise.
+
+        RED: 2 restricted-ZIP3 rows were planted and both are correctly
+        suppressed in the ACTUAL output ("" in both positions), but the
+        engine's self-reported cascade_decisions detail only records ONE
+        'suppressed' entry -- a bookkeeping bug that dropped a decision. The
+        independent output-value count (2) now disagrees with the engine's
+        self-report (1), and check_safe_harbor must raise on that
+        cross-check, not merely trust the (wrong) self-report.
+        """
+        out_tbl = pa.table({"zip5": ["", "", "941", "606"]})
+        warning = _geo_cascade_warning(
+            "zip5", {"row_0": "suppressed"}
+        )  # row_1's suppression was dropped from bookkeeping
+        result = SimpleNamespace(outputs={"members": out_tbl}, warnings=[warning])
+        spec = [
+            SafeHarborSpec(
+                table="members",
+                column="zip5",
+                planted_restricted_zip3_count=2,
+                expected_suppressions=2,
+            )
+        ]
+        with pytest.raises(AssertionError, match="engine self-reported suppressed_count"):
+            check_safe_harbor("safe_harbor_control_stripped", spec, result)
+
+    def test_good_safe_harbor_passes(self) -> None:
+        """Correctly suppressed/generalized output with matching counts must NOT raise."""
+        out_tbl = pa.table({"zip5": ["", "", "941", "606"]})
+        warning = _geo_cascade_warning("zip5", {"row_0": "suppressed", "row_1": "suppressed"})
+        result = SimpleNamespace(outputs={"members": out_tbl}, warnings=[warning])
+        spec = [
+            SafeHarborSpec(
+                table="members",
+                column="zip5",
+                planted_restricted_zip3_count=2,
+                expected_suppressions=2,
+            )
+        ]
+        check_safe_harbor("safe_harbor_control_good", spec, result)
+
+
+class TestSafeHarborPrefixAnyLengthTeeth:
+    """Mutation controls for the prefix-at-any-length hardening (TH-2.3 / P1-6).
+
+    The old check only scanned values of EXACTLY length 5. These controls
+    prove a restricted prefix leaking at zip3 (3 chars) or zip+4 (9+ chars
+    with a hyphen) shape -- shapes the old length==5 check could never see
+    -- now trips the guard.
+    """
+
+    def test_zip3_leak_detected(self) -> None:
+        """A bare 3-char restricted prefix surviving in the output must raise.
+
+        RED: "036" (a restricted prefix) appears as a bare zip3-length value.
+        The old length==5-only check would have missed this entirely -- this
+        is exactly the shape non-restricted rows resolve to in this fixture
+        (see the geo_generalize cascade note in _safe_harbor.py), so a
+        restricted-skip regression would leak precisely this shape.
+        """
+        out_tbl = pa.table({"zip5": ["036", "941", "606"]})
+        warning = _geo_cascade_warning("zip5", {})
+        result = SimpleNamespace(outputs={"members": out_tbl}, warnings=[warning])
+        spec = [
+            SafeHarborSpec(
+                table="members",
+                column="zip5",
+                planted_restricted_zip3_count=1,
+                expected_suppressions=1,
+            )
+        ]
+        with pytest.raises(AssertionError, match="leaked into output"):
+            check_safe_harbor("safe_harbor_zip3_control", spec, result)
+
+    def test_zip_plus4_leak_detected(self) -> None:
+        """A zip+4-shaped restricted-prefix value surviving must raise.
+
+        RED: "03601-1234" (zip+4 shape) starts with the restricted prefix
+        "036". Neither the length (10, not 5) nor the old check would catch
+        this; the new any-length(>=3) prefix scan does.
+        """
+        out_tbl = pa.table({"zip5": ["03601-1234", "94110", "60601"]})
+        warning = _geo_cascade_warning("zip5", {})
+        result = SimpleNamespace(outputs={"members": out_tbl}, warnings=[warning])
+        spec = [
+            SafeHarborSpec(
+                table="members",
+                column="zip5",
+                planted_restricted_zip3_count=1,
+                expected_suppressions=1,
+            )
+        ]
+        with pytest.raises(AssertionError, match="leaked into output"):
+            check_safe_harbor("safe_harbor_zip4_control", spec, result)
+
+    def test_independent_count_disagrees_with_engine_report(self) -> None:
+        """Actual suppressed-value count disagreeing with the plan must raise.
+
+        RED: the output column has only ONE "" (suppressed) value even though
+        BOTH the planted count and the engine's self-report claim 2. The
+        independent output-value count (1) catches the discrepancy against
+        the planted/expected values even when nothing has (yet) leaked a
+        restricted prefix.
+        """
+        out_tbl = pa.table({"zip5": ["", "941", "606"]})  # only 1 suppressed, not 2
+        warning = _geo_cascade_warning(
+            "zip5", {"row_0": "suppressed", "row_3": "suppressed"}
+        )  # engine claims 2 suppressed but only 1 is actually ""
+        result = SimpleNamespace(outputs={"members": out_tbl}, warnings=[warning])
+        spec = [
+            SafeHarborSpec(
+                table="members",
+                column="zip5",
+                planted_restricted_zip3_count=2,
+                expected_suppressions=2,
+            )
+        ]
+        with pytest.raises(AssertionError, match="independent output-value suppressed count"):
+            check_safe_harbor("safe_harbor_independent_control", spec, result)
+
+    def test_good_mixed_length_output_passes(self) -> None:
+        """A correct mix of zip3-length and suppressed values must NOT raise.
+
+        GREEN companion: non-restricted rows resolve to a 3-char zip3 (a
+        length the old check never scanned) and restricted rows are
+        suppressed to "". No restricted prefix appears at any length.
+        """
+        out_tbl = pa.table({"zip5": ["941", "606", "", ""]})  # 2 zip3 + 2 suppressed
+        warning = _geo_cascade_warning("zip5", {"row_2": "suppressed", "row_3": "suppressed"})
+        result = SimpleNamespace(outputs={"members": out_tbl}, warnings=[warning])
+        spec = [
+            SafeHarborSpec(
+                table="members",
+                column="zip5",
+                planted_restricted_zip3_count=2,
+                expected_suppressions=2,
+            )
+        ]
+        check_safe_harbor("safe_harbor_mixed_good", spec, result)

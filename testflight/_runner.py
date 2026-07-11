@@ -9,7 +9,9 @@ results:
      PipelineConfig.model_validate(raw).model_dump() (the real choke-point).
   4. Build a fixed master-key resolver via make_key_resolver(MASTER, LABEL).
   5. Call run_pipeline(config, sources, ...) TWICE with the same seed so the
-     determinism invariant can assert byte-identical outputs.
+     determinism invariant can assert value-equal outputs (TH-2.2: this is
+     Python value equality via to_pydict()/schema comparison, not a byte
+     comparison of serialized bytes).
   6. Evaluate every InvariantSpec via _evaluate.evaluate_invariants.
   7. Aggregate results into an evidence record; _report.py renders it; return
      pass/fail verdict.
@@ -46,6 +48,7 @@ from ._builder import build_source_frames as build_source_frames
 from ._coverage import check_suite_strategy_coverage
 from ._evaluate import InvariantResult as InvariantResult
 from ._evaluate import evaluate_invariants as evaluate_invariants
+from ._fingerprint import fingerprint_outputs
 from ._invariants import FIXED_TS
 from ._spec import FlightManifest, load_manifest
 
@@ -74,6 +77,9 @@ class JobResult:
     `passed` is True iff every InvariantResult.passed is True.
     `elapsed_s` is the wall-clock seconds for the full job (both pipeline runs
     plus invariant evaluation).
+    `fingerprint` is the TH-2.2 / P1-5a cross-process determinism fingerprint
+    of result_a's output tables (empty string if the job errored before a
+    result was produced). See testflight/_fingerprint.py.
     """
 
     job_name: str
@@ -81,6 +87,7 @@ class JobResult:
     elapsed_s: float = 0.0
     invariant_results: list[InvariantResult] = field(default_factory=list)
     error: str | None = None
+    fingerprint: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -155,8 +162,9 @@ def run_pipeline_twice(
 
     Both calls use the identical config, sources, seed, key resolver, and
     now_iso timestamp. The determinism invariant (6.1) asserts the two
-    results are byte-identical across all output tables and the in-pipeline
-    quality_metrics fidelity blocks.
+    results are value-equal (schema + to_pydict()) across all output tables
+    and the full quality_metrics block (minus known timing keys) -- not a
+    byte comparison of serialized bytes (TH-2.2 doc correction).
 
     Args:
         config: Validated pipeline config dict.
@@ -230,6 +238,12 @@ def run_job(manifest_path: Path) -> JobResult:
             # Step 6: evaluate invariants.
             inv_results = evaluate_invariants(manifest, result_a, result_b, pa_sources)
 
+            # TH-2.2 / P1-5a: fingerprint result_a's outputs for the cross-process
+            # determinism check (see testflight/_fingerprint.py). Computed from
+            # result_a only -- result_b is already proven equal to result_a
+            # in-process by check_determinism above when the family runs.
+            fingerprint = fingerprint_outputs(result_a.outputs)
+
     except Exception as exc:
         elapsed = time.monotonic() - t0
         return JobResult(
@@ -246,6 +260,7 @@ def run_job(manifest_path: Path) -> JobResult:
         passed=all_passed,
         elapsed_s=elapsed,
         invariant_results=inv_results,
+        fingerprint=fingerprint,
     )
 
 

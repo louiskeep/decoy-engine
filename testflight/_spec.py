@@ -387,7 +387,9 @@ class InvariantSpec(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    # 6.1 Determinism: require byte-identical output across two pipeline reruns.
+    # 6.1 Determinism: require value-equal output across two pipeline reruns
+    # (schema + to_pydict() + quality_metrics minus timing keys; not a byte
+    # comparison -- TH-2.2 doc correction).
     determinism: bool = True
 
     # 6.4 FK integrity: per-relationship orphan count + policy assertions.

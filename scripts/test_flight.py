@@ -30,6 +30,11 @@ if str(_REPO_ROOT) not in sys.path:
 if str(_REPO_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT / "src"))
 
+from testflight._fingerprint import (  # noqa: E402
+    check_fingerprints,
+    load_golden,
+    write_golden,
+)
 from testflight._report import render_report  # noqa: E402
 from testflight._runner import JOBS_DIR, discover_jobs, run_job, run_suite  # noqa: E402
 
@@ -65,6 +70,17 @@ def _parse_args() -> argparse.Namespace:
             "mutation runner would duplicate that gate without adding coverage."
         ),
     )
+    parser.add_argument(
+        "--update-fingerprints",
+        action="store_true",
+        help=(
+            "Record the TH-2.2 cross-process determinism fingerprint of this run's "
+            "job outputs as the new golden (testflight/golden_fingerprints.json), "
+            "instead of checking against the existing golden. A deliberate, "
+            "reviewable action -- run this after confirming the current output is "
+            "correct (e.g. after an intentional fixture or engine change)."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -85,7 +101,8 @@ def main() -> int:
             "Continuing with normal suite run."
         )
 
-    if args.job:
+    single_job_mode = bool(args.job)
+    if single_job_mode:
         # Single job mode: no suite-level guard (guard needs all manifests).
         manifests = discover_jobs()
         matching = [m for m in manifests if m.parent.name == args.job]
@@ -114,6 +131,41 @@ def main() -> int:
     write_report(report, artifacts_dir / "report.md")
 
     all_passed = all(r.passed for r in results)
+
+    # TH-2.2 / P1-5a: cross-process determinism fingerprint check. Full-suite
+    # mode only -- a single-job run (--job) already skips the coverage guard
+    # for the same reason (a partial run cannot speak for the whole golden
+    # set); see docs/acceptance-test-flight.md merge checklist.
+    if not single_job_mode:
+        current = {
+            r.job_name: r.fingerprint
+            for r in results
+            if r.job_name != "[suite-guard]" and r.fingerprint
+        }
+        if args.update_fingerprints:
+            write_golden(current)
+            print(
+                f"\nFINGERPRINTS: recorded {len(current)} job fingerprint(s) as the "
+                f"new golden (testflight/golden_fingerprints.json)."
+            )
+        else:
+            golden = load_golden()
+            if not golden:
+                print(
+                    "\nFINGERPRINTS: no golden_fingerprints.json on record yet. "
+                    "Run with --update-fingerprints to record one deliberately. "
+                    "Not treated as a failure (bootstrap case)."
+                )
+            else:
+                problems = check_fingerprints(current, golden)
+                if problems:
+                    print("\nFINGERPRINTS: cross-process determinism drift detected:")
+                    for p in problems:
+                        print(f"  - {p}")
+                    all_passed = False
+                else:
+                    print(f"\nFINGERPRINTS: {len(current)}/{len(current)} match golden.")
+
     return 0 if all_passed else 1
 
 

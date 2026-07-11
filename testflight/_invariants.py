@@ -13,6 +13,10 @@ Module split (Phase 4 / LOW-4):
   computed-column invariants       -> _computed.py
   FK + remap-mask invariants       -> _fk_remap.py (Phase 4 extraction)
   strategy-coverage guard          -> _coverage.py (Phase 4 new module)
+Module split (TH-2, same 600-line-cap rationale):
+  determinism invariant            -> _determinism.py
+  checksum invariant               -> _checksum.py
+  safe_harbor invariant            -> _safe_harbor.py
 This module re-exports from all sub-modules so existing callers are unchanged.
 """
 
@@ -20,14 +24,14 @@ from __future__ import annotations
 
 from typing import Any
 
-import pyarrow as pa
-
 # Re-export sub-module entry points so existing callers that import from
 # _invariants continue to work without change.
 from ._chapter import check_chapter_preserve as check_chapter_preserve
+from ._checksum import check_checksums as check_checksums
 from ._computed import check_computed_columns as check_computed_columns
 from ._correlation import check_correlation_through_masking as check_correlation_through_masking
 from ._coverage import check_job_strategy_coverage as check_job_strategy_coverage
+from ._determinism import check_determinism as check_determinism
 from ._distribution import (
     FIXED_TS as FIXED_TS,
 )
@@ -44,12 +48,11 @@ from ._fk_remap import check_remap_masks_orphan as check_remap_masks_orphan
 from ._fk_remap import (
     check_value_changing_not_passthrough as check_value_changing_not_passthrough,
 )
+from ._safe_harbor import check_safe_harbor as check_safe_harbor
 from ._spec import (
-    ChecksumSpec,
     JointMaskConsistencySpec,
     MaskedCorrelationSpec,
     QuarantineSpec,
-    SafeHarborSpec,
     SentinelSpec,
 )
 
@@ -76,207 +79,12 @@ __all__ = [
     "check_value_changing_not_passthrough",
 ]  # fmt: skip
 
-# HHS-restricted ZIP3 prefixes (HIPAA Safe Harbor; populations < 20,000).
-_RESTRICTED_ZIP3_PREFIXES: frozenset[str] = frozenset(
-    {
-        "036",
-        "059",
-        "063",
-        "102",
-        "203",
-        "556",
-        "692",
-        "790",
-        "821",
-        "823",
-        "830",
-        "831",
-        "878",
-        "879",
-        "884",
-        "890",
-        "893",
-    }
-)
-
-
 # ---------------------------------------------------------------------------
-# 6.1 Determinism
+# 6.1 Determinism, 6.5 Checksums, 6.6 Safe Harbor
 # ---------------------------------------------------------------------------
-
-
-def check_determinism(
-    job_name: str,
-    result_a: Any,
-    result_b: Any,
-) -> None:
-    """Assert that two pipeline runs produce byte-identical outputs.
-
-    For every table in result_a.outputs, assert:
-      result_a.outputs[t].to_pydict() == result_b.outputs[t].to_pydict()
-
-    Also asserts that the in-pipeline quality_metrics["fidelity_reports"]
-    blocks are byte-equal across both runs (the golden determinism idiom from
-    tests/integration/golden/test_fidelity_report_golden.py).
-
-    Args:
-        job_name: Job name for error messages.
-        result_a: First ExecutionResult.
-        result_b: Second ExecutionResult.
-
-    Raises:
-        AssertionError: If any table output differs across runs.
-    """
-    tables_a: dict[str, pa.Table] = result_a.outputs
-    tables_b: dict[str, pa.Table] = result_b.outputs
-
-    assert set(tables_a) == set(tables_b), (
-        f"[{job_name}] determinism: output table sets differ between runs: "
-        f"A={set(tables_a)} B={set(tables_b)}"
-    )
-
-    for table_name in tables_a:
-        dict_a = tables_a[table_name].to_pydict()
-        dict_b = tables_b[table_name].to_pydict()
-        assert dict_a == dict_b, (
-            f"[{job_name}] determinism: table '{table_name}' differs between runs. "
-            f"Columns with mismatches: "
-            + ", ".join(col for col in dict_a if dict_a.get(col) != dict_b.get(col))
-        )
-
-    # Also compare fidelity_reports block if present (golden idiom).
-    fr_a = result_a.quality_metrics.get("fidelity_reports", {})
-    fr_b = result_b.quality_metrics.get("fidelity_reports", {})
-    assert fr_a == fr_b, (
-        f"[{job_name}] determinism: quality_metrics['fidelity_reports'] differ between runs."
-    )
-
-
-# ---------------------------------------------------------------------------
-# 6.5 Checksums
-# ---------------------------------------------------------------------------
-
-
-def check_checksums(
-    job_name: str,
-    spec: list[ChecksumSpec],
-    result: Any,
-) -> None:
-    """Assert every output value in checksum columns satisfies validate(scheme, v).
-
-    Calls decoy_engine.checksums.validate(scheme, value) per row in each
-    declared (table, column) pair. A single failing value raises AssertionError
-    naming job/table/column/scheme/value.
-
-    Args:
-        job_name: Job name for error messages.
-        spec: List of ChecksumSpec from the manifest invariants.
-        result: ExecutionResult carrying masked output tables.
-
-    Raises:
-        AssertionError: If any output value fails checksum validation.
-    """
-    from decoy_engine.checksums import validate
-
-    for cs in spec:
-        tbl = result.outputs.get(cs.table)
-        assert tbl is not None, f"[{job_name}] checksums: table '{cs.table}' not in result.outputs."
-        values: list[Any] = tbl.column(cs.column).to_pylist()
-        for i, v in enumerate(values):
-            if v is None:
-                continue
-            str_v = str(v)
-            ok = validate(cs.scheme, str_v)
-            assert ok, (
-                f"[{job_name}] checksums: {cs.table}.{cs.column} row {i}: "
-                f"validate('{cs.scheme}', {str_v!r}) == False. "
-                f"Column uses a checksum-producing strategy (fpe + checksum:{cs.scheme}) "
-                f"but the output value failed the check-digit assertion. "
-                f"This indicates the FPE checksum-recomputation path was not taken."
-            )
-
-
-# ---------------------------------------------------------------------------
-# 6.6 Safe Harbor suppression
-# ---------------------------------------------------------------------------
-
-
-def check_safe_harbor(
-    job_name: str,
-    spec: list[SafeHarborSpec],
-    result: Any,
-) -> None:
-    """Assert Safe Harbor suppression counts and absence of restricted ZIP3.
-
-    For each SafeHarborSpec:
-    - Assert no restricted ZIP3 prefix survives at zip5 resolution in the
-      output (geo_generalize must have generalized or suppressed it).
-    - Assert the count of 'suppressed' entries in the geo_generalize_cascade
-      QualityWarning equals planted_restricted_zip3_count.
-    - Assert expected_suppressions matches that count.
-
-    Args:
-        job_name: Job name for error messages.
-        spec: List of SafeHarborSpec from the manifest invariants.
-        result: ExecutionResult carrying masked outputs and quality_metrics warnings.
-
-    Raises:
-        AssertionError: If suppression counts mismatch or a restricted ZIP3 leaks.
-    """
-    # Index QualityWarnings by (code, column).
-    geo_warnings = [w for w in result.warnings if w.code == "geo_generalize_cascade"]
-
-    for sh in spec:
-        tbl = result.outputs.get(sh.table)
-        assert tbl is not None, (
-            f"[{job_name}] safe_harbor: table '{sh.table}' not in result.outputs."
-        )
-        out_values: list[Any] = tbl.column(sh.column).to_pylist()
-
-        # 1. No full ZIP5 starting with a restricted prefix survives.
-        leaked = [
-            v
-            for v in out_values
-            if isinstance(v, str) and len(v) == 5 and v[:3] in _RESTRICTED_ZIP3_PREFIXES
-        ]
-        assert len(leaked) == 0, (
-            f"[{job_name}] safe_harbor: {sh.table}.{sh.column}: "
-            f"{len(leaked)} restricted ZIP5 value(s) leaked into output: {leaked[:5]}. "
-            f"geo_generalize should have generalized or suppressed all restricted ZIP3 rows."
-        )
-
-        # 2. Find the geo_generalize_cascade warning for this column.
-        col_warnings = [w for w in geo_warnings if w.column == sh.column]
-        assert col_warnings, (
-            f"[{job_name}] safe_harbor: {sh.table}.{sh.column}: "
-            f"no geo_generalize_cascade QualityWarning found for column '{sh.column}'. "
-            f"Expected at least {sh.planted_restricted_zip3_count} suppressed rows. "
-            f"Available warnings: {[w.code for w in result.warnings]}"
-        )
-
-        # 3. Count suppressed decisions (rows with the restricted ZIP3 prefix
-        #    that were suppressed because ZIP3 population < HIPAA_K_THRESHOLD).
-        cascade_decisions: dict[str, str] = col_warnings[0].detail.get("cascade_decisions", {})
-        suppressed_count = sum(1 for v in cascade_decisions.values() if v == "suppressed")
-
-        assert suppressed_count == sh.planted_restricted_zip3_count, (
-            f"[{job_name}] safe_harbor: {sh.table}.{sh.column}: "
-            f"suppressed_count={suppressed_count} != "
-            f"planted_restricted_zip3_count={sh.planted_restricted_zip3_count}. "
-            f"Cascade decision distribution: "
-            + str(
-                {
-                    v: sum(1 for d in cascade_decisions.values() if d == v)
-                    for v in set(cascade_decisions.values())
-                }
-            )
-        )
-
-        assert suppressed_count == sh.expected_suppressions, (
-            f"[{job_name}] safe_harbor: {sh.table}.{sh.column}: "
-            f"suppressed_count={suppressed_count} != "
-            f"expected_suppressions={sh.expected_suppressions}."
-        )
+# Implementations moved to _determinism.py / _checksum.py / _safe_harbor.py
+# (TH-2, same 600-line-cap rationale as the Phase 4 / LOW-4 split noted in
+# this module's docstring) and re-exported above.
 
 
 # ---------------------------------------------------------------------------
