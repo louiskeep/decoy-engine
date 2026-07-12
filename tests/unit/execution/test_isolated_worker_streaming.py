@@ -168,10 +168,20 @@ class TestIsolatedWorkerStreamsOutOfCore:
         assert sorted(envelope["staged_tables"]) == ["child", "parent"]
 
         # Correctness: what actually landed on disk matches the full_frame
-        # oracle byte-for-byte.
+        # oracle byte-for-byte, in BOTH values and schema -- a value-only
+        # comparison (`to_pydict()`) would miss a type divergence between
+        # the streamed out_of_core sink's fixed schema and full_frame's
+        # (e.g. a hash strategy emitting int64 on one route and string on
+        # the other would still compare equal by `to_pydict()` if the
+        # values happened to stringify the same).
         for table in ("parent", "child"):
             sunk = pq.read_table(staging_output_dir / f"{table}.parquet")
-            assert sunk.to_pydict() == oracle.outputs[table].to_pydict(), f"{table} sink differs"
+            oracle_table = oracle.outputs[table]
+            assert sunk.schema == oracle_table.schema, (
+                f"{table} sink schema diverges from the full_frame oracle: "
+                f"{sunk.schema} vs {oracle_table.schema}"
+            )
+            assert sunk.to_pydict() == oracle_table.to_pydict(), f"{table} sink differs"
 
     def test_run_full_frame_route_unaffected_by_always_passed_sink(self, tmp_path: Path) -> None:
         """A non-relationship (full_frame-only) job must behave byte-for-byte

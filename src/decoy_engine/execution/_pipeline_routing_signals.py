@@ -369,11 +369,14 @@ def resolve_probe_recovery(
       - `full_frame_fits_estimate is True` already -- nothing to recover,
         the static estimate already admits full_frame;
       - no mask-kind table exists;
-      - any mask-kind table is NOT resident in `caller_sources` (a lazy
-        `source_loader` table has no data for `run_pipeline_isolated` to
-        serialize into a child process -- same resident-only scope limit
+      - any mask-kind table is NOT resident in `caller_sources` -- either
+        absent entirely (a lazy `source_loader` path) or present as a
+        `LazySource` placeholder (TB-1 input streaming: the key exists in
+        `caller_sources`, but there is no resident Arrow data behind it).
+        Neither has data for `run_pipeline_isolated` to serialize into a
+        child process -- same resident-only scope limit
         `byte_estimate_full_frame_fits` documents for sampling, applied
-        here to the probe's data requirement instead);
+        here to the probe's data requirement instead;
       - the static (unmultiplied) raw-bytes estimate CLEARLY busts the
         budget even under `_probe.MIN_PLAUSIBLE_K_FULL_FRAME` (the most
         favorable real full_frame peak/raw ratio this repo has evidence
@@ -388,12 +391,19 @@ def resolve_probe_recovery(
     `True` identically (route bounded), so the distinction only matters for
     diagnostics, not safety.
 
-    TB-1 scope note: `probe_peak_bytes` below still assumes every mask
-    table in `caller_sources` is a resident `pa.Table` (it serializes them
-    into a probe subprocess); a `LazySource` entry is not audited for this
-    call. Both flags this function requires are default-`False` (TB-1
-    keeps them off), so this is not reachable in production this sprint --
-    flagged here for TB-5, which enables them, to audit before flip.
+    TB-1 dennis-review MEDIUM fix: `probe_peak_bytes` below assumes every
+    mask table in `caller_sources` is a resident `pa.Table` it can slice
+    and serialize into a probe subprocess (`_probe_scale.downscale_sources`
+    calls `.slice(...)`, which a `LazySource` does not implement). A
+    `LazySource` entry is present as a `caller_sources` KEY (TB-1 input
+    streaming wraps relationship-bearing sources in one), so a residency
+    guard keyed only on dict membership does not catch it -- the guard
+    below also excludes any table whose resolved source `isinstance(...,
+    LazySource)`, mirroring `_resident_column_arrays`'s existing
+    LazySource-is-non-resident treatment. Both flags this function
+    requires are default-`False` (TB-1 keeps them off), so this was not
+    reachable in production this sprint; fixed ahead of TB-5, which flips
+    them.
     """
     if not (use_probe_routing and use_byte_estimate_routing):
         return None
@@ -403,7 +413,10 @@ def resolve_probe_recovery(
     mask_tables = [t for t in profile.tables if table_kinds.get(t.name) == "mask"]
     if not mask_tables:
         return None
-    if any(t.name not in caller_sources for t in mask_tables):
+    if any(
+        t.name not in caller_sources or isinstance(caller_sources[t.name], LazySource)
+        for t in mask_tables
+    ):
         return None
 
     from decoy_engine.execution._mem_estimate import raw_data_bytes
