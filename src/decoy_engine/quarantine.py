@@ -41,6 +41,8 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
+import tempfile
 from collections import defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -273,6 +275,82 @@ def _write_jsonl(path: str, records: list[dict[str, Any]]) -> None:
     with out_path.open("w", encoding="utf-8") as fh:
         for record in records:
             fh.write(json.dumps(record, default=_json_default) + "\n")
+
+
+def write_jsonl_staged(final_path: str, records: list[dict[str, Any]]) -> Path:
+    """Write ``records`` as JSONL to a private staging file beside ``final_path``,
+    returning the staging path. Never touches ``final_path`` itself.
+
+    DE-08 (HIGH data-safety finding): a transactional caller (``run_sequential``
+    with a ``TransactionalSink``) must not publish the quarantine sidecar to its
+    final path until the sink's own commit has succeeded -- otherwise a sink
+    abort (table staging discarded) leaves the raw-row quarantine JSONL
+    published anyway. This mirrors ``ParquetTransactionalSink``'s staging
+    discipline (`execution/_transactional_sink.py`): the staging file is
+    created in ``final_path``'s PARENT directory (same filesystem as the
+    final path) via ``tempfile.mkstemp``, so the later publish step is a
+    single same-filesystem ``os.replace`` (POSIX rename), never a copy.
+
+    The caller owns the staged file's fate: call ``publish_staged_jsonl`` on
+    success, or ``discard_staged_jsonl`` on any failure (including a sink
+    commit failure). If this function itself raises partway through the
+    write, the partial staging file is removed before the exception
+    propagates -- nothing is ever left behind for this call's own failure.
+
+    Args:
+        final_path: The path the caller intends to publish to eventually.
+            Only used to resolve the staging directory (same parent); never
+            written to by this function.
+        records: List of dicts to serialise, one JSON object per line.
+
+    Returns:
+        Path to the private staging file.
+    """
+    out_path = Path(final_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix="_decoy_quarantine_stage_", suffix=".jsonl", dir=out_path.parent
+    )
+    staged = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            for record in records:
+                fh.write(json.dumps(record, default=_json_default) + "\n")
+    except BaseException:
+        staged.unlink(missing_ok=True)
+        raise
+    return staged
+
+
+def publish_staged_jsonl(staged_path: Path, final_path: str) -> None:
+    """Atomically publish a staged quarantine JSONL to ``final_path``.
+
+    A single ``os.replace`` (POSIX rename, same filesystem because
+    ``write_jsonl_staged`` stages beside ``final_path``) makes the file visible
+    at ``final_path`` all at once. Call ONLY after the sink's own commit has
+    already succeeded (DE-08): this is the "publish" half of the
+    stage-then-publish pair that gives the quarantine sidecar the same
+    commit-or-discard fate as the transactional sink.
+
+    Raises:
+        OSError: If the rename fails (e.g. disk full, permission denied).
+            Nothing is published on failure; ``staged_path`` is untouched.
+    """
+    os.replace(staged_path, Path(final_path))
+
+
+def discard_staged_jsonl(staged_path: Path | None) -> None:
+    """Best-effort delete of a staged quarantine file that must never be
+    published (mirrors ``TransactionalSink.abort``'s best-effort staging
+    cleanup: errors are swallowed so a cleanup failure cannot mask the
+    original run exception). A no-op when ``staged_path`` is None (nothing
+    was ever staged for this run)."""
+    if staged_path is None:
+        return
+    try:
+        staged_path.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def _json_default(obj: Any) -> Any:
