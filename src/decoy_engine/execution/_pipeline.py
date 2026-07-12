@@ -73,19 +73,21 @@ docstring describes.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any, Literal
 
 import pyarrow as pa
 
 from decoy_engine.execution import _pipeline_finalize, _pipeline_routing
 from decoy_engine.execution import _pipeline_route_exec as _route_exec
+from decoy_engine.execution import _pipeline_sources as _psrc
 from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._planner import (
     AUTO_CHUNK_THRESHOLD_ROWS_DEFAULT,
     FULL_FRAME_REJECT_ROWS_DEFAULT,
     OUT_OF_CORE_THRESHOLD_ROWS_DEFAULT,
 )
+from decoy_engine.profile._readers import LazySource
 
 if TYPE_CHECKING:
     from decoy_engine.execution._transactional_sink import TransactionalSink
@@ -152,7 +154,7 @@ def classify_table_kinds(config: dict[str, Any]) -> dict[str, str]:
 
 def run_pipeline(
     config: dict[str, Any],
-    sources: dict[str, pa.Table] | None = None,
+    sources: Mapping[str, pa.Table | LazySource] | None = None,
     *,
     engine_version: str,
     registry: ProviderRegistry | None = None,
@@ -182,9 +184,10 @@ def run_pipeline(
 
     `config` MUST be the validated dump from `PipelineConfig.model_validate`;
     no re-validation here. `sources` is the caller-loaded
-    `dict[table_name -> pa.Table]` for the mask-kind tables; pure-generate
-    configs may pass `None` (or an empty dict). `engine_version` flows
-    into `compile_plan`'s audit-evidence stamping.
+    `Mapping[table_name -> pa.Table | LazySource]` for the mask-kind tables;
+    pure-generate configs may pass `None` (or an empty dict). A `LazySource`
+    entry (TB-1) is resolved per-route -- see `_pipeline_sources`.
+    `engine_version` flows into `compile_plan`'s audit-evidence stamping.
 
     Returns one `ExecutionResult` whose `outputs` covers every output
     table (generate + mask) and whose `table_kinds` field carries the
@@ -294,7 +297,7 @@ def run_pipeline(
     require_bool("use_probe_routing", use_probe_routing)
 
     resolved_registry = registry if registry is not None else get_default_registry()
-    caller_sources: dict[str, pa.Table] = dict(sources) if sources else {}
+    caller_sources: dict[str, pa.Table | LazySource] = dict(sources) if sources else {}
 
     table_kinds = classify_table_kinds(config)
     has_mask_table = any(kind == "mask" for kind in table_kinds.values())
@@ -380,7 +383,7 @@ def run_pipeline(
     )
 
     if has_mask_table and route == "sequential":
-        loader = source_loader if source_loader is not None else (lambda t: caller_sources[t])
+        loader = _psrc.resolve_sequential_loader(source_loader, caller_sources)
         return _route_exec.run_sequential_route(
             plan=plan,
             loader=loader,
@@ -398,9 +401,8 @@ def run_pipeline(
             execution_plan_decision=execution_plan_decision,
         )
 
-    # SC2: the bounded-RAM out-of-core FK route (same early-return shape as the
-    # sequential branch). The resident caller_sources feed the runner directly
-    # (the pure-mask FK shape has every parent + child present); a sink streams.
+    # SC2 out-of-core route (same shape as sequential); caller_sources feeds
+    # the runner directly -- TB-1: a LazySource streams natively here, no materialization.
     if has_mask_table and route == "out_of_core":
         return _route_exec.run_out_of_core_route(
             plan=plan,
@@ -416,6 +418,9 @@ def run_pipeline(
             explain_plan=explain_plan,
             execution_plan_decision=execution_plan_decision,
         )
+
+    # TB-1: only full_frame / auto-chunk below needs every source resident.
+    resident_sources: dict[str, pa.Table] = _psrc.resolve_resident_sources(caller_sources)
 
     # Step 1: generate-kind tables. The synthesize entry filters by
     # `generate_columns` presence already (synthesize.py:113), so passing
@@ -447,7 +452,7 @@ def run_pipeline(
         # generate output as if it were a source: the generated value IS
         # the FK pool for the mask side.
         merged_sources: dict[str, pa.Table] = {}
-        merged_sources.update(caller_sources)
+        merged_sources.update(resident_sources)
         merged_sources.update(generate_outputs)
 
         if route_chunked:
@@ -523,7 +528,7 @@ def run_pipeline(
             auto_chunk_threshold_rows=auto_chunk_threshold_rows,
             auto_chunk_non_default=auto_chunk_non_default,
             table_kinds=table_kinds,
-            caller_sources=caller_sources,
+            caller_sources=resident_sources,
             execution_plan_decision=execution_plan_decision,
         )
 
@@ -568,7 +573,7 @@ def run_pipeline(
     outputs = _pipeline_finalize.finalize_validators_and_quarantine(
         outputs,
         config=config,
-        caller_sources=caller_sources,
+        caller_sources=resident_sources,
         mask_row_errors=mask_row_errors,
         quality_metrics=quality_metrics,
     )

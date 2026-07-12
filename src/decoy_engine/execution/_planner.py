@@ -69,6 +69,9 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
+from decoy_engine.execution._pipeline_sources import lazy_source_rejection
+from decoy_engine.profile._readers import LazySource
+
 if TYPE_CHECKING:
     import pyarrow as pa
 
@@ -178,7 +181,7 @@ def classify_job(
     registry: ProviderRegistry,
     relationship_graph: RelationshipGraph,
     substrate: str,
-    source_tables: Mapping[str, pa.Table] | None = None,
+    source_tables: Mapping[str, pa.Table | LazySource] | None = None,
     auto_chunk_threshold_rows: int = AUTO_CHUNK_THRESHOLD_ROWS_DEFAULT,
 ) -> ExecutionPlan:
     """Classify a job into exactly one execution mode, without executing.
@@ -320,7 +323,7 @@ def _chunked_rejection(
     generate_tables: list[str],
     work: list[Any],
     substrate: str,
-    source_tables: Mapping[str, pa.Table] | None,
+    source_tables: Mapping[str, pa.Table | LazySource] | None,
     auto_chunk_threshold_rows: int,
 ) -> str | None:
     """None when the job is admissible for chunked streaming; else why not.
@@ -483,7 +486,7 @@ def _fpe_join_group_columns(config: dict[str, Any], *, table: str) -> list[str]:
 
 
 def _runtime_source_rejections(
-    source_tables: Mapping[str, pa.Table],
+    source_tables: Mapping[str, pa.Table | LazySource],
     *,
     table: str,
     auto_chunk_threshold_rows: int,
@@ -511,6 +514,15 @@ def _runtime_source_rejections(
     src = source_tables.get(table)
     if src is None:
         reasons.append(f"no loaded source frame for table {table!r}")
+        return reasons
+    # TB-1 defensive guard, unreachable in production today (see
+    # `_pipeline_sources.lazy_source_rejection`'s docstring): only
+    # relationship jobs carry a LazySource, and those are already rejected
+    # upstream (line 367) before reaching this per-table check. The
+    # `isinstance` check (rather than calling the helper unconditionally)
+    # is what lets the type checker narrow `src` to `pa.Table` below.
+    if isinstance(src, LazySource):
+        reasons.append(lazy_source_rejection(src, table=table) or "")
         return reasons
     if src.num_rows < auto_chunk_threshold_rows:
         reasons.append(

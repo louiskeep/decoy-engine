@@ -40,6 +40,7 @@ from decoy_engine.execution._probe import (
     ProbePoint,
     ProbeResult,
 )
+from decoy_engine.profile._readers import LazySource
 from decoy_engine.profile._types import ColumnProfile, TableProfile
 from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge, RelationshipGraph
 
@@ -257,6 +258,33 @@ class TestResolveProbeRecovery:
             True,
             self._numeric_profile(row_count=10, num_cols=1),
             {},  # NOT resident
+            {"t": "mask"},
+            None,
+            False,
+            config={},
+            engine_version="test",
+        )
+        assert result is None
+
+    def test_lazy_source_mask_table_is_a_no_op(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """TB-1 dennis-review MEDIUM: a `LazySource` entry is present as a
+        `caller_sources` KEY (unlike `test_non_resident_mask_table_is_a_no_op`
+        above, where the key is absent entirely) but carries no resident
+        Arrow data -- the dict-membership guard alone (`t.name not in
+        caller_sources`) does NOT catch this shape, since the key exists.
+        The guard must also treat a `LazySource` value as non-resident and
+        decline, never passing it into `probe_peak_bytes` (which assumes
+        every `caller_sources` entry is a sliceable/serializable `pa.Table`).
+
+        Pre-fix failure mode: this raised `AssertionError` from
+        `_never_probe` -- proof the unfixed guard let the `LazySource`
+        through to the (mocked) probe call instead of declining."""
+        monkeypatch.setattr("decoy_engine.execution._probe.probe_peak_bytes", _never_probe)
+        result = resolve_probe_recovery(
+            True,
+            True,
+            self._numeric_profile(row_count=10, num_cols=1),
+            {"t": LazySource(path=Path("unused.parquet"))},
             {"t": "mask"},
             None,
             False,

@@ -250,7 +250,12 @@ def run_job_with_governor(
             `hard_threshold_fraction` of THIS number, re-applied unchanged at
             every rung (each route is assumed to share the same slot budget;
             a caller with per-route budgets should call this once per rung
-            itself instead).
+            itself instead). TB-1 fix #3: this is ALSO forwarded as
+            `run_pipeline`'s `out_of_core_budget_bytes` at every rung
+            (`_isolated_kwargs_with_budget`), unless `isolated_kwargs`
+            already sets it explicitly -- so the out-of-core route's DuckDB
+            `memory_limit` is sized from this job's actual slot share, not
+            `resolve_budget(None)`'s 25%-of-host-RAM fallback.
         ladder: the routes to try in order. Defaults to the SC2 priority
             order (`full_frame`, `out_of_core`, `sequential`). A caller that
             already knows a job is not full_frame-eligible (e.g. it forced
@@ -297,6 +302,13 @@ def run_job_with_governor(
     """
     require_bool("use_runtime_governor", use_runtime_governor)
     _validate_call(ladder, budget_bytes, hard_threshold_fraction, poll_interval_s, isolated_kwargs)
+    # TB-1 fix #3 (docs/plans/2026-07-12-track-b-completion-program.md's "two
+    # defects" section, #54): forward this job's slot budget to run_pipeline's
+    # out_of_core_budget_bytes so the out-of-core route's DuckDB memory_limit
+    # is sized from it, not `resolve_budget(None)`'s 25%-of-host-RAM fallback
+    # (`out_of_core._budget._HOST_RAM_FRACTION`) -- wrong on any non-32GB host
+    # and under concurrent slots.
+    isolated_kwargs = _isolated_kwargs_with_budget(budget_bytes, isolated_kwargs)
 
     if not use_runtime_governor:
         return _run_flag_off(config, sources, ladder[0], isolated_kwargs)
@@ -400,6 +412,34 @@ def run_job_with_governor(
         trips=tuple(trips),
         diagnostic=_exhausted_diagnostic(tuple(trips), budget_bytes),
     )
+
+
+def _isolated_kwargs_with_budget(
+    budget_bytes: int, isolated_kwargs: dict[str, Any]
+) -> dict[str, Any]:
+    """Default `out_of_core_budget_bytes` to this job's slot budget (TB-1 fix #3).
+
+    Without this, `run_pipeline`'s `out_of_core_budget_bytes` stays `None`
+    at every rung, so the out-of-core route's `resolve_budget(None)` sizes
+    DuckDB's `memory_limit` from 25% of detected HOST/cgroup RAM
+    (`out_of_core._budget._HOST_RAM_FRACTION`) instead of this job's actual
+    slot share -- wrong on any non-32GB host and under concurrent slots
+    (docs/plans/2026-07-12-track-b-completion-program.md's "two defects"
+    section, #54). Applied to EVERY rung (unconditionally, before the
+    ladder loop) since every route shares the same slot budget by this
+    function's own existing contract (see `budget_bytes`'s docstring
+    above): a caller with per-route budgets already calls this once per
+    rung itself instead of using the ladder.
+
+    Never overrides an EXPLICIT `out_of_core_budget_bytes` the caller
+    already set in `isolated_kwargs` (e.g. one that deliberately differs
+    from the governor's own RSS-kill threshold) -- this only supplies the
+    default, matching every other knob in this module's "additive, opt-in"
+    discipline.
+    """
+    if "out_of_core_budget_bytes" in isolated_kwargs:
+        return isolated_kwargs
+    return {**isolated_kwargs, "out_of_core_budget_bytes": budget_bytes}
 
 
 def _validate_call(

@@ -9,6 +9,10 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (TB-1 out-of-core input/output streaming, 2026-07-12)
+
+Production out-of-core path now streams input and output, closing the 2x memory overhead gap measured in the adversarial review (DE-09 and DE-15). The isolated worker (child process) wraps source paths as `LazySource` handles for relationship-bearing jobs, bypassing eager materialization before route admission (finding #56 input residency gap). The route handler passes `ParquetTransactionalSink` (all-or-nothing Parquet write, committed via atomic directory rename) to `run_pipeline` on every route; sequential/out_of_core routes stream bounded batches through it; full_frame never touches it. **Output is byte-for-byte identical: golden-gate fingerprints 5/5 match baseline.** Single-table (non-relationship) input residency remains unbounded and is a documented roadmap follow-up (`docs/relationships-memory-scaling.md` section 2, Option 1 scope).
+
 ### Fixed (SC7b lazy-path route admission with bounded OOM prevention, 2026-07-09)
 
 SC7a made profiling itself bounded by reading only cheap metadata + a sample, but the SC2 size gates (`out_of_core_threshold_rows`, `full_frame_reject_rows`) remained blind on the lazy-path input shape (`sources={}`, `source_loader` set), where `largest_mask_table_rows()` returned None and never fired the reject-before-read or out-of-core reroute that protect bounded-memory jobs. This commit wires the bounded `TableProfile.row_count` into the route-admission decision so lazy-path FK jobs get the same OOM-prevention gates as resident-path jobs.
