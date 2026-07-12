@@ -43,7 +43,13 @@ __all__ = [
 
 
 def execution_telemetry(
-    *, route: str, route_reason: str, sink: Any, source_loader: Any, sources_resident: bool
+    *,
+    route: str,
+    route_reason: str,
+    sink: Any,
+    source_loader: Any,
+    sources_resident: bool,
+    loaded_fully_in_memory: bool | None = None,
 ) -> dict[str, Any]:
     """Per-config execution memory telemetry. Honest by construction: it never
     claims bounded input residency unless the caller's Arrow sources are
@@ -57,6 +63,19 @@ def execution_telemetry(
     supplied. `sources_resident` carries that fact in; bounded input
     residency is reported ONLY for the one configuration that actually bounds
     inputs: a lazy loader supplied AND `sources` empty/omitted.
+
+    DE-09 (adversarial review): the `sources_resident or source_loader is None`
+    heuristic is a proxy for the caller's ORIGINAL shape, computed before the
+    route resolves its sources. That proxy lies for the out-of-core route,
+    which resolves missing sources itself: a job with `sources={}` + a
+    `source_loader` reads as "not resident" even after the route materialized
+    every table, and a job handed lazy `LazySource` inputs reads as "resident"
+    even though the runner only ever streams them. Callers that KNOW their
+    post-resolution residency (`run_out_of_core_route` inspects what it
+    actually holds) pass an explicit `loaded_fully_in_memory`, which is
+    reported verbatim; callers that don't (the sequential route, whose
+    per-table evicting loader keeps the original proxy honest for its own
+    shapes) omit it and keep the heuristic.
     """
     if route == "full_frame":
         return {
@@ -70,12 +89,17 @@ def execution_telemetry(
     # the same honesty shape: they evict per table and stream outputs when a
     # sink is supplied. `execution_mode` echoes the actual route so the two are
     # distinguishable in the manifest.
+    resident = (
+        loaded_fully_in_memory
+        if loaded_fully_in_memory is not None
+        else (sources_resident or source_loader is None)
+    )
     return {
         "execution_mode": route,
         "route_reason": route_reason,
         "eviction": "per_table",
         "outputs_streamed": sink is not None,
-        "loaded_fully_in_memory": sources_resident or source_loader is None,
+        "loaded_fully_in_memory": resident,
     }
 
 
@@ -166,6 +190,7 @@ def run_out_of_core_route(
     table_kinds: dict[str, str],
     source_loader: Callable[[str], pa.Table] | None,
     sources_resident: bool,
+    config_sources: Mapping[str, Any],
     budget_bytes: int | None = None,
     explain_plan: bool = False,
     execution_plan_decision: ExecutionPlan | None = None,
@@ -193,30 +218,43 @@ def run_out_of_core_route(
     SC3/SC4, and an unsupported strategy is a routing miss (the job never
     reaches here -- it stays sequential/full-frame), never a run failure.
 
-    `source_loader` resolution (M1 fix): `run_fk_out_of_core` needs its whole
-    `sources` mapping upfront -- unlike the sequential route, the DuckDB batch
-    runner has no incremental per-table eviction loop to hang a lazy load off
-    of. So a forced `execution_mode='out_of_core'` on a truly lazy job
-    (`sources={}`, `source_loader` supplied) resolves every table
-    `run_sequential`'s own lazy contract would have loaded
-    (`table_topo_order(plan, graph)`: every plan table plus every graph-edge
-    table) through `source_loader` before dispatch, mirroring
-    `run_sequential_route`'s per-table loader contract instead of raising
-    `out_of_core_source_missing`. This does cost full per-table residency for
-    whichever tables were newly resolved this way (no incremental eviction on
-    this route); the runner's own bounded `batch_rows` streaming -- its actual
-    peak-memory guarantee during masking/join -- is unaffected either way.
+    Source resolution (DE-09, superseding the SC2 "M1" eager-loader branch):
+    `run_fk_out_of_core` consumes `pa.Table | LazySource` per table and streams
+    a `LazySource` through bounded `iter_batches` (never `.to_table()`), so a
+    missing table is resolved to a `LazySource` from its on-disk Parquet path
+    whenever one is available -- mirroring `_isolated_worker._load_sources` and
+    `_pipeline_sources.resolve_out_of_core_sources`. The pre-DE-09 branch
+    instead eagerly called `source_loader(table)` for every table
+    `table_topo_order(plan, graph)` enumerates and retained the resulting
+    resident `pa.Table`s, so a job that reached this route specifically to
+    STREAM its input paid for a fully resident copy of that input first -- the
+    same input-residency defect TB-1 removed on the governed path, still open
+    here on the direct public route. A source with no local Parquet path (CSV /
+    fixed_width / cloud, or a caller-only dynamic loader) has no lazy Parquet
+    handle to stream, so it keeps the documented resident `source_loader`
+    fallback; the runner's own bounded `batch_rows` streaming (its peak-memory
+    guarantee during masking/join) is unaffected either way.
+
+    Telemetry honesty (DE-09): `loaded_fully_in_memory` is computed from what
+    this route ACTUALLY holds after resolution -- resident iff any resolved
+    source is a materialized `pa.Table` -- rather than from the caller's
+    original `sources`/`source_loader` shape, which lies both ways here (a
+    lazified `sources={}` + loader job is bounded, not resident; an all-lazy
+    `LazySource` job handed by `_isolated_worker` is streamed, not resident).
     """
+    from decoy_engine.execution import _pipeline_sources as _psrc
     from decoy_engine.execution._sequential import table_topo_order
     from decoy_engine.execution.out_of_core import resolve_budget, run_fk_out_of_core
 
-    resolved_sources = sources
-    if source_loader is not None:
-        missing = [table for table in table_topo_order(plan, graph) if table not in sources]
-        if missing:
-            resolved_sources = dict(sources)
-            for table in missing:
-                resolved_sources[table] = source_loader(table)
+    resolved_sources = _psrc.resolve_out_of_core_sources(
+        table_topo_order(plan, graph),
+        sources,
+        source_loader=source_loader,
+        config_sources=config_sources,
+    )
+    # Honest post-resolution residency: True iff a whole input table is held
+    # resident. An all-`LazySource` (or empty) mapping streams -> False.
+    input_resident = any(isinstance(src, pa.Table) for src in resolved_sources.values())
 
     memory_limit: str | None = None
     batch_rows: int | None = None
@@ -246,6 +284,7 @@ def run_out_of_core_route(
         sink=sink,
         source_loader=source_loader,
         sources_resident=sources_resident,
+        loaded_fully_in_memory=input_resident,
     )
     if explain_plan and execution_plan_decision is not None:
         quality_metrics["execution_plan"] = {

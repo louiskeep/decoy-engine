@@ -402,7 +402,10 @@ def run_pipeline(
         )
 
     # SC2 out-of-core route (same shape as sequential); caller_sources feeds
-    # the runner directly -- TB-1: a LazySource streams natively here, no materialization.
+    # the runner directly -- TB-1: a LazySource streams natively here, no
+    # materialization. DE-09: `config_sources` lets the route resolve a MISSING
+    # table (lazy `sources={}` + `source_loader`) to a `LazySource` from its
+    # on-disk Parquet path instead of eagerly loading it resident.
     if has_mask_table and route == "out_of_core":
         return _route_exec.run_out_of_core_route(
             plan=plan,
@@ -414,6 +417,7 @@ def run_pipeline(
             table_kinds=table_kinds,
             source_loader=source_loader,
             sources_resident=bool(caller_sources),
+            config_sources=config.get("sources") or {},
             budget_bytes=out_of_core_budget_bytes,
             explain_plan=explain_plan,
             execution_plan_decision=execution_plan_decision,
