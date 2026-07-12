@@ -56,7 +56,10 @@ def _write_envelope_file(envelope: dict[str, Any], result_path: Path) -> None:
 
 
 def _load_sources(manifest: dict[str, str]) -> dict[str, pa.Table]:
-    return {name: pq.read_table(path) for name, path in manifest.items()}
+    return {
+        name: pq.read_table(path)  # type: ignore[no-untyped-call, unused-ignore]
+        for name, path in manifest.items()
+    }
 
 
 def _stage_outputs(outputs: dict[str, pa.Table], staging_output_dir: str) -> list[str]:
@@ -79,7 +82,7 @@ def _stage_outputs(outputs: dict[str, pa.Table], staging_output_dir: str) -> lis
     written = []
     for table, data in outputs.items():
         dest = f"{staging_output_dir}/{table}.parquet"
-        pq.write_table(data, dest)
+        pq.write_table(data, dest)  # type: ignore[no-untyped-call, unused-ignore]
         written.append(table)
     return written
 

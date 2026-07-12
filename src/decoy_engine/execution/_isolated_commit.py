@@ -64,7 +64,9 @@ def sibling_staging_dir(output_dir: Path) -> Path:
 def stage_tables(outputs: dict[str, pa.Table], staging_dir: Path) -> None:
     staging_dir.mkdir(parents=True, exist_ok=True)
     for table, data in outputs.items():
-        pq.write_table(data, staging_dir / f"{table}.parquet")
+        pq.write_table(  # type: ignore[no-untyped-call, unused-ignore]
+            data, staging_dir / f"{table}.parquet"
+        )
 
 
 def atomic_commit(staging_dir: Path, output_dir: Path) -> None:
@@ -127,7 +129,8 @@ def read_envelope(result_path: Path) -> dict[str, Any] | None:
     except OSError:
         return None
     try:
-        return json.loads(text)
+        envelope: dict[str, Any] = json.loads(text)
+        return envelope
     except json.JSONDecodeError:
         return None
 

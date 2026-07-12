@@ -53,7 +53,12 @@ keywords = [
 ]
 
 dependencies = [
-    "pandas>=1.5.0,<4",
+    # Upper bound tightened from <4 to <3: pandas 3.x resolves on Python
+    # 3.11+ and produces fingerprint drift against the golden-suite (captured
+    # under pandas 2.3.3 / Python 3.10), a determinism hazard caught by a
+    # cross-process gold-suite re-run. Re-widen only alongside a golden
+    # re-capture + a reviewed pandas-3 compatibility pass.
+    "pandas>=1.5.0,<3",
     "pyyaml>=6.0",
     # Pinned exactly: Faker's name/data pools are not semver-stable, so the
     # version is part of the determinism guarantee (compatibility-contract
@@ -557,6 +562,22 @@ module = [
     "decoy_engine.execution._strategies._redact",
     "decoy_engine.execution._strategies._shuffle",
     "decoy_engine.execution._strategies._truncate",
+    # PR #49 (OOM-avoidance auto-routing): estimator + probe + governor +
+    # telemetry + process-isolation primitives. Same strict bar as the rest
+    # of decoy_engine.execution above; these modules were absent from this
+    # allowlist and so were only getting the repo-wide baseline settings.
+    "decoy_engine.execution._mem_estimate",
+    "decoy_engine.execution._mem_estimate_schema",
+    "decoy_engine.execution._probe",
+    "decoy_engine.execution._probe_scale",
+    "decoy_engine.execution._governor",
+    "decoy_engine.execution._governor_monitor",
+    "decoy_engine.execution._mem_telemetry",
+    "decoy_engine.execution._pipeline_chunk_route",
+    "decoy_engine.execution._isolated_run",
+    "decoy_engine.execution._isolated_worker",
+    "decoy_engine.execution._isolated_commit",
+    "decoy_engine.execution._isolated_common",
     # SP-06 / P5.INFRA.2: Lark closed-grammar expression parser.
     "decoy_engine.expressions",
     "decoy_engine.expressions._safe_eval",

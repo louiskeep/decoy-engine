@@ -347,7 +347,7 @@ def _write_payload(
     sources_manifest: dict[str, str] = {}
     for name, table in (sources or {}).items():
         dest = sources_dir / f"{name}.parquet"
-        pq.write_table(table, dest)
+        pq.write_table(table, dest)  # type: ignore[no-untyped-call, unused-ignore]
         sources_manifest[name] = str(dest)
 
     payload = {
@@ -548,7 +548,9 @@ def _commit(
     """
     staging_output_dir = Path(envelope["staging_output_dir"])
     outputs = {
-        table: pq.read_table(staging_output_dir / f"{table}.parquet")
+        table: pq.read_table(  # type: ignore[no-untyped-call, unused-ignore]
+            staging_output_dir / f"{table}.parquet"
+        )
         for table in envelope.get("staged_tables", [])
     }
     row_errors = read_staged_row_errors(staging_output_dir)
