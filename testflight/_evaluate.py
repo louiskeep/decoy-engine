@@ -28,6 +28,7 @@ from typing import Any
 import pyarrow as pa
 
 from ._invariants import (
+    _VALUE_CHANGING_STRATEGIES,
     check_chapter_preserve,
     check_checksums,
     check_computed_columns,
@@ -36,6 +37,7 @@ from ._invariants import (
     check_distribution_generate,
     check_distribution_mask,
     check_fk_integrity,
+    check_generate_row_count,
     check_joint_mask_consistency,
     check_quarantine,
     check_safe_harbor,
@@ -53,11 +55,85 @@ class InvariantResult:
     `family` matches the InvariantSpec field name (e.g. 'determinism',
     'fk_integrity', 'distribution', ...). `passed` is the verdict.
     `detail` is a human-readable summary for the evidence report.
+
+    `skipped` (TH-4.1) marks a result that could not actually be evaluated
+    (e.g. Cramers V undefined on a degenerate column) so the report renders
+    a distinct SKIP mark instead of folding it into an ordinary PASS -- a
+    check that never ran must never read the same as one that ran and
+    passed. Skipped results still carry `passed=True` (an un-evaluable
+    check is not itself a regression), but `_report.py` surfaces `skipped`
+    separately so it cannot be mistaken for real coverage.
     """
 
     family: str
     passed: bool
     detail: str = ""
+    skipped: bool = False
+
+
+def _masked_correlation_result(family_name: str, evidence: dict[str, Any]) -> InvariantResult:
+    """Turn check_correlation_through_masking's evidence dict into an InvariantResult.
+
+    Cramers V is undefined for a degenerate column (fewer than 2 distinct
+    non-null values); check_correlation_through_masking returns diff=None
+    rather than asserting in that case (see _correlation.py). Folding that
+    straight into an ordinary `passed=True` reads as a full green check in
+    the evidence report even though nothing was actually compared -- a future
+    pair declared on a synthetic/coarsen column that degenerates could vanish
+    silently. TH-4.1: surface it as an explicit, distinct SKIP instead.
+
+    Args:
+        family_name: The InvariantResult.family value for this pair.
+        evidence: Return value of check_correlation_through_masking (has
+            keys v_src, v_out, diff; diff is None iff degenerate).
+
+    Returns:
+        SKIP (passed=True, skipped=True) only when the SOURCE pair is
+        degenerate; FAIL (passed=False) when the source had association but the
+        OUTPUT column collapsed; an ordinary passed InvariantResult otherwise.
+    """
+    v_src = evidence.get("v_src")
+    v_out = evidence.get("v_out")
+    if evidence.get("diff") is None:
+        # diff is None iff v_src or v_out is undefined. The two cases are NOT
+        # equivalent and must not share an outcome:
+        #  - v_src is None (incl. both None): the SOURCE pair is degenerate, so
+        #    there is no association to preserve and the check genuinely cannot
+        #    run -> SKIP.
+        #  - v_src defined but v_out is None: the mask COLLAPSED the output column
+        #    to a single constant, destroying all association -- the single worst
+        #    outcome a masked_correlations pair exists to catch -> FAIL, never a
+        #    counted-as-passed SKIP.
+        if v_src is None:
+            return InvariantResult(
+                family=family_name,
+                passed=True,
+                skipped=True,
+                detail=(
+                    "SKIP: Cramers V undefined -- SOURCE pair degenerate (a "
+                    f"declared source column has <2 distinct non-null values). "
+                    f"v_src={v_src} v_out={v_out}"
+                ),
+            )
+        return InvariantResult(
+            family=family_name,
+            passed=False,
+            detail=(
+                f"masked_correlation OUTPUT column collapsed: v_src={v_src:.4f} "
+                f"but v_out is undefined (output has <2 distinct non-null "
+                "values). The mask destroyed all association -- this is the "
+                "failure a masked_correlations pair exists to catch, not a "
+                "skippable degenerate case."
+            ),
+        )
+    return InvariantResult(
+        family=family_name,
+        passed=True,
+        detail=(
+            f"v_src={evidence['v_src']:.4f} v_out={evidence['v_out']:.4f} "
+            f"diff={evidence['diff']:.4f}"
+        ),
+    )
 
 
 def evaluate_invariants(
@@ -119,6 +195,82 @@ def evaluate_invariants(
             result_a,
             manifest.relationships,
             sources,  # enables remap-masks-orphan check
+        )
+
+    # 6.4b Value-changing-passthrough guard (TH-1.1).
+    # Every mask column whose declared strategy is value-changing (fpe, hash,
+    # code_set) must genuinely change its data.  Derived from the LIVE pipeline
+    # config columns (not the hand-declared distribution spec) so EVERY such
+    # column is covered -- including columns absent from the distribution spec
+    # (e.g. members.mrn in Job A).  A COMPLETE no-op trips the value-set check;
+    # an FPE charset-undercoverage partial passthrough trips the positional
+    # retention check.
+    def _run_value_changing_guard() -> str:
+        checked: list[str] = []
+        skipped: list[str] = []
+        for t in manifest.config.get("tables", []):
+            if not isinstance(t, dict):
+                continue
+            table_name = t.get("name")
+            if not isinstance(table_name, str):
+                continue
+            src_pa = sources.get(table_name)
+            out_pa = result_a.outputs.get(table_name)
+            if src_pa is None or out_pa is None:
+                continue  # generate tables have no source; nothing to compare
+            src_df_v = src_pa.to_pandas()
+            out_df_v = out_pa.to_pandas()
+            for col in t.get("columns", []):
+                if not isinstance(col, dict):
+                    continue
+                strat = col.get("strategy")
+                col_name = col.get("name")
+                if strat not in _VALUE_CHANGING_STRATEGIES or not isinstance(col_name, str):
+                    continue
+                status = check_value_changing_not_passthrough(
+                    job_name, table_name, col_name, strat, src_df_v, out_df_v
+                )
+                checked.append(f"{table_name}.{col_name}({strat})")
+                if status.startswith("SKIP"):
+                    skipped.append(f"{table_name}.{col_name}: {status}")
+        if not checked:
+            return "no value-changing columns"
+        evidence = "checked=" + ",".join(checked)
+        if skipped:
+            evidence += " | " + "; ".join(skipped)
+        return evidence
+
+    _run("value_changing_passthrough", _run_value_changing_guard)
+
+    # 6.3b Generate-table row count (TH-4.3 / P2).
+    # Unconditional and independent of inv.distribution: a generate table's
+    # row count was checked against nothing, so a 0-row (or any wrong-count)
+    # generate table passed the whole suite incidentally -- every other
+    # invariant just operates on however many rows happen to exist. This is
+    # the RUNTIME counterpart to TableSpec's own schema validator (a 0-row
+    # table must declare kind=generate): that validator only proves the SPEC
+    # is well-formed, not that the ENGINE produced the declared count.
+    for ts in manifest.tables:
+        if ts.kind != "generate":
+            continue
+        family_name = f"generate_row_count:{ts.name}"
+        out_pa = result_a.outputs.get(ts.name)
+        if out_pa is None:
+            results.append(
+                InvariantResult(
+                    family=family_name,
+                    passed=False,
+                    detail=f"generate table '{ts.name}' not in result.outputs.",
+                )
+            )
+            continue
+        _run(
+            family_name,
+            check_generate_row_count,
+            job_name,
+            ts.name,
+            ts.row_count,
+            out_pa.to_pandas(),
         )
 
     # 6.2/6.3 Distribution fidelity.
@@ -357,19 +509,7 @@ def evaluate_invariants(
                 strategy_a=mc_spec.strategy_a,
                 strategy_b=mc_spec.strategy_b,
             )
-            results.append(
-                InvariantResult(
-                    family=family_name,
-                    passed=True,
-                    detail=(
-                        f"v_src={evidence.get('v_src', '?'):.4f} "
-                        f"v_out={evidence.get('v_out', '?'):.4f} "
-                        f"diff={evidence.get('diff', '?'):.4f}"
-                        if evidence.get("diff") is not None
-                        else "degenerate (v undefined, skipped)"
-                    ),
-                )
-            )
+            results.append(_masked_correlation_result(family_name, evidence))
         except (AssertionError, ValueError) as exc:
             results.append(
                 InvariantResult(

@@ -1,0 +1,292 @@
+# Test-flight Job E: hostile / edge-case data (TH-3.3 / P1-10)
+# Topology: mixed
+#   people -> accounts via person_identity (accounts.person_id FK, one-to-many)
+#   singleton is a standalone single-row MASK table (no FK)
+#   empty_table is a standalone GENERATE table with row_count: 0
+#
+# WHY THIS JOB EXISTS (TH-3.3 / P1-10):
+#   These data shapes appear NOWHERE in Jobs A-D (verified: zero non-ASCII
+#   characters in any existing fixture). A regression in unicode PII masking
+#   or degenerate/empty-input handling would ship green today.
+#
+# PLANTED EDGE CASES (exact counts asserted by invariants / documented in
+# fixture.py):
+#   - kana_name: every value is a fully non-ASCII (Japanese) name. Every FPE
+#     charset (digits/alpha/ALPHA/alphanum/ALPHANUM) is pure ASCII, so
+#     kana_name has ZERO in-charset characters and always takes the
+#     ALL-out-of-charset covering-hash path (fix #42) -- proven genuinely
+#     value-changing by the value_changing_passthrough guard (TH-1.1), the
+#     same guard that would catch a PARTIAL leak if this ever mixed ASCII
+#     and non-ASCII characters in one value.
+#   - notes: unicode sentence with an embedded US-phone-shaped span, masked
+#     by text_mask (us_phone detector). SENTINEL_PHONE planted in row 0.
+#   - bio: unicode sentence with an embedded email-shaped span, masked by
+#     text_redact (email detector). SENTINEL_EMAIL planted in row 0.
+#   - middle_name: every value is null (all-null column). passthrough:
+#     confirms the pipeline and distribution/quality reporting do not choke
+#     on a 100%-null column.
+#   - accounts: DUPLICATE_FK_COUNT=40 (of 150) rows all reference the SAME
+#     hub person_id -- a heavy duplicate-FK spike, not the varied fan-out
+#     already exercised by Jobs A-D. Not an orphan (0 orphans planted).
+#   - singleton: a single-row (row_count: 1) mask table.
+#   - empty_table: a GENERATE table with row_count: 0. The engine's own
+#     generate-table validator (config._pipeline.py) requires only a
+#     non-negative row_count, so 0 is a genuinely engine-supported shape.
+#
+# Source fingerprints (SHA-256 of canonical CSV; verified by verify_fingerprint
+# inside each fixture build_* function -- update after any fixture change):
+#   people:     5dd9c93fb8639a341fa3a4bae117d5e6b7101ab53210185ded2f3741c8fa8a51
+#   accounts:   3e35fb3b1950af73b0adeefb00317ea771b562a9ac86fa95ff373298519f83ff
+#   singleton:  5976c8a6c03141c653c7dbbc009b720b4fd937c010631195586f36fe398bc530
+#
+# Strategies exercised (strategy_coverage below): fpe, from_parent,
+# passthrough, text_mask, text_redact. (No NEW strategy families -- this job
+# is about DATA SHAPES, not new strategy coverage; fpe/from_parent/
+# passthrough/text_mask/text_redact are already exercised by Jobs A-D too.)
+
+job_name: e_hostile_edge_cases
+topology: mixed
+seed: 46
+master_key_label: testflight
+
+tables:
+  - name: people
+    kind: mask
+    row_count: 60
+    source_builder: "fixture.build_people"
+  - name: accounts
+    kind: mask
+    row_count: 150
+    source_builder: "fixture.build_accounts"
+  - name: singleton
+    kind: mask
+    row_count: 1
+    source_builder: "fixture.build_singleton"
+  - name: empty_table
+    kind: generate
+    row_count: 0
+    # No source_builder; the engine synthesises rows (zero of them) from the
+    # generate_columns spec below.
+
+relationships:
+  - parent:
+      table: people
+      columns: [person_id]
+    children:
+      - table: accounts
+        columns: [person_id]
+    orphan_policy: warn
+    namespace: person_identity
+
+config:
+  version: 1
+  global_settings:
+    seed: 46
+
+  sources:
+    people:     {type: file, format: parquet, path: "__PLACEHOLDER_people__"}
+    accounts:   {type: file, format: parquet, path: "__PLACEHOLDER_accounts__"}
+    singleton:  {type: file, format: parquet, path: "__PLACEHOLDER_singleton__"}
+
+  targets:
+    people:      {type: file, format: parquet, path: "__PLACEHOLDER_out_people__"}
+    accounts:    {type: file, format: parquet, path: "__PLACEHOLDER_out_accounts__"}
+    singleton:   {type: file, format: parquet, path: "__PLACEHOLDER_out_singleton__"}
+    empty_table: {type: file, format: parquet, path: "__PLACEHOLDER_out_empty_table__"}
+
+  namespaces:
+    person_identity:
+      declared_by:
+        - people.person_id
+
+  tables:
+    # === people (mask table, FK parent) ===
+    - name: people
+      columns:
+        # person_id: FPE PK. Declares the person_identity namespace/FK.
+        - name: person_id
+          strategy: fpe
+          namespace: person_identity
+          provider_config:
+            charset: digits
+
+        # kana_name: fully non-ASCII (Japanese) name. Zero characters fall
+        # inside ANY FPE charset, so this always takes the ALL-out-of-charset
+        # covering-hash path (fix #42) -- a genuinely value-changing,
+        # unicode-safe mask, never a verbatim passthrough.
+        - name: kana_name
+          strategy: fpe
+          namespace: kana_name_ns
+          provider_config:
+            charset: ALPHANUM
+
+        # notes: unicode sentence with an embedded US-phone-shaped span.
+        # text_mask (us_phone detector) redacts the span; surrounding
+        # unicode prose is untouched (not PII, regex span-matching is
+        # unicode-transparent).
+        - name: notes
+          strategy: text_mask
+          provider_config:
+            detectors: [us_phone]
+
+        # bio: unicode sentence with an embedded email-shaped span.
+        # text_redact (email detector) replaces the span with "[REDACTED]".
+        - name: bio
+          strategy: text_redact
+          provider_config:
+            detectors: [email]
+
+        # middle_name: all-null column (TH-3.3 degenerate shape). passthrough
+        # so a 100%-null column flows through masking and quality reporting
+        # unchanged; proves the pipeline does not choke on it.
+        - name: middle_name
+          strategy: passthrough
+
+    # === accounts (mask table, FK child; duplicate-FK spike) ===
+    - name: accounts
+      columns:
+        # account_id: FPE PK.
+        - name: account_id
+          strategy: fpe
+          namespace: account_identity
+          provider_config:
+            charset: digits
+
+        # person_id: from_parent (FK to people.person_id via person_identity).
+        # 40 of 150 rows reference the SAME hub person_id (duplicate-FK
+        # spike; see fixture.build_accounts). 0 orphans planted.
+        - name: person_id
+          strategy: from_parent
+
+        # balance: passthrough (numeric).
+        - name: balance
+          strategy: passthrough
+
+    # === singleton (mask table; single-row shape, TH-3.3) ===
+    - name: singleton
+      columns:
+        - name: singleton_code
+          strategy: fpe
+          namespace: singleton_ns
+          provider_config:
+            charset: digits
+
+    # === empty_table (generate table; row_count: 0, TH-3.3) ===
+    - name: empty_table
+      row_count: 0
+      generate_columns:
+        - name: seq_id
+          type: sequence
+          start: 1
+          step: 1
+          pad_length: 4
+
+  relationships:
+    - parent:   {table: people, columns: [person_id]}
+      children:
+        - {table: accounts, columns: [person_id]}
+      orphan_policy: warn
+      namespace: person_identity
+
+  # No validators/quarantine declared: this job's purpose is data SHAPE
+  # coverage (unicode, all-null, single-row, duplicate-FK, empty table), not
+  # a new validator/checksum axis (already covered by Jobs A-D).
+
+invariants:
+  determinism: true
+
+  # 6.4 FK integrity: 0 orphans (the duplicate-FK spike references a REAL
+  # hub person_id, not a fictional one).
+  fk_integrity:
+    - relationship_name: person_identity
+      expected_orphans: 0
+      policy: warn
+
+  # grade_floor_enabled: false -- kana_name (covering-hash FPE) and singleton_code
+  # (tiny-n FPE) pull the grade down by design; the value-changing-passthrough
+  # guard and cardinality/shape teeth are the correct checks for those columns.
+  grade_floor_enabled: false
+
+  distribution:
+    # people.person_id: preserve class (fpe bijection).
+    - table: people
+      column: person_id
+      distribution_class: preserve
+      strategy: fpe
+      tolerance: 0.05
+      null_pp: 2.0
+      joint_columns: []
+      joints_waived: true
+      joints_waived_reason: >-
+        person_id is the FPE PK; no meaningful joint with any other people
+        column is expected post-masking.
+
+    # people.middle_name: all-null column (TH-3.3 degenerate shape).
+    # distribution_class: synthetic (no meaningful source-vs-output shape
+    # comparison for a constant-null column); null_pp drift is 0 by
+    # construction (100% null on both sides), well within the default floor.
+    - table: people
+      column: middle_name
+      distribution_class: synthetic
+      strategy: passthrough
+      tolerance: 0.10
+      null_pp: 2.0
+      joint_columns: []
+      joints_waived: true
+      joints_waived_reason: >-
+        middle_name is all-null on both source and output; no meaningful
+        distribution or correlation to compare. TH-3.3 shape-coverage column
+        only (proves the pipeline and quality reporting do not choke on a
+        100%-null column).
+
+    # people.bio: synthetic class (text_redact; every cell's embedded email
+    # span becomes "[REDACTED]", collapsing the column toward a near-constant
+    # value). Mirrors Job B's customers.email precedent: text_redact
+    # intentionally causes kind_drift (freetext->categorical/constant) on a
+    # structured-PII free-text column; the distribution check's text_redact
+    # exemption suppresses that EXPECTED kind_drift, but only for a column
+    # declared here with strategy: text_redact (the exemption is keyed off
+    # the declared strategy_map, not applied blindly to every column).
+    - table: people
+      column: bio
+      distribution_class: synthetic
+      strategy: text_redact
+      tolerance: 0.10
+      null_pp: 2.0
+      joint_columns: []
+      joints_waived: true
+      joints_waived_reason: >-
+        bio's PII span is redacted to a constant "[REDACTED]" marker
+        (surrounding unicode prose is retained, but the email span dominates
+        the row-kind classification); no meaningful correlation joint with
+        another people column exists post-mask.
+
+    # accounts.balance: preserve class (passthrough; unchanged).
+    - table: accounts
+      column: balance
+      distribution_class: preserve
+      strategy: passthrough
+      tolerance: 0.05
+      null_pp: 2.0
+      joint_columns: []
+      joints_waived: true
+      joints_waived_reason: >-
+        balance has no meaningful correlation partner declared in this job;
+        the duplicate-FK shape is checked via fk_integrity, not a joint.
+
+  # 6.8 Sentinel no-leakage.
+  sentinels:
+    - table: people
+      column: notes
+      value: "800-555-0187"
+    - table: people
+      column: bio
+      value: "sentinel.leak.test@e-hostile-decoy-testflight.invalid"
+
+  # 6.10 Strategy coverage: mask strategies exercised by this job.
+  strategy_coverage:
+    - fpe
+    - from_parent
+    - passthrough
+    - text_mask
+    - text_redact

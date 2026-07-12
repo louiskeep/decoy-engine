@@ -3,9 +3,27 @@
 Implements check_suite_strategy_coverage (plan section 6.10) and the
 per-job check_job_strategy_coverage (validates declared keys are real).
 
-The coverage guard reads the LIVE SCALAR_HANDLERS registry, not a static list.
-Adding a new strategy without adding it to a job manifest's strategy_coverage OR
-the allowlist below FAILS the suite (anti-rot).
+Every coverage axis reads a LIVE engine registry, not a static snapshot
+(TH-1.2 / P0-2):
+  - strategies   -> execution._strategies.SCALAR_HANDLERS
+  - validators   -> validators._registry._REGISTRY
+  - checksums    -> checksums._VALIDATORS
+  - generate types -> config._tables.GENERATE_TYPES
+Adding an entry to any of these registries without adding it to a job manifest
+OR the matching allowlist below FAILS the suite (anti-rot).
+
+TH-3.1 (P1-7): the SCALAR-STRATEGY axis specifically was, until this change,
+trusted from the hand-maintained `InvariantSpec.strategy_coverage` manifest
+list -- unlike the generate-type/validator/checksum axes, which already read
+live sources (config columns / live registries). A manifest list drifts
+silently: delete the one column using a strategy and the list still claims
+it is covered. `_config_declared_scalar_strategies` derives the covered set
+by scanning `manifest.config["tables"][*]["columns"][*]["strategy"]` directly
+-- the SAME ground truth `run_pipeline` reads -- and `check_suite_strategy_coverage`
+now computes the SCALAR_HANDLERS union from that scan. The manifest
+`strategy_coverage` list is demoted to an assertion TARGET: each job's list is
+asserted to equal that job's own config-derived set (`_assert_declared_matches_config`),
+so a drifted list fails loudly instead of silently rotting.
 
 Allowlisted strategies (each with a specific, reviewable reason):
   formula   -- superseded by the `derived` strategy (SP-10). The `derived`
@@ -48,36 +66,40 @@ _STRATEGY_ALLOWLIST: dict[str, str] = {
         "struct-column test data model is introduced"
     ),
     "group_key": (
-        "SP-10c group-aware strategy; exercised end-to-end by "
-        "tests/unit/transforms/test_group_key.py; a dedicated test-flight job "
-        "exercising the group-aware strategies (group_key/grouped_series/"
-        "windowed_date) is a tracked backlog item"
+        "SP-10c group-aware SCALAR (mask) strategy: applies group_key to an "
+        "existing source column. Job D (TH-3.2) exercises group_key as a GENERATE "
+        "type, not as a mask strategy, so this scalar-handler path stays "
+        "unexercised; also covered by tests/unit/transforms/test_group_key.py. A "
+        "mask-mode group-aware job is a tracked backlog item."
     ),
     "grouped_series": (
-        "SP-10c group-aware strategy; exercised by "
-        "tests/unit/transforms/test_grouped_series.py; dedicated test-flight "
-        "coverage is a tracked backlog item (see group_key)"
+        "SP-10c group-aware SCALAR (mask) strategy; Job D (TH-3.2) exercises it as "
+        "a GENERATE type, not a mask strategy. Mask-mode coverage is a tracked "
+        "backlog item (see group_key); also unit-tested in "
+        "tests/unit/transforms/test_grouped_series.py."
     ),
     "windowed_date": (
-        "SP-10c group-aware strategy; exercised by "
-        "tests/unit/transforms/test_windowed_date.py; dedicated test-flight "
-        "coverage is a tracked backlog item (see group_key)"
+        "SP-10c group-aware SCALAR (mask) strategy; Job D (TH-3.2) exercises it as "
+        "a GENERATE type, not a mask strategy. Mask-mode coverage is a tracked "
+        "backlog item (see group_key); also unit-tested in "
+        "tests/unit/transforms/test_windowed_date.py."
     ),
 }
 
-# Generate-column types (from generation/synthesize.py dispatch) that are
-# intentionally not exercised by the current three jobs.
+# Generate-column types (from the live config._tables.GENERATE_TYPES set,
+# derived from the GenerateColumnConfig.type Literal) that are intentionally
+# not exercised by the current three jobs.
 _GENERATE_TYPE_ALLOWLIST: dict[str, str] = {
     "reference": (
         "requires a reference pool table configured alongside the generate table; "
         "no current job has a reference-pool generate column; will be added in "
         "a future job that exercises the lookup-reference generation path"
     ),
-    "statistical": (
-        "similar distribution coverage is provided by the formula+gauss path in "
-        "Job C synthetic_events; the statistical type uses SDV-style parameterized "
-        "distributions and will be explicitly exercised in a future job"
-    ),
+    # statistical, group_key, grouped_series, and windowed_date were allowlisted
+    # here in TH-1.2 (only unit-tested). TH-3.2 removed them: Job D
+    # (jobs/d_longitudinal_visits) now exercises all four end-to-end as
+    # generate_columns inside run_pipeline, so the live-registry guard REQUIRES
+    # them to be covered by a job and Job D satisfies that.
 }
 
 # Checksum schemes from decoy_engine.checksums that are not exercised by a job.
@@ -106,6 +128,8 @@ _CHECKSUM_SCHEME_ALLOWLIST: dict[str, str] = {
 }
 
 # Validator names from validators/_registry.py that are not exercised end-to-end.
+# leak_check is NOT allowlisted: it is exercised by Job A (members ssn/npi/mrn),
+# the strongest structural guard against the value-changing-passthrough class.
 _VALIDATOR_ALLOWLIST: dict[str, str] = {
     "npi": (
         "npi validator would fire on an NPI column with invalid check-digit rows; "
@@ -123,6 +147,31 @@ _VALIDATOR_ALLOWLIST: dict[str, str] = {
         "domains; will be added alongside the VIN checksum scheme in a future "
         "automotive job"
     ),
+    "regex_match": (
+        "generic operator-supplied validator (params.pattern); asserts output "
+        "values match an operator regex. Not tied to a domain identifier in the "
+        "current three jobs; end-to-end coverage (a job declaring a pattern that "
+        "the masked output must satisfy) is a tracked backlog item (TH-3)"
+    ),
+    "column_in_set": (
+        "generic operator-supplied validator (params.allowed_values); asserts "
+        "output values belong to an allowed set. Not tied to a domain identifier "
+        "in the current three jobs; end-to-end coverage is a tracked backlog item "
+        "(TH-3)"
+    ),
+    "parent_window_respected": (
+        "relationship validator that asserts a child date falls within a parent "
+        "window across an FK edge. Job D (TH-3.2) exercises windowed_date within a "
+        "single generate table (anchor + offset), NOT across a parent/child FK "
+        "edge, so this relationship validator stays undriven; a cross-table "
+        "windowed_date parent/child job is a tracked backlog item."
+    ),
+    "reconciliation_holds": (
+        "relationship validator that reconciles a parent aggregate against its "
+        "child rows across an FK edge. No current job (Job D included) drives a "
+        "cross-table parent-aggregate/child reconciliation edge; a job that does "
+        "is a tracked backlog item."
+    ),
 }
 
 # Expression builtins that are intentionally NOT checked for coverage.
@@ -132,29 +181,99 @@ _BUILTINS_IN_SCOPE: frozenset[str] = frozenset({"case_when", "gauss"})
 # Code-set corpora that must all be covered (icd10/hcpcs/ndc/mcc) -- no allowlist.
 _REQUIRED_CORPORA: frozenset[str] = frozenset({"icd10", "hcpcs", "ndc", "mcc"})
 
-# Generate column types that must be covered or allowlisted.
-_ALL_GENERATE_TYPES: frozenset[str] = frozenset(
-    {
-        "sequence",
-        "categorical",
-        "faker",
-        "formula",
-        "reference",
-        "statistical",
-        "derived",
-        "derived_aggregate",
-    }
-)
 
-# All checksum schemes in the registry (from checksums.py).
-_ALL_CHECKSUM_SCHEMES: frozenset[str] = frozenset(
-    {"luhn", "npi", "iban", "vin", "isbn13", "ean13", "gtin"}
-)
+# ---------------------------------------------------------------------------
+# Live-registry reads (P0-2 / TH-1.2)
+# ---------------------------------------------------------------------------
+# The coverage axes are derived from the engine's LIVE registries, not static
+# snapshots, exactly as the scalar-strategy axis reads SCALAR_HANDLERS. Adding
+# a validator / checksum scheme / generate type to its registry without a job
+# or an allowlist entry therefore fails the suite guard (anti-rot). Each read
+# is a function (not a module-load-time constant) so a test can monkeypatch the
+# underlying registry and prove the guard reads it at call time.
 
-# All validator names in the registry (from validators/_registry.py).
-_ALL_VALIDATORS: frozenset[str] = frozenset(
-    {"luhn", "npi", "iban", "vin", "fk_intact", "no_orphan_children"}
-)
+
+def _live_validators() -> set[str]:
+    """Return the live validator-name set from validators._registry._REGISTRY."""
+    from decoy_engine.validators._registry import _REGISTRY
+
+    return set(_REGISTRY.keys())
+
+
+def _live_checksum_schemes() -> set[str]:
+    """Return the live checksum-scheme set from checksums._VALIDATORS."""
+    from decoy_engine.checksums import _VALIDATORS
+
+    return set(_VALIDATORS.keys())
+
+
+def _config_declared_scalar_strategies(manifest: Any) -> set[str]:
+    """Return the set of mask-column `strategy` values in a job's LIVE config.
+
+    Scans `manifest.config["tables"][*]["columns"][*]["strategy"]` (mask
+    tables only; generate tables have `generate_columns`, not `columns`, and
+    are covered by the separate generate-type axis). "from_parent" is an FK
+    marker, not a SCALAR_HANDLERS key, and is excluded here exactly as the
+    per-job `check_job_strategy_coverage` and the old manifest-list scan both
+    already excluded it -- this keeps the two axes comparable.
+
+    This is the ground-truth source for the scalar-strategy coverage axis
+    (TH-3.1 / P1-7): the same config dict `run_pipeline` executes, not a
+    hand-maintained list that can drift from it.
+    """
+    declared: set[str] = set()
+    for t in manifest.config.get("tables", []):
+        if not isinstance(t, dict):
+            continue
+        for col in t.get("columns", []):
+            if isinstance(col, dict) and "strategy" in col and col["strategy"] != "from_parent":
+                declared.add(col["strategy"])
+    return declared
+
+
+def _assert_declared_matches_config(manifest: Any) -> None:
+    """Assert a job's declared `strategy_coverage` list == its config-derived set.
+
+    TH-3.1 (P1-7): demotes the manifest `strategy_coverage` list from
+    authoritative source to assertion TARGET. Red-first tooth this guards
+    against: delete a strategy's only column from `manifest.config` while
+    leaving the (now-stale) strategy name in `invariants.strategy_coverage`
+    -- the config-derived set no longer contains it, the declared list still
+    does, and this assertion fails naming the exact mismatch.
+
+    Args:
+        manifest: A FlightManifest (or duck-typed equivalent) with `.job_name`,
+            `.config`, and `.invariants.strategy_coverage`.
+
+    Raises:
+        AssertionError: If the declared list and the config-derived set differ
+            in either direction (stale entry OR a config strategy missing from
+            the declared list).
+    """
+    declared_list = {s for s in manifest.invariants.strategy_coverage if s != "from_parent"}
+    config_derived = _config_declared_scalar_strategies(manifest)
+    assert declared_list == config_derived, (
+        f"[{manifest.job_name}] strategy_coverage manifest list does not match "
+        f"the LIVE config-derived strategy set. "
+        f"declared={sorted(declared_list)} config_derived={sorted(config_derived)}. "
+        f"stale_in_declared={sorted(declared_list - config_derived)} "
+        f"missing_from_declared={sorted(config_derived - declared_list)}. "
+        f"The manifest strategy_coverage list is an assertion TARGET (TH-3.1), "
+        f"not the source of truth: update it to match the actual column "
+        f"strategies in manifest.config['tables'][*]['columns']."
+    )
+
+
+def _live_generate_types() -> set[str]:
+    """Return the live generate-type set from config._tables.GENERATE_TYPES.
+
+    GENERATE_TYPES is derived from the GenerateColumnConfig.type Literal (the
+    validation authority the generation.synthesize dispatch mirrors), so it is
+    the live source for the generate-type axis.
+    """
+    from decoy_engine.config import _tables
+
+    return set(_tables.GENERATE_TYPES)
 
 
 # ---------------------------------------------------------------------------
@@ -227,13 +346,19 @@ def check_suite_strategy_coverage(
     live_keys: set[str] = set(SCALAR_HANDLERS.keys())
 
     # -----------------------------------------------------------------------
-    # 1. SCALAR_HANDLERS strategy coverage
+    # 1. SCALAR_HANDLERS strategy coverage (TH-3.1 / P1-7: config-derived, not
+    #    the hand-maintained manifest list). Each job's declared
+    #    strategy_coverage list is asserted to match its OWN config-derived
+    #    set (assertion target, not source of truth) BEFORE the union is
+    #    computed, so a per-job drift is named precisely rather than only
+    #    surfacing as a suite-wide uncovered/extra mismatch.
     # -----------------------------------------------------------------------
+    for m in all_manifests:
+        _assert_declared_matches_config(m)
+
     declared_union: set[str] = set()
     for m in all_manifests:
-        for s in m.invariants.strategy_coverage:
-            if s != "from_parent":  # FK marker, not a handler
-                declared_union.add(s)
+        declared_union |= _config_declared_scalar_strategies(m)
 
     expected_covered = live_keys - set(_STRATEGY_ALLOWLIST.keys())
     uncovered = expected_covered - declared_union
@@ -265,7 +390,7 @@ def check_suite_strategy_coverage(
                     if isinstance(gcol, dict) and "type" in gcol:
                         gen_declared.add(gcol["type"])
 
-    gen_expected = _ALL_GENERATE_TYPES - set(_GENERATE_TYPE_ALLOWLIST.keys())
+    gen_expected = _live_generate_types() - set(_GENERATE_TYPE_ALLOWLIST.keys())
     gen_uncovered = gen_expected - gen_declared
     assert not gen_uncovered, (
         f"strategy_coverage guard: generate-column type(s) uncovered and not "
@@ -282,7 +407,7 @@ def check_suite_strategy_coverage(
         for cs in m.invariants.checksums:
             checksum_declared.add(cs.scheme)
 
-    checksum_expected = _ALL_CHECKSUM_SCHEMES - set(_CHECKSUM_SCHEME_ALLOWLIST.keys())
+    checksum_expected = _live_checksum_schemes() - set(_CHECKSUM_SCHEME_ALLOWLIST.keys())
     checksum_uncovered = checksum_expected - checksum_declared
     assert not checksum_uncovered, (
         f"strategy_coverage guard: checksum scheme(s) uncovered and not "
@@ -321,7 +446,7 @@ def check_suite_strategy_coverage(
             if isinstance(v, dict) and "name" in v:
                 validators_declared.add(v["name"])
 
-    val_expected = _ALL_VALIDATORS - set(_VALIDATOR_ALLOWLIST.keys())
+    val_expected = _live_validators() - set(_VALIDATOR_ALLOWLIST.keys())
     val_uncovered = val_expected - validators_declared
     assert not val_uncovered, (
         f"strategy_coverage guard: validator(s) uncovered and not allowlisted: "
@@ -368,14 +493,21 @@ def check_suite_strategy_coverage(
     val_covered = sorted(validators_declared)
     val_allowlisted = sorted(_VALIDATOR_ALLOWLIST.keys())
 
+    # Live registry totals (P0-2 / TH-1.2): the guard reports the true live
+    # counts so a summary reader can confirm coverage+allowlist == live.
+    live_gen = len(_live_generate_types())
+    live_checksums = len(_live_checksum_schemes())
+    live_validators = len(_live_validators())
+
     return (
-        f"strategies covered={len(covered)} allowlisted={len(allowlisted)} "
-        f"({','.join(covered)}) | "
-        f"generate_types covered={len(gen_covered)} allowlisted={len(gen_allowlisted)} | "
-        f"checksums covered={len(checksum_declared)} "
+        f"strategies live={len(live_keys)} covered={len(covered)} "
+        f"allowlisted={len(allowlisted)} ({','.join(covered)}) | "
+        f"generate_types live={live_gen} covered={len(gen_covered)} "
+        f"allowlisted={len(gen_allowlisted)} | "
+        f"checksums live={live_checksums} covered={len(checksum_declared)} "
         f"allowlisted={len(_CHECKSUM_SCHEME_ALLOWLIST)} | "
         f"corpora covered={len(corpora_declared)}/4 | "
-        f"validators covered={len(val_covered)} "
+        f"validators live={live_validators} covered={len(val_covered)} "
         f"allowlisted={len(val_allowlisted)} | "
         f"builtins covered={sorted(builtins_declared)}"
     )

@@ -63,7 +63,16 @@ class TableSpec(BaseModel):
 
     name: str
     kind: TableKindLiteral
-    row_count: int = Field(ge=1)
+    # ge=0 (TH-3.3 / P1-10): the engine's own generate-table validator accepts
+    # row_count=0 (config._pipeline.py requires only a non-negative integer),
+    # so a 0-row GENERATE table is a real, engine-supported shape worth
+    # exercising (Job E's empty_table). The field floor is relaxed for both
+    # kinds to keep one shared validator, but a 0-row MASK table is rejected in
+    # _row_count_zero_only_for_generate below: on such a table every
+    # value-changing/shape invariant is vacuous (empty-set comparisons), so it
+    # would pass green with nothing asserted -- exactly the false-green this
+    # program closes. Only generate legitimately has no source rows.
+    row_count: int = Field(ge=0)
     # Required for mask tables; None for generate tables (no source to build).
     source_builder: str | None = Field(
         default=None,
@@ -76,6 +85,18 @@ class TableSpec(BaseModel):
             raise ValueError(
                 f"TableSpec {self.name!r}: kind='mask' requires a source_builder. "
                 "Generate tables (kind='generate') may omit source_builder."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _row_count_zero_only_for_generate(self) -> TableSpec:
+        # A 0-row mask table makes every value-changing/shape invariant vacuous,
+        # so it would pass green with nothing asserted. Only a generate table
+        # (which legitimately has no source rows) may declare row_count=0.
+        if self.row_count == 0 and self.kind != "generate":
+            raise ValueError(
+                f"TableSpec {self.name!r}: row_count=0 is only allowed for "
+                "kind='generate'; a 0-row mask table asserts nothing."
             )
         return self
 
@@ -387,7 +408,9 @@ class InvariantSpec(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    # 6.1 Determinism: require byte-identical output across two pipeline reruns.
+    # 6.1 Determinism: require value-equal output across two pipeline reruns
+    # (schema + to_pydict() + quality_metrics minus timing keys; not a byte
+    # comparison -- TH-2.2 doc correction).
     determinism: bool = True
 
     # 6.4 FK integrity: per-relationship orphan count + policy assertions.

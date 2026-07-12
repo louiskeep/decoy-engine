@@ -45,28 +45,39 @@ import pytest
 from pydantic import ValidationError
 
 from testflight._coverage import check_suite_strategy_coverage
+from testflight._evaluate import _masked_correlation_result, evaluate_invariants
 from testflight._invariants import (
     FIXED_TS,
     check_chapter_preserve,
+    check_checksums,
     check_computed_columns,
     check_correlation_through_masking,
+    check_determinism,
     check_distribution_generate,
     check_distribution_mask,
     check_fk_integrity,
+    check_generate_row_count,
     check_quarantine,
     check_remap_masks_orphan,
+    check_safe_harbor,
     check_sentinels,
     check_value_changing_not_passthrough,
 )
 from testflight._spec import (
     ChapterPreserveSpec,
+    ChecksumSpec,
     ColumnDistributionSpec,
     ComputedColumnSpec,
     FKIntegritySpec,
+    FlightManifest,
+    InvariantSpec,
+    MaskedCorrelationSpec,
     QuarantineSpec,
     RelationshipEndSpec,
     RelationshipSpec,
+    SafeHarborSpec,
     SentinelSpec,
+    TableSpec,
 )
 
 pytestmark = pytest.mark.testflight
@@ -867,6 +878,30 @@ class TestComputedColumnTeeth:
             check_computed_columns("formula_follow_bad", spec_wrong, result)
 
 
+class TestSpecValidationTeeth:
+    """Mutation controls for TableSpec cross-field validators."""
+
+    def test_zero_row_mask_table_rejected(self) -> None:
+        """A 0-row MASK table asserts nothing (vacuous invariants) -> reject.
+
+        Only generate tables legitimately have no source rows; a 0-row mask
+        table would pass every value-changing/shape check green with empty-set
+        comparisons. Guards the ge=0 relaxation from TH-3.3 (dennis LOW-1).
+        """
+        with pytest.raises(ValidationError, match="row_count=0 is only allowed"):
+            TableSpec(name="t", kind="mask", row_count=0, source_builder="fixture.build_t")
+
+    def test_zero_row_generate_table_allowed(self) -> None:
+        """A 0-row GENERATE table is a real engine-supported shape (Job E)."""
+        spec = TableSpec(name="empty_table", kind="generate", row_count=0)
+        assert spec.row_count == 0
+
+    def test_nonzero_mask_table_still_allowed(self) -> None:
+        """The new validator must not reject ordinary >=1-row mask tables."""
+        spec = TableSpec(name="t", kind="mask", row_count=5, source_builder="fixture.build_t")
+        assert spec.row_count == 5
+
+
 class TestCoverageRotTeeth:
     """Mutation controls for the strategy-coverage guard."""
 
@@ -921,6 +956,355 @@ class TestCoverageRotTeeth:
         # manifest's strategy_coverage and not in _STRATEGY_ALLOWLIST -> RAISES.
         with pytest.raises(AssertionError, match=fake_key):
             check_suite_strategy_coverage(all_manifests)
+
+    def test_fake_validator_detected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Registering a fake validator in the LIVE registry trips the guard (TH-1.2).
+
+        RED: monkeypatch.setitem injects "zz_fake_validator" into the live
+        validators._registry._REGISTRY. It is exercised by no job and absent
+        from _VALIDATOR_ALLOWLIST, so the coverage guard -- which now reads the
+        live registry, not a static frozenset -- must raise naming it. This
+        proves the validator axis is derived live (P0-2 anti-rot).
+        """
+        from decoy_engine.validators import _registry
+        from testflight._runner import discover_jobs, load_job
+
+        all_manifests = [load_job(m) for m in discover_jobs()]
+        check_suite_strategy_coverage(all_manifests)  # baseline passes
+
+        fake = "zz_fake_validator"
+        assert fake not in _registry._REGISTRY
+        monkeypatch.setitem(_registry._REGISTRY, fake, lambda *a, **k: ())
+        with pytest.raises(AssertionError, match=fake):
+            check_suite_strategy_coverage(all_manifests)
+
+    def test_fake_checksum_scheme_detected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Registering a fake checksum scheme in the LIVE registry trips the guard (TH-1.2).
+
+        RED: inject "zz_fake_scheme" into the live checksums._VALIDATORS dict.
+        Not declared by any job, not in _CHECKSUM_SCHEME_ALLOWLIST -> the guard
+        (reading the live scheme registry) raises. Proves the checksum axis is
+        live.
+        """
+        from decoy_engine import checksums
+        from testflight._runner import discover_jobs, load_job
+
+        all_manifests = [load_job(m) for m in discover_jobs()]
+        check_suite_strategy_coverage(all_manifests)  # baseline passes
+
+        fake = "zz_fake_scheme"
+        assert fake not in checksums._VALIDATORS
+        monkeypatch.setitem(checksums._VALIDATORS, fake, lambda v: True)
+        with pytest.raises(AssertionError, match=fake):
+            check_suite_strategy_coverage(all_manifests)
+
+    def test_fake_generate_type_detected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Registering a fake generate type in the LIVE registry trips the guard (TH-1.2).
+
+        RED: extend the live config._tables.GENERATE_TYPES set (derived from the
+        GenerateColumnConfig.type Literal) with "zz_fake_gen". Not declared by
+        any job, not in _GENERATE_TYPE_ALLOWLIST -> the guard (reading the live
+        generate-type registry) raises. Proves the generate-type axis is live.
+        """
+        from decoy_engine.config import _tables
+        from testflight._runner import discover_jobs, load_job
+
+        all_manifests = [load_job(m) for m in discover_jobs()]
+        check_suite_strategy_coverage(all_manifests)  # baseline passes
+
+        fake = "zz_fake_gen"
+        assert fake not in _tables.GENERATE_TYPES
+        monkeypatch.setattr(_tables, "GENERATE_TYPES", _tables.GENERATE_TYPES | {fake})
+        with pytest.raises(AssertionError, match=fake):
+            check_suite_strategy_coverage(all_manifests)
+
+    def test_config_drift_from_declared_list_detected(self) -> None:
+        """TH-3.1 (P1-7): a manifest strategy_coverage list stale vs its config raises.
+
+        RED: the scalar-strategy coverage axis previously trusted the hand-
+        maintained `invariants.strategy_coverage` list as authoritative. Deleting
+        a strategy's only column from a job's `config` while leaving the name in
+        that job's declared list used to pass silently (the list itself never
+        changed). Job A's `members.dob` column is the ONLY `date_shift` column in
+        Job A's config (Job B also uses date_shift on a different table/job, so
+        the SUITE-WIDE union would still be covered -- proving this is a genuine
+        PER-JOB check, not a restatement of the suite-union guard).
+
+        Deep-copies Job A's real manifest, drops the `dob` column from the copy's
+        config (config-derived set for Job A loses "date_shift"), and leaves
+        `invariants.strategy_coverage` untouched (still lists "date_shift"). The
+        per-job assertion `_assert_declared_matches_config` must raise naming the
+        stale entry.
+
+        GREEN (implicit): the unmutated manifest set passes at the top of this
+        test and in the full suite run.
+        """
+        from testflight._runner import discover_jobs, load_job
+
+        all_manifests = [load_job(m) for m in discover_jobs()]
+        check_suite_strategy_coverage(all_manifests)  # baseline passes
+
+        job_a = next(m for m in all_manifests if m.job_name == "a_healthcare_claims")
+        assert "date_shift" in job_a.invariants.strategy_coverage
+        date_shift_cols = [
+            (t["name"], c["name"])
+            for t in job_a.config["tables"]
+            for c in t.get("columns", [])
+            if c.get("strategy") == "date_shift"
+        ]
+        assert date_shift_cols == [("members", "dob")], (
+            f"Expected exactly one date_shift column (members.dob) in Job A's "
+            f"config; found {date_shift_cols}. Tooth assumption changed -- "
+            f"pick a different sole-use strategy/column to mutate."
+        )
+
+        mutated = job_a.model_copy(deep=True)
+        for t in mutated.config["tables"]:
+            if t["name"] == "members":
+                t["columns"] = [c for c in t["columns"] if c.get("name") != "dob"]
+
+        mutated_manifests = [mutated if m is job_a else m for m in all_manifests]
+        with pytest.raises(AssertionError, match="date_shift"):
+            check_suite_strategy_coverage(mutated_manifests)
+
+
+# ---------------------------------------------------------------------------
+# TH-1.1: value-changing-passthrough teeth (P0-1)
+# ---------------------------------------------------------------------------
+
+
+class TestValueChangingPassthroughTeeth:
+    """Mutation controls for the value-changing-passthrough guard (TH-1.1).
+
+    The guard runs for every mask column whose strategy is value-changing
+    (fpe, hash, code_set). Two failure modes:
+      - COMPLETE no-op: output value-set equals source value-set (the charset
+        covers nothing) -> the set check raises.
+      - PARTIAL passthrough (fpe only): a charset that covers *some* characters
+        (e.g. alphanum on uppercase-plus-digit values) permutes one character
+        while leaving the rest verbatim; every whole value differs so the set
+        check passes, but the positional-retention check raises. This is the
+        exact members.mrn (charset=alphanum) live bug.
+    """
+
+    def test_complete_noop_detected(self) -> None:
+        """An fpe column whose output equals its source (complete no-op) raises.
+
+        RED: output value-set == source value-set. A value-changing strategy
+        that changes nothing is a silent passthrough; the set check catches it.
+        """
+        src = pd.DataFrame({"mrn": [f"ID{i:04d}" for i in range(50)]})
+        out = src.copy()  # complete no-op: identical
+        with pytest.raises(AssertionError, match="value-changing-mask passthrough"):
+            check_value_changing_not_passthrough("control", "members", "mrn", "fpe", src, out)
+
+    def test_fpe_partial_passthrough_detected(self) -> None:
+        """An fpe column that leaks most characters in position raises (mrn bug).
+
+        RED: source values are uppercase-plus-digit (like the fixture MRNs);
+        the output permutes ONLY the two digits and leaves every uppercase
+        letter in place. Each whole value differs (so the set check passes) but
+        the six uppercase positions are retained verbatim across all rows, so
+        the per-position leak check raises. This reproduces the charset=alphanum
+        uppercase-MRN leak.
+        """
+        # 8-char values: 6 uppercase letters (positions 0-5) + 2 digits
+        # (positions 6-7). The output keeps every uppercase letter and changes
+        # only the two digits, so positions 0-5 each have identical_fraction=1.0
+        # (informative: k=26 distinct uppercase) -> the per-position check fires.
+        rng = np.random.default_rng(3)
+        letters = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+        src_vals: list[str] = []
+        out_vals: list[str] = []
+        for _ in range(60):
+            body = "".join(rng.choice(letters, 6).tolist())
+            d0, d1 = int(rng.integers(0, 5)), int(rng.integers(0, 5))
+            src_vals.append(f"{body}{d0}{d1}")
+            # change the two digits (uppercase preserved verbatim)
+            out_vals.append(f"{body}{d0 + 4}{d1 + 4}")
+        src = pd.DataFrame({"mrn": src_vals})
+        out = pd.DataFrame({"mrn": out_vals})
+        with pytest.raises(AssertionError, match="partial-passthrough"):
+            check_value_changing_not_passthrough("control", "members", "mrn", "fpe", src, out)
+
+    def test_narrow_minority_leak_detected(self) -> None:
+        """A MINORITY of verbatim positions among many permuted ones raises (TH-1).
+
+        This is dennis's concrete false-negative that shipped GREEN under the
+        old mean-over-positions metric: an "AB123456"-shaped column (2 per-
+        subject-varying uppercase + 6 digits) masked with charset:alphanum. The
+        two uppercase characters leak VERBATIM in every row (per-position
+        identical fraction 1.0) while the six digits permute (~0.1 each).
+
+        RED-BEFORE / GREEN-AFTER pinning: the old metric averaged the eight
+        positions to ~(2*1.0 + 6*0.1)/8 = 0.33, under the 0.5 floor, so two
+        informative PII characters per subject leaked and the gate stayed green.
+        The per-position metric flags position 0 (identical 1.0, k=26 distinct
+        uppercase, well above the 1/26 genuine baseline) and raises. Two
+        informative positions leaking can no longer ship green at any value
+        width.
+        """
+        rng = np.random.default_rng(11)
+        upper = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+        digits = list("0123456789")
+        src_vals: list[str] = []
+        out_vals: list[str] = []
+        for _ in range(200):
+            # 2 varying uppercase (out-of-charset for alphanum -> verbatim) +
+            # 6 varying digits (in-charset -> permuted).
+            u = "".join(rng.choice(upper, 2).tolist())
+            d = [int(x) for x in rng.choice(digits, 6).tolist()]
+            src_vals.append(u + "".join(str(x) for x in d))
+            # uppercase preserved verbatim; digits permuted (+3 mod 10).
+            out_vals.append(u + "".join(str((x + 3) % 10) for x in d))
+        src = pd.DataFrame({"acct": src_vals})
+        out = pd.DataFrame({"acct": out_vals})
+        with pytest.raises(AssertionError, match="partial-passthrough"):
+            check_value_changing_not_passthrough("control", "members", "acct", "fpe", src, out)
+
+    def test_narrow_leak_corrected_passes(self) -> None:
+        """The SAME narrow shape passes once every position is permuted (charset fixed).
+
+        GREEN-after companion to test_narrow_minority_leak_detected: with the
+        charset corrected (ALPHANUM), the two uppercase characters are now
+        in-charset and permuted too, so no position is retained verbatim. The
+        guard must NOT raise -- proving the fix is a targeted leak detector, not
+        a blanket rejection of the shape.
+        """
+        rng = np.random.default_rng(11)
+        upper = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+        digits = list("0123456789")
+        src_vals: list[str] = []
+        out_vals: list[str] = []
+        for _ in range(200):
+            u = [x for x in rng.choice(upper, 2).tolist()]
+            d = [int(x) for x in rng.choice(digits, 6).tolist()]
+            src_vals.append("".join(u) + "".join(str(x) for x in d))
+            # ALL positions permuted: uppercase shifted A->B..Z->A, digits +3.
+            u_out = "".join(chr((ord(c) - 65 + 1) % 26 + 65) for c in u)
+            out_vals.append(u_out + "".join(str((x + 3) % 10) for x in d))
+        src = pd.DataFrame({"acct": src_vals})
+        out = pd.DataFrame({"acct": out_vals})
+        # Must NOT raise: every informative position is permuted.
+        check_value_changing_not_passthrough("control", "members", "acct", "fpe", src, out)
+
+    def test_low_entropy_structural_position_not_flagged(self) -> None:
+        """A deterministically-preserved LOW-ENTROPY position is not a leak (no false positive).
+
+        The live members.npi column exposes this trap: NPI numbers always start
+        with digit 1 or 2 (source alphabet k=2 at position 0), and the
+        checksum-aware FPE legitimately preserves that leading digit
+        (identical_fraction ~1.0 there) while permuting every other position.
+        That is FORMAT, not a subject-identifying character, so the informative-
+        alphabet gate (k >= 4) must exclude it and the guard must NOT raise.
+        """
+        rng = np.random.default_rng(5)
+        digits = list("0123456789")
+        src_vals: list[str] = []
+        out_vals: list[str] = []
+        for _ in range(200):
+            lead = rng.choice(["1", "2"]).item()  # k=2 leading digit
+            body = [int(x) for x in rng.choice(digits, 9).tolist()]
+            src_vals.append(lead + "".join(str(x) for x in body))
+            # lead preserved verbatim (structural); body fully permuted.
+            out_vals.append(lead + "".join(str((x + 5) % 10) for x in body))
+        src = pd.DataFrame({"npi": src_vals})
+        out = pd.DataFrame({"npi": out_vals})
+        # Must NOT raise: position 0 is k=2 (excluded); all other positions permute.
+        check_value_changing_not_passthrough("control", "members", "npi", "fpe", src, out)
+
+    def test_small_table_emits_skip_not_silent_pass(self) -> None:
+        """An fpe column with < _FPE_RETENTION_MIN_ROWS rows returns an explicit SKIP (LOW-1).
+
+        A silent pass on a small table would let the positional privacy floor
+        evaporate. The guard runs the set check (still enforced) but reports a
+        distinct SKIP status for the positional check instead of a silent PASS.
+        """
+        src = pd.DataFrame({"mrn": [f"AB{i:02d}CD" for i in range(5)]})  # 5 < 20
+        out = pd.DataFrame({"mrn": [f"zx{i:02d}wq" for i in range(5)]})
+        status = check_value_changing_not_passthrough("control", "members", "mrn", "fpe", src, out)
+        assert status.startswith("SKIP"), f"expected an explicit SKIP status, got {status!r}"
+
+    def test_good_fpe_passes(self) -> None:
+        """A genuinely permuted fpe column passes both checks (no over-assertion).
+
+        Every character position is remapped (retention ~0), and the value-set
+        differs. The guard must NOT raise.
+        """
+        src = pd.DataFrame({"mrn": [f"AB{i:04d}CD" for i in range(60)]})
+        # Fully different values, no in-position character retained.
+        out = pd.DataFrame({"mrn": [f"zx{(i * 7) % 10000:04d}wq"[::-1] for i in range(60)]})
+        check_value_changing_not_passthrough("control", "members", "mrn", "fpe", src, out)
+
+
+# ---------------------------------------------------------------------------
+# TH-1.3: independent computed-column recomputation (P0-3)
+# ---------------------------------------------------------------------------
+
+
+class TestIndependentRecomputationTeeth:
+    """Mutation controls proving row-wise recomputation is engine-independent.
+
+    Before TH-1.3 the harness recomputed row-wise formulas with the engine's
+    own evaluate(), so a bug in that shared evaluator produced the same wrong
+    value on both sides and the invariant passed vacuously. The harness now uses
+    an independent Python-ast evaluator, so an engine-evaluator bug is caught.
+    """
+
+    def test_independent_of_engine_evaluator(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A sabotaged engine evaluator does not blind the harness (TH-1.3).
+
+        RED-first construction: monkeypatch the engine's evaluate() to always
+        return 0 (a stand-in for any shared-evaluator bug). The stored output
+        column is what that buggy engine would emit (all zeros). A CIRCULAR
+        harness would recompute with the same evaluate(), get 0, and match the
+        stored 0 -> pass (blind spot). The independent ast evaluator recomputes
+        qty * unit_price = the true nonzero values -> mismatch -> RAISES.
+        """
+        import decoy_engine.expressions._lark_parser as lp
+
+        # NARRATIVE-ONLY patch (LOW-2): the harness recompute path in _computed.py
+        # now calls only compile_expr (smoke check) and its OWN ast evaluator --
+        # it no longer calls lp.evaluate at all, so this patch does not alter the
+        # code under test. It is retained to make the blind-spot argument concrete:
+        # the stored all-zeros output is exactly what this sabotaged evaluator
+        # would emit, so a hypothetical same-evaluator harness would agree and
+        # pass. The independent ast evaluator recomputes the true nonzero values
+        # and raises -- which is what the assertion below proves.
+        monkeypatch.setattr(lp, "evaluate", lambda compiled, ctx: 0)
+
+        tbl = pa.table(
+            {"qty": [3, 5, 2], "unit_price": [10.0, 20.0, 15.0], "order_total": [0.0, 0.0, 0.0]}
+        )
+        result = SimpleNamespace(outputs={"orders": tbl}, quality_metrics={})
+        spec = [
+            ComputedColumnSpec(
+                table="orders", column="order_total", formula="qty * unit_price", branch_count=0
+            )
+        ]
+        with pytest.raises(AssertionError, match="orders.order_total"):
+            check_computed_columns("th13_control", spec, result)
+
+    def test_case_when_independent_recomputation(self) -> None:
+        """A wrong case_when branch value is caught by the independent evaluator.
+
+        RED: stored tier uses the wrong threshold labels; the independent
+        evaluator recomputes the correct case_when result and the mismatch
+        raises. GREEN: the correct output (below) passes.
+        """
+        formula = 'case_when(order_total >= 1000.0, "premium", order_total >= 200.0, "standard", "economy")'
+        # order_total 1500 -> premium, 500 -> standard, 50 -> economy
+        good = pa.table(
+            {"order_total": [1500.0, 500.0, 50.0], "tier": ["premium", "standard", "economy"]}
+        )
+        spec = [ComputedColumnSpec(table="orders", column="tier", formula=formula, branch_count=3)]
+        check_computed_columns("th13_good", spec, SimpleNamespace(outputs={"orders": good}))
+
+        bad = pa.table(
+            {"order_total": [1500.0, 500.0, 50.0], "tier": ["economy", "economy", "economy"]}
+        )
+        with pytest.raises(AssertionError, match="orders.tier"):
+            check_computed_columns("th13_bad", spec, SimpleNamespace(outputs={"orders": bad}))
 
 
 # ---------------------------------------------------------------------------
@@ -3107,6 +3491,185 @@ class TestMaskedCorrelationTeeth:
 
 
 # ---------------------------------------------------------------------------
+# TH-3.4 (P1-9): masked_correlation multi-family mutation controls
+# ---------------------------------------------------------------------------
+
+
+class TestMaskedCorrelationMultiFamilyTeeth:
+    """Prove the masked_correlation tooth bites across MULTIPLE strategy families.
+
+    Before TH-3.4, `masked_correlations` had exactly one entry in the whole
+    suite: Job B's fpe-fpe (cat_code, risk_flag) pair. Job A's ONLY declared
+    joint was (amount_band, diagnosis_chapter) in `distribution.joint_columns`
+    -- both PASSTHROUGH, so source == output for both columns and the "check"
+    is a tautology that tests the crosstab-TVD metric, not a mask. TH-3.4
+    added a hash-hash pair (Job C: dept_hash/division_hash) and a code_set-
+    chapter pair (Job A: diagnosis/diagnosis_secondary).
+
+    Each control here builds the REAL masked output using the engine's own
+    primitives (`decoy_engine.kernel.hash_array`, `decoy_engine.transforms
+    .code_set.apply_code_set` -- the SAME functions the hash and code_set
+    strategy handlers call), on the REAL fixture data for these jobs, so the
+    faithful case is grounded in the actual masking behaviour rather than a
+    hand-rolled relabeling dict. Each then independently shuffles ONE masked
+    column (simulating a masking bug that decorrelates the pair) and asserts
+    `check_correlation_through_masking` RAISES -- proving the tooth bites for
+    TWO MORE families beyond fpe, on data shaped like the real jobs.
+    """
+
+    def test_hash_hash_destroyed_raises(self) -> None:
+        """Job C's (dept_hash, division_hash) pair: faithful passes, shuffled raises.
+
+        Builds the REAL hash tokens via `hash_array` (the exact function
+        `HashStrategyHandler.run` calls) with the SAME namespaces declared in
+        jobs/c_hr_selfref/manifest.yaml (dept_hash_ns, division_hash_ns).
+        department fully determines division (fixture._DIVISION_MAP), so
+        v_src = 1.0; hash is a namespace-keyed relabeling with no truncation
+        (collision-astronomically-unlikely), so v_out == v_src on the
+        faithful output. Independently shuffling division_hash's masked
+        values destroys the pairing -> RAISES.
+        """
+        from decoy_engine.determinism import derive
+        from decoy_engine.kernel import hash_array
+        from testflight.jobs.c_hr_selfref import fixture as job_c_fixture
+
+        employees = job_c_fixture.build_employees(seed=44)
+        source_df = employees[["dept_hash", "division_hash"]].reset_index(drop=True)
+
+        job_seed = b"\x01" * 8
+        faithful_output = pd.DataFrame(
+            {
+                "dept_hash": hash_array(
+                    pa.array(source_df["dept_hash"]),
+                    seed=job_seed,
+                    namespace="dept_hash_ns",
+                    derive_func=derive,
+                ).to_pylist(),
+                "division_hash": hash_array(
+                    pa.array(source_df["division_hash"]),
+                    seed=job_seed,
+                    namespace="division_hash_ns",
+                    derive_func=derive,
+                ).to_pylist(),
+            }
+        )
+
+        # Faithful: real hash masking on both columns -> PASSES, near-zero drift.
+        result = check_correlation_through_masking(
+            "th34_hash_faithful_control",
+            "employees",
+            "dept_hash",
+            "division_hash",
+            source_df,
+            faithful_output,
+            tol=0.10,
+            min_assoc=0.50,
+            strategy_a="hash",
+            strategy_b="hash",
+        )
+        assert result["diff"] is not None and result["diff"] < 0.01, (
+            f"Faithful hash-hash pair: expected near-zero drift, got {result['diff']}."
+        )
+
+        # BUG: division_hash independently shuffled after masking -> destroys
+        # the joint structure -> RAISES.
+        rng = np.random.default_rng(11)
+        broken_output = faithful_output.copy()
+        broken_output["division_hash"] = rng.permutation(broken_output["division_hash"].to_numpy())
+
+        with pytest.raises(AssertionError, match="masked_correlation"):
+            check_correlation_through_masking(
+                "th34_hash_destroyed_control",
+                "employees",
+                "dept_hash",
+                "division_hash",
+                source_df,
+                broken_output,
+                tol=0.10,
+                min_assoc=0.0,
+                strategy_a="hash",
+                strategy_b="hash",
+            )
+
+    def test_code_set_chapter_destroyed_raises(self) -> None:
+        """Job A's (diagnosis, diagnosis_secondary) pair: faithful passes, shuffled raises.
+
+        Builds the REAL code_set/chapter_preserve masked output via
+        `apply_code_set` (the exact function `CodeSetHandler` calls) against
+        the shipped icd10 corpus, on the REAL Job A claims fixture.
+        diagnosis_secondary is drawn from the SAME icd10 chapter as diagnosis
+        (fixture.build_claims), giving a real (non-vacuous) source association
+        that survives two INDEPENDENT chapter_preserve masks (mirrors the
+        observed live full-pipeline diff of ~0.06 -- see
+        jobs/a_healthcare_claims/manifest.yaml masked_correlations). code_set
+        mask-mode selection depends only on (value, corpus) -- not job_seed or
+        column identity -- so a single value->masked-value map applies to
+        both columns identically, matching the engine's own per-value
+        determinism.
+        """
+        from decoy_engine.transforms.code_set import CodeSetConfig, apply_code_set
+        from testflight.jobs.a_healthcare_claims import fixture as job_a_fixture
+
+        claims = job_a_fixture.build_claims(seed=42)
+        source_df = claims[["diagnosis", "diagnosis_secondary"]].reset_index(drop=True)
+
+        cfg = CodeSetConfig(code_set="icd10", chapter_preserve=True)
+        job_seed = b"\x00" * 8
+        unique_codes = sorted(set(source_df["diagnosis"]) | set(source_df["diagnosis_secondary"]))
+        masked_map = {
+            v: apply_code_set(v, cfg, mode="mask", job_seed=job_seed) for v in unique_codes
+        }
+
+        faithful_output = pd.DataFrame(
+            {
+                "diagnosis": source_df["diagnosis"].map(masked_map),
+                "diagnosis_secondary": source_df["diagnosis_secondary"].map(masked_map),
+            }
+        )
+
+        # Faithful: real code_set/chapter_preserve masking on both columns ->
+        # PASSES within the manifest's declared tolerance (real observed drift
+        # ~0.06, well under tol=0.20 here).
+        result = check_correlation_through_masking(
+            "th34_code_set_faithful_control",
+            "claims",
+            "diagnosis",
+            "diagnosis_secondary",
+            source_df,
+            faithful_output,
+            tol=0.20,
+            min_assoc=0.30,
+            strategy_a="code_set",
+            strategy_b="code_set",
+        )
+        assert result["diff"] is not None and result["diff"] < 0.20
+
+        # BUG: diagnosis_secondary independently shuffled after masking ->
+        # destroys the joint structure -> RAISES. Third independent strategy
+        # family (fpe: Job B, hash: Job C, code_set: Job A) proving the tooth
+        # is not fpe-specific.
+        rng = np.random.default_rng(7)
+        broken_output = faithful_output.copy()
+        broken_output["diagnosis_secondary"] = rng.permutation(
+            broken_output["diagnosis_secondary"].to_numpy()
+        )
+
+        with pytest.raises(AssertionError, match="masked_correlation"):
+            check_correlation_through_masking(
+                "th34_code_set_destroyed_control",
+                "claims",
+                "diagnosis",
+                "diagnosis_secondary",
+                source_df,
+                broken_output,
+                tol=0.20,
+                min_assoc=0.0,
+                strategy_a="code_set",
+                strategy_b="code_set",
+            )
+
+
+# ---------------------------------------------------------------------------
 # Phase 3c: value-changing-mask passthrough tooth mutation controls
 # ---------------------------------------------------------------------------
 
@@ -3296,3 +3859,892 @@ class TestValueChangingMaskPassthroughTooth:
         check_value_changing_not_passthrough(
             "tooth_test", "customers", "customer_id", "fpe", source_df, output_df
         )
+
+
+# ---------------------------------------------------------------------------
+# TH-2.1 / TH-2.2: determinism mutation teeth
+# ---------------------------------------------------------------------------
+
+
+class TestDeterminismTeeth:
+    """Mutation controls for the determinism invariant family (TH-2.1 / TH-2.2).
+
+    Before this sprint the determinism family (unlike checksums and
+    safe_harbor) had NO mutation control at all -- no test proved
+    check_determinism actually raises on a genuine cross-run difference. The
+    controls below plant a difference between the two runs and assert the
+    check catches it, then prove the TH-2.2 hardening (schema compare, full
+    quality_metrics compare, timing-key exclusion) each add real bite without
+    introducing flakiness.
+    """
+
+    def test_mutated_second_run_detected(self) -> None:
+        """A single differing cell between the two runs must raise (TH-2.1).
+
+        RED: result_b's 'claims' table has row 2's amount changed relative to
+        result_a -- standing in for a hash-seed / set-iteration nondeterminism
+        bug that alters output on some rows. check_determinism must raise
+        naming the differing table.
+        """
+        tbl_a = pa.table({"id": [1, 2, 3], "amount": [10.0, 20.0, 30.0]})
+        tbl_b = pa.table({"id": [1, 2, 3], "amount": [10.0, 20.0, 31.0]})  # row 2 differs
+        result_a = SimpleNamespace(
+            outputs={"claims": tbl_a}, quality_metrics={"fidelity_reports": {}}
+        )
+        result_b = SimpleNamespace(
+            outputs={"claims": tbl_b}, quality_metrics={"fidelity_reports": {}}
+        )
+        with pytest.raises(AssertionError, match="claims"):
+            check_determinism("determinism_control", result_a, result_b)
+
+    def test_schema_drift_detected(self) -> None:
+        """A dtype-only drift between runs must raise (TH-2.2 / P1-5b).
+
+        RED: both runs carry IDENTICAL cell values (to_pydict() would agree:
+        pyarrow renders both int32 and int64 as plain Python ints), but
+        result_b's 'id' column is int64 while result_a's is int32 -- a
+        regression a to_pydict()-only comparison could never see. The schema
+        compare must catch it independently of the value compare.
+        """
+        tbl_a = pa.table({"id": pa.array([1, 2, 3], type=pa.int32())})
+        tbl_b = pa.table({"id": pa.array([1, 2, 3], type=pa.int64())})
+        assert tbl_a.to_pydict() == tbl_b.to_pydict(), (
+            "Fixture invariant: values must agree so only the schema differs."
+        )
+        result_a = SimpleNamespace(outputs={"members": tbl_a}, quality_metrics={})
+        result_b = SimpleNamespace(outputs={"members": tbl_b}, quality_metrics={})
+        with pytest.raises(AssertionError, match="schema differs"):
+            check_determinism("determinism_control_schema", result_a, result_b)
+
+    def test_quality_metrics_drift_detected(self) -> None:
+        """A quality_metrics difference OUTSIDE fidelity_reports must raise (TH-2.2 / P1-5c).
+
+        RED: fidelity_reports is identical (empty) on both sides -- the OLD
+        check (fidelity_reports-only) would have passed vacuously -- but the
+        'execution' block's execution_mode differs between runs. The full-
+        block compare must catch this drift the old narrower check could not.
+        """
+        tbl = pa.table({"id": [1, 2, 3]})
+        result_a = SimpleNamespace(
+            outputs={"members": tbl},
+            quality_metrics={
+                "fidelity_reports": {},
+                "execution": {"execution_mode": "full_frame"},
+            },
+        )
+        result_b = SimpleNamespace(
+            outputs={"members": tbl},
+            quality_metrics={
+                "fidelity_reports": {},
+                "execution": {"execution_mode": "sequential"},
+            },
+        )
+        with pytest.raises(AssertionError, match="quality_metrics differ"):
+            check_determinism("determinism_control_qm", result_a, result_b)
+
+    def test_timing_keys_ignored(self) -> None:
+        """Wall-clock timing-only differences must NOT raise (no false positive).
+
+        GREEN companion: quality_metrics differs ONLY in elapsed_ms /
+        timing_per_phase values -- real scheduler jitter that varies even for
+        a perfectly deterministic pipeline. Comparing these verbatim would
+        make the gate flaky; check_determinism must ignore them while still
+        comparing everything else exactly.
+        """
+        tbl = pa.table({"id": [1, 2, 3]})
+        result_a = SimpleNamespace(
+            outputs={"members": tbl},
+            quality_metrics={
+                "fidelity_reports": {},
+                "validation": {"validators": {"elapsed_ms": 5.2, "validators_run": 1}},
+                "quality_summary": {"timing_per_phase": {"post_validation_phase_ms": 3.1}},
+            },
+        )
+        result_b = SimpleNamespace(
+            outputs={"members": tbl},
+            quality_metrics={
+                "fidelity_reports": {},
+                "validation": {"validators": {"elapsed_ms": 9.7, "validators_run": 1}},
+                "quality_summary": {"timing_per_phase": {"post_validation_phase_ms": 4.4}},
+            },
+        )
+        # Must NOT raise: only timing keys differ.
+        check_determinism("determinism_control_timing", result_a, result_b)
+
+    def test_good_determinism_passes(self) -> None:
+        """Two byte-identical runs must NOT raise (no over-assertion)."""
+        tbl = pa.table({"id": [1, 2, 3], "amount": [10.0, 20.0, 30.0]})
+        result_a = SimpleNamespace(
+            outputs={"claims": tbl}, quality_metrics={"fidelity_reports": {"grade": "A"}}
+        )
+        result_b = SimpleNamespace(
+            outputs={"claims": tbl}, quality_metrics={"fidelity_reports": {"grade": "A"}}
+        )
+        check_determinism("determinism_control_good", result_a, result_b)
+
+
+# ---------------------------------------------------------------------------
+# TH-2.1 / TH-2.4: checksum mutation teeth
+# ---------------------------------------------------------------------------
+
+
+class TestChecksumTeeth:
+    """Mutation controls for the checksum invariant family (TH-2.1)."""
+
+    def test_corrupted_luhn_check_digit_detected(self) -> None:
+        """A Luhn-valid number with a flipped last digit must raise.
+
+        RED: "4111111111111111" is a valid Luhn test PAN (standard Visa test
+        number). Flipping its last digit breaks the check digit.
+        check_checksums must raise.
+        """
+        valid = "4111111111111111"
+        corrupted = valid[:-1] + str((int(valid[-1]) + 1) % 10)
+        tbl = pa.table({"card_no": [corrupted]})
+        result = SimpleNamespace(outputs={"members": tbl})
+        spec = [ChecksumSpec(table="members", column="card_no", scheme="luhn")]
+        with pytest.raises(AssertionError, match="checksums"):
+            check_checksums("checksum_control", spec, result)
+
+    def test_corrupted_npi_check_digit_detected(self) -> None:
+        """An NPI with a corrupted check digit must raise.
+
+        RED: "1234567893" is a valid NPI (CMS NPPES example: body '123456789'
+        -> check '3'). Changing the check digit breaks it.
+        """
+        valid_npi = "1234567893"
+        corrupted = valid_npi[:-1] + str((int(valid_npi[-1]) + 1) % 10)
+        tbl = pa.table({"npi": [corrupted]})
+        result = SimpleNamespace(outputs={"members": tbl})
+        spec = [ChecksumSpec(table="members", column="npi", scheme="npi")]
+        with pytest.raises(AssertionError, match="checksums"):
+            check_checksums("checksum_control_npi", spec, result)
+
+    def test_good_checksum_passes(self) -> None:
+        """Valid Luhn and NPI values must NOT raise (no over-assertion)."""
+        tbl = pa.table({"card_no": ["4111111111111111"], "npi": ["1234567893"]})
+        result = SimpleNamespace(outputs={"members": tbl})
+        spec = [
+            ChecksumSpec(table="members", column="card_no", scheme="luhn"),
+            ChecksumSpec(table="members", column="npi", scheme="npi"),
+        ]
+        check_checksums("checksum_control_good", spec, result)
+
+
+# ---------------------------------------------------------------------------
+# TH-2.4: independent checksum validation teeth
+# ---------------------------------------------------------------------------
+
+
+class TestIndependentChecksumValidationTeeth:
+    """Mutation controls proving checksum validation is engine-independent (TH-2.4).
+
+    Before TH-2.4 the harness called decoy_engine.checksums.validate directly,
+    so a bug that broke BOTH the engine's check-digit computation AND its own
+    validate() function the same way would agree with itself and ship green
+    (the engine grading its own homework). The harness now validates luhn/npi
+    directly against python-stdnum, bypassing decoy_engine.checksums entirely.
+    """
+
+    def test_independent_of_engine_checksum_module(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A sabotaged engine validate() does not blind the harness.
+
+        RED-first construction: monkeypatch decoy_engine.checksums.validate to
+        always return True (a stand-in for a compute/validate bug that agrees
+        with itself). A genuinely corrupted Luhn value would pass the
+        sabotaged engine validator but must still be caught, because
+        check_checksums no longer calls decoy_engine.checksums.validate at all.
+        """
+        import decoy_engine.checksums as engine_checksums
+
+        monkeypatch.setattr(engine_checksums, "validate", lambda scheme, value: True)
+
+        valid = "4111111111111111"
+        corrupted = valid[:-1] + str((int(valid[-1]) + 1) % 10)
+        tbl = pa.table({"card_no": [corrupted]})
+        result = SimpleNamespace(outputs={"members": tbl})
+        spec = [ChecksumSpec(table="members", column="card_no", scheme="luhn")]
+        with pytest.raises(AssertionError, match="checksums"):
+            check_checksums("th24_control", spec, result)
+
+    def test_unimplemented_scheme_raises_not_silently_trusts_engine(self) -> None:
+        """A scheme with no independent harness implementation fails loudly.
+
+        Proves the harness never silently falls back to
+        decoy_engine.checksums.validate for a scheme it has not independently
+        implemented -- that would reintroduce the exact anti-pattern TH-2.4
+        closes. 'iban' has no harness-side implementation (TH-2.4 scopes to
+        luhn/npi, the two schemes any current job declares).
+        """
+        tbl = pa.table({"acct": ["GB33BUKB20201555555555"]})
+        result = SimpleNamespace(outputs={"members": tbl})
+        spec = [ChecksumSpec(table="members", column="acct", scheme="iban")]
+        with pytest.raises(NotImplementedError, match="iban"):
+            check_checksums("th24_unimplemented", spec, result)
+
+
+# ---------------------------------------------------------------------------
+# TH-2.1 / TH-2.3: safe_harbor mutation teeth
+# ---------------------------------------------------------------------------
+
+
+def _geo_cascade_warning(column: str, cascade_decisions: dict[str, str]) -> Any:
+    """Build a QualityWarning matching the real geo_generalize_cascade shape."""
+    from decoy_engine.generation.pool._events import QualityWarning
+
+    return QualityWarning(
+        code="geo_generalize_cascade",
+        provider="geo_generalize",
+        column=column,
+        detail={"cascade_decisions": cascade_decisions},
+    )
+
+
+class TestSafeHarborTeeth:
+    """Mutation controls for the safe_harbor invariant family (TH-2.1)."""
+
+    def test_surviving_restricted_zip5_detected(self) -> None:
+        """A restricted-prefix ZIP5 surviving in the output must raise.
+
+        RED: "03601" (prefix "036" is HHS-restricted) survives verbatim in the
+        output zip5 column instead of being generalized or suppressed.
+        """
+        out_tbl = pa.table({"zip5": ["03601", "941", "606"]})
+        warning = _geo_cascade_warning("zip5", {"row_1": "zip3", "row_2": "zip3"})
+        result = SimpleNamespace(outputs={"members": out_tbl}, warnings=[warning])
+        spec = [
+            SafeHarborSpec(
+                table="members",
+                column="zip5",
+                planted_restricted_zip3_count=1,
+                expected_suppressions=1,
+            )
+        ]
+        with pytest.raises(AssertionError, match="leaked into output"):
+            check_safe_harbor("safe_harbor_control", spec, result)
+
+    def test_stripped_cascade_decision_detected(self) -> None:
+        """A cascade decision silently dropped from the warning must raise.
+
+        RED: 2 restricted-ZIP3 rows were planted and both are correctly
+        suppressed in the ACTUAL output ("" in both positions), but the
+        engine's self-reported cascade_decisions detail only records ONE
+        'suppressed' entry -- a bookkeeping bug that dropped a decision. The
+        independent output-value count (2) now disagrees with the engine's
+        self-report (1), and check_safe_harbor must raise on that
+        cross-check, not merely trust the (wrong) self-report.
+        """
+        out_tbl = pa.table({"zip5": ["", "", "941", "606"]})
+        warning = _geo_cascade_warning(
+            "zip5", {"row_0": "suppressed"}
+        )  # row_1's suppression was dropped from bookkeeping
+        result = SimpleNamespace(outputs={"members": out_tbl}, warnings=[warning])
+        spec = [
+            SafeHarborSpec(
+                table="members",
+                column="zip5",
+                planted_restricted_zip3_count=2,
+                expected_suppressions=2,
+            )
+        ]
+        with pytest.raises(AssertionError, match="engine self-reported suppressed_count"):
+            check_safe_harbor("safe_harbor_control_stripped", spec, result)
+
+    def test_good_safe_harbor_passes(self) -> None:
+        """Correctly suppressed/generalized output with matching counts must NOT raise."""
+        out_tbl = pa.table({"zip5": ["", "", "941", "606"]})
+        warning = _geo_cascade_warning("zip5", {"row_0": "suppressed", "row_1": "suppressed"})
+        result = SimpleNamespace(outputs={"members": out_tbl}, warnings=[warning])
+        spec = [
+            SafeHarborSpec(
+                table="members",
+                column="zip5",
+                planted_restricted_zip3_count=2,
+                expected_suppressions=2,
+            )
+        ]
+        check_safe_harbor("safe_harbor_control_good", spec, result)
+
+
+class TestSafeHarborPrefixAnyLengthTeeth:
+    """Mutation controls for the prefix-at-any-length hardening (TH-2.3 / P1-6).
+
+    The old check only scanned values of EXACTLY length 5. These controls
+    prove a restricted prefix leaking at zip3 (3 chars) or zip+4 (9+ chars
+    with a hyphen) shape -- shapes the old length==5 check could never see
+    -- now trips the guard.
+    """
+
+    def test_zip3_leak_detected(self) -> None:
+        """A bare 3-char restricted prefix surviving in the output must raise.
+
+        RED: "036" (a restricted prefix) appears as a bare zip3-length value.
+        The old length==5-only check would have missed this entirely -- this
+        is exactly the shape non-restricted rows resolve to in this fixture
+        (see the geo_generalize cascade note in _safe_harbor.py), so a
+        restricted-skip regression would leak precisely this shape.
+        """
+        out_tbl = pa.table({"zip5": ["036", "941", "606"]})
+        warning = _geo_cascade_warning("zip5", {})
+        result = SimpleNamespace(outputs={"members": out_tbl}, warnings=[warning])
+        spec = [
+            SafeHarborSpec(
+                table="members",
+                column="zip5",
+                planted_restricted_zip3_count=1,
+                expected_suppressions=1,
+            )
+        ]
+        with pytest.raises(AssertionError, match="leaked into output"):
+            check_safe_harbor("safe_harbor_zip3_control", spec, result)
+
+    def test_zip_plus4_leak_detected(self) -> None:
+        """A zip+4-shaped restricted-prefix value surviving must raise.
+
+        RED: "03601-1234" (zip+4 shape) starts with the restricted prefix
+        "036". Neither the length (10, not 5) nor the old check would catch
+        this; the new any-length(>=3) prefix scan does.
+        """
+        out_tbl = pa.table({"zip5": ["03601-1234", "94110", "60601"]})
+        warning = _geo_cascade_warning("zip5", {})
+        result = SimpleNamespace(outputs={"members": out_tbl}, warnings=[warning])
+        spec = [
+            SafeHarborSpec(
+                table="members",
+                column="zip5",
+                planted_restricted_zip3_count=1,
+                expected_suppressions=1,
+            )
+        ]
+        with pytest.raises(AssertionError, match="leaked into output"):
+            check_safe_harbor("safe_harbor_zip4_control", spec, result)
+
+    def test_independent_count_disagrees_with_engine_report(self) -> None:
+        """Actual suppressed-value count disagreeing with the plan must raise.
+
+        RED: the output column has only ONE "" (suppressed) value even though
+        BOTH the planted count and the engine's self-report claim 2. The
+        independent output-value count (1) catches the discrepancy against
+        the planted/expected values even when nothing has (yet) leaked a
+        restricted prefix.
+        """
+        out_tbl = pa.table({"zip5": ["", "941", "606"]})  # only 1 suppressed, not 2
+        warning = _geo_cascade_warning(
+            "zip5", {"row_0": "suppressed", "row_3": "suppressed"}
+        )  # engine claims 2 suppressed but only 1 is actually ""
+        result = SimpleNamespace(outputs={"members": out_tbl}, warnings=[warning])
+        spec = [
+            SafeHarborSpec(
+                table="members",
+                column="zip5",
+                planted_restricted_zip3_count=2,
+                expected_suppressions=2,
+            )
+        ]
+        with pytest.raises(AssertionError, match="independent output-value suppressed count"):
+            check_safe_harbor("safe_harbor_independent_control", spec, result)
+
+    def test_good_mixed_length_output_passes(self) -> None:
+        """A correct mix of zip3-length and suppressed values must NOT raise.
+
+        GREEN companion: non-restricted rows resolve to a 3-char zip3 (a
+        length the old check never scanned) and restricted rows are
+        suppressed to "". No restricted prefix appears at any length.
+        """
+        out_tbl = pa.table({"zip5": ["941", "606", "", ""]})  # 2 zip3 + 2 suppressed
+        warning = _geo_cascade_warning("zip5", {"row_2": "suppressed", "row_3": "suppressed"})
+        result = SimpleNamespace(outputs={"members": out_tbl}, warnings=[warning])
+        spec = [
+            SafeHarborSpec(
+                table="members",
+                column="zip5",
+                planted_restricted_zip3_count=2,
+                expected_suppressions=2,
+            )
+        ]
+        check_safe_harbor("safe_harbor_mixed_good", spec, result)
+
+
+# ---------------------------------------------------------------------------
+# TH-4.1 (P2): degenerate Cramers V must SKIP, never silently PASS
+# ---------------------------------------------------------------------------
+
+
+class TestDegenerateCorrelationSkipTeeth:
+    """Mutation controls for TH-4.1: a degenerate masked_correlation pair must
+    surface as a distinct SKIP, not fold into an ordinary PASS.
+
+    Before this fix, evaluate_invariants turned a degenerate pair (Cramers V
+    undefined because a declared column has <2 distinct non-null values) into
+    an InvariantResult with passed=True and only a prose detail string. The
+    evidence report rendered that as an ordinary [PASS] line -- identical to a
+    pair that was genuinely computed. A future correlation pair declared on a
+    synthetic/coarsen column that degenerates could vanish from coverage
+    without anyone noticing.
+    """
+
+    def test_degenerate_evidence_is_not_a_silent_pass(self) -> None:
+        """A degenerate evidence dict must produce a distinctly-marked SKIP.
+
+        RED (pre-fix): the InvariantResult produced here had no `skipped`
+        field at all (or, before that field existed, no way to distinguish
+        this outcome from a genuine PASS at the report layer).
+        """
+        evidence = {"v_src": None, "v_out": None, "diff": None}
+        result = _masked_correlation_result("masked_correlation:t:a:b", evidence)
+
+        assert result.skipped is True, (
+            "Degenerate Cramers V must set skipped=True -- it must not be "
+            "indistinguishable from a genuine PASS."
+        )
+        assert result.passed is True, "A SKIP is not itself a regression; it must not fail the job."
+        assert result.detail.startswith("SKIP"), (
+            f"Degenerate result detail must start with 'SKIP', got: {result.detail!r}"
+        )
+
+    def test_computed_evidence_is_an_ordinary_pass_not_skipped(self) -> None:
+        """A genuinely-computed pair must NOT be marked skipped.
+
+        Proves the fix does not over-mark: a real v_src/v_out/diff result is
+        an ordinary passed check, not a SKIP. Without this control, a broken
+        fix that marks EVERY result skipped would still pass the test above.
+        """
+        evidence = {"v_src": 0.8, "v_out": 0.82, "diff": 0.02}
+        result = _masked_correlation_result("masked_correlation:t:a:b", evidence)
+
+        assert result.skipped is False
+        assert result.passed is True
+        assert "v_src=0.8000" in result.detail
+
+    def test_evaluate_invariants_surfaces_skip_end_to_end(self) -> None:
+        """Full evaluate_invariants wiring: a degenerate declared pair -> SKIP.
+
+        RED (pre-fix): the masked_correlations loop in evaluate_invariants
+        produced a passed=True InvariantResult with detail "degenerate (v
+        undefined, skipped)" -- prose only, no first-class status. A caller
+        reading `ir.passed` alone (as the report and job-verdict aggregation
+        both do) could not distinguish it from a real pass.
+
+        GREEN (post-fix): InvariantResult.skipped makes the SKIP a first-class
+        outcome the runner and report can act on.
+
+        cat_code is constant ("SAME"/"MASKED") on both sides -- degenerate
+        (r=1) regardless of risk_flag's cardinality, so Cramers V is undefined
+        for this declared pair.
+        """
+        n = 50
+        source_tbl = pa.table(
+            {
+                "cat_code": ["SAME"] * n,
+                "risk_flag": ["HI", "MD"] * (n // 2),
+            }
+        )
+        output_tbl = pa.table(
+            {
+                "cat_code": ["MASKED"] * n,
+                "risk_flag": ["X1", "X2"] * (n // 2),
+            }
+        )
+
+        manifest = FlightManifest(
+            job_name="th41_degenerate",
+            topology="mixed",
+            seed=1,
+            master_key_label="th41",
+            tables=[TableSpec(name="orders", kind="mask", row_count=n, source_builder="x")],
+            invariants=InvariantSpec(
+                determinism=False,
+                masked_correlations=[
+                    MaskedCorrelationSpec(
+                        table="orders",
+                        col_a="cat_code",
+                        col_b="risk_flag",
+                        strategy_a="fpe",
+                        strategy_b="fpe",
+                    )
+                ],
+            ),
+        )
+        result_a = SimpleNamespace(outputs={"orders": output_tbl}, quality_metrics={})
+        result_b = SimpleNamespace(outputs={"orders": output_tbl}, quality_metrics={})
+        sources = {"orders": source_tbl}
+
+        inv_results = evaluate_invariants(manifest, result_a, result_b, sources)
+        corr_results = [r for r in inv_results if r.family.startswith("masked_correlation:")]
+        assert len(corr_results) == 1, (
+            f"Expected exactly one masked_correlation result, got {corr_results}"
+        )
+        corr = corr_results[0]
+
+        assert corr.skipped is True, (
+            f"A degenerate declared pair (cat_code has 1 unique value on both "
+            f"sides) must be SKIP, not a silent PASS. Got: {corr}"
+        )
+        assert corr.passed is True  # SKIP does not fail the job by itself.
+
+    def test_output_collapse_fails_not_skips(self) -> None:
+        """v_src defined but v_out undefined = OUTPUT collapse -> FAIL, not SKIP.
+
+        RED (TH-4.1 as first shipped): the guard fired on `diff is None`, which
+        _correlation.py returns when EITHER side is undefined. So a mask that
+        collapsed the output column to one constant (v_src=1.0, v_out=None) was
+        marked skipped=True, passed=True -- a false green in the very check
+        being hardened. This is the single worst outcome a masked_correlations
+        pair exists to catch (dennis HIGH-1).
+
+        GREEN: the asymmetric case is a hard FAIL that names the collapse.
+        """
+        evidence = {"v_src": 1.0, "v_out": None, "diff": None}
+        result = _masked_correlation_result("masked_correlation:t:a:b", evidence)
+
+        assert result.passed is False, (
+            "An output-column collapse (v_src defined, v_out undefined) must "
+            f"FAIL -- it must not be a counted-as-passed SKIP. Got: {result}"
+        )
+        assert result.skipped is False, "An output collapse is a real failure, not a skip."
+        assert "collapsed" in result.detail.lower()
+
+    def test_source_degenerate_still_skips_even_if_output_defined(self) -> None:
+        """v_src undefined = SOURCE degenerate -> SKIP even if v_out is defined.
+
+        The check genuinely cannot run without a source baseline association, so
+        this remains a legitimate SKIP; the detail must name the SOURCE side so
+        a reader can tell it apart from the output-collapse FAIL (LOW-1).
+        """
+        evidence = {"v_src": None, "v_out": 0.5, "diff": None}
+        result = _masked_correlation_result("masked_correlation:t:a:b", evidence)
+
+        assert result.skipped is True
+        assert result.passed is True
+        assert "SOURCE" in result.detail
+
+
+# ---------------------------------------------------------------------------
+# TH-4.2 (P2): missing shape/similarity entry for a declared fpe/hash column
+# must FAIL, not silently pass through a None-guard
+# ---------------------------------------------------------------------------
+
+
+class TestMissingShapeEntryHardFailTeeth:
+    """Mutation controls for TH-4.2: a declared fpe/hash column with no
+    shape_similarity entry must FAIL, never silently pass.
+
+    The pre-fix guards read `if shape_sim is not None and shape_sim < FLOOR:
+    raise` -- if `compute_quality_report` ever stopped emitting a
+    shape_fidelity entry for a column (e.g. a profiler regression), the floor
+    simply never fired and the table stayed GREEN. These controls monkeypatch
+    the REAL `compute_quality_report` return value to strip exactly the
+    target column's shape_fidelity entry (everything else -- diagnostic,
+    policy-relevant marginal columns, etc. -- is genuinely computed), which
+    reproduces precisely the hole: an entry silently absent.
+    """
+
+    @staticmethod
+    def _strip_shape_column(monkeypatch: pytest.MonkeyPatch, column: str) -> None:
+        """Monkeypatch _distribution.compute_quality_report to drop one column's
+        shape_fidelity marginal entry from an otherwise-real report."""
+        import testflight._distribution as dist_mod
+
+        real_compute = dist_mod.compute_quality_report
+
+        def _wrapped(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            report = real_compute(*args, **kwargs)
+            shape = report.get("shape_fidelity")
+            if shape:
+                shape["marginal"]["columns"] = [
+                    c for c in shape["marginal"]["columns"] if c.get("column") != column
+                ]
+            return report
+
+        monkeypatch.setattr(dist_mod, "compute_quality_report", _wrapped)
+
+    def test_missing_shape_entry_for_fpe_column_raises(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A declared fpe column with no shape_similarity entry must FAIL.
+
+        RED (pre-fix): the None-guard silently skipped the floor entirely.
+        GREEN (post-fix): a missing entry for a declared value-changing (fpe)
+        column is itself a hard failure.
+        """
+        self._strip_shape_column(monkeypatch, "id")
+
+        n = 200
+        source_df = pd.DataFrame({"id": [f"ID{i:04d}" for i in range(n)]})
+        output_df = pd.DataFrame({"id": [f"MASKED{i:04d}" for i in range(n)]})
+        spec = [
+            ColumnDistributionSpec(
+                table="t", column="id", distribution_class="preserve", strategy="fpe"
+            )
+        ]
+
+        with pytest.raises(AssertionError, match="no shape_similarity entry"):
+            check_distribution_mask(
+                "th42_fpe_control", "t", spec, source_df, output_df, strategy_map={"id": "fpe"}
+            )
+
+    def test_missing_shape_entry_for_hash_column_raises(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A declared hash column with no shape_similarity entry must FAIL.
+
+        Same hole as the fpe case, in the hash branch (TH-4.2 covers both
+        declared value-changing strategies).
+        """
+        self._strip_shape_column(monkeypatch, "id")
+
+        n = 200
+        source_df = pd.DataFrame({"id": [f"ID{i:04d}" for i in range(n)]})
+        output_df = pd.DataFrame({"id": [f"HASHED{i:04d}" for i in range(n)]})
+        spec = [
+            ColumnDistributionSpec(
+                table="t", column="id", distribution_class="preserve", strategy="hash"
+            )
+        ]
+
+        with pytest.raises(AssertionError, match="no shape_similarity entry"):
+            check_distribution_mask(
+                "th42_hash_control", "t", spec, source_df, output_df, strategy_map={"id": "hash"}
+            )
+
+    @staticmethod
+    def _strip_marginal_column(monkeypatch: pytest.MonkeyPatch, column: str) -> None:
+        """Drop one column's top-level marginal entry (the section the shuffle
+        and passthrough floors read via col_entry_by_name), leaving the rest of
+        an otherwise-real report intact."""
+        import testflight._distribution as dist_mod
+
+        real_compute = dist_mod.compute_quality_report
+
+        def _wrapped(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            report = real_compute(*args, **kwargs)
+            marginal = report.get("marginal")
+            if marginal and "columns" in marginal:
+                marginal["columns"] = [c for c in marginal["columns"] if c.get("column") != column]
+            return report
+
+        monkeypatch.setattr(dist_mod, "compute_quality_report", _wrapped)
+
+    def test_missing_marginal_entry_for_shuffle_column_raises(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A declared shuffle column with no similarity entry must FAIL (MEDIUM-1).
+
+        RED (TH-4.2 as first shipped): the shuffle branch kept `if sim is not
+        None and ... < 0.99`. Marginal similarity is shuffle's ONLY tooth, so a
+        stripped entry evaporated it entirely and the column stayed green.
+        GREEN: a missing entry for a declared shuffle column is a hard failure.
+        """
+        self._strip_marginal_column(monkeypatch, "tag")
+
+        rng = np.random.default_rng(5)
+        n = 200
+        src = rng.integers(0, 5, size=n).astype(str).tolist()
+        source_df = pd.DataFrame({"tag": src})
+        output_df = pd.DataFrame({"tag": rng.permutation(src).tolist()})
+        spec = [
+            ColumnDistributionSpec(
+                table="t", column="tag", distribution_class="preserve", strategy="shuffle"
+            )
+        ]
+
+        with pytest.raises(AssertionError, match="no similarity entry"):
+            check_distribution_mask(
+                "th42_shuffle", "t", spec, source_df, output_df, strategy_map={"tag": "shuffle"}
+            )
+
+    def test_missing_marginal_entry_for_passthrough_column_raises(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A declared passthrough column with no similarity entry must FAIL.
+
+        The cardinality-fraction guard above still catches a collapse, but a
+        same-cardinality SHIFT with the value-identity floor evaporated would
+        slip through -- so a missing entry is itself a hard failure (MEDIUM-1).
+        """
+        self._strip_marginal_column(monkeypatch, "code")
+
+        n = 200
+        vals = [f"C{i:04d}" for i in range(n)]
+        source_df = pd.DataFrame({"code": vals})
+        output_df = pd.DataFrame({"code": vals})  # genuine passthrough
+        spec = [
+            ColumnDistributionSpec(
+                table="t", column="code", distribution_class="preserve", strategy="passthrough"
+            )
+        ]
+
+        with pytest.raises(AssertionError, match="no similarity entry"):
+            check_distribution_mask(
+                "th42_passthrough",
+                "t",
+                spec,
+                source_df,
+                output_df,
+                strategy_map={"code": "passthrough"},
+            )
+
+    def test_missing_overall_shape_score_raises_at_tooth_e(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A missing overall_shape_score on an fpe-bearing table must FAIL Tooth E.
+
+        Isolates the Tooth E (grade-floor) guard specifically: per-column
+        shape entries are left genuinely intact (so Tooth A passes cleanly)
+        but `overall_shape_score` itself is stripped, reproducing a case
+        where the per-column shape data is present yet the aggregate score
+        that Tooth E reads is missing.
+        """
+        import testflight._distribution as dist_mod
+
+        real_compute = dist_mod.compute_quality_report
+
+        def _wrapped(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            report = real_compute(*args, **kwargs)
+            shape = report.get("shape_fidelity")
+            if shape:
+                shape["overall_shape_score"] = None
+            return report
+
+        monkeypatch.setattr(dist_mod, "compute_quality_report", _wrapped)
+
+        rng = np.random.default_rng(77)
+        n = 200
+        src_ids = [f"ID{i:04d}" for i in range(n)]
+        src_amounts = rng.integers(1, 1000, size=n).astype(float).tolist()
+        source_df = pd.DataFrame({"id": src_ids, "amount": src_amounts})
+        output_df = source_df.copy()
+        output_df["id"] = [f"MASKED_{v}" for v in source_df["id"]]
+        spec = [
+            ColumnDistributionSpec(
+                table="t",
+                column="id",
+                distribution_class="preserve",
+                strategy="fpe",
+                joints_waived=True,
+                joints_waived_reason="fpe id has no meaningful correlation with amount",
+            ),
+            ColumnDistributionSpec(
+                table="t", column="amount", distribution_class="preserve", strategy="passthrough"
+            ),
+        ]
+
+        with pytest.raises(AssertionError, match="no overall_shape_score"):
+            check_distribution_mask(
+                "th42_toothe_control",
+                "t",
+                spec,
+                source_df,
+                output_df,
+                strategy_map={"id": "fpe", "amount": "passthrough"},
+            )
+
+    def test_good_fpe_table_with_real_shape_entry_still_passes(self) -> None:
+        """A genuine (unmocked) fpe table with a real shape entry must NOT raise.
+
+        Companion control proving the hard-fail does not over-assert: when
+        compute_quality_report DOES emit the entry (the normal case), nothing
+        changes versus pre-TH-4.2 behavior.
+        """
+        n = 200
+        source_df = pd.DataFrame({"id": [f"ID{i:04d}" for i in range(n)]})
+        output_df = pd.DataFrame({"id": [f"MASKED{i:04d}" for i in range(n)]})
+        spec = [
+            ColumnDistributionSpec(
+                table="t", column="id", distribution_class="preserve", strategy="fpe"
+            )
+        ]
+        check_distribution_mask(
+            "th42_good_control", "t", spec, source_df, output_df, strategy_map={"id": "fpe"}
+        )
+
+
+# ---------------------------------------------------------------------------
+# TH-4.3 (P2): generate-table row count vs declared TableSpec.row_count
+# ---------------------------------------------------------------------------
+
+
+class TestGenerateRowCountTeeth:
+    """Mutation controls for TH-4.3: a generate table's produced row count is
+    compared against its declared TableSpec.row_count.
+
+    Before this fix, nothing compared a generate table's actual output row
+    count to anything -- every other invariant just operates on whatever rows
+    happen to exist, so a 0-row (or any wrong-count) generate table passed
+    the whole suite incidentally. This is the RUNTIME counterpart to
+    TableSpec's own schema validator (a 0-row table must declare
+    kind=generate): that validator only proves the SPEC is well-formed, not
+    that the ENGINE actually produced the declared count.
+    """
+
+    def test_wrong_row_count_raises(self) -> None:
+        """A generate table producing 40 rows against a declared 50 must raise."""
+        output_df = pd.DataFrame({"x": list(range(40))})
+        with pytest.raises(AssertionError, match="generate_row_count"):
+            check_generate_row_count("th43_control", "events", 50, output_df)
+
+    def test_zero_actual_rows_against_nonzero_declared_raises(self) -> None:
+        """A 0-row output against a nonzero declared row_count must raise.
+
+        This is exactly the false-green the plan calls out: "a 0-row generate
+        passes only incidentally" when nothing checks the count.
+        """
+        output_df = pd.DataFrame({"x": []})
+        with pytest.raises(AssertionError, match="produced 0 rows"):
+            check_generate_row_count("th43_control", "events", 100, output_df)
+
+    def test_matching_row_count_passes(self) -> None:
+        """A generate table whose output matches its declared row_count must NOT raise."""
+        output_df = pd.DataFrame({"x": list(range(50))})
+        check_generate_row_count("th43_control", "events", 50, output_df)
+
+    def test_evaluate_invariants_wires_generate_row_count_end_to_end(self) -> None:
+        """Full evaluate_invariants wiring: a wrong generate row count must FAIL.
+
+        RED (pre-fix): evaluate_invariants had no code path comparing a
+        generate TableSpec.row_count to the actual produced row count -- this
+        mismatch was invisible to the whole evaluation no matter what other
+        invariants ran.
+        """
+        wrong_table = pa.table({"x": list(range(30))})  # declared row_count=100
+
+        manifest = FlightManifest(
+            job_name="th43_wiring",
+            topology="mixed",
+            seed=1,
+            master_key_label="th43",
+            tables=[TableSpec(name="events", kind="generate", row_count=100)],
+            invariants=InvariantSpec(determinism=False),
+        )
+        result_a = SimpleNamespace(outputs={"events": wrong_table}, quality_metrics={})
+        result_b = SimpleNamespace(outputs={"events": wrong_table}, quality_metrics={})
+
+        inv_results = evaluate_invariants(manifest, result_a, result_b, {})
+        gen_results = [r for r in inv_results if r.family == "generate_row_count:events"]
+        assert len(gen_results) == 1, (
+            f"Expected exactly one generate_row_count result, got {inv_results}"
+        )
+        assert gen_results[0].passed is False, (
+            f"A generate table producing 30 rows against a declared "
+            f"row_count=100 must FAIL the suite. Got: {gen_results[0]}"
+        )
+
+    def test_evaluate_invariants_generate_row_count_passes_when_matching(self) -> None:
+        """A generate table whose output matches its declared row_count must PASS."""
+        right_table = pa.table({"x": list(range(100))})
+
+        manifest = FlightManifest(
+            job_name="th43_wiring_good",
+            topology="mixed",
+            seed=1,
+            master_key_label="th43",
+            tables=[TableSpec(name="events", kind="generate", row_count=100)],
+            invariants=InvariantSpec(determinism=False),
+        )
+        result_a = SimpleNamespace(outputs={"events": right_table}, quality_metrics={})
+        result_b = SimpleNamespace(outputs={"events": right_table}, quality_metrics={})
+
+        inv_results = evaluate_invariants(manifest, result_a, result_b, {})
+        gen_results = [r for r in inv_results if r.family == "generate_row_count:events"]
+        assert len(gen_results) == 1
+        assert gen_results[0].passed is True

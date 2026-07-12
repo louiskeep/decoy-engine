@@ -13,7 +13,7 @@ Functions:
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, NamedTuple
 
 import pandas as pd
 import pyarrow as pa
@@ -28,6 +28,141 @@ from ._spec import FKIntegritySpec, RelationshipSpec
 # bijective-relabelling limitation affects).  Candidates not listed here
 # (shuffle, categorical, derived) have their own correctness teeth.
 _VALUE_CHANGING_STRATEGIES: frozenset[str] = frozenset({"fpe", "hash", "code_set"})
+
+# Maximum tolerated PER-POSITION across-row character retention for an FPE
+# column.  FPE is format-preserving: output has the same length as the source,
+# so a per-character-position comparison across rows is well defined.  For each
+# position we measure identical_fraction = the fraction of rows whose output
+# character equals the source character at that position.  A genuinely-permuting
+# FPE over an alphabet of size k retains ~1/k per position (empirically <=0.13
+# for every correctly-masked test-flight identity column, including digit
+# columns where 1/k=0.1); a position emitted VERBATIM (charset undercoverage)
+# sits far higher -- at 1.0 for a structurally out-of-charset position, or at
+# P(out-of-charset character) for a position that is out-of-charset only some of
+# the time (empirically ~0.56-0.70 for the uppercase-MRN no-op under alphanum).
+#
+# TH-1: this REPLACES an earlier MEAN-over-positions statistic.  The mean
+# dilutes a leak confined to a few positions: dennis's concrete false negative
+# is an "AB123456" column (2 per-subject-varying uppercase + 6 digits) masked
+# with charset:alphanum -- the 2 uppercase leak verbatim (per-position ~1.0)
+# while the 6 digits permute (~0.1), so the mean is ~0.33 and shipped GREEN even
+# though two informative PII characters leak per subject.  Testing EACH position
+# independently catches the narrow leak the mean misses, at ANY value width,
+# while still catching the diffuse uppercase-MRN leak (its per-position maxima
+# ~0.70 are well above this floor).
+#
+# The 0.5 floor sits in the wide empirical gap between correctly-masked
+# positions (<=0.13) and any leaked position (>=0.56 diffuse, ~1.0 verbatim).
+# It is intentionally below dennis's illustrative 0.95: a fixed verbatim leak
+# does sit at ~1.0, but the live uppercase-MRN leak is per-row-probabilistic and
+# caps near 0.70, so a 0.95 cut would regress the existing members.mrn
+# detection.  0.5 catches both regimes with >=3.8x margin over the genuine
+# baseline.
+_FPE_MAX_POSITIONAL_RETENTION: float = 0.5
+
+# Minimum SOURCE-alphabet size (distinct source characters at a position, across
+# the compared rows) for a position to be treated as informative.  A position
+# whose source takes very few distinct values is low-entropy structure, not a
+# subject-identifying character, and a correct mask may legitimately fix it: the
+# NPI leading digit is always 1 or 2 (k=2) and a checksum-aware FPE preserves it
+# (identical_fraction ~1.0) -- that is format, not a leak, so flagging it would
+# be a false positive.  Requiring k>=4 excludes such positions while keeping
+# every real leaked position eligible (digit leaks have k=10, uppercase leaks
+# k=26, mixed alphanumeric k=36) and keeping the genuine self-map baseline 1/k
+# (<=0.25 at k=4) safely under the 0.5 floor.
+_FPE_MIN_INFORMATIVE_ALPHABET: int = 4
+
+# Minimum comparable (equal-length, non-null) rows before the positional-
+# retention check is statistically meaningful.  Below this the check is SKIPPED
+# with an explicit status (LOW-1: a silent pass on a small table would let the
+# privacy floor evaporate) rather than silently passing.
+_FPE_RETENTION_MIN_ROWS: int = 20
+
+
+class _PositionalLeak(NamedTuple):
+    """Result of the per-position FPE leak scan.
+
+    ``worst_fraction`` is ``None`` when no informative position was evaluated;
+    ``max_group_rows`` and ``n_informative`` then tell the caller WHY (too few
+    comparable rows vs. no informative position) so the SKIP status is accurate.
+    """
+
+    worst_fraction: float | None
+    worst_position: int
+    worst_k: int
+    n_comparable: int
+    n_informative: int
+    n_low_entropy: int
+    max_group_rows: int
+
+
+def _fpe_positional_leak(source_vals: pd.Series, output_vals: pd.Series) -> _PositionalLeak:
+    """Detect a per-position verbatim leak across rows of an FPE column.
+
+    Rows are grouped by (equal) length -- FPE preserves length, so a per-position
+    comparison is only aligned within a length group.  For every position in a
+    length group with at least ``_FPE_RETENTION_MIN_ROWS`` rows, compute
+    ``identical_fraction`` (fraction of rows whose output character equals the
+    source character at that position) and ``k`` (number of distinct SOURCE
+    characters at that position).  A position is INFORMATIVE when
+    ``k >= _FPE_MIN_INFORMATIVE_ALPHABET``.  The worst informative position (the
+    one with the highest identical_fraction) is reported.
+
+    ``worst_fraction`` is ``None`` when no informative position could be
+    evaluated -- either because no length group reached the row floor
+    (``max_group_rows < _FPE_RETENTION_MIN_ROWS``) or because every position was
+    low-entropy structure (``n_informative == 0``, e.g. a one-character flag).
+    The caller distinguishes these to emit an accurate SKIP status (LOW-1).
+    """
+    from collections import defaultdict
+
+    groups: dict[int, list[tuple[str, str]]] = defaultdict(list)
+    n_comparable = 0
+    for src_val, out_val in zip(source_vals, output_vals, strict=False):
+        if src_val is None or out_val is None:
+            continue
+        s = str(src_val)
+        o = str(out_val)
+        if len(s) == 0 or len(s) != len(o):
+            continue
+        groups[len(s)].append((s, o))
+        n_comparable += 1
+
+    worst_fraction: float | None = None
+    worst_position = -1
+    worst_k = 0
+    n_informative = 0
+    n_low_entropy = 0
+    max_group_rows = 0
+    for length, rows in groups.items():
+        n = len(rows)
+        max_group_rows = max(max_group_rows, n)
+        if n < _FPE_RETENTION_MIN_ROWS:
+            continue
+        for pos in range(length):
+            k = len({s[pos] for s, _ in rows})
+            if k < _FPE_MIN_INFORMATIVE_ALPHABET:
+                # Excluded: at low k, a legitimately-preserved structural char
+                # (e.g. NPI leading digit) is indistinguishable from a leak by
+                # retention fraction alone. Counted + disclosed, never silently
+                # dropped (see what-we-cannot-prove.md).
+                n_low_entropy += 1
+                continue
+            n_informative += 1
+            frac = sum(1 for s, o in rows if s[pos] == o[pos]) / n
+            if worst_fraction is None or frac > worst_fraction:
+                worst_fraction = frac
+                worst_position = pos
+                worst_k = k
+    return _PositionalLeak(
+        worst_fraction,
+        worst_position,
+        worst_k,
+        n_comparable,
+        n_informative,
+        n_low_entropy,
+        max_group_rows,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -89,7 +224,7 @@ def check_value_changing_not_passthrough(
     strategy: str,
     source_df: pd.DataFrame,
     output_df: pd.DataFrame,
-) -> None:
+) -> str:
     """Assert that a value-changing-masked column's output value-set differs from source.
 
     A value-changing strategy (fpe, hash, code_set) must produce output values
@@ -103,10 +238,25 @@ def check_value_changing_not_passthrough(
     value is returned verbatim.  A column with charset:alphanum (lowercase) applied
     to uppercase-only values (e.g. "EL", "HI") passes through unchanged.
 
-    This is a column-level set check, not a row-level check.  A set equality means
-    NO value was changed at all.  A single changed value passes (output_set differs
-    from source_set in at least one element), which is sufficient to prove the
-    strategy is not a complete no-op.
+    Two checks (TH-1.1 / P0-1):
+
+    1. Column-level set check (all value-changing strategies).  A set equality
+       means NO value was changed at all -- a complete no-op.  A single changed
+       value passes this check.
+
+    2. Per-position across-row retention check (FPE only).  The set check above
+       is blind to a PARTIAL passthrough: a charset that covers only some of the
+       data's characters (e.g. charset=alphanum on an uppercase-plus-digit value)
+       permutes the in-charset characters while emitting the out-of-charset ones
+       verbatim, so every whole value differs (set check passes) yet informative
+       characters leak in place.  FPE is format-preserving, so for each character
+       position we measure the across-row fraction of rows whose output character
+       equals the source character.  ANY informative position (source alphabet
+       >= _FPE_MIN_INFORMATIVE_ALPHABET) whose identical fraction reaches
+       _FPE_MAX_POSITIONAL_RETENTION is a verbatim leak at that position.  This
+       catches both the diffuse members.mrn (charset=alphanum) live bug and a
+       NARROW leak -- a handful of verbatim positions among many permuted ones
+       -- that a mean-over-positions statistic would dilute below any floor.
 
     Only applied when strategy is in _VALUE_CHANGING_STRATEGIES.  Other strategies
     (passthrough, categorical, derived, geo_generalize, date_shift, text_redact)
@@ -120,13 +270,23 @@ def check_value_changing_not_passthrough(
         source_df: Pre-mask pandas DataFrame.
         output_df: Post-mask pandas DataFrame.
 
+    Returns:
+        A short status string for the evidence report: ``"checked"`` when the
+        positional check ran, or a ``"SKIP: ..."`` note (LOW-1) when an FPE
+        column had too few comparable rows to evaluate the positional check
+        (a distinct SKIP, not a silent PASS, so the privacy floor cannot
+        quietly evaporate on a small table).
+
     Raises:
-        AssertionError: If output value-set equals source value-set (complete no-op).
+        AssertionError: If output value-set equals source value-set (complete
+            no-op), or if an FPE column retains a source character verbatim at
+            an informative position across the rows (partial passthrough /
+            charset undercoverage).
     """
     if strategy not in _VALUE_CHANGING_STRATEGIES:
-        return
+        return "n/a"
     if column not in source_df.columns or column not in output_df.columns:
-        return  # Column-presence is checked by check_correlation_through_masking.
+        return "n/a"  # Column-presence is checked by check_correlation_through_masking.
     src_vals = set(source_df[column].dropna().unique())
     out_vals = set(output_df[column].dropna().unique())
     assert src_vals != out_vals, (
@@ -137,6 +297,65 @@ def check_value_changing_not_passthrough(
         f"Source values (up to 10): {sorted(str(v) for v in src_vals)[:10]}. "
         f"Declare charset:ALPHANUM for uppercase data, charset:alpha for lowercase, "
         f"or charset:digits for numeric data."
+    )
+
+    # Partial-passthrough guard (FPE only).  The value-set check above only
+    # catches a COMPLETE no-op; a charset that covers *some* of the data (e.g.
+    # charset=alphanum masking the digits of an uppercase-plus-digit MRN)
+    # permutes the in-charset characters while leaving the out-of-charset ones in
+    # place, so every whole value differs and the set check passes even though
+    # informative characters leak verbatim.  FPE is format-preserving, so a
+    # per-position across-row comparison detects this: a correctly-charset'd FPE
+    # retains ~1/k of characters at any informative position, while an
+    # undercovered-charset leak retains an out-of-charset character verbatim
+    # there.  Testing each position independently (not the mean over positions)
+    # catches a NARROW leak of a few verbatim positions that the mean would
+    # dilute.
+    if strategy != "fpe":
+        return "checked (set-only; non-fpe value-changing strategy)"
+
+    leak = _fpe_positional_leak(source_df[column], output_df[column])
+    if leak.worst_fraction is None:
+        # LOW-1: no informative position could be evaluated -- surface an explicit
+        # SKIP (never a silent pass) and say WHY.
+        if leak.max_group_rows < _FPE_RETENTION_MIN_ROWS:
+            reason = (
+                f"only {leak.n_comparable} comparable rows "
+                f"(< {_FPE_RETENTION_MIN_ROWS} in every equal-length group)"
+            )
+        else:
+            reason = (
+                f"no informative position (all positions have < "
+                f"{_FPE_MIN_INFORMATIVE_ALPHABET} distinct source characters, "
+                f"e.g. a short/low-entropy code); {leak.n_comparable} comparable rows"
+            )
+        return (
+            f"SKIP fpe positional check: column {column!r} -- {reason}; "
+            f"set-check passed, positional leak detection not run"
+        )
+    assert leak.worst_fraction < _FPE_MAX_POSITIONAL_RETENTION, (
+        f"[{job_name}/{table}] fpe partial-passthrough: column {column!r} "
+        f"leaks the source character verbatim at position {leak.worst_position} in "
+        f"{leak.worst_fraction:.1%} of rows (>= {_FPE_MAX_POSITIONAL_RETENTION:.0%} "
+        f"floor; source alphabet k={leak.worst_k} there, so a genuine permutation "
+        f"would retain ~{1.0 / leak.worst_k:.0%}).  The configured FPE charset does "
+        f"not cover the data's characters at that position, so an out-of-charset "
+        f"character is emitted verbatim.  Declare charset:ALPHANUM to cover "
+        f"uppercase+digits, or the specific charset that spans every character "
+        f"class present in {column!r}."
+    )
+    # MED (dennis re-verify): a mixed column with some informative and some
+    # low-entropy positions must NOT read as fully vetted -- disclose the
+    # excluded low-k positions the positional check could not evaluate.
+    excluded = (
+        f"; {leak.n_low_entropy} low-entropy pos (k<{_FPE_MIN_INFORMATIVE_ALPHABET}) "
+        f"NOT leak-checked (see what-we-cannot-prove.md)"
+        if leak.n_low_entropy
+        else ""
+    )
+    return (
+        f"checked (worst pos {leak.worst_position}: "
+        f"{leak.worst_fraction:.0%} retained, k={leak.worst_k}){excluded}"
     )
 
 
