@@ -183,3 +183,65 @@ class TestQuarantinePublishedOnlyOnSinkCommit:
         assert len(records) == 1
         assert records[0]["age"] == "badX"
         assert records[0]["_quarantine_trigger"] == "format_error"
+
+
+class TestQuarantinePublishReplaceFailureAfterCommit:
+    """DE-08 residual (dennis): the post-commit publish step itself --
+    `publish_staged_jsonl`'s `os.replace` -- can fail (disk full, permission
+    denied, ...), distinct from the sink's own `commit()` failing. By the time
+    this runs, `_tsink.commit()` has ALREADY succeeded: the masked tables are
+    legitimately, correctly published. Only the raw-PII quarantine sidecar's
+    publish is in flight. This must still err safe: no raw quarantine file at
+    the final path, no orphaned staging file, and the failure surfaces to the
+    caller rather than being silently swallowed -- `ParquetTransactionalSink
+    .abort()` being called again post-commit (the shared `except BaseException`
+    handler doesn't know publish happened after commit) must be a harmless
+    no-op, not a re-abort of already-published tables.
+
+    Reproduced with a real OS-level `os.replace` failure -- no mocking of the
+    replace call itself -- by pointing `output_path` at a path that is already
+    an existing directory: POSIX rename(2) raises EISDIR when the source is a
+    regular file and the destination is a directory, so
+    `publish_staged_jsonl`'s single `os.replace` genuinely fails.
+    """
+
+    def test_replace_failure_after_commit_leaves_no_quarantine_and_no_orphan(
+        self, tmp_path: Path
+    ) -> None:
+        # A pre-existing directory (with an occupant file, to prove it's left
+        # completely untouched) sits at the quarantine output path. A file
+        # can never be os.replace'd onto an existing directory on POSIX, so
+        # this forces publish_staged_jsonl's os.replace to raise for real.
+        qpath_dir = tmp_path / "quarantine.jsonl"
+        qpath_dir.mkdir()
+        occupant = qpath_dir / "occupant.txt"
+        occupant.write_text("pre-existing, not a quarantine file")
+        qpath = str(qpath_dir)
+
+        config = _config(tmp_path, qpath)
+        sources = _sources(config)
+        sink = ParquetTransactionalSink(tmp_path / "out")
+
+        with pytest.raises(OSError):
+            run_pipeline(config, sources, engine_version="0.1.0", sink=sink)
+
+        # The sink's own commit already succeeded before the quarantine
+        # publish step ran: the masked tables ARE legitimately published.
+        # That is correct -- they contain masked data, not raw PII -- and
+        # there is no protocol under which un-publishing them would be safer
+        # (the os.replace that published them already completed).
+        assert (tmp_path / "out" / "parent.parquet").exists()
+        assert (tmp_path / "out" / "child.parquet").exists()
+
+        # The raw-PII quarantine sidecar must NOT have landed at the final
+        # path -- proof the failed os.replace did not partially clobber
+        # anything: the pre-existing directory and its occupant are intact.
+        assert qpath_dir.is_dir()
+        assert occupant.read_text() == "pre-existing, not a quarantine file"
+        assert list(qpath_dir.iterdir()) == [occupant]
+
+        # No orphaned staging file left behind: discard_staged_jsonl ran
+        # (best-effort, via the shared except clause) even though this
+        # exception originated AFTER _tsink.commit() had already succeeded.
+        leftovers = list(tmp_path.glob("_decoy_quarantine_stage_*"))
+        assert leftovers == []
