@@ -36,13 +36,9 @@ categorical, exactly when their deterministic value-keyed path is the
 one that runs and every whole-run input is declared in config rather
 than derived from the data:
 
-- faker: `deterministic: true` + `namespace` + an explicit pool_size
-  (top-level column `pool_size` or `provider_config.pool_size`, resolved
-  via the canonical `generation.pool._capacity.resolve_pool_size` -- the
-  SAME resolver the compile-time check and the pre-warm builder use, so a
-  top-level-only declaration is never a compile-accepts/chunked-refuses
-  divergence) + `cardinality_mode` absent or `reuse`. The deterministic
-  sampler maps each value via
+- faker: `deterministic: true` + `namespace` + an explicit
+  `provider_config.pool_size` + `cardinality_mode` absent or `reuse`.
+  The deterministic sampler maps each value via
   `derive_index(job_seed, namespace, canonicalize(value), pool_size)`,
   independent of row position or chunk arrival, and the pool build is
   RNG-seeded by its identity, so a pre-built pool equals any rebuild.
@@ -111,7 +107,6 @@ from typing import Any
 
 import pyarrow as pa
 
-from decoy_engine.generation.pool._capacity import resolve_pool_size
 from decoy_engine.plan._errors import PlanCompileError
 
 from ._chunked_fk import CHUNK_SAFE_STRATEGIES, gate_fk_child_edges
@@ -138,17 +133,10 @@ def _conditional_admission_failures(col_entry: dict[str, Any]) -> list[str]:
     if not col_entry.get("namespace"):
         failures.append("requires a namespace (the value-keyed mapping derives from it)")
     if strategy == "faker":
-        # DE-11 follow-up: admission must resolve pool_size the SAME way
-        # compile and the pre-warm builder do (resolve_pool_size: top-level
-        # column `pool_size` wins, then provider_config.pool_size), so a
-        # top-level-only declaration is admitted here instead of being
-        # refused for a config compile already accepted.
-        _, pool_size_declared = resolve_pool_size(col_entry)
-        if not pool_size_declared:
+        if cfg.get("pool_size") is None:
             failures.append(
-                "requires an explicit pool_size (top-level column `pool_size` "
-                "or provider_config.pool_size) as the chunked capacity "
-                "declaration (the non-chunked default of 10000 is not "
+                "requires an explicit provider_config.pool_size as the chunked "
+                "capacity declaration (the non-chunked default of 10000 is not "
                 "applied silently here)"
             )
         if col_entry.get("cardinality_mode") not in (None, "reuse"):
@@ -431,15 +419,7 @@ def _warm_faker_pools(
         if provider is None:
             continue
         cfg = dict(col_entry.get("provider_config") or {})
-        # DE-11 follow-up: resolve via the SAME canonical resolver the
-        # compile check and the non-chunked FakerStrategyHandler use (top-
-        # level column `pool_size` wins, else provider_config.pool_size),
-        # so the pre-warmed pool's build identity always matches what the
-        # handler looks up -- a top-level-only or a top-level/provider_config
-        # mismatched declaration builds the pre-warm cache hit rather than a
-        # silently-wrong-sized pool (or a wasted rebuild under the pool_size
-        # admission already resolved).
-        pool_size, _ = resolve_pool_size(col_entry)
+        pool_size = int(cfg["pool_size"])  # admission requires it explicitly
         locale = cfg.get("locale")
         build_config = {k: v for k, v in cfg.items() if k not in ("pool_size", "locale")}
         identity = builder.identity_for(
