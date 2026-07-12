@@ -139,6 +139,16 @@ def resolve_out_of_core_sources(
     called `source_loader(table)` for every missing table and retained the
     resulting resident `pa.Table`s, undoing the whole point of the route.
 
+    DE-09 bounded-memory behavior: For a `type=="file"`, `format=="parquet"`
+    source missing from caller_sources, this resolver PREFERS a `LazySource`
+    built from the config parquet path over calling `source_loader`. That
+    path holds the same bytes the plan was compiled from. Consequence: a
+    contract-violating `source_loader` that transforms or filters data (see
+    `run_pipeline` docstring for the loader faithfulness contract) is
+    unsupported and now DIVERGES from the sequential route, which still calls
+    the loader. Route selection is size-driven: an out-of-contract caller
+    could get different row-scope depending on which route runs.
+
     Resolution order per table:
 
     - already in `caller_sources`: kept verbatim (the caller's explicit

@@ -189,6 +189,15 @@ def run_pipeline(
     entry (TB-1) is resolved per-route -- see `_pipeline_sources`.
     `engine_version` flows into `compile_plan`'s audit-evidence stamping.
 
+    `source_loader` is the optional fallback for resolving tables not in
+    `sources`. It MUST return the exact config-declared source data for each
+    table (as read from `config["sources"]`). It is a RESIDENCY/ACCESS
+    mechanism -- how to fetch the declared source -- NOT a transform hook.
+    It must not return filtered, transformed, or otherwise divergent data
+    versus what the config declares. The plan is compiled from the
+    config-declared source via profiling, so a loader returning different
+    data violates this contract and produces incorrect results.
+
     Returns one `ExecutionResult` whose `outputs` covers every output
     table (generate + mask) and whose `table_kinds` field carries the
     per-table classification for the manifest stamping.
