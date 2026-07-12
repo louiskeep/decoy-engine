@@ -553,60 +553,25 @@ def run_pipeline(
                 now_iso=now_iso,
             )
 
-    # Step 3: stitch the outputs together. Mask wins ties (every name in
-    # the config maps to one kind by construction, so no real conflicts).
-    outputs: dict[str, pa.Table] = {}
-    outputs.update(generate_outputs)
-    outputs.update(mask_outputs)
-
-    # BF1: namespace the fidelity reports under the existing free-form
-    # quality_metrics dict (already plumbed to the platform manifest).
-    # Additive + default-OFF: when the flag is off, fidelity_reports is
-    # empty and quality_metrics is untouched.
-    quality_metrics: dict[str, Any] = dict(mask_quality_metrics)
-    if fidelity_reports:
-        quality_metrics["fidelity_reports"] = fidelity_reports
-
-    # Explain surfacing: stamp the SAME classification the routing decision
-    # used (computed once above), so the explain block and the executed
-    # route cannot drift apart. Behind the default-off flag; default runs
-    # stamp nothing here.
-    if explain_plan and execution_plan_decision is not None:
-        quality_metrics["execution_plan"] = {
-            "mode": execution_plan_decision.mode,
-            "reason": execution_plan_decision.reason,
-            "rejections": dict(execution_plan_decision.rejections),
-        }
-
-    # SP-05 job-level validators (P5.INFRA.4) + D8 combined quarantine pass;
-    # see `_pipeline_finalize.finalize_validators_and_quarantine` for the
-    # full "why" (trap T5, LOW-1 raise-before-write ordering, etc). Mutates
-    # `quality_metrics` in place and returns the (possibly quarantine
-    # -filtered) outputs.
-    outputs = _pipeline_finalize.finalize_validators_and_quarantine(
-        outputs,
+    # Step 3: stitch outputs + finalize. BF1 fidelity report, explain-plan
+    # surfacing, the SP-05/D8 validator+quarantine pass, the full_frame
+    # execution-telemetry stamp, and the final `ExecutionResult` are all
+    # pure post-mask assembly -- see `_pipeline_finalize.assemble_execution_result`
+    # for the full "why" on each piece (the sequential/out-of-core routes
+    # returned early above with their own telemetry and never reach here).
+    return _pipeline_finalize.assemble_execution_result(
+        generate_outputs,
+        mask_outputs,
+        mask_quality_metrics,
+        fidelity_reports=fidelity_reports,
+        explain_plan=explain_plan,
+        execution_plan_decision=execution_plan_decision,
         config=config,
         caller_sources=resident_sources,
         mask_row_errors=mask_row_errors,
-        quality_metrics=quality_metrics,
-    )
-
-    # S2: full-frame execution telemetry (the sequential route returned
-    # early above with its own telemetry).
-    quality_metrics["execution"] = _route_exec.execution_telemetry(
-        route="full_frame",
-        route_reason=route_reason,
-        sink=None,
-        source_loader=None,
-        sources_resident=True,
-    )
-
-    return ExecutionResult(
-        outputs=outputs,
-        timings=mask_timings,
-        boundary_conversion_ms=mask_conversion_ms,
-        warnings=mask_warnings,
-        quality_metrics=quality_metrics,
+        mask_timings=mask_timings,
+        mask_conversion_ms=mask_conversion_ms,
+        mask_warnings=mask_warnings,
         table_kinds=table_kinds,
-        row_errors=mask_row_errors,
+        route_reason=route_reason,
     )

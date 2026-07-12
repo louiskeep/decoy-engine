@@ -11,7 +11,7 @@ are finalize/stamping concerns, not routing decisions: nothing here picks
 a route, it only records what already happened or enforces a policy over
 already-produced outputs.
 
-Three independent pieces:
+Four independent pieces:
 
 - `stamp_execution_metrics`: the two reproducibility stamps (selected
   adapter identity + auto-chunk decision) that make a non-default
@@ -20,6 +20,14 @@ Three independent pieces:
   distribution fidelity (never fails the job).
 - `finalize_validators_and_quarantine`: D8's combined validator +
   row-error quarantine pass with its fail-closed remainder rule.
+- `assemble_execution_result`: the full_frame tail -- stitch generate +
+  mask outputs, fold in the fidelity/explain-plan quality_metrics
+  entries, run the validator/quarantine pass, stamp the full_frame
+  execution-telemetry block, and build the final `ExecutionResult`.
+  Pulled out of `run_pipeline` itself (2026-07-12 module-size sentry
+  fix) -- it is pure post-mask assembly, the same "already happened,
+  just record/package it" character as the other three helpers here,
+  not a routing or masking decision.
 """
 
 from __future__ import annotations
@@ -29,7 +37,10 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine.execution._adapter import ExecutionResult
+
 __all__ = [
+    "assemble_execution_result",
     "compute_fidelity_reports",
     "finalize_validators_and_quarantine",
     "stamp_execution_metrics",
@@ -208,3 +219,82 @@ def finalize_validators_and_quarantine(
             quality_metrics["quarantine"] = quarantine_manifest(q_summary)
 
     return outputs
+
+
+def assemble_execution_result(
+    generate_outputs: dict[str, pa.Table],
+    mask_outputs: dict[str, pa.Table],
+    mask_quality_metrics: dict[str, Any],
+    *,
+    fidelity_reports: dict[str, Any],
+    explain_plan: bool,
+    execution_plan_decision: Any,
+    config: dict[str, Any],
+    caller_sources: dict[str, pa.Table],
+    mask_row_errors: tuple[Any, ...],
+    mask_timings: tuple[Any, ...],
+    mask_conversion_ms: float,
+    mask_warnings: tuple[Any, ...],
+    table_kinds: dict[str, str],
+    route_reason: str,
+) -> ExecutionResult:
+    """Build the final `ExecutionResult` for the full_frame / auto-chunk tail.
+
+    This is the exact sequence `run_pipeline` used to run inline after its
+    mask/generate step: stitch outputs (mask wins ties -- every name in the
+    config maps to one kind by construction, so no real conflicts), fold the
+    BF1 fidelity report and (default-off) explain-plan classification into
+    `quality_metrics`, run the SP-05/D8 validator+quarantine pass
+    (`finalize_validators_and_quarantine`), stamp the full_frame
+    execution-telemetry block (the sequential/out-of-core routes stamp their
+    own telemetry and return earlier -- they never reach this helper), and
+    package everything into one `ExecutionResult`. Pure post-mask assembly,
+    not a routing or masking decision, matching this module's other helpers.
+    """
+    outputs: dict[str, pa.Table] = {}
+    outputs.update(generate_outputs)
+    outputs.update(mask_outputs)
+
+    quality_metrics: dict[str, Any] = dict(mask_quality_metrics)
+    if fidelity_reports:
+        quality_metrics["fidelity_reports"] = fidelity_reports
+
+    # Explain surfacing: stamp the SAME classification the routing decision
+    # used, so the explain block and the executed route cannot drift apart.
+    # Behind the default-off flag; default runs stamp nothing here.
+    if explain_plan and execution_plan_decision is not None:
+        quality_metrics["execution_plan"] = {
+            "mode": execution_plan_decision.mode,
+            "reason": execution_plan_decision.reason,
+            "rejections": dict(execution_plan_decision.rejections),
+        }
+
+    outputs = finalize_validators_and_quarantine(
+        outputs,
+        config=config,
+        caller_sources=caller_sources,
+        mask_row_errors=mask_row_errors,
+        quality_metrics=quality_metrics,
+    )
+
+    # S2: full-frame execution telemetry (the sequential/out-of-core routes
+    # stamp their own telemetry and return earlier, above this helper).
+    from decoy_engine.execution import _pipeline_route_exec as _route_exec
+
+    quality_metrics["execution"] = _route_exec.execution_telemetry(
+        route="full_frame",
+        route_reason=route_reason,
+        sink=None,
+        source_loader=None,
+        sources_resident=True,
+    )
+
+    return ExecutionResult(
+        outputs=outputs,
+        timings=mask_timings,
+        boundary_conversion_ms=mask_conversion_ms,
+        warnings=mask_warnings,
+        quality_metrics=quality_metrics,
+        table_kinds=table_kinds,
+        row_errors=mask_row_errors,
+    )
