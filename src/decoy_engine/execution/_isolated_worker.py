@@ -100,6 +100,13 @@ def _load_sources(
     `pa.Table | LazySource`), while sequential/full_frame -- routes that
     legitimately need whole-table residency -- call `.to_table()` only
     when they actually reach that point, never up front.
+
+    **Scope note (TB-1):** this commit fixes input residency for
+    relationship-bearing jobs only. Single-table (non-relationship) mask
+    jobs remain eager: their full input is materialized in the child before
+    routing, even if they later stream through an out-of-core path via a
+    different mechanism. This is a documented roadmap follow-up
+    (`docs/relationships-memory-scaling.md` section 2, Option 1 scope).
     """
     if lazy:
         return {name: LazySource(Path(path)) for name, path in manifest.items()}

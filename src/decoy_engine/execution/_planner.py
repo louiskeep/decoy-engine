@@ -515,16 +515,21 @@ def _runtime_source_rejections(
         reasons.append(f"no loaded source frame for table {table!r}")
         return reasons
     if isinstance(src, LazySource):
-        # TB-1: a LazySource is a lazy on-disk handle (`_isolated_worker.
-        # _load_sources`), not a resident frame -- the dtype/null-bearing
-        # walk below reads actual column DATA (`.column(name).null_count`),
-        # which is exactly the eager materialization TB-1 exists to avoid.
-        # Conservatively treat it like "no loaded source frame": the job
-        # stays on the (still correct, just not chunk-streamed) full-frame
-        # path, where `run_pipeline`'s own `_materialize_source` resolves
-        # the LazySource at the point full_frame actually consumes it. This
-        # is a scope trim, not a defect: chunking is a memory OPTIMIZATION
-        # over full_frame for non-FK jobs, not a correctness requirement.
+        # TB-1 defensive guard: a LazySource is a lazy on-disk handle
+        # (`_isolated_worker._load_sources`), not a resident frame -- the
+        # dtype/null-bearing walk below reads actual column DATA
+        # (`.column(name).null_count`), which is exactly the eager
+        # materialization TB-1 exists to avoid. Chunking is already rejected
+        # upstream (line 367) for all relationship-bearing jobs
+        # (`config.get("relationships")`), and ONLY relationship jobs carry a
+        # LazySource by construction, so this guard is unreachable in
+        # production. It is kept as belt-and-suspenders defense-in-depth
+        # against any future code path that might hand a LazySource to a
+        # non-relationship job. When this guard fires, conservatively treat
+        # it like "no loaded source frame": the job stays on the (still
+        # correct, just not chunk-streamed) full-frame path, where
+        # `run_pipeline`'s own `_materialize_source` resolves the LazySource
+        # at the point full_frame actually consumes it.
         reasons.append(
             f"source for table {table!r} is a lazy (LazySource) handle, not a "
             "resident frame; the chunk-stable-dtype runtime gate needs real "
