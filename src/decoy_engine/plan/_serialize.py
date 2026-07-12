@@ -24,6 +24,7 @@ from decoy_engine.plan._types import (
     PlanCompileResult,
     PlanRelationship,
     PlanRelationshipEnd,
+    PoolSpec,
     SeedEnvelope,
     TableSeed,
 )
@@ -111,6 +112,14 @@ def _column_seed_to_dict(cs: ColumnSeed) -> dict[str, Any]:
     # MG-6 D1 (2026-05-31): same round-trip pattern as technique_class.
     if cs.distribution_behavior is not None:
         out["distribution_behavior"] = cs.distribution_behavior
+    # DE-11 (2026-07-12): emit the typed pool-capacity contract when set;
+    # legacy plans omit the field and round-trip unchanged.
+    if cs.pool_spec is not None:
+        out["pool_spec"] = {
+            "pool_size": cs.pool_spec.pool_size,
+            "unique": cs.pool_spec.unique,
+            "size_source": cs.pool_spec.size_source,
+        }
     return out
 
 
@@ -215,6 +224,19 @@ def _column_seed_from_dict(data: dict[str, Any]) -> ColumnSeed:
         when=data.get("when"),
         # MG-6 D1 (2026-05-31): same pattern.
         distribution_behavior=data.get("distribution_behavior"),
+        # DE-11 (2026-07-12): reconstruct the typed pool-capacity contract;
+        # legacy plans without the field deserialize as None.
+        pool_spec=_pool_spec_from_dict(data.get("pool_spec")),
+    )
+
+
+def _pool_spec_from_dict(data: dict[str, Any] | None) -> PoolSpec | None:
+    if not data:
+        return None
+    return PoolSpec(
+        pool_size=int(data["pool_size"]),
+        unique=bool(data["unique"]),
+        size_source=data["size_source"],
     )
 
 

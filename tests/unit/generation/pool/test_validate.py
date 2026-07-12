@@ -122,8 +122,14 @@ class TestPoolCapacityPreFlight:
         assert excinfo.value.code == "pool_too_small_for_source"
 
     def test_unique_pool_large_enough_passes(self) -> None:
+        # DE-11: UNIQUE feasibility is keyed on the NON-NULL OUTPUT ROW COUNT,
+        # not the source distinct count. `_profile_with_distinct(..., 50)` has
+        # row_count = 50 * 10 = 500 non-null rows, so the pool must hold >= 500
+        # unique values. (pool_size=200 here formerly compiled and then drew
+        # 500 distinct from an undeclared 10_000 default pool -- the exact
+        # defect; see test_de11_poolspec_unification.py.)
         plan = compile_plan(
-            _config("unique", pool_size=200),
+            _config("unique", pool_size=500),
             _profile_with_distinct("customers", "email", 50),
             decoy_engine_version="0.1.0",
         )
