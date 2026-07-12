@@ -23,6 +23,8 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine.profile._readers import LazySource
+
 if TYPE_CHECKING:
     from decoy_engine.plan._types import Plan
     from decoy_engine.profile._types import Profile, TableProfile
@@ -66,7 +68,7 @@ def out_of_core_admission(
 
 
 def largest_mask_table_rows(
-    caller_sources: dict[str, pa.Table],
+    caller_sources: dict[str, pa.Table | LazySource],
     *,
     table_kinds: dict[str, str],
 ) -> int | None:
@@ -117,7 +119,7 @@ def largest_mask_table_rows_from_profile(
 def _resolve_largest_mask_table_rows(
     profile: Profile,
     *,
-    caller_sources: dict[str, pa.Table],
+    caller_sources: dict[str, pa.Table | LazySource],
     table_kinds: dict[str, str],
 ) -> tuple[int | None, bool]:
     """Reconcile the resident and profile-metadata size signals into the
@@ -203,7 +205,7 @@ def out_of_core_routing_signals(
     plan: Plan,
     registry: ProviderRegistry,
     graph: RelationshipGraph,
-    caller_sources: dict[str, pa.Table],
+    caller_sources: dict[str, pa.Table | LazySource],
     table_kinds: dict[str, str],
     has_mask_table: bool,
 ) -> tuple[bool, str | None, int | None, bool]:
@@ -232,15 +234,23 @@ def out_of_core_routing_signals(
 
 
 def _resident_column_arrays(
-    resident: pa.Table | None, profile_table: TableProfile
+    resident: pa.Table | LazySource | None, profile_table: TableProfile
 ) -> dict[str, pa.Array | pa.ChunkedArray]:
     """`{column_name: array}` for `profile_table`'s columns present in a
     RESIDENT source, or `{}` for a lazy (not-yet-loaded) table.
 
     Zero-copy: `pa.Table.column` returns a view into the existing Arrow
     buffer, not a copy, so building this mapping costs nothing per row.
+
+    TB-1: a `LazySource` (`_isolated_worker._load_sources`) is treated
+    exactly like `None` here -- it has no resident column buffers to
+    sample without a full read, and this signal (the byte-estimate /
+    probe-recovery admission path, both flag-gated default-OFF) must never
+    force one just to sample. `None`/unsampleable is already the documented
+    safe direction (see this function's callers): an unpriceable column
+    routes bounded, it never silently admits full_frame.
     """
-    if resident is None:
+    if resident is None or isinstance(resident, LazySource):
         return {}
     names = set(resident.column_names)
     return {
@@ -251,7 +261,7 @@ def _resident_column_arrays(
 def byte_estimate_full_frame_fits(
     profile: Any,
     *,
-    caller_sources: dict[str, pa.Table],
+    caller_sources: dict[str, pa.Table | LazySource],
     table_kinds: dict[str, str],
     budget_bytes: int,
     error_band: float = 0.30,
@@ -302,7 +312,7 @@ def byte_estimate_full_frame_fits(
 def resolve_full_frame_fits_estimate(
     use_byte_estimate_routing: bool,
     profile: Any,
-    caller_sources: dict[str, pa.Table],
+    caller_sources: dict[str, pa.Table | LazySource],
     table_kinds: dict[str, str],
     out_of_core_budget_bytes: int | None,
 ) -> bool | None:
@@ -330,7 +340,7 @@ def resolve_probe_recovery(
     use_probe_routing: bool,
     use_byte_estimate_routing: bool,
     profile: Any,
-    caller_sources: dict[str, pa.Table],
+    caller_sources: dict[str, pa.Table | LazySource],
     table_kinds: dict[str, str],
     out_of_core_budget_bytes: int | None,
     full_frame_fits_estimate: bool | None,
@@ -377,6 +387,13 @@ def resolve_probe_recovery(
     coerced to `False`: `decide_execution_route` treats anything other than
     `True` identically (route bounded), so the distinction only matters for
     diagnostics, not safety.
+
+    TB-1 scope note: `probe_peak_bytes` below still assumes every mask
+    table in `caller_sources` is a resident `pa.Table` (it serializes them
+    into a probe subprocess); a `LazySource` entry is not audited for this
+    call. Both flags this function requires are default-`False` (TB-1
+    keeps them off), so this is not reachable in production this sprint --
+    flagged here for TB-5, which enables them, to audit before flip.
     """
     if not (use_probe_routing and use_byte_estimate_routing):
         return None
@@ -461,7 +478,7 @@ def resolve_execution_route(
     plan: Plan,
     registry: ProviderRegistry,
     graph: RelationshipGraph,
-    caller_sources: dict[str, pa.Table],
+    caller_sources: dict[str, pa.Table | LazySource],
     table_kinds: dict[str, str],
     has_mask_table: bool,
     has_generate_table: bool,

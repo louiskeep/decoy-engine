@@ -69,6 +69,8 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
+from decoy_engine.profile._readers import LazySource
+
 if TYPE_CHECKING:
     import pyarrow as pa
 
@@ -178,7 +180,7 @@ def classify_job(
     registry: ProviderRegistry,
     relationship_graph: RelationshipGraph,
     substrate: str,
-    source_tables: Mapping[str, pa.Table] | None = None,
+    source_tables: Mapping[str, pa.Table | LazySource] | None = None,
     auto_chunk_threshold_rows: int = AUTO_CHUNK_THRESHOLD_ROWS_DEFAULT,
 ) -> ExecutionPlan:
     """Classify a job into exactly one execution mode, without executing.
@@ -320,7 +322,7 @@ def _chunked_rejection(
     generate_tables: list[str],
     work: list[Any],
     substrate: str,
-    source_tables: Mapping[str, pa.Table] | None,
+    source_tables: Mapping[str, pa.Table | LazySource] | None,
     auto_chunk_threshold_rows: int,
 ) -> str | None:
     """None when the job is admissible for chunked streaming; else why not.
@@ -483,7 +485,7 @@ def _fpe_join_group_columns(config: dict[str, Any], *, table: str) -> list[str]:
 
 
 def _runtime_source_rejections(
-    source_tables: Mapping[str, pa.Table],
+    source_tables: Mapping[str, pa.Table | LazySource],
     *,
     table: str,
     auto_chunk_threshold_rows: int,
@@ -511,6 +513,24 @@ def _runtime_source_rejections(
     src = source_tables.get(table)
     if src is None:
         reasons.append(f"no loaded source frame for table {table!r}")
+        return reasons
+    if isinstance(src, LazySource):
+        # TB-1: a LazySource is a lazy on-disk handle (`_isolated_worker.
+        # _load_sources`), not a resident frame -- the dtype/null-bearing
+        # walk below reads actual column DATA (`.column(name).null_count`),
+        # which is exactly the eager materialization TB-1 exists to avoid.
+        # Conservatively treat it like "no loaded source frame": the job
+        # stays on the (still correct, just not chunk-streamed) full-frame
+        # path, where `run_pipeline`'s own `_materialize_source` resolves
+        # the LazySource at the point full_frame actually consumes it. This
+        # is a scope trim, not a defect: chunking is a memory OPTIMIZATION
+        # over full_frame for non-FK jobs, not a correctness requirement.
+        reasons.append(
+            f"source for table {table!r} is a lazy (LazySource) handle, not a "
+            "resident frame; the chunk-stable-dtype runtime gate needs real "
+            "column data, so auto-chunk conservatively declines rather than "
+            "force-materializing it just to decide"
+        )
         return reasons
     if src.num_rows < auto_chunk_threshold_rows:
         reasons.append(
