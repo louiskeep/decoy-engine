@@ -92,6 +92,55 @@ def _fk_key_value(value: object) -> object:
     return fk_key_value(value)
 
 
+def _fk_output_column(values: list[object], column: str) -> object:
+    """Materialize one FK output column losslessly, one contract for every route.
+
+    DE-10 (adversarial review): the full-frame + sequential routes used to assign
+    the raw Python list straight back to the child frame (`frame[col] = values`),
+    letting pandas infer the column dtype. That silently coerces an integer FK key
+    past exactly-representable float precision (> 2**53) to float64 the moment the
+    column also holds a float value or a null (e.g. 9007199254740993 ->
+    9007199254740992.0) -- a silent referential-integrity drift, not a crash. The
+    out-of-core route already rejects/preserves this exact shape, so route choice
+    decided whether a large key survived.
+
+    Build the column through the SAME Arrow inference the out-of-core route uses in
+    `out_of_core/_join.py::_append_output_batch` -- `pa.array(..., from_pandas=True)`:
+
+    * a mix Arrow cannot reconcile into one array (a matched float parent value
+      beside an orphan integer key > 2**53) raises ArrowInvalid/ArrowTypeError, so
+      surface the SAME coded `out_of_core_fk_key_dtype_unsupported` rejection
+      (reject rather than drift) that route already raises -- one typed error
+      across all routes, not a parallel mechanism;
+    * an all-integral column (even past 2**53) infers int64 and is kept exact;
+      `integer_object_nulls=True` materializes a nullable integer column as object
+      Python ints + None (which round-trips back to int64 through the output
+      writer's `pa.Table.from_pandas`) instead of the lossy float64 pandas would
+      pick for int + null.
+
+    The code name is the FK-key-dtype fail-closed family (born on the out-of-core
+    route, hence the `out_of_core_` prefix); reusing it verbatim is what makes the
+    rejection identical across routes.
+    """
+    try:
+        arr = pa.array(values, from_pandas=True)
+    except (pa.ArrowInvalid, pa.ArrowTypeError) as exc:
+        raise ExecutionError(
+            code="out_of_core_fk_key_dtype_unsupported",
+            message=(
+                f"FK output column {column!r} mixes key values Arrow cannot "
+                "reconcile into one array (e.g. a matched float parent value with "
+                "an orphan integer child key beyond exactly-representable float "
+                "precision, > 2**53); rejected rather than silently rounded to "
+                "float64. Matches the out-of-core route's fail-closed contract "
+                "(out_of_core/_join.py::_append_output_batch)."
+            ),
+        ) from exc
+    # `.to_numpy()` keeps the assignment POSITIONAL (like the prior raw-list
+    # assignment), avoiding any pandas index-alignment on write-back.
+    return arr.to_pandas(integer_object_nulls=True).to_numpy()
+
+
 class PandasExecutionAdapter:
     """Concrete pandas-backed execution adapter."""
 
@@ -450,7 +499,14 @@ class PandasExecutionAdapter:
         )
 
         for j, c in enumerate(child_cols):
-            child_frame[c] = [None if mk is None else mk[j] for mk in masked_keys]
+            # DE-10: build each FK output column through Arrow inference instead
+            # of letting pandas infer it from a raw list, which silently rounds an
+            # integer key past exactly-representable float precision (> 2**53) to
+            # float64. `_fk_output_column` mirrors the out-of-core route's
+            # per-batch build so all routes share one lossless typing contract.
+            child_frame[c] = _fk_output_column(
+                [None if mk is None else mk[j] for mk in masked_keys], c
+            )
         # S2: emit one cascaded RowError per child row whose key was excluded
         # from the parent map (parent key row-errored). The masked cell is
         # already None (set above), so even a downstream bug in quarantine

@@ -46,7 +46,16 @@ class FakerStrategyHandler:
         source = df[column]
         n = len(source)
         cfg = provider_config_to_dict(plan.provider_config)
-        pool_size = int(cfg.get("pool_size", _DEFAULT_POOL_SIZE))
+        # DE-11: the plan's typed PoolSpec is the canonical pool_size source, so
+        # an operator-declared top-level pool_size reaches the pool instead of
+        # the handler silently defaulting to 10_000. When too small for a UNIQUE
+        # draw the PoolSampler fails closed (GenerationError uniqueness_impossible).
+        # A directly-constructed ColumnSeed without a PoolSpec (older callers,
+        # unit tests) falls back to the legacy provider_config lookup.
+        if plan.pool_spec is not None:
+            pool_size = plan.pool_spec.pool_size
+        else:
+            pool_size = int(cfg.get("pool_size", _DEFAULT_POOL_SIZE))
         locale = cfg.get("locale")
         # pool_size + locale are build knobs, not Faker provider-method kwargs.
         build_config = {k: v for k, v in cfg.items() if k not in ("pool_size", "locale")}
