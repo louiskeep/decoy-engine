@@ -60,6 +60,15 @@ from decoy_engine.execution._chunked import (
 )
 from decoy_engine.execution._errors import ExecutionError, StrategyError
 from decoy_engine.execution._events import ExecutionEvent
+from decoy_engine.execution._governor import (
+    GovernorResult,
+    GovernorRoute,
+    GovernorTripKind,
+    GovernorTripRecord,
+    run_job_with_governor,
+)
+from decoy_engine.execution._isolated_common import IsolatedRunResult
+from decoy_engine.execution._isolated_run import run_pipeline_isolated
 from decoy_engine.execution._pandas_adapter import (
     PandasExecutionAdapter,
     get_default_executor,
@@ -72,6 +81,7 @@ from decoy_engine.execution._planner import (
     ExecutionPlan,
     classify_job,
 )
+from decoy_engine.execution._probe import ProbePoint, ProbeResult, probe_fits, probe_peak_bytes
 from decoy_engine.execution._row_errors import RowError, RowErrorRecord
 from decoy_engine.execution._runner import WorkNode, build_work_list, order_work
 from decoy_engine.execution._substrate import (
@@ -106,11 +116,18 @@ __all__ = [
     "ExecutionEvent",
     "ExecutionPlan",
     "ExecutionResult",
+    "GovernorResult",
+    "GovernorRoute",
+    "GovernorTripKind",
+    "GovernorTripRecord",
+    "IsolatedRunResult",
     "OutOfCoreCompatibility",
     "OutOfCoreRejection",
     "PandasExecutionAdapter",
     "ParquetTransactionalSink",
     "PolarsExecutionAdapter",
+    "ProbePoint",
+    "ProbeResult",
     "RowError",
     "RowErrorRecord",
     "StrategyContext",
@@ -125,8 +142,12 @@ __all__ = [
     "classify_table_kinds",
     "get_default_executor",
     "order_work",
+    "probe_fits",
+    "probe_peak_bytes",
     "resolve_substrate",
+    "run_job_with_governor",
     "run_mask_pipeline_chunked",
     "run_pipeline",
+    "run_pipeline_isolated",
     "select_execution_adapter",
 ]

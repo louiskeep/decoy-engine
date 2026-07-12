@@ -79,25 +79,37 @@ check (`_chunked.py`) raises `RowErrorsFailedError` the moment ANY chunk
 reports a row error, so `run_pipeline` never sees row errors to
 quarantine on that route (same policy the pre-existing manual chunked
 entrypoint already enforced).
+
+Sprint B1b (OOM-avoidance routing redesign, docs/plans/2026-07-10-oom-
+avoidance-routing-redesign.md §13): `decide_execution_route`'s
+`use_byte_estimate_routing` flag (default OFF) wires the B1a byte-level
+estimator (`_mem_estimate.fits`) into the "auto" full_frame-admission
+decision, additively -- see the flag's docstring on `decide_execution_route`
+for the exact scope and rule. OFF (the default), this module's routing is
+BYTE-FOR-BYTE the pre-B1b row-count logic described above.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-import pyarrow as pa
-
 from decoy_engine.errors import ConfigError
 from decoy_engine.execution._errors import ExecutionError
 
-# The size + out-of-core-admission signal helpers live in a sibling module to
-# hold the 600-LOC orchestration cap; re-exported here so `run_pipeline` keeps a
-# single `_pipeline_routing.<name>` call surface for the routing seam.
+# The size + out-of-core-admission signal helpers, and the S3 auto-chunk
+# routing layer, live in sibling modules to hold the 600-LOC orchestration
+# cap; re-exported here so `run_pipeline` keeps a single
+# `_pipeline_routing.<name>` call surface for the routing seam.
+from decoy_engine.execution._pipeline_chunk_route import auto_chunk_stamp, decide_chunk_route
 from decoy_engine.execution._pipeline_routing_signals import (
+    byte_estimate_full_frame_fits,
     largest_mask_table_rows,
     largest_mask_table_rows_from_profile,
     out_of_core_admission,
     out_of_core_routing_signals,
+    resolve_execution_route,
+    resolve_full_frame_fits_estimate,
+    resolve_probe_recovery,
 )
 from decoy_engine.execution._planner import (
     FULL_FRAME_REJECT_ROWS_DEFAULT,
@@ -105,19 +117,20 @@ from decoy_engine.execution._planner import (
 )
 
 if TYPE_CHECKING:
-    from decoy_engine.execution._planner import ExecutionPlan
-    from decoy_engine.plan._types import Plan
-    from decoy_engine.providers_v2 import ProviderRegistry
     from decoy_engine.relationships import RelationshipGraph
 
 __all__ = [
     "auto_chunk_stamp",
+    "byte_estimate_full_frame_fits",
     "decide_chunk_route",
     "decide_execution_route",
     "largest_mask_table_rows",
     "largest_mask_table_rows_from_profile",
     "out_of_core_admission",
     "out_of_core_routing_signals",
+    "resolve_execution_route",
+    "resolve_full_frame_fits_estimate",
+    "resolve_probe_recovery",
 ]
 
 
@@ -216,9 +229,52 @@ def decide_execution_route(
     largest_table_rows_exact: bool = True,
     out_of_core_threshold_rows: int = OUT_OF_CORE_THRESHOLD_ROWS_DEFAULT,
     full_frame_reject_rows: int = FULL_FRAME_REJECT_ROWS_DEFAULT,
+    use_byte_estimate_routing: bool = False,
+    full_frame_fits_estimate: bool | None = None,
+    use_probe_routing: bool = False,
+    probe_recovers_full_frame: bool | None = None,
 ) -> tuple[str, str]:
     """Decide `(route, route_reason)` -- `"out_of_core"`, `"sequential"`, or
     `"full_frame"` -- or RAISE a fail-closed reject-before-read.
+
+    `use_byte_estimate_routing` (Sprint B1b, default `False`, additive): OFF,
+    this function is BYTE-FOR-BYTE the row-count logic below --
+    `full_frame_fits_estimate` is never read, so the SC5 contract and every
+    existing routing test stay green unmodified. ON, for a job IN SCOPE
+    (`has_relationships and has_mask_table and not has_generate_table` --
+    see `byte_estimate_full_frame_fits`'s docstring for why generate+mask is
+    excluded), the "auto" decision is REPLACED by the §13 conservative-filter
+    ruling: full_frame only when `full_frame_fits_estimate is True` (the
+    caller precomputes this via `byte_estimate_full_frame_fits` +
+    `resolve_budget`); otherwise -- UNPRICEABLE (`None`) treated identically
+    to `False`, per §13 -- the job routes to whichever BOUNDED path
+    eligibility admits (out_of_core when compat-admitted, else sequential),
+    or the existing reject when NEITHER applies (§13's one irreducible reject
+    class). The choice AMONG bounded routes stays eligibility-based, never an
+    estimate of out_of_core/sequential peak (unmeasured placeholders, §13);
+    `out_of_core_threshold_rows` is not consulted in this mode. Out of scope,
+    the flag has NO effect, even when `full_frame_fits_estimate` is set.
+
+    Sprint B2 (§3.3/§11/§13): `use_probe_routing` (default `False`, additive,
+    composes with `use_byte_estimate_routing` -- it has NO effect unless that
+    flag is also `True`) is the fast-path RECOVERY for a job the conservative
+    B1b estimate over-downgrades. `probe_recovers_full_frame` is the caller's
+    precomputed `_pipeline_routing_signals.resolve_probe_recovery` result:
+    `True` only when the two-point micro-probe (`_probe.probe_peak_bytes`)
+    actually MEASURED this job's real full_frame peak (at small scale,
+    extrapolated) and confirmed it clears the budget with margin. Checked
+    ONLY after `full_frame_fits_estimate is True` fails to admit the job (a
+    confirmed static fit never needs a probe) -- when it is `True`, this
+    function returns `full_frame` even for a job that would otherwise be
+    out_of_core-eligible: a MEASURED fit beats a bounded-by-eligibility
+    default, because full_frame is faster and the probe's `True` means the
+    measurement, not a model, backs the decision. Anything other than `True`
+    (`False` or `None` -- an inconclusive probe, or one that was never run
+    because it was out of scope/unnecessary) falls straight through to the
+    exact same bounded-by-eligibility logic below as if the probe did not
+    exist -- an inconclusive probe NEVER yields full_frame, only a
+    CONFIRMED fit does (the load-bearing safety property: recovery only on
+    a measured fit).
 
     Priority (SC2), for a relationship-bearing PURE-MASK job under `auto`:
     out-of-core (when compat-admitted AND large) > sequential (bounded but
@@ -357,6 +413,71 @@ def decide_execution_route(
         return "sequential", route_reason
 
     # "auto"
+    # B1b (§13): flag-gated byte-estimate admission, scoped to
+    # relationship-bearing PURE-MASK jobs. `use_byte_estimate_routing`
+    # defaults False, so this branch can never fire unless a caller opts
+    # in -- the row-count logic below it is untouched and unreachable-
+    # bypassed only when the flag is explicitly on AND the job is in scope.
+    byte_estimate_in_scope = (
+        use_byte_estimate_routing
+        and has_relationships
+        and has_mask_table
+        and not has_generate_table
+    )
+    if byte_estimate_in_scope:
+        # §13's ruling: admit full_frame ONLY when the conservative
+        # estimate clears the budget with margin (`fits` already applied
+        # the asymmetric error_band). UNPRICEABLE (`None`) is treated
+        # exactly like "does not fit" -- never admit an unknown estimate to
+        # full_frame; B2's probe is the future fast-path recovery for it.
+        if full_frame_fits_estimate is True:
+            return "full_frame", "byte_estimate_full_frame_fits"
+        # B2 (§13): the static estimate did NOT confirm a fit -- give the
+        # probe a chance to RECOVER full_frame with a real measurement
+        # before falling back to bounded-by-eligibility. `probe_recovers_
+        # full_frame` is precomputed by the caller (`resolve_probe_recovery`)
+        # and is `True` ONLY when the probe actually measured a fit; `False`/
+        # `None` (inconclusive, out of scope, or never run) fall straight
+        # through to the unchanged bounded logic below. `use_probe_routing`
+        # is re-checked HERE too (not just trusted from the caller): a
+        # `probe_recovers_full_frame=True` passed in with the flag off must
+        # have NO effect, matching `use_byte_estimate_routing`'s own
+        # defense-in-depth discipline above.
+        if use_probe_routing and probe_recovers_full_frame is True:
+            return "full_frame", "probe_recovered_full_frame"
+        # Does not fit (or UNPRICEABLE): route bounded by ELIGIBILITY alone,
+        # never by an estimate of out_of_core/sequential peak -- their k's
+        # are unmeasured placeholders (§13), and out_of_core's own runtime
+        # budget (Sprint 1b) caps it regardless of how this job got routed
+        # there.
+        if eligible and not cyclic and out_of_core_compatible:
+            return "out_of_core", "byte_estimate_bounded_out_of_core"
+        if eligible and not cyclic:
+            return "sequential", route_reason
+        # Irreducible reject class (§13): no bounded route applies (a
+        # cross-table FK cycle, or a job disqualified from sequential for
+        # another reason) AND the byte estimate does not confirm full_frame
+        # fits either. Reuse the EXISTING reject mechanism/code
+        # (`fk_full_frame_oom_risk_rejected`) rather than inventing a new
+        # one -- retiring this code is the B3 contract migration, not this
+        # sprint.
+        byte_estimate_full_frame_reason = (
+            "cross_table_cycle" if (eligible and cyclic) else route_reason
+        )
+        raise ExecutionError(
+            code="fk_full_frame_oom_risk_rejected",
+            message=(
+                "FK job rejected before read: the byte-level memory estimator "
+                "(docs/plans/2026-07-10-oom-avoidance-routing-redesign.md §13) "
+                "predicts this job would not fit the full_frame budget within "
+                "margin, and no bounded route applies -- the job is not "
+                f"out-of-core-eligible ({out_of_core_reject_code or 'not a pure-mask FK recipe'}) "
+                f"and not sequential-eligible ({byte_estimate_full_frame_reason}). Reduce "
+                "the job size, make it out-of-core-eligible (supported "
+                "strategies + an acyclic single-parent FK graph), or force "
+                "execution_mode='full_frame' to override at your own memory risk."
+            ),
+        )
     if out_of_core_ready:
         return "out_of_core", "out_of_core_large_fk"
     if eligible and not cyclic:
@@ -424,84 +545,3 @@ def decide_execution_route(
             ),
         )
     return "full_frame", full_frame_reason
-
-
-def decide_chunk_route(
-    config: dict[str, Any],
-    *,
-    plan: Plan,
-    registry: ProviderRegistry,
-    graph: RelationshipGraph,
-    substrate: str,
-    caller_sources: dict[str, pa.Table],
-    auto_chunk_threshold_rows: int,
-    explain_plan: bool,
-    auto_chunk: bool,
-    has_mask_table: bool,
-) -> tuple[ExecutionPlan | None, bool]:
-    """Auto-chunk go/no-go + explain surfacing.
-
-    ONE `classify_job` call serves both the routing decision and the
-    `execution_plan` explain stamp so the explain surface can never
-    disagree with what actually ran. The kill switch (`auto_chunk=False`)
-    skips classification entirely unless explain asks: a forced
-    full-frame run must not depend on planner behavior.
-
-    Returns `(execution_plan_decision, route_chunked)`; `decision` is
-    `None` when neither `explain_plan` nor `auto_chunk` asked for a
-    classification.
-    """
-    if not (explain_plan or (auto_chunk and has_mask_table)):
-        return None, False
-
-    from decoy_engine.execution._planner import classify_job
-
-    decision = classify_job(
-        config,
-        plan=plan,
-        registry=registry,
-        relationship_graph=graph,
-        substrate=substrate,
-        source_tables=caller_sources,
-        auto_chunk_threshold_rows=auto_chunk_threshold_rows,
-    )
-    route_chunked = auto_chunk and decision.mode == "chunked"
-    return decision, route_chunked
-
-
-def auto_chunk_stamp(
-    *,
-    route_chunked: bool,
-    auto_chunk: bool,
-    chunk_size_rows: int,
-    auto_chunk_threshold_rows: int,
-    table_kinds: dict[str, str],
-    caller_sources: dict[str, pa.Table],
-    decision: ExecutionPlan | None,
-) -> dict[str, Any]:
-    """Build the `quality_metrics["auto_chunk"]` reproducibility block."""
-    mask_names = [name for name, kind in table_kinds.items() if kind == "mask"]
-    source_rows: int | None = None
-    if len(mask_names) == 1 and mask_names[0] in caller_sources:
-        source_rows = caller_sources[mask_names[0]].num_rows
-    chunk_count: int | None = None
-    if route_chunked and source_rows is not None:
-        chunk_count = -(-source_rows // chunk_size_rows)
-    if route_chunked and decision is not None:
-        reason = decision.reason
-    elif not auto_chunk:
-        reason = "auto_chunk disabled; full-frame path forced by the kill switch"
-    elif decision is not None:
-        reason = decision.rejections.get(
-            "chunked", f"planner selected {decision.mode}: {decision.reason}"
-        )
-    else:  # unreachable by construction; kept total for safety
-        reason = "no routing decision was computed"
-    return {
-        "mode": "chunked" if route_chunked else "full_frame",
-        "chunk_size_rows": chunk_size_rows,
-        "threshold_rows": auto_chunk_threshold_rows,
-        "source_rows": source_rows,
-        "chunk_count": chunk_count,
-        "reason": reason,
-    }

@@ -48,7 +48,7 @@ class ReferenceTable:
         # (enforced by _loader.py). Direct construction without an 'id' column
         # is allowed for internal use but keyed_row will raise in that case.
         if "id" in table.schema.names:
-            sort_indices = pc.sort_indices(  # type: ignore[attr-defined]
+            sort_indices = pc.sort_indices(  # type: ignore[attr-defined, unused-ignore]
                 table, sort_keys=[("id", "ascending")]
             )
             table = table.take(sort_indices)
