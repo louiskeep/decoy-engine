@@ -17,6 +17,7 @@ from decoy_engine.plan._seed import _normalize_job_seed
 from decoy_engine.plan._types import (
     ColumnSeed,
     GroupSeed,
+    PoolSpec,
     SeedEnvelope,
     TableSeed,
 )
@@ -253,6 +254,21 @@ def _build_seed_envelope(
                             "the column off the coherent set."
                         ),
                     )
+                # DE-11: carry ONE typed pool-capacity contract for pool-backed
+                # (faker) columns. Resolved from the canonical `pool_size`
+                # config location (shared with the compile-time capacity
+                # check), so the declared pool_size reaches the faker handler
+                # instead of the handler silently defaulting to 10_000.
+                pool_spec = None
+                if strategy == "faker":
+                    from decoy_engine.generation.pool._capacity import resolve_pool_size
+
+                    resolved_pool_size, pool_size_declared = resolve_pool_size(col_entry)
+                    pool_spec = PoolSpec(
+                        pool_size=resolved_pool_size,
+                        unique=(cardinality_mode == "unique"),
+                        size_source="declared" if pool_size_declared else "default",
+                    )
                 per_column.append(
                     (
                         col_name,
@@ -281,6 +297,7 @@ def _build_seed_envelope(
                                 strategy, provider_config
                             ),
                             ner_model_version=ner_model_version,
+                            pool_spec=pool_spec,
                         ),
                     )
                 )

@@ -352,6 +352,113 @@ class TestConditionalStrategies:
         masked = chunked.column("contact").to_pylist()
         assert len(set(masked)) <= 7
 
+    def test_top_level_pool_size_only_admitted_and_sizes_pool(self, tmp_path) -> None:
+        """DE-11 follow-up: a faker column that declares pool_size ONLY at
+        the top level (no provider_config.pool_size) must not be a
+        compile-accepts/chunked-refuses divergence. Compile already honors
+        the canonical resolver (top-level wins); the chunked admission gate
+        and pre-warm must resolve the SAME way, and the declared size (not
+        the 10_000 default) must size the chunked pool."""
+        n = 100
+        df = pd.DataFrame({"contact": [f"person{i}@source.example" for i in range(n)]})
+        df.to_csv(tmp_path / "in.csv", index=False)
+        cfg = _config(
+            tmp_path,
+            [
+                {
+                    "name": "contact",
+                    "strategy": "faker",
+                    "provider": "person_email",
+                    "deterministic": True,
+                    "namespace": "contact_ns",
+                    "pool_size": 7,  # top-level only; no provider_config.pool_size
+                }
+            ],
+        )
+        full = run_pipeline(
+            cfg,
+            sources={"accounts": pa.Table.from_pandas(df, preserve_index=False)},
+            engine_version=_ENGINE_VERSION,
+        ).outputs["accounts"]
+        chunked = pa.concat_tables(
+            list(
+                run_mask_pipeline_chunked(
+                    cfg, _chunks(df, 9), table="accounts", engine_version=_ENGINE_VERSION
+                )
+            )
+        )
+        assert chunked.to_pylist() == full.to_pylist()
+        masked = chunked.column("contact").to_pylist()
+        assert len(set(masked)) <= 7
+
+    def test_top_level_pool_size_wins_over_provider_config_mismatch(self, tmp_path) -> None:
+        """Mismatched top-level vs provider_config.pool_size: the canonical
+        resolver's top-level value wins on the chunked path too, so the
+        pre-warm builds the SAME identity the handler looks up (no
+        cache-miss on a wrong size) and both compile and chunked resolve to
+        the declared top-level size, not the (stale/mismatched)
+        provider_config value."""
+        from decoy_engine.execution._chunked import _first_chunk_profile, _warm_faker_pools
+        from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
+        from decoy_engine.generation.pool import PoolCache
+        from decoy_engine.plan import compile_plan
+        from decoy_engine.providers_v2 import get_default_registry
+        from decoy_engine.relationships import RelationshipGraph, build_namespace_registry
+
+        n = 20
+        df = pd.DataFrame({"contact": [f"person{i}@source.example" for i in range(n)]})
+        cfg = _config(
+            tmp_path,
+            [
+                {
+                    "name": "contact",
+                    "strategy": "faker",
+                    "provider": "person_email",
+                    "deterministic": True,
+                    "namespace": "contact_ns",
+                    "pool_size": 7,
+                    "provider_config": {"pool_size": 500},
+                }
+            ],
+        )
+        source_tbl = pa.Table.from_pandas(df, preserve_index=False)
+        profile = _first_chunk_profile(source_tbl, table="accounts", engine_version=_ENGINE_VERSION)
+        plan = compile_plan(cfg, profile, decoy_engine_version=_ENGINE_VERSION, no_profile=True)
+        registry = get_default_registry()
+        ns_registry = build_namespace_registry(cfg, profile)
+        graph = RelationshipGraph(edges=(), ordering=())
+        adapter = PandasExecutionAdapter()
+        cache = PoolCache()
+
+        _warm_faker_pools(
+            cfg,
+            table="accounts",
+            job_seed=plan.seed_envelope.job_seed,
+            registry=registry,
+            pool_cache=cache,
+        )
+        before = cache.stats()
+        assert before.entries == 1
+
+        result = adapter.run(
+            plan,
+            {"accounts": source_tbl},
+            registry=registry,
+            pool_cache=cache,
+            relationship_graph=graph,
+            namespace_registry=ns_registry,
+        )
+        after = cache.stats()
+        # The handler resolves pool_size via the canonical resolver (top-level
+        # wins, so 7). If pre-warm built under a different identity (the
+        # mismatched provider_config value, 500), the handler's lookup misses
+        # and silently rebuilds -- wasting the pre-warm and (in a real run)
+        # racing chunk-to-chunk rebuilds. A matching pre-warm is a cache HIT.
+        assert after.misses == before.misses
+        assert after.hits > before.hits
+        masked = result.outputs["accounts"].column("contact").to_pylist()
+        assert len(set(masked)) <= 7
+
     def test_faker_pool_cache_consulted_across_runs(self, tmp_path) -> None:
         """The handler consults ctx.pool_cache: a second adapter run with
         the same cache hits the pool built by the first instead of

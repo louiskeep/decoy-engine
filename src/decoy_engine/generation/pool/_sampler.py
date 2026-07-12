@@ -24,6 +24,7 @@ import pandas as pd
 
 from decoy_engine.determinism import derive_index
 from decoy_engine.generation.pool._canonicalize import _canonicalize_source
+from decoy_engine.generation.pool._capacity import unique_capacity_ok
 from decoy_engine.generation.pool._cardinality import CardinalityMode
 from decoy_engine.generation.pool._errors import GenerationError
 
@@ -122,16 +123,38 @@ class PoolSampler:
             output = pool.values[indices]
             return pd.Series(output)
         if mode is CardinalityMode.UNIQUE:
-            if n > pool.size:
+            # DE-11: UNIQUE needs one distinct value per NON-NULL output row.
+            # Feasibility uses the SAME unique_capacity_ok() the compile-time
+            # check uses, keyed on the non-null count when a source is
+            # available (the faker handler always passes one), so the two can
+            # never disagree.
+            if source is not None:
+                nonnull_mask = source.notna().to_numpy()
+                nonnull_rows = int(nonnull_mask.sum())
+            else:
+                nonnull_mask = None
+                nonnull_rows = n
+            if not unique_capacity_ok(pool.size, nonnull_rows):
                 raise GenerationError(
                     code="uniqueness_impossible",
                     message=(
-                        f"UNIQUE-mode sample of size {n} from pool of size "
-                        f"{pool.size}: cannot draw without replacement."
+                        f"UNIQUE-mode sample needs {nonnull_rows} distinct values "
+                        f"(non-null output rows) from a pool of size {pool.size}: "
+                        "cannot draw without replacement."
                     ),
                 )
-            indices = rng.permutation(pool.size)[:n]
-            return pd.Series(pool.values[indices])
+            perm = rng.permutation(pool.size)
+            if nonnull_mask is None or nonnull_rows == n:
+                # No nulls (or no source): byte-identical to the pre-DE-11 draw.
+                return pd.Series(pool.values[perm[:n]])
+            # Nulls present: distinct values only where the source is non-null;
+            # null positions carry pd.NA (the faker handler masks them anyway,
+            # and this matches the sampler's documented null-preservation
+            # contract). Only nonnull_rows distinct values are drawn.
+            out = np.empty(n, dtype=object)
+            out[nonnull_mask] = pool.values[perm[:nonnull_rows]]
+            out[~nonnull_mask] = pd.NA
+            return pd.Series(out)
         if mode is CardinalityMode.MATCH_SOURCE_CARDINALITY:
             return self._match_source_cardinality(pool, n, source, rng, scale=1.0)
         if mode is CardinalityMode.SCALE_SOURCE_CARDINALITY:
@@ -324,7 +347,10 @@ class PoolSampler:
         # Non-deterministic: with-replacement by default; UNIQUE without.
         rng = np.random.default_rng(_seed_bytes_to_int(seed))
         if mode is CardinalityMode.UNIQUE:
-            if n > pool.size:
+            # DE-11: route the feasibility check through the shared
+            # unique_capacity_ok(). The bundle non-deterministic path fills all
+            # n positions, so its required count is n (unchanged behavior).
+            if not unique_capacity_ok(pool.size, n):
                 raise GenerationError(
                     code="uniqueness_impossible",
                     message=(

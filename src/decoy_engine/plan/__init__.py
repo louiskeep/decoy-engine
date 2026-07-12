@@ -43,6 +43,7 @@ from decoy_engine.plan._types import (
     PlanCompileResult,
     PlanRelationship,
     PlanRelationshipEnd,
+    PoolSpec,
     SeedEnvelope,
     TableSeed,
 )
@@ -57,6 +58,7 @@ __all__ = [
     "PlanCompileResult",
     "PlanRelationship",
     "PlanRelationshipEnd",
+    "PoolSpec",
     "SeedEnvelope",
     "TableSeed",
     "compile_plan",
