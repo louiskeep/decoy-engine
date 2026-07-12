@@ -294,8 +294,10 @@ def write_jsonl_staged(final_path: str, records: list[dict[str, Any]]) -> Path:
     The caller owns the staged file's fate: call ``publish_staged_jsonl`` on
     success, or ``discard_staged_jsonl`` on any failure (including a sink
     commit failure). If this function itself raises partway through the
-    write, the partial staging file is removed before the exception
-    propagates -- nothing is ever left behind for this call's own failure.
+    write, cleanup is best-effort: a cleanup failure (closing the file, or
+    unlinking the partial temp file) is swallowed rather than propagated, so
+    it can never mask the original write/serialize/fdopen error -- the
+    caller always sees the real cause, never a `raise`-in-`except` shadow.
 
     Args:
         final_path: The path the caller intends to publish to eventually.
@@ -313,12 +315,39 @@ def write_jsonl_staged(final_path: str, records: list[dict[str, Any]]) -> Path:
     )
     staged = Path(tmp_name)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            for record in records:
-                fh.write(json.dumps(record, default=_json_default) + "\n")
+        fh = os.fdopen(fd, "w", encoding="utf-8")
     except BaseException:
-        staged.unlink(missing_ok=True)
+        # fdopen wraps the raw mkstemp fd in a file object; if it raises
+        # before doing so, the bare fd has no destructor and would leak.
+        # Close/unlink are best-effort so a cleanup failure cannot mask the
+        # real fdopen error via the bare raise.
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        try:
+            staged.unlink(missing_ok=True)
+        except OSError:
+            pass
         raise
+    try:
+        for record in records:
+            fh.write(json.dumps(record, default=_json_default) + "\n")
+    except BaseException:
+        # Mirrors ParquetTransactionalSink.write_batches: close/unlink are
+        # best-effort cleanup for a stage that must never be left behind
+        # with a raw record in it, and neither may mask the original
+        # write/serialize error propagating via the bare raise.
+        try:
+            fh.close()
+        except Exception:
+            pass
+        try:
+            staged.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+    fh.close()
     return staged
 
 
