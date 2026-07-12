@@ -9,6 +9,18 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Fixed (DE-10 one lossless FK output-typing contract across all routes, 2026-07-12)
+
+The full-frame and sequential (pandas) routes assigned masked FK keys to the child frame via raw-list assignment, letting pandas infer the dtype. A matched float parent value beside a preserved/warned orphan integer key beyond exactly-representable float precision (> 2^53) caused the column to widen to float64, silently rounding the key (e.g. 9007199254740993 to 9007199254740992.0). The out-of-core route already rejected this shape, so route choice decided whether a large key survived.
+
+This commit establishes one lossless Arrow-native FK output-typing contract across full-frame, sequential, and out-of-core routes. The FK output column is now built through the same Arrow inference the out-of-core route uses: representable columns are kept int64-exact (with `integer_object_nulls=True` so a nullable integer column stays exact), and an Arrow-irreconcilable float+int>2^53 mix fails closed with the identical typed error `ExecutionError(code="out_of_core_fk_key_dtype_unsupported")` that all routes now share. Route choice no longer changes correctness for the FK output boundary; the pandas oracle is aligned with the out-of-core route and no longer silently corrupts this shape.
+
+**Behavior change for downstream consumers:** nullable integer FK child columns now emit int64 on the pandas/sequential routes where they previously emitted float64. Value-parity is preserved (NaN folds to None, null positions unchanged); this change reduces pandas-vs-out-of-core divergence for representable keys and closes the silent-rounding class entirely for the output boundary.
+
+**Scoped residual:** a null-bearing integer FK child column whose key is > 2^53 is still rounded at the pandas INPUT boundary (before FK resolution; `pa.Table.to_pandas()` widens int64+null to float64), so out-of-core and pandas/sequential still diverge for this specific shape. This is deeper input-boundary work, separate from the output contract. See `docs/backlog/de10-fk-input-boundary-residual.md`.
+
+**Tests:** `test_de10_matched_float_int_orphan_rejected_by_every_route` (all three routes raise the identical code) and `test_de10_nullable_int_child_key_input_boundary_drift_scoped` (pins the scoped input residual for later fixing). Existing `test_matched_float_and_int_orphan_beyond_precision_fails_closed` updated: the pandas oracle now fails closed too.
+
 ### Fixed (SC7b lazy-path route admission with bounded OOM prevention, 2026-07-09)
 
 SC7a made profiling itself bounded by reading only cheap metadata + a sample, but the SC2 size gates (`out_of_core_threshold_rows`, `full_frame_reject_rows`) remained blind on the lazy-path input shape (`sources={}`, `source_loader` set), where `largest_mask_table_rows()` returned None and never fired the reject-before-read or out-of-core reroute that protect bounded-memory jobs. This commit wires the bounded `TableProfile.row_count` into the route-admission decision so lazy-path FK jobs get the same OOM-prevention gates as resident-path jobs.
