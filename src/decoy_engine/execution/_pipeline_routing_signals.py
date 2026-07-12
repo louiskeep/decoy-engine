@@ -23,6 +23,8 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine.profile._readers import LazySource
+
 if TYPE_CHECKING:
     from decoy_engine.plan._types import Plan
     from decoy_engine.profile._types import Profile, TableProfile
@@ -66,7 +68,7 @@ def out_of_core_admission(
 
 
 def largest_mask_table_rows(
-    caller_sources: dict[str, pa.Table],
+    caller_sources: dict[str, pa.Table | LazySource],
     *,
     table_kinds: dict[str, str],
 ) -> int | None:
@@ -117,7 +119,7 @@ def largest_mask_table_rows_from_profile(
 def _resolve_largest_mask_table_rows(
     profile: Profile,
     *,
-    caller_sources: dict[str, pa.Table],
+    caller_sources: dict[str, pa.Table | LazySource],
     table_kinds: dict[str, str],
 ) -> tuple[int | None, bool]:
     """Reconcile the resident and profile-metadata size signals into the
@@ -203,7 +205,7 @@ def out_of_core_routing_signals(
     plan: Plan,
     registry: ProviderRegistry,
     graph: RelationshipGraph,
-    caller_sources: dict[str, pa.Table],
+    caller_sources: dict[str, pa.Table | LazySource],
     table_kinds: dict[str, str],
     has_mask_table: bool,
 ) -> tuple[bool, str | None, int | None, bool]:
@@ -232,15 +234,23 @@ def out_of_core_routing_signals(
 
 
 def _resident_column_arrays(
-    resident: pa.Table | None, profile_table: TableProfile
+    resident: pa.Table | LazySource | None, profile_table: TableProfile
 ) -> dict[str, pa.Array | pa.ChunkedArray]:
     """`{column_name: array}` for `profile_table`'s columns present in a
     RESIDENT source, or `{}` for a lazy (not-yet-loaded) table.
 
     Zero-copy: `pa.Table.column` returns a view into the existing Arrow
     buffer, not a copy, so building this mapping costs nothing per row.
+
+    TB-1: a `LazySource` (`_isolated_worker._load_sources`) is treated
+    exactly like `None` here -- it has no resident column buffers to
+    sample without a full read, and this signal (the byte-estimate /
+    probe-recovery admission path, both flag-gated default-OFF) must never
+    force one just to sample. `None`/unsampleable is already the documented
+    safe direction (see this function's callers): an unpriceable column
+    routes bounded, it never silently admits full_frame.
     """
-    if resident is None:
+    if resident is None or isinstance(resident, LazySource):
         return {}
     names = set(resident.column_names)
     return {
@@ -251,7 +261,7 @@ def _resident_column_arrays(
 def byte_estimate_full_frame_fits(
     profile: Any,
     *,
-    caller_sources: dict[str, pa.Table],
+    caller_sources: dict[str, pa.Table | LazySource],
     table_kinds: dict[str, str],
     budget_bytes: int,
     error_band: float = 0.30,
@@ -302,7 +312,7 @@ def byte_estimate_full_frame_fits(
 def resolve_full_frame_fits_estimate(
     use_byte_estimate_routing: bool,
     profile: Any,
-    caller_sources: dict[str, pa.Table],
+    caller_sources: dict[str, pa.Table | LazySource],
     table_kinds: dict[str, str],
     out_of_core_budget_bytes: int | None,
 ) -> bool | None:
@@ -330,7 +340,7 @@ def resolve_probe_recovery(
     use_probe_routing: bool,
     use_byte_estimate_routing: bool,
     profile: Any,
-    caller_sources: dict[str, pa.Table],
+    caller_sources: dict[str, pa.Table | LazySource],
     table_kinds: dict[str, str],
     out_of_core_budget_bytes: int | None,
     full_frame_fits_estimate: bool | None,
@@ -359,11 +369,14 @@ def resolve_probe_recovery(
       - `full_frame_fits_estimate is True` already -- nothing to recover,
         the static estimate already admits full_frame;
       - no mask-kind table exists;
-      - any mask-kind table is NOT resident in `caller_sources` (a lazy
-        `source_loader` table has no data for `run_pipeline_isolated` to
-        serialize into a child process -- same resident-only scope limit
+      - any mask-kind table is NOT resident in `caller_sources` -- either
+        absent entirely (a lazy `source_loader` path) or present as a
+        `LazySource` placeholder (TB-1 input streaming: the key exists in
+        `caller_sources`, but there is no resident Arrow data behind it).
+        Neither has data for `run_pipeline_isolated` to serialize into a
+        child process -- same resident-only scope limit
         `byte_estimate_full_frame_fits` documents for sampling, applied
-        here to the probe's data requirement instead);
+        here to the probe's data requirement instead;
       - the static (unmultiplied) raw-bytes estimate CLEARLY busts the
         budget even under `_probe.MIN_PLAUSIBLE_K_FULL_FRAME` (the most
         favorable real full_frame peak/raw ratio this repo has evidence
@@ -377,6 +390,20 @@ def resolve_probe_recovery(
     coerced to `False`: `decide_execution_route` treats anything other than
     `True` identically (route bounded), so the distinction only matters for
     diagnostics, not safety.
+
+    TB-1 dennis-review MEDIUM fix: `probe_peak_bytes` below assumes every
+    mask table in `caller_sources` is a resident `pa.Table` it can slice
+    and serialize into a probe subprocess (`_probe_scale.downscale_sources`
+    calls `.slice(...)`, which a `LazySource` does not implement). A
+    `LazySource` entry is present as a `caller_sources` KEY (TB-1 input
+    streaming wraps relationship-bearing sources in one), so a residency
+    guard keyed only on dict membership does not catch it -- the guard
+    below also excludes any table whose resolved source `isinstance(...,
+    LazySource)`, mirroring `_resident_column_arrays`'s existing
+    LazySource-is-non-resident treatment. Both flags this function
+    requires are default-`False` (TB-1 keeps them off), so this was not
+    reachable in production this sprint; fixed ahead of TB-5, which flips
+    them.
     """
     if not (use_probe_routing and use_byte_estimate_routing):
         return None
@@ -386,7 +413,10 @@ def resolve_probe_recovery(
     mask_tables = [t for t in profile.tables if table_kinds.get(t.name) == "mask"]
     if not mask_tables:
         return None
-    if any(t.name not in caller_sources for t in mask_tables):
+    if any(
+        t.name not in caller_sources or isinstance(caller_sources[t.name], LazySource)
+        for t in mask_tables
+    ):
         return None
 
     from decoy_engine.execution._mem_estimate import raw_data_bytes
@@ -461,7 +491,7 @@ def resolve_execution_route(
     plan: Plan,
     registry: ProviderRegistry,
     graph: RelationshipGraph,
-    caller_sources: dict[str, pa.Table],
+    caller_sources: dict[str, pa.Table | LazySource],
     table_kinds: dict[str, str],
     has_mask_table: bool,
     has_generate_table: bool,

@@ -9,6 +9,10 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (TB-1 out-of-core input/output streaming, 2026-07-12)
+
+Production out-of-core path now streams input and output, closing the 2x memory overhead gap measured in the adversarial review (DE-09 and DE-15). The isolated worker (child process) wraps source paths as `LazySource` handles for relationship-bearing jobs, bypassing eager materialization before route admission (finding #56 input residency gap). The route handler passes `ParquetTransactionalSink` (all-or-nothing Parquet write, committed via atomic directory rename) to `run_pipeline` on every route; sequential/out_of_core routes stream bounded batches through it; full_frame never touches it. **Output is byte-for-byte identical: golden-gate fingerprints 5/5 match baseline.** Single-table (non-relationship) input residency remains unbounded and is a documented roadmap follow-up (`docs/relationships-memory-scaling.md` section 2, Option 1 scope).
+
 ### Fixed (DE-10 one lossless FK output-typing contract across all routes, 2026-07-12)
 
 The full-frame and sequential (pandas) routes assigned masked FK keys to the child frame via raw-list assignment, letting pandas infer the dtype. A matched float parent value beside a preserved/warned orphan integer key beyond exactly-representable float precision (> 2^53) caused the column to widen to float64, silently rounding the key (e.g. 9007199254740993 to 9007199254740992.0). The out-of-core route already rejected this shape, so route choice decided whether a large key survived.

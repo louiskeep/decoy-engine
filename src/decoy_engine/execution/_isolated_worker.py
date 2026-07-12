@@ -30,6 +30,7 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._isolated_common import (
     RESULT_FILENAME,
     apply_mem_cap,
@@ -37,6 +38,8 @@ from decoy_engine.execution._isolated_common import (
     peak_rss_mb,
 )
 from decoy_engine.execution._pipeline import run_pipeline
+from decoy_engine.execution._transactional_sink import ParquetTransactionalSink
+from decoy_engine.profile._readers import LazySource
 
 
 def _write_envelope_file(envelope: dict[str, Any], result_path: Path) -> None:
@@ -55,7 +58,58 @@ def _write_envelope_file(envelope: dict[str, Any], result_path: Path) -> None:
     result_path.write_text(json.dumps(envelope, default=str), encoding="utf-8")
 
 
-def _load_sources(manifest: dict[str, str]) -> dict[str, pa.Table]:
+def _load_sources(
+    manifest: dict[str, str], *, lazy: bool
+) -> dict[str, LazySource] | dict[str, pa.Table]:
+    """Load manifest sources -- lazily (TB-1) for a relationship-bearing job,
+    eagerly (pre-TB-1 behavior, unchanged) for everything else.
+
+    Pre-TB-1 this always called `pq.read_table` here, materializing every
+    input table in the child BEFORE `run_pipeline` ever decides a route --
+    the root cause of the governed out-of-core path's measured ~2x memory
+    overhead (docs/plans/2026-07-12-track-b-completion-program.md's "two
+    defects" section): even a job that goes on to stream through
+    `run_fk_out_of_core` paid for a fully resident copy of its own input
+    first.
+
+    `lazy` is decided by `_run` from `payload["config"]["relationships"]`
+    presence -- the SAME scope `run_pipeline`'s out-of-core route itself is
+    restricted to (`_pipeline_routing._sequential_eligible`: "if not
+    profile.relationships: return False"; out-of-core eligibility is a
+    strict subset of that). A non-relationship job can never reach
+    out-of-core or sequential, so wrapping it as `LazySource` would buy it
+    nothing while forcing every OTHER caller of its sources (chiefly the S3
+    auto-chunk classifier, `_planner._runtime_source_rejections`, which
+    needs real per-column null counts to decide chunk-stable dtypes) to
+    either read data it does not have or conservatively decline an
+    optimization it previously had -- observed exactly this way in a real
+    memory-cap regression (a 200k-row single-table mask job that used to
+    auto-chunk into a bounded 50k-row pandas working set instead ran
+    full-frame and segfaulted under a low rlimit). Scoping the lazy path to
+    relationship-bearing jobs keeps that existing auto-chunk optimization
+    fully intact for the jobs that don't need `LazySource` at all.
+
+    `LazySource` (`decoy_engine.profile._readers`) is the SAME lazy-Parquet
+    handle the direct/profiling path already uses (`scripts/
+    fk_memory_probe.py`'s `_run_out_of_core`, `tests/perf_fixtures/
+    fk_relational.py`'s `lazy_sources`) -- constructing one here is just
+    wrapping a path string, no I/O, so this is cheap regardless of which
+    relationship-route the job ends up taking. `run_pipeline` (`_pipeline.
+    py`) resolves each `LazySource` at the point of use: the out-of-core
+    route consumes it directly (`run_fk_out_of_core` already accepts
+    `pa.Table | LazySource`), while sequential/full_frame -- routes that
+    legitimately need whole-table residency -- call `.to_table()` only
+    when they actually reach that point, never up front.
+
+    **Scope note (TB-1):** this commit fixes input residency for
+    relationship-bearing jobs only. Single-table (non-relationship) mask
+    jobs remain eager: their full input is materialized in the child before
+    routing, even if they later stream through an out-of-core path via a
+    different mechanism. This is a documented roadmap follow-up
+    (`docs/relationships-memory-scaling.md` section 2, Option 1 scope).
+    """
+    if lazy:
+        return {name: LazySource(Path(path)) for name, path in manifest.items()}
     return {
         name: pq.read_table(path)  # type: ignore[no-untyped-call, unused-ignore]
         for name, path in manifest.items()
@@ -85,6 +139,33 @@ def _stage_outputs(outputs: dict[str, pa.Table], staging_output_dir: str) -> lis
         pq.write_table(data, dest)  # type: ignore[no-untyped-call, unused-ignore]
         written.append(table)
     return written
+
+
+def _finalize_outputs(result: ExecutionResult, staging_output_dir: str) -> list[str]:
+    """Stage `result.outputs` for the driver's atomic commit (TB-1 fix #2).
+
+    Two shapes, distinguished by `execution_telemetry`'s `outputs_streamed`
+    stamp (`_pipeline_route_exec.py`):
+
+    - STREAMED (sequential/out_of_core, now that `_run` always hands
+      `run_pipeline` a `ParquetTransactionalSink` pointed at
+      `staging_output_dir`): `result.outputs` is `{}` by construction (see
+      `run_out_of_core_route`/`run_sequential_route`'s docstrings) -- the
+      sink already wrote bounded batches straight to `staging_output_dir`
+      and committed them there (`ParquetTransactionalSink.commit`'s single
+      atomic rename), so this worker never holds a full output table
+      resident. `staged_tables` is enumerated from what actually landed on
+      disk rather than from `result.outputs.keys()`, which is empty.
+    - RESIDENT (full_frame; the sink is passed but never touched on that
+      route by construction -- `_pipeline.py`'s full_frame continuation
+      never references `sink`): `result.outputs` is the ordinary in-memory
+      dict, staged via `_stage_outputs` exactly as pre-TB-1. Unchanged
+      behavior for the route this sprint does not touch.
+    """
+    execution = result.quality_metrics.get("execution") or {}
+    if not result.outputs and execution.get("outputs_streamed"):
+        return sorted(p.stem for p in Path(staging_output_dir).glob("*.parquet"))
+    return _stage_outputs(result.outputs, staging_output_dir)
 
 
 def _stage_row_errors(row_errors: tuple[Any, ...], staging_output_dir: str) -> None:
@@ -125,9 +206,24 @@ def _run(payload: dict[str, Any]) -> dict[str, Any]:
         # load, which is the intended split (see module docstring).
         apply_mem_cap(mem_cap_bytes, rlimit_kind)
 
+    staging_output_dir = payload["staging_output_dir"]
     try:
-        sources = _load_sources(payload.get("sources") or {})
-        result = run_pipeline(payload["config"], sources, **payload["kwargs"])
+        # TB-1 fix #1: lazy-load only for a relationship-bearing job -- the
+        # exact scope out-of-core (and its sequential fallback) is itself
+        # restricted to; see `_load_sources`'s docstring for why a
+        # non-relationship job stays eager.
+        has_relationships = bool(payload["config"].get("relationships"))
+        sources = _load_sources(payload.get("sources") or {}, lazy=has_relationships)
+        # TB-1 fix #2: always hand run_pipeline a sink pointed at this run's
+        # own staging directory. A route that streams (sequential,
+        # out_of_core) writes bounded batches straight through it and
+        # commits before returning (`result.outputs == {}`); full_frame
+        # never touches `sink` at all (see `_finalize_outputs`), so passing
+        # one here is a no-op for that route -- safe to do unconditionally,
+        # since the worker does not know the route in advance (the decision
+        # happens inside `run_pipeline`, after this call is already made).
+        sink = ParquetTransactionalSink(Path(staging_output_dir))
+        result = run_pipeline(payload["config"], sources, sink=sink, **payload["kwargs"])
     except BaseException as exc:
         outcome = "oom_killed" if is_memory_failure(exc) else "crashed"
         return {
@@ -136,8 +232,8 @@ def _run(payload: dict[str, Any]) -> dict[str, Any]:
             "error": f"{type(exc).__name__}: {exc}"[:500],
         }
 
-    staged_tables = _stage_outputs(result.outputs, payload["staging_output_dir"])
-    _stage_row_errors(result.row_errors, payload["staging_output_dir"])
+    staged_tables = _finalize_outputs(result, staging_output_dir)
+    _stage_row_errors(result.row_errors, staging_output_dir)
     return {
         "outcome": "completed",
         "peak_rss_mb": round(peak_rss_mb(), 1),

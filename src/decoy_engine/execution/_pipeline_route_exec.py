@@ -16,7 +16,7 @@ re-decide).
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from decoy_engine.execution._planner import ExecutionPlan
     from decoy_engine.execution._transactional_sink import TransactionalSink
     from decoy_engine.plan._types import Plan
+    from decoy_engine.profile._readers import LazySource
     from decoy_engine.providers_v2 import ProviderRegistry
     from decoy_engine.relationships import RelationshipGraph
 
@@ -157,7 +158,7 @@ def run_sequential_route(
 def run_out_of_core_route(
     *,
     plan: Plan,
-    sources: dict[str, pa.Table],
+    sources: Mapping[str, pa.Table | LazySource],
     registry: ProviderRegistry,
     graph: RelationshipGraph,
     sink: TransactionalSink | None,

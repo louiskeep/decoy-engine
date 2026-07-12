@@ -557,6 +557,88 @@ class TestFlagOff:
 
 
 # --------------------------------------------------------------------------
+# TB-1 fix #3 (docs/plans/2026-07-12-track-b-completion-program.md's "two
+# defects" section, #54): budget_bytes must reach run_pipeline's
+# out_of_core_budget_bytes, so the out-of-core route's DuckDB memory_limit
+# is sized from THIS job's slot budget, not resolve_budget(None)'s 25%-of-
+# host-RAM fallback.
+# --------------------------------------------------------------------------
+
+
+class TestBudgetForwardedToOutOfCore:
+    def test_flag_off_forwards_budget_bytes_as_out_of_core_budget_bytes(
+        self, tmp_path, monkeypatch
+    ):
+        """FAILS pre-TB-1: `out_of_core_budget_bytes` was never in the
+        forwarded kwargs at all, so `run_pipeline`'s out-of-core route fell
+        back to detecting host RAM itself."""
+        calls: list[dict[str, Any]] = []
+
+        def fake_run_pipeline_isolated(config, sources, **kw):
+            calls.append(kw)
+            return _completed_result()
+
+        monkeypatch.setattr(_governor, "run_pipeline_isolated", fake_run_pipeline_isolated)
+
+        run_job_with_governor(
+            _mask_config(tmp_path, n_cols=1),
+            _mask_sources(tmp_path, n_rows=5, n_cols=1),
+            budget_bytes=257 * _MB,
+            use_runtime_governor=False,
+        )
+
+        assert len(calls) == 1
+        assert calls[0]["out_of_core_budget_bytes"] == 257 * _MB
+
+    def test_runtime_governor_on_forwards_budget_bytes_at_every_rung(self, tmp_path, monkeypatch):
+        calls: list[dict[str, Any]] = []
+
+        def fake_run_pipeline_isolated(config, sources, *, execution_mode, on_spawn=None, **kw):
+            if on_spawn is not None:
+                on_spawn(1)
+            calls.append({"execution_mode": execution_mode, **kw})
+            if execution_mode == "full_frame":
+                return _oom_killed_result(peak_rss_mb=900.0)
+            return _completed_result()
+
+        monkeypatch.setattr(_governor, "run_pipeline_isolated", fake_run_pipeline_isolated)
+        monkeypatch.setattr(_governor_monitor, "_read_child_status", lambda pid: None)
+
+        result = run_job_with_governor(
+            _mask_config(tmp_path, n_cols=1),
+            _mask_sources(tmp_path, n_rows=5, n_cols=1),
+            budget_bytes=321 * _MB,
+            use_runtime_governor=True,
+            poll_interval_s=0.01,
+        )
+
+        assert result.outcome == "completed"
+        assert len(calls) == 2  # full_frame (killed), then out_of_core (completed)
+        assert all(call["out_of_core_budget_bytes"] == 321 * _MB for call in calls)
+
+    def test_explicit_out_of_core_budget_bytes_is_not_overridden(self, tmp_path, monkeypatch):
+        """An explicit `out_of_core_budget_bytes` in `isolated_kwargs` wins --
+        this only supplies a default, never clobbers a caller's own value."""
+        calls: list[dict[str, Any]] = []
+
+        def fake_run_pipeline_isolated(config, sources, **kw):
+            calls.append(kw)
+            return _completed_result()
+
+        monkeypatch.setattr(_governor, "run_pipeline_isolated", fake_run_pipeline_isolated)
+
+        run_job_with_governor(
+            _mask_config(tmp_path, n_cols=1),
+            _mask_sources(tmp_path, n_rows=5, n_cols=1),
+            budget_bytes=257 * _MB,
+            out_of_core_budget_bytes=99 * _MB,
+            use_runtime_governor=False,
+        )
+
+        assert calls[0]["out_of_core_budget_bytes"] == 99 * _MB
+
+
+# --------------------------------------------------------------------------
 # Call-contract validation.
 # --------------------------------------------------------------------------
 
