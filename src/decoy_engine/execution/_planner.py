@@ -69,6 +69,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
+from decoy_engine.execution._pipeline_sources import lazy_source_rejection
 from decoy_engine.profile._readers import LazySource
 
 if TYPE_CHECKING:
@@ -514,28 +515,14 @@ def _runtime_source_rejections(
     if src is None:
         reasons.append(f"no loaded source frame for table {table!r}")
         return reasons
+    # TB-1 defensive guard, unreachable in production today (see
+    # `_pipeline_sources.lazy_source_rejection`'s docstring): only
+    # relationship jobs carry a LazySource, and those are already rejected
+    # upstream (line 367) before reaching this per-table check. The
+    # `isinstance` check (rather than calling the helper unconditionally)
+    # is what lets the type checker narrow `src` to `pa.Table` below.
     if isinstance(src, LazySource):
-        # TB-1 defensive guard: a LazySource is a lazy on-disk handle
-        # (`_isolated_worker._load_sources`), not a resident frame -- the
-        # dtype/null-bearing walk below reads actual column DATA
-        # (`.column(name).null_count`), which is exactly the eager
-        # materialization TB-1 exists to avoid. Chunking is already rejected
-        # upstream (line 367) for all relationship-bearing jobs
-        # (`config.get("relationships")`), and ONLY relationship jobs carry a
-        # LazySource by construction, so this guard is unreachable in
-        # production. It is kept as belt-and-suspenders defense-in-depth
-        # against any future code path that might hand a LazySource to a
-        # non-relationship job. When this guard fires, conservatively treat
-        # it like "no loaded source frame": the job stays on the (still
-        # correct, just not chunk-streamed) full-frame path, where
-        # `run_pipeline`'s own `_materialize_source` resolves the LazySource
-        # at the point full_frame actually consumes it.
-        reasons.append(
-            f"source for table {table!r} is a lazy (LazySource) handle, not a "
-            "resident frame; the chunk-stable-dtype runtime gate needs real "
-            "column data, so auto-chunk conservatively declines rather than "
-            "force-materializing it just to decide"
-        )
+        reasons.append(lazy_source_rejection(src, table=table) or "")
         return reasons
     if src.num_rows < auto_chunk_threshold_rows:
         reasons.append(

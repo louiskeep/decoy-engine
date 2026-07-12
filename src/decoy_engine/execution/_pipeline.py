@@ -80,6 +80,7 @@ import pyarrow as pa
 
 from decoy_engine.execution import _pipeline_finalize, _pipeline_routing
 from decoy_engine.execution import _pipeline_route_exec as _route_exec
+from decoy_engine.execution import _pipeline_sources as _psrc
 from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._planner import (
     AUTO_CHUNK_THRESHOLD_ROWS_DEFAULT,
@@ -94,28 +95,6 @@ if TYPE_CHECKING:
 
 
 __all__ = ["classify_table_kinds", "run_pipeline"]
-
-
-def _materialize_source(value: pa.Table | LazySource) -> pa.Table:
-    """Resolve one source to a resident Arrow table, AT THE POINT OF USE.
-
-    TB-1 (docs/plans/2026-07-12-track-b-completion-program.md): the isolated
-    worker (`_isolated_worker._load_sources`) now hands `run_pipeline` every
-    input wrapped as a `LazySource` instead of eagerly reading it, so the
-    out-of-core route (which already accepts `pa.Table | LazySource`
-    natively -- `out_of_core._runner.run_fk_out_of_core`) never pays for a
-    resident copy it does not need. full_frame and sequential are the two
-    routes that DO legitimately need a whole table resident (mirrors this
-    module's own docstring on why only those two do); they call this
-    exactly where they consume a source, rather than the caller being
-    forced to materialize every source up front before the route decision
-    even runs. A plain `pa.Table` (the pre-TB-1 shape, and still what every
-    non-isolated caller passes) is returned unchanged.
-    """
-    if isinstance(value, LazySource):
-        return value.to_table()
-    return value
-
 
 # run_pipeline's execution-knob defaults. `substrate` pins "pandas" (NOT
 # None): resolve_substrate(None) follows DECOY_SUBSTRATE and its S13
@@ -207,10 +186,8 @@ def run_pipeline(
     no re-validation here. `sources` is the caller-loaded
     `Mapping[table_name -> pa.Table | LazySource]` for the mask-kind tables;
     pure-generate configs may pass `None` (or an empty dict). A `LazySource`
-    entry (TB-1) is never forced resident before the route decision runs --
-    see `_materialize_source`'s docstring for exactly where and why each
-    route resolves it. `engine_version` flows into `compile_plan`'s
-    audit-evidence stamping.
+    entry (TB-1) is resolved per-route -- see `_pipeline_sources`.
+    `engine_version` flows into `compile_plan`'s audit-evidence stamping.
 
     Returns one `ExecutionResult` whose `outputs` covers every output
     table (generate + mask) and whose `table_kinds` field carries the
@@ -320,10 +297,6 @@ def run_pipeline(
     require_bool("use_probe_routing", use_probe_routing)
 
     resolved_registry = registry if registry is not None else get_default_registry()
-    # TB-1: this dict() copy does NOT materialize anything -- a LazySource
-    # value stays a LazySource until `_materialize_source` resolves it at
-    # the point of use (full_frame/sequential continuation below, or never,
-    # on the out-of-core route, which consumes it directly).
     caller_sources: dict[str, pa.Table | LazySource] = dict(sources) if sources else {}
 
     table_kinds = classify_table_kinds(config)
@@ -410,15 +383,7 @@ def run_pipeline(
     )
 
     if has_mask_table and route == "sequential":
-        # TB-1: materialize AT THE POINT OF USE. `run_sequential` loads one
-        # table at a time (its own bounded-memory contract, unrelated to
-        # this sprint), so a `LazySource` entry is resolved here rather than
-        # up front -- see `_materialize_source`'s docstring.
-        loader = (
-            source_loader
-            if source_loader is not None
-            else (lambda t: _materialize_source(caller_sources[t]))
-        )
+        loader = _psrc.resolve_sequential_loader(source_loader, caller_sources)
         return _route_exec.run_sequential_route(
             plan=plan,
             loader=loader,
@@ -436,13 +401,8 @@ def run_pipeline(
             execution_plan_decision=execution_plan_decision,
         )
 
-    # SC2: the bounded-RAM out-of-core FK route (same early-return shape as the
-    # sequential branch). `caller_sources` feeds the runner directly, UNTOUCHED
-    # -- TB-1: `run_fk_out_of_core` already accepts `pa.Table | LazySource`
-    # natively (streams a LazySource via bounded `iter_batches`, never
-    # `.to_table()`), so this is the one route that needs no materialization
-    # step at all (the pure-mask FK shape has every parent + child present
-    # either way); a sink streams the output side too.
+    # SC2 out-of-core route (same shape as sequential); caller_sources feeds
+    # the runner directly -- TB-1: a LazySource streams natively here, no materialization.
     if has_mask_table and route == "out_of_core":
         return _route_exec.run_out_of_core_route(
             plan=plan,
@@ -459,18 +419,8 @@ def run_pipeline(
             execution_plan_decision=execution_plan_decision,
         )
 
-    # TB-1: neither route above (sequential, out_of_core) needed whole-table
-    # residency to decide or execute -- out_of_core consumes a `LazySource`
-    # directly, and the sequential loader resolves one table at a time,
-    # above. Reaching this point means the job is on the full_frame /
-    # auto-chunk continuation, which DOES need every source resident (the
-    # adapter, the auto-chunk slicer, validators, and the fidelity report
-    # all operate on whole `pa.Table` frames), so every remaining source is
-    # resolved once, here, at the point full_frame actually consumes them --
-    # never before this. See `_materialize_source`'s docstring.
-    resident_sources: dict[str, pa.Table] = {
-        name: _materialize_source(src) for name, src in caller_sources.items()
-    }
+    # TB-1: only full_frame / auto-chunk below needs every source resident.
+    resident_sources: dict[str, pa.Table] = _psrc.resolve_resident_sources(caller_sources)
 
     # Step 1: generate-kind tables. The synthesize entry filters by
     # `generate_columns` presence already (synthesize.py:113), so passing
