@@ -6,11 +6,14 @@ ported Group (b) strategies. This file pins the LAYER ABOVE it:
 1. `run_pipeline` actually DISPATCHES an eligible large FK job carrying a
    Group (b) payload (fpe) to the out-of-core route and its output is
    byte-identical to the full-frame path.
-2. SC2 carry-forward M1: the `source_loader` lazy-load branch in
+2. DE-09 (superseding SC2 carry-forward M1): the missing-source branch in
    `_pipeline_route_exec.run_out_of_core_route` (reached via the forced
    `execution_mode="out_of_core"` escape hatch when `sources` are not resident)
-   is exercised -- the loader is invoked for the full `table_topo_order(plan,
-   graph)` table set and the run reaches byte-parity with the resident oracle.
+   resolves each Parquet-backed table to a streamed `LazySource` rather than
+   eagerly loading it through `source_loader`, and still reaches byte-parity
+   with the resident oracle. The direct mechanism proof (LazySource vs resident
+   `pa.Table`, honest telemetry, non-Parquet resident fallback) lives in
+   `tests/unit/execution/test_public_out_of_core_lazy.py`.
 """
 
 from __future__ import annotations
@@ -22,7 +25,6 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from decoy_engine.execution._pipeline import run_pipeline
-from decoy_engine.execution._sequential import table_topo_order
 
 _N = 40
 
@@ -126,9 +128,20 @@ def test_auto_route_fpe_payload_matches_full_frame_oracle(tmp_path: Path) -> Non
 
 
 def test_m1_forced_out_of_core_lazy_source_loader(tmp_path: Path) -> None:
-    """SC2 carry-forward M1: forced out-of-core with empty `sources` + a lazy
-    `source_loader` resolves every `table_topo_order` table through the loader
-    and reaches byte-parity with the resident full-frame oracle."""
+    """DE-09 (superseding SC2 carry-forward M1): forced out-of-core with empty
+    `sources` + a lazy `source_loader` no longer eagerly loads every table
+    through the loader. Because every config source here is an on-disk Parquet
+    file, the route resolves each missing table to a `LazySource` and STREAMS
+    it -- the `source_loader` is bypassed entirely (its resident load was the
+    input-residency defect DE-09 removes). Byte-parity with the resident
+    full-frame oracle is unchanged: a `LazySource` reads the same on-disk
+    Parquet the loader would have.
+
+    Pre-DE-09 this test asserted the opposite -- `set(loaded) ==
+    table_topo_order(plan, graph)` -- pinning the eager-loader behavior. See
+    `tests/unit/execution/test_public_out_of_core_lazy.py` for the direct
+    mechanism proof (LazySource, not resident `pa.Table`) and the resident
+    `source_loader` fallback that still fires for a non-Parquet source."""
     config = _fpe_payload_fk_config(tmp_path)
     resident = _sources(config)
 
@@ -149,25 +162,10 @@ def test_m1_forced_out_of_core_lazy_source_loader(tmp_path: Path) -> None:
     )
 
     assert forced.quality_metrics["execution"]["execution_mode"] == "out_of_core"
-
-    # The loader was invoked for the full topo table set the sequential path
-    # would have loaded -- no more, no less.
-    from decoy_engine.plan import compile_plan  # local import: test-only
-    from decoy_engine.profile import profile_source
-    from decoy_engine.relationships import (
-        build_namespace_registry,
-        build_relationship_graph,
-        check_orphan_fk_policy_completeness,
-    )
-
-    profile = profile_source(config, seed=11)
-    plan = compile_plan(config, profile, decoy_engine_version="0.1.0")
-    ns_registry = build_namespace_registry(config, profile)
-    lookup = check_orphan_fk_policy_completeness(config, profile.relationships)
-    graph = build_relationship_graph(
-        profile.relationships, namespace_registry=ns_registry, orphan_policy_lookup=lookup
-    )
-    expected_tables = set(table_topo_order(plan, graph))
-    assert set(loaded) == expected_tables, f"loader tables {set(loaded)} != topo {expected_tables}"
+    # DE-09: the Parquet-backed sources were lazified from their config paths,
+    # so the resident loader was never called.
+    assert loaded == [], f"source_loader should be bypassed for Parquet sources, got {loaded}"
+    # Honest telemetry: nothing is held resident on this streamed run.
+    assert forced.quality_metrics["execution"]["loaded_fully_in_memory"] is False
 
     assert _pydict(forced.outputs) == _pydict(oracle.outputs)

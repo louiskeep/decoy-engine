@@ -34,15 +34,19 @@ never undermined by an eager materialization upstream of the route decision.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
+from pathlib import Path
+from typing import Any
 
 import pyarrow as pa
 
 from decoy_engine.profile._readers import LazySource
 
 __all__ = [
+    "lazy_source_from_descriptor",
     "lazy_source_rejection",
     "materialize_source",
+    "resolve_out_of_core_sources",
     "resolve_resident_sources",
     "resolve_sequential_loader",
 ]
@@ -92,6 +96,82 @@ def resolve_sequential_loader(
     if source_loader is not None:
         return source_loader
     return lambda t: materialize_source(caller_sources[t])
+
+
+def lazy_source_from_descriptor(descriptor: Any) -> LazySource | None:
+    """Build a lazy on-disk handle for a local Parquet file source, else None.
+
+    DE-09: `LazySource` streams a single on-disk Parquet file
+    (`iter_batches` + footer metadata), so ONLY a local `file` + `parquet`
+    descriptor can be wrapped as one -- exactly the shape
+    `_isolated_worker._load_sources` and `ParquetFileSource._lazy` already
+    build. A CSV / fixed_width source (Parquet-only `LazySource` cannot read
+    it) or a cloud (`s3`/`gcs`) source has no local Parquet path, so this
+    returns None and the caller falls back to a resident loader. Constructing
+    a `LazySource` is just wrapping the path string -- no I/O -- so this is
+    cheap regardless of table size.
+    """
+    if not isinstance(descriptor, Mapping):
+        return None
+    if descriptor.get("type") != "file" or descriptor.get("format") != "parquet":
+        return None
+    path = descriptor.get("path")
+    if not isinstance(path, str):
+        return None
+    return LazySource(Path(path))
+
+
+def resolve_out_of_core_sources(
+    ordered_tables: Iterable[str],
+    caller_sources: Mapping[str, pa.Table | LazySource],
+    *,
+    source_loader: Callable[[str], pa.Table] | None,
+    config_sources: Mapping[str, Any],
+) -> dict[str, pa.Table | LazySource]:
+    """Resolve every plan/graph table the out-of-core runner needs, preferring
+    a lazy on-disk handle over an eager resident load (DE-09).
+
+    `run_fk_out_of_core` consumes `pa.Table | LazySource` per table and streams
+    a `LazySource` through bounded `iter_batches` (never `.to_table()`), so a
+    missing table backed by a local Parquet file is resolved to a `LazySource`
+    -- the DuckDB runner then streams it within its own `batch_rows` bound and
+    never holds it resident. This replaces the pre-DE-09 branch that eagerly
+    called `source_loader(table)` for every missing table and retained the
+    resulting resident `pa.Table`s, undoing the whole point of the route.
+
+    DE-09 bounded-memory behavior: For a `type=="file"`, `format=="parquet"`
+    source missing from caller_sources, this resolver PREFERS a `LazySource`
+    built from the config parquet path over calling `source_loader`. That
+    path holds the same bytes the plan was compiled from. Consequence: a
+    contract-violating `source_loader` that transforms or filters data (see
+    `run_pipeline` docstring for the loader faithfulness contract) is
+    unsupported and now DIVERGES from the sequential route, which still calls
+    the loader. Route selection is size-driven: an out-of-contract caller
+    could get different row-scope depending on which route runs.
+
+    Resolution order per table:
+
+    - already in `caller_sources`: kept verbatim (the caller's explicit
+      choice -- a resident `pa.Table` or a `LazySource` it built itself, e.g.
+      `_isolated_worker`);
+    - missing, but its config source is a local Parquet file: a `LazySource`
+      (bounded, streamed);
+    - missing, no Parquet path (CSV / fixed_width / cloud, or a caller-only
+      dynamic loader): the resident `source_loader(table)` fallback, documented
+      because those sources have no lazy Parquet handle to stream;
+    - missing, neither: left absent, so `run_fk_out_of_core` raises its own
+      `out_of_core_source_missing` exactly as before (never a silent skip).
+    """
+    resolved: dict[str, pa.Table | LazySource] = dict(caller_sources)
+    for table in ordered_tables:
+        if table in resolved:
+            continue
+        lazy = lazy_source_from_descriptor(config_sources.get(table))
+        if lazy is not None:
+            resolved[table] = lazy
+        elif source_loader is not None:
+            resolved[table] = source_loader(table)
+    return resolved
 
 
 def lazy_source_rejection(src: pa.Table | LazySource, *, table: str) -> str | None:
