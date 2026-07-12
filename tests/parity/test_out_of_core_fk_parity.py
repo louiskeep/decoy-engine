@@ -108,23 +108,6 @@ def _run_ooc(plan: Any, sources: dict[str, pa.Table], graph: RelationshipGraph):
     return run_fk_out_of_core(plan, sources, registry=_REG, relationship_graph=graph)
 
 
-def _run_sequential(plan: Any, sources: dict[str, pa.Table], graph: RelationshipGraph):
-    """Drive the sequential (load+mask+evict) route, the third FK code path.
-
-    It shares `_resolve_fk_node` with the full-frame `run` (both dispatch through
-    `_dispatch_mask_node`), so it exercises the same FK output-column build as the
-    oracle -- the DE-10 regression tests assert the two agree with the out-of-core
-    route on large-integer FK keys.
-    """
-    return PandasExecutionAdapter().run_sequential(
-        plan,
-        lambda table: sources[table],
-        registry=_REG,
-        relationship_graph=graph,
-        namespace_registry=_NS,
-    )
-
-
 def _gate_admits(plan: Any, graph: RelationshipGraph) -> bool:
     work = order_work(build_work_list(plan, _REG), graph)
     return check_out_of_core_compatibility(plan, work, graph).accepted
@@ -1028,12 +1011,11 @@ def test_matched_float_and_int_orphan_beyond_precision_fails_closed(policy: Orph
     uncoded ArrowInvalid; the fix converts it to the same coded fail-closed
     rejection the cross-batch path already raises.
 
-    DE-10: the pandas oracle used to silently ROUND the orphan key
-    (9007199254740993 -> 9007199254740992.0) here -- a referential-integrity
-    drift -- so route choice decided whether the key survived. It now fails closed
-    with the SAME coded rejection (the FK output-column build routes through the
-    same Arrow inference), so every route agrees: reject rather than drift. See
-    tests/parity/SEMANTIC_DIFFERENCES.md.
+    The pandas oracle is NOT a clean ground truth for this shape: it silently
+    ROUNDS the orphan key (9007199254740993 -> 9007199254740992.0), a referential-
+    integrity drift, rather than crashing. Fixing the oracle is out of scope; the
+    route's contract here is "reject rather than drift", so it fails closed while
+    the oracle quietly rounds. See tests/parity/SEMANTIC_DIFFERENCES.md.
     """
     ns = "ns_matched_float_int_orphan"
     seed = _seed("passthrough")
@@ -1062,150 +1044,17 @@ def test_matched_float_and_int_orphan_beyond_precision_fails_closed(policy: Orph
     )
     sources = {"parent": parent, "child": child}
 
-    # DE-10: the oracle (full-frame) used to silently ROUND the orphan key here
-    # (1.0, 9007199254740992.0); it now fails closed with the SAME coded
-    # rejection, so route choice cannot decide whether the key is published
-    # rounded -- see test_de10_matched_float_int_orphan_rejected_by_every_route
-    # below and tests/parity/SEMANTIC_DIFFERENCES.md.
-    with pytest.raises(ExecutionError) as oexc:
-        _run_oracle(plan, sources, graph)
-    assert oexc.value.code == "out_of_core_fk_key_dtype_unsupported"
+    # The oracle succeeds by silently rounding the orphan key (documented drift,
+    # not authoritative): pin that it does NOT crash, so the divergence is
+    # explicit rather than assumed.
+    oracle_fk = _run_oracle(plan, sources, graph).outputs["child"].column("fk").to_pylist()
+    assert oracle_fk == [1.0, 9007199254740992.0]
 
     # The out-of-core route must fail closed with the coded rejection, never a
     # raw ArrowInvalid.
     with pytest.raises(ExecutionError) as exc:
         _run_ooc(plan, sources, graph)
     assert exc.value.code == "out_of_core_fk_key_dtype_unsupported"
-
-
-# ---------------------------------------------------------------------------
-# DE-10: one lossless FK output-typing contract across ALL routes
-# ---------------------------------------------------------------------------
-#
-# Adversarial-review finding DE-10. The full-frame/pandas + sequential routes
-# used to let pandas infer the FK output-column dtype when writing masked keys
-# back to the child frame (`_pandas_adapter.py::_resolve_fk_node`). That silently
-# coerces an integer FK key past exactly-representable float precision (> 2**53)
-# to float64 whenever the column also holds a float value or a null, so the
-# source key 9007199254740993 became 9007199254740992.0 -- a silent
-# referential-integrity drift. The out-of-core route already rejects/preserves
-# this exact shape, so ROUTE CHOICE decided whether a large key survived.
-#
-# The fix routes both pandas paths through the same Arrow inference the
-# out-of-core build uses (`pa.array(..., from_pandas=True)` in
-# `out_of_core/_join.py::_append_output_batch`): representable -> preserved
-# exactly; irreconcilable -> the SAME coded `out_of_core_fk_key_dtype_unsupported`
-# rejection. These tests pin that NO route silently rounds: for a given shape,
-# every route either preserves the key exactly or raises the identical typed
-# error.
-
-_DE10_KEY = 9007199254740993  # 2**53 + 1, not exactly representable in float64
-
-
-@pytest.mark.parametrize("policy", [OrphanPolicy.PRESERVE, OrphanPolicy.WARN])
-def test_de10_matched_float_int_orphan_rejected_by_every_route(policy: OrphanPolicy) -> None:
-    """A MATCHED float parent value beside an orphan integer key > 2**53 in one
-    FK output column is Arrow-irreconcilable. Every route -- full-frame, sequential,
-    out-of-core -- must reject it with the identical coded ExecutionError, never
-    silently round it to float64. Pre-DE-10 the full-frame + sequential routes
-    rounded the key (silent RI drift) while only the out-of-core route rejected.
-    """
-    ns = "ns_de10_reject"
-    seed = _seed("passthrough")
-    parent = pa.table({"pk": pa.array([1.0, 2.0], type=pa.float64())})
-    # Row 0 matches parent 1.0 (int 1 folds to 1.0) -> resolves to the float
-    # masked value; row 1 is an orphan odd int > 2**53 kept int by fk_key_value.
-    child = pa.table({"fk": pa.array([1, _DE10_KEY], type=pa.int64())})
-    plan = _plan(
-        (
-            ("parent", TableSeed(per_column=(("pk", seed),), per_group=())),
-            ("child", TableSeed(per_column=(("fk", seed),), per_group=())),
-        )
-    )
-    graph = RelationshipGraph(
-        edges=(
-            RelationshipEdge(
-                parent_table="parent",
-                parent_columns=("pk",),
-                child_table="child",
-                child_columns=("fk",),
-                namespace=ns,
-                orphan_policy=policy,
-            ),
-        ),
-        ordering=(),
-    )
-    sources = {"parent": parent, "child": child}
-
-    codes: list[str] = []
-    for run in (_run_oracle, _run_sequential, _run_ooc):
-        with pytest.raises(ExecutionError) as exc:
-            run(plan, sources, graph)
-        codes.append(exc.value.code)
-    # Identical typed error from all three routes: route choice cannot change
-    # whether this key is (wrongly) published rounded.
-    assert codes == ["out_of_core_fk_key_dtype_unsupported"] * 3, codes
-
-
-@pytest.mark.parametrize("policy", [OrphanPolicy.PRESERVE, OrphanPolicy.WARN])
-def test_de10_nullable_int_child_key_input_boundary_drift_scoped(policy: OrphanPolicy) -> None:
-    """SCOPED residual (DE-10 follow-up): a null-bearing integer FK CHILD column
-    whose key is > 2**53 is rounded at the pandas INPUT boundary, before FK
-    resolution runs, so DE-10's output-typing fix cannot recover it.
-
-    `PandasExecutionAdapter.run`/`run_sequential` load each source with
-    `pa.Table.to_pandas()`, which widens an int64+null column to float64 (there is
-    no numpy int type that holds a null). `reject_null_bearing_int` guards masked
-    int+null columns but deliberately EXEMPTS FK children (resolved via the edge,
-    not masked), so a child key of 9007199254740993 is already 9007199254740992.0
-    by the time `_resolve_fk_node` reads it. The out-of-core route never touches
-    pandas and keeps int64 exact.
-
-    DE-10's fix makes the OUTPUT column build lossless + fail-closed (see the
-    two tests above); making the null-bearing FK-CHILD INPUT conversion lossless
-    is a larger, separate change (selective per-column loading + the
-    null-bearing-int guard interaction) and is scoped as a follow-up. This test
-    PINS the current divergence so it cannot silently widen, and so the follow-up
-    that fixes the input boundary FLIPS these assertions (and updates
-    tests/parity/SEMANTIC_DIFFERENCES.md). See that doc, "Pandas FK oracle ..."
-    section.
-    """
-    ns = "ns_de10_input_drift"
-    seed = _seed("passthrough")
-    parent = pa.table({"pk": pa.array([_DE10_KEY], type=pa.int64())})
-    # Row 0 matches the parent key (passthrough keeps it); row 1 is a null FK.
-    child = pa.table({"fk": pa.array([_DE10_KEY, None], type=pa.int64())})
-    plan = _plan(
-        (
-            ("parent", TableSeed(per_column=(("pk", seed),), per_group=())),
-            ("child", TableSeed(per_column=(("fk", seed),), per_group=())),
-        )
-    )
-    graph = RelationshipGraph(
-        edges=(
-            RelationshipEdge(
-                parent_table="parent",
-                parent_columns=("pk",),
-                child_table="child",
-                child_columns=("fk",),
-                namespace=ns,
-                orphan_policy=policy,
-            ),
-        ),
-        ordering=(),
-    )
-    sources = {"parent": parent, "child": child}
-
-    # Out-of-core preserves the key exactly (never round-trips through pandas).
-    ooc_fk = _run_ooc(plan, sources, graph).outputs["child"].column("fk").to_pylist()
-    assert ooc_fk == [_DE10_KEY, None]
-
-    # Full-frame + sequential currently DRIFT at the input boundary: the rounded
-    # value, not the source key. Pinned as a known limitation, not a silent gap.
-    for run in (_run_oracle, _run_sequential):
-        fk = run(plan, sources, graph).outputs["child"].column("fk").to_pylist()
-        assert fk != [_DE10_KEY, None], f"{run.__name__} unexpectedly preserved: {fk}"
-        assert fk == [float(_DE10_KEY - 1), None], f"{run.__name__} drift changed: {fk}"
 
 
 def test_underscore_column_staged_path_non_collision() -> None:

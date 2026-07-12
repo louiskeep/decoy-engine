@@ -48,35 +48,6 @@ BackendType = Literal["faker", "mimesis", "pool", "decoy_native"]
 
 
 @dataclass(frozen=True)
-class PoolSpec:
-    """Capacity-relevant description of a column's value pool (DE-11).
-
-    ONE typed carrier for the pool's capacity contract, populated at compile
-    from the canonical config location (top-level column ``pool_size``, with
-    ``provider_config['pool_size']`` as the pre-DE-11 fallback; see
-    ``generation.pool._capacity.resolve_pool_size``). Both the compile-time
-    feasibility check (``generation.pool._validate``) and the runtime faker
-    handler + ``PoolSampler`` size the pool from THIS same value, via the one
-    shared capacity function (``generation.pool._capacity.unique_capacity_ok``),
-    so they can never disagree on how large the pool is or whether a UNIQUE
-    draw fits.
-
-    Fields:
-        pool_size: resolved pool capacity.
-        unique: True when ``cardinality_mode == 'unique'``. For UNIQUE the
-            capacity is a hard correctness contract; a declared-but-too-small
-            pool fails closed rather than drawing from a bigger undeclared pool.
-        size_source: ``'declared'`` when an operator set ``pool_size`` in the
-            config, ``'default'`` when it is the engine fallback. The faker
-            handler only silently accepts the engine default.
-    """
-
-    pool_size: int
-    unique: bool
-    size_source: Literal["declared", "default"]
-
-
-@dataclass(frozen=True)
 class ColumnSeed:
     """Per-column masking strategy + namespace binding.
 
@@ -141,12 +112,6 @@ class ColumnSeed:
     # environments (sibling of the backend_version stamp). None for
     # every other column, and when the model has no package metadata.
     ner_model_version: str | None = None
-    # DE-11 (2026-07-12): the column's typed pool-capacity contract. Set by
-    # plan-compile for pool-backed (faker) columns from the canonical
-    # `pool_size` config location; None for scalar columns and for any
-    # ColumnSeed constructed without it (the faker handler then falls back to
-    # the legacy provider_config lookup, preserving back-compat).
-    pool_spec: PoolSpec | None = None
 
 
 @dataclass(frozen=True)

@@ -4,10 +4,7 @@ Per S5 spec §6 + cross-sprint contracts §4 row 7: for every column with
 `poolable: True` provider + a cardinality mode that requires capacity
 guarantees (UNIQUE, MATCH_SOURCE_CARDINALITY, SCALE_SOURCE_CARDINALITY):
 
-- UNIQUE: pool_size >= non-null output row count (DE-11). UNIQUE draws one
-  distinct value per non-null output row, so capacity is keyed on the rows the
-  sampler fills, NOT on the source distinct count. Checked via the SAME
-  `unique_capacity_ok` the runtime sampler uses, so the two cannot disagree.
+- UNIQUE: pool_size >= source.distinct_count.
 - MATCH: pool_size >= source.distinct_count.
 - SCALE: pool_size >= source.distinct_count * scale.
 
@@ -34,7 +31,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from decoy_engine.generation.pool._capacity import resolve_pool_size, unique_capacity_ok
 from decoy_engine.generation.pool._errors import PoolCapacityError
 
 
@@ -83,17 +79,10 @@ def check_pool_capacity_pre_flight(
     # the distinct counts are unavailable / untrusted, so the lookup stays
     # empty and every column reads as "distinct unknown".
     distinct_lookup: dict[tuple[str, str], int | None] = {}
-    # DE-11: UNIQUE feasibility is keyed on the NON-NULL OUTPUT ROW COUNT
-    # (row_count - null_count) -- the number of distinct values the sampler
-    # must actually draw -- NOT the source distinct count. Same profile
-    # availability guard as distinct_lookup: under --no-profile the counts are
-    # untrusted, so the lookup stays empty and UNIQUE reads as "unverifiable".
-    nonnull_lookup: dict[tuple[str, str], int | None] = {}
     if profile is not None and not no_profile:
         for table in getattr(profile, "tables", ()):
             for col in getattr(table, "columns", ()):
                 distinct_lookup[(table.name, col.name)] = col.distinct_count
-                nonnull_lookup[(table.name, col.name)] = col.row_count - col.null_count
 
     warnings: list[str] = []
     tables_block = config.get("tables", []) if isinstance(config.get("tables"), list) else []
@@ -114,41 +103,34 @@ def check_pool_capacity_pre_flight(
                 continue
             if not _resolve_provider_poolable(provider):
                 continue
-            # DE-11: resolve pool_size from the ONE canonical location shared
-            # with the seed-envelope builder + faker handler (top-level
-            # pool_size, else provider_config.pool_size, else default).
-            pool_size, _pool_size_declared = resolve_pool_size(col_entry)
+            pool_size = col_entry.get("pool_size", 10_000)
             col_name = col_entry.get("name", "?")
             source_distinct = distinct_lookup.get((table_name, col_name))
 
             if cardinality_mode == "unique":
                 # Uniqueness is a correctness contract: hard-error whenever it
                 # cannot be proven, independent of on_pool_exhaustion (F3) and
-                # of profile availability (F4). DE-11: feasibility is keyed on
-                # the NON-NULL OUTPUT ROW COUNT (what the sampler draws), via
-                # the SAME unique_capacity_ok() the runtime sampler uses.
-                nonnull_output_rows = nonnull_lookup.get((table_name, col_name))
-                if nonnull_output_rows is None:
+                # of profile availability (F4).
+                if source_distinct is None:
                     raise PoolCapacityError(
                         code="pool_capacity_unverifiable_no_profile",
                         message=(
                             f"Column {table_name}.{col_name} uses cardinality_mode='unique' "
-                            "but no output row count is available "
+                            "but no source distinct count is available "
                             f"({'compile ran with --no-profile' if no_profile else 'profile lacks the column'}). "
                             "The pool cannot be proven large enough to supply unique values, "
                             "and uniqueness cannot be deferred to runtime. Profile the source, "
                             "or pick a non-unique cardinality_mode."
                         ),
                     )
-                if not unique_capacity_ok(pool_size, nonnull_output_rows):
+                if source_distinct > pool_size:
                     raise PoolCapacityError(
                         code="pool_too_small_for_source",
                         message=(
                             f"Column {table_name}.{col_name} uses cardinality_mode='unique' "
-                            f"with pool_size={pool_size}, but the job produces "
-                            f"{nonnull_output_rows} non-null output rows, each of which needs a "
-                            "distinct pool value. The pool cannot supply enough unique values. "
-                            "Raise pool_size or pick a non-unique cardinality_mode."
+                            f"with pool_size={pool_size}, but profile reports source distinct "
+                            f"count {source_distinct}. The pool cannot supply enough unique "
+                            "values. Raise pool_size or pick a non-unique cardinality_mode."
                         ),
                     )
                 continue

@@ -79,31 +79,6 @@ class ModelPackLoader:
     pack_dir:
         Path to the directory containing ``manifest.json`` and
         ``model.joblib``.
-    require_authenticated_provenance:
-        OPT-IN fail-closed strict mode (DE-04), default ``False`` so all
-        existing callers and tests keep their exact current behaviour.
-        When ``True``, :meth:`load` refuses to reach ``joblib.load`` unless
-        the pack's provenance can be authenticated:
-
-          - an absent/empty ``manifest_hmac`` is rejected even when no
-            ``DECOY_PACK_SIGNING_KEY`` is configured (the default mode's
-            "no key -> warn and accept" path is closed);
-          - an HMAC mismatch against a configured key is rejected;
-          - the resolved ``pack_dir`` must stay within ``allowed_root``
-            (below) -- a path-traversal or symlink-escaped pack is rejected.
-
-        DE-04 explicitly does NOT flip this default to ``True``: that is a
-        separate, gated migration coupled to the packaging/signing rollout
-        (DE-07 -- default pack location/loading is out of scope here).
-        DE-04 also does NOT replace joblib/pickle with a safe-by-construction
-        format (ONNX/skops); that is a larger fork left as a follow-up, not
-        built here.
-    allowed_root:
-        Directory that a strictly-loaded pack's resolved path must stay
-        within (see ``require_authenticated_provenance``). Required when
-        strict mode is enabled -- omitting it is itself a fail-closed
-        configuration error, not a silently-skipped check. Ignored when
-        ``require_authenticated_provenance`` is ``False``.
 
     Examples
     --------
@@ -112,16 +87,8 @@ class ModelPackLoader:
     >>> pack["clf"].predict_proba(...)
     """
 
-    def __init__(
-        self,
-        pack_dir: Path,
-        *,
-        require_authenticated_provenance: bool = False,
-        allowed_root: Path | None = None,
-    ) -> None:
+    def __init__(self, pack_dir: Path) -> None:
         self._pack_dir = pack_dir
-        self._require_authenticated_provenance = require_authenticated_provenance
-        self._allowed_root = allowed_root
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -151,12 +118,6 @@ class ModelPackLoader:
             raise ModelPackLoadError(
                 "ML is disabled via DECOY_ML_DISABLED=1; engine uses deterministic fallback."
             )
-
-        if self._require_authenticated_provenance:
-            # Checked before we even open manifest.json: a path-substituted
-            # pack directory (traversal or symlink escape) must never be
-            # read from at all, let alone deserialised (DE-04).
-            self._check_path_containment()
 
         manifest = self._load_manifest()
         self._check_format(manifest)
@@ -242,37 +203,6 @@ class ModelPackLoader:
                 "The weights file may have been tampered with or corrupted."
             )
 
-    def _check_path_containment(self) -> None:
-        """Reject a pack path that escapes ``allowed_root`` (DE-04 strict mode).
-
-        Resolves both ``self._pack_dir`` and ``self._allowed_root`` (which
-        dereferences symlinks and normalises ``..`` traversal), then requires
-        the resolved pack path to be equal to or nested under the resolved
-        root. This catches both a caller-supplied path containing ``..``
-        segments and a symlink placed inside an otherwise-trusted directory
-        that points outside of it.
-
-        Omitting ``allowed_root`` while strict mode is enabled is itself a
-        fail-closed configuration error (mirrors ``_require_signature_enabled``'s
-        "ambiguous security config is never silently permissive" posture):
-        a containment check is meaningless without a declared trust boundary.
-        """
-        if self._allowed_root is None:
-            raise ModelPackLoadError(
-                "require_authenticated_provenance=True but no allowed_root was "
-                "configured; strict mode cannot verify the pack path without a "
-                "declared trust boundary. Pass allowed_root=<trusted packs dir> "
-                "to ModelPackLoader."
-            )
-        resolved_pack = self._pack_dir.resolve()
-        resolved_root = self._allowed_root.resolve()
-        if resolved_pack != resolved_root and resolved_root not in resolved_pack.parents:
-            raise ModelPackLoadError(
-                f"Pack path {self._pack_dir} resolves to {resolved_pack}, which is "
-                f"outside the allowed root {resolved_root}. Refusing to load a "
-                "path-substituted or symlink-escaped pack (fail-closed)."
-            )
-
     def _check_signature(self, manifest: ModelPackManifest) -> None:
         """Verify HMAC-SHA256 signature when a signing key is configured (ML3.2).
 
@@ -293,10 +223,6 @@ class ModelPackLoader:
         load an unverifiable pack instead of silently trusting it. Development
         leaves the flag unset and keeps the warn-and-continue behaviour.
 
-        The per-instance ``require_authenticated_provenance`` constructor flag
-        (DE-04) has the identical fail-closed effect as the env var, ORed in
-        here, but is opt-in per loader instance rather than process-wide.
-
         Note on raising vs falling back (L2): this method RAISES; callers using
         :meth:`load_with_fallback` will catch that and degrade to the regex
         baseline (no unverified ML runs, but the job is not aborted). Callers
@@ -311,19 +237,14 @@ class ModelPackLoader:
         """
         key = load_signing_key_from_env()
         signed = bool(manifest.manifest_hmac)
-        require_sig = self._require_authenticated_provenance or _require_signature_enabled()
+        require_sig = _require_signature_enabled()
 
         if key is None and require_sig:
-            reason = (
-                "require_authenticated_provenance=True"
-                if self._require_authenticated_provenance
-                else "DECOY_PACK_REQUIRE_SIGNATURE is enabled"
-            )
             raise ModelPackLoadError(
-                f"{reason} but no DECOY_PACK_SIGNING_KEY is configured; refusing to "
-                f"load pack {self._pack_dir} whose provenance cannot be verified. "
-                "Derive the signing key from the instance master key "
-                "(derive_pack_signing_key) and set DECOY_PACK_SIGNING_KEY."
+                f"DECOY_PACK_REQUIRE_SIGNATURE is enabled but no DECOY_PACK_SIGNING_KEY "
+                f"is configured; refusing to load pack {self._pack_dir} whose provenance "
+                "cannot be verified. Derive the signing key from the instance master "
+                "key (derive_pack_signing_key) and set DECOY_PACK_SIGNING_KEY."
             )
 
         if key is not None:

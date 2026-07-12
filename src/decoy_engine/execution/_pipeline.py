@@ -189,15 +189,6 @@ def run_pipeline(
     entry (TB-1) is resolved per-route -- see `_pipeline_sources`.
     `engine_version` flows into `compile_plan`'s audit-evidence stamping.
 
-    `source_loader` is the optional fallback for resolving tables not in
-    `sources`. It MUST return the exact config-declared source data for each
-    table (as read from `config["sources"]`). It is a RESIDENCY/ACCESS
-    mechanism -- how to fetch the declared source -- NOT a transform hook.
-    It must not return filtered, transformed, or otherwise divergent data
-    versus what the config declares. The plan is compiled from the
-    config-declared source via profiling, so a loader returning different
-    data violates this contract and produces incorrect results.
-
     Returns one `ExecutionResult` whose `outputs` covers every output
     table (generate + mask) and whose `table_kinds` field carries the
     per-table classification for the manifest stamping.
@@ -411,10 +402,7 @@ def run_pipeline(
         )
 
     # SC2 out-of-core route (same shape as sequential); caller_sources feeds
-    # the runner directly -- TB-1: a LazySource streams natively here, no
-    # materialization. DE-09: `config_sources` lets the route resolve a MISSING
-    # table (lazy `sources={}` + `source_loader`) to a `LazySource` from its
-    # on-disk Parquet path instead of eagerly loading it resident.
+    # the runner directly -- TB-1: a LazySource streams natively here, no materialization.
     if has_mask_table and route == "out_of_core":
         return _route_exec.run_out_of_core_route(
             plan=plan,
@@ -426,7 +414,6 @@ def run_pipeline(
             table_kinds=table_kinds,
             source_loader=source_loader,
             sources_resident=bool(caller_sources),
-            config_sources=config.get("sources") or {},
             budget_bytes=out_of_core_budget_bytes,
             explain_plan=explain_plan,
             execution_plan_decision=execution_plan_decision,
