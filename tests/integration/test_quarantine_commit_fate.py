@@ -420,6 +420,70 @@ class TestAbortNotCalledAfterSuccessfulCommit:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Dennis re-gate (HIGH #1): the commit-first reorder above closed the
+# ordering hazard but opened a new one -- `publish_staged_jsonl`'s
+# unconditional `os.replace` has no idea `quarantine.output_path` might alias
+# a table artifact this same sink just durably committed. Aliasing must
+# raise loudly (as the pre-reorder `origin/main` code did via ENOTEMPTY), not
+# silently overwrite the masked table with raw JSONL.
+# ---------------------------------------------------------------------------
+
+
+class TestQuarantineOutputPathAliasingCommittedTable:
+    def test_aliasing_committed_parquet_raises_and_leaves_table_intact(
+        self, tmp_path: Path
+    ) -> None:
+        """`quarantine.output_path` set to the exact path
+        `ParquetTransactionalSink` just committed `parent` to must raise
+        instead of silently clobbering the masked table with raw JSONL.
+        Fails pre-fix (silent `os.replace` overwrite; the run reports
+        success with `parent.parquet` now raw-PII JSONL); passes post-fix
+        (`ValueError`, masked `parent.parquet` untouched)."""
+        target = tmp_path / "out"
+        qpath = str(target / "parent.parquet")  # aliases the committed table
+        config = _config(tmp_path, qpath)
+        sources = _sources(config)
+        sink = ParquetTransactionalSink(target)
+
+        with pytest.raises(ValueError, match="aliases the output artifact"):
+            run_pipeline(config, sources, engine_version="0.1.0", sink=sink)
+
+        # The sink's own commit already succeeded (tables ARE legitimately
+        # published) before the alias guard runs; the guard raises before any
+        # staging/publish is attempted for the quarantine sidecar, so the
+        # masked table is untouched -- still valid masked Parquet, not raw
+        # JSONL, and the raw "badX" cell never appears in it.
+        parent_out = pq.read_table(target / "parent.parquet")
+        assert "badX" not in parent_out.column("age").to_pylist()
+        assert (target / "child.parquet").exists()
+
+        # No orphaned staging file for the quarantine sidecar either -- the
+        # guard raises before `write_jsonl_staged` is ever called.
+        leftovers = list(target.glob("_decoy_quarantine_stage_*"))
+        assert leftovers == []
+
+    def test_natural_layout_inside_target_dir_still_completes(self, tmp_path: Path) -> None:
+        """Sanity companion (also covered by
+        `TestNestedLayoutSinkAndQuarantineShareParentDirectory` above): the
+        natural, legitimate layout -- quarantine.jsonl living INSIDE the
+        sink's own target directory, under its own name, not a table's name
+        -- must NOT be treated as an alias and must still complete. Only
+        aliasing an actual committed TABLE artifact is refused, never "any
+        path inside the target dir"."""
+        target = tmp_path / "out"
+        qpath = str(target / "quarantine.jsonl")
+        config = _config(tmp_path, qpath)
+        sources = _sources(config)
+        sink = ParquetTransactionalSink(target)
+
+        result = run_pipeline(config, sources, engine_version="0.1.0", sink=sink)
+        assert result.quality_metrics["execution"]["execution_mode"] == "sequential"
+        assert (target / "parent.parquet").exists()
+        assert (target / "child.parquet").exists()
+        assert Path(qpath).exists()
+
+
 class TestSinkCommitFailureWritesNoQuarantineAnywhere:
     def test_commit_failure_never_attempts_quarantine_staging(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -427,23 +491,26 @@ class TestSinkCommitFailureWritesNoQuarantineAnywhere:
         """Stronger than `test_commit_failure_leaves_no_quarantine_at_final_path`
         above: proves `quarantine.write_jsonl_staged` is never even called
         when the sink's own commit() fails, confirming the reorder (not just
-        that a staged file happened to get discarded)."""
+        that a staged file happened to get discarded). Patches the name in
+        `decoy_engine.quarantine` (where `finalize_committed_quarantine`,
+        `run_sequential`'s post-commit publish helper, actually calls it from),
+        not in `_sequential`, which no longer imports it directly."""
         qpath = str(tmp_path / "quarantine.jsonl")
         config = _config(tmp_path, qpath)
         sources = _sources(config)
         real = ParquetTransactionalSink(tmp_path / "out")
         sink = _CommitBoomSink(real)
 
-        from decoy_engine.execution import _sequential as seq_mod
+        from decoy_engine import quarantine as quarantine_mod
 
         calls: list[str] = []
-        original = seq_mod.write_jsonl_staged
+        original = quarantine_mod.write_jsonl_staged
 
         def _tracking(*args: object, **kwargs: object) -> Path:
             calls.append("called")
             return original(*args, **kwargs)  # type: ignore[arg-type]
 
-        monkeypatch.setattr(seq_mod, "write_jsonl_staged", _tracking)
+        monkeypatch.setattr(quarantine_mod, "write_jsonl_staged", _tracking)
 
         with pytest.raises(RuntimeError, match="commit boom"):
             run_pipeline(config, sources, engine_version="0.1.0", sink=sink)

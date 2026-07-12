@@ -74,6 +74,52 @@ class TestUnlinkFailureDoesNotMaskOriginalError:
         assert leftovers == [], "partial staging file must be removed on a real cleanup success"
 
 
+class TestTerminalCloseFailureDoesNotLeakRawPiiStagingFile:
+    """Dennis re-gate (HIGH #2): the terminal `fh.close()` -- reached after
+    every record has been written successfully -- used to sit OUTSIDE the
+    try/except cleanup, so a close failure (e.g. a buffered flush hitting
+    ENOSPC) skipped `return staged` entirely: the caller never got a staged
+    path to pass to `discard_staged_jsonl`, leaving the raw-PII temp file
+    behind indefinitely."""
+
+    def test_close_failure_leaves_no_staged_file_and_propagates(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Fails pre-fix (bare `fh.close()`; the staging file survives because
+        the function never returns a path for the caller to discard); passes
+        post-fix (best-effort unlink runs before the close error propagates)."""
+        final_path = str(tmp_path / "out" / "quarantine.jsonl")
+        records = [{"a": 1}]
+
+        real_fdopen = os.fdopen
+
+        class _CloseBoomFile:
+            """Wraps the real file object; write() delegates unchanged, but
+            close() closes the real file (so the write genuinely lands, like
+            a real ENOSPC-on-flush failure would) and then raises."""
+
+            def __init__(self, real: object) -> None:
+                self._real = real
+
+            def write(self, data: str) -> int:
+                return self._real.write(data)  # type: ignore[attr-defined]
+
+            def close(self) -> None:
+                self._real.close()  # type: ignore[attr-defined]
+                raise OSError("simulated close failure (e.g. ENOSPC flush)")
+
+        def _boom_close_fdopen(fd: int, *args: object, **kwargs: object) -> _CloseBoomFile:
+            return _CloseBoomFile(real_fdopen(fd, *args, **kwargs))  # type: ignore[arg-type]
+
+        monkeypatch.setattr(os, "fdopen", _boom_close_fdopen)
+
+        with pytest.raises(OSError, match="simulated close failure"):
+            write_jsonl_staged(final_path, records)
+
+        leftovers = list((tmp_path / "out").glob("_decoy_quarantine_stage_*"))
+        assert leftovers == [], "a close() failure must not leave the raw-PII staging file behind"
+
+
 class TestFdopenFailureDoesNotLeakRawFd:
     def test_fdopen_failure_closes_the_raw_mkstemp_fd(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

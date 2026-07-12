@@ -52,6 +52,8 @@ import pyarrow as pa
 from decoy_engine.validators._types import QuarantineSummary
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from decoy_engine.execution._row_errors import RowErrorRecord
     from decoy_engine.validators._types import ValidationReport
 
@@ -293,11 +295,14 @@ def write_jsonl_staged(final_path: str, records: list[dict[str, Any]]) -> Path:
 
     The caller owns the staged file's fate: call ``publish_staged_jsonl`` on
     success, or ``discard_staged_jsonl`` on any failure (including a sink
-    commit failure). If this function itself raises partway through the
-    write, cleanup is best-effort: a cleanup failure (closing the file, or
-    unlinking the partial temp file) is swallowed rather than propagated, so
-    it can never mask the original write/serialize/fdopen error -- the
-    caller always sees the real cause, never a `raise`-in-`except` shadow.
+    commit failure). If this function itself raises -- partway through the
+    write, or from the terminal close after every record has been written --
+    cleanup is best-effort: a cleanup failure (closing the file, or unlinking
+    the partial temp file) is swallowed rather than propagated, so it can
+    never mask the real error -- the caller always sees whichever error
+    actually occurred (the write/serialize/fdopen error, or, if writing
+    succeeded but the terminal close itself failed, e.g. a buffered flush
+    hitting ENOSPC, that close error), never a `raise`-in-`except` shadow.
 
     Args:
         final_path: The path the caller intends to publish to eventually.
@@ -347,7 +352,20 @@ def write_jsonl_staged(final_path: str, records: list[dict[str, Any]]) -> Path:
         except OSError:
             pass
         raise
-    fh.close()
+    try:
+        fh.close()
+    except BaseException:
+        # The write loop above finished, but the terminal close (a buffered
+        # flush to disk) can still fail, e.g. ENOSPC. Left unguarded, this
+        # raise would skip `return staged` entirely -- the caller never gets
+        # a staged path to pass to `discard_staged_jsonl`, so the raw-PII
+        # temp file would leak. Best-effort unlink mirrors the write-loop
+        # cleanup above.
+        try:
+            staged.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
     return staged
 
 
@@ -366,6 +384,102 @@ def publish_staged_jsonl(staged_path: Path, final_path: str) -> None:
             Nothing is published on failure; ``staged_path`` is untouched.
     """
     os.replace(staged_path, Path(final_path))
+
+
+def guard_quarantine_not_aliasing_committed_table(
+    sink: object, written_tables: Sequence[str], output_path: str
+) -> None:
+    """Raise if ``output_path`` resolves to a table artifact ``sink`` just
+    durably committed (DE-08 re-gate HIGH #1).
+
+    The commit-first reorder (module docstring of ``execution/_sequential.py``)
+    fixed the ordering hazard between the quarantine sidecar and the sink's
+    own commit, but ``publish_staged_jsonl``'s unconditional ``os.replace``
+    still has no idea ``output_path`` might alias a table this same run just
+    published, e.g. ``quarantine.output_path: out/parent.parquet`` against a
+    ``ParquetTransactionalSink(Path("out"))``. On ``origin/main`` (pre-reorder)
+    that misconfiguration raised loudly (``ENOTEMPTY``, see
+    ``TestNestedLayoutSinkAndQuarantineShareParentDirectory``); left unguarded
+    post-reorder it silently overwrites the masked table with raw JSONL.
+
+    Only checked for sinks that expose a ``committed_table_path(table) ->
+    Path`` method (``ParquetTransactionalSink`` does, see
+    ``execution/_transactional_sink.py``); an arbitrary custom
+    ``TransactionalSink`` that does not expose its committed paths is
+    unaffected by this guard -- same as before this fix, not a new gap it
+    introduces. The natural layout, the quarantine JSONL living INSIDE the
+    sink's own target directory under its own name (``out/quarantine.jsonl``),
+    is never equal to any table's committed path, so it is unaffected too.
+
+    Raises:
+        ValueError: ``output_path`` is exactly a table this run just
+            committed. Nothing has been staged or published for the
+            quarantine sidecar yet when this raises, and the already-
+            committed table is untouched.
+    """
+    resolver = getattr(sink, "committed_table_path", None)
+    if not callable(resolver):
+        return
+    target = Path(output_path).resolve()
+    for table in written_tables:
+        committed = Path(resolver(table)).resolve()
+        if committed == target:
+            raise ValueError(
+                f"quarantine.output_path {output_path!r} aliases the output "
+                f"artifact this run just committed for table {table!r} "
+                f"({committed}); refusing to overwrite a masked table with "
+                "the raw-PII quarantine sidecar. Point quarantine.output_path "
+                "at a different file."
+            )
+
+
+def finalize_committed_quarantine(
+    *,
+    sink: object,
+    is_genuine_transactional_sink: bool,
+    written_tables: Sequence[str],
+    output_path: str,
+    entries: list[dict[str, Any]],
+    counts_by_trigger: dict[str, int],
+) -> dict[str, Any] | None:
+    """Publish the quarantine sidecar; return its evidence-manifest entry.
+
+    Called by ``run_sequential`` strictly AFTER ``_tsink.commit()`` has
+    already returned successfully (or with no sink / a non-transactional
+    Callable sink, where there was nothing to wait for) -- see
+    ``execution/_sequential.py``'s module docstring for the full
+    commit-or-discard contract this preserves. Returns ``None`` (nothing to
+    record) when ``entries`` is empty.
+
+    For a genuine ``TransactionalSink``, stages then atomically publishes
+    (guarded by ``guard_quarantine_not_aliasing_committed_table`` first); for
+    no sink or a plain Callable sink, writes straight to ``output_path`` as
+    before DE-08 (never staged, so a special/non-directory path like
+    ``/dev/null`` cannot crash attempting to stage a temp file there).
+    """
+    if not entries:
+        return None
+    if is_genuine_transactional_sink:
+        guard_quarantine_not_aliasing_committed_table(sink, written_tables, output_path)
+        staged = write_jsonl_staged(output_path, entries)
+        try:
+            publish_staged_jsonl(staged, output_path)
+        except BaseException:
+            # Tables are already committed; this is a bare sidecar-publish
+            # failure, not a run failure -- discard the orphaned staged file
+            # and surface the error.
+            discard_staged_jsonl(staged)
+            raise
+    else:
+        _write_jsonl(output_path, entries)
+    return quarantine_manifest(
+        QuarantineSummary(
+            enabled=True,
+            output_path=output_path,
+            counts_by_trigger=counts_by_trigger,
+            total_quarantined=len(entries),
+        )
+    )
 
 
 def discard_staged_jsonl(staged_path: Path | None) -> None:
