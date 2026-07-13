@@ -144,6 +144,10 @@ from decoy_engine.execution._adapter import ExecutionResult, StrategyContext
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._fk_keys import fk_columns_for_table, to_pandas_fk_safe
 from decoy_engine.execution._guards import reject_null_bearing_int
+from decoy_engine.execution._output_projection import (
+    UnconfiguredColumnPolicy,
+    enforce_output_projection,
+)
 from decoy_engine.execution._row_errors import RowErrorRecord, drain_row_errors
 from decoy_engine.execution._runner import WorkNode, build_work_list, order_work
 from decoy_engine.execution._transactional_sink import (
@@ -201,6 +205,7 @@ def run_sequential(
     namespace_registry: NamespaceRegistry,
     sink: TransactionalSink | Callable[[str, pa.Table], None] | None = None,
     quarantine_config: dict[str, Any] | None = None,
+    unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
 ) -> ExecutionResult:
     """Mask an FK-related job table by table in FK-topological order.
 
@@ -422,6 +427,16 @@ def run_sequential(
                 t1 = time.perf_counter()
                 out = pa.Table.from_pandas(frames[table], preserve_index=False)
                 conversion_ms += (time.perf_counter() - t1) * 1000.0
+
+                # DE-03: fail-closed output projection before this table is
+                # written/evicted. The sequential route is pure-mask by
+                # construction (generate tables disqualify it upstream), so there
+                # is no generate-echo table to exempt here.
+                warnings.extend(
+                    enforce_output_projection(
+                        table, out.column_names, plan, unconfigured_column_policy
+                    )
+                )
 
                 if table_records:  # reaching here means every record was covered
                     filtered, entries, counts, _total = compute_quarantine(

@@ -50,6 +50,10 @@ import pyarrow as pa
 from decoy_engine.execution._adapter import ExecutionResult, StrategyContext
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._guards import reject_null_bearing_int
+from decoy_engine.execution._output_projection import (
+    UnconfiguredColumnPolicy,
+    enforce_output_projection,
+)
 from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
 from decoy_engine.execution._row_errors import RowErrorRecord, drain_row_errors
 from decoy_engine.execution._runner import build_work_list, order_work
@@ -114,6 +118,8 @@ class PolarsExecutionAdapter:
         pool_cache: PoolCache | None = None,
         relationship_graph: RelationshipGraph,
         namespace_registry: NamespaceRegistry,
+        unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
+        generate_output_tables: frozenset[str] = frozenset(),
     ) -> ExecutionResult:
         # B1 (S13): reject integer + null-bearing columns under truncate/hash/
         # categorical on the Arrow sources, identically to the pandas adapter, so
@@ -130,6 +136,8 @@ class PolarsExecutionAdapter:
                 pool_cache=pool_cache,
                 relationship_graph=relationship_graph,
                 namespace_registry=namespace_registry,
+                unconfigured_column_policy=unconfigured_column_policy,
+                generate_output_tables=generate_output_tables,
             )
         if not self._fallback_to_pandas:
             raise ExecutionError(
@@ -140,6 +148,9 @@ class PolarsExecutionAdapter:
                     "and fallback_to_pandas is disabled."
                 ),
             )
+        # DE-03: the oracle path masks on the pandas adapter's run(), which
+        # enforces output projection itself -- thread the policy + generate
+        # exemption through rather than enforcing twice here.
         return self._run_via_pandas_oracle(
             plan,
             sources,
@@ -148,6 +159,8 @@ class PolarsExecutionAdapter:
             pool_cache=pool_cache,
             relationship_graph=relationship_graph,
             namespace_registry=namespace_registry,
+            unconfigured_column_policy=unconfigured_column_policy,
+            generate_output_tables=generate_output_tables,
         )
 
     def _is_fully_polars_native(
@@ -185,6 +198,8 @@ class PolarsExecutionAdapter:
         pool_cache: PoolCache | None,
         relationship_graph: RelationshipGraph,
         namespace_registry: NamespaceRegistry,
+        unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
+        generate_output_tables: frozenset[str] = frozenset(),
     ) -> ExecutionResult:
         boundary = ConversionBoundary()
         frames: dict[str, pl.DataFrame] = {
@@ -227,6 +242,17 @@ class PolarsExecutionAdapter:
                 # substrates).
                 row_error_records.extend(drain_row_errors(ctx.row_errors, table=node.table))
 
+        # DE-03: fail-closed output projection before the point of no return,
+        # mirroring the pandas adapter. Generate-echo tables are exempt.
+        for table in frames:
+            if table in generate_output_tables:
+                continue
+            warnings.extend(
+                enforce_output_projection(
+                    table, frames[table].columns, plan, unconfigured_column_policy
+                )
+            )
+
         outputs = {table: boundary.to_arrow(frame) for table, frame in frames.items()}
         return ExecutionResult(
             outputs=outputs,
@@ -250,6 +276,8 @@ class PolarsExecutionAdapter:
         pool_cache: PoolCache | None,
         relationship_graph: RelationshipGraph,
         namespace_registry: NamespaceRegistry,
+        unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
+        generate_output_tables: frozenset[str] = frozenset(),
     ) -> ExecutionResult:
         # Ingest the sources into the polars substrate and back to Arrow, timing
         # both legs; the masking then runs on the pandas oracle on the
@@ -268,6 +296,8 @@ class PolarsExecutionAdapter:
             pool_cache=pool_cache,
             relationship_graph=relationship_graph,
             namespace_registry=namespace_registry,
+            unconfigured_column_policy=unconfigured_column_policy,
+            generate_output_tables=generate_output_tables,
         )
         metrics = dict(result.quality_metrics)
         metrics["conversion_breakdown"] = boundary.as_dict()

@@ -98,6 +98,8 @@ class TestRunConfigOnlyChecks:
             "categorical_categories",
             # Row 25 (Sprint 2 honesty pack, S6, GATE-1 Q4): fpe charset resolution.
             "fpe_charset_config",
+            # Row 26 (DE-03): faker-without-provider rejection.
+            "faker_requires_provider",
         )
 
     def test_raises_on_unknown_provider(self):

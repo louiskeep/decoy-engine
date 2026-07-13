@@ -256,6 +256,7 @@ def run_pipeline(
     is reproducible from its manifest; the all-default path stamps
     nothing, keeping golden fixtures byte-identical.
     """
+    from decoy_engine.execution._output_projection import resolve_unconfigured_column_policy
     from decoy_engine.execution._substrate import (
         require_bool,
         require_positive_int,
@@ -303,6 +304,14 @@ def run_pipeline(
     table_kinds = classify_table_kinds(config)
     has_mask_table = any(kind == "mask" for kind in table_kinds.values())
     has_generate_table = any(kind == "generate" for kind in table_kinds.values())
+
+    # DE-03: resolve the output-projection policy once; generate-kind tables ride
+    # through the mask adapter as echoed sources and are exempt (declared by their
+    # generate config, not the mask plan). Threaded into every emission route.
+    projection_policy = resolve_unconfigured_column_policy(config)
+    generate_output_tables = frozenset(
+        name for name, kind in table_kinds.items() if kind == "generate"
+    )
 
     # F5 (2026-06-26): route the profile-path seed through the canonical
     # int normalizer so a bool/float seed is rejected here, BEFORE
@@ -400,6 +409,7 @@ def run_pipeline(
             table_kinds=table_kinds,
             explain_plan=explain_plan,
             execution_plan_decision=execution_plan_decision,
+            unconfigured_column_policy=projection_policy,
         )
 
     # SC2 out-of-core route (same shape as sequential); caller_sources feeds
@@ -418,6 +428,7 @@ def run_pipeline(
             budget_bytes=out_of_core_budget_bytes,
             explain_plan=explain_plan,
             execution_plan_decision=execution_plan_decision,
+            unconfigured_column_policy=projection_policy,
         )
 
     # TB-1: only full_frame / auto-chunk below needs every source resident.
@@ -480,6 +491,8 @@ def run_pipeline(
                 registry=resolved_registry,
                 relationship_graph=graph,
                 namespace_registry=ns_registry,
+                unconfigured_column_policy=projection_policy,
+                generate_output_tables=generate_output_tables,
             )
             # Adapters echo every source frame in `outputs` (generate-kind
             # entries in `merged_sources` come back round-tripped through the

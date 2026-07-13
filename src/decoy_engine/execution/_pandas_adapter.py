@@ -52,6 +52,7 @@ from decoy_engine.execution._fk_keys import (
     to_pandas_fk_safe,
 )
 from decoy_engine.execution._guards import reject_null_bearing_int
+from decoy_engine.execution._output_projection import enforce_output_projection
 from decoy_engine.execution._row_errors import RowErrorRecord, drain_row_errors
 from decoy_engine.execution._runner import WorkNode, build_work_list, order_work
 from decoy_engine.execution._sequential import run_sequential as _run_sequential
@@ -72,6 +73,7 @@ from decoy_engine.instrumentation.timing import TimingCollector, timed_strategy,
 from decoy_engine.plan._types import ColumnSeed
 
 if TYPE_CHECKING:
+    from decoy_engine.execution._output_projection import UnconfiguredColumnPolicy
     from decoy_engine.plan._types import Plan
     from decoy_engine.providers_v2 import ProviderRegistry
     from decoy_engine.relationships import NamespaceRegistry, RelationshipGraph
@@ -164,6 +166,8 @@ class PandasExecutionAdapter:
         pool_cache: PoolCache | None = None,
         relationship_graph: RelationshipGraph,
         namespace_registry: NamespaceRegistry,
+        unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
+        generate_output_tables: frozenset[str] = frozenset(),
     ) -> ExecutionResult:
         # B1 (S13): reject integer + null-bearing columns under truncate/hash/
         # categorical on the Arrow sources, before to_pandas widens int+null to
@@ -253,6 +257,17 @@ class PandasExecutionAdapter:
                     key_error_rows.setdefault(rec.table, {}).setdefault(rec.column, {})[
                         rec.row_index
                     ] = rec.trigger
+
+        # DE-03: fail-closed output projection before the point of no return. A
+        # generate-kind table rides through `frames` as an echoed source, declared
+        # by its generate config not the mask plan, so it is exempt.
+        for t in frames:
+            if t not in generate_output_tables:
+                warnings.extend(
+                    enforce_output_projection(
+                        t, frames[t].columns, plan, unconfigured_column_policy
+                    )
+                )
 
         t1 = time.perf_counter()
         outputs = {t: pa.Table.from_pandas(f, preserve_index=False) for t, f in frames.items()}
@@ -348,6 +363,7 @@ class PandasExecutionAdapter:
         namespace_registry: NamespaceRegistry,
         sink: TransactionalSink | Callable[[str, pa.Table], None] | None = None,
         quarantine_config: dict[str, object] | None = None,
+        unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
     ) -> ExecutionResult:
         """Option 2 (FK-RI memory-scaling): mask an FK-related job one table at a
         time in FK-topological order, evicting each table's wide frame after its
@@ -374,6 +390,7 @@ class PandasExecutionAdapter:
             namespace_registry=namespace_registry,
             sink=sink,
             quarantine_config=quarantine_config,
+            unconfigured_column_policy=unconfigured_column_policy,
         )
 
     def _resolve_fk_node(

@@ -107,7 +107,29 @@ ALLOWLIST: dict[str, int] = {
     # invariant text IS the fix, per the same pattern as the B5/TB-5 entries
     # above; decompose the strategy-admissibility docstring out of the
     # module header when the conditional-admission set grows again.
-    "src/decoy_engine/execution/_chunked.py": 604,
+    # DE-03 (2026-07-13): +7 LOC to thread the resolved output-projection policy
+    # into the per-chunk adapter.run() so the chunked route enforces the
+    # fail-closed schema-closure gate (the security fix must be adapter-internal
+    # / bypass-resistant, so it cannot move out of this emission path). Same
+    # strategy-admissibility docstring decomposition target stands.
+    "src/decoy_engine/execution/_chunked.py": 611,
+    # DE-03 (2026-07-13): the mask adapter's `run()` is one of the five emission
+    # routes the fail-closed output projection must guard (undeclared columns no
+    # longer leak raw). The +17 LOC are the two policy params, the per-table
+    # enforcement loop before the point of no return, and the sequential
+    # passthrough -- the security fix is adapter-internal by design (bypass-
+    # resistant), so it cannot be split out. The module was at the cap (596) when
+    # this landed; decompose the FK-resolution helpers into a sibling when the
+    # next relationship-strategy batch lands.
+    "src/decoy_engine/execution/_pandas_adapter.py": 613,
+    # DE-03 (2026-07-13): run_pipeline resolves the projection policy + the
+    # generate-echo exemption set once and threads them into every emission route
+    # (+15 LOC). The orchestration spine already owns route selection; this is the
+    # one place that can see both `config` (for the policy) and `table_kinds` (for
+    # the exemption), so the resolution belongs here. The module was exactly at
+    # the cap (600) when this landed; decompose the routing-dispatch block into a
+    # sibling when the next execution-route batch lands.
+    "src/decoy_engine/execution/_pipeline.py": 613,
 }
 
 

@@ -48,6 +48,10 @@ import pyarrow as pa
 from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._fk_keys import NULL_FK_KEY, fk_key_value
+from decoy_engine.execution._output_projection import (
+    UnconfiguredColumnPolicy,
+    enforce_output_projection,
+)
 from decoy_engine.execution._runner import build_work_list, order_work
 from decoy_engine.execution._transactional_sink import TransactionalSink
 from decoy_engine.execution.out_of_core import _join as _join_ooc
@@ -98,6 +102,7 @@ def run_fk_out_of_core(
     memory_limit: str | None = None,
     batch_rows: int | None = None,
     temp_disk_budget_bytes: int | None = None,
+    unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
 ) -> ExecutionResult:
     """Run the out-of-core FK relationship route as a batch stream.
 
@@ -166,6 +171,7 @@ def run_fk_out_of_core(
                 sink=sink,
                 outputs=outputs,
                 warnings=warnings,
+                unconfigured_column_policy=unconfigured_column_policy,
             )
             if temp_disk_budget_bytes is not None:
                 # Table boundaries are the natural checkpoints: the spill
@@ -212,6 +218,7 @@ def _stream_table(
     sink: TransactionalSink | None,
     outputs: dict[str, pa.Table],
     warnings: list[QualityWarning],
+    unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
 ) -> None:
     """Rewrite pass for one table: mask + join per batch, then emit.
 
@@ -245,6 +252,19 @@ def _stream_table(
                 _raise_on_total_orphans(edge, joiner, raw, batch_rows)
         fk_components = _fk_component_map(incoming_edges, joiners)
         fixed_schema = _fixed_output_schema(plan, table_name, source_schema, fk_components)
+        # DE-03: fail-closed output projection at the earliest point -- the fixed
+        # output schema is known before any batch streams. FK-resolved child
+        # columns are legitimate output but are not in the mask plan's seed
+        # envelope, so they are passed as extra_known to avoid a false positive.
+        warnings.extend(
+            enforce_output_projection(
+                table_name,
+                fixed_schema.names,
+                plan,
+                unconfigured_column_policy,
+                extra_known=frozenset(fk_components),
+            )
+        )
         orphan_totals = [0] * len(joiners)
 
         def rewritten() -> Iterator[pa.RecordBatch]:

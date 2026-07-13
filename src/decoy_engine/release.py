@@ -24,6 +24,14 @@ ReleasePhase = Literal["pre-ga", "ga"]
 # single reviewed commit, once every gate that branches on it (the compat
 # corpus gate, the section 8.1 deletion policy, the contract-binding checks) is
 # wired and verified against this constant.
+#
+# Pre-flip remediation (do these BEFORE flipping, so the flip stays a clean
+# one-line change and no bank of red tests masks a real regression):
+#   - DE-03 output projection: at GA, global_settings.unconfigured_column_policy
+#     defaults to "error", so parity/perf fixtures that carry undeclared payload
+#     columns and rely on the pre-GA "warn" default will hard-error (not leak).
+#     Declare those columns, or pin policy="warn" on the affected fixtures,
+#     first. See docs/discussions/2026-07-13-de03-output-projection-design.md.
 RELEASE_PHASE: ReleasePhase = "pre-ga"
 
 

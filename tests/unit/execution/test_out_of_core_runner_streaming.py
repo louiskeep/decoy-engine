@@ -105,10 +105,15 @@ def test_lazy_source_sink_run_matches_resident_run_and_oracle(tmp_path) -> None:
         assert published.equals(in_memory.outputs[name]), name
         assert in_memory.outputs[name].to_pydict() == pandas.outputs[name].to_pydict()
 
-    # WARN totals ride through the stream identically on both paths.
+    # WARN totals ride through the stream identically on both paths. DE-03: the
+    # fk_relational fixture's wide payload columns are undeclared, so the pre-GA
+    # warn default also emits `undeclared_output_columns` warnings on both paths;
+    # filter to the orphan warnings for the orphan-total assertions.
     orphans_per_edge = rows // 50  # orphan_frac=0.02 plants every 50th row
-    assert [w.detail["orphan_rows"] for w in streamed.warnings] == [orphans_per_edge] * 2
-    assert [w.code for w in streamed.warnings] == ["orphan_fk", "orphan_fk"]
+    orphan_warnings = [w for w in streamed.warnings if w.code == "orphan_fk"]
+    assert [w.detail["orphan_rows"] for w in orphan_warnings] == [orphans_per_edge] * 2
+    assert [w.code for w in orphan_warnings] == ["orphan_fk", "orphan_fk"]
+    # Full warning parity (undeclared + orphan) still holds identically on both paths.
     assert streamed.warnings == in_memory.warnings
 
     # FK integrity on the published output: every non-orphan child key maps to

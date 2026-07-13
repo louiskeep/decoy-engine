@@ -9,6 +9,34 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (DE-03: fail-closed output projection -- undeclared columns no longer silently emit raw, 2026-07-13)
+
+Closes a silent raw-passthrough defect: a source column with no declared
+strategy, or a whole table with an empty/absent `columns:` block, previously
+reached masked output **in the clear with no warning** (a PII leak). Output
+projection now runs at every emission route before its point of no return, so
+only columns the plan declares as legitimate output (a work node, an explicit
+`strategy: passthrough`, or -- for generate tables -- their `generate_columns`)
+may appear.
+
+- **New setting `global_settings.unconfigured_column_policy: "warn" | "error"`.**
+  When unset the default couples to release phase: `warn` while pre-GA (the
+  column still passes through but now carries a structured
+  `undeclared_output_columns` `QualityWarning`), `error` at GA (a hard
+  `ExecutionError` -- fail closed binds automatically at the flip, no manual
+  toggle to forget). An explicit setting overrides in both directions.
+- **Enforced on all five routes:** full-frame pandas, native polars,
+  sequential, out-of-core, and chunked (per-chunk). The isolated/governed
+  subprocess path inherits it. Generate-echo tables are exempt by table kind
+  and cannot smuggle an undeclared mask column (schema forbids a table
+  declaring both `columns` and `generate_columns`).
+- **Sibling compile check:** a declared `faker` column with no `provider` now
+  fails at compile with `PlanCompileError(faker_requires_provider)` instead of
+  being silently dropped.
+- Warnings travel the structured `ExecutionResult.warnings` channel only (no
+  stdout/stderr contamination). Golden test-flight fingerprints unchanged --
+  well-formed configs are unaffected under both the warn and error defaults.
+
 ### Changed (TB-5: OOM auto-router enabled by DEFAULT + byte-based reject contract migration, 2026-07-13)
 
 Flips the OOM-avoidance auto-router to **default-ON** and migrates the

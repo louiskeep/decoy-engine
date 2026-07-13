@@ -219,12 +219,17 @@ def test_cross_batch_orphan_policies_match_pandas(tmp_path, monkeypatch, policy)
 
     assert out.outputs["orders"].to_pydict() == pandas.outputs["orders"].to_pydict()
     assert out.outputs["customers"].to_pydict() == pandas.outputs["customers"].to_pydict()
+    # DE-03: `orders.amount` is an undeclared payload column, so the pre-GA warn
+    # default emits an `undeclared_output_columns` warning on every route. It is
+    # orthogonal to orphan-policy parity (which is what this test pins), so
+    # filter it out before asserting on the orphan warning set.
+    orphan_warnings = [w for w in out.warnings if w.code != "undeclared_output_columns"]
     if policy is OrphanPolicy.WARN:
-        assert len(out.warnings) == 1
-        assert out.warnings[0].code == "orphan_fk"
-        assert out.warnings[0].detail["orphan_rows"] == 3
+        assert len(orphan_warnings) == 1
+        assert orphan_warnings[0].code == "orphan_fk"
+        assert orphan_warnings[0].detail["orphan_rows"] == 3
     else:
-        assert out.warnings == ()
+        assert orphan_warnings == []
 
 
 _H = "a3f9c2e8b1d47765"
