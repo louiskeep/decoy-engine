@@ -206,15 +206,16 @@ def _build_seed_envelope(
                 else:
                     provider_config_raw = {}
                     provider_config = tuple()
-                # DE-11: resolve pool_size ONCE here, the single drop site
-                # between compile-time config and the runtime ColumnSeed.
-                # Both `pool_size` (top-level) and `provider_config.pool_size`
-                # are independently tested, real config locations (see
-                # docs/2026-07-13-de11-pool-size-precedence.md); pick the
-                # top-level value when set, fall back to provider_config,
-                # and fail closed if both are set and DISAGREE rather than
-                # silently discarding one of them (equal values are fine --
-                # only a genuine contradiction is an error).
+                # pool_size/scale are resolved once here so runtime consumers
+                # read a single typed source of truth; top-level wins,
+                # provider_config is the fallback, contradictions are
+                # rejected. Both `pool_size` (top-level) and
+                # `provider_config.pool_size` are independently tested, real
+                # config locations; pick the top-level value when set, fall
+                # back to provider_config, and fail closed if both are set
+                # and DISAGREE rather than silently discarding one of them
+                # (equal values are fine -- only a genuine contradiction is
+                # an error).
                 top_pool_size = col_entry.get("pool_size")
                 provider_pool_size = provider_config_raw.get("pool_size")
                 if (

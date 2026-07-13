@@ -7,7 +7,9 @@ but, pre-fix, were never copied onto the compiled `ColumnSeed`
 execution/_chunked.py) read `provider_config.pool_size` / the sampler's
 hardcoded 2.0 default instead, so a config declaring a top-level
 `pool_size` or `scale` compiled clean and then silently used a different
-value at runtime. See docs/2026-07-13-de11-pool-size-precedence.md.
+value at runtime. Resolving once onto the compiled seed gives runtime
+consumers a single typed source of truth instead of two independently
+re-parsed locations that can drift.
 
 The fix resolves both fields ONCE at the envelope drop site
 (`plan/_seed_envelope.py`) onto typed `ColumnSeed.pool_size` /

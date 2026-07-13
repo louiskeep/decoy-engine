@@ -42,8 +42,12 @@ than derived from the data:
   if both disagree) + `cardinality_mode` absent or `reuse`. The
   deterministic sampler maps each value via
   `derive_index(job_seed, namespace, canonicalize(value), pool_size)`,
-  RNG-seeded by pool identity (a pre-built pool equals any rebuild);
-  `pool_size` controls collision rate, not admission.
+  independent of row position or chunk arrival, and the pool build is
+  RNG-seeded by its identity, so a pre-built pool equals any rebuild.
+  A chunk with more distinct values than `pool_size` changes nothing:
+  derive_index maps any value into [0, pool_size) with collisions
+  allowed, byte-identical to the full-frame run of the same rows
+  (pool_size controls collision rate, not admission).
 - categorical: `deterministic: true` + `namespace` + explicit
   `provider_config.categories`, and NOT `from_profile` (profile-derived
   categories would come from the first chunk only).
