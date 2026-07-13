@@ -492,11 +492,15 @@ def orchestrate(args: argparse.Namespace) -> int:
     _, ooc3 = _run_capped(
         args.headroom_mb, "out_of_core", cfg3, rows=args.parity_rows, budget_bytes=cap_bytes
     )
-    parity_match = bool(ff3 and ooc3 and ff3["content_hash"] == ooc3["content_hash"])
+    # Guard: empty tables hash-equal; require non-empty rows before trusting the hash match.
+    fks = [(ff3 or {}).get("fk") or {}, (ooc3 or {}).get("fk") or {}]
+    nonempty = all(fk.get("rows_parent") and fk.get("rows_child") for fk in fks)
+    parity_match = bool(ff3 and ooc3 and nonempty and ff3["content_hash"] == ooc3["content_hash"])
     report["proofs"]["p3_path_parity"] = {
         "parity_rows": args.parity_rows,
         "full_frame_hash": (ff3 or {}).get("content_hash"),
         "out_of_core_hash": (ooc3 or {}).get("content_hash"),
+        "nonempty_outputs": nonempty,
         "byte_identical": parity_match,
         "full_frame_execution_mode": (ff3 or {}).get("execution_mode"),
         "out_of_core_execution_mode": (ooc3 or {}).get("execution_mode"),

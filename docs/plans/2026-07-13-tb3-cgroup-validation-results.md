@@ -69,7 +69,7 @@ host; success marker never printed) *before* any reroute result is trusted.
   governor parent's resident footprint, and well below `full_frame`'s ~3.2 GB
   peak.
 
-## The three proofs (measured, two independent runs, consistent)
+## The three proofs (measured, two independent runs; consistent in shape, peak MB varies ~±90 MB run-to-run)
 
 ### Proof 1 -- route selection by BYTES vs budget (width test, NOT row-count)
 
@@ -91,7 +91,7 @@ Cap = 2400 MB (real kernel `memory.max`). Scale 750,000 rows.
 
 | run | under cap 2400 MB | result |
 | --- | --- | --- |
-| `full_frame` alone (baseline free peak) | -- | peak **3177 MB** (unbudgeted, generous cap) |
+| `full_frame` alone (baseline free peak) | -- | peak **~3.2 GB** (observed 3177-3266 MB across 3 runs; unbudgeted, generous cap) |
 | `out_of_core` alone (baseline free peak) | -- | peak **932 MB** |
 | **`full_frame` under the cap** | yes | **kernel-OOM-KILLED** (exit 255, no completion envelope) |
 | **`out_of_core` under the cap** | yes | **COMPLETED**, peak 925 MB, FK-consistent |
@@ -102,9 +102,9 @@ terminated the over-cap `full_frame` child at ~1259 MB observed peak, not our
 in-process monitor), `final_route=out_of_core`, `outcome=completed`, completed
 `out_of_core` peak 746 MB, and referential integrity intact
 (`fk_edge_preserved`, `masking_transformed`, `ids_distinct` all true on 750,000
-rows). A job whose `full_frame` peak (3177 MB) exceeds the 2400 MB kernel cap
-completes via `out_of_core` under that same cap -- no wedge, no whole-job kill.
-**PASS.**
+rows). A job whose `full_frame` peak (~3.2 GB, observed 3177-3266 MB across runs)
+exceeds the 2400 MB kernel cap completes via `out_of_core` under that same cap
+-- no wedge, no whole-job kill. **PASS.**
 
 ### Proof 3 -- `out_of_core` vs `full_frame` path parity (byte-identity)
 

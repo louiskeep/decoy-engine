@@ -24,7 +24,8 @@ pure-mask; ~726 MB resident; cap 2400 MB): **(1) route-by-bytes width test** --
 at 200,000 rows held constant against a 500 MB budget, a narrow schema routes
 `full_frame` and a wide schema (more bytes/row) routes `out_of_core`, so the
 decision keys off computed bytes-vs-budget, not row count; **(2)
-reroute-to-completion under the cap** -- `full_frame` (free peak 3261 MB) is
+reroute-to-completion under the cap** -- `full_frame` (free peak ~3.2 GB,
+observed 3177-3266 MB across 3 runs, ~±90 MB run-to-run variance) is
 kernel-OOM-killed under the 2400 MB cap while the governor trips it
 (`trip_kind=self_oom`, a real kernel kill) and reroutes to a completed,
 FK-consistent `out_of_core` run (peak 746 MB) under that same cap; **(3) path
