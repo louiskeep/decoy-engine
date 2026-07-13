@@ -204,7 +204,48 @@ def _build_seed_envelope(
                 if isinstance(provider_config_raw, dict):
                     provider_config = tuple(sorted(provider_config_raw.items()))
                 else:
+                    provider_config_raw = {}
                     provider_config = tuple()
+                # DE-11: resolve pool_size ONCE here, the single drop site
+                # between compile-time config and the runtime ColumnSeed.
+                # Both `pool_size` (top-level) and `provider_config.pool_size`
+                # are independently tested, real config locations (see
+                # docs/2026-07-13-de11-pool-size-precedence.md); pick the
+                # top-level value when set, fall back to provider_config,
+                # and fail closed if both are set and DISAGREE rather than
+                # silently discarding one of them (equal values are fine --
+                # only a genuine contradiction is an error).
+                top_pool_size = col_entry.get("pool_size")
+                provider_pool_size = provider_config_raw.get("pool_size")
+                if (
+                    top_pool_size is not None
+                    and provider_pool_size is not None
+                    and top_pool_size != provider_pool_size
+                ):
+                    raise PlanCompileError(
+                        code="pool_size_location_conflict",
+                        path=f"tables.{table_profile.name}.columns.{col_name}.pool_size",
+                        message=(
+                            f"Column {table_profile.name}.{col_name}: top-level "
+                            f"pool_size={top_pool_size!r} conflicts with "
+                            f"provider_config.pool_size={provider_pool_size!r}. Both "
+                            "locations are legal individually, but declaring two "
+                            "different values for the same column is ambiguous. "
+                            "Set one location only, or make both values equal."
+                        ),
+                    )
+                pool_size_resolved = (
+                    top_pool_size if top_pool_size is not None else provider_pool_size
+                )
+                resolved_pool_size = (
+                    int(pool_size_resolved) if pool_size_resolved is not None else None
+                )
+                # `scale` has one documented location today (top-level
+                # ColumnConfig.scale; config/_tables.py); no runtime or
+                # compile-time reader consults provider_config.scale, so
+                # there is nothing to reconcile it against.
+                scale_raw = col_entry.get("scale")
+                resolved_scale = float(scale_raw) if scale_raw is not None else None
                 coherent_with_raw = col_entry.get("coherent_with", []) or []
                 coherent_with = tuple(c for c in coherent_with_raw if isinstance(c, str))
                 # MG-3 / M3 (2026-05-31): optional per-row gate
@@ -281,6 +322,8 @@ def _build_seed_envelope(
                                 strategy, provider_config
                             ),
                             ner_model_version=ner_model_version,
+                            pool_size=resolved_pool_size,
+                            scale=resolved_scale,
                         ),
                     )
                 )

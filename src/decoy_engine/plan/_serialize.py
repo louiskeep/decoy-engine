@@ -111,6 +111,12 @@ def _column_seed_to_dict(cs: ColumnSeed) -> dict[str, Any]:
     # MG-6 D1 (2026-05-31): same round-trip pattern as technique_class.
     if cs.distribution_behavior is not None:
         out["distribution_behavior"] = cs.distribution_behavior
+    # DE-11 (2026-07-13): same omit-when-None round-trip pattern; legacy
+    # plans (compiled before this field existed) deserialize both as None.
+    if cs.pool_size is not None:
+        out["pool_size"] = cs.pool_size
+    if cs.scale is not None:
+        out["scale"] = cs.scale
     return out
 
 
@@ -215,6 +221,9 @@ def _column_seed_from_dict(data: dict[str, Any]) -> ColumnSeed:
         when=data.get("when"),
         # MG-6 D1 (2026-05-31): same pattern.
         distribution_behavior=data.get("distribution_behavior"),
+        # DE-11 (2026-07-13): same omit-when-None pattern.
+        pool_size=data.get("pool_size"),
+        scale=data.get("scale"),
     )
 
 

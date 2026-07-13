@@ -24,6 +24,7 @@ from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._types import ColumnSeed
 
 _DEFAULT_POOL_SIZE = 10_000
+_DEFAULT_SCALE = 2.0
 
 
 class FakerStrategyHandler:
@@ -46,7 +47,18 @@ class FakerStrategyHandler:
         source = df[column]
         n = len(source)
         cfg = provider_config_to_dict(plan.provider_config)
-        pool_size = int(cfg.get("pool_size", _DEFAULT_POOL_SIZE))
+        # DE-11: `plan.pool_size` / `plan.scale` are resolved ONCE at compile
+        # (plan/_seed_envelope.py) from whichever of the two legal config
+        # locations (top-level ColumnConfig field, provider_config) the
+        # operator set. Prefer the typed field; a ColumnSeed built by hand
+        # (e.g. unit tests exercising this handler directly, bypassing
+        # compile_plan) never sets it, so provider_config stays the fallback
+        # rather than a second, independently-drifting read site.
+        if plan.pool_size is not None:
+            pool_size = plan.pool_size
+        else:
+            pool_size = int(cfg.get("pool_size", _DEFAULT_POOL_SIZE))
+        scale = plan.scale if plan.scale is not None else _DEFAULT_SCALE
         locale = cfg.get("locale")
         # pool_size + locale are build knobs, not Faker provider-method kwargs.
         build_config = {k: v for k, v in cfg.items() if k not in ("pool_size", "locale")}
@@ -86,6 +98,7 @@ class FakerStrategyHandler:
             source=source,
             namespace=plan.namespace,
             deterministic=plan.deterministic,
+            scale=scale,
         )
 
         na_mask = source.isna().to_numpy()

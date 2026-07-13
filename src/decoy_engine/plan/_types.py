@@ -112,6 +112,21 @@ class ColumnSeed:
     # environments (sibling of the backend_version stamp). None for
     # every other column, and when the model has no package metadata.
     ner_model_version: str | None = None
+    # DE-11 (2026-07-13): pool_size / scale resolved ONCE at compile from
+    # `ColumnConfig`'s top-level fields. `pool_size` falls back to
+    # `provider_config.pool_size` when only that location is set; the two
+    # must agree when both are set -- `_build_seed_envelope` raises
+    # `pool_size_location_conflict` otherwise. `scale` has one documented
+    # location (top-level only; no reader ever consulted
+    # `provider_config.scale`), so it is a straight copy. Prior to this
+    # field, `pool_size` was validated at compile (plan/_checks.py,
+    # generation/pool/_validate.py) but never copied onto ColumnSeed, so
+    # every runtime consumer silently re-read (or defaulted) a value
+    # compile never actually stamped. None means neither location set a
+    # value; runtime consumers keep their own defaults (10_000 for
+    # pool_size, 2.0 for scale) in that case.
+    pool_size: int | None = None
+    scale: float | None = None
 
 
 @dataclass(frozen=True)
