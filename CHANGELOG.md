@@ -47,18 +47,28 @@ shared, perf-noisy `ubuntu-latest` GitHub runners, that thin, one-sided
 margin risked cross-env memory drift flipping out-of-core into a governor
 kill -- a flaky RED, never a false-green, but still capable of blocking
 unrelated PRs. **HIGH, fixed:** measured full_frame's TRUE peak by running it
-UNBUDGETED (440.0-465.4 MB over 8 runs) and out-of-core's peak under its
-forwarded budget across a sweep (317.5-335.8 MB over 21 runs), then
-recentered the window at `_BUDGET_MB=415` (kill line ~386.0 MB) -- ~50 MB
-margin above out-of-core's worst observed peak and ~54 MB below full_frame's
-worst-case true peak, balanced on both sides instead of the old one-sided
-23 MB. Added a `_skip_if_noisy_host` fail-safe: if the SAME real run shows
+UNBUDGETED (428.3-465.4 MB over 8 runs, 428.3 MB a rare low tail) and
+out-of-core's peak under its forwarded budget across a sweep (317.5-335.8 MB
+over 21 runs), then recentered the window at `_BUDGET_MB=415` (kill line
+~386.0 MB) -- ~50 MB margin above out-of-core's worst observed peak and
+~42 MB below full_frame's worst-case (low-tail) true peak, balanced on both
+sides instead of the old one-sided 23 MB. Added a `_skip_if_noisy_host`
+fail-safe: if the SAME real run shows
 full_frame never tripped, the ladder exhausted, or out-of-core completed
 within 40 MB of the kill line, the test `pytest.skip`s with a full
 diagnostic instead of asserting -- a noisy host now SKIPS, not flakes RED.
-Also added an explicit `final_route == "out_of_core"` assertion (a reroute
-onto `sequential` because out-of-core got killed too is now its own caught
-failure, not silently accepted as merely `!= "full_frame"`). **MEDIUM,
+Also added an explicit `final_route == "out_of_core"` assertion, checked
+against the requested route explicitly (not merely `!= "full_frame"`) --
+though this is a reference-host guarantee, not a universal catch:
+`_skip_if_noisy_host` runs BEFORE it and already SKIPs (never fails RED) on
+the same conditions this assertion would otherwise catch -- ladder
+exhaustion, a sequential fallback, or a completed-but-thin-margin
+out-of-core run. On a noisy CI runner those conditions produce a diagnostic
+SKIP, fail-safe and never a false pass, not a caught assertion failure; the
+strict assertions below the skip-guard are the reference-host guarantee,
+backed independently by `test_governor.py`'s `TestRealSubprocessIntegration`
+(a real kill+reroute end to end) and the out-of-core route's own memory
+sentinel. **MEDIUM,
 fixed:** corrected the self-contradictory calibration numbers in both the
 test's module docstring and `execution/_governor.py`'s TB-2 status note
 (the old "~330-380 MB" out-of-core figure straddled the 353 MB kill line,

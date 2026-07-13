@@ -41,11 +41,13 @@ code change required.
   - full_frame's TRUE peak, measured UNBUDGETED (`use_runtime_governor=
     False`, a 4096 MB `budget_bytes` that never trips a kill, so
     `IsolatedRunResult.peak_rss_mb` reports the run's own real ceiling, not
-    a kill-line-truncated one) over 8 real-subprocess runs: **440.0-465.4
-    MB** (mean ~452 MB). This was previously UNOBSERVED (killed at the old
+    a kill-line-truncated one) over 8 real-subprocess runs: **428.3-465.4
+    MB** (mean ~452 MB, with 428.3 MB a rare low tail observed once -- most
+    runs land 440-465 MB). This was previously UNOBSERVED (killed at the old
     353 MB line before it could be measured) and the old "~450-460 MB"
     docstring figure was an assumption, not a measurement -- it happened to
-    be close, but this paragraph now cites the real range.
+    be close, but this paragraph now cites the real range, including its
+    low tail.
   - out-of-core's (TB-1 lazy sources + sink streaming) peak, measured under
     the SAME governor-forwarded `out_of_core_budget_bytes` the ladder
     actually uses (380/400/415/430 MB budgets, 21 real-subprocess runs
@@ -57,14 +59,14 @@ code change required.
     `test_out_of_core_memory_sentinel.py` documents for the direct route).
   - `_BUDGET_MB=415` (hard-kill line `0.93 * 415 ≈ 386.0 MB`) was chosen to
     BALANCE the margin on both sides of the measured envelope: `386.0 -
-    335.8 ≈ 50 MB` above out-of-core's worst observed peak, and `440.0 -
-    386.0 ≈ 54 MB` below full_frame's worst-case (lowest observed) true
-    peak -- both comfortably clear of the `_SKIP_MARGIN_MB` fail-safe
-    threshold below. The OLD `_BUDGET_MB=380` (kill line ≈353 MB) left only
-    ~23 MB above out-of-core's peak and was NEVER checked against
-    full_frame's true (unbudgeted) peak at all, since that peak had never
-    been measured -- exactly the thin, uncalibrated margin dennis+Codex
-    flagged as CI-shared-runner flake risk.
+    335.8 ≈ 50 MB` above out-of-core's worst observed peak, and `428.3 -
+    386.0 ≈ 42 MB` below full_frame's worst-case (lowest observed, including
+    its rare low tail) true peak -- both comfortably clear of the
+    `_SKIP_MARGIN_MB` fail-safe threshold below. The OLD `_BUDGET_MB=380`
+    (kill line ≈353 MB) left only ~23 MB above out-of-core's peak and was
+    NEVER checked against full_frame's true (unbudgeted) peak at all, since
+    that peak had never been measured -- exactly the thin, uncalibrated
+    margin dennis+Codex flagged as CI-shared-runner flake risk.
   - Verified stable across repeated real-subprocess runs at this window
     (21/21 completed to out_of_core in the calibration sweep, 4/4 additional
     full pytest runs green) -- not a one-off.
@@ -90,8 +92,9 @@ anywhere in this file -- a real child's real RSS growth trips a real
 `SIGKILL`, and the real ladder reroutes to a real completed out-of-core run.
 
 **The skip-guard (dennis+Codex HIGH, fail-safe on a hostile/noisy host).**
-This module's `_BUDGET_MB=415` window carries ~50-54 MB of real margin on
-BOTH sides on the reference host above -- but this test also runs on shared,
+This module's `_BUDGET_MB=415` window carries ~42-50 MB of real margin on
+BOTH sides on the reference host above (the low end reflecting full_frame's
+rare observed low tail) -- but this test also runs on shared,
 perf-noisy `ubuntu-latest` GitHub runners (`.github/workflows/ci.yml`'s own
 comment), where cross-env memory drift (glibc malloc arena behavior, pyarrow/
 duckdb wheel-version differences, baseline interpreter RSS) could still
@@ -125,13 +128,14 @@ _MB = 1024 * 1024
 
 # Calibrated 2026-07-13 on the reference host (module docstring: `devbox`,
 # pve2 LXC, 4 vCPU / 8 GB RAM) against MEASURED peaks on both sides, not
-# reasoned ones -- full_frame's true unbudgeted peak (440.0-465.4 MB) and
-# out-of-core's peak under the forwarded budget (317.5-335.8 MB, flat across
-# budget choices). 415 MB is large enough that full_frame's resident working
-# set (input + masked copy + output) clears the hard-kill line with ~54 MB of
-# real margin below its worst-case true peak, and out-of-core's completed
-# peak sits ~50 MB below the same kill line; small enough the real-subprocess
-# run stays a few-second test, not a benchmark-tier one.
+# reasoned ones -- full_frame's true unbudgeted peak (428.3-465.4 MB,
+# 428.3 MB a rare observed low tail) and out-of-core's peak under the
+# forwarded budget (317.5-335.8 MB, flat across budget choices). 415 MB is
+# large enough that full_frame's resident working set (input + masked copy +
+# output) clears the hard-kill line with ~42 MB of real margin below its
+# worst-case (low-tail) true peak, and out-of-core's completed peak sits
+# ~50 MB below the same kill line; small enough the real-subprocess run
+# stays a few-second test, not a benchmark-tier one.
 _ROWS = 200_000
 _BUDGET_MB = 415
 _HARD_THRESHOLD_FRACTION = 0.93  # spec §3.7; passed explicitly (not left to
@@ -140,11 +144,14 @@ _HARD_THRESHOLD_FRACTION = 0.93  # spec §3.7; passed explicitly (not left to
 _KILL_LINE_MB = _BUDGET_MB * _HARD_THRESHOLD_FRACTION  # ≈386.0 MB
 _POLL_INTERVAL_S = 0.05
 
-# dennis+Codex HIGH fail-safe: below this margin (MB) to the kill line on
-# EITHER side, treat the run as an inconclusive read of a noisy host rather
-# than a clean pass/fail -- see `_skip_if_noisy_host` and the module docstring's
-# "skip-guard" paragraph. 40 MB is comfortably inside the ~50-54 MB margins
-# measured on the reference host, so a healthy host never trips it.
+# dennis+Codex HIGH fail-safe: below this margin (MB) between out-of-core's
+# observed peak and the kill line, treat the run as an inconclusive read of a
+# noisy host rather than a clean pass/fail -- see `_skip_if_noisy_host` and
+# the module docstring's "skip-guard" paragraph. 40 MB sits inside the ~50 MB
+# out-of-core-side margin measured on the reference host (the only side this
+# threshold gates -- full_frame's own worst-case-low margin is ~42 MB, but a
+# real trip, not a margin check, is what `_skip_if_noisy_host` requires of
+# it), so a healthy host never trips this branch.
 _SKIP_MARGIN_MB = 40.0
 
 
@@ -252,6 +259,17 @@ def _assert_fk_internal_consistency(outputs: dict[str, pa.Table]) -> None:
         "did not actually transform parent.id, so the child_pids == parent_ids check "
         "above would have been vacuous (true even with no masking at all)"
     )
+    # dennis+Codex LOW: `child_pids == parent_ids` and the identity check above
+    # would BOTH still pass if the hash strategy collapsed every id to one
+    # constant value -- every child mapped to one parent, an FK disaster, not
+    # a preserved edge. Masked ids must stay pairwise distinct (as many
+    # distinct values as source rows), not merely internally consistent with
+    # each other.
+    assert len(set(parent_ids)) == _ROWS, (
+        "fk_internal_consistency check would pass even if masking collapsed every "
+        "id to a single constant value (all children -> one parent) -- masked ids "
+        "must remain pairwise distinct, not merely equal to each other"
+    )
 
 
 def _skip_if_noisy_host(result: GovernorResult) -> None:
@@ -261,7 +279,7 @@ def _skip_if_noisy_host(result: GovernorResult) -> None:
     -- see the module docstring's "skip-guard" paragraph. Uses the SAME real
     run this test already performed (no separate throwaway measurement
     pass). Called BEFORE the strict correctness assertions; on the
-    reference host (module docstring) this run's margins are ~50-54 MB, so
+    reference host (module docstring) this run's margins are ~42-50 MB, so
     none of these branches ever fire there.
     """
     if not result.trips:
@@ -374,6 +392,28 @@ def test_auto_run_that_trips_full_frame_reroutes_to_a_completed_out_of_core_run(
     )
     assert result.result is not None
     assert result.result.outcome == "completed"
+
+    # dennis+Codex MEDIUM: `final_route`/`reroute_to` above are governor-side
+    # LADDER bookkeeping -- the requested `execution_mode` echoed back once
+    # `_governor.py` decides which rung to try next, not an independent read
+    # of what the child process itself actually executed. `run_pipeline`'s
+    # out-of-core DISPATCH function (`_pipeline_route_exec.run_out_of_core_route`)
+    # stamps `quality_metrics["execution"]["execution_mode"]` itself, and only
+    # reaches that stamp by actually calling `run_fk_out_of_core` (the DuckDB
+    # bounded-batch runner) -- so this is confirmation the CHILD genuinely
+    # dispatched through the out-of-core runner, not merely that out_of_core
+    # was the label requested of it. This value crosses the real subprocess
+    # boundary via the worker's JSON envelope (`_isolated_worker.py` ->
+    # `_isolated_run.py`'s `_result_from_envelope`), so it reflects what the
+    # child computed, not something the driver fabricates post hoc.
+    execution_metrics = result.result.quality_metrics.get("execution") or {}
+    assert execution_metrics.get("execution_mode") == "out_of_core", (
+        f"governor labeled this run out_of_core (final_route={result.final_route!r}) "
+        f"but the child's own execution telemetry reports "
+        f"{execution_metrics.get('execution_mode')!r} -- the job would have been "
+        "labeled out_of_core while actually running a different route inside "
+        "run_pipeline, a real routing/labeling bug, not a proof gap"
+    )
 
     # fk_internal_consistency=ok: the completed run's output is not just
     # present, it is REFERENTIALLY CORRECT after streaming through the
