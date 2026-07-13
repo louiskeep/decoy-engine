@@ -291,9 +291,31 @@ dennis + Codex (empirical RSS measurement) disproved the §3.2 assumption that `
 - Measured true peak/raw: pooled-string ~0.12, unique-string ~1.4, numeric ~2–3× (reasoned).
 
 **Ruling (refines §3.2 / §3.3):** the static estimator is a **coarse, conservative first-pass filter** — it must only ever OVER-predict full_frame peak, never under. Near-boundary accuracy comes from the probe (B2) + telemetry (B5). Concretely:
-- Operational `K_FULL_FRAME_COLD_START = 3.0` (covers the numeric worst case; over-prices pooled-string schemas, which is the safe side — the probe recovers their fast path). The measured 1.156 is kept as evidence only.
+- Operational `K_FULL_FRAME_COLD_START` (was 3.0 cold-start; **MEASURED = 4.0 at TB-4, see §13.1** -- 3.0 was found OOM-unsafe for numeric FK). Over-prices pooled-string schemas, which is the safe side -- the probe recovers their fast path. The measured 1.156 is kept as evidence only.
 - Sequential working-set = **sum of the two largest tables** (tighter single-table bound gated on PR #22).
-- `K_OUT_OF_CORE` / `K_SEQUENTIAL` cold-starts are **unmeasured placeholders** — B1b must NOT route on them before Sprint 0 / B5.
+- `K_OUT_OF_CORE` / `K_SEQUENTIAL` cold-starts were **unmeasured placeholders** -- **MEASURED and re-pinned at TB-4 (§13.1): out_of_core 2.0 -> 1.5, sequential 1.5 -> 4.0.** B1b must NOT route on them before Sprint 0 / B5.
 - **B1b routing rule:** full_frame only when the conservative estimate clears the budget with margin; otherwise route bounded. The probe (B2) is a fast-path RECOVERY, not a safety requirement — so **B1b is safe to ship before B2** (it over-downgrades near-boundary jobs to bounded until B2 recovers them).
 
 **Process note:** the CI `mypy` gate was not runnable in the venv during the 1a/1b/B1a reviews (mypy uninstalled), so a `Literal`-type error slipped into `_isolated_run.py` (Sprint 1a remediation) and was only caught at B1a re-verify. Fixed. Sprint self-checks now run mypy via `uv run --with mypy==2.1.0 -- mypy src/decoy_engine testflight`.
+
+### 13.1 TB-4 calibration -- the placeholders are now MEASURED (2026-07-13)
+
+TB-4 replaced the three cold-start constants with values measured under Sprint 1a process isolation. Harness: `scripts/tb4_calibration.py` (manual/gated sibling of the TB-3 harness); it runs each route in a fresh `run_pipeline_isolated` child so `peak_rss_mb` is that job's own attributable VmHWM, then fits a **two-point slope** `k = d(peak) / d(basis)` across two row scales per (schema class, route), cancelling the fixed interpreter/pyarrow/DuckDB intercept the way `_probe.py` does. Measurements: `docs/plans/2026-07-13-tb4-calibration-results.md`; acceptance test: `tests/unit/execution/test_mem_calibration.py`.
+
+**Model check (STOP-and-report clause):** peak is **linear in bytes** (point_k converges to the slope as rows grow; a consistent positive intercept), so the `basis * k` model's shape holds; the estimator's model is not wrong.
+
+**Measured max slope k per route (across pooled-string / numeric / unique shapes):**
+
+| route | pooled | numeric | unique | **MAX slope** | old placeholder | **NEW pinned** |
+| --- | --- | --- | --- | --- | --- | --- |
+| `full_frame` | 2.11 | **3.45** | 2.43 | **3.45** | 3.0 | **4.0** |
+| `out_of_core` | 0.39 | **0.95** | n/a | **0.95** | 2.0 | **1.5** |
+| `sequential` | 1.65 | **3.28** | n/a | **3.28** | 1.5 | **4.0** |
+
+- **Two placeholders were OOM-UNSAFE.** `full_frame` 3.0 and `sequential` 1.5 both sat BELOW the measured numeric-FK worst case (3.45 / 3.28), the direction that silently admits a job that then OOMs. The numeric FK routes top numeric-single (full_frame 3.03) because the FK hash-remap working set rides on top of raw bytes. Pinned at max-slope rounded up: **`K_FULL_FRAME_COLD_START = 4.0`, `K_SEQUENTIAL_COLD_START = 4.0`** (each +16 to +22% over its slope, within `K_CALIBRATION_ERROR_BAND`).
+- **`out_of_core` is confirmed budget-bounded.** Its measured slope 0.95 (< 1.0) means peak grows SUB-linearly with raw bytes (chunks are RAM-capped), the design premise, now measured. **`K_OUT_OF_CORE_COLD_START = 1.5`** (tightened from the unmeasured 2.0; slope 0.95 + intercept coverage for the job sizes where out_of_core is selected, staying > 1.0). A through-origin `basis * k` under-predicts small out_of_core jobs because the route has a large ~426 MB fixed intercept: **expected and safe, since the runtime budget + governor (TB-1/TB-2/TB-3) bound out_of_core's peak, not this estimate.** The estimate's only job for out_of_core is keeping the fallback usable for large jobs.
+- **error band pinned.** `K_CALIBRATION_ERROR_BAND = 0.30` (also the default asymmetric margin in `fits`) covers TB-4's run-to-run variance (a few %, matching TB-3's ~+/-90 MB) plus headroom for unsampled shapes.
+
+**Recalibration trigger (documented in `_mem_estimate.py`; recompute via the harness + re-pin):** (1) **drift** -- B5 telemetry (`_mem_telemetry.recalibrate_k`) sees an isolated job whose `observed_k` exceeds `current_k` -> RAISE immediately (safety), or the max `observed_k` over >= `min_samples_for_lower` isolated jobs falls below `current_k / (1 + error_band)` -> LOWER (gated); (2) **dependency/route change** -- a pyarrow/DuckDB/pandas major bump or a route buffering change invalidates the slope+intercept; (3) **new schema class** -- a production shape unlike pooled/numeric/unique (wide-binary, nested).
+
+**Telemetry (B5):** the predicted-vs-observed pair is already emitted -- `GovernorTripRecord.(route, budget_bytes, observed_peak_mb)` and `IsolatedRunResult.peak_rss_mb`, foldable into a `MemoryTelemetryRecord` via `telemetry_record_from_isolated_run` / `telemetry_record_from_governor_trip`, with `recalibrate_k` as the drift detector. The persistent STORE + auto-adoption loop stays platform-owned (§4); the engine ships the record + in-memory `MemoryTelemetryStore` primitives.
