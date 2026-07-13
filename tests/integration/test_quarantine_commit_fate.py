@@ -14,7 +14,10 @@ Reproduces the exact FK shape from
 `tests/integration/test_fk_sequential_row_error_leak.py` (a parent/child pair,
 one uncoercible `bucketize` cell "badX" on the parent, `format_error` covered
 by an enabled quarantine trigger), routed through `run_pipeline`'s
-auto-eligible sequential path, but wraps a real `ParquetTransactionalSink`
+sequential path (pinned via `use_byte_estimate_routing=False`, the TB-5
+rollback route, so the tiny fixtures stay sequential rather than fitting
+full_frame under the default byte estimate), but wraps a real
+`ParquetTransactionalSink`
 with a fake whose `commit()` always raises -- simulating a late sink-side
 commit failure (disk full, permission denied, etc) unrelated to the masking
 itself.
@@ -175,7 +178,9 @@ class TestQuarantinePublishedOnlyOnSinkCommit:
         sink = _CommitBoomSink(real)
 
         with pytest.raises(RuntimeError, match="commit boom"):
-            run_pipeline(config, sources, engine_version="0.1.0", sink=sink)
+            run_pipeline(
+                config, sources, engine_version="0.1.0", sink=sink, use_byte_estimate_routing=False
+            )
 
         # Table staging is discarded (abort() ran; nothing published)...
         assert not (tmp_path / "out").exists()
@@ -195,7 +200,9 @@ class TestQuarantinePublishedOnlyOnSinkCommit:
         sources = _sources(config)
         sink = ParquetTransactionalSink(tmp_path / "out")
 
-        result = run_pipeline(config, sources, engine_version="0.1.0", sink=sink)
+        result = run_pipeline(
+            config, sources, engine_version="0.1.0", sink=sink, use_byte_estimate_routing=False
+        )
         assert result.quality_metrics["execution"]["execution_mode"] == "sequential"
 
         out_age = pq.read_table(tmp_path / "out" / "parent.parquet").column("age").to_pylist()
@@ -255,7 +262,9 @@ class TestQuarantinePublishReplaceFailureAfterCommit:
         sink = ParquetTransactionalSink(tmp_path / "out")
 
         with pytest.raises(ValueError, match="refusing to publish quarantine"):
-            run_pipeline(config, sources, engine_version="0.1.0", sink=sink)
+            run_pipeline(
+                config, sources, engine_version="0.1.0", sink=sink, use_byte_estimate_routing=False
+            )
 
         # The sink's own commit already succeeded before the quarantine
         # publish step ran: the masked tables ARE legitimately published.
@@ -313,7 +322,9 @@ class TestNestedLayoutSinkAndQuarantineShareParentDirectory:
         sources = _sources(config)
         sink = ParquetTransactionalSink(target)
 
-        result = run_pipeline(config, sources, engine_version="0.1.0", sink=sink)
+        result = run_pipeline(
+            config, sources, engine_version="0.1.0", sink=sink, use_byte_estimate_routing=False
+        )
         assert result.quality_metrics["execution"]["execution_mode"] == "sequential"
 
         assert (target / "parent.parquet").exists()
@@ -355,7 +366,9 @@ class TestCallableSinkWithSpecialQuarantinePath:
         def sink(table: str, data: pa.Table) -> None:
             seen[table] = data
 
-        result = run_pipeline(config, sources, engine_version="0.1.0", sink=sink)
+        result = run_pipeline(
+            config, sources, engine_version="0.1.0", sink=sink, use_byte_estimate_routing=False
+        )
 
         assert set(seen) == {"parent", "child"}
         assert result.quality_metrics["quarantine"]["total_quarantined"] == 1
@@ -411,7 +424,9 @@ class TestAbortNotCalledAfterSuccessfulCommit:
         sink = _AbortTrackingSink(real)
 
         with pytest.raises(ValueError, match="refusing to publish quarantine"):
-            run_pipeline(config, sources, engine_version="0.1.0", sink=sink)
+            run_pipeline(
+                config, sources, engine_version="0.1.0", sink=sink, use_byte_estimate_routing=False
+            )
 
         assert sink.abort_called is False, (
             "abort() must not run after a successful commit -- a custom "
@@ -455,7 +470,9 @@ class TestQuarantineOutputPathAliasingCommittedTable:
         sink = ParquetTransactionalSink(target)
 
         with pytest.raises(ValueError, match="aliases the output artifact"):
-            run_pipeline(config, sources, engine_version="0.1.0", sink=sink)
+            run_pipeline(
+                config, sources, engine_version="0.1.0", sink=sink, use_byte_estimate_routing=False
+            )
 
         # The sink's own commit already succeeded (tables ARE legitimately
         # published) before the alias guard runs; the guard raises before any
@@ -485,7 +502,9 @@ class TestQuarantineOutputPathAliasingCommittedTable:
         sources = _sources(config)
         sink = ParquetTransactionalSink(target)
 
-        result = run_pipeline(config, sources, engine_version="0.1.0", sink=sink)
+        result = run_pipeline(
+            config, sources, engine_version="0.1.0", sink=sink, use_byte_estimate_routing=False
+        )
         assert result.quality_metrics["execution"]["execution_mode"] == "sequential"
         assert (target / "parent.parquet").exists()
         assert (target / "child.parquet").exists()
@@ -521,7 +540,9 @@ class TestSinkCommitFailureWritesNoQuarantineAnywhere:
         monkeypatch.setattr(quarantine_mod, "write_jsonl_staged", _tracking)
 
         with pytest.raises(RuntimeError, match="commit boom"):
-            run_pipeline(config, sources, engine_version="0.1.0", sink=sink)
+            run_pipeline(
+                config, sources, engine_version="0.1.0", sink=sink, use_byte_estimate_routing=False
+            )
 
         assert calls == [], (
             "write_jsonl_staged must not be called when the sink's own "
@@ -592,7 +613,9 @@ class TestDuckTypedSinkAliasingCommittedTable:
         assert not hasattr(sink, "committed_table_path")
 
         with pytest.raises(ValueError, match="refusing to publish quarantine"):
-            run_pipeline(config, sources, engine_version="0.1.0", sink=sink)
+            run_pipeline(
+                config, sources, engine_version="0.1.0", sink=sink, use_byte_estimate_routing=False
+            )
 
         # The sink's own commit already succeeded (tables ARE legitimately
         # published) before the exclusive-create publish runs; the masked
@@ -628,7 +651,9 @@ class TestQuarantineOutputPathPreExistingNonAliasingFile:
         sink = ParquetTransactionalSink(target)
 
         with pytest.raises(ValueError, match="refusing to publish quarantine"):
-            run_pipeline(config, sources, engine_version="0.1.0", sink=sink)
+            run_pipeline(
+                config, sources, engine_version="0.1.0", sink=sink, use_byte_estimate_routing=False
+            )
 
         # Untouched: still the original content, not raw quarantine JSONL.
         assert qpath_file.read_text() == "pre-existing content, not a quarantine record"

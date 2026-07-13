@@ -352,21 +352,54 @@ class TestEstimatorEndToEndUsesTheInterceptModel:
         assert estimate.estimated_bytes >= peak
 
 
-class TestByteEstimateRoutingStaysDefaultOff:
-    """This is a VALUES/model change behind the flag-gated estimate path -- no
-    live routing change. The estimate only feeds routing when the operator
-    opts in; the flag default must stay OFF (it flips at TB-5, not here)."""
+class TestByteEstimateRoutingDefaultOn:
+    """TB-5 flipped the OOM-avoidance routing flags to default-ON (each still
+    forceable OFF for rollback). The byte-estimate router is now the DEFAULT
+    engine behavior; a caller opts OUT with `use_byte_estimate_routing=False`.
+    """
 
-    def test_use_byte_estimate_routing_default_is_false(self) -> None:
+    def test_use_byte_estimate_routing_default_is_true(self) -> None:
         from decoy_engine.execution._pipeline import run_pipeline
         from decoy_engine.execution._pipeline_routing import decide_execution_route
 
         assert (
-            inspect.signature(run_pipeline).parameters["use_byte_estimate_routing"].default is False
+            inspect.signature(run_pipeline).parameters["use_byte_estimate_routing"].default is True
         )
         assert (
             inspect.signature(decide_execution_route)
             .parameters["use_byte_estimate_routing"]
             .default
-            is False
+            is True
         )
+
+    def test_probe_routing_default_is_true(self) -> None:
+        from decoy_engine.execution._pipeline import run_pipeline
+        from decoy_engine.execution._pipeline_routing import decide_execution_route
+
+        assert inspect.signature(run_pipeline).parameters["use_probe_routing"].default is True
+        assert (
+            inspect.signature(decide_execution_route).parameters["use_probe_routing"].default
+            is True
+        )
+
+    def test_rollback_flags_still_force_off(self) -> None:
+        # The rollback path is preserved: a caller can still force each flag OFF.
+        from decoy_engine.execution._pipeline_routing import decide_execution_route
+        from decoy_engine.relationships._graph import RelationshipGraph
+
+        class _P:
+            relationships = ()
+
+        route, reason = decide_execution_route(
+            _P(),
+            has_generate_table=False,
+            has_mask_table=True,
+            validators=[],
+            fidelity_report=False,
+            vault_writer=None,
+            execution_mode="auto",
+            graph=RelationshipGraph(edges=(), ordering=()),
+            use_byte_estimate_routing=False,
+            use_probe_routing=False,
+        )
+        assert (route, reason) == ("full_frame", "no_relationships")

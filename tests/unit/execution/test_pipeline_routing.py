@@ -294,9 +294,14 @@ class TestSequentialVsFullFrameEquivalence:
             assert sunk.equals(full.outputs[table]), f"{table} sink output differs"
 
     def test_auto_mode_selects_sequential_for_eligible_fk_job(self, tmp_path: Path) -> None:
+        # Rollback row-count path (TB-5 default byte-estimate routing would size
+        # this tiny job as fitting full_frame; that default is covered in
+        # test_byte_estimate_routing.py).
         config = _fk_pure_mask_config(tmp_path)
         sources = _fk_sources(config)
-        result = run_pipeline(config, sources, engine_version="0.1.0")  # execution_mode="auto"
+        result = run_pipeline(
+            config, sources, engine_version="0.1.0", use_byte_estimate_routing=False
+        )  # execution_mode="auto"
         assert result.quality_metrics["execution"]["execution_mode"] == "sequential"
         assert result.quality_metrics["execution"]["route_reason"] == "pure_mask_fk"
 
@@ -553,7 +558,12 @@ class TestCrossTableFkCycleRoutingGuard:
         config = _cycle_config(tmp_path)
         sources = _fk_sources(config)
 
-        result = run_pipeline(config, sources, engine_version="0.1.0")  # execution_mode="auto"
+        # Rollback row-count path: pins the `cross_table_cycle` reason. Under
+        # the TB-5 byte-estimate default this tiny cyclic job also routes
+        # full_frame, but by the byte estimate (reason byte_estimate_full_frame_fits).
+        result = run_pipeline(
+            config, sources, engine_version="0.1.0", use_byte_estimate_routing=False
+        )  # execution_mode="auto"
 
         assert result.quality_metrics["execution"]["execution_mode"] == "full_frame"
         assert result.quality_metrics["execution"]["route_reason"] == "cross_table_cycle"
@@ -617,7 +627,11 @@ class TestCrossTableFkCycleRoutingGuard:
         }
         sources = _fk_sources(config)
 
-        result = run_pipeline(config, sources, engine_version="0.1.0")  # execution_mode="auto"
+        # Rollback row-count path: pins that a self-ref (non-cyclic) table routes
+        # sequential under auto (the byte-estimate default is covered elsewhere).
+        result = run_pipeline(
+            config, sources, engine_version="0.1.0", use_byte_estimate_routing=False
+        )  # execution_mode="auto"
 
         assert result.quality_metrics["execution"]["execution_mode"] == "sequential"
         assert result.quality_metrics["execution"]["route_reason"] == "pure_mask_fk"

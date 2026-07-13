@@ -41,6 +41,24 @@ set (widens as SC3/SC4/... land); it does not capture the narrower FK
 parent-key surface or per-strategy conditional config shapes -- see
 `out_of_core._compat.SUPPORTED_STRATEGIES`'s docstring for what it omits.
 
+TB-5 default-flip (2026-07-13, OOM-avoidance routing redesign §B3): the OOM
+auto-router is now DEFAULT-ON. `run_pipeline`'s `use_byte_estimate_routing`
+and `use_probe_routing` default to `True` and `run_job_with_governor`'s
+`use_runtime_governor` defaults to `True` (each still forceable `False` for
+rollback). The behavioral consequence for THIS cross-repo surface: for a
+relationship-bearing pure-mask job the reject-before-read decision is now
+keyed off COMPUTED BYTES vs. the resolved cgroup/slot budget, not the
+row-count thresholds. `FULL_FRAME_REJECT_ROWS_DEFAULT` /
+`OUT_OF_CORE_THRESHOLD_ROWS_DEFAULT` and the row-count reject remain LIVE
+(unchanged constants) only for the rollback path (`use_byte_estimate_routing=
+False`) and for out-of-scope jobs (generate+mask FK, which byte estimation
+cannot price). The reject CODE is unchanged (`fk_full_frame_oom_risk_rejected`,
+byte-based reason). Platform admission (`api/jobs/admission.py`,
+`worker_budget.py`) must match: size its own admission decision off the same
+byte estimate + budget and enable `isolated_execution_enabled` so the engine's
+default per-job isolation holds. Output is unaffected -- every route is
+byte-output-equivalent by design.
+
 Spec: docs/v2/sprints/engine-v2/sprint-09-execution-adapter-pandas.md in decoy-platform.
 """
 

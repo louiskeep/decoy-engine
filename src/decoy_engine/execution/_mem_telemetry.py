@@ -75,7 +75,9 @@ from typing import TYPE_CHECKING, Literal
 from decoy_engine.execution._mem_estimate import (
     ColumnSizeSpec,
     ExecutionPath,
+    FkCardinalityInput,
     TableSizeSpec,
+    estimator_basis_bytes,
     route_intercept_bytes,
 )
 
@@ -108,6 +110,15 @@ class MemoryTelemetryRecord:
     `raw_bytes` basis `_mem_estimate.estimate_peak_bytes` used to produce
     `predicted_bytes` (§3.4: "compares predicted vs actual for the SAME
     raw_bytes basis").
+
+    #74: `raw_bytes` here is the ESTIMATOR BASIS
+    (`_mem_estimate.estimator_basis_bytes`), which for the SEQUENTIAL route is
+    the WORKING SET (two largest tables + FK dedup), NOT total raw bytes --
+    `observed_slope` divides by it, so it must match the basis
+    `route_slope(path)` multiplies or the sequential slope is silently
+    under-stated (OOM-unsafe). The `telemetry_record_from_*` builders enforce
+    this via `_assert_basis_matches_estimator`; a caller constructing this
+    dataclass directly owns the same contract.
 
     `schema_fingerprint` (`schema_fingerprint()` below) lets records for the
     same schema SHAPE aggregate together regardless of row count -- k is a
@@ -241,6 +252,62 @@ def schema_fingerprint(
 # ---------------------------------------------------------------------------
 
 
+def _assert_basis_matches_estimator(
+    *,
+    path: ExecutionPath,
+    raw_bytes: int,
+    tables: Sequence[TableSizeSpec] | None,
+    fk_cardinality: FkCardinalityInput | None,
+) -> None:
+    """#74 basis contract: guard that `raw_bytes` (the divisor
+    `MemoryTelemetryRecord.observed_slope` uses) is the SAME basis
+    `estimate_peak_bytes` multiplied by `route_slope(path)` for this run.
+
+    The SEQUENTIAL route is the footgun: its estimator basis is the WORKING
+    SET (two largest tables + FK dedup, `_mem_estimate.estimator_basis_bytes`),
+    NOT total raw bytes. A telemetry wiring that passes total raw bytes for a
+    sequential run divides `observed_slope` by a basis LARGER than the one the
+    pinned `K_SEQUENTIAL_SLOPE` was calibrated against, UNDER-stating the
+    observed slope -- the OOM-unsafe direction (the drift detector would never
+    fire a raise and the estimator would keep under-predicting sequential
+    peak). So `tables` is REQUIRED for a sequential record and the basis is
+    verified against `estimator_basis_bytes`; for the in-core/out-of-core
+    routes the basis equals total raw bytes, and the check is applied too when
+    `tables` is supplied.
+
+    Wiring status (#74): TB-5 flips the routing flags to default-ON but does
+    NOT wire the live drift loop -- that stays platform-owned. This guard is
+    the standing contract the platform wiring must satisfy when it does; it is
+    a no-op for the in-core routes when a caller omits `tables` (back-compat),
+    and MANDATORY for sequential so the wrong-basis footgun cannot ship
+    silently.
+    """
+    if path == "sequential" and tables is None:
+        raise ValueError(
+            "telemetry basis contract (#74): a sequential-route record must pass "
+            "`tables` (and `fk_cardinality` when the job has an FK dedup set) so "
+            "`raw_bytes` can be verified as the WORKING-SET basis "
+            "`estimator_basis_bytes(tables, 'sequential', ...)` returns -- NOT total "
+            "raw bytes. Dividing observed_slope by total raw bytes under-states the "
+            "sequential slope, the OOM-unsafe direction."
+        )
+    if tables is None:
+        return
+    basis = estimator_basis_bytes(tables, path, fk_cardinality=fk_cardinality)
+    if basis.basis_bytes is None:
+        # UNPRICEABLE: the estimator could not have produced a numeric
+        # prediction either, so there is no basis to check against.
+        return
+    if raw_bytes != basis.basis_bytes:
+        raise ValueError(
+            f"telemetry basis contract (#74): raw_bytes={raw_bytes} does not match the "
+            f"estimator basis {basis.basis_bytes} for path={path!r} "
+            f"(estimator_basis_bytes). observed_slope divides by raw_bytes, so it must "
+            f"be the SAME basis route_slope() multiplies -- for sequential that is the "
+            f"working set (two largest tables + FK dedup), not total raw bytes."
+        )
+
+
 def telemetry_record_from_isolated_run(
     result: IsolatedRunResult,
     *,
@@ -249,8 +316,18 @@ def telemetry_record_from_isolated_run(
     raw_bytes: int,
     predicted_bytes: int,
     mem_cap_bytes: int | None = None,
+    tables: Sequence[TableSizeSpec] | None = None,
+    fk_cardinality: FkCardinalityInput | None = None,
 ) -> MemoryTelemetryRecord:
     """Build a `MemoryTelemetryRecord` from a `run_pipeline_isolated` result.
+
+    `raw_bytes` is the ESTIMATOR BASIS (`_mem_estimate.estimator_basis_bytes`),
+    NOT necessarily total raw bytes: for the SEQUENTIAL route the basis is the
+    working set (two largest tables + FK dedup). `tables` (and `fk_cardinality`)
+    are the #74 basis contract -- REQUIRED for a sequential record so the basis
+    is verified against `estimator_basis_bytes`, optional for the in-core /
+    out-of-core routes (whose basis is total raw bytes); see
+    `_assert_basis_matches_estimator`.
 
     `result.isolated` is carried through unchanged -- an in-process fallback
     run (§12 ruling 2, "option c") produces a contaminated `peak_rss_mb`
@@ -281,6 +358,9 @@ def telemetry_record_from_isolated_run(
             "run never reported a peak (e.g. an unrecoverable abnormal exit) and "
             "there is nothing trustworthy to record."
         )
+    _assert_basis_matches_estimator(
+        path=path, raw_bytes=raw_bytes, tables=tables, fk_cardinality=fk_cardinality
+    )
     reported_peak_bytes = int(result.peak_rss_mb * 1024 * 1024)
     outcome: MemoryTelemetryOutcome
     actual_peak_bytes: int
@@ -328,6 +408,8 @@ def telemetry_record_from_governor_trip(
     schema_fingerprint: str,
     raw_bytes: int,
     predicted_bytes: int,
+    tables: Sequence[TableSizeSpec] | None = None,
+    fk_cardinality: FkCardinalityInput | None = None,
 ) -> MemoryTelemetryRecord:
     """Build a `MemoryTelemetryRecord` from a `GovernorTripRecord` (§3.4:
     "Governor trips ... feed in as observations where actual_peak >= budget
@@ -357,6 +439,12 @@ def telemetry_record_from_governor_trip(
             "ineligibility or an unrelated crash is not evidence the memory estimate "
             "under-predicted, and must not feed a k recalibration."
         )
+    # #74 basis contract: the governor ladder reroutes THROUGH sequential, so a
+    # trip on the sequential rung is a sequential record and must use the
+    # working-set basis, not total raw bytes (see `_assert_basis_matches_estimator`).
+    _assert_basis_matches_estimator(
+        path=trip.route, raw_bytes=raw_bytes, tables=tables, fk_cardinality=fk_cardinality
+    )
     observed_bytes = (
         int(trip.observed_peak_mb * 1024 * 1024) if trip.observed_peak_mb is not None else 0
     )

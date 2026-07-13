@@ -42,12 +42,13 @@ Ladder: `full_frame` -> (killed) -> `out_of_core` (if eligible) -> (killed)
 -> `sequential` (if eligible) -> else FAIL with a clear diagnostic naming the
 routes tried and the observed peaks -- never a bare process exit code.
 
-Flag-gated (additive): `use_runtime_governor` (default `False`) composes with
-the B1b/B2 routing flags (`use_byte_estimate_routing`, `use_probe_routing`)
-the same way they compose with each other -- each is independently off by
-default and inert unless explicitly opted into. OFF, `run_job_with_governor`
-makes exactly ONE `run_pipeline_isolated` call on the ladder's first rung with
-no monitor attached and no reroute on failure: identical to calling
+Flag-gated (additive): `use_runtime_governor` (TB-5 default `True`) composes
+with the B1b/B2 routing flags (`use_byte_estimate_routing`,
+`use_probe_routing`, also TB-5 default `True`) the same way they compose with
+each other -- each is independently forceable `False` for rollback. Forced
+OFF, `run_job_with_governor` makes exactly ONE `run_pipeline_isolated` call on
+the ladder's first rung with no monitor attached and no reroute on failure:
+identical to calling
 `run_pipeline_isolated` directly today. This module is not wired into
 `run_pipeline`'s own routing (`_pipeline_routing.decide_execution_route`) or
 the platform queue worker in this sprint -- it is a standalone primitive, the
@@ -259,7 +260,7 @@ def run_job_with_governor(
     *,
     budget_bytes: int,
     ladder: tuple[GovernorRoute, ...] = _DEFAULT_LADDER,
-    use_runtime_governor: bool = False,
+    use_runtime_governor: bool = True,
     hard_threshold_fraction: float = _DEFAULT_HARD_THRESHOLD_FRACTION,
     poll_interval_s: float = _DEFAULT_POLL_INTERVAL_S,
     on_trip: Callable[[GovernorTripRecord], None] | None = None,
@@ -292,7 +293,7 @@ def run_job_with_governor(
             already knows a job is not full_frame-eligible (e.g. it forced
             `out_of_core` at submit time) can pass a shorter ladder starting
             there.
-        use_runtime_governor: default `False` -- the flag gate. OFF, this
+        use_runtime_governor: TB-5 default `True` -- the flag gate. Forced OFF, this
             function makes exactly ONE `run_pipeline_isolated` call on
             `ladder[0]` with NO monitor attached and NO reroute on failure:
             byte-for-byte what calling `run_pipeline_isolated` directly does

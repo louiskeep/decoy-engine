@@ -7,11 +7,13 @@ the routing rule).
 
 Four groups of teeth:
 
-  - `TestFlagOffUnchanged`: `use_byte_estimate_routing` defaults to `False`
-    and, when off (or unset), `decide_execution_route` is BYTE-FOR-BYTE the
-    pre-B1b row-count logic -- these tests pass a `full_frame_fits_estimate`
-    that would flip the outcome if honored, to prove the flag truly gates
-    it off rather than merely defaulting a param the code still reads.
+  - `TestFlagOffUnchanged`: TB-5 flipped `use_byte_estimate_routing` to
+    default-ON, but the rollback path is preserved -- with the flag forced
+    `False`, `decide_execution_route` is BYTE-FOR-BYTE the pre-B1b row-count
+    logic. These tests pass `use_byte_estimate_routing=False` explicitly plus
+    a `full_frame_fits_estimate` that would flip the outcome if honored, to
+    prove the rollback truly gates the estimator off rather than merely
+    reading a param.
   - `TestByteEstimateSignalFunction`: the new
     `_pipeline_routing_signals.byte_estimate_full_frame_fits` signal in
     isolation -- resident-sample pricing, lazy/UNPRICEABLE, and
@@ -127,13 +129,10 @@ def _cyclic_graph() -> RelationshipGraph:
 
 
 class TestFlagOffUnchanged:
-    @pytest.mark.parametrize("use_byte_estimate_routing", [False, None])
-    def test_eligible_small_job_routes_sequential_regardless_of_estimate(
-        self, use_byte_estimate_routing: bool | None
-    ) -> None:
-        kwargs: dict[str, Any] = {}
-        if use_byte_estimate_routing is not None:
-            kwargs["use_byte_estimate_routing"] = use_byte_estimate_routing
+    def test_eligible_small_job_routes_sequential_regardless_of_estimate(self) -> None:
+        # Rollback path (flag forced OFF): the row-count logic ignores the
+        # estimate entirely, so a `full_frame_fits_estimate=True` that would
+        # flip the outcome under the default-ON path has no effect here.
         route, reason = decide_execution_route(
             _FakeProfile(relationships=(object(),)),
             has_generate_table=False,
@@ -146,7 +145,7 @@ class TestFlagOffUnchanged:
             out_of_core_compatible=False,
             largest_table_rows=10,
             full_frame_fits_estimate=True,  # would flip to full_frame if honored
-            **kwargs,
+            use_byte_estimate_routing=False,
         )
         assert (route, reason) == ("sequential", "pure_mask_fk")
 
@@ -660,10 +659,30 @@ def _fk_sources(config: dict[str, Any]) -> dict[str, pa.Table]:
 
 
 class TestEndToEndWiring:
-    def test_flag_off_default_matches_pre_b1b_behavior(self, tmp_path: Path) -> None:
+    def test_default_on_routes_by_bytes(self, tmp_path: Path) -> None:
+        # TB-5: byte-estimate routing is the DEFAULT now. This tiny pure-mask FK
+        # job fits comfortably under an explicit 1 GB budget, so the default
+        # path routes it full_frame by the byte estimate (an explicit budget
+        # keeps the assertion host-independent -- no reliance on the runner's
+        # own cgroup ceiling).
         config = _fk_pure_mask_config(tmp_path)
         sources = _fk_sources(config)
-        result = run_pipeline(config, sources, engine_version="0.1.0")
+        result = run_pipeline(
+            config, sources, engine_version="0.1.0", out_of_core_budget_bytes=1 * _GB
+        )
+        assert result.quality_metrics["execution"]["execution_mode"] == "full_frame"
+        assert (
+            result.quality_metrics["execution"]["route_reason"] == "byte_estimate_full_frame_fits"
+        )
+
+    def test_rollback_flag_off_matches_pre_b1b_behavior(self, tmp_path: Path) -> None:
+        # Rollback: forcing the flag OFF restores the pre-B1b row-count path,
+        # which routes this small pure-mask FK job to sequential.
+        config = _fk_pure_mask_config(tmp_path)
+        sources = _fk_sources(config)
+        result = run_pipeline(
+            config, sources, engine_version="0.1.0", use_byte_estimate_routing=False
+        )
         assert result.quality_metrics["execution"]["execution_mode"] == "sequential"
         assert result.quality_metrics["execution"]["route_reason"] == "pure_mask_fk"
 
@@ -709,18 +728,106 @@ class TestEndToEndWiring:
 
     def test_end_to_end_output_is_byte_identical_regardless_of_flag(self, tmp_path: Path) -> None:
         """The flag changes ROUTING, never OUTPUT: every route is
-        byte-output-neutral versus full_frame by construction (S2)."""
+        byte-output-neutral versus full_frame by construction (S2). The rollback
+        path (sequential) and the default byte-estimate path (full_frame) must
+        produce identical output."""
         config = _fk_pure_mask_config(tmp_path)
         sources = _fk_sources(config)
-        off = run_pipeline(config, sources, engine_version="0.1.0")
+        off = run_pipeline(config, sources, engine_version="0.1.0", use_byte_estimate_routing=False)
         on_full_frame = run_pipeline(
             config,
             sources,
             engine_version="0.1.0",
-            use_byte_estimate_routing=True,
             out_of_core_budget_bytes=1 * _GB,
         )
         assert off.quality_metrics["execution"]["execution_mode"] == "sequential"
         assert on_full_frame.quality_metrics["execution"]["execution_mode"] == "full_frame"
         for table in off.outputs:
             assert off.outputs[table].equals(on_full_frame.outputs[table]), f"{table} differs"
+
+    def test_width_change_flips_route_at_a_fixed_budget_and_row_count(self, tmp_path: Path) -> None:
+        """§9 acceptance: routing keys off computed BYTES, not row count. Same
+        row count and same budget; a WIDER schema (more bytes per row) flips the
+        route from full_frame to a bounded route. This is the width-change proof
+        the redesign's §9 asks for, exercised end-to-end through the default
+        byte-estimate path.
+
+        The parent's key is masked with `faker` (deterministic + shared
+        namespace, so FK joinability is preserved) which is NOT in the
+        out-of-core supported-strategy set -- so the bounded fallback is
+        `sequential` (pandas), keeping the WIDE variant off the DuckDB path and
+        its tight memory_limit; the point under test is the ROUTE the byte
+        estimate picks, not out-of-core execution under a tiny cap."""
+        # A fixed budget both jobs share; the ONLY thing that differs is schema
+        # width (a narrow parent vs. a wide parent), at the same row count. The
+        # 512 MB budget sits above the narrow schema's estimate and below the
+        # wide one's (the ~200 MB fixed intercept dominates the narrow job).
+        budget = 512 * _MB
+        rows = 200_000
+
+        def _wide_parent(n_extra_cols: int) -> pa.Table:
+            cols: dict[str, Any] = {
+                "id": pa.array([f"p{i}" for i in range(rows)], type=pa.string()),
+            }
+            for c in range(n_extra_cols):
+                cols[f"pad{c}"] = pa.array(
+                    [f"padding-value-{i}-{c}" for i in range(rows)], type=pa.string()
+                )
+            return pa.table(cols)
+
+        child = pa.table(
+            {
+                "id": pa.array([f"c{i}" for i in range(rows)], type=pa.string()),
+                "parent_id": pa.array([f"p{i % rows}" for i in range(rows)], type=pa.string()),
+            }
+        )
+
+        def _run(n_extra_cols: int) -> str:
+            tag = f"w{n_extra_cols}"
+            parent = _wide_parent(n_extra_cols)
+            parent_src = _write_source(tmp_path, parent, f"parent_{tag}")
+            child_src = _write_source(tmp_path, child, f"child_{tag}")
+            pad_cols = [{"name": f"pad{c}", "strategy": "redact"} for c in range(n_extra_cols)]
+            config = {
+                "version": 1,
+                "global_settings": {"job_name": "width-change", "seed": 7},
+                "sources": {
+                    "parent": {"type": "file", "path": parent_src, "format": "parquet"},
+                    "child": {"type": "file", "path": child_src, "format": "parquet"},
+                },
+                "targets": {
+                    "parent": {
+                        "type": "file",
+                        "path": str(tmp_path / f"parent_{tag}.out.parquet"),
+                        "format": "parquet",
+                    },
+                    "child": {
+                        "type": "file",
+                        "path": str(tmp_path / f"child_{tag}.out.parquet"),
+                        "format": "parquet",
+                    },
+                },
+                "tables": [
+                    {"name": "parent", "columns": [_faker_col("id", "ns"), *pad_cols]},
+                    {"name": "child", "columns": [_faker_col("parent_id", "ns")]},
+                ],
+                "relationships": [
+                    {
+                        "parent": {"table": "parent", "columns": ["id"]},
+                        "children": [{"table": "child", "columns": ["parent_id"]}],
+                        "orphan_policy": "preserve",
+                        "namespace": "ns",
+                    }
+                ],
+            }
+            sources = {n: pq.read_table(s["path"]) for n, s in config["sources"].items()}
+            result = run_pipeline(
+                config, sources, engine_version="0.1.0", out_of_core_budget_bytes=budget
+            )
+            return str(result.quality_metrics["execution"]["execution_mode"])
+
+        # Narrow schema fits the 512 MB budget -> full_frame.
+        assert _run(0) == "full_frame"
+        # Same rows, same budget, WIDER schema (many extra string cols) -> more
+        # bytes -> no longer fits -> a bounded route (never full_frame).
+        assert _run(20) != "full_frame"

@@ -245,8 +245,11 @@ def _resident_column_arrays(
     TB-1: a `LazySource` (`_isolated_worker._load_sources`) is treated
     exactly like `None` here -- it has no resident column buffers to
     sample without a full read, and this signal (the byte-estimate /
-    probe-recovery admission path, both flag-gated default-OFF) must never
-    force one just to sample. `None`/unsampleable is already the documented
+    probe-recovery admission path, both TB-5 default-ON, forceable OFF for
+    rollback) must never force one just to sample. An unsampleable/lazy
+    variable-width column is UNPRICEABLE, which the byte-estimate router
+    treats as "does not fit" and routes bounded -- so default-ON is still safe
+    on this path. `None`/unsampleable is already the documented
     safe direction (see this function's callers): an unpriceable column
     routes bounded, it never silently admits full_frame.
     """

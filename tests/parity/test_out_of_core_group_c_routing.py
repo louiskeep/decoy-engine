@@ -141,7 +141,16 @@ def test_auto_route_group_c_payload_matches_full_frame_oracle(tmp_path: Path, ca
     config = _payload_fk_config(tmp_path, strategy, provider_config, values)
     sources = _sources(config)
     oracle = run_pipeline(config, sources, engine_version="0.1.0", execution_mode="full_frame")
-    routed = run_pipeline(config, sources, engine_version="0.1.0", out_of_core_threshold_rows=10)
+    # TB-5: byte-estimate routing (default-ON) routes by bytes-vs-budget; a
+    # tight budget makes this OOC-eligible fixture route the bounded out_of_core
+    # path. use_probe_routing=False keeps the assertion off the probe subprocess.
+    routed = run_pipeline(
+        config,
+        sources,
+        engine_version="0.1.0",
+        out_of_core_budget_bytes=64 * 1024 * 1024,
+        use_probe_routing=False,
+    )
     assert routed.quality_metrics["execution"]["execution_mode"] == "out_of_core", (
         f"{case}: expected out_of_core route, got "
         f"{routed.quality_metrics['execution']['execution_mode']}"

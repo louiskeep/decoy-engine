@@ -418,6 +418,19 @@ def route_intercept_bytes(path: ExecutionPath) -> int:
     return _K_INTERCEPT_BYTES[path]
 
 
+def route_slope(path: ExecutionPath) -> float:
+    """The per-byte slope `estimate_peak_bytes` multiplies the BASIS by for
+    `path` (`peak = intercept + basis * slope`).
+
+    Single source of truth for a route's slope, the companion to
+    `route_intercept_bytes`. The B5 drift detector compares an observed slope
+    against exactly this number, and any telemetry wiring that reconstructs
+    the estimator basis (`estimator_basis_bytes`) reads the slope through here
+    so the three never desync.
+    """
+    return _K_PATH[path]
+
+
 # CPython's compact dict/set keeps a dense entry table (hash + key pointer +
 # value pointer -- 24 bytes/entry on 64-bit builds, `Objects/dictobject.c`)
 # behind a sparse index sized so the table never exceeds ~2/3 load factor;
@@ -517,18 +530,59 @@ def estimate_peak_bytes(
     `FkCardinalityInput`'s docstring for why, and for the PR #22 gate on
     tightening this to a single table.
     """
+    basis = estimator_basis_bytes(tables, path, fk_cardinality=fk_cardinality)
+    if basis.basis_bytes is None:
+        return PeakEstimate(estimated_bytes=None, unpriceable_columns=basis.unpriceable_columns)
+    predicted = route_intercept_bytes(path) + basis.basis_bytes * route_slope(path)
+    return PeakEstimate(estimated_bytes=int(predicted))
+
+
+@dataclass(frozen=True)
+class BasisEstimate:
+    """The BASIS `estimate_peak_bytes` multiplies by `route_slope(path)` --
+    the single source of truth for the per-byte term (#74).
+
+    For `full_frame` / `out_of_core` the basis is the schema's total priceable
+    `raw_data_bytes`. For `sequential` it is the WORKING SET -- the two largest
+    tables' bytes plus the FK dedup table -- NOT total raw bytes, because
+    sequential streams table by table (§11 §3.2a). A telemetry caller that
+    divides an observed peak by the wrong basis (e.g. total raw bytes for a
+    sequential run) UNDER-states the sequential slope, the OOM-unsafe
+    direction; this function is the one place that basis is computed so a
+    caller can never silently pick the wrong one.
+    """
+
+    basis_bytes: int | None
+    unpriceable_columns: tuple[UnpriceableColumn, ...] = ()
+
+
+def estimator_basis_bytes(
+    tables: Sequence[TableSizeSpec],
+    path: ExecutionPath,
+    *,
+    fk_cardinality: FkCardinalityInput | None = None,
+) -> BasisEstimate:
+    """The per-byte BASIS for `path` (the term `route_slope(path)` multiplies).
+
+    Single source of truth (#74): `estimate_peak_bytes` computes its prediction
+    as `route_intercept_bytes(path) + basis * route_slope(path)` from THIS
+    result, and any B5 telemetry wiring that records an observed slope for a
+    run MUST divide by the basis this returns for that run's route -- for
+    `sequential` that is the working set (two largest tables + FK dedup), never
+    total raw bytes. Returns `basis_bytes=None` (with the offending columns)
+    when the schema is UNPRICEABLE, exactly as `estimate_peak_bytes` does.
+    """
     if path in ("full_frame", "out_of_core"):
         raw = raw_data_bytes(tables)
         if not raw.is_priceable:
-            return PeakEstimate(estimated_bytes=None, unpriceable_columns=raw.unpriceable_columns)
-        predicted = _K_INTERCEPT_BYTES[path] + raw.priceable_bytes * _K_PATH[path]
-        return PeakEstimate(estimated_bytes=int(predicted))
+            return BasisEstimate(basis_bytes=None, unpriceable_columns=raw.unpriceable_columns)
+        return BasisEstimate(basis_bytes=raw.priceable_bytes)
 
     if path == "sequential":
         per_table_raw = [raw_data_bytes((table,)) for table in tables]
         unpriceable = tuple(c for r in per_table_raw for c in r.unpriceable_columns)
         if unpriceable:
-            return PeakEstimate(estimated_bytes=None, unpriceable_columns=unpriceable)
+            return BasisEstimate(basis_bytes=None, unpriceable_columns=unpriceable)
         # Sum of the two largest tables, not `max()` of one: conservative
         # cover for an RI join holding parent-keys + child concurrently.
         # Narrowing this to a single table is gated on PR #22 (`run_sequential`
@@ -538,11 +592,7 @@ def estimate_peak_bytes(
         fk_bytes = 0
         if fk_cardinality is not None:
             fk_bytes = fk_cardinality.distinct_key_count * fk_cardinality.key_size_bytes
-        return PeakEstimate(
-            estimated_bytes=int(
-                K_INTERCEPT_BYTES + (working_set_bytes + fk_bytes) * K_SEQUENTIAL_SLOPE
-            )
-        )
+        return BasisEstimate(basis_bytes=working_set_bytes + fk_bytes)
 
     raise ValueError(f"unknown execution path {path!r}")
 

@@ -177,8 +177,8 @@ def run_pipeline(
     out_of_core_threshold_rows: int = _OUT_OF_CORE_THRESHOLD_DEFAULT,
     full_frame_reject_rows: int = _FULL_FRAME_REJECT_DEFAULT,
     out_of_core_budget_bytes: int | None = None,
-    use_byte_estimate_routing: bool = False,
-    use_probe_routing: bool = False,
+    use_byte_estimate_routing: bool = True,
+    use_probe_routing: bool = True,
 ) -> ExecutionResult:
     """Execute a mixed mask + generate config end-to-end.
 
@@ -225,11 +225,12 @@ def run_pipeline(
     `"out_of_core"` as an explicit fail-closed force.
 
     Sprint B2 (docs/plans/2026-07-10-oom-avoidance-routing-redesign.md
-    §3.3/§11/§13): `use_probe_routing` (default `False`, composes with --
-    has NO effect without -- `use_byte_estimate_routing=True`) is the
-    two-point micro-probe's fast-path RECOVERY for a job the static
-    estimate over-downgrades. See `_pipeline_routing.decide_execution_route`
-    and `_pipeline_routing_signals.resolve_probe_recovery`.
+    §3.3/§11/§13): `use_probe_routing` (TB-5 default `True`, composes with --
+    has NO effect without -- `use_byte_estimate_routing=True`, also default
+    `True` since TB-5; force either `False` to roll back) is the two-point
+    micro-probe's fast-path RECOVERY for a job the static estimate
+    over-downgrades. See `_pipeline_routing.decide_execution_route` and
+    `_pipeline_routing_signals.resolve_probe_recovery`.
 
     Execution-substrate knobs (mask-kind tables only; generate tables
     always run the synthesize path; the sequential route is pandas-only
