@@ -62,6 +62,37 @@ consume; `run_job_with_governor` both returns the full trip history
 (`GovernorResult.trips`) and, optionally, invokes an `on_trip` callback as
 each one happens, so a caller does not have to wait for the whole ladder to
 finish to start recording misses.
+
+TB-2 status (`docs/plans/2026-07-12-track-b-completion-program.md`): the 50M
+benchmark's governor phase (B6) proved containment (this module already did
+its job -- a clean `SIGKILL` + diagnostic, never a wedge) but not
+reroute-to-COMPLETION, because two things were true at the time: (1) the
+production out-of-core route was not actually memory-bounded yet (TB-1's
+`#56`, fixed on `main` -- lazy sources + sink streaming + the `_isolated_
+kwargs_with_budget` forwarding below), and (2) B6's fixed benchmark budget
+predated that fix and was never recalibrated against it, so it sat below
+EVERY route's real need. Neither defect was in this module's reroute LADDER
+itself -- `tests/perf/test_governor_reroute_completion.py` is the calibrated,
+real-subprocess proof that with TB-1 landed and a properly chosen budget
+window, the SAME mechanism here reroutes a genuinely-tripped `full_frame` run
+all the way to a completed, FK-consistent `out_of_core` run, no code change
+required in this file.
+
+Calibration numbers (dennis+Codex HIGH remediation, 2026-07-13, reference
+host `devbox`: pve2 LXC, 4 vCPU / 8 GB RAM): for that test's `_ROWS=200_000`
+fixture, full_frame's TRUE peak -- measured UNBUDGETED, since the OLD
+`_BUDGET_MB=380` kill line (~353 MB) killed it before it could ever be
+observed -- is **428.3-465.4 MB** (428.3 MB a rare observed low tail; most
+runs land 440-465 MB), and out-of-core's peak under its forwarded budget is
+**317.5-335.8 MB**, essentially flat across budget choices in this range
+(DuckDB's `memory_limit` bounds only its own buffer manager, not the fixed
+interpreter/Arrow-batch overhead riding on top of it). The window is now
+`_BUDGET_MB=415` (hard-kill line `0.93 * 415 ≈ 386.0 MB`), which sits ~50 MB
+above out-of-core's worst observed peak and ~42 MB below full_frame's
+worst-case (low-tail) true peak -- balanced margin on both sides, not the
+old window's ~23 MB margin above out-of-core and an unverified assumption
+about full_frame's ceiling. Read that test's module docstring for the full
+methodology (including its skip-guard fail-safe for CI-shared-runner noise).
 """
 
 from __future__ import annotations
