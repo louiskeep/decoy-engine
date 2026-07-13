@@ -43,7 +43,13 @@ from decoy_engine.execution._adapter import (
     StrategyHandler,
 )
 from decoy_engine.execution._errors import ExecutionError
-from decoy_engine.execution._fk_keys import fk_key_value
+from decoy_engine.execution._fk_keys import (
+    fk_columns_for_table,
+    fk_key_value,
+    fk_nullable_int_array,
+    lossless_fk_int_values,
+    to_pandas_fk_safe,
+)
 from decoy_engine.execution._guards import reject_null_bearing_int
 from decoy_engine.execution._row_errors import RowErrorRecord, drain_row_errors
 from decoy_engine.execution._runner import WorkNode, build_work_list, order_work
@@ -165,7 +171,14 @@ class PandasExecutionAdapter:
         # children are exempt (resolved via the edge, not masked).
         reject_null_bearing_int(plan, sources, registry, relationship_graph)
         t0 = time.perf_counter()
-        frames: dict[str, pd.DataFrame] = {t: tbl.to_pandas() for t, tbl in sources.items()}
+        # DE-10: FK parent/child key columns route through the lossless-typing
+        # contract (execution/_fk_keys.py) instead of a bare `to_pandas()`, so a
+        # null-bearing integer FK column never silently widens to float64 and
+        # rounds a key beyond 2**53. Every other column is unaffected.
+        frames: dict[str, pd.DataFrame] = {
+            t: to_pandas_fk_safe(tbl, fk_columns_for_table(relationship_graph.edges, t))
+            for t, tbl in sources.items()
+        }
         conversion_ms = (time.perf_counter() - t0) * 1000.0
 
         cache = pool_cache if pool_cache is not None else PoolCache()
@@ -450,7 +463,20 @@ class PandasExecutionAdapter:
         )
 
         for j, c in enumerate(child_cols):
-            child_frame[c] = [None if mk is None else mk[j] for mk in masked_keys]
+            values = [None if mk is None else mk[j] for mk in masked_keys]
+            # DE-10: a raw list assignment here is how the pandas route used
+            # to silently round an FK key beyond 2**53 -- any None mixed with
+            # a big int makes pandas' Series constructor infer float64. Route
+            # through the shared lossless-typing contract instead: a pure
+            # integer(+null) column builds via pandas' nullable Int64/UInt64
+            # extension dtype (exact, round-trips to Arrow int64/uint64 --
+            # `fk_nullable_int_array` picks UInt64 only when a value needs
+            # it, e.g. a preserved unsigned key >= 2**63); anything else
+            # either has no precision to lose (unchanged) or raises the same
+            # typed error the out-of-core route already raises for a provably
+            # unrepresentable mix.
+            safe_ints = lossless_fk_int_values(values)
+            child_frame[c] = fk_nullable_int_array(safe_ints) if safe_ints is not None else values
         # S2: emit one cascaded RowError per child row whose key was excluded
         # from the parent map (parent key row-errored). The masked cell is
         # already None (set above), so even a downstream bug in quarantine
