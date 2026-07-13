@@ -120,6 +120,7 @@ import pyarrow as pa
 
 from decoy_engine.plan._errors import PlanCompileError
 
+from ._chunked_adapter_gate import chunked_adapter_touches_pandas_ingestion
 from ._chunked_fk import (
     CHUNK_SAFE_STRATEGIES,
     fk_passthrough_columns_for_table,
@@ -352,6 +353,18 @@ def run_mask_pipeline_chunked(
     passthrough_fk_columns = fk_passthrough_columns_for_table(config, table)
     if adapter is None:
         adapter = PandasExecutionAdapter()
+    # MEDIUM (DE-10 reland): only pay the guard's cost -- and only reject --
+    # when THIS adapter will actually ingest `table` through the pandas
+    # round trip the guard protects against. A native-Polars chunked run
+    # (see `chunked_adapter_touches_pandas_ingestion`) preserves nullable
+    # int64 losslessly and never touches pandas, so applying the guard
+    # there is a false-positive fail-closed reject, not a real corruption
+    # risk.
+    guard_passthrough_fk_columns = (
+        passthrough_fk_columns
+        if chunked_adapter_touches_pandas_ingestion(adapter, config, table)
+        else set()
+    )
     # One cache for the whole run: faker pools build ONCE (eagerly, so a
     # provider failure surfaces before any output streams) and every
     # chunk samples from the same pool via the handler's cache consult.
@@ -366,9 +379,9 @@ def run_mask_pipeline_chunked(
 
     def _masked() -> Iterator[pa.Table]:
         for chunk in _chain_first(first, chunk_iter):
-            if passthrough_fk_columns:
+            if guard_passthrough_fk_columns:
                 reject_lossy_chunked_fk_passthrough(
-                    chunk, table=table, passthrough_fk_columns=passthrough_fk_columns
+                    chunk, table=table, passthrough_fk_columns=guard_passthrough_fk_columns
                 )
             result = adapter.run(
                 plan,

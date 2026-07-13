@@ -476,29 +476,46 @@ def gate_fk_child_edges(config: dict[str, Any], *, table: str) -> None:
 
 
 def fk_passthrough_columns_for_table(config: dict[str, Any], table: str) -> set[str]:
-    """Child-side FK columns on `table` admitted onto the chunked route under
-    a `passthrough` strategy -- the MEDIUM #4 gap set (see module docstring).
+    """Every FK-relevant column on `table` admitted onto the chunked route
+    under a `passthrough` strategy -- the MEDIUM #4 / BLOCKER #2 gap set (see
+    module docstring).
 
-    Only child columns matter here: a `passthrough` PARENT key column is not
-    itself resolved through any join on this route (self-masking has no
-    parent-map lookup), and `check_chunked_compatibility` requires every
-    admitted FK child edge's column to declare a strategy explicitly, so this
-    reads directly off `config.relationships` / `config.tables` rather than
-    the (deliberately empty) runtime `RelationshipGraph`.
+    Covers BOTH sides of a relationship edge where `table` participates,
+    symmetric with `_fk_keys.fk_columns_for_table` (the full-frame/sequential
+    equivalent, which protects parent AND child columns identically). A
+    `passthrough` PARENT key column is not resolved through a join on this
+    route (self-masking has no parent-map lookup), but it goes through the
+    SAME unprotected `table.to_pandas()` ingestion as every other table this
+    route processes (`run_mask_pipeline_chunked` runs one table at a time,
+    each with an empty `RelationshipGraph`) -- the vulnerability is about
+    ingestion, not joins, so a chunked PARENT table with a null-bearing
+    `passthrough` key beyond `2**53` is exactly as exposed as a child one.
+    Restricting this to child columns only (the prior cut) left every
+    chunked-route parent key column silently rounding through this same
+    float64-on-null path; dennis reproduced `[1.0, None,
+    9007199254740992.0]` for a parent-side `passthrough` key.
+    `check_chunked_compatibility` requires every admitted FK CHILD edge's
+    column to declare a strategy explicitly, but a parent-only table has no
+    such requirement, so this reads directly off `config.relationships` /
+    `config.tables` rather than the (deliberately empty) runtime
+    `RelationshipGraph`.
 
     Mirrors `gate_fk_child_edges`'s config parsing: `relationships` entries
     nest one `parent` (`{"table": ..., "columns": [...]}`) and a list of
     `children` (same shape each), NOT flat `parent_table`/`child_table` keys.
     """
-    child_columns: set[str] = set()
+    fk_columns: set[str] = set()
     for rel_entry in config.get("relationships") or []:
         if not isinstance(rel_entry, dict):
             continue
+        parent_info = rel_entry.get("parent") or {}
+        if isinstance(parent_info, dict) and parent_info.get("table") == table:
+            fk_columns.update(c for c in parent_info.get("columns") or [] if isinstance(c, str))
         for child_info in rel_entry.get("children") or []:
             if not isinstance(child_info, dict) or child_info.get("table") != table:
                 continue
-            child_columns.update(c for c in child_info.get("columns") or [] if isinstance(c, str))
-    if not child_columns:
+            fk_columns.update(c for c in child_info.get("columns") or [] if isinstance(c, str))
+    if not fk_columns:
         return set()
     table_cfg = next(
         (t for t in config.get("tables") or [] if isinstance(t, dict) and t.get("name") == table),
@@ -511,7 +528,7 @@ def fk_passthrough_columns_for_table(config: dict[str, Any], table: str) -> set[
         for col in table_cfg.get("columns") or []
         if isinstance(col, dict) and col.get("strategy") == "passthrough"
     }
-    return child_columns & passthrough_columns
+    return fk_columns & passthrough_columns
 
 
 def reject_lossy_chunked_fk_passthrough(

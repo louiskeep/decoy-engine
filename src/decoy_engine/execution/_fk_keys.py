@@ -319,7 +319,22 @@ def lossless_fk_int_values(values: Sequence[object]) -> list[int | None] | None:
         # `None` (the common case, an unmatched/null FK), `pd.NA` (a masked
         # value read back off a nullable `Int64` parent column -- see
         # `to_pandas_fk_safe`), and float `NaN`.
-        if value is None or pd.isna(value):
+        if value is None:
+            normalized.append(None)
+            continue
+        try:
+            is_null = bool(pd.isna(value))
+        except (TypeError, ValueError):
+            # `pd.isna` returns an array (not a scalar bool) for an
+            # array-like value, and `bool()` on that raises ValueError
+            # ("truth value of an array is ambiguous"). Not reachable from
+            # any scalar FK key component this engine resolves today (every
+            # `_resolve_fk_node` caller passes one masked/preserved/remapped
+            # scalar per row), but defensive: fall through to the "not a
+            # pure int" bucket below instead of crashing, matching what the
+            # pre-DE-10 bare list/array assignment did for this shape.
+            is_null = False
+        if is_null:
             normalized.append(None)
             continue
         # bool is a numbers.Integral subtype (True == 1); kept out of the
@@ -416,6 +431,26 @@ def fk_nullable_int_array(values: Sequence[int | None]) -> pd.api.extensions.Ext
         ) from exc
 
 
+def fk_all_null_array(length: int, source_dtype: object) -> pd.api.extensions.ExtensionArray:
+    """Build the pandas array for an all-null RESOLVED FK write-back column
+    (DE-10 reland MEDIUM: `_pandas_adapter.py::_resolve_fk_node`).
+
+    An all-null resolved column (every row cascaded/orphaned to null) has no
+    integer value to lose precision on, so there is no correctness reason to
+    force it through `fk_nullable_int_array`'s `Int64` default -- that would
+    retype a null-bearing string/uint32/etc. SOURCE column to `Int64` in the
+    output. `source_dtype` is the column's own pre-resolution dtype (already
+    the exact per-Arrow-type nullable dtype for a `to_pandas_fk_safe`-
+    protected column, e.g. `UInt32`, or pandas' own object/float64 default
+    otherwise); this preserves it instead. Falls back to the `Int64` default
+    only when `source_dtype` genuinely cannot hold an all-null column (a
+    plain, non-nullable numpy dtype with no null representation)."""
+    try:
+        return pd.array([None] * length, dtype=source_dtype)
+    except (TypeError, ValueError):
+        return fk_nullable_int_array([None] * length)
+
+
 def fk_columns_for_table(edges: Iterable[RelationshipEdge], table: str) -> set[str]:
     """Every column on `table` that is a relationship edge's parent or child
     key -- the set `to_pandas_fk_safe` must protect from float64-on-null
@@ -477,7 +512,20 @@ def to_pandas_fk_safe(table: pa.Table, fk_columns: Collection[str]) -> pd.DataFr
         if not pa.types.is_integer(arrow_type):
             continue
         try:
-            df[col] = table.column(col).to_pandas(types_mapper=_exact_fk_types_mapper)
+            fk_series = table.column(col).to_pandas(types_mapper=_exact_fk_types_mapper)
+            # Positional, not label-aligned: `df` (from `table.to_pandas()`)
+            # keeps whatever pandas index the Arrow table's pandas metadata
+            # carries (e.g. a real parquet file's original row labels), while
+            # `fk_series` always gets a fresh default RangeIndex from this
+            # column-only `to_pandas()` call. `df[col] = fk_series` aligns by
+            # LABEL, not position -- for any table whose index is not already
+            # `[0, 1, 2, ...]` (duplicate labels, a shuffled/non-default
+            # index, or labels absent from the fresh RangeIndex) that silently
+            # nulls, swaps, or duplicates values instead of raising. A pandas
+            # `ExtensionArray` (`.array`, not `.values`) carries no index at
+            # all, so assigning it is always positional regardless of `df`'s
+            # index.
+            df[col] = fk_series.array
         except (pa.lib.ArrowInvalid, OverflowError) as exc:
             raise ExecutionError(
                 code=FK_KEY_DTYPE_UNSUPPORTED_CODE,
@@ -493,6 +541,7 @@ def to_pandas_fk_safe(table: pa.Table, fk_columns: Collection[str]) -> pd.DataFr
 __all__ = [
     "FK_KEY_DTYPE_UNSUPPORTED_CODE",
     "NULL_FK_KEY",
+    "fk_all_null_array",
     "fk_columns_for_table",
     "fk_join_key",
     "fk_join_key_tuple",

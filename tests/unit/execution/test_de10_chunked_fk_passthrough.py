@@ -77,9 +77,48 @@ def _passthrough_fk_config(
 
 
 def test_fk_passthrough_columns_for_table_parses_nested_relationships_schema() -> None:
+    """`relationships` entries nest one `parent` + a `children` list (not
+    flat `parent_table`/`child_table` keys); both the child role AND the
+    parent role must parse correctly (BLOCKER #2, DE-10 reland: the parent
+    assertion here used to read `== set()` before the parent-column fix --
+    see `test_fk_passthrough_columns_for_table_includes_parent_key_column`
+    for the dedicated regression coverage)."""
     config = _passthrough_fk_config()
     assert fk_passthrough_columns_for_table(config, "orders") == {"customer_id"}
-    assert fk_passthrough_columns_for_table(config, "customers") == set()
+    assert fk_passthrough_columns_for_table(config, "customers") == {"id"}
+
+
+def test_fk_passthrough_columns_for_table_includes_parent_key_column() -> None:
+    """BLOCKER #2 (DE-10 reland, 2026-07-13): a table playing the PARENT role
+    in a relationship must ALSO be protected -- the reverted cut collected
+    only `relationships[].children[]`, leaving a chunked PARENT table's own
+    passthrough key column completely unguarded even though
+    `run_mask_pipeline_chunked` processes it through the exact same
+    unprotected `table.to_pandas()` ingestion as any other chunked table."""
+    config = _passthrough_fk_config()
+    assert fk_passthrough_columns_for_table(config, "customers") == {"id"}
+    assert fk_passthrough_columns_for_table(config, "orders") == {"customer_id"}
+
+
+def test_children_only_collector_would_miss_the_parent_column() -> None:
+    """Pins the PRE-FIX mechanism (BLOCKER #2): a children-only collector,
+    exactly like the reverted cut, returns an EMPTY set for the parent table
+    even though it has its own passthrough FK key column -- this is the gap
+    that let a chunked-route parent's big-int passthrough key silently
+    round (the CHANGELOG's prior "now CLOSED" claim for MEDIUM #4 was false
+    for this side; see CHANGELOG.md's 2026-07-13 reland correction)."""
+    config = _passthrough_fk_config()
+
+    def _children_only_pre_fix(cfg: dict, table: str) -> set[str]:
+        child_columns: set[str] = set()
+        for rel_entry in cfg.get("relationships") or []:
+            for child_info in rel_entry.get("children") or []:
+                if child_info.get("table") == table:
+                    child_columns.update(child_info.get("columns") or [])
+        return child_columns
+
+    assert _children_only_pre_fix(config, "customers") == set()  # the BLOCKER #2 gap
+    assert _children_only_pre_fix(config, "orders") == {"customer_id"}  # child side was fine
 
 
 def test_fk_passthrough_columns_for_table_excludes_non_passthrough_strategy() -> None:
@@ -180,3 +219,177 @@ def test_chunked_passthrough_big_int_without_null_still_admitted() -> None:
     out = list(run_mask_pipeline_chunked(config, [chunk], table="orders", engine_version=_ENGINE))
     vals = pa.concat_tables(out).column("customer_id").to_pylist()
     assert vals == [1, _BIG_KEY]
+
+
+# ---------------------------------------------------------------------------
+# BLOCKER #2 route-level coverage: the PARENT table, not just the child, must
+# fail closed on a null-bearing big-int passthrough key.
+# ---------------------------------------------------------------------------
+
+
+def test_chunked_passthrough_parent_null_bearing_big_int_fk_raises_coded_error() -> None:
+    config = _passthrough_fk_config()
+    chunk = pa.table({"id": pa.array([1, None, _BIG_KEY], type=pa.int64())})
+
+    with pytest.raises(ExecutionError) as exc:
+        list(run_mask_pipeline_chunked(config, [chunk], table="customers", engine_version=_ENGINE))
+    assert exc.value.code == FK_KEY_DTYPE_UNSUPPORTED_CODE
+
+
+def test_chunked_passthrough_parent_big_int_without_null_still_admitted() -> None:
+    config = _passthrough_fk_config()
+    chunk = pa.table({"id": pa.array([1, _BIG_KEY], type=pa.int64())})
+
+    out = list(
+        run_mask_pipeline_chunked(config, [chunk], table="customers", engine_version=_ENGINE)
+    )
+    vals = pa.concat_tables(out).column("id").to_pylist()
+    assert vals == [1, _BIG_KEY]
+
+
+def test_chunked_passthrough_parent_small_int_null_bearing_fk_still_admitted() -> None:
+    config = _passthrough_fk_config()
+    chunk = pa.table({"id": pa.array([1, None, 42], type=pa.int64())})
+
+    out = list(
+        run_mask_pipeline_chunked(config, [chunk], table="customers", engine_version=_ENGINE)
+    )
+    vals = pa.concat_tables(out).column("id").to_pylist()
+    assert vals == [1, None, 42]
+
+
+# ---------------------------------------------------------------------------
+# MEDIUM: the guard must be gated on whether THIS adapter will actually
+# touch pandas ingestion for this table -- a fully-native-Polars chunked run
+# preserves nullable int64 losslessly and never touches pandas, so applying
+# the pandas-only guard there is a false-positive fail-closed reject.
+# ---------------------------------------------------------------------------
+
+
+def test_chunked_adapter_touches_pandas_ingestion_gates_correctly() -> None:
+    from decoy_engine.execution._chunked_adapter_gate import (
+        chunked_adapter_touches_pandas_ingestion,
+    )
+    from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
+    from decoy_engine.execution.polars import PolarsExecutionAdapter
+
+    config = _passthrough_fk_config()
+    assert (
+        chunked_adapter_touches_pandas_ingestion(PandasExecutionAdapter(), config, "orders") is True
+    )
+    assert (
+        chunked_adapter_touches_pandas_ingestion(PolarsExecutionAdapter(), config, "orders")
+        is False
+    )
+
+    # A table with a non-polars-native strategy alongside `passthrough` falls
+    # back to the pandas oracle INSIDE the polars adapter's own `run()`, so it
+    # must still be treated as pandas-touching (skipping the guard there would
+    # re-open the exact silent-rounding gap this MEDIUM closes, just for a
+    # mixed-strategy table instead of an all-passthrough one). `code_set` is
+    # deliberately NOT chunk-safe (so this exact config could never actually
+    # reach `run_mask_pipeline_chunked` in production -- every CHUNK_SAFE_
+    # STRATEGIES member happens to already be polars-native today, per
+    # `POLARS_SCALAR_HANDLERS`); it is used here purely to exercise this
+    # helper's own non-native branch in isolation, as defensive coverage for
+    # if that overlap ever narrows.
+    mixed_config = _passthrough_fk_config()
+    mixed_config["tables"][1]["columns"].append(
+        {"name": "note", "strategy": "code_set", "provider_config": {"code_set": "iso3166-1"}}
+    )
+    assert (
+        chunked_adapter_touches_pandas_ingestion(PolarsExecutionAdapter(), mixed_config, "orders")
+        is True
+    )
+
+
+def test_chunked_passthrough_polars_adapter_preserves_big_int_without_false_positive_reject() -> (
+    None
+):
+    """A fully polars-native chunked run (only `passthrough` on this table,
+    no FK edges threaded -- the chunked route always passes an empty
+    `RelationshipGraph`) must NOT be rejected by the pandas-only guard: it
+    preserves nullable int64 losslessly without ever touching pandas."""
+    from decoy_engine.execution.polars import PolarsExecutionAdapter
+
+    config = _passthrough_fk_config()
+    chunk = pa.table({"customer_id": pa.array([1, None, _BIG_KEY], type=pa.int64())})
+
+    out = list(
+        run_mask_pipeline_chunked(
+            config,
+            [chunk],
+            table="orders",
+            engine_version=_ENGINE,
+            adapter=PolarsExecutionAdapter(),
+        )
+    )
+    vals = pa.concat_tables(out).column("customer_id").to_pylist()
+    assert vals == [1, None, _BIG_KEY]
+
+
+# ---------------------------------------------------------------------------
+# MEDIUM: the `dtype` field feeding `gate_fk_child_edges`'s condition (f) is
+# now reachable through the VALIDATED config API, not just a raw dict.
+# ---------------------------------------------------------------------------
+
+
+def test_dtype_field_reachable_through_validated_pipeline_config() -> None:
+    """Before this fix, `ColumnConfig`'s `extra='forbid'` had no `dtype`
+    field declared, so `PipelineConfig.model_validate(...).model_dump()`
+    (the production path per `run_mask_pipeline_chunked`'s own docstring:
+    "config is the validated pipeline config dump") raised `extra_forbidden`
+    for any config that set `dtype`, and hit the gate's "unprovable"
+    rejection unconditionally for any that omitted it -- so only a
+    hand-built raw dict (bypassing validation) could ever reach the gate's
+    dtype-family check. This test proves the validated path now carries it
+    through and the chunked hash FK edge (value-sensitive, so condition (f)
+    applies) compiles."""
+    from decoy_engine import PipelineConfig
+    from decoy_engine.execution._chunked import check_chunked_compatibility
+
+    raw_config = {
+        "version": 1,
+        "global_settings": {"seed": 7},
+        "sources": {
+            "customers": {"type": "file", "format": "csv", "path": "customers.csv"},
+            "orders": {"type": "file", "format": "csv", "path": "orders.csv"},
+        },
+        "targets": {
+            "customers": {"type": "file", "format": "csv", "path": "customers-out.csv"},
+            "orders": {"type": "file", "format": "csv", "path": "orders-out.csv"},
+        },
+        "tables": [
+            {
+                "name": "customers",
+                "columns": [
+                    {"name": "id", "strategy": "hash", "namespace": "ns", "dtype": "int64"}
+                ],
+            },
+            {
+                "name": "orders",
+                "columns": [
+                    {
+                        "name": "customer_id",
+                        "strategy": "hash",
+                        "namespace": "ns",
+                        "dtype": "int64",
+                    }
+                ],
+            },
+        ],
+        "relationships": [
+            {
+                "parent": {"table": "customers", "columns": ["id"]},
+                "children": [{"table": "orders", "columns": ["customer_id"]}],
+                "orphan_policy": "remap",
+            }
+        ],
+    }
+
+    validated = PipelineConfig.model_validate(raw_config).model_dump()
+    assert validated["tables"][0]["columns"][0]["dtype"] == "int64"
+
+    # No PlanCompileError: the dtype-family check on condition (f) is
+    # satisfied through the validated dump, not just a raw dict.
+    check_chunked_compatibility(validated, table="orders")

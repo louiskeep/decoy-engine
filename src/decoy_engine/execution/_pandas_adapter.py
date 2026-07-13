@@ -44,6 +44,7 @@ from decoy_engine.execution._adapter import (
 )
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._fk_keys import (
+    fk_all_null_array,
     fk_columns_for_table,
     fk_key_value,
     fk_nullable_int_array,
@@ -476,7 +477,15 @@ class PandasExecutionAdapter:
             # typed error the out-of-core route already raises for a provably
             # unrepresentable mix.
             safe_ints = lossless_fk_int_values(values)
-            child_frame[c] = fk_nullable_int_array(safe_ints) if safe_ints is not None else values
+            if safe_ints is not None and all(v is None for v in safe_ints):
+                # DE-10 MEDIUM: preserve the column's own pre-resolution
+                # dtype for an all-null resolved column (see
+                # `_fk_keys.fk_all_null_array`'s docstring).
+                child_frame[c] = fk_all_null_array(len(safe_ints), child_frame[c].dtype)
+            else:
+                child_frame[c] = (
+                    fk_nullable_int_array(safe_ints) if safe_ints is not None else values
+                )
         # S2: emit one cascaded RowError per child row whose key was excluded
         # from the parent map (parent key row-errored). The masked cell is
         # already None (set above), so even a downstream bug in quarantine

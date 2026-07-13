@@ -310,6 +310,130 @@ def test_narrow_int_key_column_preserves_width(route: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# BLOCKER #1 (DE-10 reland, 2026-07-13): pandas label-aligned FK assignment.
+# `to_pandas_fk_safe`'s ingestion fix did `df[col] = series`, where `df`
+# (from `table.to_pandas()`) carries whatever pandas index the source Arrow
+# table's pandas metadata restores and `series` (from a fresh column-only
+# `to_pandas()` call) always carries a default RangeIndex -- `df[col] =
+# series` aligns by LABEL, not position, so any table whose index is not
+# already `[0, 1, 2, ...]` (a shuffled/duplicate/otherwise-non-default index
+# -- the default for a real pandas-written parquet file, which preserves its
+# index unless told not to) silently nulled, swapped, or duplicated FK
+# values. `pa.table({...})` (used everywhere above) carries NO pandas index
+# metadata at all and so CANNOT reproduce this -- every fixture below goes
+# through `pa.Table.from_pandas` with an explicit non-default index instead.
+# ---------------------------------------------------------------------------
+
+
+def test_bare_label_aligned_assignment_still_corrupts_a_nondefault_index() -> None:
+    """Pins the underlying pandas mechanism BLOCKER #1 routes around (mirrors
+    this file's `test_bare_*` convention): a label-aligned `df[col] = series`
+    assignment, where `df` carries a shuffled index and the replacement
+    `series` always carries a fresh default RangeIndex, silently swaps
+    values instead of raising -- exactly the shape `to_pandas_fk_safe`'s
+    original `df[col] = table.column(col).to_pandas(...)` line hit."""
+    df = pd.DataFrame({"k": [10, 20, 30]}, index=[2, 0, 1])
+    replacement = pd.Series([10, 20, 30])  # fresh default RangeIndex [0, 1, 2]
+    df["k"] = replacement  # label-aligned, not positional
+    assert df["k"].tolist() != [10, 20, 30], "expected label-alignment to corrupt the values"
+
+
+@pytest.mark.parametrize(
+    "index",
+    [
+        pytest.param([10, 20, 30], id="non_default_labels"),
+        pytest.param([2, 0, 1], id="shuffled_labels"),
+        pytest.param([0, 0, 1], id="duplicate_labels"),
+    ],
+)
+def test_to_pandas_fk_safe_preserves_values_with_nondefault_index(index: list[int]) -> None:
+    """BLOCKER #1, direct unit coverage: `to_pandas_fk_safe` must preserve FK
+    values POSITIONALLY regardless of the source Arrow table's restored
+    pandas index -- built via `pa.Table.from_pandas` (NOT the metadata-free
+    `pa.table({...})` used elsewhere in this file), the only way to carry
+    real pandas index metadata onto the Arrow table."""
+    from decoy_engine.execution._fk_keys import to_pandas_fk_safe
+
+    source_df = pd.DataFrame({"k": pd.array([1, _BIG_KEY, None], dtype="Int64")}, index=index)
+    table = pa.Table.from_pandas(source_df, preserve_index=None)
+
+    out = to_pandas_fk_safe(table, {"k"})
+
+    values = out["k"].tolist()
+    assert values[:2] == [1, _BIG_KEY], f"index {index}: values not preserved positionally"
+    assert pd.isna(values[2]), f"index {index}: expected the null slot preserved, got {values[2]!r}"
+
+
+@pytest.mark.parametrize("route", sorted(_ROUTES_PANDAS_ONLY))
+@pytest.mark.parametrize(
+    "index",
+    [
+        pytest.param([10, 20], id="non_default_labels"),
+        pytest.param([1, 0], id="shuffled_labels"),
+        pytest.param([0, 0], id="duplicate_labels"),
+    ],
+)
+def test_route_preserves_fk_values_with_nondefault_pandas_index(
+    route: str, index: list[int]
+) -> None:
+    """BLOCKER #1 at the route level: parent AND child source tables built via
+    `pa.Table.from_pandas` with a non-default pandas index (the shape any
+    real pandas-written parquet file carries by default, since
+    `preserve_index` defaults to on) must not silently null/swap/duplicate
+    FK values on full_frame/sequential."""
+    parent_df = pd.DataFrame({"pk": pd.array([1, _BIG_KEY], dtype="Int64")}, index=[0, 1])
+    child_df = pd.DataFrame({"fk": pd.array([1, _BIG_KEY], dtype="Int64")}, index=index)
+    parent = pa.Table.from_pandas(parent_df, preserve_index=None)
+    child = pa.Table.from_pandas(child_df, preserve_index=None)
+    plan = _plan_for()
+    graph = _graph(OrphanPolicy.PRESERVE)
+    sources = {"parent": parent, "child": child}
+
+    out = _ROUTES_PANDAS_ONLY[route](plan, sources, graph)
+    assert out.to_pylist() == [1, _BIG_KEY], f"{route}: FK values corrupted by index {index}"
+
+
+# ---------------------------------------------------------------------------
+# MEDIUM (DE-10 reland, 2026-07-13): an all-null RESOLVED FK write-back
+# column (every row nulled, e.g. every child row orphaned under WARN) was
+# unconditionally retyped to `fk_nullable_int_array`'s default `Int64`,
+# regardless of the column's own source dtype -- there is no integer value
+# in an all-null column to lose precision on, so there is no correctness
+# reason to force a null-bearing string/uint32/etc. source column to become
+# `Int64` in the output.
+# ---------------------------------------------------------------------------
+
+
+def test_all_null_resolved_fk_child_column_preserves_source_dtype_string() -> None:
+    """Every FK value null (never an orphan -- `resolve_fk_keys` preserves a
+    null child key as null unconditionally, `if key is None: continue`, so
+    this is the all-null RESOLVED write-back shape without needing an
+    orphan/cascade path at all)."""
+    parent = pa.table({"pk": pa.array(["a", "b"], type=pa.string())})
+    child = pa.table({"fk": pa.array([None, None], type=pa.string())})
+    plan = _plan_for()
+    graph = _graph(OrphanPolicy.PRESERVE)
+    sources = {"parent": parent, "child": child}
+
+    out = _run_full_frame(plan, sources, graph)
+    assert not pa.types.is_integer(out.type), f"all-null string FK column retyped to {out.type}"
+    assert out.to_pylist() == [None, None]
+
+
+@pytest.mark.parametrize("route", sorted(_ROUTES_PANDAS_ONLY))
+def test_all_null_resolved_fk_child_column_preserves_source_width_uint32(route: str) -> None:
+    parent = pa.table({"pk": pa.array([1, 2], type=pa.uint32())})
+    child = pa.table({"fk": pa.array([None, None], type=pa.uint32())})
+    plan = _plan_for()
+    graph = _graph(OrphanPolicy.PRESERVE)
+    sources = {"parent": parent, "child": child}
+
+    out = _ROUTES_PANDAS_ONLY[route](plan, sources, graph)
+    assert out.type == pa.uint32(), f"{route}: all-null uint32 FK column retyped to {out.type}"
+    assert out.to_pylist() == [None, None]
+
+
+# ---------------------------------------------------------------------------
 # Route parity: the SAME job produces byte-identical FK key columns everywhere.
 # ---------------------------------------------------------------------------
 
