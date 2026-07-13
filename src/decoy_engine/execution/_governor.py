@@ -62,6 +62,22 @@ consume; `run_job_with_governor` both returns the full trip history
 (`GovernorResult.trips`) and, optionally, invokes an `on_trip` callback as
 each one happens, so a caller does not have to wait for the whole ladder to
 finish to start recording misses.
+
+TB-2 status (`docs/plans/2026-07-12-track-b-completion-program.md`): the 50M
+benchmark's governor phase (B6) proved containment (this module already did
+its job -- a clean `SIGKILL` + diagnostic, never a wedge) but not
+reroute-to-COMPLETION, because two things were true at the time: (1) the
+production out-of-core route was not actually memory-bounded yet (TB-1's
+`#56`, fixed on `main` -- lazy sources + sink streaming + the `_isolated_
+kwargs_with_budget` forwarding below), and (2) B6's fixed benchmark budget
+predated that fix and was never recalibrated against it, so it sat below
+EVERY route's real need. Neither defect was in this module's reroute LADDER
+itself -- `tests/perf/test_governor_reroute_completion.py` is the calibrated,
+real-subprocess proof that with TB-1 landed and a properly chosen budget
+window, the SAME mechanism here reroutes a genuinely-tripped `full_frame` run
+all the way to a completed, FK-consistent `out_of_core` run, no code change
+required in this file. Read that test's module docstring for the measured
+numbers behind the calibration.
 """
 
 from __future__ import annotations

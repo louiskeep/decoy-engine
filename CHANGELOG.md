@@ -9,6 +9,33 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (TB-2: runtime-governor reroute-to-completion proof, 2026-07-13)
+
+The 50M benchmark's governor phase (B6) proved *containment* (a route over
+budget gets a clean `SIGKILL` + honest diagnostic, never a wedge) but never
+*reroute-to-completion* (nothing rerouted to a route that actually finished).
+Root-caused and closed: (1) the foundational cause was TB-1's `#56` (already
+fixed on `main` before this entry -- the production out-of-core route was not
+actually memory-bounded, so no budget let it complete); (2) B6's benchmark
+budget was never recalibrated against that fix and sat below every route's
+real need. Measured on this box: with TB-1 landed, the existing reroute
+LADDER in `execution/_governor.py` needed no code change -- calibrating a
+real budget window for a genuinely out-of-core-eligible job (200,000
+rows/table, parent -> child FK, pure-mask hash/redact/truncate strategies)
+makes `run_job_with_governor` reroute a genuinely-tripped `full_frame` run
+all the way to a completed, FK-consistent `out_of_core` run. New
+`tests/perf/test_governor_reroute_completion.py` is the calibrated,
+real-subprocess (no mocking) acceptance test: `tripped=true,
+route!=full_frame, completed=true, fk_internal_consistency=ok`. Built so it
+fails on a governor that only contains (the exact B6 shape) and passes only
+on genuine reroute-to-completion -- verified against a deliberately
+too-tight budget, which reproduces the B6 "exhausted" outcome the fixed
+window must not hit. `execution/_governor.py`'s module docstring gained a
+short TB-2 status note pointing at the new test; no behavioral change to the
+module. Track B machinery (the runtime governor, byte-estimate/probe
+routing) stays flag-gated default-OFF; this sprint does not flip any
+default.
+
 ### Fixed (DE-10 reland: two BLOCKER silent-FK-corruption regressions in the rework below, 2026-07-13)
 
 DE-10's rework (the entry immediately below) merged, then was REVERTED the same day when a corrected dennis+Codex gate found it had introduced two NEW silent-corruption paths of its own -- worse than the HIGH it closed, because both fire on the mainline routes rather than an edge-case magnitude. This entry documents the reland: the rework's actual fixes are intact (see below), plus these two BLOCKERs and four smaller findings, fixed here.
