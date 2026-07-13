@@ -3,9 +3,9 @@
 §11; framed as the fast-path RECOVERY mechanism by §13).
 
 `_mem_estimate.py`'s static estimator (B1a) is a deliberately CONSERVATIVE
-filter -- `K_FULL_FRAME_COLD_START` is picked to never under-predict, which
+filter -- `K_FULL_FRAME_SLOPE` is picked to never under-predict, which
 means it over-prices a pooled-string schema by up to ~34x
-(`K_FULL_FRAME_COLD_START / K_FULL_FRAME_MEASURED_POOLED` = 4.0 / 0.117-ish
+(`K_FULL_FRAME_SLOPE / K_FULL_FRAME_MEASURED_POOLED` = 4.0 / 0.117-ish
 true ratio) and routes it bounded even though it would have fit full_frame
 comfortably. This module is how that fast path gets RECOVERED: instead of
 trusting a model of bytes, it MEASURES the real peak RSS at a small scale
@@ -118,13 +118,13 @@ UNIQUENESS_SATURATION_THRESHOLD = 0.5
 
 # The lowest real full_frame peak/raw-bytes ratio this codebase has
 # measured evidence for: the B1a calibration finding
-# (`_mem_estimate.K_FULL_FRAME_COLD_START`'s docstring) measured a
+# (`_mem_estimate.K_FULL_FRAME_SLOPE`'s docstring) measured a
 # low-cardinality pooled-string schema's TRUE peak/raw at ~0.117 -- the most
 # favorable real schema shape on record. Used ONLY as a "could ANY
 # realistic schema possibly fit" pre-filter (skip a probe that cannot
 # possibly help; see `_pipeline_routing_signals.resolve_probe_recovery`),
 # never as a routing multiplier in its own right -- that is
-# `_mem_estimate.K_FULL_FRAME_COLD_START`'s job, and it deliberately points
+# `_mem_estimate.K_FULL_FRAME_SLOPE`'s job, and it deliberately points
 # the OTHER direction (conservative-high, not conservative-low).
 MIN_PLAUSIBLE_K_FULL_FRAME = 0.117
 

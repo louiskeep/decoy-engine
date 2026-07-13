@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """TB-4: measure per-route peak-RSS multipliers to REPLACE the unmeasured
-placeholder k constants in `_mem_estimate.py` (`K_OUT_OF_CORE_COLD_START`,
-`K_SEQUENTIAL_COLD_START`) and re-affirm `K_FULL_FRAME_COLD_START`.
+placeholder k constants in `_mem_estimate.py` (`K_OUT_OF_CORE_SLOPE`,
+`K_SEQUENTIAL_SLOPE`) and re-affirm `K_FULL_FRAME_SLOPE`.
 
 `docs/plans/2026-07-12-track-b-completion-program.md` TB-4, and
 `docs/plans/2026-07-10-oom-avoidance-routing-redesign.md` §13 (the placeholder

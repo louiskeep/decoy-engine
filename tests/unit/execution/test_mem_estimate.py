@@ -7,7 +7,7 @@ are untouched (Sprint B1b). These tests pin: the fixed-width dtype cost
 table; string-width sourcing (declared / sampled / provider-metadata /
 UNPRICEABLE); `K_FULL_FRAME_MEASURED_POOLED` (evidence-only) against the
 real B1 peak-RSS sweep on its pooled-string schema; the safety property
-that the OPERATIONAL `K_FULL_FRAME_COLD_START` never under-predicts a lean
+that the OPERATIONAL `K_FULL_FRAME_SLOPE` never under-predicts a lean
 numeric/unique-string schema (the dennis BLOCK this sprint remediates --
 see `TestFullFrameSafetyMargin`); the sequential path's cardinality (not
 raw-bytes) shape, including the two-largest-tables working-set bound; the
@@ -22,8 +22,9 @@ import pytest
 
 from decoy_engine.config._tables import GenerateColumnConfig, TableConfig
 from decoy_engine.execution._mem_estimate import (
-    K_FULL_FRAME_COLD_START,
     K_FULL_FRAME_MEASURED_POOLED,
+    K_FULL_FRAME_SLOPE,
+    K_INTERCEPT_BYTES,
     ColumnSizeSpec,
     FkCardinalityInput,
     TableSizeSpec,
@@ -333,7 +334,7 @@ class TestFullFramePooledFixtureReproduction:
     """`K_FULL_FRAME_MEASURED_POOLED` is EVIDENCE ONLY (see the module and
     constant docstrings in `_mem_estimate.py`): it reproduces the B1
     pooled-string sweep and nothing more. These tests pin that reproduction
-    -- they intentionally do NOT test `K_FULL_FRAME_COLD_START` (the
+    -- they intentionally do NOT test `K_FULL_FRAME_SLOPE` (the
     OPERATIONAL constant `estimate_peak_bytes` actually uses), because that
     constant is deliberately conservative and is NOT expected to land near
     this fixture's measured peak. Its safety property (over-, never
@@ -394,12 +395,14 @@ class TestFullFramePooledFixtureReproduction:
         measured = _B1_MEASURED_PEAK_MB[6_000_000] * _MB
         assert predicted == pytest.approx(measured, rel=0.15)
 
-    def test_estimate_peak_bytes_full_frame_matches_raw_times_k(self) -> None:
+    def test_estimate_peak_bytes_full_frame_matches_intercept_plus_raw_times_slope(self) -> None:
         tables = _b1_calibration_tables(1_000_000)
         estimate = estimate_peak_bytes(tables, "full_frame")
         raw = raw_data_bytes(tables)
         assert not estimate.unpriceable
-        assert estimate.estimated_bytes == int(raw.priceable_bytes * K_FULL_FRAME_COLD_START)
+        assert estimate.estimated_bytes == int(
+            K_INTERCEPT_BYTES + raw.priceable_bytes * K_FULL_FRAME_SLOPE
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -419,7 +422,7 @@ class TestFullFrameSafetyMargin:
         bounded-path detour, never a silent OOM."""
         tables = _b1_calibration_tables(6_000_000)
         raw = raw_data_bytes(tables)
-        predicted_bytes = raw.priceable_bytes * K_FULL_FRAME_COLD_START
+        predicted_bytes = raw.priceable_bytes * K_FULL_FRAME_SLOPE
         measured_bytes = _B1_MEASURED_PEAK_MB[6_000_000] * _MB
         assert predicted_bytes >= measured_bytes
 
@@ -429,10 +432,10 @@ class TestFullFrameSafetyMargin:
         question even arises) must not be under-priced by the OPERATIONAL
         constant. dennis + Codex's reasoned/measured range for a numeric
         schema's true peak/raw ratio is ~2-3x (see the module's
-        `K_FULL_FRAME_COLD_START` docstring); this test pins the LOW end of
+        `K_FULL_FRAME_SLOPE` docstring); this test pins the LOW end of
         that range (2x raw_bytes) as a documented conservative floor on the
         true peak and asserts the estimate clears it. If a future change to
-        `K_FULL_FRAME_COLD_START` drops it below 2.0, this test fails --
+        `K_FULL_FRAME_SLOPE` drops it below 2.0, this test fails --
         that is the point: it is the regression guard against
         re-introducing the OOM-direction under-estimate this BLOCK found."""
         rows = 1_000_000
@@ -519,11 +522,21 @@ class TestSequentialCardinality:
         assert seq_three.estimated_bytes == seq_two.estimated_bytes
 
         full_one = estimate_peak_bytes(one_table, "full_frame")
+        full_two = estimate_peak_bytes(two_tables, "full_frame")
         full_three = estimate_peak_bytes(three_tables, "full_frame")
-        # int()-truncation on the combined sum vs. 3x a single truncated
-        # estimate can differ by a rounding hair; the scaling claim itself
-        # (not exact integer equality) is what matters here.
-        assert full_three.estimated_bytes == pytest.approx(3 * full_one.estimated_bytes, rel=1e-4)
+        # full_frame grows with EVERY added table (holds everything resident),
+        # unlike sequential which caps at the two largest. The per-table
+        # increment is constant (a fixed intercept + per-table basis*slope), so
+        # each equally-sized table adds the same amount -- proven by equal
+        # successive increments, not by 3x-of-one (the shared intercept is paid
+        # once, so full_three != 3 * full_one).
+        assert full_one.estimated_bytes is not None
+        assert full_two.estimated_bytes is not None
+        assert full_three.estimated_bytes is not None
+        inc_2 = full_two.estimated_bytes - full_one.estimated_bytes
+        inc_3 = full_three.estimated_bytes - full_two.estimated_bytes
+        assert full_three.estimated_bytes > full_two.estimated_bytes > full_one.estimated_bytes
+        assert inc_3 == pytest.approx(inc_2, rel=1e-4)
 
     def test_sequential_working_set_sums_the_two_largest_when_sizes_differ(self) -> None:
         """Confirms the sum is of the two LARGEST tables specifically, not

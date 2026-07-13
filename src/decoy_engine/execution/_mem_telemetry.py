@@ -2,7 +2,7 @@
 redesign, `docs/plans/2026-07-10-oom-avoidance-routing-redesign.md` §3.4,
 corrected by §11's §3.4 erratum and refined by §13).
 
-This module replaces nothing -- `K_FULL_FRAME_COLD_START` and its siblings
+This module replaces nothing -- `K_FULL_FRAME_SLOPE` and its siblings
 in `_mem_estimate.py` stay exactly as they are; this loop only computes a
 *suggestion* an operator/config can choose to adopt in their place. Wiring
 a suggestion back into `_K_PATH` is deliberately out of scope here, same as
@@ -453,7 +453,7 @@ def recalibrate_k(
             this function's own job.
         path: the execution path to recalibrate.
         current_k: the constant in force today (e.g.
-            `_mem_estimate.K_FULL_FRAME_COLD_START`).
+            `_mem_estimate.K_FULL_FRAME_SLOPE`).
         floor_k: overrides `_K_FLOOR_DEFAULT[path]`. Must be `<= current_k`
             (a floor above the constant already in force is a
             contradiction).

@@ -9,6 +9,41 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (TB-5 precondition: fixed INTERCEPT term for the OOM estimator, 2026-07-13)
+
+Closes the small-basis under-prediction the dennis gate flagged on TB-4 (issue
+#72), a prerequisite for the TB-5 flag flip. TB-4 pinned MEASURED per-route
+slopes but modeled **through-origin** (`predicted = basis * slope`), which omits
+the fixed baseline RSS (interpreter + pyarrow + DuckDB) and so UNDER-predicts
+SMALL-basis jobs -- the OOM-unsafe direction (e.g. `numeric_fk` full_frame @500k
+predicted 767 MB vs a real 858 MB peak, -11%). `_mem_estimate.py` now predicts
+**`intercept + basis * slope`**:
+
+- **Fixed intercept added, pinned PER ROUTE from the committed TB-4 two-point
+  fit** (`intercept = peak - slope*basis`): `K_INTERCEPT_BYTES = 200 MiB` for the
+  in-core routes (full_frame, sequential; measured ~197 / ~172 MB) and
+  `K_OUT_OF_CORE_INTERCEPT_BYTES = 450 MiB` (measured ~447 MB). out_of_core's
+  floor is ~2.3x larger -- it runs DuckDB + a budget-bounded buffer, not just the
+  interpreter baseline -- so a single shared intercept would either under-predict
+  out_of_core (unsafe) or over-inflate the in-core routes.
+- **The slopes are UNCHANGED** (still 4.0 / 1.5 / 4.0; each already exceeds its
+  measured two-point slope), so `intercept + basis*slope` is >= the old
+  `basis*slope` at every size: it RAISES the small-basis floor without lowering
+  any prediction. The `K_*_COLD_START` constants were **renamed to
+  `K_FULL_FRAME_SLOPE` / `K_OUT_OF_CORE_SLOPE` / `K_SEQUENTIAL_SLOPE`** (they are
+  pure slopes now, not combined intercept+slope multipliers).
+- **Acceptance** (`tests/unit/execution/test_mem_calibration.py`): fail-pre /
+  pass-post on the canonical point (through-origin 767 < 858; intercept model
+  976 >= 858), and predicted >= observed at BOTH the small AND large measured
+  points for EVERY route (all 16 TB-4 sweep points), with the slopes still within
+  `K_CALIBRATION_ERROR_BAND` above the measured worst-case slope.
+
+Flags stay default-OFF (`use_byte_estimate_routing` default False, unchanged);
+this is a values/model change behind the flag-gated estimate path, no live
+routing change. Golden test-flight (53/53 + fingerprint 5/5) unchanged -- the
+model feeds the routing estimate only, so determinism is unaffected. Design:
+`docs/plans/2026-07-10-oom-avoidance-routing-redesign.md` §13.2.
+
 ### Changed (TB-4: calibration + telemetry -- MEASURED k_path constants, 2026-07-13)
 
 The OOM-avoidance estimator's per-route peak-RSS multipliers
