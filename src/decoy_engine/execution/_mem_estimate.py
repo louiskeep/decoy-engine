@@ -1,7 +1,7 @@
 """Pure, schema-derived peak-memory estimator (OOM-avoidance routing redesign,
 Sprint B1a -- docs/plans/2026-07-10-oom-avoidance-routing-redesign.md §3.2/§3.3/
 §3.6, corrected per §11; k-constant premise corrected again per the dennis BLOCK
-on the initial B1a pass, 2026-07-11 -- see `K_FULL_FRAME_COLD_START` below).
+on the initial B1a pass, 2026-07-11 -- see `K_FULL_FRAME_SLOPE` below).
 
 This module computes bytes; it does not route. `decide_execution_route`
 (`_pipeline_routing.py`) and the reject constants are untouched here --
@@ -43,7 +43,7 @@ mis-route on any schema unlike its one calibration shape:
      pooling at all (numeric columns, high-cardinality/unique strings). A
      byte-level static description cannot know a future run's value
      cardinality, so there is no schema-invariant k this module can compute
-     -- only a conservative one. See `K_FULL_FRAME_COLD_START`'s docstring
+     -- only a conservative one. See `K_FULL_FRAME_SLOPE`'s docstring
      for the concrete numbers and the resulting operational constant.
 
   B1b PRECONDITION (binding on whoever wires this into routing): because
@@ -150,7 +150,7 @@ def is_fixed_width_dtype(dtype: str) -> bool:
 # not happen. This is precisely the accounting gap pandas' own
 # `DataFrame.memory_usage(deep=True)` flag exists to close: the shallow
 # (default) count only sees the 8-byte pointers and silently drops the
-# string payload. See `K_FULL_FRAME_COLD_START`'s docstring for how this
+# string payload. See `K_FULL_FRAME_SLOPE`'s docstring for how this
 # per-cell pricing interacts with the k-constant when a column IS pooled.
 _STR_OBJECT_POINTER_BYTES = 8
 _STR_OBJECT_HEADER_BYTES = 49
@@ -285,45 +285,43 @@ def raw_data_bytes(tables: Sequence[TableSizeSpec]) -> RawBytesResult:
 
 
 # ---------------------------------------------------------------------------
-# Path multipliers -- MEASURED constants (TB-4 calibration, 2026-07-13).
+# Peak-memory model -- MEASURED intercept + per-route slope.
 # History: cold-start guesses (2026-07-10) -> k-premise corrected (2026-07-11,
-# dennis BLOCK) -> MEASURED and pinned here (TB-4).
+# dennis BLOCK) -> MEASURED two-point slopes pinned (TB-4, 2026-07-13) -> fixed
+# INTERCEPT term added (TB-5 precondition, issue #72, 2026-07-13).
 # ---------------------------------------------------------------------------
 #
-# --- What TB-4 measured (replaces the placeholders) --------------------------
+# --- The model: predicted = intercept + basis * slope ------------------------
 #
 # TB-4 (`scripts/tb4_calibration.py`; results in `docs/plans/
-# 2026-07-13-tb4-calibration-results.md`) ran each route in a FRESH
-# subprocess (`run_pipeline_isolated`, Sprint 1a) so `peak_rss_mb` is that
-# job's own attributable VmHWM. For every (schema class, route) it took TWO
-# row scales and fit a two-point SLOPE
+# 2026-07-13-tb4-calibration-results.md`) measured each route at TWO row scales
+# under process isolation (`run_pipeline_isolated`). Peak is LINEAR in basis, so
+# both terms fall out of the two points: slope = dpeak/dbasis, intercept =
+# peak - slope*basis. The SLOPE is the per-byte cost; the INTERCEPT is the fixed
+# interpreter/pyarrow/DuckDB baseline RSS a job pays before any data. TB-4
+# pinned the slope but modeled THROUGH-ORIGIN (`basis * slope`), OMITTING the
+# intercept, so it UNDER-predicts small-basis jobs -- e.g. numeric_fk full_frame
+# @500k predicted 767 MB (191.7 MB basis * 4.0) vs a real 858 MB peak, -11%, the
+# OOM-unsafe direction. This module now adds the intercept back.
 #
-#     k = (peak_high - peak_low) / (basis_high - basis_low)
+# Fit from the numeric_fk shape (no string pooling -> the WORST-case per-byte
+# slope a conservative constant must cover; `raw_data_bytes` prices it exactly):
 #
-# on the SAME basis each route divides by (full_frame/out_of_core:
-# `raw_data_bytes`; sequential: the two-largest-tables working set). The
-# slope CANCELS the fixed interpreter/pyarrow/DuckDB intercept (~180 MB
-# full_frame, ~426 MB out_of_core) the exact way `_probe.py` fits it out --
-# a single-point peak/basis ratio over-reads at small N. Peak is LINEAR in
-# basis (point_k converges to the slope as rows grow; consistent intercept),
-# so a per-byte `basis * k` model is the right SHAPE.
+#   route        | slope | measured intercept | pinned intercept
+#   full_frame   | 3.45  |  197 MB            |  200 MiB (in-core, shared)
+#   out_of_core  | 0.95  |  447 MB            |  450 MiB (DuckDB + budget)
+#   sequential   | 3.28  |  172 MB            |  200 MiB (in-core, shared)
 #
-#   route        | pooled | numeric | unique | MAX slope | old placeholder
-#   ------------ | ------ | ------- | ------ | --------- | ---------------
-#   full_frame   | 2.11   |  3.45   |  2.43  |  3.45     | 3.0  (UNSAFE: < 3.45)
-#   out_of_core  | 0.39   |  0.95   |  --    |  0.95     | 2.0  (unmeasured over-guess)
-#   sequential   | 1.65   |  3.28   |  --    |  3.28     | 1.5  (UNSAFE: < 3.28)
-#
-# Two placeholders were OOM-UNSAFE: full_frame 3.0 and sequential 1.5 both
-# sat BELOW the measured numeric-FK worst case (the direction that silently
-# admits a job that then OOMs). The numeric shapes have no string pooling, so
-# `raw_data_bytes` prices them accurately and their k is the true worst case;
-# the FK routes add a hash-remap working set on top of raw bytes, which is
-# why numeric_fk (3.45 / 3.28) tops numeric_single (3.03). The constants
-# below are pinned at the MAX measured slope rounded UP with margin (§13's
-# conservative-filter ruling: over-predict, never under). See `raw_data_bytes`
-# for why pooled-string k reads LOW (over-priced cells) -- that is the
-# safe-to-over-predict direction, not a target to calibrate down to.
+# The intercept is pinned PER ROUTE because it differs MATERIALLY: out_of_core
+# (~2.3x) runs DuckDB and holds a budget-bounded buffer, not just the
+# interpreter/pyarrow floor the in-core routes (full_frame, sequential) share.
+# One shared 200 MB would UNDER-predict out_of_core (unsafe); one shared 450 MB
+# would over-inflate in-core small jobs by ~250 MB. Each pinned intercept is the
+# measured value rounded UP (§13: over-predict, never under). The SLOPES are the
+# TB-4 values kept UNCHANGED -- each already exceeds its measured two-point slope
+# (4.0 > 3.45, 1.5 > 0.95, 4.0 > 3.28) -- so with a strictly positive intercept
+# `intercept + basis*slope` is >= the old `basis*slope` at EVERY size: it raises
+# the omitted small-basis floor without lowering any prediction.
 
 # K_CALIBRATION_ERROR_BAND: the tolerance the pinned constants sit within,
 # ABOVE the measured max slope, for the routes the `basis * k` model prices
@@ -332,7 +330,7 @@ def raw_data_bytes(tables: Sequence[TableSizeSpec]) -> RawBytesResult:
 # for unsampled schema shapes. `out_of_core` sits further above its slope
 # (1.5/0.95 = +58%) on purpose -- its large fixed intercept makes a
 # through-origin k structurally loose, and over-predicting the RAM-CAPPED
-# fallback is the safe direction (see `K_OUT_OF_CORE_COLD_START`).
+# fallback is the safe direction (see `K_OUT_OF_CORE_SLOPE`).
 K_CALIBRATION_ERROR_BAND = 0.30
 
 # RECALIBRATION TRIGGER (when to re-run `scripts/tb4_calibration.py` and
@@ -363,42 +361,48 @@ K_CALIBRATION_ERROR_BAND = 0.30
 # `_K_PATH` does not reference it.
 K_FULL_FRAME_MEASURED_POOLED = 1.156
 
-# K_FULL_FRAME_COLD_START: the OPERATIONAL full_frame constant
-# `_K_PATH["full_frame"]` uses. MEASURED (TB-4): max slope 3.45 (numeric FK)
-# rounded up to 4.0 (+16%). Covers slope + the ~180 MB intercept for every
-# OOM-relevant (large-basis) job of any sampled schema class, and stays
-# comfortably above the pooled/unique shapes it over-prices (the safe
-# direction: an over-priced pooled job still routes correctly, or the probe
-# (B2) / B5 telemetry recover its real, much smaller peak -- see the B1b
-# precondition above). The prior 3.0 was a reasoned guess that TB-4 showed
-# UNDER-predicts numeric FK; 4.0 is the measured, conservative replacement.
-K_FULL_FRAME_COLD_START = 4.0
+# K_INTERCEPT_BYTES: the fixed baseline-RSS intercept for the IN-CORE routes
+# (full_frame, sequential) -- the interpreter + pyarrow + pandas resident floor
+# a job pays before its data-proportional (basis * slope) cost. MEASURED (TB-4
+# two-point fit): ~197 MB full_frame, ~172 MB sequential; pinned at 200 MiB, the
+# conservative max rounded up. Adding it closes the small-basis under-prediction
+# a through-origin `basis * slope` left open (numeric_fk full_frame @500k: 767 ->
+# 976 MB predicted, now >= the 858 MB real peak).
+K_INTERCEPT_BYTES = 200 * 1024 * 1024
 
-# K_OUT_OF_CORE_COLD_START: MEASURED (TB-4): max slope 0.95 (numeric FK),
-# CONFIRMING the design premise that out_of_core is RAM-CAPPED
-# (`out_of_core/_budget.py`) -- its peak grows SUB-linearly with raw bytes
-# (slope < 1.0) because chunks are budget-bounded, so the multiplier only
-# matters for jobs below the budget cap. Pinned at 1.5: the measured slope
-# 0.95 plus intercept coverage for the job sizes where out_of_core is
-# actually selected (basis >= ~850 MB), staying above 1.0 (the safe
-# direction: LESS likely to claim out_of_core fits) while tight enough to
-# keep the fallback usable for large jobs. Tightened from the unmeasured 2.0
-# now that the sub-linear growth is measured; the runtime budget + governor
-# (TB-1/TB-2/TB-3) remain the real bound for out_of_core, not this estimate.
-K_OUT_OF_CORE_COLD_START = 1.5
+# K_OUT_OF_CORE_INTERCEPT_BYTES: out_of_core's larger fixed floor -- it runs
+# DuckDB and holds a budget-bounded working buffer on top of the interpreter
+# baseline, so its MEASURED intercept (~447 MB, TB-4) is ~2.3x the in-core
+# routes'. Pinned PER ROUTE at 450 MiB (measured rounded up). Over-predicting
+# the RAM-capped fallback is the safe direction (the runtime budget + governor,
+# TB-1/TB-2/TB-3, remain out_of_core's real bound, not this estimate).
+K_OUT_OF_CORE_INTERCEPT_BYTES = 450 * 1024 * 1024
 
-# K_SEQUENTIAL_COLD_START: MEASURED (TB-4): max slope 3.28 (numeric FK),
-# intercept ~163 MB (like full_frame, unlike out_of_core -- sequential
-# streams table-by-table but still holds a working set + FK dedup resident).
-# Pinned at 4.0 (+22%). The prior 1.5 was a placeholder that TB-4 showed
-# badly UNDER-predicts (3.28 measured) -- the OOM-unsafe direction; 4.0 is
-# the measured, conservative replacement covering slope + intercept for
-# OOM-relevant sequential jobs.
-K_SEQUENTIAL_COLD_START = 4.0
+# The per-byte SLOPES, applied ON TOP OF the route's intercept (peak =
+# intercept + basis * slope). Each is the TB-4 max two-point slope (numeric FK,
+# the no-pooling worst case) rounded UP; the round-up bounds per-byte GROWTH for
+# every OOM-relevant job while staying above the pooled/unique shapes it over-
+# prices (the safe direction). Renamed from the TB-4 `K_*_COLD_START` combined
+# multipliers when the fixed intercept was split out: PURE slopes now.
+K_FULL_FRAME_SLOPE = 4.0  # measured 3.45 (+16%, within K_CALIBRATION_ERROR_BAND)
+# out_of_core is RAM-CAPPED (`out_of_core/_budget.py`): peak grows SUB-linearly
+# (slope < 1.0, chunks budget-bounded). 1.5 stays > 1.0 (LESS likely to claim it
+# fits); K_OUT_OF_CORE_INTERCEPT_BYTES now covers its large fixed floor.
+K_OUT_OF_CORE_SLOPE = 1.5  # measured 0.95
+K_SEQUENTIAL_SLOPE = 4.0  # measured 3.28 (+22%); in-core floor like full_frame
 
 _K_PATH: dict[ExecutionPath, float] = {
-    "full_frame": K_FULL_FRAME_COLD_START,
-    "out_of_core": K_OUT_OF_CORE_COLD_START,
+    "full_frame": K_FULL_FRAME_SLOPE,
+    "out_of_core": K_OUT_OF_CORE_SLOPE,
+    "sequential": K_SEQUENTIAL_SLOPE,
+}
+
+# Per-route fixed intercept (baseline RSS): the in-core routes share the
+# interpreter/pyarrow floor; out_of_core carries its larger DuckDB + budget floor.
+_K_INTERCEPT_BYTES: dict[ExecutionPath, int] = {
+    "full_frame": K_INTERCEPT_BYTES,
+    "out_of_core": K_OUT_OF_CORE_INTERCEPT_BYTES,
+    "sequential": K_INTERCEPT_BYTES,
 }
 
 # CPython's compact dict/set keeps a dense entry table (hash + key pointer +
@@ -484,8 +488,9 @@ def estimate_peak_bytes(
 ) -> PeakEstimate:
     """Predict peak resident bytes for `tables` on `path` (§3.2/§3.3).
 
-    full_frame / out_of_core: `raw_data_bytes(tables) * k_path` -- the
-    two-factor model. sequential: a cardinality term, NOT `raw_bytes *
+    full_frame / out_of_core: `intercept + raw_data_bytes(tables) * slope` --
+    a fixed baseline-RSS intercept plus the per-byte term. sequential: the
+    same intercept plus a cardinality term, NOT `raw_bytes *
     k_seq` (§11 §3.2a: sequential streams table-by-table, so its cost is
     bounded by a SMALL, FIXED number of concurrently-resident tables plus
     FK dedup working set, not the SUM of every table's bytes -- summing
@@ -503,7 +508,8 @@ def estimate_peak_bytes(
         raw = raw_data_bytes(tables)
         if not raw.is_priceable:
             return PeakEstimate(estimated_bytes=None, unpriceable_columns=raw.unpriceable_columns)
-        return PeakEstimate(estimated_bytes=int(raw.priceable_bytes * _K_PATH[path]))
+        predicted = _K_INTERCEPT_BYTES[path] + raw.priceable_bytes * _K_PATH[path]
+        return PeakEstimate(estimated_bytes=int(predicted))
 
     if path == "sequential":
         per_table_raw = [raw_data_bytes((table,)) for table in tables]
@@ -520,7 +526,9 @@ def estimate_peak_bytes(
         if fk_cardinality is not None:
             fk_bytes = fk_cardinality.distinct_key_count * fk_cardinality.key_size_bytes
         return PeakEstimate(
-            estimated_bytes=int((working_set_bytes + fk_bytes) * K_SEQUENTIAL_COLD_START)
+            estimated_bytes=int(
+                K_INTERCEPT_BYTES + (working_set_bytes + fk_bytes) * K_SEQUENTIAL_SLOPE
+            )
         )
 
     raise ValueError(f"unknown execution path {path!r}")
@@ -568,10 +576,12 @@ def fits(
 
 __all__ = [
     "K_CALIBRATION_ERROR_BAND",
-    "K_FULL_FRAME_COLD_START",
     "K_FULL_FRAME_MEASURED_POOLED",
-    "K_OUT_OF_CORE_COLD_START",
-    "K_SEQUENTIAL_COLD_START",
+    "K_FULL_FRAME_SLOPE",
+    "K_INTERCEPT_BYTES",
+    "K_OUT_OF_CORE_INTERCEPT_BYTES",
+    "K_OUT_OF_CORE_SLOPE",
+    "K_SEQUENTIAL_SLOPE",
     "ColumnSizeSpec",
     "ExecutionPath",
     "FkCardinalityInput",
