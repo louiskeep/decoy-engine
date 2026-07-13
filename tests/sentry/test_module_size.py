@@ -57,6 +57,14 @@ ALLOWLIST: dict[str, int] = {
     # the apply method; decompose into fpe_cipher.py + fpe_strategy.py when
     # additional checksum schemes or a second cipher mode lands.
     "src/decoy_engine/transforms/fpe.py": 609,
+    # TB-5 precondition #73 (2026-07-13): the pure peak estimator was at the
+    # cap (596 LOC) when it gained `route_intercept_bytes` -- the small public
+    # accessor (idiomatic here, like `is_fixed_width_dtype`) that makes the
+    # per-route intercept the single source of truth the B5 drift detector
+    # removes before comparing slopes. It cannot be split just for one
+    # accessor; decompose the fixed-width/string cost tables into a
+    # `_mem_cost_tables.py` sibling when the next dtype/pricing batch lands.
+    "src/decoy_engine/execution/_mem_estimate.py": 610,
     # B5 dennis-remediation (2026-07-11): the HIGH (percentile-knob
     # under-shoot) and MEDIUM (crashed-run miscount) fixes each needed a
     # safety invariant documented in the module's docstrings, not just
@@ -65,7 +73,12 @@ ALLOWLIST: dict[str, int] = {
     # emission helpers (telemetry_record_from_isolated_run /
     # _from_governor_trip) into their own module when B5's production
     # wiring sprint lands and gives them real callers to organize around.
-    "src/decoy_engine/execution/_mem_telemetry.py": 628,
+    # TB-5 precondition #73 (2026-07-13): +46 LOC for the intercept-aware
+    # drift fix -- the new `observed_slope` (intercept-removed) and the safety
+    # property 2 rewrite explaining WHY the raw point ratio spuriously fires.
+    # Like the B5 remediation above, the invariant text IS the fix on this
+    # safety-critical loop; folded into the same emission-helper decomposition.
+    "src/decoy_engine/execution/_mem_telemetry.py": 674,
 }
 
 

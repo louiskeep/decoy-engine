@@ -16,7 +16,16 @@ import pytest
 
 from decoy_engine.execution._governor import GovernorTripRecord
 from decoy_engine.execution._isolated_common import IsolatedRunResult
-from decoy_engine.execution._mem_estimate import ColumnSizeSpec, TableSizeSpec
+from decoy_engine.execution._mem_estimate import (
+    K_CALIBRATION_ERROR_BAND,
+    K_FULL_FRAME_SLOPE,
+    K_INTERCEPT_BYTES,
+    K_OUT_OF_CORE_INTERCEPT_BYTES,
+    ColumnSizeSpec,
+    ExecutionPath,
+    TableSizeSpec,
+    route_intercept_bytes,
+)
 from decoy_engine.execution._mem_telemetry import (
     KRecalibration,
     MemoryTelemetryRecord,
@@ -33,6 +42,17 @@ _GB = 1024 * _MB
 
 def _table(name: str, row_count: int, columns: tuple[ColumnSizeSpec, ...]) -> TableSizeSpec:
     return TableSizeSpec(name=name, row_count=row_count, columns=columns)
+
+
+def _peak_for_slope(
+    slope: float, *, raw_bytes: int = 1_000_000_000, path: ExecutionPath = "full_frame"
+) -> int:
+    """`actual_peak_bytes` that yields exactly `slope` as the intercept-removed
+    `observed_slope` for `path` -- i.e. a job whose peak lands on the model
+    `route intercept + raw_bytes * slope`. Lets a test say "observed slope 5.0"
+    without hand-mixing the per-route intercept into the peak.
+    """
+    return route_intercept_bytes(path) + int(raw_bytes * slope)
 
 
 def _record(
@@ -145,6 +165,30 @@ class TestMemoryTelemetryRecord:
         record = _record(raw_bytes=2_000_000_000, actual_peak_bytes=6_000_000_000)
         assert record.observed_k == pytest.approx(3.0)
 
+    def test_observed_slope_removes_the_route_intercept(self) -> None:
+        # peak = full_frame intercept + raw * 3.0 -> observed_slope is exactly
+        # 3.0, while the raw point ratio observed_k reads HIGHER because the
+        # intercept has not been subtracted.
+        record = _record(raw_bytes=_GB, actual_peak_bytes=_peak_for_slope(3.0, raw_bytes=_GB))
+        assert record.observed_slope == pytest.approx(3.0)
+        assert record.observed_k > record.observed_slope  # intercept inflation
+
+    def test_observed_slope_uses_the_per_route_intercept(self) -> None:
+        # The SAME peak/basis reads a lower slope on out_of_core than on
+        # full_frame, because out_of_core's fixed intercept is larger.
+        peak = 5 * _GB
+        ff = _record(raw_bytes=_GB, actual_peak_bytes=peak, path="full_frame")
+        ooc = _record(raw_bytes=_GB, actual_peak_bytes=peak, path="out_of_core")
+        assert ff.observed_slope > ooc.observed_slope
+        assert ff.observed_slope == pytest.approx((peak - K_INTERCEPT_BYTES) / _GB)
+        assert ooc.observed_slope == pytest.approx((peak - K_OUT_OF_CORE_INTERCEPT_BYTES) / _GB)
+
+    def test_observed_slope_floors_at_zero_below_the_intercept(self) -> None:
+        # A whole peak that fits under the fixed intercept shows no per-byte
+        # growth at all -- a negative slope is not a meaningful drift signal.
+        record = _record(raw_bytes=_GB, actual_peak_bytes=K_INTERCEPT_BYTES // 2)
+        assert record.observed_slope == 0.0
+
     def test_zero_raw_bytes_rejected(self) -> None:
         with pytest.raises(ValueError, match="raw_bytes"):
             _record(raw_bytes=0, actual_peak_bytes=1)
@@ -187,21 +231,31 @@ class TestRecalibrateFiltersNonIsolated:
 
 
 class TestHighPercentileAggregation:
-    def test_mix_of_low_and_high_k_recalibrates_near_the_high_end(self) -> None:
-        # 19 low observations (k=1.0) and one high one (k=5.0). The mean
-        # would be ~1.2; a max/high-percentile aggregation must land at the
-        # high observation, not be diluted toward the low cluster.
-        records = [_record(raw_bytes=_GB, actual_peak_bytes=1 * _GB) for _ in range(19)]
-        records.append(_record(raw_bytes=_GB, actual_peak_bytes=5 * _GB))
+    def test_mix_of_low_and_high_slope_recalibrates_near_the_high_end(self) -> None:
+        # 19 low observations (slope=1.0) and one high one (slope=5.0). The
+        # mean would be ~1.2; a max/high-percentile aggregation must land at
+        # the high observation, not be diluted toward the low cluster.
+        records = [
+            _record(raw_bytes=_GB, actual_peak_bytes=_peak_for_slope(1.0, raw_bytes=_GB))
+            for _ in range(19)
+        ]
+        records.append(
+            _record(raw_bytes=_GB, actual_peak_bytes=_peak_for_slope(5.0, raw_bytes=_GB))
+        )
         result = recalibrate_k(records, "full_frame", current_k=3.0)
         assert result.direction == "raise"
         assert result.suggested_k == pytest.approx(5.0)
-        mean_k = sum(r.observed_k for r in records) / len(records)
-        assert result.suggested_k > mean_k + 2.0  # nowhere near the diluted mean
+        mean_slope = sum(r.observed_slope for r in records) / len(records)
+        assert result.suggested_k > mean_slope + 2.0  # nowhere near the diluted mean
 
-    def test_single_high_outlier_keeps_k_high(self) -> None:
-        records = [_record(raw_bytes=_GB, actual_peak_bytes=1 * _GB) for _ in range(99)]
-        records.append(_record(raw_bytes=_GB, actual_peak_bytes=10 * _GB))
+    def test_single_high_outlier_keeps_slope_high(self) -> None:
+        records = [
+            _record(raw_bytes=_GB, actual_peak_bytes=_peak_for_slope(1.0, raw_bytes=_GB))
+            for _ in range(99)
+        ]
+        records.append(
+            _record(raw_bytes=_GB, actual_peak_bytes=_peak_for_slope(10.0, raw_bytes=_GB))
+        )
         result = recalibrate_k(records, "full_frame", current_k=2.0, floor_k=1.0)
         assert result.direction == "raise"
         assert result.suggested_k == pytest.approx(10.0)
@@ -209,13 +263,110 @@ class TestHighPercentileAggregation:
     def test_percentile_one_is_the_exact_maximum(self) -> None:
         observed = [0.5, 0.9, 1.0, 1.1, 4.2]
         records = [
-            _record(raw_bytes=_GB, actual_peak_bytes=int(k * _GB), path="out_of_core")
-            for k in observed
+            _record(
+                raw_bytes=_GB,
+                actual_peak_bytes=_peak_for_slope(s, raw_bytes=_GB, path="out_of_core"),
+                path="out_of_core",
+            )
+            for s in observed
         ]
         result = recalibrate_k(
             records, "out_of_core", current_k=1.0, min_samples_for_lower=1, floor_k=0.1
         )
         assert result.suggested_k == pytest.approx(4.2)
+
+
+class TestInterceptAwareDriftSignal:
+    """TB-5 precondition #72: the drift detector compares an INTERCEPT-REMOVED
+    slope against the pinned `K_<route>_SLOPE`, not the raw through-origin
+    point ratio. A small-basis job whose peak fits `intercept + basis*slope`
+    must NOT spuriously trigger a raise (the old point ratio would have); a
+    genuine slope drift still must.
+    """
+
+    # numeric_fk full_frame @500k, the shape the #72 gate cited: a real
+    # 858 MB peak on a 191.7 MB raw basis. It FITS the model (predicted
+    # 200 MiB intercept + 191.7 MB * 4.0 slope ~= 967 MB >= 858 MB), yet its
+    # through-origin point ratio (858/191.7 = 4.48) sits ABOVE the 4.0 slope.
+    _FITS_RAW_BYTES = int(191.7 * _MB)
+    _FITS_PEAK_BYTES = 858 * _MB
+
+    def test_small_basis_job_that_fits_the_model_does_not_spuriously_raise(self) -> None:
+        record = _record(
+            raw_bytes=self._FITS_RAW_BYTES,
+            actual_peak_bytes=self._FITS_PEAK_BYTES,
+            path="full_frame",
+        )
+        current_k = K_FULL_FRAME_SLOPE  # 4.0, the pinned slope
+
+        # The job genuinely fits the estimator's own model (safe over-predict):
+        # intercept + basis*slope >= the real peak, so there is nothing to
+        # recalibrate toward.
+        model_predicted = route_intercept_bytes("full_frame") + int(
+            self._FITS_RAW_BYTES * current_k
+        )
+        assert model_predicted >= self._FITS_PEAK_BYTES  # fits with headroom
+
+        # FAIL-PRE: the OLD through-origin point ratio exceeds the slope, so
+        # the pre-#72 detector (comparing observed_k against current_k) WOULD
+        # have fired a spurious raise on this fitting job.
+        assert record.observed_k > current_k
+
+        # PASS-POST: the intercept-removed slope is BELOW the pinned slope, so
+        # the new detector does not.
+        assert record.observed_slope < current_k
+
+        result = recalibrate_k([record], "full_frame", current_k=current_k)
+        assert result.direction != "raise"  # no spurious raise
+        assert result.direction == "hold"  # 1 sample < min_samples_for_lower
+        assert result.suggested_k == current_k  # no upward ratchet
+
+    def test_a_stream_of_fitting_small_jobs_never_ratchets_the_slope_up(self) -> None:
+        # The pathology #72 describes is a RATCHET: every small job's inflated
+        # point ratio nudges the slope up. Post-fix, a whole pool of fitting
+        # small jobs holds the slope exactly.
+        records = [
+            _record(
+                raw_bytes=self._FITS_RAW_BYTES,
+                actual_peak_bytes=self._FITS_PEAK_BYTES,
+                path="full_frame",
+            )
+            for _ in range(50)
+        ]
+        # Every one would have tripped the old point-ratio raise.
+        assert all(r.observed_k > K_FULL_FRAME_SLOPE for r in records)
+        result = recalibrate_k(records, "full_frame", current_k=K_FULL_FRAME_SLOPE, floor_k=1.5)
+        assert result.direction != "raise"
+        assert result.suggested_k <= K_FULL_FRAME_SLOPE
+
+    def test_genuine_slope_drift_still_triggers_a_raise(self) -> None:
+        # A job whose peak grows FASTER per byte than the pinned slope --
+        # intercept removed, beyond the error band -- must still raise. slope
+        # 6.0 vs a 4.0 pinned slope is 1.5x, well past the 1.30 error band.
+        drift_slope = 6.0
+        current_k = K_FULL_FRAME_SLOPE
+        assert drift_slope > current_k * (1 + K_CALIBRATION_ERROR_BAND)  # genuinely beyond band
+        record = _record(
+            raw_bytes=_GB,
+            actual_peak_bytes=_peak_for_slope(drift_slope, raw_bytes=_GB),
+            path="full_frame",
+        )
+        result = recalibrate_k([record], "full_frame", current_k=current_k)
+        assert result.direction == "raise"
+        assert result.suggested_k == pytest.approx(drift_slope)
+        assert result.suggested_k > current_k
+
+    def test_out_of_core_small_job_uses_its_own_larger_intercept(self) -> None:
+        # out_of_core's fixed floor (450 MiB) is larger; a small job that
+        # would read a high point ratio there is judged against THAT intercept,
+        # not the in-core 200 MiB, so it too does not spuriously raise.
+        raw = int(300 * _MB)
+        peak = int(900 * _MB)  # point ratio 3.0, but slope after 450 MiB removed = 1.5
+        record = _record(raw_bytes=raw, actual_peak_bytes=peak, path="out_of_core")
+        assert record.observed_k == pytest.approx(peak / raw)  # ~3.0 point ratio
+        result = recalibrate_k([record], "out_of_core", current_k=1.5)
+        assert record.observed_slope == pytest.approx((peak - K_OUT_OF_CORE_INTERCEPT_BYTES) / raw)
+        assert result.direction != "raise"
 
 
 class TestGovernorTripsPushKUp:
@@ -235,7 +386,10 @@ class TestGovernorTripsPushKUp:
         records.append(trip_record)
         result = recalibrate_k(records, "full_frame", current_k=3.0)
         assert result.direction == "raise"
-        assert result.suggested_k >= 8.0
+        # 8200 MB kill peak at a 1 GB basis, in-core intercept (200 MiB)
+        # removed -> a 7.8125 per-byte slope: the trip still pushes k sharply
+        # up, just measured against the pinned slope, not the point ratio.
+        assert result.suggested_k == pytest.approx(7.8125)
 
     def test_trip_actual_peak_floors_at_budget_even_if_last_sample_was_lower(self) -> None:
         trip = GovernorTripRecord(
@@ -354,7 +508,9 @@ class TestIsolatedOutcomeClassification:
 
         result = recalibrate_k([record], "full_frame", current_k=3.0)
         assert result.direction == "raise"
-        assert result.suggested_k >= 8.0
+        # 8 GB floored peak at a 1 GB basis, in-core intercept (200 MiB)
+        # removed -> ~7.80 per-byte slope.
+        assert result.suggested_k == pytest.approx(7.8046875)
 
     def test_oom_killed_without_a_mem_cap_uses_the_reported_peak(self) -> None:
         result_obj = _isolated_result(peak_rss_mb=8192.0, outcome="oom_killed", isolated=True)
@@ -387,7 +543,10 @@ class TestMinSampleGateAndFloor:
         assert result.gates_passed is False
 
     def test_enough_samples_and_margin_cleared_lowers(self) -> None:
-        records = [_record(raw_bytes=_GB, actual_peak_bytes=int(1.0 * _GB)) for _ in range(25)]
+        records = [
+            _record(raw_bytes=_GB, actual_peak_bytes=_peak_for_slope(1.0, raw_bytes=_GB))
+            for _ in range(25)
+        ]
         result = recalibrate_k(records, "full_frame", current_k=3.0, floor_k=0.5)
         assert result.direction == "lower"
         assert result.gates_passed is True
@@ -419,7 +578,8 @@ class TestMinSampleGateAndFloor:
         # under-shoot). Sweep several floors and confirm the invariant.
         observed_high = 0.9
         records = [
-            _record(raw_bytes=_GB, actual_peak_bytes=int(observed_high * _GB)) for _ in range(50)
+            _record(raw_bytes=_GB, actual_peak_bytes=_peak_for_slope(observed_high, raw_bytes=_GB))
+            for _ in range(50)
         ]
         for floor in (0.1, 0.5, 0.85, 0.95, 1.2):
             result = recalibrate_k(records, "full_frame", current_k=3.0, floor_k=min(floor, 3.0))
@@ -458,8 +618,11 @@ class TestRaiseVsLowerAsymmetry:
         assert result.direction == "raise"
         assert result.gates_passed is True
 
-    def test_equal_k_holds_without_penalty(self) -> None:
-        records = [_record(raw_bytes=_GB, actual_peak_bytes=3 * _GB) for _ in range(50)]
+    def test_equal_slope_holds_without_penalty(self) -> None:
+        records = [
+            _record(raw_bytes=_GB, actual_peak_bytes=_peak_for_slope(3.0, raw_bytes=_GB))
+            for _ in range(50)
+        ]
         result = recalibrate_k(records, "full_frame", current_k=3.0)
         assert result.direction == "hold"
         assert result.gates_passed is True
@@ -490,8 +653,16 @@ class TestRecalibrationScopedBySchemaFingerprint:
 
     def test_unscoped_recalibration_sees_every_schema(self) -> None:
         records = [
-            _record(fingerprint="fp-a", raw_bytes=_GB, actual_peak_bytes=10 * _GB),
-            _record(fingerprint="fp-b", raw_bytes=_GB, actual_peak_bytes=1 * _GB),
+            _record(
+                fingerprint="fp-a",
+                raw_bytes=_GB,
+                actual_peak_bytes=_peak_for_slope(10.0, raw_bytes=_GB),
+            ),
+            _record(
+                fingerprint="fp-b",
+                raw_bytes=_GB,
+                actual_peak_bytes=_peak_for_slope(1.0, raw_bytes=_GB),
+            ),
         ]
         result = recalibrate_k(records, "full_frame", current_k=3.0)
         assert result.sample_count == 2
@@ -603,7 +774,9 @@ class TestMemoryTelemetryStore:
     def test_recalibrate_delegates_to_the_module_function(self) -> None:
         store = MemoryTelemetryStore()
         for _ in range(30):
-            store.add(_record(raw_bytes=_GB, actual_peak_bytes=10 * _GB))
+            store.add(
+                _record(raw_bytes=_GB, actual_peak_bytes=_peak_for_slope(10.0, raw_bytes=_GB))
+            )
         result = store.recalibrate("full_frame", current_k=3.0)
         assert isinstance(result, KRecalibration)
         assert result.direction == "raise"

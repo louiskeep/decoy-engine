@@ -336,10 +336,11 @@ K_CALIBRATION_ERROR_BAND = 0.30
 # RECALIBRATION TRIGGER (when to re-run `scripts/tb4_calibration.py` and
 # re-pin these constants; §13 / doc B5):
 #   1. DRIFT: B5 telemetry (`_mem_telemetry.recalibrate_k`) sees an isolated
-#      job whose observed_k for a route exceeds current_k -> RAISE immediately
-#      (safety), or the max observed_k over >= `min_samples_for_lower`
-#      isolated jobs falls below current_k / (1 + K_CALIBRATION_ERROR_BAND)
-#      -> consider LOWERING (gated). recalibrate_k enforces both directions.
+#      job whose INTERCEPT-REMOVED observed_slope ((peak - route intercept) /
+#      raw_bytes, so a small job's fixed-floor peak is not mistaken for a
+#      steep slope) exceeds current_k -> RAISE immediately (safety), or the
+#      max observed_slope over >= `min_samples_for_lower` jobs falls below
+#      current_k / (1 + K_CALIBRATION_ERROR_BAND) -> consider LOWERING (gated).
 #   2. DEPENDENCY/ROUTE CHANGE: a pyarrow / DuckDB / pandas major bump, or an
 #      engine change to a route's buffering/copy behavior, invalidates the
 #      measured slope+intercept -> re-run the sweep.
@@ -404,6 +405,18 @@ _K_INTERCEPT_BYTES: dict[ExecutionPath, int] = {
     "out_of_core": K_OUT_OF_CORE_INTERCEPT_BYTES,
     "sequential": K_INTERCEPT_BYTES,
 }
+
+
+def route_intercept_bytes(path: ExecutionPath) -> int:
+    """The fixed baseline-RSS intercept `estimate_peak_bytes` adds for `path`.
+
+    Single source of truth for a route's intercept (public like
+    `is_fixed_width_dtype`), so the B5 drift detector removes the SAME
+    intercept this estimator adds before comparing an observed slope to
+    `K_<route>_SLOPE` -- one accessor keeps the two from desyncing.
+    """
+    return _K_INTERCEPT_BYTES[path]
+
 
 # CPython's compact dict/set keeps a dense entry table (hash + key pointer +
 # value pointer -- 24 bytes/entry on 64-bit builds, `Objects/dictobject.c`)
@@ -593,4 +606,5 @@ __all__ = [
     "fits",
     "is_fixed_width_dtype",
     "raw_data_bytes",
+    "route_intercept_bytes",
 ]

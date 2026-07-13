@@ -20,20 +20,36 @@ erratum and §13's k-is-not-schema-invariant finding:
      folding it in would silently and monotonically inflate `k` upward with
      no floor on how wrong that inflation is. `recalibrate_k` filters on
      `MemoryTelemetryRecord.isolated` before it looks at anything else.
-  2. **Aggregation is the maximum observed `k`, never a mean or median.**
-     `k = actual_peak_bytes / raw_bytes` is only a lower bound on the true
-     multiplier for a giant schema class in the general case, and the ONE
-     failure mode this loop must never produce is a `k` that under-shoots a
-     future job's real peak (§13: "the naive calibration errs in the OOM
-     direction" is exactly the mistake being guarded against here). The
-     true maximum -- one wide/unique-string/numeric-heavy job, or one
-     governor trip -- pins the suggestion at that sample's level regardless
-     of how many low, pooled-string samples surround it; a mean or median
-     would dilute it into the noise floor instead. `recalibrate_k` PINS
-     `percentile` to `1.0` (rejects any other value) and hard-clamps
-     `suggested_k` to never fall below the pool's own true `max(observed_k)`
-     on every return path -- the invariant is enforced in code, not left for
-     a caller-tunable aggregation knob to preserve.
+  2. **The drift signal is the INTERCEPT-REMOVED per-byte slope, not the raw
+     point ratio.** `estimate_peak_bytes` now predicts `intercept + raw_bytes
+     * K_<route>_SLOPE` (`_mem_estimate.py`, TB-5 precondition #72), so the
+     through-origin point ratio `actual_peak_bytes / raw_bytes` is
+     STRUCTURALLY inflated by the fixed intercept at small basis: a job that
+     fits the model reads a ratio ABOVE the slope (numeric_fk full_frame @500k:
+     858/191.7 = 4.48 > the 4.0 slope) purely because the intercept was not
+     subtracted, so comparing it to the pinned slope would spuriously raise on
+     EVERY small job and ratchet the slope up on nothing. `recalibrate_k`
+     therefore aggregates `observed_slope = max(0, (actual_peak_bytes - route
+     intercept) / raw_bytes)`, removing the SAME per-route intercept the
+     estimator added (`route_intercept_bytes`), and compares THAT against
+     `current_k` (the pinned slope) -- same units, so a raise fires only on a
+     genuine slope drift (peak growing FASTER per byte), not on intercept
+     inflation.
+
+  3. **Aggregation is the maximum observed slope, never a mean or median.**
+     `observed_slope` is only a lower bound on the true per-byte multiplier
+     for a giant schema class in the general case, and the ONE failure mode
+     this loop must never produce is a slope that under-shoots a future job's
+     real peak (§13: "the naive calibration errs in the OOM direction" is
+     exactly the mistake being guarded against here). The true maximum -- one
+     wide/unique-string/numeric-heavy job, or one governor trip -- pins the
+     suggestion at that sample's level regardless of how many low,
+     pooled-string samples surround it; a mean or median would dilute it into
+     the noise floor instead. `recalibrate_k` PINS `percentile` to `1.0`
+     (rejects any other value) and hard-clamps `suggested_k` to never fall
+     below the pool's own true `max(observed_slope)` on every return path --
+     the invariant is enforced in code, not left for a caller-tunable
+     aggregation knob to preserve.
 
 Raising `k` (the estimate needs to go UP to stay safe) is adopted the
 instant the evidence supports it -- no minimum sample count, no margin.
@@ -56,7 +72,12 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
-from decoy_engine.execution._mem_estimate import ColumnSizeSpec, ExecutionPath, TableSizeSpec
+from decoy_engine.execution._mem_estimate import (
+    ColumnSizeSpec,
+    ExecutionPath,
+    TableSizeSpec,
+    route_intercept_bytes,
+)
 
 if TYPE_CHECKING:
     from decoy_engine.execution._governor import GovernorTripRecord
@@ -124,11 +145,30 @@ class MemoryTelemetryRecord:
 
     @property
     def observed_k(self) -> float:
-        """`actual_peak_bytes / raw_bytes` -- this record's own contribution
-        to a `k_path` recalibration. Always defined: `raw_bytes > 0` is
-        enforced by `__post_init__`.
+        """`actual_peak_bytes / raw_bytes` -- the raw THROUGH-ORIGIN point
+        ratio. Kept for diagnostics/provenance ONLY: it is intercept-inflated
+        at small basis (see `observed_slope`) and is NOT what `recalibrate_k`
+        aggregates. Always defined: `raw_bytes > 0` is enforced by
+        `__post_init__`.
         """
         return self.actual_peak_bytes / self.raw_bytes
+
+    @property
+    def observed_slope(self) -> float:
+        """The INTERCEPT-REMOVED per-byte slope `recalibrate_k` aggregates:
+        `max(0, (actual_peak_bytes - route intercept) / raw_bytes)`.
+
+        `estimate_peak_bytes` predicts `intercept + raw_bytes * slope`, so the
+        signal comparable to the pinned `K_<route>_SLOPE` is the slope with the
+        fixed intercept subtracted -- NOT the `observed_k` point ratio, which
+        the intercept inflates at small basis (module docstring safety property
+        2). The subtracted intercept is exactly the one the estimator added for
+        this record's route (`route_intercept_bytes`), so the two never desync.
+        Floored at `0.0`: a peak entirely under the fixed intercept shows no
+        per-byte growth, and a negative slope is not a safe drift signal.
+        """
+        residual = self.actual_peak_bytes - route_intercept_bytes(self.path)
+        return max(0.0, residual / self.raw_bytes)
 
 
 # ---------------------------------------------------------------------------
@@ -428,22 +468,25 @@ def recalibrate_k(
          `schema_fingerprint` is given) further restricts to that one shape.
          An excluded record is dropped from the sample count and the
          percentile entirely -- it is not weak evidence, it is not evidence.
-      2. Aggregates the filtered `observed_k` at `percentile` -- never a
-         mean or median. `percentile` MUST be exactly `1.0` (the true max);
-         see the `percentile` arg doc for why this is enforced rather than
-         left as a caller-tunable knob.
-      3. Raising (`percentile_k > current_k`) is adopted immediately: no
-         minimum sample count, no margin -- under-shooting `k` is the one
-         unacceptable error.
-      4. Lowering (`percentile_k < current_k`) is gated: `sample_count`
-         must be `>= min_samples_for_lower`, AND `percentile_k * (1 +
+      2. Aggregates the filtered `observed_slope` (INTERCEPT-REMOVED per-byte
+         slope, comparable to the pinned `K_<route>_SLOPE` -- module docstring
+         safety property 2) at `percentile` -- never a mean or median.
+         `percentile` MUST be exactly `1.0` (the true max); see the
+         `percentile` arg doc for why this is enforced rather than left as a
+         caller-tunable knob. `current_k` is the pinned slope in force (a
+         `K_<route>_SLOPE`), so the comparison is slope-vs-slope.
+      3. Raising (`percentile_slope > current_k`) is adopted immediately: no
+         minimum sample count, no margin -- under-shooting the slope is the
+         one unacceptable error.
+      4. Lowering (`percentile_slope < current_k`) is gated: `sample_count`
+         must be `>= min_samples_for_lower`, AND `percentile_slope * (1 +
          lower_margin) < current_k`, so a same-ballpark measurement never
          trims the constant on noise alone. Either gate failing means
          `direction="hold"` and `suggested_k == current_k`.
       5. The suggestion is NEVER allowed below `safety_bound = max(floor_k,
-         true_max_observed_k)`, clamped on BOTH the raise and lower paths --
-         so neither a floor breach nor an under-shoot of the pool's own
-         observed maximum can slip through even if every other gate
+         true_max_observed_slope)`, clamped on BOTH the raise and lower paths
+         -- so neither a floor breach nor an under-shoot of the pool's own
+         observed maximum slope can slip through even if every other gate
          mistakenly passed (HIGH remediation: enforced in code, not
          delegated to `percentile`).
 
@@ -516,16 +559,19 @@ def recalibrate_k(
             percentile=percentile,
         )
 
-    observed_ks = [record.observed_k for record in filtered]
-    true_max_observed_k = max(observed_ks)
-    percentile_k = _percentile(observed_ks, percentile)
+    # INTERCEPT-REMOVED slopes, not raw `observed_k` point ratios (module
+    # docstring safety property 2): the quantity comparable to `current_k`
+    # (a pinned slope) is the slope with the route's fixed intercept removed.
+    observed_slopes = [record.observed_slope for record in filtered]
+    true_max_observed_slope = max(observed_slopes)
+    percentile_slope = _percentile(observed_slopes, percentile)
     # Hard backstop (HIGH remediation): computed independently of
-    # `percentile_k`, applied on every return path below.
-    safety_bound = max(resolved_floor, true_max_observed_k)
+    # `percentile_slope`, applied on every return path below.
+    safety_bound = max(resolved_floor, true_max_observed_slope)
 
-    if percentile_k > current_k:
+    if percentile_slope > current_k:
         # Raising is immediate -- no gates, no sample-count floor.
-        suggested = max(percentile_k, safety_bound)
+        suggested = max(percentile_slope, safety_bound)
         return KRecalibration(
             path=path,
             current_k=current_k,
@@ -537,9 +583,9 @@ def recalibrate_k(
             percentile=percentile,
         )
 
-    if percentile_k < current_k:
+    if percentile_slope < current_k:
         enough_samples = sample_count >= min_samples_for_lower
-        margin_cleared = percentile_k * (1 + lower_margin) < current_k
+        margin_cleared = percentile_slope * (1 + lower_margin) < current_k
         gates_passed = enough_samples and margin_cleared
         if not gates_passed:
             return KRecalibration(
@@ -555,7 +601,7 @@ def recalibrate_k(
         # Clamped to the safety bound even after the gates pass: the floor
         # (and the pool's own true max) are a hard backstop, not merely
         # another gate that can be satisfied away.
-        suggested = max(percentile_k, safety_bound)
+        suggested = max(percentile_slope, safety_bound)
         direction: RecalibrationDirection = "lower" if suggested < current_k else "hold"
         return KRecalibration(
             path=path,
@@ -568,7 +614,7 @@ def recalibrate_k(
             percentile=percentile,
         )
 
-    # percentile_k == current_k exactly: nothing to change.
+    # percentile_slope == current_k exactly: nothing to change.
     return KRecalibration(
         path=path,
         current_k=current_k,
