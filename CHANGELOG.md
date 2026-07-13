@@ -44,6 +44,43 @@ routing change. Golden test-flight (53/53 + fingerprint 5/5) unchanged -- the
 model feeds the routing estimate only, so determinism is unaffected. Design:
 `docs/plans/2026-07-10-oom-avoidance-routing-redesign.md` §13.2.
 
+### Fixed (TB-5 precondition: intercept-aware drift detector, 2026-07-13)
+
+Makes the B5 drift detector consistent with the intercept the estimator now
+adds (issue #73), a prerequisite for TB-5 wiring the drift loop. After #72 the
+estimator predicts `intercept + basis*slope`, but `recalibrate_k`
+(`_mem_telemetry.py`) still computed `observed_k = actual_peak_bytes /
+raw_bytes` -- a **through-origin point ratio** -- and compared it against
+`current_k`, a pure `K_<route>_SLOPE`. Because the estimate now has an
+intercept, that point ratio is STRUCTURALLY inflated at small basis
+(`numeric_fk` full_frame @500k: 858/191.7 = 4.48 > the 4.0 slope even though the
+job FITS the model), so the detector would spuriously fire a raise on every
+small job and ratchet the slope upward on nothing.
+
+- **`recalibrate_k` now aggregates an INTERCEPT-REMOVED slope**,
+  `MemoryTelemetryRecord.observed_slope = max(0, (actual_peak_bytes - route
+  intercept) / raw_bytes)`, and compares that against the pinned slope --
+  slope-vs-slope, same units. The subtracted intercept is the SAME per-route
+  value the estimator adds, read through a new `route_intercept_bytes`
+  accessor in `_mem_estimate.py` so the two can never desync. The
+  max-aggregation, floor (`_K_FLOOR_DEFAULT`, already in slope units), and
+  asymmetric raise/lower gates are all unchanged and now dimensionally
+  consistent. `observed_k` is retained as a diagnostic only.
+- **Acceptance** (`tests/unit/execution/test_mem_telemetry.py`): a small-basis
+  job that fits `intercept + basis*slope` does NOT trigger a raise (fail-pre:
+  its point ratio 4.48 > 4.0 slope would have; pass-post: its intercept-removed
+  slope 3.43 < 4.0 does not, and a pool of 50 such jobs never ratchets the
+  slope up); a GENUINE slope drift (peak growing faster per byte than the
+  pinned slope, intercept-removed, beyond `K_CALIBRATION_ERROR_BAND`) STILL
+  triggers a raise -- the detector is not neutered. Route-awareness is pinned
+  (out_of_core removes its own larger 450 MiB intercept).
+
+Flags stay default-OFF; the drift loop is unwired/platform-owned, so this is a
+values/logic fix behind it -- no default flag flipped, no live routing change.
+Golden test-flight (53/53 + fingerprint 5/5) unchanged -- telemetry/drift is off
+the determinism path. Design:
+`docs/plans/2026-07-10-oom-avoidance-routing-redesign.md` §3.4 / §13.
+
 ### Changed (TB-4: calibration + telemetry -- MEASURED k_path constants, 2026-07-13)
 
 The OOM-avoidance estimator's per-route peak-RSS multipliers
