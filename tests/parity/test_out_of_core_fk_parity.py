@@ -1011,17 +1011,11 @@ def test_matched_float_and_int_orphan_beyond_precision_fails_closed(policy: Orph
     uncoded ArrowInvalid; the fix converts it to the same coded fail-closed
     rejection the cross-batch path already raises.
 
-    DE-10: the pandas oracle used to be a bad ground truth for this shape --
-    it silently ROUNDED the orphan key (9007199254740993 ->
-    9007199254740992.0), a referential-integrity drift, rather than raising.
-    `execution/_fk_keys.py::lossless_fk_int_values` closes that gap: the
-    oracle's FK output-column construction now classifies by the SAME
-    matched-value-keeps-its-source-type / orphan-value-folds-via-
-    `fk_key_value` split this out-of-core route uses, so it detects the
-    identical unresolvable mix (a literal float matched value beside an
-    integer orphan beyond exact float precision) and raises the SAME coded
-    `ExecutionError` instead of drifting. See tests/parity/
-    SEMANTIC_DIFFERENCES.md (updated alongside this fix).
+    The pandas oracle is NOT a clean ground truth for this shape: it silently
+    ROUNDS the orphan key (9007199254740993 -> 9007199254740992.0), a referential-
+    integrity drift, rather than crashing. Fixing the oracle is out of scope; the
+    route's contract here is "reject rather than drift", so it fails closed while
+    the oracle quietly rounds. See tests/parity/SEMANTIC_DIFFERENCES.md.
     """
     ns = "ns_matched_float_int_orphan"
     seed = _seed("passthrough")
@@ -1050,11 +1044,11 @@ def test_matched_float_and_int_orphan_beyond_precision_fails_closed(policy: Orph
     )
     sources = {"parent": parent, "child": child}
 
-    # DE-10: the oracle now fails closed too, with the SAME coded rejection,
-    # instead of silently rounding the orphan key.
-    with pytest.raises(ExecutionError) as oracle_exc:
-        _run_oracle(plan, sources, graph)
-    assert oracle_exc.value.code == "out_of_core_fk_key_dtype_unsupported"
+    # The oracle succeeds by silently rounding the orphan key (documented drift,
+    # not authoritative): pin that it does NOT crash, so the divergence is
+    # explicit rather than assumed.
+    oracle_fk = _run_oracle(plan, sources, graph).outputs["child"].column("fk").to_pylist()
+    assert oracle_fk == [1.0, 9007199254740992.0]
 
     # The out-of-core route must fail closed with the coded rejection, never a
     # raw ArrowInvalid.

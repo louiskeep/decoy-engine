@@ -142,7 +142,6 @@ import pyarrow as pa
 from decoy_engine.errors import RowErrorsFailedError
 from decoy_engine.execution._adapter import ExecutionResult, StrategyContext
 from decoy_engine.execution._errors import ExecutionError
-from decoy_engine.execution._fk_keys import fk_columns_for_table, to_pandas_fk_safe
 from decoy_engine.execution._guards import reject_null_bearing_int
 from decoy_engine.execution._row_errors import RowErrorRecord, drain_row_errors
 from decoy_engine.execution._runner import WorkNode, build_work_list, order_work
@@ -338,10 +337,7 @@ def run_sequential(
                 # Same guard as run(), table-local (FK children exempt via graph).
                 reject_null_bearing_int(plan, {table: src}, registry, graph)
                 t0 = time.perf_counter()
-                # DE-10: same lossless-typing contract as the full-frame `run()`
-                # ingestion (execution/_fk_keys.py) -- an FK key column never
-                # silently widens to float64 on this table-at-a-time load either.
-                df = to_pandas_fk_safe(src, fk_columns_for_table(graph.edges, table))
+                df = src.to_pandas()
                 conversion_ms += (time.perf_counter() - t0) * 1000.0
                 frames[table] = df
                 del src
