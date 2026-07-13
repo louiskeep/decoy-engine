@@ -76,8 +76,22 @@ itself -- `tests/perf/test_governor_reroute_completion.py` is the calibrated,
 real-subprocess proof that with TB-1 landed and a properly chosen budget
 window, the SAME mechanism here reroutes a genuinely-tripped `full_frame` run
 all the way to a completed, FK-consistent `out_of_core` run, no code change
-required in this file. Read that test's module docstring for the measured
-numbers behind the calibration.
+required in this file.
+
+Calibration numbers (dennis+Codex HIGH remediation, 2026-07-13, reference
+host `devbox`: pve2 LXC, 4 vCPU / 8 GB RAM): for that test's `_ROWS=200_000`
+fixture, full_frame's TRUE peak -- measured UNBUDGETED, since the OLD
+`_BUDGET_MB=380` kill line (~353 MB) killed it before it could ever be
+observed -- is **440.0-465.4 MB**, and out-of-core's peak under its forwarded
+budget is **317.5-335.8 MB**, essentially flat across budget choices in this
+range (DuckDB's `memory_limit` bounds only its own buffer manager, not the
+fixed interpreter/Arrow-batch overhead riding on top of it). The window is
+now `_BUDGET_MB=415` (hard-kill line `0.93 * 415 ≈ 386.0 MB`), which sits
+~50 MB above out-of-core's worst observed peak and ~54 MB below full_frame's
+worst-case true peak -- balanced margin on both sides, not the old window's
+~23 MB margin above out-of-core and an unverified assumption about
+full_frame's ceiling. Read that test's module docstring for the full
+methodology (including its skip-guard fail-safe for CI-shared-runner noise).
 """
 
 from __future__ import annotations
