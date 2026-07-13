@@ -46,6 +46,7 @@ from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._fk_keys import (
     fk_columns_for_table,
     fk_key_value,
+    fk_nullable_int_array,
     lossless_fk_int_values,
     to_pandas_fk_safe,
 )
@@ -467,13 +468,15 @@ class PandasExecutionAdapter:
             # to silently round an FK key beyond 2**53 -- any None mixed with
             # a big int makes pandas' Series constructor infer float64. Route
             # through the shared lossless-typing contract instead: a pure
-            # integer(+null) column builds via pandas' nullable Int64
-            # extension dtype (exact, round-trips to Arrow int64); anything
-            # else either has no precision to lose (unchanged) or raises the
-            # same typed error the out-of-core route already raises for a
-            # provably unrepresentable mix.
+            # integer(+null) column builds via pandas' nullable Int64/UInt64
+            # extension dtype (exact, round-trips to Arrow int64/uint64 --
+            # `fk_nullable_int_array` picks UInt64 only when a value needs
+            # it, e.g. a preserved unsigned key >= 2**63); anything else
+            # either has no precision to lose (unchanged) or raises the same
+            # typed error the out-of-core route already raises for a provably
+            # unrepresentable mix.
             safe_ints = lossless_fk_int_values(values)
-            child_frame[c] = pd.array(safe_ints, dtype="Int64") if safe_ints is not None else values
+            child_frame[c] = fk_nullable_int_array(safe_ints) if safe_ints is not None else values
         # S2: emit one cascaded RowError per child row whose key was excluded
         # from the parent map (parent key row-errored). The masked cell is
         # already None (set above), so even a downstream bug in quarantine

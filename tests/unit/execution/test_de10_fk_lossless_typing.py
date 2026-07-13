@@ -16,6 +16,16 @@ These tests pin the contract directly (not just via `test_out_of_core_fk_parity.
 existing property suite, extended alongside this fix): a key beyond 2**53
 either survives byte-exact on every route, or every route raises the identical
 `ExecutionError(code="out_of_core_fk_key_dtype_unsupported")`.
+
+The contract covers signed AND unsigned AND narrower-than-int64 FK keys, not
+"int64 only": `test_unsigned_key_past_int64_survives_exact_beside_a_null`
+pins a `uint64` key in `[2**63, 2**64)` (unreachable through a single blanket
+signed `Int64` cast -- the pandas routes raised an uncoded
+`pyarrow.lib.ArrowInvalid`/`OverflowError` for this shape under that cast, a
+route-dependent divergence caught in re-review and closed alongside the
+original 2**53 finding), and `test_narrow_int_key_column_preserves_width`
+pins that a narrower source dtype (`int32`) is not silently widened to
+`int64` in the output (a schema change a blanket `Int64` cast also caused).
 """
 
 from __future__ import annotations
@@ -42,6 +52,15 @@ _JOB_SEED = b"\x22" * 8
 # Beyond this magnitude, IEEE-754 double precision (53-bit mantissa) cannot
 # represent every integer exactly -- the boundary this whole contract is about.
 _BIG_KEY = 9007199254740993  # 2**53 + 1, odd: does NOT round-trip through float64
+
+# Beyond this magnitude, signed Int64 cannot represent the value at all (its
+# max is 2**63 - 1) -- the boundary HIGH #2's unsigned-key fix is about. Only
+# a genuine uint64 column can carry a value this large.
+_UNSIGNED_BIG_KEY = 9223372036854775813  # 2**63 + 5
+
+# A narrow signed width well below int16's range, used to prove int32 output
+# width is preserved (not widened to int64) rather than exercise precision.
+_NARROW_INT32_VALUE = 300_000
 
 
 def _seed(strategy: str = "passthrough", *, namespace: str | None = "de10") -> ColumnSeed:
@@ -123,6 +142,46 @@ _ROUTES = {
     "out_of_core": _run_out_of_core,
 }
 
+# `uint64` FK-column tests below deliberately exclude out_of_core: it rejects
+# EVERY uint64-typed relationship key column unconditionally, regardless of
+# magnitude (`out_of_core/_batch_join.py::_python_roundtrip_type` -- "its
+# Python round trip is value-dependent"), a pre-existing, deliberate,
+# documented design choice ("A compatibility rejection beats byte drift")
+# unrelated to the 2**53 precision story DE-10 is about; it is NOT part of
+# this fix's scope and is pinned separately below
+# (`test_out_of_core_rejects_any_uint64_fk_column_unconditionally`).
+_ROUTES_PANDAS_ONLY = {"full_frame": _run_full_frame, "sequential": _run_sequential}
+
+
+def _run_full_frame_table(plan, sources, graph, *, table: str, column: str) -> pa.Array:
+    result = PandasExecutionAdapter().run(
+        plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
+    )
+    return result.outputs[table].column(column)
+
+
+def _run_sequential_table(plan, sources, graph, *, table: str, column: str) -> pa.Array:
+    result = PandasExecutionAdapter().run_sequential(
+        plan,
+        _loader(sources),
+        registry=_REG,
+        relationship_graph=graph,
+        namespace_registry=_NS,
+    )
+    return result.outputs[table].column(column)
+
+
+def _run_out_of_core_table(plan, sources, graph, *, table: str, column: str) -> pa.Array:
+    result = run_fk_out_of_core(plan, sources, registry=_REG, relationship_graph=graph)
+    return result.outputs[table].column(column)
+
+
+_ROUTES_TABLE = {
+    "full_frame": _run_full_frame_table,
+    "sequential": _run_sequential_table,
+    "out_of_core": _run_out_of_core_table,
+}
+
 
 # ---------------------------------------------------------------------------
 # Exact survival: a matched large key beside a null in the SAME output column
@@ -180,6 +239,77 @@ def test_large_key_survives_exact_with_no_nulls(route: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Width & signedness preservation (dennis+Codex remediation: BLOCKER #1,
+# HIGH #2, MEDIUM #3). An unconditional blanket signed Int64 cast (the
+# initial DE-10 rework cut) widened a narrower FK key's output dtype and
+# could not represent an unsigned key >= 2**63 at all; the exact
+# per-Arrow-type mapper closes both.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("route", sorted(_ROUTES_PANDAS_ONLY))
+def test_unsigned_key_past_int64_survives_exact_beside_a_null(route: str) -> None:
+    """HIGH #2: a genuine uint64 FK key >= 2**63 (unsigned snowflake/
+    bigserial ID) must survive byte-exact, never crash with an uncoded
+    pyarrow.lib.ArrowInvalid/OverflowError the way a blanket signed Int64
+    cast did (pinned pre-fix by
+    `test_bare_int64_cast_still_overflows_a_uint64_key_past_int64_range`
+    below). out_of_core is excluded here -- see `_ROUTES_PANDAS_ONLY`."""
+    parent = pa.table({"pk": pa.array([1, _UNSIGNED_BIG_KEY], type=pa.uint64())})
+    child = pa.table({"fk": pa.array([1, None, _UNSIGNED_BIG_KEY], type=pa.uint64())})
+    plan = _plan_for()
+    graph = _graph(OrphanPolicy.PRESERVE)
+    sources = {"parent": parent, "child": child}
+
+    out = _ROUTES_PANDAS_ONLY[route](plan, sources, graph)
+    assert out.type == pa.uint64(), f"{route}: expected uint64, got {out.type}"
+    assert out.to_pylist() == [1, None, _UNSIGNED_BIG_KEY], f"{route}: key not preserved exactly"
+
+
+def test_out_of_core_rejects_any_uint64_fk_column_unconditionally() -> None:
+    """Pins out_of_core's PRE-EXISTING, unrelated limitation (not part of
+    this fix, not a regression it introduces): it refuses ANY uint64-typed
+    FK column, even one whose every value is small -- so the pandas routes'
+    new uint64 support (above) is not full three-route parity for this
+    dtype. See `_ROUTES_PANDAS_ONLY`'s comment and this file's/CHANGELOG's
+    remediation notes for the tracked-follow-up framing."""
+    parent = pa.table({"pk": pa.array([1, 2], type=pa.uint64())})
+    child = pa.table({"fk": pa.array([1, 2], type=pa.uint64())})
+    plan = _plan_for()
+    graph = _graph(OrphanPolicy.PRESERVE)
+    sources = {"parent": parent, "child": child}
+
+    with pytest.raises(ExecutionError) as exc:
+        _run_out_of_core(plan, sources, graph)
+    assert exc.value.code == FK_KEY_DTYPE_UNSUPPORTED_CODE
+
+
+@pytest.mark.parametrize("route", sorted(_ROUTES))
+def test_narrow_int_key_column_preserves_width(route: str) -> None:
+    """BLOCKER #1 / MEDIUM #3: a narrow-width FK key (e.g. an int32
+    auto-increment PK) must not silently widen to int64 in the output -- the
+    CHANGELOG's original claim that this fix "does not change any existing
+    job's output bytes" was FALSE for this shape under the initial blanket-
+    Int64 cast (pinned pre-fix by
+    `test_bare_blanket_int64_cast_still_widens_a_narrower_int_column`
+    below). Checks the PARENT's own PK column (not the CHILD's FK column,
+    which is rebuilt fresh at write-back for every route -- including
+    out_of_core, whose own FK-child output is unconditionally widened to
+    int64 by a separate, pre-existing, documented design
+    (`out_of_core/_batch_join.py::_python_roundtrip_type`), unrelated to and
+    out of scope for this fix)."""
+    parent = pa.table({"pk": pa.array([1, None, _NARROW_INT32_VALUE], type=pa.int32())})
+    child = pa.table({"fk": pa.array([1, _NARROW_INT32_VALUE], type=pa.int32())})
+    plan = _plan_for()
+    graph = _graph(OrphanPolicy.PRESERVE)
+    sources = {"parent": parent, "child": child}
+
+    out = _ROUTES_TABLE[route](plan, sources, graph, table="parent", column="pk")
+    assert out.type == pa.int32(), f"{route}: expected int32 preserved, got {out.type}"
+    assert out.to_pylist() == [1, None, _NARROW_INT32_VALUE]
+
+
+# ---------------------------------------------------------------------------
 # Route parity: the SAME job produces byte-identical FK key columns everywhere.
 # ---------------------------------------------------------------------------
 
@@ -223,6 +353,32 @@ def test_bare_list_assignment_still_rounds_a_nullable_int_column() -> None:
     df["x"] = [1, _BIG_KEY, None]
     assert df["x"].dtype == "float64"
     assert df["x"].tolist()[1] != _BIG_KEY  # rounded
+
+
+def test_bare_int64_cast_still_overflows_a_uint64_key_past_int64_range() -> None:
+    """Pins the underlying pyarrow behavior a blanket signed Int64 cast (the
+    initial DE-10 rework cut, before the exact per-Arrow-type mapper) could
+    not route around: a genuine uint64 key >= 2**63 raises an UNCODED
+    `pyarrow.lib.ArrowInvalid` when forced through a nullable Int64 (signed)
+    extension dtype -- not a silent rounding, an uncoded crash, which is
+    exactly HIGH #2 (`to_pandas_fk_safe`'s `_exact_fk_types_mapper` routes
+    around this by casting a uint64 column to UInt64, not Int64)."""
+    tbl = pa.table({"k": pa.array([1, _UNSIGNED_BIG_KEY, None], type=pa.uint64())})
+    with pytest.raises(pa.lib.ArrowInvalid):
+        tbl.column("k").to_pandas(types_mapper=lambda _t: pd.Int64Dtype())
+
+
+def test_bare_blanket_int64_cast_still_widens_a_narrower_int_column() -> None:
+    """Pins the underlying pyarrow behavior a blanket signed Int64 cast
+    forced on EVERY null-bearing integer FK column regardless of its own
+    width: a genuine int32 column widens to a pandas Int64 (which
+    round-trips to Arrow int64) -- a schema change for a job whose FK key
+    was never anywhere near float64's precision limit (BLOCKER #1 / MEDIUM
+    #3). `to_pandas_fk_safe`'s exact per-Arrow-type mapper routes around
+    this by casting an int32 column to Int32 (its own matching width)."""
+    tbl = pa.table({"k": pa.array([1, None, _NARROW_INT32_VALUE], type=pa.int32())})
+    widened = tbl.column("k").to_pandas(types_mapper=lambda _t: pd.Int64Dtype())
+    assert str(widened.dtype) == "Int64"  # widened from the source's int32
 
 
 # ---------------------------------------------------------------------------
