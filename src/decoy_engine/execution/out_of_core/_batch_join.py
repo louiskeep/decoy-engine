@@ -62,7 +62,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from decoy_engine.execution._errors import ExecutionError
-from decoy_engine.execution._fk_keys import FK_KEY_DTYPE_UNSUPPORTED_CODE, NULL_FK_KEY, fk_key_value
+from decoy_engine.execution._fk_keys import NULL_FK_KEY, fk_key_value
 from decoy_engine.execution.out_of_core._duckdb import connect_duckdb
 from decoy_engine.execution.out_of_core._join import (
     _append_output_batch,
@@ -425,7 +425,7 @@ def _fixed_component_type(candidates: set[pa.DataType]) -> pa.DataType:
         if merged is not None:
             return merged
     raise ExecutionError(
-        code=FK_KEY_DTYPE_UNSUPPORTED_CODE,
+        code="out_of_core_fk_key_dtype_unsupported",
         message=(
             "out-of-core FK output cannot fix one Arrow type for "
             f"({', '.join(sorted(str(dtype) for dtype in non_null))}); a fixed "
@@ -504,7 +504,7 @@ def _python_roundtrip_type(dtype: pa.DataType) -> pa.DataType:
 
 def _dtype_unsupported(dtype: pa.DataType, reason: str) -> ExecutionError:
     return ExecutionError(
-        code=FK_KEY_DTYPE_UNSUPPORTED_CODE,
+        code="out_of_core_fk_key_dtype_unsupported",
         message=(
             f"out-of-core FK key type {dtype} cannot be typed up front ({reason}); "
             "rejected rather than allowed to drift from whole-column inference."
