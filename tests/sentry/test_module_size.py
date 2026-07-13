@@ -99,6 +99,15 @@ ALLOWLIST: dict[str, int] = {
     # decomposition target stands (extract the builders + guard into
     # `_mem_telemetry_emit.py` when B5 production wiring gives them real callers).
     "src/decoy_engine/execution/_mem_telemetry.py": 762,
+    # DE-11 remediation (2026-07-13): restored the chunk-parity invariant
+    # explanation (a chunk with more distinct values than pool_size is still
+    # admissible in chunked mode because it is byte-identical to the
+    # full-frame run of the same rows -- pool_size controls collision rate,
+    # not admission) that a prior trim removed to slip under the cap. The
+    # invariant text IS the fix, per the same pattern as the B5/TB-5 entries
+    # above; decompose the strategy-admissibility docstring out of the
+    # module header when the conditional-admission set grows again.
+    "src/decoy_engine/execution/_chunked.py": 604,
 }
 
 

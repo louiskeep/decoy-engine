@@ -36,9 +36,11 @@ categorical, exactly when their deterministic value-keyed path is the
 one that runs and every whole-run input is declared in config rather
 than derived from the data:
 
-- faker: `deterministic: true` + `namespace` + an explicit
-  `provider_config.pool_size` + `cardinality_mode` absent or `reuse`.
-  The deterministic sampler maps each value via
+- faker: `deterministic: true` + `namespace` + an explicit `pool_size`
+  (top-level `ColumnConfig.pool_size` or `provider_config.pool_size` --
+  DE-11 resolves whichever one is set, rejecting the config at compile
+  if both disagree) + `cardinality_mode` absent or `reuse`. The
+  deterministic sampler maps each value via
   `derive_index(job_seed, namespace, canonicalize(value), pool_size)`,
   independent of row position or chunk arrival, and the pool build is
   RNG-seeded by its identity, so a pre-built pool equals any rebuild.
@@ -150,10 +152,13 @@ def _conditional_admission_failures(col_entry: dict[str, Any]) -> list[str]:
     if not col_entry.get("namespace"):
         failures.append("requires a namespace (the value-keyed mapping derives from it)")
     if strategy == "faker":
-        if cfg.get("pool_size") is None:
+        # DE-11: legal at either location; the compile resolver rejects a
+        # disagreeing pair, so this only checks at least one is present.
+        if col_entry.get("pool_size") is None and cfg.get("pool_size") is None:
             failures.append(
-                "requires an explicit provider_config.pool_size as the chunked "
-                "capacity declaration (the non-chunked default of 10000 is not "
+                "requires an explicit pool_size (top-level or "
+                "provider_config.pool_size) as the chunked capacity "
+                "declaration (the non-chunked default of 10000 is not "
                 "applied silently here)"
             )
         if col_entry.get("cardinality_mode") not in (None, "reuse"):
@@ -370,9 +375,8 @@ def run_mask_pipeline_chunked(
     # chunk samples from the same pool via the handler's cache consult.
     pool_cache = PoolCache()
     _warm_faker_pools(
-        config,
+        plan,
         table=table,
-        job_seed=plan.seed_envelope.job_seed,
         registry=resolved_registry,
         pool_cache=pool_cache,
     )
@@ -424,10 +428,9 @@ def run_mask_pipeline_chunked(
 
 
 def _warm_faker_pools(
-    config: dict[str, Any],
+    plan: Any,
     *,
     table: str,
-    job_seed: bytes,
     registry: Any,
     pool_cache: Any,
 ) -> None:
@@ -438,42 +441,50 @@ def _warm_faker_pools(
     lookup hits this cache on every chunk. Caching is byte-safe: the
     build is RNG-seeded by the identity's pool_seed (S5 F2), so any
     rebuild of the same identity is value-identical.
+
+    DE-11: pool_size comes off the COMPILED `ColumnSeed` (already resolved
+    by `_seed_envelope.py`), not re-parsed from the raw config dict -- a
+    second read site is exactly the bug DE-11 fixes. Admission guarantees
+    it is set for every chunk-admitted faker column.
     """
+    from decoy_engine.execution._adapter import provider_config_to_dict
     from decoy_engine.generation.pool import PoolBuilder
 
-    tables = config.get("tables") or []
-    table_cfg = next((t for t in tables if isinstance(t, dict) and t.get("name") == table), None)
-    if table_cfg is None:
+    table_seed = next((ts for (name, ts) in plan.seed_envelope.per_table if name == table), None)
+    if table_seed is None:
         return
     builder = PoolBuilder(registry)
-    for col_entry in table_cfg.get("columns") or []:
-        if not isinstance(col_entry, dict) or col_entry.get("strategy") != "faker":
+    for col_name, col_seed in table_seed.per_column:
+        if col_seed.strategy != "faker" or col_seed.provider is None:
             continue
-        provider = col_entry.get("provider")
-        if provider is None:
-            continue
-        cfg = dict(col_entry.get("provider_config") or {})
-        pool_size = int(cfg["pool_size"])  # admission requires it explicitly
+        if col_seed.pool_size is None:
+            # Admission should have rejected this config already.
+            raise ValueError(
+                f"chunked faker column {table}.{col_name} reached pool pre-warm "
+                "with no resolved pool_size; admission should have rejected it."
+            )
+        pool_size = col_seed.pool_size
+        cfg = provider_config_to_dict(col_seed.provider_config)
         locale = cfg.get("locale")
         build_config = {k: v for k, v in cfg.items() if k not in ("pool_size", "locale")}
         identity = builder.identity_for(
-            str(provider),
+            col_seed.provider,
             size=pool_size,
-            job_seed=job_seed,
+            job_seed=plan.seed_envelope.job_seed,
             locale=locale,
             config=build_config,
-            namespace=col_entry.get("namespace"),
+            namespace=col_seed.namespace,
         )
         if pool_cache.get(identity) is not None:
             continue
         pool_cache.put(
             builder.build(
-                provider=str(provider),
+                provider=col_seed.provider,
                 size=pool_size,
-                job_seed=job_seed,
+                job_seed=plan.seed_envelope.job_seed,
                 locale=locale,
                 config=build_config,
-                namespace=col_entry.get("namespace"),
+                namespace=col_seed.namespace,
             )
         )
 
