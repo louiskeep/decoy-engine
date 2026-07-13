@@ -16,7 +16,12 @@ from typing import TYPE_CHECKING, Final
 import pyarrow as pa
 
 from decoy_engine.execution._errors import ExecutionError
-from decoy_engine.execution._fk_keys import NULL_FK_KEY, fk_join_key_tuple, fk_key_value
+from decoy_engine.execution._fk_keys import (
+    FK_KEY_DTYPE_UNSUPPORTED_CODE,
+    NULL_FK_KEY,
+    fk_join_key_tuple,
+    fk_key_value,
+)
 from decoy_engine.execution.out_of_core._duckdb import connect_duckdb
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge
@@ -303,7 +308,7 @@ def _append_output_batch(
     for idx, component in enumerate(out):
         try:
             output_chunks[idx].append(pa.array(component, from_pandas=True))
-        except (pa.ArrowInvalid, pa.ArrowTypeError) as exc:
+        except (pa.ArrowInvalid, pa.ArrowTypeError, OverflowError) as exc:
             # Same fail-closed contract as `cast_fk_chunk`'s cross-batch guard,
             # pulled forward to the per-batch build: a SINGLE result batch can
             # already mix FK output values Arrow cannot reconcile into one array
@@ -314,15 +319,24 @@ def _append_output_batch(
             # instead of the uncoded crash. The pandas oracle silently ROUNDS
             # this key rather than crashing, so it is not a clean ground truth
             # for this shape; the route rejects rather than drift (see
-            # tests/parity/SEMANTIC_DIFFERENCES.md).
+            # tests/parity/SEMANTIC_DIFFERENCES.md). `OverflowError` is the
+            # SAME "Arrow cannot hold this value" failure as `ArrowInvalid` for
+            # this call (DE-10 reland LOW): a matched `uint64` parent value in
+            # `[2**63, 2**64)` sharing a batch with a signed-range value makes
+            # `pa.array`'s int64-first inference raise a raw, uncoded
+            # `OverflowError` rather than `ArrowInvalid` -- same shape, same
+            # fix, just a different exception type pyarrow happens to raise
+            # for it.
             raise ExecutionError(
-                code="out_of_core_fk_key_dtype_unsupported",
+                code=FK_KEY_DTYPE_UNSUPPORTED_CODE,
                 message=(
                     "out-of-core FK output batch mixes key values Arrow cannot "
                     "reconcile into one array (e.g. a matched float parent value "
                     "with an orphan integer child key beyond exactly-representable "
-                    "float precision, > 2**53); rejected rather than crashing with "
-                    "a raw ArrowInvalid."
+                    "float precision, > 2**53, or a matched unsigned key beyond "
+                    "int64's range sharing a batch with a signed-range value); "
+                    "rejected rather than crashing with a raw ArrowInvalid/"
+                    "OverflowError."
                 ),
             ) from exc
     return orphans
@@ -401,7 +415,7 @@ def cast_fk_chunk(chunk: pa.Array, target: pa.DataType) -> pa.Array:
         # False while a lossless widening leaves it True.
         if not widened.cast(chunk.type, safe=False).equals(chunk):
             raise ExecutionError(
-                code="out_of_core_fk_key_dtype_unsupported",
+                code=FK_KEY_DTYPE_UNSUPPORTED_CODE,
                 message=(
                     f"out-of-core FK output has an integer key outside the "
                     f"exactly-representable float range casting {chunk.type} -> "
@@ -432,7 +446,7 @@ def _unified_chunk_type(types: set[pa.DataType]) -> pa.DataType | None:
         # inference raises. Neither is byte-identical, so reject fail closed: a
         # compatibility rejection beats byte drift.
         raise ExecutionError(
-            code="out_of_core_fk_key_dtype_unsupported",
+            code=FK_KEY_DTYPE_UNSUPPORTED_CODE,
             message=(
                 "out-of-core FK output mixes decimal and non-decimal key "
                 f"values ({', '.join(sorted(str(t) for t in non_null))}); this "

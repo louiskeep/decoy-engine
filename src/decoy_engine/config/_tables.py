@@ -96,6 +96,22 @@ class ColumnConfig(BaseModel):
     # natural data recurs). Requires a namespace (the derive key) and conflicts with
     # any non-`reuse` cardinality_mode; the planner enforces both.
     allow_collisions: bool = False
+    # DE-10 reland (2026-07-13): declared dtype FAMILY of this column's raw
+    # source value (e.g. "int64", "float64", "string" -- coarsened by
+    # `_chunked_fk._dtype_family`, exact width does not matter). Optional and
+    # unused by every OTHER route; `_chunked_fk.gate_fk_child_edges`'s
+    # condition (f) reads it off BOTH sides of a chunked-self-masking FK edge
+    # to prove a value-sensitive strategy (hash/fpe/date_shift/bucketize/
+    # truncate/text_redact) will mask the child's own value to the SAME bytes
+    # as the parent's, since that route never sees the parent's data to check
+    # at runtime. Without this field declared here, `extra="forbid"` above
+    # made the gate's dtype check (and its two admission-error codes) provably
+    # UNREACHABLE through `PipelineConfig.model_validate(...).model_dump()` --
+    # any config that set `dtype` failed Pydantic's `extra_forbidden` before
+    # reaching the gate, and any config that omitted it hit the "unprovable"
+    # rejection unconditionally, so only a hand-built raw dict (bypassing
+    # validation, as the gate's own unit tests did) could ever exercise it.
+    dtype: str | None = None
 
 
 class GenerateColumnConfig(BaseModel):
