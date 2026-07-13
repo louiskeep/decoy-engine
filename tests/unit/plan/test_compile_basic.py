@@ -47,7 +47,8 @@ class TestCompilePlanHappyPath:
         at row 21; Sprint 13 / coercion-13 S3 (2026-07-03) added
         truncate_config at row 22, bucketize_config at row 23, and
         categorical_categories at row 24; Sprint 2 honesty pack (2026-07-04)
-        added fpe_charset_config at row 25."""
+        added fpe_charset_config at row 25; DE-03 (2026-07-13) added
+        faker_requires_provider at row 26."""
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
         assert set(plan.plan_compile.checks_passed) == {
             "namespace_ambiguity",
@@ -75,6 +76,7 @@ class TestCompilePlanHappyPath:
             "bucketize_config",
             "categorical_categories",
             "fpe_charset_config",
+            "faker_requires_provider",
         }
 
     def test_compile_no_warnings_no_errors_no_skipped(

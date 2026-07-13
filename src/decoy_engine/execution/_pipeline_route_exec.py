@@ -27,6 +27,7 @@ from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
 from decoy_engine.execution._sequential import run_sequential
 
 if TYPE_CHECKING:
+    from decoy_engine.execution._output_projection import UnconfiguredColumnPolicy
     from decoy_engine.execution._planner import ExecutionPlan
     from decoy_engine.execution._transactional_sink import TransactionalSink
     from decoy_engine.plan._types import Plan
@@ -95,6 +96,7 @@ def run_sequential_route(
     fpe_chunk_count: int = 4,
     explain_plan: bool = False,
     execution_plan_decision: ExecutionPlan | None = None,
+    unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
 ) -> ExecutionResult:
     """Execute the sequential route and package it as a full `ExecutionResult`.
 
@@ -129,6 +131,7 @@ def run_sequential_route(
         namespace_registry=namespace_registry,
         sink=sink,
         quarantine_config=quarantine_config,
+        unconfigured_column_policy=unconfigured_column_policy,
     )
     seq_quality_metrics = dict(seq_result.quality_metrics)
     seq_quality_metrics["execution"] = execution_telemetry(
@@ -169,6 +172,7 @@ def run_out_of_core_route(
     budget_bytes: int | None = None,
     explain_plan: bool = False,
     execution_plan_decision: ExecutionPlan | None = None,
+    unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
 ) -> ExecutionResult:
     """Execute the out-of-core FK route and package it as an `ExecutionResult`.
 
@@ -238,6 +242,7 @@ def run_out_of_core_route(
         sink=sink,
         memory_limit=memory_limit,
         batch_rows=batch_rows,
+        unconfigured_column_policy=unconfigured_column_policy,
     )
     quality_metrics = dict(ooc_result.quality_metrics)
     quality_metrics["execution"] = execution_telemetry(

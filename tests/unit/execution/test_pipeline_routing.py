@@ -274,9 +274,16 @@ class TestSequentialVsFullFrameEquivalence:
         assert set(full.outputs) == set(seq.outputs) == {"parent", "child"}
         for table in full.outputs:
             assert seq.outputs[table].equals(full.outputs[table]), f"{table} differs"
-        assert {(w.code, getattr(w, "detail", None)) for w in full.warnings} == {
-            (w.code, getattr(w, "detail", None)) for w in seq.warnings
-        }
+
+        # Warning parity across routes. `detail` is a dict (unhashable), so
+        # normalize to a sorted, hashable repr rather than a raw set. The
+        # DE-03 output-projection gate fires here under the pre-GA warn default:
+        # the child source carries an undeclared `id` column, so both routes
+        # emit the same `undeclared_output_columns` warning -- parity intact.
+        def _norm(warnings: Any) -> list[tuple[str, str]]:
+            return sorted((w.code, repr(getattr(w, "detail", None))) for w in warnings)
+
+        assert _norm(full.warnings) == _norm(seq.warnings)
 
     def test_sink_output_byte_identical_to_full_frame(self, tmp_path: Path) -> None:
         config = _fk_pure_mask_config(tmp_path)

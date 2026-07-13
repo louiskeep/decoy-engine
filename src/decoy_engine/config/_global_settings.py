@@ -26,6 +26,12 @@ class GlobalSettings(BaseModel):
     source snapshot after generation and a warning is logged when the
     overall fidelity score falls below this value (warn-only; never
     fails the run or changes output bytes).
+    `unconfigured_column_policy` (DE-03) drives the fail-closed output
+    projection: `error` rejects any output column the plan does not
+    declare a strategy for; `warn` lets it pass through with a structured
+    warning. Unset defaults to the release phase (`warn` pre-GA migration
+    window, `error` at GA); an explicit value here overrides that. See
+    `execution/_output_projection.resolve_unconfigured_column_policy`.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -34,3 +40,4 @@ class GlobalSettings(BaseModel):
     post_validation: bool = False
     on_pool_exhaustion: Literal["fail", "scale_up", "fall_back"] = "scale_up"
     fidelity_warn_threshold: float = Field(default=0.8, ge=0.0, le=1.0)
+    unconfigured_column_policy: Literal["warn", "error"] | None = None

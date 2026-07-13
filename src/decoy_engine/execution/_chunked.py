@@ -339,6 +339,7 @@ def run_mask_pipeline_chunked(
     Validation and plan compile happen EAGERLY at call time; only the
     per-chunk masking is lazy.
     """
+    from decoy_engine.execution._output_projection import resolve_unconfigured_column_policy
     from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
     from decoy_engine.generation.pool import PoolCache
     from decoy_engine.plan import compile_plan
@@ -352,6 +353,11 @@ def run_mask_pipeline_chunked(
         return iter(())
     profile = _first_chunk_profile(first, table=table, engine_version=engine_version)
     plan = compile_plan(config, profile, decoy_engine_version=engine_version, no_profile=True)
+    # DE-03: resolve the projection policy once; each per-chunk adapter.run()
+    # enforces it (a chunk carries the same column set as the whole table, so
+    # per-chunk enforcement IS whole-table enforcement). Single mask table, no
+    # generate echo on this route, so no table is exempted.
+    projection_policy = resolve_unconfigured_column_policy(config)
     resolved_registry = registry if registry is not None else get_default_registry()
     ns_registry = build_namespace_registry(config, profile)
     graph = RelationshipGraph(edges=(), ordering=())
@@ -394,6 +400,7 @@ def run_mask_pipeline_chunked(
                 pool_cache=pool_cache,
                 relationship_graph=graph,
                 namespace_registry=ns_registry,
+                unconfigured_column_policy=projection_policy,
             )
             if chunk_result_sink is not None:
                 chunk_result_sink.append(result)

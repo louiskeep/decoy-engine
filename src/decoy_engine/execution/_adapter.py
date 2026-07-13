@@ -28,6 +28,7 @@ from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.instrumentation.timing import StrategyTimingRecord
 
 if TYPE_CHECKING:
+    from decoy_engine.execution._output_projection import UnconfiguredColumnPolicy
     from decoy_engine.generation.pool._cache import PoolCache
     from decoy_engine.plan._types import ColumnSeed, Plan
     from decoy_engine.providers_v2 import ProviderRegistry
@@ -139,6 +140,11 @@ class ExecutionAdapter(Protocol):
         pool_cache: PoolCache | None = None,
         relationship_graph: RelationshipGraph,
         namespace_registry: NamespaceRegistry,
+        # DE-03 fail-closed output projection. `unconfigured_column_policy` None
+        # resolves to the release-phase default; `generate_output_tables` names
+        # the generate-echo tables exempt from the mask plan's declared surface.
+        unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
+        generate_output_tables: frozenset[str] = frozenset(),
     ) -> ExecutionResult: ...
 
     def supports_strategy(self, strategy_name: str) -> bool: ...

@@ -746,7 +746,11 @@ def test_run_fk_out_of_core_composite_fk_matches_pandas(tmp_path, policy: Orphan
         name: table.to_pydict() for name, table in pandas.outputs.items()
     }
     if policy is OrphanPolicy.WARN:
-        assert len(out.warnings) == 1
+        # DE-03: the composite child carries undeclared payload columns, so the
+        # pre-GA warn default adds an `undeclared_output_columns` warning that is
+        # orthogonal to the orphan-policy parity this test pins -- filter it out.
+        orphan_warnings = [w for w in out.warnings if w.code != "undeclared_output_columns"]
+        assert len(orphan_warnings) == 1
 
 
 @pytest.mark.parametrize(
