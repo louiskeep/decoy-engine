@@ -9,6 +9,72 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (TB-5: OOM auto-router enabled by DEFAULT + byte-based reject contract migration, 2026-07-13)
+
+Flips the OOM-avoidance auto-router to **default-ON** and migrates the
+reject-before-read contract from a row-count basis to a byte-vs-budget basis
+(OOM-avoidance routing redesign §B3 / §9). This changes DEFAULT engine behavior
+(Cam-approved): a relationship-bearing pure-mask job now routes on COMPUTED
+BYTES vs. the resolved cgroup/slot budget, not fixed row-count thresholds.
+Output is unaffected -- every route is byte-output-equivalent by design (golden
+test-flight fingerprints unchanged).
+
+- **Four knobs flipped to default-ON, each still forceable OFF for rollback:**
+  `run_pipeline`'s `use_byte_estimate_routing` and `use_probe_routing`
+  (`_pipeline.py` / `_pipeline_routing.py`) and `run_job_with_governor`'s
+  `use_runtime_governor` (`_governor.py`) now default `True`. Per-job process
+  ISOLATION was already default-on (`run_pipeline_isolated(isolate=True)`; the
+  governor forbids `isolate=False`), so the engine-side `isolated_execution`
+  primitive needed no flip -- the platform-side `isolated_execution_enabled`
+  gate is a decoy-platform change (see below). Rollback: pass the corresponding
+  flag `False` to restore the exact pre-TB-5 behavior.
+- **Byte-based reject (contract migration).** For an in-scope job the
+  reject-before-read fires when the byte estimate does not confirm full_frame
+  fits the budget within margin AND no bounded route applies. The reject CODE
+  is unchanged (`fk_full_frame_oom_risk_rejected`) -- only its basis moved from
+  row count to bytes -- so the SC5 cross-repo surface keeps the same constant.
+  The **irreducible ineligible+too-big reject class is preserved** (a job that
+  fits NO route -- e.g. a cyclic FK graph or `fidelity_report`-disqualified
+  sequential that also busts the byte budget -- still rejects with a clear
+  code). The row-count thresholds (`FULL_FRAME_REJECT_ROWS_DEFAULT` /
+  `OUT_OF_CORE_THRESHOLD_ROWS_DEFAULT`) and the row-count reject remain LIVE for
+  the rollback path (`use_byte_estimate_routing=False`) and for out-of-scope
+  generate+mask FK jobs (byte estimation cannot price generated column widths).
+- **Reject/routing tests migrated.** The row-count reject/routing tests are
+  pinned to the rollback flag (they still prove the deprecated row-count
+  mechanism works); byte-based DEFAULT routing + reject is asserted directly:
+  `test_byte_estimate_routing.py` (incl. a new WIDTH-change test -- same rows,
+  wider schema, fixed budget -> route flips to a bounded path, §9 acceptance),
+  and `test_out_of_core_routing_parity.py` (byte-based out_of_core dispatch +
+  full-frame parity, and the byte-over-budget irreducible reject).
+- **#74 sequential-basis contract.** TB-5 does NOT wire the live drift/telemetry
+  loop (it stays platform-owned; #74 is DEFERRED to that wiring). The standing
+  basis contract is added anyway: `_mem_estimate.estimator_basis_bytes` +
+  `route_slope` are now the single source of truth for the per-byte BASIS the
+  estimator multiplies (`estimate_peak_bytes` derives its prediction from them),
+  and for the SEQUENTIAL route that basis is the WORKING SET (two largest tables
+  + FK dedup), NOT total raw bytes. The telemetry emission builders
+  (`telemetry_record_from_isolated_run` / `_from_governor_trip`) now assert the
+  `raw_bytes` they record matches `estimator_basis_bytes` for the run's route --
+  REQUIRED for a sequential record -- so a future caller can never silently
+  divide `observed_slope` by total raw bytes (which under-states the sequential
+  slope, the OOM-unsafe direction).
+- **Platform admission (decoy-platform, NOT changed here).** To match this
+  default, `api/jobs/admission.py` must size its admission decision off the same
+  byte estimate + resolved budget (not row counts), and the platform must enable
+  `isolated_execution_enabled` so the engine's default per-job isolation holds
+  under `queue_worker`. Until then, engine and platform can disagree on which
+  jobs admit; the engine rollback flags are the interim escape hatch.
+
+Frozen-surface note (compatibility-contract §3.4): `run_pipeline` is a public
+re-export from `decoy_engine/__init__.py`, so its default values are on the
+frozen surface. The change is output-PRESERVING (a memory-routing default, not
+an output-affecting one, §4.1) and the engine is pre-GA (`is_pre_ga()` True), so
+the surface is not yet binding -- but the PR carries the §9 pre-flight checklist
+per the compatibility-contract process. Design:
+`docs/plans/2026-07-10-oom-avoidance-routing-redesign.md` §B3/§9;
+`docs/plans/2026-07-12-track-b-completion-program.md` TB-5.
+
 ### Changed (TB-5 precondition: fixed INTERCEPT term for the OOM estimator, 2026-07-13)
 
 Closes the small-basis under-prediction the dennis gate flagged on TB-4 (issue

@@ -553,13 +553,21 @@ class TestEndToEndWiring:
     def test_probe_flag_without_byte_estimate_flag_has_no_effect(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """`use_probe_routing=True` alone (byte-estimate routing OFF) must
+        """`use_probe_routing=True` with byte-estimate routing forced OFF must
         never even call the probe -- and must match the plain legacy
-        row-count route exactly."""
+        row-count route exactly. (TB-5 made byte-estimate routing default-ON, so
+        this must force it OFF to exercise the probe-composes-with-byte-estimate
+        rule; the probe is inert without it.)"""
         monkeypatch.setattr("decoy_engine.execution._probe.probe_peak_bytes", _never_probe)
         config = _fk_pure_mask_config(tmp_path)
         sources = _fk_sources(config)
-        result = run_pipeline(config, sources, engine_version="0.1.0", use_probe_routing=True)
+        result = run_pipeline(
+            config,
+            sources,
+            engine_version="0.1.0",
+            use_probe_routing=True,
+            use_byte_estimate_routing=False,
+        )
         assert result.quality_metrics["execution"]["execution_mode"] == "sequential"
         assert result.quality_metrics["execution"]["route_reason"] == "pure_mask_fk"
 

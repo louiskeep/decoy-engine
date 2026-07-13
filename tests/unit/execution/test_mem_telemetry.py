@@ -24,6 +24,7 @@ from decoy_engine.execution._mem_estimate import (
     ColumnSizeSpec,
     ExecutionPath,
     TableSizeSpec,
+    estimator_basis_bytes,
     route_intercept_bytes,
 )
 from decoy_engine.execution._mem_telemetry import (
@@ -757,6 +758,82 @@ class TestTelemetryRecordFromIsolatedRun:
         # that the two modules compose correctly on the safety property.
         result2 = recalibrate_k([record], "full_frame", current_k=3.0)
         assert result2.sample_count == 0
+
+
+# ---------------------------------------------------------------------------
+# #74 basis contract: a sequential record must divide observed_slope by the
+# WORKING-SET basis, not total raw bytes.
+# ---------------------------------------------------------------------------
+
+
+class TestSequentialBasisContract:
+    """The estimator's sequential basis is the working set (two largest tables
+    + FK dedup), NOT total raw bytes, so `raw_bytes` on a sequential telemetry
+    record must be that working-set figure or `observed_slope` under-states the
+    slope (OOM-unsafe). The `telemetry_record_from_*` builders enforce it."""
+
+    @staticmethod
+    def _three_tables() -> tuple[TableSizeSpec, ...]:
+        # Three tables of DIFFERENT sizes so working-set (two largest) != total.
+        return (
+            _table("big", 1_000_000, (ColumnSizeSpec(name="a", dtype="int64"),)),
+            _table("mid", 500_000, (ColumnSizeSpec(name="a", dtype="int64"),)),
+            _table("small", 100_000, (ColumnSizeSpec(name="a", dtype="int64"),)),
+        )
+
+    def _seq_result(self) -> IsolatedRunResult:
+        return _isolated_result(peak_rss_mb=1024.0, outcome="completed", isolated=True)
+
+    def test_sequential_record_requires_tables(self) -> None:
+        with pytest.raises(ValueError, match="basis contract"):
+            telemetry_record_from_isolated_run(
+                self._seq_result(),
+                schema_fingerprint="fp",
+                path="sequential",
+                raw_bytes=12_000_000,
+                predicted_bytes=1 * _GB,
+            )
+
+    def test_sequential_record_rejects_total_raw_bytes_basis(self) -> None:
+        tables = self._three_tables()
+        total_raw = sum(estimator_basis_bytes((t,), "full_frame").basis_bytes or 0 for t in tables)
+        working_set = estimator_basis_bytes(tables, "sequential").basis_bytes
+        assert working_set is not None and total_raw != working_set  # the footgun exists
+        with pytest.raises(ValueError, match="basis contract"):
+            telemetry_record_from_isolated_run(
+                self._seq_result(),
+                schema_fingerprint="fp",
+                path="sequential",
+                raw_bytes=total_raw,  # WRONG basis for sequential
+                predicted_bytes=1 * _GB,
+                tables=tables,
+            )
+
+    def test_sequential_record_accepts_working_set_basis(self) -> None:
+        tables = self._three_tables()
+        working_set = estimator_basis_bytes(tables, "sequential").basis_bytes
+        assert working_set is not None
+        record = telemetry_record_from_isolated_run(
+            self._seq_result(),
+            schema_fingerprint="fp",
+            path="sequential",
+            raw_bytes=working_set,  # correct working-set basis
+            predicted_bytes=1 * _GB,
+            tables=tables,
+        )
+        assert record.raw_bytes == working_set
+
+    def test_in_core_record_without_tables_is_still_allowed(self) -> None:
+        # Back-compat: full_frame/out_of_core records (basis == total raw bytes)
+        # need not pass `tables`; only sequential is mandatory.
+        record = telemetry_record_from_isolated_run(
+            self._seq_result(),
+            schema_fingerprint="fp",
+            path="full_frame",
+            raw_bytes=1 * _GB,
+            predicted_bytes=3 * _GB,
+        )
+        assert record.path == "full_frame"
 
 
 # ---------------------------------------------------------------------------

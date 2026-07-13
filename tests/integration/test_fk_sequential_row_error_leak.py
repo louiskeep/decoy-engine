@@ -1,9 +1,12 @@
 """S2 (engine "Finish Open-Ended Surfaces" program) THE blocker proof.
 
-`run_pipeline`'s default (`execution_mode="auto"`) routes a relationship-
-bearing pure-mask job through `run_sequential` (see `_pipeline.py`,
-`_sequential_eligible`). Because that makes `run_sequential` the default FK
-mask path reachable from the public entry point, the S1 honesty-pack
+`run_pipeline`'s ROLLBACK routing (`execution_mode="auto"` with
+`use_byte_estimate_routing=False`, which these tests pin) routes a
+relationship-bearing pure-mask job through `run_sequential` (see `_pipeline.py`,
+`_sequential_eligible`); TB-5's default byte-estimate routing would size these
+tiny fixtures as fitting full_frame, so the pin is what keeps them on the
+sequential path under test. Because `run_sequential` is a public-entry-point FK
+mask path, the S1 honesty-pack
 fail-loud/quarantine guarantee MUST hold there exactly as it holds on the
 full-frame `run()` path (mirrors `tests/integration/test_when_gate_row_error_leak.py`
 and `tests/integration/test_row_errors_e2e.py`, but with a two-table FK job
@@ -153,7 +156,9 @@ class TestFkSequentialLeakClosure:
         sources = _sources(config)
         sink = ParquetTransactionalSink(tmp_path / "out")
 
-        result = run_pipeline(config, sources, engine_version="0.1.0", sink=sink)
+        result = run_pipeline(
+            config, sources, engine_version="0.1.0", sink=sink, use_byte_estimate_routing=False
+        )
 
         # The sequential route was taken (auto-eligible FK pure-mask job):
         # result.outputs is empty because a sink was supplied.
@@ -183,7 +188,9 @@ class TestFkSequentialLeakClosure:
         sink = ParquetTransactionalSink(target)
 
         with pytest.raises(RowErrorsFailedError) as exc_info:
-            run_pipeline(config, sources, engine_version="0.1.0", sink=sink)
+            run_pipeline(
+                config, sources, engine_version="0.1.0", sink=sink, use_byte_estimate_routing=False
+            )
 
         # (d) fail-loud before commit: nothing published.
         assert not target.exists()
@@ -212,7 +219,9 @@ class TestFkSequentialLeakClosureWhenGated:
         sources = _sources(config)
         sink = ParquetTransactionalSink(tmp_path / "out")
 
-        result = run_pipeline(config, sources, engine_version="0.1.0", sink=sink)
+        result = run_pipeline(
+            config, sources, engine_version="0.1.0", sink=sink, use_byte_estimate_routing=False
+        )
         assert result.outputs == {}
 
         out_parent = pq.read_table(tmp_path / "out" / "parent.parquet")
@@ -234,7 +243,9 @@ class TestFkSequentialLeakClosureWhenGated:
         sink = ParquetTransactionalSink(target)
 
         with pytest.raises(RowErrorsFailedError) as exc_info:
-            run_pipeline(config, sources, engine_version="0.1.0", sink=sink)
+            run_pipeline(
+                config, sources, engine_version="0.1.0", sink=sink, use_byte_estimate_routing=False
+            )
 
         assert not target.exists()
         recs = [r for r in exc_info.value.records if r.table == "parent"]
@@ -565,7 +576,9 @@ class TestSequentialMultiTableQuarantineJsonlNotClobbered:
         sources = _sources(config)
         sink = ParquetTransactionalSink(tmp_path / "out")
 
-        result = run_pipeline(config, sources, engine_version="0.1.0", sink=sink)
+        result = run_pipeline(
+            config, sources, engine_version="0.1.0", sink=sink, use_byte_estimate_routing=False
+        )
         assert result.quality_metrics["execution"]["execution_mode"] == "sequential"
 
         records = [json.loads(line) for line in Path(qpath).read_text().splitlines()]

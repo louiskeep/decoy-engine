@@ -12,6 +12,15 @@ out-of-core BEFORE `source_loader` is ever invoked.
 The size thresholds are `run_pipeline` kwargs; the tests lower them so a small
 fixture exercises the same routing a multi-million-row job would, without the
 data.
+
+TB-5 note: the SC7b lazy-path SIZE GATE is a property of the row-count routing
+path, which TB-5 preserved behind the rollback flag (`use_byte_estimate_routing`
+now defaults ON). The pure-mask reroute/routing tests below pin
+`use_byte_estimate_routing=False` so they keep exercising that size-gate
+mechanism directly; the generate+mask reject tests are out of byte-estimate
+scope either way (byte estimation can't price generated columns), so they need
+no pin. The default byte-estimate routing is covered in
+`test_byte_estimate_routing.py`.
 """
 
 from __future__ import annotations
@@ -244,6 +253,7 @@ def test_lazy_parquet_ooc_eligible_reroutes_to_out_of_core(tmp_path: Path) -> No
         source_loader=_file_loader(config),
         out_of_core_threshold_rows=10,  # 40-row fixture is "large"
         full_frame_reject_rows=10,  # would reject if it were full-frame-bound
+        use_byte_estimate_routing=False,  # rollback path: exercise the size gate
     )
     # AC 5: the decision + reason are stamped on the manifest.
     assert result.quality_metrics["execution"]["execution_mode"] == "out_of_core"
@@ -285,6 +295,7 @@ def test_lazy_csv_ooc_eligible_still_reroutes_on_estimate(tmp_path: Path) -> Non
         source_loader=_file_loader(config),
         out_of_core_threshold_rows=10,
         full_frame_reject_rows=10,
+        use_byte_estimate_routing=False,  # rollback path: exercise the size gate
     )
     assert result.quality_metrics["execution"]["execution_mode"] == "out_of_core"
     assert result.quality_metrics["execution"]["route_reason"] == "out_of_core_large_fk"
@@ -307,6 +318,7 @@ def test_resident_path_agrees_with_profile_count_no_warning(tmp_path: Path) -> N
             sources,  # resident path: exact Arrow count == exact Parquet profile count
             engine_version="0.1.0",
             out_of_core_threshold_rows=10,
+            use_byte_estimate_routing=False,  # rollback path: exercise the size gate
         )
     # No cross-check mismatch surfaced: resident 40 == profile 40 (both exact).
     assert not [w for w in caught if "row count disagrees" in str(w.message)], (
@@ -321,7 +333,13 @@ def test_resident_path_below_threshold_stays_sequential(tmp_path: Path) -> None:
     # before: below the out-of-core threshold it stays sequential.
     config = _ooc_eligible_config(tmp_path, "parquet")
     sources = {name: pq.read_table(spec["path"]) for name, spec in config["sources"].items()}
-    result = run_pipeline(config, sources, engine_version="0.1.0", out_of_core_threshold_rows=1_000)
+    result = run_pipeline(
+        config,
+        sources,
+        engine_version="0.1.0",
+        out_of_core_threshold_rows=1_000,
+        use_byte_estimate_routing=False,  # rollback path: exercise the size gate
+    )
     assert result.quality_metrics["execution"]["execution_mode"] == "sequential"
 
 
@@ -383,6 +401,7 @@ def test_h1_mixed_residency_large_lazy_child_reroutes_to_out_of_core(tmp_path: P
         source_loader=_file_loader(config),
         out_of_core_threshold_rows=50,  # 40 (parent) < 50 <= 100 (child)
         full_frame_reject_rows=1_000,  # well above 100: nothing rejects here
+        use_byte_estimate_routing=False,  # rollback path: exercise the size gate
     )
     assert result.quality_metrics["execution"]["execution_mode"] == "out_of_core"
     assert result.quality_metrics["execution"]["route_reason"] == "out_of_core_large_fk"
@@ -414,6 +433,7 @@ def test_m1_resident_smaller_than_exact_profile_warns_and_routes_on_resident(
             sources,
             engine_version="0.1.0",
             out_of_core_threshold_rows=10,
+            use_byte_estimate_routing=False,  # rollback path: exercise the size gate
         )
     # Exactly one cross-check warning, for the parent (resident 40 != exact 60);
     # the child (resident 40 == exact 40) does not warn.

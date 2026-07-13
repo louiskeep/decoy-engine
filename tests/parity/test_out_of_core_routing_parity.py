@@ -8,8 +8,13 @@ dispatched output is byte-identical to the full-frame path a caller would
 otherwise have taken, and that an ineligible-large FK job is REJECTED before
 the read/mask step instead of silently OOM-ing full-frame.
 
-Thresholds are lowered per call so a tiny fixture drives the same routing a
-5M/8M-row job would on the 32 GB box, without materializing the data.
+TB-5: byte-estimate routing is the DEFAULT now, so these tests drive it
+directly -- a tight `out_of_core_budget_bytes` (standing in for a cgroup-limited
+container) makes the byte estimate exceed budget so a tiny fixture routes the
+same bounded path a multi-million-row job would, without materializing the data.
+`use_probe_routing=False` keeps the assertions off the probe subprocess (the
+probe is covered in `test_probe.py`); the byte-estimate bounded dispatch and
+its full-frame parity are what this file pins.
 """
 
 from __future__ import annotations
@@ -120,16 +125,32 @@ def _pydict(outputs: dict[str, pa.Table]) -> dict[str, dict[str, list[Any]]]:
     return {t: tbl.to_pydict() for t, tbl in outputs.items()}
 
 
+_TIGHT_BUDGET = 64 * 1024 * 1024  # resolve_budget's floor; below the ~200 MB intercept
+
+
 @pytest.mark.parametrize("orphans", [False, True])
 def test_auto_route_out_of_core_matches_full_frame_oracle(tmp_path: Path, orphans: bool) -> None:
     config = _supported_fk_config(tmp_path, orphans=orphans)
     sources = _sources(config)
 
     oracle = run_pipeline(config, sources, engine_version="0.1.0", execution_mode="full_frame")
-    routed = run_pipeline(config, sources, engine_version="0.1.0", out_of_core_threshold_rows=10)
+    # Default byte-estimate routing under a tight budget: the estimate exceeds
+    # the 64 MB budget, and the job is out-of-core-eligible (hash/redact/truncate),
+    # so it routes the bounded out_of_core path by BYTES, not row count.
+    routed = run_pipeline(
+        config,
+        sources,
+        engine_version="0.1.0",
+        out_of_core_budget_bytes=_TIGHT_BUDGET,
+        use_probe_routing=False,
+    )
 
-    # The job was really dispatched to out-of-core (not just admitted).
+    # The job was really dispatched to out-of-core (not just admitted), keyed
+    # off computed bytes vs. budget.
     assert routed.quality_metrics["execution"]["execution_mode"] == "out_of_core"
+    assert (
+        routed.quality_metrics["execution"]["route_reason"] == "byte_estimate_bounded_out_of_core"
+    )
     # ...and its output is value-identical to the full-frame path.
     assert set(routed.outputs) == set(oracle.outputs) == {"parent", "child", "grandchild"}
     assert _pydict(routed.outputs) == _pydict(oracle.outputs)
@@ -144,35 +165,42 @@ def test_forced_out_of_core_matches_full_frame_oracle(tmp_path: Path) -> None:
     assert _pydict(forced.outputs) == _pydict(oracle.outputs)
 
 
-def test_ineligible_large_fk_job_rejected_before_read_not_executed(tmp_path: Path) -> None:
-    """An FK job that no bounded route can take, at reject scale, must be
-    rejected BEFORE read -- never executed to a silent full-frame OOM. Here
-    `fidelity_report=True` disqualifies the sequential route (it needs every
-    masked output resident at once) and is likewise not carried by the streaming
-    out-of-core route, so full-frame is the only path; at/above the reject
-    threshold that is a reject, not a run. The out-of-core compat gate still
-    ADMITS the FK structure (hash edges) -- proving the reject does not depend on
-    the gate declining, only on no bounded route being able to run the job."""
+def test_ineligible_byte_over_budget_fk_job_rejected_before_read_not_executed(
+    tmp_path: Path,
+) -> None:
+    """The irreducible reject class, now BYTE-based (TB-5 contract migration):
+    an FK job that no bounded route can take, whose computed bytes exceed the
+    budget, must be rejected BEFORE read -- never executed to a silent
+    full-frame OOM. `fidelity_report=True` disqualifies the sequential route
+    (it needs every masked output resident at once) and is likewise not carried
+    by the streaming out-of-core route, so no bounded route applies; when the
+    byte estimate also does not confirm full_frame fits the budget, that is a
+    reject, not a run. The out-of-core compat gate still ADMITS the FK
+    structure (hash edges) -- proving the reject does not depend on the gate
+    declining, only on no bounded route being able to run the job."""
     config = _supported_fk_config(tmp_path, orphans=False)
     sources = _sources(config)
 
+    # Tight budget: the byte estimate exceeds it, and no bounded route applies
+    # (fidelity_report bars sequential; out_of_core can't carry it) -> reject.
     with pytest.raises(ExecutionError) as exc:
         run_pipeline(
             config,
             sources,
             engine_version="0.1.0",
             fidelity_report=True,
-            full_frame_reject_rows=10,
+            out_of_core_budget_bytes=_TIGHT_BUDGET,
+            use_probe_routing=False,
         )
     assert exc.value.code == "fk_full_frame_oom_risk_rejected"
 
-    # Below the threshold the SAME job runs full-frame (no regression): proves
-    # the reject is a size gate, not a hard ban on the recipe.
+    # Under a generous budget the SAME job runs full-frame (no regression):
+    # proves the reject is a byte-size gate, not a hard ban on the recipe.
     ran = run_pipeline(
         config,
         sources,
         engine_version="0.1.0",
         fidelity_report=True,
-        full_frame_reject_rows=10_000_000,
+        out_of_core_budget_bytes=4 * 1024 * 1024 * 1024,
     )
     assert ran.quality_metrics["execution"]["execution_mode"] == "full_frame"

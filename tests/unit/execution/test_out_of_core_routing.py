@@ -64,7 +64,13 @@ def _acyclic_graph() -> RelationshipGraph:
 
 
 def _decide(**overrides: Any) -> tuple[str, str]:
-    """decide_execution_route with pure-mask FK defaults, overridable per test."""
+    """decide_execution_route with pure-mask FK defaults, overridable per test.
+
+    Pinned to `use_byte_estimate_routing=False` (the TB-5 ROLLBACK path): this
+    file exercises the row-count size-gate + reject decision logic, which TB-5
+    preserved behind the rollback flag. The default byte-estimate routing is
+    covered in `test_byte_estimate_routing.py`.
+    """
     kwargs: dict[str, Any] = {
         "has_generate_table": False,
         "has_mask_table": True,
@@ -79,6 +85,7 @@ def _decide(**overrides: Any) -> tuple[str, str]:
         "largest_table_rows": 1_000,
         "out_of_core_threshold_rows": 100,
         "full_frame_reject_rows": 500,
+        "use_byte_estimate_routing": False,
     }
     profile = overrides.pop("profile", _FakeProfile((object(),)))
     kwargs.update(overrides)
@@ -344,8 +351,18 @@ class TestRunPipelineOutOfCoreDispatch:
 
         # Full-frame oracle.
         full = run_pipeline(config, sources, engine_version="0.1.0", execution_mode="full_frame")
-        # Auto with a lowered threshold so the 20-row fixture is "large".
-        auto = run_pipeline(config, sources, engine_version="0.1.0", out_of_core_threshold_rows=10)
+        # Auto with a lowered threshold so the 20-row fixture is "large". Pinned
+        # to the rollback row-count path (byte-estimate routing, the TB-5
+        # default, would size a 20-row job as fitting full_frame; the
+        # byte-estimate out_of_core dispatch + parity is covered in
+        # test_out_of_core_routing_parity.py).
+        auto = run_pipeline(
+            config,
+            sources,
+            engine_version="0.1.0",
+            out_of_core_threshold_rows=10,
+            use_byte_estimate_routing=False,
+        )
 
         assert auto.quality_metrics["execution"]["execution_mode"] == "out_of_core"
         assert auto.quality_metrics["execution"]["route_reason"] == "out_of_core_large_fk"
@@ -354,10 +371,17 @@ class TestRunPipelineOutOfCoreDispatch:
         assert _values(auto.outputs) == _values(full.outputs)
 
     def test_below_threshold_stays_sequential(self, tmp_path: Path) -> None:
+        # Rollback row-count path: below the out-of-core threshold, an
+        # OOC-compatible job stays sequential (the byte-estimate default routes
+        # by bytes-vs-budget, not this threshold -- see test_byte_estimate_routing).
         config = _fk_ooc_config(tmp_path)
         sources = _sources(config)
         result = run_pipeline(
-            config, sources, engine_version="0.1.0", out_of_core_threshold_rows=1_000
+            config,
+            sources,
+            engine_version="0.1.0",
+            out_of_core_threshold_rows=1_000,
+            use_byte_estimate_routing=False,
         )
         assert result.quality_metrics["execution"]["execution_mode"] == "sequential"
 

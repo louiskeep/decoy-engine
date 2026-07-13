@@ -82,11 +82,11 @@ entrypoint already enforced).
 
 Sprint B1b (OOM-avoidance routing redesign, docs/plans/2026-07-10-oom-
 avoidance-routing-redesign.md §13): `decide_execution_route`'s
-`use_byte_estimate_routing` flag (default OFF) wires the B1a byte-level
+`use_byte_estimate_routing` flag (TB-5 default ON) wires the B1a byte-level
 estimator (`_mem_estimate.fits`) into the "auto" full_frame-admission
 decision, additively -- see the flag's docstring on `decide_execution_route`
-for the exact scope and rule. OFF (the default), this module's routing is
-BYTE-FOR-BYTE the pre-B1b row-count logic described above.
+for the exact scope and rule. Forced OFF (the rollback path), this module's
+routing is BYTE-FOR-BYTE the pre-B1b row-count logic described above.
 """
 
 from __future__ import annotations
@@ -229,18 +229,18 @@ def decide_execution_route(
     largest_table_rows_exact: bool = True,
     out_of_core_threshold_rows: int = OUT_OF_CORE_THRESHOLD_ROWS_DEFAULT,
     full_frame_reject_rows: int = FULL_FRAME_REJECT_ROWS_DEFAULT,
-    use_byte_estimate_routing: bool = False,
+    use_byte_estimate_routing: bool = True,
     full_frame_fits_estimate: bool | None = None,
-    use_probe_routing: bool = False,
+    use_probe_routing: bool = True,
     probe_recovers_full_frame: bool | None = None,
 ) -> tuple[str, str]:
     """Decide `(route, route_reason)` -- `"out_of_core"`, `"sequential"`, or
     `"full_frame"` -- or RAISE a fail-closed reject-before-read.
 
-    `use_byte_estimate_routing` (Sprint B1b, default `False`, additive): OFF,
-    this function is BYTE-FOR-BYTE the row-count logic below --
-    `full_frame_fits_estimate` is never read, so the SC5 contract and every
-    existing routing test stay green unmodified. ON, for a job IN SCOPE
+    `use_byte_estimate_routing` (Sprint B1b; TB-5 flipped the default to
+    `True`, additive + forceable OFF for rollback): OFF, this function is
+    BYTE-FOR-BYTE the row-count logic below -- `full_frame_fits_estimate` is
+    never read, the rollback path. ON (the default), for a job IN SCOPE
     (`has_relationships and has_mask_table and not has_generate_table` --
     see `byte_estimate_full_frame_fits`'s docstring for why generate+mask is
     excluded), the "auto" decision is REPLACED by the §13 conservative-filter
@@ -255,9 +255,10 @@ def decide_execution_route(
     `out_of_core_threshold_rows` is not consulted in this mode. Out of scope,
     the flag has NO effect, even when `full_frame_fits_estimate` is set.
 
-    Sprint B2 (§3.3/§11/§13): `use_probe_routing` (default `False`, additive,
-    composes with `use_byte_estimate_routing` -- it has NO effect unless that
-    flag is also `True`) is the fast-path RECOVERY for a job the conservative
+    Sprint B2 (§3.3/§11/§13): `use_probe_routing` (TB-5 default `True`,
+    additive, composes with `use_byte_estimate_routing` -- it has NO effect
+    unless that flag is also `True`) is the fast-path RECOVERY for a job the
+    conservative
     B1b estimate over-downgrades. `probe_recovers_full_frame` is the caller's
     precomputed `_pipeline_routing_signals.resolve_probe_recovery` result:
     `True` only when the two-point micro-probe (`_probe.probe_peak_bytes`)
@@ -457,10 +458,11 @@ def decide_execution_route(
         # Irreducible reject class (§13): no bounded route applies (a
         # cross-table FK cycle, or a job disqualified from sequential for
         # another reason) AND the byte estimate does not confirm full_frame
-        # fits either. Reuse the EXISTING reject mechanism/code
-        # (`fk_full_frame_oom_risk_rejected`) rather than inventing a new
-        # one -- retiring this code is the B3 contract migration, not this
-        # sprint.
+        # fits either. Reuses the EXISTING reject code
+        # (`fk_full_frame_oom_risk_rejected`) with a BYTE-BASED reason -- the
+        # TB-5 contract migration (§B3) kept the code and deprecated the
+        # row-count basis, not the reject itself, so this remains the one
+        # irreducible reject class byte-based routing cannot absorb.
         byte_estimate_full_frame_reason = (
             "cross_table_cycle" if (eligible and cyclic) else route_reason
         )

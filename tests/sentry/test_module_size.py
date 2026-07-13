@@ -64,7 +64,17 @@ ALLOWLIST: dict[str, int] = {
     # removes before comparing slopes. It cannot be split just for one
     # accessor; decompose the fixed-width/string cost tables into a
     # `_mem_cost_tables.py` sibling when the next dtype/pricing batch lands.
-    "src/decoy_engine/execution/_mem_estimate.py": 610,
+    # TB-5 #74 (2026-07-13): +50 LOC for the estimator-BASIS single source of
+    # truth -- `route_slope` + `estimator_basis_bytes` (and its `BasisEstimate`
+    # result). This is the load-bearing OOM-safety contract: the SEQUENTIAL
+    # route's basis is the working set (two largest tables + FK dedup), NOT
+    # total raw bytes, and telemetry MUST divide observed_slope by the SAME
+    # basis the estimator multiplies or it under-states the sequential slope
+    # (the OOM-unsafe direction). `estimate_peak_bytes` now derives its
+    # prediction from `estimator_basis_bytes`, so basis + intercept + slope are
+    # one computation, unsplittable from the estimator. Same `_mem_cost_tables.py`
+    # decomposition target stands for the pricing tables.
+    "src/decoy_engine/execution/_mem_estimate.py": 660,
     # B5 dennis-remediation (2026-07-11): the HIGH (percentile-knob
     # under-shoot) and MEDIUM (crashed-run miscount) fixes each needed a
     # safety invariant documented in the module's docstrings, not just
@@ -78,7 +88,17 @@ ALLOWLIST: dict[str, int] = {
     # property 2 rewrite explaining WHY the raw point ratio spuriously fires.
     # Like the B5 remediation above, the invariant text IS the fix on this
     # safety-critical loop; folded into the same emission-helper decomposition.
-    "src/decoy_engine/execution/_mem_telemetry.py": 674,
+    # TB-5 #74 (2026-07-13): +88 LOC for the sequential BASIS contract --
+    # `_assert_basis_matches_estimator` (the guard the two emission builders
+    # call, REQUIRED for a sequential record) + the docstring text pinning WHY
+    # the sequential basis is the working set, not total raw bytes (dividing
+    # observed_slope by the wrong basis under-states the slope, the OOM-unsafe
+    # direction). The live drift loop stays platform-owned (#74 deferred); this
+    # guard is the standing contract that wiring must satisfy, and its rationale
+    # IS the fix on this safety-critical loop. Same emission-helper
+    # decomposition target stands (extract the builders + guard into
+    # `_mem_telemetry_emit.py` when B5 production wiring gives them real callers).
+    "src/decoy_engine/execution/_mem_telemetry.py": 762,
 }
 
 

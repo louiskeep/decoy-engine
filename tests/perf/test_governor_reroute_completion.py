@@ -327,9 +327,9 @@ def test_auto_run_that_trips_full_frame_reroutes_to_a_completed_out_of_core_run(
     """The TB-2 acceptance test: `tripped=true, route!=full_frame,
     completed=true, fk_internal_consistency=ok`.
 
-    `use_runtime_governor=True` is passed ONLY to this call -- no default
-    flag is flipped anywhere by this test (Track B machinery stays
-    flag-gated default-OFF through TB-4 per the program doc).
+    `use_runtime_governor=True` is passed explicitly here (TB-5 flipped the
+    governor default to ON, but this test pins it explicitly rather than
+    relying on the default so it reads the same either way).
     """
     config = _fk_mask_config(tmp_path, _ROWS)
     sources = _sources(config)
