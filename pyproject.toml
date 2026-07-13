@@ -326,6 +326,10 @@ ignore = [
 # path are intentional and the command is fully code-constructed) and reading
 # fixtures/reports from a /tmp scratch tree (S108).
 "scripts/tb3_cgroup_validation.py" = ["S603", "S607", "S108"]
+# TB-4 k-calibration: a manual/gated measurement harness that asserts on its
+# own measured invariants (S101) and stages fixtures in a /tmp scratch tree
+# (S108); neither is a production code path.
+"scripts/tb4_calibration.py" = ["S101", "S108"]
 # Benchmark suite has measurement loops that look stylistically loud.
 "tests/benchmark/**" = ["S101", "S105", "S106", "N802", "N806", "PT011"]
 # Intentional design / math-notation exceptions (no removal trigger;

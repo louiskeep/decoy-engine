@@ -9,6 +9,39 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (TB-4: calibration + telemetry -- MEASURED k_path constants, 2026-07-13)
+
+The OOM-avoidance estimator's per-route peak-RSS multipliers
+(`_mem_estimate.py`) are now **measured**, replacing the unmeasured cold-start
+placeholders (design §13). New manual/gated harness `scripts/tb4_calibration.py`
+runs each route in a fresh `run_pipeline_isolated` child (Sprint 1a isolation,
+so `peak_rss_mb` is that job's own attributable VmHWM) and fits a **two-point
+slope** `k = d(peak) / d(basis)` across two row scales per (schema class, route),
+cancelling the fixed interpreter/pyarrow/DuckDB intercept. Peak is confirmed
+**linear in bytes** (the `basis * k` model's shape holds). Measured max slope
+per route drove the re-pin:
+
+- **`K_FULL_FRAME_COLD_START` 3.0 -> 4.0.** Measured max slope 3.45 (numeric FK)
+  showed the prior 3.0 UNDER-predicts -- an OOM-unsafe direction. 4.0 covers
+  every sampled shape conservatively (+16% over the worst slope).
+- **`K_SEQUENTIAL_COLD_START` 1.5 -> 4.0.** Measured max slope 3.28 (numeric FK)
+  showed 1.5 badly under-predicts (OOM-unsafe). 4.0 covers it (+22%).
+- **`K_OUT_OF_CORE_COLD_START` 2.0 -> 1.5.** Measured max slope 0.95 (< 1.0)
+  CONFIRMS out_of_core is budget-bounded (peak grows sub-linearly with raw
+  bytes). Tightened from the unmeasured 2.0; the runtime budget + governor
+  (TB-1/TB-2/TB-3) remain out_of_core's real bound, not this estimate.
+- New `K_CALIBRATION_ERROR_BAND = 0.30` (also `fits`'s default asymmetric
+  margin) covers run-to-run variance + unsampled-shape headroom. The
+  **recalibration trigger** (drift via B5 telemetry / dependency change / new
+  schema class) is documented in the `_mem_estimate.py` module.
+
+Flags stay default-OFF (they flip at TB-5); this changes estimate values only,
+not routing behavior, until the byte-estimate routing flag is enabled. Raw
+measurements: `docs/plans/2026-07-13-tb4-calibration-results.md`;
+acceptance test: `tests/unit/execution/test_mem_calibration.py` (old placeholder
+diverges / new fits). Golden test-flight (53/53 + fingerprint 5/5) unchanged --
+calibration constants do not affect output determinism.
+
 ### Added (TB-3: local cgroup-capped validation of the OOM-avoidance router, 2026-07-13)
 
 The confidence gate before enabling Track B flags (TB-5) and before paying for

@@ -4,8 +4,8 @@
 
 `_mem_estimate.py`'s static estimator (B1a) is a deliberately CONSERVATIVE
 filter -- `K_FULL_FRAME_COLD_START` is picked to never under-predict, which
-means it over-prices a pooled-string schema by up to ~26x
-(`K_FULL_FRAME_COLD_START / K_FULL_FRAME_MEASURED_POOLED` = 3.0 / 0.117-ish
+means it over-prices a pooled-string schema by up to ~34x
+(`K_FULL_FRAME_COLD_START / K_FULL_FRAME_MEASURED_POOLED` = 4.0 / 0.117-ish
 true ratio) and routes it bounded even though it would have fit full_frame
 comfortably. This module is how that fast path gets RECOVERED: instead of
 trusting a model of bytes, it MEASURES the real peak RSS at a small scale

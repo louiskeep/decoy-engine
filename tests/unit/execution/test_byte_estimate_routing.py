@@ -327,10 +327,10 @@ class TestByteEstimateSignalFunction:
             ),
         )
         profile = _FakeProfile(tables=(table_profile,))
-        # raw = 1,000,000 * 50 * 8 = 400,000,000 B; K=3.0 -> 1,200,000,000 B;
-        # margin 1.3x -> 1,560,000,000 B needed to "fit".
-        small_budget = 1_000_000_000  # 1 GB < 1.56 GB required
-        large_budget = 2_000_000_000  # 2 GB > 1.56 GB required
+        # raw = 1,000,000 * 50 * 8 = 400,000,000 B; K=4.0 (TB-4 measured)
+        # -> 1,600,000,000 B; margin 1.3x -> 2,080,000,000 B needed to "fit".
+        small_budget = 1_000_000_000  # 1 GB < 2.08 GB required
+        large_budget = 2_500_000_000  # 2.5 GB > 2.08 GB required
         assert (
             byte_estimate_full_frame_fits(
                 profile, caller_sources={}, table_kinds={"t": "mask"}, budget_bytes=small_budget

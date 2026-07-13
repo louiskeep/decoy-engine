@@ -285,106 +285,116 @@ def raw_data_bytes(tables: Sequence[TableSizeSpec]) -> RawBytesResult:
 
 
 # ---------------------------------------------------------------------------
-# Path multipliers -- COLD-START constants (2026-07-10, k premise corrected
-# 2026-07-11 per the dennis BLOCK on the initial B1a pass)
+# Path multipliers -- MEASURED constants (TB-4 calibration, 2026-07-13).
+# History: cold-start guesses (2026-07-10) -> k-premise corrected (2026-07-11,
+# dennis BLOCK) -> MEASURED and pinned here (TB-4).
 # ---------------------------------------------------------------------------
 #
-# --- Evidence: what was actually measured -----------------------------------
+# --- What TB-4 measured (replaces the placeholders) --------------------------
 #
-# The B1 full_frame sweep (docs/plans/2026-07-10-oom-avoidance-routing-
-# redesign.md §1) measured peak_RSS / raw_data_bytes(same schema) on the
-# parent/child/grandchild FK chain in tests/perf_fixtures/fk_relational.py
-# (`build_table`, width=16 payload columns/table -- 48 payload columns total
-# across the 3 tables, plus 4 string key columns: parent.id, child.id,
-# child.parent_id, grandchild.child_id). Every column is variable-width
-# ("object"). Payload width is the fixture's own declared pool width
-# (12 chars, `_string_pool(..., width=12)`); key width is the exact average
-# length of a base-10 stringified index in [0, rows) plus a 1-char prefix
-# (computed, not guessed, via the closed-form digit-count sum -- see the
-# calibration test for the reproduction).
+# TB-4 (`scripts/tb4_calibration.py`; results in `docs/plans/
+# 2026-07-13-tb4-calibration-results.md`) ran each route in a FRESH
+# subprocess (`run_pipeline_isolated`, Sprint 1a) so `peak_rss_mb` is that
+# job's own attributable VmHWM. For every (schema class, route) it took TWO
+# row scales and fit a two-point SLOPE
 #
-#   rows/table | peak RSS (measured) | raw_data_bytes (this formula) |   k
-#   ---------- | -------------------  | ------------------------------ | ------
-#      1,000,000 |  4,448 MB          |  3,567,555,560 B (3.568 GB)    | 1.247
-#      2,000,000 |  8,474 MB          |  7,139,555,560 B (7.140 GB)    | 1.187
-#      4,000,000 | 16,560 MB          | 14,283,555,560 B (14.284 GB)   | 1.159
-#      6,000,000 | 24,768 MB          | 21,427,555,560 B (21.428 GB)   | 1.156
+#     k = (peak_high - peak_low) / (basis_high - basis_low)
 #
-# k converges toward ~1.156 as rows grow (the B1 sweep has a ~0.3-0.4 GB
-# fixed intercept -- interpreter/pandas/Arrow baseline -- that a per-row
-# multiplier cannot represent; it matters less at larger N). This measured
-# value is pinned below as `K_FULL_FRAME_MEASURED_POOLED` -- EVIDENCE ONLY,
-# not the operational constant. Do not use it for routing.
+# on the SAME basis each route divides by (full_frame/out_of_core:
+# `raw_data_bytes`; sequential: the two-largest-tables working set). The
+# slope CANCELS the fixed interpreter/pyarrow/DuckDB intercept (~180 MB
+# full_frame, ~426 MB out_of_core) the exact way `_probe.py` fits it out --
+# a single-point peak/basis ratio over-reads at small N. Peak is LINEAR in
+# basis (point_k converges to the slope as rows grow; consistent intercept),
+# so a per-byte `basis * k` model is the right SHAPE.
 #
-# --- Why the measured value is NOT schema-invariant (the dennis BLOCK) ------
+#   route        | pooled | numeric | unique | MAX slope | old placeholder
+#   ------------ | ------ | ------- | ------ | --------- | ---------------
+#   full_frame   | 2.11   |  3.45   |  2.43  |  3.45     | 3.0  (UNSAFE: < 3.45)
+#   out_of_core  | 0.39   |  0.95   |  --    |  0.95     | 2.0  (unmeasured over-guess)
+#   sequential   | 1.65   |  3.28   |  --    |  3.28     | 1.5  (UNSAFE: < 3.28)
 #
-# The B1 fixture's payload AND key columns are drawn from a shared pool of
-# only `_FILLER_POOL = 4096` distinct strings (see `fk_relational.py`) --
-# i.e. deliberately low cardinality relative to millions of rows, so CPython
-# reuses/interns the same string objects across cells. `raw_data_bytes`,
-# however, has no way to see that reuse: it prices every cell independently
-# at `width + _STR_OBJECT_OVERHEAD_BYTES` (57 B), so on THIS fixture it
-# over-prices the resident bytes by roughly 8.5x relative to what is
-# actually held in memory (measured true peak/raw for the pooled-string
-# shape: ~0.117). A schema with unique strings (no reuse) instead measures
-# ~1.400 true-peak/raw, and a schema of plain numeric (fixed-width) columns
-# is plausibly 2-3x once allocator/copy overhead is accounted for (dennis +
-# Codex's reasoned range, pending its own B1-equivalent sweep) -- both far
-# above 1.156. Applying 1.156 (the pooled-fixture's k) to a numeric or
-# unique-string schema therefore UNDER-predicts peak, which is the
-# dangerous direction: it can route a job onto full_frame that then OOMs.
-# There is no single number this module can compute from a static schema
-# description that is simultaneously accurate for pooled, unique, and
-# numeric shapes -- k is fundamentally per-schema, not per-path.
-#
-# K_FULL_FRAME_MEASURED_POOLED: the raw B1 measurement above, kept for
-# provenance/telemetry comparison ONLY -- e.g. so B5 can sanity-check a
-# real pooled-string job's measured k against the number this sprint
-# derived from the same fixture shape. Never read this constant for a
-# routing decision; `_K_PATH` does not reference it.
+# Two placeholders were OOM-UNSAFE: full_frame 3.0 and sequential 1.5 both
+# sat BELOW the measured numeric-FK worst case (the direction that silently
+# admits a job that then OOMs). The numeric shapes have no string pooling, so
+# `raw_data_bytes` prices them accurately and their k is the true worst case;
+# the FK routes add a hash-remap working set on top of raw bytes, which is
+# why numeric_fk (3.45 / 3.28) tops numeric_single (3.03). The constants
+# below are pinned at the MAX measured slope rounded UP with margin (§13's
+# conservative-filter ruling: over-predict, never under). See `raw_data_bytes`
+# for why pooled-string k reads LOW (over-priced cells) -- that is the
+# safe-to-over-predict direction, not a target to calibrate down to.
+
+# K_CALIBRATION_ERROR_BAND: the tolerance the pinned constants sit within,
+# ABOVE the measured max slope, for the routes the `basis * k` model prices
+# tightly (full_frame 4.0/3.45 = +16%, sequential 4.0/3.28 = +22%). Covers
+# TB-4's run-to-run variance (a few %, matching TB-3's ~±90 MB) plus headroom
+# for unsampled schema shapes. `out_of_core` sits further above its slope
+# (1.5/0.95 = +58%) on purpose -- its large fixed intercept makes a
+# through-origin k structurally loose, and over-predicting the RAM-CAPPED
+# fallback is the safe direction (see `K_OUT_OF_CORE_COLD_START`).
+K_CALIBRATION_ERROR_BAND = 0.30
+
+# RECALIBRATION TRIGGER (when to re-run `scripts/tb4_calibration.py` and
+# re-pin these constants; §13 / doc B5):
+#   1. DRIFT: B5 telemetry (`_mem_telemetry.recalibrate_k`) sees an isolated
+#      job whose observed_k for a route exceeds current_k -> RAISE immediately
+#      (safety), or the max observed_k over >= `min_samples_for_lower`
+#      isolated jobs falls below current_k / (1 + K_CALIBRATION_ERROR_BAND)
+#      -> consider LOWERING (gated). recalibrate_k enforces both directions.
+#   2. DEPENDENCY/ROUTE CHANGE: a pyarrow / DuckDB / pandas major bump, or an
+#      engine change to a route's buffering/copy behavior, invalidates the
+#      measured slope+intercept -> re-run the sweep.
+#   3. NEW SCHEMA CLASS: a production shape materially unlike the sampled
+#      pooled/numeric/unique classes (e.g. wide-binary, deeply nested) ->
+#      measure it before trusting a bare estimate for full_frame admission.
+
+# K_FULL_FRAME_MEASURED_POOLED: EVIDENCE ONLY, kept for provenance/telemetry
+# comparison -- the B1 pooled-string full_frame sweep (parent/child/
+# grandchild FK, 16 pooled payload cols/table, `_string_pool(width=12)`)
+# measured peak_RSS / raw_data_bytes converging to ~1.156 as rows grow
+# (4,448 MB @ 1M rows -> 24,768 MB @ 6M; see the calibration test for the
+# closed-form reproduction). Because that fixture pools cells from only 4096
+# distinct strings, `raw_data_bytes` over-prices it ~8.5x, so 1.156 is a
+# pooled-shape ARTIFACT, NOT schema-invariant (dennis BLOCK). TB-4's
+# intercept-free pooled full_frame slope (2.11) is higher than 1.156 because
+# it prices against a leaner 4-column pooled fixture; both are far below the
+# numeric worst case. Never read this constant for a routing decision;
+# `_K_PATH` does not reference it.
 K_FULL_FRAME_MEASURED_POOLED = 1.156
 
-# K_FULL_FRAME_COLD_START: the OPERATIONAL constant `_K_PATH["full_frame"]`
-# actually uses. Deliberately conservative -- picked to cover the numeric/
-# unique-string worst case (the reasoned 2-3x range above) plus headroom,
-# NOT the pooled-fixture measurement. This intentionally OVER-prices a
-# pooled-string schema like the B1 fixture (predicting ~26x its raw bytes
-# against a true ~0.117x) -- that is the SAFE direction: an over-priced
-# pooled-string job still gets routed correctly (it will simply also fit
-# comfortably, or in a near-boundary case get bumped to the probe/bounded
-# path per the B1b precondition above, where B2/B5 measure its real, much
-# smaller peak and it is recovered). The alternative -- staying near 1.156
-# -- is not recoverable the same way: it silently admits a numeric/unique
-# schema into full_frame that then OOMs. This constant is a coarse
-# conservative filter, not a prediction, and is REPLACED by a measured
-# per-schema k (probe result or B5 telemetry) wherever one is available;
-# see the B1b precondition above for the binding rule on when a bare
-# estimate under this constant may be trusted for full_frame admission.
-K_FULL_FRAME_COLD_START = 3.0
+# K_FULL_FRAME_COLD_START: the OPERATIONAL full_frame constant
+# `_K_PATH["full_frame"]` uses. MEASURED (TB-4): max slope 3.45 (numeric FK)
+# rounded up to 4.0 (+16%). Covers slope + the ~180 MB intercept for every
+# OOM-relevant (large-basis) job of any sampled schema class, and stays
+# comfortably above the pooled/unique shapes it over-prices (the safe
+# direction: an over-priced pooled job still routes correctly, or the probe
+# (B2) / B5 telemetry recover its real, much smaller peak -- see the B1b
+# precondition above). The prior 3.0 was a reasoned guess that TB-4 showed
+# UNDER-predicts numeric FK; 4.0 is the measured, conservative replacement.
+K_FULL_FRAME_COLD_START = 4.0
 
-# HARD PRECONDITION (both constants below): no production benchmark backs
-# either of these yet, and B1b MUST NOT route a job onto out_of_core or
-# sequential on the strength of a bare estimate using them before Sprint 0's
-# speed-ratio gate (§7) and/or B5 telemetry have actually run. They exist so
-# `estimate_peak_bytes`/`fits` are callable end-to-end today; they are not a
-# green light to wire unconditional routing on top of them.
-#
-# No production out_of_core benchmark exists yet in this repo (Sprint 0's
-# speed-ratio gate, §7, has not run) -- this is a deliberately conservative
-# placeholder, NOT derived from a measurement, pending that number. The
-# out_of_core route is RAM-CAPPED by design (`out_of_core/_budget.py`'s
-# `resolve_budget`/`memory_limit`): its steady-state peak should track the
-# configured budget, not the job's total raw bytes, so this multiplier only
-# matters for small jobs whose predicted bytes are still below the budget's
-# cap. Picking a multiplier above 1.0 (rather than 1.0) is the safe
-# direction -- it makes the estimator LESS likely to claim out_of_core fits
-# when it might not, not more.
-K_OUT_OF_CORE_COLD_START = 2.0
+# K_OUT_OF_CORE_COLD_START: MEASURED (TB-4): max slope 0.95 (numeric FK),
+# CONFIRMING the design premise that out_of_core is RAM-CAPPED
+# (`out_of_core/_budget.py`) -- its peak grows SUB-linearly with raw bytes
+# (slope < 1.0) because chunks are budget-bounded, so the multiplier only
+# matters for jobs below the budget cap. Pinned at 1.5: the measured slope
+# 0.95 plus intercept coverage for the job sizes where out_of_core is
+# actually selected (basis >= ~850 MB), staying above 1.0 (the safe
+# direction: LESS likely to claim out_of_core fits) while tight enough to
+# keep the fallback usable for large jobs. Tightened from the unmeasured 2.0
+# now that the sub-linear growth is measured; the runtime budget + governor
+# (TB-1/TB-2/TB-3) remain the real bound for out_of_core, not this estimate.
+K_OUT_OF_CORE_COLD_START = 1.5
 
-# No production sequential benchmark exists yet either, and `run_sequential`
-# is mid-rework (PR #22, §3.2a) -- expect this to shift materially (the plan
-# names ~25%) once that lands and B5 telemetry replaces it. Placeholder only.
-K_SEQUENTIAL_COLD_START = 1.5
+# K_SEQUENTIAL_COLD_START: MEASURED (TB-4): max slope 3.28 (numeric FK),
+# intercept ~163 MB (like full_frame, unlike out_of_core -- sequential
+# streams table-by-table but still holds a working set + FK dedup resident).
+# Pinned at 4.0 (+22%). The prior 1.5 was a placeholder that TB-4 showed
+# badly UNDER-predicts (3.28 measured) -- the OOM-unsafe direction; 4.0 is
+# the measured, conservative replacement covering slope + intercept for
+# OOM-relevant sequential jobs.
+K_SEQUENTIAL_COLD_START = 4.0
 
 _K_PATH: dict[ExecutionPath, float] = {
     "full_frame": K_FULL_FRAME_COLD_START,
@@ -521,7 +531,7 @@ def fits(
     path: ExecutionPath,
     budget_bytes: int,
     *,
-    error_band: float = 0.30,
+    error_band: float = K_CALIBRATION_ERROR_BAND,
     fk_cardinality: FkCardinalityInput | None = None,
 ) -> bool | None:
     """Whether `path` fits `budget_bytes` with the asymmetric margin (§3.6).
@@ -557,6 +567,7 @@ def fits(
 
 
 __all__ = [
+    "K_CALIBRATION_ERROR_BAND",
     "K_FULL_FRAME_COLD_START",
     "K_FULL_FRAME_MEASURED_POOLED",
     "K_OUT_OF_CORE_COLD_START",
