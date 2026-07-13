@@ -16,7 +16,12 @@ from typing import TYPE_CHECKING, Final
 import pyarrow as pa
 
 from decoy_engine.execution._errors import ExecutionError
-from decoy_engine.execution._fk_keys import NULL_FK_KEY, fk_join_key_tuple, fk_key_value
+from decoy_engine.execution._fk_keys import (
+    FK_KEY_DTYPE_UNSUPPORTED_CODE,
+    NULL_FK_KEY,
+    fk_join_key_tuple,
+    fk_key_value,
+)
 from decoy_engine.execution.out_of_core._duckdb import connect_duckdb
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge
@@ -316,7 +321,7 @@ def _append_output_batch(
             # for this shape; the route rejects rather than drift (see
             # tests/parity/SEMANTIC_DIFFERENCES.md).
             raise ExecutionError(
-                code="out_of_core_fk_key_dtype_unsupported",
+                code=FK_KEY_DTYPE_UNSUPPORTED_CODE,
                 message=(
                     "out-of-core FK output batch mixes key values Arrow cannot "
                     "reconcile into one array (e.g. a matched float parent value "
@@ -401,7 +406,7 @@ def cast_fk_chunk(chunk: pa.Array, target: pa.DataType) -> pa.Array:
         # False while a lossless widening leaves it True.
         if not widened.cast(chunk.type, safe=False).equals(chunk):
             raise ExecutionError(
-                code="out_of_core_fk_key_dtype_unsupported",
+                code=FK_KEY_DTYPE_UNSUPPORTED_CODE,
                 message=(
                     f"out-of-core FK output has an integer key outside the "
                     f"exactly-representable float range casting {chunk.type} -> "
@@ -432,7 +437,7 @@ def _unified_chunk_type(types: set[pa.DataType]) -> pa.DataType | None:
         # inference raises. Neither is byte-identical, so reject fail closed: a
         # compatibility rejection beats byte drift.
         raise ExecutionError(
-            code="out_of_core_fk_key_dtype_unsupported",
+            code=FK_KEY_DTYPE_UNSUPPORTED_CODE,
             message=(
                 "out-of-core FK output mixes decimal and non-decimal key "
                 f"values ({', '.join(sorted(str(t) for t in non_null))}); this "
