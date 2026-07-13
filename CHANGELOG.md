@@ -9,6 +9,32 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (TB-3: local cgroup-capped validation of the OOM-avoidance router, 2026-07-13)
+
+The confidence gate before enabling Track B flags (TB-5) and before paying for
+GCP (TB-6). Where TB-2 proved reroute-to-completion under the governor's
+*in-process* RSS monitor, TB-3 re-proves the same three properties the
+routing-redesign's §9 acceptance requires under a **real kernel `memory.max`
+cgroup v2 cap** on the devbox (pve2 LXC, 8 GB RAM), with zero VM spend. New
+manual/gated harness `scripts/tb3_cgroup_validation.py` runs each engine job
+inside a transient `sudo systemd-run` service under a hard cap
+(`MemoryMax`/`MemorySwapMax=0`/`OOMPolicy=continue`) and aggregates a JSON
+verdict. Measured proofs (scale: 750,000 rows/table, parent -> child FK,
+pure-mask; ~726 MB resident; cap 2400 MB): **(1) route-by-bytes width test** --
+at 200,000 rows held constant against a 500 MB budget, a narrow schema routes
+`full_frame` and a wide schema (more bytes/row) routes `out_of_core`, so the
+decision keys off computed bytes-vs-budget, not row count; **(2)
+reroute-to-completion under the cap** -- `full_frame` (free peak ~3.2 GB,
+observed 3177-3266 MB across 3 runs, ~±90 MB run-to-run variance) is
+kernel-OOM-killed under the 2400 MB cap while the governor trips it
+(`trip_kind=self_oom`, a real kernel kill) and reroutes to a completed,
+FK-consistent `out_of_core` run (peak 746 MB) under that same cap; **(3) path
+parity** -- `full_frame` and `out_of_core` outputs are byte-identical (matching
+content hashes). Cap enforcement is proven to bite first (a 256 MB allocation
+under a 64 MB cap is OOM-killed). Results writeup:
+`docs/plans/2026-07-13-tb3-cgroup-validation-results.md`. No default flag
+flipped; the governor flag is enabled only within the validation run.
+
 ### Added (TB-2: runtime-governor reroute-to-completion proof, 2026-07-13)
 
 The 50M benchmark's governor phase (B6) proved *containment* (a route over
