@@ -321,6 +321,11 @@ ignore = [
 # scripts/test_flight.py: confirmed-importable stub; run_suite import is
 # intentionally present to prove the runner package is importable.
 "scripts/test_flight.py" = ["F401"]
+# TB-3 cgroup validation: a manual/gated harness whose whole job is spawning
+# capped `sudo systemd-run` children (S603/S607 subprocess with a partial
+# path are intentional and the command is fully code-constructed) and reading
+# fixtures/reports from a /tmp scratch tree (S108).
+"scripts/tb3_cgroup_validation.py" = ["S603", "S607", "S108"]
 # Benchmark suite has measurement loops that look stylistically loud.
 "tests/benchmark/**" = ["S101", "S105", "S106", "N802", "N806", "PT011"]
 # Intentional design / math-notation exceptions (no removal trigger;
