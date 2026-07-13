@@ -210,9 +210,10 @@ class TestQuarantinePublishedOnlyOnSinkCommit:
 
 class TestQuarantinePublishReplaceFailureAfterCommit:
     """DE-08 residual (dennis): the post-commit publish step itself --
-    `publish_staged_jsonl`'s `os.replace` -- can fail (disk full, permission
-    denied, ...), distinct from the sink's own `commit()` failing. By the time
-    this runs, `_tsink.commit()` has ALREADY succeeded: the masked tables are
+    `publish_staged_jsonl`'s exclusive-create publish -- can fail (a
+    pre-existing file at the final path, disk full, permission denied, ...),
+    distinct from the sink's own `commit()` failing. By the time this runs,
+    `_tsink.commit()` has ALREADY succeeded: the masked tables are
     legitimately, correctly published. Only the raw-PII quarantine sidecar's
     publish is in flight. This must still err safe: no raw quarantine file at
     the final path, no orphaned staging file, and the failure surfaces to the
@@ -224,20 +225,25 @@ class TestQuarantinePublishReplaceFailureAfterCommit:
     has succeeded; see `TestAbortNotCalledAfterSuccessfulCommit` below for the
     direct proof.
 
-    Reproduced with a real OS-level `os.replace` failure -- no mocking of the
-    replace call itself -- by pointing `output_path` at a path that is already
-    an existing directory: POSIX rename(2) raises EISDIR when the source is a
-    regular file and the destination is a directory, so
-    `publish_staged_jsonl`'s single `os.replace` genuinely fails.
+    Reproduced with a real OS-level failure -- no mocking of the publish call
+    itself -- by pointing `output_path` at a path that is already an existing
+    directory: `publish_staged_jsonl`'s `os.link` (dennis re-gate HIGH #2:
+    exclusive-create publish, closing the duck-typed-sink gap the name-based
+    alias guard could not) raises `FileExistsError` because the destination
+    already exists, which `publish_staged_jsonl` converts to a loud
+    `ValueError` -- never silently overwritten, and never a bare `os.replace`
+    EISDIR anymore.
     """
 
     def test_replace_failure_after_commit_leaves_no_quarantine_and_no_orphan(
         self, tmp_path: Path
     ) -> None:
         # A pre-existing directory (with an occupant file, to prove it's left
-        # completely untouched) sits at the quarantine output path. A file
-        # can never be os.replace'd onto an existing directory on POSIX, so
-        # this forces publish_staged_jsonl's os.replace to raise for real.
+        # completely untouched) sits at the quarantine output path.
+        # os.link refuses to create a link at a path that already exists
+        # (FileExistsError) regardless of whether the occupant is a file or a
+        # directory, so this forces publish_staged_jsonl's exclusive-create
+        # to raise for real.
         qpath_dir = tmp_path / "quarantine.jsonl"
         qpath_dir.mkdir()
         occupant = qpath_dir / "occupant.txt"
@@ -248,7 +254,7 @@ class TestQuarantinePublishReplaceFailureAfterCommit:
         sources = _sources(config)
         sink = ParquetTransactionalSink(tmp_path / "out")
 
-        with pytest.raises(OSError):
+        with pytest.raises(ValueError, match="refusing to publish quarantine"):
             run_pipeline(config, sources, engine_version="0.1.0", sink=sink)
 
         # The sink's own commit already succeeded before the quarantine
@@ -386,11 +392,13 @@ class _AbortTrackingSink:
 
 class TestAbortNotCalledAfterSuccessfulCommit:
     def test_post_commit_publish_failure_does_not_call_abort(self, tmp_path: Path) -> None:
-        """Reuses the EISDIR reproduction (publish_staged_jsonl's os.replace
-        genuinely fails because the destination is a pre-existing directory)
-        but asserts directly on whether abort() was invoked, rather than only
-        on side effects. Fails pre-fix (abort() called unconditionally in the
-        shared except clause); passes post-fix (`_committed` guard skips it)."""
+        """Reuses the exclusive-create-refusal reproduction
+        (publish_staged_jsonl's os.link genuinely fails with FileExistsError,
+        converted to ValueError, because the destination is a pre-existing
+        directory) but asserts directly on whether abort() was invoked,
+        rather than only on side effects. Fails pre-fix (abort() called
+        unconditionally in the shared except clause); passes post-fix
+        (`_committed` guard skips it)."""
         qpath_dir = tmp_path / "quarantine.jsonl"
         qpath_dir.mkdir()
         occupant = qpath_dir / "occupant.txt"
@@ -402,7 +410,7 @@ class TestAbortNotCalledAfterSuccessfulCommit:
         real = ParquetTransactionalSink(tmp_path / "out")
         sink = _AbortTrackingSink(real)
 
-        with pytest.raises(OSError):
+        with pytest.raises(ValueError, match="refusing to publish quarantine"):
             run_pipeline(config, sources, engine_version="0.1.0", sink=sink)
 
         assert sink.abort_called is False, (
@@ -522,3 +530,115 @@ class TestSinkCommitFailureWritesNoQuarantineAnywhere:
         )
         assert not (tmp_path / "out").exists()
         assert not Path(qpath).exists()
+
+
+# ---------------------------------------------------------------------------
+# Dennis + Codex re-gate (final HIGH): `guard_quarantine_not_aliasing_
+# committed_table` only fires for sinks that expose `committed_table_path`
+# (ParquetTransactionalSink does). A duck-typed TransactionalSink --
+# write/commit/abort present, but NOT `committed_table_path` -- routes
+# through this same staged-publish path with the guard silently no-op'ing
+# (`getattr(sink, "committed_table_path", None)` returns None), so the
+# *unconditional* `os.replace` overwrote a just-committed masked table with
+# raw-PII JSONL while the run still reported SUCCESS. The root fix makes
+# `publish_staged_jsonl` itself exclusive-create (`os.link`), closing this
+# uniformly for Parquet, duck-typed, and arbitrary custom sinks alike --
+# the earlier name-based guard is now only a friendlier, earlier error for
+# the one sink shape that can support it, not the only line of defense.
+# ---------------------------------------------------------------------------
+
+
+class _DuckTypedTransactionalSink:
+    """Wraps a real ParquetTransactionalSink; delegates write/commit/abort,
+    but deliberately does NOT expose `committed_table_path` -- the shape of
+    an arbitrary custom TransactionalSink implementation that satisfies the
+    write/commit/abort protocol without also advertising its committed
+    table paths. `guard_quarantine_not_aliasing_committed_table`'s
+    `getattr(sink, "committed_table_path", None)` returns None for this
+    sink, so that guard is a no-op here by design -- the exclusive-create
+    publish in `publish_staged_jsonl` is the only remaining line of defense."""
+
+    def __init__(self, inner: ParquetTransactionalSink) -> None:
+        self._inner = inner
+
+    def write(self, table: str, data: pa.Table) -> None:
+        self._inner.write(table, data)
+
+    def commit(self) -> None:
+        self._inner.commit()
+
+    def abort(self) -> None:
+        self._inner.abort()
+
+
+class TestDuckTypedSinkAliasingCommittedTable:
+    def test_duck_typed_sink_aliasing_raises_and_leaves_table_intact(self, tmp_path: Path) -> None:
+        """`quarantine.output_path` set to the exact path a duck-typed
+        TransactionalSink (no `committed_table_path`) just committed `parent`
+        to must raise instead of silently clobbering the masked table with
+        raw JSONL. The name-based alias guard cannot see this sink at all (no
+        `committed_table_path` to call), so a pass here proves the
+        exclusive-create publish itself is load-bearing, not just the
+        earlier friendlier guard. Fails pre-fix: `os.replace` silently
+        overwrites `parent.parquet` with raw quarantine JSONL and the run
+        reports SUCCESS (verified separately against the pre-fix source);
+        passes post-fix (`ValueError`, masked `parent.parquet` untouched)."""
+        target = tmp_path / "out"
+        qpath = str(target / "parent.parquet")  # aliases the committed table
+        config = _config(tmp_path, qpath)
+        sources = _sources(config)
+        real = ParquetTransactionalSink(target)
+        sink = _DuckTypedTransactionalSink(real)
+        assert not hasattr(sink, "committed_table_path")
+
+        with pytest.raises(ValueError, match="refusing to publish quarantine"):
+            run_pipeline(config, sources, engine_version="0.1.0", sink=sink)
+
+        # The sink's own commit already succeeded (tables ARE legitimately
+        # published) before the exclusive-create publish runs; the masked
+        # table must be untouched -- still valid masked Parquet, not raw
+        # JSONL, and the raw "badX" cell never appears in it.
+        parent_out = pq.read_table(target / "parent.parquet")
+        assert "badX" not in parent_out.column("age").to_pylist()
+        assert (target / "child.parquet").exists()
+
+        # No orphaned staging file for the quarantine sidecar either.
+        leftovers = list(target.glob("_decoy_quarantine_stage_*"))
+        assert leftovers == []
+
+
+class TestQuarantineOutputPathPreExistingNonAliasingFile:
+    def test_pre_existing_file_at_output_path_raises_and_is_not_overwritten(
+        self, tmp_path: Path
+    ) -> None:
+        """A plain pre-existing file sits at `quarantine.output_path` that
+        does NOT alias any table this run committed (so the name-based alias
+        guard would never catch it even for a ParquetTransactionalSink --
+        it only checks table paths, not arbitrary pre-existing files). The
+        exclusive-create publish must still refuse to overwrite it rather
+        than silently clobbering it, and the staged temp file must be
+        discarded (no orphan)."""
+        target = tmp_path / "out"
+        qpath_file = tmp_path / "quarantine.jsonl"
+        qpath_file.write_text("pre-existing content, not a quarantine record")
+        qpath = str(qpath_file)
+
+        config = _config(tmp_path, qpath)
+        sources = _sources(config)
+        sink = ParquetTransactionalSink(target)
+
+        with pytest.raises(ValueError, match="refusing to publish quarantine"):
+            run_pipeline(config, sources, engine_version="0.1.0", sink=sink)
+
+        # Untouched: still the original content, not raw quarantine JSONL.
+        assert qpath_file.read_text() == "pre-existing content, not a quarantine record"
+
+        # The sink's own commit already succeeded -- masked tables published.
+        assert (target / "parent.parquet").exists()
+        assert (target / "child.parquet").exists()
+
+        # No orphaned staging file left behind (best-effort discard fired).
+        leftovers = list(tmp_path.glob("_decoy_quarantine_stage_*")) + list(
+            target.glob("_decoy_quarantine_stage_*")
+        )
+        assert leftovers == []

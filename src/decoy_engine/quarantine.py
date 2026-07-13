@@ -370,20 +370,63 @@ def write_jsonl_staged(final_path: str, records: list[dict[str, Any]]) -> Path:
 
 
 def publish_staged_jsonl(staged_path: Path, final_path: str) -> None:
-    """Atomically publish a staged quarantine JSONL to ``final_path``.
+    """Exclusively publish a staged quarantine JSONL to ``final_path``.
 
-    A single ``os.replace`` (POSIX rename, same filesystem because
-    ``write_jsonl_staged`` stages beside ``final_path``) makes the file visible
-    at ``final_path`` all at once. Call ONLY after the sink's own commit has
-    already succeeded (DE-08): this is the "publish" half of the
-    stage-then-publish pair that gives the quarantine sidecar the same
-    commit-or-discard fate as the transactional sink.
+    Uses ``os.link`` (creates a hardlink; atomic and, since
+    ``write_jsonl_staged`` stages beside ``final_path``, same-filesystem) then
+    unlinks the stage -- instead of ``os.replace`` -- so the publish itself is
+    fail-CLOSED: an already-existing ``final_path`` is refused rather than
+    silently overwritten. Call ONLY after the sink's own commit has already
+    succeeded (DE-08): this is the "publish" half of the stage-then-publish
+    pair that gives the quarantine sidecar the same commit-or-discard fate as
+    the transactional sink.
+
+    Why exclusive-create, not name-based aliasing checks (dennis re-gate
+    HIGH): ``guard_quarantine_not_aliasing_committed_table`` only fires for
+    sinks that expose a ``committed_table_path`` method
+    (``ParquetTransactionalSink`` does). A duck-typed ``TransactionalSink``
+    -- write/commit/abort present, but no ``committed_table_path`` -- routed
+    through this same staged-publish path with that guard silently no-op'ing
+    (``getattr(sink, "committed_table_path", None)`` returns ``None``), so an
+    unconditional ``os.replace`` would overwrite the sink's just-committed
+    masked table with the raw-PII quarantine JSONL while the run still
+    reported SUCCESS. In transactional mode the sidecar always publishes into
+    a fresh all-or-nothing location, so ``final_path`` must not pre-exist --
+    exclusive-create closes the raw-PII-overwrite path uniformly for Parquet,
+    duck-typed, and arbitrary custom sinks alike, without depending on the
+    sink advertising its committed paths at all. It also shrinks the
+    check-then-publish TOCTOU the name-based guard had: there is no window
+    between "check the name" and "replace the file" for the path to have come
+    into existence in between -- the filesystem's own exclusive-link
+    semantics make the check-and-act a single atomic operation.
 
     Raises:
-        OSError: If the rename fails (e.g. disk full, permission denied).
-            Nothing is published on failure; ``staged_path`` is untouched.
+        ValueError: ``final_path`` already exists. Nothing is published (the
+            pre-existing file at ``final_path`` is left completely
+            untouched); the staged temp file is best-effort discarded here so
+            no raw-PII stage is left behind (the caller's own cleanup, e.g.
+            ``finalize_committed_quarantine``, discards it again for defense
+            in depth -- ``discard_staged_jsonl`` is idempotent).
+        OSError: The link fails for any other reason (e.g. a genuine
+            cross-device error -- should not happen, since the stage is
+            created beside ``final_path`` -- or permission denied). Nothing
+            is published; ``staged_path`` is left for the caller to discard.
+            Never falls back to a plain overwrite.
     """
-    os.replace(staged_path, Path(final_path))
+    final = Path(final_path)
+    try:
+        os.link(staged_path, final)
+    except FileExistsError:
+        try:
+            staged_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise ValueError(
+            f"refusing to publish quarantine: a file already exists at "
+            f"quarantine.output_path {final_path!r}; transactional publish "
+            "will not overwrite it"
+        ) from None
+    os.unlink(staged_path)
 
 
 def guard_quarantine_not_aliasing_committed_table(
@@ -404,12 +447,23 @@ def guard_quarantine_not_aliasing_committed_table(
 
     Only checked for sinks that expose a ``committed_table_path(table) ->
     Path`` method (``ParquetTransactionalSink`` does, see
-    ``execution/_transactional_sink.py``); an arbitrary custom
+    ``execution/_transactional_sink.py``). An arbitrary custom or duck-typed
     ``TransactionalSink`` that does not expose its committed paths is
-    unaffected by this guard -- same as before this fix, not a new gap it
-    introduces. The natural layout, the quarantine JSONL living INSIDE the
-    sink's own target directory under its own name (``out/quarantine.jsonl``),
-    is never equal to any table's committed path, so it is unaffected too.
+    unaffected by THIS particular guard -- and against ``origin/main`` (pre
+    the commit-first reorder this module's docstring describes) that omission
+    WAS a new gap the reorder introduced: ``publish_staged_jsonl`` used an
+    unconditional ``os.replace``, so a duck-typed sink with no
+    ``committed_table_path`` had no line of defense at all and would silently
+    overwrite a just-committed masked table with raw-PII JSONL while the run
+    still reported SUCCESS (dennis re-gate HIGH). ``publish_staged_jsonl`` is
+    now itself fail-closed (exclusive create via ``os.link``; see its
+    docstring) for every sink shape -- Parquet, duck-typed, and arbitrary
+    custom alike -- so this function is now only a friendlier, earlier,
+    name-based error for the one sink type that can support it; it is no
+    longer the only line of defense. The natural layout, the quarantine JSONL
+    living INSIDE the sink's own target directory under its own name
+    (``out/quarantine.jsonl``), is never equal to any table's committed path,
+    so it is unaffected too.
 
     Raises:
         ValueError: ``output_path`` is exactly a table this run just
