@@ -30,6 +30,61 @@ for the reference file-based implementation, which publishes via a single atomic
 directory rename: a commit-time failure leaves the target untouched, and if the
 target already exists non-empty, commit fails closed with nothing published.
 
+Quarantine sidecar shares the sink's commit-or-discard fate (DE-08, HIGH
+data-safety finding). Before this fix, the quarantine JSONL was written
+straight to its FINAL path before/independent of ``_tsink.commit()``: if
+commit() raised (the sink's abort path), table staging was discarded but the
+already-published quarantine sidecar -- raw, uncoercible pre-mask values, by
+definition (see ``quarantine.py`` module docstring) -- was left behind. With a
+genuine ``TransactionalSink`` (write/commit/abort; a plain Callable sink,
+wrapped in ``_CallableSinkAdapter``, does NOT count here -- see the Callable
+sink paragraph above), ``run_sequential`` now defers the WHOLE quarantine
+write until AFTER ``_tsink.commit()`` has already returned successfully: only
+then does it stage the JSONL beside the final path
+(``quarantine.write_jsonl_staged``, same staging-then-atomic-rename
+discipline as ``ParquetTransactionalSink``) and publish it
+(``quarantine.publish_staged_jsonl``, a single ``os.replace``).
+
+Staging AFTER commit rather than before is deliberate: the entries are
+already fully in memory by this point (a whole-file write, never a stream),
+so nothing is lost by waiting -- and staging before commit put a temp file
+inside the sink's OWN commit-target directory whenever the two share a
+parent (the natural layout: sink target ``out/``, quarantine
+``out/quarantine.jsonl``), which made the sink's atomic directory
+``os.replace`` fail closed with ``ENOTEMPTY`` and publish NOTHING, not even
+the tables. By the time staging now runs, the sink's target directory
+already exists from its own successful rename, so a sibling temp file cannot
+collide with a rename that already happened.
+
+Because staging only happens after a successful commit, ``_tsink.abort()`` is
+never called once commit has already succeeded (tracked via an explicit
+``_committed`` flag) -- calling abort() on an already-committed custom sink
+could otherwise delete tables it just durably published. A failure while
+staging or publishing the sidecar after that point (e.g. ``os.replace``
+itself failing) discards the orphaned staged file
+(``quarantine.discard_staged_jsonl``, best-effort) and re-raises, without
+calling ``_tsink.abort()`` -- the masked tables stay committed; only the
+sidecar publish failed. Fail-loud row-error ordering is unchanged: an
+uncovered record still raises `RowErrorsFailedError` before any per-table
+write/eviction, long before ``_tsink.commit()`` is reached -- that failure
+path means commit() never runs, so abort() still fires exactly as before.
+Without a sink, or with a plain Callable sink (non-transactional either way,
+and never staged, so a special/non-directory quarantine path like
+``/dev/null`` is safe), the quarantine JSONL is written straight to its
+final path exactly as before -- out of DE-08's scope.
+
+DE-08 explicitly does NOT build (left for a future sprint, Cam-gated): (1) a
+fuller run-scoped publication protocol with an authenticated success marker /
+commit-marker that downstream readers must check before trusting ANY output
+of a run (tables or quarantine) as final -- this fix only makes the
+quarantine sidecar's OWN publish atomic and commit-gated, it does not add a
+cross-artifact "is this whole run really done" signal; (2)
+heterogeneous-sink idempotency/compensation (e.g. a sink that partially
+commits table A durably before failing on table B, where a retry needs to
+know A was already applied) -- out of scope here, which only closes the
+"quarantine published despite sink abort" leak for the existing
+single-sink-instance contract.
+
 Lives in its own module so `_pandas_adapter.py` stays under the orchestration LOC
 cap. It reuses the adapter's per-node masking (`_dispatch_mask_node`) and parent-map
 builder (`_parent_map`), so masking stays defined in one place.
@@ -97,8 +152,7 @@ from decoy_engine.execution._transactional_sink import (
 from decoy_engine.generation.pool._cache import PoolCache
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.instrumentation.timing import TimingCollector, use_collector
-from decoy_engine.quarantine import _write_jsonl, compute_quarantine, quarantine_manifest
-from decoy_engine.validators._types import QuarantineSummary
+from decoy_engine.quarantine import compute_quarantine, finalize_committed_quarantine
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -177,6 +231,14 @@ def run_sequential(
     matching `run()`'s honesty guarantee). Covered records are filtered out of
     that table's output before write. `ExecutionResult.row_errors` carries every
     drained record (covered or not) for caller-side reporting.
+
+    DE-08 (+ reland fix): with a genuine `TransactionalSink`, the quarantine
+    JSONL shares its commit-or-discard fate -- both staged AND published
+    (atomic rename) only after `_tsink.commit()` has already succeeded, so
+    `_tsink.abort()` is never invoked once that commit is done; never
+    published on any exception, including a commit failure. See the module
+    docstring's "Quarantine sidecar shares the sink's commit-or-discard fate"
+    section.
     """
     q_cfg: dict[str, Any] = quarantine_config or {}
     q_enabled = bool(q_cfg.get("enabled", False))
@@ -229,6 +291,10 @@ def run_sequential(
     source_snapshots: dict[tuple[str, str], pd.Series] = {}
     frames: dict[str, pd.DataFrame] = {}
     outputs: dict[str, pa.Table] = {}
+    # Tables actually handed to `_tsink.write` (HIGH #1 re-gate): feeds the
+    # post-commit alias guard, which needs to know exactly which committed
+    # table artifacts exist to check `q_output_path` against.
+    written_tables: list[str] = []
     warnings: list[QualityWarning] = []
     conversion_ms = 0.0
     collector = TimingCollector()
@@ -239,12 +305,30 @@ def run_sequential(
     # write/commit/abort-only sink, which this call site never needs write_batches
     # from (see the helper's docstring).
     _tsink: TransactionalSink | None
-    if isinstance(sink, TransactionalSink) or _has_transactional_write_contract(sink):
+    # False for a plain Callable sink even though it gets wrapped in
+    # _CallableSinkAdapter below (making `_tsink` non-None): that adapter's
+    # commit()/abort() are no-ops, so it never had a real commit-or-discard
+    # contract, and the quarantine staged-publish path (Codex finding #3)
+    # must not be taken for it -- a callable sink with a special
+    # non-directory quarantine path (e.g. /dev/null) would otherwise crash
+    # attempting to stage a temp file there.
+    _is_genuine_transactional_sink = isinstance(
+        sink, TransactionalSink
+    ) or _has_transactional_write_contract(sink)
+    if _is_genuine_transactional_sink:
         _tsink = sink  # type: ignore[assignment]
     elif sink is not None:
         _tsink = _CallableSinkAdapter(sink)
     else:
         _tsink = None
+
+    # DE-08 (+ reland fix, Codex #2): tracks whether `_tsink.commit()` has
+    # already returned successfully. Once True, the except clause below must
+    # NEVER call `_tsink.abort()` -- a custom sink's abort() could otherwise
+    # delete tables it already durably committed. Quarantine staging/publish
+    # only ever runs after this flag is set, so any failure past that point
+    # is a sidecar-publish failure, not a run failure to undo.
+    _committed = False
 
     try:
         with use_collector(collector):
@@ -346,6 +430,7 @@ def run_sequential(
 
                 if _tsink is not None:
                     _tsink.write(table, out)
+                    written_tables.append(table)
                 else:
                     outputs[table] = out
 
@@ -366,13 +451,9 @@ def run_sequential(
                                 parent_map_cache.pop(ck, None)
                                 errored_keys_cache.pop(ck, None)
 
-        # Finalize row-error / quarantine evidence AFTER every table has masked
-        # and BEFORE commit, still inside this try so a failure here also
-        # triggers abort() rather than a partial, uncommitted publish. A
-        # single JSONL write covers every table's quarantined rows (avoiding
-        # the truncating `_write_jsonl("w")` clobbering earlier tables').
-        # Quarantine JSONL is durable only on a successful (fully covered) run;
-        # a fail-loud run publishes nothing.
+        # Finalize row-error evidence AFTER every table has masked and BEFORE
+        # commit, still inside this try so a failure here also triggers
+        # abort() (nothing has committed yet -- `_committed` is still False).
         quality_metrics: dict[str, Any] = {}
         if all_row_errors:
             row_error_counts: dict[str, int] = {}
@@ -380,25 +461,58 @@ def run_sequential(
                 key = f"{rec.table}.{rec.column}[{rec.trigger}]"
                 row_error_counts[key] = row_error_counts.get(key, 0) + 1
             quality_metrics["row_errors"] = row_error_counts
-        if quarantine_entries:
-            _write_jsonl(q_output_path, quarantine_entries)
-            # total_quarantined = distinct rows removed (each entry is one
-            # distinct quarantined row; dedup happens per table inside
-            # compute_quarantine, and row indices are per-table).
-            quality_metrics["quarantine"] = quarantine_manifest(
-                QuarantineSummary(
-                    enabled=True,
-                    output_path=q_output_path,
-                    counts_by_trigger=counts_by_trigger,
-                    total_quarantined=len(quarantine_entries),
-                )
-            )
 
+        # Commit BEFORE any quarantine write (DE-08 reland fix, Codex finding
+        # #1): the natural layout has the sink's commit target and the
+        # quarantine's parent directory as the SAME directory (out/ +
+        # out/quarantine.jsonl); staging the quarantine JSONL there before
+        # commit made the sink's own directory os.replace fail closed with
+        # ENOTEMPTY. Committing first means the sink's target directory
+        # already exists (from its own successful rename) by the time
+        # anything is staged beside it, so there is nothing left to collide.
         if _tsink is not None:
             _tsink.commit()
+            # Past this point abort() must never run (Codex finding #2): a
+            # custom sink's abort() could delete tables it just durably
+            # committed. Any failure below is a quarantine-sidecar problem,
+            # not a run failure the sink should be asked to undo.
+            # Residual (dennis re-gate MEDIUM): `commit()` returning and this
+            # assignment are two separate bytecode steps, so an async signal
+            # landing in that exact gap would reach the except clause with
+            # `_committed` still False and call abort() post-commit. Accepted
+            # as-is rather than restructured further: the window is already
+            # the minimum possible (one call, one store), and the reference
+            # `ParquetTransactionalSink.abort()` is a proven no-op once its
+            # commit has already renamed staging away (see
+            # `TestAbortNotCalledAfterSuccessfulCommit`'s deliberate case for
+            # the same property) -- a custom sink relying on non-idempotent
+            # post-commit abort is already outside this contract's guarantees.
+            _committed = True
+
+        # Quarantine JSONL is durable only on a successful (fully covered)
+        # run reaching a successful commit; a fail-loud run (raised above,
+        # inside the per-table loop, before `_tsink.commit()` runs) publishes
+        # nothing. `finalize_committed_quarantine` guards against
+        # `q_output_path` aliasing a table this run just committed (HIGH #1
+        # re-gate) before staging/publishing, and returns the evidence-
+        # manifest entry (or None if nothing was quarantined).
+        quarantine_metrics = finalize_committed_quarantine(
+            sink=_tsink,
+            is_genuine_transactional_sink=_is_genuine_transactional_sink,
+            written_tables=written_tables,
+            output_path=q_output_path,
+            entries=quarantine_entries,
+            counts_by_trigger=counts_by_trigger,
+        )
+        if quarantine_metrics is not None:
+            quality_metrics["quarantine"] = quarantine_metrics
 
     except BaseException:
-        if _tsink is not None:
+        if _tsink is not None and not _committed:
+            # Only abort a sink whose commit() has not succeeded (Codex #2):
+            # past that point, failures reachable here are quarantine-sidecar
+            # failures, which discard their own staged file above and must
+            # leave the legitimately committed tables alone.
             try:
                 _tsink.abort()
             except Exception:

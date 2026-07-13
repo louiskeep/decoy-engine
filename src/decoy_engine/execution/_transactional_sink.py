@@ -222,6 +222,20 @@ class ParquetTransactionalSink:
             raise
         writer.close()
 
+    def committed_table_path(self, table: str) -> Path:
+        """Return the path `table` will be published to once commit() succeeds.
+
+        Exposed (public, non-underscore) so a caller can check a side
+        artifact's path is not aliasing a table this sink owns without
+        reaching into private state -- e.g. `quarantine.guard_quarantine_
+        not_aliasing_committed_table`, called by `run_sequential` after
+        commit() to refuse a `quarantine.output_path` that aliases a table
+        artifact this same run just published (DE-08 re-gate HIGH #1). A pure
+        function of `table` and `self._target`; valid before or after commit.
+        """
+        self._validate_table_name(table)
+        return self._target / f"{table}.parquet"
+
     def _validate_table_name(self, table: str) -> None:
         if (
             os.sep in table
