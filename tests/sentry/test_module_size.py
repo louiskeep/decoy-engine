@@ -117,7 +117,14 @@ ALLOWLIST: dict[str, int] = {
     # DE-02 Codex item 6a (2026-07-14): +8 LOC -- the chunked entry also collects
     # vault entries, so it runs the shared assert_vault_writer_keyed guard against
     # the resolved mask key. Same docstring-decomposition target stands.
-    "src/decoy_engine/execution/_chunked.py": 634,
+    # DE-10 residual (2026-07-14): +14 LOC to wire the per-chunk declared-vs-real
+    # FK dtype guard into the masking loop (the compile-time gate trusts the
+    # declared FK key dtype; this validates it against the real Arrow dtype and
+    # fails closed on a misdeclaration that would silently void RI). The guard
+    # itself lives in the sibling `_chunked_fk_dtype.py`; only the read + per-chunk
+    # call live here, on the one path that sees each chunk. Same docstring-
+    # decomposition target stands.
+    "src/decoy_engine/execution/_chunked.py": 648,
     # DE-03 (2026-07-13): the mask adapter's `run()` is one of the five emission
     # routes the fail-closed output projection must guard (undeclared columns no
     # longer leak raw). The +17 LOC are the two policy params, the per-table
@@ -162,6 +169,15 @@ ALLOWLIST: dict[str, int] = {
     # (run-time injection, never serialized). Decompose the per-table
     # mask/quarantine loop into a sibling when the next FK-route batch lands.
     "src/decoy_engine/execution/_sequential.py": 603,
+    # DE-08 residual (2026-07-14): crossed the 600 cap (was 569) hardening the
+    # transactional quarantine publish in place -- fail-closed on a hardlink-
+    # unsupported filesystem (clear message, not an opaque OSError) and best-
+    # effort/logged cleanup of the post-link staging file so an already-successful
+    # commit is never reported as a run failure. The stage/publish/discard/finalize
+    # trio is one cohesive transactional unit that this fix extends, not appends
+    # beside; decompose that publish cluster into a `_quarantine_transaction.py`
+    # sibling when the next quarantine-sidecar change lands.
+    "src/decoy_engine/quarantine.py": 619,
 }
 
 

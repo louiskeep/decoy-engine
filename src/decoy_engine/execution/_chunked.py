@@ -129,6 +129,10 @@ from ._chunked_fk import (
     gate_fk_child_edges,
     reject_lossy_chunked_fk_passthrough,
 )
+from ._chunked_fk_dtype import (
+    fk_declared_dtypes_for_table,
+    reject_mismatched_chunked_fk_declared_dtype,
+)
 
 # Admitted only when the column's config pins the deterministic
 # value-keyed path (see module docstring for the per-strategy rules).
@@ -384,6 +388,12 @@ def run_mask_pipeline_chunked(
     ns_registry = build_namespace_registry(config, profile)
     graph = RelationshipGraph(edges=(), ordering=())
     passthrough_fk_columns = fk_passthrough_columns_for_table(config, table)
+    # DE-10 residual: the compile-time FK gate trusts the operator-DECLARED FK
+    # key dtype (it never sees the data). Read those declarations so the per-chunk
+    # guard validates them against the real Arrow dtype and fails closed on a
+    # misdeclaration (which would else silently void RI). Substrate-independent,
+    # so unlike the passthrough magnitude guard it is not adapter-gated.
+    declared_fk_dtypes = fk_declared_dtypes_for_table(config, table)
     if adapter is None:
         adapter = PandasExecutionAdapter()
     # MEDIUM (DE-10 reland): only pay the guard's cost -- and only reject --
@@ -414,6 +424,10 @@ def run_mask_pipeline_chunked(
             if guard_passthrough_fk_columns:
                 reject_lossy_chunked_fk_passthrough(
                     chunk, table=table, passthrough_fk_columns=guard_passthrough_fk_columns
+                )
+            if declared_fk_dtypes:
+                reject_mismatched_chunked_fk_declared_dtype(
+                    chunk, table=table, declared_fk_dtypes=declared_fk_dtypes
                 )
             result = adapter.run(
                 plan,

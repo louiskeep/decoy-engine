@@ -48,7 +48,10 @@ genuine `TransactionalSink` (not a plain-Callable-wrapped one).
 
 from __future__ import annotations
 
+import errno
 import json
+import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -56,6 +59,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from decoy_engine import quarantine as _quarantine
 from decoy_engine.execution import ParquetTransactionalSink
 from decoy_engine.execution._pipeline import run_pipeline
 
@@ -667,3 +671,141 @@ class TestQuarantineOutputPathPreExistingNonAliasingFile:
             target.glob("_decoy_quarantine_stage_*")
         )
         assert leftovers == []
+
+
+# ---------------------------------------------------------------------------
+# DE-08 LOW (a): the post-link staging `unlink` is best-effort. A failure
+# there -- the hardlink already succeeded, so the sidecar IS durably published
+# (final path and stage share one inode) -- must NOT be reported as a
+# publish/run failure. Before the fix the bare `os.unlink(staged_path)` could
+# raise straight out of `publish_staged_jsonl`, and
+# `finalize_committed_quarantine`'s catch-all re-raised it, crashing an already
+# fully-successful run. Now it is logged and swallowed, mirroring the swallowed
+# best-effort cleanup elsewhere in the module.
+# ---------------------------------------------------------------------------
+
+
+class TestPostLinkUnlinkFailureDoesNotFailTheRun:
+    def test_staging_unlink_failure_after_successful_link_is_best_effort(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The hardlink publish succeeds, then removing the extra staging link
+        fails (e.g. a race, or a read-only staging dir). The run must still
+        succeed: the sidecar is intact at the final path, a warning is logged,
+        and no exception propagates."""
+        qpath = str(tmp_path / "quarantine.jsonl")
+        config = _config(tmp_path, qpath)
+        sources = _sources(config)
+        sink = ParquetTransactionalSink(tmp_path / "out")
+
+        real_unlink = os.unlink
+
+        def _flaky_unlink(path: object, *args: object, **kwargs: object) -> None:
+            # Fail only the post-link cleanup of the staging file; leave every
+            # other unlink (there are none on the success path here) untouched.
+            if "_decoy_quarantine_stage_" in str(path):
+                raise OSError(errno.EACCES, "staging dir is read-only")
+            real_unlink(path, *args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(_quarantine.os, "unlink", _flaky_unlink)
+
+        with caplog.at_level(logging.WARNING, logger="decoy_engine.quarantine"):
+            result = run_pipeline(
+                config, sources, engine_version="0.1.0", sink=sink, use_byte_estimate_routing=False
+            )
+
+        # Run succeeded and recorded the quarantine sidecar in its manifest.
+        assert result.quality_metrics["execution"]["execution_mode"] == "sequential"
+
+        # The sidecar IS durably published at the final path with the right row.
+        assert Path(qpath).exists()
+        records = [json.loads(line) for line in Path(qpath).read_text().splitlines()]
+        assert len(records) == 1
+        assert records[0]["age"] == "badX"
+
+        # Masked tables are published and correct.
+        assert (tmp_path / "out" / "parent.parquet").exists()
+
+        # The failure was logged, not raised.
+        assert any(
+            "failed to remove the staging link" in rec.message
+            for rec in caplog.records
+            if rec.levelno == logging.WARNING
+        )
+
+
+# ---------------------------------------------------------------------------
+# DE-08 LOW (b): a filesystem that does not support hardlinks (cross-device
+# stage/final, or FAT/exFAT/FUSE/overlay/network mounts) must degrade to a
+# CLEAR, actionable error, not an opaque raw OSError straight from os.link.
+# Nothing is published; the stage is discarded (no orphan); the fail-closed
+# exclusive-create guarantee is never traded for a plain overwrite.
+# ---------------------------------------------------------------------------
+
+
+class TestHardlinkUnsupportedFilesystemDegradesGracefully:
+    @pytest.mark.parametrize(
+        "err",
+        [
+            errno.EXDEV,  # "Invalid cross-device link"
+            errno.EPERM,  # link(2): filesystem does not support hard links
+            getattr(errno, "ENOTSUP", errno.EOPNOTSUPP),  # operation not supported
+        ],
+    )
+    def test_hardlink_unsupported_errno_raises_clear_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, err: int
+    ) -> None:
+        """os.link raises a hardlink-unsupported errno -> a clear RuntimeError
+        naming the filesystem limitation, not a bare OSError. Tables already
+        committed stay committed; the staged sidecar is discarded (no orphan);
+        nothing is published at the quarantine path."""
+        qpath = str(tmp_path / "quarantine.jsonl")
+        config = _config(tmp_path, qpath)
+        sources = _sources(config)
+        sink = ParquetTransactionalSink(tmp_path / "out")
+
+        def _no_hardlinks(src: object, dst: object, *args: object, **kwargs: object) -> None:
+            raise OSError(err, os.strerror(err))
+
+        monkeypatch.setattr(_quarantine.os, "link", _no_hardlinks)
+
+        with pytest.raises(RuntimeError, match="does not support hardlinks"):
+            run_pipeline(
+                config, sources, engine_version="0.1.0", sink=sink, use_byte_estimate_routing=False
+            )
+
+        # The sink's own commit already succeeded -- masked tables published.
+        assert (tmp_path / "out" / "parent.parquet").exists()
+        assert (tmp_path / "out" / "child.parquet").exists()
+
+        # Nothing published at the quarantine path (fail closed, no overwrite).
+        assert not Path(qpath).exists()
+
+        # No orphaned staging file left behind (best-effort discard fired).
+        leftovers = list(tmp_path.glob("_decoy_quarantine_stage_*")) + list(
+            (tmp_path / "out").glob("_decoy_quarantine_stage_*")
+        )
+        assert leftovers == []
+
+    def test_ordinary_oserror_still_propagates_verbatim(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A NON-hardlink OSError (e.g. ENOSPC disk full, or EACCES on the
+        directory) is not about hardlink capability, so it must propagate as
+        the original OSError -- not be reworded as a 'no hardlinks' error."""
+        qpath = str(tmp_path / "quarantine.jsonl")
+        config = _config(tmp_path, qpath)
+        sources = _sources(config)
+        sink = ParquetTransactionalSink(tmp_path / "out")
+
+        def _disk_full(src: object, dst: object, *args: object, **kwargs: object) -> None:
+            raise OSError(errno.ENOSPC, "No space left on device")
+
+        monkeypatch.setattr(_quarantine.os, "link", _disk_full)
+
+        with pytest.raises(OSError) as exc:
+            run_pipeline(
+                config, sources, engine_version="0.1.0", sink=sink, use_byte_estimate_routing=False
+            )
+        assert exc.value.errno == errno.ENOSPC
+        assert not isinstance(exc.value, RuntimeError)
