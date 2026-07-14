@@ -214,9 +214,7 @@ class TestPoolSamplerNonDeterministic:
         sampler = PoolSampler()
         pool = builder.build("person_email", size=3, job_seed=_SEED)
         source = pd.Series(["a", None, "b", None, "c", None])
-        out = sampler.sample(
-            pool, n=6, mode=CardinalityMode.UNIQUE, seed=_SEED, source=source
-        )
+        out = sampler.sample(pool, n=6, mode=CardinalityMode.UNIQUE, seed=_SEED, source=source)
         assert len(out) == 6
         assert [pd.isna(v) for v in out] == [False, True, False, True, False, True]
         nonnull = [v for v in out if not pd.isna(v)]
@@ -231,9 +229,7 @@ class TestPoolSamplerNonDeterministic:
         pool = builder.build("person_email", size=3, job_seed=_SEED)
         source = pd.Series(["a", "b", "c", "d", None])
         with pytest.raises(GenerationError) as excinfo:
-            sampler.sample(
-                pool, n=5, mode=CardinalityMode.UNIQUE, seed=_SEED, source=source
-            )
+            sampler.sample(pool, n=5, mode=CardinalityMode.UNIQUE, seed=_SEED, source=source)
         assert excinfo.value.code == "uniqueness_impossible"
 
     def test_unique_mode_source_none_retains_n_requirement(self) -> None:
