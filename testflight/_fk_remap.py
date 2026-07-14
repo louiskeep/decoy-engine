@@ -206,9 +206,10 @@ def check_remap_masks_orphan(
         f"equals its output value {orphan_output_val!r}. "
         f"orphan_policy=remap must produce an output value that differs from "
         f"the source key; equality means the masking strategy left it on "
-        f"passthrough. An all-out-of-charset key is now covered by the covering "
-        f"hash under preserve_separators=True (fix #42); the residual cases are a "
-        f"partial-out-of-charset key or =False (see docs/what-we-cannot-prove.md)."
+        f"passthrough. DE-01 (2026-07-14): an all-out-of-charset key now FAILS "
+        f"CLOSED under FPE (was the covering hash, fix #42); the residual "
+        f"partial-out-of-charset prefix leak is documented in "
+        f"docs/discussions/2026-07-14-de01-vault-token-for-fpe.md."
     )
 
 

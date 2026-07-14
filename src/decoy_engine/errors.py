@@ -255,6 +255,44 @@ class FpeChecksumError(DecoyError):
         super().__init__(message)
 
 
+class FpeUnencryptableError(DecoyError):
+    """An FPE value cannot be format-preserving-encrypted without either leaking
+    cleartext or producing a non-invertible (non-round-trip) output, so the
+    engine fails closed rather than emit unsafe masked data (DE-01 cluster-C,
+    2026-07-14).
+
+    Closes two previously-silent value classes at the source in
+    ``transforms/fpe.py``:
+
+    - a value with ZERO in-charset characters (the all-out-of-charset case).
+      The pre-fix covering-hash fallback produced an in-charset value that the
+      inverse cipher cannot recover (verified non-round-trip ``'---' -> '092'
+      -> '858'``); there is nothing to format-preserving-encrypt, so fail
+      closed instead of emitting a value that silently will not reverse.
+    - under ``preserve_separators=False``, any out-of-charset character. The
+      pre-fix path returned the whole value unchanged (a silent cleartext
+      no-op on the executed V2 path); fail closed instead.
+
+    NOTE (scope): the PARTIAL out-of-charset case -- a value with in-charset
+    content plus an out-of-charset format prefix, e.g. ``M`` in ``M000001`` --
+    is NOT closed here. It keeps the current preserve-the-prefix behavior and
+    is surfaced as a structured ``QualityWarning`` (residual partial-plaintext
+    disclosure); full coverage needs the structured-FPE/FF1 fast-follow. See
+    ``docs/discussions/2026-07-14-de01-vault-token-for-fpe.md``.
+
+    The executed strategy handler re-raises this as ``StrategyError`` at the
+    execution boundary (matching the ``fpe_charset_degenerate`` precedent).
+    Carries the offending value on ``.value``. Maps to code
+    ``fpe.unencryptable``.
+    """
+
+    code: str = "fpe.unencryptable"
+
+    def __init__(self, message: str, *, value: str | None = None) -> None:
+        self.value = value
+        super().__init__(message)
+
+
 class ValidatorFailedError(DecoyError):
     """Raised when a job-level validator fails and quarantine is not active.
 
@@ -356,6 +394,7 @@ __all__ = [
     "FixedWidthParseError",
     "FlagPauseSignal",
     "FpeChecksumError",
+    "FpeUnencryptableError",
     "LicenseError",
     "LicenseExpiredError",
     "MaskKeyDerivationError",

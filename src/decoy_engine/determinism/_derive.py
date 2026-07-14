@@ -81,8 +81,9 @@ from decoy_engine.determinism._hkdf import hkdf_sha256
 # WS1 detokenization (2026-06-12): bump to v5. Two coordinated
 # FPE output-shifting changes: (a) the Feistel key moved from
 # per-value `derive(seed, ns, canonicalize(value))` to one key per
-# (seed, namespace) `derive(seed, ns, b"fpe-key/v1")` -- the NIST
-# SP 800-38G FF1 key model -- making ciphertext decryptable via
+# (seed, namespace) `derive(seed, ns, b"fpe-key/v1")` -- a single-key/
+# varying-tweak model (home-rolled HMAC-SHA256 Feistel, NOT NIST FF1) --
+# making ciphertext decryptable via
 # decoy_engine.unmask; (b) validate_luhn permutes the body and
 # appends the check digit instead of overwriting the last encrypted
 # digit (the old shape discarded a character and was irreversible).

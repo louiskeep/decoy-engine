@@ -12,7 +12,7 @@ approach; each reuses the SAME primitive the full-frame handler cites, so the
 out-of-core output is byte-identical rather than merely similar.
 
 - fpe: reuses `transforms.fpe.fpe_encrypt_value` (type-II Feistel + HMAC-SHA256;
-  NIST SP 800-38G FF1 single-key/varying-tweak key model) with the exact key
+  single-key/varying-tweak model, home-rolled -- NOT NIST SP 800-38G FF1) with the exact key
   derivation the `_strategies/_fpe.FpeStrategyHandler` uses
   (`derive(job_seed, namespace, FPE_KEY_LABEL)`, column-or-join_group tweak).
 - text_redact: reuses `storm.detectors.iter_spans` + `_text_redact._splice`

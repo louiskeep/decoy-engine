@@ -92,9 +92,11 @@ that the engine rejects rather than silently mis-keying.
 ## FPE key and tweak model
 
 FPE uses a single Feistel key per `(job_seed, namespace)`, derived as
-`derive(job_seed, namespace, b"fpe-key/v1")`. This is the NIST SP 800-38G FF1
-key model: one key, varying tweak per column. The default tweak is the column
-name encoded as UTF-8.
+`derive(job_seed, namespace, b"fpe-key/v1")`. This is a single-key/varying-tweak
+key model (one key, varying tweak per column), but the underlying primitive is
+the engine's home-rolled 8-round HMAC-SHA256 Feistel, which is NOT NIST SP
+800-38G FF1 (an audited FF1 is a documented fast-follow). The default tweak is
+the column name encoded as UTF-8.
 
 This means:
 

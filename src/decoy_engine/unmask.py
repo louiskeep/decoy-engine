@@ -11,7 +11,7 @@ What reverses and what does not:
 
 | strategy             | status         | why |
 |----------------------|----------------|-----|
-| fpe                  | reversed       | keyed Feistel permutation is a bijection; key = derive(seed, ns, FPE_KEY_LABEL) (NIST SP 800-38G FF1 key model) |
+| fpe                  | reversed       | keyed Feistel permutation is a bijection; key = derive(seed, ns, FPE_KEY_LABEL) (single-key/varying-tweak model; home-rolled HMAC-SHA256 Feistel, NOT NIST FF1) |
 | any one-way + vault: true + vault file | vault_reversed / vault_miss | the mask run recorded the source->masked map into an encrypted vault (decoy_engine.vault); lookup keyed by (namespace, masked) |
 | hash                 | irreversible   | HMAC-SHA256 is one-way; recovery needs the column's vault |
 | redact / truncate    | irreversible   | information destroyed |

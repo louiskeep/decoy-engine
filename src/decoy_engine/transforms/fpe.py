@@ -32,7 +32,7 @@ from typing import Any
 
 import pandas as pd
 
-from decoy_engine.errors import MaskKeyDerivationError
+from decoy_engine.errors import FpeUnencryptableError, MaskKeyDerivationError
 from decoy_engine.transforms.base import BaseMaskingStrategy
 
 _CHARSETS: dict[str, str] = {
@@ -163,20 +163,6 @@ def _single_char_shift(key: bytes, tweak: bytes) -> int:
     return int.from_bytes(hmac.new(key, msg, hashlib.sha256).digest(), "big")
 
 
-def _covering_hash_to_charset(val: str, key: bytes, charset: str, tweak: bytes) -> str:
-    """In-charset cover for an all-out-of-charset value (fix #42).
-    Per-position keyed PRF: HMAC-SHA256 (RFC 2104), HKDF-style domain sep (RFC 5869).
-    Deterministic under (key, charset, tweak, val); output never equals val."""
-    if not val:
-        return val
-    r, dom, val_b = len(charset), b"covering\xff", val.encode("utf-8", errors="replace")
-    out: list[str] = []
-    for i in range(len(val)):
-        msg = dom + struct.pack(">I", i) + b"\xff" + tweak + b"\xff" + val_b
-        out.append(charset[int.from_bytes(hmac.new(key, msg, hashlib.sha256).digest(), "big") % r])
-    return "".join(out)
-
-
 def _permute(s: str, key: bytes, charset: str, tweak: bytes, *, forward: bool) -> str:
     """Feistel-permute (or invert) a string made entirely of charset chars."""
     n = len(s)
@@ -195,138 +181,6 @@ def _permute(s: str, key: bytes, charset: str, tweak: bytes, *, forward: bool) -
     fn = _feistel if forward else _feistel_inverse
     y = fn(key, tweak, x, u_mod, v_mod)
     return _decode(y, charset, n)
-
-
-def _fpe_checksum_permute(
-    s: str,
-    key: bytes,
-    charset: str,
-    tweak: bytes,
-    scheme: str,
-    *,
-    forward: bool,
-) -> str:
-    """Permute a string and recompute the check digit for the given scheme.
-
-    Each scheme enforces its own alphabet constraint so the output is
-    valid-by-construction and calc_check_digit never KeyErrors.
-
-    Per-scheme rules
-    ----------------
-    luhn / ean13 / gtin
-        Digit-only schemes.  The permutation charset is constrained to
-        ``'0123456789'`` regardless of the caller's charset config.  Check
-        digit appended at the end.
-
-    npi
-        NPI (CMS NPPES, 2008): first digit must be 1 or 2.  The leading
-        digit is pinned (preserved from the source), and only the 8-digit
-        middle body is permuted over digits.  Check digit appended at end.
-        Minimum length: 10 chars (9-char body + 1-char check).
-
-    isbn13
-        The 3-char bookland prefix (978 or 979) is pinned; the 9-digit
-        inner body (s[3:12]) is permuted over digits; the EAN-13 check
-        digit is appended.  Minimum length: 13 chars.
-
-    vin
-        The permutation charset is constrained to the VIN alphabet
-        (0-9 A-Z excluding I, O, Q -- NHTSA 49 CFR Part 565).  Any I/O/Q
-        in the caller's charset is silently dropped; the body characters
-        are translated to the nearest VIN-legal value (already ensured by
-        the permutation staying in-alphabet).  16 non-check chars (s[:8] +
-        s[9:]) are permuted; the ISO 3779 check char is inserted at pos 8.
-        Minimum length: 17 chars.
-
-    iban
-        FAILS CLOSED.  Per-country BBAN structure (enforced by
-        stdnum.iban.validate) cannot be satisfied by a free Feistel
-        permutation.  Raises ``FpeChecksumError`` unconditionally.
-        Use validate-only or a different strategy for IBAN columns.
-
-    unknown scheme
-        FAILS CLOSED.  Any scheme name not in ``checksums._KNOWN_SCHEMES``
-        raises ``FpeChecksumError``.  The pre-SP04 fall-through to plain
-        FPE with no check digit was silent misconfiguration; Decoy forbids
-        that pattern.
-
-    The function is symmetric: the same body permutation runs in both the
-    forward (encrypt) and inverse (decrypt) directions.
-    """
-    from decoy_engine.checksums import _KNOWN_SCHEMES, calc_check_digit
-    from decoy_engine.errors import FpeChecksumError
-
-    # H2: unknown scheme - fail closed.
-    if scheme not in _KNOWN_SCHEMES:
-        raise FpeChecksumError(
-            f"FPE checksum mode received unknown scheme {scheme!r}. "
-            f"Known schemes: {sorted(_KNOWN_SCHEMES)}. "
-            "Check your config for typos; valid fpe checksum schemes are "
-            "luhn, npi, vin, isbn13, ean13, gtin (iban is not supported for FPE).",
-            scheme=scheme,
-        )
-
-    # B1: IBAN - fail closed.
-    if scheme == "iban":
-        raise FpeChecksumError(
-            "FPE checksum mode does not support 'iban': per-country BBAN "
-            "structure (enforced by stdnum.iban.validate) cannot be satisfied "
-            "by a format-preservation permutation. Use validate-only or a "
-            "different strategy for IBAN columns. "
-            "See carry-forward note in p5-infra-1-python-stdnum.md.",
-            scheme="iban",
-        )
-
-    _DIGITS_ONLY = "0123456789"
-
-    # luhn / ean13 / gtin: digit-only, check digit at end.
-    if scheme in ("luhn", "ean13", "gtin"):
-        body = _permute(s[:-1], key, _DIGITS_ONLY, tweak, forward=forward)
-        return body + calc_check_digit(scheme, body)
-
-    # M1: NPI - pin leading digit, permute 8-digit middle body over digits.
-    if scheme == "npi":
-        # L1: NPI needs at least 10 chars (9-char body + check); pass through if too short.
-        if len(s) < 10:
-            return s
-        # Pin the first character (must be 1 or 2 per NPPES).
-        leading = s[0]
-        middle_body = _permute(s[1:9], key, _DIGITS_ONLY, tweak, forward=forward)
-        body9 = leading + middle_body
-        return body9 + calc_check_digit("npi", body9)
-
-    # B2: isbn13 - pin bookland prefix (s[:3]), permute 9 inner digits.
-    if scheme == "isbn13":
-        # L1: isbn13 needs 13 chars; pass through if too short.
-        if len(s) < 13:
-            return s
-        prefix = s[:3]  # '978' or '979' -- pinned
-        inner = _permute(s[3:12], key, _DIGITS_ONLY, tweak, forward=forward)
-        body12 = prefix + inner
-        return body12 + calc_check_digit("isbn13", body12)
-
-    # H1: VIN - constrain charset to VIN alphabet, permute 16-char body.
-    if scheme == "vin":
-        # L1: VIN needs 17 chars; pass through if too short.
-        if len(s) < 17:
-            return s
-        # Drop I, O, Q from whatever charset the caller provided.
-        from decoy_engine.checksums import _VIN_CHARSET
-
-        vin_charset = "".join(c for c in charset if c in _VIN_CHARSET)
-        if len(vin_charset) < 2:
-            # Fallback: use the canonical VIN digit subset so permutation can proceed.
-            vin_charset = _DIGITS_ONLY
-        raw_body = s[:8] + s[9:]  # 16 non-check chars
-        enc = _permute(raw_body, key, vin_charset, tweak, forward=forward)
-        check = calc_check_digit("vin", enc)
-        return enc[:8] + check + enc[8:]
-
-    # Should never reach here: all known non-IBAN schemes handled above.
-    raise FpeChecksumError(
-        f"Unhandled scheme {scheme!r} in _fpe_checksum_permute (internal error).",
-        scheme=scheme,
-    )
 
 
 def _fpe_pure_value(
@@ -356,6 +210,10 @@ def _fpe_pure_value(
     digit) discarded one encrypted character and was therefore not invertible;
     the change is covered by the SEED_PROTOCOL_VERSION 4 -> 5 bump."""
     if checksum is not None and len(s) >= 2:
+        # Lazy import breaks the fpe <-> _fpe_checksum cycle: _fpe_checksum imports
+        # `_permute` from this module at load, so it must load AFTER fpe is ready.
+        from decoy_engine.transforms._fpe_checksum import _fpe_checksum_permute
+
         return _fpe_checksum_permute(s, key, charset, tweak, checksum, forward=forward)
     if validate_luhn and len(s) >= 2:
         body = _permute(s[:-1], key, charset, tweak, forward=forward)
@@ -376,17 +234,41 @@ def _fpe_value(
 ) -> str:
     """Shared encrypt/decrypt orchestration over one value.
 
-    With preserve_separators=True: charset chars are extracted, permuted, and
-    reinserted; zero in-charset chars invoke the covering hash (fix #42).
-    With preserve_separators=False: any out-of-charset char passes through
-    unchanged (separate behavior, not fixed here)."""
+    DE-01 cluster-C (2026-07-14) closes two silent-failure paths at the source:
+
+    - preserve_separators=True with ZERO in-charset characters (an
+      all-out-of-charset value, e.g. a fully non-ASCII name or an orphan key
+      whose every character is outside the charset). The pre-fix covering-hash
+      fallback produced an in-charset value the inverse cipher cannot recover
+      (verified non-round-trip); there is nothing to format-preserving-encrypt,
+      so fail closed (`FpeUnencryptableError`) rather than emit a value that
+      silently will not reverse.
+    - preserve_separators=False with any out-of-charset character. The pre-fix
+      path returned the whole value UNCHANGED (a silent cleartext no-op on the
+      executed V2 path); fail closed instead.
+
+    The PARTIAL case (some in-charset chars, some out-of-charset) under
+    preserve_separators=True is intentionally UNCHANGED: the in-charset content
+    is permuted and out-of-charset characters (format separators or prefixes)
+    are reinserted verbatim. The residual partial-plaintext disclosure a format
+    prefix carries is surfaced by the handler as a `QualityWarning`; full
+    coverage is deferred to the structured-FPE/FF1 fast-follow (see
+    docs/discussions/2026-07-14-de01-vault-token-for-fpe.md)."""
     if not val:
         return val
     charset_set = set(charset)
     if preserve_separators:
         positions = [i for i, ch in enumerate(val) if ch in charset_set]
-        if not positions:  # fix #42: covering hash replaces verbatim passthrough
-            return _covering_hash_to_charset(val, key, charset, tweak)
+        if not positions:
+            raise FpeUnencryptableError(
+                f"fpe cannot encrypt {val!r}: it has no character in the configured "
+                "charset, so there is nothing to format-preserving-encrypt and the "
+                "value cannot be reversibly masked. The engine fails closed rather "
+                "than emit a non-invertible covering hash that would silently not "
+                "round-trip. Use a charset that covers this column's data, or route "
+                "the column through a different strategy (hash/redact).",
+                value=val,
+            )
         body = _fpe_pure_value(
             "".join(val[i] for i in positions),
             key,
@@ -401,7 +283,15 @@ def _fpe_value(
             result[pos] = ch
         return "".join(result)
     if not all(ch in charset_set for ch in val):
-        return val
+        out_of_charset = sorted({ch for ch in val if ch not in charset_set})
+        raise FpeUnencryptableError(
+            f"fpe cannot encrypt {val!r} with preserve_separators=false: it contains "
+            f"out-of-charset character(s) {out_of_charset!r}. Returning the value "
+            "unchanged would leak it in the clear, so the engine fails closed. Enable "
+            "preserve_separators to keep structural separators in place, use a charset "
+            "that covers the data, or route the column through a different strategy.",
+            value=val,
+        )
     return _fpe_pure_value(
         val, key, charset, tweak, validate_luhn, forward=forward, checksum=checksum
     )
@@ -556,12 +446,11 @@ class FPEStrategy(BaseMaskingStrategy):
         column_name: str,
         checksum: str | None = None,
     ) -> str:
-        if not preserve_sep and val and not all(ch in set(charset) for ch in val):
-            self.logger.warning(
-                f"fpe: value for '{column_name}' contains characters outside "
-                f"charset and preserve_separators=false; passing through unchanged"
-            )
-            return val
+        # DE-01 cluster-C (2026-07-14): the pre-fix branch here warned and returned
+        # the value UNCHANGED when preserve_separators=false and the value had any
+        # out-of-charset character -- a silent cleartext pass-through. That path now
+        # fails closed inside `fpe_encrypt_value` (`FpeUnencryptableError`), so the
+        # shim is removed and the legacy strategy fails closed at the source too.
         return fpe_encrypt_value(val, key, charset, tweak, preserve_sep, validate_luhn, checksum)
 
     def _fpe_pure(

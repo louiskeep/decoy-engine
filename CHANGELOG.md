@@ -9,6 +9,59 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Security (DE-01 cluster-C: fail-closed FPE -- silent PII-in-the-clear and non-round-trip paths closed, 2026-07-14)
+
+Closes three silent-failure paths in the format-preserving-encryption (`fpe`)
+mask strategy that could emit **raw PII in the clear** or produce **undetectable
+non-round-trip corruption**. All three now **fail closed** at the source (a
+typed error), re-raised as `StrategyError` at the execution boundary so the job
+dies before any unsafe output is written. Fixed once in the shared value-level
+functions (`transforms/fpe.py`), so the V2 handler, the legacy V1 strategy, the
+out-of-core path, and `unmask` all inherit it.
+
+- **All-out-of-charset value now fails closed (`FpeUnencryptableError`).** A
+  value with zero in-charset characters (e.g. a fully non-ASCII name, or an
+  out-of-charset orphan key) was routed to a one-way covering hash whose output
+  looked in-charset but could not be inverted, so a column sold as reversible
+  silently did not round-trip (verified `'---' -> '092' -> '858'`). There is
+  nothing to format-preserving-encrypt, so the engine raises instead of emitting
+  a non-invertible value. The covering-hash fallback (fix #42) is removed.
+- **`preserve_separators=false` with any out-of-charset character now fails
+  closed.** The executed V2 path returned the whole value **unchanged** (a
+  silent cleartext no-op with no warning); it now raises `FpeUnencryptableError`.
+- **Too-short checksum values now fail closed (`FpeChecksumError`).** `npi < 10`,
+  `isbn13 < 13`, and `vin < 17` previously `return`ed the value **unchanged**;
+  they now raise rather than leak an unmasked identifier.
+- **Corrected product language.** Docstrings/docs that described the construction
+  as the "NIST SP 800-38G FF1 key model" now state honestly that it is a
+  home-rolled 8-round HMAC-SHA256 Feistel (single-key/varying-tweak model), NOT
+  NIST FF1 (`execution/_strategies/_fpe.py`, `unmask.py`, `determinism/_derive.py`,
+  `execution/out_of_core/_mask_group_b.py`, `docs/determinism.md`). An audited FF1
+  is a documented fast-follow.
+- **New structured `QualityWarning`s (via `ExecutionResult.warnings`, never
+  stdout, so masked-output fingerprints are unaffected):**
+  - `fpe_sub_minimum_domain` -- values whose in-charset domain
+    (`radix ** length`) is below the ~1,000,000 FF1 minimum. No fix is available
+    pre-FF1; this axis does not leak cleartext, it records weaker small-domain
+    strength.
+  - `fpe_partial_plaintext_disclosure` -- **KNOWN LIMITATION, not closed this
+    sprint.** A value with in-charset content plus an out-of-charset data-bearing
+    format prefix (e.g. `M` in `M000001`) still keeps that prefix in the clear;
+    the disclosure is now surfaced structurally. Full coverage needs the
+    structured-FPE/FF1 fast-follow with `vault_token` (design recorded in
+    `docs/discussions/2026-07-14-de01-vault-token-for-fpe.md`). The declared
+    per-field `on_unencryptable` knob is deferred to that sprint (always
+    fail-closed `error` today; no single-value config field added).
+- **Golden test-flight baseline (§9 reviewed-determinism change):** two jobs'
+  fingerprints are **intentionally regenerated** because their output legitimately
+  changed under the fix -- `c_hr_selfref` (its all-out-of-charset orphan key
+  `EMP-ORPHAN` reverted to the in-charset `emp99999`, which now round-trips) and
+  `e_hostile_edge_cases` (its all-CJK `kana_name` values romanized so they
+  FPE-permute instead of hitting the removed covering hash). The other three job
+  fingerprints (`a_healthcare_claims`, `b_retail_m2m`, `d_longitudinal_visits`)
+  are **unchanged**: their partial-prefix ID columns keep the current
+  preserve-the-prefix output and only gained a warning. Gate stays 53/53.
+
 ### Added (DE-03: fail-closed output projection -- undeclared columns no longer silently emit raw, 2026-07-13)
 
 Closes a silent raw-passthrough defect: a source column with no declared

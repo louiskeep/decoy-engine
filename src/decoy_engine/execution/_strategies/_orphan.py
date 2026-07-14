@@ -11,9 +11,12 @@ contracts row 7; S9 spec 6.2):
 - `REMAP`: assign a fresh masked key via the parent column's strategy. For most
   strategies this makes the orphan indistinguishable from a normally-masked value.
   For FPE with preserve_separators=True: keys with no in-charset characters (e.g.
-  all-uppercase keys like "TERMINATED" or "EMP-ORPHAN") now route through
-  _covering_hash_to_charset in transforms/fpe.py (fix #42), which maps the key to a
-  deterministic in-charset string so it is never emitted verbatim.
+  all-uppercase keys like "TERMINATED" or "EMP-ORPHAN") now FAIL CLOSED
+  (`FpeUnencryptableError` -> `StrategyError`) -- DE-01 cluster-C (2026-07-14)
+  removed the `_covering_hash_to_charset` fallback (fix #42) because its output
+  was non-invertible: a column sold as reversible silently did not round-trip.
+  An all-out-of-charset orphan key must be masked under a charset that covers it,
+  not emitted as a non-recoverable covering hash.
 - `WARN`: PRESERVE behavior + one AGGREGATED `QualityWarning(code='orphan_fk')`
   per edge (never one-per-row: a 100k-row child must not emit 100k warnings).
 - `FAIL`: raise `ExecutionError(code='orphan_fk_violation')`.

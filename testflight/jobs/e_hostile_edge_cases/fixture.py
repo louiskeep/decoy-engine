@@ -5,10 +5,11 @@ the manifest declares a fourth, standalone GENERATE table (empty_table,
 row_count=0; no fixture builder needed).
 
 Planted edge cases (match manifest.yaml invariants exactly):
-  - KANA_NAMES: a fixed pool of fully non-ASCII (Japanese) names. Every
-    character in every name is outside ALL FPE charsets (digits/alpha/ALPHA/
-    alphanum/ALPHANUM), so `kana_name` always takes the ALL-out-of-charset
-    covering-hash path (fix #42), never the ordinary permutation path.
+  - KANA_NAMES: a fixed pool of romanized (ASCII) Japanese names. Every
+    character is in-charset for the ALPHANUM charset (with a space separator),
+    so `kana_name` is FPE-permuted and round-trips. DE-01 cluster-C (2026-07-14)
+    replaced the former fully-non-ASCII names, whose all-out-of-charset path is
+    now fail-closed; that behavior is covered by a dedicated negative test.
   - SENTINEL_PHONE = "800-555-0187" embedded in a unicode sentence in the
     `notes` column of person row 0. text_mask (us_phone detector) must
     redact it; the sentinel scan checks absence from all output.
@@ -29,7 +30,7 @@ Row counts (from manifest.yaml):
 
 Source format notes:
   - person_id: "PP{n:05d}" (FPE PK; digits charset).
-  - kana_name: a fully non-ASCII Japanese full name (see KANA_NAMES).
+  - kana_name: a romanized (ASCII) Japanese full name (see KANA_NAMES).
   - notes: a unicode sentence containing an embedded US-phone-shaped span.
   - bio: a unicode sentence containing an embedded email-shaped span.
   - middle_name: always null (object dtype, all None).
@@ -64,32 +65,41 @@ SENTINEL_PHONE = "800-555-0187"
 SENTINEL_EMAIL = "sentinel.leak.test@e-hostile-decoy-testflight.invalid"
 SENTINEL_PERSON_IDX = 0  # planted in the FIRST people row (notes AND bio)
 
-# Fixed pool of fully non-ASCII (Japanese) names. A plain list (not a set), so
+# Fixed pool of romanized (ASCII) Japanese names. A plain list (not a set), so
 # iteration/index order is process-stable regardless of PYTHONHASHSEED --
-# required for the cross-process determinism fingerprint gate. Every
-# character in every name is outside every FPE charset (digits/alpha/ALPHA/
-# alphanum/ALPHANUM: all ASCII), so `_fpe_value`'s in-charset position scan
-# finds zero positions and the covering-hash fallback (fix #42) always fires
-# -- never the ordinary partial-permutation path that could retain an
-# out-of-charset character verbatim.
+# required for the cross-process determinism fingerprint gate. Every character is
+# in-charset for the ALPHANUM charset (letters) with a space separator, so
+# `name` is FPE-permuted and round-trips reversibly.
+#
+# DE-01 cluster-C (2026-07-14): these were fully non-ASCII (Japanese) names that
+# had ZERO in-charset characters and relied on the all-out-of-charset
+# covering-hash path. That path is now fail-closed (it was non-invertible: a
+# column sold as reversible silently did not round-trip). The fully-non-ASCII
+# fail-closed behavior is now asserted by a dedicated negative test
+# (tests/unit/execution/test_fpe_fail_closed_pipeline.py); job E keeps unicode
+# coverage via the `notes`/`bio` text_mask/text_redact columns (unicode prose
+# with embedded ASCII PII spans), which are unaffected by the FPE change.
 KANA_NAMES: list[str] = [
-    "田中 太郎",
-    "鈴木 花子",
-    "佐藤 次郎",
-    "高橋 三郎",
-    "渡辺 四郎",
-    "伊藤 五郎",
-    "山本 六郎",
-    "中村 七海",
-    "小林 八重",
-    "加藤 九重",
-    "吉田 十和",
-    "山田 一美",
+    "Tanaka Taro",
+    "Suzuki Hanako",
+    "Sato Jiro",
+    "Takahashi Saburo",
+    "Watanabe Shiro",
+    "Ito Goro",
+    "Yamamoto Rokuro",
+    "Nakamura Nanami",
+    "Kobayashi Yae",
+    "Kato Kokonoe",
+    "Yoshida Towa",
+    "Yamada Hitomi",
 ]
 
 # Source fingerprints (SHA-256 of canonical CSV; verified by verify_fingerprint
 # inside each fixture build_* function -- update after any fixture change).
-_PEOPLE_FINGERPRINT = "5dd9c93fb8639a341fa3a4bae117d5e6b7101ab53210185ded2f3741c8fa8a51"
+# DE-01 cluster-C (2026-07-14): re-fingerprinted after KANA_NAMES became
+# romanized (ASCII) so kana_name FPE-permutes and round-trips instead of hitting
+# the now-fail-closed all-out-of-charset covering-hash path.
+_PEOPLE_FINGERPRINT = "4f4b25e07d0aa5418eb8ba5b9c93b4cf5eabb679c8bd1663f3f988b61f60288f"
 _ACCOUNTS_FINGERPRINT = "3e35fb3b1950af73b0adeefb00317ea771b562a9ac86fa95ff373298519f83ff"
 _SINGLETON_FINGERPRINT = "5976c8a6c03141c653c7dbbc009b720b4fd937c010631195586f36fe398bc530"
 
