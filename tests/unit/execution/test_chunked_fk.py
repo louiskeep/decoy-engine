@@ -530,6 +530,16 @@ class TestFailClosedRejections:
         # Must not raise.
         check_chunked_compatibility(config, table="orders")
 
+    def test_child_key_dtype_date_timestamp_mismatch_rejected(self) -> None:
+        """date and timestamp are DISTINCT families (not folded together): a
+        date32 value and a timestamp value for the same instant canonicalize
+        to different bytes, so a declared-date parent / declared-timestamp
+        child FK edge cannot be proven to self-mask identically. Reject."""
+        config = _fk_config(parent_dtype="date", child_dtype="timestamp")
+        with pytest.raises(PlanCompileError) as exc:
+            check_chunked_compatibility(config, table="orders")
+        assert exc.value.code == "chunked_fk_child_key_dtype_mismatch"
+
     def test_child_key_dtype_undeclared_rejected_fail_closed(self) -> None:
         """Fail-closed dtype gate (2026-07-07): a value-sensitive strategy with
         an undeclared dtype on either side can NOT be proven to self-mask to the
@@ -585,6 +595,43 @@ class TestFailClosedRejections:
             child_dtype=None,
         )
         # Must not raise.
+        check_chunked_compatibility(config, table="orders")
+
+    def test_child_key_dtype_decimal_scale_mismatch_rejected(self) -> None:
+        """Decimal scale-awareness (Codex gpt-5.6-sol HIGH-1, 2026-07-14): a
+        decimal's canonical bytes depend on its SCALE, not just its family --
+        `decimal(2,1)` value 1.0 and `decimal(3,2)` value 1.00 are the same
+        logical number but canonicalize to different bytes under
+        hash/truncate/fpe. A parent declared `decimal(2, 1)` and a child
+        declared `decimal(3, 2)` are therefore DIFFERENT families (unlike the
+        old single-"decimal"-bucket model, which folded every scale together
+        and let this mismatch through), so this is rejected at the compile
+        gate exactly like an int/float mismatch."""
+        config = _fk_config(parent_dtype="decimal(2, 1)", child_dtype="decimal(3, 2)")
+        with pytest.raises(PlanCompileError) as exc:
+            check_chunked_compatibility(config, table="orders")
+        assert exc.value.code == "chunked_fk_child_key_dtype_mismatch"
+
+    def test_child_key_dtype_decimal_matching_scale_admitted(self) -> None:
+        """No false positive: identical (precision, scale) on both sides is
+        the SAME family and must be admitted."""
+        config = _fk_config(parent_dtype="decimal(2, 1)", child_dtype="decimal(2, 1)")
+        # Must not raise.
+        check_chunked_compatibility(config, table="orders")
+
+    def test_child_key_dtype_bare_decimal_both_sides_admitted_at_compile_gate(self) -> None:
+        """A bare `"decimal"` declaration on both sides (no scale -- Codex's
+        exact repro shape) compares EQUAL at the compile gate (same literal
+        unprovable-family string), so it is admitted HERE. The actual
+        fail-closed reject for a bare declaration happens one layer down, at
+        the per-chunk runtime guard (`_chunked_fk_dtype`), which has real
+        Arrow data to compare against and can prove a bare declaration never
+        matches any real scaled family. See
+        test_de10_chunked_fk_declared_dtype.py for that runtime coverage."""
+        config = _fk_config(parent_dtype="decimal", child_dtype="decimal")
+        # Must not raise -- the compile gate cannot see real data, so a
+        # same-string bare/bare declaration is not, by itself, a proven
+        # mismatch at THIS layer.
         check_chunked_compatibility(config, table="orders")
 
     def test_composite_fk_rejected(self) -> None:

@@ -27,6 +27,7 @@ shape raises.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import pyarrow as pa
@@ -42,6 +43,29 @@ from decoy_engine.plan._errors import PlanCompileError
 # passthrough` uses to decide whether an unprotected ingestion float64-on-null
 # widening would actually lose precision for this column's data.
 _EXACT_FLOAT_INT_BOUND = 2**53
+
+# Matches a decimal dtype string that carries explicit (precision, scale), in
+# either PyArrow's own `str()` form (`str(pa.decimal128(2, 1))` ==
+# "decimal128(2, 1)", `str(pa.decimal256(40, 2))` == "decimal256(40, 2)" --
+# confirmed empirically) or the SQL-style form an operator might hand-write in
+# config ("decimal(10, 2)" / "numeric(10, 2)", no width suffix). Captures
+# (precision, scale) so two decimal declarations can be compared on that pair,
+# not folded into one bare "decimal" family regardless of scale.
+# Sentinel family for an UNPROVABLE decimal declaration (bare `decimal`/`numeric`
+# with no precision+scale). The per-chunk runtime guard fails closed on any
+# column whose DECLARED family is this sentinel: decimal scale changes the
+# canonical bytes and the chunked route cannot verify parent/child scale
+# agreement, so a bare decimal FK key cannot preserve RI.
+_DECIMAL_UNPROVABLE_FAMILY = "decimal:unprovable"
+# Scale may be NEGATIVE (Arrow/Parquet-legal, e.g. `decimal128(4, -1)`), so the
+# scale group accepts an optional leading minus; precision is always >= 1.
+# Covers every PyArrow decimal width (decimal32/64/128/256, PyArrow 24+) plus a
+# SQL-style hand-written `decimal(P, S)`/`numeric(P, S)`. Only the SCALE (group 2,
+# may be negative) is used for the RI family; precision (group 1) is captured but
+# not folded in (see `_dtype_family`).
+_DECIMAL_PRECISION_SCALE_RE = re.compile(
+    r"^(?:decimal(?:32|64|128|256)?|numeric)\((\d+)\s*,\s*(-?\d+)\)$"
+)
 
 # Value-keyed strategies that produce the same output per (seed, namespace, value)
 # regardless of row position or chunk boundary. Defined here and re-exported by
@@ -91,12 +115,42 @@ def _dtype_family(dtype: str) -> str:
     for equal values -- the kernel canonicalizer encodes any-width integers
     as a length-prefixed minimal two's complement form regardless of storage
     width (kernel/_canonicalize.py) -- so only the family needs to agree, not
-    the exact dtype string. `decimal`/`numeric` is kept as its own family
-    (never folded into `int` or `float`): a decimal value can be integral or
-    fractional, so it is not provably interchangeable with either without
-    inspecting the data this gate never sees. Unrecognized strings pass
-    through lowercased and unmodified, so an unknown dtype only ever matches
-    another occurrence of that exact same string.
+    the exact dtype string. Unrecognized strings pass through lowercased and
+    unmodified, so an unknown dtype only ever matches another occurrence of
+    that exact same string.
+
+    `decimal`/`numeric` is SCALE-AWARE (Codex gpt-5.6-sol HIGH-1, 2026-07-14):
+    unlike int/float, a decimal's canonical bytes depend on its declared
+    SCALE, not just its family -- `str(1.0)` for `decimal128(2, 1)` and
+    `str(1.00)` for `decimal128(3, 2)` canonicalize to different byte strings
+    for the "same" logical value under the hash/truncate/fpe kernels, so two
+    decimal columns are only provably interchangeable when they share the same
+    SCALE. Precision is IRRELEVANT to RI: the canonicalizer encodes by
+    (unscaled_int, scale), so `decimal128(2, 1)` and `decimal128(3, 1)` mask an
+    equal key to identical bytes -- folding precision in would over-reject a
+    healthy scale-matched / precision-mismatched FK pair. A dtype string that
+    carries explicit precision+scale (any PyArrow width `str()` form
+    `decimal{32,64,128,256}(P, S)`, or the SQL-style "decimal(P, S)"/
+    "numeric(P, S)" an operator might hand-write) parses to the scale-keyed
+    family `"decimal(scale=S)"`, so a scale-matched declaration on both sides of
+    an FK edge is admitted (regardless of precision or width), and a genuine
+    scale MISmatch (parent scale 1 vs child scale 2) is rejected at the COMPILE
+    gate the same way an int/float mismatch is (different family strings).
+
+    A BARE `"decimal"` or `"numeric"` declaration (no scale) is UNPROVABLE --
+    the chunked route only ever sees one table's dtype at a time, so there is
+    no runtime check that can recover the missing scale -- and returns the
+    distinct sentinel family `_DECIMAL_UNPROVABLE_FAMILY`. Two bare declarations
+    on both sides of an edge compare EQUAL at the compile gate (same sentinel)
+    and are admitted there; the rejection happens one layer down, at the
+    per-chunk runtime guard
+    (`_chunked_fk_dtype.reject_mismatched_chunked_fk_declared_dtype`), which
+    fails closed on ANY column whose DECLARED family is the sentinel -- it does
+    NOT depend on the real data's family, so it holds even for the negative-scale
+    real decimals that the scale regex now parses concretely. Real Arrow decimals
+    (any precision/scale, including negative scale) resolve to a concrete
+    `"decimal(P,S)"` family, so a correctly-scaled declaration matches its real
+    data and is admitted, while a genuine scale mismatch is rejected.
     """
     family = dtype.strip().lower()
     if family.startswith(("int", "uint")):
@@ -104,14 +158,30 @@ def _dtype_family(dtype: str) -> str:
     if family.startswith(("float", "double")):
         return "float"
     if family.startswith(("decimal", "numeric")):
-        return "decimal"
+        match = _DECIMAL_PRECISION_SCALE_RE.match(family)
+        if match is None:
+            return _DECIMAL_UNPROVABLE_FAMILY
+        # RI keys on SCALE ONLY: the canonicalizer encodes a decimal by its
+        # (unscaled_int, scale), so two decimals of the same scale produce
+        # identical masked bytes for equal logical keys regardless of precision
+        # (verified: decimal128(2,1) and decimal128(3,1) mask 1.0 to the same
+        # hash). Precision only bounds range, so folding it in would over-reject
+        # a healthy scale-matched / precision-mismatched FK pair.
+        scale = match.group(2)
+        return f"decimal(scale={scale})"
     if family.startswith("bool"):
         return "bool"
     if family.startswith(("str", "string", "object", "utf8", "large_string")):
         return "string"
-    if family.startswith(("date", "timestamp", "datetime")):
-        return "datetime"
-    if family.startswith(("bytes", "binary", "large_binary")):
+    # date vs timestamp/datetime are DISTINCT families: date32 and timestamp
+    # canonicalize to different bytes for the same instant, so a declared-date /
+    # real-timestamp FK key voids RI. Check timestamp/datetime BEFORE date --
+    # "datetime" is a prefix-superset of "date".
+    if family.startswith(("timestamp", "datetime")):
+        return "timestamp"
+    if family.startswith("date"):
+        return "date"
+    if family.startswith(("bytes", "binary", "large_binary", "fixed_size_binary")):
         return "bytes"
     return family
 

@@ -40,7 +40,9 @@ Evidence manifest:
 from __future__ import annotations
 
 import dataclasses
+import errno
 import json
+import logging
 import os
 import tempfile
 from collections import defaultdict
@@ -56,6 +58,18 @@ if TYPE_CHECKING:
 
     from decoy_engine.execution._row_errors import RowErrorRecord
     from decoy_engine.validators._types import ValidationReport
+
+_logger = logging.getLogger(__name__)
+
+# errnos os.link raises when the destination filesystem cannot create a hardlink
+# at all: a cross-device stage->final pair (EXDEV) or a filesystem with no
+# hardlink support -- FAT/exFAT, many FUSE/overlay/network mounts (EPERM per
+# link(2), or ENOTSUP/EOPNOTSUPP). These get a clear message instead of an
+# opaque OSError; genuine directory permission-denial is EACCES (not EPERM) and
+# still propagates as-is.
+_HARDLINK_UNSUPPORTED_ERRNOS = frozenset(
+    e for e in (errno.EXDEV, errno.EPERM, errno.ENOTSUP, errno.EOPNOTSUPP) if e is not None
+)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -407,10 +421,16 @@ def publish_staged_jsonl(staged_path: Path, final_path: str) -> None:
             no raw-PII stage is left behind (the caller's own cleanup, e.g.
             ``finalize_committed_quarantine``, discards it again for defense
             in depth -- ``discard_staged_jsonl`` is idempotent).
-        OSError: The link fails for any other reason (e.g. a genuine
-            cross-device error -- should not happen, since the stage is
-            created beside ``final_path`` -- or permission denied). Nothing
-            is published; ``staged_path`` is left for the caller to discard.
+        RuntimeError: The destination filesystem does not support hardlinks
+            (cross-device pair, or a FAT/exFAT/FUSE/overlay/network mount with no
+            hardlink support). Staging beside ``final_path`` makes a cross-device
+            pair unlikely, but same-directory hardlinking is not universally
+            guaranteed, so this fails closed with an actionable message instead
+            of the raw, opaque ``OSError`` from ``os.link``. Nothing is
+            published; ``staged_path`` is left for the caller to discard.
+        OSError: The link fails for any other reason (e.g. disk full, or an
+            EACCES permission denial on the target directory). Nothing is
+            published; ``staged_path`` is left for the caller to discard.
             Never falls back to a plain overwrite.
     """
     final = Path(final_path)
@@ -426,7 +446,37 @@ def publish_staged_jsonl(staged_path: Path, final_path: str) -> None:
             f"quarantine.output_path {final_path!r}; transactional publish "
             "will not overwrite it"
         ) from None
-    os.unlink(staged_path)
+    except OSError as exc:
+        if exc.errno not in _HARDLINK_UNSUPPORTED_ERRNOS:
+            # Disk full, EACCES, etc. -- an ordinary I/O error, not a hardlink
+            # capability one. Preserve it verbatim; the stage is left for the
+            # caller to discard (finalize_committed_quarantine does).
+            raise
+        raise RuntimeError(
+            f"cannot publish quarantine sidecar to quarantine.output_path "
+            f"{final_path!r}: the destination filesystem does not support "
+            f"hardlinks ({os.strerror(exc.errno) if exc.errno else exc}), which "
+            "the transactional (fail-closed) publish requires. Point "
+            "quarantine.output_path at a filesystem that supports hardlinks "
+            "(e.g. a local ext4/xfs/apfs path), or disable transactional "
+            "quarantine publishing."
+        ) from exc
+    # Best-effort cleanup of the now-published stage: the hardlink succeeded, so
+    # the sidecar IS durably published (final path and stage share one inode). A
+    # failure to remove the extra stage link must not be reported as a publish/run
+    # failure -- mirrors the swallowed best-effort cleanup elsewhere in this
+    # module -- so we log and move on rather than raise.
+    try:
+        os.unlink(staged_path)
+    except OSError as exc:
+        _logger.warning(
+            "quarantine sidecar published to %r but failed to remove the "
+            "staging link %s (%s); the sidecar is intact -- the leftover "
+            "staging file is harmless and can be removed manually",
+            final_path,
+            staged_path,
+            exc,
+        )
 
 
 def guard_quarantine_not_aliasing_committed_table(
