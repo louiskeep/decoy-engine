@@ -209,7 +209,12 @@ def _fpe_pure_value(
     The pre-WS1 shape (permute all n chars, overwrite the last with the check
     digit) discarded one encrypted character and was therefore not invertible;
     the change is covered by the SEED_PROTOCOL_VERSION 4 -> 5 bump."""
-    if checksum is not None and len(s) >= 2:
+    if checksum is not None:
+        # Codex cross-model review (2026-07-14): route EVERY length through the
+        # checksum path (was `and len(s) >= 2`). A len-0/1 value used to skip this
+        # dispatch, fall to `_permute`, and permute to itself -- bypassing the
+        # scheme's length/validity check entirely. `_fpe_checksum_permute` now
+        # length-validates up front and fails closed on any invalid length.
         # Lazy import breaks the fpe <-> _fpe_checksum cycle: _fpe_checksum imports
         # `_permute` from this module at load, so it must load AFTER fpe is ready.
         from decoy_engine.transforms._fpe_checksum import _fpe_checksum_permute
@@ -278,8 +283,22 @@ def _fpe_value(
             forward=forward,
             checksum=checksum,
         )
+        # Codex cross-model review (2026-07-14): the permuted body must have exactly
+        # one character per in-charset position. It always does after the checksum
+        # length-validation (a fixed-width scheme body used to be shorter/longer than
+        # the source, which the old non-strict zip silently absorbed -- leaking the
+        # surplus source char). This guard turns any future mismatch into a loud
+        # fail-closed error instead of a silent leak/truncation; the `strict` zip is
+        # the belt-and-suspenders backstop.
+        if len(body) != len(positions):
+            raise FpeUnencryptableError(
+                f"fpe internal length invariant: permuted body length {len(body)} != "
+                f"{len(positions)} in-charset positions for {val!r}. Refusing to "
+                "reinsert a mismatched body, which would leak or drop a character.",
+                value=val,
+            )
         result = list(val)
-        for pos, ch in zip(positions, body, strict=False):
+        for pos, ch in zip(positions, body, strict=True):
             result[pos] = ch
         return "".join(result)
     if not all(ch in charset_set for ch in val):

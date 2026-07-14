@@ -43,6 +43,29 @@ value-level fail-closed behavior.
   NIST FF1 (`execution/_strategies/_fpe.py`, `unmask.py`, `determinism/_derive.py`,
   `execution/out_of_core/_mask_group_b.py`, `docs/determinism.md`). An audited FF1
   is a documented fast-follow.
+- **Checksum length is validated for every scheme, every length (Codex
+  cross-model review).** A checksum-mode value (`npi`/`isbn13`/`ean13`/`vin`/
+  `gtin`/`luhn`) outside the scheme's valid length now raises `FpeChecksumError`
+  ->  `StrategyError(fpe_checksum_unsupported)`. Closes two gaps: a length-0/1
+  value used to skip the dispatch guard and permute to itself (bypassing the
+  check), and an over-length value used to leak its surplus source character raw
+  (separator-preserve) or truncate it (`preserve_separators=false`). NPI/ISBN-13/
+  EAN-13/VIN are exact-length; GTIN is 8/12/13/14; Luhn keeps a floor. The
+  in-charset reinsertion is now length-guarded (strict zip).
+- **`unmask` forwards the checksum scheme to the inverse (Codex, pre-existing
+  since 2026-06-12).** A checksum-mode fpe column previously unmasked with the
+  plain inverse (the `checksum` key was not forwarded), returning deterministic
+  WRONG plaintext while still reporting `reversed`. The scheme is now forwarded,
+  so a valid-checksum source recovers byte-exact; the per-column report carries a
+  `checksum=<scheme>` caveat (the check digit is recomputed, not stored, exactly
+  like the existing Luhn caveat).
+- **Known limitation (documented, not fixed): pre-fix covering-hash artifacts.**
+  Masked outputs written before this fix, for an all-out-of-charset value,
+  contain an in-charset covering-hash token that `unmask` cannot tell from a real
+  ciphertext and will "reverse" to a fabricated value. Detection needs an
+  authenticated artifact envelope (folded into the structured-FPE fast-follow);
+  pre-GA there are no such artifacts under a compatibility guarantee -- regenerate
+  under the fixed engine. See `docs/discussions/2026-07-14-de01-vault-token-for-fpe.md`.
 - **New structured `QualityWarning`s (via `ExecutionResult.warnings`, never
   stdout, so masked-output fingerprints are unaffected):**
   - `fpe_sub_minimum_domain` -- values whose in-charset domain

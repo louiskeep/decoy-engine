@@ -17,6 +17,52 @@ from __future__ import annotations
 from decoy_engine.errors import FpeChecksumError
 from decoy_engine.transforms.fpe import _permute
 
+# Valid length(s) per checksum scheme. NPI/ISBN-13/EAN-13/VIN have EXACT lengths;
+# GTIN has four legal lengths (GS1); Luhn is variable (any Luhn-protected digit
+# string) so only a floor applies. Codex cross-model review (2026-07-14): a value
+# outside the scheme's valid length used to either bypass the check (len 0/1
+# skipped the >=2 dispatch guard and permuted to itself) or, when over-length,
+# leak the extra source digit raw (separator-preserve) or truncate it
+# (preserve_separators=false), because the checksum body is a FIXED width and the
+# surplus never round-trips. Fail closed on any invalid length instead.
+_EXACT_LENGTHS: dict[str, frozenset[int]] = {
+    "npi": frozenset({10}),
+    "isbn13": frozenset({13}),
+    "ean13": frozenset({13}),
+    "vin": frozenset({17}),
+    "gtin": frozenset({8, 12, 13, 14}),
+}
+# Luhn is length-agnostic beyond needing a body plus a check digit.
+_MIN_LENGTHS: dict[str, int] = {"luhn": 2}
+
+
+def _validate_scheme_length(scheme: str, s: str) -> None:
+    """Fail closed unless ``s`` has a valid length for ``scheme``.
+
+    Raised BEFORE any permutation so an invalid-length value never (a) bypasses
+    the checksum path and permutes to itself (len 0/1), nor (b) leaks/truncates a
+    surplus character against the scheme's fixed-width body (over-length).
+    """
+    exact = _EXACT_LENGTHS.get(scheme)
+    if exact is not None and len(s) not in exact:
+        expected = " or ".join(str(n) for n in sorted(exact))
+        raise FpeChecksumError(
+            f"FPE checksum scheme {scheme!r} requires exactly {expected} character(s); "
+            f"got {len(s)} for {s!r}. A value outside the scheme's fixed length cannot "
+            "be format-preserving-encrypted without leaking or truncating a character, "
+            "so the engine fails closed. Fix the source data or route this column "
+            "through a different strategy.",
+            scheme=scheme,
+        )
+    minimum = _MIN_LENGTHS.get(scheme)
+    if minimum is not None and len(s) < minimum:
+        raise FpeChecksumError(
+            f"FPE checksum scheme {scheme!r} requires at least {minimum} characters "
+            f"(body + check digit); got {len(s)} for {s!r}. The engine fails closed "
+            "rather than pass the value through unmasked.",
+            scheme=scheme,
+        )
+
 
 def _fpe_checksum_permute(
     s: str,
@@ -103,6 +149,13 @@ def _fpe_checksum_permute(
             scheme="iban",
         )
 
+    # Codex cross-model review (2026-07-14): validate length up front for EVERY
+    # scheme, before any permutation. This closes both the len-0/1 bypass (a
+    # single char skipped the old per-branch `len < N` floors and permuted to
+    # itself) and the over-length leak/truncation (a surplus char never fit the
+    # fixed-width checksum body).
+    _validate_scheme_length(scheme, s)
+
     _DIGITS_ONLY = "0123456789"
 
     # luhn / ean13 / gtin: digit-only, check digit at end.
@@ -112,19 +165,6 @@ def _fpe_checksum_permute(
 
     # M1: NPI - pin leading digit, permute 8-digit middle body over digits.
     if scheme == "npi":
-        # L1: NPI needs at least 10 chars (9-char body + check). DE-01 cluster-C
-        # (2026-07-14): a too-short value used to `return s` UNCHANGED -- a silent
-        # cleartext pass-through of an identifier the config asked to mask. Fail
-        # closed instead (mirrors the iban/unknown-scheme raises above).
-        if len(s) < 10:
-            raise FpeChecksumError(
-                f"FPE checksum scheme 'npi' requires at least 10 characters "
-                f"(9-digit body + check digit); got {len(s)} for {s!r}. Returning "
-                "the value unchanged would leak it in the clear, so the engine "
-                "fails closed. Fix the source data or route this column through a "
-                "different strategy.",
-                scheme="npi",
-            )
         # Pin the first character (must be 1 or 2 per NPPES).
         leading = s[0]
         middle_body = _permute(s[1:9], key, _DIGITS_ONLY, tweak, forward=forward)
@@ -133,16 +173,6 @@ def _fpe_checksum_permute(
 
     # B2: isbn13 - pin bookland prefix (s[:3]), permute 9 inner digits.
     if scheme == "isbn13":
-        # L1: isbn13 needs 13 chars. DE-01 cluster-C (2026-07-14): fail closed on
-        # a too-short value instead of the silent `return s` cleartext pass-through.
-        if len(s) < 13:
-            raise FpeChecksumError(
-                f"FPE checksum scheme 'isbn13' requires at least 13 characters; got "
-                f"{len(s)} for {s!r}. Returning the value unchanged would leak it in "
-                "the clear, so the engine fails closed. Fix the source data or route "
-                "this column through a different strategy.",
-                scheme="isbn13",
-            )
         prefix = s[:3]  # '978' or '979' -- pinned
         inner = _permute(s[3:12], key, _DIGITS_ONLY, tweak, forward=forward)
         body12 = prefix + inner
@@ -150,16 +180,6 @@ def _fpe_checksum_permute(
 
     # H1: VIN - constrain charset to VIN alphabet, permute 16-char body.
     if scheme == "vin":
-        # L1: VIN needs 17 chars. DE-01 cluster-C (2026-07-14): fail closed on a
-        # too-short value instead of the silent `return s` cleartext pass-through.
-        if len(s) < 17:
-            raise FpeChecksumError(
-                f"FPE checksum scheme 'vin' requires exactly 17 characters; got "
-                f"{len(s)} for {s!r}. Returning the value unchanged would leak it in "
-                "the clear, so the engine fails closed. Fix the source data or route "
-                "this column through a different strategy.",
-                scheme="vin",
-            )
         # Drop I, O, Q from whatever charset the caller provided.
         from decoy_engine.checksums import _VIN_CHARSET
 

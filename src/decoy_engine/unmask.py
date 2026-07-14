@@ -49,6 +49,10 @@ _LUHN_CAVEAT = (
     "validate_luhn recomputes the check digit on decrypt; round trip is "
     "byte-exact iff the source was Luhn-valid"
 )
+_CHECKSUM_CAVEAT = (
+    "checksum={scheme} recomputes the check digit on decrypt; round trip is "
+    "byte-exact iff the source was valid for the scheme"
+)
 
 
 @dataclass(frozen=True)
@@ -83,14 +87,23 @@ def _decrypt_column(
     if len(charset) < 2:
         return table  # degenerate charset was a passthrough on encrypt too
     preserve_sep = bool(cfg.get("preserve_separators", True))
-    validate_luhn = bool(cfg.get("validate_luhn", False)) and all(
-        c in "0123456789" for c in charset
+    # Codex cross-model review (2026-07-14): forward `checksum` and mirror the
+    # encrypt-side resolution EXACTLY (checksum takes priority over validate_luhn).
+    # Pre-existing bug (since the 2026-06-12 checksum landing, 07d85368): decrypt
+    # forwarded validate_luhn but NOT checksum, so a checksum-mode fpe column ran
+    # the plain inverse and silently returned WRONG plaintext (e.g. npi
+    # 1234567893 -> 1770507352 -> 5577387655), still reported `reversed`.
+    checksum: str | None = cfg.get("checksum") or None
+    validate_luhn = (
+        checksum is None
+        and bool(cfg.get("validate_luhn", False))
+        and all(c in "0123456789" for c in charset)
     )
     values = table.column(column).to_pylist()
     decrypted = [
         v
         if v is None
-        else fpe_decrypt_value(str(v), key, charset, tweak, preserve_sep, validate_luhn)
+        else fpe_decrypt_value(str(v), key, charset, tweak, preserve_sep, validate_luhn, checksum)
         for v in values
     ]
     idx = table.schema.get_field_index(column)
@@ -301,14 +314,23 @@ def unmask_pipeline(
             join_group: str | None = cfg.get("fpe_join_group") or None
             fpe_tweak = (join_group or col).encode("utf-8", errors="replace")
             table = _decrypt_column(table, col, key=key, cfg=cfg, tweak=fpe_tweak)
-            luhn = bool(cfg.get("validate_luhn", False))
+            # checksum takes priority over validate_luhn (same as encrypt). Both
+            # recompute the check digit on decrypt rather than store it, so the
+            # round trip is byte-exact iff the source was valid for the scheme.
+            checksum = cfg.get("checksum") or None
+            if checksum is not None:
+                detail = _CHECKSUM_CAVEAT.format(scheme=checksum)
+            elif bool(cfg.get("validate_luhn", False)):
+                detail = _LUHN_CAVEAT
+            else:
+                detail = ""
             reports.append(
                 UnmaskColumnReport(
                     table=name,
                     column=col,
                     strategy="fpe",
                     status="reversed",
-                    detail=_LUHN_CAVEAT if luhn else "",
+                    detail=detail,
                 )
             )
         for col in sorted(present - configured_columns):

@@ -31,10 +31,15 @@ import pytest
 
 from decoy_engine import run_pipeline
 from decoy_engine.config import PipelineConfig
+from decoy_engine.errors import FpeChecksumError
 from decoy_engine.execution import ExecutionError
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution.out_of_core._mask_group_b import fpe_array
+from decoy_engine.transforms.fpe import fpe_encrypt_value
 from decoy_engine.unmask import unmask_pipeline
+
+_DIGITS = "0123456789"
+_KEY = b"\x00" * 32
 
 _ENGINE_VERSION = "de01-fail-closed-test"
 _TABLE = "records"
@@ -117,6 +122,91 @@ class TestFailClosed:
         with pytest.raises(ExecutionError) as exc:
             _run(cfg, df, tmp_path)
         assert exc.value.code == "fpe_checksum_unsupported"
+
+
+# ---------------------------------------------------------------------------
+# Checksum length: fail closed on ANY invalid length (Codex cross-model review)
+# ---------------------------------------------------------------------------
+
+
+class TestChecksumLengthFailClosed:
+    """A checksum value outside the scheme's valid length fails closed.
+
+    Codex 2026-07-14 found two gaps in the DE-01 short-checksum fix:
+      1. BLOCKER: a len-0/1 value skipped the `len(s) >= 2` dispatch guard,
+         fell to `_permute`, and permuted to itself -- bypassing the check
+         entirely (`"1"` with checksum:npi -> `"8"`, no raise).
+      4. MEDIUM: an OVER-length value either kept its surplus source digit raw
+         (leak, separator-preserve) or truncated it (corruption), because the
+         checksum body is fixed-width and the non-strict reinsertion zip
+         absorbed the mismatch.
+    Both now raise. Valid-length values are unaffected (see the round-trip test).
+    """
+
+    # --- value level (both directions of the flaw) ---
+    @pytest.mark.parametrize("scheme", ["npi", "isbn13", "vin", "luhn"])
+    def test_single_char_checksum_value_raises(self, scheme: str) -> None:
+        with pytest.raises(FpeChecksumError):
+            fpe_encrypt_value("1", _KEY, _DIGITS, b"t", checksum=scheme)
+
+    @pytest.mark.parametrize(
+        ("value", "scheme"),
+        [
+            ("12345678930", "npi"),  # 11 digits, npi is exactly 10
+            ("97812345678901", "isbn13"),  # 14 digits, isbn13 is exactly 13
+        ],
+    )
+    def test_over_length_checksum_value_raises(self, value: str, scheme: str) -> None:
+        # Both preserve_separators settings: the pre-fix leak (True) and
+        # truncation (False) paths must each fail closed.
+        for preserve in (True, False):
+            with pytest.raises(FpeChecksumError):
+                fpe_encrypt_value(value, _KEY, _DIGITS, b"t", preserve, checksum=scheme)
+
+    # --- pipeline level (surfaces as StrategyError at the boundary) ---
+    def test_over_length_npi_pipeline_fails_closed(self, tmp_path) -> None:
+        cfg = _config([_fpe_col("npi", "digits", checksum="npi")], tmp_path)
+        df = pd.DataFrame({"npi": ["1234567893", "12345678930"]})  # second is 11 digits
+        with pytest.raises(ExecutionError) as exc:
+            _run(cfg, df, tmp_path)
+        assert exc.value.code == "fpe_checksum_unsupported"
+
+    def test_one_char_npi_pipeline_fails_closed(self, tmp_path) -> None:
+        cfg = _config([_fpe_col("npi", "digits", checksum="npi")], tmp_path)
+        df = pd.DataFrame({"npi": ["1234567893", "1"]})  # second is 1 digit
+        with pytest.raises(ExecutionError) as exc:
+            _run(cfg, df, tmp_path)
+        assert exc.value.code == "fpe_checksum_unsupported"
+
+
+# ---------------------------------------------------------------------------
+# Checksum unmask: the inverse must forward the scheme (Codex HIGH, pre-existing)
+# ---------------------------------------------------------------------------
+
+
+class TestChecksumUnmaskRoundTrip:
+    """A checksum-mode fpe column round-trips through mask -> unmask.
+
+    Pre-existing bug (since 2026-06-12): `unmask` did not forward `checksum` to
+    `fpe_decrypt_value`, so it ran the plain inverse and returned deterministic
+    WRONG plaintext while still reporting `status="reversed"`. With the scheme
+    forwarded, a valid-checksum source recovers byte-exact.
+    """
+
+    def test_valid_npi_column_masks_and_unmasks_exact(self, tmp_path) -> None:
+        cfg = _config([_fpe_col("npi", "digits", checksum="npi")], tmp_path)
+        # Genuinely check-digit-valid NPIs (else the recomputed check digit
+        # normalizes on decrypt -- the documented caveat, not this test's point).
+        source = ["1234567893", "1548273956", "2000000010"]
+        df = pd.DataFrame({"npi": source})
+        result = _run(cfg, df, tmp_path)
+        masked = result.outputs[_TABLE]
+        assert masked.column("npi").to_pylist() != source  # actually masked
+        recovered = unmask_pipeline(cfg, {_TABLE: masked})
+        assert recovered.outputs[_TABLE].column("npi").to_pylist() == source
+        report = next(r for r in recovered.columns if r.column == "npi")
+        assert report.status == "reversed"
+        assert "checksum=npi" in report.detail  # caveat surfaced
 
 
 # ---------------------------------------------------------------------------

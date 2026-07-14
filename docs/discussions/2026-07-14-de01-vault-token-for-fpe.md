@@ -119,3 +119,32 @@ documented as a known limitation (docstrings + CHANGELOG).
 
 Both depend on the audited-FF1 fast-follow and/or `vault_token` above, so they
 share a sprint.
+
+---
+
+## Deferred item 3: pre-fix covering-hash artifacts are not reliably reversible
+
+**What it is (Codex cross-model review, 2026-07-14).** DE-01 removed the
+covering-hash GENERATION path, so no new non-invertible artifacts are produced.
+But any masked output written **before** the fix, for an all-out-of-charset
+value, contains an in-charset covering-hash token that is indistinguishable from
+a normal FPE ciphertext. `unmask` has no provenance/version check, so it will
+run the inverse cipher on such a token and report a fabricated plaintext as
+`status="reversed"` -- silent wrong-plaintext, exactly the class DE-01 closes on
+the forward path.
+
+**Why it is not fixed now.** A covering-hash token and a real FPE ciphertext are
+both just in-charset strings; distinguishing them requires either a per-value
+authentication tag (a real crypto/MAC build) or a versioned/authenticated
+artifact envelope. There is no cheap, reliable detection to add. And it only
+affects PRE-FIX artifacts: the engine is pre-GA (`is_pre_ga()` is `True`), there
+are no manifests/masked outputs in the wild under a compatibility guarantee
+(the `SEED_PROTOCOL_VERSION` history repeatedly notes "pre-GA, hard cutover; no
+manifests in the wild"), and covering-hash generation is gone going forward.
+
+**Decision: document, do not build.** Pre-fix covering-hash outputs are declared
+**not reliably reversible** (pre-GA, no compatibility guarantee); regenerate any
+such output under the fixed engine. Reliable detection/authentication of
+un-invertible values is folded into the structured-FPE / FF1 fast-follow scope
+(an authenticated artifact envelope naturally subsumes it). No versioning build
+lands in DE-01.
