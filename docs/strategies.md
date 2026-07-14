@@ -88,6 +88,14 @@ a namespace.
      This prevents a silent no-op where values would pass through unmasked at
      runtime.
 
+Out-of-charset values also fail closed: a value with no in-charset characters
+(or, with `preserve_separators: false`, any out-of-charset character) raises
+`FpeUnencryptableError` at execution time rather than emitting it unmasked or
+partially masked. The engine no longer falls back to a non-invertible
+covering hash for such values (that fallback was removed in DE-01); see the
+[DE-01 FPE remediation design brief](https://github.com/louiskeep/decoy-engine/blob/main/docs/security/de-01-fpe-remediation-design.md)
+(excluded from the built docs site; see `docs/conf.py`).
+
 Use it when a downstream system validates the format of an identifier (credit
 card, account number) and you cannot change its shape.
 
