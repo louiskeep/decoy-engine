@@ -237,6 +237,10 @@ nitpick_ignore = [
     # convention for private-module-sourced types (see ExecutionError above).
     ("py:class", "decoy_engine.validators._types.ValidationReport"),
     ("py:class", "decoy_engine.validators._types.QuarantineSummary"),
+    # DE-02 (2026-07-14): keyprovider.py's plan-gate functions take `plan: Plan`
+    # via TYPE_CHECKING from the private `plan._types` module; same
+    # private-module-sourced-type pattern as ValidationReport above.
+    ("py:class", "decoy_engine.plan._types.Plan"),
     # Sprint 2 honesty pack (2026-07-04): quarantine.py references
     # RowErrorRecord via TYPE_CHECKING from the private
     # `execution._row_errors` module. Same private-module-sourced-type
