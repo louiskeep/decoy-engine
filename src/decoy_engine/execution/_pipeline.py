@@ -336,13 +336,22 @@ def run_pipeline(
     # (`global_settings.mask_secret_ref`, env:/file:), never serialized raw, and a
     # programmatic `key_provider` wins over the ref. The resolved provider threads
     # into every execution route; None means "no secret -> job_seed".
-    from decoy_engine.keyprovider import resolve_key_provider
+    from decoy_engine.keyprovider import mask_key_from_provider, resolve_key_provider
 
     resolved_key_provider = resolve_key_provider(
         plan=plan,
         key_provider=key_provider,
         mask_secret_ref=(config.get("global_settings") or {}).get("mask_secret_ref"),
     )
+    # DE-02 (Codex BLOCKER 5): the token vault holds reversible plaintext PII and
+    # must be encrypted under the SAME resolved mask key as the masking run. Fail
+    # closed here if a caller-supplied vault writer is keyed differently (e.g. a
+    # bare job_seed writer while the run masks under a real secret), so the vault
+    # can never decrypt under the public job_seed while the output uses the secret.
+    if vault_writer is not None and hasattr(vault_writer, "assert_keyed_with"):
+        vault_writer.assert_keyed_with(
+            mask_key_from_provider(resolved_key_provider, plan.seed_envelope.job_seed)
+        )
 
     ns_registry = build_namespace_registry(config, profile)
     if profile.relationships:

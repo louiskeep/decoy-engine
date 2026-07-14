@@ -70,7 +70,7 @@ from decoy_engine.execution._when_gate import run_with_when_gate
 from decoy_engine.generation.pool._cache import PoolCache
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.instrumentation.timing import TimingCollector, timed_strategy, use_collector
-from decoy_engine.keyprovider import mask_key_from_provider
+from decoy_engine.keyprovider import require_mask_key
 from decoy_engine.plan._types import ColumnSeed
 
 if TYPE_CHECKING:
@@ -198,7 +198,7 @@ class PandasExecutionAdapter:
             relationship_graph=relationship_graph,
             namespace_registry=namespace_registry,
             job_seed=plan.seed_envelope.job_seed,
-            mask_key=mask_key_from_provider(key_provider, plan.seed_envelope.job_seed),
+            mask_key=require_mask_key(plan, key_provider),
         )
 
         ordered = order_work(build_work_list(plan, registry), relationship_graph)

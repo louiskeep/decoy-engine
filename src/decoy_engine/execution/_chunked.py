@@ -354,6 +354,19 @@ def run_mask_pipeline_chunked(
         return iter(())
     profile = _first_chunk_profile(first, table=table, engine_version=engine_version)
     plan = compile_plan(config, profile, decoy_engine_version=engine_version, no_profile=True)
+    # DE-02 (Codex BLOCKER 4): this is a PUBLIC entry point. Resolve the config's
+    # `mask_secret_ref` when no programmatic provider was passed, then run the
+    # fail-closed gate up front (fail fast) -- the per-chunk adapter.run() re-gates
+    # via require_mask_key, so a keyed chunked job cannot run off job_seed at GA.
+    if key_provider is None:
+        _ref = (config.get("global_settings") or {}).get("mask_secret_ref")
+        if _ref:
+            from decoy_engine.keyprovider import key_provider_from_ref
+
+            key_provider = key_provider_from_ref(_ref)
+    from decoy_engine.keyprovider import require_mask_key
+
+    require_mask_key(plan, key_provider)
     # DE-03: resolve the projection policy once; each per-chunk adapter.run()
     # enforces it (a chunk carries the same column set as the whole table, so
     # per-chunk enforcement IS whole-table enforcement). Single mask table, no

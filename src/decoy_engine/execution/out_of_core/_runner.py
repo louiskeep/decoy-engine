@@ -72,7 +72,7 @@ from decoy_engine.execution.out_of_core._mask import (
 )
 from decoy_engine.execution.out_of_core._relation import build_parent_key_relation_aligned
 from decoy_engine.execution.out_of_core._source import LazySource
-from decoy_engine.keyprovider import mask_key_from_provider
+from decoy_engine.keyprovider import require_mask_key
 from decoy_engine.plan._types import ColumnSeed
 from decoy_engine.relationships._graph import OrphanPolicy
 
@@ -132,6 +132,10 @@ def run_fk_out_of_core(
             code="out_of_core_batch_rows_invalid",
             message=f"batch_rows must be a positive row count, got {batch_rows}.",
         )
+    # DE-02 (Codex BLOCKER 4): fail-closed gate FIRST -- before any admissibility
+    # or source checks -- so a keyed out-of-core job can never run off job_seed at
+    # GA regardless of entry point.
+    mask_key = require_mask_key(plan, key_provider)
     work = order_work(build_work_list(plan, registry), relationship_graph)
     compat = check_out_of_core_compatibility(plan, work, relationship_graph)
     if not compat.accepted:
@@ -146,7 +150,6 @@ def run_fk_out_of_core(
                 message="out-of-core FK route requires every parent and child source.",
             )
 
-    mask_key = mask_key_from_provider(key_provider, plan.seed_envelope.job_seed)
     owned_temp = temp_dir is None
     root = Path(tempfile.mkdtemp(prefix="decoy-ooc-")) if temp_dir is None else temp_dir
     root.mkdir(parents=True, exist_ok=True)

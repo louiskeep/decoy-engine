@@ -47,6 +47,7 @@ from decoy_engine.keyprovider import (
     MissingMaskSecret,
     key_provider_from_ref,
     plan_has_keyed_strategy,
+    require_mask_key,
     resolve_key_provider,
     resolve_mask_secret_ref,
 )
@@ -345,12 +346,13 @@ class TestTransformBackedHandlersRekey:
         assert base != secret
 
 
-class TestAnonymisationStrategiesAreKeyIndependent:
-    """FINDING pinned as invariant: code_set / joint_mask are anonymisation whose
-    keyed selection uses a fixed internal salt, so mask output is independent of
-    both job_seed and the secret. They still mask (output != input)."""
+class TestCodeSetJointMaskRekey:
+    """DE-02 (Codex BLOCKER 1 / HIGH, Cam decision): code_set + joint_mask mask
+    selection now derives its HMAC key from the run secret (`derive(mask_key,
+    namespace, salt)`), not a fixed public constant, so their output CHANGES under
+    a secret and is byte-identical (deterministic) without one."""
 
-    def test_code_set_mask_is_secret_independent_but_masks(self):
+    def test_code_set_changes_under_secret_and_masks(self):
         from decoy_engine.execution._strategies._code_set import CodeSetHandler
 
         h = CodeSetHandler()
@@ -358,10 +360,23 @@ class TestAnonymisationStrategiesAreKeyIndependent:
         df = lambda: pd.DataFrame({"dx": ["E11.9", "I10", "J45.909", "E11.65", "I10"]})
         base = _handler_output(h, df, "dx", seed, _JOB_SEED)
         secret = _handler_output(h, df, "dx", seed, _SECRET.mask_key())
-        assert base == secret, "code_set mask uses a fixed salt (anonymisation), not the key"
         assert base != ["E11.9", "I10", "J45.909", "E11.65", "I10"], "still masks"
+        assert base != secret, "code_set must rekey off the secret"
+        assert base == _handler_output(h, df, "dx", seed, _JOB_SEED), "deterministic"
 
-    def test_joint_mask_mask_is_secret_independent(self):
+    def test_code_set_chapter_preserve_changes_under_secret(self):
+        from decoy_engine.execution._strategies._code_set import CodeSetHandler
+
+        h = CodeSetHandler()
+        seed = _cseed(
+            "code_set", provider="code_set", pc={"code_set": "icd10", "chapter_preserve": True}
+        )
+        df = lambda: pd.DataFrame({"dx": ["E11.9", "I10", "J45.909", "E11.65", "I10"]})
+        base = _handler_output(h, df, "dx", seed, _JOB_SEED)
+        secret = _handler_output(h, df, "dx", seed, _SECRET.mask_key())
+        assert base != secret
+
+    def test_joint_mask_changes_under_secret(self):
         from decoy_engine.execution._strategies._joint_mask import JointMaskHandler
 
         h = JointMaskHandler()
@@ -382,7 +397,8 @@ class TestAnonymisationStrategiesAreKeyIndependent:
         )
         base = _handler_output(h, df, "city", seed, _JOB_SEED)
         secret = _handler_output(h, df, "city", seed, _SECRET.mask_key())
-        assert base == secret, "joint_mask keyed_row uses a fixed reference-table salt"
+        assert base != secret, "joint_mask must rekey off the secret"
+        assert base == _handler_output(h, df, "city", seed, _JOB_SEED), "deterministic"
 
 
 # --------------------------------------------------------------------------
@@ -578,6 +594,148 @@ class TestFailClosedGate:
         )
         with pytest.raises(KeyedStrategyRequiresSecret):
             _run(tmp_path, cfg)
+
+    def test_ga_rejects_seed_provider_resolved_key_too_short(self, tmp_path, monkeypatch):
+        # Codex BLOCKER 2: presence is not enough -- an 8-byte SeedKeyProvider that
+        # resolves to mask_key == job_seed must be rejected at GA.
+        monkeypatch.setattr("decoy_engine.keyprovider.is_pre_ga", lambda: False)
+        seed_provider = SeedKeyProvider((7).to_bytes(8, "big"))
+        with pytest.raises(KeyedStrategyRequiresSecret):
+            require_mask_key(_keyed_plan(tmp_path), seed_provider)
+
+    def test_ga_rejects_empty_custom_provider(self, tmp_path, monkeypatch):
+        # Codex BLOCKER 2: a custom provider whose mask_key() is < 32 bytes.
+        monkeypatch.setattr("decoy_engine.keyprovider.is_pre_ga", lambda: False)
+
+        class _EmptyProvider:
+            key_version = "empty"
+
+            def mask_key(self) -> bytes:
+                return b""
+
+        with pytest.raises(KeyedStrategyRequiresSecret):
+            require_mask_key(_keyed_plan(tmp_path), _EmptyProvider())
+
+    def test_nested_keyed_child_is_classified_and_gated(self, tmp_path, monkeypatch):
+        # Codex BLOCKER 3: nested(strategy=hash) hides a keyed child.
+        cfg = _config(
+            tmp_path,
+            columns=[
+                {
+                    "name": "payload",
+                    "strategy": "nested",
+                    "namespace": "n_ns",
+                    "provider_config": {"target": "$.ssn", "strategy": "hash"},
+                }
+            ],
+        )
+        df = pd.DataFrame({"payload": [f'{{"ssn": "12{i}-45-6789"}}' for i in range(5)]})
+        df.to_csv(tmp_path / "t.csv", index=False)
+        prof = profile_source(cfg, seed=42)
+        plan = compile_plan(cfg, prof, decoy_engine_version=_EV)
+        assert plan_has_keyed_strategy(plan) is True, "nested(hash) must classify keyed"
+        monkeypatch.setattr("decoy_engine.keyprovider.is_pre_ga", lambda: False)
+        with pytest.raises(KeyedStrategyRequiresSecret):
+            require_mask_key(plan, None)
+
+
+class TestPublicEntryPointsGated:
+    """Codex BLOCKER 4: every public masking entry point runs the gate, so none
+    can execute keyed masking off job_seed at GA without a secret."""
+
+    def _keyed_cfg(self, tmp_path):
+        return _config(
+            tmp_path, columns=[{"name": "email", "strategy": "hash", "namespace": "e_ns"}]
+        )
+
+    def _plan_and_sources(self, tmp_path):
+        cfg = self._keyed_cfg(tmp_path)
+        df = _frame(8)[["email"]]
+        df.to_csv(tmp_path / "t.csv", index=False)
+        sources = {"t": pa.Table.from_pandas(df, preserve_index=False)}
+        prof = profile_source(cfg, seed=42)
+        from decoy_engine.relationships import build_namespace_registry
+
+        plan = compile_plan(cfg, prof, decoy_engine_version=_EV)
+        ns = build_namespace_registry(cfg, prof)
+        return plan, sources, ns
+
+    def test_direct_pandas_adapter_run_gated(self, tmp_path, monkeypatch):
+        from decoy_engine.execution import PandasExecutionAdapter
+
+        monkeypatch.setattr("decoy_engine.keyprovider.is_pre_ga", lambda: False)
+        plan, sources, ns = self._plan_and_sources(tmp_path)
+        with pytest.raises(KeyedStrategyRequiresSecret):
+            PandasExecutionAdapter().run(
+                plan,
+                sources,
+                registry=get_default_registry(),
+                relationship_graph=RelationshipGraph(edges=(), ordering=()),
+                namespace_registry=ns,
+            )
+
+    def test_direct_polars_adapter_run_gated(self, tmp_path, monkeypatch):
+        from decoy_engine.execution._substrate import select_execution_adapter
+
+        monkeypatch.setattr("decoy_engine.keyprovider.is_pre_ga", lambda: False)
+        plan, sources, ns = self._plan_and_sources(tmp_path)
+        adapter = select_execution_adapter(substrate="polars")
+        with pytest.raises(KeyedStrategyRequiresSecret):
+            adapter.run(
+                plan,
+                sources,
+                registry=get_default_registry(),
+                relationship_graph=RelationshipGraph(edges=(), ordering=()),
+                namespace_registry=ns,
+            )
+
+    def test_chunked_entry_point_gated(self, tmp_path, monkeypatch):
+        from decoy_engine import run_mask_pipeline_chunked
+
+        monkeypatch.setattr("decoy_engine.keyprovider.is_pre_ga", lambda: False)
+        cfg = self._keyed_cfg(tmp_path)
+        df = _frame(8)[["email"]]
+        df.to_csv(tmp_path / "t.csv", index=False)
+        source = pa.Table.from_pandas(df, preserve_index=False)
+        with pytest.raises(KeyedStrategyRequiresSecret):
+            list(run_mask_pipeline_chunked(cfg, [source], table="t", engine_version=_EV))
+
+    def test_out_of_core_runner_gated(self, tmp_path, monkeypatch):
+        from decoy_engine.execution.out_of_core import run_fk_out_of_core
+
+        monkeypatch.setattr("decoy_engine.keyprovider.is_pre_ga", lambda: False)
+        plan, sources, _ns = self._plan_and_sources(tmp_path)
+        # No FK edges needed to exercise the gate: it runs before the stream loop.
+        with pytest.raises(KeyedStrategyRequiresSecret):
+            run_fk_out_of_core(
+                plan,
+                sources,
+                registry=get_default_registry(),
+                relationship_graph=RelationshipGraph(edges=(), ordering=()),
+            )
+
+    def test_vault_writer_key_mismatch_fails_closed(self, tmp_path, monkeypatch):
+        # Codex BLOCKER 5: a job_seed-keyed vault writer while masking under a
+        # secret must fail closed (never encrypt PII under the public seed).
+        from decoy_engine.execution import ExecutionError
+        from decoy_engine.vault import VaultError, VaultWriter
+
+        cfg = _config(
+            tmp_path,
+            columns=[{"name": "email", "strategy": "hash", "namespace": "e_ns", "vault": True}],
+        )
+        df = _frame(8)[["email"]]
+        df.to_csv(tmp_path / "t.csv", index=False)
+        sources = {"t": pa.Table.from_pandas(df, preserve_index=False)}
+        bad_writer = VaultWriter((42).to_bytes(8, "big"))  # job_seed-keyed
+        with pytest.raises((VaultError, ExecutionError)):
+            run_pipeline(
+                cfg,
+                sources=sources,
+                engine_version=_EV,
+                vault_writer=bad_writer,
+                key_provider=_SECRET,
+            )
 
 
 # --------------------------------------------------------------------------

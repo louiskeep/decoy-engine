@@ -56,6 +56,11 @@ _CHECKSUM_CAVEAT = (
     "checksum={scheme} recomputes the check digit on decrypt; round trip is "
     "byte-exact iff the source was valid for the scheme"
 )
+_FPE_UNVERIFIED_CAVEAT = (
+    "UNVERIFIED: reversed under the non-secret job_seed fallback (no mask secret "
+    "supplied). FPE is unauthenticated -- a wrong key yields plausible but WRONG "
+    "plaintext. Supply the mask secret to reverse authentically."
+)
 
 
 @dataclass(frozen=True)
@@ -65,7 +70,9 @@ class UnmaskColumnReport:
     table: str
     column: str
     strategy: str | None
-    status: str  # reversed | vault_reversed | vault_miss | irreversible | untouched | table_missing
+    # reversed | reversed_unverified (fpe under the non-secret fallback, DE-02) |
+    # vault_reversed | vault_miss | irreversible | untouched | table_missing
+    status: str
     detail: str = ""
 
 
@@ -203,6 +210,27 @@ def unmask_pipeline(
         if ref:
             provider = key_provider_from_ref(ref)
     mask_key = provider.mask_key() if provider is not None else job_seed
+    # DE-02 (Codex MEDIUM 6): unmask reverses KEYED surface (fpe + vaulted
+    # columns). Route it through the same fail-closed gate: a resolved key < 32
+    # bytes (the 8-byte job_seed fallback, or an empty custom provider) is NOT a
+    # real secret. At GA, reversing keyed columns without one hard-errors instead
+    # of silently producing wrong plaintext labelled "reversed".
+    from decoy_engine.keyprovider import MIN_SECRET_BYTES, KeyedStrategyRequiresSecret
+    from decoy_engine.release import is_pre_ga
+
+    _authenticated = len(mask_key) >= MIN_SECRET_BYTES
+    _has_fpe = any(
+        (c.get("strategy") == "fpe")
+        for t in (config.get("tables") or [])
+        for c in (t.get("columns") or [])
+    )
+    _keyed_reversal = vault_path is not None or _has_fpe
+    if _keyed_reversal and not _authenticated and not is_pre_ga():
+        raise KeyedStrategyRequiresSecret(
+            "unmask reverses keyed columns (fpe / vaulted) which at GA require the "
+            "mask secret. Supply run(...)'s key_provider or global_settings."
+            "mask_secret_ref; the 8-byte job_seed fallback is not accepted."
+        )
     vault_map: dict[tuple[str, str], str] | None = None
     vault_ambiguous = 0
     if vault_path is not None:
@@ -340,12 +368,21 @@ def unmask_pipeline(
                 detail = _LUHN_CAVEAT
             else:
                 detail = ""
+            # DE-02 (Codex MEDIUM 6): FPE is unauthenticated -- a wrong key yields
+            # plausible-looking (but wrong) plaintext. When reversing under the
+            # non-secret job_seed fallback (no >=32-byte secret supplied), flag the
+            # reversal as unverified so a consumer does not treat it as an
+            # authenticated round-trip. Under a real secret this caveat is omitted.
+            fpe_status = "reversed" if _authenticated else "reversed_unverified"
+            if not _authenticated:
+                caveat = _FPE_UNVERIFIED_CAVEAT
+                detail = f"{detail} {caveat}".strip() if detail else caveat
             reports.append(
                 UnmaskColumnReport(
                     table=name,
                     column=col,
                     strategy="fpe",
-                    status="reversed",
+                    status=fpe_status,
                     detail=detail,
                 )
             )

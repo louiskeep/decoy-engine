@@ -44,10 +44,28 @@ it deterministically.
   `vault` (Fernet key) and `unmask` (reverse FPE key). `determinism.derive()` and
   `ProviderSpec.seed` now accept an 8-byte (`job_seed`) OR 32-byte (`mask_key`)
   IKM; the 8-byte path is unchanged.
-- **Anonymisation carve-out:** `code_set` and `joint_mask` are anonymisation
-  (many-to-one, lossy) and key their selection off a fixed internal salt, not
-  `job_seed`; their output is independent of the secret by design. Fixed the
-  `text_mask.py` "32-byte HMAC key" docstring (the key is 8 or 32 bytes).
+- **`code_set` + `joint_mask` rekeyed off the secret.** Both previously selected
+  via a fixed PUBLIC salt (`code_set` `HMAC(decoy.code_set.keyed_access.v1, ...)`;
+  `joint_mask` via `ReferenceTable.keyed_row`'s
+  `decoy.reference_tables.keyed_access.v1`), so their remap was globally reversible
+  independent of any secret. The HMAC key now derives from the run secret
+  (`derive(mask_key, namespace, salt)`), so both change under a secret. This is a
+  reviewed determinism change (§9): the no-secret output of the two testflight
+  golden jobs that use them (`a_healthcare_claims`, `b_retail_m2m`) moved and their
+  cross-process fingerprints were regenerated; the other three golden jobs are
+  byte-identical.
+- **Fail-closed gate hardened.** The gate now checks the RESOLVED key length, not
+  just provider presence: an 8-byte `SeedKeyProvider` / empty custom provider is
+  rejected at GA (`WeakMaskSecret`/`KeyedStrategyRequiresSecret`). Keyed-strategy
+  classification recurses into `nested` children (`nested(strategy=hash)` is
+  gated). The gate runs at the execution CHOKE POINT (every adapter, the
+  out-of-core runner, the chunked entry) so no public masking entry point can run
+  keyed masking off `job_seed` at GA. The token vault's Fernet key must match the
+  resolved mask key (`run_pipeline` fails closed on a mismatched vault writer), and
+  `unmask` runs the same gate (GA requires the secret; an unauthenticated fpe
+  reversal under the job_seed fallback reports `status="reversed_unverified"`).
+  Secret material is redacted from provider `repr` and `mask_secret_ref` errors.
+  Fixed the `text_mask.py` "32-byte HMAC key" docstring (the key is 8 or 32 bytes).
 - **Migration (pre-GA hard cutover):** any `job_seed`-keyed vault sidecar or
   masked output produced to date is regenerated fresh under a secret at GA. There
   is no dual-read / legacy-key path.

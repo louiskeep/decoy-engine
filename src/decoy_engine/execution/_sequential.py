@@ -157,7 +157,7 @@ from decoy_engine.execution._transactional_sink import (
 from decoy_engine.generation.pool._cache import PoolCache
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.instrumentation.timing import TimingCollector, use_collector
-from decoy_engine.keyprovider import mask_key_from_provider
+from decoy_engine.keyprovider import require_mask_key
 from decoy_engine.quarantine import compute_quarantine, finalize_committed_quarantine
 
 if TYPE_CHECKING:
@@ -289,7 +289,7 @@ def run_sequential(
         relationship_graph=graph,
         namespace_registry=namespace_registry,
         job_seed=plan.seed_envelope.job_seed,
-        mask_key=mask_key_from_provider(key_provider, plan.seed_envelope.job_seed),
+        mask_key=require_mask_key(plan, key_provider),
     )
 
     parent_map_cache: dict[_NodeKey, dict[_KeyTuple, _KeyTuple]] = {}

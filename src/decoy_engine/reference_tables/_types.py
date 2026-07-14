@@ -84,8 +84,15 @@ class ReferenceTable:
             )
         return {col: self._table.column(col)[index].as_py() for col in self.column_names}
 
-    def keyed_row(self, key_value: str) -> dict[str, Any]:
+    def keyed_row(self, key_value: str, *, hmac_key: bytes = _KEYED_ACCESS_SALT) -> dict[str, Any]:
         """Return a deterministic row selected by HMAC-keyed modular index.
+
+        DE-02: `hmac_key` is the HMAC key for the selection. It defaults to the
+        public `_KEYED_ACCESS_SALT` (deterministic, non-secret) for callers that
+        only need stability; the joint_mask MASK path passes a SECRET-derived key
+        (`derive(mask_key, namespace, salt)`) so the row selection depends on the
+        run's keyed-mask secret and is not globally reversible off a public
+        constant (Codex DE-02 BLOCKER 1).
 
         Access semantics: id-sorted positional. Rows are pre-sorted by the
         'id' column (ascending) at construction. The HMAC-SHA256 digest is
@@ -109,7 +116,7 @@ class ReferenceTable:
         Returns:
             Row dict for the derived index, from the id-sorted table.
         """
-        hex_digest = hmac_hex(_KEYED_ACCESS_SALT, key_value)
+        hex_digest = hmac_hex(hmac_key, key_value)
         if hex_digest is None:
             raise ValueError("hmac_hex returned None for a non-None key_value")
         # First 8 hex chars -> 32-bit int; modulo row_count for id-sorted index.

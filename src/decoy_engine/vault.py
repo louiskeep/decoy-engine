@@ -56,6 +56,7 @@ namespace, unique-mode substitution).
 from __future__ import annotations
 
 import base64
+import hmac
 import json
 from collections.abc import Iterable, Mapping
 from pathlib import Path
@@ -202,6 +203,26 @@ class VaultWriter:
         # DE-02: the vault's keyed-mask IKM (job_seed when no secret is present).
         self._mask_key = mask_key
         self._entries: set[tuple[str, str, str]] = set()
+
+    def assert_keyed_with(self, mask_key: bytes) -> None:
+        """Fail closed if this writer's key does not match `mask_key`.
+
+        DE-02 (Codex BLOCKER 5): the vault holds reversible plaintext PII, so it
+        MUST be Fernet-encrypted under the SAME keyed-mask secret the masking run
+        used -- never the public `job_seed` while the output masks under a real
+        secret. `run_pipeline` calls this against the run's resolved `mask_key`
+        before any masking. Constant-time compare; never echoes the key bytes.
+        """
+        if not hmac.compare_digest(self._mask_key, mask_key):
+            raise VaultError(
+                code="vault_key_mismatch",
+                message=(
+                    "the supplied vault writer is keyed with a different secret than "
+                    "the masking run resolved. Build the vault writer from the same "
+                    "key_provider / mask_secret_ref (vault_writer_for_config(config, "
+                    "key_provider=...)) so the vault decrypts under the run secret."
+                ),
+            )
 
     def add(self, entries: Iterable[tuple[str, str, str]]) -> None:
         """Accumulate `(namespace, masked, source)` triples."""

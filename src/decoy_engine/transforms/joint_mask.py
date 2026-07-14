@@ -53,8 +53,16 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from decoy_engine.determinism import derive
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.reference_tables import ReferenceTable, load_table
+
+# DE-02: source label for the secret-derived HMAC key of the mask-mode keyed
+# row selection. `derive(mask_key, namespace, _KEYED_ROW_SOURCE)` yields a
+# per-(secret, column) 32-byte key so the reference-row mapping depends on the
+# run secret (Codex BLOCKER 1) instead of a public constant.
+_KEYED_ROW_SOURCE = b"joint_mask/keyed_row/v1"
+_DEFAULT_NAMESPACE = "joint_mask"
 
 _LOG = logging.getLogger(__name__)
 
@@ -218,6 +226,7 @@ def apply_joint_mask(
     *,
     mode: str = "mask",
     job_seed: bytes,
+    namespace: str | None = None,
 ) -> pd.DataFrame:
     """Apply joint_mask to ``df``, writing all target columns in one pass.
 
@@ -237,7 +246,7 @@ def apply_joint_mask(
     result = df.copy()
 
     if mode == "mask":
-        rows = _pick_rows_mask(df, config, job_seed)
+        rows = _pick_rows_mask(df, config, job_seed, namespace=namespace)
     elif mode == "gen":
         rows = _pick_rows_gen(len(df), config, job_seed)
     else:
@@ -253,6 +262,8 @@ def _pick_rows_mask(
     df: pd.DataFrame,
     config: JointMaskConfig,
     job_seed: bytes,
+    *,
+    namespace: str | None = None,
 ) -> list[dict[str, Any]]:
     """Pick one reference row per DataFrame row using HMAC-keyed selection.
 
@@ -260,11 +271,19 @@ def _pick_rows_mask(
     (the same fallback a null value would need since there is no key to
     HMAC). This preserves the non-null row count and avoids crashes.
 
+    DE-02: `job_seed` here is the keyed-mask IKM (`ctx.mask_key`). The reference
+    row is selected under an HMAC key derived from it
+    (`derive(mask_key, namespace, "joint_mask/keyed_row/v1")`), so the
+    real-value -> reference-row mapping depends on the run secret and is not
+    reversible off the public reference-table salt (Codex BLOCKER 1). The
+    null-key fallback RNG also seeds off this IKM.
+
     Pattern: HMAC-SHA256 via ReferenceTable.keyed_row (RFC 2104).
     SP-06 cross-version caveat: modular index shifts if row_count changes.
     """
     tbl = config.table
     key_col = df[config.key_by] if config.key_by in df.columns else pd.Series([None] * len(df))
+    hmac_key = derive(job_seed, namespace or _DEFAULT_NAMESPACE, _KEYED_ROW_SOURCE)
 
     rows: list[dict[str, Any]] = []
     # Seeded RNG for null-key fallback rows only.
@@ -275,9 +294,8 @@ def _pick_rows_mask(
             idx = int(rng.integers(0, tbl.row_count))
             rows.append(tbl.row(idx))
         else:
-            # Non-null: keyed_row uses HMAC-SHA256(internal_salt, str(val))
-            # per the SP-06 ReferenceTable contract (RFC 2104).
-            rows.append(tbl.keyed_row(str(val)))
+            # Non-null: keyed_row selects under the secret-derived HMAC key.
+            rows.append(tbl.keyed_row(str(val), hmac_key=hmac_key))
 
     return rows
 

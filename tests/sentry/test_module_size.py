@@ -110,7 +110,11 @@ ALLOWLIST: dict[str, int] = {
     # per-chunk adapter.run() so the chunked route rekeys off the run secret. The
     # provider is injected at run time (never serialized), so it must flow through
     # this emission path. Same docstring-decomposition target stands.
-    "src/decoy_engine/execution/_chunked.py": 613,
+    # DE-02 review round (Codex BLOCKER 4, 2026-07-14): +13 LOC -- this PUBLIC
+    # entry point now resolves the config's mask_secret_ref and runs the
+    # fail-closed gate up front, so a keyed chunked job cannot execute off
+    # job_seed at GA. Same docstring-decomposition target stands.
+    "src/decoy_engine/execution/_chunked.py": 626,
     # DE-03 (2026-07-13): the mask adapter's `run()` is one of the five emission
     # routes the fail-closed output projection must guard (undeclared columns no
     # longer leak raw). The +17 LOC are the two policy params, the per-table
@@ -138,7 +142,11 @@ ALLOWLIST: dict[str, int] = {
     # live here and thread the resolved provider into every execution route. The
     # gate must run before any table/vault/manifest is written -> spine-owned.
     # Same routing-dispatch decomposition target stands.
-    "src/decoy_engine/execution/_pipeline.py": 634,
+    # DE-02 review round (Codex BLOCKER 5, 2026-07-14): +9 LOC -- run_pipeline now
+    # fails closed if a caller-supplied vault writer is keyed differently from the
+    # resolved mask key (the vault holds reversible plaintext PII and must be
+    # encrypted under the run secret). Same routing-dispatch decomposition target.
+    "src/decoy_engine/execution/_pipeline.py": 643,
     # DE-02 (2026-07-14): +3 LOC crossing the 600 cap -- the sequential FK route
     # threads `key_provider` into StrategyContext.mask_key like the other adapters
     # (run-time injection, never serialized). Decompose the per-table
