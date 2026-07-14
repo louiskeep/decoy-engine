@@ -17,9 +17,15 @@ Fernet spec) from the `cryptography` package, installed via the optional
 full plaintext source-value table is never materialized as a single
 serialized blob before encryption (F13 privacy fix, 2026-06-26).
 
-The key derives from the job seed: `derive(job_seed, "vault",
-b"vault-key/v1")`. That is the same HMAC-SHA256 envelope every other
-engine derivation uses, with its own label. The derivation mixes
+The key derives from the keyed-mask IKM (`mask_key`): `derive(mask_key,
+"vault", b"vault-key/v1")` (`src/decoy_engine/vault.py`, `_fernet`). Under
+a configured secret, `mask_key` is the 32-byte `SecretKeyProvider` HKDF
+mask root; with no secret it falls back to the 8-byte `job_seed`
+(byte-identical to pre-DE-02). This is the same HMAC-SHA256 envelope every
+other engine derivation uses, with its own label -- and the same `mask_key`
+that FPE, hash, and the other keyed strategies draw from (see
+[key derivation](key-derivation.md)), so a vault is bound to the run's
+masking key, not to the public seed. The derivation mixes
 `SEED_PROTOCOL_VERSION`, so a vault written under one protocol version
 is undecryptable under another. The key label itself stays at `vault-key/v1`
 across the v1 to v2 format bump because only the file layout changed, not
@@ -51,11 +57,15 @@ the failure would surface as an opaque `vault_key_mismatch`.
 
 ## Threat model
 
-- **Vault + config = re-identification.** The pipeline config's
-  `global_settings.seed` derives the decryption key. Anyone holding
-  both files recovers every vaulted source value. This extends the
-  config-as-key property `decoy unmask` introduced for fpe columns:
-  with a vault in play, the config now unlocks one-way columns too.
+- **Vault + mask secret = re-identification.** The run's `mask_key`
+  derives the decryption key: the secret behind
+  `global_settings.mask_secret_ref` (or a programmatic `key_provider`)
+  when one is configured, or the `job_seed` in the no-secret fallback.
+  Anyone holding the vault file AND that mask secret (or, in the
+  no-secret case, the config's seed) recovers every vaulted source
+  value. This extends the key-as-unlock property `decoy unmask`
+  introduced for fpe columns: with a vault in play, the mask key now
+  unlocks one-way columns too.
 - **The vault grows with the data.** Unlike the seed (a constant-size
   secret), the vault contains actual source values. Treat it with the
   handling the source data itself requires.
@@ -93,7 +103,7 @@ attribute is machine-readable.
 | `vault_unreadable` | The file is missing, has a bad magic header, or is truncated. |
 | `vault_format_unsupported` | The `format` field in the header names a version this engine does not consume. |
 | `vault_protocol_version_mismatch` | The header's `seed_protocol_version` differs from the running `SEED_PROTOCOL_VERSION`. Cross-version unmask is not supported; re-mask under the correct engine version. |
-| `vault_key_mismatch` | A Fernet chunk could not be decrypted. The vault was written with a different config seed. |
+| `vault_key_mismatch` | A Fernet chunk could not be decrypted. The vault was written under a different `mask_key` (a different mask secret, or the no-secret `job_seed` when the current run supplies a secret). |
 
 Note: `vault_protocol_version_mismatch` is checked before any decryption
 attempt. A cross-version vault also fails decryption (the protocol version

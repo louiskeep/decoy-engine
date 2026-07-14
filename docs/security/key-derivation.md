@@ -44,11 +44,16 @@ stores a secret itself:
   `KeyProvider` protocol: `key_version` + `mask_key()`) takes precedence over
   `mask_secret_ref`.
 
-The raw secret is **never serialized** into a plan, a log, or the evidence
-manifest -- only the non-secret `key_version` label is recorded, so an
-auditor can confirm which key era produced an artifact without recovering
-any key material. Per-tenant secret management (KMS, rotation policy,
-tenancy) is a platform-layer concern; the engine ships no KMS client.
+The raw secret is **never serialized** by the engine into a plan or a log.
+The non-secret `key_version` label (e.g. `"v1"`, or `"seed"` for the
+no-secret fallback) is a safe-to-record identifier for which key era
+produced an artifact. Recording it into an evidence manifest is a
+platform-layer concern, not an engine guarantee: the engine emits no
+evidence manifest itself; the commercial platform's evidence assembler is
+what stamps `provider.key_version` onto a job so an auditor can confirm two
+jobs shared a key era without recovering any key material. Per-tenant secret
+management (KMS, rotation policy, tenancy) is likewise a platform-layer
+concern; the engine ships no KMS client.
 
 ## Fail-closed enforcement
 
@@ -101,24 +106,37 @@ global_settings:
 - `src/decoy_engine/vault.py`: the token vault's Fernet key derives from
   `mask_key`, not `job_seed` -- see [token vault](token-vault.md).
 
-## The legacy `derive_key` resolver (generation only)
+## The legacy `derive_key` resolver (superseded)
 
 `src/decoy_engine/context.py` still exposes `make_key_resolver` and an
 `ExecutionContext.derive_key` / `pipeline_derive_key` pair. This predates
-DE-02 and is **not** part of the masking key model described above: it is
-consumed only by `generate_tables` (synthetic *generation* determinism, via
-`GenDeriveContext` in `generators/derivation.py`), not by any masking
-strategy. `DECOY_MASTER_KEY` and `make_key_resolver` are superseded for
-masking by the `KeyProvider` model; do not use them, or the env var, to
-reason about the strength of masked output.
+DE-02. Do not confuse it with the `mask_key` model above:
+
+- `ExecutionContext.derive_key` (`context.py`) was the legacy **mask**
+  resolver. The V1 strategy classes that consumed it -- `transforms/fpe.py`
+  and `transforms/date_shift.py`, both calling `self.derive_key("mask")` --
+  are dead on the live masking path: V2 handlers key off
+  `StrategyContext.mask_key` instead. `ExecutionContext.pipeline_derive_key`
+  was the legacy generate resolver.
+- Synthetic *generation* determinism on the live path takes its key material
+  from the `derive_key` **keyword argument to `run_pipeline`**, threaded into
+  `GenDeriveContext` (`generators/derivation.py`) -- a separate input from
+  `ExecutionContext.derive_key`, despite the shared name.
+
+`DECOY_MASTER_KEY` and `make_key_resolver` are superseded for masking by the
+`KeyProvider` model; do not use them, or the env var, to reason about the
+strength of masked output. Masked output keys off `mask_key`, never the
+legacy resolver.
 
 ## Relationship to the evidence manifest
 
-The evidence manifest records a job's `key_version` (e.g. `"v1"` for a
-`SecretKeyProvider`, `"seed"` for the no-secret fallback), not any key
-material. Auditors can confirm that two jobs used the same key era by
-comparing `key_version` values; they cannot reconstruct any key from the
-label alone.
+The evidence manifest is a **platform** artifact, not an engine one. The
+engine exposes a job's non-secret `key_version` (e.g. `"v1"` for a
+`SecretKeyProvider`, `"seed"` for the no-secret fallback), never any key
+material; the commercial platform's evidence assembler is what records
+`provider.key_version` into the manifest. Auditors can then confirm that two
+jobs used the same key era by comparing `key_version` values; they cannot
+reconstruct any key from the label alone.
 
 See [SQL surfaces](sql-surfaces.md) for the companion security doc covering
 SQL injection surfaces, and [token vault](token-vault.md) for the vault's

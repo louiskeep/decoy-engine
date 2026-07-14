@@ -89,8 +89,9 @@ a namespace.
      runtime.
 
 Out-of-charset values also fail closed: a value with no in-charset characters
-(or, with `preserve_separators: false`, any out-of-charset character) raises
-`FpeUnencryptableError` at execution time rather than emitting it unmasked or
+(or, with `preserve_separators: false`, any out-of-charset character) fails
+closed with `StrategyError(code=fpe_unencryptable_value)`, which wraps the
+internal `FpeUnencryptableError`, rather than emitting the value unmasked or
 partially masked. The engine no longer falls back to a non-invertible
 covering hash for such values (that fallback was removed in DE-01); see the
 [DE-01 FPE remediation design brief](https://github.com/louiskeep/decoy-engine/blob/main/docs/security/de-01-fpe-remediation-design.md)
