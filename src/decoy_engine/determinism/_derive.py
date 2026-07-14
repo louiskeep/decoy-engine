@@ -118,7 +118,12 @@ from decoy_engine.determinism._hkdf import hkdf_sha256
 SEED_PROTOCOL_VERSION: int = 6
 
 _SALT = b"decoy-engine/determinism/v1"
-_SEED_LENGTH = 8  # exactly 8 bytes; raises on any other length
+# DE-02 (2026-07-14): the IKM slot accepts EITHER the 8-byte generation
+# `job_seed` (no-secret / pre-GA path -- byte-identical to pre-DE-02) OR a
+# 32-byte `mask_key` derived from a real KeyProvider secret. Both are valid HKDF
+# IKM lengths; the 8-byte branch is unchanged so no golden fingerprint moves.
+# Any other length is still a caller bug and raises.
+_SEED_LENGTHS = (8, 32)
 _POOL_SIZE_MAX = 1 << 56  # > 2**56 raises pool_size_overflow
 
 
@@ -134,7 +139,7 @@ class DeterminismError(Exception):
     so callers can `except DeterminismError as e: e.code` consistently.
 
     Codes:
-        seed_wrong_length:   seed argument is not exactly 8 bytes
+        seed_wrong_length:   seed argument is not 8 (job_seed) or 32 (mask_key) bytes
         namespace_empty:     namespace argument is empty string
         pool_size_overflow:  pool_size > 2**56 in derive_index
     """
@@ -178,10 +183,10 @@ class DeriveContext:
         scalar `derive(...)` does. Construction cost is the same as
         one HKDF-SHA256 call (2x HMAC-SHA256 invocations).
         """
-        if len(seed) != _SEED_LENGTH:
+        if len(seed) not in _SEED_LENGTHS:
             raise DeterminismError(
                 code="seed_wrong_length",
-                message=f"seed must be exactly {_SEED_LENGTH} bytes; got {len(seed)}",
+                message=f"seed must be 8 (job_seed) or 32 (mask_key) bytes; got {len(seed)}",
             )
         if not namespace:
             raise DeterminismError(code="namespace_empty", message="namespace must be non-empty")
@@ -216,9 +221,11 @@ def derive(seed: bytes, namespace: str, source: bytes) -> bytes:
     unchanged.
 
     Args:
-        seed: the job seed (exactly 8 bytes; raises on any other length).
-            Comes from `plan.seed_envelope.job_seed` which is `bytes`-typed
-            post-S3, or arbitrary 8-byte entropy for tests.
+        seed: the IKM -- 8 bytes (`job_seed`, the no-secret path) or 32 bytes
+            (`mask_key`, DE-02's KeyProvider-derived secret root). Any other
+            length raises. Comes from `StrategyContext.mask_key` (which is the
+            `job_seed` verbatim when no secret is present, so the 8-byte branch
+            stays byte-identical to pre-DE-02).
         namespace: the namespace string (non-empty; raises on empty). Comes
             from `NamespaceRegistry.for_column(...)` (S2) for the column
             being masked.
@@ -234,10 +241,10 @@ def derive(seed: bytes, namespace: str, source: bytes) -> bytes:
     Raises:
         DeterminismError on invalid inputs (seed wrong length, empty namespace).
     """
-    if len(seed) != _SEED_LENGTH:
+    if len(seed) not in _SEED_LENGTHS:
         raise DeterminismError(
             code="seed_wrong_length",
-            message=f"seed must be exactly {_SEED_LENGTH} bytes; got {len(seed)}",
+            message=f"seed must be 8 (job_seed) or 32 (mask_key) bytes; got {len(seed)}",
         )
     if not namespace:
         raise DeterminismError(code="namespace_empty", message="namespace must be non-empty")

@@ -696,13 +696,13 @@
       ],
       "output": [
         {
-          "diag_code": "Q65.00"
+          "diag_code": "C18.9"
         },
         {
-          "diag_code": "J06.9"
+          "diag_code": "Z87.891"
         },
         {
-          "diag_code": "C34.10"
+          "diag_code": "J18.9"
         }
       ],
       "invariant": "Each diagnosis code is replaced with a different real ICD-10 code drawn from the shipped corpus via HMAC-keyed selection. Output is always a valid corpus code and is always different from the input."
@@ -730,21 +730,21 @@
       "output": [
         {
           "patient_id": "P0001",
-          "zip": "19101",
-          "city": "Philadelphia",
-          "state": "PA"
+          "zip": "78202",
+          "city": "San Antonio",
+          "state": "TX"
         },
         {
           "patient_id": "P0002",
-          "zip": "77002",
-          "city": "Houston",
-          "state": "TX"
+          "zip": "92104",
+          "city": "San Diego",
+          "state": "CA"
         },
         {
           "patient_id": "P0003",
-          "zip": "77003",
-          "city": "Houston",
-          "state": "TX"
+          "zip": "92105",
+          "city": "San Diego",
+          "state": "CA"
         }
       ],
       "invariant": "Every output (zip, city, state) tuple is a real row from the reference table; geographic consistency is guaranteed because the entire row is drawn from a single reference record, never assembled field-by-field."

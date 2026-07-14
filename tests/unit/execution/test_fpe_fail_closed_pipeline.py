@@ -232,7 +232,8 @@ class TestChecksumUnmaskRoundTrip:
         recovered = unmask_pipeline(cfg, {_TABLE: masked})
         assert recovered.outputs[_TABLE].column("npi").to_pylist() == source
         report = next(r for r in recovered.columns if r.column == "npi")
-        assert report.status == "reversed"
+        # DE-02: no secret supplied -> unverified (unauthenticated fpe reversal).
+        assert report.status == "reversed_unverified"
         assert "checksum=npi" in report.detail  # caveat surfaced
 
 

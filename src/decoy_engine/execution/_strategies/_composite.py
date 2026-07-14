@@ -115,11 +115,15 @@ class CompositeHandler:
             )
 
         deterministic = col_seed.deterministic
+        # DE-02 seam: a deterministic composite maps a real source value to a
+        # coherent synthetic bundle -- keyed re-identification surface, so it draws
+        # from mask_key. Non-deterministic mode ignores the source (pure
+        # generation) and stays on job_seed.
         spec = ProviderSpec(
             locale=None,
             deterministic=deterministic,
             namespace=coherent_namespace if deterministic else None,
-            seed=ctx.job_seed,
+            seed=ctx.mask_key if deterministic else ctx.job_seed,
             extra=dict(col_seed.provider_config),
         )
         source = df[node.columns[0]] if deterministic else None

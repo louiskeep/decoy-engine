@@ -158,6 +158,7 @@ def test_hash_throughput_10k_rows_under_2s():
 
     class _Ctx:
         job_seed = b"\x00" * 8
+        mask_key = job_seed  # DE-02: keyed strategies read ctx.mask_key
 
     tracemalloc.start()
     start = time.perf_counter()
@@ -191,6 +192,7 @@ def test_categorical_throughput_10k_rows_under_1s():
 
     class _Ctx:
         job_seed = b"\x00" * 8
+        mask_key = job_seed  # DE-02: keyed strategies read ctx.mask_key
         namespace_registry = None
 
     tracemalloc.start()

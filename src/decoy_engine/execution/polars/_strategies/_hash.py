@@ -50,6 +50,6 @@ class PolarsHashStrategyHandler:
             if value is None:
                 out.append(None)
                 continue
-            token = derive(ctx.job_seed, plan.namespace, _canonicalize_source(value)).hex()
+            token = derive(ctx.mask_key, plan.namespace, _canonicalize_source(value)).hex()
             out.append(token[:truncate] if truncate is not None else token)
         return frame.with_columns(pl.Series(column, out, dtype=pl.Utf8)), []

@@ -70,7 +70,7 @@ from typing import Any
 
 import pyarrow.parquet as pq
 
-from decoy_engine.determinism import derive_index
+from decoy_engine.determinism import derive, derive_index
 from decoy_engine.internal.crypto import hmac_hex
 from decoy_engine.plan._errors import PlanCompileError
 
@@ -358,7 +358,7 @@ def apply_code_set(
         )
 
     if mode == "mask":
-        return _pick_mask(value, rows)
+        return _pick_mask(value, rows, mask_key=job_seed, namespace=namespace)
     if mode == "gen":
         if namespace is None:
             raise PlanCompileError(
@@ -444,7 +444,7 @@ def _apply_chapter_preserve(
         )
 
     if mode == "mask":
-        return _pick_from_candidates(value, candidates)
+        return _pick_from_candidates(value, candidates, mask_key=job_seed, namespace=namespace)
     # Gen mode: draw from candidates (bucket minus input), consistent with the
     # mask path. The input value is not used as a gen hint, but excluding it
     # from the pool keeps the chapter_preserve gen path symmetric with mask.
@@ -460,13 +460,15 @@ def _apply_chapter_preserve(
     return _pick_gen(candidates, job_seed=job_seed, namespace=namespace, row_index=row_index)
 
 
-def _pick_mask(value: str, rows: list[dict[str, Any]]) -> str:
+def _pick_mask(
+    value: str, rows: list[dict[str, Any]], *, mask_key: bytes, namespace: str | None
+) -> str:
     """HMAC-keyed selection from rows, excluding the input value.
 
     Builds the candidate set (full corpus minus the input code), then
-    picks using HMAC(salt, value) % candidate_count. This guarantees
-    output != input regardless of which HMAC index would have landed on
-    the input (domain-exclusion idiom, RFC 2104 keying).
+    picks using a SECRET-derived HMAC key (DE-02) % candidate_count. This
+    guarantees output != input regardless of which HMAC index would have landed
+    on the input (domain-exclusion idiom, RFC 2104 keying).
 
     SP-06 cross-version caveat: candidate_count changes if corpus rows are
     added/removed, shifting the modular mapping.
@@ -482,17 +484,31 @@ def _pick_mask(value: str, rows: list[dict[str, Any]]) -> str:
                 "Mask mode requires at least two distinct codes in the corpus."
             ),
         )
-    return _pick_from_candidates(value, candidates)
+    return _pick_from_candidates(value, candidates, mask_key=mask_key, namespace=namespace)
 
 
-def _pick_from_candidates(key_value: str, candidates: list[dict[str, Any]]) -> str:
-    """Pick one row from candidates using HMAC(salt, key_value) % len(candidates).
+def _pick_from_candidates(
+    key_value: str,
+    candidates: list[dict[str, Any]],
+    *,
+    mask_key: bytes,
+    namespace: str | None,
+) -> str:
+    """Pick one row from candidates using HMAC(key, key_value) % len(candidates).
 
     Candidates must be sorted by code (guaranteed by _load_corpus_rows).
     HMAC primitive: RFC 2104 / HMAC-SHA256, same as hmac_hex() in
     decoy_engine.internal.crypto.
+
+    DE-02: the HMAC key is SECRET-derived -- `derive(mask_key, namespace,
+    _KEYED_SALT)` where `_KEYED_SALT = b"decoy.code_set.keyed_access.v1"` is used
+    as the derive() source (no longer as the raw HMAC key). So the code -> code
+    remap depends on the run's keyed-mask secret and is not globally reversible
+    (Codex BLOCKER 1 / HIGH). `mask_key == job_seed` on the no-secret path, so the
+    mapping stays deterministic per (seed, column).
     """
-    hex_digest = hmac_hex(_KEYED_SALT, key_value)
+    hmac_key = derive(mask_key, namespace or "code_set", _KEYED_SALT)
+    hex_digest = hmac_hex(hmac_key, key_value)
     if hex_digest is None:
         raise ValueError("hmac_hex returned None for a non-None key_value")
     # First 8 hex chars -> 32-bit int; modulo candidate count.

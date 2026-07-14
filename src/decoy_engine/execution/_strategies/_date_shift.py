@@ -70,7 +70,7 @@ class DateShiftStrategyHandler:
             if unusable[i]:
                 shifts.append(0)
                 continue
-            digest = derive(ctx.job_seed, plan.namespace, _canonicalize_source(value))
+            digest = derive(ctx.mask_key, plan.namespace, _canonicalize_source(value))
             shifts.append(min_days + (int.from_bytes(digest[:8], "big") % range_size))
 
         shifted = parsed + pd.to_timedelta(shifts, unit="D")

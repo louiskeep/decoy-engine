@@ -325,6 +325,10 @@ def _build_seed_envelope(
                             ner_model_version=ner_model_version,
                             pool_size=resolved_pool_size,
                             scale=resolved_scale,
+                            # DE-02 (6b): a vault:true column persists a reversible
+                            # source->masked mapping, so it is keyed surface that
+                            # the GA gate must require a secret for.
+                            vault=bool(col_entry.get("vault", False)),
                         ),
                     )
                 )

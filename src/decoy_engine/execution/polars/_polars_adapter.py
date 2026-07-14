@@ -63,10 +63,12 @@ from decoy_engine.execution.polars._strategies import POLARS_SCALAR_HANDLERS
 from decoy_engine.generation.pool._cache import PoolCache
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.instrumentation.timing import TimingCollector, timed_strategy, use_collector
+from decoy_engine.keyprovider import require_mask_key
 from decoy_engine.plan._types import ColumnSeed
 
 if TYPE_CHECKING:
     from decoy_engine.execution._runner import WorkNode
+    from decoy_engine.keyprovider import KeyProvider
     from decoy_engine.plan._types import Plan
     from decoy_engine.providers_v2 import ProviderRegistry
     from decoy_engine.relationships import NamespaceRegistry, RelationshipGraph
@@ -120,6 +122,7 @@ class PolarsExecutionAdapter:
         namespace_registry: NamespaceRegistry,
         unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
         generate_output_tables: frozenset[str] = frozenset(),
+        key_provider: KeyProvider | None = None,
     ) -> ExecutionResult:
         # B1 (S13): reject integer + null-bearing columns under truncate/hash/
         # categorical on the Arrow sources, identically to the pandas adapter, so
@@ -138,6 +141,7 @@ class PolarsExecutionAdapter:
                 namespace_registry=namespace_registry,
                 unconfigured_column_policy=unconfigured_column_policy,
                 generate_output_tables=generate_output_tables,
+                key_provider=key_provider,
             )
         if not self._fallback_to_pandas:
             raise ExecutionError(
@@ -161,6 +165,7 @@ class PolarsExecutionAdapter:
             namespace_registry=namespace_registry,
             unconfigured_column_policy=unconfigured_column_policy,
             generate_output_tables=generate_output_tables,
+            key_provider=key_provider,
         )
 
     def _is_fully_polars_native(
@@ -200,6 +205,7 @@ class PolarsExecutionAdapter:
         namespace_registry: NamespaceRegistry,
         unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
         generate_output_tables: frozenset[str] = frozenset(),
+        key_provider: KeyProvider | None = None,
     ) -> ExecutionResult:
         boundary = ConversionBoundary()
         frames: dict[str, pl.DataFrame] = {
@@ -212,6 +218,7 @@ class PolarsExecutionAdapter:
             relationship_graph=relationship_graph,
             namespace_registry=namespace_registry,
             job_seed=plan.seed_envelope.job_seed,
+            mask_key=require_mask_key(plan, key_provider),
         )
         warnings: list[QualityWarning] = []
         row_error_records: list[RowErrorRecord] = []
@@ -278,6 +285,7 @@ class PolarsExecutionAdapter:
         namespace_registry: NamespaceRegistry,
         unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
         generate_output_tables: frozenset[str] = frozenset(),
+        key_provider: KeyProvider | None = None,
     ) -> ExecutionResult:
         # Ingest the sources into the polars substrate and back to Arrow, timing
         # both legs; the masking then runs on the pandas oracle on the
@@ -298,6 +306,7 @@ class PolarsExecutionAdapter:
             namespace_registry=namespace_registry,
             unconfigured_column_policy=unconfigured_column_policy,
             generate_output_tables=generate_output_tables,
+            key_provider=key_provider,
         )
         metrics = dict(result.quality_metrics)
         metrics["conversion_breakdown"] = boundary.as_dict()

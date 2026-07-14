@@ -91,6 +91,7 @@ from decoy_engine.profile._readers import LazySource
 
 if TYPE_CHECKING:
     from decoy_engine.execution._transactional_sink import TransactionalSink
+    from decoy_engine.keyprovider import KeyProvider
     from decoy_engine.providers_v2 import ProviderRegistry
 
 
@@ -179,6 +180,7 @@ def run_pipeline(
     out_of_core_budget_bytes: int | None = None,
     use_byte_estimate_routing: bool = True,
     use_probe_routing: bool = True,
+    key_provider: KeyProvider | None = None,
 ) -> ExecutionResult:
     """Execute a mixed mask + generate config end-to-end.
 
@@ -327,6 +329,32 @@ def run_pipeline(
 
     plan = compile_plan(config, profile, decoy_engine_version=engine_version)
 
+    # DE-02 fail-closed gate: resolve the keyed-mask secret ONCE, before any table
+    # / quarantine / vault / manifest is written. Pre-GA a keyed plan with no
+    # secret falls back to job_seed (byte-identical); at GA it hard-errors
+    # (KeyedStrategyRequiresSecret). The secret is a reference in config
+    # (`global_settings.mask_secret_ref`, env:/file:), never serialized raw, and a
+    # programmatic `key_provider` wins over the ref. The resolved provider threads
+    # into every execution route; None means "no secret -> job_seed".
+    from decoy_engine.keyprovider import mask_key_from_provider, resolve_key_provider
+
+    resolved_key_provider = resolve_key_provider(
+        plan=plan,
+        key_provider=key_provider,
+        mask_secret_ref=(config.get("global_settings") or {}).get("mask_secret_ref"),
+    )
+    # DE-02 (Codex BLOCKER 5 / item 6a): the token vault holds reversible plaintext
+    # PII and must be encrypted under the SAME resolved mask key as the masking
+    # run. Fail closed (shared guard) if a caller-supplied vault writer is keyed
+    # differently, or is not the standard VaultWriter contract.
+    if vault_writer is not None:
+        from decoy_engine.vault import assert_vault_writer_keyed
+
+        assert_vault_writer_keyed(
+            vault_writer,
+            mask_key_from_provider(resolved_key_provider, plan.seed_envelope.job_seed),
+        )
+
     ns_registry = build_namespace_registry(config, profile)
     if profile.relationships:
         lookup = check_orphan_fk_policy_completeness(config, profile.relationships)
@@ -410,6 +438,7 @@ def run_pipeline(
             explain_plan=explain_plan,
             execution_plan_decision=execution_plan_decision,
             unconfigured_column_policy=projection_policy,
+            key_provider=resolved_key_provider,
         )
 
     # SC2 out-of-core route (same shape as sequential); caller_sources feeds
@@ -429,6 +458,7 @@ def run_pipeline(
             explain_plan=explain_plan,
             execution_plan_decision=execution_plan_decision,
             unconfigured_column_policy=projection_policy,
+            key_provider=resolved_key_provider,
         )
 
     # TB-1: only full_frame / auto-chunk below needs every source resident.
@@ -482,6 +512,7 @@ def run_pipeline(
                     adapter=adapter,
                     vault_writer=vault_writer,
                     chunk_size_rows=chunk_size_rows,
+                    key_provider=resolved_key_provider,
                 )
             )
         else:
@@ -493,6 +524,7 @@ def run_pipeline(
                 namespace_registry=ns_registry,
                 unconfigured_column_policy=projection_policy,
                 generate_output_tables=generate_output_tables,
+                key_provider=resolved_key_provider,
             )
             # Adapters echo every source frame in `outputs` (generate-kind
             # entries in `merged_sources` come back round-tripped through the

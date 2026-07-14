@@ -130,7 +130,9 @@ class TestReport:
         masked = _mask(tmp_path, cfg, df)
         result = unmask_pipeline(cfg, masked)
         by_col = {(r.table, r.column): r for r in result.columns}
-        assert by_col[("accounts", "acct")].status == "reversed"
+        # DE-02: no secret supplied -> fpe reverses under the job_seed fallback,
+        # reported as unverified (unauthenticated) rather than a confident "reversed".
+        assert by_col[("accounts", "acct")].status == "reversed_unverified"
         assert by_col[("accounts", "email")].status == "irreversible"
         assert by_col[("accounts", "email")].strategy == "hash"
         assert by_col[("accounts", "notes")].status == "untouched"
@@ -144,7 +146,7 @@ class TestReport:
         masked = _mask(tmp_path, cfg, pd.DataFrame({"pan": ["4532015112830366"]}))
         result = unmask_pipeline(cfg, masked)
         (entry,) = [r for r in result.columns if r.column == "pan"]
-        assert entry.status == "reversed"
+        assert entry.status == "reversed_unverified"  # DE-02: no secret -> unverified
         assert "luhn" in entry.detail.lower()
 
     def test_configured_table_missing_from_inputs_reported(self, tmp_path):

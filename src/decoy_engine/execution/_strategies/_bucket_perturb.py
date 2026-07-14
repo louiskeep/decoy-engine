@@ -71,7 +71,7 @@ class BucketPerturbStrategyHandler:
         perturbed = apply_bucket_perturb(
             col,
             bucket=bucket,
-            job_seed=ctx.job_seed,
+            job_seed=ctx.mask_key,
             namespace=plan.namespace,
             date_format=date_format,
         )

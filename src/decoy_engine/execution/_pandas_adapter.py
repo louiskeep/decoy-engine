@@ -70,10 +70,12 @@ from decoy_engine.execution._when_gate import run_with_when_gate
 from decoy_engine.generation.pool._cache import PoolCache
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.instrumentation.timing import TimingCollector, timed_strategy, use_collector
+from decoy_engine.keyprovider import require_mask_key
 from decoy_engine.plan._types import ColumnSeed
 
 if TYPE_CHECKING:
     from decoy_engine.execution._output_projection import UnconfiguredColumnPolicy
+    from decoy_engine.keyprovider import KeyProvider
     from decoy_engine.plan._types import Plan
     from decoy_engine.providers_v2 import ProviderRegistry
     from decoy_engine.relationships import NamespaceRegistry, RelationshipGraph
@@ -134,6 +136,7 @@ class PandasExecutionAdapter:
         relationship_graph: RelationshipGraph,
         namespace_registry: NamespaceRegistry,
         table: str | None = None,
+        key_provider: KeyProvider | None = None,
     ) -> ExecutionResult:
         """Single-table convenience over `run`. Infers the table name from the
         plan when it has exactly one table; pass `table` explicitly otherwise."""
@@ -155,6 +158,7 @@ class PandasExecutionAdapter:
             pool_cache=pool_cache,
             relationship_graph=relationship_graph,
             namespace_registry=namespace_registry,
+            key_provider=key_provider,
         )
 
     def run(
@@ -168,6 +172,7 @@ class PandasExecutionAdapter:
         namespace_registry: NamespaceRegistry,
         unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
         generate_output_tables: frozenset[str] = frozenset(),
+        key_provider: KeyProvider | None = None,
     ) -> ExecutionResult:
         # B1 (S13): reject integer + null-bearing columns under truncate/hash/
         # categorical on the Arrow sources, before to_pandas widens int+null to
@@ -193,6 +198,7 @@ class PandasExecutionAdapter:
             relationship_graph=relationship_graph,
             namespace_registry=namespace_registry,
             job_seed=plan.seed_envelope.job_seed,
+            mask_key=require_mask_key(plan, key_provider),
         )
 
         ordered = order_work(build_work_list(plan, registry), relationship_graph)
@@ -364,6 +370,7 @@ class PandasExecutionAdapter:
         sink: TransactionalSink | Callable[[str, pa.Table], None] | None = None,
         quarantine_config: dict[str, object] | None = None,
         unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
+        key_provider: KeyProvider | None = None,
     ) -> ExecutionResult:
         """Option 2 (FK-RI memory-scaling): mask an FK-related job one table at a
         time in FK-topological order, evicting each table's wide frame after its
@@ -391,6 +398,7 @@ class PandasExecutionAdapter:
             sink=sink,
             quarantine_config=quarantine_config,
             unconfigured_column_policy=unconfigured_column_policy,
+            key_provider=key_provider,
         )
 
     def _resolve_fk_node(

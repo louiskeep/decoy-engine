@@ -90,11 +90,16 @@ class FakerStrategyHandler:
                 namespace=plan.namespace,
             )
             ctx.pool_cache.put(pool)
+        # DE-02 seam: pool BUILD stays on job_seed (fresh synthetic values); only
+        # the deterministic SELECTION from a real source value re-keys onto
+        # mask_key. Non-deterministic mode ignores `source` and generates fresh
+        # values off job_seed (still generation, not re-identification surface).
+        select_seed = ctx.mask_key if plan.deterministic else ctx.job_seed
         sampled = PoolSampler().sample(
             pool,
             n,
             mode=CardinalityMode(plan.cardinality_mode),
-            seed=ctx.job_seed,
+            seed=select_seed,
             source=source,
             namespace=plan.namespace,
             deterministic=plan.deterministic,

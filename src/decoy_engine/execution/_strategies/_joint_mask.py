@@ -48,5 +48,7 @@ class JointMaskHandler:
         cfg = provider_config_to_dict(plan.provider_config)
         mode = str(cfg.get("mode", "mask"))
         joint_cfg = JointMaskConfig.from_dict(cfg)
-        updated_df = apply_joint_mask(df, joint_cfg, mode=mode, job_seed=ctx.job_seed)
+        updated_df = apply_joint_mask(
+            df, joint_cfg, mode=mode, job_seed=ctx.mask_key, namespace=plan.namespace
+        )
         return updated_df, []

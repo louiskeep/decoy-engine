@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from decoy_engine.execution._output_projection import UnconfiguredColumnPolicy
     from decoy_engine.execution._planner import ExecutionPlan
     from decoy_engine.execution._transactional_sink import TransactionalSink
+    from decoy_engine.keyprovider import KeyProvider
     from decoy_engine.plan._types import Plan
     from decoy_engine.profile._readers import LazySource
     from decoy_engine.providers_v2 import ProviderRegistry
@@ -97,6 +98,7 @@ def run_sequential_route(
     explain_plan: bool = False,
     execution_plan_decision: ExecutionPlan | None = None,
     unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
+    key_provider: KeyProvider | None = None,
 ) -> ExecutionResult:
     """Execute the sequential route and package it as a full `ExecutionResult`.
 
@@ -132,6 +134,7 @@ def run_sequential_route(
         sink=sink,
         quarantine_config=quarantine_config,
         unconfigured_column_policy=unconfigured_column_policy,
+        key_provider=key_provider,
     )
     seq_quality_metrics = dict(seq_result.quality_metrics)
     seq_quality_metrics["execution"] = execution_telemetry(
@@ -173,6 +176,7 @@ def run_out_of_core_route(
     explain_plan: bool = False,
     execution_plan_decision: ExecutionPlan | None = None,
     unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
+    key_provider: KeyProvider | None = None,
 ) -> ExecutionResult:
     """Execute the out-of-core FK route and package it as an `ExecutionResult`.
 
@@ -243,6 +247,7 @@ def run_out_of_core_route(
         memory_limit=memory_limit,
         batch_rows=batch_rows,
         unconfigured_column_policy=unconfigured_column_policy,
+        key_provider=key_provider,
     )
     quality_metrics = dict(ooc_result.quality_metrics)
     quality_metrics["execution"] = execution_telemetry(
@@ -279,6 +284,7 @@ def run_mask_chunked(
     adapter: Any,
     vault_writer: Any,
     chunk_size_rows: int,
+    key_provider: KeyProvider | None = None,
 ) -> tuple[dict[str, pa.Table], tuple, float, tuple]:
     """Mask one eligible table via the chunked entrypoint.
 
@@ -319,6 +325,7 @@ def run_mask_chunked(
             adapter=adapter,
             vault_writer=vault_writer,
             chunk_result_sink=chunk_results,
+            key_provider=key_provider,
         )
     )
     masked = _chunked.concat_masked_chunks(masked_chunks, table=table)

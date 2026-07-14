@@ -131,8 +131,8 @@ class FpeStrategyHandler:
         tweak = (join_group or column).encode("utf-8", errors="replace")
         namespace = plan.namespace
 
-        # One key per (job_seed, namespace) -- derived once, not per cell.
-        key = derive(ctx.job_seed, namespace, FPE_KEY_LABEL)
+        # One key per (mask_key, namespace) -- derived once, not per cell.
+        key = derive(ctx.mask_key, namespace, FPE_KEY_LABEL)
 
         def encrypt_one(value: str) -> str:
             return fpe_encrypt_value(

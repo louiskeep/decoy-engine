@@ -309,6 +309,7 @@ def run_mask_pipeline_chunked(
     adapter: Any = None,
     vault_writer: Any = None,
     chunk_result_sink: list[Any] | None = None,
+    key_provider: Any = None,
 ) -> Iterator[pa.Table]:
     """Mask `table`'s rows chunk-by-chunk under `config`.
 
@@ -353,6 +354,27 @@ def run_mask_pipeline_chunked(
         return iter(())
     profile = _first_chunk_profile(first, table=table, engine_version=engine_version)
     plan = compile_plan(config, profile, decoy_engine_version=engine_version, no_profile=True)
+    # DE-02 (Codex BLOCKER 4): this is a PUBLIC entry point. Resolve the config's
+    # `mask_secret_ref` when no programmatic provider was passed, then run the
+    # fail-closed gate up front (fail fast) -- the per-chunk adapter.run() re-gates
+    # via require_mask_key, so a keyed chunked job cannot run off job_seed at GA.
+    if key_provider is None:
+        _ref = (config.get("global_settings") or {}).get("mask_secret_ref")
+        if _ref:
+            from decoy_engine.keyprovider import key_provider_from_ref
+
+            key_provider = key_provider_from_ref(_ref)
+    from decoy_engine.keyprovider import require_mask_key
+
+    _resolved_mask_key = require_mask_key(plan, key_provider)
+    # DE-02 (Codex item 6a): this public entry point also collects vault entries,
+    # so it must run the SAME vault-key guard as run_pipeline -- the vault holds
+    # reversible plaintext PII and cannot be written under a key that differs from
+    # the resolved mask key.
+    if vault_writer is not None:
+        from decoy_engine.vault import assert_vault_writer_keyed
+
+        assert_vault_writer_keyed(vault_writer, _resolved_mask_key)
     # DE-03: resolve the projection policy once; each per-chunk adapter.run()
     # enforces it (a chunk carries the same column set as the whole table, so
     # per-chunk enforcement IS whole-table enforcement). Single mask table, no
@@ -401,6 +423,7 @@ def run_mask_pipeline_chunked(
                 relationship_graph=graph,
                 namespace_registry=ns_registry,
                 unconfigured_column_policy=projection_policy,
+                key_provider=key_provider,
             )
             if chunk_result_sink is not None:
                 chunk_result_sink.append(result)

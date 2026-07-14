@@ -32,6 +32,16 @@ ReleasePhase = Literal["pre-ga", "ga"]
 #     columns and rely on the pre-GA "warn" default will hard-error (not leak).
 #     Declare those columns, or pin policy="warn" on the affected fixtures,
 #     first. See docs/discussions/2026-07-13-de03-output-projection-design.md.
+#   - DE-02 keyed-mask secret (2026-07-14): at GA, is_pre_ga() -> False flips the
+#     fail-closed gate on -- any plan with a keyed masking strategy MUST be given a
+#     >=32-byte secret (run(key_provider=...) or global_settings.mask_secret_ref)
+#     or it raises KeyedStrategyRequiresSecret. Before the flip, and before the GA
+#     corpus freeze: (a) every fixture that masks a keyed column supplies a secret;
+#     (b) every pre-GA vault sidecar / masked output keyed on job_seed is
+#     hard-deleted and regenerated fresh under a secret (no dual-read / legacy-key
+#     path). This flip MUST land before the corpus freeze so no GA artifact is ever
+#     produced under a seed-only key. See
+#     docs/discussions/2026-07-14-de02-keyprovider-design.md.
 RELEASE_PHASE: ReleasePhase = "pre-ga"
 
 

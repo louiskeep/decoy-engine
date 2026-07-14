@@ -47,7 +47,7 @@ class ShuffleStrategyHandler:
                     message=f"column {column!r} uses deterministic shuffle but has no namespace.",
                 )
             seed_int = int.from_bytes(
-                derive(ctx.job_seed, plan.namespace, column.encode("utf-8"))[:8], "big"
+                derive(ctx.mask_key, plan.namespace, column.encode("utf-8"))[:8], "big"
             )
             rng = np.random.default_rng(seed_int)
         else:

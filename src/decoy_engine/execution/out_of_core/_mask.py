@@ -96,11 +96,16 @@ def truncate_params(cfg: dict[str, Any]) -> tuple[int, str, str | None]:
 def mask_column(
     values: pa.Array | pa.ChunkedArray,
     seed: ColumnSeed,
-    job_seed: bytes,
+    mask_key: bytes,
     *,
     column: str | None = None,
 ) -> pa.Array:
     """Apply one admitted strategy to one column (or column slice).
+
+    `mask_key` is the DE-02 keyed-mask IKM fed at the one substituted slot: the
+    8-byte `job_seed` when no secret is present (byte-identical to pre-DE-02) or a
+    32-byte KeyProvider mask root under a secret. Every keyed leaf below
+    (fpe/categorical/hash/group_c) receives it in its `job_seed`-named IKM slot.
 
     `column` carries the column name for strategies whose output depends on it
     (fpe's per-column tweak). It is None only on the FK parent-key / remap call
@@ -108,6 +113,7 @@ def mask_column(
     (hash/redact/truncate/passthrough), so a None column never reaches a
     strategy that needs it.
     """
+    job_seed = mask_key
     cfg = provider_config_to_dict(seed.provider_config)
     if seed.strategy in GROUP_B_STRATEGIES:
         if seed.strategy == "fpe":
@@ -202,25 +208,28 @@ def mask_table(
     table: pa.Table,
     *,
     skip_columns: frozenset[str],
+    mask_key: bytes | None = None,
 ) -> pa.Table:
     """Whole-table, whole-column masking.
 
     The runner masks per batch (`mask_batch`); this is the single-shot
     lowering it must reproduce, retained as the executable definition the
     parity suites pin the streaming path against.
+
+    `mask_key` (DE-02) is the keyed-mask IKM; None falls back to `job_seed`
+    (byte-identical to pre-DE-02).
     """
     seed = table_seed(plan, table_name)
     if seed is None:
         return table
+    key = mask_key if mask_key is not None else plan.seed_envelope.job_seed
     out = table
     for column, column_seed in seed.per_column:
         if column in skip_columns:
             continue
         if column not in out.column_names:
             continue
-        masked = mask_column(
-            out.column(column), column_seed, plan.seed_envelope.job_seed, column=column
-        )
+        masked = mask_column(out.column(column), column_seed, key, column=column)
         out = out.set_column(out.schema.get_field_index(column), column, masked)
     return out
 
@@ -231,6 +240,7 @@ def mask_batch(
     batch: pa.RecordBatch,
     *,
     skip_columns: frozenset[str] = frozenset(),
+    mask_key: bytes | None = None,
 ) -> pa.RecordBatch:
     """Mask one RecordBatch's non-FK columns per the plan.
 
@@ -246,6 +256,7 @@ def mask_batch(
     seed = table_seed(plan, table_name)
     if seed is None:
         return batch
+    key = mask_key if mask_key is not None else plan.seed_envelope.job_seed
     fields = list(batch.schema)
     arrays = list(batch.columns)
     for column, column_seed in seed.per_column:
@@ -254,7 +265,7 @@ def mask_batch(
         idx = batch.schema.get_field_index(column)
         if idx < 0:
             continue
-        masked = mask_column(arrays[idx], column_seed, plan.seed_envelope.job_seed, column=column)
+        masked = mask_column(arrays[idx], column_seed, key, column=column)
         arrays[idx] = masked
         # Same field semantics as Table.set_column with a bare name: the field
         # type follows the masked array, prior field metadata is not carried.

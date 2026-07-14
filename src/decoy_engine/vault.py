@@ -56,14 +56,18 @@ namespace, unique-mode substitution).
 from __future__ import annotations
 
 import base64
+import hmac
 import json
 from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
 from decoy_engine.determinism import SEED_PROTOCOL_VERSION, derive
+
+if TYPE_CHECKING:
+    from decoy_engine.keyprovider import KeyProvider
 
 VAULT_FORMAT_VERSION = "decoy-vault/v2"
 VAULT_NAMESPACE = "vault"
@@ -112,7 +116,11 @@ class VaultError(Exception):
         super().__init__(f"[{code}] {message}")
 
 
-def _fernet(job_seed: bytes) -> Any:
+def _fernet(mask_key: bytes) -> Any:
+    # DE-02: the Fernet key derives from the keyed-mask IKM -- the 8-byte job_seed
+    # when no secret is present (byte-identical to pre-DE-02) or a 32-byte
+    # KeyProvider mask root under a secret. A vault written under job_seed cannot
+    # be opened under a secret key (pre-GA = hard-delete/regenerate; no dual-read).
     try:
         from cryptography.fernet import Fernet
     except ImportError as exc:
@@ -123,7 +131,7 @@ def _fernet(job_seed: bytes) -> Any:
                 f"vault extra: {_INSTALL_HINT}"
             ),
         ) from exc
-    key = derive(job_seed, VAULT_NAMESPACE, VAULT_KEY_LABEL)
+    key = derive(mask_key, VAULT_NAMESPACE, VAULT_KEY_LABEL)
     return Fernet(base64.urlsafe_b64encode(key))
 
 
@@ -191,9 +199,30 @@ class VaultWriter:
     before encryption.
     """
 
-    def __init__(self, job_seed: bytes) -> None:
-        self._job_seed = job_seed
+    def __init__(self, mask_key: bytes) -> None:
+        # DE-02: the vault's keyed-mask IKM (job_seed when no secret is present).
+        self._mask_key = mask_key
         self._entries: set[tuple[str, str, str]] = set()
+
+    def assert_keyed_with(self, mask_key: bytes) -> None:
+        """Fail closed if this writer's key does not match `mask_key`.
+
+        DE-02 (Codex BLOCKER 5): the vault holds reversible plaintext PII, so it
+        MUST be Fernet-encrypted under the SAME keyed-mask secret the masking run
+        used -- never the public `job_seed` while the output masks under a real
+        secret. `run_pipeline` calls this against the run's resolved `mask_key`
+        before any masking. Constant-time compare; never echoes the key bytes.
+        """
+        if not hmac.compare_digest(self._mask_key, mask_key):
+            raise VaultError(
+                code="vault_key_mismatch",
+                message=(
+                    "the supplied vault writer is keyed with a different secret than "
+                    "the masking run resolved. Build the vault writer from the same "
+                    "key_provider / mask_secret_ref (vault_writer_for_config(config, "
+                    "key_provider=...)) so the vault decrypts under the run secret."
+                ),
+            )
 
     def add(self, entries: Iterable[tuple[str, str, str]]) -> None:
         """Accumulate `(namespace, masked, source)` triples."""
@@ -263,23 +292,60 @@ class VaultWriter:
         return len(rows)
 
     def _fernet(self) -> Any:
-        return _fernet(self._job_seed)
+        return _fernet(self._mask_key)
 
 
-def vault_writer_for_config(config: dict[str, Any]) -> VaultWriter:
-    """Build a `VaultWriter` keyed by the config's normalized job seed.
+def assert_vault_writer_keyed(vault_writer: object, mask_key: bytes) -> None:
+    """Fail closed unless `vault_writer` is a VaultWriter keyed with `mask_key`.
 
-    Normalization matches the plan compiler exactly (the same
-    `global_settings.seed` rules), so the vault key always matches the
-    seed envelope the mask run used.
+    DE-02 (Codex item 6a + 6, dennis L3): the single shared guard every public
+    entry point that accepts a vault writer (`run_pipeline`,
+    `run_mask_pipeline_chunked`, ...) MUST call before any vault entry is
+    collected, so the vault (reversible plaintext PII) can never be encrypted
+    under a key that does not match the masking run's resolved secret. A
+    duck-typed writer without the key-match contract is rejected outright.
     """
+    if not isinstance(vault_writer, VaultWriter):
+        raise VaultError(
+            code="vault_writer_unsupported",
+            message=(
+                "vault_writer must be a decoy_engine.vault.VaultWriter so its "
+                "keyed-mask key can be verified against the run secret "
+                "(DE-02 fail-closed vault-key guard)."
+            ),
+        )
+    vault_writer.assert_keyed_with(mask_key)
+
+
+def vault_writer_for_config(
+    config: dict[str, Any], *, key_provider: KeyProvider | None = None
+) -> VaultWriter:
+    """Build a `VaultWriter` keyed by the run's mask key.
+
+    Mirrors the mask path's key resolution (DE-02) so the vault always opens
+    under the same key the masked output was produced with: a programmatic
+    `key_provider` wins, else `global_settings.mask_secret_ref` (env:/file:), else
+    the normalized `job_seed` (byte-identical to pre-DE-02). Normalization matches
+    the plan compiler exactly (the same `global_settings.seed` rules).
+    """
+    from decoy_engine.keyprovider import key_provider_from_ref
     from decoy_engine.plan._seed import _normalize_job_seed
 
-    return VaultWriter(_normalize_job_seed(config))
+    job_seed = _normalize_job_seed(config)
+    provider: KeyProvider | None = key_provider
+    if provider is None:
+        ref = (config.get("global_settings") or {}).get("mask_secret_ref")
+        if ref:
+            provider = key_provider_from_ref(ref)
+    mask_key = provider.mask_key() if provider is not None else job_seed
+    return VaultWriter(mask_key)
 
 
-def load_vault(path: str | Path, job_seed: bytes) -> tuple[dict[tuple[str, str], str], int]:
+def load_vault(path: str | Path, mask_key: bytes) -> tuple[dict[tuple[str, str], str], int]:
     """Decrypt a vault file into `{(namespace, masked): source}`.
+
+    DE-02: `mask_key` is the keyed-mask IKM the vault was written under (the
+    8-byte `job_seed` when no secret, or a 32-byte KeyProvider root).
 
     Returns the map plus the recorded `ambiguous_dropped` count.
 
@@ -292,14 +358,14 @@ def load_vault(path: str | Path, job_seed: bytes) -> tuple[dict[tuple[str, str],
             ``code='vault_protocol_version_mismatch'`` when the vault was
             written under a different `SEED_PROTOCOL_VERSION` (cross-version
             unmask is not supported);
-            ``code='vault_key_mismatch'`` when `job_seed` does not
-            decrypt the file (wrong config for this vault).
+            ``code='vault_key_mismatch'`` when `mask_key` does not
+            decrypt the file (wrong config/secret for this vault).
     """
     # Build the Fernet first so a missing cryptography extra fails with
     # vault_crypto_not_installed even when the file is absent (preserves the
     # pre-streaming ordering the absent-dep contract test pins). Building the
     # object only derives the key; it does not decrypt.
-    fernet = _fernet(job_seed)
+    fernet = _fernet(mask_key)
     try:
         blob = Path(path).read_bytes()
     except OSError as exc:

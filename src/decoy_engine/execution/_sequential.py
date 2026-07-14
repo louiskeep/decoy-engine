@@ -157,6 +157,7 @@ from decoy_engine.execution._transactional_sink import (
 from decoy_engine.generation.pool._cache import PoolCache
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.instrumentation.timing import TimingCollector, use_collector
+from decoy_engine.keyprovider import require_mask_key
 from decoy_engine.quarantine import compute_quarantine, finalize_committed_quarantine
 
 if TYPE_CHECKING:
@@ -165,6 +166,7 @@ if TYPE_CHECKING:
     import pandas as pd
 
     from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
+    from decoy_engine.keyprovider import KeyProvider
     from decoy_engine.plan._types import Plan
     from decoy_engine.providers_v2 import ProviderRegistry
     from decoy_engine.relationships import NamespaceRegistry, RelationshipGraph
@@ -206,6 +208,7 @@ def run_sequential(
     sink: TransactionalSink | Callable[[str, pa.Table], None] | None = None,
     quarantine_config: dict[str, Any] | None = None,
     unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
+    key_provider: KeyProvider | None = None,
 ) -> ExecutionResult:
     """Mask an FK-related job table by table in FK-topological order.
 
@@ -286,6 +289,7 @@ def run_sequential(
         relationship_graph=graph,
         namespace_registry=namespace_registry,
         job_seed=plan.seed_envelope.job_seed,
+        mask_key=require_mask_key(plan, key_provider),
     )
 
     parent_map_cache: dict[_NodeKey, dict[_KeyTuple, _KeyTuple]] = {}

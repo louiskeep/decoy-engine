@@ -31,8 +31,9 @@ class TextMaskHandler:
     """Span-level PII masking with per-detector strategy dispatch (SP-07).
 
     Implements the V2 StrategyHandler protocol. Iterates over non-null column
-    cells and delegates each to ``mask_cell``, passing ``ctx.job_seed`` as the
-    HMAC key for cross-cell determinism.
+    cells and delegates each to ``mask_cell``, passing ``ctx.mask_key`` as the
+    HMAC key for cross-cell determinism (DE-02: the keyed span mapping draws from
+    the mask key, not the generation seed).
     """
 
     name: str = "text_mask"
@@ -80,7 +81,7 @@ class TextMaskHandler:
                 value = str(value)
             col_values[pos] = mask_cell(
                 value,
-                ctx.job_seed,
+                ctx.mask_key,
                 detector_ids=detector_ids,
                 strategy_map=per_detector or None,
                 unmatched_span_policy=policy,

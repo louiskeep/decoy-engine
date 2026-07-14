@@ -127,6 +127,14 @@ class ColumnSeed:
     # pool_size, 2.0 for scale) in that case.
     pool_size: int | None = None
     scale: float | None = None
+    # DE-02 (Codex item 6b, 2026-07-14): the column is `vault: true` -- its
+    # source->masked mapping is persisted, Fernet-encrypted, into the token vault
+    # for later reversal. That makes it a KEYED re-identification surface
+    # regardless of the masking strategy (a `redact` + `vault: true` column still
+    # stores reversible plaintext PII), so `plan_has_keyed_strategy` treats a
+    # vault column as keyed and the GA gate requires a real secret for it. Stamped
+    # from the column config's `vault` flag at compile.
+    vault: bool = False
 
 
 @dataclass(frozen=True)
