@@ -27,6 +27,7 @@ shape raises.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import pyarrow as pa
@@ -42,6 +43,15 @@ from decoy_engine.plan._errors import PlanCompileError
 # passthrough` uses to decide whether an unprotected ingestion float64-on-null
 # widening would actually lose precision for this column's data.
 _EXACT_FLOAT_INT_BOUND = 2**53
+
+# Matches a decimal dtype string that carries explicit (precision, scale), in
+# either PyArrow's own `str()` form (`str(pa.decimal128(2, 1))` ==
+# "decimal128(2, 1)", `str(pa.decimal256(40, 2))` == "decimal256(40, 2)" --
+# confirmed empirically) or the SQL-style form an operator might hand-write in
+# config ("decimal(10, 2)" / "numeric(10, 2)", no width suffix). Captures
+# (precision, scale) so two decimal declarations can be compared on that pair,
+# not folded into one bare "decimal" family regardless of scale.
+_DECIMAL_PRECISION_SCALE_RE = re.compile(r"^(?:decimal(?:128|256)?|numeric)\((\d+)\s*,\s*(\d+)\)$")
 
 # Value-keyed strategies that produce the same output per (seed, namespace, value)
 # regardless of row position or chunk boundary. Defined here and re-exported by
@@ -91,12 +101,38 @@ def _dtype_family(dtype: str) -> str:
     for equal values -- the kernel canonicalizer encodes any-width integers
     as a length-prefixed minimal two's complement form regardless of storage
     width (kernel/_canonicalize.py) -- so only the family needs to agree, not
-    the exact dtype string. `decimal`/`numeric` is kept as its own family
-    (never folded into `int` or `float`): a decimal value can be integral or
-    fractional, so it is not provably interchangeable with either without
-    inspecting the data this gate never sees. Unrecognized strings pass
-    through lowercased and unmodified, so an unknown dtype only ever matches
-    another occurrence of that exact same string.
+    the exact dtype string. Unrecognized strings pass through lowercased and
+    unmodified, so an unknown dtype only ever matches another occurrence of
+    that exact same string.
+
+    `decimal`/`numeric` is SCALE-AWARE (Codex gpt-5.6-sol HIGH-1, 2026-07-14):
+    unlike int/float, a decimal's canonical bytes depend on its declared
+    SCALE, not just its family -- `str(1.0)` for `decimal128(2, 1)` and
+    `str(1.00)` for `decimal128(3, 2)` canonicalize to different byte strings
+    for the "same" logical value under the hash/truncate/fpe kernels, so two
+    decimal columns are only provably interchangeable when they share the
+    same (precision, scale), not merely both being "some decimal". A dtype
+    string that carries explicit precision+scale (PyArrow's own `str()` form,
+    e.g. "decimal128(2, 1)", or the SQL-style "decimal(2, 1)"/"numeric(2, 1)"
+    an operator might hand-write) parses to `"decimal(2,1)"`, so a correctly
+    scale-matched declaration on both sides of an FK edge is admitted, and a
+    genuine scale MISmatch (parent "decimal(2,1)" vs child "decimal(3,2)")
+    is rejected at the COMPILE gate the same way an int/float mismatch is
+    (different family strings).
+
+    A BARE `"decimal"` or `"numeric"` declaration (no scale) is UNPROVABLE --
+    the chunked route only ever sees one table's dtype at a time, so there is
+    no runtime check that can recover the missing scale -- and returns the
+    distinct family `"decimal:unprovable"`. Two bare declarations on both
+    sides of an edge compare EQUAL at the compile gate (same literal string)
+    and are admitted there, exactly like Codex's reproduction case; the real
+    rejection happens one layer down, at the per-chunk runtime guard
+    (`_chunked_fk_dtype.reject_mismatched_chunked_fk_declared_dtype`): neither
+    side's REAL Arrow data is ever literally `"decimal:unprovable"` (real
+    data always resolves to a scaled `"decimal(P,S)"` family or a non-decimal
+    family), so a bare declaration never matches its own chunk's real family
+    and fails closed there with `chunked_fk_declared_dtype_mismatch`,
+    regardless of what scale the real data on each side turns out to be.
     """
     family = dtype.strip().lower()
     if family.startswith(("int", "uint")):
@@ -104,7 +140,11 @@ def _dtype_family(dtype: str) -> str:
     if family.startswith(("float", "double")):
         return "float"
     if family.startswith(("decimal", "numeric")):
-        return "decimal"
+        match = _DECIMAL_PRECISION_SCALE_RE.match(family)
+        if match is None:
+            return "decimal:unprovable"
+        precision, scale = match.group(1), match.group(2)
+        return f"decimal({precision},{scale})"
     if family.startswith("bool"):
         return "bool"
     if family.startswith(("str", "string", "object", "utf8", "large_string")):

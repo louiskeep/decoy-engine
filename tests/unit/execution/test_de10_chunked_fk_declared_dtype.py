@@ -24,6 +24,8 @@ are admitted without false positives.
 
 from __future__ import annotations
 
+import decimal
+
 import pyarrow as pa
 import pytest
 
@@ -311,3 +313,129 @@ def test_null_typed_fk_chunk_streams_end_to_end() -> None:
     out = list(run_mask_pipeline_chunked(config, [chunk], table="orders", engine_version=_ENGINE))
     vals = pa.concat_tables(out).column("customer_id").to_pylist()
     assert vals == [None, None, None]
+
+
+# ---------------------------------------------------------------------------
+# Decimal scale-awareness (Codex gpt-5.6-sol HIGH-1, 2026-07-14). A bare
+# "decimal"/"numeric" declaration carries no scale, so it is UNPROVABLE for
+# RI on this route -- `_dtype_family` maps it to the distinct family
+# "decimal:unprovable", which never matches a real scaled-decimal family
+# ("decimal(P,S)"). Two bare declarations still compare EQUAL to each other
+# at the compile gate (same literal string), so the reject happens here, at
+# the runtime declared-vs-real guard, one layer down.
+# ---------------------------------------------------------------------------
+
+
+def test_declared_bare_decimal_but_real_decimal_2_1_fails_closed() -> None:
+    """(a) A bare `dtype: "decimal"` declaration (no scale) can never match a
+    real scaled Arrow decimal family, so it fails closed regardless of what
+    the real scale turns out to be -- here `decimal128(2, 1)`."""
+    config = _fk_config(strategy="passthrough", parent_dtype="decimal", child_dtype="decimal")
+    chunk = pa.table(
+        {
+            "customer_id": pa.array(
+                [decimal.Decimal("1.0"), decimal.Decimal("2.0")], type=pa.decimal128(2, 1)
+            )
+        }
+    )
+
+    with pytest.raises(ExecutionError) as exc:
+        list(run_mask_pipeline_chunked(config, [chunk], table="orders", engine_version=_ENGINE))
+    assert exc.value.code == "chunked_fk_declared_dtype_mismatch"
+    assert "orders.customer_id" in exc.value.message
+
+
+def test_declared_scaled_decimal_matching_real_admitted() -> None:
+    """(b) A declaration that DOES carry precision+scale (PyArrow's own
+    `str()` form, "decimal128(2, 1)") parses to the same `decimal(2,1)`
+    family as the matching real data, so it is admitted and streams
+    normally -- a correct scale-aware declaration is not penalized."""
+    config = _fk_config(
+        strategy="passthrough",
+        parent_dtype="decimal128(2, 1)",
+        child_dtype="decimal128(2, 1)",
+    )
+    chunk = pa.table(
+        {
+            "customer_id": pa.array(
+                [decimal.Decimal("1.0"), decimal.Decimal("2.0")], type=pa.decimal128(2, 1)
+            )
+        }
+    )
+
+    out = list(run_mask_pipeline_chunked(config, [chunk], table="orders", engine_version=_ENGINE))
+    vals = pa.concat_tables(out).column("customer_id").to_pylist()
+    assert len(vals) == 2
+
+
+def test_declared_scaled_decimal_mismatched_real_scale_fails_closed() -> None:
+    """A declaration that carries the WRONG scale (declared `decimal128(2, 1)`,
+    real `decimal128(3, 2)`) is a genuine misdeclaration, not a bare/unprovable
+    one -- still fails closed, on the actual (precision, scale) disagreement."""
+    config = _fk_config(
+        strategy="passthrough",
+        parent_dtype="decimal128(2, 1)",
+        child_dtype="decimal128(2, 1)",
+    )
+    chunk = pa.table(
+        {
+            "customer_id": pa.array(
+                [decimal.Decimal("1.00"), decimal.Decimal("2.00")], type=pa.decimal128(3, 2)
+            )
+        }
+    )
+
+    with pytest.raises(ExecutionError) as exc:
+        list(run_mask_pipeline_chunked(config, [chunk], table="orders", engine_version=_ENGINE))
+    assert exc.value.code == "chunked_fk_declared_dtype_mismatch"
+
+
+def test_reproduced_ri_case_bare_decimal_both_sides_fails_closed_each_role() -> None:
+    """(c) Codex's exact repro: parent `decimal128(2, 1)` value 1.0 and child
+    `decimal128(3, 2)` value 1.00 both declared bare `"decimal"`. Under the
+    OLD single-`"decimal"`-family model this passed the compile gate (both
+    declare the same bare string) AND the runtime guard (both real families
+    coarsened to the same bare "decimal" too), silently voiding FK RI:
+    canonicalize(1.0) != canonicalize(1.00) despite being the same logical
+    key. Scale-awareness closes this at the runtime guard on EACH side
+    independently -- neither side's bare declaration can match its own
+    chunk's real scaled family, regardless of what that real scale is.
+    """
+    config = _fk_config(strategy="passthrough", parent_dtype="decimal", child_dtype="decimal")
+
+    # Compile gate: bare-vs-bare compares EQUAL (same literal family string),
+    # so it is admitted here -- must NOT raise PlanCompileError.
+    parent_chunk = pa.table({"id": pa.array([decimal.Decimal("1.0")], type=pa.decimal128(2, 1))})
+    child_chunk = pa.table(
+        {"customer_id": pa.array([decimal.Decimal("1.00")], type=pa.decimal128(3, 2))}
+    )
+
+    # Parent role: real decimal(2,1) vs declared bare "decimal" -- rejected.
+    with pytest.raises(ExecutionError) as parent_exc:
+        list(
+            run_mask_pipeline_chunked(
+                config, [parent_chunk], table="customers", engine_version=_ENGINE
+            )
+        )
+    assert parent_exc.value.code == "chunked_fk_declared_dtype_mismatch"
+
+    # Child role: real decimal(3,2) vs declared bare "decimal" -- rejected too.
+    with pytest.raises(ExecutionError) as child_exc:
+        list(
+            run_mask_pipeline_chunked(config, [child_chunk], table="orders", engine_version=_ENGINE)
+        )
+    assert child_exc.value.code == "chunked_fk_declared_dtype_mismatch"
+
+
+def test_dtype_family_decimal_scale_aware_unit() -> None:
+    """Direct unit coverage of the scale-aware family strings themselves."""
+    from decoy_engine.execution._chunked_fk import _dtype_family
+
+    assert _dtype_family("decimal128(2, 1)") == "decimal(2,1)"
+    assert _dtype_family("decimal256(40, 2)") == "decimal(40,2)"
+    assert _dtype_family("decimal(10, 2)") == "decimal(10,2)"
+    assert _dtype_family("numeric(10, 2)") == "decimal(10,2)"
+    assert _dtype_family("decimal") == "decimal:unprovable"
+    assert _dtype_family("numeric") == "decimal:unprovable"
+    # Different scales are DIFFERENT families -- not folded together.
+    assert _dtype_family("decimal128(2, 1)") != _dtype_family("decimal128(3, 2)")
