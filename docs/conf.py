@@ -345,4 +345,12 @@ exclude_patterns = [
     # The ADR template itself isn't a record — it's a copy-from skeleton.
     # Including it produces a `toc.not_included` warning and an empty page.
     "adr/template.md",
+    # DE-01/DE-02 crypto remediation design briefs are internal tech-lead
+    # decision records ("Status: design brief. No source under src/ changed
+    # by this document."), not reader-facing security reference material
+    # like their `security/*` siblings (key-derivation, sql-surfaces,
+    # token-vault). Without this they'd be swept into the published nav by
+    # the `security/*` glob toctree in index.md; excluded so that glob keeps
+    # matching only the curated reference docs.
+    "security/de-0*-*-design.md",
 ]

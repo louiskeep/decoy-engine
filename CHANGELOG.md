@@ -189,6 +189,35 @@ may appear.
   stdout/stderr contamination). Golden test-flight fingerprints unchanged --
   well-formed configs are unaffected under both the warn and error defaults.
 
+### Fixed (DE-11: pool_size + scale resolved once at compile, no more silent runtime defaults, 2026-07-13)
+
+Closes a HIGH from the 2026-07-12 adversarial review: `pool_size` and `scale`
+were validated at compile as top-level `ColumnConfig` fields but then dropped
+before runtime, so a job that compiled cleanly silently ran with the
+hardcoded defaults (pool 10,000, scale 2.0) instead of its declared values. A
+`pool_size: 5` job produced 1,795 distinct values pre-fix; post-fix it
+produces at most 5.
+
+- **Resolve-once at compile, typed field.** `pool_size` / `scale` are now
+  typed fields on `ColumnSeed` (`plan/_types.py`), resolved a single time at
+  the envelope drop site (`plan/_seed_envelope.py`) -- top-level wins,
+  `provider_config` is the fallback -- instead of being re-derived (or
+  silently dropped) at each runtime consumer.
+- **Reject-on-contradiction (fail closed).** Both locations set and
+  disagreeing now raises `PlanCompileError(pool_size_location_conflict)` at
+  compile; equal values are legal.
+- **Round-trips through `plan/_serialize.py`** (omit-when-None, `is not None`
+  checks so `0`/`0.0` survive serialization instead of being treated as
+  falsy-missing).
+- **Runtime consumers read the typed field:** `execution/_strategies/_faker.py`
+  and `execution/_chunked.py` (removes the `cfg["pool_size"]` KeyError drift
+  site; `scale` now actually reaches `PoolSampler.sample()`). Chunked
+  admission is extended to cover top-level-only `pool_size` declarations.
+- Golden test-flight baseline unchanged (53/53, fingerprints 5/5 match
+  golden) -- this is a config-plumbing correctness fix, not a masking-output
+  change, so the pigeonhole regression test proves output changes only where
+  a job actually declared a non-default `pool_size`/`scale`.
+
 ### Changed (TB-5: OOM auto-router enabled by DEFAULT + byte-based reject contract migration, 2026-07-13)
 
 Flips the OOM-avoidance auto-router to **default-ON** and migrates the
