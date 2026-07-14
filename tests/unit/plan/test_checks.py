@@ -296,6 +296,60 @@ class TestBasicUniquenessPreFlight:
         }
         compile_plan(config, simple_profile, decoy_engine_version="0.1.0")
 
+    def test_rejects_pool_unique_insufficient_capacity_provider_config_location(
+        self, simple_profile: Profile
+    ) -> None:
+        # DE-11 residual #1: pool_size declared ONLY in provider_config (a
+        # supported location) must be caught by the preflight, not deferred to
+        # a late runtime failure. customers has 10 distinct ids; pool of 5 is
+        # too small.
+        config = {
+            "global_settings": {"seed": 1},
+            "tables": [
+                {
+                    "name": "customers",
+                    "columns": [
+                        {
+                            "name": "customer_id",
+                            "strategy": "from_pool",
+                            "provider": "uuid",
+                            "backend_type": "pool",
+                            "cardinality_mode": "unique",
+                            "provider_config": {"pool_size": 5},
+                        }
+                    ],
+                }
+            ],
+            "relationships": SIMPLE_PROFILE_RELATIONSHIPS_BLOCK,
+        }
+        with pytest.raises(PlanCompileError) as exc:
+            compile_plan(config, simple_profile, decoy_engine_version="0.1.0")
+        assert exc.value.code == "pool_capacity_pre_flight_unique"
+
+    def test_accepts_pool_unique_sufficient_capacity_provider_config_location(
+        self, simple_profile: Profile
+    ) -> None:
+        config = {
+            "global_settings": {"seed": 1},
+            "tables": [
+                {
+                    "name": "customers",
+                    "columns": [
+                        {
+                            "name": "customer_id",
+                            "strategy": "from_pool",
+                            "provider": "uuid",
+                            "backend_type": "pool",
+                            "cardinality_mode": "unique",
+                            "provider_config": {"pool_size": 1000},
+                        }
+                    ],
+                }
+            ],
+            "relationships": SIMPLE_PROFILE_RELATIONSHIPS_BLOCK,
+        }
+        compile_plan(config, simple_profile, decoy_engine_version="0.1.0")
+
     def test_no_pool_size_hint_passes(self, simple_profile: Profile) -> None:
         # When no pool_size is declared, the check passes silently (runtime catches).
         config = {
