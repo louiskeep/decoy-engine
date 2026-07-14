@@ -24,6 +24,7 @@ import importlib.util
 import re
 from typing import Any
 
+from decoy_engine.generation.pool import unique_capacity_ok
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.profile._types import Profile
 
@@ -143,7 +144,7 @@ def check_non_poolable_provider_with_pool_backend(config: dict[str, Any]) -> Non
 
 
 def check_basic_uniqueness_pre_flight(config: dict[str, Any], profile: Profile) -> None:
-    """Reject pool-backed `unique` configs whose source distinct count
+    """Reject pool-backed `unique` configs whose non-null output-row count
     exceeds the pool capacity hint.
 
     Partial in S1; S5 tightens with the full `pool_capacity_pre_flight`
@@ -151,12 +152,14 @@ def check_basic_uniqueness_pre_flight(config: dict[str, Any], profile: Profile) 
     time; if no hint is declared, the check passes (the runtime
     discovers the failure later).
 
+    DE-11: UNIQUE capacity is the non-null output-row count (row_count -
+    null_count), shared with the runtime sampler via `unique_capacity_ok`.
     Compile-check ownership table row #4.
     """
-    distinct_lookup: dict[tuple[str, str], int | None] = {}
+    nonnull_lookup: dict[tuple[str, str], int] = {}
     for table in profile.tables:
         for col in table.columns:
-            distinct_lookup[(table.name, col.name)] = col.distinct_count
+            nonnull_lookup[(table.name, col.name)] = col.row_count - col.null_count
 
     tables = config.get("tables", []) if isinstance(config.get("tables"), list) else []
     for table_entry in tables:
@@ -174,17 +177,17 @@ def check_basic_uniqueness_pre_flight(config: dict[str, Any], profile: Profile) 
             if pool_size is None:
                 continue
             col_name = col_entry.get("name", "?")
-            source_distinct = distinct_lookup.get((table_name, col_name))
-            if source_distinct is None:
+            nonnull_rows = nonnull_lookup.get((table_name, col_name))
+            if nonnull_rows is None:
                 continue
-            if source_distinct > pool_size:
+            if not unique_capacity_ok(pool_size, nonnull_rows):
                 raise PlanCompileError(
                     code="pool_capacity_pre_flight_unique",
                     path=f"tables.{table_name}.columns.{col_name}",
                     message=(
                         f"Column {table_name}.{col_name} uses cardinality_mode=unique "
-                        f"with pool_size={pool_size}, but the profile reports "
-                        f"distinct_count={source_distinct} source rows. The pool "
+                        f"with pool_size={pool_size}, but the pool must supply one unique "
+                        f"value per non-null output row ({nonnull_rows}). The pool "
                         "cannot supply enough unique values; raise pool_size or pick "
                         "a different cardinality_mode."
                     ),

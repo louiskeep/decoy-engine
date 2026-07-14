@@ -10,7 +10,8 @@ PII columns.
 
 Cardinality-mode dispatch (S5 §5 + §6 R6 matrix):
 - REUSE: random/deterministic indices with replacement.
-- UNIQUE: random/deterministic indices without replacement; n <= pool.size.
+- UNIQUE: random/deterministic indices without replacement; requires
+  pool.size >= non-null output rows (DE-11).
 - MATCH_SOURCE_CARDINALITY: source.nunique() distinct pool entries; stable mapping.
 - SCALE_SOURCE_CARDINALITY: same with scale factor.
 """
@@ -24,6 +25,7 @@ import pandas as pd
 
 from decoy_engine.determinism import derive_index
 from decoy_engine.generation.pool._canonicalize import _canonicalize_source
+from decoy_engine.generation.pool._capacity import unique_capacity_ok
 from decoy_engine.generation.pool._cardinality import CardinalityMode
 from decoy_engine.generation.pool._errors import GenerationError
 
@@ -87,7 +89,8 @@ class PoolSampler:
                 with deterministic=True returns REUSE semantics (until a
                 future sprint adds a deterministic-source-cardinality
                 mode).
-            GenerationError(code='uniqueness_impossible') if UNIQUE and n > pool.size.
+            GenerationError(code='uniqueness_impossible') if UNIQUE and the
+                non-null output-row count exceeds pool.size (DE-11).
         """
         if deterministic:
             if source is None or namespace is None:
@@ -122,16 +125,55 @@ class PoolSampler:
             output = pool.values[indices]
             return pd.Series(output)
         if mode is CardinalityMode.UNIQUE:
-            if n > pool.size:
+            # DE-11: UNIQUE capacity is the NON-NULL output-row count. Preserved
+            # source nulls are re-emitted as null and consume no pool value, so
+            # a null-bearing column needs only as many distinct values as it has
+            # non-null rows -- not `n`. Sizing on `n` over-rejected null-bearing
+            # columns and disagreed with the compile-time check. When no source
+            # is supplied (direct callers/tests), every position is non-null, so
+            # the requirement collapses back to `n` and the output is unchanged.
+            if source is None:
+                nonnull_mask = None
+                required = n
+            else:
+                if len(source) != n:
+                    raise GenerationError(
+                        code="source_length_mismatch",
+                        message=(
+                            f"UNIQUE sample called with source length {len(source)} "
+                            f"but n={n}; they must match."
+                        ),
+                    )
+                nonnull_mask = source.notna().to_numpy()
+                required = int(nonnull_mask.sum())
+            # UNIQUE requires distinct OUTPUT values, so capacity and the draw
+            # must be on the pool's DISTINCT value set, not its raw size/indices.
+            # PoolBuilder does not dedup -- a provider can collide -- so a pool
+            # may hold duplicate values; drawing distinct INDICES from such a
+            # pool would silently emit duplicates and violate UNIQUE. Dedup is
+            # stable (first-seen order), so for an all-distinct pool this is
+            # byte-identical to the previous index draw. (Codex HIGH-2, 2026-07-14.)
+            distinct_values = pd.unique(pool.values)
+            if not unique_capacity_ok(len(distinct_values), required):
                 raise GenerationError(
                     code="uniqueness_impossible",
                     message=(
-                        f"UNIQUE-mode sample of size {n} from pool of size "
-                        f"{pool.size}: cannot draw without replacement."
+                        f"UNIQUE-mode sample needs {required} distinct value(s) "
+                        f"(non-null output rows) but the pool has only "
+                        f"{len(distinct_values)} distinct value(s): cannot draw "
+                        "without replacement."
                     ),
                 )
-            indices = rng.permutation(pool.size)[:n]
-            return pd.Series(pool.values[indices])
+            drawn = distinct_values[rng.permutation(len(distinct_values))[:required]]
+            if nonnull_mask is None:
+                return pd.Series(drawn)
+            # Scatter the distinct draws into non-null positions; null-source
+            # rows stay null (uniform null contract with the deterministic and
+            # MATCH/SCALE paths).
+            output = np.empty(n, dtype=object)
+            output[:] = pd.NA
+            output[nonnull_mask] = drawn
+            return pd.Series(output)
         if mode is CardinalityMode.MATCH_SOURCE_CARDINALITY:
             return self._match_source_cardinality(pool, n, source, rng, scale=1.0)
         if mode is CardinalityMode.SCALE_SOURCE_CARDINALITY:

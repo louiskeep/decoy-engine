@@ -44,6 +44,7 @@ from decoy_engine.generation.pool._cache import (
     PoolCache,
     get_default_pool_cache,
 )
+from decoy_engine.generation.pool._capacity import unique_capacity_ok
 from decoy_engine.generation.pool._cardinality import CardinalityMode
 from decoy_engine.generation.pool._errors import GenerationError, PoolCapacityError
 from decoy_engine.generation.pool._events import QualityWarning
@@ -65,4 +66,5 @@ __all__ = [
     "ValuePool",
     "check_pool_capacity_pre_flight",
     "get_default_pool_cache",
+    "unique_capacity_ok",
 ]
