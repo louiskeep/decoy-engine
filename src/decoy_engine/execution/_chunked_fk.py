@@ -51,7 +51,17 @@ _EXACT_FLOAT_INT_BOUND = 2**53
 # config ("decimal(10, 2)" / "numeric(10, 2)", no width suffix). Captures
 # (precision, scale) so two decimal declarations can be compared on that pair,
 # not folded into one bare "decimal" family regardless of scale.
-_DECIMAL_PRECISION_SCALE_RE = re.compile(r"^(?:decimal(?:128|256)?|numeric)\((\d+)\s*,\s*(\d+)\)$")
+# Sentinel family for an UNPROVABLE decimal declaration (bare `decimal`/`numeric`
+# with no precision+scale). The per-chunk runtime guard fails closed on any
+# column whose DECLARED family is this sentinel: decimal scale changes the
+# canonical bytes and the chunked route cannot verify parent/child scale
+# agreement, so a bare decimal FK key cannot preserve RI.
+_DECIMAL_UNPROVABLE_FAMILY = "decimal:unprovable"
+# Scale may be NEGATIVE (Arrow/Parquet-legal, e.g. `decimal128(4, -1)`), so the
+# scale group accepts an optional leading minus; precision is always >= 1.
+_DECIMAL_PRECISION_SCALE_RE = re.compile(
+    r"^(?:decimal(?:128|256)?|numeric)\((\d+)\s*,\s*(-?\d+)\)$"
+)
 
 # Value-keyed strategies that produce the same output per (seed, namespace, value)
 # regardless of row position or chunk boundary. Defined here and re-exported by
@@ -123,16 +133,17 @@ def _dtype_family(dtype: str) -> str:
     A BARE `"decimal"` or `"numeric"` declaration (no scale) is UNPROVABLE --
     the chunked route only ever sees one table's dtype at a time, so there is
     no runtime check that can recover the missing scale -- and returns the
-    distinct family `"decimal:unprovable"`. Two bare declarations on both
-    sides of an edge compare EQUAL at the compile gate (same literal string)
-    and are admitted there, exactly like Codex's reproduction case; the real
-    rejection happens one layer down, at the per-chunk runtime guard
-    (`_chunked_fk_dtype.reject_mismatched_chunked_fk_declared_dtype`): neither
-    side's REAL Arrow data is ever literally `"decimal:unprovable"` (real
-    data always resolves to a scaled `"decimal(P,S)"` family or a non-decimal
-    family), so a bare declaration never matches its own chunk's real family
-    and fails closed there with `chunked_fk_declared_dtype_mismatch`,
-    regardless of what scale the real data on each side turns out to be.
+    distinct sentinel family `_DECIMAL_UNPROVABLE_FAMILY`. Two bare declarations
+    on both sides of an edge compare EQUAL at the compile gate (same sentinel)
+    and are admitted there; the rejection happens one layer down, at the
+    per-chunk runtime guard
+    (`_chunked_fk_dtype.reject_mismatched_chunked_fk_declared_dtype`), which
+    fails closed on ANY column whose DECLARED family is the sentinel -- it does
+    NOT depend on the real data's family, so it holds even for the negative-scale
+    real decimals that the scale regex now parses concretely. Real Arrow decimals
+    (any precision/scale, including negative scale) resolve to a concrete
+    `"decimal(P,S)"` family, so a correctly-scaled declaration matches its real
+    data and is admitted, while a genuine scale mismatch is rejected.
     """
     family = dtype.strip().lower()
     if family.startswith(("int", "uint")):
@@ -142,7 +153,7 @@ def _dtype_family(dtype: str) -> str:
     if family.startswith(("decimal", "numeric")):
         match = _DECIMAL_PRECISION_SCALE_RE.match(family)
         if match is None:
-            return "decimal:unprovable"
+            return _DECIMAL_UNPROVABLE_FAMILY
         precision, scale = match.group(1), match.group(2)
         return f"decimal({precision},{scale})"
     if family.startswith("bool"):

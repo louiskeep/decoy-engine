@@ -439,3 +439,36 @@ def test_dtype_family_decimal_scale_aware_unit() -> None:
     assert _dtype_family("numeric") == "decimal:unprovable"
     # Different scales are DIFFERENT families -- not folded together.
     assert _dtype_family("decimal128(2, 1)") != _dtype_family("decimal128(3, 2)")
+    # Negative scale (Arrow/Parquet-legal) parses concretely, not as the sentinel.
+    assert _dtype_family("decimal128(4, -1)") == "decimal(4,-1)"
+    assert _dtype_family("decimal128(4, -1)") != "decimal:unprovable"
+
+
+def test_declared_bare_decimal_negative_scale_real_fails_closed() -> None:
+    """Regression (dennis BLOCKER): a NEGATIVE-scale real decimal must not slip
+    the bare-decimal guard. Pre-fix, str(decimal128(4,-1)) failed the scale
+    regex and returned the same `decimal:unprovable` sentinel as a bare
+    declaration, so real == declared == sentinel and the guard did NOT fire ->
+    RI could break silently. Now a bare declaration fails closed regardless of
+    the real family."""
+    chunk = pa.table(
+        {"customer_id": pa.array([decimal.Decimal("1E+1")], type=pa.decimal128(4, -1))}
+    )
+    with pytest.raises(ExecutionError) as exc:
+        reject_mismatched_chunked_fk_declared_dtype(
+            chunk, table="orders", declared_fk_dtypes={"customer_id": "decimal"}
+        )
+    assert exc.value.code == "chunked_fk_declared_dtype_mismatch"
+
+
+def test_declared_matched_negative_scale_decimal_admitted() -> None:
+    """A correctly-scaled NEGATIVE-scale declaration matches its real data and
+    is admitted -- the scale regex parses the leading minus, so a legitimate
+    negative-scale FK key is not false-positive rejected."""
+    chunk = pa.table(
+        {"customer_id": pa.array([decimal.Decimal("1E+1")], type=pa.decimal128(4, -1))}
+    )
+    # Must not raise: declared decimal128(4,-1) resolves to the real family.
+    reject_mismatched_chunked_fk_declared_dtype(
+        chunk, table="orders", declared_fk_dtypes={"customer_id": "decimal128(4,-1)"}
+    )

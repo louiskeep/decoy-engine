@@ -27,6 +27,7 @@ from typing import Any
 import pyarrow as pa
 
 from decoy_engine.execution._chunked_fk import (
+    _DECIMAL_UNPROVABLE_FAMILY,
     CHUNK_SAFE_STRATEGIES,
     DTYPE_INVARIANT_STRATEGIES,
     _dtype_family,
@@ -131,6 +132,26 @@ def reject_mismatched_chunked_fk_declared_dtype(
             continue
         real_family = _arrow_dtype_family(real_type)
         declared_family = _dtype_family(declared_dtype)
+        # Defense-in-depth: a bare/unprovable decimal DECLARATION fails closed
+        # regardless of the real family. The chunked route cannot verify that
+        # parent and child declare the same decimal scale (it sees one table at
+        # a time), and scale changes the canonical bytes, so a bare decimal FK
+        # key can never preserve RI. This does not depend on the real data
+        # resolving away from the sentinel, so it holds even for any decimal
+        # str form the scale regex might not parse concretely.
+        if declared_family == _DECIMAL_UNPROVABLE_FAMILY:
+            raise ExecutionError(
+                code="chunked_fk_declared_dtype_mismatch",
+                message=(
+                    f"Column {table}.{column} declares an UNPROVABLE FK key dtype "
+                    f"{declared_dtype!r}: a bare decimal/numeric with no precision "
+                    "and scale. Decimal scale changes the canonical byte sequence "
+                    "and the chunked route cannot verify parent/child scale "
+                    "agreement, so a bare decimal FK key cannot preserve "
+                    "referential integrity. Declare the exact decimal type "
+                    "(e.g. decimal128(P,S)), or use run_pipeline / run_sequential."
+                ),
+            )
         if real_family != declared_family:
             raise ExecutionError(
                 code="chunked_fk_declared_dtype_mismatch",
