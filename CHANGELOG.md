@@ -13,11 +13,16 @@ minimum engine version it was tested against via its
 
 Closes three silent-failure paths in the format-preserving-encryption (`fpe`)
 mask strategy that could emit **raw PII in the clear** or produce **undetectable
-non-round-trip corruption**. All three now **fail closed** at the source (a
-typed error), re-raised as `StrategyError` at the execution boundary so the job
-dies before any unsafe output is written. Fixed once in the shared value-level
-functions (`transforms/fpe.py`), so the V2 handler, the legacy V1 strategy, the
-out-of-core path, and `unmask` all inherit it.
+non-round-trip corruption**. All three now **fail closed** at the source (a typed
+`FpeUnencryptableError` / `FpeChecksumError`) so the job dies before any unsafe
+output is written. Fixed once in the shared value-level functions
+(`transforms/fpe.py`); **both** masking routes -- the full-frame handler
+(`_strategies/_fpe.py`) and the out-of-core path (`out_of_core/_mask_group_b.py`)
+-- translate the value-level error into the identical
+`StrategyError(code="fpe_unencryptable_value" | "fpe_checksum_unsupported")` at
+the execution boundary, so a consumer keying on `StrategyError.code` sees the
+same fail-closed event regardless of route. `unmask` inherits the same
+value-level fail-closed behavior.
 
 - **All-out-of-charset value now fails closed (`FpeUnencryptableError`).** A
   value with zero in-charset characters (e.g. a fully non-ASCII name, or an

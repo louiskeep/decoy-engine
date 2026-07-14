@@ -51,6 +51,7 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 
 from decoy_engine.determinism import derive, derive_index
+from decoy_engine.errors import FpeChecksumError, FpeUnencryptableError
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError, StrategyError
 from decoy_engine.execution._strategies._categorical import _WEIGHTED_CDF_RES, _build_cdf
@@ -131,15 +132,35 @@ def fpe_array(
     key = derive(job_seed, namespace, FPE_KEY_LABEL)
 
     out: list[str | None] = []
-    for value in _array_to_pylist(values):
-        if _is_missing(value):
-            out.append(None)
-            continue
-        out.append(
-            fpe_encrypt_value(
-                str(value), key, charset, tweak, preserve_sep, validate_luhn, checksum
+    # DE-01 cluster-C (2026-07-14): translate the value-level fail-closed raises
+    # into the SAME StrategyError type + codes the full-frame handler
+    # (`_strategies/_fpe.FpeStrategyHandler.run`) uses, so a consumer keying on
+    # `StrategyError.code` sees an identical fail-closed event on both routes.
+    try:
+        for value in _array_to_pylist(values):
+            if _is_missing(value):
+                out.append(None)
+                continue
+            out.append(
+                fpe_encrypt_value(
+                    str(value), key, charset, tweak, preserve_sep, validate_luhn, checksum
+                )
             )
-        )
+    except FpeUnencryptableError as exc:
+        raise StrategyError(
+            code="fpe_unencryptable_value",
+            strategy="fpe",
+            message=(
+                f"column {column!r}: {exc}. The engine fails closed rather than "
+                "emit unmaskable or non-round-trip output."
+            ),
+        ) from exc
+    except FpeChecksumError as exc:
+        raise StrategyError(
+            code="fpe_checksum_unsupported",
+            strategy="fpe",
+            message=f"column {column!r}: {exc}",
+        ) from exc
     return pa.array(out, type=pa.string())
 
 

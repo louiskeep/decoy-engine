@@ -32,6 +32,8 @@ import pytest
 from decoy_engine import run_pipeline
 from decoy_engine.config import PipelineConfig
 from decoy_engine.execution import ExecutionError
+from decoy_engine.execution._errors import StrategyError
+from decoy_engine.execution.out_of_core._mask_group_b import fpe_array
 from decoy_engine.unmask import unmask_pipeline
 
 _ENGINE_VERSION = "de01-fail-closed-test"
@@ -158,6 +160,55 @@ class TestResidualRiskWarnings:
 # ---------------------------------------------------------------------------
 # Healthy path still round-trips exactly
 # ---------------------------------------------------------------------------
+
+
+class TestOutOfCoreFailClosed:
+    """The out-of-core route (`fpe_array`) fails closed with the SAME taxonomy.
+
+    DE-01 cluster-C wraps the value-level raises into `StrategyError` with the
+    identical codes the full-frame handler uses, so a consumer keying on
+    `StrategyError.code` sees the same fail-closed event on both routes. Real
+    Arrow input + real key derivation (the OOC masking primitive), mirroring
+    `TestFailClosed` above.
+    """
+
+    _SEED = (0xDECAFC0FFEE).to_bytes(8, "big")
+
+    def test_ooc_all_out_of_charset_fails_closed(self) -> None:
+        with pytest.raises(StrategyError) as exc:
+            fpe_array(
+                pa.array(["Tanaka", "田中 太郎", "Sato"]),
+                job_seed=self._SEED,
+                namespace="name_ns",
+                column="name",
+                cfg={"charset": "ALPHANUM"},
+            )
+        assert exc.value.code == "fpe_unencryptable_value"
+
+    def test_ooc_short_checksum_fails_closed(self) -> None:
+        with pytest.raises(StrategyError) as exc:
+            fpe_array(
+                pa.array(["1234567893", "12345"]),  # second is too short for npi
+                job_seed=self._SEED,
+                namespace="npi_ns",
+                column="npi",
+                cfg={"charset": "digits", "checksum": "npi"},
+            )
+        assert exc.value.code == "fpe_checksum_unsupported"
+
+    def test_ooc_healthy_values_encrypt(self) -> None:
+        """A healthy in-charset column masks cleanly on the OOC route (no false raise)."""
+        out = fpe_array(
+            pa.array(["123456", "654321", None]),
+            job_seed=self._SEED,
+            namespace="id_ns",
+            column="id",
+            cfg={"charset": "digits"},
+        ).to_pylist()
+        assert out[2] is None  # nulls preserved
+        assert all(
+            v is not None and v != s for v, s in zip(out[:2], ["123456", "654321"], strict=True)
+        )
 
 
 class TestHealthyRoundTrip:
