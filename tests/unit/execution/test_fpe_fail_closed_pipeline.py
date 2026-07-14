@@ -178,6 +178,33 @@ class TestChecksumLengthFailClosed:
             _run(cfg, df, tmp_path)
         assert exc.value.code == "fpe_checksum_unsupported"
 
+    def test_empty_string_checksum_value_passes_through(self) -> None:
+        """Empty string (length 0) is PRESERVED, not failed closed (Codex follow-up).
+
+        Engine convention: a missing value carries no PII to protect and has
+        nothing to permute, so it passes through -- the same deliberate no-op nulls
+        get (skipped via na_mask before the value layer). This is distinct from the
+        len-1 fail-closed case above: empty is the ONLY passthrough, a non-empty
+        invalid length still raises.
+        """
+        for scheme in ("npi", "isbn13", "vin", "luhn"):
+            assert fpe_encrypt_value("", _KEY, _DIGITS, b"t", checksum=scheme) == ""
+
+    def test_empty_and_null_checksum_cells_pass_through_pipeline(self, tmp_path) -> None:
+        """A checksum column with empty + null cells masks the valid rows and
+        preserves the empty/null ones, with NO fail-closed raise.
+
+        Pins the nullable-checksum-column case: failing closed on empty/null
+        would break any real column that has missing values.
+        """
+        cfg = _config([_fpe_col("npi", "digits", checksum="npi")], tmp_path)
+        df = pd.DataFrame({"npi": ["1234567893", "", None]})  # valid, empty, null
+        result = _run(cfg, df, tmp_path)
+        out = result.outputs[_TABLE].column("npi").to_pylist()
+        assert out[1] == ""  # empty preserved
+        assert out[2] is None  # null preserved
+        assert out[0] not in ("1234567893", "", None)  # valid row actually masked
+
 
 # ---------------------------------------------------------------------------
 # Checksum unmask: the inverse must forward the scheme (Codex HIGH, pre-existing)

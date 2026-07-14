@@ -209,6 +209,16 @@ def _fpe_pure_value(
     The pre-WS1 shape (permute all n chars, overwrite the last with the check
     digit) discarded one encrypted character and was therefore not invertible;
     the change is covered by the SEED_PROTOCOL_VERSION 4 -> 5 bump."""
+    # Empty-string preserve (engine convention, made explicit here): a missing
+    # value carries no PII to protect and has nothing to permute, so it passes
+    # through as-is. This is the same deliberate no-op nulls get -- they are
+    # skipped via `na_mask` at the strategy handler before ever reaching the value
+    # layer -- applied to the empty string. It is NOT the fail-closed case: a
+    # NON-empty value of an invalid length still fails closed below (an invalid
+    # checksum length raises in `_fpe_checksum_permute`; an all-out-of-charset or
+    # preserve_separators=false out-of-charset value raises in `_fpe_value`).
+    if not s:
+        return s
     if checksum is not None:
         # Codex cross-model review (2026-07-14): route EVERY length through the
         # checksum path (was `and len(s) >= 2`). A len-0/1 value used to skip this
@@ -259,6 +269,12 @@ def _fpe_value(
     prefix carries is surfaced by the handler as a `QualityWarning`; full
     coverage is deferred to the structured-FPE/FF1 fast-follow (see
     docs/discussions/2026-07-14-de01-vault-token-for-fpe.md)."""
+    # Empty-string preserve (engine convention): a missing value has no PII to
+    # protect and nothing to encrypt, so it passes through -- the same deliberate
+    # no-op nulls get (skipped via na_mask before the value layer). A NON-empty
+    # value that is un-encryptable (all-out-of-charset, or preserve_separators=
+    # false with out-of-charset chars, or an invalid checksum length) still fails
+    # closed below; empty is the ONLY passthrough.
     if not val:
         return val
     charset_set = set(charset)

@@ -51,7 +51,11 @@ value-level fail-closed behavior.
   check), and an over-length value used to leak its surplus source character raw
   (separator-preserve) or truncate it (`preserve_separators=false`). NPI/ISBN-13/
   EAN-13/VIN are exact-length; GTIN is 8/12/13/14; Luhn keeps a floor. The
-  in-charset reinsertion is now length-guarded (strict zip).
+  in-charset reinsertion is now length-guarded (strict zip). Empty strings and
+  nulls are PRESERVED (the engine convention: a missing value has no PII and
+  nothing to permute, the same no-op nulls get via `na_mask`) -- only a
+  NON-empty value of an invalid length fails closed, so nullable checksum
+  columns keep working.
 - **`unmask` forwards the checksum scheme to the inverse (Codex, pre-existing
   since 2026-06-12).** A checksum-mode fpe column previously unmasked with the
   plain inverse (the `checksum` key was not forwarded), returning deterministic
