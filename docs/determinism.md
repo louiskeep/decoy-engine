@@ -53,6 +53,21 @@ label produces different masked output, so pick something durable.
 See [security/key-derivation](security/key-derivation.md) for how the master
 key is split into per-field subkeys.
 
+### Keyed masking: mask_key, not job_seed
+
+`job_seed` (above) drives reproducibility for *generation* and for the
+no-secret fallback path. Every re-identification-protecting *masking*
+derivation (`fpe`, `hash`, `date_shift`, `code_set`, `joint_mask`,
+deterministic `faker`/`categorical`/composites, and the token vault's
+encryption key) instead draws from a separate value, `mask_key`, sourced
+through a `KeyProvider`. Configure it with `global_settings.mask_secret_ref`
+(`env:NAME` or `file:/PATH`, resolved to a >=32-byte secret) or a
+programmatic `run(key_provider=...)`. With no provider configured, `mask_key`
+falls back to `job_seed` so pre-KeyProvider output stays byte-identical; at
+GA a keyed plan with no resolved secret hard-errors instead of silently
+keying off the seed. See [security/key-derivation](security/key-derivation.md)
+for the full model.
+
 ## What is deterministic
 
 - Keyed mask strategies in deterministic mode: `faker`, `hash`, `fpe`,
