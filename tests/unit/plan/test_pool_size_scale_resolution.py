@@ -375,3 +375,36 @@ class TestProviderOnlyPoolSizeCapacity:
         with pytest.raises(PlanCompileError) as exc:
             compile_plan(cfg, _people_profile(row_count=10), decoy_engine_version=_ENGINE_VERSION)
         assert exc.value.code == "pool_size_location_conflict"
+
+
+class TestScaleModeCapacity:
+    """check_pool_capacity_pre_flight must handle the sibling `scale` field
+    with the same validated-None discipline as pool_size: a validated config
+    dumps `scale` as an explicit None, which must not crash the capacity check.
+
+    (Making the SCALE capacity gate exactly track runtime capacity -- rounding,
+    the deterministic bypass, and sampled-distinct-is-a-lower-bound -- is DE-11
+    residual #2, task #76; deliberately NOT attempted here.)
+    """
+
+    def test_omitted_scale_uses_default_not_crash(self, tmp_path) -> None:
+        # A validated config dumps `scale` as explicit None; the prior
+        # `float(col_entry.get("scale", 2.0))` read None and crashed with
+        # `float(None)`. The 2.0 default must apply: distinct 2 * 2.0 = 4 <<
+        # the 10_000 default pool, so this compiles clean.
+        cfg = _config(
+            tmp_path,
+            [
+                {
+                    "name": "email",
+                    "strategy": "faker",
+                    "provider": "person_email",
+                    "cardinality_mode": "scale_source_cardinality",
+                }
+            ],
+        )
+        compile_plan(
+            cfg,
+            _people_profile(row_count=100, distinct_count=2),
+            decoy_engine_version=_ENGINE_VERSION,
+        )
