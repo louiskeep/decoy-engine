@@ -109,9 +109,15 @@ def _dtype_family(dtype: str) -> str:
         return "bool"
     if family.startswith(("str", "string", "object", "utf8", "large_string")):
         return "string"
-    if family.startswith(("date", "timestamp", "datetime")):
-        return "datetime"
-    if family.startswith(("bytes", "binary", "large_binary")):
+    # date vs timestamp/datetime are DISTINCT families: date32 and timestamp
+    # canonicalize to different bytes for the same instant, so a declared-date /
+    # real-timestamp FK key voids RI. Check timestamp/datetime BEFORE date --
+    # "datetime" is a prefix-superset of "date".
+    if family.startswith(("timestamp", "datetime")):
+        return "timestamp"
+    if family.startswith("date"):
+        return "date"
+    if family.startswith(("bytes", "binary", "large_binary", "fixed_size_binary")):
         return "bytes"
     return family
 

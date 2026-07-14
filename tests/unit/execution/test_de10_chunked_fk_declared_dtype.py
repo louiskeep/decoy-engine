@@ -184,6 +184,52 @@ def test_dictionary_encoded_string_fk_not_false_positive() -> None:
 
 
 # ---------------------------------------------------------------------------
+# date vs timestamp: DISTINCT families (date32 and timestamp canonicalize to
+# different bytes for the same instant), and fixed_size_binary -> bytes.
+# ---------------------------------------------------------------------------
+
+
+def test_declared_date_but_real_timestamp_fk_fails_closed() -> None:
+    """A declared `date` FK key backed by real `timestamp` data used to fold
+    into one shared "datetime" family and pass silently. A date32 value and a
+    timestamp value for the same instant canonicalize to DIFFERENT bytes, so
+    the child would self-mask a different byte sequence than a parent masked
+    from its own real dtype -- RI voided. Now a cross-family reject."""
+    config = _fk_config(strategy="passthrough", parent_dtype="date", child_dtype="date")
+    chunk = pa.table({"customer_id": pa.array([1, 2, 3], type=pa.timestamp("us"))})
+
+    with pytest.raises(ExecutionError) as exc:
+        list(run_mask_pipeline_chunked(config, [chunk], table="orders", engine_version=_ENGINE))
+    assert exc.value.code == "chunked_fk_declared_dtype_mismatch"
+    assert "orders.customer_id" in exc.value.message
+
+
+def test_declared_date_and_real_date32_admitted() -> None:
+    """No false positive: a declared `date` FK key backed by a real `date32`
+    column is the SAME family and must stream normally."""
+    config = _fk_config(strategy="passthrough", parent_dtype="date", child_dtype="date")
+    chunk = pa.table({"customer_id": pa.array([1, 2, 3], type=pa.date32())})
+
+    out = list(run_mask_pipeline_chunked(config, [chunk], table="orders", engine_version=_ENGINE))
+    vals = pa.concat_tables(out).column("customer_id").to_pylist()
+    assert len(vals) == 3
+
+
+def test_declared_binary_and_real_fixed_size_binary_admitted() -> None:
+    """Regression for the false-positive reject: a real `fixed_size_binary[N]`
+    Arrow column used to fall through `_dtype_family` to a raw string family
+    (bug), so a healthy FK declared `binary` but stored as
+    `fixed_size_binary` was falsely rejected. `fixed_size_binary` must map to
+    the `bytes` family, same as `binary`."""
+    config = _fk_config(strategy="passthrough", parent_dtype="binary", child_dtype="binary")
+    chunk = pa.table({"customer_id": pa.array([b"abcd", b"efgh", b"ijkl"], type=pa.binary(4))})
+
+    out = list(run_mask_pipeline_chunked(config, [chunk], table="orders", engine_version=_ENGINE))
+    vals = pa.concat_tables(out).column("customer_id").to_pylist()
+    assert vals == [b"abcd", b"efgh", b"ijkl"]
+
+
+# ---------------------------------------------------------------------------
 # Unit coverage: the declaration collector.
 # ---------------------------------------------------------------------------
 

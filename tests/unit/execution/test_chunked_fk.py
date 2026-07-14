@@ -530,6 +530,16 @@ class TestFailClosedRejections:
         # Must not raise.
         check_chunked_compatibility(config, table="orders")
 
+    def test_child_key_dtype_date_timestamp_mismatch_rejected(self) -> None:
+        """date and timestamp are DISTINCT families (not folded together): a
+        date32 value and a timestamp value for the same instant canonicalize
+        to different bytes, so a declared-date parent / declared-timestamp
+        child FK edge cannot be proven to self-mask identically. Reject."""
+        config = _fk_config(parent_dtype="date", child_dtype="timestamp")
+        with pytest.raises(PlanCompileError) as exc:
+            check_chunked_compatibility(config, table="orders")
+        assert exc.value.code == "chunked_fk_child_key_dtype_mismatch"
+
     def test_child_key_dtype_undeclared_rejected_fail_closed(self) -> None:
         """Fail-closed dtype gate (2026-07-07): a value-sensitive strategy with
         an undeclared dtype on either side can NOT be proven to self-mask to the
