@@ -61,10 +61,16 @@ it deterministically.
   gated). The gate runs at the execution CHOKE POINT (every adapter, the
   out-of-core runner, the chunked entry) so no public masking entry point can run
   keyed masking off `job_seed` at GA. The token vault's Fernet key must match the
-  resolved mask key (`run_pipeline` fails closed on a mismatched vault writer), and
-  `unmask` runs the same gate (GA requires the secret; an unauthenticated fpe
-  reversal under the job_seed fallback reports `status="reversed_unverified"`).
-  Secret material is redacted from provider `repr` and `mask_secret_ref` errors.
+  resolved mask key, and `unmask` runs the same gate (GA requires the secret; an
+  unauthenticated fpe reversal under the job_seed fallback reports
+  `status="reversed_unverified"`). A `vault: true` column is itself keyed surface
+  (it persists reversible plaintext PII), so any vault-bearing plan -- even
+  `redact` + `vault: true` -- requires a secret at GA regardless of masking
+  strategy or entry point, and the shared vault-writer-key guard
+  (`vault.assert_vault_writer_keyed`) fires on both `run_pipeline` and
+  `run_mask_pipeline_chunked` so no entry point can encrypt the vault under a key
+  that differs from the resolved secret. Secret material is redacted from provider
+  `repr` and `mask_secret_ref` errors.
   Fixed the `text_mask.py` "32-byte HMAC key" docstring (the key is 8 or 32 bytes).
 - **Migration (pre-GA hard cutover):** any `job_seed`-keyed vault sidecar or
   masked output produced to date is regenerated fresh under a secret at GA. There

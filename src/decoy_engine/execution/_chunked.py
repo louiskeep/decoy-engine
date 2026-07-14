@@ -366,7 +366,15 @@ def run_mask_pipeline_chunked(
             key_provider = key_provider_from_ref(_ref)
     from decoy_engine.keyprovider import require_mask_key
 
-    require_mask_key(plan, key_provider)
+    _resolved_mask_key = require_mask_key(plan, key_provider)
+    # DE-02 (Codex item 6a): this public entry point also collects vault entries,
+    # so it must run the SAME vault-key guard as run_pipeline -- the vault holds
+    # reversible plaintext PII and cannot be written under a key that differs from
+    # the resolved mask key.
+    if vault_writer is not None:
+        from decoy_engine.vault import assert_vault_writer_keyed
+
+        assert_vault_writer_keyed(vault_writer, _resolved_mask_key)
     # DE-03: resolve the projection policy once; each per-chunk adapter.run()
     # enforces it (a chunk carries the same column set as the whole table, so
     # per-chunk enforcement IS whole-table enforcement). Single mask table, no

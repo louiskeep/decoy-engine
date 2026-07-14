@@ -277,12 +277,20 @@ _ALWAYS_KEYED_STRATEGIES = frozenset(
 def _col_seed_is_keyed(col_seed: Any) -> bool:
     """Whether one ColumnSeed is keyed re-identification surface.
 
+    A `vault: true` column is ALWAYS keyed (Codex item 6b): its source->masked
+    mapping is persisted, encrypted, into the token vault for reversal, so it
+    stores reversible plaintext PII even when the masking strategy itself is
+    anonymising (e.g. `redact` + `vault: true`). The GA gate must therefore
+    require a real secret for any vault-bearing plan, at every entry point.
+
     Recurses into `nested` children (Codex BLOCKER 3): a nested wrapper carries
     its child strategy in `provider_config["strategy"]` and the child's config in
     `provider_config["strategy_config"]`; a keyed child (e.g.
     `nested(strategy=hash)`) must be classified keyed even though the parent
     strategy is `nested`.
     """
+    if getattr(col_seed, "vault", False):
+        return True
     if col_seed.strategy in _ALWAYS_KEYED_STRATEGIES or col_seed.deterministic:
         return True
     if col_seed.strategy == "nested":

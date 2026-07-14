@@ -114,7 +114,10 @@ ALLOWLIST: dict[str, int] = {
     # entry point now resolves the config's mask_secret_ref and runs the
     # fail-closed gate up front, so a keyed chunked job cannot execute off
     # job_seed at GA. Same docstring-decomposition target stands.
-    "src/decoy_engine/execution/_chunked.py": 626,
+    # DE-02 Codex item 6a (2026-07-14): +8 LOC -- the chunked entry also collects
+    # vault entries, so it runs the shared assert_vault_writer_keyed guard against
+    # the resolved mask key. Same docstring-decomposition target stands.
+    "src/decoy_engine/execution/_chunked.py": 634,
     # DE-03 (2026-07-13): the mask adapter's `run()` is one of the five emission
     # routes the fail-closed output projection must guard (undeclared columns no
     # longer leak raw). The +17 LOC are the two policy params, the per-table
@@ -150,7 +153,10 @@ ALLOWLIST: dict[str, int] = {
     # requires the standard VaultWriter contract (isinstance) so a duck-typed
     # writer without the key-match method cannot silently bypass the fail-closed
     # net. Same routing-dispatch decomposition target stands.
-    "src/decoy_engine/execution/_pipeline.py": 655,
+    # DE-02 Codex item 6a (2026-07-14): -10 LOC -- the inline vault guard moved to
+    # the shared vault.assert_vault_writer_keyed helper (reused by the chunked
+    # entry). Ceiling lowered to the new size. Same decomposition target stands.
+    "src/decoy_engine/execution/_pipeline.py": 645,
     # DE-02 (2026-07-14): +3 LOC crossing the 600 cap -- the sequential FK route
     # threads `key_provider` into StrategyContext.mask_key like the other adapters
     # (run-time injection, never serialized). Decompose the per-table

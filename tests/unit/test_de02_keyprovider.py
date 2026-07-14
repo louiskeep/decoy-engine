@@ -737,6 +737,113 @@ class TestPublicEntryPointsGated:
             )
 
 
+class TestVaultIsKeyedSurface:
+    """Codex item 6 (residual): a `vault: true` column is a KEYED surface (it
+    persists reversible plaintext PII) regardless of the masking strategy, so the
+    GA gate requires a secret for it at EVERY entry point, and the vault-key guard
+    fires on the chunked route too."""
+
+    _VAULT_REDACT = [
+        {"name": "email", "strategy": "redact", "namespace": "e_ns", "vault": True},
+    ]
+
+    def _plan(self, tmp_path):
+        cfg = _config(tmp_path, columns=self._VAULT_REDACT)
+        df = _frame(8)[["email"]]
+        df.to_csv(tmp_path / "t.csv", index=False)
+        prof = profile_source(cfg, seed=42)
+        return compile_plan(cfg, prof, decoy_engine_version=_EV)
+
+    def test_redact_plus_vault_is_classified_keyed(self, tmp_path):
+        # 6b root cause: redact is anonymising, but vault:true makes it keyed.
+        assert plan_has_keyed_strategy(self._plan(tmp_path)) is True
+
+    def test_ga_vault_no_secret_gate_raises(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("decoy_engine.keyprovider.is_pre_ga", lambda: False)
+        with pytest.raises(KeyedStrategyRequiresSecret):
+            require_mask_key(self._plan(tmp_path), None)
+
+    @needs_crypto
+    def test_ga_vault_redact_no_secret_fails_closed_run_pipeline(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("decoy_engine.keyprovider.is_pre_ga", lambda: False)
+        cfg = _config(tmp_path, columns=self._VAULT_REDACT)
+        df = _frame(8)[["email"]]
+        df.to_csv(tmp_path / "t.csv", index=False)
+        sources = {"t": pa.Table.from_pandas(df, preserve_index=False)}
+        with pytest.raises(KeyedStrategyRequiresSecret):
+            run_pipeline(cfg, sources=sources, engine_version=_EV)
+
+    @needs_crypto
+    def test_ga_vault_redact_no_secret_fails_closed_chunked(self, tmp_path, monkeypatch):
+        from decoy_engine import run_mask_pipeline_chunked
+
+        monkeypatch.setattr("decoy_engine.keyprovider.is_pre_ga", lambda: False)
+        cfg = _config(tmp_path, columns=self._VAULT_REDACT)
+        df = _frame(8)[["email"]]
+        df.to_csv(tmp_path / "t.csv", index=False)
+        source = pa.Table.from_pandas(df, preserve_index=False)
+        with pytest.raises(KeyedStrategyRequiresSecret):
+            list(run_mask_pipeline_chunked(cfg, [source], table="t", engine_version=_EV))
+
+    @needs_crypto
+    def test_chunked_mismatched_vault_writer_under_secret_fails_closed(self, tmp_path):
+        from decoy_engine import run_mask_pipeline_chunked
+        from decoy_engine.vault import VaultError, VaultWriter
+
+        cfg = _config(
+            tmp_path,
+            columns=[{"name": "email", "strategy": "hash", "namespace": "e_ns", "vault": True}],
+        )
+        df = _frame(8)[["email"]]
+        df.to_csv(tmp_path / "t.csv", index=False)
+        source = pa.Table.from_pandas(df, preserve_index=False)
+        bad_writer = VaultWriter((42).to_bytes(8, "big"))  # job_seed-keyed
+        with pytest.raises(VaultError):
+            list(
+                run_mask_pipeline_chunked(
+                    cfg,
+                    [source],
+                    table="t",
+                    engine_version=_EV,
+                    vault_writer=bad_writer,
+                    key_provider=_SECRET,
+                )
+            )
+
+    @needs_crypto
+    def test_chunked_matching_secret_writes_and_round_trips(self, tmp_path):
+        from decoy_engine import run_mask_pipeline_chunked, unmask_pipeline
+        from decoy_engine.vault import vault_writer_for_config
+
+        cfg = _config(
+            tmp_path,
+            columns=[{"name": "email", "strategy": "hash", "namespace": "e_ns", "vault": True}],
+        )
+        df = _frame(20)[["email"]]
+        df.to_csv(tmp_path / "t.csv", index=False)
+        source = pa.Table.from_pandas(df, preserve_index=False)
+        writer = vault_writer_for_config(cfg, key_provider=_SECRET)
+        chunks = list(
+            run_mask_pipeline_chunked(
+                cfg,
+                [source],
+                table="t",
+                engine_version=_EV,
+                vault_writer=writer,
+                key_provider=_SECRET,
+            )
+        )
+        assert chunks, "chunked happy path must produce masked chunks"
+        writer.write(tmp_path / "vault.bin")
+        import pyarrow as _pa
+
+        masked = _pa.concat_tables(chunks)
+        recovered = unmask_pipeline(
+            cfg, {"t": masked}, vault_path=str(tmp_path / "vault.bin"), key_provider=_SECRET
+        ).outputs["t"]
+        assert recovered.column("email").to_pylist() == df["email"].tolist()
+
+
 # --------------------------------------------------------------------------
 # Secret-source ref resolver (env: / file:, hex + base64, <32 rejection).
 # --------------------------------------------------------------------------

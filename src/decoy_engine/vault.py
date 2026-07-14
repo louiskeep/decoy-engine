@@ -295,6 +295,28 @@ class VaultWriter:
         return _fernet(self._mask_key)
 
 
+def assert_vault_writer_keyed(vault_writer: object, mask_key: bytes) -> None:
+    """Fail closed unless `vault_writer` is a VaultWriter keyed with `mask_key`.
+
+    DE-02 (Codex item 6a + 6, dennis L3): the single shared guard every public
+    entry point that accepts a vault writer (`run_pipeline`,
+    `run_mask_pipeline_chunked`, ...) MUST call before any vault entry is
+    collected, so the vault (reversible plaintext PII) can never be encrypted
+    under a key that does not match the masking run's resolved secret. A
+    duck-typed writer without the key-match contract is rejected outright.
+    """
+    if not isinstance(vault_writer, VaultWriter):
+        raise VaultError(
+            code="vault_writer_unsupported",
+            message=(
+                "vault_writer must be a decoy_engine.vault.VaultWriter so its "
+                "keyed-mask key can be verified against the run secret "
+                "(DE-02 fail-closed vault-key guard)."
+            ),
+        )
+    vault_writer.assert_keyed_with(mask_key)
+
+
 def vault_writer_for_config(
     config: dict[str, Any], *, key_provider: KeyProvider | None = None
 ) -> VaultWriter:

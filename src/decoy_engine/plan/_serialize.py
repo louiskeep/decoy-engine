@@ -117,6 +117,9 @@ def _column_seed_to_dict(cs: ColumnSeed) -> dict[str, Any]:
         out["pool_size"] = cs.pool_size
     if cs.scale is not None:
         out["scale"] = cs.scale
+    # DE-02 (6b): emit vault only when set, so legacy plans round-trip unchanged.
+    if cs.vault:
+        out["vault"] = True
     return out
 
 
@@ -224,6 +227,8 @@ def _column_seed_from_dict(data: dict[str, Any]) -> ColumnSeed:
         # DE-11 (2026-07-13): same omit-when-None pattern.
         pool_size=data.get("pool_size"),
         scale=data.get("scale"),
+        # DE-02 (6b): legacy plans omit vault -> False.
+        vault=bool(data.get("vault", False)),
     )
 
 
