@@ -125,6 +125,17 @@ ALLOWLIST: dict[str, int] = {
     # call live here, on the one path that sees each chunk. Same docstring-
     # decomposition target stands.
     "src/decoy_engine/execution/_chunked.py": 648,
+    # DE-10 family-model (2026-07-14): crossed the 600 cap adding the scale-aware
+    # chunked-FK dtype family -- date/timestamp split, fixed_size_binary, and the
+    # decimal scale regex + unprovable-sentinel + a load-bearing docstring, all
+    # closing Codex/dennis-reproduced RI holes (a misdeclared FK dtype silently
+    # voided referential integrity). `_dtype_family` + the decimal constants are a
+    # cohesive, self-contained unit consumed by both this module (the compile
+    # gate) and the sibling `_chunked_fk_dtype.py` (the runtime guard); decompose
+    # them into a shared `_fk_dtype_family.py` sibling when the next FK-dtype
+    # change lands (a pure move -- no circular import, since the family logic
+    # imports nothing from either consumer).
+    "src/decoy_engine/execution/_chunked_fk.py": 650,
     # DE-03 (2026-07-13): the mask adapter's `run()` is one of the five emission
     # routes the fail-closed output projection must guard (undeclared columns no
     # longer leak raw). The +17 LOC are the two policy params, the per-table
