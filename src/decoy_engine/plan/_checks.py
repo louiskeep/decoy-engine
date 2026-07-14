@@ -152,11 +152,8 @@ def check_basic_uniqueness_pre_flight(config: dict[str, Any], profile: Profile) 
     time; if no hint is declared, the check passes (the runtime
     discovers the failure later).
 
-    DE-11: UNIQUE capacity is the non-null output-row count
-    (row_count - null_count), the same quantity the runtime sampler draws
-    against, shared via `unique_capacity_ok`. The prior source-distinct-count
-    basis under-counted whenever a column had duplicate source values.
-
+    DE-11: UNIQUE capacity is the non-null output-row count (row_count -
+    null_count), shared with the runtime sampler via `unique_capacity_ok`.
     Compile-check ownership table row #4.
     """
     nonnull_lookup: dict[tuple[str, str], int] = {}
