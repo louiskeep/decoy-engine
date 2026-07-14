@@ -132,7 +132,7 @@ class TestRoundTrip:
         outputs, vault_path = _mask_with_vault(tmp_path, cfg, df)
         masked_contacts = outputs["accounts"].column("contact").to_pylist()
 
-        job_seed = vault_writer_for_config(cfg)._job_seed
+        job_seed = vault_writer_for_config(cfg)._mask_key
         vault_map, _ = load_vault(vault_path, job_seed)
 
         result = unmask_pipeline(cfg, outputs, vault_path=str(vault_path))
@@ -205,7 +205,7 @@ class TestChunkedParity:
         chunked_path = tmp_path / "vault-chunked.bin"
         chunked_writer.write(chunked_path)
 
-        job_seed = vault_writer_for_config(cfg)._job_seed
+        job_seed = vault_writer_for_config(cfg)._mask_key
         full_map, full_ambiguous = load_vault(full_path, job_seed)
         chunked_map, chunked_ambiguous = load_vault(chunked_path, job_seed)
         assert chunked_map == full_map

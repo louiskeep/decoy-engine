@@ -200,6 +200,15 @@ def test_all_lists_every_public_name():
         "RELEASE_PHASE",
         "ReleasePhase",
         "is_pre_ga",
+        # DE-02 (2026-07-14): the KeyProvider keyed-mask secret boundary +
+        # its fail-closed error taxonomy.
+        "KeyProvider",
+        "SecretKeyProvider",
+        "SeedKeyProvider",
+        "MaskSecretError",
+        "KeyedStrategyRequiresSecret",
+        "MissingMaskSecret",
+        "WeakMaskSecret",
     }
     assert set(decoy_engine.__all__) == expected
 

@@ -96,7 +96,7 @@ class CodeSetHandler:
                     str(value),
                     code_cfg,
                     mode=mode,
-                    job_seed=ctx.job_seed,
+                    job_seed=ctx.mask_key,
                     row_index=i,
                     namespace=plan.namespace,
                 )

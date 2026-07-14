@@ -35,7 +35,7 @@ normalized; the per-column report carries this caveat.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
@@ -44,6 +44,9 @@ from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._strategies._fpe import FPE_KEY_LABEL
 from decoy_engine.plan._seed import _normalize_job_seed
 from decoy_engine.transforms.fpe import _CHARSETS, fpe_decrypt_value
+
+if TYPE_CHECKING:
+    from decoy_engine.keyprovider import KeyProvider
 
 _LUHN_CAVEAT = (
     "validate_luhn recomputes the check digit on decrypt; round trip is "
@@ -163,6 +166,7 @@ def unmask_pipeline(
     masked_sources: dict[str, pa.Table],
     *,
     vault_path: str | None = None,
+    key_provider: KeyProvider | None = None,
 ) -> UnmaskResult:
     """Invert the fpe and vaulted columns of `masked_sources` under `config`.
 
@@ -187,13 +191,25 @@ def unmask_pipeline(
             be opened under this config.
     """
     job_seed = _normalize_job_seed(config)
+    # DE-02: reverse the keyed surface under the SAME mask key the mask run used
+    # (a programmatic key_provider wins over global_settings.mask_secret_ref; both
+    # absent -> job_seed, byte-identical to pre-DE-02). Reversing under the wrong
+    # key surfaces as vault_key_mismatch (vault) or wrong plaintext (fpe).
+    from decoy_engine.keyprovider import key_provider_from_ref
+
+    provider: KeyProvider | None = key_provider
+    if provider is None:
+        ref = (config.get("global_settings") or {}).get("mask_secret_ref")
+        if ref:
+            provider = key_provider_from_ref(ref)
+    mask_key = provider.mask_key() if provider is not None else job_seed
     vault_map: dict[tuple[str, str], str] | None = None
     vault_ambiguous = 0
     if vault_path is not None:
         from decoy_engine.vault import VaultError, load_vault
 
         try:
-            vault_map, vault_ambiguous = load_vault(vault_path, job_seed)
+            vault_map, vault_ambiguous = load_vault(vault_path, mask_key)
         except VaultError as exc:
             raise ExecutionError(code=exc.code, message=exc.message) from exc
     reports: list[UnmaskColumnReport] = []
@@ -305,7 +321,7 @@ def unmask_pipeline(
                     ),
                 )
             cfg = col_cfg.get("provider_config") or {}
-            key = derive(job_seed, namespace, FPE_KEY_LABEL)
+            key = derive(mask_key, namespace, FPE_KEY_LABEL)
             # SP-46: mirror the join-group tweak resolution from _strategies/_fpe.py.
             # When fpe_join_group is set the tweak is the group name, not the column
             # name; using the wrong tweak produces incorrect decryption. The config

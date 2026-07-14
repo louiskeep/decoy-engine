@@ -51,7 +51,7 @@ class HashStrategyHandler:
 
         masked = hash_array(
             pandas_column_to_kernel_input(df[column]),
-            seed=ctx.job_seed,
+            seed=ctx.mask_key,
             namespace=plan.namespace,
             truncate=truncate,
             derive_func=derive,

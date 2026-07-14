@@ -64,6 +64,6 @@ class GroupKeyStrategyHandler:
         # Namespace isolates this column's derivation from other group_key
         # columns and from mask-path derivations in the same job.
         namespace = f"group_key/{column}"
-        key_list = apply_group_key(config, df, seed=ctx.job_seed, namespace=namespace)
+        key_list = apply_group_key(config, df, seed=ctx.mask_key, namespace=namespace)
         df[column] = key_list
         return df, []

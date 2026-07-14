@@ -72,6 +72,7 @@ from decoy_engine.execution.out_of_core._mask import (
 )
 from decoy_engine.execution.out_of_core._relation import build_parent_key_relation_aligned
 from decoy_engine.execution.out_of_core._source import LazySource
+from decoy_engine.keyprovider import mask_key_from_provider
 from decoy_engine.plan._types import ColumnSeed
 from decoy_engine.relationships._graph import OrphanPolicy
 
@@ -81,6 +82,7 @@ if TYPE_CHECKING:
 
     from decoy_engine.execution.out_of_core._relation import ParentKeyRelation
     from decoy_engine.generation.pool._events import QualityWarning
+    from decoy_engine.keyprovider import KeyProvider
     from decoy_engine.plan._types import Plan
     from decoy_engine.providers_v2 import ProviderRegistry
     from decoy_engine.relationships import RelationshipGraph
@@ -103,6 +105,7 @@ def run_fk_out_of_core(
     batch_rows: int | None = None,
     temp_disk_budget_bytes: int | None = None,
     unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
+    key_provider: KeyProvider | None = None,
 ) -> ExecutionResult:
     """Run the out-of-core FK relationship route as a batch stream.
 
@@ -143,6 +146,7 @@ def run_fk_out_of_core(
                 message="out-of-core FK route requires every parent and child source.",
             )
 
+    mask_key = mask_key_from_provider(key_provider, plan.seed_envelope.job_seed)
     owned_temp = temp_dir is None
     root = Path(tempfile.mkdtemp(prefix="decoy-ooc-")) if temp_dir is None else temp_dir
     root.mkdir(parents=True, exist_ok=True)
@@ -172,6 +176,7 @@ def run_fk_out_of_core(
                 outputs=outputs,
                 warnings=warnings,
                 unconfigured_column_policy=unconfigured_column_policy,
+                mask_key=mask_key,
             )
             if temp_disk_budget_bytes is not None:
                 # Table boundaries are the natural checkpoints: the spill
@@ -219,6 +224,7 @@ def _stream_table(
     outputs: dict[str, pa.Table],
     warnings: list[QualityWarning],
     unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
+    mask_key: bytes | None = None,
 ) -> None:
     """Rewrite pass for one table: mask + join per batch, then emit.
 
@@ -245,6 +251,7 @@ def _stream_table(
                     source_schema,
                     temp_dir / f"edge_{idx}",
                     memory_limit,
+                    mask_key=mask_key,
                 )
             )
         for edge, joiner in zip(incoming_edges, joiners, strict=True):
@@ -269,7 +276,9 @@ def _stream_table(
 
         def rewritten() -> Iterator[pa.RecordBatch]:
             for raw_batch in _iter_source_batches(raw, batch_rows):
-                out = mask_batch(plan, table_name, raw_batch, skip_columns=skip_columns)
+                out = mask_batch(
+                    plan, table_name, raw_batch, skip_columns=skip_columns, mask_key=mask_key
+                )
                 for join_idx, joiner in enumerate(joiners):
                     # key_source pins every join to the immutable raw batch:
                     # edges overlapping on a child column must each key off
@@ -327,6 +336,8 @@ def _open_joiner(
     source_schema: pa.Schema,
     temp_dir: Path,
     memory_limit: str | None,
+    *,
+    mask_key: bytes | None = None,
 ) -> ChildFkBatchJoiner:
     for child_col in edge.child_columns:
         if child_col not in source_schema.names:
@@ -353,7 +364,7 @@ def _open_joiner(
         temp_dir=temp_dir,
         memory_limit=memory_limit,
         remap_seeds=remap_seeds,
-        job_seed=plan.seed_envelope.job_seed,
+        job_seed=mask_key if mask_key is not None else plan.seed_envelope.job_seed,
     )
 
 
@@ -427,12 +438,16 @@ def _remap_values(
     plan: Plan,
     edge: RelationshipEdge,
     source_child: pa.Table,
+    *,
+    mask_key: bytes | None = None,
 ) -> tuple[pa.Array, ...]:
     """Whole-child REMAP value minting.
 
     The runner mints remap values per batch inside the joiner; this is the
     single-shot lowering retained as the executable oracle definition.
+    `mask_key` (DE-02) defaults to `job_seed` when absent (byte-identical).
     """
+    key = mask_key if mask_key is not None else plan.seed_envelope.job_seed
     remapped: list[pa.Array] = []
     for parent_column, child_column in zip(edge.parent_columns, edge.child_columns, strict=True):
         parent_seed = _column_seed(plan, edge.parent_table, parent_column)
@@ -445,13 +460,7 @@ def _remap_values(
             None if fk_key_value(value) is NULL_FK_KEY else fk_key_value(value)
             for value in source_child.column(child_column).combine_chunks().to_pylist()
         ]
-        remapped.append(
-            mask_column(
-                pa.array(normalized, from_pandas=True),
-                parent_seed,
-                plan.seed_envelope.job_seed,
-            )
-        )
+        remapped.append(mask_column(pa.array(normalized, from_pandas=True), parent_seed, key))
     return tuple(remapped)
 
 

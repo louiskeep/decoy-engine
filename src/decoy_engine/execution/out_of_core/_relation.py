@@ -61,6 +61,7 @@ def build_parent_key_relation(
     temp_dir: Path,
     memory_limit: str | None = None,
     batch_rows: int = _RELATION_BATCH_ROWS,
+    mask_key: bytes | None = None,
 ) -> ParentKeyRelation:
     """Materialize a narrow last-write-wins parent source->masked key relation.
 
@@ -98,7 +99,8 @@ def build_parent_key_relation(
         source_type = schema.field(parent_col).type if schema is not None else None
         masked_types.append(masked_output_type(seed, source_type))
         key_seeds.append(seed)
-    job_seed = plan.seed_envelope.job_seed
+    # DE-02: the keyed-mask IKM; None falls back to job_seed (byte-identical).
+    job_seed = mask_key if mask_key is not None else plan.seed_envelope.job_seed
 
     def masked_batch_fn(
         start: int, key_arrays: list[pa.Array], keep_mask: pa.BooleanArray

@@ -45,6 +45,8 @@ class _Ctx:
     # job_seed length must match decoy_engine.determinism's
     # SEED_LENGTH (8 bytes per the S3 spec).
     job_seed = (0x0123456789).to_bytes(8, "big")
+    # DE-02: keyed strategies read ctx.mask_key; no-secret path == job_seed.
+    mask_key = job_seed
 
 
 # ── CDF builder ───────────────────────────────────────────────────

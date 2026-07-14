@@ -5,7 +5,7 @@ using a per-detector strategy. Non-matched text portions are controlled by
 ``unmatched_span_policy`` (default: ``redact``).
 
 Cross-cell keyed determinism: each span is masked by deriving a per-value key as
-HMAC-SHA256(job_seed, matched_text). The same real value in any two cells always
+HMAC-SHA256(mask_key, matched_text). The same real value in any two cells always
 produces the same masked value regardless of surrounding context; the context is
 intentionally excluded from the key so cross-cell consistency holds.
 
@@ -155,19 +155,24 @@ _FAKER_METHOD: dict[str, str] = {
 # ── Core primitives ───────────────────────────────────────────────────────────
 
 
-def _span_key(job_seed: bytes, matched_text: str) -> bytes:
-    """Per-span mask key: HMAC-SHA256(job_seed, matched_text) (RFC 2104).
+def _span_key(mask_key: bytes, matched_text: str) -> bytes:
+    """Per-span mask key: HMAC-SHA256(mask_key, matched_text) (RFC 2104).
 
     The key depends on ``matched_text`` ONLY -- not on surrounding cell text,
     column name, or row index. The same real SSN in any two cells therefore
     always produces the same masked SSN because both produce the same
-    (job_seed, matched_text) pair and hence the same HMAC digest.
+    (mask_key, matched_text) pair and hence the same HMAC digest.
+
+    DE-02: ``mask_key`` is the keyed-mask IKM -- the 8-byte ``job_seed`` when no
+    secret is present (byte-identical to pre-DE-02) or a 32-byte KeyProvider root
+    under a secret. HMAC accepts a key of any length, so the substitution is
+    transparent to this primitive.
 
     Raw-value isolation: this function consumes ``matched_text`` internally
     to produce keying material only; it never appears in logs or evidence.
     """
     msg = matched_text.encode("utf-8", errors="replace")
-    return _hmac_mod.new(job_seed, msg, hashlib.sha256).digest()
+    return _hmac_mod.new(mask_key, msg, hashlib.sha256).digest()
 
 
 def _mask_fpe(
@@ -273,7 +278,7 @@ def _mask_date_shift(
 
 def _mask_span(
     span: Span,
-    job_seed: bytes,
+    mask_key: bytes,
     strategy: str,
     cfg: dict[str, Any],
 ) -> str:
@@ -284,7 +289,7 @@ def _mask_span(
     never written to any log or evidence output -- the logger writes only
     the strategy name and detector_id, never the value.
     """
-    span_key = _span_key(job_seed, span.matched_text)
+    span_key = _span_key(mask_key, span.matched_text)
     if strategy == "fpe":
         return _mask_fpe(
             span.matched_text, span_key, span.detector_id, str(cfg.get("token", _DEFAULT_TOKEN))
@@ -329,7 +334,7 @@ def _apply_unmatched(text: str, policy: str, token: str) -> str:
 
 def mask_cell(
     text: Any,
-    job_seed: bytes,
+    mask_key: bytes,
     *,
     detector_ids: list[str] | None = None,
     extra_spans: list[Span] | None = None,
@@ -350,10 +355,11 @@ def mask_cell(
 
     Args:
         text:                 Cell value. Non-string returns unchanged.
-        job_seed:             32-byte HMAC key material (RFC 2104). Same seed
-                              across all cells in a run ensures cross-cell
-                              consistency: the same real value always produces
-                              the same masked value.
+        mask_key:             HMAC key material (RFC 2104): the 8-byte job_seed
+                              (no secret) or a 32-byte KeyProvider mask root
+                              (DE-02). Same key across all cells in a run ensures
+                              cross-cell consistency: the same real value always
+                              produces the same masked value.
         detector_ids:         Detector IDs to run. None = all span detectors.
                               Unknown IDs are silently skipped (``iter_spans``
                               contract).
@@ -408,7 +414,7 @@ def mask_cell(
             unmatched = text[cursor : span.start]
             parts.append(_apply_unmatched(unmatched, unmatched_span_policy, token))
         strategy = effective_map.get(span.detector_id, "redact")
-        parts.append(_mask_span(span, job_seed, strategy, extra_cfg))
+        parts.append(_mask_span(span, mask_key, strategy, extra_cfg))
         cursor = span.end
 
     if cursor < len(text):

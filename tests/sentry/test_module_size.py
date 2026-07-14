@@ -106,7 +106,11 @@ ALLOWLIST: dict[str, int] = {
     # fail-closed schema-closure gate (the security fix must be adapter-internal
     # / bypass-resistant, so it cannot move out of this emission path). Same
     # strategy-admissibility docstring decomposition target stands.
-    "src/decoy_engine/execution/_chunked.py": 611,
+    # DE-02 (2026-07-14): +2 LOC to thread the keyed-mask `key_provider` into the
+    # per-chunk adapter.run() so the chunked route rekeys off the run secret. The
+    # provider is injected at run time (never serialized), so it must flow through
+    # this emission path. Same docstring-decomposition target stands.
+    "src/decoy_engine/execution/_chunked.py": 613,
     # DE-03 (2026-07-13): the mask adapter's `run()` is one of the five emission
     # routes the fail-closed output projection must guard (undeclared columns no
     # longer leak raw). The +17 LOC are the two policy params, the per-table
@@ -115,7 +119,12 @@ ALLOWLIST: dict[str, int] = {
     # resistant), so it cannot be split out. The module was at the cap (596) when
     # this landed; decompose the FK-resolution helpers into a sibling when the
     # next relationship-strategy batch lands.
-    "src/decoy_engine/execution/_pandas_adapter.py": 613,
+    # DE-02 (2026-07-14): +8 LOC to thread the keyed-mask `key_provider` through
+    # run / run_single / run_sequential into StrategyContext.mask_key so every
+    # keyed strategy rekeys off the run secret. The provider is a run-time
+    # injection (never serialized), so the plumbing is adapter-internal by design.
+    # Same FK-resolution-helper decomposition target stands.
+    "src/decoy_engine/execution/_pandas_adapter.py": 621,
     # DE-03 (2026-07-13): run_pipeline resolves the projection policy + the
     # generate-echo exemption set once and threads them into every emission route
     # (+15 LOC). The orchestration spine already owns route selection; this is the
@@ -123,7 +132,18 @@ ALLOWLIST: dict[str, int] = {
     # the exemption), so the resolution belongs here. The module was exactly at
     # the cap (600) when this landed; decompose the routing-dispatch block into a
     # sibling when the next execution-route batch lands.
-    "src/decoy_engine/execution/_pipeline.py": 613,
+    # DE-02 (2026-07-14): +21 LOC. run_pipeline is the one place that sees both the
+    # compiled `plan` (to detect keyed strategies) and `config` (for the
+    # `mask_secret_ref`), so the fail-closed gate + one-time provider resolution
+    # live here and thread the resolved provider into every execution route. The
+    # gate must run before any table/vault/manifest is written -> spine-owned.
+    # Same routing-dispatch decomposition target stands.
+    "src/decoy_engine/execution/_pipeline.py": 634,
+    # DE-02 (2026-07-14): +3 LOC crossing the 600 cap -- the sequential FK route
+    # threads `key_provider` into StrategyContext.mask_key like the other adapters
+    # (run-time injection, never serialized). Decompose the per-table
+    # mask/quarantine loop into a sibling when the next FK-route batch lands.
+    "src/decoy_engine/execution/_sequential.py": 603,
 }
 
 

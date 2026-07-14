@@ -185,7 +185,7 @@ class CategoricalStrategyHandler:
                         out.append(None)
                         continue
                     idx = derive_index(
-                        ctx.job_seed,
+                        ctx.mask_key,
                         plan.namespace,
                         _canonicalize_source(value),
                         pool_size=len(categories),
@@ -199,7 +199,7 @@ class CategoricalStrategyHandler:
                         out.append(None)
                         continue
                     bucket = derive_index(
-                        ctx.job_seed,
+                        ctx.mask_key,
                         plan.namespace,
                         _canonicalize_source(value),
                         pool_size=_WEIGHTED_CDF_RES,

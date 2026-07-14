@@ -56,6 +56,6 @@ class WindowedDateStrategyHandler:
         cfg_dict = provider_config_to_dict(plan.provider_config)
         config = WindowedDateConfig.from_dict(cfg_dict)
         namespace = f"windowed_date/{column}"
-        date_list = apply_windowed_date(config, df, seed=ctx.job_seed, namespace=namespace)
+        date_list = apply_windowed_date(config, df, seed=ctx.mask_key, namespace=namespace)
         df[column] = date_list
         return df, []

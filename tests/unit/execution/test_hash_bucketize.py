@@ -120,6 +120,8 @@ class _FakeCtx:
     """Minimal StrategyContext stand-in for direct handler.run() calls."""
 
     job_seed = _SEED
+    # DE-02: keyed strategies read ctx.mask_key; no-secret path == job_seed.
+    mask_key = _SEED
 
 
 class TestMixedObjectColumnRegression:

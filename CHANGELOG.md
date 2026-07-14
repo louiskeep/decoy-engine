@@ -9,6 +9,49 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Security (DE-02: KeyProvider -- keyed masking rekeys off a real secret, fail-closed at GA, 2026-07-14)
+
+Demotes the 8-byte `job_seed` from doubling as the confidentiality key to a
+**generation-reproducibility seed only**, and moves the key role for the entire
+keyed re-identification surface onto a new `KeyProvider` (opaque >=32-byte secret
+-> `HKDF-SHA256` mask root, RFC 5869). Every keyed masking derivation now draws
+from a `mask_key` fed at one substituted IKM slot. **No-secret behavior is
+byte-identical to before** (`mask_key == job_seed`, 8 bytes), so the golden gate
+stays 53/53 with 5/5 fingerprints and `SEED_PROTOCOL_VERSION` is unchanged; a
+real secret rekeys the whole surface at once and a rotated `key_version` re-keys
+it deterministically.
+
+- **New public API** (`decoy_engine.keyprovider`, re-exported from the package):
+  `KeyProvider` Protocol, `SecretKeyProvider` (managed >=32-byte secret),
+  `SeedKeyProvider` (no-secret / pre-GA), and the typed gate errors
+  `MaskSecretError`, `KeyedStrategyRequiresSecret`, `MissingMaskSecret`,
+  `WeakMaskSecret`.
+- **Secret source is a reference, never the raw secret.** A new
+  `global_settings.mask_secret_ref` resolves two ref kinds -- `env:NAME` and
+  `file:/PATH` -- decoding hex OR base64 to raw bytes. The raw secret is never
+  serialized into the plan, logged, or stamped into the manifest. The platform
+  can also inject bytes directly via `run_pipeline(key_provider=...)`; no cloud
+  SDK or tenancy concept is added to the engine.
+- **Fail-closed gate keyed on `is_pre_ga()`** (presence + >=32-byte length,
+  provenance-blind): pre-GA a keyed plan with no secret falls back to `job_seed`
+  (byte-identical); at GA it hard-errors with `KeyedStrategyRequiresSecret`. A
+  supplied secret shorter than 32 bytes always raises `WeakMaskSecret`.
+- **Rekeyed surface** (`mask_key` in `StrategyContext` + the standalone
+  `vault`/`unmask` key params): `fpe`, `hash`, `date_shift`, `shuffle`,
+  `bucket_perturb`, deterministic `categorical` / `faker` / composite,
+  `text_mask`, `grouped_series`, `windowed_date`, `group_key`, across the pandas,
+  polars-native, out-of-core, sequential, and chunked routes, plus the token
+  `vault` (Fernet key) and `unmask` (reverse FPE key). `determinism.derive()` and
+  `ProviderSpec.seed` now accept an 8-byte (`job_seed`) OR 32-byte (`mask_key`)
+  IKM; the 8-byte path is unchanged.
+- **Anonymisation carve-out:** `code_set` and `joint_mask` are anonymisation
+  (many-to-one, lossy) and key their selection off a fixed internal salt, not
+  `job_seed`; their output is independent of the secret by design. Fixed the
+  `text_mask.py` "32-byte HMAC key" docstring (the key is 8 or 32 bytes).
+- **Migration (pre-GA hard cutover):** any `job_seed`-keyed vault sidecar or
+  masked output produced to date is regenerated fresh under a secret at GA. There
+  is no dual-read / legacy-key path.
+
 ### Security (DE-01 cluster-C: fail-closed FPE -- silent PII-in-the-clear and non-round-trip paths closed, 2026-07-14)
 
 Closes three silent-failure paths in the format-preserving-encryption (`fpe`)

@@ -309,6 +309,7 @@ def run_mask_pipeline_chunked(
     adapter: Any = None,
     vault_writer: Any = None,
     chunk_result_sink: list[Any] | None = None,
+    key_provider: Any = None,
 ) -> Iterator[pa.Table]:
     """Mask `table`'s rows chunk-by-chunk under `config`.
 
@@ -401,6 +402,7 @@ def run_mask_pipeline_chunked(
                 relationship_graph=graph,
                 namespace_registry=ns_registry,
                 unconfigured_column_policy=projection_policy,
+                key_provider=key_provider,
             )
             if chunk_result_sink is not None:
                 chunk_result_sink.append(result)

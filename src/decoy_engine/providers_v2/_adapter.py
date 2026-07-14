@@ -38,8 +38,8 @@ class ProviderSpec:
     `__post_init__` runs three defensive checks (per S4 spec §3):
 
     1. `deterministic=True` requires both `namespace` and `seed` non-None.
-    2. When `seed is not None`, `len(seed) == 8` (matches the job-seed
-       bytes form per S3 spec §5.5).
+    2. When `seed is not None`, `len(seed)` is 8 (job_seed) or 32 (DE-02
+       mask_key) -- both valid derive() IKM lengths.
     3. `deterministic=True` requires `namespace` to be non-empty.
 
     `extra` is a `dict[str, Any]` for provider-specific knobs. By
@@ -75,13 +75,16 @@ class ProviderSpec:
                         "to be non-empty (matches S2's NamespaceRegistry contract)."
                     ),
                 )
-        if self.seed is not None and len(self.seed) != 8:
+        # DE-02: the seed slot carries the keyed-mask IKM -- the 8-byte job_seed
+        # (generation / no-secret) OR a 32-byte mask_key derived from a
+        # KeyProvider secret (deterministic composite/faker masking a real source
+        # value). Both are valid derive() IKM lengths; any other length is a bug.
+        if self.seed is not None and len(self.seed) not in (8, 32):
             raise ProviderError(
                 code="seed_wrong_length",
                 message=(
-                    f"ProviderSpec.seed must be exactly 8 bytes when set; "
-                    f"got {len(self.seed)} bytes. The job seed is 8-byte "
-                    "big-endian per S3 spec §5.5."
+                    f"ProviderSpec.seed must be 8 (job_seed) or 32 (mask_key) bytes "
+                    f"when set; got {len(self.seed)} bytes."
                 ),
             )
 

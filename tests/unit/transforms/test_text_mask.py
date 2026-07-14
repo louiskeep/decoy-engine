@@ -48,6 +48,8 @@ class _FakeCtx:
 
     def __init__(self, job_seed: bytes = _SEED) -> None:
         self.job_seed = job_seed
+        # DE-02: TextMaskHandler keys off ctx.mask_key; no-secret path == job_seed.
+        self.mask_key = job_seed
 
 
 # ── spec slice 1: span detection + dispatch ───────────────────────────────────

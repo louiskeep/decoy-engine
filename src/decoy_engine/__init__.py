@@ -130,6 +130,15 @@ from decoy_engine.generation.pool import (
     get_default_pool_cache,
 )
 from decoy_engine.generation.synthesize import generate_tables
+from decoy_engine.keyprovider import (
+    KeyedStrategyRequiresSecret,
+    KeyProvider,
+    MaskSecretError,
+    MissingMaskSecret,
+    SecretKeyProvider,
+    SeedKeyProvider,
+    WeakMaskSecret,
+)
 from decoy_engine.license import LicenseVerifier
 from decoy_engine.plan import compile_plan, job_seed_for_config, run_config_only_checks
 from decoy_engine.plan.validate import (
@@ -308,10 +317,14 @@ __all__ = [
     "FlagPauseSignal",
     "GenerationError",
     "IdentityDomain",
+    "KeyProvider",
+    "KeyedStrategyRequiresSecret",
     "LicenseError",
     "LicenseExpiredError",
     "LicenseVerifier",
     "Logger",
+    "MaskSecretError",
+    "MissingMaskSecret",
     "NamespaceBinding",
     "NamespaceConfigError",
     "NamespaceRegistry",
@@ -337,6 +350,8 @@ __all__ = [
     "RelationshipGraph",
     "ReleasePhase",
     "SchemaInspector",
+    "SecretKeyProvider",
+    "SeedKeyProvider",
     "SentinelFlag",
     "StormProfile",
     "StrategyError",
@@ -351,6 +366,7 @@ __all__ = [
     "ValuePool",
     "VaultError",
     "VaultWriter",
+    "WeakMaskSecret",
     "WriteResult",
     "atomic_swap_db_providers",
     "build_namespace_registry",

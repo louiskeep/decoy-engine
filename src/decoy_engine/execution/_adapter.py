@@ -30,6 +30,7 @@ from decoy_engine.instrumentation.timing import StrategyTimingRecord
 if TYPE_CHECKING:
     from decoy_engine.execution._output_projection import UnconfiguredColumnPolicy
     from decoy_engine.generation.pool._cache import PoolCache
+    from decoy_engine.keyprovider import KeyProvider
     from decoy_engine.plan._types import ColumnSeed, Plan
     from decoy_engine.providers_v2 import ProviderRegistry
     from decoy_engine.relationships import NamespaceRegistry, RelationshipGraph
@@ -84,9 +85,16 @@ class ExecutionResult:
 class StrategyContext:
     """Shared per-job dependencies threaded into every strategy handler.
 
-    `job_seed` (8 bytes) is the sole entropy input deterministic strategies feed
-    into `derive` / `derive_index` / `PoolSampler.sample` (S3 removed per-column
-    seed integers).
+    `job_seed` (8 bytes) is the GENERATION seed: reproducibility for fresh
+    synthetic data (faker/categorical pool builds, non-deterministic composites).
+    `mask_key` is the KEYED-mask IKM (DE-02): every re-identification-protecting
+    derivation (`derive` / `derive_index` / `PoolSampler.sample` in deterministic
+    mode / the raw `text_mask` HMAC) draws from it, NOT from `job_seed`. When no
+    secret is present `mask_key == job_seed` (8 bytes) so output is byte-identical
+    to pre-DE-02; with a KeyProvider secret it is the 32-byte HKDF mask root.
+    `mask_key` defaults to `job_seed` when left unset (see `__post_init__`), so a
+    handler that reads `ctx.mask_key` is correct even for callers that predate the
+    field.
     """
 
     registry: ProviderRegistry
@@ -94,6 +102,10 @@ class StrategyContext:
     relationship_graph: RelationshipGraph
     namespace_registry: NamespaceRegistry
     job_seed: bytes
+    # DE-02 (2026-07-14): the keyed-mask IKM. Empty sentinel means "not supplied"
+    # -> falls back to job_seed in __post_init__, keeping every pre-DE-02
+    # construction (including the test fixtures that never pass it) byte-identical.
+    mask_key: bytes = b""
     # Sprint 2 honesty pack (D7): the shared per-row-error sink. The
     # dataclass is frozen, but a mutable field's CONTENTS may still be
     # mutated: handlers append RowError instances here; nothing reassigns
@@ -101,6 +113,13 @@ class StrategyContext:
     # FrozenInstanceError and, more importantly, would break the drain
     # point's identity-based reference to this list).
     row_errors: list[RowError] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        # A frozen dataclass forbids attribute assignment; object.__setattr__ is
+        # the sanctioned escape hatch for post-init normalization. `mask_key`
+        # defaults to the job_seed so no-secret runs feed the identical IKM.
+        if not self.mask_key:
+            object.__setattr__(self, "mask_key", self.job_seed)
 
 
 class StrategyHandler(Protocol):
@@ -145,6 +164,9 @@ class ExecutionAdapter(Protocol):
         # the generate-echo tables exempt from the mask plan's declared surface.
         unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
         generate_output_tables: frozenset[str] = frozenset(),
+        # DE-02: the keyed-mask secret source, injected at run time and NEVER
+        # serialized into the plan. None -> the no-secret job_seed fallback.
+        key_provider: KeyProvider | None = None,
     ) -> ExecutionResult: ...
 
     def supports_strategy(self, strategy_name: str) -> bool: ...
