@@ -205,6 +205,48 @@ class TestPoolSamplerNonDeterministic:
             sampler.sample(pool, n=20, mode=CardinalityMode.UNIQUE, seed=_SEED)
         assert excinfo.value.code == "uniqueness_impossible"
 
+    def test_unique_mode_sizes_on_nonnull_rows_and_preserves_nulls(self) -> None:
+        """DE-11: with source nulls, UNIQUE sizes on the non-null output-row
+        count. n=6 but only 3 non-null rows fit a pool of 3: the draw succeeds,
+        null positions stay null, and the emitted non-null values are
+        distinct."""
+        builder = _builder()
+        sampler = PoolSampler()
+        pool = builder.build("person_email", size=3, job_seed=_SEED)
+        source = pd.Series(["a", None, "b", None, "c", None])
+        out = sampler.sample(
+            pool, n=6, mode=CardinalityMode.UNIQUE, seed=_SEED, source=source
+        )
+        assert len(out) == 6
+        assert [pd.isna(v) for v in out] == [False, True, False, True, False, True]
+        nonnull = [v for v in out if not pd.isna(v)]
+        assert len(nonnull) == 3
+        assert len(set(nonnull)) == 3
+
+    def test_unique_mode_raises_when_nonnull_exceeds_pool(self) -> None:
+        """4 non-null rows cannot draw distinctly from a pool of 3, even though
+        the total row count includes nulls."""
+        builder = _builder()
+        sampler = PoolSampler()
+        pool = builder.build("person_email", size=3, job_seed=_SEED)
+        source = pd.Series(["a", "b", "c", "d", None])
+        with pytest.raises(GenerationError) as excinfo:
+            sampler.sample(
+                pool, n=5, mode=CardinalityMode.UNIQUE, seed=_SEED, source=source
+            )
+        assert excinfo.value.code == "uniqueness_impossible"
+
+    def test_unique_mode_source_none_retains_n_requirement(self) -> None:
+        """Backward-compat: with no source every position is non-null, so the
+        requirement is `n` and the output is the length-n distinct draw."""
+        builder = _builder()
+        sampler = PoolSampler()
+        pool = builder.build("person_email", size=50, job_seed=_SEED)
+        out = sampler.sample(pool, n=20, mode=CardinalityMode.UNIQUE, seed=_SEED)
+        assert len(out) == 20
+        assert len(set(out)) == 20
+        assert not any(pd.isna(v) for v in out)
+
     def test_qa1_h9_unique_plus_deterministic_raises(self) -> None:
         """QA-1 H9 (2026-06-01): mode=UNIQUE + deterministic=True must
         raise the typed GenerationError. Pre-fix the combo silently
