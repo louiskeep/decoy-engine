@@ -32,6 +32,16 @@ on:
 jobs:
   testflight:
     runs-on: ubuntu-latest
+    strategy:
+      # Both Python legs run to completion so a divergence on one is not masked
+      # by the other short-circuiting the matrix.
+      fail-fast: false
+      matrix:
+        # 3.11 guards the pandas-determinism pin (pinned <3) against a future
+        # re-widening: the acceptance fingerprints must stay identical across
+        # the supported Python range, not just on 3.10. Verified identical
+        # (53/53 checks, 5/5 fingerprints match golden) before this leg landed.
+        python-version: ["3.10", "3.11"]
     env:
       DECOY_SUBSTRATE: pandas
     steps:
@@ -39,7 +49,7 @@ jobs:
 
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.10"
+          python-version: ${{ matrix.python-version }}
           cache: pip
 
       - name: Install uv
