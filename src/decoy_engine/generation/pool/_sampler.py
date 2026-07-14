@@ -146,16 +146,25 @@ class PoolSampler:
                     )
                 nonnull_mask = source.notna().to_numpy()
                 required = int(nonnull_mask.sum())
-            if not unique_capacity_ok(pool.size, required):
+            # UNIQUE requires distinct OUTPUT values, so capacity and the draw
+            # must be on the pool's DISTINCT value set, not its raw size/indices.
+            # PoolBuilder does not dedup -- a provider can collide -- so a pool
+            # may hold duplicate values; drawing distinct INDICES from such a
+            # pool would silently emit duplicates and violate UNIQUE. Dedup is
+            # stable (first-seen order), so for an all-distinct pool this is
+            # byte-identical to the previous index draw. (Codex HIGH-2, 2026-07-14.)
+            distinct_values = pd.unique(pool.values)
+            if not unique_capacity_ok(len(distinct_values), required):
                 raise GenerationError(
                     code="uniqueness_impossible",
                     message=(
                         f"UNIQUE-mode sample needs {required} distinct value(s) "
-                        f"(non-null output rows) from a pool of size {pool.size}: "
-                        "cannot draw without replacement."
+                        f"(non-null output rows) but the pool has only "
+                        f"{len(distinct_values)} distinct value(s): cannot draw "
+                        "without replacement."
                     ),
                 )
-            drawn = pool.values[rng.permutation(pool.size)[:required]]
+            drawn = distinct_values[rng.permutation(len(distinct_values))[:required]]
             if nonnull_mask is None:
                 return pd.Series(drawn)
             # Scatter the distinct draws into non-null positions; null-source

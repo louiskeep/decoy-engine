@@ -6,6 +6,9 @@ the four cardinality modes, null preservation, and namespace independence.
 
 from __future__ import annotations
 
+import dataclasses
+
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -242,6 +245,37 @@ class TestPoolSamplerNonDeterministic:
         assert len(out) == 20
         assert len(set(out)) == 20
         assert not any(pd.isna(v) for v in out)
+
+    def test_unique_mode_pool_with_duplicate_values_uses_distinct_capacity(self) -> None:
+        """Codex HIGH-2 (2026-07-14): PoolBuilder does not dedup, so a pool can
+        hold duplicate values (distinct_count < size). UNIQUE must key capacity
+        and the draw on the DISTINCT value set -- drawing distinct INDICES from a
+        duplicate-bearing pool would silently emit duplicates. Pre-fix, a 3-value
+        pool ['x','x','y'] passed the size-based check and returned ['x','x','y']
+        for 3 required; now it fails closed, and a request within the distinct
+        capacity draws distinct values."""
+        sampler = PoolSampler()
+        base = _builder().build("person_email", size=3, job_seed=_SEED)
+        dup_values = np.array(["x", "x", "y"], dtype=object)
+        dup_values.setflags(write=False)
+        pool = dataclasses.replace(base, values=dup_values, size=3, distinct_count=2)
+        # 3 non-null rows need 3 distinct values but only 2 exist -> fail closed.
+        with pytest.raises(GenerationError) as excinfo:
+            sampler.sample(
+                pool,
+                n=3,
+                mode=CardinalityMode.UNIQUE,
+                seed=_SEED,
+                source=pd.Series(["a", "b", "c"]),
+            )
+        assert excinfo.value.code == "uniqueness_impossible"
+        # 2 non-null rows fit the 2 distinct values -> distinct output, no dup.
+        out = sampler.sample(
+            pool, n=2, mode=CardinalityMode.UNIQUE, seed=_SEED, source=pd.Series(["a", "b"])
+        )
+        vals = [v for v in out]
+        assert len(set(vals)) == 2
+        assert set(vals) <= {"x", "y"}
 
     def test_qa1_h9_unique_plus_deterministic_raises(self) -> None:
         """QA-1 H9 (2026-06-01): mode=UNIQUE + deterministic=True must
