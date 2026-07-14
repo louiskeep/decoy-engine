@@ -81,6 +81,74 @@ def _profile_with_distinct(table: str, col: str, distinct: int) -> Profile:
     )
 
 
+def _profile_email_counts(
+    *, row_count: int, null_count: int, distinct_count: int | None
+) -> Profile:
+    """Two-table profile where `customers.email` carries explicit counts.
+
+    Lets DE-11 tests exercise the non-null-output-row capacity contract
+    (row_count - null_count) independently of the source distinct count,
+    including distinct_count=None (unprofiled distinctness, valid counts).
+    """
+    email = ColumnProfile(
+        name="email",
+        dtype="object",
+        row_count=row_count,
+        null_count=null_count,
+        distinct_count=distinct_count,
+        sampled=False,
+        is_candidate_key_sampled=False,
+        declared_pk=False,
+        is_fk=False,
+        fk_target=None,
+        pii_class=None,
+    )
+    customers_id = ColumnProfile(
+        name="customer_id",
+        dtype="object",
+        row_count=10,
+        null_count=0,
+        distinct_count=10,
+        sampled=False,
+        is_candidate_key_sampled=True,
+        declared_pk=True,
+        is_fk=False,
+        fk_target=None,
+        pii_class=None,
+    )
+    orders_fk = ColumnProfile(
+        name="customer_id",
+        dtype="object",
+        row_count=10,
+        null_count=0,
+        distinct_count=10,
+        sampled=False,
+        is_candidate_key_sampled=False,
+        declared_pk=False,
+        is_fk=True,
+        fk_target=("customers", "customer_id"),
+        pii_class=None,
+    )
+    return Profile(
+        schema_version=1,
+        tables=(
+            TableProfile(name="customers", row_count=10, columns=(customers_id, email)),
+            TableProfile(name="orders", row_count=10, columns=(orders_fk,)),
+        ),
+        relationships=(
+            Relationship(
+                parent_table="customers",
+                parent_columns=("customer_id",),
+                child_table="orders",
+                child_columns=("customer_id",),
+                namespace="customer_identity",
+            ),
+        ),
+        profiled_at=datetime(2026, 5, 27, 0, 0, 0),
+        decoy_engine_version="0.1.0",
+    )
+
+
 def _config(cardinality: str, pool_size: int) -> dict:
     return {
         "global_settings": {"seed": 1, "on_pool_exhaustion": "fail"},
@@ -122,12 +190,29 @@ class TestPoolCapacityPreFlight:
         assert excinfo.value.code == "pool_too_small_for_source"
 
     def test_unique_pool_large_enough_passes(self) -> None:
+        # DE-11: UNIQUE capacity is the non-null output-row count. The email
+        # column has row_count = 50 * 10 = 500 non-null rows, so the pool must
+        # hold >= 500 distinct values (the source distinct count of 50 is
+        # irrelevant -- duplicate source values each get their own unique out).
         plan = compile_plan(
-            _config("unique", pool_size=200),
+            _config("unique", pool_size=600),
             _profile_with_distinct("customers", "email", 50),
             decoy_engine_version="0.1.0",
         )
         assert plan is not None
+
+    def test_unique_sized_on_nonnull_rows_not_distinct(self) -> None:
+        """DE-11 regression: 500 non-null rows, 50 source-distinct, pool 200.
+        Pre-fix this compiled (pool 200 >= distinct 50) and then raised
+        uniqueness_impossible at runtime (500 > 200). Post-fix compile fails,
+        matching the runtime contract."""
+        with pytest.raises(PoolCapacityError) as excinfo:
+            compile_plan(
+                _config("unique", pool_size=200),
+                _profile_with_distinct("customers", "email", 50),
+                decoy_engine_version="0.1.0",
+            )
+        assert excinfo.value.code == "pool_too_small_for_source"
 
     def test_unique_always_raises_under_scale_up(self) -> None:
         """F3: uniqueness is a correctness contract, not a soft-cardinality
@@ -186,6 +271,40 @@ class TestPoolCapacityPreFlight:
         plan = compile_plan(
             _config("reuse", pool_size=10),
             _profile_with_distinct("customers", "email", 50),
+            decoy_engine_version="0.1.0",
+        )
+        assert plan is not None
+
+    def test_unique_nulls_reduce_required_capacity(self) -> None:
+        """DE-11 regression: 500 rows, 400 nulls => 100 non-null output rows.
+        A pool of 100 is sufficient (nulls consume no pool value); pre-fix the
+        check sized on total rows / source distinct and would over- or
+        under-count."""
+        plan = compile_plan(
+            _config("unique", pool_size=100),
+            _profile_email_counts(row_count=500, null_count=400, distinct_count=100),
+            decoy_engine_version="0.1.0",
+        )
+        assert plan is not None
+
+    def test_unique_nulls_pool_one_short_raises(self) -> None:
+        """Same shape as above but pool 99 < 100 non-null rows: hard error."""
+        with pytest.raises(PoolCapacityError) as excinfo:
+            compile_plan(
+                _config("unique", pool_size=99),
+                _profile_email_counts(row_count=500, null_count=400, distinct_count=100),
+                decoy_engine_version="0.1.0",
+            )
+        assert excinfo.value.code == "pool_too_small_for_source"
+
+    def test_unique_verifiable_when_distinct_count_none(self) -> None:
+        """DE-11: distinctness is irrelevant to UNIQUE capacity, so a profile
+        with distinct_count=None but valid row/null counts still compiles (the
+        pre-fix code hard-raised pool_capacity_unverifiable_no_profile purely
+        because distinct_count was None)."""
+        plan = compile_plan(
+            _config("unique", pool_size=100),
+            _profile_email_counts(row_count=100, null_count=0, distinct_count=None),
             decoy_engine_version="0.1.0",
         )
         assert plan is not None

@@ -4,7 +4,7 @@ Per S5 spec §6 + cross-sprint contracts §4 row 7: for every column with
 `poolable: True` provider + a cardinality mode that requires capacity
 guarantees (UNIQUE, MATCH_SOURCE_CARDINALITY, SCALE_SOURCE_CARDINALITY):
 
-- UNIQUE: pool_size >= source.distinct_count.
+- UNIQUE: pool_size >= non-null output rows (row_count - null_count) (DE-11).
 - MATCH: pool_size >= source.distinct_count.
 - SCALE: pool_size >= source.distinct_count * scale.
 
@@ -31,6 +31,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from decoy_engine.generation.pool._capacity import unique_capacity_ok
 from decoy_engine.generation.pool._errors import PoolCapacityError
 
 
@@ -75,14 +76,19 @@ def check_pool_capacity_pre_flight(
     Under no_profile, soft-mode capacity is unverifiable and skipped (the
     planner records `pool_capacity_pre_flight` in checks_skipped).
     """
-    # Build (table, column) -> distinct_count from profile. Under --no-profile
-    # the distinct counts are unavailable / untrusted, so the lookup stays
-    # empty and every column reads as "distinct unknown".
+    # Build (table, column) lookups from profile. Under --no-profile the
+    # counts are unavailable / untrusted, so both stay empty and every column
+    # reads as "unknown". `distinct_lookup` sizes the soft modes (MATCH/SCALE);
+    # `nonnull_lookup` (row_count - null_count) sizes UNIQUE (DE-11): UNIQUE
+    # needs one distinct value per non-null output row, not per source distinct
+    # value.
     distinct_lookup: dict[tuple[str, str], int | None] = {}
+    nonnull_lookup: dict[tuple[str, str], int] = {}
     if profile is not None and not no_profile:
         for table in getattr(profile, "tables", ()):
             for col in getattr(table, "columns", ()):
                 distinct_lookup[(table.name, col.name)] = col.distinct_count
+                nonnull_lookup[(table.name, col.name)] = col.row_count - col.null_count
 
     warnings: list[str] = []
     tables_block = config.get("tables", []) if isinstance(config.get("tables"), list) else []
@@ -110,27 +116,33 @@ def check_pool_capacity_pre_flight(
             if cardinality_mode == "unique":
                 # Uniqueness is a correctness contract: hard-error whenever it
                 # cannot be proven, independent of on_pool_exhaustion (F3) and
-                # of profile availability (F4).
-                if source_distinct is None:
+                # of profile availability (F4). DE-11: capacity is the non-null
+                # output-row count (row_count - null_count), the same quantity
+                # the runtime sampler draws against -- NOT the source distinct
+                # count. Verifiability keys on the row/null counts, so a profile
+                # with distinct_count=None but valid counts still compiles.
+                nonnull_rows = nonnull_lookup.get((table_name, col_name))
+                if nonnull_rows is None:
                     raise PoolCapacityError(
                         code="pool_capacity_unverifiable_no_profile",
                         message=(
                             f"Column {table_name}.{col_name} uses cardinality_mode='unique' "
-                            "but no source distinct count is available "
+                            "but no source row/null counts are available "
                             f"({'compile ran with --no-profile' if no_profile else 'profile lacks the column'}). "
                             "The pool cannot be proven large enough to supply unique values, "
                             "and uniqueness cannot be deferred to runtime. Profile the source, "
                             "or pick a non-unique cardinality_mode."
                         ),
                     )
-                if source_distinct > pool_size:
+                if not unique_capacity_ok(pool_size, nonnull_rows):
                     raise PoolCapacityError(
                         code="pool_too_small_for_source",
                         message=(
                             f"Column {table_name}.{col_name} uses cardinality_mode='unique' "
-                            f"with pool_size={pool_size}, but profile reports source distinct "
-                            f"count {source_distinct}. The pool cannot supply enough unique "
-                            "values. Raise pool_size or pick a non-unique cardinality_mode."
+                            f"with pool_size={pool_size}, but the pool must supply one unique "
+                            f"value per non-null output row ({nonnull_rows}). The pool cannot "
+                            "supply enough unique values. Raise pool_size or pick a non-unique "
+                            "cardinality_mode."
                         ),
                     )
                 continue
