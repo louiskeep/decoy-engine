@@ -343,12 +343,24 @@ def run_pipeline(
         key_provider=key_provider,
         mask_secret_ref=(config.get("global_settings") or {}).get("mask_secret_ref"),
     )
-    # DE-02 (Codex BLOCKER 5): the token vault holds reversible plaintext PII and
-    # must be encrypted under the SAME resolved mask key as the masking run. Fail
-    # closed here if a caller-supplied vault writer is keyed differently (e.g. a
-    # bare job_seed writer while the run masks under a real secret), so the vault
-    # can never decrypt under the public job_seed while the output uses the secret.
-    if vault_writer is not None and hasattr(vault_writer, "assert_keyed_with"):
+    # DE-02 (Codex BLOCKER 5 + dennis LOW L3): the token vault holds reversible
+    # plaintext PII and must be encrypted under the SAME resolved mask key as the
+    # masking run. Fail closed if a caller-supplied vault writer is keyed
+    # differently (e.g. a bare job_seed writer while the run masks under a real
+    # secret). A duck-typed writer WITHOUT the key-match guard must not silently
+    # slip past the net -- require the standard VaultWriter contract.
+    if vault_writer is not None:
+        from decoy_engine.vault import VaultError, VaultWriter
+
+        if not isinstance(vault_writer, VaultWriter):
+            raise VaultError(
+                code="vault_writer_unsupported",
+                message=(
+                    "vault_writer must be a decoy_engine.vault.VaultWriter so its "
+                    "keyed-mask key can be verified against the run secret "
+                    "(DE-02 fail-closed vault-key guard)."
+                ),
+            )
         vault_writer.assert_keyed_with(
             mask_key_from_provider(resolved_key_provider, plan.seed_envelope.job_seed)
         )

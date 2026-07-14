@@ -8,16 +8,15 @@ secret". Plus: the fail-closed gate (pre-GA fallback / GA hard-error), the
 `env:`/`file:` ref resolver (hex + base64, <32-byte rejection), and the
 no-secret-in-serialized-plan guarantee.
 
-Anonymisation carve-out (finding, tested as an invariant): `code_set` and
-`joint_mask` are ANONYMISATION strategies (many-to-one, lossy). Their keyed
-selection uses a fixed INTERNAL salt (`decoy.code_set.keyed_access.v1`,
-`decoy.reference_tables.keyed_access.v1`), NOT `job_seed`, so their mask output
-is independent of both the seed and the secret BY DESIGN -- the anonymisation
-comes from lossiness, not key secrecy. The DE-02 site map listed them among the
-23 job_seed sites, but their mask path never consumed `job_seed`; rekeying them
-would break no-secret byte-identity (the golden `a_healthcare_claims` uses
-code_set) for zero anonymisation benefit. This module pins that as an explicit
-invariant rather than a silent gap.
+code_set + joint_mask rekey (Codex BLOCKER 1 / HIGH, Cam decision): both
+previously selected via a fixed PUBLIC salt (`decoy.code_set.keyed_access.v1`,
+`decoy.reference_tables.keyed_access.v1`), so their remap was globally reversible
+independent of any secret. Their HMAC key now derives from the run secret
+(`derive(mask_key, namespace, salt)`), so -- like every other keyed strategy --
+their output CHANGES under a secret and is byte-identical (deterministic) without
+one. `TestCodeSetJointMaskRekey` pins that. This was a reviewed determinism change
+(the no-secret output of the two golden jobs that use them moved and their
+fingerprints were regenerated).
 """
 
 from __future__ import annotations

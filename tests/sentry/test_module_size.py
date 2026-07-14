@@ -146,7 +146,11 @@ ALLOWLIST: dict[str, int] = {
     # fails closed if a caller-supplied vault writer is keyed differently from the
     # resolved mask key (the vault holds reversible plaintext PII and must be
     # encrypted under the run secret). Same routing-dispatch decomposition target.
-    "src/decoy_engine/execution/_pipeline.py": 643,
+    # DE-02 dennis re-gate (LOW L3, 2026-07-14): +12 LOC -- the vault-key guard now
+    # requires the standard VaultWriter contract (isinstance) so a duck-typed
+    # writer without the key-match method cannot silently bypass the fail-closed
+    # net. Same routing-dispatch decomposition target stands.
+    "src/decoy_engine/execution/_pipeline.py": 655,
     # DE-02 (2026-07-14): +3 LOC crossing the 600 cap -- the sequential FK route
     # threads `key_provider` into StrategyContext.mask_key like the other adapters
     # (run-time injection, never serialized). Decompose the per-table
