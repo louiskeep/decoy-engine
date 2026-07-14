@@ -27,7 +27,7 @@ import pandas as pd
 import pyarrow as pa
 import pytest
 
-from decoy_engine import GenerationError, run_pipeline
+from decoy_engine import GenerationError, PoolCapacityError, run_pipeline
 from decoy_engine.config import PipelineConfig
 from decoy_engine.plan import PlanCompileError, compile_plan, plan_from_yaml, plan_to_yaml
 from decoy_engine.profile import ColumnProfile, Profile, TableProfile
@@ -261,3 +261,117 @@ class TestPlanRoundTrip:
         assert recovered_seed.pool_size == 4242
         assert recovered_seed.scale == 3.5
         assert recovered == plan
+
+
+def _people_profile(*, row_count: int, null_count: int = 0, distinct_count: int | None = None):
+    """A one-column ('email') profile for the pool-capacity preflight."""
+    return Profile(
+        schema_version=1,
+        tables=(
+            TableProfile(
+                name="people",
+                row_count=row_count,
+                columns=(
+                    ColumnProfile(
+                        name="email",
+                        dtype="object",
+                        row_count=row_count,
+                        null_count=null_count,
+                        distinct_count=distinct_count if distinct_count is not None else row_count,
+                        sampled=False,
+                        is_candidate_key_sampled=False,
+                        declared_pk=False,
+                        is_fk=False,
+                        fk_target=None,
+                        pii_class=None,
+                    ),
+                ),
+            ),
+        ),
+        relationships=(),
+        profiled_at=datetime(1970, 1, 1),
+        decoy_engine_version=_ENGINE_VERSION,
+    )
+
+
+class TestProviderOnlyPoolSizeCapacity:
+    """DE-11 residual #1: `pool_size` declared ONLY in provider_config on a
+    real, pydantic-validated + poolable faker column must be resolved and
+    capacity-checked by `check_pool_capacity_pre_flight`
+    (generation/pool/_validate.py), not read as the dumped top-level None.
+
+    A validated PipelineConfig dumps top-level `pool_size` as an explicit
+    None, so the prior `col_entry.get("pool_size", 10_000)` read None (key
+    present, default skipped) and crashed the capacity comparison with a
+    `TypeError` instead of enforcing the provider_config value.
+    """
+
+    def test_provider_only_insufficient_capacity_rejected_at_compile(self, tmp_path) -> None:
+        cfg = _config(
+            tmp_path,
+            [
+                {
+                    "name": "email",
+                    "strategy": "faker",
+                    "provider": "person_email",
+                    "cardinality_mode": "unique",
+                    "provider_config": {"pool_size": 5},
+                }
+            ],
+        )
+        with pytest.raises(PoolCapacityError) as exc:
+            compile_plan(cfg, _people_profile(row_count=10), decoy_engine_version=_ENGINE_VERSION)
+        assert exc.value.code == "pool_too_small_for_source"
+
+    def test_provider_only_sufficient_capacity_compiles(self, tmp_path) -> None:
+        cfg = _config(
+            tmp_path,
+            [
+                {
+                    "name": "email",
+                    "strategy": "faker",
+                    "provider": "person_email",
+                    "cardinality_mode": "unique",
+                    "provider_config": {"pool_size": 1000},
+                }
+            ],
+        )
+        compile_plan(cfg, _people_profile(row_count=10), decoy_engine_version=_ENGINE_VERSION)
+
+    def test_no_pool_size_unique_uses_default_not_none(self, tmp_path) -> None:
+        # No pool_size at either site: the 10_000 default must apply (the
+        # dumped top-level None previously reached the capacity comparison and
+        # crashed). 10 rows << 10_000, so this compiles clean.
+        cfg = _config(
+            tmp_path,
+            [
+                {
+                    "name": "email",
+                    "strategy": "faker",
+                    "provider": "person_email",
+                    "cardinality_mode": "unique",
+                }
+            ],
+        )
+        compile_plan(cfg, _people_profile(row_count=10), decoy_engine_version=_ENGINE_VERSION)
+
+    def test_conflicting_locations_raise_conflict_before_capacity(self, tmp_path) -> None:
+        # Both sites set + differing AND insufficient capacity: the shared
+        # resolver raises `pool_size_location_conflict` before the capacity
+        # comparison runs. Locks that precedence for a poolable faker column.
+        cfg = _config(
+            tmp_path,
+            [
+                {
+                    "name": "email",
+                    "strategy": "faker",
+                    "provider": "person_email",
+                    "cardinality_mode": "unique",
+                    "pool_size": 5,
+                    "provider_config": {"pool_size": 6},
+                }
+            ],
+        )
+        with pytest.raises(PlanCompileError) as exc:
+            compile_plan(cfg, _people_profile(row_count=10), decoy_engine_version=_ENGINE_VERSION)
+        assert exc.value.code == "pool_size_location_conflict"

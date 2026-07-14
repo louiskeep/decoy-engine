@@ -109,8 +109,21 @@ def check_pool_capacity_pre_flight(
                 continue
             if not _resolve_provider_poolable(provider):
                 continue
-            pool_size = col_entry.get("pool_size", 10_000)
             col_name = col_entry.get("name", "?")
+            # Resolve pool_size from BOTH declaration sites (top-level +
+            # provider_config) via the shared helper, the same resolver the
+            # plan-layer checks use, so this capacity gate cannot drift from
+            # them. A validated config dumps top-level `pool_size` as an
+            # explicit None, so `.get("pool_size", 10_000)` would read None
+            # (key present) and crash the capacity comparison; the 10_000
+            # default belongs only when NO site declares pool_size. Deferred
+            # import keeps the generation->plan edge out of module load.
+            from decoy_engine.plan._pool_size import resolve_pool_size
+
+            resolved_pool_size = resolve_pool_size(
+                col_entry, table_name=table_name, col_name=col_name
+            )
+            pool_size = resolved_pool_size if resolved_pool_size is not None else 10_000
             source_distinct = distinct_lookup.get((table_name, col_name))
 
             if cardinality_mode == "unique":
