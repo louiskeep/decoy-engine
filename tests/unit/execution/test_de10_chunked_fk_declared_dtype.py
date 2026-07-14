@@ -229,3 +229,39 @@ def test_reject_helper_skips_absent_column() -> None:
     reject_mismatched_chunked_fk_declared_dtype(
         chunk, table="orders", declared_fk_dtypes={"customer_id": "int64"}
     )
+
+
+def test_null_typed_all_null_fk_chunk_not_false_positive() -> None:
+    """An all-null FK column can arrive as Arrow `null` type (no surviving real
+    dtype, e.g. an in-memory all-None array). Null keys mask to null on both
+    sides regardless of declared dtype, so RI is trivially preserved -- a
+    CORRECT declaration (here int64) must NOT be rejected. Regression for the
+    false-positive reject dennis flagged (declared-correct, real `pa.null()`)."""
+    chunk = pa.table({"customer_id": pa.array([None, None, None], type=pa.null())})
+    # Must not raise despite declared int64 vs real `null`.
+    reject_mismatched_chunked_fk_declared_dtype(
+        chunk, table="orders", declared_fk_dtypes={"customer_id": "int64"}
+    )
+
+
+def test_typed_all_null_column_still_validated() -> None:
+    """The null-type skip is scoped to Arrow `null` ONLY: a TYPED all-null
+    column keeps its real family, so a genuine misdeclaration (declared int64,
+    real all-null STRING) is still caught -- the skip does not weaken the guard
+    for typed columns that merely happen to be all-null."""
+    chunk = pa.table({"customer_id": pa.array([None, None], type=pa.string())})
+    with pytest.raises(ExecutionError) as exc:
+        reject_mismatched_chunked_fk_declared_dtype(
+            chunk, table="orders", declared_fk_dtypes={"customer_id": "int64"}
+        )
+    assert exc.value.code == "chunked_fk_declared_dtype_mismatch"
+
+
+def test_null_typed_fk_chunk_streams_end_to_end() -> None:
+    """End-to-end: a real chunked run whose FK key chunk is all-null `null`-typed
+    under a correct declaration streams normally rather than failing closed."""
+    config = _fk_config(strategy="passthrough", parent_dtype="int64", child_dtype="int64")
+    chunk = pa.table({"customer_id": pa.array([None, None, None], type=pa.null())})
+    out = list(run_mask_pipeline_chunked(config, [chunk], table="orders", engine_version=_ENGINE))
+    vals = pa.concat_tables(out).column("customer_id").to_pylist()
+    assert vals == [None, None, None]

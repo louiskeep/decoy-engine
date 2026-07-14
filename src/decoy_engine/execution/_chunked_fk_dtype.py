@@ -122,6 +122,13 @@ def reject_mismatched_chunked_fk_declared_dtype(
         if column not in chunk.column_names:
             continue
         real_type = chunk.schema.field(column).type
+        # An all-null column can arrive as Arrow `null` type when no real dtype
+        # survived (e.g. an in-memory all-None array). Null keys mask to null on
+        # both sides regardless of declared dtype, so RI is trivially preserved
+        # and a CORRECT declaration must not be false-positive rejected here. A
+        # typed all-null column keeps its real family and is still validated.
+        if pa.types.is_null(real_type):
+            continue
         real_family = _arrow_dtype_family(real_type)
         declared_family = _dtype_family(declared_dtype)
         if real_family != declared_family:
