@@ -431,16 +431,26 @@ def test_dtype_family_decimal_scale_aware_unit() -> None:
     """Direct unit coverage of the scale-aware family strings themselves."""
     from decoy_engine.execution._chunked_fk import _dtype_family
 
-    assert _dtype_family("decimal128(2, 1)") == "decimal(2,1)"
-    assert _dtype_family("decimal256(40, 2)") == "decimal(40,2)"
-    assert _dtype_family("decimal(10, 2)") == "decimal(10,2)"
-    assert _dtype_family("numeric(10, 2)") == "decimal(10,2)"
+    # RI keys on SCALE ONLY -- precision and storage width are irrelevant.
+    assert _dtype_family("decimal128(2, 1)") == "decimal(scale=1)"
+    assert _dtype_family("decimal256(40, 2)") == "decimal(scale=2)"
+    assert _dtype_family("decimal(10, 2)") == "decimal(scale=2)"
+    assert _dtype_family("numeric(10, 2)") == "decimal(scale=2)"
     assert _dtype_family("decimal") == "decimal:unprovable"
     assert _dtype_family("numeric") == "decimal:unprovable"
     # Different scales are DIFFERENT families -- not folded together.
     assert _dtype_family("decimal128(2, 1)") != _dtype_family("decimal128(3, 2)")
+    # Same scale, DIFFERENT precision/width -> SAME family (Codex LOW-2): the
+    # canonicalizer keys on (unscaled_int, scale), so these mask equal keys
+    # identically and must not be over-rejected.
+    assert _dtype_family("decimal128(2, 1)") == _dtype_family("decimal128(3, 1)")
+    assert _dtype_family("decimal32(2, 1)") == _dtype_family("decimal128(9, 1)")
+    # decimal32/decimal64 (PyArrow 24) parse concretely, not as the sentinel
+    # (Codex LOW-1): a healthy decimal32 FK must not be false-positive rejected.
+    assert _dtype_family("decimal64(9, 1)") == "decimal(scale=1)"
+    assert _dtype_family("decimal32(4, 1)") != "decimal:unprovable"
     # Negative scale (Arrow/Parquet-legal) parses concretely, not as the sentinel.
-    assert _dtype_family("decimal128(4, -1)") == "decimal(4,-1)"
+    assert _dtype_family("decimal128(4, -1)") == "decimal(scale=-1)"
     assert _dtype_family("decimal128(4, -1)") != "decimal:unprovable"
 
 

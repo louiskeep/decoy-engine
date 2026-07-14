@@ -59,8 +59,12 @@ _EXACT_FLOAT_INT_BOUND = 2**53
 _DECIMAL_UNPROVABLE_FAMILY = "decimal:unprovable"
 # Scale may be NEGATIVE (Arrow/Parquet-legal, e.g. `decimal128(4, -1)`), so the
 # scale group accepts an optional leading minus; precision is always >= 1.
+# Covers every PyArrow decimal width (decimal32/64/128/256, PyArrow 24+) plus a
+# SQL-style hand-written `decimal(P, S)`/`numeric(P, S)`. Only the SCALE (group 2,
+# may be negative) is used for the RI family; precision (group 1) is captured but
+# not folded in (see `_dtype_family`).
 _DECIMAL_PRECISION_SCALE_RE = re.compile(
-    r"^(?:decimal(?:128|256)?|numeric)\((\d+)\s*,\s*(-?\d+)\)$"
+    r"^(?:decimal(?:32|64|128|256)?|numeric)\((\d+)\s*,\s*(-?\d+)\)$"
 )
 
 # Value-keyed strategies that produce the same output per (seed, namespace, value)
@@ -120,15 +124,18 @@ def _dtype_family(dtype: str) -> str:
     SCALE, not just its family -- `str(1.0)` for `decimal128(2, 1)` and
     `str(1.00)` for `decimal128(3, 2)` canonicalize to different byte strings
     for the "same" logical value under the hash/truncate/fpe kernels, so two
-    decimal columns are only provably interchangeable when they share the
-    same (precision, scale), not merely both being "some decimal". A dtype
-    string that carries explicit precision+scale (PyArrow's own `str()` form,
-    e.g. "decimal128(2, 1)", or the SQL-style "decimal(2, 1)"/"numeric(2, 1)"
-    an operator might hand-write) parses to `"decimal(2,1)"`, so a correctly
-    scale-matched declaration on both sides of an FK edge is admitted, and a
-    genuine scale MISmatch (parent "decimal(2,1)" vs child "decimal(3,2)")
-    is rejected at the COMPILE gate the same way an int/float mismatch is
-    (different family strings).
+    decimal columns are only provably interchangeable when they share the same
+    SCALE. Precision is IRRELEVANT to RI: the canonicalizer encodes by
+    (unscaled_int, scale), so `decimal128(2, 1)` and `decimal128(3, 1)` mask an
+    equal key to identical bytes -- folding precision in would over-reject a
+    healthy scale-matched / precision-mismatched FK pair. A dtype string that
+    carries explicit precision+scale (any PyArrow width `str()` form
+    `decimal{32,64,128,256}(P, S)`, or the SQL-style "decimal(P, S)"/
+    "numeric(P, S)" an operator might hand-write) parses to the scale-keyed
+    family `"decimal(scale=S)"`, so a scale-matched declaration on both sides of
+    an FK edge is admitted (regardless of precision or width), and a genuine
+    scale MISmatch (parent scale 1 vs child scale 2) is rejected at the COMPILE
+    gate the same way an int/float mismatch is (different family strings).
 
     A BARE `"decimal"` or `"numeric"` declaration (no scale) is UNPROVABLE --
     the chunked route only ever sees one table's dtype at a time, so there is
@@ -154,8 +161,14 @@ def _dtype_family(dtype: str) -> str:
         match = _DECIMAL_PRECISION_SCALE_RE.match(family)
         if match is None:
             return _DECIMAL_UNPROVABLE_FAMILY
-        precision, scale = match.group(1), match.group(2)
-        return f"decimal({precision},{scale})"
+        # RI keys on SCALE ONLY: the canonicalizer encodes a decimal by its
+        # (unscaled_int, scale), so two decimals of the same scale produce
+        # identical masked bytes for equal logical keys regardless of precision
+        # (verified: decimal128(2,1) and decimal128(3,1) mask 1.0 to the same
+        # hash). Precision only bounds range, so folding it in would over-reject
+        # a healthy scale-matched / precision-mismatched FK pair.
+        scale = match.group(2)
+        return f"decimal(scale={scale})"
     if family.startswith("bool"):
         return "bool"
     if family.startswith(("str", "string", "object", "utf8", "large_string")):
