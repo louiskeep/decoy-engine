@@ -11,13 +11,14 @@
 #
 # PLANTED EDGE CASES (exact counts asserted by invariants / documented in
 # fixture.py):
-#   - kana_name: every value is a fully non-ASCII (Japanese) name. Every FPE
-#     charset (digits/alpha/ALPHA/alphanum/ALPHANUM) is pure ASCII, so
-#     kana_name has ZERO in-charset characters and always takes the
-#     ALL-out-of-charset covering-hash path (fix #42) -- proven genuinely
-#     value-changing by the value_changing_passthrough guard (TH-1.1), the
-#     same guard that would catch a PARTIAL leak if this ever mixed ASCII
-#     and non-ASCII characters in one value.
+#   - kana_name: romanized (ASCII) Japanese names over the ALPHANUM charset
+#     (letters + space separator), so kana_name is FPE-permuted and round-trips
+#     -- proven genuinely value-changing by the value_changing_passthrough guard
+#     (TH-1.1). DE-01 cluster-C (2026-07-14) replaced the former fully-non-ASCII
+#     names: their all-out-of-charset path is now fail-closed (it was
+#     non-invertible), and that behavior is asserted by the dedicated negative
+#     test tests/unit/execution/test_fpe_fail_closed_pipeline.py. Unicode PII
+#     coverage remains via the notes/bio text_mask/text_redact columns below.
 #   - notes: unicode sentence with an embedded US-phone-shaped span, masked
 #     by text_mask (us_phone detector). SENTINEL_PHONE planted in row 0.
 #   - bio: unicode sentence with an embedded email-shaped span, masked by
@@ -35,7 +36,7 @@
 #
 # Source fingerprints (SHA-256 of canonical CSV; verified by verify_fingerprint
 # inside each fixture build_* function -- update after any fixture change):
-#   people:     5dd9c93fb8639a341fa3a4bae117d5e6b7101ab53210185ded2f3741c8fa8a51
+#   people:     4f4b25e07d0aa5418eb8ba5b9c93b4cf5eabb679c8bd1663f3f988b61f60288f
 #   accounts:   3e35fb3b1950af73b0adeefb00317ea771b562a9ac86fa95ff373298519f83ff
 #   singleton:  5976c8a6c03141c653c7dbbc009b720b4fd937c010631195586f36fe398bc530
 #
@@ -110,10 +111,10 @@ config:
           provider_config:
             charset: digits
 
-        # kana_name: fully non-ASCII (Japanese) name. Zero characters fall
-        # inside ANY FPE charset, so this always takes the ALL-out-of-charset
-        # covering-hash path (fix #42) -- a genuinely value-changing,
-        # unicode-safe mask, never a verbatim passthrough.
+        # kana_name: romanized (ASCII) Japanese name. Letters are in-charset for
+        # ALPHANUM (space is a preserved separator), so this is FPE-permuted and
+        # round-trips. DE-01 (2026-07-14): replaced the former fully-non-ASCII
+        # names whose all-out-of-charset path now fails closed (see negative test).
         - name: kana_name
           strategy: fpe
           namespace: kana_name_ns
@@ -202,9 +203,9 @@ invariants:
       expected_orphans: 0
       policy: warn
 
-  # grade_floor_enabled: false -- kana_name (covering-hash FPE) and singleton_code
-  # (tiny-n FPE) pull the grade down by design; the value-changing-passthrough
-  # guard and cardinality/shape teeth are the correct checks for those columns.
+  # grade_floor_enabled: false -- kana_name (short-token FPE over names) and
+  # singleton_code (tiny-n FPE) pull the grade down by design; the value-changing-
+  # passthrough guard and cardinality/shape teeth are the correct checks for those columns.
   grade_floor_enabled: false
 
   distribution:

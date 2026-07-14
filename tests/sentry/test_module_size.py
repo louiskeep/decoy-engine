@@ -51,12 +51,6 @@ ALLOWLIST: dict[str, int] = {
     # per-strategy check sub-modules in a follow-up sprint when the check set
     # stabilises (post-SP-15 or when the next strategy batch lands).
     "src/decoy_engine/plan/_checks.py": 695,
-    # SP-46 (2026-06-29): fpe_join_group tweak mirror added 9 lines to the
-    # V1 FPEStrategy.apply in transforms/fpe.py, pushing it over the cap.
-    # The module already owns the entire Feistel cipher implementation and
-    # the apply method; decompose into fpe_cipher.py + fpe_strategy.py when
-    # additional checksum schemes or a second cipher mode lands.
-    "src/decoy_engine/transforms/fpe.py": 609,
     # TB-5 precondition #73 (2026-07-13): the pure peak estimator was at the
     # cap (596 LOC) when it gained `route_intercept_bytes` -- the small public
     # accessor (idiomatic here, like `is_fixed_width_dtype`) that makes the

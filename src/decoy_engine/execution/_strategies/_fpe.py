@@ -5,14 +5,18 @@ The Feistel+HMAC permutation is REUSED from V1 `transforms/fpe.FPEStrategy`
 
 Keying (WS1 detokenization, 2026-06-12, SEED_PROTOCOL_VERSION 4 -> 5): ONE
 Feistel key per (job_seed, namespace), `derive(job_seed, namespace,
-FPE_KEY_LABEL)`, with the column name as the per-column tweak. This is the
-NIST SP 800-38G FF1 key model (single key, varying tweak); it keeps the
-S9 contracts (same value -> same ciphertext within a namespace, byte-stable
-across runs, cross-column linkage broken by the tweak) AND makes ciphertext
-decryptable by any holder of (job_seed, namespace, column, charset) via
-`decoy_engine.unmask`. The pre-WS1 keying derived a key from the PLAINTEXT
-(`derive(seed, ns, _canonicalize_source(value))`), which made ciphertext-only
-reversal impossible and incidentally paid one HKDF per cell.
+FPE_KEY_LABEL)`, with the column name as the per-column tweak. This is a
+single-key / varying-tweak key model; the underlying primitive is the engine's
+home-rolled 8-round HMAC-SHA256 Feistel (`transforms/fpe.py`), which is NOT
+NIST SP 800-38G FF1 (no AES, 8 rounds vs FF1's 10, no minimum-domain floor).
+An audited FF1 is a documented fast-follow; do not describe this construction
+as NIST FF1 in product-facing copy. The key model keeps the S9 contracts (same
+value -> same ciphertext within a namespace, byte-stable across runs,
+cross-column linkage broken by the tweak) AND makes ciphertext decryptable by
+any holder of (job_seed, namespace, column, charset) via `decoy_engine.unmask`.
+The pre-WS1 keying derived a key from the PLAINTEXT (`derive(seed, ns,
+_canonicalize_source(value))`), which made ciphertext-only reversal impossible
+and incidentally paid one HKDF per cell.
 
 Per-row parallelism (S9 spec §5.2): rows are split into `chunk_count` chunks
 processed in worker threads, then concatenated. Each value's encryption is
@@ -40,6 +44,7 @@ import numpy as np
 import pandas as pd
 
 from decoy_engine.determinism import derive
+from decoy_engine.errors import FpeChecksumError, FpeUnencryptableError
 from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.generation.pool._events import QualityWarning
@@ -49,6 +54,25 @@ from decoy_engine.transforms.fpe import _CHARSETS, fpe_encrypt_value
 # The constant derive() source for the per-(job_seed, namespace) Feistel key.
 # Shared with decoy_engine.unmask; changing it is a SEED_PROTOCOL_VERSION bump.
 FPE_KEY_LABEL: bytes = b"fpe-key/v1"
+
+# NIST SP 800-38G Rev.1 sets the minimum admissible FPE domain at ~1,000,000
+# possible values (radix ** length): below it, ANY format-preserving cipher --
+# FF1 included -- leaks. The home-rolled Feistel has no floor, so DE-01
+# cluster-C surfaces sub-minimum columns as a documented residual-risk
+# QualityWarning (structured channel, not stdout) instead of silently masking
+# them under a domain too small to be safe. This axis does NOT leak cleartext;
+# it records that the masked output is weaker than an admissible-domain cipher.
+_FF1_MIN_DOMAIN = 1_000_000
+
+
+def _min_domain_length(radix: int, min_domain: int = _FF1_MIN_DOMAIN) -> int:
+    """Smallest value length whose domain (radix ** length) reaches min_domain."""
+    length = 1
+    size = radix
+    while size < min_domain:
+        size *= radix
+        length += 1
+    return length
 
 
 class FpeStrategyHandler:
@@ -123,7 +147,30 @@ class FpeStrategyHandler:
         # paid O(n) pandas-indexing overhead V1's C-level astype never did; Dennis
         # S13 FPE-port finding). str() semantics + order are preserved exactly.
         non_na_values = [str(v) for v in source.to_numpy(dtype=object)[~na_mask]]
-        encrypted = self._encrypt_values(non_na_values, encrypt_one)
+        # DE-01 cluster-C (2026-07-14): value-level fail-closed raises
+        # (`FpeUnencryptableError` for an all-out-of-charset value or a
+        # preserve_separators=false out-of-charset value; `FpeChecksumError` for a
+        # too-short checksum value) are re-raised at the execution boundary as
+        # `StrategyError`, matching the `fpe_charset_degenerate` / truncate /
+        # bucketize fail-closed precedent so the runner attributes the failure to
+        # this strategy and kills the job before any unsafe output is written.
+        try:
+            encrypted = self._encrypt_values(non_na_values, encrypt_one)
+        except FpeUnencryptableError as exc:
+            raise StrategyError(
+                code="fpe_unencryptable_value",
+                strategy="fpe",
+                message=(
+                    f"column {column!r}: {exc}. The engine fails closed rather than "
+                    "emit unmaskable or non-round-trip output."
+                ),
+            ) from exc
+        except FpeChecksumError as exc:
+            raise StrategyError(
+                code="fpe_checksum_unsupported",
+                strategy="fpe",
+                message=f"column {column!r}: {exc}",
+            ) from exc
 
         out: list[object] = [None] * len(source)
         for offset, position in enumerate(non_na_positions):
@@ -131,6 +178,15 @@ class FpeStrategyHandler:
         df[column] = out
 
         run_warnings: list[QualityWarning] = []
+        run_warnings.extend(
+            self._residual_risk_warnings(
+                non_na_values,
+                charset_set=set(charset),
+                radix=len(charset),
+                preserve_sep=preserve_sep,
+                column=column,
+            )
+        )
         if join_group:
             run_warnings.append(
                 QualityWarning(
@@ -144,6 +200,86 @@ class FpeStrategyHandler:
                 )
             )
         return df, run_warnings
+
+    def _residual_risk_warnings(
+        self,
+        values: list[str],
+        *,
+        charset_set: set[str],
+        radix: int,
+        preserve_sep: bool,
+        column: str,
+    ) -> list[QualityWarning]:
+        """Structured residual-risk notes for the two documented DE-01 limits.
+
+        Both ride `ExecutionResult.warnings`, NOT the masked output, so they never
+        change a determinism fingerprint:
+
+        - `fpe_sub_minimum_domain`: values whose in-charset domain
+          (radix ** in_charset_length) is below the ~1M FF1 minimum. No fix is
+          available pre-FF1; this axis does not leak cleartext, it records weaker
+          strength for small-domain values.
+        - `fpe_partial_plaintext_disclosure`: values that keep an out-of-charset,
+          data-bearing (alphanumeric) format prefix in the clear under
+          preserve_separators=true (e.g. "M" in "M000001"). This partial-plaintext
+          disclosure is a KNOWN limitation of the home-rolled FPE; full coverage
+          needs the structured-FPE/FF1 fast-follow with vault_token.
+        """
+        min_len = _min_domain_length(radix)
+        sub_minimum = 0
+        partial_prefix = 0
+        for value in values:
+            in_charset = sum(1 for ch in value if ch in charset_set)
+            if 0 < in_charset < min_len:
+                sub_minimum += 1
+            if preserve_sep and in_charset > 0:
+                if any(ch not in charset_set and ch.isalnum() for ch in value):
+                    partial_prefix += 1
+        warnings: list[QualityWarning] = []
+        total = len(values)
+        if sub_minimum:
+            warnings.append(
+                QualityWarning(
+                    code="fpe_sub_minimum_domain",
+                    provider="fpe",
+                    column=column,
+                    detail={
+                        "sub_minimum_values": sub_minimum,
+                        "total_values": total,
+                        "radix": radix,
+                        "min_domain": _FF1_MIN_DOMAIN,
+                        "min_length": min_len,
+                        "note": (
+                            "values shorter than the FF1 minimum admissible domain "
+                            "(radix ** length < ~1,000,000) are format-preserving-"
+                            "encrypted under a home-rolled cipher with weaker "
+                            "small-domain guarantees; no fix is available pre-FF1. "
+                            "This does not leak cleartext."
+                        ),
+                    },
+                )
+            )
+        if partial_prefix:
+            warnings.append(
+                QualityWarning(
+                    code="fpe_partial_plaintext_disclosure",
+                    provider="fpe",
+                    column=column,
+                    detail={
+                        "affected_values": partial_prefix,
+                        "total_values": total,
+                        "note": (
+                            "values retain an out-of-charset, data-bearing format "
+                            "prefix in the clear (e.g. 'M' in 'M000001') under "
+                            "preserve_separators=true. This residual partial-"
+                            "plaintext disclosure is a known limitation of the home-"
+                            "rolled FPE; use a charset that covers the prefix, or await "
+                            "the structured-FPE/FF1 fast-follow (with vault_token)."
+                        ),
+                    },
+                )
+            )
+        return warnings
 
     def _encrypt_values(self, values: list[str], encrypt_one: Callable[[str], str]) -> list[str]:
         # Cap workers at the actual CPU count: the Feistel orchestration is

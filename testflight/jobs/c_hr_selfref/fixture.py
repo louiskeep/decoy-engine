@@ -11,12 +11,14 @@ Topology: self_referential.
 Planted edge cases (match manifest.yaml invariants exactly):
   - ROOT_COUNT = 10 root-node rows with manager_id = NULL.
     Null manager_ids pass through the FK remap machinery unchanged.
-  - ORPHAN_COUNT = 1 row with manager_id = "EMP-ORPHAN" (not in employee_id set).
-    "EMP-ORPHAN" uses only uppercase letters and a hyphen, which are ALL outside the
-    FPE alphanum charset ("0123456789abcdefghijklmnopqrstuvwxyz"). Fix #42 routes
-    such keys through the covering hash in transforms/fpe.py so the output differs
-    from the source key. The fk_integrity invariant verifies expected_orphans:1 AND
-    that the remapped output value != "EMP-ORPHAN" (remap genuinely masked it).
+  - ORPHAN_COUNT = 1 row with manager_id = "emp99999" (not in employee_id set).
+    "emp99999" is in-charset for the FPE alphanum charset
+    ("0123456789abcdefghijklmnopqrstuvwxyz"), so orphan_policy:remap re-applies
+    FPE and permutes it to a different in-charset value (reversible, no leak).
+    The fk_integrity invariant verifies expected_orphans:1 AND that the remapped
+    output value != "emp99999" (remap genuinely masked it). DE-01 cluster-C
+    (2026-07-14) reverted this from the all-out-of-charset "EMP-ORPHAN": that
+    value now fails closed (non-round-trip), so the orphan must be in-charset.
   - SENTINEL_PHONE = "800-555-0100" planted in the notes column of employee row 0.
     text_mask with phone_number detector must redact it; sentinel scan verifies absence.
 
@@ -33,7 +35,7 @@ Row counts (from manifest.yaml):
 
 Source format notes:
   - employee_id: "EMP-{n:05d}" for n in 1..2500.
-  - manager_id: None for roots, "EMP-ORPHAN" for the orphan row, otherwise
+  - manager_id: None for roots, "emp99999" for the orphan row, otherwise
     a valid employee_id from the root set (depth-2 tree, no cycles).
   - department: one of Engineering/Sales/Marketing/HR/Finance.
   - salary: float; department-correlated.
@@ -66,11 +68,16 @@ ROOT_COUNT = 10
 # The FK remap machinery handles this via orphan_policy:remap.
 ORPHAN_COUNT = 1
 
-# Source FK value for the orphan row. Uses all-uppercase + hyphen chars, which are
-# outside the FPE alphanum charset (0-9 + a-z). Fix #42 routes such keys through
-# the covering hash in transforms/fpe.py so they are never emitted verbatim.
-# This key was "emp99999" (in-charset) before fix #42 closed the gap.
-ORPHAN_SOURCE_KEY = "EMP-ORPHAN"
+# Source FK value for the orphan row. In-charset for the FPE alphanum charset
+# (0-9 + a-z) so orphan_policy:remap re-applies FPE and produces a permuted,
+# reversible value that differs from the source key.
+# DE-01 cluster-C (2026-07-14): reverted from the all-out-of-charset "EMP-ORPHAN"
+# back to "emp99999". Fix #42 had changed it TO "EMP-ORPHAN" to exercise the
+# covering-hash path; DE-01 closes that path (an all-out-of-charset value now
+# fails closed as non-round-trip), so the orphan must be an in-charset value the
+# cipher can actually permute. The all-out-of-charset fail-closed behavior is
+# covered by the dedicated negative test (test_fpe_fail_closed_pipeline.py).
+ORPHAN_SOURCE_KEY = "emp99999"
 
 # Source fingerprint (SHA-256 of canonical CSV). verify_fingerprint is called
 # inside build_employees so a faker/numpy version bump that shifts the fixture
@@ -78,7 +85,9 @@ ORPHAN_SOURCE_KEY = "EMP-ORPHAN"
 # Baseline: run compute_fingerprint(build_employees(seed=44)) and update here.
 # Updated (fix #42): ORPHAN_SOURCE_KEY changed from "emp99999" to "EMP-ORPHAN".
 # Updated (TH-3.4): added division_hash column (hash-hash masked_correlations pair).
-_EMPLOYEES_FINGERPRINT = "83bb2c2250f7c1d7a61017d89243fb30351553ea1959568d0ba68c237ada3323"
+# Updated (DE-01 cluster-C, 2026-07-14): ORPHAN_SOURCE_KEY reverted to "emp99999"
+# (in-charset, round-trips) because all-out-of-charset FPE now fails closed.
+_EMPLOYEES_FINGERPRINT = "beafc60902e1436dc8127450e98c45c838b129e47d35a150d9be25c5194aa6bc"
 
 # The sentinel phone number planted in the notes column of row 0.
 # text_mask with phone_number detector must redact it; sentinel scan checks absence.
@@ -148,7 +157,7 @@ def build_employees(seed: int = 44, **_kwargs: Any) -> pd.DataFrame:
 
     # Build manager_ids:
     # - Rows 0..ROOT_COUNT-1: None (root nodes).
-    # - Row ROOT_COUNT: ORPHAN_SOURCE_KEY (out-of-charset orphan; not in emp_ids set).
+    # - Row ROOT_COUNT: ORPHAN_SOURCE_KEY (in-charset orphan; not in emp_ids set).
     # - Rows ROOT_COUNT+1..: reference a root node (cycle-free depth-2 tree).
     root_ids = emp_ids[:ROOT_COUNT]
     manager_ids: list[Any] = [None] * ROOT_COUNT + [ORPHAN_SOURCE_KEY]

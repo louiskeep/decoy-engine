@@ -241,24 +241,28 @@ class TestFpeUnknownSchemeFailClosed:
 
 
 class TestFpeMinimumLength:
-    """Too-short values for structured schemes must not produce nonsensical slices."""
+    """Too-short values for structured schemes FAIL CLOSED (DE-01 cluster-C).
 
-    def test_vin_too_short_handled_cleanly(self) -> None:
+    Pre-fix, a value below a scheme's minimum length (`NPI<10`, `ISBN13<13`,
+    `VIN<17`) was returned UNCHANGED -- a silent cleartext pass-through of an
+    identifier the config asked to mask. The engine now raises `FpeChecksumError`
+    rather than leak the value.
+    """
+
+    def test_npi_too_short_raises(self) -> None:
+        short = "12345"  # 5 chars, not >= 10
+        with pytest.raises(FpeChecksumError, match="npi"):
+            fpe_encrypt_value(short, _KEY, _DIGITS, _TWEAK, checksum="npi")
+
+    def test_vin_too_short_raises(self) -> None:
         short = "1HGCM826"  # 8 chars, not 17
-        try:
-            result = fpe_encrypt_value(short, _KEY, _VIN_ALPHA, _TWEAK, checksum="vin")
-            # If it doesn't raise, the result must at least not crash and be a string
-            assert isinstance(result, str)
-        except (ValueError, TypeError):
-            pass  # also acceptable: fail closed for too-short
+        with pytest.raises(FpeChecksumError, match="vin"):
+            fpe_encrypt_value(short, _KEY, _VIN_ALPHA, _TWEAK, checksum="vin")
 
-    def test_isbn13_too_short_handled_cleanly(self) -> None:
+    def test_isbn13_too_short_raises(self) -> None:
         short = "97831614"  # 8 chars, not 13
-        try:
-            result = fpe_encrypt_value(short, _KEY, _DIGITS, _TWEAK, checksum="isbn13")
-            assert isinstance(result, str)
-        except (ValueError, TypeError):
-            pass  # also acceptable
+        with pytest.raises(FpeChecksumError, match="isbn13"):
+            fpe_encrypt_value(short, _KEY, _DIGITS, _TWEAK, checksum="isbn13")
 
 
 # ---------------------------------------------------------------------------

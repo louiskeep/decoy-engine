@@ -4,12 +4,13 @@
 #
 # PLANTED EDGE CASES (exact counts asserted by invariants):
 #   - 10 employee rows with manager_id = NULL (root nodes; pass through as NULL)
-#   - 1 employee row with manager_id = "EMP-ORPHAN" (not in employee_id set)
-#     "EMP-ORPHAN" is all-OUT-of-charset (FPE alphanum: 0-9 + a-z; the uppercase
-#     letters + hyphen are outside it) so orphan_policy:remap routes it through the
-#     covering hash (fix #42) -> a deterministic in-charset value, never verbatim.
+#   - 1 employee row with manager_id = "emp99999" (not in employee_id set)
+#     "emp99999" is IN-charset (FPE alphanum: 0-9 + a-z) so orphan_policy:remap
+#     re-applies FPE and permutes it to a different in-charset value (reversible).
 #     The fk_integrity invariant verifies expected_orphans:1 and that the remapped
 #     value differs from the source key (remap masked it, not a passthrough).
+#     DE-01 cluster-C (2026-07-14): reverted from the all-out-of-charset
+#     "EMP-ORPHAN" (fix #42), which now fails closed as non-round-trip.
 #   - SENTINEL_PHONE "800-555-0100" in employee row 0 notes column
 #     text_mask with us_phone detector must redact it; sentinel scan checks absence
 #
@@ -32,7 +33,7 @@
 #   employees: 83bb2c2250f7c1d7a61017d89243fb30351553ea1959568d0ba68c237ada3323
 #   (Phase 4: badge_id/dept_code/dept_hash/dept_shuffle columns for redact/truncate/
 #    hash/shuffle; fix #42: re-fingerprinted after the orphan key became "EMP-ORPHAN";
-#    TH-3.4: added division_hash column)
+#    TH-3.4: added division_hash column; DE-01: orphan key reverted to "emp99999")
 #
 # Strategies exercised (employees mask table):
 #   fpe (employee_id), fpe+same-namespace (manager_id self-FK), categorical (department),
@@ -129,7 +130,7 @@ config:
         # and child columns; the FK coordinator resolves child values through the
         # same bijection as the parent, preserving referential integrity.
         # null -> null (root nodes), valid ref -> FPE-remapped consistently,
-        # orphan "EMP-ORPHAN" (out-of-charset) -> covering-hash remap (fix #42).
+        # orphan "emp99999" (in-charset) -> FPE-permuted remap (reversible, DE-01).
         - name: manager_id
           strategy: fpe
           namespace: employee_identity

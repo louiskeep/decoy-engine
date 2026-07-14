@@ -84,16 +84,18 @@ class TestSeparatorRoundTrip:
         dec = fpe_decrypt_value(enc, _KEY, cs, _TWEAK, preserve_separators=True)
         assert dec == val
 
-    def test_no_charset_chars_routes_to_covering_hash(self) -> None:
-        """Fix #42: all-out-of-charset values are covered by a deterministic in-charset
-        hash rather than being returned verbatim (the old passthrough was a privacy leak
-        under orphan_policy:remap with FPE)."""
+    def test_no_charset_chars_fails_closed(self) -> None:
+        """DE-01 cluster-C: all-out-of-charset values FAIL CLOSED (supersedes fix #42).
+
+        Fix #42 replaced the verbatim passthrough with a covering hash, but that
+        hash is non-invertible, so the "reversible" column silently did not
+        round-trip (`'---' -> '092' -> '858'`). The engine now raises rather than
+        emit a value that cannot be recovered."""
+        from decoy_engine.errors import FpeUnencryptableError
+
         cs = _CHARSETS["digits"]
-        enc = fpe_encrypt_value("---", _KEY, cs, _TWEAK, preserve_separators=True)
-        # Must differ from source (no verbatim leak) and be all-in-charset.
-        assert enc != "---", f"Covering hash must not return verbatim; got {enc!r}."
-        assert all(ch in cs for ch in enc), f"Output {enc!r} has non-digit chars."
-        assert len(enc) == 3
+        with pytest.raises(FpeUnencryptableError):
+            fpe_encrypt_value("---", _KEY, cs, _TWEAK, preserve_separators=True)
 
 
 class TestLuhnRoundTrip:

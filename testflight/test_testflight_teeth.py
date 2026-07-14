@@ -3687,9 +3687,9 @@ class TestValueChangingMaskPassthroughTooth:
 
     Controls:
     A. No-op mask (BUG): a value-changing mask that left output == input ->
-       check_value_changing_not_passthrough RAISES. Constructed directly: fix #42
-       closed the original FPE alphanum-on-uppercase passthrough route at the
-       engine level (the covering hash now transforms all-out-of-charset values).
+       check_value_changing_not_passthrough RAISES. Constructed directly: the
+       original FPE alphanum-on-uppercase passthrough route is closed at the engine
+       level (DE-01: an all-out-of-charset value now fails closed).
     B. Real mask (FIX): ALPHANUM charset on uppercase data -> values permuted
        -> check_value_changing_not_passthrough PASSES.
     C. Non-value-changing strategy -> check is skipped (no assertion).
@@ -3723,18 +3723,18 @@ class TestValueChangingMaskPassthroughTooth:
         """A value-changing mask that no-op'd (output == input) must raise the tooth.
 
         RED control. Originally this no-op was produced by FPE charset:alphanum on
-        uppercase data (a verbatim passthrough); fix #42's covering hash now
-        transforms all-out-of-charset values, so the no-op is constructed directly
+        uppercase data (a verbatim passthrough); the engine now fails closed on an
+        all-out-of-charset value (DE-01), so the no-op is constructed directly
         below. The tooth (check_value_changing_not_passthrough) must still RAISE
         when a value-changing strategy left every value unchanged -- the exact bug
         that let BLOCKER-1 ship green (26/26 checks passed while fpe columns were
         verbatim passthroughs).
         """
         cats = self._SRC_CATS * 20  # 100 rows, 5 unique values
-        # Fix #42 closed the FPE alphanum-on-uppercase passthrough route at the
-        # engine level (the covering hash now transforms all-out-of-charset
-        # values). Construct the no-op directly: a value-changing mask that left
-        # every value unchanged is exactly the bug this tooth must still detect.
+        # The FPE alphanum-on-uppercase passthrough route is closed at the engine
+        # level (DE-01: an all-out-of-charset value fails closed). Construct the
+        # no-op directly: a value-changing mask that left every value unchanged is
+        # exactly the bug this tooth must still detect.
         out_cats = list(cats)
 
         # Confirm the constructed scenario is a complete passthrough.
