@@ -141,7 +141,7 @@ def _chunks(rows: list, col_name: str, chunk_size: int) -> list[pa.Table]:
 
 
 def _profile_for(first_chunk: pa.Table, *, table: str) -> Profile:
-    """Minimal single-table Profile from a chunk (mirrors _first_chunk_profile)."""
+    """Minimal single-table Profile from a chunk (mirrors first_chunk_profile)."""
     import random
 
     tbl_profile = walk_dataframe(
