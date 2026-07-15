@@ -102,8 +102,11 @@ class WeakMaskSecret(MaskSecretError):  # noqa: N818 -- design-named gate error 
 class KeyProvider(Protocol):
     """Opaque source of keyed mask material. The engine only ever takes bytes.
 
-    `key_version` is NON-secret (e.g. "v1"); it is stamped into the evidence
-    manifest so a keyed artifact records which key era produced it. `mask_key()`
+    `key_version` is NON-secret (e.g. "v1"); it is a safe-to-record identifier
+    for which key era produced an artifact. Recording it into an evidence
+    manifest is a platform-layer concern, not an engine guarantee: the engine
+    emits no evidence manifest itself, and the commercial platform's evidence
+    assembler is what stamps `provider.key_version` onto a job. `mask_key()`
     returns the mask-root IKM fed at the one substituted slot.
 
     `key_version` is declared read-only (a property) so a frozen-dataclass
