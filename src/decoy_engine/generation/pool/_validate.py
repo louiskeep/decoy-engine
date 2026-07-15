@@ -73,9 +73,21 @@ def check_pool_capacity_pre_flight(
           on_pool_exhaustion=='fail': raises. With scale_up/fall_back: emits a
           deferral warning instead and defers to runtime.
 
+    Also raises PlanCompileError (code='pool_size_location_conflict') via the
+    shared `resolve_pool_size` helper when a column declares two different
+    pool_size values in its two legal locations. `validate_plan` catches both
+    error types at the compile boundary (`compile_plan` propagates them).
+
     Under no_profile, soft-mode capacity is unverifiable and skipped (the
     planner records `pool_capacity_pre_flight` in checks_skipped).
     """
+    # pool_size has two legal declaration sites (top-level + provider_config);
+    # resolve them through the shared plan-layer helper so this capacity gate
+    # agrees with the plan checks. (`scale` is top-level only.) Deferred import
+    # keeps the generation->plan edge out of module load (matches the deferred
+    # registry import in `_resolve_provider_poolable`).
+    from decoy_engine.plan._pool_size import resolve_pool_size
+
     # Build (table, column) lookups from profile. Under --no-profile the
     # counts are unavailable / untrusted, so both stay empty and every column
     # reads as "unknown". `distinct_lookup` sizes the soft modes (MATCH/SCALE);
@@ -109,8 +121,16 @@ def check_pool_capacity_pre_flight(
                 continue
             if not _resolve_provider_poolable(provider):
                 continue
-            pool_size = col_entry.get("pool_size", 10_000)
             col_name = col_entry.get("name", "?")
+            # Resolve pool_size from BOTH declaration sites (top-level +
+            # provider_config). A validated config dumps top-level `pool_size`
+            # as an explicit None, so `.get("pool_size", 10_000)` would read
+            # None (key present) and crash the capacity comparison; the 10_000
+            # default belongs only when NO site declares pool_size.
+            resolved_pool_size = resolve_pool_size(
+                col_entry, table_name=table_name, col_name=col_name
+            )
+            pool_size = resolved_pool_size if resolved_pool_size is not None else 10_000
             source_distinct = distinct_lookup.get((table_name, col_name))
 
             if cardinality_mode == "unique":
@@ -148,15 +168,34 @@ def check_pool_capacity_pre_flight(
                 continue
 
             # Soft modes: MATCH_SOURCE_CARDINALITY / SCALE_SOURCE_CARDINALITY.
+            # The runtime sampler short-circuits to the deterministic path for
+            # any deterministic column before it consults cardinality mode or
+            # pool capacity -- derive_index selects via a modulo, so it never
+            # needs pool_size >= source distinct. Mirror that bypass here, or
+            # this gate hard-rejects (under on_pool_exhaustion='fail') a
+            # deterministic MATCH/SCALE config the runtime would accept. UNIQUE
+            # is unaffected: deterministic+UNIQUE is rejected by the runtime
+            # itself, so the UNIQUE branch above intentionally ignores it.
+            if bool(col_entry.get("deterministic", False)):
+                continue
             if source_distinct is None:
                 # Unverifiable (no_profile or profile lacked the column); soft
                 # cardinality tolerates deferral, so runtime catches it.
                 continue
-            scale = (
-                float(col_entry.get("scale", 2.0))
-                if cardinality_mode == "scale_source_cardinality"
-                else 1.0
-            )
+            # A validated config dumps `scale` as an explicit None, so
+            # `.get("scale", 2.0)` reads None (key present) and `float(None)`
+            # crashes; the 2.0 default belongs only when scale is undeclared.
+            if cardinality_mode == "scale_source_cardinality":
+                scale_raw = col_entry.get("scale")
+                scale = float(scale_raw) if scale_raw is not None else 2.0
+            else:
+                scale = 1.0
+            # trunc, not the sampler's max(1, round(...)): trunc under-counts
+            # so it only ever DEFERS a borderline case to runtime, never
+            # over-rejects a config the runtime would accept. Making this gate
+            # exactly track runtime capacity -- rounding and the
+            # sampled-distinct-is-a-lower-bound problem -- is still open; the
+            # deterministic bypass above is the part that is settled.
             needed = source_distinct if scale == 1.0 else int(source_distinct * scale)
             if needed > pool_size:
                 if on_pool_exhaustion == "fail":

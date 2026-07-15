@@ -26,6 +26,7 @@ from typing import Any
 
 from decoy_engine.generation.pool import unique_capacity_ok
 from decoy_engine.plan._errors import PlanCompileError
+from decoy_engine.plan._pool_size import resolve_pool_size
 from decoy_engine.profile._types import Profile
 
 # Strategies under which a null-bearing integer source column diverges across the
@@ -145,15 +146,12 @@ def check_non_poolable_provider_with_pool_backend(config: dict[str, Any]) -> Non
 
 def check_basic_uniqueness_pre_flight(config: dict[str, Any], profile: Profile) -> None:
     """Reject pool-backed `unique` configs whose non-null output-row count
-    exceeds the pool capacity hint.
-
-    Partial in S1; S5 tightens with the full `pool_capacity_pre_flight`
-    check. S1's check uses whatever capacity hint is available at compile
-    time; if no hint is declared, the check passes (the runtime
-    discovers the failure later).
+    exceeds the pool capacity hint. If no pool_size is declared the check
+    passes and the runtime discovers any failure later.
 
     DE-11: UNIQUE capacity is the non-null output-row count (row_count -
-    null_count), shared with the runtime sampler via `unique_capacity_ok`.
+    null_count), shared with the runtime sampler via `unique_capacity_ok`;
+    pool_size is resolved from both declaration sites via `resolve_pool_size`.
     Compile-check ownership table row #4.
     """
     nonnull_lookup: dict[tuple[str, str], int] = {}
@@ -173,10 +171,12 @@ def check_basic_uniqueness_pre_flight(config: dict[str, Any], profile: Profile) 
                 continue
             if col_entry.get("backend_type") != "pool":
                 continue
-            pool_size = col_entry.get("pool_size")
+            col_name = col_entry.get("name", "?")
+            # Resolve from both sites so a provider_config-only pool_size is
+            # checked here, not silently deferred to a late runtime failure.
+            pool_size = resolve_pool_size(col_entry, table_name=table_name, col_name=col_name)
             if pool_size is None:
                 continue
-            col_name = col_entry.get("name", "?")
             nonnull_rows = nonnull_lookup.get((table_name, col_name))
             if nonnull_rows is None:
                 continue

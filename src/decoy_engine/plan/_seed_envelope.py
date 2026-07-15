@@ -13,6 +13,7 @@ from typing import Any
 from decoy_engine.execution._distribution_behavior import distribution_behavior_for
 from decoy_engine.execution._technique_class import technique_class_for
 from decoy_engine.plan._errors import PlanCompileError
+from decoy_engine.plan._pool_size import resolve_pool_size
 from decoy_engine.plan._seed import _normalize_job_seed
 from decoy_engine.plan._types import (
     ColumnSeed,
@@ -206,40 +207,14 @@ def _build_seed_envelope(
                 else:
                     provider_config_raw = {}
                     provider_config = tuple()
-                # pool_size/scale are resolved once here so runtime consumers
-                # read a single typed source of truth; top-level wins,
-                # provider_config is the fallback, contradictions are
-                # rejected. Both `pool_size` (top-level) and
-                # `provider_config.pool_size` are independently tested, real
-                # config locations; pick the top-level value when set, fall
-                # back to provider_config, and fail closed if both are set
-                # and DISAGREE rather than silently discarding one of them
-                # (equal values are fine -- only a genuine contradiction is
-                # an error).
-                top_pool_size = col_entry.get("pool_size")
-                provider_pool_size = provider_config_raw.get("pool_size")
-                if (
-                    top_pool_size is not None
-                    and provider_pool_size is not None
-                    and top_pool_size != provider_pool_size
-                ):
-                    raise PlanCompileError(
-                        code="pool_size_location_conflict",
-                        path=f"tables.{table_profile.name}.columns.{col_name}.pool_size",
-                        message=(
-                            f"Column {table_profile.name}.{col_name}: top-level "
-                            f"pool_size={top_pool_size!r} conflicts with "
-                            f"provider_config.pool_size={provider_pool_size!r}. Both "
-                            "locations are legal individually, but declaring two "
-                            "different values for the same column is ambiguous. "
-                            "Set one location only, or make both values equal."
-                        ),
-                    )
-                pool_size_resolved = (
-                    top_pool_size if top_pool_size is not None else provider_pool_size
-                )
-                resolved_pool_size = (
-                    int(pool_size_resolved) if pool_size_resolved is not None else None
+                # pool_size is resolved once here so runtime consumers read a
+                # single typed source of truth; top-level wins, provider_config
+                # is the fallback, contradictions fail closed. The compile-time
+                # UNIQUE-capacity preflight (plan/_checks.py) resolves through
+                # the same `resolve_pool_size` helper so the two readers cannot
+                # disagree about a provider_config-only declaration.
+                resolved_pool_size = resolve_pool_size(
+                    col_entry, table_name=table_profile.name, col_name=col_name
                 )
                 # `scale` has one documented location today (top-level
                 # ColumnConfig.scale; config/_tables.py); no runtime or

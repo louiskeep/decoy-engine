@@ -21,9 +21,9 @@ import pandas as pd
 from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
 from decoy_engine.generation.pool import CardinalityMode, PoolBuilder, PoolSampler, ValuePool
 from decoy_engine.generation.pool._events import QualityWarning
+from decoy_engine.generation.pool._runtime_pool_size import resolve_runtime_pool_size
 from decoy_engine.plan._types import ColumnSeed
 
-_DEFAULT_POOL_SIZE = 10_000
 _DEFAULT_SCALE = 2.0
 
 
@@ -57,7 +57,11 @@ class FakerStrategyHandler:
         if plan.pool_size is not None:
             pool_size = plan.pool_size
         else:
-            pool_size = int(cfg.get("pool_size", _DEFAULT_POOL_SIZE))
+            # A hand-built ColumnSeed (or a provider_config-only declaration the
+            # compile resolver read as undeclared) leaves plan.pool_size None, so
+            # fall back to the raw config -- coalescing an explicit-null pool_size
+            # to the default the same way an absent key is (shared helper).
+            pool_size = resolve_runtime_pool_size(cfg)
         scale = plan.scale if plan.scale is not None else _DEFAULT_SCALE
         locale = cfg.get("locale")
         # pool_size + locale are build knobs, not Faker provider-method kwargs.

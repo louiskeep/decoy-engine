@@ -196,6 +196,38 @@ may appear.
   stdout/stderr contamination). Golden test-flight fingerprints unchanged --
   well-formed configs are unaffected under both the warn and error defaults.
 
+### Fixed (DE-11 residual #1: nested pool_size null crash + deterministic MATCH/SCALE over-rejection, 2026-07-15)
+
+Closes a class of nested-null `pool_size` crashes plus a deterministic
+over-rejection surfaced by adversarial re-review of the pool-capacity work.
+
+- **Nested `provider_config: {pool_size: null}` no longer crashes at runtime,
+  on any pool-build route.** A validated config dumps an unset `pool_size` as
+  an explicit null, which can reach a runtime pool builder through either
+  `ColumnSeed.provider_config` or `ProviderSpec.extra`. `dict.get(k, default)`
+  only substitutes the default for an ABSENT key, so a key present with value
+  `None` returned `None` and `int(None)` raised `TypeError` after the column
+  had already passed compile. Both runtime readers -- the faker strategy
+  handler (`execution/_strategies/_faker.py`) and the public `PoolAdapter`
+  (`generation/pool/_pool_adapter.py`) -- now resolve the size through one
+  shared helper (`generation/pool/_runtime_pool_size.resolve_runtime_pool_size`)
+  that coalesces both absent-key and explicit-null to the default pool size,
+  so no current or future runtime reader can drift (the runtime analog of how
+  `plan._pool_size.resolve_pool_size` is the single compile-time source of
+  truth). The default constant is unified on one value (10,000).
+- **Deterministic `match_source_cardinality` / `scale_source_cardinality`
+  columns are no longer wrongly rejected at compile.** The runtime sampler
+  (`generation/pool/_sampler.py`) has always bypassed pool-capacity
+  requirements entirely for deterministic columns (`derive_index` selects via
+  modulo, so it never needs `pool_size >= source distinct`), but
+  `check_pool_capacity_pre_flight`'s soft-mode branch did not consult
+  `deterministic` and hard-rejected (under `on_pool_exhaustion='fail'`) a
+  config the runtime would have accepted -- e.g. 2 source-distinct values
+  with `pool_size: 1`. The preflight now skips the capacity check for
+  deterministic soft-mode columns, mirroring the runtime bypass exactly.
+  Non-deterministic MATCH/SCALE columns are unaffected: the capacity check
+  still rejects them under the same conditions as before.
+
 ### Fixed (DE-11: pool_size + scale resolved once at compile, no more silent runtime defaults, 2026-07-13)
 
 Closes a HIGH from the 2026-07-12 adversarial review: `pool_size` and `scale`

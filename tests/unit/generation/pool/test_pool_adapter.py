@@ -174,6 +174,35 @@ class TestCacheBeforeBuild:
         pool = adapter._build_or_get_pool("person_email", spec)
         assert pool.size == 128
 
+    def test_explicit_null_pool_size_in_extra_uses_default(self) -> None:
+        """A validated config dumps an unset pool_size as an explicit null,
+        which then flows into ProviderSpec.extra. `dict.get(k, default)` only
+        substitutes the default for an ABSENT key, so a present None reached
+        int(None) and raised TypeError at the public generate entry. The
+        coalesce must fall back to the default pool size (10_000) instead, and
+        the built pool must actually be that size (not merely not-crash)."""
+        registry = get_default_registry()
+        adapter = PoolAdapter(
+            wrapped=registry.get_adapter("person_email"),
+            builder=PoolBuilder(registry),
+            cache=PoolCache(max_bytes=50_000_000),
+        )
+        spec = ProviderSpec(
+            locale="en_US",
+            deterministic=True,
+            namespace="customer_identity",
+            seed=b"\x00\x00\x00\x00\x00\x00\x00\x2a",
+            extra={"pool_size": None},
+        )
+        # Public entry point (not just the private builder): pre-fix this raised
+        # TypeError inside _build_or_get_pool.
+        out = adapter.generate("person_email", spec=spec, source_value=b"a@b.com")
+        assert isinstance(out, str)
+        # The default pool size (10_000) must actually have been applied, so an
+        # accidental small pool would fail this even though it would not crash.
+        pool = adapter._build_or_get_pool("person_email", spec)
+        assert pool.size == 10_000
+
 
 class TestNonDeterministicDelegation:
     def test_non_deterministic_generate_delegates_to_wrapped(self) -> None:
