@@ -191,17 +191,23 @@ may appear.
 
 ### Fixed (DE-11 residual #1: nested pool_size null crash + deterministic MATCH/SCALE over-rejection, 2026-07-15)
 
-Closes two HIGHs from Codex's adversarial re-review of PR #76 (DE-11 residual #1).
+Closes a class of nested-null `pool_size` crashes plus a deterministic
+over-rejection surfaced by adversarial re-review of the pool-capacity work.
 
-- **Nested `provider_config: {pool_size: null}` no longer crashes at runtime.**
-  `resolve_pool_size` already treats an explicit nested null as undeclared
-  (falls back to the 10,000 default), but the runtime fallback read in
-  `execution/_strategies/_faker.py` used `cfg.get("pool_size",
-  _DEFAULT_POOL_SIZE)`; `dict.get`'s default only fires when the key is
-  ABSENT, and a key present with value `None` returned `None`, so
-  `int(None)` raised `TypeError` after the column had already passed compile.
-  The fallback now coalesces an explicit null to the default, agreeing with
-  the compile-time interpretation.
+- **Nested `provider_config: {pool_size: null}` no longer crashes at runtime,
+  on any pool-build route.** A validated config dumps an unset `pool_size` as
+  an explicit null, which can reach a runtime pool builder through either
+  `ColumnSeed.provider_config` or `ProviderSpec.extra`. `dict.get(k, default)`
+  only substitutes the default for an ABSENT key, so a key present with value
+  `None` returned `None` and `int(None)` raised `TypeError` after the column
+  had already passed compile. Both runtime readers -- the faker strategy
+  handler (`execution/_strategies/_faker.py`) and the public `PoolAdapter`
+  (`generation/pool/_pool_adapter.py`) -- now resolve the size through one
+  shared helper (`generation/pool/_runtime_pool_size.resolve_runtime_pool_size`)
+  that coalesces both absent-key and explicit-null to the default pool size,
+  so no current or future runtime reader can drift (the runtime analog of how
+  `plan._pool_size.resolve_pool_size` is the single compile-time source of
+  truth). The default constant is unified on one value (10,000).
 - **Deterministic `match_source_cardinality` / `scale_source_cardinality`
   columns are no longer wrongly rejected at compile.** The runtime sampler
   (`generation/pool/_sampler.py`) has always bypassed pool-capacity

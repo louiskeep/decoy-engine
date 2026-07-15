@@ -411,18 +411,18 @@ class TestScaleModeCapacity:
 
 
 class TestNestedProviderConfigPoolSizeNull:
-    """Codex HIGH-1 (PR #76 review, 2026-07-15): `resolve_pool_size` already
-    treats a nested `provider_config: {pool_size: null}` as undeclared (returns
-    None), so `plan.pool_size` is None for this case and the runtime falls back
-    to reading `provider_config` directly. `execution/_strategies/_faker.py`'s
-    fallback was `int(cfg.get("pool_size", _DEFAULT_POOL_SIZE))`: `dict.get`'s
-    default only fires when the key is ABSENT, and an explicit null is
-    present-with-value-None, so `.get` returned None and `int(None)` raised
-    TypeError at runtime -- after the column passed compile clean (the
-    compile-time preflight agrees the column is undeclared and skips it).
+    """A nested `provider_config: {pool_size: null}` is read as undeclared by
+    the compile resolver (`plan.pool_size` stays None), so the runtime faker
+    handler falls back to reading `provider_config` directly. `dict.get(k,
+    default)` only substitutes the default for an ABSENT key, so an explicit
+    null returned None and `int(None)` raised TypeError at runtime -- after the
+    column passed compile clean. The fallback must coalesce the null to the
+    default pool size instead.
     """
 
-    def test_nested_null_pool_size_compiles_and_runs(self, tmp_path) -> None:
+    def test_nested_null_pool_size_compiles_and_runs(self, tmp_path, monkeypatch) -> None:
+        from decoy_engine.generation.pool import PoolBuilder
+
         n = 50
         cfg = _config(
             tmp_path,
@@ -436,28 +436,38 @@ class TestNestedProviderConfigPoolSizeNull:
                 }
             ],
         )
+
+        # Capture the size the handler actually resolves and passes to the pool
+        # build -- an unambiguous signal that the DEFAULT applied, not merely
+        # that no crash occurred and not an accidental small pool.
+        seen_sizes: list[int] = []
+        original_identity_for = PoolBuilder.identity_for
+
+        def _spy_identity_for(self, provider, *, size, **kwargs):
+            seen_sizes.append(size)
+            return original_identity_for(self, provider, size=size, **kwargs)
+
+        monkeypatch.setattr(PoolBuilder, "identity_for", _spy_identity_for)
+
         df = pd.DataFrame({"email": [f"user{i}@example.com" for i in range(n)]})
         # Pre-fix: `int(None)` TypeError at runtime, after a clean compile.
         result = _write_and_run(tmp_path, df, cfg)
         out = result.outputs["people"].column("email").to_pylist()
         assert len(out) == n
-        # Falls back to the 10_000-value default pool (not <= 5 like the
-        # explicit-pool_size test above): n=50 << 10_000, collisions are
-        # vanishingly rare, so this also proves the *default* actually applied
-        # rather than some other accidental small pool.
-        assert len(set(out)) > 5
+        # The nested null coalesced to the 10_000 default (not None, not an
+        # accidental small pool): the exact size reached the builder.
+        assert seen_sizes == [10_000]
 
 
 class TestDeterministicSoftModeCapacityBypass:
-    """DE-11 residual #2 (Codex HIGH-2, PR #76 review, 2026-07-15): the
-    runtime sampler (`generation/pool/_sampler.py::PoolSampler.sample`)
-    short-circuits to `_deterministic` for ANY deterministic column before
-    ever consulting cardinality mode or pool capacity -- `derive_index`
-    selects via a modulo, so it never needs `pool_size >= source distinct`.
-    The soft-modes branch of `check_pool_capacity_pre_flight`
-    (generation/pool/_validate.py) did not consult `deterministic` and
-    hard-rejected (under `on_pool_exhaustion='fail'`) a deterministic
-    MATCH/SCALE config the runtime would happily accept.
+    """The runtime sampler short-circuits to the deterministic path for ANY
+    deterministic column before ever consulting cardinality mode or pool
+    capacity -- derive_index selects via a modulo, so it never needs
+    `pool_size >= source distinct`. The soft-modes branch of
+    `check_pool_capacity_pre_flight` (generation/pool/_validate.py) did not
+    consult `deterministic` and hard-rejected (under
+    `on_pool_exhaustion='fail'`) a deterministic MATCH/SCALE config the runtime
+    would happily accept.
     """
 
     @staticmethod

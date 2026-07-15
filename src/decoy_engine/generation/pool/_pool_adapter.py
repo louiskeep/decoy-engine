@@ -20,6 +20,7 @@ from decoy_engine.determinism import derive_index
 from decoy_engine.generation.pool._builder import PoolBuilder
 from decoy_engine.generation.pool._cache import PoolCache
 from decoy_engine.generation.pool._errors import GenerationError
+from decoy_engine.generation.pool._runtime_pool_size import resolve_runtime_pool_size
 from decoy_engine.providers_v2 import (
     BackendAdapter,
     CapabilityMatrix,
@@ -88,7 +89,11 @@ class PoolAdapter:
         # kwargs (a stray `pool_size=` kwarg would break the Faker call). The
         # prior code hardcoded size=10_000, so the config knob was dead.
         build_config = {k: v for k, v in spec.extra.items() if k != "pool_size"}
-        size = int(spec.extra.get("pool_size", 10_000))
+        # spec.extra can carry an explicit-null pool_size (a validated config
+        # dumps an unset field as null, then it flows into ProviderSpec.extra),
+        # which a plain `.get(k, default)` would pass straight to int() and
+        # crash; the shared helper coalesces both absent and null to the default.
+        size = resolve_runtime_pool_size(spec.extra)
         identity = self._builder.identity_for(
             provider,
             size=size,

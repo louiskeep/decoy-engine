@@ -21,9 +21,9 @@ import pandas as pd
 from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
 from decoy_engine.generation.pool import CardinalityMode, PoolBuilder, PoolSampler, ValuePool
 from decoy_engine.generation.pool._events import QualityWarning
+from decoy_engine.generation.pool._runtime_pool_size import resolve_runtime_pool_size
 from decoy_engine.plan._types import ColumnSeed
 
-_DEFAULT_POOL_SIZE = 10_000
 _DEFAULT_SCALE = 2.0
 
 
@@ -57,16 +57,11 @@ class FakerStrategyHandler:
         if plan.pool_size is not None:
             pool_size = plan.pool_size
         else:
-            # Codex HIGH-1 (PR #76 review, 2026-07-15): `cfg.get(key, default)`
-            # only falls back when the KEY is absent; a column that declares
-            # `provider_config: {pool_size: null}` has the key present with
-            # value None, so the plain `.get` returned None and `int(None)`
-            # raised TypeError. `resolve_pool_size` (plan/_pool_size.py) already
-            # treats a nested None as undeclared -> `plan.pool_size` is None
-            # here for that case, so this fallback must agree: explicit null
-            # coalesces to the same default as an absent key.
-            raw_pool_size = cfg.get("pool_size")
-            pool_size = int(raw_pool_size) if raw_pool_size is not None else _DEFAULT_POOL_SIZE
+            # A hand-built ColumnSeed (or a provider_config-only declaration the
+            # compile resolver read as undeclared) leaves plan.pool_size None, so
+            # fall back to the raw config -- coalescing an explicit-null pool_size
+            # to the default the same way an absent key is (shared helper).
+            pool_size = resolve_runtime_pool_size(cfg)
         scale = plan.scale if plan.scale is not None else _DEFAULT_SCALE
         locale = cfg.get("locale")
         # pool_size + locale are build knobs, not Faker provider-method kwargs.
