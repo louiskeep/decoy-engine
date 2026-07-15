@@ -189,6 +189,32 @@ may appear.
   stdout/stderr contamination). Golden test-flight fingerprints unchanged --
   well-formed configs are unaffected under both the warn and error defaults.
 
+### Fixed (DE-11 residual #1: nested pool_size null crash + deterministic MATCH/SCALE over-rejection, 2026-07-15)
+
+Closes two HIGHs from Codex's adversarial re-review of PR #76 (DE-11 residual #1).
+
+- **Nested `provider_config: {pool_size: null}` no longer crashes at runtime.**
+  `resolve_pool_size` already treats an explicit nested null as undeclared
+  (falls back to the 10,000 default), but the runtime fallback read in
+  `execution/_strategies/_faker.py` used `cfg.get("pool_size",
+  _DEFAULT_POOL_SIZE)`; `dict.get`'s default only fires when the key is
+  ABSENT, and a key present with value `None` returned `None`, so
+  `int(None)` raised `TypeError` after the column had already passed compile.
+  The fallback now coalesces an explicit null to the default, agreeing with
+  the compile-time interpretation.
+- **Deterministic `match_source_cardinality` / `scale_source_cardinality`
+  columns are no longer wrongly rejected at compile.** The runtime sampler
+  (`generation/pool/_sampler.py`) has always bypassed pool-capacity
+  requirements entirely for deterministic columns (`derive_index` selects via
+  modulo, so it never needs `pool_size >= source distinct`), but
+  `check_pool_capacity_pre_flight`'s soft-mode branch did not consult
+  `deterministic` and hard-rejected (under `on_pool_exhaustion='fail'`) a
+  config the runtime would have accepted -- e.g. 2 source-distinct values
+  with `pool_size: 1`. The preflight now skips the capacity check for
+  deterministic soft-mode columns, mirroring the runtime bypass exactly.
+  Non-deterministic MATCH/SCALE columns are unaffected: the capacity check
+  still rejects them under the same conditions as before.
+
 ### Fixed (DE-11: pool_size + scale resolved once at compile, no more silent runtime defaults, 2026-07-13)
 
 Closes a HIGH from the 2026-07-12 adversarial review: `pool_size` and `scale`

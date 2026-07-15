@@ -408,3 +408,141 @@ class TestScaleModeCapacity:
             _people_profile(row_count=100, distinct_count=2),
             decoy_engine_version=_ENGINE_VERSION,
         )
+
+
+class TestNestedProviderConfigPoolSizeNull:
+    """Codex HIGH-1 (PR #76 review, 2026-07-15): `resolve_pool_size` already
+    treats a nested `provider_config: {pool_size: null}` as undeclared (returns
+    None), so `plan.pool_size` is None for this case and the runtime falls back
+    to reading `provider_config` directly. `execution/_strategies/_faker.py`'s
+    fallback was `int(cfg.get("pool_size", _DEFAULT_POOL_SIZE))`: `dict.get`'s
+    default only fires when the key is ABSENT, and an explicit null is
+    present-with-value-None, so `.get` returned None and `int(None)` raised
+    TypeError at runtime -- after the column passed compile clean (the
+    compile-time preflight agrees the column is undeclared and skips it).
+    """
+
+    def test_nested_null_pool_size_compiles_and_runs(self, tmp_path) -> None:
+        n = 50
+        cfg = _config(
+            tmp_path,
+            [
+                {
+                    "name": "email",
+                    "strategy": "faker",
+                    "provider": "person_email",
+                    "cardinality_mode": "reuse",
+                    "provider_config": {"pool_size": None},
+                }
+            ],
+        )
+        df = pd.DataFrame({"email": [f"user{i}@example.com" for i in range(n)]})
+        # Pre-fix: `int(None)` TypeError at runtime, after a clean compile.
+        result = _write_and_run(tmp_path, df, cfg)
+        out = result.outputs["people"].column("email").to_pylist()
+        assert len(out) == n
+        # Falls back to the 10_000-value default pool (not <= 5 like the
+        # explicit-pool_size test above): n=50 << 10_000, collisions are
+        # vanishingly rare, so this also proves the *default* actually applied
+        # rather than some other accidental small pool.
+        assert len(set(out)) > 5
+
+
+class TestDeterministicSoftModeCapacityBypass:
+    """DE-11 residual #2 (Codex HIGH-2, PR #76 review, 2026-07-15): the
+    runtime sampler (`generation/pool/_sampler.py::PoolSampler.sample`)
+    short-circuits to `_deterministic` for ANY deterministic column before
+    ever consulting cardinality mode or pool capacity -- `derive_index`
+    selects via a modulo, so it never needs `pool_size >= source distinct`.
+    The soft-modes branch of `check_pool_capacity_pre_flight`
+    (generation/pool/_validate.py) did not consult `deterministic` and
+    hard-rejected (under `on_pool_exhaustion='fail'`) a deterministic
+    MATCH/SCALE config the runtime would happily accept.
+    """
+
+    @staticmethod
+    def _config_fail_mode(tmp_path, columns: list[dict], table: str = "people") -> dict:
+        cfg = {
+            "version": 1,
+            "global_settings": {"seed": 42, "on_pool_exhaustion": "fail"},
+            "sources": {table: {"type": "file", "format": "csv", "path": str(tmp_path / "in.csv")}},
+            "tables": [{"name": table, "columns": columns}],
+            "targets": {
+                table: {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")}
+            },
+        }
+        return PipelineConfig.model_validate(cfg).model_dump()
+
+    def test_deterministic_match_bypasses_capacity_at_compile(self, tmp_path) -> None:
+        # 2 source distinct, pool_size=1: a NON-deterministic MATCH needs
+        # needed=2 > pool_size=1 and hard-raises under on_pool_exhaustion=fail
+        # (see the sibling test below). deterministic=True must skip the
+        # check entirely, mirroring the runtime bypass.
+        cfg = self._config_fail_mode(
+            tmp_path,
+            [
+                {
+                    "name": "email",
+                    "strategy": "faker",
+                    "provider": "person_email",
+                    "cardinality_mode": "match_source_cardinality",
+                    "deterministic": True,
+                    "namespace": "email_ns",
+                    "pool_size": 1,
+                }
+            ],
+        )
+        plan = compile_plan(
+            cfg,
+            _people_profile(row_count=10, distinct_count=2),
+            decoy_engine_version=_ENGINE_VERSION,
+        )
+        assert plan is not None
+
+    def test_deterministic_match_runs_at_pool_size_below_distinct(self, tmp_path) -> None:
+        # Mirrors Codex's repro: 2 source-distinct values, pool_size=1,
+        # deterministic=True. Proves the runtime sampler genuinely accepts
+        # this (not just that compile lets it through).
+        n = 10
+        df = pd.DataFrame({"email": [f"user{i % 2}@example.com" for i in range(n)]})
+        cfg = self._config_fail_mode(
+            tmp_path,
+            [
+                {
+                    "name": "email",
+                    "strategy": "faker",
+                    "provider": "person_email",
+                    "cardinality_mode": "match_source_cardinality",
+                    "deterministic": True,
+                    "namespace": "email_ns",
+                    "pool_size": 1,
+                }
+            ],
+        )
+        result = _write_and_run(tmp_path, df, cfg)
+        out = result.outputs["people"].column("email").to_pylist()
+        assert len(out) == n
+
+    def test_non_deterministic_match_still_rejected(self, tmp_path) -> None:
+        """Sibling proof: the SAME shape without deterministic=True still
+        hard-raises under on_pool_exhaustion=fail -- only the deterministic
+        case was relaxed, not the check wholesale."""
+        cfg = self._config_fail_mode(
+            tmp_path,
+            [
+                {
+                    "name": "email",
+                    "strategy": "faker",
+                    "provider": "person_email",
+                    "cardinality_mode": "match_source_cardinality",
+                    "pool_size": 1,
+                }
+            ],
+        )
+        with pytest.raises(PoolCapacityError) as exc:
+            compile_plan(
+                cfg,
+                _people_profile(row_count=10, distinct_count=2),
+                decoy_engine_version=_ENGINE_VERSION,
+            )
+        assert exc.value.code == "pool_too_small_for_source"

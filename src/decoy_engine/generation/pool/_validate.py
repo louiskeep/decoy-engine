@@ -168,6 +168,19 @@ def check_pool_capacity_pre_flight(
                 continue
 
             # Soft modes: MATCH_SOURCE_CARDINALITY / SCALE_SOURCE_CARDINALITY.
+            # Codex HIGH-2 (PR #76 review, 2026-07-15): the runtime sampler
+            # (`generation/pool/_sampler.py::PoolSampler.sample`) short-circuits
+            # to `_deterministic` for ANY deterministic column before it ever
+            # looks at cardinality mode or pool capacity -- `derive_index`
+            # selects via `hash(...) % pool_size`, a modulo, so it never needs
+            # pool_size >= source distinct. This gate must mirror that bypass
+            # exactly, or it hard-rejects (under on_pool_exhaustion='fail') a
+            # deterministic MATCH/SCALE config the runtime would accept.
+            # UNIQUE is unaffected: deterministic+UNIQUE is rejected by the
+            # runtime itself (deterministic_mode_unsupported_cardinality), so
+            # the UNIQUE branch above intentionally does not read `deterministic`.
+            if bool(col_entry.get("deterministic", False)):
+                continue
             if source_distinct is None:
                 # Unverifiable (no_profile or profile lacked the column); soft
                 # cardinality tolerates deferral, so runtime catches it.
