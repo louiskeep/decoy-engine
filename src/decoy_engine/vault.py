@@ -10,10 +10,12 @@ column declares `vault: true` AND the operator passes a vault path; a
 mask run never writes a vault otherwise.
 
 Security model. The vault is a re-identification database: anyone
-holding the vault file AND the pipeline config (whose seed derives the
-vault key) can recover every vaulted source value. Store the vault and
-the config separately, with the handling the source data itself would
-get; never ship a vault alongside its masked output. The encryption is
+holding the vault file AND the run's mask key (the secret behind
+`mask_secret_ref` / a programmatic `key_provider` when one is
+configured, or the job seed in the no-secret fallback) can recover
+every vaulted source value. Store the vault and the config separately,
+with the handling the source data itself would get; never ship a
+vault alongside its masked output. The encryption is
 Fernet from the `cryptography` package (AES-128-CBC + HMAC-SHA256,
 encrypt-then-MAC, per the published Fernet spec) -- an audited AEAD
 construction rather than anything hand-rolled, per the engine's
@@ -22,14 +24,17 @@ established-methodology rule. `cryptography` ships in the optional
 function-local so the default install never pays for it.
 
 Key model. One key per job, domain-separated from every other engine
-derivation by a fresh label: `derive(job_seed, "vault",
+derivation by a fresh label: `derive(mask_key, "vault",
 b"vault-key/v1")` (HKDF-style HMAC-SHA256 expansion, RFC 5869 model;
-the same envelope FPE keys use with their own label). `derive` mixes
-`SEED_PROTOCOL_VERSION` into the key, so a vault written under one
-protocol version is undecryptable under another. The `decoy-vault/v2`
-file format stamps that version in its unencrypted header, so a
-cross-version load fails with a clear `vault_protocol_version_mismatch`
-rather than an opaque key error.
+the same envelope FPE keys use with their own label). `mask_key` is
+the run's keyed-mask IKM -- the 32-byte `SecretKeyProvider` HKDF root
+under a configured secret, or the 8-byte `job_seed` in the no-secret
+fallback (DE-02) -- so the vault is bound to the run's masking key,
+not the public seed. `derive` mixes `SEED_PROTOCOL_VERSION` into the
+key, so a vault written under one protocol version is undecryptable
+under another. The `decoy-vault/v2` file format stamps that version in
+its unencrypted header, so a cross-version load fails with a clear
+`vault_protocol_version_mismatch` rather than an opaque key error.
 
 File format (`decoy-vault/v2`). Magic, then a length-prefixed
 unencrypted JSON header (`format`, `seed_protocol_version`,
