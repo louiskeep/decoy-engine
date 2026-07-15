@@ -9,6 +9,8 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-15
+
 ### Security (DE-02: KeyProvider -- keyed masking rekeys off a real secret, fail-closed at GA, 2026-07-14)
 
 Demotes the 8-byte `job_seed` from doubling as the confidentiality key to a

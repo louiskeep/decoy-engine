@@ -356,7 +356,7 @@ class TestConditionalStrategies:
         """The handler consults ctx.pool_cache: a second adapter run with
         the same cache hits the pool built by the first instead of
         rebuilding, with identical output bytes."""
-        from decoy_engine.execution._chunked import _first_chunk_profile
+        from decoy_engine.execution._chunked_profile import first_chunk_profile
         from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
         from decoy_engine.generation.pool import PoolCache
         from decoy_engine.plan import compile_plan
@@ -366,7 +366,7 @@ class TestConditionalStrategies:
         df = _frame(20)
         cfg = _config(tmp_path, _SAFE_COLUMNS)
         source_tbl = pa.Table.from_pandas(df, preserve_index=False)
-        profile = _first_chunk_profile(source_tbl, table="accounts", engine_version=_ENGINE_VERSION)
+        profile = first_chunk_profile(source_tbl, table="accounts", engine_version=_ENGINE_VERSION)
         plan = compile_plan(cfg, profile, decoy_engine_version=_ENGINE_VERSION, no_profile=True)
         registry = get_default_registry()
         ns_registry = build_namespace_registry(cfg, profile)

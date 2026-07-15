@@ -243,6 +243,19 @@ def resolve_mask_secret_ref(ref: str) -> bytes:
             raise MissingMaskSecret(
                 f"mask secret file {path!r} (from mask_secret_ref) could not be read: {exc}."
             ) from exc
+        except UnicodeDecodeError as exc:
+            # The file exists and is readable, but is not valid UTF-8 text --
+            # a distinct failure mode from "missing" (bad_secret_ref, not
+            # MissingMaskSecret), and it must not escape as a raw
+            # UnicodeDecodeError (an uncaught crash instead of a clean,
+            # typed gate error the CLI maps to EXIT_USAGE). Read stays TEXT
+            # (not bytes) -- switching to a raw-bytes read would change key
+            # derivation for existing file-based secrets, a determinism/
+            # compat break outside this fix's scope (see PR body follow-up).
+            raise MaskSecretError(
+                code="bad_secret_ref",
+                message=f"mask secret file {path!r} (from mask_secret_ref) is not valid UTF-8: {exc}.",
+            ) from exc
         return _decode_secret_material(raw)
     raise MaskSecretError(
         code="bad_secret_ref",

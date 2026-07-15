@@ -254,7 +254,7 @@ class TestModelVersionStamp:
         import pandas as pd
         import pyarrow as pa
 
-        from decoy_engine.execution._chunked import _first_chunk_profile
+        from decoy_engine.execution._chunked_profile import first_chunk_profile
         from decoy_engine.plan import _compile as compile_mod
         from decoy_engine.plan import compile_plan
 
@@ -276,7 +276,7 @@ class TestModelVersionStamp:
             ],
         }
         df = pd.DataFrame({"notes": ["hello"], "email": ["a@b.com"]})
-        profile = _first_chunk_profile(
+        profile = first_chunk_profile(
             pa.Table.from_pandas(df, preserve_index=False), table="t", engine_version="x"
         )
         # Row 13 hard-fails when the model is absent; bypass it for the
@@ -291,7 +291,7 @@ class TestModelVersionStamp:
         import pandas as pd
         import pyarrow as pa
 
-        from decoy_engine.execution._chunked import _first_chunk_profile
+        from decoy_engine.execution._chunked_profile import first_chunk_profile
         from decoy_engine.plan import _compile as compile_mod
         from decoy_engine.plan import compile_plan
 
@@ -313,7 +313,7 @@ class TestModelVersionStamp:
             ],
         }
         df = pd.DataFrame({"notes": ["hello"]})
-        profile = _first_chunk_profile(
+        profile = first_chunk_profile(
             pa.Table.from_pandas(df, preserve_index=False), table="t", engine_version="x"
         )
         plan = compile_plan(cfg, profile, decoy_engine_version="x", no_profile=True)

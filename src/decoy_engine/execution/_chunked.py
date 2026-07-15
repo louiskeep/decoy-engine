@@ -115,7 +115,6 @@ this module under the LOC cap) -- see that module for the full write-up.
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
-from datetime import datetime
 from typing import Any
 
 import pyarrow as pa
@@ -265,44 +264,6 @@ def check_chunked_compatibility(config: dict[str, Any], *, table: str) -> None:
         )
 
 
-def _first_chunk_profile(first_chunk: pa.Table, *, table: str, engine_version: str) -> Any:
-    """Profile the FIRST chunk so compile_plan can build the seed envelope.
-
-    The envelope iterates `profile.tables` (the table must exist there
-    for its columns to mask at all), so a fully-empty --no-profile-style
-    Profile silently masks nothing. The first chunk gives real dtypes;
-    distinct counts and row_count describe only that chunk, which is
-    fine -- admitted strategies consume nothing distribution-dependent.
-    Faker pools size from the config-declared pool_size (the admission
-    rule requires it explicitly), never from profile distinct counts,
-    and the pool-capacity pre-flight lands in checks_skipped under
-    no_profile=True, which is correct here: with admission restricted
-    to deterministic REUSE, pool capacity is a collision-rate knob, not
-    a correctness input. Epoch `profiled_at` keeps the 'not a real
-    source profile' sentinel from the --no-profile path."""
-    import random
-
-    from decoy_engine.profile import Profile
-    from decoy_engine.profile._walk import walk_dataframe
-
-    table_profile = walk_dataframe(
-        first_chunk.to_pandas(),
-        table_name=table,
-        declared_pk_cols=frozenset(),
-        fk_specs={},
-        sample_rows=None,
-        rng=random.Random(0),
-    )
-    return Profile(
-        schema_version=1,
-        tables=(table_profile,),
-        relationships=(),
-        profiled_at=datetime(1970, 1, 1, 0, 0, 0),
-        decoy_engine_version=engine_version,
-        profile_seed=None,
-    )
-
-
 def run_mask_pipeline_chunked(
     config: dict[str, Any],
     chunks: Iterable[pa.Table],
@@ -344,6 +305,7 @@ def run_mask_pipeline_chunked(
     Validation and plan compile happen EAGERLY at call time; only the
     per-chunk masking is lazy.
     """
+    from decoy_engine.execution._chunked_profile import empty_input_profile, first_chunk_profile
     from decoy_engine.execution._output_projection import resolve_unconfigured_column_policy
     from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
     from decoy_engine.generation.pool import PoolCache
@@ -354,9 +316,17 @@ def run_mask_pipeline_chunked(
     check_chunked_compatibility(config, table=table)
     chunk_iter = iter(chunks)
     first = next(chunk_iter, None)
+    # Codex-found: the gate below used to run AFTER this point returned early
+    # for a zero-chunk source, so a keyed job with zero rows/batches and a
+    # missing/invalid mask secret slipped through the GA fail-closed gate
+    # (empty output, no error). The profile/plan/gate sequence now always
+    # runs -- from a real first-chunk profile, or from `empty_input_profile`
+    # when there is none -- and the empty-input return moves to AFTER the
+    # gate so it only ever short-circuits a job the gate has already cleared.
     if first is None:
-        return iter(())
-    profile = _first_chunk_profile(first, table=table, engine_version=engine_version)
+        profile = empty_input_profile(config, table=table, engine_version=engine_version)
+    else:
+        profile = first_chunk_profile(first, table=table, engine_version=engine_version)
     plan = compile_plan(config, profile, decoy_engine_version=engine_version, no_profile=True)
     # DE-02 (Codex BLOCKER 4): this is a PUBLIC entry point. Resolve the config's
     # `mask_secret_ref` when no programmatic provider was passed, then run the
@@ -379,6 +349,12 @@ def run_mask_pipeline_chunked(
         from decoy_engine.vault import assert_vault_writer_keyed
 
         assert_vault_writer_keyed(vault_writer, _resolved_mask_key)
+    if first is None:
+        # Gate cleared (or the plan is unkeyed / pre-GA); there is genuinely
+        # nothing to mask, so skip pool warming and adapter setup below --
+        # unchanged from the original empty-input short-circuit, just moved
+        # to run after the gate instead of before it.
+        return iter(())
     # DE-03: resolve the projection policy once; each per-chunk adapter.run()
     # enforces it (a chunk carries the same column set as the whole table, so
     # per-chunk enforcement IS whole-table enforcement). Single mask table, no
