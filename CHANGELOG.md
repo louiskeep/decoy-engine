@@ -9,6 +9,13 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-15
+
+### Fixed
+
+- **Chunked masking: empty-input fail-closed gate.** A zero-chunk source returned before the GA `require_mask_key` gate, so a keyed masking job with no rows and a missing/invalid mask secret produced empty output instead of being rejected at GA. The secret gate now runs before the empty-input short-circuit.
+- **Mask secret file: invalid UTF-8 now classified.** A `mask_secret_ref: file:/PATH` pointing at a non-UTF-8 file raised an uncaught `UnicodeDecodeError`; it is now a typed `MaskSecretError(code="bad_secret_ref")` (a usage error, not a crash).
+
 ### Security (DE-02: KeyProvider -- keyed masking rekeys off a real secret, fail-closed at GA, 2026-07-14)
 
 Demotes the 8-byte `job_seed` from doubling as the confidentiality key to a
@@ -2336,5 +2343,6 @@ PyPI index; first publish lands with OSS.7.
   in `running` forever. Post-fix the validator rejects at submit time
   with a "deferred to V2.1" message.
 
-[Unreleased]: https://github.com/louiskeep/decoy-engine/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/louiskeep/decoy-engine/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/louiskeep/decoy-engine/compare/v0.1.0...v0.4.0
 [0.1.0]: https://github.com/louiskeep/decoy-engine/releases/tag/v0.1.0

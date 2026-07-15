@@ -699,6 +699,44 @@ class TestPublicEntryPointsGated:
         with pytest.raises(KeyedStrategyRequiresSecret):
             list(run_mask_pipeline_chunked(cfg, [source], table="t", engine_version=_EV))
 
+    def test_chunked_entry_point_gated_on_empty_input(self, tmp_path, monkeypatch):
+        """Codex-found: a chunked source with ZERO chunks used to return `[]`
+        BEFORE the gate ran at all (the gate lived after the `first is None`
+        short-circuit), so an empty keyed job with no secret silently
+        succeeded at GA instead of being rejected. Zero chunks must still
+        hit the same KeyedStrategyRequiresSecret as a non-empty one."""
+        from decoy_engine import run_mask_pipeline_chunked
+
+        monkeypatch.setattr("decoy_engine.keyprovider.is_pre_ga", lambda: False)
+        cfg = self._keyed_cfg(tmp_path)
+        with pytest.raises(KeyedStrategyRequiresSecret):
+            list(run_mask_pipeline_chunked(cfg, [], table="t", engine_version=_EV))
+
+    def test_chunked_entry_point_empty_input_unkeyed_still_runs_at_ga(self, tmp_path, monkeypatch):
+        """The empty-input gate fix must not over-gate: a non-keyed plan with
+        zero chunks and no secret still returns [] at GA (unkeyed path is
+        unaffected)."""
+        from decoy_engine import run_mask_pipeline_chunked
+
+        monkeypatch.setattr("decoy_engine.keyprovider.is_pre_ga", lambda: False)
+        cfg = _config(tmp_path, columns=[{"name": "email", "strategy": "redact"}])
+        assert list(run_mask_pipeline_chunked(cfg, [], table="t", engine_version=_EV)) == []
+
+    def test_chunked_entry_point_empty_input_with_secret_still_runs_at_ga(
+        self, tmp_path, monkeypatch
+    ):
+        """A keyed plan with zero chunks but a real secret still clears the
+        gate and returns [] at GA (the fix doesn't break the satisfied case)."""
+        from decoy_engine import run_mask_pipeline_chunked
+
+        monkeypatch.setattr("decoy_engine.keyprovider.is_pre_ga", lambda: False)
+        cfg = self._keyed_cfg(tmp_path)
+        kp = SecretKeyProvider(b"x" * 32)
+        assert (
+            list(run_mask_pipeline_chunked(cfg, [], table="t", engine_version=_EV, key_provider=kp))
+            == []
+        )
+
     def test_out_of_core_runner_gated(self, tmp_path, monkeypatch):
         from decoy_engine.execution.out_of_core import run_fk_out_of_core
 
@@ -873,6 +911,18 @@ class TestSecretRefResolver:
     def test_missing_file_raises(self, tmp_path):
         with pytest.raises(MissingMaskSecret):
             resolve_mask_secret_ref(f"file:{tmp_path / 'nope.bin'}")
+
+    def test_invalid_utf8_file_raises_clean_mask_secret_error(self, tmp_path):
+        """Codex-found: a `file:` secret ref pointing at non-UTF-8 bytes used
+        to escape the `open(..., encoding='utf-8').read()` as an uncaught
+        UnicodeDecodeError (a runtime crash) instead of the clean,
+        CLI-mappable MaskSecretError every other bad-ref shape raises."""
+        p = tmp_path / "secret.bin"
+        p.write_bytes(b"\xff\xfe\x00\x01not-valid-utf8\x80\x81")
+        with pytest.raises(MaskSecretError) as exc:
+            resolve_mask_secret_ref(f"file:{p}")
+        assert not isinstance(exc.value, MissingMaskSecret)
+        assert exc.value.code == "bad_secret_ref"
 
     def test_unknown_ref_kind_raises(self):
         with pytest.raises(MaskSecretError):

@@ -386,9 +386,9 @@ class TestCompileChecks:
         df = _frame(5)
         df.to_csv(tmp_path / "accounts.csv", index=False)
         cfg = _config(tmp_path, _VAULT_COLUMNS)
-        from decoy_engine.execution._chunked import _first_chunk_profile
+        from decoy_engine.execution._chunked_profile import first_chunk_profile
 
-        profile = _first_chunk_profile(
+        profile = first_chunk_profile(
             pa.Table.from_pandas(df, preserve_index=False),
             table="accounts",
             engine_version=_ENGINE_VERSION,
