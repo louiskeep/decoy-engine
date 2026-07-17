@@ -89,6 +89,16 @@ class CodeSetProvenance:
             public code set (HC-1 slice 1 ships seeds; slice 2 replaces them
             with full corpora). Lets downstream evidence distinguish a seed
             from a complete corpus without inspecting row counts.
+        raw_is_seed: The EXACT decoded ``is_seed`` metadata string, or None
+            when the key was absent. ``is_seed`` above collapses this to a
+            bool (anything != "true" becomes False), which is the right
+            evidence shape but LOSES the distinction between an explicit
+            "false", an absent key, and a garbled value like "yes". Shipped-
+            corpus validation (:meth:`shipped_stamp_defects`) needs that
+            distinction so a build artifact whose seed status is unknown fails
+            closed instead of silently masquerading as a full corpus
+            (is_seed=False). Not surfaced in :meth:`to_json_dict` -- evidence
+            keeps the clean bool.
     """
 
     corpus: str
@@ -100,6 +110,7 @@ class CodeSetProvenance:
     source_version: str
     effective_date: str
     is_seed: bool = False
+    raw_is_seed: str | None = None
 
     @classmethod
     def from_parquet_metadata(cls, tbl: pa.Table) -> CodeSetProvenance | None:
@@ -151,7 +162,8 @@ class CodeSetProvenance:
             citation=decoded.get("citation", ""),
             source_version=decoded.get("source_version", ""),
             effective_date=decoded.get("effective_date", ""),
-            is_seed=decoded.get("is_seed", "").strip().lower() == "true",
+            is_seed=(decoded.get("is_seed") or "").strip().lower() == "true",
+            raw_is_seed=decoded.get("is_seed"),
         )
 
     def missing_required_fields(self) -> list[str]:
@@ -163,6 +175,34 @@ class CodeSetProvenance:
             "license": self.license,
         }
         return [name for name in REQUIRED_PROVENANCE_FIELDS if not values[name]]
+
+    def shipped_stamp_defects(self) -> list[str]:
+        """SHIPPED-only strictness beyond REQUIRED_PROVENANCE_FIELDS (HC-1).
+
+        Codex round-7 P2 remediation: ``is_seed`` and ``corpus_version`` are
+        not in REQUIRED_PROVENANCE_FIELDS, so a shipped corpus whose metadata
+        omits ``is_seed`` (or supplies a non-boolean like "yes") passed
+        validation while :meth:`from_parquet_metadata` silently coerced
+        ``is_seed`` to False -- evidence then reported an unknown seed status
+        as a full corpus. Likewise a shipped file stamped with a stale
+        metadata-format ``corpus_version`` was accepted. A shipped corpus is
+        the engine's OWN build artifact (scripts/build_codesets.py), so an
+        absent/garbled seed flag or a wrong format version is a packaging
+        defect that must fail closed, not degrade to a misleading default.
+        Returns the list of defects (empty == well-formed). Shipped-only: a
+        customer corpus may legitimately omit ``is_seed`` (it defaults False,
+        surfaced as-is) and never carries our ``corpus_version``.
+        """
+        defects: list[str] = []
+        if self.corpus_version != CORPUS_METADATA_VERSION:
+            defects.append(
+                f"corpus_version {self.corpus_version!r} != expected {CORPUS_METADATA_VERSION!r}"
+            )
+        if self.raw_is_seed is None:
+            defects.append("is_seed metadata key is absent")
+        elif self.raw_is_seed.strip().lower() not in ("true", "false"):
+            defects.append(f"is_seed {self.raw_is_seed!r} is not a boolean (true/false)")
+        return defects
 
     def to_json_dict(self) -> dict[str, Any]:
         """Return a plain JSON-serializable dict (evidence + Plan-YAML shape)."""

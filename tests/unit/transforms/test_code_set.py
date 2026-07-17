@@ -762,6 +762,111 @@ class TestCorpusProvenance:
         assert "icd10" in exc_info.value.message
         assert "mcc" in exc_info.value.message
 
+    def _complete_shipped_meta(self, **overrides: bytes) -> dict[bytes, bytes]:
+        """A shipped stamp with all four REQUIRED fields + matching identity.
+
+        Callers override `is_seed` / `decoy_corpus_version` to exercise the
+        Codex round-7 shipped-stamp strictness in isolation (identity and
+        required-field checks already pass, so validation reaches the new
+        gate). `decoy_corpus` is 'seedcorpus' to match the requested name.
+        """
+        meta: dict[bytes, bytes] = {
+            b"decoy_corpus": b"seedcorpus",
+            b"decoy_corpus_version": b"2.0",
+            b"source": b"Some Public Source",
+            b"source_version": b"2024",
+            b"effective_date": b"2024-01-01",
+            b"license": b"Public domain",
+            b"is_seed": b"true",
+        }
+        # Override keys arrive as str (**kwargs); the metadata dict is
+        # byte-keyed, so encode them to actually REPLACE the base entry rather
+        # than add a colliding str key that pyarrow silently drops.
+        for key, value in overrides.items():
+            meta[key.encode()] = value
+        return meta
+
+    def test_shipped_corpus_missing_is_seed_fails_closed(self, tmp_path: pathlib.Path):
+        """Codex round-7 P2 remediation: a SHIPPED corpus with complete
+        required fields and matching identity but NO is_seed key fails closed.
+        Previously `from_parquet_metadata` silently coerced the absent key to
+        is_seed=False, so evidence reported an unknown seed status as a full
+        corpus. is_seed is not a REQUIRED_PROVENANCE_FIELD, so the pre-round-7
+        completeness check let it through."""
+        from decoy_engine.transforms._codeset_loader import _get_corpus_record
+
+        meta = self._complete_shipped_meta()
+        del meta[b"is_seed"]
+        tbl = pa.table({"code": pa.array(["A01", "A02"], type=pa.string())}, metadata=meta)
+        path = tmp_path / "seedcorpus.parquet"
+        pq.write_table(tbl, str(path))
+
+        with pytest.raises(PlanCompileError) as exc_info:
+            _get_corpus_record("seedcorpus", path, is_shipped=True)
+        assert exc_info.value.code == "code_set_corpus_provenance_malformed_stamp"
+        assert "is_seed" in exc_info.value.message
+
+    def test_shipped_corpus_invalid_is_seed_fails_closed(self, tmp_path: pathlib.Path):
+        """Codex round-7 P2 remediation: a non-boolean is_seed value (e.g.
+        'yes') on a SHIPPED corpus fails closed rather than silently parsing to
+        False (anything != 'true' collapsed to False pre-round-7)."""
+        from decoy_engine.transforms._codeset_loader import _get_corpus_record
+
+        tbl = pa.table(
+            {"code": pa.array(["A01", "A02"], type=pa.string())},
+            metadata=self._complete_shipped_meta(is_seed=b"yes"),
+        )
+        path = tmp_path / "seedcorpus.parquet"
+        pq.write_table(tbl, str(path))
+
+        with pytest.raises(PlanCompileError) as exc_info:
+            _get_corpus_record("seedcorpus", path, is_shipped=True)
+        assert exc_info.value.code == "code_set_corpus_provenance_malformed_stamp"
+
+    def test_shipped_corpus_stale_metadata_version_fails_closed(self, tmp_path: pathlib.Path):
+        """Codex round-7 P2 remediation: a SHIPPED corpus stamped with a
+        superseded metadata format version (corpus_version != current) fails
+        closed -- the format is our own and a stale one is a packaging defect,
+        not something to accept silently."""
+        from decoy_engine.transforms._codeset_loader import _get_corpus_record
+
+        tbl = pa.table(
+            {"code": pa.array(["A01", "A02"], type=pa.string())},
+            metadata=self._complete_shipped_meta(decoy_corpus_version=b"1.0"),
+        )
+        path = tmp_path / "seedcorpus.parquet"
+        pq.write_table(tbl, str(path))
+
+        with pytest.raises(PlanCompileError) as exc_info:
+            _get_corpus_record("seedcorpus", path, is_shipped=True)
+        assert exc_info.value.code == "code_set_corpus_provenance_malformed_stamp"
+        assert "corpus_version" in exc_info.value.message
+
+    def test_customer_corpus_missing_is_seed_and_version_is_exempt(self, tmp_path: pathlib.Path):
+        """Codex round-7 P2 remediation is SHIPPED-ONLY: a CUSTOMER corpus may
+        legitimately omit is_seed (defaults False, surfaced as-is) and never
+        carries our corpus_version. It must still load with complete required
+        fields, not trip the new shipped-stamp gate."""
+        from decoy_engine.transforms.code_set import load_corpus_provenance
+
+        tbl = pa.table(
+            {"code": pa.array(["C01", "C02"], type=pa.string())},
+            metadata={
+                b"decoy_corpus": b"customer_no_seed",
+                b"source": b"Internal registry",
+                b"source_version": b"2026-01",
+                b"effective_date": b"2026-01-01",
+                b"license": b"Proprietary",
+            },
+        )
+        path = tmp_path / "customer_no_seed.parquet"
+        pq.write_table(tbl, str(path))
+
+        prov = load_corpus_provenance("customer_no_seed", path)
+        assert prov is not None
+        assert prov.is_seed is False
+        assert prov.raw_is_seed is None  # absent, but exempt for customer corpora
+
     def test_customer_corpus_missing_provenance_warns_not_fails(
         self, tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture
     ):

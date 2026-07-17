@@ -165,7 +165,22 @@ class CodeSetHandler:
         # customer corpus file replaced mid-run can then no longer make a
         # later value mask off a different version than the one evidence
         # already reported -- see this module's docstring.
-        corpus_record = resolve_corpus_record(code_cfg)
+        #
+        # Codex round-7 P2 CROSS-INVOCATION DIVERGENCE remediation: pin the
+        # record on `ctx` keyed by (table, column) so the round-6 single-run
+        # guarantee extends across the TWO `run` invocations an FK parent
+        # under `orphan_policy=REMAP` triggers (the parent's own masking, plus
+        # the orphan-REMAP closure re-running the parent strategy). Both key on
+        # the same (current_table, evidence-column) identity, so orphan remaps
+        # mask off -- and stamp evidence for -- the exact same corpus version
+        # as the parent's real values, even if the file is replaced between
+        # the two calls. Falls through to a fresh resolve on the first call
+        # (byte-identical to round-6 behavior when no replacement occurs).
+        record_key = (ctx.current_table, ctx.nested_outer_column or column)
+        corpus_record = ctx.code_set_records.get(record_key)
+        if corpus_record is None:
+            corpus_record = resolve_corpus_record(code_cfg)
+            ctx.code_set_records[record_key] = corpus_record
         evidence = describe_loaded_corpus(code_cfg, record=corpus_record)
 
         source = df[column]

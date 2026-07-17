@@ -154,6 +154,24 @@ class StrategyContext:
     # mirroring `_orphan.py`'s prior_table save/restore since nested
     # dispatch can itself run mid-dispatch of an enclosing node.
     nested_outer_column: str = ""
+    # Codex round-7 P2 CROSS-INVOCATION MASKING/EVIDENCE DIVERGENCE
+    # remediation: the job-wide pinned corpus record per (table, column). The
+    # round-6 fix pinned one corpus record within a SINGLE `CodeSetHandler.run`
+    # so masking and evidence could not diverge on a mid-run file replacement.
+    # But a code_set on an FK PARENT under `orphan_policy=REMAP` dispatches
+    # `run` TWICE -- once for the parent column, and once from the orphan-REMAP
+    # closure (`_orphan.make_remap_fn`) which re-runs the parent's strategy to
+    # mask orphan keys -- and each call independently re-resolved from the
+    # loader cache. A customer corpus file replaced between those two calls
+    # then masked real parent values off v1 and remapped orphans off v2, and
+    # the second call's evidence stamp overwrote the first's with v2. Pinning
+    # the resolved record here (job scope == this StrategyContext's lifetime),
+    # keyed by the same (table, column) identity the evidence sink uses, makes
+    # every `run` invocation for one logical column in one job share ONE corpus
+    # version. Value typed loosely (`Any`) so the execution boundary does not
+    # import the transforms-layer `_CorpusRecord`. Same mutate-in-place pattern
+    # as `code_set_corpora` above; a fresh dict per job via default_factory.
+    code_set_records: dict[tuple[str, str], Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         # A frozen dataclass forbids attribute assignment; object.__setattr__ is

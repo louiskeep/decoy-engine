@@ -9,6 +9,38 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (HC-1 slice 1: code_set corpus provenance + scale infrastructure, 2026-07-17)
+
+Ships the provenance and scale plumbing for the healthcare code sets; the full
+public-domain corpora themselves (the real-data ETL) are HC-1 slice 2. See
+`docs/backlog/hc-1-codeset-slice2-and-hardening-tail.md`.
+
+- **Corpus provenance is surfaced as evidence, never config.** Each `code_set`
+  corpus carries a provenance stamp (`source`, `source_version`,
+  `effective_date`, `license`, `is_seed`, metadata format version) embedded in
+  its Parquet key/value metadata. `CodeSetHandler` stamps one
+  identifiers-and-counts-only entry per `(table, column)` into
+  `ExecutionResult.quality_metrics['code_set_corpora']` across the pandas,
+  sequential, and out-of-core routes -- **never raw codes**. Provenance is a
+  runtime observation, so it is deliberately NOT written into the plan YAML.
+- **Fail-closed provenance validation.** A SHIPPED corpus with missing,
+  incomplete, or identity-mismatched provenance is job-fatal; a shipped corpus
+  with an absent/garbled `is_seed` or a stale metadata format version is now
+  also job-fatal (a build artifact whose seed status is unknown must not
+  masquerade as a full corpus). A CUSTOMER corpus may omit provenance entirely
+  (warn), but a half-filled stamp is rejected.
+- **O(1) chapter lookup + bounded corpus caching.** `chapter_preserve` now uses
+  a memoized `code -> chapter` index instead of an O(n) per-value scan. Shipped
+  corpora cache on resolved path; customer corpora cache on
+  `(path, mtime, ctime, size)` in a bounded LRU so a same-path file replacement
+  invalidates automatically.
+- **Masking and evidence cannot diverge on a mid-job corpus swap.** One resolved
+  corpus record is pinned per `(table, column)` for the life of a job and
+  threaded into both the evidence stamp and every per-value mask -- including
+  the second invocation an FK parent under `orphan_policy=REMAP` triggers via
+  the orphan-remap closure -- so real values, remapped orphans, and the evidence
+  all report the same corpus version.
+
 ## [0.4.0] - 2026-07-15
 
 ### Fixed

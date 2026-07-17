@@ -359,6 +359,28 @@ def _validate_provenance(
                     "provenance.corpus must match the requested corpus name."
                 ),
             )
+        # Codex round-7 P2 remediation: the required-field check above does
+        # not cover is_seed or the metadata format version, so a shipped
+        # corpus with all four required fields but an absent/garbled is_seed
+        # (silently coerced to False -> evidence reports a seed as a full
+        # corpus) or a stale corpus_version slipped through. Shipped corpora
+        # are our own build artifacts; those are packaging defects, fail
+        # closed. Customer corpora are exempt (they may omit is_seed and never
+        # carry our corpus_version).
+        if is_shipped:
+            stamp_defects = provenance.shipped_stamp_defects()
+            if stamp_defects:
+                raise PlanCompileError(
+                    code="code_set_corpus_provenance_malformed_stamp",
+                    path="provider_config.code_set",
+                    message=(
+                        f"shipped corpus {name!r} at {path} has a malformed "
+                        f"provenance stamp ({'; '.join(stamp_defects)}). A "
+                        "shipped corpus is a build artifact: is_seed and the "
+                        "metadata format version must be explicit and current "
+                        "so evidence cannot misreport a seed as a full corpus."
+                    ),
+                )
         return
     if is_shipped:
         raise PlanCompileError(
