@@ -250,3 +250,62 @@ class TestWhenPlusGroupByRejected:
             ]
         }
         check_date_shift_group_by_refs(cfg)  # no raise
+
+
+class TestGroupByOnFkColumnRejected:
+    """Codex R2 P1s: date_shift+group_by on an FK-participating column is
+    fail-closed at compile. A per-entity anchored shift makes equal FK keys mask
+    to different dates -- breaking RI on the chunked FK self-masking route (FK
+    child) and mis-anchoring orphan REMAP (FK parent). date_shift WITHOUT
+    group_by stays FK-safe, so only the combination is rejected."""
+
+    def _cfg(self, *, group_by: str | None, as_parent: bool) -> dict[str, Any]:
+        # `visit_date` is the FK column that is also date_shift'd.
+        pc: dict[str, Any] = {"min_days": -30, "max_days": 30}
+        if group_by is not None:
+            pc["group_by"] = group_by
+        visits_cols = [
+            {
+                "name": "visit_date",
+                "strategy": "date_shift",
+                "namespace": "vd",
+                "provider_config": pc,
+            },
+            {"name": "patient_id", "strategy": "passthrough"},
+        ]
+        other_cols = [{"name": "visit_date", "strategy": "passthrough"}]
+        # date_shift column is the parent end if as_parent, else the child end.
+        parent_tbl, child_tbl = ("visits", "encounters") if as_parent else ("encounters", "visits")
+        rel = {
+            "parent": {"table": parent_tbl, "columns": ["visit_date"]},
+            "children": [{"table": child_tbl, "columns": ["visit_date"]}],
+            "orphan_policy": "remap",
+        }
+        return {
+            "tables": [
+                {"name": "visits", "columns": visits_cols},
+                {"name": "encounters", "columns": other_cols},
+            ],
+            "relationships": [rel],
+        }
+
+    def test_group_by_on_fk_parent_column_rejected(self) -> None:
+        with pytest.raises(PlanCompileError) as exc:
+            check_date_shift_group_by_refs(self._cfg(group_by="patient_id", as_parent=True))
+        assert exc.value.code == "date_shift_group_by_on_fk_column_unsupported"
+
+    def test_group_by_on_fk_child_column_rejected(self) -> None:
+        with pytest.raises(PlanCompileError) as exc:
+            check_date_shift_group_by_refs(self._cfg(group_by="patient_id", as_parent=False))
+        assert exc.value.code == "date_shift_group_by_on_fk_column_unsupported"
+
+    def test_fk_date_shift_without_group_by_passes(self) -> None:
+        # date_shift on an FK column is FK-safe WITHOUT group_by (per-value
+        # deterministic), so it must NOT be rejected.
+        check_date_shift_group_by_refs(self._cfg(group_by=None, as_parent=True))  # no raise
+
+    def test_group_by_on_non_fk_column_passes(self) -> None:
+        # No relationships: the same config is fine.
+        cfg = self._cfg(group_by="patient_id", as_parent=True)
+        cfg["relationships"] = []
+        check_date_shift_group_by_refs(cfg)  # no raise

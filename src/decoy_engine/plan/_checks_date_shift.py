@@ -37,6 +37,11 @@ def check_date_shift_group_by_refs(config: dict[str, Any]) -> None:
        rejected. The nested child runs against a synthetic single-column
        ``_nested_leaves`` frame with no sibling columns, so the entity anchor
        can never be present -- fail closed rather than KeyError at execution.
+    5. group_by on an FK-participating column (Codex R2 P1s): rejected. Entity
+       anchoring makes the shift depend on a sibling value, so equal FK keys can
+       mask to different dates -- breaking RI on the chunked FK self-masking
+       route and mis-anchoring orphan REMAP. date_shift WITHOUT group_by is
+       FK-safe (per-value deterministic); only the combination is rejected.
     4. group_by combined with ``when`` (Codex R1 P1 #1 residual): rejected. The
        pre-mask anchor is label-aligned to the frame the handler sees, which is
        correct on pandas but not on the polars-native when-gate (it filters to a
@@ -56,6 +61,28 @@ def check_date_shift_group_by_refs(config: dict[str, Any]) -> None:
     Raises:
         PlanCompileError: A group_by ref is missing, non-string, or nested.
     """
+    # FK-participating (table, column) pairs (Codex R2 P1s). A date_shift with
+    # `group_by` makes the shift depend on a per-entity anchor, which BREAKS the
+    # invariant every FK route relies on -- that equal source key -> equal masked
+    # key. On the chunked FK self-masking route an FK child so configured can
+    # shift differently from its parent (RI break); under orphan_policy=remap an
+    # FK parent so configured is invoked on a synthetic orphan-only frame whose
+    # RangeIndex mis-aligns the anchor (or whose snapshot was already evicted in
+    # sequential mode). date_shift WITHOUT group_by stays FK-safe (per-value
+    # deterministic), so only the group_by combination is rejected.
+    fk_cols: set[tuple[str, str]] = set()
+    for rel in config.get("relationships", []) or []:
+        if not isinstance(rel, dict):
+            continue
+        ends = [rel.get("parent"), *(rel.get("children") or [])]
+        for end in ends:
+            if not isinstance(end, dict):
+                continue
+            end_table = end.get("table")
+            for end_col in end.get("columns", []) or []:
+                if end_table and end_col:
+                    fk_cols.add((str(end_table), str(end_col)))
+
     tables = config.get("tables", []) if isinstance(config.get("tables"), list) else []
     for table_entry in tables:
         if not isinstance(table_entry, dict):
@@ -139,6 +166,25 @@ def check_date_shift_group_by_refs(config: dict[str, Any]) -> None:
                         f"{table_name!r} references group_by column "
                         f"{group_by!r} which is not defined in the same "
                         f"table. Available columns: {sorted(all_col_names)!r}."
+                    ),
+                )
+            # FK column + group_by (Codex R2 P1s): fail closed. A group_by shift
+            # depends on a per-entity anchor, so equal FK keys can mask to
+            # different dates -- breaking referential integrity on the chunked FK
+            # self-masking route (FK child) and mis-anchoring orphan REMAP (FK
+            # parent). Reject until per-route FK-anchor threading exists.
+            if (table_name, col_name) in fk_cols:
+                raise PlanCompileError(
+                    code="date_shift_group_by_on_fk_column_unsupported",
+                    path=(f"tables.{table_name}.columns.{col_name}.provider_config.group_by"),
+                    message=(
+                        f"date_shift column {col_name!r} in table {table_name!r} "
+                        "participates in a foreign-key relationship AND sets "
+                        "group_by. Entity-anchored shifting makes the masked value "
+                        "depend on a sibling anchor, which breaks referential "
+                        "integrity (equal keys can shift apart) and orphan remap. "
+                        "Remove group_by from this FK column, or drop the FK "
+                        "relationship on it."
                     ),
                 )
             # `when` + `group_by` (Codex R1 P1 #1 residual): fail closed. The
