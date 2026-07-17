@@ -15,7 +15,6 @@ strategy registration in SCALAR_HANDLERS. A test that only calls
 
 from __future__ import annotations
 
-import pathlib
 from types import SimpleNamespace
 from typing import Any
 
@@ -23,6 +22,7 @@ import pyarrow as pa
 import pytest
 
 from decoy_engine.execution import PandasExecutionAdapter
+from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.relationships._graph import RelationshipGraph
@@ -39,6 +39,7 @@ def _col(
     *,
     provider_config: tuple[tuple[str, Any], ...] = (),
     namespace: str | None = None,
+    when: str | None = None,
 ) -> ColumnSeed:
     return ColumnSeed(
         namespace=namespace,
@@ -50,6 +51,7 @@ def _col(
         deterministic=False,
         provider_config=provider_config,
         coherent_with=(),
+        when=when,
     )
 
 
@@ -334,31 +336,46 @@ class TestCodeSetProvenanceEvidence:
 
 
 class TestCodeSetPlanYamlProvenance:
-    """HC-1 slice 1 item 3: corpus provenance stamped into the Plan YAML via
-    plan/_serialize.py::_column_seed_to_dict when strategy == 'code_set'."""
+    """Codex P1 PROVENANCE IS EVIDENCE, NOT PLAN STATE remediation.
 
-    def test_column_seed_to_dict_stamps_code_set_provenance(self) -> None:
+    HC-1 slice 1 originally stamped `code_set_provenance` onto the Plan YAML
+    from whatever corpus happened to be on disk at `plan_to_yaml` time. That
+    made the plan artifact non-deterministic (a swapped or absent corpus
+    silently changed or dropped the block) and it never round-tripped
+    (`_column_seed_from_dict` ignores the key). The HC-1 spec requires
+    provenance "surfaced in output/evidence", not in the reproducible plan
+    config, so `_column_seed_to_dict` must NEVER emit this key -- provenance
+    lives only in execution evidence
+    (`ExecutionResult.quality_metrics['code_set_corpora']`, from the
+    actually-loaded corpus at run time; see TestCodeSetCorpusEvidence
+    above)."""
+
+    def test_column_seed_to_dict_never_stamps_provenance_for_a_valid_shipped_corpus(
+        self,
+    ) -> None:
+        """Even for a real, resolvable, fully-provenanced shipped corpus
+        (icd10), the plan-YAML dict must carry no code_set_provenance key."""
         from decoy_engine.plan._serialize import _column_seed_to_dict
 
         cs = _col("code_set", provider_config=(("code_set", "icd10"),))
         out = _column_seed_to_dict(cs)
-        prov = out.get("code_set_provenance")
-        assert prov is not None
-        assert prov["source_version"] == "FY2024"
-        assert prov["effective_date"] == "2023-10-01"
-        assert prov["is_seed"] is True
+        assert "code_set_provenance" not in out
 
-    def test_column_seed_to_dict_omits_provenance_for_non_code_set_strategy(self) -> None:
+    def test_column_seed_to_dict_never_stamps_provenance_for_non_code_set_strategy(
+        self,
+    ) -> None:
         from decoy_engine.plan._serialize import _column_seed_to_dict
 
         cs = _col("passthrough")
         out = _column_seed_to_dict(cs)
         assert "code_set_provenance" not in out
 
-    def test_column_seed_to_dict_omits_provenance_for_unreachable_customer_corpus(self) -> None:
+    def test_column_seed_to_dict_never_stamps_provenance_for_unreachable_customer_corpus(
+        self,
+    ) -> None:
         """A code_set column referencing a customer corpus that does not
-        exist in THIS environment must not raise plan_to_yaml -- best-effort,
-        omit the annotation (see corpus_provenance_for_manifest's docstring)."""
+        exist in THIS environment must not raise plan_to_yaml, and (like
+        every other code_set column now) must not gain the key either."""
         from decoy_engine.plan._serialize import _column_seed_to_dict
 
         cs = _col(
@@ -371,40 +388,63 @@ class TestCodeSetPlanYamlProvenance:
         out = _column_seed_to_dict(cs)  # must not raise
         assert "code_set_provenance" not in out
 
-    def test_column_seed_to_dict_omits_provenance_when_stat_races_removal(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
-    ) -> None:
-        """Codex P2 PLAN-SERIALIZATION BEST-EFFORT VIOLATION remediation: a
-        customer corpus removed (or made unreadable) in the gap between
-        `_resolve_read_path`'s `Path.exists()` check and the later
-        `Path.stat()` call raises a bare OSError (FileNotFoundError /
-        PermissionError), not PlanCompileError. `corpus_provenance_for_
-        manifest` must still degrade to "no provenance" instead of breaking
-        `plan_to_yaml` -- only `PlanCompileError` was caught before this fix,
-        so this race escaped straight through `_column_seed_to_dict`.
 
-        Simulated deterministically (a genuine delete-after-check race is not
-        reproducible on demand): `Path.exists` is patched to unconditionally
-        report present while `Path.stat` is patched to unconditionally raise,
-        which reproduces exactly the observable sequence a real race leaves
-        behind -- the existence check passed, the later stat() did not.
-        """
-        from decoy_engine.plan._serialize import _column_seed_to_dict
+class TestCodeSetWhenGateFailClosed:
+    """Codex P2 FAIL-CLOSED VALIDATION BYPASSED BY A ZERO-MATCH `when` GATE
+    remediation: `run_with_when_gate` used to short-circuit to a passthrough
+    (never calling `CodeSetHandler.run`, and so never triggering its eager
+    corpus load/validation) whenever a `when:`-gated code_set column's
+    predicate matched zero rows. A column referencing a missing/invalid
+    corpus therefore succeeded silently as long as its gate happened to
+    match nothing -- violating fail-closed. `CodeSetHandler.preflight` closes
+    this: the corpus is validated unconditionally, even under a zero-match
+    gate."""
 
-        raced_path = tmp_path / "removed_between_check_and_stat.parquet"
-        monkeypatch.setattr(pathlib.Path, "exists", lambda self: True)
-
-        def _raise_stat(self: pathlib.Path, *args: object, **kwargs: object) -> None:
-            raise FileNotFoundError(f"simulated race: {self} removed after the exists() check")
-
-        monkeypatch.setattr(pathlib.Path, "stat", _raise_stat)
-
-        cs = _col(
-            "code_set",
-            provider_config=(
-                ("code_set", "raced_corpus"),
-                ("corpus_source", f"customer:{raced_path}"),
+    def test_zero_match_when_gate_still_fails_closed_on_missing_corpus(self) -> None:
+        """A code_set column whose `when:` predicate matches NO rows, and
+        whose corpus_source points at a customer path that does not exist,
+        must still raise -- not silently pass through the raw values."""
+        table = pa.table({"diag": pa.array(["I10", "E11.9"], type=pa.string())})
+        plan = _plan(
+            "diag",
+            _col(
+                "code_set",
+                provider_config=(
+                    ("code_set", "missing_corpus"),
+                    ("corpus_source", "customer:/no/such/file.parquet"),
+                ),
+                # Never true for either row: the gate matches zero rows.
+                when="diag == 'ZZZ_NEVER_MATCHES'",
             ),
         )
-        out = _column_seed_to_dict(cs)  # must not raise OSError
-        assert "code_set_provenance" not in out
+        with pytest.raises(PlanCompileError) as excinfo:
+            PandasExecutionAdapter().run_single(
+                plan, table, registry=_REG, relationship_graph=_GRAPH, namespace_registry=_NS
+            )
+        assert excinfo.value.code == "code_set_corpus_path_not_found", (
+            f"expected a fail-closed corpus error, got {excinfo.value.code!r}. "
+            "A zero-match when: gate must not let a missing corpus succeed silently."
+        )
+
+    def test_zero_match_when_gate_does_not_stamp_evidence(self) -> None:
+        """The other side of NIT-1: preflight validates but must NOT stamp
+        `code_set_corpora` evidence when the gate matches zero rows -- no
+        value was actually masked, so there is nothing to attest to."""
+        table = pa.table({"diag": pa.array(["I10", "E11.9"], type=pa.string())})
+        plan = _plan(
+            "diag",
+            _col(
+                "code_set",
+                provider_config=(("code_set", "icd10"),),
+                when="diag == 'ZZZ_NEVER_MATCHES'",
+            ),
+        )
+        result = PandasExecutionAdapter().run_single(
+            plan, table, registry=_REG, relationship_graph=_GRAPH, namespace_registry=_NS
+        )
+        # Passthrough: values are untouched (gate matched nothing).
+        assert result.output.column("diag").to_pylist() == ["I10", "E11.9"]
+        assert result.quality_metrics.get("code_set_corpora") is None, (
+            "preflight must validate the corpus without stamping evidence "
+            "for a column that never actually masked a value."
+        )

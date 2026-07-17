@@ -581,18 +581,16 @@ carries Parquet key/value metadata: `source`, `source_url`, `license`,
   provenance stamp, it must be complete; a partial stamp also fails closed
   (a half-filled provenance block is worse than none).
 
-Provenance is surfaced as evidence in two places:
-
-- `ExecutionResult.quality_metrics['code_set_corpora']`: a list of
-  `{code_set, source, source_version, effective_date, license, is_seed,
-  row_count}` entries, one per code_set column used in the job. Counts and
-  identifiers only -- never raw codes.
-- The Plan YAML manifest: each code_set column's entry gets a
-  `code_set_provenance` block (same shape) via
-  `plan/_serialize.py::_column_seed_to_dict`. Best-effort: if the corpus
-  cannot be resolved from wherever the plan is being serialized (e.g. a
-  customer corpus path not mounted in that environment), the block is
-  omitted rather than failing the serialization.
+Provenance is surfaced as evidence, not as plan state: it is stamped ONLY
+into `ExecutionResult.quality_metrics['code_set_corpora']`, a list of
+`{code_set, source, source_version, effective_date, license, is_seed,
+row_count}` entries, one per code_set column used in the job (counts and
+identifiers only -- never raw codes), from the corpus actually loaded at run
+time. It is never written into the Plan YAML manifest: a code corpus is
+data, which may be swapped, absent, or unreachable in whatever environment
+`plan_to_yaml` happens to run in, so stamping it there would make the plan
+artifact non-deterministic (a swapped/absent corpus silently changes or
+drops the block) for a field that does not round-trip anyway.
 
 **Cross-version keyed-access caveat (inherited from SP-06 corpus-sort pattern).**
 MASK mode selects at position `HMAC(...) % candidate_count` over the

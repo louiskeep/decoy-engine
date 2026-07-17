@@ -27,7 +27,6 @@ from decoy_engine.plan._types import (
     SeedEnvelope,
     TableSeed,
 )
-from decoy_engine.transforms.code_set import corpus_provenance_for_manifest
 
 
 def plan_to_yaml(plan: Plan) -> str:
@@ -121,15 +120,17 @@ def _column_seed_to_dict(cs: ColumnSeed) -> dict[str, Any]:
     # DE-02 (6b): emit vault only when set, so legacy plans round-trip unchanged.
     if cs.vault:
         out["vault"] = True
-    # HC-1 slice 1: stamp code-corpus provenance onto the manifest, the same
-    # "surfaced in output/evidence" contract as
-    # ExecutionResult.quality_metrics['code_set_corpora']. Best-effort (see
-    # corpus_provenance_for_manifest's docstring): omitted when the corpus
-    # cannot be resolved from wherever plan_to_yaml happens to run.
-    if cs.strategy == "code_set" and cs.provider_config:
-        provenance = corpus_provenance_for_manifest(dict(cs.provider_config))
-        if provenance is not None:
-            out["code_set_provenance"] = provenance.to_json_dict()
+    # Codex P1 PROVENANCE IS EVIDENCE, NOT PLAN STATE: code-corpus provenance
+    # is deliberately NEVER stamped onto the plan manifest. HC-1 slice 1
+    # originally called corpus_provenance_for_manifest here, which loaded
+    # whatever corpus happened to be on disk at plan_to_yaml time -- making
+    # the plan artifact non-deterministic (a swapped/absent corpus silently
+    # changed or dropped the block) and it never round-tripped
+    # (_column_seed_from_dict ignores unknown keys). The HC-1 spec requires
+    # provenance "surfaced in output/evidence", not in the reproducible plan
+    # config; it lives only in execution evidence
+    # (ExecutionResult.quality_metrics['code_set_corpora'], stamped from the
+    # actually-loaded corpus at run time -- see execution/_strategies/_code_set.py).
     return out
 
 

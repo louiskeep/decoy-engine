@@ -34,6 +34,18 @@ effective_date, license, row_count), never raw codes. Keyed by (table,
 column) rather than bare column name so two tables with a same-named
 code_set column bound to different corpora each surface their own evidence
 entry instead of one overwriting the other.
+
+Codex P2 FAIL-CLOSED VALIDATION BYPASSED BY A ZERO-MATCH `when` GATE
+remediation (2026-07-17): ``run``'s eager corpus load/validation only fires
+when ``run`` is actually invoked, but ``execution._when_gate.run_with_
+when_gate`` never calls ``run`` for a `when:`-gated column whose predicate
+matches zero rows -- it short-circuits to a passthrough. That let a
+code_set column referencing a missing/invalid corpus succeed silently
+whenever its gate happened to match nothing. ``CodeSetHandler.preflight``
+(an optional hook the when-gate calls unconditionally, before its
+zero-match short-circuit) re-runs the same load/validate call so the
+corpus is validated regardless of match count, while evidence stamping
+(NIT-1: only on ``masked_any``) stays exclusively ``run``'s job.
 """
 
 from __future__ import annotations
@@ -71,6 +83,28 @@ class CodeSetHandler:
     """
 
     name: str = "code_set"
+
+    def preflight(self, plan: ColumnSeed, ctx: StrategyContext) -> None:
+        """Load and validate this column's corpus, regardless of row count.
+
+        Codex P2 FAIL-CLOSED VALIDATION BYPASSED BY A ZERO-MATCH `when` GATE
+        remediation: `run()`'s eager `describe_loaded_corpus` call below
+        (the fail-closed corpus check) never executes when this column has a
+        `when:` gate that matches zero rows, because
+        `execution._when_gate.run_with_when_gate` short-circuits to a
+        passthrough before calling `run()` at all. That let a code_set
+        column referencing a missing or invalid corpus succeed silently
+        whenever its gate happened to match nothing. `run_with_when_gate`
+        calls this optional hook unconditionally, before its zero-match
+        short-circuit, so the corpus is always validated. Deliberately does
+        NOT touch `ctx.code_set_corpora` -- NIT-1 (evidence stamped only
+        when the column actually masks >= 1 value) is `run()`'s job alone;
+        this method exists purely to make the load raise when the corpus is
+        bad, not to record evidence.
+        """
+        cfg = provider_config_to_dict(plan.provider_config)
+        code_cfg = CodeSetConfig.from_dict(cfg)
+        describe_loaded_corpus(code_cfg)
 
     def run(
         self,

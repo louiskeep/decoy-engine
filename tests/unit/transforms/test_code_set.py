@@ -24,6 +24,7 @@ excludes the input code (analogous to the FPE domain-exclusion idiom).
 
 from __future__ import annotations
 
+import os
 import pathlib
 import time
 
@@ -940,10 +941,12 @@ class TestCustomerCorpusCacheInvalidation:
     at the same path is served stale forever (correctness), and the cache
     grows one entry per distinct path ever seen with no eviction (memory).
     Both are fixed in `transforms/_codeset_loader.py::_customer_cache`: keyed
-    on (resolved_path, mtime_ns, size) so a same-path replacement mints a new
-    entry, in a bounded LRU so the cache cannot grow without bound. SHIPPED
-    corpora are unaffected (bundled, immutable, simple path key; see
-    `_shipped_cache`)."""
+    on (resolved_path, mtime_ns, ctime_ns, size) -- ctime closes the case
+    where a same-size replacement is deliberately re-stamped with the
+    original mtime (Codex P2 remediation) -- so a same-path replacement
+    mints a new entry, in a bounded LRU so the cache cannot grow without
+    bound. SHIPPED corpora are unaffected (bundled, immutable, simple path
+    key; see `_shipped_cache`)."""
 
     @staticmethod
     def _write(path: pathlib.Path, codes: list[str]) -> None:
@@ -976,6 +979,83 @@ class TestCustomerCorpusCacheInvalidation:
         assert second == {"NEW1", "NEW2"}, (
             f"load_corpus served stale cached rows {second!r} after the file at "
             f"{path} was replaced; expected the new content."
+        )
+
+    def test_replaced_customer_corpus_with_same_mtime_and_size_is_not_served_stale(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Codex P2 CUSTOMER CACHE SAME-MTIME+SAME-SIZE STALENESS
+        remediation: a replacement file that keeps the EXACT same mtime and
+        size -- a coarse-timestamp filesystem, or tooling that explicitly
+        restores mtime after writing (e.g. `rsync --times`) -- must still be
+        detected. `ctime` (inode change time) updates on any metadata-
+        changing operation (write, rename, utime), even when mtime is
+        deliberately re-stamped, because the re-stamping call is itself a
+        metadata change.
+
+        Real stat() results cannot be forced to collide on mtime_ns+size
+        across two genuinely different writes on every filesystem/CI
+        runner, so this test patches `Path.stat` for the corpus path only:
+        both loads see byte-identical mtime_ns and size, and only ctime_ns
+        differs on the second -- exactly what a real same-path replacement
+        with a preserved mtime leaves behind. This isolates the assertion
+        to the one variable the fix actually added to the cache key.
+
+        The fake ctime is driven by a `state` dict the test flips explicitly
+        BETWEEN the two `load_corpus` calls, not by an internal call
+        counter: `_get_corpus_record` calls `.stat()` (directly or via
+        `Path.exists()`/`.resolve()`) an unspecified, possibly-multiple
+        number of times per invocation, so a counter that advances the
+        return value on every call cannot reliably land on a different
+        value for the cache-key-determining call each time.
+        """
+        from decoy_engine.transforms.code_set import load_corpus
+
+        path = tmp_path / "ctime_replaceable.parquet"
+        self._write(path, ["OLD1", "OLD2"])
+        real_stat = pathlib.Path.stat
+        frozen = real_stat(path)
+        state = {"ctime_ns": frozen.st_ctime_ns}
+
+        def _fake_stat(self: pathlib.Path, *args: object, **kwargs: object) -> os.stat_result:
+            if self != path:
+                return real_stat(self, *args, **kwargs)
+            # Same mtime_ns and size every call; ctime_ns is whatever the
+            # test has currently set (flipped once, between the two loads).
+            return os.stat_result(
+                (
+                    frozen.st_mode,
+                    frozen.st_ino,
+                    frozen.st_dev,
+                    frozen.st_nlink,
+                    frozen.st_uid,
+                    frozen.st_gid,
+                    frozen.st_size,
+                    int(frozen.st_atime),
+                    int(frozen.st_mtime),
+                    int(frozen.st_ctime),
+                ),
+                {
+                    "st_atime_ns": frozen.st_atime_ns,
+                    "st_mtime_ns": frozen.st_mtime_ns,
+                    "st_ctime_ns": state["ctime_ns"],
+                },
+            )
+
+        monkeypatch.setattr(pathlib.Path, "stat", _fake_stat)
+
+        first = {r["code"] for r in load_corpus("ctime_replaceable", path)}
+        assert first == {"OLD1", "OLD2"}
+
+        # Replace the file's CONTENT on disk and bump only the fake ctime;
+        # mtime_ns and size stay byte-identical to the first load.
+        self._write(path, ["NEW1", "NEW2"])
+        state["ctime_ns"] = frozen.st_ctime_ns + 1
+        second = {r["code"] for r in load_corpus("ctime_replaceable", path)}
+        assert second == {"NEW1", "NEW2"}, (
+            f"load_corpus served stale cached rows {second!r} for a replacement "
+            "that kept an identical mtime_ns and size and differed only in "
+            "ctime_ns; the cache key must include ctime to catch this."
         )
 
     def test_replaced_customer_corpus_provenance_also_refreshes(self, tmp_path: pathlib.Path):

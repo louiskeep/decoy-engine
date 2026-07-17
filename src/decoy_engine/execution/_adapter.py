@@ -160,7 +160,18 @@ class StrategyContext:
 
 
 class StrategyHandler(Protocol):
-    """A single scalar masking strategy, invoked through the boundary."""
+    """A single scalar masking strategy, invoked through the boundary.
+
+    `preflight` is an OPTIONAL extra method, not part of this Protocol's
+    formal shape (duck-typed via `getattr(handler, "preflight", None)` in
+    `execution._when_gate.run_with_when_gate`, Codex P2 FAIL-CLOSED
+    VALIDATION BYPASSED BY A ZERO-MATCH `when` GATE remediation). A handler
+    whose `run()` does fail-closed validation that must happen even when a
+    `when:` gate matches zero rows (e.g. `CodeSetHandler` loading/validating
+    its corpus) defines `preflight(plan, ctx) -> None`; the when-gate calls
+    it unconditionally before its zero-match short-circuit. Handlers with no
+    such need simply do not define it.
+    """
 
     name: str
 

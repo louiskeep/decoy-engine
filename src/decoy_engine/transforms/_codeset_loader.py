@@ -5,8 +5,7 @@ Split out of ``transforms/code_set.py`` to keep that module under its LOC cap
 discipline). This module owns the low-level "read a Parquet file off disk,
 validate it, cache it" concern; ``code_set.py`` owns the strategy-level
 concepts (``CodeSetConfig``, HMAC-keyed selection, chapter_preserve) and the
-config-aware wrappers (``corpus_provenance_for_manifest``,
-``describe_loaded_corpus``) that need both.
+config-aware wrapper (``describe_loaded_corpus``) that needs both.
 
 Pattern: Parquet key/value metadata carries provenance (see
 ``transforms/_codeset_provenance.py`` for the ``CodeSetProvenance`` type and
@@ -77,14 +76,29 @@ _shipped_cache: dict[str, _CorpusRecord] = {}
 # replaced file would be served the STALE pre-replacement rows forever
 # (correctness), and the cache also grew one entry per distinct path ever
 # seen with no eviction (memory, in a long-lived platform worker). Keying on
-# (resolved_path, mtime_ns, size) makes a same-path file replacement mint a
-# new cache entry automatically (a modified file almost never keeps the same
-# mtime+size, and a job that races a mid-run file swap either way was never
-# consistent), and bounding it as an LRU (OrderedDict, move-to-end on hit,
-# evict-oldest on overflow) caps worst-case memory for a worker that
-# processes many distinct customer corpus files over its lifetime.
+# (resolved_path, mtime_ns, ctime_ns, size) makes a same-path file
+# replacement mint a new cache entry automatically, and bounding it as an
+# LRU (OrderedDict, move-to-end on hit, evict-oldest on overflow) caps
+# worst-case memory for a worker that processes many distinct customer
+# corpus files over its lifetime.
+#
+# Codex P2 CUSTOMER CACHE SAME-MTIME+SAME-SIZE STALENESS remediation:
+# mtime+size alone under-identifies a file. A coarse-timestamp filesystem
+# (1s or 2s resolution, common on some network/Windows mounts) or tooling
+# that explicitly restores the original mtime after writing (rsync
+# --times, some backup/deploy tooling) can produce a replacement file that
+# keeps the exact same mtime, and a same-length replacement keeps the same
+# size -- the old key then silently reuses the stale cached rows. ``ctime``
+# (inode change time; POSIX st_ctime, or Windows' "last metadata change" on
+# platforms without POSIX ctime semantics) updates on content write AND on
+# metadata-only operations like ``rename``/``utime``, closing the common
+# case: even a same-path replace that deliberately re-stamps mtime still
+# bumps ctime because the re-stamping utime() call is itself a metadata
+# change. This is still best-effort file identity, not a content hash --
+# hashing every customer corpus (up to ICD-10-CM scale, ~70k rows) on every
+# load would defeat the point of caching it.
 _CUSTOMER_CACHE_MAX_ENTRIES = 32
-_customer_cache: OrderedDict[tuple[str, int, int], _CorpusRecord] = OrderedDict()
+_customer_cache: OrderedDict[tuple[str, int, int, int], _CorpusRecord] = OrderedDict()
 
 
 def load_corpus(name: str, path: Path | None = None) -> list[dict[str, Any]]:
@@ -174,10 +188,13 @@ def _get_corpus_record(name: str, path: Path | None, *, is_shipped: bool) -> _Co
 
     MEDIUM-1 remediation (HC-1 slice 1 gap): shipped corpora cache on the
     resolved path alone (bundled + immutable, see ``_shipped_cache``'s module
-    comment); customer corpora additionally key on ``(mtime_ns, size)`` so a
-    file replaced at the same path between calls invalidates automatically,
-    in a bounded LRU (``_customer_cache``) so the cache cannot grow without
-    bound over a long-lived process's lifetime.
+    comment); customer corpora additionally key on ``(mtime_ns, ctime_ns,
+    size)`` so a file replaced at the same path between calls invalidates
+    automatically (Codex P2 remediation: ``ctime`` closes the case where a
+    same-size replacement is deliberately re-stamped with the original
+    mtime -- see ``_customer_cache``'s module comment), in a bounded LRU
+    (``_customer_cache``) so the cache cannot grow without bound over a
+    long-lived process's lifetime.
     """
     resolved = _resolve_read_path(name, path)
     resolved_str = str(resolved.resolve())
@@ -190,7 +207,10 @@ def _get_corpus_record(name: str, path: Path | None, *, is_shipped: bool) -> _Co
         return record
 
     stat = resolved.stat()
-    cache_key = (resolved_str, stat.st_mtime_ns, stat.st_size)
+    # Best-effort file identity, not a content hash (see the module-level
+    # comment on `_customer_cache` for why ctime is included and a hash is
+    # not).
+    cache_key = (resolved_str, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size)
     cached = _customer_cache.get(cache_key)
     if cached is not None:
         _customer_cache.move_to_end(cache_key)  # LRU: mark as most recently used.

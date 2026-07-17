@@ -190,6 +190,21 @@ def run_with_when_gate(
     if plan.when is None:
         return handler.run(df, column, plan, ctx)
 
+    # Codex P2 FAIL-CLOSED VALIDATION BYPASSED BY A ZERO-MATCH `when` GATE
+    # remediation: a handler's own fail-closed preflight (e.g. CodeSetHandler
+    # loading/validating its corpus) normally runs inside `handler.run()`,
+    # which the `not mask.any()` short-circuit below never reaches. That let
+    # a column referencing a missing/invalid corpus succeed silently
+    # whenever its `when:` predicate happened to match zero rows. A handler
+    # that needs config/data validated regardless of match count exposes an
+    # optional `preflight(plan, ctx) -> None` method; call it unconditionally
+    # here, BEFORE the short-circuit, so it always runs while the handler's
+    # own `run()` (reached only on a non-empty match) still does the real
+    # per-row work and evidence stamping unchanged.
+    preflight = getattr(handler, "preflight", None)
+    if preflight is not None:
+        preflight(plan, ctx)
+
     mask = _eval_predicate(df, plan.when, plan.strategy)
 
     if not mask.any():

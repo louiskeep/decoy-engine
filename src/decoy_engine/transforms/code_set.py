@@ -64,8 +64,8 @@ Provenance + scale (HC-1 slice 1, 2026-07-17)
   Every corpus load is validated and cached once per cache key (module-level
   ``_shipped_cache`` for bundled corpora, keyed on resolved path; a bounded
   LRU ``_customer_cache`` for operator-supplied corpora, keyed on resolved
-  path + mtime + size so a file replaced at the same path invalidates
-  automatically instead of serving stale rows -- see
+  path + mtime + ctime + size so a file replaced at the same path
+  invalidates automatically instead of serving stale rows -- see
   ``_codeset_loader.py``'s module docstring), including a memoized
   ``code -> chapter`` dict built at that same load point -- ``_get_chapter``
   is an O(1) lookup instead of the pre-HC-1 O(n) scan, which is what makes an
@@ -76,10 +76,12 @@ Provenance + scale (HC-1 slice 1, 2026-07-17)
   closed (``code_set_corpus_missing_provenance``, job-fatal); a CUSTOMER
   corpus without provenance only warns (it may legitimately have none), but
   a partial stamp on a customer corpus still fails closed -- see
-  ``_validate_provenance``. Provenance is surfaced as evidence via
+  ``_validate_provenance``. Provenance is surfaced as evidence ONLY, via
   ``describe_loaded_corpus`` (``ExecutionResult.quality_metrics
-  ['code_set_corpora']``, counts + identifiers only, no raw codes) and via
-  ``corpus_provenance_for_manifest`` (Plan YAML, ``plan/_serialize.py``).
+  ['code_set_corpora']``, counts + identifiers only, no raw codes); it is
+  deliberately never written into the Plan YAML -- a code corpus is data,
+  not reproducible plan config (Codex P1 PROVENANCE IS EVIDENCE, NOT PLAN
+  STATE remediation).
 """
 
 from __future__ import annotations
@@ -95,9 +97,8 @@ from decoy_engine.transforms._codeset_loader import (
     _SHIPPED_CORPORA,
     _get_corpus_record,
     load_corpus,  # noqa: F401 -- re-exported public API (see below)
-    load_corpus_provenance,
+    load_corpus_provenance,  # noqa: F401 -- re-exported public API (see below)
 )
-from decoy_engine.transforms._codeset_provenance import CodeSetProvenance
 
 # Stable salt for HMAC-keyed row derivation. Same purpose as
 # reference_tables._KEYED_ACCESS_SALT: determinism, not secrecy.
@@ -208,47 +209,20 @@ def validate_code_set_config(cfg: dict[str, Any]) -> None:
 # The file-I/O / caching / provenance-validation machinery
 # (``_CorpusRecord``, ``_shipped_cache``, ``_customer_cache``, ``_get_corpus_record``,
 # ``load_corpus``, ``load_corpus_provenance``) lives in ``transforms/_codeset_loader.py`` and is
-# imported above. What stays here are the two CONFIG-aware wrappers below
-# (they need ``CodeSetConfig`` / ``validate_code_set_config``, which would
-# create a circular import if the loader depended on them) plus
-# ``_resolve_corpus_path``, shared by both.
-
-
-def corpus_provenance_for_manifest(cfg: dict[str, Any]) -> CodeSetProvenance | None:
-    """Best-effort provenance lookup for Plan-YAML manifest stamping.
-
-    Used by ``plan/_serialize.py::_column_seed_to_dict`` to stamp
-    ``code_set_provenance`` onto a code_set column's manifest entry.
-    Deliberately swallows every failure (bad config, unreadable corpus,
-    missing provenance) and returns ``None`` instead of raising: a Plan may
-    be serialized in an environment without access to a customer corpus file
-    (e.g. an orchestrator that never touches the customer's mounted path),
-    and ``plan_to_yaml`` must not gain a new way to fail just because this
-    annotation could not be resolved. Execution-time corpus loading
-    (``apply_code_set``) remains the actual fail-closed gate.
-
-    Codex P2 PLAN-SERIALIZATION BEST-EFFORT VIOLATION remediation: the load
-    path below (``_codeset_loader._get_corpus_record``) does its existence
-    check and its ``Path.stat()`` call as two separate filesystem operations,
-    so a customer corpus removed (or made unreadable) in the gap between them
-    raises a bare ``OSError`` (``FileNotFoundError``/``PermissionError``),
-    not ``PlanCompileError``. Caught here alongside ``PlanCompileError`` so
-    that ordinary, uncontrolled filesystem races at this best-effort boundary
-    omit provenance instead of breaking ``plan_to_yaml``. This widening is
-    scoped to this annotation boundary only -- ``apply_code_set``'s
-    execution-time fail-closed gate is untouched.
-    """
-    try:
-        validate_code_set_config(cfg)
-    except PlanCompileError:
-        return None
-    name = str(cfg.get("code_set", ""))
-    source = str(cfg.get("corpus_source", "shipped"))
-    override_path = Path(source[len("customer:") :]) if source.startswith("customer:") else None
-    try:
-        return load_corpus_provenance(name, override_path)
-    except (PlanCompileError, OSError):
-        return None
+# imported above. What stays here is the one CONFIG-aware wrapper below
+# (it needs ``CodeSetConfig``, which would create a circular import if the
+# loader depended on it) plus ``_resolve_corpus_path``, which it shares with
+# the execution-time apply path.
+#
+# Codex P1 PROVENANCE IS EVIDENCE, NOT PLAN STATE remediation: this module
+# used to also export ``corpus_provenance_for_manifest``, a best-effort
+# lookup ``plan/_serialize.py`` called to stamp ``code_set_provenance`` onto
+# the Plan YAML. That made the plan artifact non-deterministic (a
+# swapped/absent corpus silently changed or dropped the block) and the field
+# never round-tripped. Deleted; provenance is surfaced ONLY as execution
+# evidence, via ``describe_loaded_corpus`` below
+# (``ExecutionResult.quality_metrics['code_set_corpora']``), from the corpus
+# actually loaded at run time.
 
 
 def describe_loaded_corpus(config: CodeSetConfig) -> dict[str, Any]:
