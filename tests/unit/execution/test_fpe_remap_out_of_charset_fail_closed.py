@@ -94,7 +94,11 @@ def _sources(orphan_key: str) -> dict[str, pa.Table]:
 
 def _run(orphan_key: str) -> Any:
     return PandasExecutionAdapter().run(
-        _plan(), _sources(orphan_key), registry=_REG, relationship_graph=_graph(), namespace_registry=_NS
+        _plan(),
+        _sources(orphan_key),
+        registry=_REG,
+        relationship_graph=_graph(),
+        namespace_registry=_NS,
     )
 
 
