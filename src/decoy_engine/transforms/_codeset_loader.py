@@ -16,6 +16,7 @@ its ``ModelPackManifest``-imitating shape).
 from __future__ import annotations
 
 import logging
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -39,8 +40,8 @@ _SHIPPED_CORPORA = frozenset(CODESET_REGISTRY)
 class _CorpusRecord:
     """A loaded, validated corpus: rows, provenance, and a memoized chapter index.
 
-    Built once per resolved file path and cached in ``_corpus_cache`` (module-
-    level, HC-1 slice 1). ``chapter_index`` is a ``code -> chapter`` dict built
+    Built once per cache key and cached in ``_shipped_cache`` / ``_customer_cache``
+    (module-level, HC-1 slice 1). ``chapter_index`` is a ``code -> chapter`` dict built
     once at load time so ``code_set._get_chapter`` is O(1) per lookup instead
     of an O(n) scan per call -- the fix that makes an ICD-10-CM-scale (~70k
     row) corpus viable, since every masked VALUE used to re-scan the whole
@@ -53,13 +54,37 @@ class _CorpusRecord:
     chapter_index: dict[str, str] | None
 
 
-# Memoized corpus loads, keyed by the resolved corpus file path (str). A
-# corpus is read from disk, validated, provenance-checked, and chapter-
-# indexed at MOST ONCE per process; every subsequent apply_code_set call for
-# the same path reuses the cached record. Without this, every masked VALUE
-# would re-read and re-sort the whole Parquet file (fine at 65 rows, a
-# disaster at ICD-10-CM's ~70k).
-_corpus_cache: dict[str, _CorpusRecord] = {}
+# Memoized corpus loads. A corpus is read from disk, validated,
+# provenance-checked, and chapter-indexed at MOST ONCE per cache key; every
+# subsequent apply_code_set call for the same corpus reuses the cached
+# record. Without this, every masked VALUE would re-read and re-sort the
+# whole Parquet file (fine at 65 rows, a disaster at ICD-10-CM's ~70k).
+#
+# MEDIUM-1 remediation (HC-1 slice 1 gap): split into two caches with
+# different invalidation/eviction policies, because SHIPPED and CUSTOMER
+# corpora have different lifetimes.
+#
+# Shipped corpora are bundled package files, immutable for the life of a
+# running process, so a simple resolved-path key is correct AND self-bounds
+# in size (CODESET_REGISTRY is a small, fixed set -- 4 corpora today) with
+# no eviction needed.
+_shipped_cache: dict[str, _CorpusRecord] = {}
+
+# Customer corpora are operator-supplied files at a path the engine does not
+# own; the pre-HC-1 code re-read one from disk on every call, so a file
+# REPLACED at the same path between jobs was always picked up. Caching by
+# path alone (as HC-1 slice 1 originally shipped) silently broke that: a
+# replaced file would be served the STALE pre-replacement rows forever
+# (correctness), and the cache also grew one entry per distinct path ever
+# seen with no eviction (memory, in a long-lived platform worker). Keying on
+# (resolved_path, mtime_ns, size) makes a same-path file replacement mint a
+# new cache entry automatically (a modified file almost never keeps the same
+# mtime+size, and a job that races a mid-run file swap either way was never
+# consistent), and bounding it as an LRU (OrderedDict, move-to-end on hit,
+# evict-oldest on overflow) caps worst-case memory for a worker that
+# processes many distinct customer corpus files over its lifetime.
+_CUSTOMER_CACHE_MAX_ENTRIES = 32
+_customer_cache: OrderedDict[tuple[str, int, int], _CorpusRecord] = OrderedDict()
 
 
 def load_corpus(name: str, path: Path | None = None) -> list[dict[str, Any]]:
@@ -75,9 +100,11 @@ def load_corpus(name: str, path: Path | None = None) -> list[dict[str, Any]]:
         path: Override path. When None, loads from the shipped codesets dir.
 
     Returns:
-        List of row dicts with at least a ``code`` key. A fresh list object
-        per call (the cached rows are not returned by reference), so
-        mutating the returned list never corrupts the shared cache.
+        List of row dicts with at least a ``code`` key. A fresh list AND
+        fresh row dicts per call (NIT-2 remediation: neither the returned
+        list nor its row dicts are the cached objects), so mutating the
+        returned rows -- the list, or an individual row's fields -- never
+        corrupts the shared cache record another caller reads next.
 
     Raises:
         PlanCompileError: File not found, not readable, missing ``code``
@@ -86,13 +113,13 @@ def load_corpus(name: str, path: Path | None = None) -> list[dict[str, Any]]:
             provenance``).
     """
     record = _get_corpus_record(name, path, is_shipped=path is None)
-    return list(record.rows)
+    return [dict(row) for row in record.rows]
 
 
 def load_corpus_provenance(name: str, path: Path | None = None) -> CodeSetProvenance | None:
     """Return the parsed provenance for a corpus (HC-1 slice 1).
 
-    Shares ``_corpus_cache`` with :func:`load_corpus`, so calling this before
+    Shares the module cache with :func:`load_corpus`, so calling this before
     or after ``load_corpus`` for the same corpus costs no extra I/O. Same
     fail-closed (shipped) / warn (customer) validation as corpus loading in
     general -- see :func:`_validate_provenance`.
@@ -143,14 +170,35 @@ def _resolve_read_path(name: str, path: Path | None) -> Path:
 
 
 def _get_corpus_record(name: str, path: Path | None, *, is_shipped: bool) -> _CorpusRecord:
-    """Return the cached (or freshly-read) ``_CorpusRecord`` for this corpus."""
+    """Return the cached (or freshly-read) ``_CorpusRecord`` for this corpus.
+
+    MEDIUM-1 remediation (HC-1 slice 1 gap): shipped corpora cache on the
+    resolved path alone (bundled + immutable, see ``_shipped_cache``'s module
+    comment); customer corpora additionally key on ``(mtime_ns, size)`` so a
+    file replaced at the same path between calls invalidates automatically,
+    in a bounded LRU (``_customer_cache``) so the cache cannot grow without
+    bound over a long-lived process's lifetime.
+    """
     resolved = _resolve_read_path(name, path)
-    cache_key = str(resolved.resolve())
-    cached = _corpus_cache.get(cache_key)
+    resolved_str = str(resolved.resolve())
+    if is_shipped:
+        cached = _shipped_cache.get(resolved_str)
+        if cached is not None:
+            return cached
+        record = _read_corpus_record(name, resolved, is_shipped=True)
+        _shipped_cache[resolved_str] = record
+        return record
+
+    stat = resolved.stat()
+    cache_key = (resolved_str, stat.st_mtime_ns, stat.st_size)
+    cached = _customer_cache.get(cache_key)
     if cached is not None:
+        _customer_cache.move_to_end(cache_key)  # LRU: mark as most recently used.
         return cached
-    record = _read_corpus_record(name, resolved, is_shipped=is_shipped)
-    _corpus_cache[cache_key] = record
+    record = _read_corpus_record(name, resolved, is_shipped=False)
+    _customer_cache[cache_key] = record
+    if len(_customer_cache) > _CUSTOMER_CACHE_MAX_ENTRIES:
+        _customer_cache.popitem(last=False)  # evict the least-recently-used entry.
     return record
 
 
@@ -198,13 +246,17 @@ def _read_corpus_record(name: str, path: Path, *, is_shipped: bool) -> _CorpusRe
 
     # HC-1 slice 1: memoized code -> chapter dict, built once here instead of
     # linear-scanned per _get_chapter call. Assumes codes are unique within a
-    # corpus (true of every shipped corpus; a duplicate code in a customer
-    # corpus resolves to its LAST occurrence in code-sorted order, same
-    # ambiguity a linear "first match" scan would have had for an unordered
-    # customer file anyway).
+    # corpus (true of every shipped corpus). LOW-1 remediation: a duplicate
+    # code in a customer corpus resolves FIRST-WINS in code-sorted order
+    # (`setdefault`, not a dict-comprehension which is last-write-wins) to
+    # match the pre-HC-1 linear scan's `for row in rows: if match: return`,
+    # which stopped at the first hit -- byte-identical to the old behavior,
+    # not merely equivalent in the common no-duplicate case.
     chapter_index: dict[str, str] | None = None
     if rows and "chapter" in rows[0]:
-        chapter_index = {str(r["code"]): str(r["chapter"]) for r in rows}
+        chapter_index = {}
+        for r in rows:
+            chapter_index.setdefault(str(r["code"]), str(r["chapter"]))
 
     provenance = CodeSetProvenance.from_parquet_metadata(tbl)
     _validate_provenance(name, path, provenance, is_shipped=is_shipped)

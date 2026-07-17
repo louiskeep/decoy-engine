@@ -353,3 +353,69 @@ def test_bucket_perturb_autodetect_is_gate_miss() -> None:
     )
     assert not _gate_admits(plan, graph)
     assert "out_of_core_bucket_perturb_autodetect_unsupported" in _gate_codes(plan, graph)
+
+
+# ---------------------------------------------------------------------------
+# HIGH-2 remediation: the out-of-core route must surface the same
+# code_set_corpora provenance evidence the pandas/sequential routes merge
+# into ExecutionResult.quality_metrics -- the exact route the large-healthcare
+# (70k ICD) case HC-1 exists for actually takes.
+# ---------------------------------------------------------------------------
+
+
+class TestOutOfCoreCodeSetCorporaEvidence:
+    def test_ooc_code_set_masking_surfaces_code_set_corpora(self) -> None:
+        payload_seed, payload_vals = _PAYLOADS["code_set_mask"]
+        plan, sources, graph = _payload_edge_job(
+            payload_seed, payload_vals, policy=OrphanPolicy.PRESERVE
+        )
+        oracle = PandasExecutionAdapter().run(
+            plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
+        )
+        ooc = run_fk_out_of_core(plan, sources, registry=_REG, relationship_graph=graph)
+
+        oracle_corpora = oracle.quality_metrics.get("code_set_corpora")
+        ooc_corpora = ooc.quality_metrics.get("code_set_corpora")
+        assert oracle_corpora is not None and ooc_corpora is not None
+
+        # Both routes stamp one entry per code_set column ("pay" on the parent,
+        # "cpay" on the child, both configured for the "mcc" corpus); parity in
+        # SHAPE (sorted by code_set-column identity), not raw list order.
+        def _key(entries: list[dict[str, Any]]) -> list[tuple[str, int]]:
+            return sorted((e["code_set"], e["row_count"]) for e in entries)
+
+        assert _key(ooc_corpora) == _key(oracle_corpora)
+        for entry in ooc_corpora:
+            assert entry["code_set"] == "mcc"
+            assert entry["row_count"] > 0
+            # Counts + identifiers only -- no raw codes leak into evidence.
+            assert "codes" not in entry
+            assert "rows" not in entry
+
+    def test_ooc_quality_metrics_omits_code_set_corpora_when_no_code_set_columns(self) -> None:
+        payload_seed, payload_vals = _PAYLOADS["text_mask"]
+        plan, sources, graph = _payload_edge_job(
+            payload_seed, payload_vals, policy=OrphanPolicy.PRESERVE
+        )
+        ooc = run_fk_out_of_core(plan, sources, registry=_REG, relationship_graph=graph)
+        assert "code_set_corpora" not in ooc.quality_metrics
+
+    def test_ooc_sink_path_also_surfaces_code_set_corpora(self, tmp_path: Any) -> None:
+        """The sink branch (`ExecutionResult(outputs={}, ...)`) must carry the
+        same evidence as the in-memory branch -- both return sites were fixed."""
+        from decoy_engine.execution import ParquetTransactionalSink
+
+        payload_seed, payload_vals = _PAYLOADS["code_set_mask"]
+        plan, sources, graph = _payload_edge_job(
+            payload_seed, payload_vals, policy=OrphanPolicy.PRESERVE
+        )
+        ooc = run_fk_out_of_core(
+            plan,
+            sources,
+            registry=_REG,
+            relationship_graph=graph,
+            sink=ParquetTransactionalSink(tmp_path / "published"),
+        )
+        corpora = ooc.quality_metrics.get("code_set_corpora")
+        assert corpora is not None and len(corpora) == 2
+        assert {e["code_set"] for e in corpora} == {"mcc"}

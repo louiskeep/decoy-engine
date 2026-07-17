@@ -129,6 +129,18 @@ class StrategyContext:
         if not self.mask_key:
             object.__setattr__(self, "mask_key", self.job_seed)
 
+    def code_set_corpora_metrics(self) -> dict[str, Any]:
+        """HC-1 slice 1: the code_set corpus-provenance evidence block, or {}.
+
+        Both the full-frame (`PandasExecutionAdapter.run`) and the
+        table-at-a-time (`run_sequential`) paths merge this into the job's
+        `ExecutionResult.quality_metrics`. Empty dict when no code_set column
+        ran, so an unrelated job's quality_metrics is untouched.
+        """
+        if not self.code_set_corpora:
+            return {}
+        return {"code_set_corpora": list(self.code_set_corpora.values())}
+
 
 class StrategyHandler(Protocol):
     """A single scalar masking strategy, invoked through the boundary."""

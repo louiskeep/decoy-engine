@@ -91,16 +91,23 @@ class CodeSetHandler:
                 ),
             )
 
-        # HC-1 slice 1: stamp corpus provenance once per column (not once per
-        # value) into the shared evidence sink. Loads (and fail-closes/warns
-        # on) the corpus up front, same as the first per-value apply_code_set
-        # call would have, just earlier -- catches a corpus-level defect even
-        # for an all-null column that would otherwise never dispatch below.
-        ctx.code_set_corpora[column] = describe_loaded_corpus(code_cfg)
+        # HC-1 slice 1: eagerly load (and fail-close/warn on) the corpus up
+        # front, same as the first per-value apply_code_set call would have,
+        # just earlier -- catches a corpus-level defect even for an all-null
+        # (or, under a `when` gate, fully-suppressed-subset) column that would
+        # otherwise never dispatch a single value below. `evidence` is the
+        # candidate provenance-evidence entry for this column; NIT-1
+        # remediation (HC-1 slice 1 gap) below only commits it into the
+        # shared sink if this column actually masked >=1 value, so a
+        # column that validates cleanly but never dispatches (all-null, or
+        # when-gated to zero live rows in this subset) does not falsely
+        # report its corpus as "used."
+        evidence = describe_loaded_corpus(code_cfg)
 
         source = df[column]
         na_mask = source.isna().to_numpy()
         out: list[object] = []
+        masked_any = False
         for i, value in enumerate(source):
             if na_mask[i]:
                 out.append(None)
@@ -120,7 +127,8 @@ class CodeSetHandler:
                 # Sprint 2 honesty pack (D7): a per-value defect. Record it
                 # and keep the ORIGINAL value in the frame (trap T4); the
                 # pipeline-level rule (D8) guarantees this row never reaches
-                # the main output.
+                # the main output. Not a successful mask, so it does not set
+                # masked_any (the raw value stays put, same as a null row).
                 ctx.row_errors.append(
                     RowError(
                         column=column,
@@ -132,6 +140,14 @@ class CodeSetHandler:
                 out.append(value)
                 continue
             out.append(result)
+            masked_any = True
+
+        if masked_any:
+            # Once-per-column stamp (not once-per-value): a column dispatched
+            # more than once (e.g. re-run under a when_gate across repeated
+            # calls is not a real code path today, but this stays idempotent
+            # either way) just overwrites with the same evidence dict.
+            ctx.code_set_corpora[column] = evidence
 
         df[column] = out
         return df, []

@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Mapping
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import pandas as pd
 import pyarrow as pa
@@ -279,20 +279,12 @@ class PandasExecutionAdapter:
         outputs = {t: pa.Table.from_pandas(f, preserve_index=False) for t, f in frames.items()}
         conversion_ms += (time.perf_counter() - t1) * 1000.0
 
-        # HC-1 slice 1: surface the code_set corpus-provenance evidence
-        # `ctx.code_set_corpora` accumulated across every node dispatch above.
-        # Empty dict (the common case: no code_set columns) leaves
-        # quality_metrics unchanged from before this feature existed.
-        quality_metrics: dict[str, Any] = {}
-        if ctx.code_set_corpora:
-            quality_metrics["code_set_corpora"] = list(ctx.code_set_corpora.values())
-
         return ExecutionResult(
             outputs=outputs,
             timings=tuple(collector.records),
             boundary_conversion_ms=conversion_ms,
             warnings=tuple(warnings),
-            quality_metrics=quality_metrics,
+            quality_metrics=ctx.code_set_corpora_metrics(),  # HC-1: {} if no code_set column
             row_errors=tuple(row_error_records),
         )
 

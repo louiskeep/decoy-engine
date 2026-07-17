@@ -253,6 +253,22 @@ class TestCodeSetProvenanceEvidence:
         )
         assert "code_set_corpora" not in out.quality_metrics
 
+    def test_quality_metrics_omits_code_set_corpora_when_column_all_null(self) -> None:
+        """NIT-1 remediation: an all-null code_set column masks ZERO values
+        (every row short-circuits on the null check before `apply_code_set`
+        ever runs), so it must not report its corpus as "used" -- even though
+        the corpus is still eagerly loaded + validated for that column (a
+        corpus-level defect, e.g. a missing corpus file, must still fail
+        closed for an all-null column; only the EVIDENCE stamp is withheld)."""
+        out = PandasExecutionAdapter().run_single(
+            _plan("diag", _col("code_set", provider_config=(("code_set", "icd10"),))),
+            pa.table({"diag": pa.array([None, None], type=pa.string())}),
+            registry=_REG,
+            relationship_graph=_GRAPH,
+            namespace_registry=_NS,
+        )
+        assert "code_set_corpora" not in out.quality_metrics
+
 
 class TestCodeSetPlanYamlProvenance:
     """HC-1 slice 1 item 3: corpus provenance stamped into the Plan YAML via

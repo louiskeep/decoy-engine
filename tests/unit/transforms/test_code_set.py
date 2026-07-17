@@ -25,6 +25,7 @@ excludes the input code (analogous to the FPE domain-exclusion idiom).
 from __future__ import annotations
 
 import pathlib
+import time
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -440,30 +441,51 @@ class TestShippedCorpora:
     def test_codesets_docstring_lists_every_registry_corpus(self):
         """Drift guard: codesets/__init__.py's docstring is hand-maintained
         prose (not runtime-generated, so sphinx-autoapi's static source
-        parsing renders it correctly), but every registry corpus name must
-        still appear in it."""
+        parsing renders it correctly). LOW-2 remediation: bidirectional SET
+        equality against the docstring's "Shipped corpora" section, with
+        exact-token matching on that section's ``name   -- description``
+        lines -- not a whole-docstring substring `corpus_name in doc` check.
+        The prior one-directional substring check could never catch a STALE
+        entry left behind for a corpus removed from the registry, and could
+        false-pass on a coincidental substring appearing anywhere in the
+        ~50-line module docstring outside the actual corpus list."""
+        import re
+
         import decoy_engine.codesets as codesets_pkg
 
         doc = codesets_pkg.__doc__ or ""
-        for corpus_name in CODESET_REGISTRY:
-            assert corpus_name in doc, (
-                f"codesets/__init__.py docstring is missing corpus {corpus_name!r} "
-                "(registry and docstring have drifted; update the docstring)."
-            )
+        section = re.search(r"Shipped corpora\n-+\n(.*?)\n\n", doc, re.DOTALL)
+        assert section, "codesets/__init__.py docstring is missing its 'Shipped corpora' section."
+        documented = set(re.findall(r"^(\w+)\s+--", section.group(1), re.MULTILINE))
+        assert documented == frozenset(CODESET_REGISTRY), (
+            f"codesets/__init__.py docstring's Shipped corpora entries {sorted(documented)} "
+            f"and CODESET_REGISTRY {sorted(CODESET_REGISTRY)} have drifted "
+            "(a corpus was added to or removed from one but not the other)."
+        )
 
     def test_docs_strategies_md_lists_every_registry_corpus(self):
-        """Drift guard: docs/strategies.md's code_set corpus list must name
-        every registry corpus (HC-1 slice 1 item 6: prose, not a hardcoded
-        row-count table)."""
+        """Drift guard: docs/strategies.md's Shipped corpora bullet list must
+        name EXACTLY the registry's corpora (HC-1 slice 1 item 6). LOW-2
+        remediation: bidirectional SET equality on the section's
+        ``- `name` -- ...`` bullets, not a whole-file substring
+        (backtick + name + backtick) `in text` check -- e.g. `icd10` is ALSO
+        backtick-quoted elsewhere in
+        this doc as a PII-detector id (the TIER 1 detector table), unrelated
+        to the code_set corpus registry, so the old check could false-pass
+        even with the actual corpus-list bullet missing or stale."""
         import pathlib
+        import re
 
         docs_path = pathlib.Path(__file__).resolve().parents[3] / "docs" / "strategies.md"
         text = docs_path.read_text(encoding="utf-8")
-        for corpus_name in CODESET_REGISTRY:
-            assert f"`{corpus_name}`" in text, (
-                f"docs/strategies.md is missing corpus {corpus_name!r} "
-                "(registry and docs have drifted)."
-            )
+        section = re.search(r"Shipped corpora \(under.*?:\n\n(.*?)\n\n\*\*HC-1", text, re.DOTALL)
+        assert section, "docs/strategies.md is missing its 'Shipped corpora' bullet section."
+        documented = set(re.findall(r"^- `(\w+)` --", section.group(1), re.MULTILINE))
+        assert documented == frozenset(CODESET_REGISTRY), (
+            f"docs/strategies.md Shipped corpora bullets {sorted(documented)} and "
+            f"CODESET_REGISTRY {sorted(CODESET_REGISTRY)} have drifted "
+            "(a corpus was added to or removed from one but not the other)."
+        )
 
 
 # ── H1: gen mode must vary per row (intra-column variation) ───────────────────
@@ -817,3 +839,162 @@ class TestChapterIndexParity:
         from decoy_engine.transforms.code_set import _get_chapter
 
         assert _get_chapter("ANY", None) is None
+
+    def test_dict_index_duplicate_code_resolves_first_wins(self, tmp_path: pathlib.Path):
+        """LOW-1 remediation: a duplicate code in a customer corpus must
+        resolve to its FIRST occurrence in code-sorted (rows) order, matching
+        the pre-HC-1 linear scan's `for row in rows: if match: return` (which
+        stops at the first hit). A naive dict comprehension over the
+        code-sorted rows is LAST-write-wins, which would silently diverge
+        from the old scan's answer for a duplicate code."""
+        from decoy_engine.transforms._codeset_loader import _get_corpus_record
+        from decoy_engine.transforms.code_set import _get_chapter
+
+        tbl = pa.table(
+            {
+                "code": pa.array(["D01", "D01", "D02"], type=pa.string()),
+                "chapter": pa.array(["FIRST", "SECOND", "D"], type=pa.string()),
+            }
+        )
+        path = tmp_path / "dup_codes.parquet"
+        pq.write_table(tbl, str(path))
+
+        record = _get_corpus_record("dup_codes", path, is_shipped=False)
+        expected = self._naive_get_chapter("D01", record.rows)
+        assert expected == "FIRST", "test fixture sanity: naive scan must pick the first row."
+        actual = _get_chapter("D01", record.chapter_index)
+        assert actual == "FIRST", (
+            f"dict-index resolved duplicate code 'D01' to {actual!r}; expected the FIRST "
+            "code-sorted occurrence ('FIRST'), matching the pre-HC-1 linear scan."
+        )
+
+
+# ── MEDIUM-1: customer corpus cache invalidation + bounded growth ────────────
+
+
+class TestCustomerCorpusCacheInvalidation:
+    """MEDIUM-1 remediation: a customer corpus cache keyed only on resolved
+    path is a dual defect in a long-lived platform worker -- a file replaced
+    at the same path is served stale forever (correctness), and the cache
+    grows one entry per distinct path ever seen with no eviction (memory).
+    Both are fixed in `transforms/_codeset_loader.py::_customer_cache`: keyed
+    on (resolved_path, mtime_ns, size) so a same-path replacement mints a new
+    entry, in a bounded LRU so the cache cannot grow without bound. SHIPPED
+    corpora are unaffected (bundled, immutable, simple path key; see
+    `_shipped_cache`)."""
+
+    @staticmethod
+    def _write(path: pathlib.Path, codes: list[str]) -> None:
+        tbl = pa.table(
+            {
+                "code": pa.array(codes, type=pa.string()),
+                "description": pa.array([f"desc-{c}" for c in codes], type=pa.string()),
+            }
+        )
+        pq.write_table(tbl, str(path))
+
+    def test_replaced_customer_corpus_at_same_path_is_not_served_stale(
+        self, tmp_path: pathlib.Path
+    ):
+        """Replacing a customer corpus file at the same path between
+        load_corpus calls must return the NEW rows, not the cached old ones."""
+        from decoy_engine.transforms.code_set import load_corpus
+
+        path = tmp_path / "replaceable.parquet"
+        self._write(path, ["OLD1", "OLD2", "OLD3"])
+        first = {r["code"] for r in load_corpus("replaceable", path)}
+        assert first == {"OLD1", "OLD2", "OLD3"}
+
+        # A real file replacement at the SAME path (new content -> new size;
+        # the sleep also guards mtime-based filesystems with coarse
+        # resolution, belt-and-suspenders with the size difference).
+        time.sleep(0.01)
+        self._write(path, ["NEW1", "NEW2"])
+        second = {r["code"] for r in load_corpus("replaceable", path)}
+        assert second == {"NEW1", "NEW2"}, (
+            f"load_corpus served stale cached rows {second!r} after the file at "
+            f"{path} was replaced; expected the new content."
+        )
+
+    def test_replaced_customer_corpus_provenance_also_refreshes(self, tmp_path: pathlib.Path):
+        """`load_corpus_provenance` shares the same cache; it must not go
+        stale either after a same-path file replacement."""
+        from decoy_engine.transforms.code_set import load_corpus_provenance
+
+        path = tmp_path / "replaceable_prov.parquet"
+        tbl1 = pa.table(
+            {"code": pa.array(["A1"], type=pa.string())},
+            metadata={
+                b"decoy_corpus": b"replaceable_prov",
+                b"source": b"First Source",
+                b"source_version": b"v1",
+                b"effective_date": b"2020-01-01",
+                b"license": b"Public",
+            },
+        )
+        pq.write_table(tbl1, str(path))
+        prov1 = load_corpus_provenance("replaceable_prov", path)
+        assert prov1 is not None and prov1.source == "First Source"
+
+        time.sleep(0.01)
+        tbl2 = pa.table(
+            {"code": pa.array(["B1"], type=pa.string())},
+            metadata={
+                b"decoy_corpus": b"replaceable_prov",
+                b"source": b"A Completely Different Second Source",
+                b"source_version": b"v2",
+                b"effective_date": b"2021-01-01",
+                b"license": b"Public",
+            },
+        )
+        pq.write_table(tbl2, str(path))
+        prov2 = load_corpus_provenance("replaceable_prov", path)
+        assert prov2 is not None and prov2.source == "A Completely Different Second Source", (
+            "load_corpus_provenance served the stale cached provenance after the "
+            "underlying file was replaced at the same path."
+        )
+
+    def test_customer_cache_is_bounded(self, tmp_path: pathlib.Path):
+        """The customer corpus cache must never grow past its LRU cap:
+        loading more distinct customer files than the cap must always leave
+        at most `cap` entries resident, regardless of how many distinct
+        customer corpora this process has ever loaded."""
+        from decoy_engine.transforms import _codeset_loader
+        from decoy_engine.transforms.code_set import load_corpus
+
+        cap = _codeset_loader._CUSTOMER_CACHE_MAX_ENTRIES
+        for i in range(cap + 10):
+            path = tmp_path / f"bounded_{i}.parquet"
+            self._write(path, [f"C{i}"])
+            load_corpus(f"bounded_{i}", path)
+            assert len(_codeset_loader._customer_cache) <= cap, (
+                f"customer corpus cache grew to {len(_codeset_loader._customer_cache)} "
+                f"entries after loading corpus #{i}, exceeding the {cap}-entry bound."
+            )
+
+    def test_load_corpus_returned_rows_do_not_share_cache_identity(self) -> None:
+        """NIT-2 remediation: mutating a row dict returned by `load_corpus`
+        must never corrupt the shared cached record another caller reads
+        next (each call returns fresh row dicts, not references into the
+        cache)."""
+        from decoy_engine.transforms.code_set import load_corpus
+
+        rows = load_corpus("icd10")
+        original_code = rows[0]["code"]
+        rows[0]["code"] = "MUTATED"
+
+        rows_again = load_corpus("icd10")
+        assert rows_again[0]["code"] == original_code, (
+            "mutating a row returned by load_corpus() corrupted the shared cache; "
+            f"expected {original_code!r} on the next call, got {rows_again[0]['code']!r}."
+        )
+
+    def test_shipped_corpus_cache_unaffected_by_customer_invalidation(self) -> None:
+        """SHIPPED corpora keep the simple path-only cache (bundled files are
+        immutable at runtime; re-loading the same shipped corpus must hit the
+        cache, not re-read the file, and must not consult mtime/size at all)."""
+        from decoy_engine.transforms._codeset_loader import _get_corpus_record
+
+        first = _get_corpus_record("icd10", None, is_shipped=True)
+        second = _get_corpus_record("icd10", None, is_shipped=True)
+        assert first is second, "shipped corpus reload must hit the cache (same object)."

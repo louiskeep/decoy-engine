@@ -39,13 +39,13 @@ import os
 import shutil
 import tempfile
 from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
-from decoy_engine.execution._adapter import ExecutionResult
+from decoy_engine.execution._adapter import ExecutionResult, provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._fk_keys import NULL_FK_KEY, fk_key_value
 from decoy_engine.execution._output_projection import (
@@ -75,6 +75,7 @@ from decoy_engine.execution.out_of_core._source import LazySource
 from decoy_engine.keyprovider import require_mask_key
 from decoy_engine.plan._types import ColumnSeed
 from decoy_engine.relationships._graph import OrphanPolicy
+from decoy_engine.transforms.code_set import CodeSetConfig, describe_loaded_corpus
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -160,6 +161,12 @@ def run_fk_out_of_core(
         parent_relations: dict[RelationshipEdge, ParentKeyRelation] = {}
         outputs: dict[str, pa.Table] = {}
         warnings: list[QualityWarning] = []
+        # HIGH-2 remediation (HC-1 slice 1 gap): the code_set corpus-provenance
+        # evidence sink, mirroring `StrategyContext.code_set_corpora` on the
+        # pandas/sequential routes. Keyed by column name (not table-qualified),
+        # same shape as the full-frame sink, so a multi-table job's evidence
+        # list matches the pandas oracle's shape byte-for-byte.
+        code_set_corpora: dict[str, dict[str, Any]] = {}
         for table_name in _table_order(plan, relationship_graph, sources):
             if table_name not in sources:
                 continue
@@ -180,17 +187,25 @@ def run_fk_out_of_core(
                 warnings=warnings,
                 unconfigured_column_policy=unconfigured_column_policy,
                 mask_key=mask_key,
+                code_set_corpora=code_set_corpora,
             )
             if temp_disk_budget_bytes is not None:
                 # Table boundaries are the natural checkpoints: the spill
                 # footprint peaks with each table's relation/join staging, and
                 # a walk here costs a handful of stats, not a watcher thread.
                 check_temp_disk_budget(root, max_bytes=temp_disk_budget_bytes)
+        quality_metrics: dict[str, Any] = (
+            {"code_set_corpora": list(code_set_corpora.values())} if code_set_corpora else {}
+        )
         if sink is not None:
             sink.commit()
             committed = True
-            return ExecutionResult(outputs={}, warnings=tuple(warnings))
-        return ExecutionResult(outputs=outputs, warnings=tuple(warnings))
+            return ExecutionResult(
+                outputs={}, warnings=tuple(warnings), quality_metrics=quality_metrics
+            )
+        return ExecutionResult(
+            outputs=outputs, warnings=tuple(warnings), quality_metrics=quality_metrics
+        )
     except Exception:
         if sink is not None and not committed:
             sink.abort()
@@ -228,6 +243,7 @@ def _stream_table(
     warnings: list[QualityWarning],
     unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
     mask_key: bytes | None = None,
+    code_set_corpora: dict[str, dict[str, Any]] | None = None,
 ) -> None:
     """Rewrite pass for one table: mask + join per batch, then emit.
 
@@ -238,11 +254,21 @@ def _stream_table(
     `parent_relations` for the children later in the topo order. WARN orphan
     totals are aggregated over the whole stream and appended to `warnings` in
     incoming-edge order, matching whole-table reporting.
+
+    `code_set_corpora` (HIGH-2 remediation, default None): the shared
+    corpus-provenance evidence sink, mutated in place the same way `outputs`/
+    `warnings` are -- see `_code_set_corpora_for_table`.
     """
     if batch_rows is None:
         batch_rows = _join_ooc._JOIN_BATCH_ROWS
     source_schema = raw.schema
     skip_columns = frozenset(col for edge in incoming_edges for col in edge.child_columns)
+    if code_set_corpora is not None:
+        code_set_corpora.update(
+            _code_set_corpora_for_table(
+                plan, table_name, source_schema.names, skip_columns=skip_columns
+            )
+        )
     joiners: list[ChildFkBatchJoiner] = []
     try:
         for idx, edge in enumerate(incoming_edges):
@@ -435,6 +461,46 @@ def _fixed_output_schema(
         else:
             fields.append(field)
     return pa.schema(fields, metadata=source_schema.metadata)
+
+
+def _code_set_corpora_for_table(
+    plan: Plan,
+    table_name: str,
+    column_names: Sequence[str],
+    *,
+    skip_columns: frozenset[str],
+) -> dict[str, dict[str, Any]]:
+    """HIGH-2 remediation: code_set corpus-provenance evidence for one table.
+
+    Mirrors `CodeSetHandler.run`'s once-per-column stamp (`describe_loaded_
+    corpus`; counts + identifiers only, no raw codes) so the out-of-core route
+    surfaces the same `code_set_corpora` evidence block the pandas/sequential
+    routes already merge into `ExecutionResult.quality_metrics` -- previously
+    silently absent here, the exact route the large-healthcare (70k ICD) case
+    this slice exists for takes.
+
+    Restricted to columns actually present in this table's batch schema and
+    not consumed as an FK child (`skip_columns`), so a plan-declared code_set
+    column absent from the source or resolved via FK join never falsely
+    reports as "used." The out-of-core compat gate (`_compat.py`) admits
+    code_set only in mask mode without `chapter_preserve` and rejects any
+    `when` predicate, so every admitted column here unconditionally masks
+    every non-null value in the table -- there is no when-gated zero-row case
+    to guard against (unlike the pandas/sequential route's when_gate).
+    """
+    seed = table_seed(plan, table_name)
+    if seed is None:
+        return {}
+    names = frozenset(column_names)
+    corpora: dict[str, dict[str, Any]] = {}
+    for column, column_seed in seed.per_column:
+        if column_seed.strategy != "code_set":
+            continue
+        if column not in names or column in skip_columns:
+            continue
+        cfg = provider_config_to_dict(column_seed.provider_config)
+        corpora[column] = describe_loaded_corpus(CodeSetConfig.from_dict(cfg))
+    return corpora
 
 
 def _remap_values(

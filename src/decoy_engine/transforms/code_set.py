@@ -61,11 +61,15 @@ Deferred (items remaining after SP-09b handler registration):
   - HIPAA pack wiring (P5.PACK.hipaa_tighten, SP-11).
 
 Provenance + scale (HC-1 slice 1, 2026-07-17)
-  Every corpus load is validated and cached once per resolved file path
-  (module-level ``_corpus_cache``), including a memoized ``code -> chapter``
-  dict built at that same load point -- ``_get_chapter`` is an O(1) lookup
-  instead of the pre-HC-1 O(n) scan, which is what makes an ICD-10-CM-scale
-  (~70k row) corpus viable. Each load also reads the corpus's Parquet
+  Every corpus load is validated and cached once per cache key (module-level
+  ``_shipped_cache`` for bundled corpora, keyed on resolved path; a bounded
+  LRU ``_customer_cache`` for operator-supplied corpora, keyed on resolved
+  path + mtime + size so a file replaced at the same path invalidates
+  automatically instead of serving stale rows -- see
+  ``_codeset_loader.py``'s module docstring), including a memoized
+  ``code -> chapter`` dict built at that same load point -- ``_get_chapter``
+  is an O(1) lookup instead of the pre-HC-1 O(n) scan, which is what makes an
+  ICD-10-CM-scale (~70k row) corpus viable. Each load also reads the corpus's Parquet
   key/value metadata into a typed ``CodeSetProvenance`` record (see
   ``transforms/_codeset_provenance.py``): a SHIPPED corpus missing required
   provenance fields (source, source_version, effective_date, license) fails
@@ -202,8 +206,8 @@ def validate_code_set_config(cfg: dict[str, Any]) -> None:
 # ── Corpus loading ────────────────────────────────────────────────────────────
 #
 # The file-I/O / caching / provenance-validation machinery
-# (``_CorpusRecord``, ``_corpus_cache``, ``_get_corpus_record``, ``load_corpus``,
-# ``load_corpus_provenance``) lives in ``transforms/_codeset_loader.py`` and is
+# (``_CorpusRecord``, ``_shipped_cache``, ``_customer_cache``, ``_get_corpus_record``,
+# ``load_corpus``, ``load_corpus_provenance``) lives in ``transforms/_codeset_loader.py`` and is
 # imported above. What stays here are the two CONFIG-aware wrappers below
 # (they need ``CodeSetConfig`` / ``validate_code_set_config``, which would
 # create a circular import if the loader depended on them) plus

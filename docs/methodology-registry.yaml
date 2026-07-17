@@ -161,6 +161,16 @@ modules:
     pattern: Bottom-k / KMV consistent sampling
     source: RFC 2104 (HMAC); MinHash bottom-k sketch family
 
+  # HC-1 slice 1 (2026-07-17): code_set corpus provenance types. Imitates
+  # storm.model_pack.types.ModelPackManifest's shape (a small, frozen,
+  # JSON-serializable manifest dataclass with a typed constructor + a
+  # dict-export method) but reads from the corpus Parquet file's OWN
+  # key/value metadata instead of a sidecar manifest.json, since Parquet
+  # already carries key/value metadata natively.
+  - path: src/decoy_engine/transforms/_codeset_provenance.py
+    pattern: Parquet key/value metadata
+    source: apache/arrow (Apache-2.0); imitates storm/model_pack/types.py ModelPackManifest
+
   # Removed 2026-06-02: the entire `forecast/` module (Recommender +
   # ForecastReport + DisguiseRecommendation + FieldRecommendation +
   # RiskFlag) was deleted under the storm-reframe-C clean break
