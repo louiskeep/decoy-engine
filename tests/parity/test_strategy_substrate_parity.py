@@ -255,6 +255,38 @@ _CASES: list[tuple[str, Any, dict[str, pa.Table]]] = [
         {"t": pa.table({"c": ["2020-01-15", "2019-06-30", None, "2021-12-01", "2018-03-20"]})},
     ),
     (
+        # HC-3a: proves PandasStrategyPort's sibling-column threading -- the
+        # polars route must select `patient_id` alongside the date column
+        # (via required_sibling_columns) for group_by to reach the handler.
+        "date_shift-group-by-entity-anchored",
+        _plan(
+            "t",
+            (
+                (
+                    "c",
+                    _col(
+                        "date_shift",
+                        namespace="ds_group_ns",
+                        provider_config=(
+                            ("min_days", -30),
+                            ("max_days", 30),
+                            ("group_by", "patient_id"),
+                        ),
+                    ),
+                ),
+                ("patient_id", _col("passthrough")),
+            ),
+        ),
+        {
+            "t": pa.table(
+                {
+                    "c": ["2020-01-15", "2020-02-20", None, "2019-06-30", "2019-07-15"],
+                    "patient_id": ["p1", "p1", "p1", "p2", "p2"],
+                }
+            )
+        },
+    ),
+    (
         "bucketize-lower-int",
         _plan("t", (("c", _col("bucketize", provider_config=(("width", 10),))),)),
         {"t": pa.table({"c": pa.array([3, 17, 42, None, 99], type=pa.int64())})},

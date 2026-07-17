@@ -17,6 +17,8 @@ gate covers them below.
 
 from __future__ import annotations
 
+import datetime
+
 import pandas as pd
 import pyarrow as pa
 import pytest
@@ -169,6 +171,85 @@ class TestChunkParity:
             )
         )
         assert a.equals(b)
+
+
+class TestChunkParityGroupBy:
+    """HC-3a: date_shift + group_by chunk parity, including patients split
+    ACROSS chunk boundaries. group_by adds no whole-column state (it's a
+    per-row lookup into the same-row's sibling value, same as the date cell
+    itself), so a group's offset is identical whether all its rows land in
+    one chunk or are split across several -- the parity gate below is the
+    proof."""
+
+    _COLUMNS = [
+        {
+            "name": "dob",
+            "strategy": "date_shift",
+            "namespace": "dob_ns",
+            "provider_config": {"min_days": -30, "max_days": 30, "group_by": "patient_id"},
+        },
+        {"name": "patient_id", "strategy": "passthrough"},
+    ]
+
+    def _frame(self, n: int) -> pd.DataFrame:
+        # Patients repeat every 3 rows, so most chunk sizes below split at
+        # least one patient's rows across a chunk boundary.
+        return pd.DataFrame(
+            {
+                "dob": [f"19{60 + (i % 40):02d}-03-{1 + (i % 28):02d}" for i in range(n)],
+                "patient_id": [f"patient-{i // 3}" for i in range(n)],
+            }
+        )
+
+    @pytest.mark.parametrize("chunk_size", [1, 7, 33, 100, 250])
+    def test_chunked_equals_full_frame(self, tmp_path, chunk_size: int) -> None:
+        df = self._frame(100)
+        df.to_csv(tmp_path / "in.csv", index=False)
+        cfg = _config(tmp_path, self._COLUMNS)
+
+        full = run_pipeline(
+            cfg,
+            sources={"accounts": pa.Table.from_pandas(df, preserve_index=False)},
+            engine_version=_ENGINE_VERSION,
+        ).outputs["accounts"]
+
+        out_chunks = list(
+            run_mask_pipeline_chunked(
+                cfg, _chunks(df, chunk_size), table="accounts", engine_version=_ENGINE_VERSION
+            )
+        )
+        chunked = pa.concat_tables(out_chunks)
+        assert chunked.to_pylist() == full.to_pylist()
+
+    def test_same_patient_same_offset_across_chunk_boundary(self, tmp_path) -> None:
+        """CORE guarantee: a patient's two dates land in DIFFERENT chunks
+        (chunk_size=2 splits patient pA's second row from its first) but
+        still shift by the same offset -- the interval survives chunking."""
+        df = pd.DataFrame(
+            {
+                "dob": ["1980-01-01", "1980-01-15", "1990-05-01"],
+                "patient_id": ["pA", "pA", "pB"],
+            }
+        )
+        df.to_csv(tmp_path / "in.csv", index=False)
+        cfg = _config(tmp_path, self._COLUMNS)
+        out = (
+            pa.concat_tables(
+                list(
+                    run_mask_pipeline_chunked(
+                        cfg, _chunks(df, 2), table="accounts", engine_version=_ENGINE_VERSION
+                    )
+                )
+            )
+            .column("dob")
+            .to_pylist()
+        )
+
+        d0 = datetime.date.fromisoformat("1980-01-01")
+        d1 = datetime.date.fromisoformat("1980-01-15")
+        o0 = datetime.datetime.strptime(out[0], "%Y-%m-%d").date()
+        o1 = datetime.datetime.strptime(out[1], "%Y-%m-%d").date()
+        assert (o1 - o0).days == (d1 - d0).days
 
 
 class TestChunkedCompatibility:

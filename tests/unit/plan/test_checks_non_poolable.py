@@ -88,6 +88,8 @@ class TestRunConfigOnlyChecks:
             "grouped_series_refs",
             "windowed_date_refs",
             "group_key_refs",
+            # Row 27 (HC-3a): date_shift group_by (entity-anchor) column ref.
+            "date_shift_group_by_refs",
             # Row 21 (SP-46): fpe_join_group structural validation.
             "fpe_join_groups",
             # Row 22 (Sprint 13 S3): truncate length/keep/mask_char validation.
