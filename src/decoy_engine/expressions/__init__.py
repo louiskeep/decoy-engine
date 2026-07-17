@@ -11,9 +11,10 @@ compile_expr / evaluate
   Lark-backed CLOSED-VOCABULARY parser for the ``derived`` and
   ``case_when`` strategies. Accepts ONLY the explicit operator set
   defined in grammar.lark (arithmetic, comparison, logical, membership,
-  concat, days_between, ternary, column refs, literals). Any expression
-  outside that set raises ValidationError at compile time, before any
-  row evaluation. No dynamic code execution anywhere in this path.
+  concat, slice, days_between, ternary, column refs, literals). Any
+  expression outside that set raises ValidationError at compile time,
+  before any row evaluation. No dynamic code execution anywhere in this
+  path.
 
 Pattern: Lark EBNF closed-grammar sandbox (lark-parser/lark, MIT).
 See: https://github.com/lark-parser/lark

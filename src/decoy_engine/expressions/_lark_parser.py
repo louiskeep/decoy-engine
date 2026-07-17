@@ -5,9 +5,9 @@ See: https://github.com/lark-parser/lark
 
 SECURITY DESIGN: config-supplied expressions route through a CLOSED Lark
 grammar (grammar.lark in this package). Only the explicit operator set
-(arithmetic, comparison, logical, membership, concat, days_between,
+(arithmetic, comparison, logical, membership, concat, slice, days_between,
 ternary, literals, column references) can parse. Any expression outside
-the grammar -- function calls other than concat/days_between, attribute
+the grammar -- function calls other than concat/slice/days_between, attribute
 access, dunder identifiers, subscript syntax, import -- produces a Lark
 ParseError converted to ValidationError at compile time (before any row
 data is touched). There is NO Python eval(), exec(), or __import__ here.
@@ -90,8 +90,10 @@ def compile_expr(expr_string: str) -> CompiledExpression:
     Note: string literals must use double quotes. Single-quoted strings
     (e.g. ``'hello'``) are not in the closed grammar; use ``"hello"``.
 
-    Supported built-in forms: ``concat(a, b)``, ``days_between(start, end)``,
-    ``case_when(cond1, val1, ..., condN, valN, default)`` (SP-10b).
+    Supported built-in forms: ``concat(a, b, ...)`` (two or more arguments),
+    ``slice(s, start[, end])`` (Python-native 0-indexed slicing, e.g.
+    ``slice(firstname, -4)`` for the last 4 characters), ``days_between(start,
+    end)``, ``case_when(cond1, val1, ..., condN, valN, default)`` (SP-10b).
 
     Args:
         expr_string: A column-level expression string, e.g. ``"a + b"``.
@@ -149,11 +151,12 @@ def compile_expr(expr_string: str) -> CompiledExpression:
         raise ValidationError(
             f"unsupported expression: {expr_string!r} is outside the closed "
             f"operator set. Only arithmetic (+,-,*,/,//), comparison "
-            f"(==,!=,<,>,<=,>=,in), logical (and,or,not), concat(), "
-            f"days_between(), case_when(cond, val, ..., default), "
-            f"if/else ternary, literals, and column references are allowed. "
-            f"Workaround: use a formula strategy for arbitrary Python "
-            f"expressions.{single_quote_hint} Detail: {exc}"
+            f"(==,!=,<,>,<=,>=,in), logical (and,or,not), concat() (n-arg, "
+            f"two or more), slice(s, start[, end]), days_between(), "
+            f"case_when(cond, val, ..., default), if/else ternary, literals, "
+            f"and column references are allowed. Workaround: use a formula "
+            f"strategy for arbitrary Python expressions.{single_quote_hint} "
+            f"Detail: {exc}"
         ) from exc
     except RecursionError as exc:
         # Belt-and-suspenders: the depth bound above prevents most cases,
@@ -356,7 +359,31 @@ class _ExprTransformer(lark.Transformer):  # type: ignore[type-arg]
     # ---- built-in functions (closed set only) ----------------------------
 
     def concat_op(self, items: list[Any]) -> str:
-        return str(items[0]) + str(items[1])
+        return "".join(str(i) for i in items)
+
+    def slice_op(self, items: list[Any]) -> str:
+        """Python-native slice: str(subject)[start:end] (SP-10 / HC-6).
+
+        Args: subject (str()-coerced), start (int), end (int, optional --
+        omitted means "to end"). 0-indexed, half-open, negative-from-end,
+        and clamps out-of-range gracefully (no error), matching
+        ``truncate``'s forgiving behaviour (kernel/_scalar.py). ``bool`` is
+        rejected explicitly even though it is a Python int subclass, since a
+        boolean start/end index is never a meaningful config value.
+        """
+        subject = str(items[0])
+        start = items[1]
+        end = items[2] if len(items) > 2 else None
+        for name, value in (("start", start), ("end", end)):
+            if value is None:
+                continue
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValidationError(
+                    f"unsupported expression: slice() {name!r} argument must be "
+                    f"an int, got {value!r} ({type(value).__name__}). "
+                    f"slice(s, start[, end]) requires integer indices."
+                )
+        return subject[start:end]
 
     def days_between_op(self, items: list[Any]) -> int:
         start = _parse_date(items[0])

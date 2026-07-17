@@ -716,8 +716,11 @@ Common parameters:
 - `expression` (str, required): a closed-grammar expression. Column references
   are bare identifiers (no dots, no dunders). The permitted forms are:
   arithmetic (`+`, `-`, `*`, `/`, `//`), comparison (`==`, `!=`, `<`, `>`,
-  `<=`, `>=`, `in`), logical (`and`, `or`, `not`), string (`concat(a, b)`),
-  date (`days_between(start, end)`), ternary (`value if condition else other`),
+  `<=`, `>=`, `in`), logical (`and`, `or`, `not`), string concat
+  (`concat(a, b, ...)`, two or more arguments), substring
+  (`slice(s, start[, end])`, Python-native 0-indexed slicing -- e.g.
+  `slice(firstname, -4)` for the last 4 characters), date
+  (`days_between(start, end)`), ternary (`value if condition else other`),
   and literals (integers, floats, double-quoted strings, `True`, `False`,
   `None`). Anything outside that set raises `ValidationError` at config-parse
   time, before any row data is touched. A column value that looks like an
@@ -1211,7 +1214,8 @@ Two safety bounds are checked before parsing:
 | Arithmetic | `+` `-` `*` `/` `//` |
 | Comparison | `==` `!=` `<` `>` `<=` `>=` `in` |
 | Logical | `and` `or` `not` |
-| String | `concat(a, b)` (exactly two arguments) |
+| String | `concat(a, b, ...)` (two or more arguments) |
+| Substring | `slice(s, start[, end])` (Python-native 0-indexed, half-open, negative-from-end slicing; out-of-range indices clamp rather than error, e.g. `slice(firstname, -4)` for the last 4 characters) |
 | Date | `days_between(start, end)` (integer days; accepts `datetime.date` or ISO-8601 strings) |
 | Conditional | `case_when(cond1, val1, ..., condN, valN, default)` -- **non-short-circuit**: all sub-expressions are evaluated before branch selection; every branch value must be safe to evaluate for all rows |
 | Ternary | `value if condition else other` |
@@ -1219,8 +1223,9 @@ Two safety bounds are checked before parsing:
 | Column refs | bare identifiers (no dots, no dunders) |
 
 Anything not in the table above is rejected. This includes: function calls
-other than `concat`, `days_between`, and `case_when`, attribute access (`.`),
-subscript syntax (`[]`), `import`, and dunder identifiers (`__class__`, etc.).
+other than `concat`, `slice`, `days_between`, and `case_when`, attribute
+access (`.`), subscript syntax (`[]`), `import`, and dunder identifiers
+(`__class__`, etc.).
 
 String literals must use double quotes (`"hello"`); single-quoted strings
 (`'hello'`) are not in the grammar. String escape sequences are validated at

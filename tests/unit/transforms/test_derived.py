@@ -129,6 +129,31 @@ class TestApplyDerivedPerOperator:
         result = self._apply("concat(a, b)", {"a": "hello", "b": "world"})
         assert result == "helloworld"
 
+    def test_concat_function_n_arg(self) -> None:
+        result = self._apply("concat(a, b, c)", {"a": "x", "b": "-", "c": "y"})
+        assert result == "x-y"
+
+    def test_slice_last4(self) -> None:
+        """The HC-6 motivating case: last4(firstname) via slice(firstname, -4)."""
+        result = self._apply("slice(firstname, -4)", {"firstname": "Alexander"})
+        assert result == "nder"
+
+    def test_slice_first_n(self) -> None:
+        result = self._apply("slice(firstname, 0, 4)", {"firstname": "Alexander"})
+        assert result == "Alex"
+
+    def test_slice_middle(self) -> None:
+        result = self._apply("slice(firstname, 2, 5)", {"firstname": "Alexander"})
+        assert result == "exa"
+
+    def test_slice_two_arg_form(self) -> None:
+        result = self._apply("slice(s, 3)", {"s": "abcdef"})
+        assert result == "def"
+
+    def test_slice_out_of_range_clamps(self) -> None:
+        result = self._apply("slice(s, 0, 100)", {"s": "abc"})
+        assert result == "abc"
+
     def test_ternary_if_else(self) -> None:
         result = self._apply("a if a > 0 else b", {"a": 5, "b": -1})
         assert result == 5
@@ -197,6 +222,16 @@ class TestNullPropagation:
     def test_default_mode_non_null_values_unchanged(self) -> None:
         result = self._apply("a + b", {"a": 3, "b": 4}, null_propagation="default")
         assert result == 7
+
+    def test_explicit_null_propagates_over_slice_subject(self) -> None:
+        """A null column feeding slice()'s subject obeys explicit_null mode."""
+        result = self._apply("slice(a, -4)", {"a": None}, null_propagation="explicit_null")
+        assert result is None
+
+    def test_sentinel_mode_slice_over_null_subject(self) -> None:
+        # a=None -> "" (sentinel); slice("", -4) -> "" (clamps, no error)
+        result = self._apply("slice(a, -4)", {"a": None}, null_propagation="sentinel")
+        assert result == ""
 
 
 class TestBoundsEnforcement:
@@ -324,6 +359,25 @@ class TestColumnRefExtraction:
         compiled = compile_expr("1 + 2")
         refs = _get_column_refs(compiled)
         assert refs == frozenset()
+
+    def test_slice_subject_arg_surfaces_as_col_ref(self) -> None:
+        """slice()'s subject argument is a normal expr sub-tree, so its
+        column ref must surface via _get_column_refs (HC-6 parity with
+        concat/days_between)."""
+        from decoy_engine.expressions import compile_expr
+        from decoy_engine.transforms.derived import _get_column_refs
+
+        compiled = compile_expr("slice(firstname, -4)")
+        refs = _get_column_refs(compiled)
+        assert refs == frozenset({"firstname"})
+
+    def test_slice_start_end_col_refs_also_surface(self) -> None:
+        from decoy_engine.expressions import compile_expr
+        from decoy_engine.transforms.derived import _get_column_refs
+
+        compiled = compile_expr("slice(s, start, end)")
+        refs = _get_column_refs(compiled)
+        assert refs == frozenset({"s", "start", "end"})
 
 
 class TestCheckDerivedColumnRefs:
@@ -524,6 +578,24 @@ class TestDerivedGeneratePath:
             ]
         )
         assert out["greeting"] == ["hello!", "hello!", "hello!"]
+
+    def test_derived_generate_slice_last4_expression(self) -> None:
+        """HC-6 mask/generate parity: last4(firstname) works identically in
+        the generate path (the mask-path equivalent is covered by
+        TestApplyDerivedPerOperator.test_slice_last4 and the adapter
+        integration test in test_derived_strategy.py)."""
+        out = self._run_generate(
+            [
+                {
+                    "name": "firstname",
+                    "type": "categorical",
+                    "categories": ["Alexander"],
+                    "weights": [1],
+                },
+                {"name": "last4", "type": "derived", "expression": "slice(firstname, -4)"},
+            ]
+        )
+        assert out["last4"] == ["nder", "nder", "nder"]
 
     def test_derived_generate_ternary_expression(self) -> None:
         """Derived column in generate table: ternary expression over sibling."""
