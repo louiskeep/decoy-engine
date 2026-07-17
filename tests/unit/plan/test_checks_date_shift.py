@@ -193,3 +193,60 @@ class TestNestedGroupByRejected:
             ]
         }
         check_date_shift_group_by_refs(cfg)  # no raise
+
+
+class TestWhenPlusGroupByRejected:
+    """Codex R1 P1 #1 residual: `when` + `group_by` on a date_shift column is
+    fail-closed at compile. The pre-mask anchor is label-aligned, which is
+    correct on pandas but silently mis-anchors on the polars-native when-gate
+    (fresh RangeIndex after filter), so the combination is rejected until
+    per-route positional anchoring lands."""
+
+    def _cfg_with_when(self, when: str | None) -> dict[str, Any]:
+        dob: dict[str, Any] = {
+            "name": "dob",
+            "strategy": "date_shift",
+            "namespace": "dob_ns",
+            "provider_config": {"min_days": -30, "max_days": 30, "group_by": "patient_id"},
+        }
+        if when is not None:
+            dob["when"] = when
+        return {
+            "tables": [
+                {
+                    "name": "t",
+                    "columns": [dob, {"name": "patient_id", "strategy": "passthrough"}],
+                }
+            ]
+        }
+
+    def test_when_with_group_by_rejected(self) -> None:
+        cfg = self._cfg_with_when("record_type == 'inpatient'")
+        with pytest.raises(PlanCompileError) as exc:
+            check_date_shift_group_by_refs(cfg)
+        assert exc.value.code == "date_shift_group_by_with_when_unsupported"
+        assert exc.value.path == "tables.t.columns.dob.when"
+
+    def test_group_by_without_when_still_passes(self) -> None:
+        # The guard must not reject the common (no-`when`) group_by case.
+        check_date_shift_group_by_refs(self._cfg_with_when(None))  # no raise
+
+    def test_when_without_group_by_passes(self) -> None:
+        # `when` alone (no group_by) is unaffected by this check.
+        cfg = {
+            "tables": [
+                {
+                    "name": "t",
+                    "columns": [
+                        {
+                            "name": "dob",
+                            "strategy": "date_shift",
+                            "namespace": "dob_ns",
+                            "provider_config": {"min_days": -30, "max_days": 30},
+                            "when": "record_type == 'inpatient'",
+                        }
+                    ],
+                }
+            ]
+        }
+        check_date_shift_group_by_refs(cfg)  # no raise

@@ -37,6 +37,11 @@ def check_date_shift_group_by_refs(config: dict[str, Any]) -> None:
        rejected. The nested child runs against a synthetic single-column
        ``_nested_leaves`` frame with no sibling columns, so the entity anchor
        can never be present -- fail closed rather than KeyError at execution.
+    4. group_by combined with ``when`` (Codex R1 P1 #1 residual): rejected. The
+       pre-mask anchor is label-aligned to the frame the handler sees, which is
+       correct on pandas but not on the polars-native when-gate (it filters to a
+       fresh RangeIndex), so the combination would silently mis-anchor on the
+       polars route. Fail closed until per-route positional anchoring lands.
 
     date_shift is mask-kind only (no generate-kind `type: date_shift`), so
     unlike windowed_date/group_key the top-level check has a single loop.
@@ -134,5 +139,29 @@ def check_date_shift_group_by_refs(config: dict[str, Any]) -> None:
                         f"{table_name!r} references group_by column "
                         f"{group_by!r} which is not defined in the same "
                         f"table. Available columns: {sorted(all_col_names)!r}."
+                    ),
+                )
+            # `when` + `group_by` (Codex R1 P1 #1 residual): fail closed. The
+            # entity anchor is aligned to the frame the handler sees by index
+            # LABEL, which is correct on every pandas route (a when-gated subset
+            # keeps its parent-table labels). But the polars-native when-gate
+            # filters to a FRESH RangeIndex (the original positions survive only
+            # in the gate's internal `_decoy_when_row_pos` anchor), so a
+            # label-reindex there silently picks the WRONG rows -- a wrong-output
+            # hole the handler cannot detect (both indexes are RangeIndexes).
+            # Rather than ship a route-dependent silent-wrong-output, reject the
+            # combination until per-route positional anchoring is implemented.
+            # date_shift's core per-entity-consistent shift does not need `when`.
+            if col_entry.get("when"):
+                raise PlanCompileError(
+                    code="date_shift_group_by_with_when_unsupported",
+                    path=(f"tables.{table_name}.columns.{col_name}.when"),
+                    message=(
+                        f"date_shift column {col_name!r} in table "
+                        f"{table_name!r} combines `when` with `group_by`. This "
+                        "combination is not yet supported: on the polars route a "
+                        "when-gated subset cannot be re-aligned to the pre-mask "
+                        "entity anchor without producing wrong offsets. Remove "
+                        "`when` or `group_by` from this column."
                     ),
                 )
