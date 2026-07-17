@@ -208,6 +208,46 @@ class TestDerivedAdapterIntegration:
         # b = a / b: 3/1=3, 6/2=3, 9/3=3
         assert all(v == 3.0 for v in out["b"])
 
+    def test_derived_slice_last4_via_adapter(self) -> None:
+        """HC-6: last4(firstname) works on the MASK path via slice(firstname, -4).
+
+        This is the gap HC-6 closes -- composite-ID expressions like last4
+        now work through the shared derived/Lark evaluator on mask, not only
+        generate-side.
+        """
+        table = pa.table(
+            {
+                "firstname": pa.array(["Alexander", "Bo"], type=pa.string()),
+                "last4": pa.array(["X", "Y"], type=pa.string()),
+            }
+        )
+        plan = _plan(
+            [
+                (
+                    "t",
+                    TableSeed(
+                        per_column=(
+                            ("firstname", _col("passthrough")),
+                            (
+                                "last4",
+                                _col(
+                                    "derived",
+                                    provider_config=(("expression", "slice(firstname, -4)"),),
+                                ),
+                            ),
+                        ),
+                        per_group=(),
+                    ),
+                )
+            ]
+        )
+        result = PandasExecutionAdapter().run_single(
+            plan, table, registry=_REG, relationship_graph=_GRAPH, namespace_registry=_NS
+        )
+        last4 = result.output.column("last4").to_pylist()
+        assert last4[0] == "nder"  # "Alexander"[-4:]
+        assert last4[1] == "Bo"  # "Bo"[-4:] clamps to the whole (short) string
+
     def test_derived_string_expression_via_adapter(self) -> None:
         """String concat expression works through the adapter."""
         table = pa.table(

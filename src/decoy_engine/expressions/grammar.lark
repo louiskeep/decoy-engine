@@ -2,8 +2,8 @@
 // strategies (SP-06 / P5.INFRA.2, extended SP-10b).
 //
 // SECURITY CONTRACT: only the listed operators / forms are valid. Any
-// attempt to use function calls (other than concat, days_between, and
-// case_when), attribute access, subscript syntax, import, or dunder
+// attempt to use function calls (other than concat, slice, days_between,
+// and case_when), attribute access, subscript syntax, import, or dunder
 // identifiers produces a parse error -> ValidationError. This is the
 // primary security boundary for config-supplied expressions.
 //
@@ -11,7 +11,8 @@
 //   Arithmetic: + - * / //
 //   Comparison: == != < > <= >= in
 //   Logical:    and or not
-//   String:     concat(a, b)
+//   String:     concat(a, b, ...) (two or more arguments)
+//   Substring:  slice(s, start[, end]) (Python-native 0-indexed slicing)
 //   Date:       days_between(start, end)
 //   Ternary:    value if condition else other
 //   Conditional: case_when(cond1, val1 [, cond2, val2 ...], default)
@@ -52,7 +53,8 @@ MUL_OP: "//" | "*" | "/"
 unary_expr: "-" unary_expr  -> neg_op
           | primary
 
-primary: "concat" "(" expr "," expr ")"                                     -> concat_op
+primary: "concat" "(" expr ("," expr)+ ")"                                  -> concat_op
+       | "slice" "(" expr "," expr ("," expr)? ")"                          -> slice_op
        | "days_between" "(" expr "," expr ")"                               -> days_between_op
        | "case_when" "(" expr "," expr ("," expr "," expr)* "," expr ")"   -> case_when_op
        | "(" expr ")"                                                        -> paren_expr
