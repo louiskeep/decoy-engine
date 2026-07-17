@@ -474,6 +474,18 @@ class TestObjectColumnExactParse:
         assert [e.row_index for e in ctx.row_errors] == [1]
         assert out["age"].iloc[0] == "40" and out["age"].iloc[2] == "90+"
 
+    def test_array_like_cell_is_per_row_error_not_uncoded_crash(self) -> None:
+        # Dennis LOW: a non-scalar (list/ndarray) cell must be a per-row
+        # format_error, NOT an uncoded pd.isna ambiguous-truth ValueError.
+        df = pd.DataFrame({"age": [40, [1, 2], 90]}, dtype=object)
+        ctx = _FakeCtx()
+        out, _ = TopCodeStrategyHandler().run(
+            df.copy(), "age", _col((("preset", "hipaa_age"),)), ctx
+        )
+        assert [e.row_index for e in ctx.row_errors] == [1]
+        assert ctx.row_errors[0].trigger == "format_error"
+        assert out["age"].iloc[0] == "40" and out["age"].iloc[2] == "90+"
+
     def test_native_float_column_fractional_not_rejected(self) -> None:
         # A genuine float dtype column is the inherent float domain, NOT the
         # exact-source case -- an in-range fractional value is kept and rendered

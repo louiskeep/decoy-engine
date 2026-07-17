@@ -268,14 +268,20 @@ class TopCodeStrategyHandler:
 
         Returns ``(over_mask, under_mask, in_range_mask, in_range_str)`` aligned to
         ``col.index``. Each non-null cell is parsed without float64 coercion:
-        a non-numeric cell is a per-row ``format_error`` (kept original, like the
-        numeric path), and an in-range integral value renders from its exact
-        Python int (identical on every route, no ".0", no large-int collapse).
-        A coercible-but-FRACTIONAL cell fails the whole column closed BEFORE any
-        mutation (raised here, df untouched): routing it through float64 is the
-        only way top_code could misread a sub-ULP tail value as in-range, so we
-        refuse the column rather than take that path. A genuine decimal column
-        belongs in a float dtype (handled inherently) or should be pre-rounded.
+        a non-numeric cell (including a non-scalar/array-like cell) is a per-row
+        ``format_error`` (kept original, like the numeric path), and an in-range
+        integral value renders from its exact Python int (identical on every
+        route, no ".0", no large-int collapse). A coercible-but-FRACTIONAL cell
+        fails closed with ``top_code_non_integral_object_column`` before that
+        value is ever rendered in-range: routing it through float64 is the only
+        way top_code could misread a sub-ULP tail value as in-range, so we refuse
+        it rather than take that path. On the full-frame route the raise precedes
+        any df mutation (whole column refused); on the chunked route it is
+        per-chunk (an earlier all-integral chunk may already be written before a
+        later chunk's fractional cell fails the job) -- the fractional value still
+        never renders in-range on any chunk, so this is fail-closed with a partial
+        output file, not a leak. A genuine decimal column belongs in a float dtype
+        (handled inherently) or should be pre-rounded.
         """
         do_under = floor is not None and under_label is not None
         n = len(col)
@@ -286,6 +292,21 @@ class TopCodeStrategyHandler:
         values = col.to_numpy()
         for pos in range(n):
             value = values[pos]
+            # A non-scalar cell (list/ndarray) would make `pd.isna` raise the
+            # ambiguous-truth-value ValueError; treat it as a format error (the
+            # same contract as any other non-numeric cell) rather than crash
+            # uncoded (Dennis LOW). `is_scalar` is True for None/NaN/int/str/
+            # Decimal, so the null and parse paths below are unaffected.
+            if not pd.api.types.is_scalar(value):
+                ctx.row_errors.append(
+                    RowError(
+                        column=column,
+                        row_index=pos,
+                        trigger="format_error",
+                        reason="value is not numeric under top_code",
+                    )
+                )
+                continue
             if pd.isna(value):
                 continue  # null passthrough, never a leak
             parsed = _parse_exact(value)
