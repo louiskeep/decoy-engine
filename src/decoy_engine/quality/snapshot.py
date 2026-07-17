@@ -151,8 +151,23 @@ def compute_distribution_snapshot(
     Raises:
         DistributionSnapshotError: A `high_cardinality_columns` entry has
             a non-string source dtype, or exceeds the distinct-value or
-            label-byte safety limit.
+            label-byte safety limit; or `high_cardinality_columns` itself
+            is a bare `str`/`bytes` (MED-3) instead of a collection of
+            column names.
     """
+    # MED-3: a bare str satisfies `Collection[str]` structurally, so
+    # `high_cardinality_columns="code"` would silently iterate characters
+    # ({"c","o","d","e"}) instead of naming the "code" column -- the real
+    # column then stays freetext with no error. Reject the shape explicitly
+    # before it can silently disable the feature.
+    if isinstance(high_cardinality_columns, (str, bytes)):
+        raise DistributionSnapshotError(
+            code="high_cardinality_columns_not_collection",
+            message=(
+                "high_cardinality_columns must be a collection of column names "
+                "(e.g. a list/set/tuple), not a bare string. Pass ['code'], not 'code'."
+            ),
+        )
     high_cardinality_set = frozenset(str(c) for c in high_cardinality_columns)
     columns_block: dict[str, dict[str, Any]] = {}
     for col in df.columns:
@@ -256,24 +271,46 @@ def _high_cardinality_categorical_stats(non_null: pd.Series) -> dict[str, Any]:
     source dtype -- numeric-looking codes (NDC, some ICD variants) must be
     loaded as strings to preserve leading zeros, so a numeric/datetime/bool
     source dtype is a typed error rather than a silent int coercion.
+
+    Dennis-LOW-1: the dtype gate is an ALLOW-list (object / pandas string /
+    category only), not a deny-list -- a deny-list of bool/numeric/datetime
+    lets timedelta/period/interval dtypes fall through uncaught. Reject
+    everything not explicitly allowed, by construction.
     """
     name = non_null.name
-    if (
-        pd.api.types.is_bool_dtype(non_null)
-        or pd.api.types.is_numeric_dtype(non_null)
-        or pd.api.types.is_datetime64_any_dtype(non_null)
-    ):
+    dtype = non_null.dtype
+    is_allowed = (
+        pd.api.types.is_object_dtype(dtype)
+        or isinstance(dtype, pd.CategoricalDtype)
+        or (pd.api.types.is_string_dtype(dtype) and not pd.api.types.is_object_dtype(dtype))
+    )
+    if not is_allowed:
         raise DistributionSnapshotError(
             code="high_cardinality_non_string_dtype",
             message=(
                 f"high_cardinality column {name!r}: source dtype "
-                f"{canonical_dtype_label(non_null.dtype)!r} is numeric/datetime/bool. "
+                f"{canonical_dtype_label(dtype)!r} is not string/object/category. "
                 f"Load it as a string column to preserve leading zeros and other "
                 f"code formatting before fitting."
             ),
         )
     str_vals = non_null.astype(str)
     distinct = str_vals.unique()
+    # MED-2: an object column of mixed types (e.g. int 1 and str "1") string-
+    # coerces both to "1" -- two real, distinct source values silently merge
+    # into one category label. Compare raw distinct count to the string-
+    # label distinct count and fail loud rather than let categories collide.
+    raw_distinct_count = len(non_null.unique())
+    if raw_distinct_count != len(distinct):
+        raise DistributionSnapshotError(
+            code="high_cardinality_ambiguous_string_coercion",
+            message=(
+                f"high_cardinality column {name!r}: {raw_distinct_count} distinct "
+                f"source values collapse to {len(distinct)} string labels; some "
+                f"categories are indistinguishable after string coercion. "
+                f"Normalize the column to a single consistent type before fitting."
+            ),
+        )
     if len(distinct) > _HIGH_CARDINALITY_MAX_DISTINCT:
         raise DistributionSnapshotError(
             code="high_cardinality_distinct_limit_exceeded",
@@ -283,7 +320,21 @@ def _high_cardinality_categorical_stats(non_null: pd.Series) -> dict[str, Any]:
                 f"vocabulary retention."
             ),
         )
-    label_bytes = sum(len(v.encode("utf-8")) for v in distinct)
+    # Codex-LOW: a lone surrogate (or other unencodable label) must raise
+    # the module's typed error boundary, not a raw UnicodeEncodeError. The
+    # offending label is not included in the message -- it may be
+    # unprintable or sensitive; the column name is enough to act on.
+    try:
+        label_bytes = sum(len(v.encode("utf-8")) for v in distinct)
+    except UnicodeEncodeError as exc:
+        raise DistributionSnapshotError(
+            code="high_cardinality_invalid_label_encoding",
+            message=(
+                f"high_cardinality column {name!r}: a category label could not be "
+                f"encoded as UTF-8 (e.g. a lone surrogate). Normalize the column's "
+                f"text encoding before fitting."
+            ),
+        ) from exc
     if label_bytes > _HIGH_CARDINALITY_MAX_LABEL_BYTES:
         raise DistributionSnapshotError(
             code="high_cardinality_label_bytes_limit_exceeded",
@@ -294,7 +345,16 @@ def _high_cardinality_categorical_stats(non_null: pd.Series) -> dict[str, Any]:
                 f"vocabulary retention."
             ),
         )
-    return _categorical_stats(str_vals, top_k=None)
+    stats = _categorical_stats(str_vals, top_k=None)
+    # HIGH-2 (gate remediation): provenance marker so a downstream consumer
+    # (generation/statistical/_spec.py) can prove this column was actually
+    # fit with full-vocabulary retention rather than trusting the
+    # generate-side `high_cardinality: true` flag alone (which proves
+    # nothing about how the artifact was fit). Additive-only -- never set
+    # on the default `_categorical_stats` path, so ordinary snapshots stay
+    # byte-identical to every prior engine version.
+    stats["high_cardinality"] = True
+    return stats
 
 
 def _numeric_stats(non_null: pd.Series, *, bins: int) -> dict[str, Any]:

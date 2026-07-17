@@ -392,6 +392,41 @@ class TestHashConfigExcludesSourcesAndTargets:
         p2 = compile_plan(modified, simple_profile, decoy_engine_version="0.1.0")
         assert p1.pipeline_config_hash != p2.pipeline_config_hash
 
+    def test_categorical_retention_warn_threshold_does_not_perturb_hash(
+        self, simple_config: dict, simple_profile: Profile
+    ) -> None:
+        """MED-1 (gate remediation): `categorical_retention_warn_threshold`
+        (HC-5) is warn-only advisory config -- it must not enter the
+        hashed masking-semantics block. A default config and one that sets
+        it to a non-default value must produce the SAME
+        pipeline_config_hash."""
+        default_config = dict(simple_config)
+        p1 = compile_plan(default_config, simple_profile, decoy_engine_version="0.1.0")
+
+        with_threshold = dict(simple_config)
+        with_threshold["global_settings"] = {
+            **simple_config["global_settings"],
+            "categorical_retention_warn_threshold": 0.42,
+        }
+        p2 = compile_plan(with_threshold, simple_profile, decoy_engine_version="0.1.0")
+        assert p1.pipeline_config_hash == p2.pipeline_config_hash
+
+    def test_hash_config_pinned_to_expected_digest(self) -> None:
+        """Pin a minimal config's hash to a hard-coded digest so any future
+        regression to _hash_config (e.g. a new advisory key leaking into
+        the semantic block) is caught immediately."""
+        from decoy_engine.plan._compile import _hash_config
+
+        config = {
+            "version": 1,
+            "global_settings": {"seed": 42},
+            "tables": [{"name": "t"}],
+        }
+        assert (
+            _hash_config(config)
+            == "9c2c4ae154637bb1db28973df3c842c2f0b86a00c3587617ad8fb7fd5503bce1"
+        )
+
 
 class TestS2WiringInvariants:
     """Sanity checks specific to the S2 wiring: the planner delegates to

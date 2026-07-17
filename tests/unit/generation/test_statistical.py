@@ -126,6 +126,21 @@ class TestCategoricalSampling:
         spec = load_spec(_col("state", snap, allow_real_categories=True))
         assert sample_column(spec, 400, col_seed=3) == sample_column(spec, 400, col_seed=3)
 
+    def test_truthy_string_allow_real_categories_rejected(self, tmp_path):
+        """HIGH-1: `bool("false")` is True -- a string value must not sail
+        through the consent gate. Only a literal bool `true` permits real
+        categories."""
+        snap = _write_snapshot(tmp_path, _source_df())
+        with pytest.raises(StatisticalSpecError) as exc:
+            load_spec(_col("state", snap, allow_real_categories="false"))
+        assert exc.value.code == "statistical_allow_real_categories_invalid_type"
+
+    def test_truthy_int_allow_real_categories_rejected(self, tmp_path):
+        snap = _write_snapshot(tmp_path, _source_df())
+        with pytest.raises(StatisticalSpecError) as exc:
+            load_spec(_col("state", snap, allow_real_categories=1))
+        assert exc.value.code == "statistical_allow_real_categories_invalid_type"
+
 
 class TestHighCardinalitySampling:
     """HC-5: full-vocabulary retention opt-in. The sampler itself needs no
@@ -150,6 +165,66 @@ class TestHighCardinalitySampling:
         with pytest.raises(StatisticalSpecError) as exc:
             load_spec(_col("code", str(path), high_cardinality=True))
         assert exc.value.code == "statistical_high_cardinality_requires_real_categories"
+
+    def test_truthy_string_allow_real_categories_rejected(self, tmp_path):
+        """HIGH-1: a high_cardinality column with a stringy truthy
+        allow_real_categories must still be rejected as a type error, not
+        silently pass the consent gate."""
+        from decoy_engine.quality.snapshot import compute_distribution_snapshot
+
+        df = self._high_card_df()
+        snap_dict = compute_distribution_snapshot(df, high_cardinality_columns=["code"])
+        path = tmp_path / "s.json"
+        path.write_text(json.dumps(snap_dict), encoding="utf-8")
+        with pytest.raises(StatisticalSpecError) as exc:
+            load_spec(
+                _col(
+                    "code",
+                    str(path),
+                    high_cardinality=True,
+                    allow_real_categories="false",
+                )
+            )
+        assert exc.value.code == "statistical_allow_real_categories_invalid_type"
+
+    def test_snapshot_without_high_cardinality_marker_rejected(self, tmp_path):
+        """HIGH-2: an ordinary top-K categorical snapshot (fit WITHOUT
+        high_cardinality_columns) paired with a generate spec that declares
+        high_cardinality: true must be rejected -- the tail is already
+        gone from the artifact, so accepting this would silently drop it
+        on every redistribute draw."""
+        from decoy_engine.quality.snapshot import compute_distribution_snapshot
+
+        df = pd.DataFrame({"code": [f"C{i:03d}" for i in range(25)]})
+        snap_dict = compute_distribution_snapshot(df, categorical_top_k=20)
+        assert snap_dict["columns"]["code"]["stats"]["other_count"] > 0
+        assert "high_cardinality" not in snap_dict["columns"]["code"]["stats"]
+        path = tmp_path / "s.json"
+        path.write_text(json.dumps(snap_dict), encoding="utf-8")
+        with pytest.raises(StatisticalSpecError) as exc:
+            load_spec(
+                _col(
+                    "code",
+                    str(path),
+                    high_cardinality=True,
+                    allow_real_categories=True,
+                )
+            )
+        assert exc.value.code == "statistical_high_cardinality_snapshot_mismatch"
+
+    def test_snapshot_with_high_cardinality_marker_accepted(self, tmp_path):
+        """HIGH-2 counterpart: a snapshot actually fit with
+        high_cardinality_columns carries the marker and load_spec accepts
+        it."""
+        from decoy_engine.quality.snapshot import compute_distribution_snapshot
+
+        df = self._high_card_df(n_codes=40)
+        snap_dict = compute_distribution_snapshot(df, high_cardinality_columns=["code"])
+        assert snap_dict["columns"]["code"]["stats"]["high_cardinality"] is True
+        path = tmp_path / "s.json"
+        path.write_text(json.dumps(snap_dict), encoding="utf-8")
+        spec = load_spec(_col("code", str(path), high_cardinality=True, allow_real_categories=True))
+        assert spec.kind == "categorical"
 
     def test_invalid_type_rejected(self, tmp_path):
         snap = _write_snapshot(tmp_path, _source_df())

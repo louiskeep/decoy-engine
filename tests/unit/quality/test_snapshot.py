@@ -116,6 +116,9 @@ def test_categorical_column_uses_top_k_and_other_count() -> None:
     # 30 distinct values * 3 reps = 90 rows; top 5 take 15 rows, other = 75.
     top_total = sum(item["count"] for item in col["stats"]["top_values"])
     assert top_total + col["stats"]["other_count"] == col["non_null_count"]
+    # HIGH-2 byte-stability: the default (non-high_cardinality) path must
+    # NEVER carry the high_cardinality provenance marker.
+    assert "high_cardinality" not in col["stats"]
 
 
 def test_categorical_ordering_is_count_desc_then_lexical() -> None:
@@ -266,6 +269,8 @@ def test_high_cardinality_bypasses_cliff_and_top_k() -> None:
     assert len(col["stats"]["top_values"]) == col["distinct_count"] == 50
     top_total = sum(item["count"] for item in col["stats"]["top_values"])
     assert top_total == col["non_null_count"] == 70
+    # HIGH-2: the high_cardinality path DOES carry the provenance marker.
+    assert col["stats"]["high_cardinality"] is True
 
 
 def test_high_cardinality_omitted_is_unaffected() -> None:
@@ -364,3 +369,97 @@ def test_high_cardinality_is_json_serializable_and_deterministic() -> None:
     s1 = compute_distribution_snapshot(df, high_cardinality_columns=["code"])
     s2 = compute_distribution_snapshot(df, high_cardinality_columns=["code"])
     assert json.dumps(s1, sort_keys=True) == json.dumps(s2, sort_keys=True)
+
+
+def test_high_cardinality_mixed_object_string_coercion_collision_rejected() -> None:
+    """MED-2: an object column of [1, "1", 2, "2"] has 4 raw distinct
+    values but only 2 string labels after str() coercion -- two real
+    categories would silently merge. Must fail loud."""
+    from decoy_engine.quality.snapshot import DistributionSnapshotError
+
+    df = pd.DataFrame({"code": pd.Series([1, "1", 2, "2"], dtype=object)})
+    with pytest.raises(DistributionSnapshotError) as exc:
+        compute_distribution_snapshot(df, high_cardinality_columns=["code"])
+    assert exc.value.code == "high_cardinality_ambiguous_string_coercion"
+
+
+def test_high_cardinality_clean_string_column_no_collision() -> None:
+    # Sanity check: a clean string column does not trip the collision gate.
+    df = pd.DataFrame({"code": ["1", "2", "3", "4"]})
+    snap = compute_distribution_snapshot(df, high_cardinality_columns=["code"])
+    assert snap["columns"]["code"]["distinct_count"] == 4
+
+
+def test_high_cardinality_bare_str_columns_arg_rejected() -> None:
+    """MED-3: `high_cardinality_columns="code"` satisfies `Collection[str]`
+    structurally and would otherwise become {"c","o","d","e"} -- the real
+    "code" column silently stays freetext. Reject the bare string shape."""
+    from decoy_engine.quality.snapshot import DistributionSnapshotError
+
+    df = pd.DataFrame({"code": [f"C{i:03d}" for i in range(40)]})
+    with pytest.raises(DistributionSnapshotError) as exc:
+        compute_distribution_snapshot(df, high_cardinality_columns="code")
+    assert exc.value.code == "high_cardinality_columns_not_collection"
+    # A real collection (list) still works.
+    snap = compute_distribution_snapshot(df, high_cardinality_columns=["code"])
+    assert snap["columns"]["code"]["kind"] == "categorical"
+
+
+def test_high_cardinality_invalid_utf8_label_raises_typed_error() -> None:
+    """Codex-LOW: a lone surrogate cannot be UTF-8 encoded; this must
+    surface as the module's typed error, not a raw UnicodeEncodeError."""
+    from decoy_engine.quality.snapshot import DistributionSnapshotError
+
+    df = pd.DataFrame({"code": ["a", "b", "\ud800"]})
+    with pytest.raises(DistributionSnapshotError) as exc:
+        compute_distribution_snapshot(df, high_cardinality_columns=["code"])
+    assert exc.value.code == "high_cardinality_invalid_label_encoding"
+
+
+def test_high_cardinality_timedelta_dtype_rejected() -> None:
+    """Dennis-LOW-1: the dtype gate is an allow-list, not a deny-list --
+    timedelta/period/interval must be rejected too, not just bool/numeric/
+    datetime."""
+    from decoy_engine.quality.snapshot import DistributionSnapshotError
+
+    df = pd.DataFrame({"code": pd.to_timedelta(["1 days", "2 days", "3 days"])})
+    with pytest.raises(DistributionSnapshotError) as exc:
+        compute_distribution_snapshot(df, high_cardinality_columns=["code"])
+    assert exc.value.code == "high_cardinality_non_string_dtype"
+
+
+def test_high_cardinality_period_dtype_rejected() -> None:
+    from decoy_engine.quality.snapshot import DistributionSnapshotError
+
+    df = pd.DataFrame({"code": pd.period_range("2020-01", periods=3, freq="M")})
+    with pytest.raises(DistributionSnapshotError) as exc:
+        compute_distribution_snapshot(df, high_cardinality_columns=["code"])
+    assert exc.value.code == "high_cardinality_non_string_dtype"
+
+
+def test_high_cardinality_interval_dtype_rejected() -> None:
+    from decoy_engine.quality.snapshot import DistributionSnapshotError
+
+    df = pd.DataFrame({"code": pd.IntervalIndex.from_breaks([0, 1, 2, 3])})
+    with pytest.raises(DistributionSnapshotError) as exc:
+        compute_distribution_snapshot(df, high_cardinality_columns=["code"])
+    assert exc.value.code == "high_cardinality_non_string_dtype"
+
+
+def test_high_cardinality_category_dtype_still_accepted() -> None:
+    # Allow-list sanity check: object/string/category still pass.
+    df = pd.DataFrame({"code": pd.Series(["a", "b", "c"], dtype="category")})
+    snap = compute_distribution_snapshot(df, high_cardinality_columns=["code"])
+    assert snap["columns"]["code"]["kind"] == "categorical"
+
+
+def test_high_cardinality_all_null_column_returns_empty_without_raising() -> None:
+    """Dennis-LOW-2: an all-null column early-returns kind:"empty" before
+    the dtype gate, so even a numeric all-null column marked
+    high_cardinality never raises -- nothing to coerce, no vocabulary to
+    retain. Pin this behavior; it must not raise and must carry no marker."""
+    df = pd.DataFrame({"code": pd.Series([None, None, None], dtype=object)})
+    snap = compute_distribution_snapshot(df, high_cardinality_columns=["code"])
+    col = snap["columns"]["code"]
+    assert col["kind"] == "empty"
+    assert "high_cardinality" not in col["stats"]

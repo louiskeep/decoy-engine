@@ -64,7 +64,13 @@ ALLOWLIST: dict[str, int] = {
     # added here. Decompose the four call/list sites into a small
     # data-driven table (check fn -> passed-name) when the next strategy
     # check lands and this module is touched again.
-    "src/decoy_engine/plan/_compile.py": 609,
+    # HC-5 gate remediation MED-1 (2026-07-17): +19 LOC (609 -> 628) for
+    # `_NON_SEMANTIC_GLOBAL_SETTINGS` + the strip-before-hash block in
+    # `_hash_config`, restoring pipeline_config_hash byte-stability against
+    # the new `categorical_retention_warn_threshold` advisory key. Small,
+    # localized addition to an already-oversized module; the decomposition
+    # target above still stands for the next touch.
+    "src/decoy_engine/plan/_compile.py": 628,
     # TB-5 precondition #73 (2026-07-13): the pure peak estimator was at the
     # cap (596 LOC) when it gained `route_intercept_bytes` -- the small public
     # accessor (idiomatic here, like `is_fixed_width_dtype`) that makes the
