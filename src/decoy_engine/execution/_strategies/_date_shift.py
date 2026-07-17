@@ -35,11 +35,15 @@ patient would anchor on different values (one masked, one raw) and shift
 apart -- exactly the interval the feature preserves. Each adapter copies the
 column pre-mask; the same requirement (immutable source value + lossless
 int-with-null typing) as an FK parent key, so the same `fk_columns_for_table`
-/ snapshot machinery carries it. The snapshot is aligned to the frame this
-handler sees by index LABEL (`reindex`), so a when-gated SUBSET frame (which
-keeps its parent-table row labels) still picks each surviving row's own
-pre-mask anchor. FAIL CLOSED if a configured `group_by` has no snapshot
-rather than silently falling back to the live (mutable) frame.
+/ snapshot machinery carries it. On every SUPPORTED path a date_shift+group_by
+column masks the FULL table frame (`when`, FK-participation, and `nested` are
+all compile-rejected for group_by), so the snapshot -- built from that same
+pre-mask frame -- shares its index exactly. The handler REQUIRES that index
+identity and fails closed on any mismatch, rather than silently reindexing an
+unexpected (filtered/reordered) frame -- so an unaccounted-for route becomes a
+loud fail-closed error, never a silent mis-anchor. FAIL CLOSED likewise if a
+configured `group_by` has no snapshot, rather than falling back to the live
+(mutable) frame.
 
 Null group-by value policy: `_canonicalize_source` hard-errors on a raw
 null (None) and on the float NaN sentinel pandas normally produces for a
@@ -120,11 +124,31 @@ class DateShiftStrategyHandler:
                         "adapter wiring error, not a config error."
                     ),
                 )
-            # Align the full-table pre-mask anchor to the frame this handler
-            # sees by LABEL, so a when-gated SUBSET (whose row labels are the
-            # parent-table positions) picks each surviving row's own anchor;
-            # identity for a full-frame / chunk / per-table load.
-            anchor_col = snapshot.reindex(col.index)
+            # The snapshot must line up ROW-FOR-ROW with the frame this handler
+            # sees. On every SUPPORTED path a date_shift+group_by column gets the
+            # full table frame -- a `when` gate, an FK-participating column, and a
+            # nested child are ALL compile-rejected for group_by -- so the snapshot,
+            # built from that same pre-mask frame, has an identical index. Require
+            # that identity and FAIL CLOSED otherwise instead of silently
+            # reindexing: a future/unknown route that handed a filtered or
+            # reordered frame (a fresh RangeIndex) would otherwise mis-anchor
+            # UNDETECTABLY -- the exact wrong-output class this snapshot exists to
+            # prevent (Dennis R2 LOW-1). This backstops any execution route not yet
+            # accounted for at the handler, turning a silent-wrong-output into a
+            # loud fail-closed raise.
+            if not snapshot.index.equals(col.index):
+                raise StrategyError(
+                    code="date_shift_group_anchor_snapshot_misaligned",
+                    strategy="date_shift",
+                    message=(
+                        f"column {column!r} date_shift group_by {group_by!r}: the "
+                        "pre-mask anchor snapshot does not row-align with the frame "
+                        "being masked (indexes differ). Anchoring would be wrong, so "
+                        "the run fails closed. This indicates an execution route not "
+                        "yet supported for group_by, not a config error."
+                    ),
+                )
+            anchor_col = snapshot
             if pd.api.types.is_extension_array_dtype(anchor_col.dtype):
                 anchor_col = anchor_col.astype(object)
 

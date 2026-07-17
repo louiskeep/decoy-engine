@@ -345,3 +345,69 @@ class TestFormula:
         assert float(out[0]) == 2.0
         assert float(out[1]) == 4.0
         assert out[2] is None
+
+
+class TestGroupAnchorSnapshotMisalignedFailsClosed:
+    """Dennis R2 LOW-1 backstop: if a snapshot ever fails to row-align with the
+    frame being masked (a future/unknown route handing a filtered or reordered
+    frame), the handler FAILS CLOSED instead of silently mis-anchoring. On every
+    supported route the indexes are identical by construction; this proves the
+    guard fires when that invariant is violated."""
+
+    def test_misaligned_snapshot_index_raises(self) -> None:
+        import pandas as pd
+
+        from decoy_engine.execution._adapter import StrategyContext
+        from decoy_engine.execution._errors import StrategyError
+        from decoy_engine.execution._strategies._date_shift import DateShiftStrategyHandler
+        from decoy_engine.generation.pool._cache import PoolCache
+
+        seed = _col(
+            "date_shift",
+            namespace="ds",
+            provider_config=(("min_days", -30), ("max_days", 30), ("group_by", "pid")),
+        )
+        df = pd.DataFrame({"d": ["2020-01-01", "2020-02-01", "2020-03-01"]})  # index 0,1,2
+        ctx = StrategyContext(
+            registry=None,  # type: ignore[arg-type]
+            pool_cache=PoolCache(),
+            relationship_graph=RelationshipGraph(edges=(), ordering=()),
+            namespace_registry=NamespaceRegistry(bindings=()),
+            job_seed=(0x1).to_bytes(8, "big"),
+        )
+        object.__setattr__(ctx, "current_table", "t")
+        # A snapshot whose index does NOT match the frame's (0,1,2) -> misaligned.
+        object.__setattr__(
+            ctx,
+            "group_anchor_snapshots",
+            {("t", "pid"): pd.Series(["p1", "p1", "p2"], index=[10, 11, 12])},
+        )
+        with pytest.raises(StrategyError) as exc:
+            DateShiftStrategyHandler().run(df, "d", seed, ctx)
+        assert exc.value.code == "date_shift_group_anchor_snapshot_misaligned"
+
+    def test_missing_snapshot_raises(self) -> None:
+        import pandas as pd
+
+        from decoy_engine.execution._adapter import StrategyContext
+        from decoy_engine.execution._errors import StrategyError
+        from decoy_engine.execution._strategies._date_shift import DateShiftStrategyHandler
+        from decoy_engine.generation.pool._cache import PoolCache
+
+        seed = _col(
+            "date_shift",
+            namespace="ds",
+            provider_config=(("min_days", -30), ("max_days", 30), ("group_by", "pid")),
+        )
+        df = pd.DataFrame({"d": ["2020-01-01", "2020-02-01"]})
+        ctx = StrategyContext(
+            registry=None,  # type: ignore[arg-type]
+            pool_cache=PoolCache(),
+            relationship_graph=RelationshipGraph(edges=(), ordering=()),
+            namespace_registry=NamespaceRegistry(bindings=()),
+            job_seed=(0x1).to_bytes(8, "big"),
+        )
+        object.__setattr__(ctx, "current_table", "t")  # no snapshot populated
+        with pytest.raises(StrategyError) as exc:
+            DateShiftStrategyHandler().run(df, "d", seed, ctx)
+        assert exc.value.code == "date_shift_group_anchor_snapshot_missing"

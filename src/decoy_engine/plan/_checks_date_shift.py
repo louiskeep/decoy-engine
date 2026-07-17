@@ -198,7 +198,8 @@ def check_date_shift_group_by_refs(config: dict[str, Any]) -> None:
             # Rather than ship a route-dependent silent-wrong-output, reject the
             # combination until per-route positional anchoring is implemented.
             # date_shift's core per-entity-consistent shift does not need `when`.
-            if col_entry.get("when"):
+            when_val = col_entry.get("when")
+            if isinstance(when_val, str) and when_val.strip():
                 raise PlanCompileError(
                     code="date_shift_group_by_with_when_unsupported",
                     path=(f"tables.{table_name}.columns.{col_name}.when"),
