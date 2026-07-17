@@ -142,6 +142,28 @@ def date_shift_group_columns(plan: Plan, registry: ProviderRegistry) -> dict[str
     return out
 
 
+def top_code_columns(plan: Plan, registry: ProviderRegistry) -> dict[str, set[str]]:
+    """Per-table set of columns masked by `top_code` (HC-3b).
+
+    A top_code column must ingest LOSSLESSLY (nullable Int64), never via a bare
+    `to_pandas()` that widens an int+null column to float64. Widening rounds any
+    integer with magnitude >= 2**53, and -- because whether a chunk widens
+    depends on whether THAT chunk carries a null -- makes the masked output
+    depend on the chunk boundary, breaking the CHUNK_SAFE byte-identity contract
+    (Codex R2 HIGH). The pandas adapter and the sequential runner union this set
+    into `fk_columns_for_table(...)` so the handler compares and renders exact
+    integer values on every route. Genuine float columns are unaffected (they are
+    float64 on every route already, so no chunk-dependent widening arises).
+    """
+    out: dict[str, set[str]] = {}
+    for node in build_work_list(plan, registry):
+        if node.kind != "scalar" or node.strategy != "top_code":
+            continue
+        for col in node.columns:
+            out.setdefault(node.table, set()).add(col)
+    return out
+
+
 def order_work(work: list[WorkNode], relationship_graph: RelationshipGraph) -> list[WorkNode]:
     """Order the work list (S9 spec §6.2).
 

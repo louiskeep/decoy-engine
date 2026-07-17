@@ -393,6 +393,28 @@ CAPABILITY_PROOFS: list[CapabilityProof] = [
         ),
     ),
     _mask_proof(
+        "top_code",
+        "Top-coding (age 90+ generalization)",
+        "age",
+        # Native integers (a real age column's shape), so the proof exercises the
+        # canonical numeric render, not just the string-passthrough path.
+        [67, 94, 101],
+        {"provider_config": {"preset": "hipaa_age"}},
+        "Ages over 89 collapse into a single '90+' category (HIPAA Safe Harbor "
+        "§164.514(b)(2)(i)(C)); ages at or below 89 are preserved, so distinct "
+        "high ages share one bucket while the rest keep their own value.",
+        # 94 and 101 both exceed the cap and become "90+", so two distinct inputs
+        # share one output; 67 is kept, rendered canonically as "67" (no ".0").
+        # Output cardinality < input cardinality.
+        lambda col, i, o: (
+            all(
+                (b[col] == "90+") if int(a[col]) > 89 else (b[col] == str(int(a[col])))
+                for a, b in zip(i, o, strict=True)
+            )
+            and len({b[col] for b in o}) < len({a[col] for a in i})
+        ),
+    ),
+    _mask_proof(
         "categorical",
         "Categorical remap",
         "tier",

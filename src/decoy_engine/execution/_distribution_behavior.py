@@ -134,6 +134,10 @@ _STATIC_BEHAVIOR: dict[str, DistributionBehavior] = {
     # HMAC output). Preserves_cardinality_only: distinct count of the group_by
     # column is preserved in the output; individual values are replaced.
     "group_key": "preserves_cardinality_only",
+    # top_code (HC-3b): numeric tail generalization. Only the tail is
+    # rewritten to a constant label; in-range values pass through unchanged.
+    # Coarsens: same class as bucketize (many-to-one on the affected slice).
+    "top_code": "coarsens",
 }
 
 

@@ -77,6 +77,7 @@ SHAPE_PRESERVING: frozenset[str] = frozenset(
         "nested",
         "shuffle",
         "text_mask",
+        "top_code",
         "truncate",
         "windowed_date",
     }

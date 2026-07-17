@@ -2,7 +2,7 @@
   "engine_version": "0.2.0",
   "generated_at": "2026-06-14",
   "surface": {
-    "mask": 22,
+    "mask": 23,
     "generate": 12,
     "providers": 34
   },
@@ -68,9 +68,9 @@
           {
             "member_id": "072426646",
             "ssn": "498-77-6275",
-            "first_name": "Tricia",
-            "last_name": "Clark",
-            "email": "tricia.clark@example.net",
+            "first_name": "Tomas",
+            "last_name": "Noble",
+            "email": "tomas.noble@example.net",
             "city": "Raleigh",
             "state": "NC",
             "zip": "27601"
@@ -78,9 +78,9 @@
           {
             "member_id": "198389147",
             "ssn": "120-21-3146",
-            "first_name": "Connie",
-            "last_name": "Lane",
-            "email": "connie.lane@corp.example.com",
+            "first_name": "Octavio",
+            "last_name": "Collins",
+            "email": "octavio.collins@corp.example.com",
             "city": "St. Louis",
             "state": "MO",
             "zip": "63101"
@@ -88,9 +88,9 @@
           {
             "member_id": "294512140",
             "ssn": "966-18-6578",
-            "first_name": "Leah",
-            "last_name": "Schaefer",
-            "email": "leah.schaefer@mail.example.com",
+            "first_name": "Nick",
+            "last_name": "Hendricks",
+            "email": "nick.hendricks@mail.example.com",
             "city": "Philadelphia",
             "state": "PA",
             "zip": "19101"
@@ -98,9 +98,9 @@
           {
             "member_id": "997965490",
             "ssn": "913-40-7403",
-            "first_name": "Derek",
-            "last_name": "Hall",
-            "email": "derek.hall@mail.example.com",
+            "first_name": "Deeanna",
+            "last_name": "Burks",
+            "email": "deeanna.burks@mail.example.com",
             "city": "New York",
             "state": "NY",
             "zip": "10001"
@@ -108,9 +108,9 @@
           {
             "member_id": "017723403",
             "ssn": "184-61-3581",
-            "first_name": "Lance",
-            "last_name": "Wilson",
-            "email": "lance.wilson@example.org",
+            "first_name": "Nolan",
+            "last_name": "Grant",
+            "email": "nolan.grant@example.org",
             "city": "Baltimore",
             "state": "MD",
             "zip": "21201"
@@ -408,6 +408,36 @@
       "invariant": "Numeric values collapse into fixed-width ranges, so distinct inputs share a bucket."
     },
     {
+      "id": "mask.top_code",
+      "kind": "mask",
+      "title": "Top-coding (age 90+ generalization)",
+      "column": "age",
+      "config_yaml": "tables:\n- name: t\n  columns:\n  - name: age\n    strategy: top_code\n    provider_config:\n      preset: hipaa_age",
+      "input": [
+        {
+          "age": "67"
+        },
+        {
+          "age": "94"
+        },
+        {
+          "age": "101"
+        }
+      ],
+      "output": [
+        {
+          "age": "67"
+        },
+        {
+          "age": "90+"
+        },
+        {
+          "age": "90+"
+        }
+      ],
+      "invariant": "Ages over 89 collapse into a single '90+' category (HIPAA Safe Harbor \u00a7164.514(b)(2)(i)(C)); ages at or below 89 are preserved, so distinct high ages share one bucket while the rest keep their own value."
+    },
+    {
       "id": "mask.categorical",
       "kind": "mask",
       "title": "Categorical remap",
@@ -546,13 +576,13 @@
       ],
       "output": [
         {
-          "first_name": "Katherine"
+          "first_name": "Shelby"
         },
         {
-          "first_name": "Marissa"
+          "first_name": "Alex"
         },
         {
-          "first_name": "Sarah"
+          "first_name": "Lamonica"
         }
       ],
       "invariant": "Values are replaced with synthetic provider output drawn from a value pool, not the originals."
