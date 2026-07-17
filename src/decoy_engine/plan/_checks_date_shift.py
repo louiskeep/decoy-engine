@@ -49,12 +49,15 @@ def check_date_shift_group_by_refs(config: dict[str, Any]) -> None:
             continue
         table_name = table_entry.get("name", "?")
 
-        # Build the full set of column names known in this table.
+        # Build the set of column names known in this table. date_shift is
+        # mask-kind only, so a group_by anchor must be a real (masked/source)
+        # `columns` entry present in the frame at mask time -- deliberately NOT
+        # unioning `generate_columns` (unlike windowed_date, which can anchor on
+        # a generate-side column). Including them would let a group_by naming a
+        # generate-only column pass compile and then KeyError at execution;
+        # restricting to `columns` lets compile fully own the validation.
         all_col_names: set[str] = set()
         for col_entry in table_entry.get("columns", []) or []:
-            if isinstance(col_entry, dict) and col_entry.get("name"):
-                all_col_names.add(str(col_entry["name"]))
-        for col_entry in table_entry.get("generate_columns", []) or []:
             if isinstance(col_entry, dict) and col_entry.get("name"):
                 all_col_names.add(str(col_entry["name"]))
 

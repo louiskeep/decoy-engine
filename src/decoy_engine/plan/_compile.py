@@ -65,8 +65,8 @@ from decoy_engine.plan._checks import (
 from decoy_engine.plan._checks_bucketize import check_bucketize_config
 from decoy_engine.plan._checks_categorical import check_categorical_categories
 
-# SP-10c + SP-46: per-strategy check modules (grouped_series, windowed_date,
-# group_key) and the fpe_join_group structural validation (SP-46).
+# HC-3a: date_shift `group_by` entity-anchor ref check (its own module for the
+# same _checks.py size-ceiling reason as the sibling per-strategy modules).
 from decoy_engine.plan._checks_date_shift import check_date_shift_group_by_refs
 
 # SP-10b: derived_aggregate check extracted from _checks.py to keep that
@@ -81,6 +81,9 @@ from decoy_engine.plan._checks_faker import check_faker_requires_provider
 # whole-column passthrough (discovery 0.1, DISCOVERY 2). Its own module for
 # the same _checks.py size-ceiling reason as the blocks above.
 from decoy_engine.plan._checks_fpe import check_fpe_charset_config
+
+# SP-10c + SP-46: per-strategy check modules (grouped_series, windowed_date,
+# group_key) and the fpe_join_group structural validation (SP-46).
 from decoy_engine.plan._checks_fpe_join import check_fpe_join_groups
 from decoy_engine.plan._checks_group_key import check_group_key_refs
 from decoy_engine.plan._checks_grouped_series import check_grouped_series_refs

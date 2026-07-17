@@ -280,8 +280,18 @@ _CASES: list[tuple[str, Any, dict[str, pa.Table]]] = [
         {
             "t": pa.table(
                 {
-                    "c": ["2020-01-15", "2020-02-20", None, "2019-06-30", "2019-07-15"],
-                    "patient_id": ["p1", "p1", "p1", "p2", "p2"],
+                    # Last row: a NULL patient_id with a VALID date exercises the
+                    # null-group self-anchor branch across substrates (it reduces
+                    # to the date-anchor path, which must stay pandas==polars).
+                    "c": [
+                        "2020-01-15",
+                        "2020-02-20",
+                        None,
+                        "2019-06-30",
+                        "2019-07-15",
+                        "2021-03-10",
+                    ],
+                    "patient_id": ["p1", "p1", "p1", "p2", "p2", None],
                 }
             )
         },
