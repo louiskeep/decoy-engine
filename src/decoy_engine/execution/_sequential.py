@@ -485,6 +485,14 @@ def run_sequential(
                 row_error_counts[key] = row_error_counts.get(key, 0) + 1
             quality_metrics["row_errors"] = row_error_counts
 
+        # HC-1 slice 1: same code_set corpus-provenance surfacing as the
+        # full-frame `run()` path -- `ctx` is shared across every table in
+        # this job (built once above), so `ctx.code_set_corpora` accumulates
+        # identically whether the job runs table-at-a-time (here) or
+        # full-frame.
+        if ctx.code_set_corpora:
+            quality_metrics["code_set_corpora"] = list(ctx.code_set_corpora.values())
+
         # Commit BEFORE any quarantine write (DE-08 reland fix, Codex finding
         # #1): the natural layout has the sink's commit target and the
         # quarantine's parent directory as the SAME directory (out/ +

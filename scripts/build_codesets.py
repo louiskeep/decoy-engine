@@ -1,7 +1,10 @@
 """Build minimal, free-license corpus Parquet files for the code_set strategy (SP-09).
 
 Corpora are written to src/decoy_engine/codesets/.
-Each file carries Parquet metadata with source and license information.
+Each file carries Parquet metadata with source and license information
+(read back by decoy_engine.transforms._codeset_provenance.CodeSetProvenance
+.from_parquet_metadata; see that module's docstring for the ModelPackManifest
+pattern this imitates).
 
 Run from the repo root:
     uv run python scripts/build_codesets.py
@@ -17,6 +20,20 @@ Sources:
              card networks (Visa, Mastercard); no copyright restriction on the
              enumeration itself (ISO standard codes are public reference data).
              See: https://www.iso.org/standard/33365.html
+
+HC-1 slice 1 (2026-07-17): every corpus below is an ABBREVIATED SEED (a
+handful of codes per chapter/section), not the full public code set --
+``is_seed=True`` on every _write() call marks this explicitly in the shipped
+metadata so downstream evidence can tell a seed from a complete corpus
+without inspecting row counts. Replacing these with full CMS/CDC/FDA data
+is HC-1 slice 2 (separate, larger change with its own network-fetch and
+sourcing-verification step); this script does not fetch anything live.
+``source_version`` / ``effective_date`` values below are read off each
+source's OWN already-cited release identifier (e.g. "FY2024" -> its
+documented Oct 1 effective date); day-precision dates for sources with no
+single fixed release (NDC's continuously-updated directory, MCC's ISO
+standard) use a documented year-anchor convention noted inline, not an
+independently re-verified live-source date.
 """
 
 from __future__ import annotations
@@ -31,8 +48,44 @@ CODESETS_DIR = Path(__file__).parent.parent / "src" / "decoy_engine" / "codesets
 CODESETS_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def _write(name: str, codes: list[str], chapters: list[str], descs: list[str], meta: dict) -> int:
-    """Write a corpus Parquet file; return row count."""
+def _write(
+    name: str,
+    codes: list[str],
+    chapters: list[str],
+    descs: list[str],
+    *,
+    source: str,
+    source_url: str,
+    license: str,
+    citation: str,
+    source_version: str,
+    effective_date: str,
+    is_seed: bool = True,
+) -> int:
+    """Write a corpus Parquet file; return row count.
+
+    Embeds HC-1 slice-1 provenance metadata (decoy_corpus_version 2.0):
+    identity (decoy_corpus, decoy_corpus_version), attribution (source,
+    source_url, license, citation), and release tracking (source_version,
+    effective_date) -- the shape
+    decoy_engine.transforms._codeset_provenance.CodeSetProvenance reads back
+    via CodeSetProvenance.from_parquet_metadata. is_seed marks this file as
+    an abbreviated sample (pending the HC-1 slice-2 full-data ETL), not the
+    complete public code set. All fields are keyword-only and required
+    (except is_seed) so a future corpus cannot be added to this script
+    without a provenance stamp.
+    """
+    meta = {
+        "decoy_corpus": name,
+        "decoy_corpus_version": "2.0",
+        "source": source,
+        "source_url": source_url,
+        "license": license,
+        "citation": citation,
+        "source_version": source_version,
+        "effective_date": effective_date,
+        "is_seed": "true" if is_seed else "false",
+    }
     table = pa.table(
         {
             "code": pa.array(codes, type=pa.string()),
@@ -409,15 +462,16 @@ def main() -> None:
         list(ICD10_CODES),
         list(ICD10_CHAPTERS),
         list(ICD10_DESCS),
-        {
-            "decoy_corpus": "icd10",
-            "decoy_corpus_version": "1.0",
-            "source": "CMS ICD-10-CM FY2024; WHO ICD-10",
-            "source_url": "https://www.cms.gov/medicare/coding-billing/icd-10-codes",
-            "license": "Public domain (United States Federal Government work; 17 U.S.C. 105)",
-            "citation": "Centers for Medicare and Medicaid Services. ICD-10-CM FY2024 "
-            "Official Guidelines for Coding and Reporting. CMS.gov, 2023.",
-        },
+        source="CMS ICD-10-CM FY2024; WHO ICD-10",
+        source_url="https://www.cms.gov/medicare/coding-billing/icd-10-codes",
+        license="Public domain (United States Federal Government work; 17 U.S.C. 105)",
+        citation="Centers for Medicare and Medicaid Services. ICD-10-CM FY2024 "
+        "Official Guidelines for Coding and Reporting. CMS.gov, 2023.",
+        # FY2024 ICD-10-CM's documented effective date is the start of the
+        # federal fiscal year (CMS convention: FY2024 = Oct 1 2023 - Sep 30
+        # 2024).
+        source_version="FY2024",
+        effective_date="2023-10-01",
     )
 
     counts["hcpcs"] = _write(
@@ -425,15 +479,14 @@ def main() -> None:
         list(HCPCS_CODES),
         list(HCPCS_CHAPTERS),
         list(HCPCS_DESCS),
-        {
-            "decoy_corpus": "hcpcs",
-            "decoy_corpus_version": "1.0",
-            "source": "CMS HCPCS Level II Q1 2024",
-            "source_url": "https://www.cms.gov/medicare/coding-billing/healthcare-common-procedure-system",
-            "license": "Public domain (United States Federal Government work; 17 U.S.C. 105)",
-            "citation": "Centers for Medicare and Medicaid Services. HCPCS Level II Codes "
-            "Q1 2024. CMS.gov, 2024.",
-        },
+        source="CMS HCPCS Level II Q1 2024",
+        source_url="https://www.cms.gov/medicare/coding-billing/healthcare-common-procedure-system",
+        license="Public domain (United States Federal Government work; 17 U.S.C. 105)",
+        citation="Centers for Medicare and Medicaid Services. HCPCS Level II Codes "
+        "Q1 2024. CMS.gov, 2024.",
+        # Q1 2024 calendar-quarter start (CMS releases HCPCS updates quarterly).
+        source_version="Q1 2024",
+        effective_date="2024-01-01",
     )
 
     counts["ndc"] = _write(
@@ -441,15 +494,18 @@ def main() -> None:
         list(NDC_CODES),
         list(NDC_CHAPTERS),
         list(NDC_DESCS),
-        {
-            "decoy_corpus": "ndc",
-            "decoy_corpus_version": "1.0",
-            "source": "FDA National Drug Code Directory",
-            "source_url": "https://www.fda.gov/drugs/drug-approvals-and-databases/national-drug-code-directory",
-            "license": "Public domain (United States Federal Government work; 17 U.S.C. 105)",
-            "citation": "U.S. Food and Drug Administration. National Drug Code Directory. "
-            "FDA.gov. Retrieved 2024.",
-        },
+        source="FDA National Drug Code Directory",
+        source_url="https://www.fda.gov/drugs/drug-approvals-and-databases/national-drug-code-directory",
+        license="Public domain (United States Federal Government work; 17 U.S.C. 105)",
+        citation="U.S. Food and Drug Administration. National Drug Code Directory. "
+        "FDA.gov. Retrieved 2024.",
+        # The NDC directory is continuously updated (no discrete "release");
+        # source_version/effective_date anchor to the cited retrieval year's
+        # Jan 1 as a documented convention, not an independently re-verified
+        # snapshot date. HC-1 slice 2 (real ETL) should replace this with the
+        # actual pull date.
+        source_version="2024",
+        effective_date="2024-01-01",
     )
 
     counts["mcc"] = _write(
@@ -457,16 +513,16 @@ def main() -> None:
         list(MCC_CODES),
         list(MCC_CHAPTERS),
         list(MCC_DESCS),
-        {
-            "decoy_corpus": "mcc",
-            "decoy_corpus_version": "1.0",
-            "source": "ISO 18245:2003 Merchant Category Codes (public reference enumeration)",
-            "source_url": "https://www.iso.org/standard/33365.html",
-            "license": "Standard code enumeration; no copyright restriction on the published "
-            "MCC list (widely published by Visa, Mastercard as reference data).",
-            "citation": "ISO 18245:2003 Retail financial services - Merchant category codes "
-            "for retail financial services. International Organization for Standardization.",
-        },
+        source="ISO 18245:2003 Merchant Category Codes (public reference enumeration)",
+        source_url="https://www.iso.org/standard/33365.html",
+        license="Standard code enumeration; no copyright restriction on the published "
+        "MCC list (widely published by Visa, Mastercard as reference data).",
+        citation="ISO 18245:2003 Retail financial services - Merchant category codes "
+        "for retail financial services. International Organization for Standardization.",
+        # ISO 18245:2003's own version number; day-precision anchors to the
+        # standard's publication year (no finer-grained release date published).
+        source_version="ISO 18245:2003",
+        effective_date="2003-01-01",
     )
 
     print()

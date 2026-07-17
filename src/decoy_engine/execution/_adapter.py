@@ -113,6 +113,14 @@ class StrategyContext:
     # FrozenInstanceError and, more importantly, would break the drain
     # point's identity-based reference to this list).
     row_errors: list[RowError] = field(default_factory=list)
+    # HC-1 slice 1: the shared code_set corpus-provenance evidence sink,
+    # keyed by column name (dedupes if a column's handler runs more than
+    # once, e.g. under a when_gate). `CodeSetHandler.run` populates one
+    # entry per code_set column (counts + identifiers only, no raw codes);
+    # `PandasExecutionAdapter.run` / `run_sequential` copy it into
+    # `ExecutionResult.quality_metrics['code_set_corpora']` at the end of the
+    # job. Same mutate-in-place pattern as `row_errors` above.
+    code_set_corpora: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         # A frozen dataclass forbids attribute assignment; object.__setattr__ is

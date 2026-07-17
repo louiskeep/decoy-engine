@@ -9,7 +9,12 @@ Tests cover:
   CS.6 - corpus_source: malformed customer corpus raises clean error.
   CS.7 - Config validation: missing code_set name raises.
   CS.8 - SP-06 keyed-access cross-version caveat documented.
-  CS.9 - All four shipped corpora load and smoke-mask cleanly.
+  CS.9 - Every registry-listed shipped corpus loads and smoke-masks cleanly.
+
+HC-1 slice 1 (2026-07-17) added: provenance read/validate cases
+(TestCorpusProvenance), chapter-lookup dict-index parity
+(TestChapterIndexParity), and made CS.9 (TestShippedCorpora) iterate
+CODESET_REGISTRY instead of a hardcoded corpus-name list.
 
 Methodology: HMAC-SHA256-keyed modular selection with domain exclusion
 (RFC 2104, https://datatracker.ietf.org/doc/html/rfc2104).
@@ -26,6 +31,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from decoy_engine.plan._errors import PlanCompileError
+from decoy_engine.transforms._codeset_provenance import CODESET_REGISTRY, CodeSetProvenance
 from decoy_engine.transforms.code_set import (
     CodeSetConfig,
     apply_code_set,
@@ -378,11 +384,15 @@ class TestKeyedAccessCaveat:
         )
 
 
-# ── CS.9: All four shipped corpora smoke-test ─────────────────────────────────
+# ── CS.9: All shipped corpora smoke-test (registry-driven, HC-1 item 5) ───────
 
 
 class TestShippedCorpora:
-    @pytest.mark.parametrize("corpus_name", ["icd10", "hcpcs", "ndc", "mcc"])
+    """HC-1 slice 1 item 5: parametrized off CODESET_REGISTRY, not a
+    hardcoded name list. Adding a corpus to the registry makes it show up
+    here automatically."""
+
+    @pytest.mark.parametrize("corpus_name", sorted(CODESET_REGISTRY))
     def test_corpus_loads(self, corpus_name: str):
         """Each shipped corpus must load without error."""
         from decoy_engine.transforms.code_set import load_corpus
@@ -391,7 +401,7 @@ class TestShippedCorpora:
         assert len(rows) > 0, f"Corpus {corpus_name!r} loaded 0 rows."
         assert all("code" in r for r in rows), "Every row must have a 'code' key."
 
-    @pytest.mark.parametrize("corpus_name", ["icd10", "hcpcs", "ndc", "mcc"])
+    @pytest.mark.parametrize("corpus_name", sorted(CODESET_REGISTRY))
     def test_corpus_masks_cleanly(self, corpus_name: str):
         """Each shipped corpus must support mask mode end-to-end."""
         from decoy_engine.transforms.code_set import load_corpus
@@ -406,7 +416,7 @@ class TestShippedCorpora:
         assert out in codes, f"Mask output {out!r} not in {corpus_name!r} corpus."
         assert out != first_code, f"Mask output equals input for {corpus_name!r}."
 
-    @pytest.mark.parametrize("corpus_name", ["icd10", "hcpcs", "ndc", "mcc"])
+    @pytest.mark.parametrize("corpus_name", sorted(CODESET_REGISTRY))
     def test_corpus_gen_mode_cleanly(self, corpus_name: str):
         """Each shipped corpus must support gen mode end-to-end."""
         from decoy_engine.transforms.code_set import load_corpus
@@ -419,6 +429,41 @@ class TestShippedCorpora:
             "any_value", cfg, mode="gen", job_seed=b"\xca\xfe" * 4, namespace="test.gen"
         )
         assert out in codes, f"Gen output {out!r} not in {corpus_name!r} corpus."
+
+    def test_shipped_corpora_derived_from_registry(self):
+        """`_SHIPPED_CORPORA` must be exactly the registry's keys (single
+        source of truth, HC-1 slice 1 item 5)."""
+        from decoy_engine.transforms.code_set import _SHIPPED_CORPORA
+
+        assert frozenset(CODESET_REGISTRY) == _SHIPPED_CORPORA
+
+    def test_codesets_docstring_lists_every_registry_corpus(self):
+        """Drift guard: codesets/__init__.py's docstring is hand-maintained
+        prose (not runtime-generated, so sphinx-autoapi's static source
+        parsing renders it correctly), but every registry corpus name must
+        still appear in it."""
+        import decoy_engine.codesets as codesets_pkg
+
+        doc = codesets_pkg.__doc__ or ""
+        for corpus_name in CODESET_REGISTRY:
+            assert corpus_name in doc, (
+                f"codesets/__init__.py docstring is missing corpus {corpus_name!r} "
+                "(registry and docstring have drifted; update the docstring)."
+            )
+
+    def test_docs_strategies_md_lists_every_registry_corpus(self):
+        """Drift guard: docs/strategies.md's code_set corpus list must name
+        every registry corpus (HC-1 slice 1 item 6: prose, not a hardcoded
+        row-count table)."""
+        import pathlib
+
+        docs_path = pathlib.Path(__file__).resolve().parents[3] / "docs" / "strategies.md"
+        text = docs_path.read_text(encoding="utf-8")
+        for corpus_name in CODESET_REGISTRY:
+            assert f"`{corpus_name}`" in text, (
+                f"docs/strategies.md is missing corpus {corpus_name!r} "
+                "(registry and docs have drifted)."
+            )
 
 
 # ── H1: gen mode must vary per row (intra-column variation) ───────────────────
@@ -591,3 +636,184 @@ class TestChapterPreserveUnknownChapter:
         )
         with pytest.raises(PlanCompileError, match="chapter"):
             apply_code_set("Z99", cfg, mode="gen", job_seed=_JOB_SEED)
+
+
+# ── HC-1 slice 1: provenance read/validate + evidence surfacing ──────────────
+
+
+class TestCorpusProvenance:
+    """HC-1 slice 1 items 1-3: provenance schema, fail-closed/warn loading,
+    and evidence surfacing (describe_loaded_corpus)."""
+
+    def test_load_corpus_provenance_shipped_icd10(self):
+        """A shipped corpus's provenance parses with every required field
+        present and no missing_required_fields()."""
+        from decoy_engine.transforms.code_set import load_corpus_provenance
+
+        prov = load_corpus_provenance("icd10")
+        assert isinstance(prov, CodeSetProvenance)
+        assert prov.source_version == "FY2024"
+        assert prov.effective_date == "2023-10-01"
+        assert prov.source
+        assert prov.license
+        assert prov.is_seed is True, "HC-1 slice 1 shipped corpora are abbreviated seeds."
+        assert prov.missing_required_fields() == []
+
+    def test_describe_loaded_corpus_evidence_shape(self):
+        """describe_loaded_corpus returns counts + identifiers only -- the
+        exact shape CodeSetHandler stamps into
+        ExecutionResult.quality_metrics['code_set_corpora']."""
+        from decoy_engine.transforms.code_set import describe_loaded_corpus
+
+        cfg = CodeSetConfig.from_dict({"code_set": "icd10"})
+        summary = describe_loaded_corpus(cfg)
+        assert summary["code_set"] == "icd10"
+        assert summary["source_version"] == "FY2024"
+        assert summary["effective_date"] == "2023-10-01"
+        assert summary["is_seed"] is True
+        assert summary["row_count"] > 0
+        # No raw codes leak into the evidence summary (SubsetManifest
+        # no-raw-data contract).
+        assert "codes" not in summary
+        assert "rows" not in summary
+
+    def test_shipped_corpus_missing_provenance_fails_closed(self, tmp_path: pathlib.Path):
+        """A SHIPPED corpus with NO provenance metadata at all is job-fatal
+        (code_set_corpus_missing_provenance), even though the file itself is
+        otherwise well-formed. Drives the loader's internal is_shipped=True
+        branch directly (there is no public way to make a real shipped
+        corpus lack provenance without mutating the repo's own files)."""
+        from decoy_engine.transforms._codeset_loader import _get_corpus_record
+
+        tbl = pa.table({"code": pa.array(["A01", "A02"], type=pa.string())})
+        path = tmp_path / "no_provenance.parquet"
+        pq.write_table(tbl, str(path))
+
+        with pytest.raises(PlanCompileError) as exc_info:
+            _get_corpus_record("no_provenance", path, is_shipped=True)
+        assert exc_info.value.code == "code_set_corpus_missing_provenance"
+
+    def test_shipped_corpus_partial_provenance_fails_closed(self, tmp_path: pathlib.Path):
+        """A SHIPPED corpus with an INCOMPLETE provenance stamp (some
+        required fields present, others missing) also fails closed."""
+        from decoy_engine.transforms._codeset_loader import _get_corpus_record
+
+        tbl = pa.table(
+            {"code": pa.array(["A01", "A02"], type=pa.string())},
+            metadata={b"decoy_corpus": b"partial", b"source": b"Some Source"},
+        )
+        path = tmp_path / "partial_provenance.parquet"
+        pq.write_table(tbl, str(path))
+
+        with pytest.raises(PlanCompileError) as exc_info:
+            _get_corpus_record("partial", path, is_shipped=True)
+        assert exc_info.value.code == "code_set_corpus_missing_provenance"
+
+    def test_customer_corpus_missing_provenance_warns_not_fails(
+        self, tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture
+    ):
+        """A CUSTOMER corpus with no provenance metadata at all only warns;
+        it must still load and mask successfully (provenance is optional
+        for customer corpora)."""
+        import logging
+
+        codes = ["Y01", "Y02", "Y03"]
+        tbl = pa.table({"code": pa.array(codes, type=pa.string())})
+        path = tmp_path / "customer_no_prov.parquet"
+        pq.write_table(tbl, str(path))
+
+        cfg = CodeSetConfig.from_dict(
+            {"code_set": "customer_no_prov", "corpus_source": f"customer:{path}"}
+        )
+        with caplog.at_level(logging.WARNING, logger="decoy_engine.transforms._codeset_loader"):
+            out = apply_code_set("Y01", cfg, mode="mask", job_seed=_JOB_SEED)
+        assert out in set(codes)
+        assert any("no provenance metadata" in rec.message for rec in caplog.records), (
+            "a customer corpus without provenance must log a warning, not raise."
+        )
+
+    def test_customer_corpus_partial_provenance_fails_closed(self, tmp_path: pathlib.Path):
+        """A CUSTOMER corpus with a PARTIAL provenance stamp still fails
+        closed: 'if present it must validate' (HC-1 slice 1 item 2) -- a
+        half-filled provenance block is worse than none."""
+        tbl = pa.table(
+            {"code": pa.array(["Z01", "Z02"], type=pa.string())},
+            metadata={b"decoy_corpus": b"partial_customer", b"source": b"Some Source"},
+        )
+        path = tmp_path / "customer_partial_prov.parquet"
+        pq.write_table(tbl, str(path))
+
+        cfg = CodeSetConfig.from_dict(
+            {"code_set": "partial_customer", "corpus_source": f"customer:{path}"}
+        )
+        with pytest.raises(PlanCompileError) as exc_info:
+            apply_code_set("Z01", cfg, mode="mask", job_seed=_JOB_SEED)
+        assert exc_info.value.code == "code_set_corpus_missing_provenance"
+
+    def test_customer_corpus_complete_provenance_validates(self, tmp_path: pathlib.Path):
+        """A CUSTOMER corpus with a COMPLETE provenance stamp loads cleanly
+        (no warning, no raise) -- 'if present it must validate' passes when
+        it actually does."""
+        tbl = pa.table(
+            {"code": pa.array(["W01", "W02"], type=pa.string())},
+            metadata={
+                b"decoy_corpus": b"complete_customer",
+                b"source": b"Internal customer registry",
+                b"source_version": b"2026-01",
+                b"effective_date": b"2026-01-01",
+                b"license": b"Proprietary, customer-owned",
+            },
+        )
+        path = tmp_path / "customer_complete_prov.parquet"
+        pq.write_table(tbl, str(path))
+
+        from decoy_engine.transforms.code_set import load_corpus_provenance
+
+        prov = load_corpus_provenance("complete_customer", path)
+        assert prov is not None
+        assert prov.missing_required_fields() == []
+        assert prov.source_version == "2026-01"
+
+
+# ── HC-1 slice 1 item 4: dict-index parity for chapter lookup ────────────────
+
+
+class TestChapterIndexParity:
+    """The memoized code->chapter dict index must produce byte-identical
+    results to the pre-HC-1 linear scan, for every case the old _get_chapter
+    handled (exact code match, unknown code fallback, no-chapter-column)."""
+
+    @staticmethod
+    def _naive_get_chapter(code: str, rows: list) -> str | None:
+        """Reference implementation: the exact pre-HC-1 linear-scan logic."""
+        if not rows:
+            return None
+        if "chapter" not in rows[0]:
+            return None
+        for row in rows:
+            if str(row["code"]) == code:
+                return str(row["chapter"])
+        return code[0] if code else None
+
+    def test_dict_index_matches_naive_scan_icd10(self):
+        from decoy_engine.transforms._codeset_loader import _get_corpus_record
+        from decoy_engine.transforms.code_set import _get_chapter
+
+        record = _get_corpus_record("icd10", None, is_shipped=True)
+        known_codes = [r["code"] for r in record.rows[:10]]
+        test_codes = [*known_codes, "ZZZ.UNKNOWN", ""]
+        for code in test_codes:
+            expected = self._naive_get_chapter(code, record.rows)
+            actual = _get_chapter(code, record.chapter_index)
+            assert actual == expected, (
+                f"chapter mismatch for {code!r}: dict-index gave {actual!r}, "
+                f"naive scan gave {expected!r}."
+            )
+
+    def test_dict_index_none_when_no_chapter_column(self):
+        """chapter_index is None (no per-corpus dict built) when the corpus
+        has no 'chapter' column; _get_chapter returns None, matching the
+        pre-HC-1 behavior."""
+        from decoy_engine.transforms.code_set import _get_chapter
+
+        assert _get_chapter("ANY", None) is None

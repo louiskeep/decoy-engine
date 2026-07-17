@@ -215,3 +215,79 @@ class TestCodeSetChapterPreserveUnknownChapter:
             # The original (unmasked) value stays in the output; the
             # pipeline layer, not the adapter, decides its fate (D8).
             assert result.output.column("code_col").to_pylist() == ["U07.1"]
+
+
+class TestCodeSetProvenanceEvidence:
+    """HC-1 slice 1 item 3: corpus provenance surfaced into
+    ExecutionResult.quality_metrics['code_set_corpora'] via the adapter."""
+
+    def test_quality_metrics_code_set_corpora_present(self) -> None:
+        out = PandasExecutionAdapter().run_single(
+            _plan("diag", _col("code_set", provider_config=(("code_set", "icd10"),))),
+            pa.table({"diag": pa.array(["I10", "E11.9"], type=pa.string())}),
+            registry=_REG,
+            relationship_graph=_GRAPH,
+            namespace_registry=_NS,
+        )
+        corpora = out.quality_metrics.get("code_set_corpora")
+        assert corpora is not None and len(corpora) == 1
+        entry = corpora[0]
+        assert entry["code_set"] == "icd10"
+        assert entry["source_version"] == "FY2024"
+        assert entry["effective_date"] == "2023-10-01"
+        assert entry["is_seed"] is True
+        assert entry["row_count"] > 0
+        # Counts + identifiers only -- no raw codes leak into evidence.
+        assert "codes" not in entry
+        assert "rows" not in entry
+
+    def test_quality_metrics_omits_code_set_corpora_when_no_code_set_columns(self) -> None:
+        """A job with no code_set columns must not gain a stray, empty
+        code_set_corpora key (additive, zero-impact on unrelated jobs)."""
+        out = PandasExecutionAdapter().run_single(
+            _plan("name", _col("passthrough")),
+            pa.table({"name": pa.array(["a", "b"], type=pa.string())}),
+            registry=_REG,
+            relationship_graph=_GRAPH,
+            namespace_registry=_NS,
+        )
+        assert "code_set_corpora" not in out.quality_metrics
+
+
+class TestCodeSetPlanYamlProvenance:
+    """HC-1 slice 1 item 3: corpus provenance stamped into the Plan YAML via
+    plan/_serialize.py::_column_seed_to_dict when strategy == 'code_set'."""
+
+    def test_column_seed_to_dict_stamps_code_set_provenance(self) -> None:
+        from decoy_engine.plan._serialize import _column_seed_to_dict
+
+        cs = _col("code_set", provider_config=(("code_set", "icd10"),))
+        out = _column_seed_to_dict(cs)
+        prov = out.get("code_set_provenance")
+        assert prov is not None
+        assert prov["source_version"] == "FY2024"
+        assert prov["effective_date"] == "2023-10-01"
+        assert prov["is_seed"] is True
+
+    def test_column_seed_to_dict_omits_provenance_for_non_code_set_strategy(self) -> None:
+        from decoy_engine.plan._serialize import _column_seed_to_dict
+
+        cs = _col("passthrough")
+        out = _column_seed_to_dict(cs)
+        assert "code_set_provenance" not in out
+
+    def test_column_seed_to_dict_omits_provenance_for_unreachable_customer_corpus(self) -> None:
+        """A code_set column referencing a customer corpus that does not
+        exist in THIS environment must not raise plan_to_yaml -- best-effort,
+        omit the annotation (see corpus_provenance_for_manifest's docstring)."""
+        from decoy_engine.plan._serialize import _column_seed_to_dict
+
+        cs = _col(
+            "code_set",
+            provider_config=(
+                ("code_set", "cpt_local"),
+                ("corpus_source", "customer:/no/such/file.parquet"),
+            ),
+        )
+        out = _column_seed_to_dict(cs)  # must not raise
+        assert "code_set_provenance" not in out

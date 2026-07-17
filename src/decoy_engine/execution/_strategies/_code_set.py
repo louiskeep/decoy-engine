@@ -24,6 +24,13 @@ row corpus) is a config/corpus-level defect that affects every row, not a
 row defect, and is re-raised unchanged: the discriminator is the exception's
 ``.code`` attribute, not a string match on its message (trap T8 -- no
 heuristic re-derivation of what "corpus-level" means).
+
+HC-1 slice 1 (2026-07-17): ``run`` stamps one corpus-provenance entry into
+``ctx.code_set_corpora`` per column, before the per-value loop
+(``describe_loaded_corpus``). ``PandasExecutionAdapter`` surfaces the
+accumulated sink into ``ExecutionResult.quality_metrics['code_set_corpora']``
+at the end of the job -- counts and identifiers only (source, source_version,
+effective_date, license, row_count), never raw codes.
 """
 
 from __future__ import annotations
@@ -36,7 +43,7 @@ from decoy_engine.execution._row_errors import RowError
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._types import ColumnSeed
-from decoy_engine.transforms.code_set import CodeSetConfig, apply_code_set
+from decoy_engine.transforms.code_set import CodeSetConfig, apply_code_set, describe_loaded_corpus
 
 # PlanCompileError codes that are PER-VALUE defects (this specific input
 # code cannot be masked under chapter_preserve), not corpus/config-level
@@ -83,6 +90,13 @@ class CodeSetHandler:
                     "decorrelated across namespaces via derive_index."
                 ),
             )
+
+        # HC-1 slice 1: stamp corpus provenance once per column (not once per
+        # value) into the shared evidence sink. Loads (and fail-closes/warns
+        # on) the corpus up front, same as the first per-value apply_code_set
+        # call would have, just earlier -- catches a corpus-level defect even
+        # for an all-null column that would otherwise never dispatch below.
+        ctx.code_set_corpora[column] = describe_loaded_corpus(code_cfg)
 
         source = df[column]
         na_mask = source.isna().to_numpy()

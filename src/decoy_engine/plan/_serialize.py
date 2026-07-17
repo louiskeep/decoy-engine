@@ -27,6 +27,7 @@ from decoy_engine.plan._types import (
     SeedEnvelope,
     TableSeed,
 )
+from decoy_engine.transforms.code_set import corpus_provenance_for_manifest
 
 
 def plan_to_yaml(plan: Plan) -> str:
@@ -120,6 +121,15 @@ def _column_seed_to_dict(cs: ColumnSeed) -> dict[str, Any]:
     # DE-02 (6b): emit vault only when set, so legacy plans round-trip unchanged.
     if cs.vault:
         out["vault"] = True
+    # HC-1 slice 1: stamp code-corpus provenance onto the manifest, the same
+    # "surfaced in output/evidence" contract as
+    # ExecutionResult.quality_metrics['code_set_corpora']. Best-effort (see
+    # corpus_provenance_for_manifest's docstring): omitted when the corpus
+    # cannot be resolved from wherever plan_to_yaml happens to run.
+    if cs.strategy == "code_set" and cs.provider_config:
+        provenance = corpus_provenance_for_manifest(dict(cs.provider_config))
+        if provenance is not None:
+            out["code_set_provenance"] = provenance.to_json_dict()
     return out
 
 
