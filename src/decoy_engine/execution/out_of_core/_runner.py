@@ -484,9 +484,17 @@ def _code_set_corpora_for_table(
     column absent from the source or resolved via FK join never falsely
     reports as "used." The out-of-core compat gate (`_compat.py`) admits
     code_set only in mask mode without `chapter_preserve` and rejects any
-    `when` predicate, so every admitted column here unconditionally masks
-    every non-null value in the table -- there is no when-gated zero-row case
-    to guard against (unlike the pandas/sequential route's when_gate).
+    `when` predicate, so there is no when-gated zero-row case to guard against
+    here (unlike the pandas/sequential route's when_gate).
+
+    Known divergence: stamping is keyed on schema presence, not on observed
+    non-null masking, so an all-null code_set column is reported here as used
+    whereas the pandas/sequential route omits it (it stamps only after masking
+    at least one non-null value). The two routes agree for any column with a
+    non-null value and diverge only for an entirely-null column; this is
+    evidence-only (a corpus listed though it masked nothing, no leak). Exact
+    parity would require threading a per-column non-null count through the
+    streaming batch loop.
     """
     seed = table_seed(plan, table_name)
     if seed is None:
