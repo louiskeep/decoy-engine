@@ -65,6 +65,10 @@ from decoy_engine.plan._checks import (
 from decoy_engine.plan._checks_bucketize import check_bucketize_config
 from decoy_engine.plan._checks_categorical import check_categorical_categories
 
+# HC-3a: date_shift `group_by` entity-anchor ref check (its own module for the
+# same _checks.py size-ceiling reason as the sibling per-strategy modules).
+from decoy_engine.plan._checks_date_shift import check_date_shift_group_by_refs
+
 # SP-10b: derived_aggregate check extracted from _checks.py to keep that
 # module under its allowlisted ceiling. See test_module_size.py ALLOWLIST.
 from decoy_engine.plan._checks_derived_aggregate import check_derived_aggregate_refs
@@ -198,6 +202,10 @@ def compile_plan(
     # Row 20 (SP-10c / P5.P.group_key, 2026-06-29): reject group_key columns
     # whose group_by column is missing. Config-only.
     check_group_key_refs(config)
+    # Row 27 (HC-3a, 2026-07-17): reject date_shift columns whose group_by
+    # (entity-anchor) column is missing. Config-only; both branches +
+    # run_config_only_checks.
+    check_date_shift_group_by_refs(config)
     # Row 21 (SP-46, 2026-06-29): validate fpe_join_group declarations and emit
     # compile-time manifest warnings for every active group. Config-only; runs
     # in both branches and in run_config_only_checks.
@@ -287,6 +295,8 @@ def compile_plan(
             "windowed_date_refs",
             # Row 20 (SP-10c): group_key group_by column ref.
             "group_key_refs",
+            # Row 27 (HC-3a): date_shift group_by (entity-anchor) column ref.
+            "date_shift_group_by_refs",
             # Row 21 (SP-46): fpe_join_group structural validation.
             "fpe_join_groups",
             # Row 22 (Sprint 13 S3): truncate length/keep/mask_char validation.
@@ -349,6 +359,8 @@ def compile_plan(
             "windowed_date_refs",
             # Row 20 (SP-10c): group_key group_by column ref.
             "group_key_refs",
+            # Row 27 (HC-3a): date_shift group_by (entity-anchor) column ref.
+            "date_shift_group_by_refs",
             # Row 21 (SP-46): fpe_join_group structural validation.
             "fpe_join_groups",
             # Row 22 (Sprint 13 S3): truncate length/keep/mask_char validation.
@@ -456,6 +468,9 @@ def run_config_only_checks(config: dict[str, Any]) -> tuple[str, ...]:
     # Row 20 (SP-10c / P5.P.group_key): reject group_key columns with a missing
     # group_by column ref. Config-only.
     check_group_key_refs(config)
+    # Row 27 (HC-3a): reject date_shift columns with a missing group_by
+    # (entity-anchor) column ref. Config-only.
+    check_date_shift_group_by_refs(config)
     # Row 21 (SP-46 / fpe_join_group): validate fpe_join_group declarations.
     # Warnings are discarded here (config-only callers do not build a Plan).
     check_fpe_join_groups(config)
@@ -485,6 +500,8 @@ def run_config_only_checks(config: dict[str, Any]) -> tuple[str, ...]:
         "grouped_series_refs",
         "windowed_date_refs",
         "group_key_refs",
+        # Row 27 (HC-3a): date_shift group_by (entity-anchor) column ref.
+        "date_shift_group_by_refs",
         # Row 21 (SP-46): fpe_join_group structural validation.
         "fpe_join_groups",
         # Row 22 (Sprint 13 S3): truncate length/keep/mask_char validation.

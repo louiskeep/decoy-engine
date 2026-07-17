@@ -12,6 +12,12 @@ runs the EXISTING pandas handler (so the masked column is identical to a direct
 pandas-adapter run, parity by construction), and writes the result back into the
 polars frame. The keyed/format primitive is shared, not reimplemented per
 substrate, which is what keeps the parity gate byte-exact.
+
+HC-3a note: `date_shift`'s `group_by` anchor does NOT ride through this port as
+a sibling column. The handler reads its entity anchors from a pre-mask snapshot
+in `ctx.group_anchor_snapshots` (populated by the polars adapter before its mask
+dispatch), so the port stays a strict single-column extractor and never has to
+thread -- or risk masking -- a live sibling.
 """
 
 from __future__ import annotations
