@@ -408,3 +408,77 @@ class TestWiredThroughAdapter:
     def test_top_code_registered_in_scalar_handlers(self) -> None:
         assert "top_code" in SCALAR_HANDLERS
         assert isinstance(SCALAR_HANDLERS["top_code"], TopCodeStrategyHandler)
+
+
+class TestObjectColumnExactParse:
+    """Codex D1 = A': an object/string/Decimal column is parsed EXACTLY (never
+    routed through float64). Non-numeric cells stay per-row RowErrors; a
+    fractional cell fails the whole column closed (that is the only path by which
+    a sub-ULP tail value could collapse into range); native float columns keep
+    their inherent float domain and are NOT rejected."""
+
+    def test_integer_strings_generalize(self) -> None:
+        src = pa.table({"age": ["40", "89", "90", "105"]})
+        out = _run(_plan("age", _col((("preset", "hipaa_age"),))), src)
+        assert out.output.column("age").to_pylist() == ["40", "89", "90+", "90+"]
+
+    def test_integral_decimal_notation_accepted(self) -> None:
+        # "89.0" is integral-valued -> accepted, rendered "89"; "90.0" -> tail.
+        df = pd.DataFrame({"age": ["89.0", "90.0"]}, dtype=object)
+        ctx = _FakeCtx()
+        out, _ = TopCodeStrategyHandler().run(
+            df.copy(), "age", _col((("preset", "hipaa_age"),)), ctx
+        )
+        assert out["age"].tolist() == ["89", "90+"]
+        assert ctx.row_errors == []
+
+    def test_huge_negative_in_range_renders_exactly(self) -> None:
+        # A huge-magnitude integral value with no floor lands in-range; the
+        # object exact-parse renders it from the exact Python int, NOT a
+        # float64-collapsed double (the old float path corrupted this).
+        big_neg = str(-(2**70))
+        df = pd.DataFrame({"age": [big_neg, "40"]}, dtype=object)
+        ctx = _FakeCtx()
+        out, _ = TopCodeStrategyHandler().run(
+            df.copy(), "age", _col((("preset", "hipaa_age"),)), ctx
+        )
+        assert out["age"].tolist() == [big_neg, "40"]  # exact, not collapsed
+        assert ctx.row_errors == []
+
+    def test_fractional_object_column_fails_closed(self) -> None:
+        src = pa.table({"age": ["40", "89.5", "95"]})
+        with pytest.raises((ExecutionError, StrategyError)) as exc:
+            _run(_plan("age", _col((("preset", "hipaa_age"),))), src)
+        assert exc.value.code == "top_code_non_integral_object_column"
+
+    def test_sub_ulp_decimal_string_rejected_closes_leak(self) -> None:
+        # THE Codex BLOCKER: "89.0000000000000001" > 89 exactly, but float64
+        # would render it in-range "89". Exact parse sees it as fractional and
+        # fails the column closed instead of leaking.
+        df = pd.DataFrame({"age": ["40", "89.0000000000000001"]}, dtype=object)
+        with pytest.raises(StrategyError) as exc:
+            TopCodeStrategyHandler().run(
+                df.copy(), "age", _col((("preset", "hipaa_age"),)), _FakeCtx()
+            )
+        assert exc.value.code == "top_code_non_integral_object_column"
+
+    def test_nonnumeric_cell_still_per_row_not_column_reject(self) -> None:
+        # A genuinely non-numeric cell is a per-row RowError (kept original),
+        # NOT a column-level reject -- dirty integer-age columns keep working.
+        df = pd.DataFrame({"age": [40, "abc", 90]}, dtype=object)
+        ctx = _FakeCtx()
+        out, _ = TopCodeStrategyHandler().run(
+            df.copy(), "age", _col((("preset", "hipaa_age"),)), ctx
+        )
+        assert out["age"].iloc[1] == "abc"  # kept original, quarantined
+        assert [e.row_index for e in ctx.row_errors] == [1]
+        assert out["age"].iloc[0] == "40" and out["age"].iloc[2] == "90+"
+
+    def test_native_float_column_fractional_not_rejected(self) -> None:
+        # A genuine float dtype column is the inherent float domain, NOT the
+        # exact-source case -- an in-range fractional value is kept and rendered
+        # (never a column reject); a value above cap still generalizes.
+        src = pa.table({"v": pa.array([50.5, 90.5], type=pa.float64())})
+        seed = _col((("cap", 89), ("over_label", "90+")))
+        out = _run(_plan("v", seed), src)
+        assert out.output.column("v").to_pylist() == ["50.5", "90+"]

@@ -1,56 +1,48 @@
-# top_code non-integer column domain (OPEN design decision)
+# top_code non-integer column domain — RESOLVED (Option A′)
 
-Status: **OPEN** — escalated for a scope decision. The HIPAA age>89 use case
-(integer ages) is correct and complete; this concerns applying top_code to
-NON-integer columns.
+Status: **RESOLVED** 2026-07-17 via Option A′ (Codex cross-model decision,
+product-owner-delegated). Kept here as the rationale record.
 
-## Context
+## The finding
 
-`top_code` (HC-3b) is numeric top-/bottom-coding. It coerces the target column
-with `pd.to_numeric` and compares against `cap`/`floor`. Two column classes
-behave differently:
+`top_code` (HC-3b) is numeric top-/bottom-coding. For an INTEGER column (genuine
+`int64` or the lossless nullable-`Int64` ingest) every value is exact at any
+magnitude. The open concern was NON-integer columns: `top_code` coerced them with
+`pd.to_numeric` (float64), and for an `object`/string/`Decimal` column whose
+SOURCE values are exact, that coercion could collapse a tail value one ULP above
+the cap — `Decimal("89.0000000000000001")` → `89.0` → rendered in-range `"89"`
+instead of the `"90+"` tail label (a disclosure introduced by top_code's own
+coercion, since the source was exact). A genuine `float64` column was never exact
+to begin with, so that case is inherent, not a top_code defect.
 
-- **Integer columns** (genuine `int64`, or the nullable `Int64` produced by
-  top_code's lossless FK-safe ingest): every value is exact at any magnitude, so
-  the comparison and the rendered string are exact. This is the HIPAA age path.
-- **Non-integer columns** (a genuine `float` column, or an `object`/string/
-  `Decimal` column that `pd.to_numeric` coerces through `float64`): values enter
-  the `float64` numeric domain, which represents integers exactly only up to
-  `2**53` and cannot hold sub-ULP decimal distinctions.
+## Resolution — Option A′ (`execution/_strategies/_top_code.py`)
 
-## The open finding (Codex R4 BLOCKER)
+Branch on the SOURCE dtype:
 
-For an `object`/`Decimal` column whose SOURCE values are exact, top_code's own
-choice to coerce through `float64` is what loses precision. Example:
-`Decimal("89.0000000000000001")` with `preset: hipaa_age` (cap=89) is genuinely
-`> 89`, but coerces to exactly `89.0` and renders in-range `"89"` instead of the
-`"90+"` tail label. Codex classifies this as a disclosure (a true tail value
-rendered in-range) because the source was exact until top_code coerced it. The
-counter-view: no real dataset stores an age as `"89.0000000000000001"`, and for
-a genuine `float64` source the value was never representable as distinct from
-`89.0`, so the coercion introduces nothing.
+- **Integer / float dtype**: unchanged. Integers are exact; a genuine float lives
+  in its inherent float domain (a fractional float in-range renders as itself).
+- **Object / string / Decimal dtype** → `_classify_object_column`, which parses
+  every non-null cell EXACTLY via `Decimal(str(cell))` (never float64):
+  - non-numeric cell (`"abc"`, bool, non-finite) → per-row `format_error`
+    RowError, original kept (unchanged dirty-column behavior — a mostly-numeric
+    integer-age column with a few placeholders still works cell-by-cell);
+  - integral value (native int, integral float, integral Decimal, integer-valued
+    string, incl. `"89.0"`) → compared exactly against cap/floor and, in-range,
+    rendered from its exact Python int (no `.0`, no large-int collapse — a huge
+    in-range negative with no floor now renders exactly instead of via a
+    float64-collapsed double);
+  - **fractional** value (a decimal / non-integral float, e.g.
+    `"89.0000000000000001"`) → the WHOLE column fails closed BEFORE any mutation
+    with `top_code_non_integral_object_column`. Routing it through float64 is the
+    only way top_code could misread a sub-ULP tail value as in-range, so we
+    refuse the column rather than take that path. A genuine decimal column
+    belongs in a float dtype or should be pre-rounded.
 
-## Decision needed (recommendation: Option A)
+This closes the disclosure by construction, covers the HIPAA integer age>89 use
+case, keeps genuine float columns working, and preserves per-cell quarantine for
+dirty integer columns — strictly better than plain "reject all object columns".
 
-- **Option A (recommended) — scope top_code to numeric-typed columns.** Reject
-  `object`/string source columns at runtime (fail closed with a coded
-  `StrategyError`), so top_code only ever operates on already-typed numeric
-  columns. Eliminates the exact-source-lost-to-float64 class by construction
-  (an object column of decimal strings is an upstream typing problem the ETL
-  should fix). Fully covers the HIPAA integer-age use case. Genuine `float64`
-  columns keep working (their sub-ULP identities are inherent to the data, not a
-  top_code defect). Cost: an object column of numeric strings that top_code
-  currently coerces would now be rejected instead of processed cell-by-cell —
-  a behavior change to weigh.
-- **Option B — full `Decimal`-domain top_code.** Run the comparison and the
-  chunk-safe render in arbitrary-precision `Decimal` for object columns. Exact,
-  but a meaningful rewrite that must preserve the pandas/polars parity and
-  chunk-byte-identity guarantees, and it still cannot make a genuine `float64`
-  source exact.
-- **Option C — accept as a documented limitation.** Keep float64 coercion;
-  state that top_code operates in the float64 numeric domain and sub-ULP decimal
-  distinctions are not preserved. Lowest effort; leaves Codex's BLOCKER standing.
-
-The HC-3(b) spec is "age>89" (integers), so Option A loses nothing for the
-stated scope while collapsing the entire float64-domain finding class. Pending
-the owner's call before merge.
+Compile-time note: `plan/_checks_top_code.py` is config-only (no source data), so
+it cannot see column dtype/values; the A′ rejection is necessarily a runtime
+fail-closed check. Regression coverage: `TestObjectColumnExactParse` in
+`tests/unit/execution/test_top_code.py`.
