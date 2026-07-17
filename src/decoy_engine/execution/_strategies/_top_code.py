@@ -119,18 +119,23 @@ class TopCodeStrategyHandler:
         in_range_mask = nums.notna() & ~over_mask & ~under_mask
 
         # Canonical, dtype-independent string for the in-range cells (see the
-        # module docstring's CRITICAL note): render from the COERCED numeric,
-        # with integral values normalized to carry no trailing ".0", so the
-        # SAME value renders identically whether the column ingested as int64
+        # module docstring's CRITICAL note): render from the COERCED numeric so
+        # the SAME value renders identically whether the column ingested as int64
         # (null-free chunk) or float64 (null-bearing chunk / cross-substrate).
         # `raw.astype(str)` would emit "67" vs "67.0" depending on the chunk's
         # null content -- the CHUNK_SAFE byte-identity break Dennis reproduced.
-        n_float = nums.astype("float64")
-        integral = nums.notna() & np.isfinite(n_float) & (n_float == np.floor(n_float))
-        in_range_str = nums.astype(str)  # fractional / non-finite fallback
-        # integral+finite -> plain integer string (never "67.0"); the boolean
-        # mask selects only those positions, so the int64 cast is always safe.
-        in_range_str[integral] = n_float[integral].astype("int64").astype(str)
+        if pd.api.types.is_integer_dtype(nums.dtype):
+            # Already ".0"-free and arbitrary-precision; no normalization needed.
+            in_range_str = nums.astype(str)
+        else:
+            # Float dtype (nulls widened it, or genuine floats): an integral
+            # value renders "67.0", so strip the ".0" via Python's
+            # arbitrary-precision int -- NOT a fixed-width `.astype("int64")`,
+            # which SILENTLY overflows/wraps negative above 2^63 (Dennis R2 LOW).
+            n_float = nums.astype("float64")
+            integral = nums.notna() & np.isfinite(n_float) & (n_float == np.floor(n_float))
+            in_range_str = nums.astype(str)  # fractional / non-finite fallback
+            in_range_str[integral] = n_float[integral].map(lambda v: str(int(v)))
 
         # A null or non-null-uncoercible cell is carried through byte-for-byte
         # unchanged (null passthrough is not a leak; the uncoercible cell is the

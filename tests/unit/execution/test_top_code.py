@@ -138,6 +138,23 @@ class TestInRangeContentPreserved:
         assert all(int(v) == orig for v, orig in zip(result, [23, 45, 89], strict=True))
 
 
+class TestLargeIntegralRenderNoOverflow:
+    """Dennis R2 LOW: the integral render must use arbitrary-precision Python
+    int, not a fixed-width `.astype("int64")` that silently wraps negative above
+    2^63. A large integral value on the float path (genuine float dtype) renders
+    correctly. Unreachable by a real top-coding config (cap this large is
+    nonsensical), but silent numeric corruption is closed at the source."""
+
+    def test_large_integral_float_renders_without_int64_overflow(self) -> None:
+        # 1e19 > 2^63: `.astype("int64")` would wrap to a negative value.
+        src = pa.table({"n": pa.array([1e19, 5.0], type=pa.float64())})
+        seed = _col((("cap", 1e20), ("over_label", "HUGE")))
+        out = _run(_plan("n", seed), src)
+        got = out.output.column("n").to_pylist()
+        assert got == [str(int(1e19)), "5"]
+        assert not got[0].startswith("-")  # no overflow wrap
+
+
 class TestNullPassthrough:
     def test_null_source_passes_through_unchanged_no_row_error(self) -> None:
         src = pa.table({"age": [23, None, 105]})
