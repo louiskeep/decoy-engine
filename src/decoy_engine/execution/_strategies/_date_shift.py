@@ -163,9 +163,23 @@ class DateShiftStrategyHandler:
                 continue
             if anchor_col is not None:
                 group_value = anchor_col.iloc[i]
-                # Null group value: self-anchor on this row's own date
-                # value instead (see module docstring's null policy).
-                anchor = value if pd.isna(group_value) else group_value
+                if pd.isna(group_value):
+                    # Null group value: self-anchor on this row's own date
+                    # value instead (see module docstring's null policy).
+                    anchor = value
+                else:
+                    # Normalize a numpy scalar (e.g. `numpy.bool_`/`numpy.int64`
+                    # from a null-free numpy-backed chunk) to its Python
+                    # equivalent, so the canonical digest input is identical
+                    # whether the anchor column materialized as a numpy dtype or
+                    # a Python-scalar object/extension/polars dtype. Without this
+                    # the SAME anchor value hashes differently across a chunk
+                    # boundary (null-free chunk vs nullable full frame) and across
+                    # substrates (`numpy.bool_(True)` -> b"True" vs `True` ->
+                    # b"\x01"), breaking the deterministic parity guarantee
+                    # (Codex R3 P1). Python scalars have no `.item()` and pass
+                    # through unchanged.
+                    anchor = group_value.item() if hasattr(group_value, "item") else group_value
             else:
                 anchor = value
             digest = derive(ctx.mask_key, plan.namespace, _canonicalize_source(anchor))

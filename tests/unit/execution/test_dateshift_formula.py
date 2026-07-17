@@ -411,3 +411,44 @@ class TestGroupAnchorSnapshotMisalignedFailsClosed:
         with pytest.raises(StrategyError) as exc:
             DateShiftStrategyHandler().run(df, "d", seed, ctx)
         assert exc.value.code == "date_shift_group_anchor_snapshot_missing"
+
+
+class TestBooleanAnchorNumpyPythonParity:
+    """Codex R3 P1: a boolean (or other numpy-materialized) group_by anchor must
+    hash identically whether it arrives as a numpy scalar (null-free numpy-backed
+    chunk) or a Python scalar (nullable full frame / polars snapshot). Otherwise
+    the same anchor shifts differently across chunk boundaries and substrates."""
+
+    def _run_with_snapshot(self, snapshot):
+        import pandas as pd
+
+        from decoy_engine.execution._adapter import StrategyContext
+        from decoy_engine.execution._strategies._date_shift import DateShiftStrategyHandler
+        from decoy_engine.generation.pool._cache import PoolCache
+
+        seed = _col(
+            "date_shift",
+            namespace="ds",
+            provider_config=(("min_days", -100), ("max_days", 100), ("group_by", "flag")),
+        )
+        df = pd.DataFrame({"d": ["2020-01-01", "2020-06-01", "2020-12-01"]})
+        ctx = StrategyContext(
+            registry=None,  # type: ignore[arg-type]
+            pool_cache=PoolCache(),
+            relationship_graph=RelationshipGraph(edges=(), ordering=()),
+            namespace_registry=NamespaceRegistry(bindings=()),
+            job_seed=(0x7).to_bytes(8, "big"),
+        )
+        object.__setattr__(ctx, "current_table", "t")
+        object.__setattr__(ctx, "group_anchor_snapshots", {("t", "flag"): snapshot})
+        out, _ = DateShiftStrategyHandler().run(df, "d", seed, ctx)
+        return list(out["d"])
+
+    def test_numpy_bool_matches_python_bool_anchor(self) -> None:
+        import pandas as pd
+
+        # numpy.bool_ elements (bool dtype) vs Python bool elements (object dtype),
+        # same logical values + same index.
+        numpy_snap = pd.Series([True, False, True], dtype=bool)
+        python_snap = pd.Series([True, False, True], dtype=object)
+        assert self._run_with_snapshot(numpy_snap) == self._run_with_snapshot(python_snap)
