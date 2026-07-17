@@ -23,6 +23,7 @@ exactly (only its Python type changes).
 
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 
@@ -42,6 +43,7 @@ from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution._row_errors import RowError
 from decoy_engine.execution._strategies import SCALAR_HANDLERS
 from decoy_engine.execution._strategies._top_code import TopCodeStrategyHandler
+from decoy_engine.execution._when_gate import run_with_when_gate
 from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.relationships._graph import RelationshipGraph
@@ -301,6 +303,44 @@ class TestBottomBoundFailClosed:
         assert exc.value.code == "top_code_bounds_unresolvable"
 
 
+class TestWhenGatePreflightFailsClosed:
+    """Codex R4 HIGH: the compile check rejects when+top_code, but a Plan that
+    bypasses compile (direct construction / YAML deserialization) reaches the
+    handler with a live `when`. The when-gate calls `preflight` unconditionally,
+    so top_code's preflight is the route-independent backstop: it fails closed
+    whether the gate matches zero rows (validation-bypass leak) or some rows
+    (Int64 writeback crash)."""
+
+    def test_preflight_always_raises_coded_error(self) -> None:
+        # preflight is invoked by the when-gate ONLY when plan.when is set, so
+        # its invocation means when+top_code -- it raises unconditionally.
+        with pytest.raises(StrategyError) as exc:
+            TopCodeStrategyHandler().preflight(_col((("preset", "hipaa_age"),)), _FakeCtx())
+        assert exc.value.code == "top_code_with_when_unsupported"
+
+    def _when_seed(self, when: str) -> ColumnSeed:
+        base = _col((("preset", "hipaa_age"),))
+        return replace(base, when=when)
+
+    @pytest.mark.parametrize(
+        "when, region",
+        [
+            ("region == 'nowhere'", ["A", "B", "C"]),  # zero-match (validation bypass)
+            ("region == 'A'", ["A", "B", "C"]),  # some match (Int64 writeback crash)
+        ],
+    )
+    def test_when_gate_fails_closed_on_both_match_counts(self, when: str, region: list) -> None:
+        # Drive the REAL pandas when-gate: preflight runs unconditionally before
+        # the zero-match short-circuit AND before run(), so both of Codex R4's
+        # reachable scenarios raise the coded error instead of leaking/crashing.
+        df = pd.DataFrame({"age": [50, 90, 105], "region": region})
+        with pytest.raises(StrategyError) as exc:
+            run_with_when_gate(
+                TopCodeStrategyHandler(), df.copy(), "age", self._when_seed(when), _FakeCtx()
+            )
+        assert exc.value.code == "top_code_with_when_unsupported"
+
+
 class TestNonNullUncoercible:
     def test_uncoercible_cell_records_row_error_and_leaves_original(self) -> None:
         """A non-null, non-numeric cell is a RowError (trigger format_error),
@@ -319,45 +359,6 @@ class TestNonNullUncoercible:
         assert err.row_index == 1
         assert err.trigger == "format_error"
         assert "abc" not in err.reason  # trap T3: reason never embeds the cell value
-
-
-class TestInexactMagnitudeQuarantined:
-    """Codex R3 BLOCKER: a non-integer column whose value magnitude reaches
-    float64's exact-integer limit (2**53) cannot be compared or rendered
-    exactly. Rather than silently collapse/corrupt it, fail closed (RowError)."""
-
-    def test_huge_value_on_object_column_quarantined_not_corrupted(self) -> None:
-        # An object column of numeric strings that EXCEED uint64 range, so
-        # `pd.to_numeric` must coerce through float64 (a value that fits int64 or
-        # uint64 parses exactly and needs no quarantine). The float-collapsed
-        # value would otherwise render corrupted; it is quarantined instead. A
-        # normal in-range age beside it is unaffected.
-        big = str(2**64 + 1)  # exceeds uint64 max -> forces float64 coercion
-        df = pd.DataFrame({"age": ["40", big, "95"]})
-        ctx = _FakeCtx()
-        out, _ = TopCodeStrategyHandler().run(
-            df.copy(), "age", _col((("preset", "hipaa_age"),)), ctx
-        )
-
-        assert out["age"].iloc[0] == "40"  # in-range small value rendered
-        assert out["age"].iloc[1] == big  # huge value left original (quarantined)
-        assert out["age"].iloc[2] == "90+"  # tail still generalized
-        assert len(ctx.row_errors) == 1
-        assert ctx.row_errors[0].row_index == 1
-        assert ctx.row_errors[0].trigger == "format_error"
-        assert big not in ctx.row_errors[0].reason  # trap T3: no cell value in reason
-
-    def test_integer_column_at_same_magnitude_is_exact_not_quarantined(self) -> None:
-        # The SAME magnitude on a genuine int64 column is exact (int dtype), so
-        # it is generalized normally -- never quarantined.
-        df = pd.DataFrame({"age": pd.array([40, 2**53 + 1, 95], dtype="Int64")})
-        ctx = _FakeCtx()
-        out, _ = TopCodeStrategyHandler().run(
-            df.copy(), "age", _col((("preset", "hipaa_age"),)), ctx
-        )
-
-        assert out["age"].iloc[1] == "90+"  # huge positive int is over cap -> generalized
-        assert ctx.row_errors == []
 
 
 class TestUnresolvableConfigFailsClosed:

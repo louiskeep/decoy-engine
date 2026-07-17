@@ -137,44 +137,12 @@ class TopCodeStrategyHandler:
                 )
             )
 
-        # Fail closed on any value we cannot reason about EXACTLY (Codex R3
-        # BLOCKER). An integer-dtype column carries Python-int / nullable-Int64
-        # values exactly at any magnitude (lossless FK-safe ingest keeps it int),
-        # but a NON-integer column -- a genuine float, or an object/string/Decimal
-        # column that `pd.to_numeric` coerced through float64 -- collapses every
-        # value with |v| >= 2**53 onto the nearest representable double. Two
-        # distinct source values then render to the SAME string (utility
-        # corruption), and a huge-negative value with no floor configured lands
-        # in-range and renders from that collapsed double. We only emit a
-        # generalized/rendered value when we can render it exactly, so a coerced
-        # value at or beyond float64's exact-integer range is quarantined as a
-        # format error rather than silently corrupted. The HIPAA age use case
-        # (small integer ages) never trips this; it fires only on pathological
-        # out-of-range magnitudes on non-integer columns.
-        inexact_mask = pd.Series(False, index=nums.index)
-        if not pd.api.types.is_integer_dtype(nums.dtype):
-            nf = nums.astype("float64")
-            inexact_mask = nums.notna() & np.isfinite(nf) & (np.abs(nf) >= _MAX_EXACT_INT)
-            for i in np.flatnonzero(inexact_mask.to_numpy()):
-                ctx.row_errors.append(
-                    RowError(
-                        column=column,
-                        row_index=int(i),
-                        trigger="format_error",
-                        reason=(
-                            "value magnitude is at or beyond 2**53 on a non-integer "
-                            "column; top_code cannot compare or render it exactly"
-                        ),
-                    )
-                )
-
-        usable = nums.notna() & ~inexact_mask
-        over_mask = usable & (nums > cap)
+        over_mask = nums.notna() & (nums > cap)
         if floor is not None and under_label is not None:
-            under_mask = usable & (nums < floor)
+            under_mask = nums.notna() & (nums < floor)
         else:
             under_mask = pd.Series(False, index=nums.index)
-        in_range_mask = usable & ~over_mask & ~under_mask
+        in_range_mask = nums.notna() & ~over_mask & ~under_mask
 
         # Canonical, dtype-independent string for the in-range cells (see the
         # module docstring's CRITICAL note): render from the COERCED numeric so
@@ -237,6 +205,38 @@ class TopCodeStrategyHandler:
             )
 
         return df, warnings
+
+    def preflight(self, plan: ColumnSeed, ctx: StrategyContext) -> None:
+        """Fail closed: top_code is never valid under a `when` gate.
+
+        `run_with_when_gate` (pandas) and `run_with_when_gate_polars` (via the
+        `PandasStrategyPort` forward) call this optional hook UNCONDITIONALLY and
+        ONLY when `plan.when is not None`, before their zero-match short-circuit.
+        Its mere invocation therefore means "top_code was combined with `when`".
+
+        The compile check (`plan/_checks_top_code.py`) rejects that shape too, but
+        a `Plan` that bypasses compile -- built directly, or deserialized from
+        YAML (`plan/_serialize.py` preserves `when`) -- reaches the handler with a
+        live `when`. There, conditional top-coding is unsound: a zero-match gate
+        skips `run()` so a malformed bound is never validated (unmasked
+        passthrough), and a matching gate makes the handler emit an aggregate
+        string label that the gate's `df.loc[mask, column] = ...` writeback cannot
+        put back into the column's lossless integer dtype (`ValueError: invalid
+        literal for int()`). This preflight makes both fail closed with a coded
+        error on every route, independent of the compile check (Codex R4 HIGH).
+        top-coding generalizes the whole column; a partial one is not supported.
+        """
+        raise StrategyError(
+            code="top_code_with_when_unsupported",
+            strategy="top_code",
+            message=(
+                "a top_code column combines `when` with top_code. Conditional "
+                "top-coding is not supported: a zero-match gate skips bound "
+                "validation (unmasked passthrough) and the aggregate label cannot "
+                "be written back into the column's integer dtype. top-coding "
+                "generalizes the whole column; remove `when` from this column."
+            ),
+        )
 
     @staticmethod
     def _resolve_top_bound(cfg: dict[str, Any]) -> tuple[int | float, str] | None:
