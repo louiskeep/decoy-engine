@@ -50,7 +50,12 @@ ALLOWLIST: dict[str, int] = {
     # compile-check ownership table. Decompose the growing _checks.py into
     # per-strategy check sub-modules in a follow-up sprint when the check set
     # stabilises (post-SP-15 or when the next strategy batch lands).
-    "src/decoy_engine/plan/_checks.py": 695,
+    "src/decoy_engine/plan/_checks.py": 711,
+    # HC-5 (2026-07-17): +16 LOC (695 -> 711) adding the `high_cardinality`
+    # wrong-type guard to `check_statistical_columns` -- a `high_cardinality`
+    # key on a non-`type: statistical` column (the one case `load_spec` never
+    # sees, since it is only called for statistical columns) plus its
+    # docstring note. Same per-strategy-check decomposition target stands.
     # HC-3b (2026-07-17): crossed the 600 cap adding the top_code compile-check
     # wiring (import + one call-site + one checks_passed entry, x2 for the
     # no_profile/full branches, plus run_config_only_checks' call + return

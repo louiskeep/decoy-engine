@@ -127,6 +127,60 @@ class TestCategoricalSampling:
         assert sample_column(spec, 400, col_seed=3) == sample_column(spec, 400, col_seed=3)
 
 
+class TestHighCardinalitySampling:
+    """HC-5: full-vocabulary retention opt-in. The sampler itself needs no
+    high_cardinality-specific code -- it draws over whatever `top_values`
+    list the snapshot carries, so these tests exercise load_spec's
+    validation plus the resulting full-vocab draw end to end."""
+
+    def _high_card_df(self, n_codes: int = 40) -> pd.DataFrame:
+        import numpy as np
+
+        rng = np.random.default_rng(9)
+        codes = [f"C{i:03d}" for i in range(n_codes)]
+        return pd.DataFrame({"code": rng.choice(codes, size=1_000)})
+
+    def test_requires_allow_real_categories(self, tmp_path):
+        from decoy_engine.quality.snapshot import compute_distribution_snapshot
+
+        df = self._high_card_df()
+        snap_dict = compute_distribution_snapshot(df, high_cardinality_columns=["code"])
+        path = tmp_path / "s.json"
+        path.write_text(json.dumps(snap_dict), encoding="utf-8")
+        with pytest.raises(StatisticalSpecError) as exc:
+            load_spec(_col("code", str(path), high_cardinality=True))
+        assert exc.value.code == "statistical_high_cardinality_requires_real_categories"
+
+    def test_invalid_type_rejected(self, tmp_path):
+        snap = _write_snapshot(tmp_path, _source_df())
+        with pytest.raises(StatisticalSpecError) as exc:
+            load_spec(_col("state", snap, allow_real_categories=True, high_cardinality="yes"))
+        assert exc.value.code == "statistical_high_cardinality_invalid_type"
+
+    def test_non_categorical_kind_rejected(self, tmp_path):
+        # "amount" snapshots as numeric; high_cardinality only applies to a
+        # categorical snapshot kind.
+        snap = _write_snapshot(tmp_path, _source_df())
+        with pytest.raises(StatisticalSpecError) as exc:
+            load_spec(_col("amount", snap, allow_real_categories=True, high_cardinality=True))
+        assert exc.value.code == "statistical_high_cardinality_kind_invalid"
+
+    def test_full_vocabulary_retained_and_sampled(self, tmp_path):
+        from decoy_engine.quality.snapshot import compute_distribution_snapshot
+
+        df = self._high_card_df(n_codes=40)
+        snap_dict = compute_distribution_snapshot(df, high_cardinality_columns=["code"])
+        assert snap_dict["columns"]["code"]["stats"]["other_count"] == 0
+        assert len(snap_dict["columns"]["code"]["stats"]["top_values"]) == 40
+        path = tmp_path / "s.json"
+        path.write_text(json.dumps(snap_dict), encoding="utf-8")
+        spec = load_spec(_col("code", str(path), allow_real_categories=True, high_cardinality=True))
+        out = sample_column(spec, 2_000, col_seed=5)
+        # Every drawn value is a real observed code; none collapsed to other.
+        assert set(out) <= {f"C{i:03d}" for i in range(40)}
+        assert len(set(out)) > 20  # broad coverage, not just the head of a top-k cut
+
+
 class TestDatetimeSampling:
     def test_within_source_range_and_deterministic(self, tmp_path):
         df = _source_df()
@@ -441,4 +495,59 @@ class TestCompileCheck:
 
         snap = _write_snapshot(tmp_path, _source_df())
         cfg = self._cfg([{"name": "amount", "type": "statistical", "snapshot_file": snap}])
+        assert "statistical_columns" in run_config_only_checks(cfg)
+
+    def test_high_cardinality_without_consent_rejected_config_only(self, tmp_path):
+        from decoy_engine import run_config_only_checks
+        from decoy_engine.plan import PlanCompileError
+        from decoy_engine.quality.snapshot import compute_distribution_snapshot
+
+        df = pd.DataFrame({"code": [f"C{i:03d}" for i in range(40)]})
+        snap_dict = compute_distribution_snapshot(df, high_cardinality_columns=["code"])
+        path = tmp_path / "s.json"
+        path.write_text(json.dumps(snap_dict), encoding="utf-8")
+        cfg = self._cfg(
+            [
+                {
+                    "name": "code",
+                    "type": "statistical",
+                    "snapshot_file": str(path),
+                    "high_cardinality": True,
+                }
+            ]
+        )
+        with pytest.raises(PlanCompileError) as exc:
+            run_config_only_checks(cfg)
+        assert exc.value.code == "statistical_high_cardinality_requires_real_categories"
+
+    def test_high_cardinality_on_non_statistical_column_rejected(self, tmp_path):
+        from decoy_engine import run_config_only_checks
+        from decoy_engine.plan import PlanCompileError
+
+        cfg = self._cfg(
+            [{"name": "w", "type": "faker", "faker_type": "word", "high_cardinality": True}]
+        )
+        with pytest.raises(PlanCompileError) as exc:
+            run_config_only_checks(cfg)
+        assert exc.value.code == "statistical_high_cardinality_wrong_type"
+
+    def test_high_cardinality_clean_config_passes(self, tmp_path):
+        from decoy_engine import run_config_only_checks
+        from decoy_engine.quality.snapshot import compute_distribution_snapshot
+
+        df = pd.DataFrame({"code": [f"C{i:03d}" for i in range(40)]})
+        snap_dict = compute_distribution_snapshot(df, high_cardinality_columns=["code"])
+        path = tmp_path / "s.json"
+        path.write_text(json.dumps(snap_dict), encoding="utf-8")
+        cfg = self._cfg(
+            [
+                {
+                    "name": "code",
+                    "type": "statistical",
+                    "snapshot_file": str(path),
+                    "high_cardinality": True,
+                    "allow_real_categories": True,
+                }
+            ]
+        )
         assert "statistical_columns" in run_config_only_checks(cfg)

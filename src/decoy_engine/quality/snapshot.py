@@ -38,12 +38,20 @@ What this module does NOT do (out of scope for D1a, owned by D1b/c/d):
   - Diagnostic structural checks (column survival, dtype drift). That
     belongs in D1b (diagnostic.py).
   - Persist snapshots to a job record. That's D2.
+
+Sensitive artifact: a categorical column's `top_values` already carries
+REAL source values (gated by the consumer-side `allow_real_categories`
+opt-in, generation/statistical/_spec.py). A `high_cardinality_columns`
+entry (HC-5) retains the FULL observed vocabulary for that column with
+no top-K collapse, so the artifact additionally exposes every distinct
+code AND rare-code presence/absence -- treat it with the same care as
+a raw extract of that column.
 """
 
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from typing import Any
 
 import numpy as np
@@ -52,6 +60,23 @@ import pandas as pd
 from decoy_engine.internal.pandas_compat import canonical_dtype_label
 
 DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION = "distribution-snapshot/v1"
+
+
+class DistributionSnapshotError(Exception):
+    """Fit-time `high_cardinality` contract violation. Machine-readable code.
+
+    Raised in place of silently degrading: a column marked
+    `high_cardinality` promises FULL-fidelity vocabulary retention, so a
+    request this module cannot honor (wrong dtype, or a vocabulary/label
+    size the JSON artifact should not carry) fails the fit loudly instead
+    of falling back to the ordinary top-K/freetext behavior.
+    """
+
+    def __init__(self, *, code: str, message: str) -> None:
+        self.code = code
+        self.message = message
+        super().__init__(f"[{code}] {message}")
+
 
 # Determinism guard. Floating-point quantile / mean / std calculations can
 # vary in the last few bits across BLAS builds; rounding to 12 places
@@ -72,9 +97,18 @@ _DEFAULT_CATEGORICAL_TOP_K = 20
 _DEFAULT_CONTINGENCY_TOP_K = 25
 
 # Cardinality cap that splits "categorical" from "freetext" for object
-# columns. Mirrors storm/profiler._CATEGORICAL_DISTINCT_CAP (30) so the
-# kind assignment is consistent across the engine.
+# columns. Mirrors storm/_distributions._STORM_CATEGORICAL_DISTINCT_CAP (30)
+# so the kind assignment is consistent across the engine. This is the SINGLE
+# fit source of truth (HC-5 D4): the STORM copy is a deliberately independent
+# profiler-chart constant, not derived from this one.
 _CATEGORICAL_DISTINCT_CAP = 30
+
+# HC-5 hard safety limits for an opt-in `high_cardinality` column: the "full
+# fidelity" promise (retain every observed category) must fail loudly rather
+# than silently truncate or balloon the JSON artifact. Both are typed fit
+# errors, never a silent cap.
+_HIGH_CARDINALITY_MAX_DISTINCT = 100_000
+_HIGH_CARDINALITY_MAX_LABEL_BYTES = 16 * 1024 * 1024  # 16 MiB
 
 
 def compute_distribution_snapshot(
@@ -84,6 +118,7 @@ def compute_distribution_snapshot(
     numeric_bins: int = _DEFAULT_NUMERIC_BINS,
     categorical_top_k: int = _DEFAULT_CATEGORICAL_TOP_K,
     contingency_top_k: int = _DEFAULT_CONTINGENCY_TOP_K,
+    high_cardinality_columns: Collection[str] = (),
 ) -> dict[str, Any]:
     """Compute a deterministic, JSON-serializable distribution snapshot.
 
@@ -97,17 +132,35 @@ def compute_distribution_snapshot(
             column; rest collapse into the column's `other_count`.
         contingency_top_k: Max cells kept per joint table; rest collapse
             into the joint's `other_count`.
+        high_cardinality_columns: Column names (HC-5) to fit with FULL
+            vocabulary retention instead of the ordinary cardinality cliff
+            (>30 distinct -> freetext) and top-K collapse: forces
+            `kind: categorical` and keeps every observed category
+            (`other_count` stays 0). Opt-in only -- omitted (the default)
+            means byte-identical output to every prior engine version.
+            Restricted to string/object/category source dtype and to
+            <=100,000 distinct values / <=16 MiB combined UTF-8 label
+            bytes; violating either raises `DistributionSnapshotError`
+            rather than silently degrading. Unknown column names are
+            silently skipped (matching `joint_columns`, not a validator).
 
     Returns:
         A dict matching schema `distribution-snapshot/v1`. See module
         docstring for shape contract.
+
+    Raises:
+        DistributionSnapshotError: A `high_cardinality_columns` entry has
+            a non-string source dtype, or exceeds the distinct-value or
+            label-byte safety limit.
     """
+    high_cardinality_set = frozenset(str(c) for c in high_cardinality_columns)
     columns_block: dict[str, dict[str, Any]] = {}
     for col in df.columns:
         columns_block[str(col)] = _column_snapshot(
             df[col],
             numeric_bins=numeric_bins,
             categorical_top_k=categorical_top_k,
+            high_cardinality=str(col) in high_cardinality_set,
         )
 
     joints_block: list[dict[str, Any]] = []
@@ -136,6 +189,7 @@ def _column_snapshot(
     *,
     numeric_bins: int,
     categorical_top_k: int,
+    high_cardinality: bool = False,
 ) -> dict[str, Any]:
     non_null = series.dropna()
     null_count = int(series.isna().sum())
@@ -156,7 +210,12 @@ def _column_snapshot(
             "stats": {},
         }
 
-    kind, stats = _stats_for(non_null, numeric_bins=numeric_bins, top_k=categorical_top_k)
+    kind, stats = _stats_for(
+        non_null,
+        numeric_bins=numeric_bins,
+        top_k=categorical_top_k,
+        high_cardinality=high_cardinality,
+    )
     return {
         "dtype": dtype,
         "kind": kind,
@@ -172,7 +231,10 @@ def _stats_for(
     *,
     numeric_bins: int,
     top_k: int,
+    high_cardinality: bool = False,
 ) -> tuple[str, dict[str, Any]]:
+    if high_cardinality:
+        return "categorical", _high_cardinality_categorical_stats(non_null)
     if pd.api.types.is_bool_dtype(non_null):
         return "categorical", _categorical_stats(non_null.astype(str), top_k=top_k)
     if pd.api.types.is_numeric_dtype(non_null):
@@ -184,6 +246,55 @@ def _stats_for(
     if distinct <= _CATEGORICAL_DISTINCT_CAP:
         return "categorical", _categorical_stats(non_null.astype(str), top_k=top_k)
     return "freetext", _freetext_stats(non_null.astype(str), bins=numeric_bins)
+
+
+def _high_cardinality_categorical_stats(non_null: pd.Series) -> dict[str, Any]:
+    """Force-categorical, full-vocabulary path for a `high_cardinality`
+    column (HC-5 D1): bypasses the 30-distinct cliff AND the top-K collapse
+    (`top_k=None` in `_categorical_stats` retains every observed value, so
+    `other_count` is always 0 here). Restricted to string/object/category
+    source dtype -- numeric-looking codes (NDC, some ICD variants) must be
+    loaded as strings to preserve leading zeros, so a numeric/datetime/bool
+    source dtype is a typed error rather than a silent int coercion.
+    """
+    name = non_null.name
+    if (
+        pd.api.types.is_bool_dtype(non_null)
+        or pd.api.types.is_numeric_dtype(non_null)
+        or pd.api.types.is_datetime64_any_dtype(non_null)
+    ):
+        raise DistributionSnapshotError(
+            code="high_cardinality_non_string_dtype",
+            message=(
+                f"high_cardinality column {name!r}: source dtype "
+                f"{canonical_dtype_label(non_null.dtype)!r} is numeric/datetime/bool. "
+                f"Load it as a string column to preserve leading zeros and other "
+                f"code formatting before fitting."
+            ),
+        )
+    str_vals = non_null.astype(str)
+    distinct = str_vals.unique()
+    if len(distinct) > _HIGH_CARDINALITY_MAX_DISTINCT:
+        raise DistributionSnapshotError(
+            code="high_cardinality_distinct_limit_exceeded",
+            message=(
+                f"high_cardinality column {name!r}: {len(distinct)} distinct values "
+                f"exceeds the {_HIGH_CARDINALITY_MAX_DISTINCT} safety limit for full "
+                f"vocabulary retention."
+            ),
+        )
+    label_bytes = sum(len(v.encode("utf-8")) for v in distinct)
+    if label_bytes > _HIGH_CARDINALITY_MAX_LABEL_BYTES:
+        raise DistributionSnapshotError(
+            code="high_cardinality_label_bytes_limit_exceeded",
+            message=(
+                f"high_cardinality column {name!r}: {label_bytes} combined UTF-8 "
+                f"category-label bytes exceeds the "
+                f"{_HIGH_CARDINALITY_MAX_LABEL_BYTES} safety limit for full "
+                f"vocabulary retention."
+            ),
+        )
+    return _categorical_stats(str_vals, top_k=None)
 
 
 def _numeric_stats(non_null: pd.Series, *, bins: int) -> dict[str, Any]:
@@ -240,7 +351,10 @@ def _numeric_stats(non_null: pd.Series, *, bins: int) -> dict[str, Any]:
     }
 
 
-def _categorical_stats(non_null: pd.Series, *, top_k: int) -> dict[str, Any]:
+def _categorical_stats(non_null: pd.Series, *, top_k: int | None) -> dict[str, Any]:
+    """`top_k=None` (HC-5 high_cardinality) retains every observed category:
+    `other_count` is always 0 and the deterministic (-count, str(value))
+    sort still applies, it just never gets truncated."""
     counts = non_null.value_counts()
     # value_counts already orders by count desc, but ties are broken in
     # observation order. Re-sort by (-count, str(value)) for a stable
@@ -249,8 +363,10 @@ def _categorical_stats(non_null: pd.Series, *, top_k: int) -> dict[str, Any]:
         ((str(val), int(cnt)) for val, cnt in counts.items()),
         key=lambda kv: (-kv[1], kv[0]),
     )
-    head = sorted_items[:top_k]
-    tail = sorted_items[top_k:]
+    if top_k is None:
+        head, tail = sorted_items, []
+    else:
+        head, tail = sorted_items[:top_k], sorted_items[top_k:]
     other_count = int(sum(cnt for _, cnt in tail))
     return {
         "top_values": [{"value": val, "count": cnt} for val, cnt in head],

@@ -250,3 +250,117 @@ def test_numeric_bins_kwarg_controls_bin_count() -> None:
     bin_counts = snap["columns"]["x"]["stats"]["bin_counts"]
     assert len(bin_counts) == 4
     assert sum(bin_counts) == 100
+
+
+# ── high_cardinality (HC-5) ─────────────────────────────────────────────────
+
+
+def test_high_cardinality_bypasses_cliff_and_top_k() -> None:
+    # 50 distinct values, one dominant: without high_cardinality this would
+    # be freetext (>30 distinct); with it, categorical with full retention.
+    df = pd.DataFrame({"code": [f"C{i:03d}" for i in range(50)] + ["C000"] * 20})
+    snap = compute_distribution_snapshot(df, high_cardinality_columns=["code"])
+    col = snap["columns"]["code"]
+    assert col["kind"] == "categorical"
+    assert col["stats"]["other_count"] == 0
+    assert len(col["stats"]["top_values"]) == col["distinct_count"] == 50
+    top_total = sum(item["count"] for item in col["stats"]["top_values"])
+    assert top_total == col["non_null_count"] == 70
+
+
+def test_high_cardinality_omitted_is_unaffected() -> None:
+    """A column NOT in high_cardinality_columns behaves exactly as before,
+    even when other columns in the same frame are marked."""
+    df = pd.DataFrame(
+        {
+            "code": [f"C{i:03d}" for i in range(50)],
+            "notes": [f"note {i} with extra words" for i in range(50)],
+        }
+    )
+    with_flag = compute_distribution_snapshot(df, high_cardinality_columns=["code"])
+    without_flag = compute_distribution_snapshot(df)
+    assert with_flag["columns"]["notes"] == without_flag["columns"]["notes"]
+    assert without_flag["columns"]["code"]["kind"] == "freetext"
+
+
+def test_high_cardinality_preserves_deterministic_sort() -> None:
+    df = pd.DataFrame({"x": ["b", "a", "a", "c", "b"] * 8})  # a:16, b:16, c:8
+    snap = compute_distribution_snapshot(df, high_cardinality_columns=["x"])
+    items = snap["columns"]["x"]["stats"]["top_values"]
+    assert [i["value"] for i in items] == ["a", "b", "c"]
+
+
+def test_high_cardinality_unknown_column_silently_skipped() -> None:
+    # Matches joint_columns precedent: the collection is not a validator.
+    df = pd.DataFrame({"x": ["a", "b", "c"]})
+    snap = compute_distribution_snapshot(df, high_cardinality_columns=["ghost"])
+    assert snap["columns"]["x"]["kind"] == "categorical"
+
+
+def test_high_cardinality_numeric_dtype_rejected() -> None:
+    from decoy_engine.quality.snapshot import DistributionSnapshotError
+
+    df = pd.DataFrame({"code": [1, 2, 3, 4, 5]})
+    with pytest.raises(DistributionSnapshotError) as exc:
+        compute_distribution_snapshot(df, high_cardinality_columns=["code"])
+    assert exc.value.code == "high_cardinality_non_string_dtype"
+
+
+def test_high_cardinality_datetime_dtype_rejected() -> None:
+    from decoy_engine.quality.snapshot import DistributionSnapshotError
+
+    df = pd.DataFrame({"code": pd.to_datetime(["2020-01-01", "2020-01-02"])})
+    with pytest.raises(DistributionSnapshotError) as exc:
+        compute_distribution_snapshot(df, high_cardinality_columns=["code"])
+    assert exc.value.code == "high_cardinality_non_string_dtype"
+
+
+def test_high_cardinality_bool_dtype_rejected() -> None:
+    from decoy_engine.quality.snapshot import DistributionSnapshotError
+
+    df = pd.DataFrame({"code": [True, False, True]})
+    with pytest.raises(DistributionSnapshotError) as exc:
+        compute_distribution_snapshot(df, high_cardinality_columns=["code"])
+    assert exc.value.code == "high_cardinality_non_string_dtype"
+
+
+def test_high_cardinality_distinct_limit_exceeded() -> None:
+    from decoy_engine.quality.snapshot import DistributionSnapshotError
+
+    df = pd.DataFrame({"code": [f"C{i}" for i in range(100_001)]})
+    with pytest.raises(DistributionSnapshotError) as exc:
+        compute_distribution_snapshot(df, high_cardinality_columns=["code"])
+    assert exc.value.code == "high_cardinality_distinct_limit_exceeded"
+
+
+def test_high_cardinality_distinct_limit_boundary_ok() -> None:
+    # Exactly at the limit must NOT raise.
+    df = pd.DataFrame({"code": [f"C{i}" for i in range(100_000)]})
+    snap = compute_distribution_snapshot(df, high_cardinality_columns=["code"])
+    assert snap["columns"]["code"]["distinct_count"] == 100_000
+
+
+def test_high_cardinality_label_bytes_limit_exceeded() -> None:
+    from decoy_engine.quality.snapshot import DistributionSnapshotError
+
+    # 2,000 distinct labels of ~10KB each: well over the 16 MiB combined cap,
+    # while staying under the 100k distinct-value cap.
+    big_label = "x" * 10_000
+    df = pd.DataFrame({"code": [f"{big_label}{i}" for i in range(2_000)]})
+    with pytest.raises(DistributionSnapshotError) as exc:
+        compute_distribution_snapshot(df, high_cardinality_columns=["code"])
+    assert exc.value.code == "high_cardinality_label_bytes_limit_exceeded"
+
+
+def test_high_cardinality_does_not_mutate_input() -> None:
+    df = pd.DataFrame({"code": [f"C{i:03d}" for i in range(40)]})
+    before = copy.deepcopy(df)
+    compute_distribution_snapshot(df, high_cardinality_columns=["code"])
+    pd.testing.assert_frame_equal(df, before)
+
+
+def test_high_cardinality_is_json_serializable_and_deterministic() -> None:
+    df = pd.DataFrame({"code": [f"C{i:03d}" for i in range(40)] + ["C000"] * 5})
+    s1 = compute_distribution_snapshot(df, high_cardinality_columns=["code"])
+    s2 = compute_distribution_snapshot(df, high_cardinality_columns=["code"])
+    assert json.dumps(s1, sort_keys=True) == json.dumps(s2, sort_keys=True)

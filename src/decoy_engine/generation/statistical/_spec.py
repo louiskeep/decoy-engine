@@ -14,6 +14,17 @@ Differential privacy lives at FIT time (`decoy fit --epsilon`,
 quality/dp.py); the spec layer consumes exact and noisy snapshots
 identically.
 
+`high_cardinality: true` (HC-5) opts a column into the FULL retained
+vocabulary a fit step produced with `compute_distribution_snapshot(...,
+high_cardinality_columns=...)` (quality/snapshot.py) -- it carries no
+weight here beyond validating the config is coherent with that intent:
+the flag requires `allow_real_categories: true` (retaining every
+category is a LARGER disclosure than the top-K default, so it needs the
+same consent gate, checked first for a specific error) and only makes
+sense against a categorical snapshot kind. The sampler itself
+(_sample.py) needs no high_cardinality-specific code: it already draws
+over whatever `top_values` list the snapshot carries.
+
 Freetext (deferred follow-up 4, 2026-06-12) is LENGTH-ONLY: the sampler
 draws a target length from the fitted length histogram and fills with
 deterministic lorem tokens. No source tokens are stored in the snapshot
@@ -127,6 +138,28 @@ def load_spec(col_cfg: dict[str, Any]) -> StatisticalSpec:
             ),
         )
 
+    high_cardinality = col_cfg.get("high_cardinality")
+    if high_cardinality is not None and not isinstance(high_cardinality, bool):
+        raise StatisticalSpecError(
+            code="statistical_high_cardinality_invalid_type",
+            message=(
+                f"statistical column {name!r}: high_cardinality must be a bool, got "
+                f"{high_cardinality!r}."
+            ),
+        )
+    high_cardinality = bool(high_cardinality)
+
+    if high_cardinality and not bool(col_cfg.get("allow_real_categories")):
+        raise StatisticalSpecError(
+            code="statistical_high_cardinality_requires_real_categories",
+            message=(
+                f"statistical column {name!r}: high_cardinality retains the FULL "
+                f"observed category vocabulary (no top-K collapse), a larger "
+                f"disclosure than the default; it requires `allow_real_categories: "
+                f"true` on the same column (explicit disclosure opt-in)."
+            ),
+        )
+
     if kind == "categorical" and not bool(col_cfg.get("allow_real_categories")):
         raise StatisticalSpecError(
             code="statistical_real_categories_not_allowed",
@@ -134,6 +167,17 @@ def load_spec(col_cfg: dict[str, Any]) -> StatisticalSpec:
                 f"statistical column {name!r}: the snapshot's top_values contain REAL "
                 f"source values; emitting them requires `allow_real_categories: true` "
                 f"on the column (explicit disclosure opt-in)."
+            ),
+        )
+
+    if high_cardinality and kind != "categorical":
+        raise StatisticalSpecError(
+            code="statistical_high_cardinality_kind_invalid",
+            message=(
+                f"statistical column {name!r}: high_cardinality requires a "
+                f"categorical snapshot kind (got {kind!r}). Re-fit the source "
+                f"column with high_cardinality set so the fit step forces it "
+                f"categorical."
             ),
         )
 
