@@ -510,6 +510,16 @@ Config surface (`strategy: code_set` on a column; parameters under
   corpus directory. `customer:<absolute_path>` loads a Parquet file at the
   given path. A customer corpus must have a `code` column (string) and, when
   `chapter_preserve: true`, a `chapter` column.
+- `corpus_source_version` (str, optional, HC-2): pins the expected SOURCE
+  release id (e.g. `"FY2024"`) of the corpus this config expects to load.
+  Independently verified at load time against the loaded corpus's embedded
+  `source_version` (see Provenance below) -- if they differ, or the loaded
+  corpus has no `source_version` at all, the load fails closed
+  (`code_set_corpus_version_mismatch`). Applies to BOTH shipped and customer
+  corpora: a shipped corpus update and a customer swapping in a different
+  release fail the same way. Distinct from the corpus metadata FORMAT
+  version (`corpus_version` / `CORPUS_METADATA_VERSION`), which this field
+  does not pin. Unset (default): no pin, today's behavior.
 
 Two modes:
 
@@ -552,6 +562,41 @@ means adding one entry there):
   constrains to these Decoy-defined buckets, not any native NDC hierarchy.
 - `mcc` -- ISO 18245 Merchant Category Codes. Public reference enumeration;
   see NOTICE.
+
+**Licensed code sets: upload-only, never shipped (HC-2 D2b).** The clean
+split: the valid code UNIVERSE (which codes exist, their format) is what the
+engine ships when it is public domain; the FREQUENCY distribution (how often
+each code appears) is always learned from the customer's own data, never
+shipped, because real frequencies come from claims data the engine cannot
+redistribute and which differ by specialty/payer/population anyway. Some
+code universes are themselves licensed, not public domain -- CPT (AMA) and
+APR-DRG (3M, a proprietary grouper) -- and the engine hard-refuses to ship
+them: `code_set: cpt` or `code_set: apr_drg` with `corpus_source: shipped`
+(or absent) raises `PlanCompileError` (`code_set_reserved_licensed_name`) at
+config-validation time, before any I/O. The only legal path for a reserved
+name is `corpus_source: customer:<path>` to your own separately-licensed
+copy -- exactly the same customer-corpus flow documented above, just with a
+reserved name. The reserved-name set (`RESERVED_LICENSED_NAMES` in
+`transforms/_codeset_provenance.py`) is deliberately disjoint from
+`CODESET_REGISTRY`: a reserved name is never a shipped one.
+
+**Schema invariants (HC-2 D2c, corpus-agnostic).** Every corpus -- shipped or
+customer -- must have a `code` column whose values are non-null, non-empty,
+and unique (`code_set_corpus_null_code`, `code_set_corpus_empty_code`,
+`code_set_corpus_duplicate_codes`); when a `chapter` column is present, it
+must be populated for every row (`code_set_corpus_incoherent_chapter`). These
+checks are corpus-agnostic by design -- no code-system-specific regexes, no
+mandatory `description` column -- deferred until the real full corpora (HC-1
+slice 2) land and their per-system format conventions are settled.
+
+**Verifying a corpus file without a masking job (HC-2 item 1).**
+`decoy_engine.transforms.code_set.verify_corpus(path)` runs the exact same
+schema and provenance checks the load path runs, and returns a frozen
+`CorpusVerifyReport` (`ok`, `path`, `row_count`, `provenance` summary,
+`problems`) instead of raising -- the single validation source of truth a
+CLI `codesets verify`/`add` command or a platform upload check can call
+before registering a corpus. Like the evidence summaries above, the
+provenance field carries counts and identifiers only, never raw codes.
 
 **HC-1 (2026-07-17): these are abbreviated seeds, not full code sets.** Every
 shipped file above carries `is_seed: true` in its provenance (see below) --

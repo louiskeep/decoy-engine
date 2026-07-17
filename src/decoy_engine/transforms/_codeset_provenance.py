@@ -43,6 +43,17 @@ REQUIRED_PROVENANCE_FIELDS: tuple[str, ...] = (
 #: pre-GA, allowed (see decoy_engine.release.is_pre_ga).
 CORPUS_METADATA_VERSION = "2.0"
 
+#: Corpus names the engine must NEVER ship, because the underlying code set
+#: is licensed, not public domain (HC-2 D2b). "cpt": AMA CPT (Current
+#: Procedural Terminology) requires a paid AMA license per use. "apr_drg":
+#: 3M APR-DRG is a proprietary grouper. `validate_code_set_config`
+#: (transforms/code_set.py) hard-refuses `corpus_source: shipped` (or
+#: absent) for these names; the only legal path is `corpus_source:
+#: customer:<path>` to the operator's own separately-licensed copy. Single
+#: source of truth, matching the `CODESET_REGISTRY` pattern above -- these
+#: names are deliberately NOT in that registry (they are never shipped).
+RESERVED_LICENSED_NAMES: frozenset[str] = frozenset({"cpt", "apr_drg"})
+
 #: The known Parquet schema-metadata keys `CodeSetProvenance.from_parquet_metadata`
 #: reads (see `scripts/build_codesets.py::_write`, the writer side). Codex P2
 #: PROVENANCE METADATA DECODE CRASH remediation: PyArrow schema metadata is

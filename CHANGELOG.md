@@ -41,6 +41,41 @@ public-domain corpora themselves (the real-data ETL) are HC-1 slice 2. See
   the orphan-remap closure -- so real values, remapped orphans, and the evidence
   all report the same corpus version.
 
+### Added (HC-2: user-updatable code sets, engine pieces, 2026-07-17)
+
+Engine-side pieces for user-updatable `code_set` corpora; the CLI
+(`decoy codesets list/add/verify`) and platform upload flow that consume
+these are separate, sibling-repo changes.
+
+- **`verify_corpus(path)` standalone verification primitive.** Runs the exact
+  same schema and provenance checks the load path runs, without running a
+  masking job, and returns a frozen `CorpusVerifyReport`
+  (`ok`, `path`, `row_count`, `provenance` summary, `problems`) instead of
+  raising -- the single validation source of truth a future CLI
+  `codesets verify`/`add` command or a platform upload check calls into.
+  Provenance in the report is counts and identifiers only, never raw codes.
+- **`corpus_source_version` fail-closed load-time pin.** A new optional
+  `CodeSetConfig` field: when set, the loaded corpus's embedded
+  `source_version` must match it exactly, or the load fails closed
+  (`code_set_corpus_version_mismatch`) -- for both shipped and customer
+  corpora. Distinct from the corpus metadata FORMAT version
+  (`corpus_version` / `CORPUS_METADATA_VERSION`). Unset: unchanged, unpinned
+  behavior.
+- **Reserved licensed corpus names are upload-only.** `RESERVED_LICENSED_NAMES`
+  (`cpt`, `apr_drg` -- AMA-licensed and proprietary-grouper code sets the
+  engine must never ship) now hard-refuses `corpus_source: shipped` (or
+  absent) at config-validation time (`code_set_reserved_licensed_name`); the
+  only legal path is `corpus_source: customer:<path>` to an operator-supplied,
+  separately-licensed copy.
+- **Generic, corpus-agnostic schema invariants.** Every corpus's `code` column
+  must be non-null, non-empty, and unique
+  (`code_set_corpus_null_code`, `code_set_corpus_empty_code`,
+  `code_set_corpus_duplicate_codes`); a present `chapter` column must be
+  populated for every row (`code_set_corpus_incoherent_chapter`). One shared
+  checker enforces this on both the load path and `verify_corpus`.
+  Code-system-specific regexes and a mandatory `description` column are
+  deferred to HC-1 slice 2, when the real full corpora land.
+
 ## [0.4.0] - 2026-07-15
 
 ### Fixed
