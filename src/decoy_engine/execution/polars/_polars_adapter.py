@@ -233,6 +233,14 @@ class PolarsExecutionAdapter:
                         code="unsupported_strategy",
                         message=f"scalar node {node.columns} has a non-ColumnSeed plan slice.",
                     )
+                # Codex round-4 P2 POLARS-NATIVE ROUTE OMITS CODE_SET EVIDENCE
+                # remediation: stamp the in-flight table onto ctx before
+                # dispatch, mirroring `_pandas_adapter._dispatch_mask_node`,
+                # so a handler that keys evidence by (table, column)
+                # (CodeSetHandler, reached here via `nested` ->
+                # `PandasStrategyPort`) attributes it to the right table
+                # instead of leaving `current_table` at its "" default.
+                object.__setattr__(ctx, "current_table", node.table)
                 handler = self._polars_handlers[node.strategy]
                 with timed_strategy(node.strategy, ",".join(node.columns)):
                     # MG-3 / M3 (2026-05-31): same when_gate semantics as
@@ -269,6 +277,18 @@ class PolarsExecutionAdapter:
             quality_metrics={
                 "conversion_breakdown": boundary.as_dict(),
                 "executed_substrate": {node.strategy: "polars" for node in work},
+                # Codex round-4 P2 POLARS-NATIVE ROUTE OMITS CODE_SET
+                # EVIDENCE remediation: mirrors
+                # `PandasExecutionAdapter.run`'s `quality_metrics=ctx.
+                # code_set_corpora_metrics()`. A code_set column reached
+                # through this loop (directly, or nested's child via
+                # `PandasStrategyPort`, which shares this same `ctx`
+                # instance) populates `ctx.code_set_corpora`; without this
+                # merge a successful polars-native mask returned NO
+                # provenance even though the sink held it. {} when no
+                # code_set column ran, so an unrelated job's quality_metrics
+                # is untouched.
+                **ctx.code_set_corpora_metrics(),
             },
             row_errors=tuple(row_error_records),
         )

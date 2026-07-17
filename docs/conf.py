@@ -248,6 +248,13 @@ nitpick_ignore = [
     # also re-exported publicly from `decoy_engine.execution`, but autoapi
     # renders the cross-reference against its defining (private) module.
     ("py:class", "decoy_engine.execution._row_errors.RowErrorRecord"),
+    # HC-1 (2026-07-17): CodeSetProvenance is defined in the private
+    # `transforms._codeset_provenance` module (autoapi_ignore */_*.py) but
+    # appears in public return-type hints in `transforms/code_set.py`
+    # (`load_corpus_provenance`, re-exported from `_codeset_loader.py`).
+    # Same private-module-sourced-type pattern as RowErrorRecord above.
+    ("py:class", "decoy_engine.transforms._codeset_provenance.CodeSetProvenance"),
+    ("py:class", "CodeSetProvenance"),
     # SP-06 (2026-06-27): expressions.py converted to a package. The public
     # API functions (safe_eval, make_mask_globals) are now defined in the
     # private `_safe_eval.py` submodule (autoapi_ignore pattern */_*.py) and

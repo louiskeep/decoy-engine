@@ -120,6 +120,17 @@ def _column_seed_to_dict(cs: ColumnSeed) -> dict[str, Any]:
     # DE-02 (6b): emit vault only when set, so legacy plans round-trip unchanged.
     if cs.vault:
         out["vault"] = True
+    # Codex P1 PROVENANCE IS EVIDENCE, NOT PLAN STATE: code-corpus provenance
+    # is deliberately NEVER stamped onto the plan manifest. HC-1 slice 1
+    # originally called corpus_provenance_for_manifest here, which loaded
+    # whatever corpus happened to be on disk at plan_to_yaml time -- making
+    # the plan artifact non-deterministic (a swapped/absent corpus silently
+    # changed or dropped the block) and it never round-tripped
+    # (_column_seed_from_dict ignores unknown keys). The HC-1 spec requires
+    # provenance "surfaced in output/evidence", not in the reproducible plan
+    # config; it lives only in execution evidence
+    # (ExecutionResult.quality_metrics['code_set_corpora'], stamped from the
+    # actually-loaded corpus at run time -- see execution/_strategies/_code_set.py).
     return out
 
 

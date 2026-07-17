@@ -477,7 +477,12 @@ def run_sequential(
         # Finalize row-error evidence AFTER every table has masked and BEFORE
         # commit, still inside this try so a failure here also triggers
         # abort() (nothing has committed yet -- `_committed` is still False).
-        quality_metrics: dict[str, Any] = {}
+        # HC-1 slice 1: same code_set corpus-provenance surfacing as the
+        # full-frame `run()` path -- `ctx` is shared across every table in
+        # this job (built once above), so `ctx.code_set_corpora` accumulates
+        # identically whether the job runs table-at-a-time (here) or
+        # full-frame.
+        quality_metrics: dict[str, Any] = ctx.code_set_corpora_metrics()  # HC-1 evidence
         if all_row_errors:
             row_error_counts: dict[str, int] = {}
             for rec in all_row_errors:

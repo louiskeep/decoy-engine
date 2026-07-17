@@ -539,19 +539,58 @@ Customer corpus (`corpus_source: customer:<path>`): a missing `code` column or
 an empty corpus raises `PlanCompileError` at execution time, pre-mutation,
 before any row is changed.
 
-Shipped corpora (under `src/decoy_engine/codesets/`):
+Shipped corpora (under `src/decoy_engine/codesets/`; the canonical list is
+`CODESET_REGISTRY` in `transforms/_codeset_provenance.py` -- adding a corpus
+means adding one entry there):
 
-| Name | Rows | Source | License | Notes |
-|---|---|---|---|---|
-| `icd10` | 65 | CMS ICD-10-CM | US public domain | First-letter chapter per ICD-10-CM spec |
-| `hcpcs` | 32 | CMS HCPCS | US public domain | |
-| `ndc` | 38 | FDA NDC | US public domain | `chapter` column is a Decoy-defined therapeutic bucket (A/B/C/D); NDC has no native chapter structure |
-| `mcc` | 62 | ISO 18245 | See NOTICE | Merchant Category Codes |
+- `icd10` -- ICD-10-CM diagnosis codes (CDC/NCHS + CMS). Public domain.
+  Chapter is the first letter of the code, per the ICD-10-CM spec.
+- `hcpcs` -- HCPCS Level II procedure/supply codes (CMS). Public domain.
+- `ndc` -- FDA National Drug Code Directory entries. Public domain. The
+  `chapter` column is a Decoy-defined therapeutic bucket (A/B/C/D...); NDC
+  has no native chapter structure, so `chapter_preserve: true` with `ndc`
+  constrains to these Decoy-defined buckets, not any native NDC hierarchy.
+- `mcc` -- ISO 18245 Merchant Category Codes. Public reference enumeration;
+  see NOTICE.
 
-The `chapter` column in the NDC corpus is a Decoy-defined therapeutic grouping,
-not an attribute of the NDC standard. When using `chapter_preserve: true` with
-`ndc`, the chapter constraint refers to these Decoy-defined buckets, not to any
-native NDC hierarchy.
+**HC-1 (2026-07-17): these are abbreviated seeds, not full code sets.** Every
+shipped file above carries `is_seed: true` in its provenance (see below) --
+today's corpora are a handful of representative codes per chapter/section,
+not the complete CMS/CDC/FDA/ISO data. Row counts are intentionally not
+documented here (they will change when the full data replaces the seed);
+call `decoy_engine.transforms.code_set.load_corpus(name)` and check
+`len(...)`, or `load_corpus_provenance(name)` for the full provenance
+record. Replacing the seeds with the full public code sets is a separate,
+larger change (real network-fetched CMS/CDC/FDA data, its own sourcing
+verification); the provenance and scale infrastructure below already exists
+for that drop-in.
+
+**Provenance and evidence surfacing (HC-1 slice 1).** Every corpus file
+carries Parquet key/value metadata: `source`, `source_url`, `license`,
+`citation`, `source_version` (the source's own release identifier, e.g.
+`"FY2024"`), `effective_date` (ISO date the release took effect), and
+`is_seed`. This is read back at load time into a typed provenance record:
+
+- A **shipped** corpus missing any required field (`source`,
+  `source_version`, `effective_date`, `license`) fails closed
+  (`PlanCompileError`, code `code_set_corpus_missing_provenance`) --
+  the engine ships it, so it must be able to say where the codes came from.
+- A **customer** corpus (`corpus_source: customer:<path>`) may omit
+  provenance entirely (logged as a warning, not an error) -- it is not
+  required for the strategy to function. If a customer corpus DOES carry a
+  provenance stamp, it must be complete; a partial stamp also fails closed
+  (a half-filled provenance block is worse than none).
+
+Provenance is surfaced as evidence, not as plan state: it is stamped ONLY
+into `ExecutionResult.quality_metrics['code_set_corpora']`, a list of
+`{code_set, source, source_version, effective_date, license, is_seed,
+row_count}` entries, one per code_set column used in the job (counts and
+identifiers only -- never raw codes), from the corpus actually loaded at run
+time. It is never written into the Plan YAML manifest: a code corpus is
+data, which may be swapped, absent, or unreachable in whatever environment
+`plan_to_yaml` happens to run in, so stamping it there would make the plan
+artifact non-deterministic (a swapped/absent corpus silently changes or
+drops the block) for a field that does not round-trip anyway.
 
 **Cross-version keyed-access caveat (inherited from SP-06 corpus-sort pattern).**
 MASK mode selects at position `HMAC(...) % candidate_count` over the
@@ -563,7 +602,9 @@ is added or removed. Do not assume cross-version MASK output stability for
 **Carry-forwards (not yet built):** additional shipped corpora LOINC, CIP,
 NUCC, UPC/EAN; CPT and MedDRA bring-your-own-corpus workflow documentation; an
 out-of-corpus-input `QualityWarning` signal (currently, an out-of-corpus input
-is silently remapped to a real code). HIPAA-pack default wiring shipped in SP-11.
+is silently remapped to a real code); the full-data replacement for today's
+abbreviated seed corpora (HC-1 slice 2). HIPAA-pack default wiring shipped in
+SP-11.
 
 ```yaml
 # Mask ICD-10 diagnosis codes, preserving chapter grouping.

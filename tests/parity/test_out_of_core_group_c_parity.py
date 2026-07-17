@@ -353,3 +353,133 @@ def test_bucket_perturb_autodetect_is_gate_miss() -> None:
     )
     assert not _gate_admits(plan, graph)
     assert "out_of_core_bucket_perturb_autodetect_unsupported" in _gate_codes(plan, graph)
+
+
+# ---------------------------------------------------------------------------
+# HIGH-2 remediation: the out-of-core route must surface the same
+# code_set_corpora provenance evidence the pandas/sequential routes merge
+# into ExecutionResult.quality_metrics -- the exact route the large-healthcare
+# (70k ICD) case HC-1 exists for actually takes.
+# ---------------------------------------------------------------------------
+
+
+class TestOutOfCoreCodeSetCorporaEvidence:
+    def test_ooc_code_set_masking_surfaces_code_set_corpora(self) -> None:
+        payload_seed, payload_vals = _PAYLOADS["code_set_mask"]
+        plan, sources, graph = _payload_edge_job(
+            payload_seed, payload_vals, policy=OrphanPolicy.PRESERVE
+        )
+        oracle = PandasExecutionAdapter().run(
+            plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
+        )
+        ooc = run_fk_out_of_core(plan, sources, registry=_REG, relationship_graph=graph)
+
+        oracle_corpora = oracle.quality_metrics.get("code_set_corpora")
+        ooc_corpora = ooc.quality_metrics.get("code_set_corpora")
+        assert oracle_corpora is not None and ooc_corpora is not None
+
+        # Both routes stamp one entry per code_set column ("pay" on the parent,
+        # "cpay" on the child, both configured for the "mcc" corpus); parity in
+        # SHAPE (sorted by code_set-column identity), not raw list order.
+        def _key(entries: list[dict[str, Any]]) -> list[tuple[str, int]]:
+            return sorted((e["code_set"], e["row_count"]) for e in entries)
+
+        assert _key(ooc_corpora) == _key(oracle_corpora)
+        for entry in ooc_corpora:
+            assert entry["code_set"] == "mcc"
+            assert entry["row_count"] > 0
+            # Counts + identifiers only -- no raw codes leak into evidence.
+            assert "codes" not in entry
+            assert "rows" not in entry
+
+    def test_ooc_quality_metrics_omits_code_set_corpora_when_no_code_set_columns(self) -> None:
+        payload_seed, payload_vals = _PAYLOADS["text_mask"]
+        plan, sources, graph = _payload_edge_job(
+            payload_seed, payload_vals, policy=OrphanPolicy.PRESERVE
+        )
+        ooc = run_fk_out_of_core(plan, sources, registry=_REG, relationship_graph=graph)
+        assert "code_set_corpora" not in ooc.quality_metrics
+
+    def test_ooc_sink_path_also_surfaces_code_set_corpora(self, tmp_path: Any) -> None:
+        """The sink branch (`ExecutionResult(outputs={}, ...)`) must carry the
+        same evidence as the in-memory branch -- both return sites were fixed."""
+        from decoy_engine.execution import ParquetTransactionalSink
+
+        payload_seed, payload_vals = _PAYLOADS["code_set_mask"]
+        plan, sources, graph = _payload_edge_job(
+            payload_seed, payload_vals, policy=OrphanPolicy.PRESERVE
+        )
+        ooc = run_fk_out_of_core(
+            plan,
+            sources,
+            registry=_REG,
+            relationship_graph=graph,
+            sink=ParquetTransactionalSink(tmp_path / "published"),
+        )
+        corpora = ooc.quality_metrics.get("code_set_corpora")
+        assert corpora is not None and len(corpora) == 2
+        assert {e["code_set"] for e in corpora} == {"mcc"}
+
+    def test_ooc_code_set_corpora_keyed_by_table_for_same_named_columns(self) -> None:
+        """Codex P2 MULTI-TABLE EVIDENCE COLLISION remediation: parent and
+        child tables that each declare a SAME-NAMED code_set column ("code")
+        bound to DIFFERENT corpora must both surface their own evidence
+        entry. Before this fix, the sink was keyed by bare column name, so
+        the child's stamp silently overwrote the parent's and one table's
+        audit provenance was dropped."""
+        key = _seed("hash", namespace="kns")
+        parent_code_seed = _seed(
+            "code_set", namespace="cs_a", provider_config=(("code_set", "icd10"),)
+        )
+        child_code_seed = _seed(
+            "code_set", namespace="cs_b", provider_config=(("code_set", "mcc"),)
+        )
+        parent = pa.table(
+            {
+                "pk": pa.array(["p0", "p1"], type=pa.string()),
+                "code": pa.array(["I10", "E11.9"], type=pa.string()),
+            }
+        )
+        child = pa.table(
+            {
+                "fk": pa.array(["p0", "p1"], type=pa.string()),
+                "code": pa.array(["alpha", "beta"], type=pa.string()),
+            }
+        )
+        plan = _plan(
+            (
+                (
+                    "parent",
+                    TableSeed(per_column=(("pk", key), ("code", parent_code_seed)), per_group=()),
+                ),
+                (
+                    "child",
+                    TableSeed(per_column=(("fk", key), ("code", child_code_seed)), per_group=()),
+                ),
+            )
+        )
+        graph = RelationshipGraph(
+            edges=(
+                RelationshipEdge(
+                    parent_table="parent",
+                    parent_columns=("pk",),
+                    child_table="child",
+                    child_columns=("fk",),
+                    namespace="kns",
+                    orphan_policy=OrphanPolicy.PRESERVE,
+                ),
+            ),
+            ordering=(),
+        )
+        sources = {"parent": parent, "child": child}
+        assert _gate_admits(plan, graph)
+        ooc = run_fk_out_of_core(plan, sources, registry=_REG, relationship_graph=graph)
+        corpora = ooc.quality_metrics.get("code_set_corpora")
+        assert corpora is not None and len(corpora) == 2, (
+            f"expected one evidence entry per (table, column), got {corpora!r}"
+        )
+        by_table_column = {(e["table"], e["column"]): e["code_set"] for e in corpora}
+        assert by_table_column == {
+            ("parent", "code"): "icd10",
+            ("child", "code"): "mcc",
+        }

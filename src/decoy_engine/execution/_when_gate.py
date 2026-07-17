@@ -190,6 +190,21 @@ def run_with_when_gate(
     if plan.when is None:
         return handler.run(df, column, plan, ctx)
 
+    # Codex P2 FAIL-CLOSED VALIDATION BYPASSED BY A ZERO-MATCH `when` GATE
+    # remediation: a handler's own fail-closed preflight (e.g. CodeSetHandler
+    # loading/validating its corpus) normally runs inside `handler.run()`,
+    # which the `not mask.any()` short-circuit below never reaches. That let
+    # a column referencing a missing/invalid corpus succeed silently
+    # whenever its `when:` predicate happened to match zero rows. A handler
+    # that needs config/data validated regardless of match count exposes an
+    # optional `preflight(plan, ctx) -> None` method; call it unconditionally
+    # here, BEFORE the short-circuit, so it always runs while the handler's
+    # own `run()` (reached only on a non-empty match) still does the real
+    # per-row work and evidence stamping unchanged.
+    preflight = getattr(handler, "preflight", None)
+    if preflight is not None:
+        preflight(plan, ctx)
+
     mask = _eval_predicate(df, plan.when, plan.strategy)
 
     if not mask.any():
@@ -227,11 +242,27 @@ def run_with_when_gate_polars(
     Byte-identical to the pandas adapter's gated dispatch by
     construction: same eval substrate, same `mask.any()` short-circuit,
     same subset semantics.
+
+    Codex round-6 P2 FAIL-CLOSED PARITY remediation: this polars gate used
+    to short-circuit a zero-match `when:` WITHOUT calling the handler's
+    optional `preflight` hook, unlike `run_with_when_gate` (the pandas
+    variant), which calls it unconditionally before its own short-circuit
+    (see that function's docstring). A native polars `nested(code_set)`
+    column with a zero-match `when:` and a missing/invalid corpus therefore
+    succeeded silently on the polars route while the pandas route correctly
+    failed closed -- a cross-substrate fail-closed inconsistency. Fixed by
+    calling `preflight` here too, mirroring the pandas gate exactly. Reaches
+    a `PandasStrategyPort`-wrapped handler's `preflight` via the port's own
+    forwarding `preflight` method (see `_pandas_port.PandasStrategyPort`).
     """
     import polars as pl  # local import keeps the module pandas-only by default
 
     if plan.when is None:
         return handler.run(frame, column, plan, ctx)
+
+    preflight = getattr(handler, "preflight", None)
+    if preflight is not None:
+        preflight(plan, ctx)
 
     pdf = frame.to_pandas()
     mask = _eval_predicate(pdf, plan.when, plan.strategy)

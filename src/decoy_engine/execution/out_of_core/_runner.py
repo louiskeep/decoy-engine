@@ -39,13 +39,13 @@ import os
 import shutil
 import tempfile
 from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
-from decoy_engine.execution._adapter import ExecutionResult
+from decoy_engine.execution._adapter import ExecutionResult, provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._fk_keys import NULL_FK_KEY, fk_key_value
 from decoy_engine.execution._output_projection import (
@@ -75,6 +75,11 @@ from decoy_engine.execution.out_of_core._source import LazySource
 from decoy_engine.keyprovider import require_mask_key
 from decoy_engine.plan._types import ColumnSeed
 from decoy_engine.relationships._graph import OrphanPolicy
+from decoy_engine.transforms.code_set import (
+    CodeSetConfig,
+    describe_loaded_corpus,
+    resolve_corpus_record,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -87,6 +92,7 @@ if TYPE_CHECKING:
     from decoy_engine.providers_v2 import ProviderRegistry
     from decoy_engine.relationships import RelationshipGraph
     from decoy_engine.relationships._graph import RelationshipEdge
+    from decoy_engine.transforms._codeset_loader import _CorpusRecord
 
     # One source per table: a resident Arrow table (back-compat) or a
     # path-backed lazy reader (the bounded-residency capability path).
@@ -160,6 +166,15 @@ def run_fk_out_of_core(
         parent_relations: dict[RelationshipEdge, ParentKeyRelation] = {}
         outputs: dict[str, pa.Table] = {}
         warnings: list[QualityWarning] = []
+        # HIGH-2 remediation (HC-1 slice 1 gap): the code_set corpus-provenance
+        # evidence sink, mirroring `StrategyContext.code_set_corpora` on the
+        # pandas/sequential routes. Keyed by (table, column) -- Codex P2
+        # MULTI-TABLE EVIDENCE COLLISION remediation: two tables can legally
+        # declare a same-named code_set column bound to different corpora, and
+        # a bare-column key let the second table's stamp silently overwrite
+        # the first's. Same shape as the full-frame sink, so a multi-table
+        # job's evidence list matches the pandas oracle's shape byte-for-byte.
+        code_set_corpora: dict[tuple[str, str], dict[str, Any]] = {}
         for table_name in _table_order(plan, relationship_graph, sources):
             if table_name not in sources:
                 continue
@@ -180,17 +195,25 @@ def run_fk_out_of_core(
                 warnings=warnings,
                 unconfigured_column_policy=unconfigured_column_policy,
                 mask_key=mask_key,
+                code_set_corpora=code_set_corpora,
             )
             if temp_disk_budget_bytes is not None:
                 # Table boundaries are the natural checkpoints: the spill
                 # footprint peaks with each table's relation/join staging, and
                 # a walk here costs a handful of stats, not a watcher thread.
                 check_temp_disk_budget(root, max_bytes=temp_disk_budget_bytes)
+        quality_metrics: dict[str, Any] = (
+            {"code_set_corpora": list(code_set_corpora.values())} if code_set_corpora else {}
+        )
         if sink is not None:
             sink.commit()
             committed = True
-            return ExecutionResult(outputs={}, warnings=tuple(warnings))
-        return ExecutionResult(outputs=outputs, warnings=tuple(warnings))
+            return ExecutionResult(
+                outputs={}, warnings=tuple(warnings), quality_metrics=quality_metrics
+            )
+        return ExecutionResult(
+            outputs=outputs, warnings=tuple(warnings), quality_metrics=quality_metrics
+        )
     except Exception:
         if sink is not None and not committed:
             sink.abort()
@@ -228,6 +251,7 @@ def _stream_table(
     warnings: list[QualityWarning],
     unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
     mask_key: bytes | None = None,
+    code_set_corpora: dict[tuple[str, str], dict[str, Any]] | None = None,
 ) -> None:
     """Rewrite pass for one table: mask + join per batch, then emit.
 
@@ -238,11 +262,28 @@ def _stream_table(
     `parent_relations` for the children later in the topo order. WARN orphan
     totals are aggregated over the whole stream and appended to `warnings` in
     incoming-edge order, matching whole-table reporting.
+
+    `code_set_corpora` (HIGH-2 remediation, default None): the shared
+    corpus-provenance evidence sink, mutated in place the same way `outputs`/
+    `warnings` are -- see `_code_set_records_and_evidence_for_table`.
+
+    Codex round-6 P2 MASKING/EVIDENCE VERSION DIVERGENCE remediation: this
+    table's code_set corpus record(s) are resolved ONCE here, before any
+    batch streams, and the SAME pinned record is threaded into every
+    `mask_batch` call below AND into the evidence stamp -- resolved
+    unconditionally (not just when `code_set_corpora` is given), since
+    masking consistency across the whole batch stream does not depend on
+    whether the caller also wants evidence.
     """
     if batch_rows is None:
         batch_rows = _join_ooc._JOIN_BATCH_ROWS
     source_schema = raw.schema
     skip_columns = frozenset(col for edge in incoming_edges for col in edge.child_columns)
+    code_set_corpus_records, table_code_set_evidence = _code_set_records_and_evidence_for_table(
+        plan, table_name, source_schema.names, skip_columns=skip_columns
+    )
+    if code_set_corpora is not None:
+        code_set_corpora.update(table_code_set_evidence)
     joiners: list[ChildFkBatchJoiner] = []
     try:
         for idx, edge in enumerate(incoming_edges):
@@ -280,7 +321,12 @@ def _stream_table(
         def rewritten() -> Iterator[pa.RecordBatch]:
             for raw_batch in _iter_source_batches(raw, batch_rows):
                 out = mask_batch(
-                    plan, table_name, raw_batch, skip_columns=skip_columns, mask_key=mask_key
+                    plan,
+                    table_name,
+                    raw_batch,
+                    skip_columns=skip_columns,
+                    mask_key=mask_key,
+                    code_set_corpus_records=code_set_corpus_records,
                 )
                 for join_idx, joiner in enumerate(joiners):
                     # key_source pins every join to the immutable raw batch:
@@ -435,6 +481,76 @@ def _fixed_output_schema(
         else:
             fields.append(field)
     return pa.schema(fields, metadata=source_schema.metadata)
+
+
+def _code_set_records_and_evidence_for_table(
+    plan: Plan,
+    table_name: str,
+    column_names: Sequence[str],
+    *,
+    skip_columns: frozenset[str],
+) -> tuple[dict[str, _CorpusRecord], dict[tuple[str, str], dict[str, Any]]]:
+    """HIGH-2 remediation: code_set corpus record + provenance evidence for one table.
+
+    Mirrors `CodeSetHandler.run`'s once-per-(table, column) stamp
+    (`describe_loaded_corpus`; counts + identifiers only, no raw codes) so the
+    out-of-core route surfaces the same `code_set_corpora` evidence block the
+    pandas/sequential routes already merge into `ExecutionResult.quality_metrics`
+    -- previously silently absent here, the exact route the large-healthcare
+    (70k ICD) case this slice exists for takes.
+
+    Keyed by (table_name, column) -- Codex P2 MULTI-TABLE EVIDENCE COLLISION
+    remediation: two tables can legally declare a same-named code_set column
+    bound to different corpora (e.g. both have a "code" column, one icd10 one
+    mcc), and a bare-column key let the second table's stamp silently
+    overwrite the first's, dropping audit provenance. Each emitted evidence
+    dict also carries its own `table`/`column` identity, since the flattened
+    metrics list (`list(code_set_corpora.values())`) discards the sink's keys.
+
+    Restricted to columns actually present in this table's batch schema and
+    not consumed as an FK child (`skip_columns`), so a plan-declared code_set
+    column absent from the source or resolved via FK join never falsely
+    reports as "used." The out-of-core compat gate (`_compat.py`) admits
+    code_set only in mask mode without `chapter_preserve` and rejects any
+    `when` predicate, so there is no when-gated zero-row case to guard against
+    here (unlike the pandas/sequential route's when_gate).
+
+    Known divergence: stamping is keyed on schema presence, not on observed
+    non-null masking, so an all-null code_set column is reported here as used
+    whereas the pandas/sequential route omits it (it stamps only after masking
+    at least one non-null value). The two routes agree for any column with a
+    non-null value and diverge only for an entirely-null column; this is
+    evidence-only (a corpus listed though it masked nothing, no leak). Exact
+    parity would require threading a per-column non-null count through the
+    streaming batch loop.
+
+    Codex round-6 P2 MASKING/EVIDENCE VERSION DIVERGENCE remediation: returns
+    the PINNED `_CorpusRecord` per code_set column alongside the evidence
+    derived from that SAME record (`describe_loaded_corpus(..., record=...)`),
+    resolving each corpus exactly ONCE. `_stream_table` threads the returned
+    records dict into every `mask_batch` call for this table, so a customer
+    corpus file replaced mid-stream cannot make one batch's masking, another
+    batch's masking, or the evidence stamp disagree about which corpus
+    version was used -- there is only ever one resolve per (table, column)
+    for the whole table stream.
+    """
+    seed = table_seed(plan, table_name)
+    if seed is None:
+        return {}, {}
+    names = frozenset(column_names)
+    records: dict[str, _CorpusRecord] = {}
+    corpora: dict[tuple[str, str], dict[str, Any]] = {}
+    for column, column_seed in seed.per_column:
+        if column_seed.strategy != "code_set":
+            continue
+        if column not in names or column in skip_columns:
+            continue
+        code_cfg = CodeSetConfig.from_dict(provider_config_to_dict(column_seed.provider_config))
+        record = resolve_corpus_record(code_cfg)
+        records[column] = record
+        evidence = describe_loaded_corpus(code_cfg, record=record)
+        corpora[(table_name, column)] = {**evidence, "table": table_name, "column": column}
+    return records, corpora
 
 
 def _remap_values(

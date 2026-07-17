@@ -14,13 +14,26 @@ Locks:
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
+from typing import Any
 
 import pandas as pd
+import pyarrow as pa
 import pytest
 
+from decoy_engine.execution import PandasExecutionAdapter, PolarsExecutionAdapter
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution._strategies._nested import NestedStrategyHandler
-from decoy_engine.plan._types import ColumnSeed
+from decoy_engine.plan._errors import PlanCompileError
+from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
+from decoy_engine.providers_v2 import get_default_registry
+from decoy_engine.relationships._graph import RelationshipGraph
+from decoy_engine.relationships._namespace import NamespaceRegistry
+
+_REG = get_default_registry()
+_GRAPH = RelationshipGraph(edges=(), ordering=())
+_NS = NamespaceRegistry(bindings=())
+_JOB_SEED = b"\xca\xfe" * 4  # 8 bytes
 
 
 def _seed(provider_config: dict) -> ColumnSeed:
@@ -415,3 +428,148 @@ class TestBatchDelegation:
             parsed = json.loads(cell)
             assert parsed["a"] == "REDACTED"
             assert parsed["b"] == f"keep{i}"
+
+
+class TestNestedWhenGateFailClosed:
+    """Codex round-5 P2 NESTED CODE_SET CHILD NOT PREFLIGHTED UNDER A
+    ZERO-MATCH WHEN-GATE remediation: `run_with_when_gate` calls
+    `getattr(handler, "preflight", None)` unconditionally, before its
+    zero-match short-circuit (see
+    test_code_set_strategy.py::TestCodeSetWhenGateFailClosed for the plain
+    `code_set` case), but that only reaches a `code_set` column's own
+    corpus check when the OUTER handler defines `preflight`.
+    `NestedStrategyHandler` (the outer handler for a `nested(code_set)`
+    column) previously did not, so the CHILD `CodeSetHandler.preflight` was
+    never invoked, and a `nested(code_set)` column referencing a
+    missing/invalid corpus succeeded silently whenever its `when:` gate
+    matched zero rows. `NestedStrategyHandler.preflight` closes this by
+    resolving the child handler and forwarding to its `preflight`.
+
+    Codex round-6 P2 FAIL-CLOSED PARITY remediation: the pandas gate
+    (`run_with_when_gate`) called `preflight` unconditionally, but its
+    polars counterpart (`run_with_when_gate_polars`) did not call it at all
+    -- and even once it does, a `nested` column routes through
+    `PandasStrategyPort(NestedStrategyHandler())` on the polars adapter,
+    and the port itself did not forward a `preflight` attribute, so
+    `getattr(handler, "preflight", None)` still resolved to `None` for the
+    wrapped handler. A native polars `nested(code_set)` column with a
+    zero-match `when:` and a missing/invalid corpus therefore succeeded
+    (or rather, silently passed the raw JSON cells through) on the polars
+    route while the pandas route correctly raised -- a cross-substrate
+    fail-closed divergence. `test_zero_match_when_gate_still_fails_closed_
+    on_missing_child_corpus_polars` below pins the polars route to the
+    SAME fail-closed behavior as the pandas test above."""
+
+    def test_zero_match_when_gate_still_fails_closed_on_missing_child_corpus(self) -> None:
+        """A nested(code_set) column whose `when:` predicate matches NO
+        rows, and whose child corpus_source points at a customer path that
+        does not exist, must still raise through the real pandas-adapter
+        route -- not silently pass the raw JSON cells through."""
+        table = pa.table({"data": pa.array([json.dumps({"diag": "I10"})], type=pa.string())})
+        col_seed = ColumnSeed(
+            namespace=None,
+            strategy="nested",
+            provider=None,
+            backend_type="decoy_native",
+            backend_version="1",
+            cardinality_mode="reuse",
+            deterministic=False,
+            provider_config=tuple(
+                sorted(
+                    {
+                        "target": "$.diag",
+                        "strategy": "code_set",
+                        "strategy_config": {
+                            "code_set": "missing_corpus",
+                            "corpus_source": "customer:/no/such/file.parquet",
+                        },
+                    }.items()
+                )
+            ),
+            # Never true for the one row: the gate matches zero rows.
+            when="data == 'ZZZ_NEVER_MATCHES'",
+        )
+        plan: Any = SimpleNamespace(
+            seed_envelope=SeedEnvelope(
+                job_seed=_JOB_SEED,
+                per_table=(
+                    (
+                        "t",
+                        TableSeed(
+                            per_column=(("data", col_seed),),
+                            per_group=(),
+                        ),
+                    ),
+                ),
+            )
+        )
+        with pytest.raises(PlanCompileError) as excinfo:
+            PandasExecutionAdapter().run_single(
+                plan, table, registry=_REG, relationship_graph=_GRAPH, namespace_registry=_NS
+            )
+        assert excinfo.value.code == "code_set_corpus_path_not_found", (
+            f"expected a fail-closed corpus error, got {excinfo.value.code!r}. "
+            "A zero-match when: gate on a nested(code_set) column must not let "
+            "a missing child corpus succeed silently."
+        )
+
+    def test_zero_match_when_gate_still_fails_closed_on_missing_child_corpus_polars(
+        self,
+    ) -> None:
+        """Same fixture as the pandas test above, driven through
+        `PolarsExecutionAdapter` instead: `nested` is polars-native
+        (`PandasStrategyPort(NestedStrategyHandler())`), so this job has no
+        FK edges or unmigrated strategies and classifies fully native --
+        exercising `run_with_when_gate_polars`'s preflight call and the
+        port's `preflight` forwarding, not an oracle fallback."""
+        table = pa.table({"data": pa.array([json.dumps({"diag": "I10"})], type=pa.string())})
+        col_seed = ColumnSeed(
+            namespace=None,
+            strategy="nested",
+            provider=None,
+            backend_type="decoy_native",
+            backend_version="1",
+            cardinality_mode="reuse",
+            deterministic=False,
+            provider_config=tuple(
+                sorted(
+                    {
+                        "target": "$.diag",
+                        "strategy": "code_set",
+                        "strategy_config": {
+                            "code_set": "missing_corpus",
+                            "corpus_source": "customer:/no/such/file.parquet",
+                        },
+                    }.items()
+                )
+            ),
+            # Never true for the one row: the gate matches zero rows.
+            when="data == 'ZZZ_NEVER_MATCHES'",
+        )
+        plan: Any = SimpleNamespace(
+            seed_envelope=SeedEnvelope(
+                job_seed=_JOB_SEED,
+                per_table=(
+                    (
+                        "t",
+                        TableSeed(
+                            per_column=(("data", col_seed),),
+                            per_group=(),
+                        ),
+                    ),
+                ),
+            )
+        )
+        with pytest.raises(PlanCompileError) as excinfo:
+            PolarsExecutionAdapter().run(
+                plan,
+                {"t": table},
+                registry=_REG,
+                relationship_graph=_GRAPH,
+                namespace_registry=_NS,
+            )
+        assert excinfo.value.code == "code_set_corpus_path_not_found", (
+            f"expected a fail-closed corpus error, got {excinfo.value.code!r}. "
+            "A zero-match when: gate on a nested(code_set) column must not let "
+            "a missing child corpus succeed silently on the POLARS route either."
+        )

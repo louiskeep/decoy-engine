@@ -284,7 +284,7 @@ class PandasExecutionAdapter:
             timings=tuple(collector.records),
             boundary_conversion_ms=conversion_ms,
             warnings=tuple(warnings),
-            quality_metrics={},
+            quality_metrics=ctx.code_set_corpora_metrics(),  # HC-1: {} if no code_set column
             row_errors=tuple(row_error_records),
         )
 
@@ -308,6 +308,13 @@ class PandasExecutionAdapter:
         other node masks via its scalar or composite handler. `key_error_rows`/
         `errored_keys_cache` (S2, default None) thread the quarantine-aware FK
         caches to `_resolve_fk_node`; non-FK nodes ignore them."""
+        # Codex P2 MULTI-TABLE EVIDENCE COLLISION remediation: stamp the
+        # in-flight table onto ctx BEFORE any handler dispatch (scalar,
+        # composite, or fk_resolve) so a scalar handler that needs table
+        # identity for evidence keying (CodeSetHandler) can read it. ctx is
+        # frozen; object.__setattr__ is the sanctioned mutation path (see
+        # StrategyContext.current_table).
+        object.__setattr__(ctx, "current_table", node.table)
         df = frames[node.table]
         child_edges = relationship_graph.parents_of(node.table, node.columns)
         if child_edges:
