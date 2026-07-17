@@ -236,6 +236,62 @@ class TestChunkSafety:
         assert got == ["67", "90+", "67", None, "89", "90+"]
         assert not any(isinstance(v, str) and v.endswith(".0") for v in got if v is not None)
 
+    @pytest.mark.parametrize("boundary", [2, 3, 4])
+    def test_large_null_bearing_int_is_chunk_exact(self, tmp_path, boundary: int) -> None:
+        # Codex R2 HIGH 1: a large in-range int64 with a null used to widen to
+        # float64 in the full-frame/null-bearing path (rounding it) but stay
+        # exact in a null-free chunk -> chunk-dependent output. The lossless
+        # nullable-Int64 ingest (top_code_columns) makes it exact everywhere.
+        big = -9007199254740993  # |v| > 2**53: not exactly representable in float64
+        src = pa.table({"n": pa.array([big, 1, None, 90], type=pa.int64())})
+        cfg = {
+            "version": 1,
+            "global_settings": {"seed": 42},
+            "sources": {"t": {"type": "file", "format": "csv", "path": str(tmp_path / "in.csv")}},
+            "tables": [
+                {
+                    "name": "t",
+                    "columns": [
+                        {
+                            "name": "n",
+                            "strategy": "top_code",
+                            "provider_config": {"cap": 89, "over_label": "OVER"},
+                        }
+                    ],
+                }
+            ],
+            "targets": {"t": {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")}},
+        }
+        cfg = PipelineConfig.model_validate(cfg).model_dump()
+        src.to_pandas().to_csv(tmp_path / "in.csv", index=False)
+        full = run_pipeline(cfg, sources={"t": src}, engine_version="hc3b-test").outputs["t"]
+        chunks = [src.slice(i, boundary) for i in range(0, src.num_rows, boundary)]
+        chunked = pa.concat_tables(
+            list(run_mask_pipeline_chunked(cfg, chunks, table="t", engine_version="hc3b-test"))
+        )
+        assert chunked.column("n").to_pylist() == full.column("n").to_pylist()
+        # and the large in-range value is preserved EXACTLY (not float-rounded).
+        assert full.column("n").to_pylist()[0] == str(big)
+
+
+class TestBottomBoundFailClosed:
+    """Codex R2 HIGH 2: a PRESENT-but-invalid floor must fail closed at the
+    handler, not silently disable bottom-coding. The compile check rejects these
+    shapes, but a Plan deserialized straight into execution bypasses it, so the
+    handler is the backstop."""
+
+    def test_invalid_floor_raises(self) -> None:
+        with pytest.raises(StrategyError) as exc:
+            TopCodeStrategyHandler._resolve_bottom_bound({"floor": -(2**53), "under_label": "U"})
+        assert exc.value.code == "top_code_bounds_unresolvable"
+
+    def test_floor_without_under_label_raises(self) -> None:
+        with pytest.raises(StrategyError):
+            TopCodeStrategyHandler._resolve_bottom_bound({"floor": 0})
+
+    def test_absent_floor_is_not_an_error(self) -> None:
+        assert TopCodeStrategyHandler._resolve_bottom_bound({}) == (None, None)
+
 
 class TestNonNullUncoercible:
     def test_uncoercible_cell_records_row_error_and_leaves_original(self) -> None:

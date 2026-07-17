@@ -59,6 +59,7 @@ from decoy_engine.execution._runner import (
     build_work_list,
     date_shift_group_columns,
     order_work,
+    top_code_columns,
 )
 from decoy_engine.execution._sequential import run_sequential as _run_sequential
 from decoy_engine.execution._strategies import SCALAR_HANDLERS
@@ -195,10 +196,17 @@ class PandasExecutionAdapter:
         # float64, or `_canonicalize_source` rejects the valid id -- so union
         # those columns into the FK-safe set per table.
         group_anchor_cols = date_shift_group_columns(plan, registry)
+        # HC-3b (Codex R2): a top_code column has the same lossless-typing need
+        # as an FK key -- an int+null column must not widen to float64, or a
+        # value >= 2**53 rounds and the masked output becomes chunk-boundary
+        # dependent (whether a chunk widens turns on whether it carries a null).
+        top_code_cols = top_code_columns(plan, registry)
         frames: dict[str, pd.DataFrame] = {
             t: to_pandas_fk_safe(
                 tbl,
-                fk_columns_for_table(relationship_graph.edges, t) | group_anchor_cols.get(t, set()),
+                fk_columns_for_table(relationship_graph.edges, t)
+                | group_anchor_cols.get(t, set())
+                | top_code_cols.get(t, set()),
             )
             for t, tbl in sources.items()
         }

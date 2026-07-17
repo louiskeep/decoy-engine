@@ -169,7 +169,11 @@ ALLOWLIST: dict[str, int] = {
     # sequential route's (whole-frame dict vs per-table lifetime), so it does not
     # factor into a shared helper without harm. Same FK-resolution-helper
     # decomposition target stands.
-    "src/decoy_engine/execution/_pandas_adapter.py": 652,
+    # HC-3b (2026-07-17): +8 LOC (652 -> 660) unioning top_code columns into the
+    # lossless nullable-Int64 ingest (top_code_columns) so a large int+null value
+    # is not float64-rounded and the masked output stays chunk-boundary
+    # independent (Codex R2). Same FK-resolution-helper decomposition target.
+    "src/decoy_engine/execution/_pandas_adapter.py": 660,
     # DE-03 (2026-07-13): run_pipeline resolves the projection policy + the
     # generate-echo exemption set once and threads them into every emission route
     # (+15 LOC). The orchestration spine already owns route selection; this is the
@@ -202,7 +206,9 @@ ALLOWLIST: dict[str, int] = {
     # anchors pre-mask into ctx.group_anchor_snapshots, and evict them with the
     # frame after its node loop (same-table lifetime). Codex R1 P1 #1/#2. Same
     # per-table mask/quarantine-loop decomposition target stands.
-    "src/decoy_engine/execution/_sequential.py": 635,
+    # HC-3b (2026-07-17): +6 LOC (635 -> 641) unioning top_code columns into the
+    # sequential route's lossless nullable-Int64 ingest (Codex R2 chunk-safety).
+    "src/decoy_engine/execution/_sequential.py": 641,
     # DE-08 residual (2026-07-14): crossed the 600 cap (was 569) hardening the
     # transactional quarantine publish in place -- fail-closed on a hardlink-
     # unsupported filesystem (clear message, not an opaque OSError) and best-

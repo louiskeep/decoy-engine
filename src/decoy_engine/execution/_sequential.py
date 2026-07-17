@@ -154,6 +154,7 @@ from decoy_engine.execution._runner import (
     build_work_list,
     date_shift_group_columns,
     order_work,
+    top_code_columns,
 )
 from decoy_engine.execution._transactional_sink import (
     TransactionalSink,
@@ -284,6 +285,9 @@ def run_sequential(
     # Unioned into each table's FK-safe column set at load (lossless int+null)
     # and snapshotted pre-mask into ctx.group_anchor_snapshots below.
     group_anchor_cols = date_shift_group_columns(plan, registry)
+    # HC-3b (Codex R2): top_code columns need the same lossless int+null typing
+    # so a value >= 2**53 is not rounded by a float64 widen (chunk-safety).
+    top_code_cols = top_code_columns(plan, registry)
 
     # A parent key map is retained until every child table that references it has
     # been processed; this makes multi-parent and diamond graphs safe.
@@ -364,7 +368,9 @@ def run_sequential(
                 # lossless int+null path (union into the FK-safe set).
                 df = to_pandas_fk_safe(
                     src,
-                    fk_columns_for_table(graph.edges, table) | group_anchor_cols.get(table, set()),
+                    fk_columns_for_table(graph.edges, table)
+                    | group_anchor_cols.get(table, set())
+                    | top_code_cols.get(table, set()),
                 )
                 conversion_ms += (time.perf_counter() - t0) * 1000.0
                 frames[table] = df

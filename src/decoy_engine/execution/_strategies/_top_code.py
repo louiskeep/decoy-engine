@@ -232,21 +232,39 @@ class TopCodeStrategyHandler:
 
     @staticmethod
     def _resolve_bottom_bound(cfg: dict[str, Any]) -> tuple[int | float | None, str | None]:
-        """Resolve (floor, under_label). Both None when `floor` is absent or
-        the pairing is malformed -- the bottom tail is optional, so a
-        malformed `floor`/`under_label` degrades to "no floor" here rather
-        than raising; `plan/_checks_top_code.py` rejects that shape at
-        compile time so it never reaches a real run.
+        """Resolve (floor, under_label). (None, None) ONLY when `floor` is
+        absent (no bottom tail -- a legitimate, common shape).
+
+        When `floor` IS present the operator intends bottom-coding, so a
+        malformed floor or a missing/invalid `under_label` FAILS CLOSED here
+        (raises), rather than silently degrading to "no floor". Silent degrade
+        was a leak (Codex R2 HIGH): the compile check (`_checks_top_code.py`)
+        rejects those shapes, but a `Plan` that bypasses it -- e.g. one
+        deserialized from YAML straight into execution -- would otherwise drop
+        the bottom tail and let a value that should be `under_label` pass through.
         """
         floor = cfg.get("floor")
         if floor is None:
             return None, None
-        # Same usability gate as cap: bool/non-numeric, NaN/inf, or |floor| >=
-        # 2**53 all disable the (optional) bottom tail. The compile check rejects
-        # these loudly; here they degrade to "no floor" as a handler backstop.
         if not _is_usable_bound(floor):
-            return None, None
+            raise StrategyError(
+                code="top_code_bounds_unresolvable",
+                strategy="top_code",
+                message=(
+                    f"top_code floor {floor!r} is not a usable bound (must be a "
+                    "finite number with magnitude below 2**53). Refusing to run "
+                    "rather than silently disable bottom-coding."
+                ),
+            )
         under_label = cfg.get("under_label")
         if not isinstance(under_label, str) or not under_label:
-            return None, None
+            raise StrategyError(
+                code="top_code_bounds_unresolvable",
+                strategy="top_code",
+                message=(
+                    f"top_code sets floor {floor!r} but no non-empty under_label "
+                    f"(got {under_label!r}). Refusing to run rather than silently "
+                    "drop the bottom tail."
+                ),
+            )
         return floor, under_label
