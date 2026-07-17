@@ -147,6 +147,10 @@ TECHNIQUE_CLASS_BY_STRATEGY: dict[str, TechniqueClass] = {
     # the output without the job seed. Pseudonymisation per Art 4(5) GDPR: the
     # key held separately could reverse the mapping.
     "group_key": "pseudonymisation",
+    # top_code (HC-3b, 2026-07-17): numeric tail generalization (e.g. HIPAA
+    # Safe Harbor age>89 -> "90+"). The tail value is not recoverable -- many
+    # source values collapse onto one label -- same class as bucketize.
+    "top_code": "anonymisation",
     # `nested` (MG-3 M2, 2026-05-31) is intentionally absent. It is a
     # wrapper -- its GDPR posture is the child strategy's posture, not
     # its own. Until the FE surfaces the child-strategy badge for

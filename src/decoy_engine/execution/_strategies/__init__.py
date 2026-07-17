@@ -9,6 +9,7 @@ SP-08b adds `bucket_perturb` (coarse time-bucket datetime generalization).
 SP-10b adds `derived_aggregate` (intra-table scalar aggregate fill).
 SP-10c adds `grouped_series` (per-group series), `windowed_date` (bounded date
 offset from an anchor column), and `group_key` (HKDF-keyed per-group identifier).
+HC-3b adds `top_code` (numeric tail generalization, e.g. HIPAA Safe Harbor age>89).
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ from decoy_engine.execution._strategies._redact import RedactHandler
 from decoy_engine.execution._strategies._shuffle import ShuffleStrategyHandler
 from decoy_engine.execution._strategies._text_mask import TextMaskHandler
 from decoy_engine.execution._strategies._text_redact import TextRedactHandler
+from decoy_engine.execution._strategies._top_code import TopCodeStrategyHandler
 from decoy_engine.execution._strategies._truncate import TruncateHandler
 from decoy_engine.execution._strategies._windowed_date import WindowedDateStrategyHandler
 
@@ -47,6 +49,7 @@ SCALAR_HANDLERS: dict[str, StrategyHandler] = {
         FakerStrategyHandler(),
         HashStrategyHandler(),
         BucketizeStrategyHandler(),
+        TopCodeStrategyHandler(),
         ShuffleStrategyHandler(),
         CategoricalStrategyHandler(),
         DateShiftStrategyHandler(),
@@ -90,6 +93,7 @@ __all__ = [
     "ShuffleStrategyHandler",
     "TextMaskHandler",
     "TextRedactHandler",
+    "TopCodeStrategyHandler",
     "TruncateHandler",
     "WindowedDateStrategyHandler",
 ]

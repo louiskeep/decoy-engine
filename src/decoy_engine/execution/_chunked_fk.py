@@ -10,7 +10,7 @@ chunked` (`_chunked.py`) always threads an EMPTY `RelationshipGraph` into
 the pandas adapter (self-masking has no parent-map join), so `_fk_keys.
 to_pandas_fk_safe`'s ingestion protection -- keyed off that same runtime
 graph -- protects NOTHING on this route. Every OTHER chunk-safe strategy
-(hash, fpe, redact, truncate, text_redact, date_shift, bucketize) re-derives
+(hash, fpe, redact, truncate, text_redact, date_shift, bucketize, top_code) re-derives
 its output rather than preserving the raw key, so an unprotected
 float64-on-null ingestion widening never survives to the output for them --
 but `passthrough` (identity) IS admitted here (`CHUNK_SAFE_STRATEGIES`
@@ -80,6 +80,7 @@ CHUNK_SAFE_STRATEGIES: frozenset[str] = frozenset(
         "text_redact",
         "date_shift",
         "bucketize",
+        "top_code",
         "passthrough",
     }
 )
@@ -91,9 +92,9 @@ CHUNK_SAFE_STRATEGIES: frozenset[str] = frozenset(
 #   fpe        -- fpe_requires_namespace
 #   date_shift -- date_shift_requires_namespace
 # The remaining CHUNK_SAFE strategies (redact, truncate, text_redact, bucketize,
-# passthrough) do not read plan.namespace and produce byte-identical output
-# regardless of whether a namespace is declared; the namespace sub-checks in the
-# FK gate are skipped for them.
+# top_code, passthrough) do not read plan.namespace and produce byte-identical
+# output regardless of whether a namespace is declared; the namespace sub-checks
+# in the FK gate are skipped for them.
 NAMESPACE_REQUIRING_STRATEGIES: frozenset[str] = frozenset({"hash", "fpe", "date_shift"})
 
 # Strategies whose masked output does NOT depend on the key's value (only on
@@ -222,7 +223,7 @@ def gate_fk_child_edges(config: dict[str, Any], *, table: str) -> None:
         (chunked_fk_parent_namespace_missing), consistent with the per-strategy
         namespace-required error at execution time.
         For namespace-agnostic strategies (redact, truncate, text_redact,
-        bucketize, passthrough), namespace sub-checks are skipped entirely:
+        bucketize, top_code, passthrough), namespace sub-checks are skipped entirely:
         their output is pure(value, config) and byte-identical regardless of
         whether a namespace is declared.
     (d) orphan_policy is 'remap'.
@@ -339,7 +340,7 @@ def gate_fk_child_edges(config: dict[str, Any], *, table: str) -> None:
             # strategy is in NAMESPACE_REQUIRING_STRATEGIES (hash, fpe, date_shift).
             # Those handlers call derive(job_seed, namespace, ...) and raise at
             # execution when plan.namespace is None.  Namespace-agnostic strategies
-            # (redact, truncate, text_redact, bucketize, passthrough) do not read
+            # (redact, truncate, text_redact, bucketize, top_code, passthrough) do not read
             # plan.namespace; their output is pure(value, config) and byte-identical
             # regardless of whether a namespace is declared, so no namespace
             # sub-checks are needed and imposing them would over-reject configs that

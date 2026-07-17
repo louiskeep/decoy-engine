@@ -87,6 +87,11 @@ from decoy_engine.plan._checks_fpe import check_fpe_charset_config
 from decoy_engine.plan._checks_fpe_join import check_fpe_join_groups
 from decoy_engine.plan._checks_group_key import check_group_key_refs
 from decoy_engine.plan._checks_grouped_series import check_grouped_series_refs
+
+# Row 28 (HC-3b, 2026-07-17): top_code bound-resolution check (its own module
+# for the same _checks.py size-ceiling reason as the sibling per-strategy
+# modules).
+from decoy_engine.plan._checks_top_code import check_top_code_config
 from decoy_engine.plan._checks_truncate import check_truncate_config
 from decoy_engine.plan._checks_windowed_date import check_windowed_date_refs
 from decoy_engine.plan._errors import PlanCompileError
@@ -219,6 +224,10 @@ def compile_plan(
     # bucketize columns whose width cannot be resolved (sibling silent-
     # passthrough leak). Config-only; both branches + run_config_only_checks.
     check_bucketize_config(config)
+    # Row 28 (HC-3b, 2026-07-17): reject top_code columns with no resolvable
+    # bound (silent-passthrough leak). Config-only; both branches +
+    # run_config_only_checks.
+    check_top_code_config(config)
     # Row 24 (Sprint 13 / coercion-13 S3, GATE-1 Q4, 2026-07-03): reject
     # categorical (mask) columns whose categories is not a proper non-empty
     # list (sibling silent-corruption leak). Config-only; both branches +
@@ -303,6 +312,8 @@ def compile_plan(
             "truncate_config",
             # Row 23 (Sprint 13 S3, GATE-1 Q4): bucketize width resolution.
             "bucketize_config",
+            # Row 28 (HC-3b): top_code bound resolution.
+            "top_code_config",
             # Row 24 (Sprint 13 S3, GATE-1 Q4): categorical categories shape.
             "categorical_categories",
             # Row 25 (Sprint 2 honesty pack S6, GATE-1 Q4): fpe charset resolution.
@@ -367,6 +378,8 @@ def compile_plan(
             "truncate_config",
             # Row 23 (Sprint 13 S3, GATE-1 Q4): bucketize width resolution.
             "bucketize_config",
+            # Row 28 (HC-3b): top_code bound resolution.
+            "top_code_config",
             # Row 24 (Sprint 13 S3, GATE-1 Q4): categorical categories shape.
             "categorical_categories",
             # Row 25 (Sprint 2 honesty pack S6, GATE-1 Q4): fpe charset resolution.
@@ -479,6 +492,9 @@ def run_config_only_checks(config: dict[str, Any]) -> tuple[str, ...]:
     check_truncate_config(config)
     # Row 23 (Sprint 13 S3, GATE-1 Q4): bucketize width resolution.
     check_bucketize_config(config)
+    # Row 28 (HC-3b, 2026-07-17): reject top_code columns with no resolvable
+    # bound (silent-passthrough leak). Config-only.
+    check_top_code_config(config)
     # Row 24 (Sprint 13 S3, GATE-1 Q4): categorical (mask) categories shape.
     check_categorical_categories(config)
     # Row 25 (Sprint 2 honesty pack S6, GATE-1 Q4): fpe degenerate-charset
@@ -508,6 +524,8 @@ def run_config_only_checks(config: dict[str, Any]) -> tuple[str, ...]:
         "truncate_config",
         # Row 23 (Sprint 13 S3, GATE-1 Q4): bucketize width resolution.
         "bucketize_config",
+        # Row 28 (HC-3b): top_code bound resolution.
+        "top_code_config",
         # Row 24 (Sprint 13 S3, GATE-1 Q4): categorical categories shape.
         "categorical_categories",
         # Row 25 (Sprint 2 honesty pack S6, GATE-1 Q4): fpe charset resolution.
