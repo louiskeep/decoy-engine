@@ -109,16 +109,19 @@ from typing import Any
 from decoy_engine.determinism import derive, derive_index
 from decoy_engine.internal.crypto import hmac_hex
 from decoy_engine.plan._errors import PlanCompileError
+from decoy_engine.transforms._codeset_config_checks import (
+    validate_code_set_config,
+)
 from decoy_engine.transforms._codeset_loader import (
-    _SHIPPED_CORPORA,
+    _SHIPPED_CORPORA,  # noqa: F401 -- re-exported (validate_code_set_config moved out)
     CorpusVerifyReport,  # noqa: F401 -- re-exported public API (see below)
+    _check_source_version_pin,
     _CorpusRecord,
     _get_corpus_record,
     load_corpus,  # noqa: F401 -- re-exported public API (see below)
     load_corpus_provenance,  # noqa: F401 -- re-exported public API (see below)
     verify_corpus,  # noqa: F401 -- re-exported public API (see below)
 )
-from decoy_engine.transforms._codeset_provenance import RESERVED_LICENSED_NAMES
 
 # Stable salt for HMAC-keyed row derivation. Same purpose as
 # reference_tables._KEYED_ACCESS_SALT: determinism, not secrecy.
@@ -187,74 +190,19 @@ class CodeSetConfig:
                 "shipped"/absent.
         """
         validate_code_set_config(cfg)
+        raw_version = cfg.get("corpus_source_version")
         return cls(
             code_set=cfg["code_set"],
             chapter_preserve=bool(cfg.get("chapter_preserve", False)),
             corpus_source=str(cfg.get("corpus_source", "shipped")),
-            # `or None` collapses an explicit empty string to "unset", same
-            # idiom as date_shift.py's optional string fields.
-            corpus_source_version=cfg.get("corpus_source_version") or None,
-        )
-
-
-def validate_code_set_config(cfg: dict[str, Any]) -> None:
-    """Validate a code_set config dict; raise PlanCompileError on any failure.
-
-    Checks:
-      - ``code_set`` is present and non-empty.
-      - The name is not a reserved licensed corpus (e.g. "cpt") requested
-        with ``corpus_source`` "shipped" (or absent) -- those are upload-only
-        (HC-2 D2b). Checked BEFORE the shipped-corpus lookup below so the
-        error is the specific licensing one, not the generic "not found"
-        (reserved names are deliberately absent from ``_SHIPPED_CORPORA``).
-      - When ``corpus_source`` is "shipped" (or absent), the name must be a
-        known shipped corpus.
-
-    Called at config parse time (fast, no I/O). Corpus loading and deeper
-    schema checks happen in :func:`_read_corpus_record` at apply time,
-    pre-mutation, so invalid corpora fail closed before any data is changed.
-
-    Args:
-        cfg: Raw config dict.
-
-    Raises:
-        PlanCompileError: Any validation failure.
-    """
-    name = cfg.get("code_set")
-    if not name:
-        raise PlanCompileError(
-            code="code_set_name_missing",
-            path="provider_config.code_set",
-            message=(
-                "'code_set' is required and must name a corpus "
-                "(e.g. 'icd10', 'hcpcs', 'ndc', 'mcc', or a customer corpus name "
-                "with corpus_source: customer:<path>)."
-            ),
-        )
-
-    source = str(cfg.get("corpus_source", "shipped"))
-    is_shipped_source = source == "shipped" or not source
-
-    if str(name).strip().lower() in RESERVED_LICENSED_NAMES and is_shipped_source:
-        raise PlanCompileError(
-            code="code_set_reserved_licensed_name",
-            path="provider_config.code_set",
-            message=(
-                f"{name!r} is a licensed code set the engine never ships "
-                "(AMA CPT license / proprietary grouper). It is upload-only: "
-                "set corpus_source: customer:<path> to your own licensed copy."
-            ),
-        )
-
-    if is_shipped_source and name not in _SHIPPED_CORPORA:
-        raise PlanCompileError(
-            code="code_set_corpus_not_found",
-            path="provider_config.code_set",
-            message=(
-                f"corpus {name!r} not found in shipped corpora. "
-                f"Available: {sorted(_SHIPPED_CORPORA)}. "
-                f"To use a custom corpus, set corpus_source: customer:<path>."
-            ),
+            # Coerce to str so an unquoted-YAML numeric release id
+            # (corpus_source_version: 2024 -> int) compares equal to the
+            # corpus's always-string embedded source_version ("2024"); an
+            # absent/empty pin stays None (unpinned). bool/list/dict are
+            # rejected by validate_code_set_config above, so they never reach
+            # here to be str()'d into a bogus pin (a `false` pin must fail
+            # closed, not silently disable verification).
+            corpus_source_version=(str(raw_version) if raw_version not in (None, "") else None),
         )
 
 
@@ -436,6 +384,14 @@ def apply_code_set(
         )
     else:
         record = corpus_record
+        # Defense-in-depth (Codex HIGH): a caller that resolved this record
+        # under one config and now applies it under a DIFFERENT pinned config
+        # would otherwise skip verification entirely (the resolve-time pin
+        # check ran against the OTHER config). Re-verify the pin against the
+        # record we are about to mask with, so the pin is enforced wherever a
+        # pinned config is used, not only on the self-resolving path.
+        corpus_name, override_path = _resolve_corpus_path(config)
+        _check_source_version_pin(corpus_name, override_path, record, config.corpus_source_version)
     rows = record.rows
 
     if config.chapter_preserve:

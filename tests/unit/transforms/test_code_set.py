@@ -1591,3 +1591,70 @@ class TestVerifyCorpus:
 
         assert callable(verify_corpus)
         assert CorpusVerifyReport is not None
+
+
+class TestTwoModelGateRemediation:
+    """Dennis + Codex adversarial-gate findings on the HC-2 build, each fixed
+    at the source (fail-closed / coded, no silent bypass)."""
+
+    def test_pin_enforced_on_supplied_record_route(self):
+        # Codex HIGH: apply_code_set with a PASSED-IN record and a pinned config
+        # must re-verify the pin, not trust the record. A record resolved under
+        # a different (unpinned) config must not slip past a later pinned apply.
+        from decoy_engine.transforms.code_set import resolve_corpus_record
+
+        record = resolve_corpus_record(CodeSetConfig.from_dict({"code_set": "icd10"}))
+        pinned = CodeSetConfig.from_dict({"code_set": "icd10", "corpus_source_version": "FY2023"})
+        with pytest.raises(PlanCompileError) as exc:
+            apply_code_set("I10", pinned, mode="mask", job_seed=_JOB_SEED, corpus_record=record)
+        assert exc.value.code == "code_set_corpus_version_mismatch"
+
+    @pytest.mark.parametrize("source", [None, "Shipped", " shipped ", " ", "garbage"])
+    def test_reserved_name_blocked_for_all_shipped_like_sources(self, source):
+        # Codex/Dennis MEDIUM: any non-`customer:` source is a shipped load, so
+        # cpt/apr_drg must be refused with the licensing error, not slip to a
+        # later generic "not found".
+        cfg = {"code_set": "cpt"}
+        if source is not None:
+            cfg["corpus_source"] = source
+        with pytest.raises(PlanCompileError) as exc:
+            validate_code_set_config(cfg)
+        assert exc.value.code == "code_set_reserved_licensed_name"
+
+    def test_reserved_name_with_customer_path_allowed(self, tmp_path: pathlib.Path):
+        tbl = pa.table({"code": pa.array(["99213", "99214"], type=pa.string())})
+        path = tmp_path / "cpt.parquet"
+        pq.write_table(tbl, str(path))
+        cfg = CodeSetConfig.from_dict({"code_set": "cpt", "corpus_source": f"customer:{path}"})
+        assert apply_code_set("99213", cfg, mode="mask", job_seed=_JOB_SEED) in {"99213", "99214"}
+
+    def test_numeric_version_pin_coerced_and_matches(self):
+        # Dennis MEDIUM: unquoted-YAML numeric release id (int) must compare
+        # equal to the corpus's always-string embedded source_version.
+        cfg = CodeSetConfig.from_dict({"code_set": "ndc", "corpus_source_version": 2024})
+        assert cfg.corpus_source_version == "2024"
+        assert apply_code_set("0002-1975", cfg, mode="mask", job_seed=_JOB_SEED) is not None
+
+    @pytest.mark.parametrize("bad", [False, True, ["2024"], {"v": 1}])
+    def test_non_scalar_version_pin_rejected_not_failed_open(self, bad):
+        # Codex MEDIUM: a bool/list/dict pin must be a coded error, never
+        # silently collapse to "unpinned" (a false pin disabling verification).
+        with pytest.raises(PlanCompileError) as exc:
+            CodeSetConfig.from_dict({"code_set": "icd10", "corpus_source_version": bad})
+        assert exc.value.code == "code_set_corpus_source_version_invalid"
+
+    @pytest.mark.parametrize("bad_name", [["icd10"], {"x": 1}, 123])
+    def test_non_string_code_set_name_coded_not_typeerror(self, bad_name):
+        # Codex MEDIUM: a non-string code_set must raise a coded compile error,
+        # not a raw TypeError from the frozenset membership test.
+        with pytest.raises(PlanCompileError) as exc:
+            validate_code_set_config({"code_set": bad_name})
+        assert exc.value.code == "code_set_name_missing"
+
+    def test_verify_corpus_accepts_str_path_without_raising(self):
+        # Codex LOW: the never-raises contract must hold for a path-like str too.
+        from decoy_engine.transforms.code_set import verify_corpus
+
+        report = verify_corpus("/nonexistent/does-not-exist.parquet")
+        assert report.ok is False
+        assert report.problems and report.problems[0].startswith("code_set_corpus_read_error")

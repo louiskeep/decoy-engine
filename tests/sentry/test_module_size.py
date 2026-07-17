@@ -226,17 +226,6 @@ ALLOWLIST: dict[str, int] = {
     # routes). Decompose the chunk-drain / evidence-merge cluster into a sibling
     # when the next out-of-core route change lands.
     "src/decoy_engine/execution/out_of_core/_runner.py": 639,
-    # HC-2 (2026-07-17): crossed the 600 cap adding the corpus_source_version
-    # fail-closed pin (docstring + parse + threading through
-    # resolve_corpus_record/apply_code_set) and the reserved-licensed-name
-    # gate (RESERVED_LICENSED_NAMES check in validate_code_set_config). Both
-    # are config-time additions to the one module that owns CodeSetConfig;
-    # neither factors out without breaking the "code_set.py owns strategy-
-    # level concepts" split documented in this module's own docstring.
-    # Decompose validate_code_set_config's growing gate list into a
-    # `_codeset_config_checks.py` sibling when the next code_set config
-    # field lands and this module is touched again.
-    "src/decoy_engine/transforms/code_set.py": 637,
     # HC-2 (2026-07-17): crossed the 600 cap adding the generic corpus
     # schema-invariant checker (_check_corpus_schema, shared by the load path
     # and the new standalone verify_corpus primitive), the
@@ -244,10 +233,17 @@ ALLOWLIST: dict[str, int] = {
     # verify_corpus/CorpusVerifyReport themselves -- this module already owns
     # "read a Parquet file off disk, validate it, cache it" (see its
     # docstring), so the new checks and the new standalone primitive belong
-    # here, not split further. Decompose verify_corpus + CorpusVerifyReport
-    # into a `_codeset_verify.py` sibling when the next standalone-check
-    # consumer (CLI/platform) lands and needs this module touched again.
-    "src/decoy_engine/transforms/_codeset_loader.py": 610,
+    # here, not split further. 610 -> 613: the two-model gate added a Path()
+    # coercion + optional-path pin signature (verify_corpus never-raises fix).
+    # Decompose verify_corpus + CorpusVerifyReport into a `_codeset_verify.py`
+    # sibling when the next standalone-check consumer (CLI/platform) lands and
+    # needs this module touched again.
+    "src/decoy_engine/transforms/_codeset_loader.py": 613,
+    # NOTE: transforms/code_set.py was allowlisted at 637 during the HC-2 build;
+    # the two-model-gate remediation then decomposed validate_code_set_config
+    # into transforms/_codeset_config_checks.py (mirroring _checks_top_code.py),
+    # bringing code_set.py back to 592 -- under the 600 cap, so it is no longer
+    # allowlisted here. Do not re-add it without cause.
 }
 
 

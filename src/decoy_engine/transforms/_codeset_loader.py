@@ -259,7 +259,7 @@ def _get_corpus_record(
 
 def _check_source_version_pin(
     name: str,
-    path: Path,
+    path: Path | None,
     record: _CorpusRecord,
     expected_source_version: str | None,
 ) -> None:
@@ -279,11 +279,12 @@ def _check_source_version_pin(
         return
     actual = record.provenance.source_version if record.provenance else ""
     if actual != expected_source_version:
+        at = f" at {path}" if path is not None else ""
         raise PlanCompileError(
             code="code_set_corpus_version_mismatch",
             path="provider_config.corpus_source_version",
             message=(
-                f"corpus {name!r} at {path}: corpus_source_version pins "
+                f"corpus {name!r}{at}: corpus_source_version pins "
                 f"{expected_source_version!r}, but the loaded corpus's embedded "
                 f"source_version is {actual!r}. The corpus at this name/path has "
                 "changed since the plan was authored (or never carried the pinned "
@@ -404,13 +405,10 @@ def _read_corpus_record(name: str, path: Path, *, is_shipped: bool) -> _CorpusRe
     rows.sort(key=lambda r: str(r["code"]))
 
     # HC-1 slice 1: memoized code -> chapter dict, built once here instead of
-    # linear-scanned per _get_chapter call. Assumes codes are unique within a
-    # corpus (true of every shipped corpus). LOW-1 remediation: a duplicate
-    # code in a customer corpus resolves FIRST-WINS in code-sorted order
-    # (`setdefault`, not a dict-comprehension which is last-write-wins) to
-    # match the pre-HC-1 linear scan's `for row in rows: if match: return`,
-    # which stopped at the first hit -- byte-identical to the old behavior,
-    # not merely equivalent in the common no-duplicate case.
+    # linear-scanned per _get_chapter call. Codes are unique by invariant at
+    # this point -- HC-2's `_check_corpus_schema` (run above, before this block)
+    # rejects a duplicate-code corpus outright -- so the `setdefault` is now
+    # just defensive: there is at most one row per code, no resolution to make.
     chapter_index: dict[str, str] | None = None
     if rows and "chapter" in rows[0]:
         chapter_index = {}
@@ -533,8 +531,10 @@ class CorpusVerifyReport:
     Attributes:
         ok: True when the corpus passed every check.
         path: The verified file's path, as given (for display; not resolved).
-        row_count: Row count. 0 when the corpus could not be read far enough
-            to count rows.
+        row_count: Row count on success. Always 0 on failure (``ok=False``):
+            validation raises at the first failed check, before a row count is
+            returned, so a partially-read corpus reports 0 rather than a
+            possibly-misleading partial count.
         provenance: A counts/identifiers-only provenance summary -- the same
             shape ``describe_loaded_corpus`` stamps into evidence, never raw
             codes. ``None`` when the corpus carries no provenance stamp, or
@@ -570,13 +570,16 @@ def verify_corpus(path: Path) -> CorpusVerifyReport:
     corpus under review is not yet a job's corpus).
 
     Args:
-        path: Path to the corpus Parquet file to verify.
+        path: Path to the corpus Parquet file to verify. A ``str`` is accepted
+            and coerced (the "never raises" contract must hold for a path-like
+            string too, not only a ``Path``).
 
     Returns:
         A :class:`CorpusVerifyReport`. ``ok=False`` on any failure (unreadable
         file, missing/empty/duplicate/null code column, incomplete
         provenance, ...); ``problems`` names exactly what failed.
     """
+    path = Path(path)
     name = path.stem
     try:
         record = _read_corpus_record(name, path, is_shipped=False)
