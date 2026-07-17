@@ -1038,15 +1038,14 @@ class TestChapterIndexParity:
 
         assert _get_chapter("ANY", None) is None
 
-    def test_dict_index_duplicate_code_resolves_first_wins(self, tmp_path: pathlib.Path):
-        """LOW-1 remediation: a duplicate code in a customer corpus must
-        resolve to its FIRST occurrence in code-sorted (rows) order, matching
-        the pre-HC-1 linear scan's `for row in rows: if match: return` (which
-        stops at the first hit). A naive dict comprehension over the
-        code-sorted rows is LAST-write-wins, which would silently diverge
-        from the old scan's answer for a duplicate code."""
+    def test_duplicate_code_now_fails_closed(self, tmp_path: pathlib.Path):
+        """HC-2 D2c supersedes the HC-1 LOW-1 'first-wins duplicate' behavior:
+        a duplicate code in ANY corpus (shipped or customer) is now rejected
+        at load (`code_set_corpus_duplicate_codes`), because the UNIQUE-codes
+        invariant makes HMAC-keyed candidate selection unambiguous. The old
+        first-wins chapter-index resolution is therefore unreachable through
+        the load path -- a duplicate never gets as far as the chapter index."""
         from decoy_engine.transforms._codeset_loader import _get_corpus_record
-        from decoy_engine.transforms.code_set import _get_chapter
 
         tbl = pa.table(
             {
@@ -1057,14 +1056,9 @@ class TestChapterIndexParity:
         path = tmp_path / "dup_codes.parquet"
         pq.write_table(tbl, str(path))
 
-        record = _get_corpus_record("dup_codes", path, is_shipped=False)
-        expected = self._naive_get_chapter("D01", record.rows)
-        assert expected == "FIRST", "test fixture sanity: naive scan must pick the first row."
-        actual = _get_chapter("D01", record.chapter_index)
-        assert actual == "FIRST", (
-            f"dict-index resolved duplicate code 'D01' to {actual!r}; expected the FIRST "
-            "code-sorted occurrence ('FIRST'), matching the pre-HC-1 linear scan."
-        )
+        with pytest.raises(PlanCompileError) as exc_info:
+            _get_corpus_record("dup_codes", path, is_shipped=False)
+        assert exc_info.value.code == "code_set_corpus_duplicate_codes"
 
 
 # ── MEDIUM-1: customer corpus cache invalidation + bounded growth ────────────
@@ -1300,3 +1294,367 @@ class TestCustomerCorpusCacheInvalidation:
         first = _get_corpus_record("icd10", None, is_shipped=True)
         second = _get_corpus_record("icd10", None, is_shipped=True)
         assert first is second, "shipped corpus reload must hit the cache (same object)."
+
+
+# ── HC-2 item 3: reserved licensed corpus names (D2b) ─────────────────────────
+
+
+class TestReservedLicensedName:
+    """CPT and APR-DRG are licensed, not public domain: the engine must never
+    ship them under corpus_source: shipped (or absent); the only legal path
+    is corpus_source: customer:<path> to the operator's own licensed copy."""
+
+    def test_cpt_shipped_raises_reserved_licensed_name(self):
+        with pytest.raises(PlanCompileError) as exc_info:
+            validate_code_set_config({"code_set": "cpt"})
+        assert exc_info.value.code == "code_set_reserved_licensed_name"
+
+    def test_apr_drg_shipped_raises_reserved_licensed_name(self):
+        with pytest.raises(PlanCompileError) as exc_info:
+            validate_code_set_config({"code_set": "apr_drg", "corpus_source": "shipped"})
+        assert exc_info.value.code == "code_set_reserved_licensed_name"
+
+    def test_reserved_name_check_is_case_insensitive(self):
+        """A reserved name must be caught regardless of case (D2b: 'case-normalised')."""
+        with pytest.raises(PlanCompileError) as exc_info:
+            validate_code_set_config({"code_set": "CPT"})
+        assert exc_info.value.code == "code_set_reserved_licensed_name"
+
+    def test_cpt_with_customer_path_is_allowed(self, tmp_path: pathlib.Path):
+        """A reserved name WITH a customer path is the intended, allowed flow."""
+        codes = [f"CPT{i:03d}" for i in range(5)]
+        tbl = pa.table({"code": pa.array(codes, type=pa.string())})
+        path = tmp_path / "cpt_customer.parquet"
+        pq.write_table(tbl, str(path))
+
+        cfg = CodeSetConfig.from_dict({"code_set": "cpt", "corpus_source": f"customer:{path}"})
+        out = apply_code_set(codes[0], cfg, mode="mask", job_seed=_JOB_SEED)
+        assert out in set(codes)
+
+
+# ── HC-2 item 2: corpus_source_version fail-closed pin (D2a) ─────────────────
+
+
+class TestCorpusSourceVersionPin:
+    """`corpus_source_version`, when set, must match the loaded corpus's
+    embedded `CodeSetProvenance.source_version` or the load fails closed --
+    for both shipped and customer corpora. Unset (the default) is a no-op."""
+
+    def test_matching_shipped_version_loads(self):
+        cfg = CodeSetConfig.from_dict({"code_set": "icd10", "corpus_source_version": "FY2024"})
+        out = apply_code_set("I10", cfg, mode="mask", job_seed=_JOB_SEED)
+        assert out != "I10"
+
+    def test_mismatched_shipped_version_raises(self):
+        cfg = CodeSetConfig.from_dict({"code_set": "icd10", "corpus_source_version": "FY2023"})
+        with pytest.raises(PlanCompileError) as exc_info:
+            apply_code_set("I10", cfg, mode="mask", job_seed=_JOB_SEED)
+        assert exc_info.value.code == "code_set_corpus_version_mismatch"
+        assert "FY2023" in exc_info.value.message
+        assert "FY2024" in exc_info.value.message
+
+    def test_matching_customer_version_loads(self, tmp_path: pathlib.Path):
+        tbl = pa.table(
+            {"code": pa.array(["P01", "P02"], type=pa.string())},
+            metadata={
+                b"decoy_corpus": b"pinned_customer",
+                b"source": b"Internal registry",
+                b"source_version": b"2026-01",
+                b"effective_date": b"2026-01-01",
+                b"license": b"Proprietary",
+            },
+        )
+        path = tmp_path / "pinned_customer.parquet"
+        pq.write_table(tbl, str(path))
+
+        cfg = CodeSetConfig.from_dict(
+            {
+                "code_set": "pinned_customer",
+                "corpus_source": f"customer:{path}",
+                "corpus_source_version": "2026-01",
+            }
+        )
+        out = apply_code_set("P01", cfg, mode="mask", job_seed=_JOB_SEED)
+        assert out in {"P01", "P02"}
+
+    def test_mismatched_customer_version_raises(self, tmp_path: pathlib.Path):
+        tbl = pa.table(
+            {"code": pa.array(["Q01", "Q02"], type=pa.string())},
+            metadata={
+                b"decoy_corpus": b"mismatched_customer",
+                b"source": b"Internal registry",
+                b"source_version": b"2026-01",
+                b"effective_date": b"2026-01-01",
+                b"license": b"Proprietary",
+            },
+        )
+        path = tmp_path / "mismatched_customer.parquet"
+        pq.write_table(tbl, str(path))
+
+        cfg = CodeSetConfig.from_dict(
+            {
+                "code_set": "mismatched_customer",
+                "corpus_source": f"customer:{path}",
+                "corpus_source_version": "2099-01",
+            }
+        )
+        with pytest.raises(PlanCompileError) as exc_info:
+            apply_code_set("Q01", cfg, mode="mask", job_seed=_JOB_SEED)
+        assert exc_info.value.code == "code_set_corpus_version_mismatch"
+
+    def test_pin_with_no_embedded_provenance_raises(self, tmp_path: pathlib.Path):
+        """A customer corpus with NO provenance at all normally only warns
+        (provenance is optional for customer corpora); a version pin still
+        fails closed, since there is no source_version to satisfy the pin."""
+        tbl = pa.table({"code": pa.array(["R01", "R02"], type=pa.string())})
+        path = tmp_path / "no_prov_pinned.parquet"
+        pq.write_table(tbl, str(path))
+
+        cfg = CodeSetConfig.from_dict(
+            {
+                "code_set": "no_prov_pinned",
+                "corpus_source": f"customer:{path}",
+                "corpus_source_version": "FY2024",
+            }
+        )
+        with pytest.raises(PlanCompileError) as exc_info:
+            apply_code_set("R01", cfg, mode="mask", job_seed=_JOB_SEED)
+        assert exc_info.value.code == "code_set_corpus_version_mismatch"
+
+    def test_unset_pin_is_unchanged_behavior(self):
+        """No corpus_source_version set -> no pin check, same as pre-HC-2."""
+        cfg = CodeSetConfig.from_dict({"code_set": "icd10"})
+        assert cfg.corpus_source_version is None
+        out = apply_code_set("I10", cfg, mode="mask", job_seed=_JOB_SEED)
+        assert out != "I10"
+
+
+# ── HC-2 item 4: generic corpus-agnostic schema invariants (D2c) ─────────────
+
+
+class TestSchemaInvariants:
+    """Non-null, non-empty, unique codes, and (when present) a coherent
+    chapter column -- factored into `_check_corpus_schema`, shared by the
+    load path and `verify_corpus`. Deliberately corpus-agnostic: no
+    code-system-specific regexes, no mandatory `description` (deferred to
+    HC-1 slice 2)."""
+
+    def test_null_code_raises(self, tmp_path: pathlib.Path):
+        tbl = pa.table({"code": pa.array(["A01", None, "A03"], type=pa.string())})
+        path = tmp_path / "null_code.parquet"
+        pq.write_table(tbl, str(path))
+        cfg = CodeSetConfig.from_dict({"code_set": "custom", "corpus_source": f"customer:{path}"})
+        with pytest.raises(PlanCompileError) as exc_info:
+            apply_code_set("A01", cfg, mode="mask", job_seed=_JOB_SEED)
+        assert exc_info.value.code == "code_set_corpus_null_code"
+
+    def test_empty_string_code_raises(self, tmp_path: pathlib.Path):
+        tbl = pa.table({"code": pa.array(["A01", "", "A03"], type=pa.string())})
+        path = tmp_path / "empty_code.parquet"
+        pq.write_table(tbl, str(path))
+        cfg = CodeSetConfig.from_dict({"code_set": "custom", "corpus_source": f"customer:{path}"})
+        with pytest.raises(PlanCompileError) as exc_info:
+            apply_code_set("A01", cfg, mode="mask", job_seed=_JOB_SEED)
+        assert exc_info.value.code == "code_set_corpus_empty_code"
+
+    def test_duplicate_codes_raise(self, tmp_path: pathlib.Path):
+        tbl = pa.table({"code": pa.array(["A01", "A01", "A03"], type=pa.string())})
+        path = tmp_path / "dup_code.parquet"
+        pq.write_table(tbl, str(path))
+        cfg = CodeSetConfig.from_dict({"code_set": "custom", "corpus_source": f"customer:{path}"})
+        with pytest.raises(PlanCompileError) as exc_info:
+            apply_code_set("A01", cfg, mode="mask", job_seed=_JOB_SEED)
+        assert exc_info.value.code == "code_set_corpus_duplicate_codes"
+
+    def test_incoherent_chapter_raises(self, tmp_path: pathlib.Path):
+        tbl = pa.table(
+            {
+                "code": pa.array(["A01", "A02"], type=pa.string()),
+                "chapter": pa.array(["A", None], type=pa.string()),
+            }
+        )
+        path = tmp_path / "incoherent_chapter.parquet"
+        pq.write_table(tbl, str(path))
+        cfg = CodeSetConfig.from_dict({"code_set": "custom", "corpus_source": f"customer:{path}"})
+        with pytest.raises(PlanCompileError) as exc_info:
+            apply_code_set("A01", cfg, mode="mask", job_seed=_JOB_SEED)
+        assert exc_info.value.code == "code_set_corpus_incoherent_chapter"
+
+
+# ── HC-2 item 1: verify_corpus standalone structured-report primitive ───────
+
+
+class TestVerifyCorpus:
+    """`verify_corpus(path)` runs the same schema + provenance checks the
+    load path runs, WITHOUT running a masking job, and never raises --
+    failures become `problems` on a frozen `CorpusVerifyReport`."""
+
+    def test_valid_corpus_is_ok(self, tmp_path: pathlib.Path):
+        from decoy_engine.transforms._codeset_loader import verify_corpus
+
+        codes = [f"V{i:02d}" for i in range(5)]
+        tbl = pa.table({"code": pa.array(codes, type=pa.string())})
+        path = tmp_path / "valid.parquet"
+        pq.write_table(tbl, str(path))
+
+        report = verify_corpus(path)
+        assert report.ok is True
+        assert report.row_count == 5
+        assert report.problems == ()
+
+    def test_missing_code_column_is_not_ok(self, tmp_path: pathlib.Path):
+        from decoy_engine.transforms._codeset_loader import verify_corpus
+
+        tbl = pa.table({"notcode": pa.array(["X01"], type=pa.string())})
+        path = tmp_path / "bad.parquet"
+        pq.write_table(tbl, str(path))
+
+        report = verify_corpus(path)
+        assert report.ok is False
+        assert any("code_set_corpus_missing_code_column" in p for p in report.problems)
+
+    def test_empty_corpus_is_not_ok(self, tmp_path: pathlib.Path):
+        from decoy_engine.transforms._codeset_loader import verify_corpus
+
+        tbl = pa.table({"code": pa.array([], type=pa.string())})
+        path = tmp_path / "empty.parquet"
+        pq.write_table(tbl, str(path))
+
+        report = verify_corpus(path)
+        assert report.ok is False
+        assert any("code_set_corpus_empty" in p for p in report.problems)
+
+    def test_duplicate_codes_is_not_ok(self, tmp_path: pathlib.Path):
+        from decoy_engine.transforms._codeset_loader import verify_corpus
+
+        tbl = pa.table({"code": pa.array(["D01", "D01"], type=pa.string())})
+        path = tmp_path / "dup.parquet"
+        pq.write_table(tbl, str(path))
+
+        report = verify_corpus(path)
+        assert report.ok is False
+        assert any("code_set_corpus_duplicate_codes" in p for p in report.problems)
+
+    def test_null_code_is_not_ok(self, tmp_path: pathlib.Path):
+        from decoy_engine.transforms._codeset_loader import verify_corpus
+
+        tbl = pa.table({"code": pa.array(["N01", None], type=pa.string())})
+        path = tmp_path / "null.parquet"
+        pq.write_table(tbl, str(path))
+
+        report = verify_corpus(path)
+        assert report.ok is False
+        assert any("code_set_corpus_null_code" in p for p in report.problems)
+
+    def test_incomplete_provenance_customer_corpus_is_not_ok(self, tmp_path: pathlib.Path):
+        from decoy_engine.transforms._codeset_loader import verify_corpus
+
+        tbl = pa.table(
+            {"code": pa.array(["I01", "I02"], type=pa.string())},
+            metadata={b"decoy_corpus": b"partial", b"source": b"Some Source"},
+        )
+        path = tmp_path / "partial_prov.parquet"
+        pq.write_table(tbl, str(path))
+
+        report = verify_corpus(path)
+        assert report.ok is False
+        assert any("code_set_corpus_missing_provenance" in p for p in report.problems)
+
+    def test_provenance_summary_has_no_raw_codes(self, tmp_path: pathlib.Path):
+        from decoy_engine.transforms._codeset_loader import verify_corpus
+
+        tbl = pa.table(
+            {"code": pa.array(["S01", "S02"], type=pa.string())},
+            metadata={
+                b"decoy_corpus": b"summary_check",
+                b"source": b"Internal registry",
+                b"source_version": b"2026-01",
+                b"effective_date": b"2026-01-01",
+                b"license": b"Proprietary",
+            },
+        )
+        path = tmp_path / "summary_check.parquet"
+        pq.write_table(tbl, str(path))
+
+        report = verify_corpus(path)
+        assert report.ok is True
+        assert report.provenance is not None
+        assert report.provenance["source_version"] == "2026-01"
+        assert "codes" not in report.provenance
+        assert "rows" not in report.provenance
+        assert "S01" not in str(report.provenance)
+        assert "S02" not in str(report.provenance)
+
+    def test_verify_corpus_exported_from_code_set_module(self):
+        """Re-exported from the package surface, same as load_corpus_provenance."""
+        from decoy_engine.transforms.code_set import CorpusVerifyReport, verify_corpus
+
+        assert callable(verify_corpus)
+        assert CorpusVerifyReport is not None
+
+
+class TestTwoModelGateRemediation:
+    """Dennis + Codex adversarial-gate findings on the HC-2 build, each fixed
+    at the source (fail-closed / coded, no silent bypass)."""
+
+    def test_pin_enforced_on_supplied_record_route(self):
+        # Codex HIGH: apply_code_set with a PASSED-IN record and a pinned config
+        # must re-verify the pin, not trust the record. A record resolved under
+        # a different (unpinned) config must not slip past a later pinned apply.
+        from decoy_engine.transforms.code_set import resolve_corpus_record
+
+        record = resolve_corpus_record(CodeSetConfig.from_dict({"code_set": "icd10"}))
+        pinned = CodeSetConfig.from_dict({"code_set": "icd10", "corpus_source_version": "FY2023"})
+        with pytest.raises(PlanCompileError) as exc:
+            apply_code_set("I10", pinned, mode="mask", job_seed=_JOB_SEED, corpus_record=record)
+        assert exc.value.code == "code_set_corpus_version_mismatch"
+
+    @pytest.mark.parametrize("source", [None, "Shipped", " shipped ", " ", "garbage"])
+    def test_reserved_name_blocked_for_all_shipped_like_sources(self, source):
+        # Codex/Dennis MEDIUM: any non-`customer:` source is a shipped load, so
+        # cpt/apr_drg must be refused with the licensing error, not slip to a
+        # later generic "not found".
+        cfg = {"code_set": "cpt"}
+        if source is not None:
+            cfg["corpus_source"] = source
+        with pytest.raises(PlanCompileError) as exc:
+            validate_code_set_config(cfg)
+        assert exc.value.code == "code_set_reserved_licensed_name"
+
+    def test_reserved_name_with_customer_path_allowed(self, tmp_path: pathlib.Path):
+        tbl = pa.table({"code": pa.array(["99213", "99214"], type=pa.string())})
+        path = tmp_path / "cpt.parquet"
+        pq.write_table(tbl, str(path))
+        cfg = CodeSetConfig.from_dict({"code_set": "cpt", "corpus_source": f"customer:{path}"})
+        assert apply_code_set("99213", cfg, mode="mask", job_seed=_JOB_SEED) in {"99213", "99214"}
+
+    def test_numeric_version_pin_coerced_and_matches(self):
+        # Dennis MEDIUM: unquoted-YAML numeric release id (int) must compare
+        # equal to the corpus's always-string embedded source_version.
+        cfg = CodeSetConfig.from_dict({"code_set": "ndc", "corpus_source_version": 2024})
+        assert cfg.corpus_source_version == "2024"
+        assert apply_code_set("0002-1975", cfg, mode="mask", job_seed=_JOB_SEED) is not None
+
+    @pytest.mark.parametrize("bad", [False, True, ["2024"], {"v": 1}])
+    def test_non_scalar_version_pin_rejected_not_failed_open(self, bad):
+        # Codex MEDIUM: a bool/list/dict pin must be a coded error, never
+        # silently collapse to "unpinned" (a false pin disabling verification).
+        with pytest.raises(PlanCompileError) as exc:
+            CodeSetConfig.from_dict({"code_set": "icd10", "corpus_source_version": bad})
+        assert exc.value.code == "code_set_corpus_source_version_invalid"
+
+    @pytest.mark.parametrize("bad_name", [["icd10"], {"x": 1}, 123])
+    def test_non_string_code_set_name_coded_not_typeerror(self, bad_name):
+        # Codex MEDIUM: a non-string code_set must raise a coded compile error,
+        # not a raw TypeError from the frozenset membership test.
+        with pytest.raises(PlanCompileError) as exc:
+            validate_code_set_config({"code_set": bad_name})
+        assert exc.value.code == "code_set_name_missing"
+
+    def test_verify_corpus_accepts_str_path_without_raising(self):
+        # Codex LOW: the never-raises contract must hold for a path-like str too.
+        from decoy_engine.transforms.code_set import verify_corpus
+
+        report = verify_corpus("/nonexistent/does-not-exist.parquet")
+        assert report.ok is False
+        assert report.problems and report.problems[0].startswith("code_set_corpus_read_error")

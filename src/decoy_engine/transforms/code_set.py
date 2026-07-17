@@ -109,12 +109,18 @@ from typing import Any
 from decoy_engine.determinism import derive, derive_index
 from decoy_engine.internal.crypto import hmac_hex
 from decoy_engine.plan._errors import PlanCompileError
+from decoy_engine.transforms._codeset_config_checks import (
+    validate_code_set_config,
+)
 from decoy_engine.transforms._codeset_loader import (
-    _SHIPPED_CORPORA,
+    _SHIPPED_CORPORA,  # noqa: F401 -- re-exported (validate_code_set_config moved out)
+    CorpusVerifyReport,  # noqa: F401 -- re-exported public API (see below)
+    _check_source_version_pin,
     _CorpusRecord,
     _get_corpus_record,
     load_corpus,  # noqa: F401 -- re-exported public API (see below)
     load_corpus_provenance,  # noqa: F401 -- re-exported public API (see below)
+    verify_corpus,  # noqa: F401 -- re-exported public API (see below)
 )
 
 # Stable salt for HMAC-keyed row derivation. Same purpose as
@@ -122,12 +128,12 @@ from decoy_engine.transforms._codeset_loader import (
 # RFC 2104: HMAC(key, msg) -- here key = salt, msg = str(input_value).
 _KEYED_SALT = b"decoy.code_set.keyed_access.v1"
 
-# `load_corpus` / `load_corpus_provenance` / `_get_corpus_record` and the
-# `_SHIPPED_CORPORA` name set live in `transforms/_codeset_loader.py` (split
-# out to keep this module under its LOC cap; see that module's docstring).
-# Imported above and used/re-exported here unchanged -- `from
-# decoy_engine.transforms.code_set import load_corpus` keeps working exactly
-# as before the split.
+# `load_corpus` / `load_corpus_provenance` / `verify_corpus` /
+# `CorpusVerifyReport` / `_get_corpus_record` and the `_SHIPPED_CORPORA` name
+# set live in `transforms/_codeset_loader.py` (split out to keep this module
+# under its LOC cap; see that module's docstring). Imported above and
+# used/re-exported here unchanged -- `from decoy_engine.transforms.code_set
+# import load_corpus` keeps working exactly as before the split.
 
 
 @dataclass(frozen=True)
@@ -141,6 +147,15 @@ class CodeSetConfig:
             same chapter/category bucket as the input. Requires the corpus to
             have a ``chapter`` column. Defaults to False.
         corpus_source: "shipped" (default) or "customer:<absolute_path>".
+        corpus_source_version: Optional expected SOURCE release id (e.g.
+            "FY2024"), independently verified (HC-2 D2a) against the loaded
+            corpus's embedded ``CodeSetProvenance.source_version`` at load
+            time. The engine fails closed (``code_set_corpus_version_mismatch``)
+            if the loaded corpus's ``source_version`` differs from this pin
+            or is absent. Distinct from ``corpus_version`` /
+            ``CORPUS_METADATA_VERSION``, which is the metadata FORMAT
+            version, not the source's own release. ``None`` (default) means
+            no pin: today's unversioned behavior, unchanged.
 
     SP-06 keyed-access cross-version caveat:
         Keyed selection is HMAC(...) % candidate_count on the code-sorted
@@ -153,6 +168,7 @@ class CodeSetConfig:
     code_set: str
     chapter_preserve: bool = False
     corpus_source: str = "shipped"
+    corpus_source_version: str | None = None
 
     @classmethod
     def from_dict(cls, cfg: dict[str, Any]) -> CodeSetConfig:
@@ -164,60 +180,29 @@ class CodeSetConfig:
 
         Args:
             cfg: Config dict with key ``code_set`` (required), plus optional
-                ``chapter_preserve`` and ``corpus_source``.
+                ``chapter_preserve``, ``corpus_source``, and
+                ``corpus_source_version``.
 
         Raises:
             PlanCompileError: Missing ``code_set``, unrecognised shipped
-                corpus name (when corpus_source is "shipped").
+                corpus name (when corpus_source is "shipped"), or a reserved
+                licensed name (e.g. "cpt") requested with corpus_source
+                "shipped"/absent.
         """
         validate_code_set_config(cfg)
+        raw_version = cfg.get("corpus_source_version")
         return cls(
             code_set=cfg["code_set"],
             chapter_preserve=bool(cfg.get("chapter_preserve", False)),
             corpus_source=str(cfg.get("corpus_source", "shipped")),
-        )
-
-
-def validate_code_set_config(cfg: dict[str, Any]) -> None:
-    """Validate a code_set config dict; raise PlanCompileError on any failure.
-
-    Checks:
-      - ``code_set`` is present and non-empty.
-      - When ``corpus_source`` is "shipped" (or absent), the name must be a
-        known shipped corpus.
-
-    Called at config parse time (fast, no I/O). Corpus loading and deeper
-    schema checks happen in :func:`_read_corpus_record` at apply time,
-    pre-mutation, so invalid corpora fail closed before any data is changed.
-
-    Args:
-        cfg: Raw config dict.
-
-    Raises:
-        PlanCompileError: Any validation failure.
-    """
-    name = cfg.get("code_set")
-    if not name:
-        raise PlanCompileError(
-            code="code_set_name_missing",
-            path="provider_config.code_set",
-            message=(
-                "'code_set' is required and must name a corpus "
-                "(e.g. 'icd10', 'hcpcs', 'ndc', 'mcc', or a customer corpus name "
-                "with corpus_source: customer:<path>)."
-            ),
-        )
-
-    source = str(cfg.get("corpus_source", "shipped"))
-    if source == "shipped" and name not in _SHIPPED_CORPORA:
-        raise PlanCompileError(
-            code="code_set_corpus_not_found",
-            path="provider_config.code_set",
-            message=(
-                f"corpus {name!r} not found in shipped corpora. "
-                f"Available: {sorted(_SHIPPED_CORPORA)}. "
-                f"To use a custom corpus, set corpus_source: customer:<path>."
-            ),
+            # Coerce to str so an unquoted-YAML numeric release id
+            # (corpus_source_version: 2024 -> int) compares equal to the
+            # corpus's always-string embedded source_version ("2024"); an
+            # absent/empty pin stays None (unpinned). bool/list/dict are
+            # rejected by validate_code_set_config above, so they never reach
+            # here to be str()'d into a bogus pin (a `false` pin must fail
+            # closed, not silently disable verification).
+            corpus_source_version=(str(raw_version) if raw_version not in (None, "") else None),
         )
 
 
@@ -252,9 +237,20 @@ def resolve_corpus_record(config: CodeSetConfig) -> _CorpusRecord:
     corpus_record=...)`` so both draw from the SAME corpus version even if
     the underlying customer file is replaced mid-run -- see the module
     docstring's "Pinned-record masking/evidence parity" section.
+
+    HC-2 D2a: passes ``config.corpus_source_version`` through as the expected
+    pin, so the ONE resolve this function performs is also the ONE place the
+    version-mismatch check runs for this config -- both the evidence stamp
+    and every subsequent masked value (via the pinned record) share the
+    already-verified corpus.
     """
     corpus_name, override_path = _resolve_corpus_path(config)
-    return _get_corpus_record(corpus_name, override_path, is_shipped=override_path is None)
+    return _get_corpus_record(
+        corpus_name,
+        override_path,
+        is_shipped=override_path is None,
+        expected_source_version=config.corpus_source_version,
+    )
 
 
 def describe_loaded_corpus(
@@ -373,14 +369,29 @@ def apply_code_set(
         PlanCompileError: Corpus not loadable, missing required columns,
             or empty; sole-member chapter bucket (chapter_preserve); missing
             chapter column when chapter_preserve=True; input chapter absent
-            from corpus when chapter_preserve=True; namespace is None in gen mode.
+            from corpus when chapter_preserve=True; namespace is None in gen
+            mode; loaded corpus's source_version does not match
+            config.corpus_source_version when the latter is set (HC-2 D2a).
         ValueError: Unsupported mode.
     """
     if corpus_record is None:
         corpus_name, override_path = _resolve_corpus_path(config)
-        record = _get_corpus_record(corpus_name, override_path, is_shipped=override_path is None)
+        record = _get_corpus_record(
+            corpus_name,
+            override_path,
+            is_shipped=override_path is None,
+            expected_source_version=config.corpus_source_version,
+        )
     else:
         record = corpus_record
+        # Defense-in-depth (Codex HIGH): a caller that resolved this record
+        # under one config and now applies it under a DIFFERENT pinned config
+        # would otherwise skip verification entirely (the resolve-time pin
+        # check ran against the OTHER config). Re-verify the pin against the
+        # record we are about to mask with, so the pin is enforced wherever a
+        # pinned config is used, not only on the self-resolving path.
+        corpus_name, override_path = _resolve_corpus_path(config)
+        _check_source_version_pin(corpus_name, override_path, record, config.corpus_source_version)
     rows = record.rows
 
     if config.chapter_preserve:
