@@ -26,6 +26,21 @@ Harbor date-shift guidance: shift consistently per patient, not per
 event). `group_by` is None by default, and the digest input is then
 byte-identical to the pre-HC-3(a) behavior (the date value itself).
 
+Anchor source (Codex R1 P1 #1): the anchor value is read from a PRE-MASK
+snapshot threaded through `ctx.group_anchor_snapshots[(table, group_by)]`,
+NOT from the live frame. Reading `df[group_by]` directly was wrong: if the
+group column masks before this node (node order is lexicographic) or is
+when-gated so only some of an entity's rows are rewritten, two rows of one
+patient would anchor on different values (one masked, one raw) and shift
+apart -- exactly the interval the feature preserves. Each adapter copies the
+column pre-mask; the same requirement (immutable source value + lossless
+int-with-null typing) as an FK parent key, so the same `fk_columns_for_table`
+/ snapshot machinery carries it. The snapshot is aligned to the frame this
+handler sees by index LABEL (`reindex`), so a when-gated SUBSET frame (which
+keeps its parent-table row labels) still picks each surviving row's own
+pre-mask anchor. FAIL CLOSED if a configured `group_by` has no snapshot
+rather than silently falling back to the live (mutable) frame.
+
 Null group-by value policy: `_canonicalize_source` hard-errors on a raw
 null (None) and on the float NaN sentinel pandas normally produces for a
 missing object-dtype cell (see generation/pool/_canonicalize.py), so
@@ -61,16 +76,6 @@ class DateShiftStrategyHandler:
 
     name: str = "date_shift"
 
-    def required_sibling_columns(self, plan: ColumnSeed) -> list[str]:
-        """Duck-typed hook (S12 polars port): sibling columns this handler
-        needs beyond `column` itself. `PandasStrategyPort` calls this (if
-        present) to widen the pandas slice it extracts from the polars
-        frame; absent/empty is byte-identical to the pre-hook behavior.
-        """
-        cfg = provider_config_to_dict(plan.provider_config)
-        group_by = cfg.get("group_by")
-        return [group_by] if group_by else []
-
     def run(
         self,
         df: pd.DataFrame,
@@ -97,14 +102,31 @@ class DateShiftStrategyHandler:
         fmt = cfg.get("date_format") or _detect_format(col)
 
         # HC-3(a): group_by anchors the digest input to a sibling entity
-        # column instead of the date value. Existence of `group_by` in the
-        # same table is a plan-compile check (check_date_shift_group_by_refs);
-        # execution-time reads it directly, same convention as
-        # windowed_date's `anchor` (compile-time is the validation layer).
+        # column read from the PRE-MASK snapshot in ctx, not the live frame
+        # (see module docstring "Anchor source"). Existence + a non-empty
+        # string ref are plan-compile checks (check_date_shift_group_by_refs).
         group_by = cfg.get("group_by")
-        group_col = df[group_by] if group_by else None
-        if group_col is not None and pd.api.types.is_extension_array_dtype(group_col.dtype):
-            group_col = group_col.astype(object)
+        anchor_col: pd.Series | None = None
+        if group_by:
+            snapshot = ctx.group_anchor_snapshots.get((ctx.current_table, group_by))
+            if snapshot is None:
+                raise StrategyError(
+                    code="date_shift_group_anchor_snapshot_missing",
+                    strategy="date_shift",
+                    message=(
+                        f"column {column!r} uses date_shift group_by {group_by!r} "
+                        "but no pre-mask anchor snapshot was provided for it; the "
+                        "run cannot anchor the shift deterministically. This is an "
+                        "adapter wiring error, not a config error."
+                    ),
+                )
+            # Align the full-table pre-mask anchor to the frame this handler
+            # sees by LABEL, so a when-gated SUBSET (whose row labels are the
+            # parent-table positions) picks each surviving row's own anchor;
+            # identity for a full-frame / chunk / per-table load.
+            anchor_col = snapshot.reindex(col.index)
+            if pd.api.types.is_extension_array_dtype(anchor_col.dtype):
+                anchor_col = anchor_col.astype(object)
 
         parsed = pd.to_datetime(col, format=fmt, errors="coerce")
         unusable = parsed.isna().to_numpy()  # null source OR unparseable date
@@ -115,8 +137,8 @@ class DateShiftStrategyHandler:
             if unusable[i]:
                 shifts.append(0)
                 continue
-            if group_col is not None:
-                group_value = group_col.iloc[i]
+            if anchor_col is not None:
+                group_value = anchor_col.iloc[i]
                 # Null group value: self-anchor on this row's own date
                 # value instead (see module docstring's null policy).
                 anchor = value if pd.isna(group_value) else group_value

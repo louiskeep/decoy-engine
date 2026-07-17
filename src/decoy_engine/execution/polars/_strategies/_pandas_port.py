@@ -7,13 +7,17 @@ Faker/FPE backends. For these the substrate-decision doc is explicit that the
 perf win comes from S5/S7/S9, not the substrate: "the migration is just accept
 Polars input + return Polars output; internal logic unchanged."
 
-This port realizes exactly that: it extracts the target column (plus any
-sibling columns the handler declares via `required_sibling_columns`, HC-3a)
-to pandas, runs the EXISTING pandas handler (so the masked column is
-identical to a direct pandas-adapter run, parity by construction), and
-writes only the target column back into the polars frame. The keyed/format
-primitive is shared, not reimplemented per substrate, which is what keeps
-the parity gate byte-exact.
+This port realizes exactly that: it extracts the single target column to pandas,
+runs the EXISTING pandas handler (so the masked column is identical to a direct
+pandas-adapter run, parity by construction), and writes the result back into the
+polars frame. The keyed/format primitive is shared, not reimplemented per
+substrate, which is what keeps the parity gate byte-exact.
+
+HC-3a note: `date_shift`'s `group_by` anchor does NOT ride through this port as
+a sibling column. The handler reads its entity anchors from a pre-mask snapshot
+in `ctx.group_anchor_snapshots` (populated by the polars adapter before its mask
+dispatch), so the port stays a strict single-column extractor and never has to
+thread -- or risk masking -- a live sibling.
 """
 
 from __future__ import annotations
@@ -57,16 +61,7 @@ class PandasStrategyPort:
         plan: ColumnSeed,
         ctx: StrategyContext,
     ) -> tuple[pl.DataFrame, list[QualityWarning]]:
-        # HC-3a: an optional, duck-typed hook -- most handlers don't define
-        # it, so `getattr` with a None default keeps every other strategy's
-        # port byte-identical to the pre-hook single-column select.
-        sibling_hook = getattr(self._pandas, "required_sibling_columns", None)
-        siblings = sibling_hook(plan) if sibling_hook is not None else []
-        select_columns = [column]
-        for sibling in siblings:
-            if sibling in frame.columns and sibling not in select_columns:
-                select_columns.append(sibling)
-        pandas_frame = frame.select(select_columns).to_pandas()
+        pandas_frame = frame.select(column).to_pandas()
         pandas_frame, warnings = self._pandas.run(pandas_frame, column, plan, ctx)
         # Convert the masked column back through Arrow (pl.from_pandas), the same
         # path the pandas adapter uses for its outputs, so a mixed object column

@@ -27,6 +27,7 @@ def _col(
     namespace: str | None = None,
     deterministic: bool = False,
     provider_config: tuple[tuple[str, Any], ...] = (),
+    when: str | None = None,
 ) -> ColumnSeed:
     return ColumnSeed(
         namespace=namespace,
@@ -38,6 +39,7 @@ def _col(
         deterministic=deterministic,
         provider_config=provider_config,
         coherent_with=(),
+        when=when,
     )
 
 
@@ -65,6 +67,16 @@ def _plan_cols(cols: tuple[tuple[str, ColumnSeed], ...]) -> Any:
 def _run(plan: Any, table: pa.Table) -> ExecutionResult:
     return PandasExecutionAdapter().run_single(
         plan, table, registry=_REG, relationship_graph=_GRAPH, namespace_registry=_NS
+    )
+
+
+def _run_sequential(plan: Any, table_name: str, table: pa.Table) -> ExecutionResult:
+    return PandasExecutionAdapter().run_sequential(
+        plan,
+        lambda t: {table_name: table}[t],
+        registry=_REG,
+        relationship_graph=_GRAPH,
+        namespace_registry=_NS,
     )
 
 
@@ -219,6 +231,110 @@ class TestDateShiftGroupBy:
         assert len(result.row_errors) == 1
         assert result.row_errors[0].trigger == "format_error"
         assert result.row_errors[0].row_index == 2
+
+    def test_anchor_is_pre_mask_when_group_column_is_itself_masked(self) -> None:
+        """Codex R1 P1 #1 regression (mirrors the masked-anchor repro).
+
+        The group column (patient_id) is itself masked with `hash`, and
+        when-gated (`flag == 1`) so only ONE of each patient's two rows is
+        rewritten. Node order is lexicographic, so `patient_id` masks BEFORE
+        `visit_date` -- on the pre-fix code the date_shift handler read the
+        LIVE patient_id, anchoring one row on hash(p1) and its sibling on the
+        raw p1, splitting one patient onto two offsets and breaking the
+        interval. With the pre-mask snapshot both rows anchor on raw p1, so
+        the interval survives. This test FAILS on the pre-fix code.
+        """
+        src = pa.table(
+            {
+                "flag": pa.array([1, 0, 1, 0], type=pa.int64()),
+                "patient_id": ["p1", "p1", "p2", "p2"],
+                "visit_date": ["2020-01-01", "2020-01-15", "2019-05-01", "2019-05-20"],
+            }
+        )
+        date_seed = _col(
+            "date_shift",
+            namespace="dates",
+            deterministic=True,
+            provider_config=(
+                ("min_days", -100),
+                ("max_days", 100),
+                ("date_format", "%Y-%m-%d"),
+                ("group_by", "patient_id"),
+            ),
+        )
+        # hash masks patient_id in place; the `when` gate rewrites only the
+        # flag==1 rows (row0, row2), leaving row1/row3 raw -> the exact
+        # split-anchor shape the bug needs.
+        pid_seed = _col("hash", namespace="pids", when="flag == 1")
+        flag_seed = _col("passthrough")
+        plan = _plan_cols(
+            (("visit_date", date_seed), ("patient_id", pid_seed), ("flag", flag_seed))
+        )
+        result = _run(plan, src)
+        out = result.output
+        masked_pid = out.column("patient_id").to_pylist()
+        # Precondition: the scenario is real -- the gated row IS masked, its
+        # sibling is NOT, so the live column holds two different values for p1.
+        assert masked_pid[0] != "p1"
+        assert masked_pid[1] == "p1"
+        assert masked_pid[0] != masked_pid[1]
+
+        out_dates = [
+            datetime.datetime.strptime(v, "%Y-%m-%d").date()
+            for v in out.column("visit_date").to_pylist()
+        ]
+        in_dates = [datetime.date.fromisoformat(v) for v in src.column("visit_date").to_pylist()]
+        # Interval preserved for BOTH patients despite the split mask state.
+        assert (out_dates[1] - out_dates[0]).days == (in_dates[1] - in_dates[0]).days
+        assert (out_dates[3] - out_dates[2]).days == (in_dates[3] - in_dates[2]).days
+
+    def test_sequential_route_matches_full_frame(self) -> None:
+        """The sequential (memory-scaling) runner is SEPARATE wiring from
+        run() -- it builds its own pre-mask group anchor snapshot per table.
+        Its date_shift+group_by output must be byte-identical to full-frame,
+        including the null-group self-anchor row."""
+        src = pa.table(
+            {
+                "d": ["2020-01-01", "2020-01-15", "2019-05-01", "2019-05-20", "2018-03-03"],
+                "patient_id": ["p1", "p1", "p2", "p2", None],
+            }
+        )
+        plan = _plan_cols(self._cols())
+        full = _run(plan, src).output.column("d").to_pylist()
+        seq = _run_sequential(plan, "t", src).outputs["t"].column("d").to_pylist()
+        assert seq == full
+
+    def test_nullable_int_group_column_no_crash(self) -> None:
+        """Codex R1 P1 #2 regression: an integer group column that carries a
+        null must not widen to float64 on ingestion (which would make
+        `_canonicalize_source` reject the valid ids). No crash; deterministic;
+        same-int rows share an offset; the null row self-anchors."""
+        src = pa.table(
+            {
+                "d": ["2020-01-01", "2020-02-02", "2020-03-03", "2020-01-20"],
+                "patient_id": pa.array([1, None, 2, 1], type=pa.int64()),
+            }
+        )
+        date_seed = _col(
+            "date_shift",
+            namespace="dates",
+            deterministic=True,
+            provider_config=(
+                ("min_days", -100),
+                ("max_days", 100),
+                ("date_format", "%Y-%m-%d"),
+                ("group_by", "patient_id"),
+            ),
+        )
+        plan = _plan_cols((("d", date_seed), ("patient_id", _col("passthrough"))))
+        out1 = _run(plan, src).output.column("d").to_pylist()
+        out2 = _run(plan, src).output.column("d").to_pylist()
+        assert out1 == out2  # deterministic, no crash
+
+        in_dates = [datetime.date.fromisoformat(v) for v in src.column("d").to_pylist()]
+        out_dates = [datetime.datetime.strptime(v, "%Y-%m-%d").date() for v in out1]
+        # Rows 0 and 3 share patient_id == 1 -> same offset -> interval preserved.
+        assert (out_dates[3] - out_dates[0]).days == (in_dates[3] - in_dates[0]).days
 
 
 class TestFormula:

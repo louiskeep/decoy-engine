@@ -54,7 +54,12 @@ from decoy_engine.execution._fk_keys import (
 from decoy_engine.execution._guards import reject_null_bearing_int
 from decoy_engine.execution._output_projection import enforce_output_projection
 from decoy_engine.execution._row_errors import RowErrorRecord, drain_row_errors
-from decoy_engine.execution._runner import WorkNode, build_work_list, order_work
+from decoy_engine.execution._runner import (
+    WorkNode,
+    build_work_list,
+    date_shift_group_columns,
+    order_work,
+)
 from decoy_engine.execution._sequential import run_sequential as _run_sequential
 from decoy_engine.execution._strategies import SCALAR_HANDLERS
 from decoy_engine.execution._strategies._composite import CompositeHandler
@@ -185,11 +190,29 @@ class PandasExecutionAdapter:
         # contract (execution/_fk_keys.py) instead of a bare `to_pandas()`, so a
         # null-bearing integer FK column never silently widens to float64 and
         # rounds a key beyond 2**53. Every other column is unaffected.
+        # HC-3a (Codex R1 P1 #2): a date_shift group_by anchor column has the
+        # same lossless requirement -- an int+null entity id must not widen to
+        # float64, or `_canonicalize_source` rejects the valid id -- so union
+        # those columns into the FK-safe set per table.
+        group_anchor_cols = date_shift_group_columns(plan, registry)
         frames: dict[str, pd.DataFrame] = {
-            t: to_pandas_fk_safe(tbl, fk_columns_for_table(relationship_graph.edges, t))
+            t: to_pandas_fk_safe(
+                tbl,
+                fk_columns_for_table(relationship_graph.edges, t) | group_anchor_cols.get(t, set()),
+            )
             for t, tbl in sources.items()
         }
         conversion_ms = (time.perf_counter() - t0) * 1000.0
+        # HC-3a P1 #1: snapshot each group_by anchor column PRE-MASK (before the
+        # node loop mutates any frame), keyed by (table, col), so the handler
+        # anchors on immutable source ids. Same construction as source_snapshots
+        # below but with no cross-table lifetime -- an anchor is same-table only.
+        group_anchor_snapshots: dict[tuple[str, str], pd.Series] = {
+            (t, col): frames[t][col].copy()
+            for t, cols in group_anchor_cols.items()
+            for col in cols
+            if t in frames and col in frames[t].columns
+        }
 
         cache = pool_cache if pool_cache is not None else PoolCache()
         ctx = StrategyContext(
@@ -199,6 +222,7 @@ class PandasExecutionAdapter:
             namespace_registry=namespace_registry,
             job_seed=plan.seed_envelope.job_seed,
             mask_key=require_mask_key(plan, key_provider),
+            group_anchor_snapshots=group_anchor_snapshots,
         )
 
         ordered = order_work(build_work_list(plan, registry), relationship_graph)

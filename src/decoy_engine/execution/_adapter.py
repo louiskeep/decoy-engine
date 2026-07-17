@@ -172,6 +172,20 @@ class StrategyContext:
     # import the transforms-layer `_CorpusRecord`. Same mutate-in-place pattern
     # as `code_set_corpora` above; a fresh dict per job via default_factory.
     code_set_records: dict[tuple[str, str], Any] = field(default_factory=dict)
+    # HC-3a (Codex R1 P1 #1): pre-mask entity-anchor snapshots for
+    # `date_shift` columns configured with `group_by`, keyed by (table,
+    # group_by_column). Each route (pandas full-frame/chunked, sequential,
+    # polars-native) copies the group column's values BEFORE any node masks,
+    # so `DateShiftStrategyHandler` derives every row's offset from the
+    # entity's ORIGINAL id -- never a value some earlier (possibly when-gated)
+    # node already masked in place, which would split one patient's rows onto
+    # different offsets and break the interval the feature exists to preserve.
+    # The handler aligns a snapshot to the (possibly when-gated subset) frame
+    # it sees by index label, and FAILS CLOSED if a configured group_by has no
+    # snapshot rather than falling back to the live (mutable) frame. Same
+    # mutate-in-place / default-empty pattern as the sinks above; a fresh dict
+    # per job via default_factory.
+    group_anchor_snapshots: dict[tuple[str, str], pd.Series] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         # A frozen dataclass forbids attribute assignment; object.__setattr__ is

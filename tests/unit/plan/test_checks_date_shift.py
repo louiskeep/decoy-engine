@@ -106,3 +106,90 @@ class TestCheckDateShiftGroupByRefs:
         with pytest.raises(PlanCompileError) as exc:
             check_date_shift_group_by_refs(cfg)
         assert exc.value.path == "tables.bad.columns.dob.provider_config.group_by"
+
+
+class TestNonStringGroupByRejected:
+    """Codex R1 P2 #3: a non-string group_by ref (`group_by: 123`) survives a
+    bare `str(group_by) in cols` membership test if a column named "123"
+    exists, but execution does `df[123]` -> KeyError. Reject at compile."""
+
+    def test_int_group_by_rejected_even_with_matching_named_column(self) -> None:
+        cfg = _config(
+            {"min_days": -30, "max_days": 30, "group_by": 123},
+            extra_columns=[{"name": "123", "strategy": "passthrough"}],
+        )
+        with pytest.raises(PlanCompileError) as exc:
+            check_date_shift_group_by_refs(cfg)
+        assert exc.value.code == "date_shift_missing_group_by_ref"
+        assert exc.value.path == "tables.t.columns.dob.provider_config.group_by"
+
+    def test_empty_string_group_by_rejected(self) -> None:
+        cfg = _config({"min_days": -30, "max_days": 30, "group_by": ""})
+        # An empty string is falsy, so it is treated as "no group_by" (not an
+        # error): the handler never dereferences it. No raise.
+        check_date_shift_group_by_refs(cfg)
+
+    def test_list_group_by_rejected(self) -> None:
+        cfg = _config({"min_days": -30, "max_days": 30, "group_by": ["patient_id"]})
+        with pytest.raises(PlanCompileError) as exc:
+            check_date_shift_group_by_refs(cfg)
+        assert exc.value.code == "date_shift_missing_group_by_ref"
+
+
+class TestNestedGroupByRejected:
+    """Codex R1 P2 #4: date_shift+group_by inside a `nested` strategy child is
+    rejected -- the nested child masks a synthetic single-column leaf batch
+    (`_nested_leaves`) with no sibling columns, so the entity anchor can never
+    be present. Fail closed at compile instead of KeyError at execution."""
+
+    def test_nested_date_shift_with_group_by_rejected(self) -> None:
+        cfg = {
+            "tables": [
+                {
+                    "name": "t",
+                    "columns": [
+                        {"name": "patient_id", "strategy": "passthrough"},
+                        {
+                            "name": "payload",
+                            "strategy": "nested",
+                            "namespace": "ns",
+                            "provider_config": {
+                                "strategy": "date_shift",
+                                "target": "$.dates[*]",
+                                "strategy_config": {
+                                    "min_days": -30,
+                                    "max_days": 30,
+                                    "group_by": "patient_id",
+                                },
+                            },
+                        },
+                    ],
+                }
+            ]
+        }
+        with pytest.raises(PlanCompileError) as exc:
+            check_date_shift_group_by_refs(cfg)
+        assert exc.value.code == "date_shift_group_by_unsupported_in_nested"
+        assert exc.value.path == "tables.t.columns.payload.provider_config.strategy_config.group_by"
+
+    def test_nested_date_shift_without_group_by_passes(self) -> None:
+        cfg = {
+            "tables": [
+                {
+                    "name": "t",
+                    "columns": [
+                        {
+                            "name": "payload",
+                            "strategy": "nested",
+                            "namespace": "ns",
+                            "provider_config": {
+                                "strategy": "date_shift",
+                                "target": "$.dates[*]",
+                                "strategy_config": {"min_days": -30, "max_days": 30},
+                            },
+                        }
+                    ],
+                }
+            ]
+        }
+        check_date_shift_group_by_refs(cfg)  # no raise

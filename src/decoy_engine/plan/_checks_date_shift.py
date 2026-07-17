@@ -19,18 +19,27 @@ from decoy_engine.plan._errors import PlanCompileError
 
 
 def check_date_shift_group_by_refs(config: dict[str, Any]) -> None:
-    """Reject date_shift columns whose `group_by` column is missing.
+    """Reject malformed / unsupported date_shift `group_by` refs.
 
-    Compile-check ownership table row #27 (HC-3a, 2026-07-17). One failure
-    mode caught here (plan-compile time, before any execution):
+    Compile-check ownership table row #27 (HC-3a, 2026-07-17). Failure modes
+    caught here (plan-compile time, before any execution):
 
-    Missing group_by ref: the ``group_by`` key (in ``provider_config``)
-    names a column not present in the same table. A missing ref is
-    guaranteed to raise KeyError at execution time; rejecting here surfaces
-    it with the exact missing name.
+    1. Missing group_by ref: the ``group_by`` key (in ``provider_config``)
+       names a column not present in the same table. A missing ref is
+       guaranteed to raise KeyError at execution time; rejecting here surfaces
+       it with the exact missing name.
+    2. Non-string group_by ref (Codex R1 P2 #3): ``group_by: 123`` would slip
+       past a bare ``str(group_by) in cols`` membership test if a column named
+       "123" existed, but execution does ``df[123]`` -> KeyError. A group_by
+       ref must be a non-empty string.
+    3. group_by inside a ``nested`` child (Codex R1 P2 #4): a ``nested``
+       strategy whose scalar child is ``date_shift`` with a ``group_by`` is
+       rejected. The nested child runs against a synthetic single-column
+       ``_nested_leaves`` frame with no sibling columns, so the entity anchor
+       can never be present -- fail closed rather than KeyError at execution.
 
     date_shift is mask-kind only (no generate-kind `type: date_shift`), so
-    unlike windowed_date/group_key this check has a single loop.
+    unlike windowed_date/group_key the top-level check has a single loop.
 
     Config-only (no profile, no source data): safe to run in both compile
     branches and in ``run_config_only_checks``. Validation never mutates
@@ -40,8 +49,7 @@ def check_date_shift_group_by_refs(config: dict[str, Any]) -> None:
         config: Raw pipeline config dict.
 
     Raises:
-        PlanCompileError: The group_by column ref is missing from the same
-            table.
+        PlanCompileError: A group_by ref is missing, non-string, or nested.
     """
     tables = config.get("tables", []) if isinstance(config.get("tables"), list) else []
     for table_entry in tables:
@@ -61,18 +69,63 @@ def check_date_shift_group_by_refs(config: dict[str, Any]) -> None:
             if isinstance(col_entry, dict) and col_entry.get("name"):
                 all_col_names.add(str(col_entry["name"]))
 
-        # Check mask-kind columns (strategy: date_shift).
         for col_entry in table_entry.get("columns") or []:
             if not isinstance(col_entry, dict):
-                continue
-            if col_entry.get("strategy") != "date_shift":
                 continue
             col_name = col_entry.get("name", "?")
             pc = col_entry.get("provider_config") or {}
             if not isinstance(pc, dict):
                 continue
+
+            # Nested (P2 #4): a nested column carries its child strategy +
+            # config under provider_config.strategy / .strategy_config, so
+            # top-level `strategy == "date_shift"` never matches it. Inspect it
+            # explicitly and reject a nested date_shift+group_by before the
+            # generic branch below.
+            if col_entry.get("strategy") == "nested" and pc.get("strategy") == "date_shift":
+                nested_cfg = pc.get("strategy_config") or {}
+                if isinstance(nested_cfg, dict) and nested_cfg.get("group_by"):
+                    raise PlanCompileError(
+                        code="date_shift_group_by_unsupported_in_nested",
+                        path=(
+                            f"tables.{table_name}.columns.{col_name}"
+                            ".provider_config.strategy_config.group_by"
+                        ),
+                        message=(
+                            f"date_shift column {col_name!r} in table "
+                            f"{table_name!r} sets group_by inside a `nested` "
+                            "strategy. group_by is not supported there: the "
+                            "nested child masks a synthetic single-column leaf "
+                            "batch with no sibling columns, so the entity anchor "
+                            "can never be present. Move date_shift+group_by to a "
+                            "top-level column."
+                        ),
+                    )
+                continue
+
+            if col_entry.get("strategy") != "date_shift":
+                continue
             group_by = pc.get("group_by")
-            if group_by and str(group_by) not in all_col_names:
+            # Falsy (None, "", 0, []) means "no group_by": the handler's own
+            # `if group_by:` gate skips it, so compile agrees and does not error.
+            if not group_by:
+                continue
+            # Non-string but truthy (P2 #3): e.g. `group_by: 123` or a list.
+            # `str(123) in cols` would slip past a bare membership test if a
+            # column named "123" existed, but execution does `df[123]` ->
+            # KeyError. Reject before the membership test.
+            if not isinstance(group_by, str):
+                raise PlanCompileError(
+                    code="date_shift_missing_group_by_ref",
+                    path=(f"tables.{table_name}.columns.{col_name}.provider_config.group_by"),
+                    message=(
+                        f"date_shift column {col_name!r} in table "
+                        f"{table_name!r} has a group_by that is not a string "
+                        f"(got {group_by!r}). group_by must name a column in the "
+                        "same table."
+                    ),
+                )
+            if group_by not in all_col_names:
                 raise PlanCompileError(
                     code="date_shift_missing_group_by_ref",
                     path=(f"tables.{table_name}.columns.{col_name}.provider_config.group_by"),
