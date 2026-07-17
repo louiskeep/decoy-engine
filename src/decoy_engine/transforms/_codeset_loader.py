@@ -206,7 +206,25 @@ def _get_corpus_record(name: str, path: Path | None, *, is_shipped: bool) -> _Co
         _shipped_cache[resolved_str] = record
         return record
 
-    stat = resolved.stat()
+    # A customer corpus can disappear or become unreadable between
+    # `_resolve_read_path`'s existence check and this stat (TOCTOU). Translate
+    # the bare OSError to the loader's typed error contract (load_corpus
+    # documents PlanCompileError for missing/unreadable corpora) instead of
+    # leaking FileNotFoundError/PermissionError.
+    try:
+        stat = resolved.stat()
+    except FileNotFoundError as exc:
+        raise PlanCompileError(
+            code="code_set_corpus_path_not_found",
+            path="provider_config.corpus_source",
+            message=f"customer corpus at {resolved} became unavailable after the existence check.",
+        ) from exc
+    except OSError as exc:
+        raise PlanCompileError(
+            code="code_set_corpus_read_error",
+            path="provider_config.corpus_source",
+            message=f"failed to stat customer corpus at {resolved}: {exc}",
+        ) from exc
     # Best-effort file identity, not a content hash (see the module-level
     # comment on `_customer_cache` for why ctime is included and a hash is
     # not).

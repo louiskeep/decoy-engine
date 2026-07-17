@@ -958,6 +958,31 @@ class TestCustomerCorpusCacheInvalidation:
         )
         pq.write_table(tbl, str(path))
 
+    def test_stat_race_after_existence_check_raises_typed_error(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Codex R3 P2: a customer corpus that disappears between the
+        existence check in `_resolve_read_path` and the cache-key `stat()` in
+        `_get_corpus_record` must surface the loader's typed PlanCompileError
+        (load_corpus's documented contract), not a bare FileNotFoundError."""
+        from decoy_engine.transforms import _codeset_loader
+
+        path = tmp_path / "gone.parquet"
+        self._write(path, ["A1", "B2"])  # real file so setup is realistic
+
+        # `_resolve_read_path` passes (returns the path); the cache-key stat()
+        # then fails as if the file was removed in the TOCTOU window.
+        monkeypatch.setattr(_codeset_loader, "_resolve_read_path", lambda name, p: path)
+        monkeypatch.setattr(pathlib.Path, "resolve", lambda self, *a, **k: path)
+
+        def _raise_stat(self, *a, **k):
+            raise FileNotFoundError("removed after existence check")
+
+        monkeypatch.setattr(pathlib.Path, "stat", _raise_stat)
+
+        with pytest.raises(PlanCompileError, match="unavailable|not found"):
+            _codeset_loader._get_corpus_record("gone", path, is_shipped=False)
+
     def test_replaced_customer_corpus_at_same_path_is_not_served_stale(
         self, tmp_path: pathlib.Path
     ):
