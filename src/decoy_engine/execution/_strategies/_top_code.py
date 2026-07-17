@@ -44,7 +44,7 @@ survives.
 from __future__ import annotations
 
 import math
-from typing import Any
+from typing import Any, TypeGuard
 
 import numpy as np
 import pandas as pd
@@ -72,11 +72,15 @@ _PRESETS: dict[str, dict[str, Any]] = {
 _MAX_EXACT_INT: int = 2**53
 
 
-def _is_usable_bound(value: Any) -> bool:
+def _is_usable_bound(value: Any) -> TypeGuard[int | float]:
     """A cap/floor is usable only if it is a real, finite number strictly inside
     the exactly-representable integer range. Rejects bool, non-numeric, NaN/inf,
     and |value| >= 2**53. `math.isfinite` is only called on floats so a huge
-    Python int (e.g. 10**400) is classified by magnitude, never an OverflowError."""
+    Python int (e.g. 10**400) is classified by magnitude, never an OverflowError.
+
+    A `TypeGuard` (not a plain `bool`) so mypy narrows a validated `cap`/`floor`
+    from `Any` to `int | float` at the call site -- the resolver return types
+    stay honest without a cast."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return False
     if isinstance(value, float) and not math.isfinite(value):
@@ -133,12 +137,44 @@ class TopCodeStrategyHandler:
                 )
             )
 
-        over_mask = nums.notna() & (nums > cap)
+        # Fail closed on any value we cannot reason about EXACTLY (Codex R3
+        # BLOCKER). An integer-dtype column carries Python-int / nullable-Int64
+        # values exactly at any magnitude (lossless FK-safe ingest keeps it int),
+        # but a NON-integer column -- a genuine float, or an object/string/Decimal
+        # column that `pd.to_numeric` coerced through float64 -- collapses every
+        # value with |v| >= 2**53 onto the nearest representable double. Two
+        # distinct source values then render to the SAME string (utility
+        # corruption), and a huge-negative value with no floor configured lands
+        # in-range and renders from that collapsed double. We only emit a
+        # generalized/rendered value when we can render it exactly, so a coerced
+        # value at or beyond float64's exact-integer range is quarantined as a
+        # format error rather than silently corrupted. The HIPAA age use case
+        # (small integer ages) never trips this; it fires only on pathological
+        # out-of-range magnitudes on non-integer columns.
+        inexact_mask = pd.Series(False, index=nums.index)
+        if not pd.api.types.is_integer_dtype(nums.dtype):
+            nf = nums.astype("float64")
+            inexact_mask = nums.notna() & np.isfinite(nf) & (np.abs(nf) >= _MAX_EXACT_INT)
+            for i in np.flatnonzero(inexact_mask.to_numpy()):
+                ctx.row_errors.append(
+                    RowError(
+                        column=column,
+                        row_index=int(i),
+                        trigger="format_error",
+                        reason=(
+                            "value magnitude is at or beyond 2**53 on a non-integer "
+                            "column; top_code cannot compare or render it exactly"
+                        ),
+                    )
+                )
+
+        usable = nums.notna() & ~inexact_mask
+        over_mask = usable & (nums > cap)
         if floor is not None and under_label is not None:
-            under_mask = nums.notna() & (nums < floor)
+            under_mask = usable & (nums < floor)
         else:
             under_mask = pd.Series(False, index=nums.index)
-        in_range_mask = nums.notna() & ~over_mask & ~under_mask
+        in_range_mask = usable & ~over_mask & ~under_mask
 
         # Canonical, dtype-independent string for the in-range cells (see the
         # module docstring's CRITICAL note): render from the COERCED numeric so
@@ -242,10 +278,16 @@ class TopCodeStrategyHandler:
         rejects those shapes, but a `Plan` that bypasses it -- e.g. one
         deserialized from YAML straight into execution -- would otherwise drop
         the bottom tail and let a value that should be `under_label` pass through.
+
+        Absence is keyed on `"floor" not in cfg`, NOT on `floor is None`: an
+        explicit `floor: None` is a PRESENT-but-malformed bound (operator typo /
+        templating miss), so it fails closed via `_is_usable_bound(None)` rather
+        than being read as "no bottom tail" and silently disabling bottom-coding
+        (Codex R3 HIGH -- `.get` can't tell absent from explicit-None).
         """
-        floor = cfg.get("floor")
-        if floor is None:
+        if "floor" not in cfg:
             return None, None
+        floor = cfg.get("floor")
         if not _is_usable_bound(floor):
             raise StrategyError(
                 code="top_code_bounds_unresolvable",

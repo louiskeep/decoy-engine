@@ -292,6 +292,14 @@ class TestBottomBoundFailClosed:
     def test_absent_floor_is_not_an_error(self) -> None:
         assert TopCodeStrategyHandler._resolve_bottom_bound({}) == (None, None)
 
+    def test_explicit_none_floor_fails_closed(self) -> None:
+        # Codex R3 HIGH: `floor: None` is PRESENT-but-malformed (keyed on
+        # "floor" in cfg, not `is None`), so it must raise, NOT be read as
+        # "no bottom tail" the way an absent floor is.
+        with pytest.raises(StrategyError) as exc:
+            TopCodeStrategyHandler._resolve_bottom_bound({"floor": None, "under_label": "U"})
+        assert exc.value.code == "top_code_bounds_unresolvable"
+
 
 class TestNonNullUncoercible:
     def test_uncoercible_cell_records_row_error_and_leaves_original(self) -> None:
@@ -311,6 +319,45 @@ class TestNonNullUncoercible:
         assert err.row_index == 1
         assert err.trigger == "format_error"
         assert "abc" not in err.reason  # trap T3: reason never embeds the cell value
+
+
+class TestInexactMagnitudeQuarantined:
+    """Codex R3 BLOCKER: a non-integer column whose value magnitude reaches
+    float64's exact-integer limit (2**53) cannot be compared or rendered
+    exactly. Rather than silently collapse/corrupt it, fail closed (RowError)."""
+
+    def test_huge_value_on_object_column_quarantined_not_corrupted(self) -> None:
+        # An object column of numeric strings that EXCEED uint64 range, so
+        # `pd.to_numeric` must coerce through float64 (a value that fits int64 or
+        # uint64 parses exactly and needs no quarantine). The float-collapsed
+        # value would otherwise render corrupted; it is quarantined instead. A
+        # normal in-range age beside it is unaffected.
+        big = str(2**64 + 1)  # exceeds uint64 max -> forces float64 coercion
+        df = pd.DataFrame({"age": ["40", big, "95"]})
+        ctx = _FakeCtx()
+        out, _ = TopCodeStrategyHandler().run(
+            df.copy(), "age", _col((("preset", "hipaa_age"),)), ctx
+        )
+
+        assert out["age"].iloc[0] == "40"  # in-range small value rendered
+        assert out["age"].iloc[1] == big  # huge value left original (quarantined)
+        assert out["age"].iloc[2] == "90+"  # tail still generalized
+        assert len(ctx.row_errors) == 1
+        assert ctx.row_errors[0].row_index == 1
+        assert ctx.row_errors[0].trigger == "format_error"
+        assert big not in ctx.row_errors[0].reason  # trap T3: no cell value in reason
+
+    def test_integer_column_at_same_magnitude_is_exact_not_quarantined(self) -> None:
+        # The SAME magnitude on a genuine int64 column is exact (int dtype), so
+        # it is generalized normally -- never quarantined.
+        df = pd.DataFrame({"age": pd.array([40, 2**53 + 1, 95], dtype="Int64")})
+        ctx = _FakeCtx()
+        out, _ = TopCodeStrategyHandler().run(
+            df.copy(), "age", _col((("preset", "hipaa_age"),)), ctx
+        )
+
+        assert out["age"].iloc[1] == "90+"  # huge positive int is over cap -> generalized
+        assert ctx.row_errors == []
 
 
 class TestUnresolvableConfigFailsClosed:

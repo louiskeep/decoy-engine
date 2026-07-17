@@ -339,3 +339,58 @@ class TestCodexCrossModelRejections:
             ]
         }
         check_top_code_config(cfg)  # no raise
+
+
+class TestCodexR3Rejections:
+    """Round-3 cross-model findings: conditional top-coding and explicit-None
+    floor. Both previously slipped past compile."""
+
+    def _with_when(self, when: Any, provider_config: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "tables": [
+                {
+                    "name": "t",
+                    "columns": [
+                        {
+                            "name": "age",
+                            "strategy": "top_code",
+                            "when": when,
+                            "provider_config": provider_config,
+                        }
+                    ],
+                }
+            ]
+        }
+
+    def test_when_plus_top_code_rejected(self) -> None:
+        # HIGH x2: a zero-match `when` skips bound validation (unmasked
+        # passthrough) AND the aggregate label cannot be written back into the
+        # lossless-Int64 column. Conditional top-coding is unsupported.
+        cfg = self._with_when("region == 'X'", {"preset": "hipaa_age"})
+        with pytest.raises(PlanCompileError) as exc:
+            check_top_code_config(cfg)
+        assert exc.value.code == "top_code_with_when_unsupported"
+        assert exc.value.path == "tables.t.columns.age.when"
+
+    def test_when_plus_manual_cap_rejected(self) -> None:
+        cfg = self._with_when("x > 0", {"cap": 89, "over_label": "90+"})
+        with pytest.raises(PlanCompileError) as exc:
+            check_top_code_config(cfg)
+        assert exc.value.code == "top_code_with_when_unsupported"
+
+    def test_blank_when_does_not_trip_guard(self) -> None:
+        # An empty / whitespace `when` is not a real gate; must not be rejected.
+        for blank in ("", "   ", None):
+            check_top_code_config(self._with_when(blank, {"preset": "hipaa_age"}))
+
+    def test_explicit_none_floor_fails_closed(self) -> None:
+        # HIGH: `floor: None` is PRESENT-but-malformed, not absent. It must fail
+        # closed via the invalid-floor path, never be read as "no bottom tail".
+        cfg = _config({"cap": 89, "over_label": "90+", "floor": None, "under_label": "U"})
+        with pytest.raises(PlanCompileError) as exc:
+            check_top_code_config(cfg)
+        assert exc.value.code == "top_code_invalid_floor"
+
+    def test_absent_floor_still_a_clean_no_op(self) -> None:
+        # The absent-floor path (no bottom tail) stays valid.
+        check_top_code_config(_config({"cap": 89, "over_label": "90+"}))

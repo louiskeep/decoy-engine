@@ -9,11 +9,12 @@ rather than run -- when `preset` names something not in the known preset
 table, or when `cap`/`over_label` is missing, non-numeric, or not a non-empty
 string. This module rejects the same shapes at compile time, before any row
 is masked, so the operator sees the error at plan-compile rather than at
-run. It additionally rejects a malformed `floor`/`under_label` pairing and a
-`floor >= cap` range, both of which the handler silently treats as "no
-floor" rather than raising (the bottom tail is optional, so degrading is
-safe at the handler layer, but a config that clearly intended a floor and
-got the shape wrong should be caught here).
+run. It additionally rejects a malformed `floor`/`under_label` pairing, a
+`floor >= cap` range, and a `when`-gated top_code column. The handler
+(`_resolve_bottom_bound`) also fails closed on a present-but-invalid floor, so
+these are caught at compile for the operator's benefit rather than being the
+only backstop -- a config that clearly intended a floor and got the shape wrong
+should surface at plan-compile, not at run.
 
 Reuses `_PRESETS` from the handler module as the single source of truth for
 known preset names (no duplicated table to drift out of sync).
@@ -30,8 +31,15 @@ from decoy_engine.execution._strategies._top_code import _MAX_EXACT_INT, _PRESET
 from decoy_engine.plan._errors import PlanCompileError
 
 
-def _reject_unusable_bound(value: Any, *, code: str, path: str, kind: str, where: str) -> None:
-    """Raise PlanCompileError if `value` cannot serve as an EXACT top_code bound.
+def _reject_unusable_bound(
+    value: Any, *, code: str, path: str, kind: str, where: str
+) -> int | float:
+    """Raise PlanCompileError if `value` cannot serve as an EXACT top_code bound;
+    otherwise RETURN it narrowed to `int | float`.
+
+    Returning the validated number (rather than `None`) lets the caller bind
+    `cap = _reject_unusable_bound(...)` with an honest `int | float` type instead
+    of the `Any | None` a bare `pc.get("cap")` carries -- no cast, mypy-clean.
 
     Rejects, in order: bool/non-numeric; non-finite (NaN/inf, floats only so a
     huge Python int never raises OverflowError in `math.isfinite`); and
@@ -71,6 +79,8 @@ def _reject_unusable_bound(value: Any, *, code: str, path: str, kind: str, where
                 f"generalization -- a leak. Use a {kind} with magnitude below 2**53."
             ),
         )
+    # Every reject path above raised; the value is a finite in-range number.
+    return value
 
 
 def check_top_code_config(config: dict[str, Any]) -> None:
@@ -88,7 +98,10 @@ def check_top_code_config(config: dict[str, Any]) -> None:
     `under_label` without a `floor` is rejected (incomplete pair).
 
     A `nested` column whose child is top_code is rejected outright (top_code is
-    not supported as a nested child; see the guard's comment). Every numeric
+    not supported as a nested child; see the guard's comment). A `when`-gated
+    top_code column is likewise rejected: conditional top-coding skips bound
+    validation on a zero match and cannot write its string label back into the
+    column's lossless integer dtype (see the guard's comment). Every numeric
     bound (cap, floor) must also have magnitude below 2**53 so the tail
     comparison is exact on a null-bearing column (past that, float64 rounding can
     let a true tail value escape generalization -- a leak).
@@ -103,8 +116,9 @@ def check_top_code_config(config: dict[str, Any]) -> None:
     Raises:
         PlanCompileError: the top bound is unresolvable (missing/non-numeric/
             non-finite/>=2**53 cap, or unknown/non-string preset), the bottom
-            bound is malformed (bad floor, floor without under_label or vice
-            versa), floor >= cap, or top_code is used as a nested child.
+            bound is malformed (bad floor incl. explicit None, floor without
+            under_label or vice versa), floor >= cap, top_code is used as a
+            nested child, or top_code is combined with `when`.
     """
     tables = config.get("tables", []) if isinstance(config.get("tables"), list) else []
     for table_entry in tables:
@@ -146,6 +160,34 @@ def check_top_code_config(config: dict[str, Any]) -> None:
             if col_entry.get("strategy") != "top_code":
                 continue
 
+            # `when` + top_code (Codex R3 HIGH x2): fail closed. Conditional
+            # top-coding is unsound on two fronts and neither is worth the
+            # machinery for a niche shape. (1) A zero-match `when` skips the
+            # handler entirely, so a deserialized/direct Plan with a malformed
+            # bound is never validated at run and the column passes through
+            # unmasked -- the compile check here is the ONLY backstop, and a
+            # gate that the handler can silently skip is not a backstop. (2) The
+            # when-gate writes the aggregate label (a str) back into the gated
+            # subset; a top_code column ingests as nullable Int64 (lossless FK-
+            # safe ingest, so large in-range ints stay exact), and writing "90+"
+            # into an Int64 slot raises `ValueError: invalid literal for int()`.
+            # top-coding is a whole-column generalization; a partial one is not a
+            # supported shape. Mirrors date_shift's `when`+group_by rejection.
+            when_val = col_entry.get("when")
+            if isinstance(when_val, str) and when_val.strip():
+                raise PlanCompileError(
+                    code="top_code_with_when_unsupported",
+                    path=f"tables.{table_name}.columns.{col_name}.when",
+                    message=(
+                        f"top_code column {where} combines `when` with top_code. "
+                        "Conditional top-coding is not supported: a zero-match "
+                        "`when` skips bound validation (unmasked passthrough), and "
+                        "the aggregate label cannot be written back into the "
+                        "column's lossless integer dtype. top-coding generalizes "
+                        "the whole column; remove `when` from this column."
+                    ),
+                )
+
             preset = pc.get("preset")
             if preset is not None:
                 # `preset` must be a hashable str before the membership test: a
@@ -164,15 +206,13 @@ def check_top_code_config(config: dict[str, Any]) -> None:
                     )
                 cap: int | float = _PRESETS[preset]["cap"]
             else:
-                raw_cap = pc.get("cap")
-                _reject_unusable_bound(
-                    raw_cap,
+                cap = _reject_unusable_bound(
+                    pc.get("cap"),
                     code="top_code_bounds_unresolvable",
                     path=f"tables.{table_name}.columns.{col_name}.provider_config.cap",
                     kind="cap",
                     where=where,
                 )
-                cap = raw_cap
                 over_label = pc.get("over_label")
                 if not isinstance(over_label, str) or not over_label:
                     raise PlanCompileError(
@@ -187,8 +227,13 @@ def check_top_code_config(config: dict[str, Any]) -> None:
                         ),
                     )
 
-            floor = pc.get("floor")
-            if floor is None:
+            # Absence keyed on `"floor" not in pc`, NOT `floor is None`: an
+            # explicit `floor: None` is a present-but-malformed bound (operator
+            # typo / templating miss), so it must fail closed via
+            # `_reject_unusable_bound(None, ...)` below rather than read as "no
+            # bottom tail" and silently disable bottom-coding (Codex R3 HIGH --
+            # `.get` cannot tell absent from explicit-None). Mirrors the handler.
+            if "floor" not in pc:
                 # under_label without floor (Codex MEDIUM 3): an incomplete
                 # bottom-bound pair silently disables the bottom tail. If the
                 # operator supplied under_label they intended a floor; reject
@@ -206,8 +251,8 @@ def check_top_code_config(config: dict[str, Any]) -> None:
                         ),
                     )
                 continue
-            _reject_unusable_bound(
-                floor,
+            floor = _reject_unusable_bound(
+                pc.get("floor"),
                 code="top_code_invalid_floor",
                 path=f"tables.{table_name}.columns.{col_name}.provider_config.floor",
                 kind="floor",
