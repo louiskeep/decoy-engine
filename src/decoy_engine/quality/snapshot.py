@@ -296,19 +296,32 @@ def _high_cardinality_categorical_stats(non_null: pd.Series) -> dict[str, Any]:
         )
     str_vals = non_null.astype(str)
     distinct = str_vals.unique()
-    # MED-2: an object column of mixed types (e.g. int 1 and str "1") string-
-    # coerces both to "1" -- two real, distinct source values silently merge
-    # into one category label. Compare raw distinct count to the string-
-    # label distinct count and fail loud rather than let categories collide.
-    raw_distinct_count = len(non_null.unique())
-    if raw_distinct_count != len(distinct):
+    # MED-2 (gate remediation): string coercion must be a faithful 1:1
+    # relabeling of the source categories, or category membership and mass are
+    # silently rewritten. Comparing distinct COUNTS is not enough: a
+    # simultaneous merge + split leaves the counts equal while scrambling the
+    # partition (e.g. object [1, 1.0, "1"] -- pandas treats 1 and 1.0 as one
+    # raw value, but str() splits them into "1"/"1.0", so 2 raw == 2 labels yet
+    # the mapping is not a bijection). Verify the row partition induced by raw
+    # values equals the one induced by string labels: the count of distinct
+    # (raw, label) pairs must equal both the raw-class count and the label
+    # count. Any many-to-one (merge) or one-to-many (split) fails loud.
+    # `non_null` has nulls dropped upstream, so factorize's NaN handling is
+    # moot; default args keep this compatible with the full supported pandas
+    # range (the `use_na_sentinel` kwarg only exists from pandas 1.5).
+    raw_codes = pd.factorize(non_null)[0]
+    str_codes = pd.factorize(str_vals)[0]
+    n_raw = len(set(raw_codes.tolist()))
+    n_pairs = len(set(zip(raw_codes.tolist(), str_codes.tolist(), strict=True)))
+    if n_pairs != n_raw or n_pairs != len(distinct):
         raise DistributionSnapshotError(
             code="high_cardinality_ambiguous_string_coercion",
             message=(
-                f"high_cardinality column {name!r}: {raw_distinct_count} distinct "
-                f"source values collapse to {len(distinct)} string labels; some "
-                f"categories are indistinguishable after string coercion. "
-                f"Normalize the column to a single consistent type before fitting."
+                f"high_cardinality column {name!r}: string coercion does not "
+                f"preserve the source categories 1:1 ({n_raw} source values, "
+                f"{len(distinct)} string labels, {n_pairs} distinct pairings); some "
+                f"categories merge or split after coercion. Normalize the column "
+                f"to a single consistent type before fitting."
             ),
         )
     if len(distinct) > _HIGH_CARDINALITY_MAX_DISTINCT:

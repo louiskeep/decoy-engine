@@ -383,6 +383,20 @@ def test_high_cardinality_mixed_object_string_coercion_collision_rejected() -> N
     assert exc.value.code == "high_cardinality_ambiguous_string_coercion"
 
 
+def test_high_cardinality_simultaneous_merge_and_split_rejected() -> None:
+    """MED-2 (re-gate): a count-equality check misses a simultaneous merge +
+    split. object [1, 1.0, "1"] has 2 raw distinct values (pandas treats 1 and
+    1.0 as equal) and 2 string labels ("1", "1.0"), so counts match -- but the
+    partition is scrambled (raw class {1, 1.0} splits across "1"/"1.0" while
+    "1" also absorbs the str "1"). The bijection check must fail loud."""
+    from decoy_engine.quality.snapshot import DistributionSnapshotError
+
+    df = pd.DataFrame({"code": pd.Series([1, 1.0, "1"], dtype=object)})
+    with pytest.raises(DistributionSnapshotError) as exc:
+        compute_distribution_snapshot(df, high_cardinality_columns=["code"])
+    assert exc.value.code == "high_cardinality_ambiguous_string_coercion"
+
+
 def test_high_cardinality_clean_string_column_no_collision() -> None:
     # Sanity check: a clean string column does not trip the collision gate.
     df = pd.DataFrame({"code": ["1", "2", "3", "4"]})
