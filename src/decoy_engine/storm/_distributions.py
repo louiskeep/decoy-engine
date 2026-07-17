@@ -13,8 +13,11 @@ from decoy_engine.storm.types import DetectorMatch, Distribution
 
 # Cardinality threshold for "categorical" object columns. Below this we group
 # by value and show top-10 + other; above it we treat the column as freetext
-# or pattern-shaped depending on whether a detector fired.
-_CATEGORICAL_DISTINCT_CAP = 30
+# or pattern-shaped depending on whether a detector fired. Deliberately
+# independent of quality/snapshot.py's fit-time _CATEGORICAL_DISTINCT_CAP
+# (HC-5 D4): this is a profiler-chart display concern, not the fit source of
+# truth, so it is not imported from there even though the value matches.
+_STORM_CATEGORICAL_DISTINCT_CAP = 30
 
 
 def _distribution_numeric(non_null: pd.Series) -> Distribution | None:
@@ -143,7 +146,7 @@ def _build_distribution(
     if inferred_type == "string":
         # Categorical when low cardinality regardless of detector - value-set is
         # the most useful summary at that scale.
-        if distinct_count > 0 and distinct_count <= _CATEGORICAL_DISTINCT_CAP:
+        if distinct_count > 0 and distinct_count <= _STORM_CATEGORICAL_DISTINCT_CAP:
             return _distribution_categorical(non_null, total_rows)
         # If a detector fired, surface match-rate buckets; the user wants to
         # see "97.8% of values look like SSN" at a glance.

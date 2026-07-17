@@ -574,6 +574,18 @@ def _check_when_with_coherent_with(config: dict[str, Any]) -> None:
                 )
 
 
+# MED-1 (gate remediation): advisory-only global_settings keys stripped
+# from the hashed config. `categorical_retention_warn_threshold` (HC-5)
+# is warn-only at FIT time -- it never changes masking semantics or output
+# bytes -- so it is excluded from the outset, the same way `sources` /
+# `targets` are excluded. NOTE: `fidelity_warn_threshold` is NOT in this
+# set even though it is equally advisory: it was already part of the hash
+# before this fix, and removing it now would change `pipeline_config_hash`
+# for every existing config that sets it. Grandfathered for byte-compat;
+# only new advisory keys get added here going forward.
+_NON_SEMANTIC_GLOBAL_SETTINGS = frozenset({"categorical_retention_warn_threshold"})
+
+
 def _hash_config(config: dict[str, Any]) -> str:
     """SHA-256 over a canonical JSON serialization of the masking-semantics
     portion of the config (M1 from S1 end-of-sprint Dennis review).
@@ -591,6 +603,13 @@ def _hash_config(config: dict[str, Any]) -> str:
     same hash regardless of key insertion order or source/target binding.
     """
     semantic_config = {k: v for k, v in config.items() if k not in ("sources", "targets")}
+    global_settings = semantic_config.get("global_settings")
+    if isinstance(global_settings, dict) and any(
+        key in global_settings for key in _NON_SEMANTIC_GLOBAL_SETTINGS
+    ):
+        semantic_config["global_settings"] = {
+            k: v for k, v in global_settings.items() if k not in _NON_SEMANTIC_GLOBAL_SETTINGS
+        }
     # QA walks/generators F9 (2026-06-01, LOW correctness): no
     # default=str. Pre-fix json.dumps silently called str() on any
     # non-JSON-native value (datetime, UUID, dataclass), so two
