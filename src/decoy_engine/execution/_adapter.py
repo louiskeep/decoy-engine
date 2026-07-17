@@ -138,6 +138,22 @@ class StrategyContext:
     # handler, so `CodeSetHandler.run` can key its evidence sink by
     # (table, column) instead of a bare column name.
     current_table: str = ""
+    # Codex round-4 P2 NESTED CODE_SET MIS-KEYED EVIDENCE remediation: the
+    # OUTER column identity when a scalar handler is running as a nested
+    # strategy's child. `NestedStrategyHandler.run` invokes the child handler
+    # with the synthetic column name `_nested_leaves` (a batch-collection
+    # column that does not exist in the source frame), so a child handler
+    # that stamps column-keyed evidence (CodeSetHandler) must not key it off
+    # the `column` parameter it was literally called with -- that would
+    # record a nonexistent `_nested_leaves` column, and two nested code_set
+    # columns in the same table would collide on that same synthetic name,
+    # silently dropping one corpus's provenance. Empty string means "not
+    # running as a nested child"; `CodeSetHandler.run` falls back to its own
+    # `column` parameter in that case. Set/restored via `object.__setattr__`
+    # around the child dispatch (same escape hatch as `current_table`),
+    # mirroring `_orphan.py`'s prior_table save/restore since nested
+    # dispatch can itself run mid-dispatch of an enclosing node.
+    nested_outer_column: str = ""
 
     def __post_init__(self) -> None:
         # A frozen dataclass forbids attribute assignment; object.__setattr__ is

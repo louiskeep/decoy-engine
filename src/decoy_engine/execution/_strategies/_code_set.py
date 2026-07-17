@@ -192,10 +192,22 @@ class CodeSetHandler:
             # the evidence dict itself so the flattened metrics list (which
             # discards the sink's keys) still records which table+column used
             # which corpus.
-            ctx.code_set_corpora[(ctx.current_table, column)] = {
+            #
+            # Codex round-4 P2 NESTED CODE_SET MIS-KEYED EVIDENCE
+            # remediation: when this handler is running as a nested
+            # strategy's child, `column` is the synthetic `_nested_leaves`
+            # batch-collection name, not a real column on the frame --
+            # `NestedStrategyHandler` stamps the real outer column onto
+            # `ctx.nested_outer_column` before dispatching here. Prefer that
+            # when set so evidence attributes to the column the operator
+            # actually configured, and so two nested code_set columns in one
+            # table key on their distinct outer columns instead of both
+            # colliding on `_nested_leaves`.
+            evidence_column = ctx.nested_outer_column or column
+            ctx.code_set_corpora[(ctx.current_table, evidence_column)] = {
                 **evidence,
                 "table": ctx.current_table,
-                "column": column,
+                "column": evidence_column,
             }
 
         df[column] = out

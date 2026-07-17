@@ -245,7 +245,22 @@ class NestedStrategyHandler:
         # Run the child handler on the collected leaves in one batch.
         temp_col = "_nested_leaves"
         temp_df = pd.DataFrame({temp_col: leaf_values})
-        temp_df, child_warnings = child_handler.run(temp_df, temp_col, child_seed, ctx)
+        # Codex round-4 P2 NESTED CODE_SET MIS-KEYED EVIDENCE remediation:
+        # the child is invoked with the synthetic `temp_col` name, not the
+        # real column this nested strategy is configured on. A child handler
+        # that stamps column-keyed evidence (CodeSetHandler) needs the OUTER
+        # column identity, so stamp it onto ctx before dispatch and restore
+        # afterward (prior value saved, not just cleared -- nested dispatch
+        # can itself run mid-dispatch of another node, same rationale as
+        # `_orphan.py`'s prior_table save/restore). `getattr` with a default
+        # tolerates test doubles (e.g. `_FakeCtx` in test_nested_strategy.py)
+        # that predate this field and do not define it.
+        prior_outer_column = getattr(ctx, "nested_outer_column", "")
+        object.__setattr__(ctx, "nested_outer_column", column)
+        try:
+            temp_df, child_warnings = child_handler.run(temp_df, temp_col, child_seed, ctx)
+        finally:
+            object.__setattr__(ctx, "nested_outer_column", prior_outer_column)
         warnings.extend(child_warnings)
         new_leaf_values = temp_df[temp_col].tolist()
 
