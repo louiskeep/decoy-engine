@@ -61,6 +61,28 @@ _PRESETS: dict[str, dict[str, Any]] = {
     "hipaa_age": {"cap": 89, "over_label": "90+"},
 }
 
+# float64 represents every integer up to 2**53 exactly; beyond it consecutive
+# integers collapse (2**53 and 2**53+1 both round to 2**53). A cap/floor at or
+# past this magnitude cannot be compared exactly against a null-bearing column
+# (Arrow int64+null widens to float64 on ingest), so a true tail value could
+# round DOWN to the cap and escape generalization -- a silent leak Codex
+# reproduced. Bounds must stay strictly inside [-2**53, 2**53]; the check module
+# rejects the rest at compile, this is the handler backstop. Shared with
+# plan/_checks_top_code.py as the single source of truth for the threshold.
+_MAX_EXACT_INT: int = 2**53
+
+
+def _is_usable_bound(value: Any) -> bool:
+    """A cap/floor is usable only if it is a real, finite number strictly inside
+    the exactly-representable integer range. Rejects bool, non-numeric, NaN/inf,
+    and |value| >= 2**53. `math.isfinite` is only called on floats so a huge
+    Python int (e.g. 10**400) is classified by magnitude, never an OverflowError."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    if isinstance(value, float) and not math.isfinite(value):
+        return False
+    return abs(value) < _MAX_EXACT_INT
+
 
 class TopCodeStrategyHandler:
     """Generalize the rare tail(s) of a numeric column into an aggregate label."""
@@ -149,6 +171,15 @@ class TopCodeStrategyHandler:
         over_positions = np.flatnonzero(over_mask.to_numpy())
         under_positions = np.flatnonzero(under_mask.to_numpy())
 
+        # The audit warning's row indices are LOCAL to this handler invocation
+        # (this frame). On the chunked route each chunk is a separate invocation,
+        # so the indices are chunk-local and the per-(code,column) warning
+        # dedup in _chunked.py collapses them -- the concatenated audit log
+        # then under-reports generalized rows. The MASKED OUTPUT is unaffected
+        # and correct (every tail cell is generalized); only this evidence
+        # sidecar is chunk-boundary-dependent. Tracked as a known limitation
+        # shared with any warning-emitting chunk-safe strategy; see
+        # docs/backlog/chunked-audit-evidence-row-indices.md.
         warnings: list[QualityWarning] = []
         if len(over_positions) or len(under_positions):
             generalized: dict[str, str] = {}
@@ -180,18 +211,19 @@ class TopCodeStrategyHandler:
         """
         preset = cfg.get("preset")
         if preset is not None:
+            # `preset` must be a hashable str before the `in`/`.get` lookup: a
+            # list/dict preset would raise `TypeError: unhashable type`.
+            if not isinstance(preset, str):
+                return None
             resolved = _PRESETS.get(preset)
             if resolved is None:
                 return None
             return resolved["cap"], resolved["over_label"]
         cap = cfg.get("cap")
-        if isinstance(cap, bool) or not isinstance(cap, (int, float)):
-            return None
-        # A non-finite cap (NaN/inf) is a silent fail-open: `nums > nan`/`> inf`
-        # is always False, so nothing generalizes and the whole column passes
-        # through in the clear -- exactly the unresolvable-bound leak this guard
-        # exists to prevent. Reject it (compile-check mirrors this).
-        if not math.isfinite(cap):
+        # Rejects bool/non-numeric, NaN/inf, and |cap| >= 2**53 (past which the
+        # tail comparison cannot be exact on a null-widened column -- a silent
+        # leak). All three are unresolvable bounds; the compile check mirrors it.
+        if not _is_usable_bound(cap):
             return None
         over_label = cfg.get("over_label")
         if not isinstance(over_label, str) or not over_label:
@@ -207,11 +239,12 @@ class TopCodeStrategyHandler:
         compile time so it never reaches a real run.
         """
         floor = cfg.get("floor")
-        if floor is None or isinstance(floor, bool) or not isinstance(floor, (int, float)):
+        if floor is None:
             return None, None
-        # Non-finite floor (NaN/inf) is the same silent fail-open as cap: `nums <
-        # nan`/`< inf` never fires, so the bottom tail is never generalized.
-        if not math.isfinite(floor):
+        # Same usability gate as cap: bool/non-numeric, NaN/inf, or |floor| >=
+        # 2**53 all disable the (optional) bottom tail. The compile check rejects
+        # these loudly; here they degrade to "no floor" as a handler backstop.
+        if not _is_usable_bound(floor):
             return None, None
         under_label = cfg.get("under_label")
         if not isinstance(under_label, str) or not under_label:

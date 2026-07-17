@@ -238,3 +238,104 @@ class TestNonFiniteBoundsRejected:
         check_top_code_config(
             _config({"cap": 100, "over_label": "hi", "floor": 0, "under_label": "lo"})
         )
+
+
+class TestCodexCrossModelRejections:
+    """Codex cross-model gate findings: shapes that previously slipped past
+    compile (silent leak, raw crash, or ignored config). Each must now be a
+    clean PlanCompileError."""
+
+    def _nested(self, strategy_config: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "tables": [
+                {
+                    "name": "t",
+                    "columns": [
+                        {
+                            "name": "payload",
+                            "strategy": "nested",
+                            "namespace": "ns",
+                            "provider_config": {
+                                "strategy": "top_code",
+                                "target": "$.ages[*]",
+                                "strategy_config": strategy_config,
+                            },
+                        }
+                    ],
+                }
+            ]
+        }
+
+    def test_nested_top_code_rejected(self) -> None:
+        # BLOCKER 2/3: nested(top_code) mis-maps RowError to the wrong outer row
+        # and bypasses bottom-bound checks. Reject outright.
+        with pytest.raises(PlanCompileError) as exc:
+            check_top_code_config(self._nested({"cap": 89, "over_label": "OVER"}))
+        assert exc.value.code == "top_code_unsupported_in_nested"
+
+    def test_nested_top_code_with_malformed_floor_rejected(self) -> None:
+        # The malformed-floor nested child (BLOCKER 3) is caught by the nested
+        # guard before it can silently disable the floor.
+        with pytest.raises(PlanCompileError) as exc:
+            check_top_code_config(
+                self._nested({"cap": 89, "over_label": "O", "floor": "0", "under_label": "U"})
+            )
+        assert exc.value.code == "top_code_unsupported_in_nested"
+
+    @pytest.mark.parametrize("bad_cap", [2**53, 2**53 + 1, 10**400, -(2**53)])
+    def test_cap_at_or_beyond_2_to_53_rejected(self, bad_cap: int) -> None:
+        # BLOCKER 1 + MEDIUM 2: past 2**53 float64 can't compare exactly, so a
+        # tail value could escape generalization (leak). 10**400 also used to
+        # raise OverflowError from math.isfinite; now a clean reject.
+        cfg = _config({"cap": bad_cap, "over_label": "OVER"})
+        with pytest.raises(PlanCompileError) as exc:
+            check_top_code_config(cfg)
+        assert exc.value.code == "top_code_bounds_unresolvable"
+
+    def test_floor_beyond_2_to_53_rejected(self) -> None:
+        cfg = _config({"cap": 89, "over_label": "O", "floor": -(2**53), "under_label": "U"})
+        with pytest.raises(PlanCompileError) as exc:
+            check_top_code_config(cfg)
+        assert exc.value.code == "top_code_invalid_floor"
+
+    def test_cap_just_below_2_to_53_still_passes(self) -> None:
+        check_top_code_config(_config({"cap": 2**53 - 1, "over_label": "OVER"}))
+
+    @pytest.mark.parametrize("bad_preset", [[], {}, 123])
+    def test_unhashable_or_non_string_preset_rejected_cleanly(self, bad_preset: Any) -> None:
+        # MEDIUM 2: `preset: []`/`{}` used to raise TypeError (unhashable) from
+        # the membership test. Now a clean PlanCompileError.
+        cfg = _config({"preset": bad_preset})
+        with pytest.raises(PlanCompileError) as exc:
+            check_top_code_config(cfg)
+        assert exc.value.code == "top_code_bounds_unresolvable"
+
+    def test_under_label_without_floor_rejected(self) -> None:
+        # MEDIUM 3: an incomplete bottom-bound pair used to be silently ignored.
+        cfg = _config({"cap": 89, "over_label": "OVER", "under_label": "UNDER"})
+        with pytest.raises(PlanCompileError) as exc:
+            check_top_code_config(cfg)
+        assert exc.value.code == "top_code_under_label_without_floor"
+
+    def test_nested_non_top_code_child_not_wrongly_rejected(self) -> None:
+        # A nested child of a DIFFERENT strategy must not trip the top_code guard.
+        cfg = {
+            "tables": [
+                {
+                    "name": "t",
+                    "columns": [
+                        {
+                            "name": "payload",
+                            "strategy": "nested",
+                            "namespace": "ns",
+                            "provider_config": {
+                                "strategy": "date_shift",
+                                "target": "$.d[*]",
+                                "strategy_config": {"min_days": -1, "max_days": 1},
+                            },
+                        }
+                    ],
+                }
+            ]
+        }
+        check_top_code_config(cfg)  # no raise

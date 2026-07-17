@@ -138,21 +138,30 @@ class TestInRangeContentPreserved:
         assert all(int(v) == orig for v, orig in zip(result, [23, 45, 89], strict=True))
 
 
-class TestLargeIntegralRenderNoOverflow:
-    """Dennis R2 LOW: the integral render must use arbitrary-precision Python
-    int, not a fixed-width `.astype("int64")` that silently wraps negative above
-    2^63. A large integral value on the float path (genuine float dtype) renders
-    correctly. Unreachable by a real top-coding config (cap this large is
-    nonsensical), but silent numeric corruption is closed at the source."""
+class TestLargeIntegralRender:
+    """Large but VALID (|value| < 2**53) integral values render canonically on
+    the float path (no trailing ".0", exact, no int64 overflow) via
+    arbitrary-precision Python int. Codex BLOCKER: a cap AT/beyond 2**53 is
+    fail-closed rejected instead (the tail comparison cannot be exact on a
+    null-widened column), so the overflow path is unreachable by construction."""
 
-    def test_large_integral_float_renders_without_int64_overflow(self) -> None:
-        # 1e19 > 2^63: `.astype("int64")` would wrap to a negative value.
-        src = pa.table({"n": pa.array([1e19, 5.0], type=pa.float64())})
-        seed = _col((("cap", 1e20), ("over_label", "HUGE")))
+    def test_large_valid_integral_float_renders_exactly(self) -> None:
+        # 5e14 < 2**53: integral, exactly representable, in-range under cap 1e15.
+        src = pa.table({"n": pa.array([5e14, None], type=pa.float64())})
+        seed = _col((("cap", 10**15), ("over_label", "HUGE")))
         out = _run(_plan("n", seed), src)
         got = out.output.column("n").to_pylist()
-        assert got == [str(int(1e19)), "5"]
-        assert not got[0].startswith("-")  # no overflow wrap
+        assert got == ["500000000000000", None]
+        assert not got[0].endswith(".0")
+
+    def test_cap_at_or_beyond_2_to_53_is_fail_closed(self) -> None:
+        # Codex BLOCKER 1: cap >= 2**53 can't be compared exactly against a
+        # null-widened column, so a true tail value could escape generalization.
+        # The handler resolves no bound and fails closed.
+        src = pa.table({"n": [1, 2, 3]})
+        seed = _col((("cap", 2**53), ("over_label", "OVER")))
+        with pytest.raises((ExecutionError, StrategyError)):
+            _run(_plan("n", seed), src)
 
 
 class TestNullPassthrough:
