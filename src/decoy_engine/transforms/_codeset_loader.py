@@ -337,6 +337,28 @@ def _validate_provenance(
 
     missing = provenance.missing_required_fields()
     if not missing:
+        # Codex round-5 P2 SHIPPED PROVENANCE IDENTITY UNVERIFIED
+        # remediation: a complete provenance stamp is not proof the stamp
+        # belongs to THIS corpus. A packaging/metadata mistake (or a
+        # deliberate swap) can ship `icd10.parquet` carrying `mcc`'s
+        # embedded `decoy_corpus` metadata; the completeness check above
+        # passes either way, so `describe_loaded_corpus` would report
+        # `code_set: icd10` with MCC's attribution as if it were genuine.
+        # Shipped-only: a customer corpus's provenance is optional and may
+        # legitimately name a different embedded id (e.g. a customer's own
+        # code_set built from a shipped seed), so this identity check does
+        # not apply to the customer path.
+        if is_shipped and provenance.corpus != name:
+            raise PlanCompileError(
+                code="code_set_corpus_provenance_identity_mismatch",
+                path="provider_config.code_set",
+                message=(
+                    f"shipped corpus {name!r} at {path} carries provenance "
+                    f"for a different corpus ({provenance.corpus!r}). This "
+                    "looks like a packaging or metadata swap; the embedded "
+                    "provenance.corpus must match the requested corpus name."
+                ),
+            )
         return
     if is_shipped:
         raise PlanCompileError(

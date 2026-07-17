@@ -59,6 +59,127 @@ class NestedStrategyHandler:
 
     name: str = "nested"
 
+    def _resolve_child(self, plan: ColumnSeed, column: str | None = None) -> tuple[Any, ColumnSeed]:
+        """Resolve the child strategy handler + a synthetic child `ColumnSeed`.
+
+        Shared by `run()` (real masking dispatch) and `preflight()` (corpus-
+        only validation forward), so the two entry points can never drift on
+        error codes or on which handler/seed a given `provider_config`
+        resolves to. Codex round-5 P2 NESTED CODE_SET CHILD NOT PREFLIGHTED
+        UNDER A ZERO-MATCH WHEN-GATE remediation: this is exactly the
+        resolution `run()` did inline before this fix (parse
+        `provider_config` -> child strategy name + config, reject
+        nested-of-nested, look up `SCALAR_HANDLERS`, classify the child's
+        `technique_class`); extracting it lets `preflight()` reuse it
+        byte-for-byte instead of re-deriving a second copy that could
+        silently diverge.
+
+        `column` is optional and cosmetic only (folded into error messages
+        when known): `run()` passes the real column so its error text stays
+        byte-identical to the pre-extraction inline checks; `preflight()` is
+        called by `run_with_when_gate` as `preflight(plan, ctx)` -- no
+        column argument exists at that call site -- so it omits the suffix.
+
+        Does not validate `target` (that stays `run()`-only -- JSONPath
+        targeting is about locating leaves in the frame, not about which
+        child strategy handles them, and preflighting it is out of this
+        fix's scope).
+        """
+        # Lazy import keeps the SCALAR_HANDLERS init cycle clean (the
+        # nested strategy reads from SCALAR_HANDLERS, and the
+        # SCALAR_HANDLERS dict imports nested strategy at module load).
+        from decoy_engine.execution._strategies import SCALAR_HANDLERS
+
+        cfg = provider_config_to_dict(plan.provider_config)
+        child_strategy_name = cfg.get("strategy")
+        child_strategy_config = cfg.get("strategy_config") or {}
+        column_suffix = f" (column={column!r})" if column is not None else ""
+
+        if not isinstance(child_strategy_name, str) or not child_strategy_name:
+            raise StrategyError(
+                code="nested_strategy_unset",
+                strategy="nested",
+                message=(
+                    "nested child strategy is required and must be a non-empty "
+                    f"string{column_suffix}."
+                ),
+            )
+
+        if child_strategy_name == "nested":
+            raise StrategyError(
+                code="nested_recursive_nested_rejected",
+                strategy="nested",
+                message=f"nested cannot wrap itself recursively{column_suffix}.",
+            )
+
+        child_handler = SCALAR_HANDLERS.get(child_strategy_name)
+        if child_handler is None:
+            raise StrategyError(
+                code="nested_child_strategy_unknown",
+                strategy="nested",
+                message=(
+                    f"nested child strategy {child_strategy_name!r} is not a "
+                    f"registered SCALAR_HANDLERS key{column_suffix}. "
+                    "A typo here silently dropped PII pre-fix."
+                ),
+            )
+
+        # Build a synthetic child seed inheriting parent fields but
+        # carrying the child strategy + config.
+        child_provider_config: tuple[tuple[str, Any], ...]
+        if isinstance(child_strategy_config, dict):
+            child_provider_config = tuple(sorted(child_strategy_config.items()))
+        else:
+            child_provider_config = ()
+        # QA-3 F7 (2026-05-31): resolve the CHILD's technique class. The
+        # parent's `technique_class` is None for nested (intentionally;
+        # see _technique_class.py), so inheriting it would always leave
+        # the child seed unclassified. The child should report the
+        # class of the strategy it actually runs (e.g. redact ->
+        # anonymisation).
+        child_seed = ColumnSeed(
+            namespace=plan.namespace,
+            strategy=child_strategy_name,
+            provider=plan.provider,
+            backend_type=plan.backend_type,
+            backend_version=plan.backend_version,
+            cardinality_mode=plan.cardinality_mode,
+            deterministic=plan.deterministic,
+            provider_config=child_provider_config,
+            coherent_with=plan.coherent_with,
+            technique_class=technique_class_for(child_strategy_name),
+            when=None,
+        )
+        return child_handler, child_seed
+
+    def preflight(self, plan: ColumnSeed, ctx: StrategyContext) -> None:
+        """Forward preflight validation to the child strategy.
+
+        Codex round-5 P2 NESTED CODE_SET CHILD NOT PREFLIGHTED UNDER A
+        ZERO-MATCH WHEN-GATE remediation: `execution._when_gate.run_with_
+        when_gate` calls `getattr(handler, "preflight", None)`
+        unconditionally, before its zero-match short-circuit -- but that
+        only helps when `handler` itself defines `preflight`.
+        `CodeSetHandler` does; `NestedStrategyHandler` (the outer handler
+        for a `nested(code_set)` column) did not, so the CHILD
+        `CodeSetHandler.preflight` was never reached, and a
+        `nested(code_set)` column referencing a missing/invalid corpus
+        succeeded silently whenever its `when:` gate matched zero rows --
+        the exact fail-closed hole `CodeSetHandler.preflight` closes for a
+        bare (non-nested) `code_set` column, one level deeper.
+
+        Resolves the child via `_resolve_child` (same helper `run()` uses)
+        and forwards to the child handler's own optional `preflight` hook
+        if it defines one. Deliberately does NOT run masking and does NOT
+        touch `ctx.code_set_corpora` -- evidence stamping (NIT-1: only on
+        `masked_any`) stays exclusively `run()`'s job, same contract as
+        `CodeSetHandler.preflight`.
+        """
+        child_handler, child_seed = self._resolve_child(plan)
+        child_preflight = getattr(child_handler, "preflight", None)
+        if child_preflight is not None:
+            child_preflight(child_seed, ctx)
+
     def run(
         self,
         df: pd.DataFrame,
@@ -66,15 +187,8 @@ class NestedStrategyHandler:
         plan: ColumnSeed,
         ctx: StrategyContext,
     ) -> tuple[pd.DataFrame, list[QualityWarning]]:
-        # Lazy import keeps the SCALAR_HANDLERS init cycle clean (the
-        # nested strategy reads from SCALAR_HANDLERS, and the
-        # SCALAR_HANDLERS dict imports nested strategy at module load).
-        from decoy_engine.execution._strategies import SCALAR_HANDLERS
-
         cfg = provider_config_to_dict(plan.provider_config)
         target_path = cfg.get("target")
-        child_strategy_name = cfg.get("strategy")
-        child_strategy_config = cfg.get("strategy_config") or {}
 
         # QA-3 F12 (2026-05-31, security): config errors below promote to
         # StrategyError so the runner fails the job. Pre-fix they returned
@@ -97,34 +211,16 @@ class NestedStrategyHandler:
                     "silently passed PII through."
                 ),
             )
-        if not isinstance(child_strategy_name, str) or not child_strategy_name:
-            raise StrategyError(
-                code="nested_strategy_unset",
-                strategy="nested",
-                message=(
-                    f"nested child strategy is required and must be a non-empty "
-                    f"string (column={column!r})."
-                ),
-            )
 
-        if child_strategy_name == "nested":
-            raise StrategyError(
-                code="nested_recursive_nested_rejected",
-                strategy="nested",
-                message=(f"nested cannot wrap itself recursively (column={column!r})."),
-            )
-
-        child_handler = SCALAR_HANDLERS.get(child_strategy_name)
-        if child_handler is None:
-            raise StrategyError(
-                code="nested_child_strategy_unknown",
-                strategy="nested",
-                message=(
-                    f"nested child strategy {child_strategy_name!r} is not a "
-                    f"registered SCALAR_HANDLERS key (column={column!r}). "
-                    "A typo here silently dropped PII pre-fix."
-                ),
-            )
+        # Codex round-5 P2 remediation: child handler + child seed
+        # resolution (strategy-name validation, nested-of-nested rejection,
+        # SCALAR_HANDLERS lookup, technique_class) now lives in
+        # `_resolve_child`, shared with `preflight()`. Resolving it here --
+        # before the jsonpath parse below, same position the inline checks
+        # occupied pre-refactor -- keeps every error code, message, and raise
+        # order byte-identical to the pre-extraction behavior (passing
+        # `column` preserves the "(column=...)" message suffix).
+        child_handler, child_seed = self._resolve_child(plan, column)
 
         try:
             jsonpath_expr = jsonpath_ng.parse(target_path)
@@ -215,34 +311,9 @@ class NestedStrategyHandler:
         if not leaf_values:
             return df, warnings
 
-        # Build a synthetic child seed inheriting parent fields but
-        # carrying the child strategy + config.
-        child_provider_config: tuple[tuple[str, Any], ...]
-        if isinstance(child_strategy_config, dict):
-            child_provider_config = tuple(sorted(child_strategy_config.items()))
-        else:
-            child_provider_config = ()
-        # QA-3 F7 (2026-05-31): resolve the CHILD's technique class. The
-        # parent's `technique_class` is None for nested (intentionally;
-        # see _technique_class.py), so inheriting it would always leave
-        # the child seed unclassified. The child should report the
-        # class of the strategy it actually runs (e.g. redact ->
-        # anonymisation).
-        child_seed = ColumnSeed(
-            namespace=plan.namespace,
-            strategy=child_strategy_name,
-            provider=plan.provider,
-            backend_type=plan.backend_type,
-            backend_version=plan.backend_version,
-            cardinality_mode=plan.cardinality_mode,
-            deterministic=plan.deterministic,
-            provider_config=child_provider_config,
-            coherent_with=plan.coherent_with,
-            technique_class=technique_class_for(child_strategy_name),
-            when=None,
-        )
-
         # Run the child handler on the collected leaves in one batch.
+        # `child_handler` and `child_seed` were resolved earlier via
+        # `_resolve_child` (shared with `preflight()`).
         temp_col = "_nested_leaves"
         temp_df = pd.DataFrame({temp_col: leaf_values})
         # Codex round-4 P2 NESTED CODE_SET MIS-KEYED EVIDENCE remediation:

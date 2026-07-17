@@ -732,6 +732,36 @@ class TestCorpusProvenance:
             _get_corpus_record("partial", path, is_shipped=True)
         assert exc_info.value.code == "code_set_corpus_missing_provenance"
 
+    def test_shipped_corpus_provenance_identity_mismatch_fails_closed(self, tmp_path: pathlib.Path):
+        """Codex round-5 P2 SHIPPED PROVENANCE IDENTITY UNVERIFIED remediation:
+        a SHIPPED corpus with a COMPLETE provenance stamp still fails closed
+        when the embedded `decoy_corpus` id does not match the requested
+        corpus name -- e.g. `icd10.parquet` packaged with `mcc`'s provenance
+        metadata. Completeness alone is not identity; a packaging/metadata
+        swap must not silently attribute one corpus's provenance to
+        another's evidence trail."""
+        from decoy_engine.transforms._codeset_loader import _get_corpus_record
+
+        tbl = pa.table(
+            {"code": pa.array(["A01", "A02"], type=pa.string())},
+            metadata={
+                b"decoy_corpus": b"mcc",
+                b"decoy_corpus_version": b"2.0",
+                b"source": b"ISO 18245 Merchant Category Codes",
+                b"source_version": b"2003",
+                b"effective_date": b"2003-01-01",
+                b"license": b"Public reference enumeration",
+            },
+        )
+        path = tmp_path / "icd10.parquet"
+        pq.write_table(tbl, str(path))
+
+        with pytest.raises(PlanCompileError) as exc_info:
+            _get_corpus_record("icd10", path, is_shipped=True)
+        assert exc_info.value.code == "code_set_corpus_provenance_identity_mismatch"
+        assert "icd10" in exc_info.value.message
+        assert "mcc" in exc_info.value.message
+
     def test_customer_corpus_missing_provenance_warns_not_fails(
         self, tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture
     ):
