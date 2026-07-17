@@ -26,11 +26,14 @@ row defect, and is re-raised unchanged: the discriminator is the exception's
 heuristic re-derivation of what "corpus-level" means).
 
 HC-1 slice 1 (2026-07-17): ``run`` stamps one corpus-provenance entry into
-``ctx.code_set_corpora`` per column, before the per-value loop
+``ctx.code_set_corpora`` per (table, column), before the per-value loop
 (``describe_loaded_corpus``). ``PandasExecutionAdapter`` surfaces the
 accumulated sink into ``ExecutionResult.quality_metrics['code_set_corpora']``
 at the end of the job -- counts and identifiers only (source, source_version,
-effective_date, license, row_count), never raw codes.
+effective_date, license, row_count), never raw codes. Keyed by (table,
+column) rather than bare column name so two tables with a same-named
+code_set column bound to different corpora each surface their own evidence
+entry instead of one overwriting the other.
 """
 
 from __future__ import annotations
@@ -143,11 +146,23 @@ class CodeSetHandler:
             masked_any = True
 
         if masked_any:
-            # Once-per-column stamp (not once-per-value): a column dispatched
-            # more than once (e.g. re-run under a when_gate across repeated
-            # calls is not a real code path today, but this stays idempotent
-            # either way) just overwrites with the same evidence dict.
-            ctx.code_set_corpora[column] = evidence
+            # Once-per-(table, column) stamp (not once-per-value): a column
+            # dispatched more than once (e.g. re-run under a when_gate across
+            # repeated calls is not a real code path today, but this stays
+            # idempotent either way) just overwrites with the same evidence
+            # dict. Keyed by (table, column) rather than a bare column name --
+            # two tables can legally declare a same-named code_set column
+            # bound to different corpora (Codex P2 MULTI-TABLE EVIDENCE
+            # COLLISION); a bare-column key let the second table's stamp
+            # silently overwrite the first's. `table`/`column` ride along in
+            # the evidence dict itself so the flattened metrics list (which
+            # discards the sink's keys) still records which table+column used
+            # which corpus.
+            ctx.code_set_corpora[(ctx.current_table, column)] = {
+                **evidence,
+                "table": ctx.current_table,
+                "column": column,
+            }
 
         df[column] = out
         return df, []

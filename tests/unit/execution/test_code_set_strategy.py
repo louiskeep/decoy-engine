@@ -15,10 +15,12 @@ strategy registration in SCALAR_HANDLERS. A test that only calls
 
 from __future__ import annotations
 
+import pathlib
 from types import SimpleNamespace
 from typing import Any
 
 import pyarrow as pa
+import pytest
 
 from decoy_engine.execution import PandasExecutionAdapter
 from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
@@ -269,6 +271,67 @@ class TestCodeSetProvenanceEvidence:
         )
         assert "code_set_corpora" not in out.quality_metrics
 
+    def test_quality_metrics_keys_evidence_by_table_for_same_named_columns(self) -> None:
+        """Codex P2 MULTI-TABLE EVIDENCE COLLISION remediation: two tables
+        that each declare a SAME-NAMED code_set column ("code") bound to
+        DIFFERENT corpora must both surface their own evidence entry. Before
+        this fix, the sink was keyed by bare column name, so the second
+        table's stamp silently overwrote the first's and one table's audit
+        provenance was dropped."""
+        plan = SimpleNamespace(
+            seed_envelope=SeedEnvelope(
+                job_seed=_SEED,
+                per_table=(
+                    (
+                        "table_a",
+                        TableSeed(
+                            per_column=(
+                                (
+                                    "code",
+                                    _col(
+                                        "code_set",
+                                        provider_config=(("code_set", "icd10"),),
+                                    ),
+                                ),
+                            ),
+                            per_group=(),
+                        ),
+                    ),
+                    (
+                        "table_b",
+                        TableSeed(
+                            per_column=(
+                                (
+                                    "code",
+                                    _col(
+                                        "code_set",
+                                        provider_config=(("code_set", "mcc"),),
+                                    ),
+                                ),
+                            ),
+                            per_group=(),
+                        ),
+                    ),
+                ),
+            )
+        )
+        sources = {
+            "table_a": pa.table({"code": pa.array(["I10", "E11.9"], type=pa.string())}),
+            "table_b": pa.table({"code": pa.array(["alpha", "beta"], type=pa.string())}),
+        }
+        out = PandasExecutionAdapter().run(
+            plan, sources, registry=_REG, relationship_graph=_GRAPH, namespace_registry=_NS
+        )
+        corpora = out.quality_metrics.get("code_set_corpora")
+        assert corpora is not None and len(corpora) == 2, (
+            f"expected one evidence entry per (table, column), got {corpora!r}"
+        )
+        by_table_column = {(e["table"], e["column"]): e["code_set"] for e in corpora}
+        assert by_table_column == {
+            ("table_a", "code"): "icd10",
+            ("table_b", "code"): "mcc",
+        }
+
 
 class TestCodeSetPlanYamlProvenance:
     """HC-1 slice 1 item 3: corpus provenance stamped into the Plan YAML via
@@ -306,4 +369,42 @@ class TestCodeSetPlanYamlProvenance:
             ),
         )
         out = _column_seed_to_dict(cs)  # must not raise
+        assert "code_set_provenance" not in out
+
+    def test_column_seed_to_dict_omits_provenance_when_stat_races_removal(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+    ) -> None:
+        """Codex P2 PLAN-SERIALIZATION BEST-EFFORT VIOLATION remediation: a
+        customer corpus removed (or made unreadable) in the gap between
+        `_resolve_read_path`'s `Path.exists()` check and the later
+        `Path.stat()` call raises a bare OSError (FileNotFoundError /
+        PermissionError), not PlanCompileError. `corpus_provenance_for_
+        manifest` must still degrade to "no provenance" instead of breaking
+        `plan_to_yaml` -- only `PlanCompileError` was caught before this fix,
+        so this race escaped straight through `_column_seed_to_dict`.
+
+        Simulated deterministically (a genuine delete-after-check race is not
+        reproducible on demand): `Path.exists` is patched to unconditionally
+        report present while `Path.stat` is patched to unconditionally raise,
+        which reproduces exactly the observable sequence a real race leaves
+        behind -- the existence check passed, the later stat() did not.
+        """
+        from decoy_engine.plan._serialize import _column_seed_to_dict
+
+        raced_path = tmp_path / "removed_between_check_and_stat.parquet"
+        monkeypatch.setattr(pathlib.Path, "exists", lambda self: True)
+
+        def _raise_stat(self: pathlib.Path, *args: object, **kwargs: object) -> None:
+            raise FileNotFoundError(f"simulated race: {self} removed after the exists() check")
+
+        monkeypatch.setattr(pathlib.Path, "stat", _raise_stat)
+
+        cs = _col(
+            "code_set",
+            provider_config=(
+                ("code_set", "raced_corpus"),
+                ("corpus_source", f"customer:{raced_path}"),
+            ),
+        )
+        out = _column_seed_to_dict(cs)  # must not raise OSError
         assert "code_set_provenance" not in out

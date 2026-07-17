@@ -796,6 +796,68 @@ class TestCorpusProvenance:
         assert prov.missing_required_fields() == []
         assert prov.source_version == "2026-01"
 
+    def test_from_parquet_metadata_ignores_non_utf8_unrelated_key_no_marker(self) -> None:
+        """Codex P2 PROVENANCE METADATA DECODE CRASH remediation (unit level):
+        PyArrow schema metadata is byte-valued and may legally carry opaque
+        binary bytes on a key that has nothing to do with provenance. With no
+        `decoy_corpus` marker present at all, `from_parquet_metadata` must
+        return None (no provenance) instead of raising UnicodeDecodeError
+        while blindly decoding every metadata key."""
+        tbl = pa.table(
+            {"code": pa.array(["Q01", "Q02"], type=pa.string())},
+            metadata={b"some_unrelated_binary_key": b"\xff\xfe\x00\x01\x02\xc0\xc1"},
+        )
+        prov = CodeSetProvenance.from_parquet_metadata(tbl)
+        assert prov is None
+
+    def test_from_parquet_metadata_ignores_non_utf8_unrelated_key_with_marker(self) -> None:
+        """Same binary-metadata hazard, but WITH a valid provenance marker
+        present alongside the unrelated binary key: the known provenance
+        fields must still parse correctly and the unrelated binary key must
+        never be touched (it is not one of the known provenance keys)."""
+        tbl = pa.table(
+            {"code": pa.array(["Q01", "Q02"], type=pa.string())},
+            metadata={
+                b"decoy_corpus": b"binary_meta_corpus",
+                b"source": b"Some Source",
+                b"source_version": b"2026-01",
+                b"effective_date": b"2026-01-01",
+                b"license": b"Proprietary",
+                b"some_unrelated_binary_key": b"\xff\xfe\x00\x01\x02\xc0\xc1",
+            },
+        )
+        prov = CodeSetProvenance.from_parquet_metadata(tbl)
+        assert prov is not None
+        assert prov.corpus == "binary_meta_corpus"
+        assert prov.source_version == "2026-01"
+        assert prov.missing_required_fields() == []
+
+    def test_customer_corpus_binary_metadata_no_marker_loads_via_optional_path(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """End-to-end: a customer corpus whose Parquet schema metadata
+        contains a non-UTF-8 binary key/value AND no provenance marker must
+        load and mask successfully via the optional-provenance (warn, no
+        crash) path -- not raise UnicodeDecodeError."""
+        codes = ["V01", "V02"]
+        tbl = pa.table(
+            {"code": pa.array(codes, type=pa.string())},
+            metadata={b"some_binary_key": b"\xff\xfe\x00\x01\x02"},
+        )
+        path = tmp_path / "customer_binary_meta.parquet"
+        pq.write_table(tbl, str(path))
+
+        cfg = CodeSetConfig.from_dict(
+            {"code_set": "binary_meta", "corpus_source": f"customer:{path}"}
+        )
+        out = apply_code_set("V01", cfg, mode="mask", job_seed=_JOB_SEED)
+        assert out in set(codes)
+
+        from decoy_engine.transforms.code_set import load_corpus_provenance
+
+        prov = load_corpus_provenance("binary_meta", path)
+        assert prov is None, "no provenance marker present -> no provenance, not a crash."
+
 
 # ── HC-1 slice 1 item 4: dict-index parity for chapter lookup ────────────────
 

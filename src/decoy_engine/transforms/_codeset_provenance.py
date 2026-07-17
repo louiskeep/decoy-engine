@@ -43,6 +43,24 @@ REQUIRED_PROVENANCE_FIELDS: tuple[str, ...] = (
 #: pre-GA, allowed (see decoy_engine.release.is_pre_ga).
 CORPUS_METADATA_VERSION = "2.0"
 
+#: The known Parquet schema-metadata keys `CodeSetProvenance.from_parquet_metadata`
+#: reads (see `scripts/build_codesets.py::_write`, the writer side). Codex P2
+#: PROVENANCE METADATA DECODE CRASH remediation: PyArrow schema metadata is
+#: byte-valued and may legally carry opaque binary bytes on keys unrelated to
+#: provenance, so `from_parquet_metadata` decodes ONLY these known keys as
+#: UTF-8 instead of every key in the metadata dict.
+_PROVENANCE_METADATA_KEYS: tuple[str, ...] = (
+    "decoy_corpus",
+    "decoy_corpus_version",
+    "source",
+    "source_url",
+    "license",
+    "citation",
+    "source_version",
+    "effective_date",
+    "is_seed",
+)
+
 
 @dataclass(frozen=True)
 class CodeSetProvenance:
@@ -94,15 +112,34 @@ class CodeSetProvenance:
         present, one or more required fields empty) still returns a record;
         callers use :meth:`missing_required_fields` to decide fail-closed
         vs. warn.
+
+        Codex P2 PROVENANCE METADATA DECODE CRASH remediation: only the known
+        provenance keys (`_PROVENANCE_METADATA_KEYS`) are decoded as UTF-8.
+        PyArrow schema metadata is byte-valued and may legally carry opaque
+        binary bytes on keys this corpus never intended as provenance (e.g. a
+        customer's own tooling stamped an unrelated binary key); decoding
+        every key unconditionally raised ``UnicodeDecodeError`` on such an
+        otherwise-valid corpus, crashing instead of following the documented
+        optional-provenance (warn, not fail) path. A key whose bytes fail to
+        decode is treated as absent rather than propagating the decode error,
+        since a corrupted single provenance field should degrade to the same
+        "no provenance" / warn path as a missing field, not crash.
         """
         raw = tbl.schema.metadata
         if not raw:
             return None
         decoded: dict[str, str] = {}
-        for key, value in raw.items():
-            k = key.decode("utf-8") if isinstance(key, bytes) else str(key)
-            v = value.decode("utf-8") if isinstance(value, bytes) else str(value)
-            decoded[k] = v
+        for name in _PROVENANCE_METADATA_KEYS:
+            raw_value = raw.get(name.encode("utf-8"), raw.get(name))
+            if raw_value is None:
+                continue
+            try:
+                value = (
+                    raw_value.decode("utf-8") if isinstance(raw_value, bytes) else str(raw_value)
+                )
+            except UnicodeDecodeError:
+                continue
+            decoded[name] = value
         if "decoy_corpus" not in decoded:
             return None
         return cls(

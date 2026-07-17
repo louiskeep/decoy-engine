@@ -226,6 +226,17 @@ def corpus_provenance_for_manifest(cfg: dict[str, Any]) -> CodeSetProvenance | N
     and ``plan_to_yaml`` must not gain a new way to fail just because this
     annotation could not be resolved. Execution-time corpus loading
     (``apply_code_set``) remains the actual fail-closed gate.
+
+    Codex P2 PLAN-SERIALIZATION BEST-EFFORT VIOLATION remediation: the load
+    path below (``_codeset_loader._get_corpus_record``) does its existence
+    check and its ``Path.stat()`` call as two separate filesystem operations,
+    so a customer corpus removed (or made unreadable) in the gap between them
+    raises a bare ``OSError`` (``FileNotFoundError``/``PermissionError``),
+    not ``PlanCompileError``. Caught here alongside ``PlanCompileError`` so
+    that ordinary, uncontrolled filesystem races at this best-effort boundary
+    omit provenance instead of breaking ``plan_to_yaml``. This widening is
+    scoped to this annotation boundary only -- ``apply_code_set``'s
+    execution-time fail-closed gate is untouched.
     """
     try:
         validate_code_set_config(cfg)
@@ -236,7 +247,7 @@ def corpus_provenance_for_manifest(cfg: dict[str, Any]) -> CodeSetProvenance | N
     override_path = Path(source[len("customer:") :]) if source.startswith("customer:") else None
     try:
         return load_corpus_provenance(name, override_path)
-    except PlanCompileError:
+    except (PlanCompileError, OSError):
         return None
 
 

@@ -163,10 +163,13 @@ def run_fk_out_of_core(
         warnings: list[QualityWarning] = []
         # HIGH-2 remediation (HC-1 slice 1 gap): the code_set corpus-provenance
         # evidence sink, mirroring `StrategyContext.code_set_corpora` on the
-        # pandas/sequential routes. Keyed by column name (not table-qualified),
-        # same shape as the full-frame sink, so a multi-table job's evidence
-        # list matches the pandas oracle's shape byte-for-byte.
-        code_set_corpora: dict[str, dict[str, Any]] = {}
+        # pandas/sequential routes. Keyed by (table, column) -- Codex P2
+        # MULTI-TABLE EVIDENCE COLLISION remediation: two tables can legally
+        # declare a same-named code_set column bound to different corpora, and
+        # a bare-column key let the second table's stamp silently overwrite
+        # the first's. Same shape as the full-frame sink, so a multi-table
+        # job's evidence list matches the pandas oracle's shape byte-for-byte.
+        code_set_corpora: dict[tuple[str, str], dict[str, Any]] = {}
         for table_name in _table_order(plan, relationship_graph, sources):
             if table_name not in sources:
                 continue
@@ -243,7 +246,7 @@ def _stream_table(
     warnings: list[QualityWarning],
     unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
     mask_key: bytes | None = None,
-    code_set_corpora: dict[str, dict[str, Any]] | None = None,
+    code_set_corpora: dict[tuple[str, str], dict[str, Any]] | None = None,
 ) -> None:
     """Rewrite pass for one table: mask + join per batch, then emit.
 
@@ -469,15 +472,23 @@ def _code_set_corpora_for_table(
     column_names: Sequence[str],
     *,
     skip_columns: frozenset[str],
-) -> dict[str, dict[str, Any]]:
+) -> dict[tuple[str, str], dict[str, Any]]:
     """HIGH-2 remediation: code_set corpus-provenance evidence for one table.
 
-    Mirrors `CodeSetHandler.run`'s once-per-column stamp (`describe_loaded_
-    corpus`; counts + identifiers only, no raw codes) so the out-of-core route
-    surfaces the same `code_set_corpora` evidence block the pandas/sequential
-    routes already merge into `ExecutionResult.quality_metrics` -- previously
-    silently absent here, the exact route the large-healthcare (70k ICD) case
-    this slice exists for takes.
+    Mirrors `CodeSetHandler.run`'s once-per-(table, column) stamp
+    (`describe_loaded_corpus`; counts + identifiers only, no raw codes) so the
+    out-of-core route surfaces the same `code_set_corpora` evidence block the
+    pandas/sequential routes already merge into `ExecutionResult.quality_metrics`
+    -- previously silently absent here, the exact route the large-healthcare
+    (70k ICD) case this slice exists for takes.
+
+    Keyed by (table_name, column) -- Codex P2 MULTI-TABLE EVIDENCE COLLISION
+    remediation: two tables can legally declare a same-named code_set column
+    bound to different corpora (e.g. both have a "code" column, one icd10 one
+    mcc), and a bare-column key let the second table's stamp silently
+    overwrite the first's, dropping audit provenance. Each emitted evidence
+    dict also carries its own `table`/`column` identity, since the flattened
+    metrics list (`list(code_set_corpora.values())`) discards the sink's keys.
 
     Restricted to columns actually present in this table's batch schema and
     not consumed as an FK child (`skip_columns`), so a plan-declared code_set
@@ -500,14 +511,15 @@ def _code_set_corpora_for_table(
     if seed is None:
         return {}
     names = frozenset(column_names)
-    corpora: dict[str, dict[str, Any]] = {}
+    corpora: dict[tuple[str, str], dict[str, Any]] = {}
     for column, column_seed in seed.per_column:
         if column_seed.strategy != "code_set":
             continue
         if column not in names or column in skip_columns:
             continue
         cfg = provider_config_to_dict(column_seed.provider_config)
-        corpora[column] = describe_loaded_corpus(CodeSetConfig.from_dict(cfg))
+        evidence = describe_loaded_corpus(CodeSetConfig.from_dict(cfg))
+        corpora[(table_name, column)] = {**evidence, "table": table_name, "column": column}
     return corpora
 
 

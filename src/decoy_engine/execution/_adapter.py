@@ -114,13 +114,30 @@ class StrategyContext:
     # point's identity-based reference to this list).
     row_errors: list[RowError] = field(default_factory=list)
     # HC-1 slice 1: the shared code_set corpus-provenance evidence sink,
-    # keyed by column name (dedupes if a column's handler runs more than
-    # once, e.g. under a when_gate). `CodeSetHandler.run` populates one
-    # entry per code_set column (counts + identifiers only, no raw codes);
-    # `PandasExecutionAdapter.run` / `run_sequential` copy it into
+    # keyed by (table, column) (dedupes if a column's handler runs more than
+    # once, e.g. under a when_gate). Table-qualified because two tables can
+    # legally declare a same-named code_set column bound to DIFFERENT corpora
+    # (e.g. both tables have a "code" column, one icd10 one mcc); a bare-column
+    # key would let the second table's stamp silently overwrite the first's,
+    # dropping audit provenance for whichever table lost the race (Codex P2
+    # MULTI-TABLE EVIDENCE COLLISION). `CodeSetHandler.run` populates one entry
+    # per (table, column) (counts + identifiers only, no raw codes), including
+    # the `table`/`column` identity in the evidence dict itself since the
+    # flattened metrics list below discards the key; `PandasExecutionAdapter.run`
+    # / `run_sequential` copy it into
     # `ExecutionResult.quality_metrics['code_set_corpora']` at the end of the
     # job. Same mutate-in-place pattern as `row_errors` above.
-    code_set_corpora: dict[str, dict[str, Any]] = field(default_factory=dict)
+    code_set_corpora: dict[tuple[str, str], dict[str, Any]] = field(default_factory=dict)
+    # Codex P2 MULTI-TABLE EVIDENCE COLLISION remediation: the table the
+    # in-flight scalar handler dispatch belongs to. Mutated via
+    # `object.__setattr__` (frozen dataclass, same escape hatch as `mask_key`'s
+    # `__post_init__` normalization below) by the nearest enclosing point that
+    # iterates tables and owns `code_set_corpora`
+    # (`_pandas_adapter._dispatch_mask_node`, and the orphan-REMAP closure for
+    # the narrower parent-key-strategy case), immediately before invoking a
+    # handler, so `CodeSetHandler.run` can key its evidence sink by
+    # (table, column) instead of a bare column name.
+    current_table: str = ""
 
     def __post_init__(self) -> None:
         # A frozen dataclass forbids attribute assignment; object.__setattr__ is
