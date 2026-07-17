@@ -70,7 +70,13 @@ ALLOWLIST: dict[str, int] = {
     # the new `categorical_retention_warn_threshold` advisory key. Small,
     # localized addition to an already-oversized module; the decomposition
     # target above still stands for the next touch.
-    "src/decoy_engine/plan/_compile.py": 628,
+    # HC-7 (2026-07-17): +30 LOC (628 -> 658) for the clinical free-text
+    # advisory wiring: the import + Row 29 call site + its checks_passed
+    # entry (x2 for the no_profile/full branches) + the warnings-fold line +
+    # two new keys in `_NON_SEMANTIC_GLOBAL_SETTINGS`. Same per-strategy
+    # check-module pattern as every prior addition here; same decomposition
+    # target stands.
+    "src/decoy_engine/plan/_compile.py": 658,
     # TB-5 precondition #73 (2026-07-13): the pure peak estimator was at the
     # cap (596 LOC) when it gained `route_intercept_bytes` -- the small public
     # accessor (idiomatic here, like `is_fixed_width_dtype`) that makes the

@@ -60,7 +60,15 @@ def _data_shape_bytes(profile: Profile) -> bytes:
         # from the hash: two profiles over identical source data must still
         # hash equal, and the pinned hash stays stable. It IS carried in the
         # full serialization below so a round-tripped profile keeps the flag.
-        "tables": [_table_to_dict(t, include_row_count_exact=False) for t in profile.tables],
+        # HC-7: `avg_length` / `max_length` are excluded from the hash the
+        # same way -- they feed only the warn-only free-text advisory, never
+        # masking semantics, and excluding them keeps the pinned
+        # test_hash_regression.py digest stable for every profile taken
+        # before this field existed. Also carried in the full serialization.
+        "tables": [
+            _table_to_dict(t, include_row_count_exact=False, include_length_stats=False)
+            for t in profile.tables
+        ],
         "relationships": [_relationship_to_dict(r) for r in profile.relationships],
     }
     return json.dumps(
@@ -82,23 +90,30 @@ def _profile_to_dict(profile: Profile) -> dict[str, Any]:
     }
 
 
-def _table_to_dict(table: TableProfile, *, include_row_count_exact: bool = True) -> dict[str, Any]:
+def _table_to_dict(
+    table: TableProfile,
+    *,
+    include_row_count_exact: bool = True,
+    include_length_stats: bool = True,
+) -> dict[str, Any]:
     out: dict[str, Any] = {
         "name": table.name,
         "row_count": table.row_count,
-        "columns": [_column_to_dict(c) for c in table.columns],
+        "columns": [
+            _column_to_dict(c, include_length_stats=include_length_stats) for c in table.columns
+        ],
     }
     if include_row_count_exact:
         out["row_count_exact"] = table.row_count_exact
     return out
 
 
-def _column_to_dict(column: ColumnProfile) -> dict[str, Any]:
+def _column_to_dict(column: ColumnProfile, *, include_length_stats: bool = True) -> dict[str, Any]:
     # Hand-listed (L3 from slice-1 review) rather than dataclasses.asdict +
     # spot fixes. New ColumnProfile fields should not silently change the
     # wire shape; adding a field here is the deliberate part of a schema
     # change.
-    return {
+    out: dict[str, Any] = {
         "name": column.name,
         "dtype": column.dtype,
         "row_count": column.row_count,
@@ -111,6 +126,13 @@ def _column_to_dict(column: ColumnProfile) -> dict[str, Any]:
         "fk_target": list(column.fk_target) if column.fk_target is not None else None,
         "pii_class": column.pii_class.value if column.pii_class is not None else None,
     }
+    # HC-7: kept out of the hash-bytes call (see _data_shape_bytes) but
+    # present in the full round-trip so a serialized-then-deserialized
+    # profile still carries the advisory's input stats.
+    if include_length_stats:
+        out["avg_length"] = column.avg_length
+        out["max_length"] = column.max_length
+    return out
 
 
 def _relationship_to_dict(rel: Relationship) -> dict[str, Any]:
@@ -161,6 +183,11 @@ def _column_from_dict(data: dict[str, Any]) -> ColumnProfile:
         is_fk=data["is_fk"],
         fk_target=fk_target,
         pii_class=pii_class,
+        # HC-7: absent in JSON written before this field existed; .get()
+        # defaults to None, same degrade-gracefully posture as the rest of
+        # this reader.
+        avg_length=data.get("avg_length"),
+        max_length=data.get("max_length"),
     )
 
 

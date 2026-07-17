@@ -85,6 +85,12 @@ from decoy_engine.plan._checks_fpe import check_fpe_charset_config
 # SP-10c + SP-46: per-strategy check modules (grouped_series, windowed_date,
 # group_key) and the fpe_join_group structural validation (SP-46).
 from decoy_engine.plan._checks_fpe_join import check_fpe_join_groups
+
+# HC-7 (2026-07-17): clinical free-text advisory, warn-only. Own module for
+# the same _checks.py / _compile.py size-ceiling reason as the sibling
+# per-strategy check modules; unlike them it never raises (see
+# quality/_freetext_advisory.py for the full warn-only rationale).
+from decoy_engine.plan._checks_freetext_advisory import check_freetext_advisory
 from decoy_engine.plan._checks_group_key import check_group_key_refs
 from decoy_engine.plan._checks_grouped_series import check_grouped_series_refs
 
@@ -242,6 +248,13 @@ def compile_plan(
     # no provider (the seed-envelope builder drops them, leaking the raw value).
     # Config-only; both branches + run_config_only_checks.
     check_faker_requires_provider(config)
+    # Row 29 (HC-7, 2026-07-17): clinical free-text advisory. WARN-ONLY --
+    # unlike every check above, this never raises; it returns warning
+    # strings folded into PlanCompileResult.warnings below (same shape as
+    # fpe_join_warnings). Needs `profile` for avg_length/distinct_count, so
+    # it cannot live in run_config_only_checks (config-only by contract);
+    # it degrades to name-hint-only when a column has no profile entry.
+    freetext_advisory_warnings = check_freetext_advisory(config, profile)
     check_composite_columns_length_match(profile)
     # MG-3 / M3 (2026-05-31): reject when + coherent_with combo early,
     # before composite-wiring checks. A column carrying both fields is
@@ -320,6 +333,8 @@ def compile_plan(
             "fpe_charset_config",
             # Row 26 (DE-03 sibling): faker-without-provider rejection.
             "faker_requires_provider",
+            # Row 29 (HC-7): clinical free-text advisory (warn-only).
+            "freetext_advisory",
         )
         checks_skipped: tuple[str, ...] = (
             "basic_uniqueness_pre_flight",
@@ -386,6 +401,8 @@ def compile_plan(
             "fpe_charset_config",
             # Row 26 (DE-03 sibling): faker-without-provider rejection.
             "faker_requires_provider",
+            # Row 29 (HC-7): clinical free-text advisory (warn-only).
+            "freetext_advisory",
         )
         checks_skipped = ()
 
@@ -415,7 +432,10 @@ def compile_plan(
         plan_compile=PlanCompileResult(
             checks_passed=checks_passed,
             checks_skipped=checks_skipped,
-            warnings=stamp_warnings + capacity_warnings + fpe_join_warnings,
+            warnings=stamp_warnings
+            + capacity_warnings
+            + fpe_join_warnings
+            + freetext_advisory_warnings,
         ),
     )
 
@@ -583,7 +603,17 @@ def _check_when_with_coherent_with(config: dict[str, Any]) -> None:
 # before this fix, and removing it now would change `pipeline_config_hash`
 # for every existing config that sets it. Grandfathered for byte-compat;
 # only new advisory keys get added here going forward.
-_NON_SEMANTIC_GLOBAL_SETTINGS = frozenset({"categorical_retention_warn_threshold"})
+# HC-7 (2026-07-17): `freetext_advisory_min_avg_length` /
+# `freetext_advisory_min_distinctness` are new keys (no existing config sets
+# them), so they are excluded from day one -- same reasoning as
+# categorical_retention_warn_threshold, no grandfathering needed.
+_NON_SEMANTIC_GLOBAL_SETTINGS = frozenset(
+    {
+        "categorical_retention_warn_threshold",
+        "freetext_advisory_min_avg_length",
+        "freetext_advisory_min_distinctness",
+    }
+)
 
 
 def _hash_config(config: dict[str, Any]) -> str:
