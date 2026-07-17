@@ -18,24 +18,27 @@ decides.
 The heuristic (all branches gated on the column being a passthrough
 string column with at least one non-null value -- see
 `plan/_checks_freetext_advisory.py` for how the per-column view is
-assembled). MEASURED EVIDENCE WINS: when length and distinctness are
-available they are the sole criterion, and the name hint never overrides
-them.
+assembled). MEASURED EVIDENCE WINS: whatever length/distinctness is
+available constrains the decision, and the name hint never overrides it.
 
-1. Length + distinctness (primary, whenever `avg_length` /
-   `distinct_count` / a positive non-null count are known): warn iff
-   `avg_length >= min_avg_length` AND `distinctness >= min_distinctness`.
-   LENGTH is the load-bearing discriminator -- a high-cardinality ICD-10
-   *code* column (HC-5) also has high distinctness but SHORT values
-   (avg ~6 chars); only average length separates long prose (avg ~200)
-   from short high-cardinality codes. Because evidence decides here, a
-   column merely NAMED like free text but holding short codes does NOT
-   warn -- that is exactly the HC-5 code-column false-positive the length
-   gate prevents.
-2. Name-hint (fallback, ONLY when length/distinctness are genuinely
-   unmeasurable -- a stale profile predating this feature, `--no-profile`,
-   or an unconfirmable dtype): `matches_freetext_name` alone warns, a
-   best-effort signal for the case where we cannot measure the column.
+0. Length is a HARD gate, applied the moment `avg_length` is measurable and
+   INDEPENDENT of `distinct_count`: a KNOWN-short column (`avg_length <
+   min_avg_length`) is code-shaped and never warns -- whatever its name, and
+   even if distinctness is missing. LENGTH is the load-bearing discriminator:
+   a high-cardinality ICD-10 *code* column (HC-5) also has high distinctness
+   but SHORT values (avg ~6 chars); only average length separates long prose
+   (avg ~200) from short high-cardinality codes. This is the HC-5 code-column
+   false-positive protection, and applying it before the name fallback also
+   closes the partial-stats hole (length known, distinct_count not).
+1. Length + distinctness (when length has cleared gate 0 AND distinct_count /
+   a positive non-null count are known): warn iff `distinctness >=
+   min_distinctness`. A low-distinctness long column (repetitive/templated)
+   does not warn, and the name never rescues it.
+2. Name-hint (fallback, ONLY when distinctness is unmeasurable and length is
+   either long-enough or unknown -- a stale profile, `--no-profile`, or an
+   unconfirmable dtype): `matches_freetext_name` alone warns, a best-effort
+   signal for the case where we cannot fully measure the column. A
+   known-short column never reaches here (gate 0 suppressed it).
 
 An all-null / empty column carries no PHI and never warns, even when its
 name matches. A column already routed to a real masking strategy (anything
@@ -162,13 +165,20 @@ def score_unmasked_freetext(
         if col.non_null_count is not None and col.non_null_count <= 0:
             continue
 
-        # Measured evidence decides; the name hint does NOT override it. A
-        # column NAMED `clinical_notes`/`diagnosis_text` that actually holds
-        # short codes (avg length well under the threshold) is not free text --
-        # letting the name warn anyway would re-introduce the exact
-        # false-positive on HC-5 high-cardinality code columns that the length
-        # gate exists to prevent. When length/distinctness are measurable, they
-        # are the sole criterion and we never fall through to the name branch.
+        # LENGTH IS A HARD GATE, applied the moment it is measurable and
+        # INDEPENDENT of distinct_count. A KNOWN-short column is code-shaped
+        # and is never free text, whatever its name or (missing) distinctness:
+        # a column NAMED `clinical_notes`/`diagnosis_text` that actually holds
+        # short codes must not warn, or the HC-5 high-cardinality code-column
+        # false positive re-opens. Suppressing here -- before the name
+        # fallback -- also closes the partial-stats hole where avg_length is
+        # known but distinct_count is not.
+        if col.avg_length is not None and col.avg_length < min_avg_length:
+            continue
+
+        # Length passed OR is unmeasurable. When full stats exist (length
+        # already cleared above), distinctness is the deciding factor and the
+        # name never rescues a low-distinctness column.
         if (
             col.avg_length is not None
             and col.distinct_count is not None
@@ -176,7 +186,7 @@ def score_unmasked_freetext(
             and col.non_null_count > 0
         ):
             distinctness = col.distinct_count / col.non_null_count
-            if col.avg_length >= min_avg_length and distinctness >= min_distinctness:
+            if distinctness >= min_distinctness:
                 warnings.append(
                     f"freetext_advisory_length_distinctness: column={col.name!r} "
                     f"avg_length={col.avg_length} min_avg_length={min_avg_length} "
@@ -186,10 +196,11 @@ def score_unmasked_freetext(
                 )
             continue
 
-        # Stats genuinely unavailable (missing/stale profile, or a non-string
-        # dtype we could not confirm): fall back to the name hint alone. This
-        # is best-effort -- we cannot measure length here -- and is the only
-        # path on which a name match, by itself, produces a warning.
+        # Distinctness is unmeasurable (no distinct_count / non-null count),
+        # and length is either long-enough or unknown -- never known-short (that
+        # was suppressed above). Fall back to the name hint alone: best-effort
+        # for a stale/absent profile, and the only path on which a name match,
+        # by itself, produces a warning.
         if matches_freetext_name(col.name):
             warnings.append(
                 f"freetext_advisory_name_hint: column={col.name!r} "

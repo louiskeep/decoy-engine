@@ -153,6 +153,25 @@ class TestEvidenceWinsOverName:
         assert len(warnings) == 1
         assert "clinical_notes" in warnings[0]
 
+    def test_hinted_short_length_with_missing_distinctness_does_not_warn(self) -> None:
+        # Partial stats: avg_length is known and short (6.2) but distinct_count
+        # is absent. Length is a hard gate applied independently of
+        # distinctness, so a hinted short-code column still must not warn --
+        # the partial-stats hole the two-model gate flagged on re-review.
+        warnings = _score(
+            [_view("diagnosis_text", avg_length=6.2, distinct_count=None, non_null_count=1000)]
+        )
+        assert warnings == []
+
+    def test_hinted_long_length_with_missing_distinctness_warns_via_name(self) -> None:
+        # Length clears the hard gate but distinctness is unmeasurable; the
+        # name hint is then the best available signal, so a long hinted column
+        # still warns (via the fallback branch).
+        warnings = _score(
+            [_view("clinical_notes", avg_length=200.0, distinct_count=None, non_null_count=1000)]
+        )
+        assert len(warnings) == 1
+
     def test_all_null_hinted_column_does_not_warn(self) -> None:
         # An all-null column has no PHI to leak; it must not warn even though
         # its name matches and its length is unmeasurable (avg_length None,
