@@ -15,27 +15,33 @@ PII type per field). This gate is the visibility signal, nothing more:
 it names the column and recommends `strategy: text_mask`; the operator
 decides.
 
-The heuristic (both branches gated on the column being a passthrough
-string column -- see `plan/_checks_freetext_advisory.py` for how the
-per-column view is assembled):
+The heuristic (all branches gated on the column being a passthrough
+string column with at least one non-null value -- see
+`plan/_checks_freetext_advisory.py` for how the per-column view is
+assembled). MEASURED EVIDENCE WINS: when length and distinctness are
+available they are the sole criterion, and the name hint never overrides
+them.
 
-1. Name-hint (primary, always-available): `matches_freetext_name` fires
-   regardless of length/distinctness data being available, so a column
-   with no profile stats (e.g. a stale profile predating this feature,
-   or `--no-profile`) still gets caught by name alone.
-2. Length + distinctness (fallback, for oddly-named columns): fires only
-   when both `avg_length` and `distinct_count` are known. LENGTH is the
-   load-bearing discriminator, not optional -- a high-cardinality ICD-10
+1. Length + distinctness (primary, whenever `avg_length` /
+   `distinct_count` / a positive non-null count are known): warn iff
+   `avg_length >= min_avg_length` AND `distinctness >= min_distinctness`.
+   LENGTH is the load-bearing discriminator -- a high-cardinality ICD-10
    *code* column (HC-5) also has high distinctness but SHORT values
    (avg ~6 chars); only average length separates long prose (avg ~200)
-   from short high-cardinality codes. A distinctness-only heuristic would
-   false-positive on exactly the code columns HC-5 protects.
+   from short high-cardinality codes. Because evidence decides here, a
+   column merely NAMED like free text but holding short codes does NOT
+   warn -- that is exactly the HC-5 code-column false-positive the length
+   gate prevents.
+2. Name-hint (fallback, ONLY when length/distinctness are genuinely
+   unmeasurable -- a stale profile predating this feature, `--no-profile`,
+   or an unconfirmable dtype): `matches_freetext_name` alone warns, a
+   best-effort signal for the case where we cannot measure the column.
 
-A column already routed to a real masking strategy (anything other than
-`passthrough`) is never considered here -- the operator already handled
-it; `score_unmasked_freetext` enforces this directly (`strategy !=
-"passthrough"` is the first gate in its loop), so it holds even if a
-caller passes an unfiltered column list.
+An all-null / empty column carries no PHI and never warns, even when its
+name matches. A column already routed to a real masking strategy (anything
+other than `passthrough`) is never considered -- the operator already
+handled it; `score_unmasked_freetext` enforces both directly, so they hold
+even if a caller passes an unfiltered column list.
 """
 
 from __future__ import annotations
@@ -148,16 +154,21 @@ def score_unmasked_freetext(
             continue
         if col.dtype_known_non_string:
             continue
-
-        if matches_freetext_name(col.name):
-            warnings.append(
-                f"freetext_advisory_name_hint: column={col.name!r} "
-                f"avg_length={col.avg_length} distinct_count={col.distinct_count} "
-                "(column name matches known clinical/claims free-text "
-                "vocabulary; unmasked -- consider strategy: text_mask)"
-            )
+        # An all-null / empty column carries no PHI to leak, so it never
+        # warns -- even when its name matches the free-text vocabulary and
+        # even though its length is unmeasurable (avg_length is None). This
+        # gate precedes the name-only fallback so a hinted all-null column
+        # cannot slip through it.
+        if col.non_null_count is not None and col.non_null_count <= 0:
             continue
 
+        # Measured evidence decides; the name hint does NOT override it. A
+        # column NAMED `clinical_notes`/`diagnosis_text` that actually holds
+        # short codes (avg length well under the threshold) is not free text --
+        # letting the name warn anyway would re-introduce the exact
+        # false-positive on HC-5 high-cardinality code columns that the length
+        # gate exists to prevent. When length/distinctness are measurable, they
+        # are the sole criterion and we never fall through to the name branch.
         if (
             col.avg_length is not None
             and col.distinct_count is not None
@@ -173,6 +184,20 @@ def score_unmasked_freetext(
                     f"min_distinctness={min_distinctness} "
                     "(long, highly-distinct unmasked text; consider strategy: text_mask)"
                 )
+            continue
+
+        # Stats genuinely unavailable (missing/stale profile, or a non-string
+        # dtype we could not confirm): fall back to the name hint alone. This
+        # is best-effort -- we cannot measure length here -- and is the only
+        # path on which a name match, by itself, produces a warning.
+        if matches_freetext_name(col.name):
+            warnings.append(
+                f"freetext_advisory_name_hint: column={col.name!r} "
+                f"avg_length={col.avg_length} distinct_count={col.distinct_count} "
+                "(column name matches known clinical/claims free-text "
+                "vocabulary; length unmeasured; unmasked -- consider "
+                "strategy: text_mask)"
+            )
     return warnings
 
 
@@ -181,10 +206,20 @@ def warn_on_unmasked_freetext(
     *,
     min_avg_length: float,
     min_distinctness: float,
-) -> None:
-    """Run the gate and log each warning. Advisory only: never raises,
-    never mutates the plan/config, never changes output bytes."""
-    for message in score_unmasked_freetext(
+) -> list[str]:
+    """Score the columns, log each advisory once, and return the messages.
+
+    Returning the scored messages (rather than `None` like the sibling gates'
+    wrappers) lets the single compile call-site surface each advisory through
+    BOTH channels without re-scoring: the log line here is the operator-visible
+    nudge at compile time, and the returned list is folded into
+    `PlanCompileResult.warnings` for programmatic/serialized consumers. Advisory
+    only: never raises, never mutates the plan/config, never changes output
+    bytes.
+    """
+    messages = score_unmasked_freetext(
         columns, min_avg_length=min_avg_length, min_distinctness=min_distinctness
-    ):
+    )
+    for message in messages:
         _log.warning(message)
+    return messages

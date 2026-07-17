@@ -12,8 +12,11 @@ fixtures from `conftest.py`, confirming the advisory compiles successfully
 from __future__ import annotations
 
 import copy
+import logging
 from datetime import datetime
 from typing import Any
+
+import pytest
 
 from decoy_engine.plan._checks_freetext_advisory import check_freetext_advisory
 from decoy_engine.plan._compile import compile_plan
@@ -145,6 +148,24 @@ class TestCheckFreetextAdvisoryColumnSelection:
         # though the column name is identical.
         assert len(warnings) == 1
 
+    def test_advisory_is_logged_exactly_once(self, caplog: pytest.LogCaptureFixture) -> None:
+        # The advisory must be operator-VISIBLE, not merely folded into the
+        # structured PlanCompileResult.warnings: check_freetext_advisory logs
+        # each message once (via warn_on_unmasked_freetext) AND returns it.
+        profile = _profile(
+            TableProfile(
+                name="t",
+                row_count=1000,
+                columns=(_col("clinical_notes", avg_length=210.0, distinct_count=980),),
+            )
+        )
+        config = _config([{"name": "clinical_notes", "strategy": "passthrough"}])
+        with caplog.at_level(logging.WARNING, logger="decoy_engine.quality._freetext_advisory"):
+            warnings = check_freetext_advisory(config, profile)
+        assert len(warnings) == 1
+        logged = [r for r in caplog.records if "clinical_notes" in r.message]
+        assert len(logged) == 1
+
     def test_does_not_mutate_config_or_profile(self) -> None:
         profile = _profile(
             TableProfile(
@@ -182,7 +203,11 @@ class TestCompileIntegration:
         # real strategy (explicit passthrough), which must compile
         # successfully (warn, not error) and surface the advisory.
         customers = simple_profile.tables[0]
-        extra_col = _col("clinical_notes", avg_length=220.0, distinct_count=9)
+        # Realistic free-text stats: long and nearly all-distinct (real
+        # clinical notes rarely repeat). Under the evidence-wins contract the
+        # name alone no longer warns -- the measured length+distinctness must
+        # also clear the thresholds, which genuine prose does.
+        extra_col = _col("clinical_notes", avg_length=220.0, distinct_count=990)
         new_customers = TableProfile(
             name=customers.name,
             row_count=customers.row_count,

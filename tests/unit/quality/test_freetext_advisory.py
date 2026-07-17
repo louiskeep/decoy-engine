@@ -129,6 +129,40 @@ class TestIcd10RegressionGuard:
         )
 
 
+class TestEvidenceWinsOverName:
+    """Measured length/distinctness override the name hint: a column NAMED
+    like free-text but holding short codes must NOT warn (the HIGH the
+    two-model gate caught), and an all-null hinted column carries no PHI."""
+
+    def test_hinted_name_with_short_length_does_not_warn(self) -> None:
+        # `diagnosis_text` IS a free-text name token, but the measured avg
+        # length (6.2) is code-shaped -- evidence wins, so no warning. Before
+        # the fix the name branch fired here and bypassed the length gate,
+        # re-opening the HC-5 code-column false positive.
+        warnings = _score(
+            [_view("diagnosis_text", avg_length=6.2, distinct_count=950, non_null_count=1000)]
+        )
+        assert warnings == []
+
+    def test_hinted_name_with_good_length_still_warns(self) -> None:
+        # Positive control: a genuinely long hinted column warns via the
+        # length+distinctness branch (the name is redundant confirmation).
+        warnings = _score(
+            [_view("clinical_notes", avg_length=200.0, distinct_count=900, non_null_count=1000)]
+        )
+        assert len(warnings) == 1
+        assert "clinical_notes" in warnings[0]
+
+    def test_all_null_hinted_column_does_not_warn(self) -> None:
+        # An all-null column has no PHI to leak; it must not warn even though
+        # its name matches and its length is unmeasurable (avg_length None,
+        # non_null_count 0). The all-null gate precedes the name fallback.
+        warnings = _score(
+            [_view("clinical_notes", avg_length=None, distinct_count=0, non_null_count=0)]
+        )
+        assert warnings == []
+
+
 class TestAlreadyMaskedNeverWarns:
     """(d) a clinical_notes column already routed to text_mask does NOT
     warn."""

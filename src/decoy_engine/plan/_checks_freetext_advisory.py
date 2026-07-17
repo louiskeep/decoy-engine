@@ -33,7 +33,7 @@ from decoy_engine.quality._freetext_advisory import (
     freetext_advisory_min_avg_length,
     freetext_advisory_min_distinctness,
     is_string_dtype_label,
-    score_unmasked_freetext,
+    warn_on_unmasked_freetext,
 )
 
 
@@ -89,8 +89,12 @@ def check_freetext_advisory(config: dict[str, Any], profile: Profile) -> tuple[s
                 )
             )
 
+    # warn_on_unmasked_freetext both LOGS each advisory (the operator-visible
+    # compile-time nudge) and returns the messages, which we fold into
+    # PlanCompileResult.warnings for programmatic/serialized consumers -- the
+    # same structured channel check_fpe_join_groups uses. One scoring pass.
     return tuple(
-        score_unmasked_freetext(
+        warn_on_unmasked_freetext(
             views, min_avg_length=min_avg_length, min_distinctness=min_distinctness
         )
     )
