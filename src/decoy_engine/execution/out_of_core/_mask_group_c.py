@@ -81,6 +81,7 @@ if TYPE_CHECKING:
     import pandas as pd
 
     from decoy_engine.plan._types import ColumnSeed
+    from decoy_engine.transforms._codeset_loader import _CorpusRecord
 
 # Strategies with a per-value out-of-core kernel below. Admission is gated in
 # `_compat.py`; code_set and bucket_perturb are admitted only for the config
@@ -95,12 +96,24 @@ def group_c_array(
     *,
     column: str | None,
     cfg: dict[str, Any],
+    corpus_record: _CorpusRecord | None = None,
 ) -> pa.Array:
-    """Dispatch one admitted Group (c) strategy to its per-value kernel."""
+    """Dispatch one admitted Group (c) strategy to its per-value kernel.
+
+    `corpus_record` (Codex round-6 P2 MASKING/EVIDENCE VERSION DIVERGENCE
+    remediation) is forwarded only to the `code_set` kernel -- see
+    `_code_set_array`'s docstring. The other Group (c) kernels ignore it.
+    """
     if seed.strategy == "text_mask":
         return _text_mask_array(values, job_seed=job_seed, cfg=cfg)
     if seed.strategy == "code_set":
-        return _code_set_array(values, job_seed=job_seed, namespace=seed.namespace, cfg=cfg)
+        return _code_set_array(
+            values,
+            job_seed=job_seed,
+            namespace=seed.namespace,
+            cfg=cfg,
+            corpus_record=corpus_record,
+        )
     if seed.strategy == "bucket_perturb":
         return _bucket_perturb_array(values, job_seed=job_seed, namespace=seed.namespace, cfg=cfg)
     raise ExecutionError(
@@ -168,6 +181,7 @@ def _code_set_array(
     job_seed: bytes,
     namespace: str | None,
     cfg: dict[str, Any],
+    corpus_record: _CorpusRecord | None = None,
 ) -> pa.Array:
     """Corpus-remap each non-null value, byte-identical to the oracle handler.
 
@@ -180,6 +194,18 @@ def _code_set_array(
     per-value quarantine codes (`_PER_VALUE_CODE_SET_ERRORS`) are unreachable
     without chapter_preserve, so failing closed (raising) rather than keeping the
     raw value can never leak.
+
+    `corpus_record` (Codex round-6 P2 MASKING/EVIDENCE VERSION DIVERGENCE
+    remediation): the out-of-core runner streams a table batch-at-a-time, so
+    without a pinned record every batch (and every value within a batch)
+    would independently re-resolve the corpus from the cache -- a customer
+    corpus file replaced mid-stream could then mask different batches off
+    different versions, and disagree with the evidence stamped once per table
+    before the first batch. `_runner.py` resolves the record ONCE per table
+    (before streaming starts) and threads it down through every batch's
+    `mask_batch` call so the whole table stream -- and the evidence -- share
+    one version. `None` falls back to a fresh per-value resolve, preserving
+    every existing (non-runner) caller.
     """
     mode = str(cfg.get("mode", "mask"))
     if mode != "mask" or cfg.get("chapter_preserve"):
@@ -197,7 +223,12 @@ def _code_set_array(
         try:
             out.append(
                 apply_code_set(
-                    str(value), code_cfg, mode=mode, job_seed=job_seed, namespace=namespace
+                    str(value),
+                    code_cfg,
+                    mode=mode,
+                    job_seed=job_seed,
+                    namespace=namespace,
+                    corpus_record=corpus_record,
                 )
             )
         except PlanCompileError as exc:

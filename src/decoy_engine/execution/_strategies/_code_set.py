@@ -46,6 +46,19 @@ whenever its gate happened to match nothing. ``CodeSetHandler.preflight``
 zero-match short-circuit) re-runs the same load/validate call so the
 corpus is validated regardless of match count, while evidence stamping
 (NIT-1: only on ``masked_any``) stays exclusively ``run``'s job.
+
+Codex round-6 P2 MASKING/EVIDENCE VERSION DIVERGENCE remediation
+(2026-07-17): pre-fix, ``run`` stamped evidence via one ``describe_loaded_
+corpus`` call while each per-value ``apply_code_set`` call independently
+re-resolved the corpus from the cache. The customer cache invalidates on
+(path, mtime_ns, ctime_ns, size), so a customer corpus file REPLACED mid-run
+could make later values mask off a DIFFERENT corpus version than the one
+evidence already reported -- outputs and evidence silently disagreeing.
+Root-cause fix: ``run`` now resolves ONE ``_CorpusRecord`` via
+``resolve_corpus_record`` before the per-value loop and threads that SAME
+pinned record into both ``describe_loaded_corpus`` and every
+``apply_code_set`` call, so masking and evidence structurally cannot
+diverge -- there is only ever one record in play for the whole column.
 """
 
 from __future__ import annotations
@@ -58,7 +71,12 @@ from decoy_engine.execution._row_errors import RowError
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._types import ColumnSeed
-from decoy_engine.transforms.code_set import CodeSetConfig, apply_code_set, describe_loaded_corpus
+from decoy_engine.transforms.code_set import (
+    CodeSetConfig,
+    apply_code_set,
+    describe_loaded_corpus,
+    resolve_corpus_record,
+)
 
 # PlanCompileError codes that are PER-VALUE defects (this specific input
 # code cannot be masked under chapter_preserve), not corpus/config-level
@@ -139,7 +157,16 @@ class CodeSetHandler:
         # column that validates cleanly but never dispatches (all-null, or
         # when-gated to zero live rows in this subset) does not falsely
         # report its corpus as "used."
-        evidence = describe_loaded_corpus(code_cfg)
+        #
+        # Codex round-6 P2 MASKING/EVIDENCE VERSION DIVERGENCE remediation:
+        # resolve the corpus record ONCE here and thread the SAME object into
+        # `describe_loaded_corpus` and every `apply_code_set` call below,
+        # instead of each independently re-resolving from the cache. A
+        # customer corpus file replaced mid-run can then no longer make a
+        # later value mask off a different version than the one evidence
+        # already reported -- see this module's docstring.
+        corpus_record = resolve_corpus_record(code_cfg)
+        evidence = describe_loaded_corpus(code_cfg, record=corpus_record)
 
         source = df[column]
         na_mask = source.isna().to_numpy()
@@ -157,6 +184,7 @@ class CodeSetHandler:
                     job_seed=ctx.mask_key,
                     row_index=i,
                     namespace=plan.namespace,
+                    corpus_record=corpus_record,
                 )
             except PlanCompileError as exc:
                 if exc.code not in _PER_VALUE_CODE_SET_ERRORS:

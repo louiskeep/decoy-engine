@@ -242,11 +242,27 @@ def run_with_when_gate_polars(
     Byte-identical to the pandas adapter's gated dispatch by
     construction: same eval substrate, same `mask.any()` short-circuit,
     same subset semantics.
+
+    Codex round-6 P2 FAIL-CLOSED PARITY remediation: this polars gate used
+    to short-circuit a zero-match `when:` WITHOUT calling the handler's
+    optional `preflight` hook, unlike `run_with_when_gate` (the pandas
+    variant), which calls it unconditionally before its own short-circuit
+    (see that function's docstring). A native polars `nested(code_set)`
+    column with a zero-match `when:` and a missing/invalid corpus therefore
+    succeeded silently on the polars route while the pandas route correctly
+    failed closed -- a cross-substrate fail-closed inconsistency. Fixed by
+    calling `preflight` here too, mirroring the pandas gate exactly. Reaches
+    a `PandasStrategyPort`-wrapped handler's `preflight` via the port's own
+    forwarding `preflight` method (see `_pandas_port.PandasStrategyPort`).
     """
     import polars as pl  # local import keeps the module pandas-only by default
 
     if plan.when is None:
         return handler.run(frame, column, plan, ctx)
+
+    preflight = getattr(handler, "preflight", None)
+    if preflight is not None:
+        preflight(plan, ctx)
 
     pdf = frame.to_pandas()
     mask = _eval_predicate(pdf, plan.when, plan.strategy)

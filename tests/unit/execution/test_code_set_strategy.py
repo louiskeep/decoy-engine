@@ -448,3 +448,93 @@ class TestCodeSetWhenGateFailClosed:
             "preflight must validate the corpus without stamping evidence "
             "for a column that never actually masked a value."
         )
+
+
+class TestCodeSetPinnedRecordAcrossMidRunCorpusReplace:
+    """Codex round-6 P2 MASKING/EVIDENCE VERSION DIVERGENCE remediation.
+
+    Pre-fix, `CodeSetHandler.run` stamped evidence via ONE `describe_loaded_
+    corpus` call while each per-value `apply_code_set` call independently
+    re-resolved the corpus from the module cache. The customer cache
+    invalidates on (path, mtime_ns, ctime_ns, size), so a customer corpus
+    file REPLACED mid-run (between the handler's initial load and a later
+    value) could make later values mask off a DIFFERENT corpus version than
+    the one evidence already reported -- masking output and evidence
+    silently disagreeing about which corpus was actually used. The fix pins
+    ONE `_CorpusRecord` per column/run (`resolve_corpus_record`, called once
+    in `CodeSetHandler.run`) and threads it into both the evidence stamp and
+    every per-value `apply_code_set` call, so a mid-run file replacement can
+    no longer be observed by either -- they draw from the same in-memory
+    record regardless of what is on disk after the first load."""
+
+    @staticmethod
+    def _write_corpus(path: Any, codes: list[str]) -> None:
+        import pyarrow.parquet as pq
+
+        tbl = pa.table({"code": pa.array(codes, type=pa.string())})
+        pq.write_table(tbl, str(path))
+
+    def test_mid_run_corpus_replace_does_not_diverge_masking_from_evidence(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from decoy_engine.execution._strategies import _code_set as code_set_module
+
+        path = tmp_path / "swap.parquet"
+        v1_codes = ["A01", "A02", "A03"]
+        v2_codes = ["B01", "B02", "B03", "B04", "B05"]
+        self._write_corpus(path, v1_codes)
+
+        values = ["A01", "A02", "A03"]
+        table = pa.table({"diag": pa.array(values, type=pa.string())})
+        plan = _plan(
+            "diag",
+            _col(
+                "code_set",
+                provider_config=(
+                    ("code_set", "swap_corpus"),
+                    ("corpus_source", f"customer:{path}"),
+                ),
+            ),
+        )
+
+        real_apply = code_set_module.apply_code_set
+        state = {"swapped": False}
+
+        def _apply_then_swap_disk(*args: Any, **kwargs: Any) -> str:
+            # Real masking call first (this is what a pinned record must be
+            # immune to what happens on disk AFTER it was resolved), then
+            # replace the corpus FILE on disk -- a different row count means
+            # a different file size, so the customer cache key changes
+            # regardless of filesystem timestamp resolution. Only swap once:
+            # the point is "a replace happened mid-run," not "every call
+            # races a fresh replace."
+            result = real_apply(*args, **kwargs)
+            if not state["swapped"]:
+                state["swapped"] = True
+                self._write_corpus(path, v2_codes)
+            return result
+
+        monkeypatch.setattr(code_set_module, "apply_code_set", _apply_then_swap_disk)
+
+        result = PandasExecutionAdapter().run_single(
+            plan, table, registry=_REG, relationship_graph=_GRAPH, namespace_registry=_NS
+        )
+
+        out = result.output.column("diag").to_pylist()
+        for i, v in enumerate(out):
+            assert v in v1_codes, (
+                f"row {i}: masked output {v!r} is not a v1 corpus code {v1_codes!r} -- "
+                "a later value picked up the mid-run file replacement instead of the "
+                "SAME pinned record the earlier values (and evidence) used."
+            )
+
+        corpora = result.quality_metrics.get("code_set_corpora")
+        assert corpora is not None and len(corpora) == 1, (
+            f"expected exactly one code_set_corpora evidence entry, got {corpora!r}"
+        )
+        assert corpora[0]["row_count"] == len(v1_codes), (
+            f"evidence reported row_count={corpora[0]['row_count']!r}, expected "
+            f"{len(v1_codes)} (the v1 corpus actually used to mask every value) -- "
+            "evidence must never report a corpus version different from the one "
+            "masking actually used."
+        )

@@ -82,6 +82,22 @@ Provenance + scale (HC-1 slice 1, 2026-07-17)
   deliberately never written into the Plan YAML -- a code corpus is data,
   not reproducible plan config (Codex P1 PROVENANCE IS EVIDENCE, NOT PLAN
   STATE remediation).
+
+Pinned-record masking/evidence parity (Codex round-6 P2 MASKING/EVIDENCE
+VERSION DIVERGENCE remediation, 2026-07-17)
+  The customer cache invalidates on (path, mtime_ns, ctime_ns, size), which is
+  exactly right for "don't serve stale rows forever" but means two
+  INDEPENDENT cache lookups made moments apart -- one to stamp evidence, one
+  per value to mask -- can each resolve a DIFFERENT ``_CorpusRecord`` if the
+  file is replaced on disk in between. ``resolve_corpus_record`` is the one
+  place a caller that needs BOTH resolves the record; ``describe_loaded_
+  corpus`` and ``apply_code_set`` both accept that SAME resolved record via an
+  optional parameter so a caller (``CodeSetHandler.run``, the out-of-core
+  per-table code_set path) pins it once and threads it through, closing the
+  divergence surface entirely rather than re-deriving "are these the same
+  version" after the fact. Callers that only need one or the other (tests,
+  external code) keep working unchanged -- omitting the parameter resolves
+  fresh, exactly as before.
 """
 
 from __future__ import annotations
@@ -95,6 +111,7 @@ from decoy_engine.internal.crypto import hmac_hex
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.transforms._codeset_loader import (
     _SHIPPED_CORPORA,
+    _CorpusRecord,
     _get_corpus_record,
     load_corpus,  # noqa: F401 -- re-exported public API (see below)
     load_corpus_provenance,  # noqa: F401 -- re-exported public API (see below)
@@ -225,7 +242,24 @@ def validate_code_set_config(cfg: dict[str, Any]) -> None:
 # actually loaded at run time.
 
 
-def describe_loaded_corpus(config: CodeSetConfig) -> dict[str, Any]:
+def resolve_corpus_record(config: CodeSetConfig) -> _CorpusRecord:
+    """Resolve *config* to its ``_CorpusRecord``, ONE cache lookup.
+
+    Codex round-6 P2 MASKING/EVIDENCE VERSION DIVERGENCE remediation: a
+    caller that needs BOTH the evidence summary and per-value masking for the
+    same run must call this exactly once and thread the returned record into
+    ``describe_loaded_corpus(config, record=...)`` and ``apply_code_set(...,
+    corpus_record=...)`` so both draw from the SAME corpus version even if
+    the underlying customer file is replaced mid-run -- see the module
+    docstring's "Pinned-record masking/evidence parity" section.
+    """
+    corpus_name, override_path = _resolve_corpus_path(config)
+    return _get_corpus_record(corpus_name, override_path, is_shipped=override_path is None)
+
+
+def describe_loaded_corpus(
+    config: CodeSetConfig, *, record: _CorpusRecord | None = None
+) -> dict[str, Any]:
     """Return a quality-evidence summary for the corpus *config* resolves to.
 
     Counts and identifiers only -- NO raw codes -- following the
@@ -235,9 +269,15 @@ def describe_loaded_corpus(config: CodeSetConfig) -> dict[str, Any]:
     (HC-1 slice 1's evidence-surfacing requirement). Loads (and validates /
     fail-closes) the corpus exactly like :func:`apply_code_set`; shares the
     module cache, so this costs no extra I/O once the column starts masking.
+
+    ``record``, when given, is used AS-IS instead of resolving a fresh one
+    (Codex round-6 P2 remediation) -- pass the SAME record returned by
+    :func:`resolve_corpus_record` that a subsequent :func:`apply_code_set`
+    call also pins, so evidence and masking can never disagree about which
+    corpus version was used. Omit it to resolve fresh, as before.
     """
-    corpus_name, override_path = _resolve_corpus_path(config)
-    record = _get_corpus_record(corpus_name, override_path, is_shipped=override_path is None)
+    if record is None:
+        record = resolve_corpus_record(config)
     prov = record.provenance
     return {
         "code_set": config.code_set,
@@ -296,6 +336,7 @@ def apply_code_set(
     job_seed: bytes,
     row_index: int = 0,
     namespace: str | None = None,
+    corpus_record: _CorpusRecord | None = None,
 ) -> str:
     """Apply the code_set strategy to a single value.
 
@@ -316,6 +357,14 @@ def apply_code_set(
             per row (intra-column variation). Ignored in mask mode.
         namespace: Column namespace string. Required for gen mode (raises
             PlanCompileError if None); not used by mask mode.
+        corpus_record: Codex round-6 P2 remediation -- when given, this exact
+            ``_CorpusRecord`` is used instead of resolving one from the cache.
+            Pass the record :func:`resolve_corpus_record` returned so a caller
+            that masks many values off one pinned load (e.g.
+            ``CodeSetHandler.run``) cannot have a later value pick up a
+            DIFFERENT corpus version than an earlier one (or than the
+            evidence stamp) if the underlying file is replaced mid-run.
+            Omit it to resolve fresh, as before.
 
     Returns:
         A real corpus code string.
@@ -327,8 +376,11 @@ def apply_code_set(
             from corpus when chapter_preserve=True; namespace is None in gen mode.
         ValueError: Unsupported mode.
     """
-    corpus_name, override_path = _resolve_corpus_path(config)
-    record = _get_corpus_record(corpus_name, override_path, is_shipped=override_path is None)
+    if corpus_record is None:
+        corpus_name, override_path = _resolve_corpus_path(config)
+        record = _get_corpus_record(corpus_name, override_path, is_shipped=override_path is None)
+    else:
+        record = corpus_record
     rows = record.rows
 
     if config.chapter_preserve:
