@@ -373,10 +373,19 @@ class _ExprTransformer(lark.Transformer):  # type: ignore[type-arg]
         """
         subject = str(items[0])
         start = items[1]
-        end = items[2] if len(items) > 2 else None
-        for name, value in (("start", start), ("end", end)):
-            if value is None:
-                continue
+        # Distinguish "end omitted" (2-arg form -> slice to end) from an
+        # explicit `None` argument. `None` is a grammar literal, so a config
+        # can write `slice(x, None)` / `slice(x, 1, None)`; treating that as
+        # "omitted" would run `x[None:...]` and return the WHOLE value -- a
+        # silent masking bypass (a reduce-to-last-4 op emitting the full
+        # secret). `start` is therefore always validated; `end` only when a
+        # third argument was actually supplied.
+        has_end = len(items) > 2
+        end = items[2] if has_end else None
+        to_check = [("start", start)]
+        if has_end:
+            to_check.append(("end", end))
+        for name, value in to_check:
             if isinstance(value, bool) or not isinstance(value, int):
                 raise ValidationError(
                     f"unsupported expression: slice() {name!r} argument must be "

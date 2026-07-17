@@ -238,6 +238,22 @@ class TestSliceOp:
         with pytest.raises(ValidationError, match="slice"):
             evaluate(c, {"s": "abcdef", "flag": False})
 
+    def test_none_literal_start_rejected(self):
+        """A literal `None` start must NOT be treated as "omitted" -- that would
+        run s[None:] and return the WHOLE value (silent masking bypass)."""
+        compile_expr, evaluate = _get_parser()
+        c = compile_expr("slice(s, None)")
+        with pytest.raises(ValidationError, match="slice"):
+            evaluate(c, {"s": "abcdef"})
+
+    def test_none_literal_end_rejected(self):
+        """An explicitly-supplied `None` end is a real 3-arg call and must be
+        rejected, distinct from the 2-arg omitted-end form."""
+        compile_expr, evaluate = _get_parser()
+        c = compile_expr("slice(s, 1, None)")
+        with pytest.raises(ValidationError, match="slice"):
+            evaluate(c, {"s": "abcdef"})
+
     def test_zero_arg_fails_to_parse(self):
         compile_expr, _ = _get_parser()
         with pytest.raises(ValidationError, match="unsupported"):
