@@ -14,24 +14,36 @@ unmasked (`_resolve_top_bound` returning `None` raises `StrategyError`, backed
 by `plan/_checks_top_code.py` at compile time), and a non-null cell that fails
 numeric coercion is a recorded `RowError`, never a silent keep-original.
 
-Every coercible cell -- in-range or tail -- renders through `str()`, same as
-bucketize's whole-column `.astype(str)`: a column that kept in-range cells as
-native Python numerics while tail cells became string labels would carry TWO
-Python types in one pandas object column, and the engine's single Arrow<->
-pandas conversion site (`_pandas_adapter.py` S9 spec Sec 3/7) infers ONE Arrow
-type per column -- `pa.Table.from_pandas` raises `ArrowInvalid` the instant a
-column holds both a kept int and a generalized str, which is the HIPAA
-age>89 column's ordinary shape (most ages are in-range, a few are 90+).
-Formatting every cell independently of what its neighbors need also keeps
-top_code's output a pure function of ONE value (never of the batch/chunk it
-happens to ride in), which is the same invariant `CHUNK_SAFE_STRATEGIES`
-membership requires. The in-range cell's numeric CONTENT is still exactly
-preserved -- only its Python type changes, from numeric to its string
-rendering -- so utility on the untouched majority of the column survives.
+Every coercible cell -- in-range or tail -- renders to a string, so the column
+never carries two Python types at once: a column that kept in-range cells as
+native numerics while tail cells became string labels would hold both an int
+and a str in one pandas object column, and the engine's single Arrow<->pandas
+conversion site (`_pandas_adapter.py` S9 spec Sec 3/7) infers ONE Arrow type
+per column -- `pa.Table.from_pandas` raises `ArrowInvalid` the instant a column
+holds both a kept int and a generalized str, which is the HIPAA age>89 column's
+ordinary shape (most ages are in-range, a few are 90+).
+
+CRITICAL -- the in-range string is CANONICAL, not `raw_column.astype(str)`: an
+integral value renders WITHOUT a trailing ".0" (67, not 67.0), derived from the
+coerced numeric rather than the raw column's inferred dtype. This is load-
+bearing for the `CHUNK_SAFE_STRATEGIES` membership. On the chunked self-masking
+route a non-FK numeric column ingests as pandas `int64` in a null-free chunk but
+widens to `float64` in a null-bearing one (the Arrow int64+null widening; see
+`_chunked_fk.py`), so `raw.astype(str)` would emit "67" in one chunk and "67.0"
+in another for the SAME value -- output depending on the chunk boundary, which
+breaks the byte-identical-to-full-frame guarantee `run_mask_pipeline_chunked`
+makes and splits GROUP BY/JOIN groups. Rendering from the coerced numeric with
+integral values normalized (mirroring bucketize's `.astype("Int64")`
+normalization, not its raw whole-column `.astype(str)`) makes `str(value)` a
+pure function of the value -- identical across chunk boundaries and across the
+pandas/polars substrates. The in-range cell's numeric CONTENT is preserved
+exactly; only its Python type changes, so utility on the untouched majority
+survives.
 """
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import numpy as np
@@ -106,15 +118,25 @@ class TopCodeStrategyHandler:
             under_mask = pd.Series(False, index=nums.index)
         in_range_mask = nums.notna() & ~over_mask & ~under_mask
 
+        # Canonical, dtype-independent string for the in-range cells (see the
+        # module docstring's CRITICAL note): render from the COERCED numeric,
+        # with integral values normalized to carry no trailing ".0", so the
+        # SAME value renders identically whether the column ingested as int64
+        # (null-free chunk) or float64 (null-bearing chunk / cross-substrate).
+        # `raw.astype(str)` would emit "67" vs "67.0" depending on the chunk's
+        # null content -- the CHUNK_SAFE byte-identity break Dennis reproduced.
+        n_float = nums.astype("float64")
+        integral = nums.notna() & np.isfinite(n_float) & (n_float == np.floor(n_float))
+        in_range_str = nums.astype(str)  # fractional / non-finite fallback
+        # integral+finite -> plain integer string (never "67.0"); the boolean
+        # mask selects only those positions, so the int64 cast is always safe.
+        in_range_str[integral] = n_float[integral].astype("int64").astype(str)
+
         # A null or non-null-uncoercible cell is carried through byte-for-byte
-        # unchanged (null passthrough is not a leak; the uncoercible cell is
-        # the trap-T4 case handled by the RowError above, never silently
-        # rewritten). Every coercible cell -- in range or tail -- renders as a
-        # string (see module docstring for why this can't be per-column
-        # conditional): in-range via `str()` of the original value, tail via
-        # the configured label.
-        result = col.copy()
-        result = result.where(~in_range_mask, col.astype(str))
+        # unchanged (null passthrough is not a leak; the uncoercible cell is the
+        # trap-T4 case handled by the RowError above, never silently rewritten).
+        result = col.astype(object).copy()
+        result = result.where(~in_range_mask, in_range_str)
         result = result.where(~over_mask, over_label)
         result = result.where(~under_mask, under_label)
         df[column] = result
@@ -160,6 +182,12 @@ class TopCodeStrategyHandler:
         cap = cfg.get("cap")
         if isinstance(cap, bool) or not isinstance(cap, (int, float)):
             return None
+        # A non-finite cap (NaN/inf) is a silent fail-open: `nums > nan`/`> inf`
+        # is always False, so nothing generalizes and the whole column passes
+        # through in the clear -- exactly the unresolvable-bound leak this guard
+        # exists to prevent. Reject it (compile-check mirrors this).
+        if not math.isfinite(cap):
+            return None
         over_label = cfg.get("over_label")
         if not isinstance(over_label, str) or not over_label:
             return None
@@ -175,6 +203,10 @@ class TopCodeStrategyHandler:
         """
         floor = cfg.get("floor")
         if floor is None or isinstance(floor, bool) or not isinstance(floor, (int, float)):
+            return None, None
+        # Non-finite floor (NaN/inf) is the same silent fail-open as cap: `nums <
+        # nan`/`< inf` never fires, so the bottom tail is never generalized.
+        if not math.isfinite(floor):
             return None, None
         under_label = cfg.get("under_label")
         if not isinstance(under_label, str) or not under_label:

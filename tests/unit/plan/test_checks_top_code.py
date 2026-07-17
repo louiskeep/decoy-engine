@@ -208,3 +208,33 @@ class TestNonTopCodeColumnsIgnored:
         with pytest.raises(PlanCompileError) as exc:
             check_top_code_config(cfg)
         assert exc.value.path == "tables.bad.columns.age.provider_config.cap"
+
+
+class TestNonFiniteBoundsRejected:
+    """Dennis HC-3b HIGH: a non-finite cap/floor (NaN/inf) is a float, so it
+    slips past the isinstance check, but `value > nan`/`> inf` never fires --
+    nothing is generalized and the column passes through unmasked. Reject it at
+    compile (mirrors the handler's `math.isfinite` guard)."""
+
+    @pytest.mark.parametrize("bad_cap", [float("nan"), float("inf"), float("-inf")])
+    def test_non_finite_cap_rejected(self, bad_cap: float) -> None:
+        cfg = _config({"cap": bad_cap, "over_label": "90+"})
+        with pytest.raises(PlanCompileError) as exc:
+            check_top_code_config(cfg)
+        assert exc.value.code == "top_code_bounds_unresolvable"
+        assert exc.value.path == "tables.t.columns.age.provider_config.cap"
+
+    @pytest.mark.parametrize("bad_floor", [float("nan"), float("inf"), float("-inf")])
+    def test_non_finite_floor_rejected(self, bad_floor: float) -> None:
+        cfg = _config({"cap": 89, "over_label": "90+", "floor": bad_floor, "under_label": "low"})
+        with pytest.raises(PlanCompileError) as exc:
+            check_top_code_config(cfg)
+        assert exc.value.code == "top_code_invalid_floor"
+        assert exc.value.path == "tables.t.columns.age.provider_config.floor"
+
+    def test_finite_bounds_still_pass(self) -> None:
+        # Guard against over-rejection: ordinary finite bounds must be accepted.
+        check_top_code_config(_config({"cap": 89, "over_label": "90+"}))
+        check_top_code_config(
+            _config({"cap": 100, "over_label": "hi", "floor": 0, "under_label": "lo"})
+        )

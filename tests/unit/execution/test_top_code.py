@@ -6,16 +6,19 @@ and RowError bookkeeping) plus `test_bucket_perturb.py`'s ColumnSeed/plan/run
 harness for integration-level assertions.
 
 Design note pinned by these tests (see `_top_code.py` module docstring): an
-in-range cell renders through `str()`, same as a tail cell, rather than
-staying in its native numeric type. A column mixing native Python numerics
-(kept cells) with `str` labels (tail cells) would fail the engine's single
-Arrow<->pandas conversion boundary (`pa.Table.from_pandas` raises
-`ArrowInvalid` on a genuinely mixed-type object column) the moment BOTH a
-kept and a generalized row exist -- the HIPAA age>89 column's ordinary
-shape. Per-cell formatting must also be independent of what other rows in
-the same chunk need, which `CHUNK_SAFE_STRATEGIES` membership requires. The
-in-range cell's numeric CONTENT is still exactly preserved (only its Python
-type changes).
+in-range cell renders to a string (not its native numeric type), so the column
+never mixes kept ints with generalized `str` labels -- that would fail the
+engine's single Arrow<->pandas boundary (`pa.Table.from_pandas` raises
+`ArrowInvalid` on a genuinely mixed-type object column) the moment both a kept
+and a generalized row exist, the HIPAA age>89 column's ordinary shape. The
+in-range string is CANONICAL: integral values render WITHOUT a trailing ".0",
+derived from the coerced numeric rather than the raw column's inferred dtype,
+so `str(value)` is a pure function of the value -- identical whether the chunk
+ingested as int64 (null-free) or float64 (null-bearing), which
+`CHUNK_SAFE_STRATEGIES` membership requires. `TestChunkSafety` pins the
+whole-frame-vs-chunked byte-identity on a null-bearing int64 column (the
+BLOCKER Dennis reproduced). The in-range cell's numeric CONTENT is preserved
+exactly (only its Python type changes).
 """
 
 from __future__ import annotations
@@ -27,7 +30,14 @@ import pandas as pd
 import pyarrow as pa
 import pytest
 
-from decoy_engine.execution import ExecutionError, ExecutionResult, PandasExecutionAdapter
+from decoy_engine import run_mask_pipeline_chunked
+from decoy_engine.config import PipelineConfig
+from decoy_engine.execution import (
+    ExecutionError,
+    ExecutionResult,
+    PandasExecutionAdapter,
+    run_pipeline,
+)
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution._row_errors import RowError
 from decoy_engine.execution._strategies import SCALAR_HANDLERS
@@ -133,12 +143,72 @@ class TestNullPassthrough:
         src = pa.table({"age": [23, None, 105]})
         out = _run(_plan("age", _col((("preset", "hipaa_age"),))), src)
         # A null-bearing int64 Arrow column upcasts to pandas float64 on
-        # ingestion (numpy int64 has no null representation) -- an unrelated
-        # pandas/Arrow interop nuance every numeric strategy inherits, not
-        # something top_code introduces; "23.0" reflects the ingested float,
-        # not a masking bug. The null cell itself passes through untouched.
-        assert out.output.column("age").to_pylist() == ["23.0", None, "90+"]
+        # ingestion (numpy int64 has no null representation). top_code renders
+        # the in-range cell CANONICALLY (integral -> no trailing ".0") from the
+        # coerced numeric, NOT `raw.astype(str)`, so 23 renders "23" whether or
+        # not the chunk carried a null -- the dtype-independence the CHUNK_SAFE
+        # contract requires (see test_chunk_safety below). The null cell itself
+        # passes through untouched.
+        assert out.output.column("age").to_pylist() == ["23", None, "90+"]
         assert out.row_errors == ()
+
+
+class TestChunkSafety:
+    """BLOCKER regression (Dennis, HC-3b re-gate): top_code is in
+    CHUNK_SAFE_STRATEGIES, so `run_mask_pipeline_chunked` must be byte-identical
+    to the full-frame `run_pipeline` for ANY chunking. An Arrow int64 column
+    with a null ingests as pandas int64 in a null-free chunk but widens to
+    float64 in a null-bearing one; a naive `raw.astype(str)` would emit "89" in
+    one chunk and "89.0" in another for the same age, splitting joins. The
+    canonical render (integral -> no ".0", from the coerced numeric) must make
+    every chunking agree.
+    """
+
+    _CFG_COLUMNS = [
+        {"name": "age", "strategy": "top_code", "provider_config": {"preset": "hipaa_age"}}
+    ]
+
+    def _cfg(self, tmp_path) -> dict:
+        cfg = {
+            "version": 1,
+            "global_settings": {"seed": 42},
+            "sources": {"t": {"type": "file", "format": "csv", "path": str(tmp_path / "in.csv")}},
+            "tables": [{"name": "t", "columns": self._CFG_COLUMNS}],
+            "targets": {"t": {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")}},
+        }
+        return PipelineConfig.model_validate(cfg).model_dump()
+
+    # Boundaries >=2 keep at least one real value beside the null in its chunk.
+    # boundary=1 would isolate the single null into an ALL-NULL chunk, which any
+    # string-output coarsening strategy (bucketize included, verified) cannot
+    # emit -- an all-null object column infers Arrow `null` type and fails to
+    # concat with the string chunks. That is a pre-existing chunked-route
+    # limitation shared with bucketize, not the dtype-rendering regression this
+    # test pins; see docs/backlog for the all-null-chunk follow-up.
+    @pytest.mark.parametrize("boundary", [2, 3, 4, 5])
+    def test_chunked_equals_full_frame_on_null_bearing_int64(self, tmp_path, boundary: int) -> None:
+        # Arrow int64 + null: some slices are null-free (pandas int64), the slice
+        # holding the null widens to float64. 67 and 89 are in-range; 94 and 200
+        # are the >89 tail. Every boundary must produce identical output.
+        src = pa.table({"age": [67, 94, 67, None, 89, 200]})
+        src.to_pandas().to_csv(tmp_path / "in.csv", index=False)
+        cfg = self._cfg(tmp_path)
+
+        full = run_pipeline(cfg, sources={"t": src}, engine_version="hc3b-test").outputs["t"]
+        chunks = [src.slice(i, boundary) for i in range(0, src.num_rows, boundary)]
+        chunked = pa.concat_tables(
+            list(run_mask_pipeline_chunked(cfg, chunks, table="t", engine_version="hc3b-test"))
+        )
+        assert chunked.column("age").to_pylist() == full.column("age").to_pylist()
+
+    def test_in_range_never_carries_trailing_dot_zero(self, tmp_path) -> None:
+        src = pa.table({"age": [67, 94, 67, None, 89, 200]})
+        src.to_pandas().to_csv(tmp_path / "in.csv", index=False)
+        cfg = self._cfg(tmp_path)
+        vals = run_pipeline(cfg, sources={"t": src}, engine_version="hc3b-test").outputs["t"]
+        got = vals.column("age").to_pylist()
+        assert got == ["67", "90+", "67", None, "89", "90+"]
+        assert not any(isinstance(v, str) and v.endswith(".0") for v in got if v is not None)
 
 
 class TestNonNullUncoercible:

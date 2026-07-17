@@ -23,6 +23,7 @@ This module exports exactly one function: `check_top_code_config`.
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from decoy_engine.execution._strategies._top_code import _PRESETS
@@ -99,6 +100,18 @@ def check_top_code_config(config: dict[str, Any]) -> None:
                             "to a real number before it reaches the engine)."
                         ),
                     )
+                if not math.isfinite(raw_cap):
+                    raise PlanCompileError(
+                        code="top_code_bounds_unresolvable",
+                        path=f"tables.{table_name}.columns.{col_name}.provider_config.cap",
+                        message=(
+                            f"top_code column {col_name!r} in table {table_name!r} "
+                            f"has non-finite cap {raw_cap!r}. A NaN/inf cap never "
+                            "fires the `value > cap` comparison, so nothing is "
+                            "generalized and the column passes through unmasked; "
+                            "set a finite numeric cap."
+                        ),
+                    )
                 cap = raw_cap
                 over_label = pc.get("over_label")
                 if not isinstance(over_label, str) or not over_label:
@@ -126,6 +139,17 @@ def check_top_code_config(config: dict[str, Any]) -> None:
                         f"has invalid floor {floor!r} ({type(floor).__name__}). "
                         "'floor' must be a numeric (int or float), not a bool "
                         "or a string."
+                    ),
+                )
+            if not math.isfinite(floor):
+                raise PlanCompileError(
+                    code="top_code_invalid_floor",
+                    path=f"tables.{table_name}.columns.{col_name}.provider_config.floor",
+                    message=(
+                        f"top_code column {col_name!r} in table {table_name!r} "
+                        f"has non-finite floor {floor!r}. A NaN/inf floor never "
+                        "fires the `value < floor` comparison, so the bottom tail "
+                        "is never generalized; set a finite numeric floor."
                     ),
                 )
             under_label = pc.get("under_label")
