@@ -70,6 +70,13 @@ def check_freetext_advisory(config: dict[str, Any], profile: Profile) -> tuple[s
                     )
                 )
                 continue
+            # Full-frame non-null count. distinct_count / avg_length are
+            # measured over the (possibly bounded) sample, so under active
+            # sampling `distinct_count / non_null_count` UNDERSTATES true
+            # distinctness -- a conservative lower bound that only ever biases
+            # the advisory toward staying silent, never toward a false warning.
+            # Acceptable for a warn-only heuristic; documented rather than
+            # closed with a new sampled-non-null profile field.
             non_null_count = profile_col.row_count - profile_col.null_count
             views.append(
                 FreetextColumnView(

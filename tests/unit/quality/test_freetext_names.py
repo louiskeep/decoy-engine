@@ -52,6 +52,25 @@ def test_matches_known_freetext_names(col_name: str) -> None:
 @pytest.mark.parametrize(
     "col_name",
     [
+        "clinicalNotes",
+        "claimDescription",
+        "patientNotes",
+        "progressNote",
+        "ClinicalNotes",
+        "dischargeSummary",
+        "denialReason",
+        "providerComment",
+    ],
+)
+def test_matches_camelcase_freetext_names(col_name: str) -> None:
+    # camelCase/PascalCase normalize to a delimited form before matching, so a
+    # genuinely trailing Title-cased token is recognized (HC-7 LOW-1).
+    assert matches_freetext_name(col_name) is True
+
+
+@pytest.mark.parametrize(
+    "col_name",
+    [
         "note_id",
         "description_code",
         "phone_number",
@@ -63,6 +82,14 @@ def test_matches_known_freetext_names(col_name: str) -> None:
         "email",
         "ssn",
         "",
+        # camelCase identifier suffixes must still miss: normalization only
+        # ADDS a boundary, so the trailing segment is Id/Code/Number, not a
+        # free-text token (HC-7 LOW-1 preserves every negative).
+        "noteId",
+        "descriptionCode",
+        "accountNumber",
+        "phoneNumber",
+        "reasonCode",
     ],
 )
 def test_does_not_match_negatives(col_name: str) -> None:

@@ -170,9 +170,13 @@ def _walk_column(
     distinct_count = int(distinct_count_raw) if not pd.isna(distinct_count_raw) else None
 
     # HC-7: string-length stats, from the same sample population as
-    # distinct_count above (so the two stay a statistically consistent
-    # pair for the free-text advisory's length+distinctness heuristic).
-    # Mirrors storm/profiler.py's FieldStats.avg_length computation.
+    # distinct_count above (so avg_length and distinct_count are mutually
+    # consistent -- both measured over sample_series). The free-text
+    # advisory's distinctness RATIO, however, divides this sampled
+    # distinct_count by the full-frame non-null count (see
+    # plan/_checks_freetext_advisory.py), which under active sampling makes
+    # the ratio a conservative lower bound -- intentional for a warn-only
+    # advisory. Mirrors storm/profiler.py's FieldStats.avg_length computation.
     # None for non-string dtypes; None when the sample has no non-null
     # values (an all-null or empty column).
     avg_length: float | None = None
