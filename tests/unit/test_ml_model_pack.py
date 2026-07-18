@@ -36,6 +36,8 @@ from decoy_engine.storm.model_pack.types import (
 joblib = pytest.importorskip("joblib")
 DictVectorizer = pytest.importorskip("sklearn.feature_extraction").DictVectorizer
 
+pytestmark = pytest.mark.ml  # ml-gate membership (pytest -m ml)
+
 _LIVE_PACK = Path(__file__).parents[2] / "docs" / "v2" / "ml" / "packs" / "lgbm-v1"
 
 

@@ -208,7 +208,15 @@ def _make_lgbm_params() -> dict[str, Any]:
         "subsample": 0.8,
         "colsample_bytree": 0.8,
         "random_state": TRAIN_SEED,
-        "n_jobs": 1,  # deterministic
+        # Reproducibility: n_jobs=1 removes multi-thread reduction-order
+        # nondeterminism; deterministic=True + force_row_wise=True pin the
+        # histogram construction so the trained model is bit-identical across
+        # runner microarchitectures (deterministic=True requires an explicit
+        # force_row_wise/force_col_wise or LightGBM auto-selects and warns).
+        # The frozen golden pack + its 1e-4 retrain gate depend on this.
+        "n_jobs": 1,
+        "deterministic": True,
+        "force_row_wise": True,
         "verbose": -1,
     }
 

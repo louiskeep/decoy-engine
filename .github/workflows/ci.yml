@@ -109,14 +109,20 @@ jobs:
   # ml-gate: activates the ML field-recognition tests that importorskip
   # themselves out of the regression-gate above (which installs .[dev] only,
   # so scikit-learn + lightgbm are absent and the retrain gate silently
-  # skips). This job installs .[dev,ml] and runs the ML suite so the frozen
-  # golden pack (docs/v2/ml/packs/lgbm-v1) is actually reproduced in CI:
+  # skips). This job installs .[dev,ml] and runs every test marked `ml` so the
+  # frozen golden pack (docs/v2/ml/packs/lgbm-v1) is actually reproduced in CI:
   # test_lightgbm_regression_retrain re-trains under the EXACT-pinned
   # scikit-learn/lightgbm (see the [ml] extra in pyproject.toml) and asserts
   # the metrics match the committed baseline within 1e-4. Kept separate from
   # regression-gate so an ML failure is legible at a glance and the pinned ML
-  # deps do not slow the main gate. New ML test files must be added to the
-  # path list below (they skip harmlessly in regression-gate without the extra).
+  # deps do not slow the main gate.
+  #
+  # Selection is by the `ml` marker (pytest -m ml overrides the addopts -m),
+  # NOT a hand-maintained path list: a new ML test module joins the gate by
+  # adding `pytestmark = pytest.mark.ml`, so coverage cannot silently shrink
+  # the way an unlisted path would. The `ml`-marked tests still run in
+  # regression-gate too (ml is not benchmark), importorskip-skipping there
+  # without the extra.
   ml-gate:
     runs-on: ubuntu-latest
     steps:
@@ -128,12 +134,4 @@ jobs:
       - name: Install engine + dev + ml extras
         run: pip install -e ".[dev,ml]"
       - name: ML gate (golden retrain + provenance + privacy + classify)
-        run: |
-          pytest \
-            tests/snapshots/test_ml_lightgbm_golden.py \
-            tests/unit/test_ml_provenance_signing.py \
-            tests/unit/test_ml_model_pack.py \
-            tests/unit/test_ml_classify_fields.py \
-            tests/unit/test_storm_eval_split.py \
-            tests/privacy/test_no_raw_values_in_ml_pack.py \
-            --tb=short
+        run: pytest -m ml --tb=short

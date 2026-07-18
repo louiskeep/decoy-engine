@@ -40,7 +40,8 @@ test_predict_column_band_accuracy  [§A.4]
     Runs predict_column on the held-out test set and asserts the
     band-to-accuracy relationship holds: review-band predictions are >= 70%
     accurate (the band's precision floor), high-band predictions (if any)
-    are >= 95% accurate.  Reports PROVISIONAL counts since n=59.
+    are >= 95% accurate.  Reports PROVISIONAL counts (small held-out n; the
+    exact fold size shifts with the pinned scikit-learn version).
 """
 
 from __future__ import annotations
@@ -49,6 +50,14 @@ import hashlib
 import json
 import os
 from pathlib import Path
+
+import pytest
+
+# ml-gate membership (pytest -m ml). The pure file-hash tests here
+# (report/manifest/provenance/golden-SHA) need no ml extra and also run in the
+# default regression gate; the retrain + band tests importorskip themselves
+# when scikit-learn/lightgbm are absent.
+pytestmark = pytest.mark.ml
 
 _GOLDEN_SHA256 = Path(__file__).parent / "golden" / "ml_lightgbm" / "lightgbm.sha256"
 _REPORT_PATH = Path(__file__).parents[2] / "docs" / "v2" / "ml" / "lightgbm-report.json"
@@ -177,6 +186,49 @@ def test_manifest_report_hash_matches_committed_report() -> None:
     )
 
 
+# ── §B.7 provenance.json binding (hashes vs committed artifacts) ──────────────
+
+
+def test_provenance_json_hashes_match_committed_artifacts() -> None:
+    """docs/v2/ml/provenance.json is a hand-maintained provenance record whose
+    eval.report_sha256 and model.weights_sha256 must match the bytes actually
+    committed. Nothing regenerates it automatically (UPDATE_SNAPSHOTS rewrites
+    the report/manifest/pack but not this scaffold), so without this test a
+    regeneration silently leaves provenance.json pointing at bytes that no
+    longer exist. This is a pure file-hash check (no ml extra), so it runs in
+    the main regression-gate, not only ml-gate.
+    """
+    prov_path = _REPORT_PATH.parent / "provenance.json"
+    weights_path = _REPORT_PATH.parent / "packs" / "lgbm-v1" / "model.joblib"
+
+    if not prov_path.exists():
+        raise AssertionError(f"Missing provenance.json at {prov_path}.")
+    if not _REPORT_PATH.exists():
+        raise AssertionError(f"Missing lightgbm-report.json at {_REPORT_PATH}.")
+    if not weights_path.exists():
+        raise AssertionError(f"Missing model.joblib at {weights_path}.")
+
+    prov = json.loads(prov_path.read_text(encoding="utf-8"))
+
+    report_digest = _digest(_REPORT_PATH.read_bytes())
+    stored_report_hash = prov.get("eval", {}).get("report_sha256", "")
+    assert stored_report_hash == report_digest, (
+        "provenance.json eval.report_sha256 is stale:\n"
+        f"  provenance : {stored_report_hash}\n"
+        f"  actual report bytes: {report_digest}\n"
+        "Update docs/v2/ml/provenance.json to match the regenerated report."
+    )
+
+    weights_digest = _digest(weights_path.read_bytes())
+    stored_weights_hash = prov.get("model", {}).get("weights_sha256", "")
+    assert stored_weights_hash == weights_digest, (
+        "provenance.json model.weights_sha256 is stale:\n"
+        f"  provenance : {stored_weights_hash}\n"
+        f"  actual model.joblib bytes: {weights_digest}\n"
+        "Update docs/v2/ml/provenance.json to match the regenerated pack."
+    )
+
+
 # ── §A.7 regression gate: re-run training and assert metric stability ─────────
 
 
@@ -258,8 +310,9 @@ def test_predict_column_band_accuracy() -> None:
     """§A.4 PROVISIONAL: verify band-to-accuracy relationship on the held-out
     test set using predict_column.
 
-    Bands are PROVISIONAL (n_test=59 held-out samples is too small for tight
-    calibration guarantees).  The test asserts the minimum floor for each band:
+    Bands are PROVISIONAL (the held-out fold is too small for tight
+    calibration guarantees; its exact size shifts with the pinned
+    scikit-learn version).  The test asserts the minimum floor for each band:
 
       high   (proba >= 0.95): empirical accuracy >= 0.95.
               For lgbm-v1, this band is currently never triggered (max
@@ -348,9 +401,12 @@ def test_predict_column_band_accuracy() -> None:
             "PROVISIONAL (small n); update model-card.md §A.4 if this fails."
         )
 
-    # Observability: print counts for CI logs.
+    # Observability: print counts for CI logs. Derive n_test from the actual
+    # split so the log line cannot drift from the fold (it shifts with the
+    # scikit-learn version; see the golden regeneration note in the header).
+    n_test = len(test_set)
     print(
-        f"\n§A.4 band accuracy (PROVISIONAL, n_test=59):\n"
+        f"\n§A.4 band accuracy (PROVISIONAL, n_test={n_test}):\n"
         f"  high   (>={HIGH_PRECISION_FLOOR}): {high_correct}/{high_total} "
         f"({'N/A - never triggered for lgbm-v1' if high_total == 0 else f'{high_correct / high_total:.3f}'})\n"
         f"  review ({REVIEW_PRECISION_FLOOR}-{HIGH_PRECISION_FLOOR}): "

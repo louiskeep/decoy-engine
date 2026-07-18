@@ -8,7 +8,7 @@
   "manifest_hmac": "",
   "operating_threshold": 0.1667,
   "pack_id": "lgbm-v1",
-  "sha256": "32d73a1e9004039feb08083c9719ff35e9a890166b7d7d127ca2fae9379162ff",
+  "sha256": "14a358d689ceea61c82b1668147e75b91771a5b3aab71647072dde33fc5669f1",
   "signing_key_ref": "unsigned",
   "training_seed": 42,
   "version": "0.1.0"

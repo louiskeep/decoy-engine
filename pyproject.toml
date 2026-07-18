@@ -222,6 +222,17 @@ geo = [
 # pin and regenerate the golden in the same PR
 # (UPDATE_SNAPSHOTS=1 pytest tests/snapshots/test_ml_lightgbm_golden.py),
 # never implicitly.
+#
+# Cost acknowledged: this makes `[ml]` a HERMETIC extra. A downstream install
+# of decoy-engine[ml] alongside a package needing a different scikit-learn/
+# lightgbm gets an unsatisfiable or force-downgraded resolution, and a security
+# patch (e.g. a scikit-learn 1.7.3 CVE fix) cannot be adopted without the
+# deliberate bump-and-regenerate above. That trade is accepted for a
+# reproducible shipped model pack (same posture as the exact faker pin in the
+# core deps); the numeric stack under sklearn (numpy/scipy) is intentionally
+# left unpinned -- LightGBM training is pinned deterministic
+# (n_jobs=1 + deterministic=True + force_row_wise=True in trainer.py), and the
+# first ubuntu-latest ml-gate run is the reproducibility proof of record.
 ml = [
     "scikit-learn==1.7.2",
     "lightgbm==4.6.0",
@@ -254,6 +265,7 @@ markers = [
     "golden: engine-v2 S1 golden fixture suite (CSVs + manifests under tests/fixtures/golden/); CI gates engine-v2 sprint work on these",
     "regression: a bugfix's regression test; the prove-regression gate re-runs it against the pre-fix baseline and requires it to fail there",
     "testflight: acceptance test-flight suite (deliberately run, multi-job); excluded from the default loop; invoke via pytest testflight -m testflight or python scripts/test_flight.py",
+    "ml: STORM field-recognition ML tests needing the [ml] extra (scikit-learn + lightgbm). Run by the ml-gate CI job (pytest -m ml with .[dev,ml] installed); they importorskip in the default gate where the extra is absent. Mark a new ML test module by adding pytestmark = pytest.mark.ml at module top so coverage stays automatic rather than a hand-maintained path list.",
 ]
 
 # ── Tooling baseline (V2.0-prep, sprint 1) ──────────────────────────────────

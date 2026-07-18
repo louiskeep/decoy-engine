@@ -26,6 +26,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.ml  # ml-gate membership (pytest -m ml)
+
 _PACK_DIR = Path(__file__).parents[2] / "docs" / "v2" / "ml" / "packs" / "lgbm-v1"
 _REPORT_PATH = Path(__file__).parents[2] / "docs" / "v2" / "ml" / "lightgbm-report.json"
 _MIN_VALUE_LEN = 8  # short strings (e.g. "1234") are too common to be probes
