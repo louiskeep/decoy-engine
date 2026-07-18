@@ -29,6 +29,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from decoy_engine.storm.features.header_lexicon import roles_from_tokens
+
 
 def flatten_features(feats: dict[str, Any]) -> dict[str, Any]:
     """Flatten a ``ColumnFeatures.to_dict()`` snapshot to a DictVectorizer-ready dict.
@@ -104,7 +106,18 @@ def flatten_features(feats: dict[str, Any]) -> dict[str, Any]:
     # ── Header token indicator features ──────────────────────────────────────
     # Each token in header_tokens becomes "hdr_{token}" -> 1.0.
     # Unknown tokens at inference time are ignored by DictVectorizer (all-zero).
-    for token in feats.get("header_tokens") or []:
+    header_tokens = feats.get("header_tokens") or []
+    for token in header_tokens:
         flat[f"hdr_{token}"] = 1.0
+
+    # ── Header role features (CH-1 lexicon + CH-2 fuzzy) ──────────────────────
+    # Canonical roles give a vocabulary-stable header channel that survives
+    # cryptic/abbreviated headers: `diagnosis_code` (training) and `dx_cd`
+    # (inference) both emit `role_icd10`, so DictVectorizer learns the role at
+    # train time and the model can still use the header when the raw token is
+    # novel. Unlike hdr_{token}, an unseen role never appears, so no new feature
+    # leaks in at inference. Emit nothing when no token maps (content-only).
+    for role in roles_from_tokens(header_tokens):
+        flat[f"role_{role}"] = 1.0
 
     return flat
