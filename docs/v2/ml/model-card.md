@@ -243,17 +243,26 @@ verifies the band-to-accuracy relationship holds on every CI run.
    correct.  This is not a safety hazard (no overconfident FPs) but should
    be resolved with a larger corpus.
 
-4. **Provenance signing (ML3.2 -- DECIDED, Option A):** The committed pack
-   ships unsigned (`manifest_hmac: ""`) by design, because the signing key is
-   per-instance. Decoy is single-tenant and self-hosted, so the signing key
-   is derived from the box's own master key via HKDF-SHA256
+4. **Provenance signing (ML3.2 -- DECIDED; DE-04 enforcement Option C):** The
+   committed pack ships unsigned (`manifest_hmac: ""`) by design, because the
+   signing key is per-instance. Decoy is single-tenant and self-hosted, so the
+   signing key is derived from the box's own master key via HKDF-SHA256
    (`derive_pack_signing_key`, info `decoy-pack-signing-v1`) and the pack is
-   signed in place at install time on that box (`sign_pack`). Production sets
-   `DECOY_PACK_SIGNING_KEY` plus `DECOY_PACK_REQUIRE_SIGNATURE=1` so an
-   unsigned or altered pack is rejected fail-closed. No external KMS or
-   asymmetric signature is used: within a single self-hosted trust boundary
-   a symmetric HMAC is the right primitive (tamper-evidence, not remote-forger
-   defence). See `storm/model_pack/provenance.py`.
+   signed in place at install time on that box (`sign_pack`). No external KMS or
+   asymmetric signature is used: within a single self-hosted trust boundary a
+   symmetric HMAC is the right primitive (tamper-evidence, not remote-forger
+   defence).
+
+   Because `joblib.load` executes arbitrary code, the loader enforces a signature
+   across the **untrusted pack boundary** (DE-04). A caller-supplied `pack_dir`
+   (a pack from anywhere other than the shipped first-party default) is
+   fail-closed: it is refused before deserialisation unless it carries a
+   signature verifiable with `DECOY_PACK_SIGNING_KEY`. The trusted first-party
+   default pack (shipped inside the wheel, SHA-256 verified) keeps loading out of
+   the box; setting `DECOY_PACK_REQUIRE_SIGNATURE=1` additionally requires a
+   signature for it too (opt-in hard lockdown, e.g. once the deploy step signs
+   the pack in place). See `storm/model_pack/loader.py` (`trusted` /
+   `_check_signature`) and `storm/model_pack/provenance.py`.
 
 5. **Corpus expansion:** 301 training columns is sufficient to demonstrate
    the lift gate but is a small corpus. Pre-GA training should use a larger

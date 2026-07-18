@@ -135,9 +135,18 @@ def classify_fields(
     from decoy_engine.storm.model_pack.featurizer import flatten_features
     from decoy_engine.storm.model_pack.loader import ModelPackLoader
 
-    resolved_dir = pack_dir if pack_dir is not None else _default_pack_dir()
+    # DE-04 (Option C): the resolved default pack is first-party (shipped in the
+    # wheel, SHA-256 verified) and is trusted; a caller-supplied pack_dir crosses
+    # an untrusted boundary and must carry a verifiable signature (the loader
+    # fail-closes it before joblib.load runs).
+    if pack_dir is None:
+        resolved_dir = _default_pack_dir()
+        trusted = True
+    else:
+        resolved_dir = pack_dir
+        trusted = False
 
-    loader = ModelPackLoader(resolved_dir)
+    loader = ModelPackLoader(resolved_dir, trusted=trusted)
     pack = loader.load_with_fallback()
     if pack is None:
         # ML disabled or pack unavailable; caller uses the regex baseline.

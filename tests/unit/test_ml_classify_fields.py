@@ -67,7 +67,7 @@ def test_classify_fields_output_contains_no_raw_cell_values() -> None:
         }
     )
 
-    result = classify_fields(df, pack_dir=_LIVE_PACK)
+    result = classify_fields(df)
     assert result is not None, "classify_fields returned None with a live pack"
 
     output_json = json.dumps(result)
@@ -98,7 +98,7 @@ def test_classify_fields_returns_none_when_ml_disabled(
     from decoy_engine.storm.model_pack.classify import classify_fields
 
     df = pd.DataFrame({"col_a": ["foo", "bar"]})
-    result = classify_fields(df, pack_dir=_LIVE_PACK)
+    result = classify_fields(df)
     assert result is None
 
 
@@ -109,6 +109,28 @@ def test_classify_fields_returns_none_when_pack_missing(tmp_path: Path) -> None:
     df = pd.DataFrame({"col_a": ["foo", "bar"]})
     result = classify_fields(df, pack_dir=tmp_path / "nonexistent")
     assert result is None
+
+
+@_needs_live_pack
+def test_classify_fields_rejects_unsigned_external_pack_dir(tmp_path: Path) -> None:
+    """DE-04 Option C public contract: a caller-supplied (untrusted) pack_dir is
+    fail-closed when unsigned -- classify_fields degrades to None (regex
+    baseline) rather than joblib.load-ing an unverified pack. The identical
+    bytes loaded as the default (no pack_dir) are trusted and DO classify, so
+    this proves it is the untrusted boundary, not the pack, that is refused.
+    """
+    import shutil
+
+    from decoy_engine.storm.model_pack.classify import classify_fields
+
+    external = tmp_path / "external-pack"
+    shutil.copytree(_LIVE_PACK, external)  # a copy of the (unsigned) first-party pack
+
+    df = pd.DataFrame({"email_addr": ["a@b.com", "c@d.com"]})
+    # As an untrusted external pack_dir: refused -> None.
+    assert classify_fields(df, pack_dir=external) is None
+    # The same bytes as the trusted default: classified.
+    assert classify_fields(df) is not None
 
 
 # ── Output shape ──────────────────────────────────────────────────────────────
@@ -134,7 +156,7 @@ def test_classify_fields_output_shape() -> None:
             "name": ["Alice Smith", "Bob Jones"],
         }
     )
-    result = classify_fields(df, pack_dir=_LIVE_PACK)
+    result = classify_fields(df)
     assert result is not None
 
     for col_name, col_result in result.items():
@@ -171,7 +193,7 @@ def test_classify_fields_empty_dataframe_returns_empty_dict() -> None:
     from decoy_engine.storm.model_pack.classify import classify_fields
 
     df = pd.DataFrame()
-    result = classify_fields(df, pack_dir=_LIVE_PACK)
+    result = classify_fields(df)
     assert result == {}, f"Expected empty dict, got {result!r}"
 
 
@@ -191,8 +213,8 @@ def test_classify_fields_is_deterministic() -> None:
         }
     )
 
-    result_a = classify_fields(df, pack_dir=_LIVE_PACK)
-    result_b = classify_fields(df, pack_dir=_LIVE_PACK)
+    result_a = classify_fields(df)
+    result_b = classify_fields(df)
 
     assert result_a is not None
     assert result_b is not None
