@@ -265,7 +265,13 @@ def _stream_table(
 
     `code_set_corpora` (HIGH-2 remediation, default None): the shared
     corpus-provenance evidence sink, mutated in place the same way `outputs`/
-    `warnings` are -- see `_code_set_records_and_evidence_for_table`.
+    `warnings` are -- see `_code_set_records_and_evidence_for_table`. A
+    column's evidence commits into this sink only once the batch stream below
+    has observed at least one non-null source value for it (`code_set_null_
+    seen`), mirroring `CodeSetHandler.run`'s masked_any gate on the pandas/
+    sequential routes: an entirely-null column never dispatches
+    `apply_code_set` there, so it must not report its corpus as "used" here
+    either.
 
     Codex round-6 P2 MASKING/EVIDENCE VERSION DIVERGENCE remediation: this
     table's code_set corpus record(s) are resolved ONCE here, before any
@@ -282,8 +288,11 @@ def _stream_table(
     code_set_corpus_records, table_code_set_evidence = _code_set_records_and_evidence_for_table(
         plan, table_name, source_schema.names, skip_columns=skip_columns
     )
-    if code_set_corpora is not None:
-        code_set_corpora.update(table_code_set_evidence)
+    # `table_code_set_evidence` is resolved from the plan+schema alone, before
+    # any row is read, so it cannot yet know whether a column turns out
+    # all-null. Commit is deferred until the batch stream has actually seen a
+    # non-null value per column -- see the docstring paragraph above.
+    code_set_null_seen: dict[str, bool] = dict.fromkeys(code_set_corpus_records, False)
     joiners: list[ChildFkBatchJoiner] = []
     try:
         for idx, edge in enumerate(incoming_edges):
@@ -320,6 +329,12 @@ def _stream_table(
 
         def rewritten() -> Iterator[pa.RecordBatch]:
             for raw_batch in _iter_source_batches(raw, batch_rows):
+                for column, seen in code_set_null_seen.items():
+                    if seen:
+                        continue
+                    idx = raw_batch.schema.get_field_index(column)
+                    if idx >= 0 and raw_batch.column(idx).null_count < raw_batch.num_rows:
+                        code_set_null_seen[column] = True
                 out = mask_batch(
                     plan,
                     table_name,
@@ -370,6 +385,16 @@ def _stream_table(
                     memory_limit=memory_limit,
                     batch_rows=batch_rows,
                 )
+        # Deferred commit (see the docstring paragraph on `code_set_corpora`
+        # above): by this point `rewritten()` has been fully consumed by
+        # either branch above, so `code_set_null_seen` reflects the whole
+        # table's stream. Only a column that saw at least one non-null
+        # source value earns its evidence stamp, matching CodeSetHandler
+        # .run's masked_any gate on the pandas/sequential routes.
+        if code_set_corpora is not None:
+            for key, evidence in table_code_set_evidence.items():
+                if code_set_null_seen.get(key[1], False):
+                    code_set_corpora[key] = evidence
         for edge, total in zip(incoming_edges, orphan_totals, strict=True):
             if total and edge.orphan_policy is OrphanPolicy.WARN:
                 warnings.append(orphan_fk_warning(edge, total))
@@ -515,14 +540,15 @@ def _code_set_records_and_evidence_for_table(
     `when` predicate, so there is no when-gated zero-row case to guard against
     here (unlike the pandas/sequential route's when_gate).
 
-    Known divergence: stamping is keyed on schema presence, not on observed
-    non-null masking, so an all-null code_set column is reported here as used
-    whereas the pandas/sequential route omits it (it stamps only after masking
-    at least one non-null value). The two routes agree for any column with a
-    non-null value and diverge only for an entirely-null column; this is
-    evidence-only (a corpus listed though it masked nothing, no leak). Exact
-    parity would require threading a per-column non-null count through the
-    streaming batch loop.
+    This function alone cannot achieve masked-value parity with the pandas/
+    sequential route: it is resolved from the plan+schema before any row is
+    read, so it returns CANDIDATE evidence keyed on schema presence, not on
+    observed non-null masking. `_stream_table` closes that gap -- it commits
+    each entry into the shared `code_set_corpora` sink only after its batch
+    stream has observed at least one non-null source value for that column,
+    so an all-null column ends up with no evidence stamp here either, exactly
+    as `CodeSetHandler.run`'s masked_any gate withholds one on the pandas/
+    sequential route.
 
     Codex round-6 P2 MASKING/EVIDENCE VERSION DIVERGENCE remediation: returns
     the PINNED `_CorpusRecord` per code_set column alongside the evidence

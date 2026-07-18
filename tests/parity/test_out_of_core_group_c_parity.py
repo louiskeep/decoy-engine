@@ -483,3 +483,105 @@ class TestOutOfCoreCodeSetCorporaEvidence:
             ("parent", "code"): "icd10",
             ("child", "code"): "mcc",
         }
+
+
+# ---------------------------------------------------------------------------
+# Fast-follow to the HIGH-2 remediation above: `_code_set_records_and_evidence_
+# for_table` resolves candidate evidence from the plan+schema alone, before any
+# row is read, so on its own it cannot know a column is all-null. Pre-fix, that
+# meant the out-of-core route stamped an all-null code_set column's corpus as
+# "used" even though `CodeSetHandler.run`'s masked_any gate withholds the same
+# stamp on the pandas/sequential routes for the byte-identical input -- an
+# evidence-parity gap in the OPPOSITE direction from a missing stamp. Pinned
+# here so a column that never dispatches a masked value reports identically
+# (absent) on every route.
+# ---------------------------------------------------------------------------
+
+
+class TestOutOfCoreCodeSetCorporaAllNullEvidenceParity:
+    def test_ooc_omits_code_set_corpora_for_all_null_column_matching_oracle(self) -> None:
+        payload_seed, payload_vals = _PAYLOADS["code_set_mask"]
+        all_null_vals: list[str | None] = [None] * len(payload_vals)
+        plan, sources, graph = _payload_edge_job(
+            payload_seed, all_null_vals, policy=OrphanPolicy.PRESERVE
+        )
+        oracle = PandasExecutionAdapter().run(
+            plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
+        )
+        ooc = run_fk_out_of_core(plan, sources, registry=_REG, relationship_graph=graph)
+
+        # Structural parity: neither route reports a corpus as "used" for a
+        # column that never dispatched a single masked value.
+        assert "code_set_corpora" not in oracle.quality_metrics
+        assert "code_set_corpora" not in ooc.quality_metrics
+
+    @pytest.mark.parametrize("batch_rows", [None, 2, 1])
+    def test_ooc_all_null_parity_holds_at_small_batch_sizes(self, batch_rows: int | None) -> None:
+        """A single-row batch stream is where a per-batch (rather than
+        whole-stream) null check would wrongly reset "seen" between batches
+        that are each individually all-null; pin at batch_rows=1 too."""
+        payload_seed, payload_vals = _PAYLOADS["code_set_mask"]
+        all_null_vals: list[str | None] = [None] * len(payload_vals)
+        plan, sources, graph = _payload_edge_job(
+            payload_seed, all_null_vals, policy=OrphanPolicy.PRESERVE
+        )
+        ooc = run_fk_out_of_core(
+            plan, sources, registry=_REG, relationship_graph=graph, batch_rows=batch_rows
+        )
+        assert "code_set_corpora" not in ooc.quality_metrics
+
+    def test_ooc_all_null_sibling_does_not_suppress_or_pollute_the_non_null_columns_stamp(
+        self,
+    ) -> None:
+        """Mixed case: parent's code_set column has real values, child's
+        (same corpus) is entirely null. Only the non-null column earns a
+        stamp on either route -- the all-null sibling neither drags it down
+        (no evidence at all) nor gets spuriously included itself."""
+        key = _seed("hash", namespace="kns")
+        code_seed = _seed("code_set", namespace="cs", provider_config=(("code_set", "mcc"),))
+        parent = pa.table(
+            {
+                "pk": pa.array(["p0", "p1"], type=pa.string()),
+                "pay": pa.array(["alpha", "beta"], type=pa.string()),
+            }
+        )
+        child = pa.table(
+            {
+                "fk": pa.array(["p0", "p1"], type=pa.string()),
+                "cpay": pa.array([None, None], type=pa.string()),
+            }
+        )
+        plan = _plan(
+            (
+                ("parent", TableSeed(per_column=(("pk", key), ("pay", code_seed)), per_group=())),
+                ("child", TableSeed(per_column=(("fk", key), ("cpay", code_seed)), per_group=())),
+            )
+        )
+        graph = RelationshipGraph(
+            edges=(
+                RelationshipEdge(
+                    parent_table="parent",
+                    parent_columns=("pk",),
+                    child_table="child",
+                    child_columns=("fk",),
+                    namespace="kns",
+                    orphan_policy=OrphanPolicy.PRESERVE,
+                ),
+            ),
+            ordering=(),
+        )
+        sources = {"parent": parent, "child": child}
+        assert _gate_admits(plan, graph)
+        oracle = PandasExecutionAdapter().run(
+            plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
+        )
+        ooc = run_fk_out_of_core(plan, sources, registry=_REG, relationship_graph=graph)
+
+        for label, result in (("oracle", oracle), ("ooc", ooc)):
+            corpora = result.quality_metrics.get("code_set_corpora")
+            assert corpora is not None and len(corpora) == 1, (
+                f"{label}: expected only the non-null column's evidence, got {corpora!r}"
+            )
+            entry = corpora[0]
+            assert entry["table"] == "parent"
+            assert entry["column"] == "pay"
