@@ -52,7 +52,7 @@ class PandasStrategyPort:
         self._pandas = pandas_handler
         pandas_preflight = getattr(pandas_handler, "preflight", None)
         if pandas_preflight is not None:
-            self.preflight = pandas_preflight  # type: ignore[method-assign]
+            self.preflight = pandas_preflight
 
     def run(
         self,
