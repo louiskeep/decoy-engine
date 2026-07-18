@@ -172,6 +172,33 @@ class TestEvidenceWinsOverName:
         )
         assert len(warnings) == 1
 
+    def test_hinted_unknown_length_with_low_distinctness_does_not_warn(self) -> None:
+        # Mirror partial-stats hole: length unmeasurable (e.g. a stale profile
+        # predating avg_length) but a LOW distinct_count is present. Measured
+        # low distinctness (5/1000) proves the column categorical/templated, so
+        # the name must not rescue it -- measured evidence wins over the name.
+        warnings = _score(
+            [_view("clinical_notes", avg_length=None, distinct_count=5, non_null_count=1000)]
+        )
+        assert warnings == []
+
+    def test_hinted_unknown_length_with_high_distinctness_warns_via_name(self) -> None:
+        # Length unknown, distinctness high, and a name hint: nothing measured
+        # contradicts, so the name tiebreaker warns.
+        warnings = _score(
+            [_view("clinical_notes", avg_length=None, distinct_count=990, non_null_count=1000)]
+        )
+        assert len(warnings) == 1
+
+    def test_unhinted_unknown_length_high_distinctness_does_not_warn(self) -> None:
+        # High distinctness ALONE with unknown length must not warn without a
+        # name: a short high-cardinality code column is indistinguishable here,
+        # so warning would re-open the HC-5 false positive.
+        warnings = _score(
+            [_view("field_7", avg_length=None, distinct_count=990, non_null_count=1000)]
+        )
+        assert warnings == []
+
     def test_all_null_hinted_column_does_not_warn(self) -> None:
         # An all-null column has no PHI to leak; it must not warn even though
         # its name matches and its length is unmeasurable (avg_length None,
