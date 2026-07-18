@@ -28,7 +28,7 @@ class TestCompilePlanHappyPath:
         assert plan.seed_protocol_version == 6
         assert plan.engine_version == "0.1.0"
 
-    def test_compile_records_twenty_five_checks_passed(
+    def test_compile_records_twenty_nine_checks_passed(
         self, simple_config: dict, simple_profile: Profile
     ) -> None:
         """S2 added orphan_fk_policy_completeness at row 6; S5 added
@@ -48,7 +48,10 @@ class TestCompilePlanHappyPath:
         truncate_config at row 22, bucketize_config at row 23, and
         categorical_categories at row 24; Sprint 2 honesty pack (2026-07-04)
         added fpe_charset_config at row 25; DE-03 (2026-07-13) added
-        faker_requires_provider at row 26."""
+        faker_requires_provider at row 26; HC-3a (2026-07-17) added
+        date_shift_group_by_refs at row 27; HC-3b (2026-07-17) added
+        top_code_config at row 28; HC-7 (2026-07-17) added freetext_advisory
+        at row 29."""
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
         assert set(plan.plan_compile.checks_passed) == {
             "namespace_ambiguity",
@@ -77,6 +80,9 @@ class TestCompilePlanHappyPath:
             "categorical_categories",
             "fpe_charset_config",
             "faker_requires_provider",
+            "date_shift_group_by_refs",
+            "top_code_config",
+            "freetext_advisory",
         }
 
     def test_compile_no_warnings_no_errors_no_skipped(

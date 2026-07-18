@@ -113,6 +113,79 @@ class StrategyContext:
     # FrozenInstanceError and, more importantly, would break the drain
     # point's identity-based reference to this list).
     row_errors: list[RowError] = field(default_factory=list)
+    # HC-1 slice 1: the shared code_set corpus-provenance evidence sink,
+    # keyed by (table, column) (dedupes if a column's handler runs more than
+    # once, e.g. under a when_gate). Table-qualified because two tables can
+    # legally declare a same-named code_set column bound to DIFFERENT corpora
+    # (e.g. both tables have a "code" column, one icd10 one mcc); a bare-column
+    # key would let the second table's stamp silently overwrite the first's,
+    # dropping audit provenance for whichever table lost the race (Codex P2
+    # MULTI-TABLE EVIDENCE COLLISION). `CodeSetHandler.run` populates one entry
+    # per (table, column) (counts + identifiers only, no raw codes), including
+    # the `table`/`column` identity in the evidence dict itself since the
+    # flattened metrics list below discards the key; `PandasExecutionAdapter.run`
+    # / `run_sequential` copy it into
+    # `ExecutionResult.quality_metrics['code_set_corpora']` at the end of the
+    # job. Same mutate-in-place pattern as `row_errors` above.
+    code_set_corpora: dict[tuple[str, str], dict[str, Any]] = field(default_factory=dict)
+    # Codex P2 MULTI-TABLE EVIDENCE COLLISION remediation: the table the
+    # in-flight scalar handler dispatch belongs to. Mutated via
+    # `object.__setattr__` (frozen dataclass, same escape hatch as `mask_key`'s
+    # `__post_init__` normalization below) by the nearest enclosing point that
+    # iterates tables and owns `code_set_corpora`
+    # (`_pandas_adapter._dispatch_mask_node`, and the orphan-REMAP closure for
+    # the narrower parent-key-strategy case), immediately before invoking a
+    # handler, so `CodeSetHandler.run` can key its evidence sink by
+    # (table, column) instead of a bare column name.
+    current_table: str = ""
+    # Codex round-4 P2 NESTED CODE_SET MIS-KEYED EVIDENCE remediation: the
+    # OUTER column identity when a scalar handler is running as a nested
+    # strategy's child. `NestedStrategyHandler.run` invokes the child handler
+    # with the synthetic column name `_nested_leaves` (a batch-collection
+    # column that does not exist in the source frame), so a child handler
+    # that stamps column-keyed evidence (CodeSetHandler) must not key it off
+    # the `column` parameter it was literally called with -- that would
+    # record a nonexistent `_nested_leaves` column, and two nested code_set
+    # columns in the same table would collide on that same synthetic name,
+    # silently dropping one corpus's provenance. Empty string means "not
+    # running as a nested child"; `CodeSetHandler.run` falls back to its own
+    # `column` parameter in that case. Set/restored via `object.__setattr__`
+    # around the child dispatch (same escape hatch as `current_table`),
+    # mirroring `_orphan.py`'s prior_table save/restore since nested
+    # dispatch can itself run mid-dispatch of an enclosing node.
+    nested_outer_column: str = ""
+    # Codex round-7 P2 CROSS-INVOCATION MASKING/EVIDENCE DIVERGENCE
+    # remediation: the job-wide pinned corpus record per (table, column). The
+    # round-6 fix pinned one corpus record within a SINGLE `CodeSetHandler.run`
+    # so masking and evidence could not diverge on a mid-run file replacement.
+    # But a code_set on an FK PARENT under `orphan_policy=REMAP` dispatches
+    # `run` TWICE -- once for the parent column, and once from the orphan-REMAP
+    # closure (`_orphan.make_remap_fn`) which re-runs the parent's strategy to
+    # mask orphan keys -- and each call independently re-resolved from the
+    # loader cache. A customer corpus file replaced between those two calls
+    # then masked real parent values off v1 and remapped orphans off v2, and
+    # the second call's evidence stamp overwrote the first's with v2. Pinning
+    # the resolved record here (job scope == this StrategyContext's lifetime),
+    # keyed by the same (table, column) identity the evidence sink uses, makes
+    # every `run` invocation for one logical column in one job share ONE corpus
+    # version. Value typed loosely (`Any`) so the execution boundary does not
+    # import the transforms-layer `_CorpusRecord`. Same mutate-in-place pattern
+    # as `code_set_corpora` above; a fresh dict per job via default_factory.
+    code_set_records: dict[tuple[str, str], Any] = field(default_factory=dict)
+    # HC-3a (Codex R1 P1 #1): pre-mask entity-anchor snapshots for
+    # `date_shift` columns configured with `group_by`, keyed by (table,
+    # group_by_column). Each route (pandas full-frame/chunked, sequential,
+    # polars-native) copies the group column's values BEFORE any node masks,
+    # so `DateShiftStrategyHandler` derives every row's offset from the
+    # entity's ORIGINAL id -- never a value some earlier (possibly when-gated)
+    # node already masked in place, which would split one patient's rows onto
+    # different offsets and break the interval the feature exists to preserve.
+    # The handler aligns a snapshot to the (possibly when-gated subset) frame
+    # it sees by index label, and FAILS CLOSED if a configured group_by has no
+    # snapshot rather than falling back to the live (mutable) frame. Same
+    # mutate-in-place / default-empty pattern as the sinks above; a fresh dict
+    # per job via default_factory.
+    group_anchor_snapshots: dict[tuple[str, str], pd.Series] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         # A frozen dataclass forbids attribute assignment; object.__setattr__ is
@@ -121,9 +194,32 @@ class StrategyContext:
         if not self.mask_key:
             object.__setattr__(self, "mask_key", self.job_seed)
 
+    def code_set_corpora_metrics(self) -> dict[str, Any]:
+        """HC-1 slice 1: the code_set corpus-provenance evidence block, or {}.
+
+        Both the full-frame (`PandasExecutionAdapter.run`) and the
+        table-at-a-time (`run_sequential`) paths merge this into the job's
+        `ExecutionResult.quality_metrics`. Empty dict when no code_set column
+        ran, so an unrelated job's quality_metrics is untouched.
+        """
+        if not self.code_set_corpora:
+            return {}
+        return {"code_set_corpora": list(self.code_set_corpora.values())}
+
 
 class StrategyHandler(Protocol):
-    """A single scalar masking strategy, invoked through the boundary."""
+    """A single scalar masking strategy, invoked through the boundary.
+
+    `preflight` is an OPTIONAL extra method, not part of this Protocol's
+    formal shape (duck-typed via `getattr(handler, "preflight", None)` in
+    `execution._when_gate.run_with_when_gate`, Codex P2 FAIL-CLOSED
+    VALIDATION BYPASSED BY A ZERO-MATCH `when` GATE remediation). A handler
+    whose `run()` does fail-closed validation that must happen even when a
+    `when:` gate matches zero rows (e.g. `CodeSetHandler` loading/validating
+    its corpus) defines `preflight(plan, ctx) -> None`; the when-gate calls
+    it unconditionally before its zero-match short-circuit. Handlers with no
+    such need simply do not define it.
+    """
 
     name: str
 

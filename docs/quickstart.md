@@ -82,8 +82,9 @@ touched. `run` profiles the source, compiles a frozen plan, executes it on the
 default (Polars) execution adapter, and writes `people_masked.csv`.
 
 Because `global_settings.seed` is fixed, the same config plus the same input
-produces the same output every time. For output that is stable across machines
-(not just across runs on one box), supply a master key; see
+produces the same output every time. For masking output that is stable across
+machines (not just across runs on one box), set a masking secret with
+`--mask-secret` (or `global_settings.mask_secret_ref`); see
 [determinism](determinism.md).
 
 ## Where to go next

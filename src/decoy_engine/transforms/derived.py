@@ -114,8 +114,9 @@ class DerivedConfig:
                     "'expression' is required for the derived strategy. "
                     "Provide a closed-vocabulary expression using column "
                     "references and the supported operators (+, -, *, /, //, "
-                    "==, !=, <, >, <=, >=, in, and, or, not, concat(), "
-                    "days_between(), if/else ternary, literals)."
+                    "==, !=, <, >, <=, >=, in, and, or, not, concat() (n-arg), "
+                    "slice(s, start[, end]), days_between(), if/else ternary, "
+                    "literals)."
                 ),
             )
 

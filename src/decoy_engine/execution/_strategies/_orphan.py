@@ -260,7 +260,18 @@ def make_remap_fn(
                     message=f"REMAP found no handler for parent strategy {pnode.strategy!r}.",
                 )
             tmp = pd.DataFrame({pcol: [k[j] for k in orphan_keys]})
-            tmp, _ = handler.run(tmp, pcol, pnode.plan_slice, ctx)
+            # Codex P2 MULTI-TABLE EVIDENCE COLLISION remediation: this remaps
+            # orphan keys via the PARENT column's own strategy, so any
+            # table-identity evidence a handler stamps (CodeSetHandler) must
+            # attribute to the parent table, not whatever table a prior
+            # `_dispatch_mask_node` call last set. Restored in `finally` since
+            # this closure can run interleaved mid-dispatch of the CHILD table.
+            prior_table = ctx.current_table
+            object.__setattr__(ctx, "current_table", ptable)
+            try:
+                tmp, _ = handler.run(tmp, pcol, pnode.plan_slice, ctx)
+            finally:
+                object.__setattr__(ctx, "current_table", prior_table)
             masked_cols.append(list(tmp[pcol]))
         return [tuple(col[i] for col in masked_cols) for i in range(len(orphan_keys))]
 

@@ -157,7 +157,9 @@ class TestProfileShape:
 
         df = _hipaa_like_dataframe()
         profile = run_storm(df, "x")
-        json.dumps(profile.to_dict())
+        as_dict = profile.to_dict()
+        payload = json.dumps(as_dict)
+        assert json.loads(payload) == as_dict
 
 
 class TestPIIDetection:

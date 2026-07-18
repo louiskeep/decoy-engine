@@ -254,8 +254,10 @@ class TestPolarsAdapterConformance:
 
     def test_shutdown_idempotent(self) -> None:
         adapter = PolarsExecutionAdapter()
-        adapter.shutdown()
-        adapter.shutdown()
+        # Calling shutdown twice must not raise, and the (currently no-op)
+        # release returns None both times -- the observable contract.
+        assert adapter.shutdown() is None
+        assert adapter.shutdown() is None
 
 
 class TestFallbackParity:

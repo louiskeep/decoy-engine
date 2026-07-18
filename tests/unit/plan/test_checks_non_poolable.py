@@ -88,12 +88,16 @@ class TestRunConfigOnlyChecks:
             "grouped_series_refs",
             "windowed_date_refs",
             "group_key_refs",
+            # Row 27 (HC-3a): date_shift group_by (entity-anchor) column ref.
+            "date_shift_group_by_refs",
             # Row 21 (SP-46): fpe_join_group structural validation.
             "fpe_join_groups",
             # Row 22 (Sprint 13 S3): truncate length/keep/mask_char validation.
             "truncate_config",
             # Row 23 (Sprint 13 S3, GATE-1 Q4): bucketize width resolution.
             "bucketize_config",
+            # Row 28 (HC-3b): top_code bound resolution.
+            "top_code_config",
             # Row 24 (Sprint 13 S3, GATE-1 Q4): categorical categories shape.
             "categorical_categories",
             # Row 25 (Sprint 2 honesty pack, S6, GATE-1 Q4): fpe charset resolution.

@@ -510,6 +510,16 @@ Config surface (`strategy: code_set` on a column; parameters under
   corpus directory. `customer:<absolute_path>` loads a Parquet file at the
   given path. A customer corpus must have a `code` column (string) and, when
   `chapter_preserve: true`, a `chapter` column.
+- `corpus_source_version` (str, optional, HC-2): pins the expected SOURCE
+  release id (e.g. `"FY2024"`) of the corpus this config expects to load.
+  Independently verified at load time against the loaded corpus's embedded
+  `source_version` (see Provenance below) -- if they differ, or the loaded
+  corpus has no `source_version` at all, the load fails closed
+  (`code_set_corpus_version_mismatch`). Applies to BOTH shipped and customer
+  corpora: a shipped corpus update and a customer swapping in a different
+  release fail the same way. Distinct from the corpus metadata FORMAT
+  version (`corpus_version` / `CORPUS_METADATA_VERSION`), which this field
+  does not pin. Unset (default): no pin, today's behavior.
 
 Two modes:
 
@@ -539,19 +549,93 @@ Customer corpus (`corpus_source: customer:<path>`): a missing `code` column or
 an empty corpus raises `PlanCompileError` at execution time, pre-mutation,
 before any row is changed.
 
-Shipped corpora (under `src/decoy_engine/codesets/`):
+Shipped corpora (under `src/decoy_engine/codesets/`; the canonical list is
+`CODESET_REGISTRY` in `transforms/_codeset_provenance.py` -- adding a corpus
+means adding one entry there):
 
-| Name | Rows | Source | License | Notes |
-|---|---|---|---|---|
-| `icd10` | 65 | CMS ICD-10-CM | US public domain | First-letter chapter per ICD-10-CM spec |
-| `hcpcs` | 32 | CMS HCPCS | US public domain | |
-| `ndc` | 38 | FDA NDC | US public domain | `chapter` column is a Decoy-defined therapeutic bucket (A/B/C/D); NDC has no native chapter structure |
-| `mcc` | 62 | ISO 18245 | See NOTICE | Merchant Category Codes |
+- `icd10` -- ICD-10-CM diagnosis codes (CDC/NCHS + CMS). Public domain.
+  Chapter is the first letter of the code, per the ICD-10-CM spec.
+- `hcpcs` -- HCPCS Level II procedure/supply codes (CMS). Public domain.
+- `ndc` -- FDA National Drug Code Directory entries. Public domain. The
+  `chapter` column is a Decoy-defined therapeutic bucket (A/B/C/D...); NDC
+  has no native chapter structure, so `chapter_preserve: true` with `ndc`
+  constrains to these Decoy-defined buckets, not any native NDC hierarchy.
+- `mcc` -- ISO 18245 Merchant Category Codes. Public reference enumeration;
+  see NOTICE.
 
-The `chapter` column in the NDC corpus is a Decoy-defined therapeutic grouping,
-not an attribute of the NDC standard. When using `chapter_preserve: true` with
-`ndc`, the chapter constraint refers to these Decoy-defined buckets, not to any
-native NDC hierarchy.
+**Licensed code sets: upload-only, never shipped (HC-2 D2b).** The clean
+split: the valid code UNIVERSE (which codes exist, their format) is what the
+engine ships when it is public domain; the FREQUENCY distribution (how often
+each code appears) is always learned from the customer's own data, never
+shipped, because real frequencies come from claims data the engine cannot
+redistribute and which differ by specialty/payer/population anyway. Some
+code universes are themselves licensed, not public domain -- CPT (AMA) and
+APR-DRG (3M, a proprietary grouper) -- and the engine hard-refuses to ship
+them: `code_set: cpt` or `code_set: apr_drg` with `corpus_source: shipped`
+(or absent) raises `PlanCompileError` (`code_set_reserved_licensed_name`) at
+config-validation time, before any I/O. The only legal path for a reserved
+name is `corpus_source: customer:<path>` to your own separately-licensed
+copy -- exactly the same customer-corpus flow documented above, just with a
+reserved name. The reserved-name set (`RESERVED_LICENSED_NAMES` in
+`transforms/_codeset_provenance.py`) is deliberately disjoint from
+`CODESET_REGISTRY`: a reserved name is never a shipped one.
+
+**Schema invariants (HC-2 D2c, corpus-agnostic).** Every corpus -- shipped or
+customer -- must have a `code` column whose values are non-null, non-empty,
+and unique (`code_set_corpus_null_code`, `code_set_corpus_empty_code`,
+`code_set_corpus_duplicate_codes`); when a `chapter` column is present, it
+must be populated for every row (`code_set_corpus_incoherent_chapter`). These
+checks are corpus-agnostic by design -- no code-system-specific regexes, no
+mandatory `description` column -- deferred until the real full corpora (HC-1
+slice 2) land and their per-system format conventions are settled.
+
+**Verifying a corpus file without a masking job (HC-2 item 1).**
+`decoy_engine.transforms.code_set.verify_corpus(path)` runs the exact same
+schema and provenance checks the load path runs, and returns a frozen
+`CorpusVerifyReport` (`ok`, `path`, `row_count`, `provenance` summary,
+`problems`) instead of raising -- the single validation source of truth a
+CLI `codesets verify`/`add` command or a platform upload check can call
+before registering a corpus. Like the evidence summaries above, the
+provenance field carries counts and identifiers only, never raw codes.
+
+**HC-1 (2026-07-17): these are abbreviated seeds, not full code sets.** Every
+shipped file above carries `is_seed: true` in its provenance (see below) --
+today's corpora are a handful of representative codes per chapter/section,
+not the complete CMS/CDC/FDA/ISO data. Row counts are intentionally not
+documented here (they will change when the full data replaces the seed);
+call `decoy_engine.transforms.code_set.load_corpus(name)` and check
+`len(...)`, or `load_corpus_provenance(name)` for the full provenance
+record. Replacing the seeds with the full public code sets is a separate,
+larger change (real network-fetched CMS/CDC/FDA data, its own sourcing
+verification); the provenance and scale infrastructure below already exists
+for that drop-in.
+
+**Provenance and evidence surfacing (HC-1 slice 1).** Every corpus file
+carries Parquet key/value metadata: `source`, `source_url`, `license`,
+`citation`, `source_version` (the source's own release identifier, e.g.
+`"FY2024"`), `effective_date` (ISO date the release took effect), and
+`is_seed`. This is read back at load time into a typed provenance record:
+
+- A **shipped** corpus missing any required field (`source`,
+  `source_version`, `effective_date`, `license`) fails closed
+  (`PlanCompileError`, code `code_set_corpus_missing_provenance`) --
+  the engine ships it, so it must be able to say where the codes came from.
+- A **customer** corpus (`corpus_source: customer:<path>`) may omit
+  provenance entirely (logged as a warning, not an error) -- it is not
+  required for the strategy to function. If a customer corpus DOES carry a
+  provenance stamp, it must be complete; a partial stamp also fails closed
+  (a half-filled provenance block is worse than none).
+
+Provenance is surfaced as evidence, not as plan state: it is stamped ONLY
+into `ExecutionResult.quality_metrics['code_set_corpora']`, a list of
+`{code_set, source, source_version, effective_date, license, is_seed,
+row_count}` entries, one per code_set column used in the job (counts and
+identifiers only -- never raw codes), from the corpus actually loaded at run
+time. It is never written into the Plan YAML manifest: a code corpus is
+data, which may be swapped, absent, or unreachable in whatever environment
+`plan_to_yaml` happens to run in, so stamping it there would make the plan
+artifact non-deterministic (a swapped/absent corpus silently changes or
+drops the block) for a field that does not round-trip anyway.
 
 **Cross-version keyed-access caveat (inherited from SP-06 corpus-sort pattern).**
 MASK mode selects at position `HMAC(...) % candidate_count` over the
@@ -563,7 +647,9 @@ is added or removed. Do not assume cross-version MASK output stability for
 **Carry-forwards (not yet built):** additional shipped corpora LOINC, CIP,
 NUCC, UPC/EAN; CPT and MedDRA bring-your-own-corpus workflow documentation; an
 out-of-corpus-input `QualityWarning` signal (currently, an out-of-corpus input
-is silently remapped to a real code). HIPAA-pack default wiring shipped in SP-11.
+is silently remapped to a real code); the full-data replacement for today's
+abbreviated seed corpora (HC-1 slice 2). HIPAA-pack default wiring shipped in
+SP-11.
 
 ```yaml
 # Mask ICD-10 diagnosis codes, preserving chapter grouping.
@@ -630,8 +716,11 @@ Common parameters:
 - `expression` (str, required): a closed-grammar expression. Column references
   are bare identifiers (no dots, no dunders). The permitted forms are:
   arithmetic (`+`, `-`, `*`, `/`, `//`), comparison (`==`, `!=`, `<`, `>`,
-  `<=`, `>=`, `in`), logical (`and`, `or`, `not`), string (`concat(a, b)`),
-  date (`days_between(start, end)`), ternary (`value if condition else other`),
+  `<=`, `>=`, `in`), logical (`and`, `or`, `not`), string concat
+  (`concat(a, b, ...)`, two or more arguments), substring
+  (`slice(s, start[, end])`, Python-native 0-indexed slicing -- e.g.
+  `slice(firstname, -4)` for the last 4 characters), date
+  (`days_between(start, end)`), ternary (`value if condition else other`),
   and literals (integers, floats, double-quoted strings, `True`, `False`,
   `None`). Anything outside that set raises `ValidationError` at config-parse
   time, before any row data is touched. A column value that looks like an
@@ -1125,7 +1214,8 @@ Two safety bounds are checked before parsing:
 | Arithmetic | `+` `-` `*` `/` `//` |
 | Comparison | `==` `!=` `<` `>` `<=` `>=` `in` |
 | Logical | `and` `or` `not` |
-| String | `concat(a, b)` (exactly two arguments) |
+| String | `concat(a, b, ...)` (two or more arguments) |
+| Substring | `slice(s, start[, end])` (Python-native 0-indexed, half-open, negative-from-end slicing; out-of-range indices clamp rather than error, e.g. `slice(firstname, -4)` for the last 4 characters) |
 | Date | `days_between(start, end)` (integer days; accepts `datetime.date` or ISO-8601 strings) |
 | Conditional | `case_when(cond1, val1, ..., condN, valN, default)` -- **non-short-circuit**: all sub-expressions are evaluated before branch selection; every branch value must be safe to evaluate for all rows |
 | Ternary | `value if condition else other` |
@@ -1133,8 +1223,9 @@ Two safety bounds are checked before parsing:
 | Column refs | bare identifiers (no dots, no dunders) |
 
 Anything not in the table above is rejected. This includes: function calls
-other than `concat`, `days_between`, and `case_when`, attribute access (`.`),
-subscript syntax (`[]`), `import`, and dunder identifiers (`__class__`, etc.).
+other than `concat`, `slice`, `days_between`, and `case_when`, attribute
+access (`.`), subscript syntax (`[]`), `import`, and dunder identifiers
+(`__class__`, etc.).
 
 String literals must use double quotes (`"hello"`); single-quoted strings
 (`'hello'`) are not in the grammar. String escape sequences are validated at

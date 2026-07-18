@@ -303,6 +303,13 @@ def check_statistical_columns(config: dict[str, Any]) -> None:
     Config + snapshot artifact only (no profile, no source data): the
     snapshot is a config-referenced fitted-model file, so config-only
     callers (decoy validate) catch a bad artifact before a long run.
+
+    HC-5: `high_cardinality` (full-vocabulary retention opt-in) is meaningful
+    only for `type: statistical` columns; `load_spec` validates its
+    dependency on `allow_real_categories` and its snapshot-kind requirement,
+    but it never sees non-statistical columns, so the "wrong type entirely"
+    case (a `faker`/`sequence`/... column carrying a stray `high_cardinality`
+    key) is caught here instead.
     """
     from decoy_engine.generation.statistical import load_spec
     from decoy_engine.generation.statistical._spec import StatisticalSpecError
@@ -317,7 +324,17 @@ def check_statistical_columns(config: dict[str, Any]) -> None:
             if not isinstance(col_entry, dict):
                 continue
             col_name = col_entry.get("name", "?")
-            if col_entry.get("type") == "statistical":
+            col_type = col_entry.get("type")
+            if col_type != "statistical" and "high_cardinality" in col_entry:
+                raise PlanCompileError(
+                    code="statistical_high_cardinality_wrong_type",
+                    path=f"tables.{table_name}.generate_columns.{col_name}.high_cardinality",
+                    message=(
+                        f"generate column {col_name!r}: high_cardinality is only valid "
+                        f"for `type: statistical` columns (got type {col_type!r})."
+                    ),
+                )
+            if col_type == "statistical":
                 try:
                     spec = load_spec(col_entry)
                 except StatisticalSpecError as exc:

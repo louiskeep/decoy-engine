@@ -9,10 +9,180 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (HC-1 slice 1: code_set corpus provenance + scale infrastructure, 2026-07-17)
+
+Ships the provenance and scale plumbing for the healthcare code sets; the full
+public-domain corpora themselves (the real-data ETL) are HC-1 slice 2. See
+`docs/backlog/hc-1-codeset-slice2-and-hardening-tail.md`.
+
+- **Corpus provenance is surfaced as evidence, never config.** Each `code_set`
+  corpus carries a provenance stamp (`source`, `source_version`,
+  `effective_date`, `license`, `is_seed`, metadata format version) embedded in
+  its Parquet key/value metadata. `CodeSetHandler` stamps one
+  identifiers-and-counts-only entry per `(table, column)` into
+  `ExecutionResult.quality_metrics['code_set_corpora']` across the pandas,
+  sequential, and out-of-core routes -- **never raw codes**. Provenance is a
+  runtime observation, so it is deliberately NOT written into the plan YAML.
+- **Fail-closed provenance validation.** A SHIPPED corpus with missing,
+  incomplete, or identity-mismatched provenance is job-fatal; a shipped corpus
+  with an absent/garbled `is_seed` or a stale metadata format version is now
+  also job-fatal (a build artifact whose seed status is unknown must not
+  masquerade as a full corpus). A CUSTOMER corpus may omit provenance entirely
+  (warn), but a half-filled stamp is rejected.
+- **O(1) chapter lookup + bounded corpus caching.** `chapter_preserve` now uses
+  a memoized `code -> chapter` index instead of an O(n) per-value scan. Shipped
+  corpora cache on resolved path; customer corpora cache on
+  `(path, mtime, ctime, size)` in a bounded LRU so a same-path file replacement
+  invalidates automatically.
+- **Masking and evidence cannot diverge on a mid-job corpus swap.** One resolved
+  corpus record is pinned per `(table, column)` for the life of a job and
+  threaded into both the evidence stamp and every per-value mask -- including
+  the second invocation an FK parent under `orphan_policy=REMAP` triggers via
+  the orphan-remap closure -- so real values, remapped orphans, and the evidence
+  all report the same corpus version.
+
+### Added (HC-3(a): entity/patient-anchored date_shift, 2026-07-17)
+
+- **`date_shift` gains an optional `group_by` config.** When it names an entity
+  column (e.g. `patient_id`), every date sharing that entity value shifts by ONE
+  consistent keyed offset instead of a per-value offset, so intra-entity
+  intervals (admission -> discharge length-of-stay, medication schedules)
+  survive de-identification. This is the HIPAA Safe Harbor per-patient
+  consistent-shift technique. `group_by` is `None` by default, and the digest
+  input is then byte-identical to prior behavior.
+- **Fail-closed safe envelope.** `date_shift` + `group_by` is rejected at
+  plan-compile for a missing/non-string ref, a `nested` child, a `when` gate,
+  and any FK-participating column (entity anchoring would break referential
+  integrity and orphan remap). At runtime the anchor is read from a pre-mask
+  snapshot (never the live, maskable frame) whose index must row-align with the
+  frame being masked; a mismatch fails closed (`date_shift_group_anchor_snapshot_misaligned`)
+  rather than silently mis-anchoring. numpy scalar anchors are normalized to
+  Python so the offset is byte-stable across chunk boundaries and substrates.
+
+### Added (HC-2: user-updatable code sets, engine pieces, 2026-07-17)
+
+Engine-side pieces for user-updatable `code_set` corpora; the CLI
+(`decoy codesets list/add/verify`) and platform upload flow that consume
+these are separate, sibling-repo changes.
+
+- **`verify_corpus(path)` standalone verification primitive.** Runs the exact
+  same schema and provenance checks the load path runs, without running a
+  masking job, and returns a frozen `CorpusVerifyReport`
+  (`ok`, `path`, `row_count`, `provenance` summary, `problems`) instead of
+  raising -- the single validation source of truth a future CLI
+  `codesets verify`/`add` command or a platform upload check calls into.
+  Provenance in the report is counts and identifiers only, never raw codes.
+- **`corpus_source_version` fail-closed load-time pin.** A new optional
+  `CodeSetConfig` field: when set, the loaded corpus's embedded
+  `source_version` must match it exactly, or the load fails closed
+  (`code_set_corpus_version_mismatch`) -- for both shipped and customer
+  corpora. Distinct from the corpus metadata FORMAT version
+  (`corpus_version` / `CORPUS_METADATA_VERSION`). Unset: unchanged, unpinned
+  behavior.
+- **Reserved licensed corpus names are upload-only.** `RESERVED_LICENSED_NAMES`
+  (`cpt`, `apr_drg` -- AMA-licensed and proprietary-grouper code sets the
+  engine must never ship) now hard-refuses `corpus_source: shipped` (or
+  absent) at config-validation time (`code_set_reserved_licensed_name`); the
+  only legal path is `corpus_source: customer:<path>` to an operator-supplied,
+  separately-licensed copy.
+- **Generic, corpus-agnostic schema invariants.** Every corpus's `code` column
+  must be non-null, non-empty, and unique
+  (`code_set_corpus_null_code`, `code_set_corpus_empty_code`,
+  `code_set_corpus_duplicate_codes`); a present `chapter` column must be
+  populated for every row (`code_set_corpus_incoherent_chapter`). One shared
+  checker enforces this on both the load path and `verify_corpus`.
+  Code-system-specific regexes and a mandatory `description` column are
+  deferred to HC-1 slice 2, when the real full corpora land.
+
+### Added (HC-5: high-cardinality categorical fidelity, engine pieces, 2026-07-17)
+
+Engine-side pieces so a structured high-cardinality categorical column (e.g. an
+ICD-10 diagnosis-code column with thousands of distinct values) keeps its real
+vocabulary and learned frequency instead of being silently collapsed. The single
+`decoy fit` call-site that passes the column list and surfaces the warnings is a
+separate CLI change (see `docs/backlog/hc-5-cli-fit-wiring.md`).
+
+- **Per-column `high_cardinality: true` opt-in** on a `type: statistical` generate
+  column. When set (and paired with `allow_real_categories: true`) it forces the
+  column categorical, bypassing the >30-distinct reclassification to length-only
+  freetext, and retains the FULL observed vocabulary (`other_count` is 0) rather
+  than the default top-K collapse. Threaded through `compute_distribution_snapshot`
+  as `high_cardinality_columns`. No auto-detection: the operator declares it.
+- **Fit-time categorical-retention warn-gate.** A pure scorer +
+  logger wrapper (`quality/_retention_gate.py`) mirroring the existing fidelity
+  gate: warns (never raises, never mutates, never changes bytes) when a column is
+  silently reclassified to freetext by the cardinality cliff or when top-K/joint
+  tail-collapse drops mass below `global_settings.categorical_retention_warn_threshold`
+  (default 0.8; 0.0 disables).
+- **Fail-closed safety limits.** A high_cardinality column may retain at most
+  100,000 distinct values and 16 MiB of combined UTF-8 label bytes; exceeding
+  either is a typed fit error, not silent truncation. Non-string source dtype,
+  ambiguous string coercion (categories that merge or split under `str()`), and
+  unencodable labels are likewise typed fit errors.
+- **All shipped defaults unchanged.** Omitting `high_cardinality` is byte-identical
+  to prior versions: the golden distribution-snapshot baseline is untouched and the
+  new warn-threshold default is excluded from the `pipeline_config_hash` so existing
+  plans keep the same hash.
+
+### Added (HC-6: mask-side substring/slice + n-arg concat, 2026-07-17)
+
+Closes the composite-ID parity gap so expressions like `last4(firstname)` work on
+the MASK path, not just generate-side. The change is confined to the `derived`
+strategy's closed Lark grammar (`expressions/grammar.lark` + `_lark_parser.py`),
+the single evaluator shared by derived-mask and derived-generate, so the new
+primitives land on both paths with no branch. The `formula`/simpleeval surface is
+untouched.
+
+- **New `slice(s, start[, end])` primitive** with Python-native slice semantics:
+  0-indexed, half-open `[start, end)`, negative-index-from-end, and graceful
+  out-of-range clamp (matching the existing `truncate` string-subspan model). Covers
+  every composite-ID case (`slice(firstname, -4)` = last 4, `slice(x, 0, 4)` = first
+  4, `slice(x, 2, 5)` = middle). Deliberately NOT a second SQL-style 1-indexed
+  `substr` (dual index conventions in one grammar is a footgun); additive later if
+  wanted.
+- **`concat` is now n-arg** (`concat(a, b, c, ...)`, was exactly 2), keeping the
+  per-item `str()` coercion.
+- **Integer-only indices, fail-closed.** `start`/`end` must be `int`; `bool` (an int
+  subclass), `float`, `str`, and a `None` literal are each rejected with a typed
+  `ValidationError` surfaced by `apply_derived`. A `None` index does NOT fall through
+  to `subject[None:]` (which would return the whole value): the 2-arg "end omitted"
+  form is distinguished from an explicit `None` by argument count, so an omitted end
+  slices-to-end while `slice(x, None)` / `slice(x, 1, None)` are rejected. This closed
+  a silent full-value-passthrough hole found by the two-model gate.
+- **No new strategy name and all defaults unchanged.** Pure functions, no RNG,
+  byte-stable; bracket-subscript syntax (`col[0:4]`) remains a parse error.
+
+### Added (HC-7: clinical free-text advisory, warn-only, 2026-07-18)
+
+A compile-time advisory that warns when a `clinical_notes` / `claim_description`-style
+long free-text column is left UNMASKED (explicit `strategy: passthrough`), so an
+operator gets a visible signal it likely carries unstructured PHI and should use
+`text_mask`. The engine still NEVER auto-assigns a strategy: `strategy` is a required
+user field and this is a visibility signal only (it names the column and recommends
+`text_mask`; the operator decides). Mirrors the existing fidelity / retention warn-gates.
+
+- **Name-hint + measured length/distinctness heuristic.** A column is flagged only when
+  it is a passthrough string column with at least one non-null value AND measured
+  evidence does not rule it out. Two INDEPENDENT hard suppression gates: a KNOWN-short
+  average length (code-shaped) OR a KNOWN-low distinctness (categorical/templated) each
+  suppress on their own. LENGTH is the load-bearing discriminator so a high-cardinality
+  ICD-10 *code* column (short, high-distinct; HC-5) is never mistaken for prose. Past
+  both gates, a long + highly-distinct column warns; otherwise the free-text column-name
+  hint (snake_case and camelCase) is the tiebreaker when a signal is unmeasurable.
+- **Strictly warn-only.** Pure scorer + logger wrapper: never raises, never mutates the
+  plan/config, never changes output bytes, never auto-assigns a strategy. The advisory is
+  logged (operator-visible) and folded into `PlanCompileResult.warnings` (structured).
+- **New tunable, hash-stable knobs.** `global_settings.freetext_advisory_min_avg_length`
+  (default 40.0) and `freetext_advisory_min_distinctness` (default 0.5); a `min_avg_length
+  <= 0` sentinel disables the advisory. Both are excluded from `pipeline_config_hash`, and
+  the new `ColumnProfile.avg_length` / `max_length` are excluded from `profile_hash`, so
+  existing plans and golden hashes are unchanged.
+
 ## [0.4.0] - 2026-07-15
 
 ### Fixed
 
+- **BREAKING (chunked FK): decimal FK keys are now scale-aware (DE-10).** In the chunked self-masking route, a foreign-key column declared as a bare `decimal`/`numeric` (no scale) can no longer preserve referential integrity, because a decimal's canonical masked bytes depend on its declared scale (`str(1.0)` for `decimal128(2, 1)` and `str(1.00)` for `decimal128(3, 2)` canonicalize differently). Such a declaration now resolves to an unprovable-family sentinel and is rejected fail-closed with `chunked_fk_declared_dtype_mismatch` (or `chunked_fk_child_key_dtype_unprovable` for an un-scaled child key), rather than silently emitting keys that no longer join. Fix: declare the scale on both sides of the FK, e.g. `decimal(10, 2)`. Other masking routes (full-frame, sequential, out-of-core) were unaffected because they join through a real parent-key map instead of re-deriving the child's masked value. (PR #74)
 - **Chunked masking: empty-input fail-closed gate.** A zero-chunk source returned before the GA `require_mask_key` gate, so a keyed masking job with no rows and a missing/invalid mask secret produced empty output instead of being rejected at GA. The secret gate now runs before the empty-input short-circuit.
 - **Mask secret file: invalid UTF-8 now classified.** A `mask_secret_ref: file:/PATH` pointing at a non-UTF-8 file raised an uncaught `UnicodeDecodeError`; it is now a typed `MaskSecretError(code="bad_secret_ref")` (a usage error, not a crash).
 

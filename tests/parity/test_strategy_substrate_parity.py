@@ -255,6 +255,83 @@ _CASES: list[tuple[str, Any, dict[str, pa.Table]]] = [
         {"t": pa.table({"c": ["2020-01-15", "2019-06-30", None, "2021-12-01", "2018-03-20"]})},
     ),
     (
+        # HC-3a: both substrates anchor date_shift on the PRE-MASK group column
+        # read from ctx.group_anchor_snapshots (Codex R1 P1 #1). The polars
+        # route builds that snapshot in _run_polars_native, so an entity-anchored
+        # shift is byte-identical to pandas without the port ever seeing a live
+        # (possibly-masked) sibling.
+        "date_shift-group-by-entity-anchored",
+        _plan(
+            "t",
+            (
+                (
+                    "c",
+                    _col(
+                        "date_shift",
+                        namespace="ds_group_ns",
+                        provider_config=(
+                            ("min_days", -30),
+                            ("max_days", 30),
+                            ("group_by", "patient_id"),
+                        ),
+                    ),
+                ),
+                ("patient_id", _col("passthrough")),
+            ),
+        ),
+        {
+            "t": pa.table(
+                {
+                    # Last row: a NULL patient_id with a VALID date exercises the
+                    # null-group self-anchor branch across substrates (it reduces
+                    # to the date-anchor path, which must stay pandas==polars).
+                    "c": [
+                        "2020-01-15",
+                        "2020-02-20",
+                        None,
+                        "2019-06-30",
+                        "2019-07-15",
+                        "2021-03-10",
+                    ],
+                    "patient_id": ["p1", "p1", "p1", "p2", "p2", None],
+                }
+            )
+        },
+    ),
+    (
+        # HC-3a (Codex R1 P1 #2): an INT+null group column must stay lossless on
+        # BOTH substrates -- pandas via to_pandas_fk_safe, polars via the
+        # pyarrow-extension snapshot -- so a valid id never widens to float64
+        # (which _canonicalize_source rejects). The null row self-anchors.
+        "date_shift-group-by-nullable-int",
+        _plan(
+            "t",
+            (
+                (
+                    "c",
+                    _col(
+                        "date_shift",
+                        namespace="ds_int_group_ns",
+                        provider_config=(
+                            ("min_days", -30),
+                            ("max_days", 30),
+                            ("group_by", "patient_id"),
+                        ),
+                    ),
+                ),
+                ("patient_id", _col("passthrough")),
+            ),
+        ),
+        {
+            "t": pa.table(
+                {
+                    "c": ["2020-01-15", "2020-02-20", "2019-06-30", None, "2019-07-15"],
+                    "patient_id": pa.array([1, 1, 2, 2, None], type=pa.int64()),
+                }
+            )
+        },
+    ),
+    (
         "bucketize-lower-int",
         _plan("t", (("c", _col("bucketize", provider_config=(("width", 10),))),)),
         {"t": pa.table({"c": pa.array([3, 17, 42, None, 99], type=pa.int64())})},

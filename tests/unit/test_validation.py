@@ -47,6 +47,9 @@ def _valid_v2_pipeline_config() -> dict:
 
 class TestValidConfigs:
     def test_valid_v2_pipeline_dict_passes(self):
+        # must not raise: validate_config raises PipelineValidationError on
+        # invalid shapes (see TestInvalidConfigs below); this proves it does
+        # not raise on a known-valid v2 shape. validate_config returns None.
         validate_config(_valid_v2_pipeline_config())
 
 

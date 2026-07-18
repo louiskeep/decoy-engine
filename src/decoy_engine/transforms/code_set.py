@@ -59,35 +59,81 @@ Deferred (items remaining after SP-09b handler registration):
   - LOINC, CIP, NUCC, UPC/EAN corpora (P5.S.code_set.3 remainder).
   - CPT/MedDRA bring-your-own documentation.
   - HIPAA pack wiring (P5.PACK.hipaa_tighten, SP-11).
+
+Provenance + scale (HC-1 slice 1, 2026-07-17)
+  Every corpus load is validated and cached once per cache key (module-level
+  ``_shipped_cache`` for bundled corpora, keyed on resolved path; a bounded
+  LRU ``_customer_cache`` for operator-supplied corpora, keyed on resolved
+  path + mtime + ctime + size so a file replaced at the same path
+  invalidates automatically instead of serving stale rows -- see
+  ``_codeset_loader.py``'s module docstring), including a memoized
+  ``code -> chapter`` dict built at that same load point -- ``_get_chapter``
+  is an O(1) lookup instead of the pre-HC-1 O(n) scan, which is what makes an
+  ICD-10-CM-scale (~70k row) corpus viable. Each load also reads the corpus's Parquet
+  key/value metadata into a typed ``CodeSetProvenance`` record (see
+  ``transforms/_codeset_provenance.py``): a SHIPPED corpus missing required
+  provenance fields (source, source_version, effective_date, license) fails
+  closed (``code_set_corpus_missing_provenance``, job-fatal); a CUSTOMER
+  corpus without provenance only warns (it may legitimately have none), but
+  a partial stamp on a customer corpus still fails closed -- see
+  ``_validate_provenance``. Provenance is surfaced as evidence ONLY, via
+  ``describe_loaded_corpus`` (``ExecutionResult.quality_metrics
+  ['code_set_corpora']``, counts + identifiers only, no raw codes); it is
+  deliberately never written into the Plan YAML -- a code corpus is data,
+  not reproducible plan config (Codex P1 PROVENANCE IS EVIDENCE, NOT PLAN
+  STATE remediation).
+
+Pinned-record masking/evidence parity (Codex round-6 P2 MASKING/EVIDENCE
+VERSION DIVERGENCE remediation, 2026-07-17)
+  The customer cache invalidates on (path, mtime_ns, ctime_ns, size), which is
+  exactly right for "don't serve stale rows forever" but means two
+  INDEPENDENT cache lookups made moments apart -- one to stamp evidence, one
+  per value to mask -- can each resolve a DIFFERENT ``_CorpusRecord`` if the
+  file is replaced on disk in between. ``resolve_corpus_record`` is the one
+  place a caller that needs BOTH resolves the record; ``describe_loaded_
+  corpus`` and ``apply_code_set`` both accept that SAME resolved record via an
+  optional parameter so a caller (``CodeSetHandler.run``, the out-of-core
+  per-table code_set path) pins it once and threads it through, closing the
+  divergence surface entirely rather than re-deriving "are these the same
+  version" after the fact. Callers that only need one or the other (tests,
+  external code) keep working unchanged -- omitting the parameter resolves
+  fresh, exactly as before.
 """
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import pyarrow.parquet as pq
-
 from decoy_engine.determinism import derive, derive_index
 from decoy_engine.internal.crypto import hmac_hex
 from decoy_engine.plan._errors import PlanCompileError
-
-_LOG = logging.getLogger(__name__)
-
-# Shipped corpora live in this directory.
-_CODESETS_DIR = Path(__file__).parent.parent / "codesets"
+from decoy_engine.transforms._codeset_config_checks import (
+    validate_code_set_config,
+)
+from decoy_engine.transforms._codeset_loader import (
+    _SHIPPED_CORPORA,  # noqa: F401 -- re-exported (validate_code_set_config moved out)
+    CorpusVerifyReport,  # noqa: F401 -- re-exported public API (see below)
+    _check_source_version_pin,
+    _CorpusRecord,
+    _get_corpus_record,
+    load_corpus,  # noqa: F401 -- re-exported public API (see below)
+    load_corpus_provenance,  # noqa: F401 -- re-exported public API (see below)
+    verify_corpus,  # noqa: F401 -- re-exported public API (see below)
+)
 
 # Stable salt for HMAC-keyed row derivation. Same purpose as
 # reference_tables._KEYED_ACCESS_SALT: determinism, not secrecy.
 # RFC 2104: HMAC(key, msg) -- here key = salt, msg = str(input_value).
 _KEYED_SALT = b"decoy.code_set.keyed_access.v1"
 
-# Recognised shipped corpus names.  Used for validation only; a name not in
-# this set is rejected for the "shipped" source so operators get a clear error
-# rather than a FileNotFoundError from deep inside pyarrow.
-_SHIPPED_CORPORA = frozenset({"icd10", "hcpcs", "ndc", "mcc"})
+# `load_corpus` / `load_corpus_provenance` / `verify_corpus` /
+# `CorpusVerifyReport` / `_get_corpus_record` and the `_SHIPPED_CORPORA` name
+# set live in `transforms/_codeset_loader.py` (split out to keep this module
+# under its LOC cap; see that module's docstring). Imported above and
+# used/re-exported here unchanged -- `from decoy_engine.transforms.code_set
+# import load_corpus` keeps working exactly as before the split.
 
 
 @dataclass(frozen=True)
@@ -101,6 +147,15 @@ class CodeSetConfig:
             same chapter/category bucket as the input. Requires the corpus to
             have a ``chapter`` column. Defaults to False.
         corpus_source: "shipped" (default) or "customer:<absolute_path>".
+        corpus_source_version: Optional expected SOURCE release id (e.g.
+            "FY2024"), independently verified (HC-2 D2a) against the loaded
+            corpus's embedded ``CodeSetProvenance.source_version`` at load
+            time. The engine fails closed (``code_set_corpus_version_mismatch``)
+            if the loaded corpus's ``source_version`` differs from this pin
+            or is absent. Distinct from ``corpus_version`` /
+            ``CORPUS_METADATA_VERSION``, which is the metadata FORMAT
+            version, not the source's own release. ``None`` (default) means
+            no pin: today's unversioned behavior, unchanged.
 
     SP-06 keyed-access cross-version caveat:
         Keyed selection is HMAC(...) % candidate_count on the code-sorted
@@ -113,6 +168,7 @@ class CodeSetConfig:
     code_set: str
     chapter_preserve: bool = False
     corpus_source: str = "shipped"
+    corpus_source_version: str | None = None
 
     @classmethod
     def from_dict(cls, cfg: dict[str, Any]) -> CodeSetConfig:
@@ -124,86 +180,110 @@ class CodeSetConfig:
 
         Args:
             cfg: Config dict with key ``code_set`` (required), plus optional
-                ``chapter_preserve`` and ``corpus_source``.
+                ``chapter_preserve``, ``corpus_source``, and
+                ``corpus_source_version``.
 
         Raises:
             PlanCompileError: Missing ``code_set``, unrecognised shipped
-                corpus name (when corpus_source is "shipped").
+                corpus name (when corpus_source is "shipped"), or a reserved
+                licensed name (e.g. "cpt") requested with corpus_source
+                "shipped"/absent.
         """
         validate_code_set_config(cfg)
+        raw_version = cfg.get("corpus_source_version")
         return cls(
             code_set=cfg["code_set"],
             chapter_preserve=bool(cfg.get("chapter_preserve", False)),
             corpus_source=str(cfg.get("corpus_source", "shipped")),
-        )
-
-
-def validate_code_set_config(cfg: dict[str, Any]) -> None:
-    """Validate a code_set config dict; raise PlanCompileError on any failure.
-
-    Checks:
-      - ``code_set`` is present and non-empty.
-      - When ``corpus_source`` is "shipped" (or absent), the name must be a
-        known shipped corpus.
-
-    Called at config parse time (fast, no I/O). Corpus loading and deeper
-    schema checks happen in :func:`_load_corpus_rows` at apply time,
-    pre-mutation, so invalid corpora fail closed before any data is changed.
-
-    Args:
-        cfg: Raw config dict.
-
-    Raises:
-        PlanCompileError: Any validation failure.
-    """
-    name = cfg.get("code_set")
-    if not name:
-        raise PlanCompileError(
-            code="code_set_name_missing",
-            path="provider_config.code_set",
-            message=(
-                "'code_set' is required and must name a corpus "
-                "(e.g. 'icd10', 'hcpcs', 'ndc', 'mcc', or a customer corpus name "
-                "with corpus_source: customer:<path>)."
-            ),
-        )
-
-    source = str(cfg.get("corpus_source", "shipped"))
-    if source == "shipped" and name not in _SHIPPED_CORPORA:
-        raise PlanCompileError(
-            code="code_set_corpus_not_found",
-            path="provider_config.code_set",
-            message=(
-                f"corpus {name!r} not found in shipped corpora. "
-                f"Available: {sorted(_SHIPPED_CORPORA)}. "
-                f"To use a custom corpus, set corpus_source: customer:<path>."
-            ),
+            # Coerce to str so an unquoted-YAML numeric release id
+            # (corpus_source_version: 2024 -> int) compares equal to the
+            # corpus's always-string embedded source_version ("2024"); an
+            # absent/empty pin stays None (unpinned). bool/list/dict are
+            # rejected by validate_code_set_config above, so they never reach
+            # here to be str()'d into a bogus pin (a `false` pin must fail
+            # closed, not silently disable verification).
+            corpus_source_version=(str(raw_version) if raw_version not in (None, "") else None),
         )
 
 
 # ── Corpus loading ────────────────────────────────────────────────────────────
+#
+# The file-I/O / caching / provenance-validation machinery
+# (``_CorpusRecord``, ``_shipped_cache``, ``_customer_cache``, ``_get_corpus_record``,
+# ``load_corpus``, ``load_corpus_provenance``) lives in ``transforms/_codeset_loader.py`` and is
+# imported above. What stays here is the one CONFIG-aware wrapper below
+# (it needs ``CodeSetConfig``, which would create a circular import if the
+# loader depended on it) plus ``_resolve_corpus_path``, which it shares with
+# the execution-time apply path.
+#
+# Codex P1 PROVENANCE IS EVIDENCE, NOT PLAN STATE remediation: this module
+# used to also export ``corpus_provenance_for_manifest``, a best-effort
+# lookup ``plan/_serialize.py`` called to stamp ``code_set_provenance`` onto
+# the Plan YAML. That made the plan artifact non-deterministic (a
+# swapped/absent corpus silently changed or dropped the block) and the field
+# never round-tripped. Deleted; provenance is surfaced ONLY as execution
+# evidence, via ``describe_loaded_corpus`` below
+# (``ExecutionResult.quality_metrics['code_set_corpora']``), from the corpus
+# actually loaded at run time.
 
 
-def load_corpus(name: str, path: Path | None = None) -> list[dict[str, Any]]:
-    """Load a corpus Parquet file and return rows as a sorted list of dicts.
+def resolve_corpus_record(config: CodeSetConfig) -> _CorpusRecord:
+    """Resolve *config* to its ``_CorpusRecord``, ONE cache lookup.
 
-    Rows are sorted ascending by ``code`` to establish a stable, file-order-
-    independent ordering for HMAC-keyed access (same principle as the
-    ReferenceTable.keyed_row id-sort in SP-06).
+    Codex round-6 P2 MASKING/EVIDENCE VERSION DIVERGENCE remediation: a
+    caller that needs BOTH the evidence summary and per-value masking for the
+    same run must call this exactly once and thread the returned record into
+    ``describe_loaded_corpus(config, record=...)`` and ``apply_code_set(...,
+    corpus_record=...)`` so both draw from the SAME corpus version even if
+    the underlying customer file is replaced mid-run -- see the module
+    docstring's "Pinned-record masking/evidence parity" section.
 
-    Args:
-        name: Corpus name (e.g. "icd10"). Used only for error messages when
-            path is provided by the caller.
-        path: Override path. When None, loads from the shipped codesets dir.
-
-    Returns:
-        List of row dicts with at least a ``code`` key.
-
-    Raises:
-        PlanCompileError: File not found, not readable, missing ``code``
-            column, or corpus is empty.
+    HC-2 D2a: passes ``config.corpus_source_version`` through as the expected
+    pin, so the ONE resolve this function performs is also the ONE place the
+    version-mismatch check runs for this config -- both the evidence stamp
+    and every subsequent masked value (via the pinned record) share the
+    already-verified corpus.
     """
-    return _load_corpus_rows(name, path)
+    corpus_name, override_path = _resolve_corpus_path(config)
+    return _get_corpus_record(
+        corpus_name,
+        override_path,
+        is_shipped=override_path is None,
+        expected_source_version=config.corpus_source_version,
+    )
+
+
+def describe_loaded_corpus(
+    config: CodeSetConfig, *, record: _CorpusRecord | None = None
+) -> dict[str, Any]:
+    """Return a quality-evidence summary for the corpus *config* resolves to.
+
+    Counts and identifiers only -- NO raw codes -- following the
+    SubsetManifest no-raw-data contract. Used by
+    ``execution._strategies._code_set.CodeSetHandler`` to stamp
+    ``ExecutionResult.quality_metrics['code_set_corpora']`` once per column
+    (HC-1 slice 1's evidence-surfacing requirement). Loads (and validates /
+    fail-closes) the corpus exactly like :func:`apply_code_set`; shares the
+    module cache, so this costs no extra I/O once the column starts masking.
+
+    ``record``, when given, is used AS-IS instead of resolving a fresh one
+    (Codex round-6 P2 remediation) -- pass the SAME record returned by
+    :func:`resolve_corpus_record` that a subsequent :func:`apply_code_set`
+    call also pins, so evidence and masking can never disagree about which
+    corpus version was used. Omit it to resolve fresh, as before.
+    """
+    if record is None:
+        record = resolve_corpus_record(config)
+    prov = record.provenance
+    return {
+        "code_set": config.code_set,
+        "source": prov.source if prov else "",
+        "source_version": prov.source_version if prov else "",
+        "effective_date": prov.effective_date if prov else "",
+        "license": prov.license if prov else "",
+        "is_seed": prov.is_seed if prov else False,
+        "row_count": len(record.rows),
+    }
 
 
 def _resolve_corpus_path(config: CodeSetConfig) -> tuple[str, Path | None]:
@@ -218,90 +298,24 @@ def _resolve_corpus_path(config: CodeSetConfig) -> tuple[str, Path | None]:
     return config.code_set, None
 
 
-def _load_corpus_rows(name: str, path: Path | None) -> list[dict[str, Any]]:
-    """Internal: load and validate a corpus from disk; return sorted row list.
-
-    Validation is execution-time, pre-mutation (fail-closed). No data is
-    mutated before this check. Invalid corpora raise PlanCompileError.
-    """
-    if path is None:
-        path = _CODESETS_DIR / f"{name}.parquet"
-        if not path.exists():
-            raise PlanCompileError(
-                code="code_set_corpus_not_found",
-                path="provider_config.code_set",
-                message=(
-                    f"shipped corpus {name!r} not found at {path}. "
-                    f"Available: {sorted(_SHIPPED_CORPORA)}."
-                ),
-            )
-
-    if not path.exists():
-        raise PlanCompileError(
-            code="code_set_corpus_path_not_found",
-            path="provider_config.corpus_source",
-            message=f"customer corpus not found at path {path}.",
-        )
-
-    try:
-        tbl = pq.read_table(str(path))  # type: ignore[no-untyped-call, unused-ignore]
-    except Exception as exc:
-        raise PlanCompileError(
-            code="code_set_corpus_read_error",
-            path="provider_config.corpus_source",
-            message=f"failed to read corpus Parquet at {path}: {exc}",
-        ) from exc
-
-    if "code" not in tbl.schema.names:
-        raise PlanCompileError(
-            code="code_set_corpus_missing_code_column",
-            path="provider_config.corpus_source",
-            message=(
-                f"corpus at {path} is missing required 'code' column. "
-                f"Customer corpora must have a 'code' (string) column. "
-                f"Available columns: {tbl.schema.names}"
-            ),
-        )
-
-    if tbl.num_rows == 0:
-        raise PlanCompileError(
-            code="code_set_corpus_empty",
-            path="provider_config.corpus_source",
-            message=f"corpus at {path} has 0 rows. Corpus must be non-empty.",
-        )
-
-    # Build row dicts and sort by code for stable HMAC-keyed access.
-    columns = tbl.schema.names
-    rows: list[dict[str, Any]] = []
-    for i in range(tbl.num_rows):
-        row = {col: tbl.column(col)[i].as_py() for col in columns}
-        rows.append(row)
-
-    rows.sort(key=lambda r: str(r["code"]))
-    return rows
-
-
 # ── Chapter derivation ────────────────────────────────────────────────────────
 
 
-def _get_chapter(code: str, rows: list[dict[str, Any]]) -> str | None:
-    """Look up the chapter for a code from the corpus rows.
+def _get_chapter(code: str, chapter_index: dict[str, str] | None) -> str | None:
+    """Look up the chapter for a code via the memoized code->chapter dict.
 
     Falls back to the first character of the code when the code is not in
-    the corpus (unknown input) and when the corpus has no chapter column.
-    Returns None when the chapter cannot be determined.
+    the corpus (unknown input). Returns None when the corpus has no chapter
+    column at all (``chapter_index`` is None).
+
+    HC-1 slice 1: O(1) dict lookup, replacing the pre-HC-1 O(n) linear scan
+    over every corpus row per call (see ``_CorpusRecord.chapter_index``).
     """
-    if not rows:
+    if chapter_index is None:
         return None
 
-    has_chapter = "chapter" in rows[0]
-    if not has_chapter:
-        return None
-
-    # Exact code lookup.
-    for row in rows:
-        if str(row["code"]) == code:
-            return str(row["chapter"])
+    if code in chapter_index:
+        return chapter_index[code]
 
     # Input code not in corpus: derive chapter from first character.
     return code[0] if code else None
@@ -318,6 +332,7 @@ def apply_code_set(
     job_seed: bytes,
     row_index: int = 0,
     namespace: str | None = None,
+    corpus_record: _CorpusRecord | None = None,
 ) -> str:
     """Apply the code_set strategy to a single value.
 
@@ -338,6 +353,14 @@ def apply_code_set(
             per row (intra-column variation). Ignored in mask mode.
         namespace: Column namespace string. Required for gen mode (raises
             PlanCompileError if None); not used by mask mode.
+        corpus_record: Codex round-6 P2 remediation -- when given, this exact
+            ``_CorpusRecord`` is used instead of resolving one from the cache.
+            Pass the record :func:`resolve_corpus_record` returned so a caller
+            that masks many values off one pinned load (e.g.
+            ``CodeSetHandler.run``) cannot have a later value pick up a
+            DIFFERENT corpus version than an earlier one (or than the
+            evidence stamp) if the underlying file is replaced mid-run.
+            Omit it to resolve fresh, as before.
 
     Returns:
         A real corpus code string.
@@ -346,15 +369,40 @@ def apply_code_set(
         PlanCompileError: Corpus not loadable, missing required columns,
             or empty; sole-member chapter bucket (chapter_preserve); missing
             chapter column when chapter_preserve=True; input chapter absent
-            from corpus when chapter_preserve=True; namespace is None in gen mode.
+            from corpus when chapter_preserve=True; namespace is None in gen
+            mode; loaded corpus's source_version does not match
+            config.corpus_source_version when the latter is set (HC-2 D2a).
         ValueError: Unsupported mode.
     """
-    corpus_name, override_path = _resolve_corpus_path(config)
-    rows = _load_corpus_rows(corpus_name, override_path)
+    if corpus_record is None:
+        corpus_name, override_path = _resolve_corpus_path(config)
+        record = _get_corpus_record(
+            corpus_name,
+            override_path,
+            is_shipped=override_path is None,
+            expected_source_version=config.corpus_source_version,
+        )
+    else:
+        record = corpus_record
+        # Defense-in-depth (Codex HIGH): a caller that resolved this record
+        # under one config and now applies it under a DIFFERENT pinned config
+        # would otherwise skip verification entirely (the resolve-time pin
+        # check ran against the OTHER config). Re-verify the pin against the
+        # record we are about to mask with, so the pin is enforced wherever a
+        # pinned config is used, not only on the self-resolving path.
+        corpus_name, override_path = _resolve_corpus_path(config)
+        _check_source_version_pin(corpus_name, override_path, record, config.corpus_source_version)
+    rows = record.rows
 
     if config.chapter_preserve:
         return _apply_chapter_preserve(
-            value, rows, mode=mode, job_seed=job_seed, namespace=namespace, row_index=row_index
+            value,
+            rows,
+            record.chapter_index,
+            mode=mode,
+            job_seed=job_seed,
+            namespace=namespace,
+            row_index=row_index,
         )
 
     if mode == "mask":
@@ -376,6 +424,7 @@ def apply_code_set(
 def _apply_chapter_preserve(
     value: str,
     rows: list[dict[str, Any]],
+    chapter_index: dict[str, str] | None,
     *,
     mode: str,
     job_seed: bytes,
@@ -404,8 +453,9 @@ def _apply_chapter_preserve(
             ),
         )
 
-    # Determine input's chapter.
-    input_chapter = _get_chapter(value, rows)
+    # Determine input's chapter. HC-1 slice 1: O(1) dict lookup via the
+    # memoized chapter_index built once at corpus load time.
+    input_chapter = _get_chapter(value, chapter_index)
     if input_chapter is None:
         # Unknown chapter: derive from first char of code.
         input_chapter = value[0] if value else ""
@@ -496,7 +546,7 @@ def _pick_from_candidates(
 ) -> str:
     """Pick one row from candidates using HMAC(key, key_value) % len(candidates).
 
-    Candidates must be sorted by code (guaranteed by _load_corpus_rows).
+    Candidates must be sorted by code (guaranteed by _read_corpus_record).
     HMAC primitive: RFC 2104 / HMAC-SHA256, same as hmac_hex() in
     decoy_engine.internal.crypto.
 

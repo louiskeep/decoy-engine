@@ -143,6 +143,127 @@ class TestStringConcat:
         c = compile_expr('concat(first_name, " Smith")')
         assert evaluate(c, {"first_name": "Jane"}) == "Jane Smith"
 
+    def test_concat_three_args(self):
+        compile_expr, evaluate = _get_parser()
+        c = compile_expr('concat(a, "-", b)')
+        assert evaluate(c, {"a": "x", "b": "y"}) == "x-y"
+
+    def test_concat_four_args(self):
+        compile_expr, evaluate = _get_parser()
+        c = compile_expr("concat(a, b, c, d)")
+        assert evaluate(c, {"a": "1", "b": "2", "c": "3", "d": "4"}) == "1234"
+
+    def test_concat_coerces_non_string_args(self):
+        compile_expr, evaluate = _get_parser()
+        c = compile_expr('concat(a, "-", b)')
+        assert evaluate(c, {"a": 1, "b": 2}) == "1-2"
+
+    def test_concat_one_arg_fails_to_parse(self):
+        compile_expr, _ = _get_parser()
+        with pytest.raises(ValidationError, match="unsupported"):
+            compile_expr("concat(a)")
+
+
+class TestSliceOp:
+    """slice(s, start[, end]) -- Python-native slice semantics (HC-6)."""
+
+    def test_last4_via_negative_start(self):
+        compile_expr, evaluate = _get_parser()
+        c = compile_expr("slice(firstname, -4)")
+        assert evaluate(c, {"firstname": "Alexander"}) == "nder"
+
+    def test_first_n_chars(self):
+        compile_expr, evaluate = _get_parser()
+        c = compile_expr("slice(firstname, 0, 4)")
+        assert evaluate(c, {"firstname": "Alexander"}) == "Alex"
+
+    def test_middle_chars(self):
+        compile_expr, evaluate = _get_parser()
+        c = compile_expr("slice(firstname, 2, 5)")
+        assert evaluate(c, {"firstname": "Alexander"}) == "exa"
+
+    def test_two_arg_form_slices_to_end(self):
+        compile_expr, evaluate = _get_parser()
+        c = compile_expr("slice(s, 3)")
+        assert evaluate(c, {"s": "abcdef"}) == "def"
+
+    def test_out_of_range_end_clamps(self):
+        compile_expr, evaluate = _get_parser()
+        c = compile_expr("slice(s, 0, 100)")
+        assert evaluate(c, {"s": "abc"}) == "abc"
+
+    def test_out_of_range_negative_start_clamps(self):
+        compile_expr, evaluate = _get_parser()
+        c = compile_expr("slice(s, -100)")
+        assert evaluate(c, {"s": "abc"}) == "abc"
+
+    def test_start_beyond_length_returns_empty(self):
+        compile_expr, evaluate = _get_parser()
+        c = compile_expr("slice(s, 5)")
+        assert evaluate(c, {"s": "abc"}) == ""
+
+    def test_coerces_non_string_subject(self):
+        compile_expr, evaluate = _get_parser()
+        c = compile_expr("slice(n, 0, 3)")
+        assert evaluate(c, {"n": 123456}) == "123"
+
+    def test_non_int_start_rejected(self):
+        compile_expr, evaluate = _get_parser()
+        c = compile_expr("slice(s, 1.5)")
+        with pytest.raises(ValidationError, match="slice"):
+            evaluate(c, {"s": "abcdef"})
+
+    def test_string_start_rejected(self):
+        compile_expr, evaluate = _get_parser()
+        c = compile_expr("slice(s, start)")
+        with pytest.raises(ValidationError, match="slice"):
+            evaluate(c, {"s": "abcdef", "start": "1"})
+
+    def test_bool_start_rejected(self):
+        """bool is a Python int subclass but must be rejected explicitly."""
+        compile_expr, evaluate = _get_parser()
+        c = compile_expr("slice(s, flag)")
+        with pytest.raises(ValidationError, match="slice"):
+            evaluate(c, {"s": "abcdef", "flag": True})
+
+    def test_non_int_end_rejected(self):
+        compile_expr, evaluate = _get_parser()
+        c = compile_expr("slice(s, 0, 2.5)")
+        with pytest.raises(ValidationError, match="slice"):
+            evaluate(c, {"s": "abcdef"})
+
+    def test_bool_end_rejected(self):
+        compile_expr, evaluate = _get_parser()
+        c = compile_expr("slice(s, 0, flag)")
+        with pytest.raises(ValidationError, match="slice"):
+            evaluate(c, {"s": "abcdef", "flag": False})
+
+    def test_none_literal_start_rejected(self):
+        """A literal `None` start must NOT be treated as "omitted" -- that would
+        run s[None:] and return the WHOLE value (silent masking bypass)."""
+        compile_expr, evaluate = _get_parser()
+        c = compile_expr("slice(s, None)")
+        with pytest.raises(ValidationError, match="slice"):
+            evaluate(c, {"s": "abcdef"})
+
+    def test_none_literal_end_rejected(self):
+        """An explicitly-supplied `None` end is a real 3-arg call and must be
+        rejected, distinct from the 2-arg omitted-end form."""
+        compile_expr, evaluate = _get_parser()
+        c = compile_expr("slice(s, 1, None)")
+        with pytest.raises(ValidationError, match="slice"):
+            evaluate(c, {"s": "abcdef"})
+
+    def test_zero_arg_fails_to_parse(self):
+        compile_expr, _ = _get_parser()
+        with pytest.raises(ValidationError, match="unsupported"):
+            compile_expr("slice()")
+
+    def test_four_arg_fails_to_parse(self):
+        compile_expr, _ = _get_parser()
+        with pytest.raises(ValidationError, match="unsupported"):
+            compile_expr("slice(s, 0, 1, 2)")
+
 
 class TestDaysBetween:
     def test_days_between_dates(self):

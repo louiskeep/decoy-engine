@@ -40,6 +40,7 @@ from decoy_engine.kernel import hash_array, passthrough_array, redact_array, tru
 
 if TYPE_CHECKING:
     from decoy_engine.plan._types import ColumnSeed, Plan, TableSeed
+    from decoy_engine.transforms._codeset_loader import _CorpusRecord
 
 
 def table_seed(plan: Plan, table_name: str) -> TableSeed | None:
@@ -99,6 +100,7 @@ def mask_column(
     mask_key: bytes,
     *,
     column: str | None = None,
+    corpus_record: _CorpusRecord | None = None,
 ) -> pa.Array:
     """Apply one admitted strategy to one column (or column slice).
 
@@ -112,6 +114,10 @@ def mask_column(
     paths, which the compat gate restricts to the column-independent strategies
     (hash/redact/truncate/passthrough), so a None column never reaches a
     strategy that needs it.
+
+    `corpus_record` (Codex round-6 P2 MASKING/EVIDENCE VERSION DIVERGENCE
+    remediation) is forwarded to the `code_set` Group (c) kernel only -- see
+    `_mask_group_c._code_set_array`'s docstring. Every other strategy ignores it.
     """
     job_seed = mask_key
     cfg = provider_config_to_dict(seed.provider_config)
@@ -130,7 +136,9 @@ def mask_column(
             cfg=cfg,
         )
     if seed.strategy in GROUP_C_STRATEGIES:
-        return group_c_array(values, seed, job_seed, column=column, cfg=cfg)
+        return group_c_array(
+            values, seed, job_seed, column=column, cfg=cfg, corpus_record=corpus_record
+        )
     if seed.strategy == "passthrough":
         return passthrough_array(values)
     if seed.strategy == "redact":
@@ -209,6 +217,7 @@ def mask_table(
     *,
     skip_columns: frozenset[str],
     mask_key: bytes | None = None,
+    code_set_corpus_records: dict[str, _CorpusRecord] | None = None,
 ) -> pa.Table:
     """Whole-table, whole-column masking.
 
@@ -218,18 +227,30 @@ def mask_table(
 
     `mask_key` (DE-02) is the keyed-mask IKM; None falls back to `job_seed`
     (byte-identical to pre-DE-02).
+
+    `code_set_corpus_records` (Codex round-6 P2 MASKING/EVIDENCE VERSION
+    DIVERGENCE remediation), keyed by column name: the pinned `_CorpusRecord`
+    a `code_set` column should mask off, resolved once by the caller. `None`
+    (the default) falls back to a fresh per-value resolve, matching pre-fix
+    behavior -- this whole-table entry point runs the values of one column in
+    one shot, so it has no cross-call divergence surface of its own; the
+    parameter exists so a caller that already pinned records for `mask_batch`
+    can pass the SAME dict here too (e.g. a parity test comparing both).
     """
     seed = table_seed(plan, table_name)
     if seed is None:
         return table
     key = mask_key if mask_key is not None else plan.seed_envelope.job_seed
+    records = code_set_corpus_records or {}
     out = table
     for column, column_seed in seed.per_column:
         if column in skip_columns:
             continue
         if column not in out.column_names:
             continue
-        masked = mask_column(out.column(column), column_seed, key, column=column)
+        masked = mask_column(
+            out.column(column), column_seed, key, column=column, corpus_record=records.get(column)
+        )
         out = out.set_column(out.schema.get_field_index(column), column, masked)
     return out
 
@@ -241,6 +262,7 @@ def mask_batch(
     *,
     skip_columns: frozenset[str] = frozenset(),
     mask_key: bytes | None = None,
+    code_set_corpus_records: dict[str, _CorpusRecord] | None = None,
 ) -> pa.RecordBatch:
     """Mask one RecordBatch's non-FK columns per the plan.
 
@@ -252,11 +274,22 @@ def mask_batch(
     schema is the streaming runner's job, per the module docstring.
     `skip_columns` carries the FK child columns whose replacement belongs to
     the join, not the mask.
+
+    `code_set_corpus_records` (Codex round-6 P2 MASKING/EVIDENCE VERSION
+    DIVERGENCE remediation), keyed by column name: the pinned `_CorpusRecord`
+    a `code_set` column should mask off. The runner resolves this ONCE per
+    table, before the first batch streams, and passes the SAME dict to every
+    `mask_batch` call for that table -- without it, a customer corpus file
+    replaced mid-stream could make a later batch mask off a different corpus
+    version than an earlier one, or than the evidence stamped once per table.
+    `None` (the default) falls back to a fresh per-value resolve per batch,
+    matching pre-fix behavior.
     """
     seed = table_seed(plan, table_name)
     if seed is None:
         return batch
     key = mask_key if mask_key is not None else plan.seed_envelope.job_seed
+    records = code_set_corpus_records or {}
     fields = list(batch.schema)
     arrays = list(batch.columns)
     for column, column_seed in seed.per_column:
@@ -265,7 +298,9 @@ def mask_batch(
         idx = batch.schema.get_field_index(column)
         if idx < 0:
             continue
-        masked = mask_column(arrays[idx], column_seed, key, column=column)
+        masked = mask_column(
+            arrays[idx], column_seed, key, column=column, corpus_record=records.get(column)
+        )
         arrays[idx] = masked
         # Same field semantics as Table.set_column with a bare name: the field
         # type follows the masked array, prior field metadata is not carried.

@@ -72,46 +72,76 @@ def _base_config_with_transforms(transforms: list[dict]) -> dict:
 
 class TestTransformSchema:
     def test_accepts_filter_op(self):
-        PipelineConfig.model_validate(
+        parsed = PipelineConfig.model_validate(
             _base_config_with_transforms([{"op": "filter", "expression": "age >= 18"}])
         )
+        transform = parsed.tables[0].transforms[0]
+        assert transform.op == "filter"
+        assert transform.expression == "age >= 18"
 
     def test_accepts_sort_op_with_default_ascending(self):
-        PipelineConfig.model_validate(_base_config_with_transforms([{"op": "sort", "by": ["age"]}]))
+        parsed = PipelineConfig.model_validate(
+            _base_config_with_transforms([{"op": "sort", "by": ["age"]}])
+        )
+        transform = parsed.tables[0].transforms[0]
+        assert transform.op == "sort"
+        assert transform.by == ["age"]
+        assert transform.ascending is True
 
     def test_accepts_sort_op_with_per_column_ascending(self):
-        PipelineConfig.model_validate(
+        parsed = PipelineConfig.model_validate(
             _base_config_with_transforms(
                 [{"op": "sort", "by": ["age", "name"], "ascending": [False, True]}]
             )
         )
+        transform = parsed.tables[0].transforms[0]
+        assert transform.by == ["age", "name"]
+        assert transform.ascending == [False, True]
 
     def test_accepts_limit_op(self):
-        PipelineConfig.model_validate(_base_config_with_transforms([{"op": "limit", "n": 100}]))
+        parsed = PipelineConfig.model_validate(
+            _base_config_with_transforms([{"op": "limit", "n": 100}])
+        )
+        transform = parsed.tables[0].transforms[0]
+        assert transform.op == "limit"
+        assert transform.n == 100
 
     def test_limit_op_rejects_negative_n(self):
         with pytest.raises(Exception):
             PipelineConfig.model_validate(_base_config_with_transforms([{"op": "limit", "n": -5}]))
 
     def test_accepts_dedupe_op_with_columns(self):
-        PipelineConfig.model_validate(
+        parsed = PipelineConfig.model_validate(
             _base_config_with_transforms([{"op": "dedupe", "columns": ["email"]}])
         )
+        transform = parsed.tables[0].transforms[0]
+        assert transform.op == "dedupe"
+        assert transform.columns == ["email"]
 
     def test_accepts_dedupe_op_without_columns(self):
-        PipelineConfig.model_validate(_base_config_with_transforms([{"op": "dedupe"}]))
+        parsed = PipelineConfig.model_validate(_base_config_with_transforms([{"op": "dedupe"}]))
+        transform = parsed.tables[0].transforms[0]
+        assert transform.op == "dedupe"
+        assert transform.columns is None
 
     def test_accepts_derive_op(self):
-        PipelineConfig.model_validate(
+        parsed = PipelineConfig.model_validate(
             _base_config_with_transforms(
                 [{"op": "derive", "column": "arpu", "expression": "revenue / users"}]
             )
         )
+        transform = parsed.tables[0].transforms[0]
+        assert transform.op == "derive"
+        assert transform.column == "arpu"
+        assert transform.expression == "revenue / users"
 
     def test_accepts_drop_column_op(self):
-        PipelineConfig.model_validate(
+        parsed = PipelineConfig.model_validate(
             _base_config_with_transforms([{"op": "drop_column", "columns": ["pii_a", "pii_b"]}])
         )
+        transform = parsed.tables[0].transforms[0]
+        assert transform.op == "drop_column"
+        assert transform.columns == ["pii_a", "pii_b"]
 
     def test_rejects_unknown_op(self):
         # 'join' is one of the 9 cut ops (S22 / V2.1); it must not validate as a

@@ -81,6 +81,9 @@ EXPECTED_S2_CHECKS_PASSED = (
     # Row 20 (SP-10c / P5.S.group_key, 2026-06-29): group_key group_by column
     # ref validation, appended at the tail.
     "group_key_refs",
+    # Row 27 (HC-3a, 2026-07-17): date_shift group_by (entity-anchor) column
+    # ref validation, appended at the tail.
+    "date_shift_group_by_refs",
     # Row 21 (SP-46, 2026-06-29): fpe_join_group structural validation (singleton,
     # non-fpe member, config mismatch, namespace mismatch).
     "fpe_join_groups",
@@ -90,6 +93,9 @@ EXPECTED_S2_CHECKS_PASSED = (
     # Row 23 (Sprint 13 S3, GATE-1 Q4, 2026-07-03): bucketize width resolution
     # (sibling silent-passthrough leak).
     "bucketize_config",
+    # Row 28 (HC-3b, 2026-07-17): top_code bound resolution (sibling silent-
+    # passthrough leak), inserted right after bucketize_config.
+    "top_code_config",
     # Row 24 (Sprint 13 S3, GATE-1 Q4, 2026-07-03): categorical (mask)
     # categories shape (sibling silent-corruption leak).
     "categorical_categories",
@@ -99,6 +105,9 @@ EXPECTED_S2_CHECKS_PASSED = (
     # Row 26 (DE-03, 2026-07-13): faker-without-provider rejection (the
     # seed-envelope builder otherwise silently drops it, leaking the raw value).
     "faker_requires_provider",
+    # Row 29 (HC-7, 2026-07-17): clinical free-text advisory. Warn-only
+    # (never raises), appended at the tail like every other check here.
+    "freetext_advisory",
 )
 
 
@@ -112,7 +121,7 @@ class TestChecksPassedShape:
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
         assert plan.plan_compile.checks_passed == EXPECTED_S2_CHECKS_PASSED
 
-    def test_checks_passed_contains_exactly_twenty_six_entries(
+    def test_checks_passed_contains_exactly_twenty_nine_entries(
         self, simple_config: dict, simple_profile: Profile
     ) -> None:
         # 9 through S8, row 10 (B1/S13), row 11 (audit H5), rows 12-13
@@ -120,12 +129,14 @@ class TestChecksPassedShape:
         # row 15 (SP-04 fpe_checksum_scheme), row 16 (SP-10 derived_column_refs),
         # row 17 (SP-10b derived_aggregate_refs), rows 18-20 (SP-10c
         # grouped_series_refs, windowed_date_refs, group_key_refs),
-        # row 21 (SP-46 fpe_join_groups), rows 22-24 (Sprint 13 S3:
-        # truncate_config, bucketize_config, categorical_categories), row 25
-        # (Sprint 2 honesty pack: fpe_charset_config), row 26 (DE-03:
-        # faker_requires_provider).
+        # row 27 (HC-3a date_shift_group_by_refs), row 21 (SP-46
+        # fpe_join_groups), rows 22-24 (Sprint 13 S3: truncate_config,
+        # bucketize_config, categorical_categories), row 28 (HC-3b:
+        # top_code_config), row 25 (Sprint 2 honesty pack: fpe_charset_config),
+        # row 26 (DE-03: faker_requires_provider), row 29 (HC-7:
+        # freetext_advisory).
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
-        assert len(plan.plan_compile.checks_passed) == 26
+        assert len(plan.plan_compile.checks_passed) == 29
 
     def test_orphan_fk_policy_completeness_at_documented_position(
         self, simple_config: dict, simple_profile: Profile
@@ -139,30 +150,37 @@ class TestChecksPassedShape:
         rows 22-24 (truncate_config, bucketize_config, categorical_categories)
         at the tail. Sprint 2 honesty pack (2026-07-04) adds row 25
         (fpe_charset_config) at the tail. DE-03 (2026-07-13) adds row 26
-        (faker_requires_provider) at the tail."""
+        (faker_requires_provider) at the tail. HC-3a (2026-07-17) adds row 27
+        (date_shift_group_by_refs) right after group_key_refs, ahead of the
+        SP-46/Sprint-13 tail. HC-3b (2026-07-17) adds row 28 (top_code_config)
+        right after bucketize_config. HC-7 (2026-07-17) adds row 29
+        (freetext_advisory) at the very tail."""
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
-        assert plan.plan_compile.checks_passed[-22] == "composite_columns_length_match"
-        assert plan.plan_compile.checks_passed[-21] == "orphan_fk_policy_completeness"
-        assert plan.plan_compile.checks_passed[-20] == "pool_capacity_pre_flight"
-        assert plan.plan_compile.checks_passed[-19] == "composite_wiring_consistent"
-        assert plan.plan_compile.checks_passed[-18] == "deterministic_namespace_completeness"
-        assert plan.plan_compile.checks_passed[-17] == "null_bearing_int_unsupported"
-        assert plan.plan_compile.checks_passed[-16] == "non_poolable_provider_with_pool_backend"
-        assert plan.plan_compile.checks_passed[-15] == "statistical_columns"
-        assert plan.plan_compile.checks_passed[-14] == "text_redact_ner_available"
-        assert plan.plan_compile.checks_passed[-13] == "vault_columns"
-        assert plan.plan_compile.checks_passed[-12] == "fpe_checksum_scheme"
-        assert plan.plan_compile.checks_passed[-11] == "derived_column_refs"
-        assert plan.plan_compile.checks_passed[-10] == "derived_aggregate_refs"
-        assert plan.plan_compile.checks_passed[-9] == "grouped_series_refs"
-        assert plan.plan_compile.checks_passed[-8] == "windowed_date_refs"
-        assert plan.plan_compile.checks_passed[-7] == "group_key_refs"
-        assert plan.plan_compile.checks_passed[-6] == "fpe_join_groups"
-        assert plan.plan_compile.checks_passed[-5] == "truncate_config"
-        assert plan.plan_compile.checks_passed[-4] == "bucketize_config"
-        assert plan.plan_compile.checks_passed[-3] == "categorical_categories"
-        assert plan.plan_compile.checks_passed[-2] == "fpe_charset_config"
-        assert plan.plan_compile.checks_passed[-1] == "faker_requires_provider"
+        assert plan.plan_compile.checks_passed[-25] == "composite_columns_length_match"
+        assert plan.plan_compile.checks_passed[-24] == "orphan_fk_policy_completeness"
+        assert plan.plan_compile.checks_passed[-23] == "pool_capacity_pre_flight"
+        assert plan.plan_compile.checks_passed[-22] == "composite_wiring_consistent"
+        assert plan.plan_compile.checks_passed[-21] == "deterministic_namespace_completeness"
+        assert plan.plan_compile.checks_passed[-20] == "null_bearing_int_unsupported"
+        assert plan.plan_compile.checks_passed[-19] == "non_poolable_provider_with_pool_backend"
+        assert plan.plan_compile.checks_passed[-18] == "statistical_columns"
+        assert plan.plan_compile.checks_passed[-17] == "text_redact_ner_available"
+        assert plan.plan_compile.checks_passed[-16] == "vault_columns"
+        assert plan.plan_compile.checks_passed[-15] == "fpe_checksum_scheme"
+        assert plan.plan_compile.checks_passed[-14] == "derived_column_refs"
+        assert plan.plan_compile.checks_passed[-13] == "derived_aggregate_refs"
+        assert plan.plan_compile.checks_passed[-12] == "grouped_series_refs"
+        assert plan.plan_compile.checks_passed[-11] == "windowed_date_refs"
+        assert plan.plan_compile.checks_passed[-10] == "group_key_refs"
+        assert plan.plan_compile.checks_passed[-9] == "date_shift_group_by_refs"
+        assert plan.plan_compile.checks_passed[-8] == "fpe_join_groups"
+        assert plan.plan_compile.checks_passed[-7] == "truncate_config"
+        assert plan.plan_compile.checks_passed[-6] == "bucketize_config"
+        assert plan.plan_compile.checks_passed[-5] == "top_code_config"
+        assert plan.plan_compile.checks_passed[-4] == "categorical_categories"
+        assert plan.plan_compile.checks_passed[-3] == "fpe_charset_config"
+        assert plan.plan_compile.checks_passed[-2] == "faker_requires_provider"
+        assert plan.plan_compile.checks_passed[-1] == "freetext_advisory"
 
     def test_s1_check_order_preserved(self, simple_config: dict, simple_profile: Profile) -> None:
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
@@ -379,6 +397,41 @@ class TestHashConfigExcludesSourcesAndTargets:
         modified["global_settings"] = {"seed": 999}  # different seed
         p2 = compile_plan(modified, simple_profile, decoy_engine_version="0.1.0")
         assert p1.pipeline_config_hash != p2.pipeline_config_hash
+
+    def test_categorical_retention_warn_threshold_does_not_perturb_hash(
+        self, simple_config: dict, simple_profile: Profile
+    ) -> None:
+        """MED-1 (gate remediation): `categorical_retention_warn_threshold`
+        (HC-5) is warn-only advisory config -- it must not enter the
+        hashed masking-semantics block. A default config and one that sets
+        it to a non-default value must produce the SAME
+        pipeline_config_hash."""
+        default_config = dict(simple_config)
+        p1 = compile_plan(default_config, simple_profile, decoy_engine_version="0.1.0")
+
+        with_threshold = dict(simple_config)
+        with_threshold["global_settings"] = {
+            **simple_config["global_settings"],
+            "categorical_retention_warn_threshold": 0.42,
+        }
+        p2 = compile_plan(with_threshold, simple_profile, decoy_engine_version="0.1.0")
+        assert p1.pipeline_config_hash == p2.pipeline_config_hash
+
+    def test_hash_config_pinned_to_expected_digest(self) -> None:
+        """Pin a minimal config's hash to a hard-coded digest so any future
+        regression to _hash_config (e.g. a new advisory key leaking into
+        the semantic block) is caught immediately."""
+        from decoy_engine.plan._compile import _hash_config
+
+        config = {
+            "version": 1,
+            "global_settings": {"seed": 42},
+            "tables": [{"name": "t"}],
+        }
+        assert (
+            _hash_config(config)
+            == "9c2c4ae154637bb1db28973df3c842c2f0b86a00c3587617ad8fb7fd5503bce1"
+        )
 
 
 class TestS2WiringInvariants:

@@ -2,7 +2,7 @@
   "engine_version": "0.2.0",
   "generated_at": "2026-06-14",
   "surface": {
-    "mask": 22,
+    "mask": 23,
     "generate": 12,
     "providers": 34
   },
@@ -406,6 +406,36 @@
         }
       ],
       "invariant": "Numeric values collapse into fixed-width ranges, so distinct inputs share a bucket."
+    },
+    {
+      "id": "mask.top_code",
+      "kind": "mask",
+      "title": "Top-coding (age 90+ generalization)",
+      "column": "age",
+      "config_yaml": "tables:\n- name: t\n  columns:\n  - name: age\n    strategy: top_code\n    provider_config:\n      preset: hipaa_age",
+      "input": [
+        {
+          "age": "67"
+        },
+        {
+          "age": "94"
+        },
+        {
+          "age": "101"
+        }
+      ],
+      "output": [
+        {
+          "age": "67"
+        },
+        {
+          "age": "90+"
+        },
+        {
+          "age": "90+"
+        }
+      ],
+      "invariant": "Ages over 89 collapse into a single '90+' category (HIPAA Safe Harbor \u00a7164.514(b)(2)(i)(C)); ages at or below 89 are preserved, so distinct high ages share one bucket while the rest keep their own value."
     },
     {
       "id": "mask.categorical",

@@ -91,6 +91,15 @@ class ColumnProfile:
     is_fk: bool
     fk_target: tuple[str, str] | None
     pii_class: PIIClass | None
+    # HC-7: string-length stats, populated only for string/object-dtype
+    # columns (None otherwise). Additive and defaulted None so every
+    # existing construction is unaffected. Deliberately excluded from
+    # profile_hash's data-shape bytes (see profile/_serialize.py) so
+    # adding this field does not perturb the pinned hash for profiles
+    # taken before it existed -- these are advisory stats (HC-7's
+    # warn-only free-text gate), not identity-relevant data shape.
+    avg_length: float | None = None
+    max_length: int | None = None
 
     def __post_init__(self) -> None:
         if self.sampled and self.is_candidate_key_sampled:
@@ -119,6 +128,26 @@ class ColumnProfile:
             raise ValueError(
                 f"ColumnProfile {self.name!r}: distinct_count={self.distinct_count} "
                 f"exceeds row_count={self.row_count}."
+            )
+        # HC-7 length-stat sanity: same fail-loud-at-construction posture as
+        # the checks above. A negative length or a mean exceeding the max is
+        # a walker bug, not a legitimate reading.
+        if self.avg_length is not None and self.avg_length < 0:
+            raise ValueError(
+                f"ColumnProfile {self.name!r}: avg_length={self.avg_length} is negative."
+            )
+        if self.max_length is not None and self.max_length < 0:
+            raise ValueError(
+                f"ColumnProfile {self.name!r}: max_length={self.max_length} is negative."
+            )
+        if (
+            self.avg_length is not None
+            and self.max_length is not None
+            and self.avg_length > self.max_length
+        ):
+            raise ValueError(
+                f"ColumnProfile {self.name!r}: avg_length={self.avg_length} exceeds "
+                f"max_length={self.max_length}."
             )
 
 

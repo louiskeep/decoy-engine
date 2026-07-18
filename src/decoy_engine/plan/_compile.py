@@ -65,6 +65,10 @@ from decoy_engine.plan._checks import (
 from decoy_engine.plan._checks_bucketize import check_bucketize_config
 from decoy_engine.plan._checks_categorical import check_categorical_categories
 
+# HC-3a: date_shift `group_by` entity-anchor ref check (its own module for the
+# same _checks.py size-ceiling reason as the sibling per-strategy modules).
+from decoy_engine.plan._checks_date_shift import check_date_shift_group_by_refs
+
 # SP-10b: derived_aggregate check extracted from _checks.py to keep that
 # module under its allowlisted ceiling. See test_module_size.py ALLOWLIST.
 from decoy_engine.plan._checks_derived_aggregate import check_derived_aggregate_refs
@@ -81,8 +85,19 @@ from decoy_engine.plan._checks_fpe import check_fpe_charset_config
 # SP-10c + SP-46: per-strategy check modules (grouped_series, windowed_date,
 # group_key) and the fpe_join_group structural validation (SP-46).
 from decoy_engine.plan._checks_fpe_join import check_fpe_join_groups
+
+# HC-7 (2026-07-17): clinical free-text advisory, warn-only. Own module for
+# the same _checks.py / _compile.py size-ceiling reason as the sibling
+# per-strategy check modules; unlike them it never raises (see
+# quality/_freetext_advisory.py for the full warn-only rationale).
+from decoy_engine.plan._checks_freetext_advisory import check_freetext_advisory
 from decoy_engine.plan._checks_group_key import check_group_key_refs
 from decoy_engine.plan._checks_grouped_series import check_grouped_series_refs
+
+# Row 28 (HC-3b, 2026-07-17): top_code bound-resolution check (its own module
+# for the same _checks.py size-ceiling reason as the sibling per-strategy
+# modules).
+from decoy_engine.plan._checks_top_code import check_top_code_config
 from decoy_engine.plan._checks_truncate import check_truncate_config
 from decoy_engine.plan._checks_windowed_date import check_windowed_date_refs
 from decoy_engine.plan._errors import PlanCompileError
@@ -198,6 +213,10 @@ def compile_plan(
     # Row 20 (SP-10c / P5.P.group_key, 2026-06-29): reject group_key columns
     # whose group_by column is missing. Config-only.
     check_group_key_refs(config)
+    # Row 27 (HC-3a, 2026-07-17): reject date_shift columns whose group_by
+    # (entity-anchor) column is missing. Config-only; both branches +
+    # run_config_only_checks.
+    check_date_shift_group_by_refs(config)
     # Row 21 (SP-46, 2026-06-29): validate fpe_join_group declarations and emit
     # compile-time manifest warnings for every active group. Config-only; runs
     # in both branches and in run_config_only_checks.
@@ -211,6 +230,10 @@ def compile_plan(
     # bucketize columns whose width cannot be resolved (sibling silent-
     # passthrough leak). Config-only; both branches + run_config_only_checks.
     check_bucketize_config(config)
+    # Row 28 (HC-3b, 2026-07-17): reject top_code columns with no resolvable
+    # bound (silent-passthrough leak). Config-only; both branches +
+    # run_config_only_checks.
+    check_top_code_config(config)
     # Row 24 (Sprint 13 / coercion-13 S3, GATE-1 Q4, 2026-07-03): reject
     # categorical (mask) columns whose categories is not a proper non-empty
     # list (sibling silent-corruption leak). Config-only; both branches +
@@ -225,6 +248,13 @@ def compile_plan(
     # no provider (the seed-envelope builder drops them, leaking the raw value).
     # Config-only; both branches + run_config_only_checks.
     check_faker_requires_provider(config)
+    # Row 29 (HC-7, 2026-07-17): clinical free-text advisory. WARN-ONLY --
+    # unlike every check above, this never raises; it returns warning
+    # strings folded into PlanCompileResult.warnings below (same shape as
+    # fpe_join_warnings). Needs `profile` for avg_length/distinct_count, so
+    # it cannot live in run_config_only_checks (config-only by contract);
+    # it degrades to name-hint-only when a column has no profile entry.
+    freetext_advisory_warnings = check_freetext_advisory(config, profile)
     check_composite_columns_length_match(profile)
     # MG-3 / M3 (2026-05-31): reject when + coherent_with combo early,
     # before composite-wiring checks. A column carrying both fields is
@@ -287,18 +317,24 @@ def compile_plan(
             "windowed_date_refs",
             # Row 20 (SP-10c): group_key group_by column ref.
             "group_key_refs",
+            # Row 27 (HC-3a): date_shift group_by (entity-anchor) column ref.
+            "date_shift_group_by_refs",
             # Row 21 (SP-46): fpe_join_group structural validation.
             "fpe_join_groups",
             # Row 22 (Sprint 13 S3): truncate length/keep/mask_char validation.
             "truncate_config",
             # Row 23 (Sprint 13 S3, GATE-1 Q4): bucketize width resolution.
             "bucketize_config",
+            # Row 28 (HC-3b): top_code bound resolution.
+            "top_code_config",
             # Row 24 (Sprint 13 S3, GATE-1 Q4): categorical categories shape.
             "categorical_categories",
             # Row 25 (Sprint 2 honesty pack S6, GATE-1 Q4): fpe charset resolution.
             "fpe_charset_config",
             # Row 26 (DE-03 sibling): faker-without-provider rejection.
             "faker_requires_provider",
+            # Row 29 (HC-7): clinical free-text advisory (warn-only).
+            "freetext_advisory",
         )
         checks_skipped: tuple[str, ...] = (
             "basic_uniqueness_pre_flight",
@@ -349,18 +385,24 @@ def compile_plan(
             "windowed_date_refs",
             # Row 20 (SP-10c): group_key group_by column ref.
             "group_key_refs",
+            # Row 27 (HC-3a): date_shift group_by (entity-anchor) column ref.
+            "date_shift_group_by_refs",
             # Row 21 (SP-46): fpe_join_group structural validation.
             "fpe_join_groups",
             # Row 22 (Sprint 13 S3): truncate length/keep/mask_char validation.
             "truncate_config",
             # Row 23 (Sprint 13 S3, GATE-1 Q4): bucketize width resolution.
             "bucketize_config",
+            # Row 28 (HC-3b): top_code bound resolution.
+            "top_code_config",
             # Row 24 (Sprint 13 S3, GATE-1 Q4): categorical categories shape.
             "categorical_categories",
             # Row 25 (Sprint 2 honesty pack S6, GATE-1 Q4): fpe charset resolution.
             "fpe_charset_config",
             # Row 26 (DE-03 sibling): faker-without-provider rejection.
             "faker_requires_provider",
+            # Row 29 (HC-7): clinical free-text advisory (warn-only).
+            "freetext_advisory",
         )
         checks_skipped = ()
 
@@ -390,7 +432,10 @@ def compile_plan(
         plan_compile=PlanCompileResult(
             checks_passed=checks_passed,
             checks_skipped=checks_skipped,
-            warnings=stamp_warnings + capacity_warnings + fpe_join_warnings,
+            warnings=stamp_warnings
+            + capacity_warnings
+            + fpe_join_warnings
+            + freetext_advisory_warnings,
         ),
     )
 
@@ -456,6 +501,9 @@ def run_config_only_checks(config: dict[str, Any]) -> tuple[str, ...]:
     # Row 20 (SP-10c / P5.P.group_key): reject group_key columns with a missing
     # group_by column ref. Config-only.
     check_group_key_refs(config)
+    # Row 27 (HC-3a): reject date_shift columns with a missing group_by
+    # (entity-anchor) column ref. Config-only.
+    check_date_shift_group_by_refs(config)
     # Row 21 (SP-46 / fpe_join_group): validate fpe_join_group declarations.
     # Warnings are discarded here (config-only callers do not build a Plan).
     check_fpe_join_groups(config)
@@ -464,6 +512,9 @@ def run_config_only_checks(config: dict[str, Any]) -> tuple[str, ...]:
     check_truncate_config(config)
     # Row 23 (Sprint 13 S3, GATE-1 Q4): bucketize width resolution.
     check_bucketize_config(config)
+    # Row 28 (HC-3b, 2026-07-17): reject top_code columns with no resolvable
+    # bound (silent-passthrough leak). Config-only.
+    check_top_code_config(config)
     # Row 24 (Sprint 13 S3, GATE-1 Q4): categorical (mask) categories shape.
     check_categorical_categories(config)
     # Row 25 (Sprint 2 honesty pack S6, GATE-1 Q4): fpe degenerate-charset
@@ -485,12 +536,16 @@ def run_config_only_checks(config: dict[str, Any]) -> tuple[str, ...]:
         "grouped_series_refs",
         "windowed_date_refs",
         "group_key_refs",
+        # Row 27 (HC-3a): date_shift group_by (entity-anchor) column ref.
+        "date_shift_group_by_refs",
         # Row 21 (SP-46): fpe_join_group structural validation.
         "fpe_join_groups",
         # Row 22 (Sprint 13 S3): truncate length/keep/mask_char validation.
         "truncate_config",
         # Row 23 (Sprint 13 S3, GATE-1 Q4): bucketize width resolution.
         "bucketize_config",
+        # Row 28 (HC-3b): top_code bound resolution.
+        "top_code_config",
         # Row 24 (Sprint 13 S3, GATE-1 Q4): categorical categories shape.
         "categorical_categories",
         # Row 25 (Sprint 2 honesty pack S6, GATE-1 Q4): fpe charset resolution.
@@ -539,6 +594,28 @@ def _check_when_with_coherent_with(config: dict[str, Any]) -> None:
                 )
 
 
+# MED-1 (gate remediation): advisory-only global_settings keys stripped
+# from the hashed config. `categorical_retention_warn_threshold` (HC-5)
+# is warn-only at FIT time -- it never changes masking semantics or output
+# bytes -- so it is excluded from the outset, the same way `sources` /
+# `targets` are excluded. NOTE: `fidelity_warn_threshold` is NOT in this
+# set even though it is equally advisory: it was already part of the hash
+# before this fix, and removing it now would change `pipeline_config_hash`
+# for every existing config that sets it. Grandfathered for byte-compat;
+# only new advisory keys get added here going forward.
+# HC-7 (2026-07-17): `freetext_advisory_min_avg_length` /
+# `freetext_advisory_min_distinctness` are new keys (no existing config sets
+# them), so they are excluded from day one -- same reasoning as
+# categorical_retention_warn_threshold, no grandfathering needed.
+_NON_SEMANTIC_GLOBAL_SETTINGS = frozenset(
+    {
+        "categorical_retention_warn_threshold",
+        "freetext_advisory_min_avg_length",
+        "freetext_advisory_min_distinctness",
+    }
+)
+
+
 def _hash_config(config: dict[str, Any]) -> str:
     """SHA-256 over a canonical JSON serialization of the masking-semantics
     portion of the config (M1 from S1 end-of-sprint Dennis review).
@@ -556,6 +633,13 @@ def _hash_config(config: dict[str, Any]) -> str:
     same hash regardless of key insertion order or source/target binding.
     """
     semantic_config = {k: v for k, v in config.items() if k not in ("sources", "targets")}
+    global_settings = semantic_config.get("global_settings")
+    if isinstance(global_settings, dict) and any(
+        key in global_settings for key in _NON_SEMANTIC_GLOBAL_SETTINGS
+    ):
+        semantic_config["global_settings"] = {
+            k: v for k, v in global_settings.items() if k not in _NON_SEMANTIC_GLOBAL_SETTINGS
+        }
     # QA walks/generators F9 (2026-06-01, LOW correctness): no
     # default=str. Pre-fix json.dumps silently called str() on any
     # non-JSON-native value (datetime, UUID, dataclass), so two

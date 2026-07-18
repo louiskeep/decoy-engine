@@ -56,7 +56,11 @@ from decoy_engine.execution._output_projection import (
 )
 from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
 from decoy_engine.execution._row_errors import RowErrorRecord, drain_row_errors
-from decoy_engine.execution._runner import build_work_list, order_work
+from decoy_engine.execution._runner import (
+    build_work_list,
+    date_shift_group_columns,
+    order_work,
+)
 from decoy_engine.execution._when_gate import run_with_when_gate_polars
 from decoy_engine.execution.polars._conversion_boundary import ConversionBoundary
 from decoy_engine.execution.polars._strategies import POLARS_SCALAR_HANDLERS
@@ -67,6 +71,8 @@ from decoy_engine.keyprovider import require_mask_key
 from decoy_engine.plan._types import ColumnSeed
 
 if TYPE_CHECKING:
+    import pandas as pd
+
     from decoy_engine.execution._runner import WorkNode
     from decoy_engine.keyprovider import KeyProvider
     from decoy_engine.plan._types import Plan
@@ -211,6 +217,21 @@ class PolarsExecutionAdapter:
         frames: dict[str, pl.DataFrame] = {
             table: boundary.to_polars(tbl) for table, tbl in sources.items()
         }
+        # HC-3a (Codex R1 P1 #1): snapshot each date_shift group_by anchor
+        # column PRE-MASK, before the dispatch loop masks anything, so the
+        # (PandasStrategyPort-wrapped) handler anchors on immutable source ids
+        # rather than a value an earlier node already rewrote in place. Convert
+        # via pyarrow extension arrays so an int+null entity id stays lossless
+        # (polars->pandas would otherwise widen it to float64, which
+        # `_canonicalize_source` rejects); the default RangeIndex aligns
+        # positionally with the port's own `frame.select([col]).to_pandas()`.
+        group_anchor_cols = date_shift_group_columns(plan, registry)
+        group_anchor_snapshots: dict[tuple[str, str], pd.Series] = {
+            (table, col): pframe.get_column(col).to_pandas(use_pyarrow_extension_array=True)
+            for table, pframe in frames.items()
+            for col in group_anchor_cols.get(table, set())
+            if col in pframe.columns
+        }
         cache = pool_cache if pool_cache is not None else PoolCache()
         ctx = StrategyContext(
             registry=registry,
@@ -219,6 +240,7 @@ class PolarsExecutionAdapter:
             namespace_registry=namespace_registry,
             job_seed=plan.seed_envelope.job_seed,
             mask_key=require_mask_key(plan, key_provider),
+            group_anchor_snapshots=group_anchor_snapshots,
         )
         warnings: list[QualityWarning] = []
         row_error_records: list[RowErrorRecord] = []
@@ -233,6 +255,14 @@ class PolarsExecutionAdapter:
                         code="unsupported_strategy",
                         message=f"scalar node {node.columns} has a non-ColumnSeed plan slice.",
                     )
+                # Codex round-4 P2 POLARS-NATIVE ROUTE OMITS CODE_SET EVIDENCE
+                # remediation: stamp the in-flight table onto ctx before
+                # dispatch, mirroring `_pandas_adapter._dispatch_mask_node`,
+                # so a handler that keys evidence by (table, column)
+                # (CodeSetHandler, reached here via `nested` ->
+                # `PandasStrategyPort`) attributes it to the right table
+                # instead of leaving `current_table` at its "" default.
+                object.__setattr__(ctx, "current_table", node.table)
                 handler = self._polars_handlers[node.strategy]
                 with timed_strategy(node.strategy, ",".join(node.columns)):
                     # MG-3 / M3 (2026-05-31): same when_gate semantics as
@@ -269,6 +299,18 @@ class PolarsExecutionAdapter:
             quality_metrics={
                 "conversion_breakdown": boundary.as_dict(),
                 "executed_substrate": {node.strategy: "polars" for node in work},
+                # Codex round-4 P2 POLARS-NATIVE ROUTE OMITS CODE_SET
+                # EVIDENCE remediation: mirrors
+                # `PandasExecutionAdapter.run`'s `quality_metrics=ctx.
+                # code_set_corpora_metrics()`. A code_set column reached
+                # through this loop (directly, or nested's child via
+                # `PandasStrategyPort`, which shares this same `ctx`
+                # instance) populates `ctx.code_set_corpora`; without this
+                # merge a successful polars-native mask returned NO
+                # provenance even though the sink held it. {} when no
+                # code_set column ran, so an unrelated job's quality_metrics
+                # is untouched.
+                **ctx.code_set_corpora_metrics(),
             },
             row_errors=tuple(row_error_records),
         )

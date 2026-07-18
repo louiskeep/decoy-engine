@@ -28,6 +28,12 @@ narrowly:
   category strings (gated behind `allow_real_categories`). A fully
   data-independent release (fixed bin ranges, thresholded category sets) is a
   recorded follow-up.
+- A `high_cardinality: true` column (HC-5, e.g. an ICD-10-CM/NDC/HCPCS code
+  field) intentionally retains its FULL observed vocabulary with no top-K
+  collapse, so its snapshot artifact exposes every distinct code AND
+  rare-code presence/absence at fit time — treat that artifact with the same
+  care as a raw extract of that column, on top of the `allow_real_categories`
+  gate it already requires.
 - Joint contingency tables are rejected under `--epsilon` (no composition
   accounting in v1).
 - Nothing downstream of the snapshot inherits the guarantee: generation

@@ -149,7 +149,13 @@ from decoy_engine.execution._output_projection import (
     enforce_output_projection,
 )
 from decoy_engine.execution._row_errors import RowErrorRecord, drain_row_errors
-from decoy_engine.execution._runner import WorkNode, build_work_list, order_work
+from decoy_engine.execution._runner import (
+    WorkNode,
+    build_work_list,
+    date_shift_group_columns,
+    order_work,
+    top_code_columns,
+)
 from decoy_engine.execution._transactional_sink import (
     TransactionalSink,
     _CallableSinkAdapter,
@@ -275,6 +281,14 @@ def run_sequential(
 
     table_order = table_topo_order(plan, graph)
 
+    # HC-3a: per-table date_shift group_by anchor columns (Codex R1 P1 #1/#2).
+    # Unioned into each table's FK-safe column set at load (lossless int+null)
+    # and snapshotted pre-mask into ctx.group_anchor_snapshots below.
+    group_anchor_cols = date_shift_group_columns(plan, registry)
+    # HC-3b (Codex R2): top_code columns need the same lossless int+null typing
+    # so a value >= 2**53 is not rounded by a float64 widen (chunk-safety).
+    top_code_cols = top_code_columns(plan, registry)
+
     # A parent key map is retained until every child table that references it has
     # been processed; this makes multi-parent and diamond graphs safe.
     remaining_child_consumers: dict[_NodeKey, set[str]] = {}
@@ -350,7 +364,14 @@ def run_sequential(
                 # DE-10: same lossless-typing contract as the full-frame `run()`
                 # ingestion (execution/_fk_keys.py) -- an FK key column never
                 # silently widens to float64 on this table-at-a-time load either.
-                df = to_pandas_fk_safe(src, fk_columns_for_table(graph.edges, table))
+                # HC-3a P1 #2: date_shift group_by anchor columns get the same
+                # lossless int+null path (union into the FK-safe set).
+                df = to_pandas_fk_safe(
+                    src,
+                    fk_columns_for_table(graph.edges, table)
+                    | group_anchor_cols.get(table, set())
+                    | top_code_cols.get(table, set()),
+                )
                 conversion_ms += (time.perf_counter() - t0) * 1000.0
                 frames[table] = df
                 del src
@@ -362,6 +383,14 @@ def run_sequential(
                         for col in edge.parent_columns:
                             if col in df.columns and (table, col) not in source_snapshots:
                                 source_snapshots[(table, col)] = df[col].copy()
+
+                # HC-3a P1 #1: snapshot this table's date_shift group_by anchor
+                # columns pre-mask (before its node loop below masks anything),
+                # so the handler anchors on immutable source ids. Same-table
+                # lifetime only; evicted with the frame after the node loop.
+                for col in group_anchor_cols.get(table, set()):
+                    if col in df.columns:
+                        ctx.group_anchor_snapshots[(table, col)] = df[col].copy()
 
                 table_records_list: list[RowErrorRecord] = []
                 for node in nodes_by_table.get(table, ()):
@@ -462,6 +491,10 @@ def run_sequential(
                 del frames[table]
                 for snap_key in [k for k in source_snapshots if k[0] == table]:
                     del source_snapshots[snap_key]
+                # HC-3a: group anchors are same-table only (never a cross-table
+                # consumer), so evict them with the frame.
+                for snap_key in [k for k in ctx.group_anchor_snapshots if k[0] == table]:
+                    del ctx.group_anchor_snapshots[snap_key]
 
                 # Release any parent map whose every child consumer is now done.
                 for edge in graph.edges:
@@ -477,7 +510,12 @@ def run_sequential(
         # Finalize row-error evidence AFTER every table has masked and BEFORE
         # commit, still inside this try so a failure here also triggers
         # abort() (nothing has committed yet -- `_committed` is still False).
-        quality_metrics: dict[str, Any] = {}
+        # HC-1 slice 1: same code_set corpus-provenance surfacing as the
+        # full-frame `run()` path -- `ctx` is shared across every table in
+        # this job (built once above), so `ctx.code_set_corpora` accumulates
+        # identically whether the job runs table-at-a-time (here) or
+        # full-frame.
+        quality_metrics: dict[str, Any] = ctx.code_set_corpora_metrics()  # HC-1 evidence
         if all_row_errors:
             row_error_counts: dict[str, int] = {}
             for rec in all_row_errors:

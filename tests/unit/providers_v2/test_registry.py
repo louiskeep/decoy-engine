@@ -326,5 +326,10 @@ class TestBackendAdapterProtocolConformance:
         above proves the surface matches. This belt-and-suspenders test
         confirms the typing hint resolves."""
         adapter = get_default_registry().get_adapter("person_email")
-        # Just smoke-test that we can assign to a BackendAdapter-typed slot.
+        # must not raise: BackendAdapter is a plain typing.Protocol (not
+        # @runtime_checkable), so isinstance(adapter, BackendAdapter) would
+        # itself raise TypeError here - it is not a valid runtime check for
+        # this type. This assignment only proves the annotation is legal
+        # Python at import time; real conformance is verified structurally
+        # by test_faker_adapter_satisfies_protocol above and by mypy.
         _: BackendAdapter = adapter  # type: ignore[assignment]

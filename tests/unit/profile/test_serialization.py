@@ -87,7 +87,9 @@ class TestJsonRoundTrip:
 
     def test_json_is_well_formed(self, sample_profile: Profile) -> None:
         s = profile_to_json(sample_profile)
-        json.loads(s)
+        parsed = json.loads(s)
+        assert isinstance(parsed, dict)
+        assert {"schema_version", "tables", "relationships", "profiled_at"} <= parsed.keys()
 
 
 class TestJsonErrorPaths:

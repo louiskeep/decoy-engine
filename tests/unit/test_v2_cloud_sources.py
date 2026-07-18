@@ -65,8 +65,12 @@ class TestCloudSourceSchema:
                 "key": "data/customers.csv",
             },
         }
-        # No exception => the discriminator accepts the variant.
-        PipelineConfig.model_validate(cfg)
+        parsed = PipelineConfig.model_validate(cfg)
+        source = parsed.sources["t"]
+        assert source.type == "s3"
+        assert source.format == "csv"
+        assert source.bucket == "my-bucket"
+        assert source.key == "data/customers.csv"
 
     def test_source_descriptor_accepts_gcs_variant(self):
         """GCSSource with bucket + object + format is a valid v2 source."""
@@ -79,7 +83,12 @@ class TestCloudSourceSchema:
                 "object": "data/customers.parquet",
             },
         }
-        PipelineConfig.model_validate(cfg)
+        parsed = PipelineConfig.model_validate(cfg)
+        source = parsed.sources["t"]
+        assert source.type == "gcs"
+        assert source.format == "parquet"
+        assert source.bucket == "my-bucket"
+        assert source.object == "data/customers.parquet"
 
     def test_source_descriptor_rejects_unknown_type(self):
         """An unsupported type (sftp here -- S18 wires it) is rejected at the
@@ -111,7 +120,8 @@ class TestCloudSourceSchema:
                 "credentials_ref": "aws-prod-readonly",
             },
         }
-        PipelineConfig.model_validate(cfg_s3)
+        parsed_s3 = PipelineConfig.model_validate(cfg_s3)
+        assert parsed_s3.sources["t"].credentials_ref == "aws-prod-readonly"
 
         cfg_gcs = _base_config()
         cfg_gcs["sources"] = {
@@ -123,7 +133,8 @@ class TestCloudSourceSchema:
                 "credentials_ref": "gcp-prod-readonly",
             },
         }
-        PipelineConfig.model_validate(cfg_gcs)
+        parsed_gcs = PipelineConfig.model_validate(cfg_gcs)
+        assert parsed_gcs.sources["t"].credentials_ref == "gcp-prod-readonly"
 
     def test_s3_source_rejects_empty_bucket(self):
         """min_length=1 on bucket means empty-string rejects at the choke-point."""

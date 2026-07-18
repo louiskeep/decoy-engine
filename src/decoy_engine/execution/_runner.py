@@ -113,6 +113,57 @@ def build_work_list(plan: Plan, registry: ProviderRegistry) -> list[WorkNode]:
     return work
 
 
+def date_shift_group_columns(plan: Plan, registry: ProviderRegistry) -> dict[str, set[str]]:
+    """Per-table set of sibling columns named by a `date_shift` `group_by` (HC-3a).
+
+    A `group_by` anchor column has the same two requirements as an FK-parent
+    key column: it must be read PRE-MASK (so every row of one entity anchors on
+    the identical source value regardless of masking order / when-gates) and
+    converted LOSSLESSLY (an int+null anchor must not widen to float64, which
+    would make `_canonicalize_source` reject a valid id). Both the pandas
+    adapter and the sequential runner union this set into
+    `fk_columns_for_table(...)` (lossless ingestion) and snapshot these columns
+    pre-mask into `StrategyContext.group_anchor_snapshots`. Empty when no
+    `date_shift` column configures a `group_by`. Only a non-empty STRING
+    `group_by` is collected; a malformed ref is rejected at plan-compile
+    (`check_date_shift_group_by_refs`), so this walker never has to guess.
+    """
+    from decoy_engine.execution._adapter import provider_config_to_dict
+
+    out: dict[str, set[str]] = {}
+    for node in build_work_list(plan, registry):
+        if node.kind != "scalar" or node.strategy != "date_shift":
+            continue
+        if not isinstance(node.plan_slice, ColumnSeed):
+            continue
+        group_by = provider_config_to_dict(node.plan_slice.provider_config).get("group_by")
+        if isinstance(group_by, str) and group_by:
+            out.setdefault(node.table, set()).add(group_by)
+    return out
+
+
+def top_code_columns(plan: Plan, registry: ProviderRegistry) -> dict[str, set[str]]:
+    """Per-table set of columns masked by `top_code` (HC-3b).
+
+    A top_code column must ingest LOSSLESSLY (nullable Int64), never via a bare
+    `to_pandas()` that widens an int+null column to float64. Widening rounds any
+    integer with magnitude >= 2**53, and -- because whether a chunk widens
+    depends on whether THAT chunk carries a null -- makes the masked output
+    depend on the chunk boundary, breaking the CHUNK_SAFE byte-identity contract
+    (Codex R2 HIGH). The pandas adapter and the sequential runner union this set
+    into `fk_columns_for_table(...)` so the handler compares and renders exact
+    integer values on every route. Genuine float columns are unaffected (they are
+    float64 on every route already, so no chunk-dependent widening arises).
+    """
+    out: dict[str, set[str]] = {}
+    for node in build_work_list(plan, registry):
+        if node.kind != "scalar" or node.strategy != "top_code":
+            continue
+        for col in node.columns:
+            out.setdefault(node.table, set()).add(col)
+    return out
+
+
 def order_work(work: list[WorkNode], relationship_graph: RelationshipGraph) -> list[WorkNode]:
     """Order the work list (S9 spec §6.2).
 

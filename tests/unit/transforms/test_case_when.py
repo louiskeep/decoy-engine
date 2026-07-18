@@ -53,20 +53,34 @@ class TestCaseWhenParse:
         _compile('case_when(score >= 90, "A", score >= 80, "B", score >= 70, "C", "D")')
 
     def test_value_is_closed_grammar_expression(self) -> None:
-        """Values are themselves closed-grammar sub-expressions."""
-        _compile("case_when(a > 0, a * 2, 0)")
+        """Values are themselves closed-grammar sub-expressions: the
+        arithmetic in the value position must actually be evaluated,
+        not just accepted as an opaque token."""
+        expr = "case_when(a > 0, a * 2, 0)"
+        assert _eval(expr, {"a": 5}) == 10
+        assert _eval(expr, {"a": -1}) == 0
 
     def test_condition_is_closed_grammar_expression(self) -> None:
-        """Conditions may reference columns and use comparison operators."""
-        _compile("case_when(a > 0 and b != 0, 1, 0)")
+        """Conditions may reference columns and use comparison operators;
+        the compound boolean condition must actually be evaluated."""
+        expr = "case_when(a > 0 and b != 0, 1, 0)"
+        assert _eval(expr, {"a": 5, "b": 3}) == 1
+        assert _eval(expr, {"a": 5, "b": 0}) == 0
 
     def test_nested_case_when_in_value(self) -> None:
-        """A case_when can nest another case_when in a value position."""
-        _compile("case_when(a > 0, case_when(b > 0, 2, 1), 0)")
+        """A case_when can nest another case_when in a value position,
+        and the nested branch must resolve to the correct value."""
+        expr = "case_when(a > 0, case_when(b > 0, 2, 1), 0)"
+        assert _eval(expr, {"a": 1, "b": 1}) == 2
+        assert _eval(expr, {"a": 1, "b": -1}) == 1
+        assert _eval(expr, {"a": -1, "b": 1}) == 0
 
     def test_concat_in_value(self) -> None:
-        """Closed-grammar functions are allowed in value positions."""
-        _compile('case_when(a > 0, concat(name, "_ok"), concat(name, "_fail"))')
+        """Closed-grammar functions are allowed in value positions,
+        and concat() must actually produce the concatenated string."""
+        expr = 'case_when(a > 0, concat(name, "_ok"), concat(name, "_fail"))'
+        assert _eval(expr, {"a": 1, "name": "x"}) == "x_ok"
+        assert _eval(expr, {"a": -1, "name": "x"}) == "x_fail"
 
 
 class TestCaseWhenEval:

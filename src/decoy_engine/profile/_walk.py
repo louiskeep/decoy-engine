@@ -161,11 +161,32 @@ def _walk_column(
     docs/plans/2026-07-09-consultant-f1-f2-bounded-profiling.md). distinct_count
     comes from sample_series, which equals series when not further sampling
     within that frame. pii_class is resolved by the caller (walk_dataframe)
-    from a STORM scan when run_pii_detection=True; otherwise None.
+    from a STORM scan when run_pii_detection=True; otherwise None. avg_length /
+    max_length (HC-7) also come from sample_series, for the same reason as
+    distinct_count.
     """
     null_count = int(series.isna().sum())
     distinct_count_raw = sample_series.dropna().nunique()
     distinct_count = int(distinct_count_raw) if not pd.isna(distinct_count_raw) else None
+
+    # HC-7: string-length stats, from the same sample population as
+    # distinct_count above (so avg_length and distinct_count are mutually
+    # consistent -- both measured over sample_series). The free-text
+    # advisory's distinctness RATIO, however, divides this sampled
+    # distinct_count by the full-frame non-null count (see
+    # plan/_checks_freetext_advisory.py), which under active sampling makes
+    # the ratio a conservative lower bound -- intentional for a warn-only
+    # advisory. Mirrors storm/profiler.py's FieldStats.avg_length computation.
+    # None for non-string dtypes; None when the sample has no non-null
+    # values (an all-null or empty column).
+    avg_length: float | None = None
+    max_length: int | None = None
+    if pd.api.types.is_string_dtype(series):
+        non_null_sample = sample_series.dropna()
+        if len(non_null_sample) > 0:
+            str_lens = non_null_sample.astype(str).str.len()
+            avg_length = float(str_lens.mean())
+            max_length = int(str_lens.max())
 
     declared_pk = name in declared_pk_cols
     is_fk = name in fk_specs
@@ -196,4 +217,6 @@ def _walk_column(
         is_fk=is_fk,
         fk_target=fk_target,
         pii_class=pii_class,
+        avg_length=avg_length,
+        max_length=max_length,
     )

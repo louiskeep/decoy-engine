@@ -50,7 +50,33 @@ ALLOWLIST: dict[str, int] = {
     # compile-check ownership table. Decompose the growing _checks.py into
     # per-strategy check sub-modules in a follow-up sprint when the check set
     # stabilises (post-SP-15 or when the next strategy batch lands).
-    "src/decoy_engine/plan/_checks.py": 695,
+    "src/decoy_engine/plan/_checks.py": 711,
+    # HC-5 (2026-07-17): +16 LOC (695 -> 711) adding the `high_cardinality`
+    # wrong-type guard to `check_statistical_columns` -- a `high_cardinality`
+    # key on a non-`type: statistical` column (the one case `load_spec` never
+    # sees, since it is only called for statistical columns) plus its
+    # docstring note. Same per-strategy-check decomposition target stands.
+    # HC-3b (2026-07-17): crossed the 600 cap adding the top_code compile-check
+    # wiring (import + one call-site + one checks_passed entry, x2 for the
+    # no_profile/full branches, plus run_config_only_checks' call + return
+    # entry) -- the same repeated-four-times pattern every prior per-strategy
+    # check module (bucketize, categorical, date_shift group_by, ...) already
+    # added here. Decompose the four call/list sites into a small
+    # data-driven table (check fn -> passed-name) when the next strategy
+    # check lands and this module is touched again.
+    # HC-5 gate remediation MED-1 (2026-07-17): +19 LOC (609 -> 628) for
+    # `_NON_SEMANTIC_GLOBAL_SETTINGS` + the strip-before-hash block in
+    # `_hash_config`, restoring pipeline_config_hash byte-stability against
+    # the new `categorical_retention_warn_threshold` advisory key. Small,
+    # localized addition to an already-oversized module; the decomposition
+    # target above still stands for the next touch.
+    # HC-7 (2026-07-17): +30 LOC (628 -> 658) for the clinical free-text
+    # advisory wiring: the import + Row 29 call site + its checks_passed
+    # entry (x2 for the no_profile/full branches) + the warnings-fold line +
+    # two new keys in `_NON_SEMANTIC_GLOBAL_SETTINGS`. Same per-strategy
+    # check-module pattern as every prior addition here; same decomposition
+    # target stands.
+    "src/decoy_engine/plan/_compile.py": 658,
     # TB-5 precondition #73 (2026-07-13): the pure peak estimator was at the
     # cap (596 LOC) when it gained `route_intercept_bytes` -- the small public
     # accessor (idiomatic here, like `is_fixed_width_dtype`) that makes the
@@ -135,7 +161,10 @@ ALLOWLIST: dict[str, int] = {
     # them into a shared `_fk_dtype_family.py` sibling when the next FK-dtype
     # change lands (a pure move -- no circular import, since the family logic
     # imports nothing from either consumer).
-    "src/decoy_engine/execution/_chunked_fk.py": 650,
+    # HC-3b (2026-07-17): +1 LOC adding "top_code" to CHUNK_SAFE_STRATEGIES
+    # (it is value-deterministic, unkeyed, and chunk-independent, same as
+    # bucketize). Same decomposition target stands.
+    "src/decoy_engine/execution/_chunked_fk.py": 651,
     # DE-03 (2026-07-13): the mask adapter's `run()` is one of the five emission
     # routes the fail-closed output projection must guard (undeclared columns no
     # longer leak raw). The +17 LOC are the two policy params, the per-table
@@ -149,7 +178,19 @@ ALLOWLIST: dict[str, int] = {
     # keyed strategy rekeys off the run secret. The provider is a run-time
     # injection (never serialized), so the plumbing is adapter-internal by design.
     # Same FK-resolution-helper decomposition target stands.
-    "src/decoy_engine/execution/_pandas_adapter.py": 621,
+    # HC-3a (2026-07-17): +31 LOC (621 -> 652) threading the date_shift group_by
+    # pre-mask anchor snapshots -- union the anchor columns into the FK-safe
+    # (lossless int+null) load set, snapshot each pre-mask keyed by (table, col),
+    # and pass them into StrategyContext so the handler anchors on immutable
+    # source ids (Codex R1 P1 #1/#2). The snapshot construction differs from the
+    # sequential route's (whole-frame dict vs per-table lifetime), so it does not
+    # factor into a shared helper without harm. Same FK-resolution-helper
+    # decomposition target stands.
+    # HC-3b (2026-07-17): +8 LOC (652 -> 660) unioning top_code columns into the
+    # lossless nullable-Int64 ingest (top_code_columns) so a large int+null value
+    # is not float64-rounded and the masked output stays chunk-boundary
+    # independent (Codex R2). Same FK-resolution-helper decomposition target.
+    "src/decoy_engine/execution/_pandas_adapter.py": 660,
     # DE-03 (2026-07-13): run_pipeline resolves the projection policy + the
     # generate-echo exemption set once and threads them into every emission route
     # (+15 LOC). The orchestration spine already owns route selection; this is the
@@ -171,15 +212,20 @@ ALLOWLIST: dict[str, int] = {
     # requires the standard VaultWriter contract (isinstance) so a duck-typed
     # writer without the key-match method cannot silently bypass the fail-closed
     # net. Same routing-dispatch decomposition target stands.
-    # DE-02 Codex item 6a (2026-07-14): -10 LOC -- the inline vault guard moved to
-    # the shared vault.assert_vault_writer_keyed helper (reused by the chunked
-    # entry). Ceiling lowered to the new size. Same decomposition target stands.
     "src/decoy_engine/execution/_pipeline.py": 645,
     # DE-02 (2026-07-14): +3 LOC crossing the 600 cap -- the sequential FK route
     # threads `key_provider` into StrategyContext.mask_key like the other adapters
     # (run-time injection, never serialized). Decompose the per-table
     # mask/quarantine loop into a sibling when the next FK-route batch lands.
-    "src/decoy_engine/execution/_sequential.py": 603,
+    # HC-3a (2026-07-17): +32 LOC (603 -> 635) threading the date_shift group_by
+    # pre-mask anchor snapshots on the sequential route -- union the anchor
+    # columns into the FK-safe (lossless int+null) load, snapshot each table's
+    # anchors pre-mask into ctx.group_anchor_snapshots, and evict them with the
+    # frame after its node loop (same-table lifetime). Codex R1 P1 #1/#2. Same
+    # per-table mask/quarantine-loop decomposition target stands.
+    # HC-3b (2026-07-17): +6 LOC (635 -> 641) unioning top_code columns into the
+    # sequential route's lossless nullable-Int64 ingest (Codex R2 chunk-safety).
+    "src/decoy_engine/execution/_sequential.py": 641,
     # DE-08 residual (2026-07-14): crossed the 600 cap (was 569) hardening the
     # transactional quarantine publish in place -- fail-closed on a hardlink-
     # unsupported filesystem (clear message, not an opaque OSError) and best-
@@ -189,6 +235,32 @@ ALLOWLIST: dict[str, int] = {
     # beside; decompose that publish cluster into a `_quarantine_transaction.py`
     # sibling when the next quarantine-sidecar change lands.
     "src/decoy_engine/quarantine.py": 619,
+    # HC-1 slice 1 (2026-07-17): crossed the 600 cap (639) wiring the code_set
+    # corpus provenance stamp + pinned-record lookup into the out-of-core route
+    # -- the per-chunk evidence stamp and the job-wide pinned corpus record are
+    # threaded through the streaming runner so masking and evidence cannot
+    # diverge on a mid-job corpus swap (parity with the pandas/sequential
+    # routes). Decompose the chunk-drain / evidence-merge cluster into a sibling
+    # when the next out-of-core route change lands.
+    "src/decoy_engine/execution/out_of_core/_runner.py": 639,
+    # HC-2 (2026-07-17): crossed the 600 cap adding the generic corpus
+    # schema-invariant checker (_check_corpus_schema, shared by the load path
+    # and the new standalone verify_corpus primitive), the
+    # corpus_source_version mismatch gate (_check_source_version_pin), and
+    # verify_corpus/CorpusVerifyReport themselves -- this module already owns
+    # "read a Parquet file off disk, validate it, cache it" (see its
+    # docstring), so the new checks and the new standalone primitive belong
+    # here, not split further. 610 -> 613: the two-model gate added a Path()
+    # coercion + optional-path pin signature (verify_corpus never-raises fix).
+    # Decompose verify_corpus + CorpusVerifyReport into a `_codeset_verify.py`
+    # sibling when the next standalone-check consumer (CLI/platform) lands and
+    # needs this module touched again.
+    "src/decoy_engine/transforms/_codeset_loader.py": 613,
+    # NOTE: transforms/code_set.py was allowlisted at 637 during the HC-2 build;
+    # the two-model-gate remediation then decomposed validate_code_set_config
+    # into transforms/_codeset_config_checks.py (mirroring _checks_top_code.py),
+    # bringing code_set.py back to 592 -- under the 600 cap, so it is no longer
+    # allowlisted here. Do not re-add it without cause.
 }
 
 
