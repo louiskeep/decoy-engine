@@ -21,6 +21,8 @@ from decoy_engine.storm.eval.split import (
     make_split_inputs,
 )
 
+pytestmark = pytest.mark.ml  # ml-gate membership (pytest -m ml)
+
 
 class TestMakeGroupKey:
     """Group key correctly represents unique column values."""

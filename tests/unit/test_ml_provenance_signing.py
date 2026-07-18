@@ -46,6 +46,8 @@ DictVectorizer = pytest.importorskip("sklearn.feature_extraction").DictVectorize
 # production.  The production key source is an escalated decision (see
 # keyMgmtNote in the Sprint C hand-off).
 
+pytestmark = pytest.mark.ml  # ml-gate membership (pytest -m ml)
+
 _FIXTURE_KEY = bytes.fromhex("de00c0de000000000000000000000000000000000000000000000000000000f1")
 
 _FIXTURE_KEY_HEX = _FIXTURE_KEY.hex()

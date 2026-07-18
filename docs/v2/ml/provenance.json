@@ -26,18 +26,18 @@
 
   "eval": {
     "report_path": "docs/v2/ml/lightgbm-report.json",
-    "report_sha256": "73863b66a4ffd4a5f4b47025b1e99ee6911980a662391cd973f4986b3dda54ff",
+    "report_sha256": "140a224bf5cbec0117549999d1e7b74c485b6b0bd92acaa24abd5dea58b1602f",
     "gate_doc": "docs/ml-benchmarking-and-privacy.md",
     "lift_gate_threshold_ppt": 5.0,
     "lift_gate_met": true,
-    "macro_recall_baseline": 0.8,
-    "macro_recall_model": 0.975,
-    "lift_ppt": 17.5,
-    "brier_score": 0.0104
+    "macro_recall_baseline": 0.725,
+    "macro_recall_model": 1.0,
+    "lift_ppt": 27.5,
+    "brier_score": 0.0113
   },
 
   "model": {
-    "weights_sha256": "c6f990308cce4602fc6cc4c43aaa4e71c4ea32fed608f3c22a4bcac85e9dd5d6",
+    "weights_sha256": "14a358d689ceea61c82b1668147e75b91771a5b3aab71647072dde33fc5669f1",
     "algorithm": "LGBMClassifier + CalibratedClassifierCV(sigmoid)",
     "calibration_method": "sigmoid",
     "operating_threshold": 0.1667,

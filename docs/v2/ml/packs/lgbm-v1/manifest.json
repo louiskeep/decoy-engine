@@ -1,13 +1,14 @@
 {
   "calibration_method": "sigmoid",
-  "eval_report_hash": "73863b66a4ffd4a5f4b47025b1e99ee6911980a662391cd973f4986b3dda54ff",
+  "eval_report_hash": "140a224bf5cbec0117549999d1e7b74c485b6b0bd92acaa24abd5dea58b1602f",
   "extra": {},
   "feature_schema_version": "ml1-v1",
   "format_version": "decoy-model-pack/v1",
   "license_note": "Trained on fully synthetic data (no real PII). Detection only -- not a de-identification tool. See corpus-datasheet.md for provenance.",
+  "manifest_hmac": "",
   "operating_threshold": 0.1667,
   "pack_id": "lgbm-v1",
-  "sha256": "c6f990308cce4602fc6cc4c43aaa4e71c4ea32fed608f3c22a4bcac85e9dd5d6",
+  "sha256": "14a358d689ceea61c82b1668147e75b91771a5b3aab71647072dde33fc5669f1",
   "signing_key_ref": "unsigned",
   "training_seed": 42,
   "version": "0.1.0"
