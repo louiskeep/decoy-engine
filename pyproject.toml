@@ -210,9 +210,21 @@ geo = [
 # GroupKFold API; pin below 3 until a 3.x validation pass.
 # lightgbm upper bound: 4.x is the stable API; cap below 5 until a 5.x
 # validation pass.
+#
+# Versions are EXACT-pinned, not ranged. The frozen golden pack
+# (docs/v2/ml/packs/lgbm-v1) and its retrain gate
+# (tests/snapshots/test_ml_lightgbm_golden.py::test_lightgbm_regression_retrain)
+# assert reproduced metrics within 1e-4 of the committed baseline. Tree-split
+# tie-breaking and calibration drift across even a scikit-learn patch release
+# can exceed that tolerance, so a floating range would make the CI gate
+# non-reproducible over time. These are the versions the shipped pack was
+# trained under (Python 3.10, the public floor). Bump deliberately: change the
+# pin and regenerate the golden in the same PR
+# (UPDATE_SNAPSHOTS=1 pytest tests/snapshots/test_ml_lightgbm_golden.py),
+# never implicitly.
 ml = [
-    "scikit-learn>=1.4,<3",
-    "lightgbm>=4.0,<5",
+    "scikit-learn==1.7.2",
+    "lightgbm==4.6.0",
 ]
 
 # Project URLs surfaced on the PyPI sidebar.
