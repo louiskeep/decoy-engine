@@ -264,24 +264,15 @@ def _stream_table(
     totals are aggregated over the whole stream and appended to `warnings` in
     incoming-edge order, matching whole-table reporting.
 
-    `code_set_corpora` (HIGH-2 remediation, default None): the shared
-    corpus-provenance evidence sink, mutated in place the same way `outputs`/
-    `warnings` are -- see `_code_set_records_and_evidence_for_table`. A
-    column's evidence commits into this sink only once the batch stream below
-    has observed at least one non-missing source value for it (tracked in
-    `code_set_null_seen`; missing == null OR float NaN, matching the mask
-    kernel's `_is_missing`), mirroring `CodeSetHandler.run`'s masked_any gate on
-    the pandas/sequential routes: an entirely-null column never dispatches
-    `apply_code_set` there, so it must not report its corpus as "used" here
-    either.
-
-    Codex round-6 P2 MASKING/EVIDENCE VERSION DIVERGENCE remediation: this
-    table's code_set corpus record(s) are resolved ONCE here, before any
-    batch streams, and the SAME pinned record is threaded into every
-    `mask_batch` call below AND into the evidence stamp -- resolved
-    unconditionally (not just when `code_set_corpora` is given), since
-    masking consistency across the whole batch stream does not depend on
-    whether the caller also wants evidence.
+    `code_set_corpora` (default None): the shared corpus-provenance evidence
+    sink, mutated in place like `outputs`/`warnings`. Each column's evidence
+    commits only once its stream has seen a value the mask kernel would
+    dispatch -- missing (null OR float NaN, per the kernel's `_is_missing`)
+    never counts -- so an all-null (or all-NaN-float) column reports no corpus
+    as "used", matching `CodeSetHandler.run`'s masked_any gate. The corpus
+    record is resolved ONCE here and threaded into every `mask_batch` call AND
+    the evidence stamp, so a corpus swapped mid-stream cannot make batches or
+    the stamp disagree on version.
     """
     if batch_rows is None:
         batch_rows = _join_ooc._JOIN_BATCH_ROWS
@@ -290,10 +281,8 @@ def _stream_table(
     code_set_corpus_records, table_code_set_evidence = _code_set_records_and_evidence_for_table(
         plan, table_name, source_schema.names, skip_columns=skip_columns
     )
-    # `table_code_set_evidence` is resolved from the plan+schema alone, before
-    # any row is read, so it cannot yet know whether a column turns out
-    # all-null. Commit is deferred until the batch stream has actually seen a
-    # non-null value per column -- see the docstring paragraph above.
+    # Evidence is resolved from plan+schema before any row is read; the commit
+    # is deferred until the stream has seen a non-missing value per column.
     code_set_null_seen: dict[str, bool] = dict.fromkeys(code_set_corpus_records, False)
     joiners: list[ChildFkBatchJoiner] = []
     try:
@@ -338,16 +327,12 @@ def _stream_table(
                     if idx < 0:
                         continue
                     col = raw_batch.column(idx)
-                    # Count missing values the way the mask kernel's `_is_missing`
-                    # does -- null OR float NaN -- not a plain Arrow null_count.
-                    # The oracle folds NaN to null (`pa.array(from_pandas=True)`)
-                    # before masking, so an all-NaN float column masks nothing and
-                    # withholds its stamp; a null_count-only check would over-count
-                    # its NaNs as "seen" and stamp evidence the kernel never emits.
+                    # "Missing" == null OR float NaN, matching the mask kernel's
+                    # `_is_missing`: an all-NaN float column masks nothing, so a
+                    # plain null_count would over-stamp evidence it never emits.
                     n_missing = col.null_count
                     if pa.types.is_floating(col.type):
-                        # pyarrow.compute funcs are dynamically generated, so the
-                        # stubs miss them (see _chunked_fk.py's pc.min_max usage).
+                        # pc.* funcs are dynamically generated; stubs miss them.
                         n_missing += pc.sum(pc.is_nan(col)).as_py() or 0  # type: ignore[attr-defined, unused-ignore]
                     if n_missing < raw_batch.num_rows:
                         code_set_null_seen[column] = True
@@ -401,12 +386,9 @@ def _stream_table(
                     memory_limit=memory_limit,
                     batch_rows=batch_rows,
                 )
-        # Deferred commit (see the docstring paragraph on `code_set_corpora`
-        # above): by this point `rewritten()` has been fully consumed by
-        # either branch above, so `code_set_null_seen` reflects the whole
-        # table's stream. Only a column that saw at least one non-null
-        # source value earns its evidence stamp, matching CodeSetHandler
-        # .run's masked_any gate on the pandas/sequential routes.
+        # Deferred commit: `rewritten()` is fully consumed by now, so
+        # `code_set_null_seen` reflects the whole stream. Only a column that
+        # saw a non-missing value earns its stamp (masked_any parity).
         if code_set_corpora is not None:
             for key, evidence in table_code_set_evidence.items():
                 if code_set_null_seen.get(key[1], False):
@@ -531,52 +513,20 @@ def _code_set_records_and_evidence_for_table(
     *,
     skip_columns: frozenset[str],
 ) -> tuple[dict[str, _CorpusRecord], dict[tuple[str, str], dict[str, Any]]]:
-    """HIGH-2 remediation: code_set corpus record + provenance evidence for one table.
+    """code_set corpus record + provenance evidence for one table.
 
-    Mirrors `CodeSetHandler.run`'s once-per-(table, column) stamp
-    (`describe_loaded_corpus`; counts + identifiers only, no raw codes) so the
-    out-of-core route surfaces the same `code_set_corpora` evidence block the
-    pandas/sequential routes already merge into `ExecutionResult.quality_metrics`
-    -- previously silently absent here, the exact route the large-healthcare
-    (70k ICD) case this slice exists for takes.
-
-    Keyed by (table_name, column) -- Codex P2 MULTI-TABLE EVIDENCE COLLISION
-    remediation: two tables can legally declare a same-named code_set column
-    bound to different corpora (e.g. both have a "code" column, one icd10 one
-    mcc), and a bare-column key let the second table's stamp silently
-    overwrite the first's, dropping audit provenance. Each emitted evidence
-    dict also carries its own `table`/`column` identity, since the flattened
-    metrics list (`list(code_set_corpora.values())`) discards the sink's keys.
-
-    Restricted to columns actually present in this table's batch schema and
-    not consumed as an FK child (`skip_columns`), so a plan-declared code_set
-    column absent from the source or resolved via FK join never falsely
-    reports as "used." The out-of-core compat gate (`_compat.py`) admits
-    code_set only in mask mode without `chapter_preserve` and rejects any
-    `when` predicate, so there is no when-gated zero-row case to guard against
-    here (unlike the pandas/sequential route's when_gate).
-
-    This function alone cannot achieve masked-value parity with the pandas/
-    sequential route: it is resolved from the plan+schema before any row is
-    read, so it returns CANDIDATE evidence keyed on schema presence, not on
-    observed non-null masking. `_stream_table` closes that gap -- it commits
-    each entry into the shared `code_set_corpora` sink only after its batch
-    stream has observed at least one non-missing source value for that column
-    (missing == null OR float NaN, matching the kernel's `_is_missing`), so a
-    column the kernel masks nothing of -- all-null, or an all-NaN float column
-    the oracle folds to null -- ends up with no evidence stamp here either,
-    exactly as `CodeSetHandler.run`'s masked_any gate withholds one on the
-    pandas/sequential route.
-
-    Codex round-6 P2 MASKING/EVIDENCE VERSION DIVERGENCE remediation: returns
-    the PINNED `_CorpusRecord` per code_set column alongside the evidence
-    derived from that SAME record (`describe_loaded_corpus(..., record=...)`),
-    resolving each corpus exactly ONCE. `_stream_table` threads the returned
-    records dict into every `mask_batch` call for this table, so a customer
-    corpus file replaced mid-stream cannot make one batch's masking, another
-    batch's masking, or the evidence stamp disagree about which corpus
-    version was used -- there is only ever one resolve per (table, column)
-    for the whole table stream.
+    Mirrors `CodeSetHandler.run`'s once-per-(table, column) stamp (counts +
+    identifiers only, no raw codes) so the out-of-core route surfaces the same
+    `code_set_corpora` block the pandas/sequential routes merge into
+    quality_metrics. Keyed by (table, column) -- two tables may bind a
+    same-named code_set column to different corpora -- and each evidence dict
+    carries its own table/column identity, since the flattened metrics list
+    discards the sink's keys. Restricted to columns present in this table's
+    schema and not consumed as an FK child. Returns CANDIDATE evidence (keyed on
+    schema presence, not observed masking); `_stream_table` withholds the stamp
+    for a column that masks nothing. The pinned `_CorpusRecord` is resolved ONCE
+    and returned alongside its evidence, then threaded into every `mask_batch`
+    call, so a mid-stream corpus swap cannot make masking and evidence disagree.
     """
     seed = table_seed(plan, table_name)
     if seed is None:
