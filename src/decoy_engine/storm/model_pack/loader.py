@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from decoy_engine.storm.model_pack.provenance import (
+    SIGNING_KEY_ENV,
     load_signing_key_from_env,
     verify_manifest,
 )
@@ -82,13 +83,29 @@ class ModelPackLoader:
 
     Examples
     --------
-    >>> loader = ModelPackLoader(Path("docs/v2/ml/packs/lgbm-v1"))
+    >>> # trusted=True vouches for the first-party default pack; an untrusted
+    >>> # (caller-supplied) pack requires a verified signature (DE-04 Option C).
+    >>> loader = ModelPackLoader(Path("docs/v2/ml/packs/lgbm-v1"), trusted=True)
     >>> pack = loader.load()   # raises ModelPackLoadError on any problem
     >>> pack["clf"].predict_proba(...)
     """
 
-    def __init__(self, pack_dir: Path) -> None:
+    def __init__(self, pack_dir: Path, *, trusted: bool = False) -> None:
+        """Construct a loader for the pack at *pack_dir*.
+
+        ``trusted`` marks the pack as the first-party default artifact (shipped
+        inside the wheel, SHA-256 verified, provenance-pinned) rather than one
+        arriving across an untrusted boundary. It governs DE-04 signature
+        enforcement (see :meth:`_check_signature`): an untrusted pack ALWAYS
+        requires a verifiable signature before deserialisation, while the trusted
+        default is governed only by the opt-in ``DECOY_PACK_REQUIRE_SIGNATURE``
+        flag. Defaults to ``False`` (fail-closed): a caller that hands the loader
+        an arbitrary path gets the strict posture unless it explicitly vouches
+        for the bytes. ``classify_fields`` sets ``trusted=True`` only for its
+        resolved default pack.
+        """
         self._pack_dir = pack_dir
+        self._trusted = trusted
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -204,24 +221,32 @@ class ModelPackLoader:
             )
 
     def _check_signature(self, manifest: ModelPackManifest) -> None:
-        """Verify HMAC-SHA256 signature when a signing key is configured (ML3.2).
+        """Verify the HMAC-SHA256 provenance signature (ML3.2 / DE-04).
 
-        Behaviour:
-          - Key configured + valid HMAC stored  -> pass (signature verified).
+        The key is read from the ``DECOY_PACK_SIGNING_KEY`` env var (hex bytes),
+        derived out-of-band from the instance master key at deploy time.
+
+        DE-04 model (Option C): ``joblib.load`` executes arbitrary code, so a
+        pack that crosses an UNTRUSTED boundary must be refused before
+        deserialisation unless its provenance is cryptographically verified. A
+        signature is therefore REQUIRED whenever either holds:
+          - the pack is untrusted (``self._trusted`` is False -- e.g. a
+            caller-supplied ``pack_dir``), OR
+          - ``DECOY_PACK_REQUIRE_SIGNATURE`` is enabled (opt-in hard lockdown,
+            which also covers the trusted default; ``1``/``true``/``yes``/``on``,
+            any case; see :func:`_require_signature_enabled`).
+
+        The trusted first-party default pack (shipped in the wheel, already
+        SHA-256 verified, provenance-pinned) is otherwise governed only by that
+        opt-in flag, so it keeps loading out of the box while an
+        externally-supplied pack must carry a verifiable signature or be refused.
+
+        Behaviour, given ``require_sig = untrusted or flag``:
+          - Key configured + valid HMAC        -> pass (verified; trust irrelevant).
           - Key configured + HMAC mismatch      -> ModelPackLoadError (tampered).
-          - Key configured + no HMAC stored     -> ModelPackLoadError (unsigned pack).
-          - No key configured + HMAC stored     -> warn once; verification skipped.
-          - No key configured + no HMAC stored  -> warn once; unsigned pack accepted.
-
-        The key is read from the DECOY_PACK_SIGNING_KEY env var (hex-encoded bytes).
-
-        Fail-closed production posture (Option A): when
-        ``DECOY_PACK_REQUIRE_SIGNATURE`` is truthy (``1``/``true``/``yes``/``on``,
-        any case; see :func:`_require_signature_enabled`), a missing key is
-        treated as a hard error rather than a warning, so a misconfigured
-        production box (platform forgot to derive/inject the key) refuses to
-        load an unverifiable pack instead of silently trusting it. Development
-        leaves the flag unset and keeps the warn-and-continue behaviour.
+          - Key configured + no HMAC stored     -> ModelPackLoadError (unsigned).
+          - No key + require_sig                -> ModelPackLoadError (refused).
+          - No key + not require_sig (trusted)  -> warn once; accepted.
 
         Note on raising vs falling back (L2): this method RAISES; callers using
         :meth:`load_with_fallback` will catch that and degrade to the regex
@@ -236,19 +261,24 @@ class ModelPackLoader:
         weights are independently SHA-256 checked.
         """
         key = load_signing_key_from_env()
-        signed = bool(manifest.manifest_hmac)
-        require_sig = _require_signature_enabled()
-
-        if key is None and require_sig:
+        # Fail CLOSED on a set-but-unparseable key: an operator who configured
+        # DECOY_PACK_SIGNING_KEY intended enforcement, so a typo'd/invalid value
+        # must not silently collapse to "no key" (which would let a tampered
+        # signed pack through on the trusted default). Mirrors the fail-closed
+        # posture of _require_signature_enabled on an ambiguous flag.
+        if key is None and os.environ.get(SIGNING_KEY_ENV, "").strip():
             raise ModelPackLoadError(
-                f"DECOY_PACK_REQUIRE_SIGNATURE is enabled but no DECOY_PACK_SIGNING_KEY "
-                f"is configured; refusing to load pack {self._pack_dir} whose provenance "
-                "cannot be verified. Derive the signing key from the instance master "
-                "key (derive_pack_signing_key) and set DECOY_PACK_SIGNING_KEY."
+                f"{SIGNING_KEY_ENV} is set but could not be parsed as a valid "
+                "signing key; refusing to load (fail-closed). Fix the key value "
+                "(64 hex chars / 32 bytes) or unset it."
             )
+        signed = bool(manifest.manifest_hmac)
+        # A signature is required for any untrusted pack, OR whenever the opt-in
+        # hard-lockdown flag is set (which also tightens the trusted default).
+        require_sig = _require_signature_enabled() or not self._trusted
 
         if key is not None:
-            # Key is configured: enforce signature.
+            # A key is configured: enforce the signature regardless of trust.
             if not signed:
                 raise ModelPackLoadError(
                     f"Pack {self._pack_dir} is unsigned (manifest_hmac is empty) "
@@ -262,21 +292,47 @@ class ModelPackLoader:
                     "Re-sign with the current key or investigate the discrepancy."
                 )
             _log.debug("Pack %s signature verified (ML3.2).", self._pack_dir)
+            return
+
+        # No key configured.
+        if require_sig:
+            reason = (
+                "it crosses an untrusted boundary (not the first-party default "
+                "pack), so its provenance MUST be verified"
+                if not self._trusted
+                else "DECOY_PACK_REQUIRE_SIGNATURE is enabled"
+            )
+            # A refusal across the untrusted boundary is a security event, not a
+            # routine fallback: log it distinctly at ERROR even though
+            # load_with_fallback will downgrade the raise to the regex baseline.
+            if not self._trusted:
+                _log.error(
+                    "SECURITY: refusing to deserialise untrusted model pack %s "
+                    "without a verified signature (DE-04).",
+                    self._pack_dir,
+                )
+            raise ModelPackLoadError(
+                f"Refusing to load pack {self._pack_dir}: {reason}, but no "
+                "DECOY_PACK_SIGNING_KEY is configured to verify it (DE-04). "
+                "Sign the pack (sign_manifest / sign_pack) and set "
+                "DECOY_PACK_SIGNING_KEY to the key derived from the instance "
+                "master key (derive_pack_signing_key)."
+            )
+
+        # Trusted default pack, hard-lockdown not enabled: accept but flag.
+        if signed:
+            _log.warning(
+                "Pack %s has a manifest_hmac signature but DECOY_PACK_SIGNING_KEY "
+                "is not configured; signature verification skipped.",
+                self._pack_dir,
+            )
         else:
-            # No key configured: accept but flag.
-            if signed:
-                _log.warning(
-                    "Pack %s has a manifest_hmac signature but DECOY_PACK_SIGNING_KEY "
-                    "is not configured; signature verification skipped.",
-                    self._pack_dir,
-                )
-            else:
-                _log.warning(
-                    "Pack %s is unsigned (manifest_hmac empty) and no "
-                    "DECOY_PACK_SIGNING_KEY is configured. "
-                    "Provenance cannot be verified (ML3.2).",
-                    self._pack_dir,
-                )
+            _log.warning(
+                "Pack %s is unsigned (manifest_hmac empty) and no "
+                "DECOY_PACK_SIGNING_KEY is configured. "
+                "Provenance cannot be verified (ML3.2).",
+                self._pack_dir,
+            )
 
     def _deserialise(self, model_bytes: bytes) -> dict[str, Any]:
         # SHA-256 verified above before reaching this point.

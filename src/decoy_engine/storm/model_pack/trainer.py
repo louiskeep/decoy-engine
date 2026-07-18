@@ -594,11 +594,17 @@ def train_and_evaluate(
 
 
 def load_pack(pack_dir: Path) -> dict[str, Any]:
-    """Load and validate a ``decoy-model-pack/v1`` from disk.
+    """Load and validate a ``decoy-model-pack/v1`` from disk (TEST-ONLY).
 
-    This is the thin convenience wrapper used by tests.  Production loading
-    goes through ``ModelPackLoader`` (loader.py) which adds additional
-    security validation.
+    .. warning::
+       This is a thin convenience wrapper for tests and offline training
+       tooling ONLY.  It verifies format/schema/SHA-256 but deliberately does
+       NOT perform the DE-04 signature/trust checks: it calls ``joblib.load``
+       (arbitrary-code-execution via pickle) on the given pack unconditionally.
+       Production and any code path that loads a caller-supplied pack MUST go
+       through ``ModelPackLoader`` (loader.py), which fail-closes an untrusted
+       or set-but-unverifiable pack before deserialising.  Do not call this on
+       a pack whose origin you do not control.
 
     Returns
     -------

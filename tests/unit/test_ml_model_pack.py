@@ -82,7 +82,8 @@ def _write_minimal_pack(tmp_path: Path, *, weights: bytes | None = None) -> Path
 )
 def test_live_pack_loads_successfully() -> None:
     """The committed lgbm-v1 pack loads without error."""
-    loader = ModelPackLoader(_LIVE_PACK)
+    # trusted=True: this is the first-party default artifact (DE-04 Option C).
+    loader = ModelPackLoader(_LIVE_PACK, trusted=True)
     pack = loader.load()
     assert "vec" in pack
     assert "clf" in pack
@@ -96,7 +97,7 @@ def test_live_pack_loads_successfully() -> None:
 @pytest.mark.skipif(not _LIVE_PACK.exists(), reason="lgbm-v1 pack not found")
 def test_live_pack_has_expected_classes() -> None:
     """The committed pack was trained on the expected 11 label classes."""
-    loader = ModelPackLoader(_LIVE_PACK)
+    loader = ModelPackLoader(_LIVE_PACK, trusted=True)  # first-party default
     pack = loader.load()
     classes = set(pack["classes"])
     expected = {

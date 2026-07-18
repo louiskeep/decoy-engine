@@ -227,16 +227,49 @@ def test_loader_rejects_tampered_hmac_when_key_configured(
         loader.load()
 
 
-def test_loader_accepts_unsigned_pack_when_no_key_set(
+def test_loader_accepts_unsigned_trusted_pack_when_no_key_set(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Loader accepts an unsigned pack (with a warning) when no key is configured."""
+    """A TRUSTED unsigned pack loads (with a warning) when no key is configured.
+
+    DE-04 Option C: the trusted first-party default keeps the dev/out-of-box
+    warn-and-continue posture. The untrusted counterpart is fail-closed -- see
+    test_loader_rejects_unsigned_untrusted_pack_when_no_key.
+    """
     pack_dir = _write_signed_pack(tmp_path, key=None)
     # Ensure env var is unset
     monkeypatch.delenv(SIGNING_KEY_ENV, raising=False)
 
-    loader = ModelPackLoader(pack_dir)
+    loader = ModelPackLoader(pack_dir, trusted=True)
     pack = loader.load()  # should not raise
+    assert "manifest" in pack
+
+
+def test_loader_rejects_unsigned_untrusted_pack_when_no_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """DE-04 Option C core guarantee: an UNTRUSTED unsigned pack is refused
+    before joblib.load even with no key and the flag unset."""
+    pack_dir = _write_signed_pack(tmp_path, key=None)
+    monkeypatch.delenv(SIGNING_KEY_ENV, raising=False)
+    monkeypatch.delenv("DECOY_PACK_REQUIRE_SIGNATURE", raising=False)
+
+    loader = ModelPackLoader(pack_dir)  # default trusted=False
+    with pytest.raises(ModelPackLoadError, match="untrusted boundary"):
+        loader.load()
+
+
+def test_loader_accepts_signed_untrusted_pack_with_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An UNTRUSTED pack loads when it carries a verifiable signature -- the
+    escape hatch: verified provenance lets an external pack cross the boundary."""
+    pack_dir = _write_signed_pack(tmp_path, key=_FIXTURE_KEY)
+    monkeypatch.setenv(SIGNING_KEY_ENV, _FIXTURE_KEY_HEX)
+    monkeypatch.delenv("DECOY_PACK_REQUIRE_SIGNATURE", raising=False)
+
+    loader = ModelPackLoader(pack_dir)  # untrusted, but signed + key present
+    pack = loader.load()
     assert "manifest" in pack
 
 
@@ -356,7 +389,9 @@ def test_require_signature_without_key_is_fail_closed(
     monkeypatch.delenv(SIGNING_KEY_ENV, raising=False)
     monkeypatch.setenv("DECOY_PACK_REQUIRE_SIGNATURE", "1")
 
-    loader = ModelPackLoader(pack_dir)
+    # trusted=True so the flag (not the untrusted-boundary rule) is the sole
+    # driver of the requirement -- this test targets the opt-in hard-lockdown.
+    loader = ModelPackLoader(pack_dir, trusted=True)
     with pytest.raises(ModelPackLoadError, match="REQUIRE_SIGNATURE"):
         loader.load()
 
@@ -386,7 +421,7 @@ def test_require_signature_accepts_truthy_word_true(
     monkeypatch.delenv(SIGNING_KEY_ENV, raising=False)
     monkeypatch.setenv("DECOY_PACK_REQUIRE_SIGNATURE", "TRUE")
 
-    loader = ModelPackLoader(pack_dir)
+    loader = ModelPackLoader(pack_dir, trusted=True)  # flag is the sole driver
     with pytest.raises(ModelPackLoadError, match="REQUIRE_SIGNATURE"):
         loader.load()
 
@@ -412,6 +447,8 @@ def test_require_signature_falsy_word_disables(
     monkeypatch.delenv(SIGNING_KEY_ENV, raising=False)
     monkeypatch.setenv("DECOY_PACK_REQUIRE_SIGNATURE", "off")
 
-    loader = ModelPackLoader(pack_dir)
+    # trusted=True: with the flag explicitly off and a trusted pack, the
+    # warn-and-continue dev posture holds (an untrusted pack would still fail).
+    loader = ModelPackLoader(pack_dir, trusted=True)
     pack = loader.load()  # must not raise
     assert "manifest" in pack
