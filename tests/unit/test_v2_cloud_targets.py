@@ -54,7 +54,12 @@ class TestCloudTargetSchema:
                 "key": "out/customers.csv",
             }
         )
-        PipelineConfig.model_validate(cfg)
+        parsed = PipelineConfig.model_validate(cfg)
+        target = parsed.targets["t"]
+        assert target.type == "s3"
+        assert target.format == "csv"
+        assert target.bucket == "my-bucket"
+        assert target.key == "out/customers.csv"
 
     def test_target_descriptor_accepts_gcs_variant(self):
         cfg = _base_config_with_target(
@@ -65,7 +70,12 @@ class TestCloudTargetSchema:
                 "object": "out/customers.parquet",
             }
         )
-        PipelineConfig.model_validate(cfg)
+        parsed = PipelineConfig.model_validate(cfg)
+        target = parsed.targets["t"]
+        assert target.type == "gcs"
+        assert target.format == "parquet"
+        assert target.bucket == "my-bucket"
+        assert target.object == "out/customers.parquet"
 
     def test_target_descriptor_rejects_unknown_type(self):
         cfg = _base_config_with_target(
@@ -89,7 +99,8 @@ class TestCloudTargetSchema:
                 "key": "k",
             }
         )
-        PipelineConfig.model_validate(cfg_no_creds)
+        parsed_no_creds = PipelineConfig.model_validate(cfg_no_creds)
+        assert parsed_no_creds.targets["t"].credentials_ref is None
 
         cfg_with_creds = _base_config_with_target(
             {
@@ -100,7 +111,8 @@ class TestCloudTargetSchema:
                 "credentials_ref": "aws-prod-writeonly",
             }
         )
-        PipelineConfig.model_validate(cfg_with_creds)
+        parsed_with_creds = PipelineConfig.model_validate(cfg_with_creds)
+        assert parsed_with_creds.targets["t"].credentials_ref == "aws-prod-writeonly"
 
     def test_gcs_target_credentials_ref_optional(self):
         cfg_no_creds = _base_config_with_target(
@@ -111,7 +123,8 @@ class TestCloudTargetSchema:
                 "object": "o",
             }
         )
-        PipelineConfig.model_validate(cfg_no_creds)
+        parsed_no_creds = PipelineConfig.model_validate(cfg_no_creds)
+        assert parsed_no_creds.targets["t"].credentials_ref is None
 
         cfg_with_creds = _base_config_with_target(
             {
@@ -122,7 +135,8 @@ class TestCloudTargetSchema:
                 "credentials_ref": "gcp-prod-writeonly",
             }
         )
-        PipelineConfig.model_validate(cfg_with_creds)
+        parsed_with_creds = PipelineConfig.model_validate(cfg_with_creds)
+        assert parsed_with_creds.targets["t"].credentials_ref == "gcp-prod-writeonly"
 
     def test_s3_target_rejects_empty_bucket(self):
         cfg = _base_config_with_target(

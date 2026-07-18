@@ -91,9 +91,11 @@ class TestTimedStrategy:
     def test_timed_strategy_is_noop_without_collector(self):
         # No collector bound: context manager yields and returns immediately,
         # no record is created (because there is no collector to record into).
+        assert get_active_collector() is None
         with timed_strategy("fpe", "ssn"):
-            pass
-        # Nothing to assert other than no exception was raised.
+            # The noop path must not bind a collector as a side effect.
+            assert get_active_collector() is None
+        assert get_active_collector() is None
 
     def test_timed_strategy_records_when_collector_active(self):
         c = TimingCollector()

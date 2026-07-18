@@ -104,7 +104,15 @@ def test_arrow_to_pandas_conversion(rows):
 @pytest.mark.benchmark
 def test_zzz_summary():
     """Trend table -- does the speedup grow with scale, plateau, or shrink?
-    Always passes; this is the reporter."""
+    Always passes; this is the reporter.
+
+    must not raise: this is a pure reporting/aggregation step over timing
+    data collected by test_arrow_to_pandas_conversion. Timing numbers are
+    inherently non-deterministic across machines/runs, so there is nothing
+    observable here worth asserting on beyond "printing the summary does
+    not raise" -- the actual regression signal lives in the per-size
+    benchmark test above, not in this aggregate print.
+    """
     if not _RESULTS:
         pytest.skip("no results captured")
 

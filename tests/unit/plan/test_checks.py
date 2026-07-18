@@ -370,7 +370,15 @@ class TestBasicUniquenessPreFlight:
             ],
             "relationships": SIMPLE_PROFILE_RELATIONSHIPS_BLOCK,
         }
-        compile_plan(config, simple_profile, decoy_engine_version="0.1.0")
+        plan = compile_plan(config, simple_profile, decoy_engine_version="0.1.0")
+        # "Passes silently" means no deferred-capacity warning either, not
+        # just no raise: the 10_000 default pool covers 10 rows, so nothing
+        # is deferred to runtime. (This config's declared backend_type also
+        # triggers an unrelated backend_stamp_user_override_ignored warning,
+        # so scope the assertion to capacity deferral, not warnings == ().)
+        assert not any(
+            w.startswith("pool_capacity_deferred") for w in plan.plan_compile.warnings
+        )
 
 
 class TestCompositeColumnsLengthMatch:

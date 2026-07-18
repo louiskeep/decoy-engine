@@ -101,9 +101,11 @@ class TestMakeSplitInputs:
         assert set(self.y).issubset(all_labels)
 
     def test_feature_dicts_are_json_serializable(self):
-        # Features must be aggregate stats, all JSON-serializable.
+        # Features must be aggregate stats, all JSON-serializable, and
+        # round-trip back to an equal dict (no lossy/opaque encoding).
         for feat in self.X:
-            json.dumps(feat)  # must not raise
+            payload = json.dumps(feat)
+            assert json.loads(payload) == feat
 
     def test_feature_dicts_contain_no_raw_cell_values(self):
         # Privacy gate §B.4: X must be aggregate stats, not raw cell values.
