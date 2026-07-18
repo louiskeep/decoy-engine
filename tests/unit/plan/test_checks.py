@@ -376,9 +376,7 @@ class TestBasicUniquenessPreFlight:
         # is deferred to runtime. (This config's declared backend_type also
         # triggers an unrelated backend_stamp_user_override_ignored warning,
         # so scope the assertion to capacity deferral, not warnings == ().)
-        assert not any(
-            w.startswith("pool_capacity_deferred") for w in plan.plan_compile.warnings
-        )
+        assert not any(w.startswith("pool_capacity_deferred") for w in plan.plan_compile.warnings)
 
 
 class TestCompositeColumnsLengthMatch:

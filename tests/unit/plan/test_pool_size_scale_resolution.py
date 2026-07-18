@@ -353,7 +353,9 @@ class TestProviderOnlyPoolSizeCapacity:
                 }
             ],
         )
-        plan = compile_plan(cfg, _people_profile(row_count=10), decoy_engine_version=_ENGINE_VERSION)
+        plan = compile_plan(
+            cfg, _people_profile(row_count=10), decoy_engine_version=_ENGINE_VERSION
+        )
         # "Compiles clean" means no deferred-capacity warning either: 10 rows
         # is well under the 10_000 default, so nothing needed deferring.
         assert plan.plan_compile.warnings == ()
