@@ -50,6 +50,16 @@ class GlobalSettings(BaseModel):
     secret: pre-GA the keyed surface falls back to `job_seed`
     (byte-identical to today); at GA a keyed plan with no secret
     hard-errors. See `decoy_engine.keyprovider`.
+    `freetext_advisory_min_avg_length` / `freetext_advisory_min_distinctness`
+    (HC-7) drive the compile-time clinical free-text advisory
+    (`quality._freetext_advisory`): an unmasked (`strategy: passthrough`)
+    string column whose name matches a clinical/claims free-text hint, or
+    whose average length and distinctness both clear these thresholds,
+    gets a warning recommending `strategy: text_mask`. Warn-only, same
+    contract as `fidelity_warn_threshold`; never auto-assigns a strategy,
+    never mutates the plan/config, never changes output bytes.
+    `freetext_advisory_min_avg_length <= 0` disables the advisory entirely
+    (both branches).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -61,3 +71,5 @@ class GlobalSettings(BaseModel):
     categorical_retention_warn_threshold: float = Field(default=0.8, ge=0.0, le=1.0)
     unconfigured_column_policy: Literal["warn", "error"] | None = None
     mask_secret_ref: str | None = None
+    freetext_advisory_min_avg_length: float = Field(default=40.0)
+    freetext_advisory_min_distinctness: float = Field(default=0.5, ge=0.0, le=1.0)
