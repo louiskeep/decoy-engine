@@ -38,9 +38,14 @@ Key options:
 - `--quiet` (`-q`): suppress stdout; the exit code carries success.
 - `--verbose` (`-v`): debug-level CLI logs on stderr.
 - `--master-key` (env `DECOY_MASTER_KEY`): 64-char hex key for portable,
-  machine-stable deterministic masking. See [determinism](determinism.md).
-- `--key-label`: stable namespace string for the key hierarchy; required when
-  `--master-key` is set (or read from the YAML's top-level `key_label` field).
+  machine-stable deterministic **synthetic generation** (`--mode generate`);
+  does not affect masking. See [determinism](determinism.md).
+- `--key-label`: stable namespace string for the generation key hierarchy;
+  required when `--master-key` is set. CLI flag only -- there is no YAML
+  equivalent (`PipelineConfig` forbids unknown top-level keys).
+- `--mask-secret` (`env:NAME` or `file:/PATH`): the keyed-masking secret for
+  portable, machine-stable deterministic **masking**; sets
+  `global_settings.mask_secret_ref`. See [determinism](determinism.md).
 
 ## `storm` subcommands
 

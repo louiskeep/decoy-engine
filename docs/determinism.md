@@ -33,22 +33,23 @@ plus the same input produces the same output on repeated runs. This covers
 local reproducibility and the byte-equal-across-runs invariant the golden tests
 pin.
 
-### Same key, any machine: the master key
+### Same key, any machine: the master key (generation)
 
-A bare seed is reproducible per input but not portable in the same way across
-every keying path. For output that is bitwise-identical across machines, supply
-a master key and a stable key label:
+A bare seed is reproducible per input but not portable across machines on the
+keyed paths. For **synthetic generation** (`--mode generate`) that is
+bitwise-identical across machines, supply a master key and a stable key label:
 
 ```
-decoy run pipeline.yaml --master-key <64-char-hex> --key-label customers_q4
+decoy run pipeline.yaml --mode generate --master-key <64-char-hex> --key-label customers_q4
 ```
 
-The master key can also come from the `DECOY_MASTER_KEY` environment variable,
-and the key label from the YAML's top-level `key_label` field. The same master
-key plus the same key label always yield bitwise-identical output across runs
-and machines. Without either, masking falls back to the legacy seeded path
-(per-input deterministic, but not portable in the same sense). Changing the key
-label produces different masked output, so pick something durable.
+The master key can also come from the `DECOY_MASTER_KEY` environment variable.
+The key label has no YAML equivalent; it is supplied only via `--key-label`.
+The same master key plus the same key label always yield bitwise-identical
+generated output across runs and machines; changing the key label produces
+different output, so pick something durable. The master key drives generation only and does not
+affect masking -- portable masking is configured separately via the masking
+secret (see the next section).
 
 See [security/key-derivation](security/key-derivation.md) for how the master
 key is split into per-field subkeys.
