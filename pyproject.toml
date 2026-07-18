@@ -249,6 +249,21 @@ Changelog = "https://github.com/louiskeep/decoy-engine/blob/main/CHANGELOG.md"
 [tool.hatch.build.targets.wheel]
 packages = ["src/decoy_engine"]
 
+# DE-07: the shipped ML model pack is the source-of-truth under docs/ (so the
+# golden gate + provenance tests pin exactly those bytes), which is OUTSIDE the
+# packaged src/decoy_engine tree. Without this a clean wheel omitted the pack
+# and classify_fields silently returned None in a real install. Force-include
+# copies the pack under the installed package at decoy_engine/model_packs/, and
+# classify._default_pack_dir() resolves it via importlib.resources. py.typed
+# ships automatically (it lives under the packaged src/decoy_engine tree).
+[tool.hatch.build.targets.wheel.force-include]
+"docs/v2/ml/packs/lgbm-v1" = "decoy_engine/model_packs/lgbm-v1"
+
+# The sdist ships docs/v2/ml/packs/lgbm-v1 at its natural path (the bytes are
+# VCS-tracked), so a wheel built FROM the sdist (the PyPI path) still finds the
+# force-include source. Do NOT relocate the pack in the sdist -- that would move
+# it out from under the wheel force-include and break sdist->wheel builds.
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
@@ -266,6 +281,7 @@ markers = [
     "regression: a bugfix's regression test; the prove-regression gate re-runs it against the pre-fix baseline and requires it to fail there",
     "testflight: acceptance test-flight suite (deliberately run, multi-job); excluded from the default loop; invoke via pytest testflight -m testflight or python scripts/test_flight.py",
     "ml: STORM field-recognition ML tests needing the [ml] extra (scikit-learn + lightgbm). Run by the ml-gate CI job (pytest -m ml with .[dev,ml] installed); they importorskip in the default gate where the extra is absent. Mark a new ML test module by adding pytestmark = pytest.mark.ml at module top so coverage stays automatic rather than a hand-maintained path list.",
+    "packaging: build-artifact tests that shell out to the wheel build frontend (DE-07 wheel-membership gate). Run by the packaging-gate CI job (pytest -m packaging with `build` installed); importorskip out of the default loop where `build` is absent.",
 ]
 
 # ── Tooling baseline (V2.0-prep, sprint 1) ──────────────────────────────────
