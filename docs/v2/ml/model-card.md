@@ -83,42 +83,41 @@ merged into one group that always landed in training.  That artefact is resolved
 ## 4. Metrics (Held-out Test Set, §A.1 / §A.8)
 
 **Split:** First fold of StratifiedGroupKFold(n_splits=5, shuffle=True, seed=42),
-value-level groups (§A.3). n_train=232, n_test=59.
+value-level groups (§A.3). n_train=246, n_test=45.
 
 **Operating threshold:** 0.1667 (suppress predictions below this calibrated
 probability; derived from FN:FP cost ratio k=5, Elkan 2001).
 
 | Semantic type | Precision | Recall | F2 | Support |
 |---|---|---|---|---|
-| cvv | 1.00 | 1.00 | 1.00 | 2 |
-| email | 1.00 | 1.00 | 1.00 | 4 |
-| health_plan_id | 1.00 | 0.75 | 0.790 | 8 |
-| iban | 1.00 | 1.00 | 1.00 | 4 |
-| icd10 | 1.00 | 1.00 | 1.00 | 4 |
-| iso_date | 1.00 | 1.00 | 1.00 | 4 |
-| mrn | 1.00 | 1.00 | 1.00 | 8 |
-| npi | 1.00 | 1.00 | 1.00 | 4 |
-| pan | 1.00 | 1.00 | 1.00 | 4 |
+| cvv | 1.00 | 1.00 | 1.00 | 1 |
+| email | 0.67 | 1.00 | 0.91 | 2 |
+| health_plan_id | 0.80 | 1.00 | 0.95 | 8 |
+| iban | 1.00 | 1.00 | 1.00 | 2 |
+| icd10 | 1.00 | 1.00 | 1.00 | 7 |
+| mrn | 1.00 | 1.00 | 1.00 | 5 |
+| npi | 1.00 | 1.00 | 1.00 | 2 |
+| pan | 1.00 | 1.00 | 1.00 | 5 |
 | ssn | 1.00 | 1.00 | 1.00 | 4 |
-| none | implicit | - | - | 13 |
+| none | implicit | - | - | 9 |
 
 **Aggregate metrics:**
 
 | Metric | Value |
 |---|---|
-| macro-F2 | 0.9789 |
-| weighted-F2 | 0.9634 |
-| balanced_accuracy | 0.9750 |
-| Brier score (avg OvR, sigmoid calibration) | 0.0104 |
-| Mean calibration error (MCE) | 0.2063 |
+| macro-F2 | 0.9846 |
+| weighted-F2 | 0.9844 |
+| balanced_accuracy | 1.0 |
+| Brier score (avg OvR, sigmoid calibration) | 0.0113 |
+| Mean calibration error (MCE) | 0.1695 |
 
 **Lift gate (§A.2):**
 
 | | Macro recall |
 |---|---|
-| Regex baseline | 0.8000 |
-| LightGBM (lgbm-v1) | 0.9750 |
-| Lift | +17.50 ppt |
+| Regex baseline | 0.725 |
+| LightGBM (lgbm-v1) | 1.0 |
+| Lift | +27.50 ppt |
 | Gate threshold | 5 ppt |
 | Gate status | PASSED |
 
@@ -127,13 +126,13 @@ single/double-char cryptic headers.
 
 | Metric | Value |
 |---|---|
-| balanced_accuracy | 1.00 |
-| macro_recall | 1.00 |
+| balanced_accuracy | 0.8889 |
+| macro_recall | 0.8889 |
 
-**False negatives (n=2):** two `health_plan_id` columns (`carrier_id`,
-`ins_id`) were suppressed to `none` below the operating threshold.
+**False negatives (n=0):** zero false negatives on the held-out test set.
 
-**False positives (n=0):** no false positives on the held-out test set.
+**False positives (n=3):** three false positives: one `email` column and two
+`health_plan_id` columns were over-predicted from `none` ground truth.
 
 ---
 
@@ -188,7 +187,7 @@ Sigmoid calibration was used because the calibration fold contains ~46 samples
 are recorded in `lightgbm-report.json`.
 
 Band thresholds are set from the held-out test set but must be treated as
-PROVISIONAL because n_test=59 is too small for narrow confidence intervals:
+PROVISIONAL because the held-out fold is small (n=45) and cannot support narrow confidence intervals:
 
 | Band | Proba threshold | Empirical accuracy (held-out) | n samples | 95% CI lower |
 |---|---|---|---|---|
@@ -203,7 +202,7 @@ leaf probabilities toward 0.5, rarely producing outputs above 0.8.  The band
 threshold of 0.95 is retained as a forward-compatible definition for when the
 corpus expands and isotonic calibration becomes viable.
 
-The MCE of 0.2063 reflects UNDERCONFIDENCE: the model assigns probabilities
+The MCE of 0.1695 reflects UNDERCONFIDENCE: the model assigns probabilities
 in the 0.5-0.73 range for columns it classifies with near-100% empirical
 accuracy.  A downstream operator can safely treat any prediction above the
 operating threshold (0.1667) as high-confidence on this corpus, though the
@@ -239,7 +238,7 @@ verifies the band-to-accuracy relationship holds on every CI run.
    by expanding the corpus and switching to isotonic calibration (>= ~1000
    calibration samples, sklearn §1.16).  See §A.4 above for measured numbers.
 
-3. **MCE reflects underconfidence:** MCE is 0.2063 because the model assigns
+3. **MCE reflects underconfidence:** MCE is 0.1695 because the model assigns
    probabilities of 0.5-0.73 to predictions that are empirically ~100%
    correct.  This is not a safety hazard (no overconfident FPs) but should
    be resolved with a larger corpus.
@@ -263,3 +262,19 @@ verifies the band-to-accuracy relationship holds on every CI run.
 6. **On-prem only:** Never load this pack from an external or untrusted
    source. The SHA-256 check in `ModelPackLoader` is a tamper-detection
    mechanism, not an authentication scheme.
+
+7. **iso_date is trained-but-unevaluated:** The model is trained on 20 iso_date
+   columns, but due to the StratifiedGroupKFold reshuffle (induced by
+   scikit-learn version changes), the held-out test fold contains ZERO iso_date
+   columns. Therefore, iso_date has no held-out evaluation in this re-baseline,
+   and the CI retrain gate cannot detect iso_date regressions. To restore
+   iso_date coverage, expand the training corpus to ensure iso_date columns
+   land in the test fold with sufficient support.
+
+8. **OOD generalization regressed:** Out-of-distribution balanced_accuracy and
+   macro_recall both dropped from 1.0 to 0.8889 in this re-baseline. This
+   represents a genuine regression on OOD cryptic headers. Additionally, the
+   in-distribution balanced_accuracy reaching 1.0 reflects the smaller test
+   split (n=45 vs n=59 in the prior baseline), not a model improvement. Both
+   the OOD drop and the test-fold size reduction must be factored into any
+   confidence claim about this re-baseline.
