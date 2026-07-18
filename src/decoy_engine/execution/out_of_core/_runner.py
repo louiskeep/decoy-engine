@@ -44,6 +44,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
+import pyarrow.compute as pc
 
 from decoy_engine.execution._adapter import ExecutionResult, provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError
@@ -267,8 +268,9 @@ def _stream_table(
     corpus-provenance evidence sink, mutated in place the same way `outputs`/
     `warnings` are -- see `_code_set_records_and_evidence_for_table`. A
     column's evidence commits into this sink only once the batch stream below
-    has observed at least one non-null source value for it (tracked in
-    `code_set_null_seen`), mirroring `CodeSetHandler.run`'s masked_any gate on
+    has observed at least one non-missing source value for it (tracked in
+    `code_set_null_seen`; missing == null OR float NaN, matching the mask
+    kernel's `_is_missing`), mirroring `CodeSetHandler.run`'s masked_any gate on
     the pandas/sequential routes: an entirely-null column never dispatches
     `apply_code_set` there, so it must not report its corpus as "used" here
     either.
@@ -333,7 +335,21 @@ def _stream_table(
                     if seen:
                         continue
                     idx = raw_batch.schema.get_field_index(column)
-                    if idx >= 0 and raw_batch.column(idx).null_count < raw_batch.num_rows:
+                    if idx < 0:
+                        continue
+                    col = raw_batch.column(idx)
+                    # Count missing values the way the mask kernel's `_is_missing`
+                    # does -- null OR float NaN -- not a plain Arrow null_count.
+                    # The oracle folds NaN to null (`pa.array(from_pandas=True)`)
+                    # before masking, so an all-NaN float column masks nothing and
+                    # withholds its stamp; a null_count-only check would over-count
+                    # its NaNs as "seen" and stamp evidence the kernel never emits.
+                    n_missing = col.null_count
+                    if pa.types.is_floating(col.type):
+                        # pyarrow.compute funcs are dynamically generated, so the
+                        # stubs miss them (see _chunked_fk.py's pc.min_max usage).
+                        n_missing += pc.sum(pc.is_nan(col)).as_py() or 0  # type: ignore[attr-defined, unused-ignore]
+                    if n_missing < raw_batch.num_rows:
                         code_set_null_seen[column] = True
                 out = mask_batch(
                     plan,
@@ -545,10 +561,12 @@ def _code_set_records_and_evidence_for_table(
     read, so it returns CANDIDATE evidence keyed on schema presence, not on
     observed non-null masking. `_stream_table` closes that gap -- it commits
     each entry into the shared `code_set_corpora` sink only after its batch
-    stream has observed at least one non-null source value for that column,
-    so an all-null column ends up with no evidence stamp here either, exactly
-    as `CodeSetHandler.run`'s masked_any gate withholds one on the pandas/
-    sequential route.
+    stream has observed at least one non-missing source value for that column
+    (missing == null OR float NaN, matching the kernel's `_is_missing`), so a
+    column the kernel masks nothing of -- all-null, or an all-NaN float column
+    the oracle folds to null -- ends up with no evidence stamp here either,
+    exactly as `CodeSetHandler.run`'s masked_any gate withholds one on the
+    pandas/sequential route.
 
     Codex round-6 P2 MASKING/EVIDENCE VERSION DIVERGENCE remediation: returns
     the PINNED `_CorpusRecord` per code_set column alongside the evidence

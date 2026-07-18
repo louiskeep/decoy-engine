@@ -627,3 +627,82 @@ class TestOutOfCoreCodeSetCorporaAllNullEvidenceParity:
         for entry in ooc_corpora:
             assert entry["row_count"] > 0
             assert "codes" not in entry and "rows" not in entry
+
+    def test_ooc_withholds_stamp_for_all_nan_float_column_matching_oracle(self) -> None:
+        """A float code_set column of all-NaN masks ZERO values: the OOC mask
+        kernel's `_is_missing` folds NaN to null exactly as the oracle's
+        `pa.array(from_pandas=True)` conversion does, so both routes must
+        withhold the corpus stamp. A plain Arrow `null_count` (which does not
+        count NaN) would read the NaNs as "non-null seen" and stamp evidence the
+        kernel never emits -- the divergence this predicate closes. Run at
+        batch_rows=1 so the fold is exercised per batch."""
+        key = _seed("hash", namespace="kns")
+        code_seed = _seed("code_set", namespace="cs", provider_config=(("code_set", "mcc"),))
+        nan = float("nan")
+        parent = pa.table(
+            {
+                "pk": pa.array(["p0", "p1"], type=pa.string()),
+                "pay": pa.array([nan, nan], type=pa.float64()),
+            }
+        )
+        child = pa.table(
+            {
+                "fk": pa.array(["p0", "p1"], type=pa.string()),
+                "cpay": pa.array([nan, nan], type=pa.float64()),
+            }
+        )
+        plan = _plan(
+            (
+                ("parent", TableSeed(per_column=(("pk", key), ("pay", code_seed)), per_group=())),
+                ("child", TableSeed(per_column=(("fk", key), ("cpay", code_seed)), per_group=())),
+            )
+        )
+        graph = RelationshipGraph(
+            edges=(
+                RelationshipEdge(
+                    parent_table="parent",
+                    parent_columns=("pk",),
+                    child_table="child",
+                    child_columns=("fk",),
+                    namespace="kns",
+                    orphan_policy=OrphanPolicy.PRESERVE,
+                ),
+            ),
+            ordering=(),
+        )
+        sources = {"parent": parent, "child": child}
+        assert _gate_admits(plan, graph), "expected the gate to admit a float code_set column"
+        oracle = PandasExecutionAdapter().run(
+            plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
+        )
+        ooc = run_fk_out_of_core(
+            plan, sources, registry=_REG, relationship_graph=graph, batch_rows=1
+        )
+        # Neither route may claim the corpus is "used" -- the kernel masks nothing.
+        assert "code_set_corpora" not in oracle.quality_metrics
+        assert "code_set_corpora" not in ooc.quality_metrics
+        # The masked column comes out entirely null (NaN -> null), confirming zero
+        # values dispatched -- the reason the stamp is withheld, on both routes.
+        assert _comparable(ooc.outputs["parent"])["pay"] == [None, None]
+        assert _comparable(oracle.outputs["parent"])["pay"] == [None, None]
+
+    def test_ooc_sink_path_also_withholds_stamp_for_all_null_column(self, tmp_path: Any) -> None:
+        """The withhold path must hold on the SINK branch too, not just the
+        in-memory branch -- the deferred commit reads `code_set_null_seen` only
+        after `write_batches` drains the stream, so an all-null column emits no
+        stamp regardless of which return site runs."""
+        from decoy_engine.execution import ParquetTransactionalSink
+
+        payload_seed, payload_vals = _PAYLOADS["code_set_mask"]
+        all_null_vals: list[str | None] = [None] * len(payload_vals)
+        plan, sources, graph = _payload_edge_job(
+            payload_seed, all_null_vals, policy=OrphanPolicy.PRESERVE
+        )
+        ooc = run_fk_out_of_core(
+            plan,
+            sources,
+            registry=_REG,
+            relationship_graph=graph,
+            sink=ParquetTransactionalSink(tmp_path / "published"),
+        )
+        assert "code_set_corpora" not in ooc.quality_metrics
