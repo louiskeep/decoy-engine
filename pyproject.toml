@@ -249,6 +249,30 @@ Changelog = "https://github.com/louiskeep/decoy-engine/blob/main/CHANGELOG.md"
 [tool.hatch.build.targets.wheel]
 packages = ["src/decoy_engine"]
 
+# DE-07: the shipped ML model pack is the source-of-truth under docs/ (so the
+# golden gate + provenance tests pin exactly those bytes), which is OUTSIDE the
+# packaged src/decoy_engine tree. Without this a clean wheel omitted the pack
+# and classify_fields silently returned None in a real install. Force-include
+# copies the pack under the installed package at decoy_engine/model_packs/, and
+# classify._default_pack_dir() resolves it via importlib.resources. py.typed
+# ships automatically (it lives under the packaged src/decoy_engine tree).
+[tool.hatch.build.targets.wheel.force-include]
+"docs/v2/ml/packs/lgbm-v1" = "decoy_engine/model_packs/lgbm-v1"
+
+# The sdist ships docs/v2/ml/packs/lgbm-v1 at its natural path (the bytes are
+# VCS-tracked), so a wheel built FROM the sdist (the PyPI path) still finds the
+# force-include source. Do NOT relocate the pack in the sdist -- that would move
+# it out from under the wheel force-include and break sdist->wheel builds.
+[tool.hatch.build.targets.sdist]
+# Keep hatchling's default file selection, but never ship dev scratch: agent
+# worktrees under .claude/ carry full nested-repo snapshots (duplicate docs +
+# model packs) and .hypothesis is the property-test DB, so a `python -m build`
+# from a dirty dev checkout would otherwise upload them to PyPI. These dirs are
+# also VCS-ignored (the root-cause fix); this exclude is belt-and-suspenders and
+# also drops the few tracked .claude/ dev-tooling files, which a source dist
+# does not need.
+exclude = [".claude", ".hypothesis"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
@@ -256,9 +280,14 @@ pythonpath = ["src"]
 # exclusion is the testflight/ location outside testpaths). The CLI -m flag
 # overrides addopts -m, so addopts alone is not sufficient -- but together
 # with the path exclusion it closes all default-loop collection vectors.
+# `packaging` is ALSO excluded here (unlike `ml`, which merely importorskips):
+# a packaging test shells out to a full isolated wheel/sdist build, so it must
+# never fire in the default loop even if the `build` frontend becomes
+# importable in a dev venv. It runs only via the packaging-gate CI job's
+# explicit `pytest -m packaging`.
 # The `perf` marker is intentionally NOT excluded: perf tests run in the
 # default regression gate (see the perf marker description below).
-addopts = "-m 'not benchmark and not testflight'"
+addopts = "-m 'not benchmark and not testflight and not packaging'"
 markers = [
     "benchmark: informational performance benchmarks; not a regression gate",
     "perf: PERF.BASE.2/3 fixture + baseline tests; run in the default regression gate (not opt-in)",
@@ -266,6 +295,7 @@ markers = [
     "regression: a bugfix's regression test; the prove-regression gate re-runs it against the pre-fix baseline and requires it to fail there",
     "testflight: acceptance test-flight suite (deliberately run, multi-job); excluded from the default loop; invoke via pytest testflight -m testflight or python scripts/test_flight.py",
     "ml: STORM field-recognition ML tests needing the [ml] extra (scikit-learn + lightgbm). Run by the ml-gate CI job (pytest -m ml with .[dev,ml] installed); they importorskip in the default gate where the extra is absent. Mark a new ML test module by adding pytestmark = pytest.mark.ml at module top so coverage stays automatic rather than a hand-maintained path list.",
+    "packaging: build-artifact tests that shell out to the wheel build frontend (DE-07 wheel-membership gate). Run by the packaging-gate CI job (pytest -m packaging with `build` installed); importorskip out of the default loop where `build` is absent.",
 ]
 
 # ── Tooling baseline (V2.0-prep, sprint 1) ──────────────────────────────────

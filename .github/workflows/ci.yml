@@ -104,7 +104,11 @@ jobs:
             test -d "$d" || { echo "MISSING SUITE DIR: $d"; exit 1; }
           done
       - name: Regression gate (full suite, benchmarks excluded)
-        run: pytest tests -m "not benchmark" --tb=short
+        # `not packaging` too: the packaging module is collected here (it lives
+        # under tests/) and only skips today because `build` is absent from
+        # .[dev]; excluding the marker makes the dedicated packaging-gate its
+        # unambiguous owner rather than relying on that transitive absence.
+        run: pytest tests -m "not benchmark and not packaging" --tb=short
 
   # ml-gate: activates the ML field-recognition tests that importorskip
   # themselves out of the regression-gate above (which installs .[dev] only,
@@ -135,3 +139,24 @@ jobs:
         run: pip install -e ".[dev,ml]"
       - name: ML gate (golden retrain + provenance + privacy + classify)
         run: pytest -m ml --tb=short
+
+  # packaging-gate: builds an actual wheel and asserts it ships the default ML
+  # model pack + py.typed (DE-07). A clean wheel used to package only
+  # src/decoy_engine and omit the pack (which lives under docs/), so
+  # classify_fields silently returned None in every real install. This gate
+  # builds the wheel from a clean checkout and inspects archive membership so
+  # the force-include mapping cannot silently regress. Separate job because it
+  # needs the `build` frontend and shells out; the test importorskips elsewhere.
+  packaging-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+          cache: pip
+      - name: Install engine + dev extras + build frontend
+        # build pinned like ruff/mypy: a frontend bump should be deliberate.
+        run: pip install -e ".[dev]" build==1.2.2
+      - name: Packaging gate (wheel ships the model pack + py.typed)
+        run: pytest -m packaging --tb=short

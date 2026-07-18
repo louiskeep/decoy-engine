@@ -34,8 +34,44 @@ if TYPE_CHECKING:
 
 _log = logging.getLogger(__name__)
 
-#: Default pack location (the committed lgbm-v1 artifact).
-_DEFAULT_PACK = Path(__file__).parents[4] / "docs" / "v2" / "ml" / "packs" / "lgbm-v1"
+#: Pack id of the committed default artifact.
+_DEFAULT_PACK_ID = "lgbm-v1"
+
+#: Source-of-truth location of the committed pack in the repo tree. Used for
+#: source checkouts and editable installs, where the wheel force-include (which
+#: copies the pack under ``decoy_engine/model_packs/``) has not run.
+_SOURCE_PACK = Path(__file__).parents[4] / "docs" / "v2" / "ml" / "packs" / _DEFAULT_PACK_ID
+
+
+def _default_pack_dir() -> Path:
+    """Resolve the default lgbm-v1 pack directory across install shapes.
+
+    A built wheel force-includes the pack under the installed package at
+    ``decoy_engine/model_packs/lgbm-v1`` (see pyproject ``force-include``); that
+    copy is resolved here via ``importlib.resources`` so ``classify_fields``
+    works from an installed wheel. Before this (DE-07) a clean wheel omitted the
+    pack entirely and the classifier silently returned ``None``.
+
+    Source checkouts and editable installs have no packaged copy, so fall back
+    to the repo-tree source-of-truth under ``docs/v2/ml/packs`` -- the same
+    bytes the golden gate and provenance tests pin.
+    """
+    try:
+        from importlib.resources import files
+
+        packaged = files("decoy_engine") / "model_packs" / _DEFAULT_PACK_ID
+        packaged_path = Path(str(packaged))
+        if packaged_path.is_dir():
+            return packaged_path
+    except Exception:  # resolver must never crash the host (see below)
+        # This resolver runs BEFORE ModelPackLoader, outside load_with_fallback's
+        # never-crash guard, so any failure here (zip import, namespace-package
+        # MultiplexedPath raising FileNotFoundError, an unreadable site-packages
+        # ancestor) must fall through to the source tree rather than propagate.
+        # The §B.5 invariant is that a pack-resolution failure degrades to the
+        # deterministic baseline, never crashes the caller.
+        pass
+    return _SOURCE_PACK
 
 
 def classify_fields(
@@ -99,7 +135,7 @@ def classify_fields(
     from decoy_engine.storm.model_pack.featurizer import flatten_features
     from decoy_engine.storm.model_pack.loader import ModelPackLoader
 
-    resolved_dir = pack_dir if pack_dir is not None else _DEFAULT_PACK
+    resolved_dir = pack_dir if pack_dir is not None else _default_pack_dir()
 
     loader = ModelPackLoader(resolved_dir)
     pack = loader.load_with_fallback()
