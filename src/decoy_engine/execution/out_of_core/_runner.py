@@ -267,9 +267,9 @@ def _stream_table(
     corpus-provenance evidence sink, mutated in place the same way `outputs`/
     `warnings` are -- see `_code_set_records_and_evidence_for_table`. A
     column's evidence commits into this sink only once the batch stream below
-    has observed at least one non-null source value for it (`code_set_null_
-    seen`), mirroring `CodeSetHandler.run`'s masked_any gate on the pandas/
-    sequential routes: an entirely-null column never dispatches
+    has observed at least one non-null source value for it (tracked in
+    `code_set_null_seen`), mirroring `CodeSetHandler.run`'s masked_any gate on
+    the pandas/sequential routes: an entirely-null column never dispatches
     `apply_code_set` there, so it must not report its corpus as "used" here
     either.
 

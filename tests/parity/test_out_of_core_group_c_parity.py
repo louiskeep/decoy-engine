@@ -585,3 +585,45 @@ class TestOutOfCoreCodeSetCorporaAllNullEvidenceParity:
             entry = corpora[0]
             assert entry["table"] == "parent"
             assert entry["column"] == "pay"
+
+    @pytest.mark.parametrize("batch_rows", [None, 2, 1])
+    def test_ooc_stamp_survives_column_that_goes_null_across_a_batch_boundary(
+        self, batch_rows: int | None
+    ) -> None:
+        """The invariant the deferral actually exists for: a code_set column
+        whose only non-null value falls in ONE batch while a sibling batch is
+        all-null. `payload_vals=["alpha", None]` makes the parent's "pay"
+        non-null early / null late and the child's "cpay" (reversed) null early
+        / non-null late, so BOTH directions ride through at batch_rows=1. A
+        naive per-batch commit-and-reset would drop the parent's stamp (reset on
+        the trailing all-null batch) or miss the child's (earned only in the
+        trailing batch); the whole-stream deferral keeps both, byte-for-byte
+        with the oracle. The all-null tests above cannot catch this -- a column
+        that is never non-null can't distinguish a reset bug from correctness."""
+        payload_seed, _ = _PAYLOADS["code_set_mask"]
+        plan, sources, graph = _payload_edge_job(
+            payload_seed, ["alpha", None], policy=OrphanPolicy.PRESERVE
+        )
+        oracle = PandasExecutionAdapter().run(
+            plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
+        )
+        ooc = run_fk_out_of_core(
+            plan, sources, registry=_REG, relationship_graph=graph, batch_rows=batch_rows
+        )
+
+        def _stamped(entries: list[dict[str, Any]]) -> set[tuple[str, str, str]]:
+            return {(e["table"], e["column"], e["code_set"]) for e in entries}
+
+        oracle_corpora = oracle.quality_metrics.get("code_set_corpora")
+        ooc_corpora = ooc.quality_metrics.get("code_set_corpora")
+        assert oracle_corpora is not None and ooc_corpora is not None
+        # Both code_set columns mask exactly one value, so both earn a stamp on
+        # the oracle; the ooc route must match that shape at every batch size.
+        assert _stamped(ooc_corpora) == _stamped(oracle_corpora)
+        assert _stamped(ooc_corpora) == {
+            ("parent", "pay", "mcc"),
+            ("child", "cpay", "mcc"),
+        }
+        for entry in ooc_corpora:
+            assert entry["row_count"] > 0
+            assert "codes" not in entry and "rows" not in entry
