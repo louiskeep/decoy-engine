@@ -63,9 +63,13 @@ def _default_pack_dir() -> Path:
         packaged_path = Path(str(packaged))
         if packaged_path.is_dir():
             return packaged_path
-    except (ModuleNotFoundError, TypeError, ValueError, NotADirectoryError):
-        # importlib.resources cannot yield a filesystem path for this loader
-        # (e.g. a zip import); fall through to the source tree.
+    except Exception:  # resolver must never crash the host (see below)
+        # This resolver runs BEFORE ModelPackLoader, outside load_with_fallback's
+        # never-crash guard, so any failure here (zip import, namespace-package
+        # MultiplexedPath raising FileNotFoundError, an unreadable site-packages
+        # ancestor) must fall through to the source tree rather than propagate.
+        # The §B.5 invariant is that a pack-resolution failure degrades to the
+        # deterministic baseline, never crashes the caller.
         pass
     return _SOURCE_PACK
 

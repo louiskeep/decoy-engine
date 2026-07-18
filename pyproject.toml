@@ -263,6 +263,15 @@ packages = ["src/decoy_engine"]
 # VCS-tracked), so a wheel built FROM the sdist (the PyPI path) still finds the
 # force-include source. Do NOT relocate the pack in the sdist -- that would move
 # it out from under the wheel force-include and break sdist->wheel builds.
+[tool.hatch.build.targets.sdist]
+# Keep hatchling's default file selection, but never ship dev scratch: agent
+# worktrees under .claude/ carry full nested-repo snapshots (duplicate docs +
+# model packs) and .hypothesis is the property-test DB, so a `python -m build`
+# from a dirty dev checkout would otherwise upload them to PyPI. These dirs are
+# also VCS-ignored (the root-cause fix); this exclude is belt-and-suspenders and
+# also drops the few tracked .claude/ dev-tooling files, which a source dist
+# does not need.
+exclude = [".claude", ".hypothesis"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -271,9 +280,14 @@ pythonpath = ["src"]
 # exclusion is the testflight/ location outside testpaths). The CLI -m flag
 # overrides addopts -m, so addopts alone is not sufficient -- but together
 # with the path exclusion it closes all default-loop collection vectors.
+# `packaging` is ALSO excluded here (unlike `ml`, which merely importorskips):
+# a packaging test shells out to a full isolated wheel/sdist build, so it must
+# never fire in the default loop even if the `build` frontend becomes
+# importable in a dev venv. It runs only via the packaging-gate CI job's
+# explicit `pytest -m packaging`.
 # The `perf` marker is intentionally NOT excluded: perf tests run in the
 # default regression gate (see the perf marker description below).
-addopts = "-m 'not benchmark and not testflight'"
+addopts = "-m 'not benchmark and not testflight and not packaging'"
 markers = [
     "benchmark: informational performance benchmarks; not a regression gate",
     "perf: PERF.BASE.2/3 fixture + baseline tests; run in the default regression gate (not opt-in)",

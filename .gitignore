@@ -28,3 +28,12 @@ data/
 docs/_build/
 docs/api/
 .gstack/
+
+# Dev scratch that must NEVER enter a source release. Agent worktrees are full
+# nested repo snapshots (megabytes of duplicated docs + model packs); .hypothesis
+# is the property-test DB. Both are untracked, but hatchling's default sdist sweep
+# includes untracked files, so a `python -m build` from a dirty dev tree would
+# otherwise upload them to PyPI (DE-07 hygiene). VCS-ignore is the root-cause fix
+# (hatchling honors it); the sdist target also excludes them belt-and-suspenders.
+.claude/worktrees/
+.hypothesis/

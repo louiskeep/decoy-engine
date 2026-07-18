@@ -104,7 +104,11 @@ jobs:
             test -d "$d" || { echo "MISSING SUITE DIR: $d"; exit 1; }
           done
       - name: Regression gate (full suite, benchmarks excluded)
-        run: pytest tests -m "not benchmark" --tb=short
+        # `not packaging` too: the packaging module is collected here (it lives
+        # under tests/) and only skips today because `build` is absent from
+        # .[dev]; excluding the marker makes the dedicated packaging-gate its
+        # unambiguous owner rather than relying on that transitive absence.
+        run: pytest tests -m "not benchmark and not packaging" --tb=short
 
   # ml-gate: activates the ML field-recognition tests that importorskip
   # themselves out of the regression-gate above (which installs .[dev] only,
