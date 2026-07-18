@@ -23,6 +23,7 @@ from decoy_engine.storm.eval.bands import (
 from decoy_engine.storm.eval.fixtures import (
     NO_DETECTOR,
     LabeledFixture,
+    build_cryptic_fixtures,
     build_extended_fixtures,
     build_fixtures,
     build_ood_fixtures,
@@ -60,6 +61,7 @@ __all__ = [
     "assign_value_level_groups",
     "benchmark_all_fixture_columns",
     "benchmark_column_latency",
+    "build_cryptic_fixtures",
     "build_extended_fixtures",
     "build_fixtures",
     "build_ood_fixtures",

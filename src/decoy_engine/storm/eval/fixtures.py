@@ -20,16 +20,35 @@ Field-type coverage (original five-fixture corpus):
   - cryptic_header : real PII under opaque headers (c1/f07/xref/...)
 
 Extended corpus (build_extended_fixtures / build_ood_fixtures) -- ML2:
-  Scales up to 370+ single-column fixtures across all 10 semantic types
-  plus "none", with varied headers (clear and cryptic) and value formats.
+  Scales up to ~2960 single-column fixtures across all 10 semantic types
+  plus "none", with varied headers (clear / abbreviated / cryptic) and
+  value formats (locale, separator, network, and prefix variants).
   See ml-benchmarking-and-privacy.md §B.3 (synthetic-only corpus) and
   corpus-datasheet.md for the full Datasheet.
+
+Cryptic-header benchmark (build_cryptic_fixtures) -- Phase B / CH-3:
+  A held-out slice of real PII under cryptic/abbreviated headers only,
+  evaluated separately from the train/test fold. This is the benchmark
+  the CH-1/CH-2 header-lexicon lift is measured against.
+
+Leakage guard (§A.3): every generator below is col_idx-aware -- each
+column draws values from a slice of a value space that is EXCLUSIVE to
+that column (either via a global index k = col_idx * rows_per_col + row
+embedded directly in the formatted value, or via a disjoint slice of a
+precomputed pool) -- so assign_value_level_groups() can never merge two
+same-label columns into one fold-collapsing group. ``cvv`` is the one
+documented exception: its realistic 3-4 digit value space (~9900 values)
+is too small to stay disjoint across 100+ columns, so cvv windows wrap
+and MAY overlap once the corpus exceeds ~120 columns; every other label
+stays exactly disjoint at any corpus scale used here.
 """
 
 from __future__ import annotations
 
 import random
+import string
 from dataclasses import dataclass, field
+from datetime import date, timedelta
 
 import pandas as pd
 
@@ -225,85 +244,13 @@ def build_fixtures() -> list[LabeledFixture]:
 
 # ===========================================================================
 # Extended corpus -- ML2 LightGBM training (ml-benchmarking-and-privacy.md §B.3)
+# Phase B rebaseline: ~2960 columns, diversified value formats + header styles.
 # ===========================================================================
-# Separate seed so adding columns does NOT shift the original build_fixtures()
-# RNG state (which would break the frozen golden test for the regex baseline).
+# Kept for provenance/documentation; corpus generation below is purely
+# deterministic via col_idx-derived offsets (no RNG), so calling any of the
+# build_* functions twice yields byte-identical output with no seed needed.
 _EXT_SEED = 20260627
 _EXT_ROWS = 60  # rows per extended-corpus column
-
-# Header name pools: clear (name hint fires regex baseline) vs cryptic
-# (opaque header; model must rely on content signals alone).
-# fmt: off
-_MRN_HEADERS_CLEAR = [
-    "mrn", "patient_mrn", "medical_record_no", "med_rec_num", "mrn_number",
-    "patient_id_mr", "mr_number", "pt_mrn", "record_number", "hospital_mrn",
-    "facility_mrn", "emr_id", "ehr_id", "chart_number", "hsi_mrn",
-    "fhir_mrn", "epic_mrn", "encounter_mrn", "pt_id_no", "patient_record_id",
-]
-_MRN_HEADERS_CRYPTIC = [
-    "col_a", "x1", "id1", "ref_num", "field_a", "uid_1", "code_a",
-    "a1", "p1", "num_1", "r1", "k1", "d_a", "rec_1", "z1",
-    "alpha", "r01", "f_a", "c_mr", "v1",
-]
-_HP_HEADERS_CLEAR = [
-    "health_plan_id", "plan_id", "insurance_id", "hmo_id", "payer_id",
-    "carrier_id", "plan_number", "insurance_number", "hp_id",
-    "health_plan_num", "benefit_plan_id", "insurance_plan_id", "plan_code",
-    "payer_plan_id", "medicaid_plan_id", "medicare_plan_id", "health_id",
-    "plan_identifier", "ins_id", "coverage_id",
-]
-_HP_HEADERS_CRYPTIC = [
-    "col_b", "x2", "id2", "ref_b", "field_b", "uid_2", "code_b",
-    "b1", "p2", "num_2", "r2", "k2", "d_b", "rec_2", "z2",
-    "beta", "r02", "f_b", "c_hp", "v2",
-]
-_CVV_HEADERS_CLEAR = [
-    "cvv", "cvc", "cvv_code", "security_code", "card_cvv", "cvv2",
-    "cvc2", "card_verification", "security_num", "cvn",
-]
-_SSN_HEADERS = [
-    "ssn", "social_security_no", "social_security_number", "sin_no",
-    "tax_id", "taxpayer_id", "ss_number", "s_s_n", "social_sec",
-    "ssn_number", "a9", "b7", "x_id", "ref01", "col_ssn",
-    "field_s", "uid_s", "num_s", "sec_id", "code_s",
-]
-_EMAIL_HEADERS = [
-    "email", "email_address", "e_mail", "contact_email", "user_email",
-    "email_addr", "email_id", "primary_email", "work_email", "home_email",
-    "c2", "d4", "y_id", "ref02", "col_em",
-    "field_e", "uid_e", "addr_e", "info_e", "contact",
-]
-_PAN_HEADERS = [
-    "pan", "card_number", "credit_card_no", "cc_number", "card_no",
-    "card_num", "credit_card_number", "debit_card_no", "payment_card",
-    "card_account", "e3", "f8", "w_num", "ref03", "col_pan",
-    "field_p", "uid_p", "num_p", "pay_ref", "card_ref",
-]
-_IBAN_HEADERS = [
-    "iban", "iban_number", "bank_account_no", "account_iban", "intl_acct",
-    "bank_iban", "iban_code", "sepa_iban", "wire_iban", "bank_no",
-    "g3", "h4", "v_num", "ref04", "col_ib",
-    "field_i", "uid_i", "bban", "acct_id", "routing",
-]
-_ICD10_HEADERS = [
-    "icd10", "icd10_code", "diagnosis_code", "dx_code", "primary_dx",
-    "icd_code", "diag_code", "condition_code", "clinical_code", "cpt_icd",
-    "j5", "k6", "u_code", "ref05", "col_dx",
-    "field_d", "uid_d", "dx_id", "code_d", "diag",
-]
-_ISO_DATE_HEADERS = [
-    "service_date", "date", "event_date", "record_date", "entry_date",
-    "created_at", "updated_at", "dob", "visit_date", "discharge_date",
-    "m3", "n7", "t_date", "ref06", "col_dt",
-    "field_t", "uid_t", "ts_col", "cal_dt", "dt_ref",
-]
-_NPI_HEADERS = [
-    "npi", "npi_number", "provider_npi", "physician_npi", "billing_npi",
-    "rendering_npi", "npi_id", "provider_id_npi", "clinician_npi", "npi_code",
-    "p3", "q4", "n_id", "ref07", "col_npi",
-    "field_n", "uid_n", "prov_id", "tax_npi", "npi_ref",
-]
-# fmt: on
 
 
 def _make_fixture(name: str, col_name: str, values: list[str], label: str) -> LabeledFixture:
@@ -311,44 +258,443 @@ def _make_fixture(name: str, col_name: str, values: list[str], label: str) -> La
     return LabeledFixture(name, pd.DataFrame({col_name: values}), {col_name: label})
 
 
-def _ssn_values(rng: random.Random, n: int) -> list[str]:
-    return [
-        f"{rng.randint(100, 899):03d}-{rng.randint(10, 99):02d}-{rng.randint(1000, 9999):04d}"
-        for _ in range(n)
-    ]
+# ── header pools: clear canonical names / realistic abbreviations / cryptic ──
+# Each type gets 3 short hand-written pools (clear, abbrev) plus a
+# programmatically generated cryptic pool (_cryptic_headers) -- opaque
+# single/double-char and "col_x"/"fNN" headers don't need hand-listing,
+# they're a small closed pattern space. _pick_header rotates a column's
+# header through the 3 style bands across its type's column range so the
+# model sees clear AND cryptic headers for every type during training.
 
 
-def _email_values(n: int, domain_pool: list[str] | None = None) -> list[str]:
-    domains = domain_pool or ["example.com", "test.org", "sample.net", "demo.co"]
-    return [f"user{i:05d}@{domains[i % len(domains)]}" for i in range(n)]
+def _cryptic_headers(tag: str, count: int) -> list[str]:
+    """Deterministically generate ``count`` opaque column-header strings.
+
+    Cheap synthetic stand-ins for real-world opaque exports (col_a, f07,
+    single/double-char headers) -- generated, not hand-listed, so scaling
+    the corpus doesn't require ever-longer literal lists.
+    """
+    letters = string.ascii_lowercase
+    out: list[str] = []
+    i = 0
+    while len(out) < count:
+        bucket = i % 4
+        if bucket == 0:
+            out.append(f"{letters[i % 26]}{(i // 26) % 10}")
+        elif bucket == 1:
+            out.append(f"col_{letters[i % 26]}")
+        elif bucket == 2:
+            out.append(f"f{i:02d}")
+        else:
+            out.append(f"{tag}{i}")
+        i += 1
+    return out
 
 
-def _pan_values(rng: random.Random, n: int, prefix: str = "4111") -> list[str]:
-    return [make_pan(f"{prefix}{rng.randint(10**10, 10**11 - 1)}") for _ in range(n)]
+def _pick_header(
+    clear: list[str], abbrev: list[str], cryptic: list[str], col_idx: int, total: int
+) -> str:
+    """Rotate a column's header through 3 style bands across ``[0, total)``.
+
+    Roughly the first third of a type's columns get clear canonical names,
+    the next third realistic abbreviations, the last third cryptic/opaque
+    headers.
+    """
+    band = (col_idx * 3) // max(total, 1)
+    pool = (clear, abbrev, cryptic)[min(band, 2)]
+    return pool[col_idx % len(pool)]
 
 
-def _iban_values(
-    rng: random.Random, n: int, country: str = "GB", bban_prefix: str = "WEST"
-) -> list[str]:
-    return [
-        make_iban(country, f"{bban_prefix}{rng.randint(10**13, 10**14 - 1)}".upper())
-        for _ in range(n)
-    ]
+_SSN_CLEAR = [
+    "ssn",
+    "social_security_no",
+    "social_security_number",
+    "ss_number",
+    "ssn_number",
+    "tax_id",
+    "taxpayer_id",
+    "social_sec",
+]
+_SSN_ABBREV = ["ss_no", "ssn_num", "taxid", "soc_sec", "ss_id", "natl_id", "fed_id", "tin"]
+_SSN_CRYPTIC = _cryptic_headers("s", 14)
+
+_EMAIL_CLEAR = [
+    "email",
+    "email_address",
+    "contact_email",
+    "user_email",
+    "primary_email",
+    "work_email",
+    "home_email",
+    "e_mail",
+]
+_EMAIL_ABBREV = [
+    "em_addr",
+    "eml",
+    "usr_email",
+    "cust_email",
+    "addr_email",
+    "email_id",
+    "mail_addr",
+    "em",
+]
+_EMAIL_CRYPTIC = _cryptic_headers("e", 14)
+
+_PAN_CLEAR = [
+    "pan",
+    "card_number",
+    "credit_card_no",
+    "cc_number",
+    "card_no",
+    "debit_card_no",
+    "payment_card_number",
+    "card_account_no",
+]
+_PAN_ABBREV = [
+    "cc_no",
+    "card_num",
+    "pmt_card",
+    "cardnbr",
+    "acct_pan",
+    "card_ref",
+    "cc_num",
+    "pay_card",
+]
+_PAN_CRYPTIC = _cryptic_headers("p", 14)
+
+_IBAN_CLEAR = [
+    "iban",
+    "iban_number",
+    "bank_account_no",
+    "account_iban",
+    "international_account",
+    "bank_iban",
+    "sepa_iban",
+    "wire_iban",
+]
+_IBAN_ABBREV = [
+    "iban_no",
+    "bank_acct",
+    "acct_no_intl",
+    "bban",
+    "routing_iban",
+    "acct_iban",
+    "iban_ref",
+    "bnk_iban",
+]
+_IBAN_CRYPTIC = _cryptic_headers("i", 14)
+
+_ICD10_CLEAR = [
+    "icd10",
+    "icd10_code",
+    "diagnosis_code",
+    "dx_code",
+    "primary_dx",
+    "icd_code",
+    "diag_code",
+    "clinical_code",
+]
+_ICD10_ABBREV = [
+    "dx",
+    "dx_cd",
+    "icd_cd",
+    "primary_diag",
+    "diag",
+    "icd10cm",
+    "condition_cd",
+    "cpt_icd",
+]
+_ICD10_CRYPTIC = _cryptic_headers("d", 14)
+
+_ISO_DATE_CLEAR = [
+    "service_date",
+    "event_date",
+    "record_date",
+    "entry_date",
+    "visit_date",
+    "discharge_date",
+    "admit_date",
+    "encounter_date",
+]
+_ISO_DATE_ABBREV = ["svc_dt", "evt_dt", "rec_dt", "ent_dt", "vis_dt", "dis_dt", "adm_dt", "enc_dt"]
+_ISO_DATE_CRYPTIC = _cryptic_headers("t", 14)
+
+_NPI_CLEAR = [
+    "npi",
+    "npi_number",
+    "provider_npi",
+    "physician_npi",
+    "billing_npi",
+    "rendering_npi",
+    "clinician_npi",
+    "npi_code",
+]
+_NPI_ABBREV = [
+    "npi_no",
+    "prov_npi",
+    "phys_npi",
+    "bill_npi",
+    "rend_npi",
+    "clin_npi",
+    "npi_num",
+    "prv_npi",
+]
+_NPI_CRYPTIC = _cryptic_headers("n", 14)
+
+_CVV_CLEAR = [
+    "cvv",
+    "cvc",
+    "cvv_code",
+    "security_code",
+    "card_cvv",
+    "cvv2",
+    "cvc2",
+    "card_verification",
+]
+_CVV_ABBREV = ["cvv_no", "sec_cd", "cvn", "cv_code", "cvc_no", "verif_cd", "cvv_num", "sc"]
+_CVV_CRYPTIC = _cryptic_headers("v", 8)
+
+_MRN_CLEAR = [
+    "mrn",
+    "patient_mrn",
+    "medical_record_no",
+    "med_rec_num",
+    "mrn_number",
+    "hospital_mrn",
+    "chart_number",
+    "record_number",
+]
+_MRN_ABBREV = ["pt_mrn", "mr_no", "med_rec", "rec_no", "pt_no", "chart_no", "emr_no", "hsp_mrn"]
+_MRN_CRYPTIC = _cryptic_headers("m", 18)
+
+_HP_CLEAR = [
+    "health_plan_id",
+    "plan_id",
+    "insurance_id",
+    "payer_id",
+    "hmo_id",
+    "carrier_id",
+    "plan_number",
+    "insurance_number",
+]
+_HP_ABBREV = [
+    "hp_id",
+    "ins_no",
+    "plan_no",
+    "mbr_plan",
+    "payer_no",
+    "cov_id",
+    "hplan_id",
+    "ins_plan",
+]
+_HP_CRYPTIC = _cryptic_headers("h", 18)
 
 
-# ── Extended ICD-10 code pool (unique codes per column, §A.3 leakage guard) ──
-# Generate enough unique valid ICD-10-CM-like codes that each extended corpus
-# column can be assigned a non-overlapping slice of _EXT_ICD10_POOL, preventing
-# value-level grouping from merging all ICD-10 columns into one fold.
-# Codes are structured as "{Chapter}{nn}.{d}" where Chapter, nn, and d are
-# chosen to satisfy _icd10_valid (chapter in _ICD10_CHAPTERS, category in range).
-# Using chapters E(0-89), G(0-99), M(0-99), R(0-99): 4 * 90 * 9 = 3240 unique
-# codes, comfortably more than the 20*60 = 1200 needed.
+# ── SSN: mixed-radix (area, group, serial) encoding of a global index k ─────
+# Injective for any k < 800*90*9000 (~648M), far beyond corpus scale, so no
+# two (col_idx, row) pairs can ever collide -- regardless of how many format
+# variants (dashed / no-dash / spaced) reuse the same digits.
+
+
+def _ssn_digits_from_k(k: int) -> tuple[str, str, str]:
+    serial = 1000 + (k % 9000)
+    rem = k // 9000
+    group = 10 + (rem % 90)
+    rem2 = rem // 90
+    area = 100 + (rem2 % 799)  # dodges the reserved 900+ block
+    return f"{area:03d}", f"{group:02d}", f"{serial:04d}"
+
+
+def _format_ssn(area: str, group: str, serial: str, variant: int) -> str:
+    if variant == 0:
+        return f"{area}-{group}-{serial}"
+    if variant == 1:
+        return f"{area}{group}{serial}"
+    return f"{area} {group} {serial}"
+
+
+def _ssn_values_for_col(col_idx: int, n: int) -> list[str]:
+    variant = col_idx % 3
+    base = col_idx * n
+    out = []
+    for row in range(n):
+        area, group, serial = _ssn_digits_from_k(base + row)
+        out.append(_format_ssn(area, group, serial, variant))
+    return out
+
+
+# ── EMAIL: username embeds a global k directly -> trivially unique ──────────
+
+_EMAIL_DOMAIN_POOLS: list[list[str]] = [
+    ["example.com", "test.org"],
+    ["sample.net", "demo.co"],
+    ["mail.example", "users.test"],
+    ["corp.net", "work.org"],
+    ["example.co.uk", "sample.org.uk"],
+    ["firma.de", "beispiel.de"],
+    ["exemple.fr", "test.fr"],
+    ["example.io", "sample.io"],
+    ["agency.edu", "campus.edu"],
+    ["dept.gov", "state.gov"],
+    ["global.com", "intl.net"],
+    ["example.com.au", "sample.co.jp"],
+]
+
+
+def _email_values_for_col(col_idx: int, n: int) -> list[str]:
+    domains = _EMAIL_DOMAIN_POOLS[col_idx % len(_EMAIL_DOMAIN_POOLS)]
+    style = col_idx % 4
+    base = col_idx * n
+    out = []
+    for row in range(n):
+        k = base + row
+        domain = domains[row % len(domains)]
+        if style == 0:
+            local = f"user{k:06d}"
+        elif style == 1:
+            local = f"person.{k:06d}"
+        elif style == 2:
+            local = f"contact{k:06d}+acct"
+        else:
+            local = f"n{k:06d}.doe"
+        out.append(f"{local}@{domain}")
+    return out
+
+
+# ── PAN: network-prefixed base + Luhn check digit, k padded into the base ───
+
+_PAN_NETWORKS: list[tuple[str, int]] = [
+    ("4111", 16),
+    ("4000", 16),
+    ("4532", 16),
+    ("4716", 16),  # visa
+    ("51", 16),
+    ("52", 16),
+    ("53", 16),
+    ("55", 16),  # mastercard (BIN range)
+    ("2221", 16),
+    ("2720", 16),  # mastercard 2-series
+    ("6011", 16),
+    ("6500", 16),  # discover
+    ("34", 15),
+    ("37", 15),  # amex (15-digit)
+]
+
+
+def _pan_from_k(prefix: str, total_len: int, k: int) -> str:
+    base_len = total_len - 1 - len(prefix)
+    base = f"{prefix}{k:0{base_len}d}"
+    return base + _luhn_check_digit(base)
+
+
+def _format_pan(digits: str, variant: int) -> str:
+    if variant == 0:
+        return digits
+    groups = [digits[i : i + 4] for i in range(0, len(digits), 4)]
+    sep = "-" if variant == 1 else " "
+    return sep.join(groups)
+
+
+def _pan_values_for_col(col_idx: int, n: int) -> list[str]:
+    prefix, total_len = _PAN_NETWORKS[col_idx % len(_PAN_NETWORKS)]
+    variant = col_idx % 3
+    base = col_idx * n
+    out = []
+    for row in range(n):
+        digits = _pan_from_k(prefix, total_len, base + row)
+        out.append(_format_pan(digits, variant))
+    return out
+
+
+# ── IBAN: country-specific BBAN length, k padded into the BBAN suffix ───────
+
+_IBAN_COUNTRY_CONFIGS: list[tuple[str, int, str]] = [
+    # (country, iban_total_len, bank_prefix)
+    ("GB", 22, "WEST"),
+    ("DE", 22, "DEUT"),
+    ("FR", 27, "BNPA"),
+    ("NL", 18, "ABNA"),
+    ("ES", 24, "CAIX"),
+    ("IT", 27, "UNCR"),
+    ("BE", 16, "GEBA"),
+    ("CH", 21, "UBSW"),
+    ("IE", 22, "AIBK"),
+    ("PT", 25, "BPIP"),
+    ("AT", 20, "GIBA"),
+    ("SE", 24, "ESSE"),
+    ("NO", 15, "DNBA"),
+    ("DK", 18, "DABA"),
+    ("FI", 18, "NDEA"),
+    ("PL", 28, "PKOP"),
+]
+
+
+def _iban_bban_from_k(country: str, total_len: int, bank_prefix: str, k: int) -> str:
+    bban_len = total_len - 4
+    suffix_len = bban_len - len(bank_prefix)
+    if suffix_len < 5:
+        bank_prefix = bank_prefix[: max(bban_len - 5, 1)]
+        suffix_len = bban_len - len(bank_prefix)
+    return f"{bank_prefix}{k:0{suffix_len}d}"[:bban_len]
+
+
+def _format_iban(iban: str, variant: int) -> str:
+    if variant == 0:
+        return iban
+    return " ".join(iban[i : i + 4] for i in range(0, len(iban), 4))
+
+
+def _iban_values_for_col(col_idx: int, n: int) -> list[str]:
+    country, total_len, bank_prefix = _IBAN_COUNTRY_CONFIGS[col_idx % len(_IBAN_COUNTRY_CONFIGS)]
+    variant = col_idx % 2
+    base = col_idx * n
+    out = []
+    for row in range(n):
+        bban = _iban_bban_from_k(country, total_len, bank_prefix, base + row)
+        out.append(_format_iban(make_iban(country, bban), variant))
+    return out
+
+
+# ── ICD-10 pool: full A-Z chapter-range table (independent of detectors.py,
+# same public ICD-10-CM structure) x many subcodes -- comfortably covers
+# the training slice (240*60) plus the reserved OOD/cryptic regions below.
+
+_ICD10_EXT_CHAPTER_RANGES: dict[str, tuple[int, int]] = {
+    "A": (0, 99),
+    "B": (0, 99),
+    "C": (0, 99),
+    "D": (0, 89),
+    "E": (0, 89),
+    "F": (1, 99),
+    "G": (0, 99),
+    "H": (0, 95),
+    "I": (0, 99),
+    "J": (0, 99),
+    "K": (0, 95),
+    "L": (0, 99),
+    "M": (0, 99),
+    "N": (0, 99),
+    "O": (0, 99),
+    "P": (0, 96),
+    "Q": (0, 99),
+    "R": (0, 99),
+    "S": (0, 99),
+    "T": (0, 88),
+    "U": (0, 85),
+    "V": (0, 99),
+    "W": (0, 99),
+    "X": (0, 99),
+    "Y": (0, 99),
+    "Z": (0, 99),
+}
+
+
 def _gen_ext_icd10_pool() -> list[str]:
     pool: list[str] = []
-    for ch, cat_max in [("E", 89), ("G", 99), ("M", 99), ("R", 99)]:
-        for cat in range(0, cat_max + 1):
-            for sub in range(1, 10):
+    for ch in sorted(_ICD10_EXT_CHAPTER_RANGES):
+        cat_lo, cat_hi = _ICD10_EXT_CHAPTER_RANGES[ch]
+        for cat in range(cat_lo, cat_hi + 1):
+            for sub in range(1, 26):  # 25 subcodes/category -- ample headroom
                 pool.append(f"{ch}{cat:02d}.{sub}")
     return pool
 
@@ -356,364 +702,479 @@ def _gen_ext_icd10_pool() -> list[str]:
 _EXT_ICD10_POOL: list[str] = _gen_ext_icd10_pool()
 
 
-def _icd10_unique_values(col_idx: int, n: int) -> list[str]:
-    """Return n unique ICD-10 codes for the given column index (no sharing)."""
-    start = col_idx * n
-    return [_EXT_ICD10_POOL[start + j] for j in range(n)]
+# ── ISO date: real calendar arithmetic from a base date + global k ──────────
+# Distinct bases per corpus slice keep the (base, k-range) windows from ever
+# overlapping, while every date stays inside the _iso_date_valid 1900-2100
+# bound.
+
+_ISO_DATE_TRAIN_BASE = date(1970, 1, 1)  # k up to 14399 -> ~2009-06
+_ISO_DATE_OOD_BASE = date(2012, 1, 1)  # k up to ~120 -> ~2012-04
+_ISO_DATE_CRYPTIC_BASE = date(2020, 1, 1)  # k up to ~1320 -> ~2023-08
 
 
-def _iso_date_values(col_idx: int, n: int) -> list[str]:
-    """Return n unique ISO dates for the given column index (no sharing).
-
-    Gap of 200 days between columns ensures no date appears in two columns
-    (each column uses only n=60 consecutive days).
-    """
-    offset = col_idx * 200
-    return [
-        f"{2020 + (offset + j) // 365}-{((offset + j) % 12) + 1:02d}-{((offset + j) % 27) + 1:02d}"
-        for j in range(n)
-    ]
+def _iso_date_values_from_base(base: date, offset_days: int, n: int) -> list[str]:
+    return [(base + timedelta(days=offset_days + j)).isoformat() for j in range(n)]
 
 
-def _email_unique_values(col_idx: int, n: int, domain_pool: list[str] | None = None) -> list[str]:
-    """Return n unique email addresses for the given column index (no sharing).
+# ── NPI: 9-digit body embeds a global k, Luhn-style check digit appended ────
 
-    Username includes the column index so "user{col_idx*n + i}@domain" is
-    globally unique across all 20 email columns.
-    """
-    domains = domain_pool or ["example.com", "test.org", "sample.net", "demo.co"]
+
+def _npi_values_for_col(col_idx: int, n: int) -> list[str]:
     base = col_idx * n
-    return [f"user{base + i:06d}@{domains[i % len(domains)]}" for i in range(n)]
+    return [make_npi(f"{100000000 + base + row:09d}") for row in range(n)]
 
 
-def _npi_values(n: int) -> list[str]:
-    # Use a repeating pool of valid NPI bodies (9 digits).
-    bodies = [f"{123456000 + i}" for i in range(max(n, 60))]
-    return [make_npi(bodies[i % len(bodies)]) for i in range(n)]
+# ── CVV: realistic 3-4 digit space (~9900 values) -- fully disjoint up to
+# ~120 columns (120*80=9600 < 9800); wraps (and may overlap) beyond that,
+# which is the documented exemption from the disjointness invariant.
 
 
-def _cvv_unique_values(col_idx: int, n: int) -> list[str]:
-    """Non-overlapping 4-digit CVV values per column (§A.3 leakage guard).
-
-    Each column gets a distinct 100-slot window in 2000-2999 so
-    assign_value_level_groups keeps CVV columns in separate groups.
-    """
-    start = 2000 + col_idx * 100
-    return [str(start + j % 100) for j in range(n)]
+def _cvv_values_for_col(col_idx: int, n: int, width: int = 80, start: int = 100) -> list[str]:
+    lo = start + (col_idx * width) % 9800
+    return [str(lo + (row % width)) for row in range(n)]
 
 
-def _mrn_values(rng: random.Random, n: int, prefix: str = "MRN") -> list[str]:
-    # Prefix 2-4 alpha chars + 5-6 digits to give distinctive content signals.
-    width = 6 if len(prefix) <= 2 else 5
-    return [f"{prefix}{rng.randint(10 ** (width - 1), 10**width - 1)}" for _ in range(n)]
+# ── MRN / health_plan_id: prefix + k-derived numeric suffix, several
+# separator styles. The numeric suffix alone is unique per (col_idx, row)
+# across the WHOLE label (not just within a prefix), so two columns can
+# reuse the same institutional prefix and still never collide.
+
+_MRN_PREFIXES = [
+    "MRN",
+    "MR",
+    "PT",
+    "REC",
+    "EMR",
+    "EHR",
+    "CHT",
+    "HSI",
+    "FHIR",
+    "EPIC",
+    "MED",
+    "PAT",
+    "HOSP",
+    "CLIN",
+    "VISIT",
+    "ENC",
+    "ADM",
+    "DISCH",
+    "REGID",
+    "CASE",
+]
+_HP_PREFIXES = [
+    "HP",
+    "PLN",
+    "HMO",
+    "INS",
+    "BP",
+    "MEDPLAN",
+    "BEN",
+    "COV",
+    "HPLAN",
+    "PAYER",
+    "CARR",
+    "MCARE",
+    "MCAID",
+    "GRP",
+    "SUB",
+    "POL",
+    "CERT",
+    "RXBIN",
+    "NETWK",
+    "TIER",
+]
 
 
-def _hp_values(rng: random.Random, n: int, fmt: str = "HP") -> list[str]:
-    # Health plan ID: prefix + dash + digits, or prefix + digits directly.
-    if "-" in fmt:
-        pfx = fmt.rstrip("-")
-        return [f"{pfx}-{rng.randint(10**7, 10**8 - 1)}" for _ in range(n)]
-    return [f"{fmt}{rng.randint(10**6, 10**7 - 1)}" for _ in range(n)]
+def _institutional_values_for_col(col_idx: int, n: int, prefixes: list[str]) -> list[str]:
+    prefix = prefixes[col_idx % len(prefixes)]
+    style = col_idx % 3
+    base = col_idx * n
+    out = []
+    for row in range(n):
+        k = base + row
+        if style == 0:
+            out.append(f"{prefix}-{k:07d}")
+        elif style == 1:
+            out.append(f"{prefix}{k:07d}")
+        else:
+            out.append(f"{prefix}-{(k // 10000) % 100:02d}-{k % 10000:04d}")
+    return out
 
 
-def _none_int_seq(start: int, n: int) -> list[str]:
-    return [str(start + i) for i in range(n)]
+# ── NONE: the richest label. 22 high-cardinality "families" (k embedded in
+# a family-exclusive numeric block -> globally disjoint by construction,
+# regardless of prefix reuse) + 16 single-column low-cardinality
+# status/flag columns, each with its own mutually-exclusive token alphabet
+# so no two ever share a value.
+
+_NONE_HIGH_CARD_FAMILIES: list[tuple[str, list[str], str, str]] = [
+    # (family_key, header_pool, prefix, kind)
+    ("acct", ["account_id", "account_number", "acct_id", "acct_no"], "ACC", "id"),
+    ("cust", ["customer_id", "cust_id", "client_id", "cust_no"], "CUS", "id"),
+    ("emp", ["employee_id", "emp_id", "staff_id", "emp_no"], "EMP", "id"),
+    ("order", ["order_id", "order_number", "purchase_id", "ord_no"], "ORD", "id"),
+    ("invoice", ["invoice_no", "invoice_id", "bill_no", "inv_no"], "INV", "id"),
+    ("claim", ["claim_id", "claim_no", "encounter_id", "visit_id"], "CLM", "id"),
+    ("product", ["product_code", "sku", "item_code", "prod_id"], "SKU", "id"),
+    ("txn", ["transaction_id", "txn_id", "payment_ref", "txn_no"], "TXN", "id"),
+    ("conf", ["confirmation_no", "conf_id", "conf_code", "confirm_no"], "CNF", "id"),
+    ("po", ["po_number", "purchase_order", "po_id", "contract_id"], "PO", "id"),
+    ("ref", ["reference_no", "ref_id", "ref_code", "reference_id"], "REF", "id"),
+    ("serial", ["serial_number", "batch_id", "lot_number", "serial_no"], "SN", "id"),
+    ("dept", ["dept_code", "division", "region", "cost_center"], "DEPT", "id"),
+    ("cat", ["category", "type_code", "category_code", "class_code"], "CAT", "id"),
+    ("session", ["session_id", "request_id", "trace_id", "job_id"], "SESS", "id"),
+    ("amount", ["amount", "charge_amount", "payment", "cost"], "", "amount"),
+    ("balance", ["balance", "total_due", "net_amount", "gross_amount"], "", "amount"),
+    ("ratio", ["completion_rate", "score", "confidence", "utilization"], "", "ratio"),
+    ("hash", ["hash_id", "checksum", "fingerprint", "content_hash"], "", "hex"),
+    ("uuid", ["uuid", "guid", "trace_uuid", "external_uuid"], "", "uuid"),
+    ("epoch", ["created_ts", "updated_ts", "event_ts", "log_ts"], "", "epoch"),
+    ("zip", ["zip_code", "postal_code", "area_code", "mail_code"], "", "zip"),
+]
+
+_NONE_STATUS_ALPHABETS: list[tuple[str, list[str]]] = [
+    ("status_code", ["A", "B", "C"]),
+    ("state", ["open", "closed", "pending"]),
+    ("stage", ["new", "processing", "shipped", "delivered"]),
+    ("priority", ["low", "medium", "high"]),
+    ("lifecycle", ["draft", "published", "archived"]),
+    ("check_result", ["pass", "fail"]),
+    ("trend", ["up", "down"]),
+    ("category_type", ["male", "female", "other"]),
+]
+_NONE_FLAG_ALPHABETS: list[tuple[str, list[str]]] = [
+    ("is_active", ["0", "1"]),
+    ("flag_bool", ["true", "false"]),
+    ("verified_flag", ["Y", "N"]),
+    ("confirmed_flag", ["yes", "no"]),
+    ("bit_flag", ["T", "F"]),
+    ("account_state", ["active", "inactive"]),
+    ("switch_state", ["on", "off"]),
+    ("feature_flag", ["enabled", "disabled"]),
+]
 
 
-def _none_code_seq(prefix: str, n: int) -> list[str]:
-    return [f"{prefix}{i:05d}" for i in range(n)]
+def _none_value(kind: str, prefix: str, family_idx: int, local_k: int) -> str:
+    # family_idx * 2_000_000 gives every family its own numeric block, so
+    # "n" (used by id/amount/uuid) is globally unique across ALL none
+    # columns even when two families share a prefix or kind.
+    n = family_idx * 2_000_000 + local_k
+    if kind == "id":
+        return f"{prefix}{n:09d}"
+    if kind == "amount":
+        return f"{n // 100}.{n % 100:02d}"
+    if kind == "ratio":
+        return f"{local_k % 10000 / 100:.2f}"
+    if kind == "hex":
+        return f"{local_k:016x}"
+    if kind == "uuid":
+        hexn = f"{n:032x}"
+        return f"{hexn[0:8]}-{hexn[8:12]}-{hexn[12:16]}-{hexn[16:20]}-{hexn[20:32]}"
+    if kind == "epoch":
+        return str(1_600_000_000 + local_k)
+    if kind == "zip":
+        return f"{10000 + local_k:05d}"
+    return f"{n:09d}"
 
 
-def _none_amount(rng: random.Random, n: int) -> list[str]:
-    return [f"{rng.uniform(1.0, 9999.99):.2f}" for _ in range(n)]
+def _none_high_card_fixtures(cols_per_family: int = 21) -> list[LabeledFixture]:
+    fx: list[LabeledFixture] = []
+    for family_idx, (fam_key, headers, prefix, kind) in enumerate(_NONE_HIGH_CARD_FAMILIES):
+        for col_local_idx in range(cols_per_family):
+            hdr = headers[col_local_idx % len(headers)]
+            vals = [
+                _none_value(kind, prefix, family_idx, col_local_idx * _EXT_ROWS + row)
+                for row in range(_EXT_ROWS)
+            ]
+            fx.append(
+                _make_fixture(f"ext_none_{fam_key}_{col_local_idx:02d}", hdr, vals, NO_DETECTOR)
+            )
+    return fx
 
 
-def _none_order_id(n: int) -> list[str]:
-    return [f"ORD-2025-{i:06d}" for i in range(n)]
-
-
-def _none_product_code(n: int) -> list[str]:
-    return [f"PROD-{i:04d}" for i in range(n)]
+def _none_enum_fixtures() -> list[LabeledFixture]:
+    fx: list[LabeledFixture] = []
+    for header, alphabet in _NONE_STATUS_ALPHABETS + _NONE_FLAG_ALPHABETS:
+        vals = [alphabet[row % len(alphabet)] for row in range(_EXT_ROWS)]
+        fx.append(_make_fixture(f"ext_none_enum_{header}", header, vals, NO_DETECTOR))
+    return fx
 
 
 def build_extended_fixtures() -> list[LabeledFixture]:
-    """Return the extended ML2 training corpus (370+ labeled single-column fixtures).
+    """Return the extended ML2 training corpus (~2960 labeled single-column
+    fixtures) for the LightGBM sprint (ML2.2) and the Phase B rebaseline.
 
-    Designed for the LightGBM sprint (ML2.2).  Every column has a deterministic,
-    fully-synthetic value set (no real PII) per ml-benchmarking-and-privacy.md §B.3.
+    Every column has a deterministic, fully-synthetic value set (no real
+    PII) per ml-benchmarking-and-privacy.md §B.3. Each label's columns are
+    value-disjoint from one another (module docstring "Leakage guard"),
+    except ``cvv`` (documented exemption).
 
-    Type distribution:
-    - ssn, email, pan, iban, icd10, iso_date, npi: 20 columns each
-    - cvv: 10 columns (clear header only; name-hint-only detector)
-    - mrn: 40 columns (20 clear header + 20 cryptic)
-    - health_plan_id: 40 columns (20 clear header + 20 cryptic)
-    - none: 60 columns (non-PII identifiers / amounts / codes)
-    Total: approx 370 columns.
-
+    Type distribution (~2960 total, ±15% per label):
+    - ssn, email, pan, iban: 260 columns each
+    - icd10, iso_date, npi: 240 columns each
+    - cvv: 120 columns
+    - mrn, health_plan_id: 300 columns each
+    - none: 478 columns (22 high-cardinality families x 21 + 16 single
+      low-cardinality status/flag columns)
     """
-    rng = random.Random(_EXT_SEED)
-    fx: list[LabeledFixture] = []
     n = _EXT_ROWS
+    fx: list[LabeledFixture] = []
 
-    # SSN (20 columns: 10 clear header, 10 cryptic)
-    for i, hdr in enumerate(_SSN_HEADERS):
-        fx.append(_make_fixture(f"ext_ssn_{i:02d}", hdr, _ssn_values(rng, n), "ssn"))
+    ssn_total = 260
+    for col_idx in range(ssn_total):
+        hdr = _pick_header(_SSN_CLEAR, _SSN_ABBREV, _SSN_CRYPTIC, col_idx, ssn_total)
+        fx.append(
+            _make_fixture(f"ext_ssn_{col_idx:03d}", hdr, _ssn_values_for_col(col_idx, n), "ssn")
+        )
 
-    # EMAIL (20 columns: 10 clear header, 10 cryptic)
-    # Use col_idx-aware generator so usernames are globally unique across columns
-    # (prevents value-level grouping from merging all email columns into one fold).
-    email_domains = [
-        ["example.com", "test.org"],
-        ["sample.net", "demo.co"],
-        ["mail.example", "users.test"],
-        ["corp.net", "work.org"],
-    ]
-    for i, hdr in enumerate(_EMAIL_HEADERS):
+    email_total = 260
+    for col_idx in range(email_total):
+        hdr = _pick_header(_EMAIL_CLEAR, _EMAIL_ABBREV, _EMAIL_CRYPTIC, col_idx, email_total)
         fx.append(
             _make_fixture(
-                f"ext_email_{i:02d}",
-                hdr,
-                _email_unique_values(i, n, email_domains[i % len(email_domains)]),
-                "email",
+                f"ext_email_{col_idx:03d}", hdr, _email_values_for_col(col_idx, n), "email"
             )
         )
 
-    # PAN (20 columns: 10 clear header, 10 cryptic)
-    pan_prefixes = ["4111", "5500", "4000", "5100", "4532", "4485", "4000", "5200", "4012", "4111"]
-    for i, hdr in enumerate(_PAN_HEADERS):
+    pan_total = 260
+    for col_idx in range(pan_total):
+        hdr = _pick_header(_PAN_CLEAR, _PAN_ABBREV, _PAN_CRYPTIC, col_idx, pan_total)
         fx.append(
-            _make_fixture(
-                f"ext_pan_{i:02d}",
-                hdr,
-                _pan_values(rng, n, pan_prefixes[i % len(pan_prefixes)]),
-                "pan",
-            )
+            _make_fixture(f"ext_pan_{col_idx:03d}", hdr, _pan_values_for_col(col_idx, n), "pan")
         )
 
-    # IBAN (20 columns: 10 clear header, 10 cryptic)
-    # fmt: off
-    iban_configs = [
-        ("GB", "WEST"), ("DE", "IBAN"), ("FR", "BARC"), ("NL", "ABNA"),
-        ("GB", "NWBK"), ("DE", "DEUT"), ("FR", "BNPA"), ("NL", "INGB"),
-        ("GB", "LLOY"), ("ES", "CAJA"),
-    ]
-    # fmt: on
-    for i, hdr in enumerate(_IBAN_HEADERS):
-        cc, bpfx = iban_configs[i % len(iban_configs)]
-        fx.append(_make_fixture(f"ext_iban_{i:02d}", hdr, _iban_values(rng, n, cc, bpfx), "iban"))
-
-    # ICD10 (20 columns: 10 clear header, 10 cryptic)
-    # Each column gets a non-overlapping slice of _EXT_ICD10_POOL so that no
-    # two ICD-10 columns share a value; this prevents assign_value_level_groups
-    # from merging all ICD-10 columns into one fold (§A.3 leakage guard).
-    for i, hdr in enumerate(_ICD10_HEADERS):
-        fx.append(_make_fixture(f"ext_icd10_{i:02d}", hdr, _icd10_unique_values(i, n), "icd10"))
-
-    # ISO_DATE (20 columns: 10 clear header, 10 cryptic)
-    # 200-day gap ensures no date appears in two columns (each column has n=60
-    # consecutive days); prevents value sharing across iso_date columns.
-    for i, hdr in enumerate(_ISO_DATE_HEADERS):
-        fx.append(_make_fixture(f"ext_iso_date_{i:02d}", hdr, _iso_date_values(i, n), "iso_date"))
-
-    # NPI (20 columns: 10 clear header, 10 cryptic)
-    for i, hdr in enumerate(_NPI_HEADERS):
-        start_body = 100000000 + i * 1000
-        vals = [make_npi(f"{start_body + j:09d}") for j in range(n)]
-        fx.append(_make_fixture(f"ext_npi_{i:02d}", hdr, vals, "npi"))
-
-    # CVV (10 columns: clear header only -- name-hint-gated detector).
-    # Non-overlapping value ranges via _cvv_unique_values so each column is a
-    # distinct union-find group and some land in the held-out test fold.
-    for i, hdr in enumerate(_CVV_HEADERS_CLEAR):
-        fx.append(_make_fixture(f"ext_cvv_{i:02d}", hdr, _cvv_unique_values(i, n), "cvv"))
-
-    # MRN (40 columns: 20 clear header, 20 cryptic)
-    # fmt: off
-    mrn_prefixes = ["MRN", "MR", "MRC", "PT", "REC", "EMR", "EHR", "CHT", "HSI", "FHIR",
-                    "EPIC", "MED", "PAT", "MR", "RN"]
-    # fmt: on
-    for i, hdr in enumerate(_MRN_HEADERS_CLEAR):
-        pfx = mrn_prefixes[i % len(mrn_prefixes)]
-        fx.append(_make_fixture(f"ext_mrn_clear_{i:02d}", hdr, _mrn_values(rng, n, pfx), "mrn"))
-    for i, hdr in enumerate(_MRN_HEADERS_CRYPTIC):
-        pfx = mrn_prefixes[(i + 5) % len(mrn_prefixes)]
-        fx.append(_make_fixture(f"ext_mrn_crypt_{i:02d}", hdr, _mrn_values(rng, n, pfx), "mrn"))
-
-    # HEALTH_PLAN_ID (40 columns: 20 clear header, 20 cryptic)
-    # fmt: off
-    hp_formats = [
-        "HP-", "PLN", "HMO", "INS", "BP", "MED", "BEN", "COV",
-        "HPLAN", "PAYER", "CARR", "INS-", "HP", "PLAN", "HLT-",
-    ]
-    # fmt: on
-    for i, hdr in enumerate(_HP_HEADERS_CLEAR):
-        fmt = hp_formats[i % len(hp_formats)]
+    iban_total = 260
+    for col_idx in range(iban_total):
+        hdr = _pick_header(_IBAN_CLEAR, _IBAN_ABBREV, _IBAN_CRYPTIC, col_idx, iban_total)
         fx.append(
-            _make_fixture(f"ext_hp_clear_{i:02d}", hdr, _hp_values(rng, n, fmt), "health_plan_id")
-        )
-    for i, hdr in enumerate(_HP_HEADERS_CRYPTIC):
-        fmt = hp_formats[(i + 3) % len(hp_formats)]
-        fx.append(
-            _make_fixture(f"ext_hp_crypt_{i:02d}", hdr, _hp_values(rng, n, fmt), "health_plan_id")
+            _make_fixture(f"ext_iban_{col_idx:03d}", hdr, _iban_values_for_col(col_idx, n), "iban")
         )
 
-    # NONE (60 columns: non-PII identifiers, amounts, codes)
-    none_specs: list[tuple[str, str, list[str]]] = [
-        # (fixture_name, col_header, values)
-        ("ext_none_acct", "account_id", _none_int_seq(20000000, n)),
-        ("ext_none_acct2", "account_number", _none_int_seq(30000000, n)),
-        ("ext_none_acct3", "acct_id", _none_int_seq(40000000, n)),
-        ("ext_none_ord1", "order_id", _none_order_id(n)),
-        ("ext_none_ord2", "order_number", [f"ORD-2024-{i:06d}" for i in range(n)]),
-        ("ext_none_ord3", "purchase_id", [f"PUR-{i:07d}" for i in range(n)]),
-        ("ext_none_prod1", "product_code", _none_product_code(n)),
-        ("ext_none_prod2", "sku", [f"SKU-{i:05d}" for i in range(n)]),
-        ("ext_none_prod3", "item_code", [f"ITEM{i:05d}" for i in range(n)]),
-        ("ext_none_amt1", "amount", _none_amount(rng, n)),
-        ("ext_none_amt2", "charge_amount", _none_amount(rng, n)),
-        ("ext_none_amt3", "payment", _none_amount(rng, n)),
-        ("ext_none_amt4", "cost", _none_amount(rng, n)),
-        ("ext_none_cnt1", "count", [str(i) for i in range(n)]),
-        ("ext_none_cnt2", "quantity", [str(i * 2) for i in range(n)]),
-        ("ext_none_cnt3", "units", [str(i + 1) for i in range(n)]),
-        ("ext_none_code1", "status_code", [f"{['A', 'B', 'C', 'D'][i % 4]}" for i in range(n)]),
-        ("ext_none_code2", "type_code", [f"T{i % 10:02d}" for i in range(n)]),
-        ("ext_none_code3", "category", [f"CAT{i % 20:02d}" for i in range(n)]),
-        ("ext_none_sn1", "serial_number", [f"SN2024{i:06d}" for i in range(n)]),
-        ("ext_none_sn2", "batch_id", [f"BATCH{i:05d}" for i in range(n)]),
-        ("ext_none_sn3", "lot_number", [f"LOT{i:06d}" for i in range(n)]),
-        ("ext_none_clm1", "claim_id", [f"CLM{i:08d}" for i in range(n)]),
-        ("ext_none_clm2", "encounter_id", [f"ENC{i:07d}" for i in range(n)]),
-        ("ext_none_clm3", "visit_id", [f"VIS{i:07d}" for i in range(n)]),
-        ("ext_none_dept1", "dept_code", [f"DEPT{i % 30:02d}" for i in range(n)]),
-        ("ext_none_dept2", "division", [f"DIV{i % 10:02d}" for i in range(n)]),
-        ("ext_none_dept3", "region", [f"REG{i % 8:02d}" for i in range(n)]),
-        ("ext_none_ref1", "reference_no", [f"REF{i:07d}" for i in range(n)]),
-        ("ext_none_ref2", "transaction_id", [f"TXN{i:08d}" for i in range(n)]),
-        ("ext_none_ref3", "confirmation_no", [f"CONF{i:07d}" for i in range(n)]),
-        ("ext_none_inv1", "invoice_no", [f"INV{i:07d}" for i in range(n)]),
-        ("ext_none_inv2", "po_number", [f"PO{i:07d}" for i in range(n)]),
-        ("ext_none_inv3", "contract_id", [f"CTR{i:07d}" for i in range(n)]),
-        ("ext_none_usr1", "user_id", [str(100000 + i) for i in range(n)]),
-        ("ext_none_usr2", "employee_id", [f"EMP{i:06d}" for i in range(n)]),
-        ("ext_none_usr3", "customer_id", [str(200000 + i) for i in range(n)]),
-        ("ext_none_zip1", "zip_code", [f"{10000 + i:05d}" for i in range(n)]),
-        ("ext_none_zip2", "postal_code", [f"{20000 + i:05d}" for i in range(n)]),
-        ("ext_none_zip3", "area_code", [f"{300 + i:03d}" for i in range(n)]),
-        ("ext_none_date1", "year", [str(2020 + i % 5) for i in range(n)]),
-        ("ext_none_date2", "month", [str((i % 12) + 1) for i in range(n)]),
-        ("ext_none_date3", "day", [str((i % 28) + 1) for i in range(n)]),
-        ("ext_none_flag1", "is_active", [str(i % 2) for i in range(n)]),
-        ("ext_none_flag2", "processed", [str(i % 2) for i in range(n)]),
-        ("ext_none_flag3", "verified", [str(i % 2) for i in range(n)]),
-        ("ext_none_pct1", "completion_rate", [f"{(i % 100):.1f}" for i in range(n)]),
-        ("ext_none_pct2", "score", [f"{(i % 100):.2f}" for i in range(n)]),
-        ("ext_none_pct3", "confidence", [f"{(i % 100) / 100:.4f}" for i in range(n)]),
-        ("ext_none_hash1", "hash_id", [f"{i:032x}" for i in range(n)]),
-        ("ext_none_hash2", "checksum", [f"{i:016x}" for i in range(n)]),
-        ("ext_none_hash3", "fingerprint", [f"{i:024x}" for i in range(n)]),
-        ("ext_none_seq1", "sequence_no", [f"{i:010d}" for i in range(n)]),
-        ("ext_none_seq2", "line_number", [str(i + 1) for i in range(n)]),
-        ("ext_none_seq3", "row_num", [str(i) for i in range(n)]),
-        ("ext_none_idx1", "index", [str(i) for i in range(n)]),
-        ("ext_none_idx2", "position", [str(i + 1) for i in range(n)]),
-        ("ext_none_idx3", "rank", [str(i + 1) for i in range(n)]),
-        ("ext_none_sz1", "file_size", [str(1024 * (i + 1)) for i in range(n)]),
-        # Unit-suffixed to avoid union-find collision with 4-digit CVV range.
-        ("ext_none_sz2", "record_count", [f"{i * 10} recs" for i in range(n)]),
-        ("ext_none_dur1", "duration_sec", [f"PT{i}M" for i in range(n)]),
-    ]
-    for fix_name, col_hdr, vals in none_specs:
-        fx.append(_make_fixture(fix_name, col_hdr, vals, NO_DETECTOR))
+    icd10_total = 240
+    for col_idx in range(icd10_total):
+        hdr = _pick_header(_ICD10_CLEAR, _ICD10_ABBREV, _ICD10_CRYPTIC, col_idx, icd10_total)
+        vals = _EXT_ICD10_POOL[col_idx * n : col_idx * n + n]
+        fx.append(_make_fixture(f"ext_icd10_{col_idx:03d}", hdr, vals, "icd10"))
+
+    iso_total = 240
+    for col_idx in range(iso_total):
+        hdr = _pick_header(_ISO_DATE_CLEAR, _ISO_DATE_ABBREV, _ISO_DATE_CRYPTIC, col_idx, iso_total)
+        vals = _iso_date_values_from_base(_ISO_DATE_TRAIN_BASE, col_idx * n, n)
+        fx.append(_make_fixture(f"ext_iso_date_{col_idx:03d}", hdr, vals, "iso_date"))
+
+    npi_total = 240
+    for col_idx in range(npi_total):
+        hdr = _pick_header(_NPI_CLEAR, _NPI_ABBREV, _NPI_CRYPTIC, col_idx, npi_total)
+        fx.append(
+            _make_fixture(f"ext_npi_{col_idx:03d}", hdr, _npi_values_for_col(col_idx, n), "npi")
+        )
+
+    cvv_total = 120
+    for col_idx in range(cvv_total):
+        hdr = _pick_header(_CVV_CLEAR, _CVV_ABBREV, _CVV_CRYPTIC, col_idx, cvv_total)
+        fx.append(
+            _make_fixture(f"ext_cvv_{col_idx:03d}", hdr, _cvv_values_for_col(col_idx, n), "cvv")
+        )
+
+    mrn_total = 300
+    for col_idx in range(mrn_total):
+        hdr = _pick_header(_MRN_CLEAR, _MRN_ABBREV, _MRN_CRYPTIC, col_idx, mrn_total)
+        vals = _institutional_values_for_col(col_idx, n, _MRN_PREFIXES)
+        fx.append(_make_fixture(f"ext_mrn_{col_idx:03d}", hdr, vals, "mrn"))
+
+    hp_total = 300
+    for col_idx in range(hp_total):
+        hdr = _pick_header(_HP_CLEAR, _HP_ABBREV, _HP_CRYPTIC, col_idx, hp_total)
+        vals = _institutional_values_for_col(col_idx, n, _HP_PREFIXES)
+        fx.append(_make_fixture(f"ext_hp_{col_idx:03d}", hdr, vals, "health_plan_id"))
+
+    fx.extend(_none_high_card_fixtures())
+    fx.extend(_none_enum_fixtures())
 
     return fx
+
+
+# ── OOD (out-of-distribution) slice: cryptic headers + adversarial value
+# obfuscation (no-dash SSN, spaced PAN, mixed-domain email). Evaluated
+# SEPARATELY from the §A.1/§A.4 held-out test fold (§B.2). A distinct
+# col_idx / date-base / ICD-10-pool offset keeps every value here disjoint
+# from the training corpus.
+
+_OOD_COL_OFFSET = 10_000
 
 
 def build_ood_fixtures() -> list[LabeledFixture]:
     """Out-of-distribution / adversarial held-out slice (§B.2).
 
     Cryptic single/double-char headers PLUS value-obfuscation: spaced PAN,
-    no-dash SSN, mixed-domain email.  Evaluated SEPARATELY (not in the
-    §A.1/§A.4 held-out test fold).  Source: NIST SP 800-188 §B.2.
+    no-dash SSN, mixed-domain email. Evaluated SEPARATELY (not in the
+    §A.1/§A.4 held-out test fold). Source: NIST SP 800-188 §B.2.
     """
-    rng = random.Random(_EXT_SEED + 1)
     n = _EXT_ROWS
     fx: list[LabeledFixture] = []
 
-    # SSN: standard dashed format under single/double-char headers.
-    for i, hdr in enumerate(["a1", "b2", "c3", "s1"]):
-        fx.append(_make_fixture(f"ood_ssn_{i:02d}", hdr, _ssn_values(rng, n), "ssn"))
+    # SSN: dashed under single/double-char headers, plus no-dash obfuscation.
+    for i, hdr in enumerate(["a1", "b2", "c3", "s1", "v1", "w2"]):
+        col_idx = _OOD_COL_OFFSET + i
+        vals = _ssn_values_for_col(col_idx, n)
+        if i >= 4:  # last two: no-dash obfuscation (_SSN_RE uses -?, still matches)
+            vals = [v.replace("-", "") for v in vals]
+        fx.append(_make_fixture(f"ood_ssn_{i:02d}", hdr, vals, "ssn"))
 
-    # SSN: no-dash obfuscation "NNNNNNNNN" (§B.2). _SSN_RE uses -? so matches.
-    for i, hdr in enumerate(["v1", "w2"]):
-        nodash = [v.replace("-", "") for v in _ssn_values(rng, n)]
-        fx.append(_make_fixture(f"ood_ssn_nd_{i:02d}", hdr, nodash, "ssn"))
-
-    # EMAIL under cryptic headers with mixed domains
-    # Use high base index (1000) to avoid overlap with extended corpus emails.
+    # EMAIL under cryptic headers with mixed domains.
     for i, hdr in enumerate(["e1", "f2", "g3", "h4"]):
-        base = (1000 + i) * n
+        col_idx = _OOD_COL_OFFSET + i
         fx.append(
-            _make_fixture(
-                f"ood_email_{i:02d}",
-                hdr,
-                [f"contact{base + j:06d}@intl-{j % 5}.co.uk" for j in range(n)],
-                "email",
-            )
+            _make_fixture(f"ood_email_{i:02d}", hdr, _email_values_for_col(col_idx, n), "email")
         )
 
-    # PAN: spaced format "NNNN NNNN NNNN NNNN" (§B.2). _PAN_RE handles [\s-]?.
+    # PAN: spaced/dashed format under cryptic headers.
     for i, hdr in enumerate(["p1", "q2"]):
-        raw = _pan_values(rng, n, "4111")
-        spaced = [f"{v[:4]} {v[4:8]} {v[8:12]} {v[12:]}" for v in raw]
-        fx.append(_make_fixture(f"ood_pan_{i:02d}", hdr, spaced, "pan"))
+        col_idx = _OOD_COL_OFFSET + i
+        fx.append(_make_fixture(f"ood_pan_{i:02d}", hdr, _pan_values_for_col(col_idx, n), "pan"))
 
-    # IBAN -- German IBANs under cryptic headers
+    # IBAN under cryptic headers.
     for i, hdr in enumerate(["i1", "j2"]):
-        fx.append(
-            _make_fixture(f"ood_iban_{i:02d}", hdr, _iban_values(rng, n, "DE", "DEUT"), "iban")
-        )
+        col_idx = _OOD_COL_OFFSET + i
+        fx.append(_make_fixture(f"ood_iban_{i:02d}", hdr, _iban_values_for_col(col_idx, n), "iban"))
 
-    # ICD-10 under cryptic headers.
-    # OOD fixtures are evaluated SEPARATELY after training (no train/test split
-    # applied), so we can draw codes from the tail of the pool without worrying
-    # about overlap with training slices (21*n through the end of the pool).
-    ood_icd10_start = 21 * n  # first slot after the 20 training columns
+    # ICD-10 under cryptic headers -- reserved pool region far from training.
+    ood_icd10_start = 40_000
     for i, hdr in enumerate(["d1", "x2"]):
-        pool_size = len(_EXT_ICD10_POOL)
-        vals = [_EXT_ICD10_POOL[(ood_icd10_start + i * n + j) % pool_size] for j in range(n)]
-        fx.append(_make_fixture(f"ood_icd10_{i:02d}", hdr, vals, "icd10"))
-
-    # ISO date under cryptic headers (high col_idx avoids overlap with training corpus).
-    for i, hdr in enumerate(["t1", "u2"]):
+        start = ood_icd10_start + i * n
         fx.append(
-            _make_fixture(f"ood_isodt_{i:02d}", hdr, _iso_date_values(100 + i, n), "iso_date")
+            _make_fixture(f"ood_icd10_{i:02d}", hdr, _EXT_ICD10_POOL[start : start + n], "icd10")
         )
 
-    # NPI under cryptic headers
+    # ISO date under cryptic headers -- reserved base date far from training.
+    for i, hdr in enumerate(["t1", "u2"]):
+        vals = _iso_date_values_from_base(_ISO_DATE_OOD_BASE, i * n, n)
+        fx.append(_make_fixture(f"ood_isodt_{i:02d}", hdr, vals, "iso_date"))
+
+    # NPI under cryptic headers.
     for i, hdr in enumerate(["n1", "m2"]):
-        vals = [make_npi(f"{500000000 + j:09d}") for j in range(n)]
-        fx.append(_make_fixture(f"ood_npi_{i:02d}", hdr, vals, "npi"))
+        col_idx = _OOD_COL_OFFSET + i
+        fx.append(_make_fixture(f"ood_npi_{i:02d}", hdr, _npi_values_for_col(col_idx, n), "npi"))
 
-    # MRN under single-char headers (hardest case)
+    # MRN under single-char headers (hardest case).
     for i, hdr in enumerate(["r1", "s2", "t3", "u4"]):
-        pfx = ["MRN", "MR", "PT", "REC"][i]
-        fx.append(_make_fixture(f"ood_mrn_{i:02d}", hdr, _mrn_values(rng, n, pfx), "mrn"))
+        col_idx = _OOD_COL_OFFSET + i
+        vals = _institutional_values_for_col(col_idx, n, _MRN_PREFIXES)
+        fx.append(_make_fixture(f"ood_mrn_{i:02d}", hdr, vals, "mrn"))
 
-    # HEALTH_PLAN_ID under single-char headers
+    # HEALTH_PLAN_ID under single-char headers.
     for i, hdr in enumerate(["w1", "x2", "y3", "z4"]):
-        fmt = ["HP-", "PLN", "INS", "BEN"][i]
-        fx.append(_make_fixture(f"ood_hp_{i:02d}", hdr, _hp_values(rng, n, fmt), "health_plan_id"))
+        col_idx = _OOD_COL_OFFSET + i
+        vals = _institutional_values_for_col(col_idx, n, _HP_PREFIXES)
+        fx.append(_make_fixture(f"ood_hp_{i:02d}", hdr, vals, "health_plan_id"))
 
-    # NONE under cryptic headers (short integers, codes)
+    # NONE under cryptic headers (short integers).
     for i, hdr in enumerate(["aa", "bb", "cc", "dd"]):
+        vals = [str(9_000_000 + i * n + j) for j in range(n)]
+        fx.append(_make_fixture(f"ood_none_{i:02d}", hdr, vals, NO_DETECTOR))
+
+    return fx
+
+
+# ── Cryptic-header benchmark slice (Phase B / CH-3 ablation) ────────────────
+# Every header is cryptic/abbreviated; values are realistic per PII type.
+# Evaluated SEPARATELY from both the train/test fold and the OOD slice --
+# this is the benchmark CH-1/CH-2 header-lexicon lift is measured against.
+# A distinct col_idx / date-base / ICD-10-pool offset from both the
+# training corpus AND the OOD slice keeps every value here out of both.
+
+_CRYPTIC_COL_OFFSET = 20_000
+
+_CRYPTIC_HEADER_POOLS: dict[str, list[str]] = {
+    "ssn": ["ssn_x", "tin_no", "s_id", "natid", "c9", "z7", "fld_a", "col7"],
+    "email": ["em", "cont_em", "mail_x", "e_addr", "c3", "z9", "fld_b", "col8"],
+    "pan": ["card_x", "pan_ref", "cc_x", "paymnt", "c4", "z1", "fld_c", "col9"],
+    "iban": ["ib_x", "acct_x", "bank_x", "iban_ref", "c5", "z2", "fld_d", "col10"],
+    "icd10": ["dx", "dx_cd", "diag_x", "icdx", "c6", "z3", "fld_e", "col11"],
+    "iso_date": ["svc_dt", "dt_x", "evt_x", "d_ref", "c7", "z4", "fld_f", "col12"],
+    "npi": ["npi_x", "prov_x", "phy_id", "n_ref", "c8", "z5", "fld_g", "col13"],
+    "mrn": ["pt_no", "mr_x", "rec_x", "chart_x", "c1", "z6", "fld_h", "col14"],
+    "health_plan_id": ["mbr_id", "plan_x", "hp_x", "cov_x", "c2", "z8", "fld_i", "col15"],
+    "cvv": ["cv_x", "sec_x", "vcode", "c0", "z0", "fld_j", "col16"],
+}
+
+
+def _cryptic_hdr(label: str, i: int) -> str:
+    pool = _CRYPTIC_HEADER_POOLS[label]
+    return pool[i % len(pool)]
+
+
+def build_cryptic_fixtures() -> list[LabeledFixture]:
+    """Held-out cryptic-header benchmark slice (Phase B / CH-3 ablation).
+
+    ~210 columns, every header cryptic/abbreviated, spanning all 10 real
+    PII labels with realistic values. Evaluated SEPARATELY from the
+    train/test fold (like build_ood_fixtures) -- this is the benchmark the
+    CH-1/CH-2 header-lexicon lift is measured against.
+    """
+    n = _EXT_ROWS
+    fx: list[LabeledFixture] = []
+    cols_per_type = 22
+
+    for i in range(cols_per_type):
+        col_idx = _CRYPTIC_COL_OFFSET + i
         fx.append(
             _make_fixture(
-                f"ood_none_{i:02d}",
-                hdr,
-                [str(900000 + i * 100 + j) for j in range(n)],
-                NO_DETECTOR,
+                f"ch_ssn_{i:02d}", _cryptic_hdr("ssn", i), _ssn_values_for_col(col_idx, n), "ssn"
             )
         )
+
+    for i in range(cols_per_type):
+        col_idx = _CRYPTIC_COL_OFFSET + i
+        vals = _email_values_for_col(col_idx, n)
+        fx.append(_make_fixture(f"ch_email_{i:02d}", _cryptic_hdr("email", i), vals, "email"))
+
+    for i in range(cols_per_type):
+        col_idx = _CRYPTIC_COL_OFFSET + i
+        vals = _pan_values_for_col(col_idx, n)
+        fx.append(_make_fixture(f"ch_pan_{i:02d}", _cryptic_hdr("pan", i), vals, "pan"))
+
+    for i in range(cols_per_type):
+        col_idx = _CRYPTIC_COL_OFFSET + i
+        vals = _iban_values_for_col(col_idx, n)
+        fx.append(_make_fixture(f"ch_iban_{i:02d}", _cryptic_hdr("iban", i), vals, "iban"))
+
+    icd10_start = 20_000
+    for i in range(cols_per_type):
+        start = icd10_start + i * n
+        vals = _EXT_ICD10_POOL[start : start + n]
+        fx.append(_make_fixture(f"ch_icd10_{i:02d}", _cryptic_hdr("icd10", i), vals, "icd10"))
+
+    for i in range(cols_per_type):
+        vals = _iso_date_values_from_base(_ISO_DATE_CRYPTIC_BASE, i * n, n)
+        fx.append(_make_fixture(f"ch_isodt_{i:02d}", _cryptic_hdr("iso_date", i), vals, "iso_date"))
+
+    for i in range(cols_per_type):
+        col_idx = _CRYPTIC_COL_OFFSET + i
+        vals = _npi_values_for_col(col_idx, n)
+        fx.append(_make_fixture(f"ch_npi_{i:02d}", _cryptic_hdr("npi", i), vals, "npi"))
+
+    for i in range(cols_per_type):
+        col_idx = _CRYPTIC_COL_OFFSET + i
+        vals = _institutional_values_for_col(col_idx, n, _MRN_PREFIXES)
+        fx.append(_make_fixture(f"ch_mrn_{i:02d}", _cryptic_hdr("mrn", i), vals, "mrn"))
+
+    for i in range(cols_per_type):
+        col_idx = _CRYPTIC_COL_OFFSET + i
+        vals = _institutional_values_for_col(col_idx, n, _HP_PREFIXES)
+        fx.append(
+            _make_fixture(
+                f"ch_hp_{i:02d}", _cryptic_hdr("health_plan_id", i), vals, "health_plan_id"
+            )
+        )
+
+    cvv_cols = 12
+    for i in range(cvv_cols):
+        # Shares cvv's small value space with the training slice; not
+        # disjoint-guaranteed (documented exemption, see module docstring).
+        col_idx = _CRYPTIC_COL_OFFSET + i
+        vals = _cvv_values_for_col(col_idx, n)
+        fx.append(_make_fixture(f"ch_cvv_{i:02d}", _cryptic_hdr("cvv", i), vals, "cvv"))
 
     return fx
