@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from decoy_engine.storm.model_pack.provenance import (
+    SIGNING_KEY_ENV,
     load_signing_key_from_env,
     verify_manifest,
 )
@@ -260,6 +261,17 @@ class ModelPackLoader:
         weights are independently SHA-256 checked.
         """
         key = load_signing_key_from_env()
+        # Fail CLOSED on a set-but-unparseable key: an operator who configured
+        # DECOY_PACK_SIGNING_KEY intended enforcement, so a typo'd/invalid value
+        # must not silently collapse to "no key" (which would let a tampered
+        # signed pack through on the trusted default). Mirrors the fail-closed
+        # posture of _require_signature_enabled on an ambiguous flag.
+        if key is None and os.environ.get(SIGNING_KEY_ENV, "").strip():
+            raise ModelPackLoadError(
+                f"{SIGNING_KEY_ENV} is set but could not be parsed as a valid "
+                "signing key; refusing to load (fail-closed). Fix the key value "
+                "(64 hex chars / 32 bytes) or unset it."
+            )
         signed = bool(manifest.manifest_hmac)
         # A signature is required for any untrusted pack, OR whenever the opt-in
         # hard-lockdown flag is set (which also tightens the trusted default).
@@ -285,11 +297,20 @@ class ModelPackLoader:
         # No key configured.
         if require_sig:
             reason = (
-                "it was loaded across an untrusted boundary (a caller-supplied "
-                "pack_dir), so its provenance MUST be verified"
+                "it crosses an untrusted boundary (not the first-party default "
+                "pack), so its provenance MUST be verified"
                 if not self._trusted
                 else "DECOY_PACK_REQUIRE_SIGNATURE is enabled"
             )
+            # A refusal across the untrusted boundary is a security event, not a
+            # routine fallback: log it distinctly at ERROR even though
+            # load_with_fallback will downgrade the raise to the regex baseline.
+            if not self._trusted:
+                _log.error(
+                    "SECURITY: refusing to deserialise untrusted model pack %s "
+                    "without a verified signature (DE-04).",
+                    self._pack_dir,
+                )
             raise ModelPackLoadError(
                 f"Refusing to load pack {self._pack_dir}: {reason}, but no "
                 "DECOY_PACK_SIGNING_KEY is configured to verify it (DE-04). "

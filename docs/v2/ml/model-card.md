@@ -264,6 +264,17 @@ verifies the band-to-accuracy relationship holds on every CI run.
    the pack in place). See `storm/model_pack/loader.py` (`trusted` /
    `_check_signature`) and `storm/model_pack/provenance.py`.
 
+   > **Operator note (ordering matters).** Turning on hard lockdown before the
+   > deploy step has signed the pack makes ML go dark. If you set
+   > `DECOY_PACK_REQUIRE_SIGNATURE=1` while the on-box pack is still unsigned
+   > (`manifest_hmac: ""`), the trusted default now also demands a signature,
+   > fails closed, and `classify_fields` degrades to the regex baseline
+   > (returns `None`) with no error raised. Sign the pack in place first
+   > (`sign_pack`, which needs `DECOY_PACK_SIGNING_KEY` configured), then enable
+   > the flag. Likewise, a set-but-unparseable `DECOY_PACK_SIGNING_KEY` is
+   > treated as fail-closed: the loader raises rather than silently loading
+   > unverified, so a typo'd key disables ML instead of weakening it.
+
 5. **Corpus expansion:** 301 training columns is sufficient to demonstrate
    the lift gate but is a small corpus. Pre-GA training should use a larger
    synthetic corpus (500+ columns per type).

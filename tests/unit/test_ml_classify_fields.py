@@ -27,6 +27,21 @@ pytestmark = pytest.mark.ml  # ml-gate membership (pytest -m ml)
 _LIVE_PACK = Path(__file__).parents[2] / "docs" / "v2" / "ml" / "packs" / "lgbm-v1"
 
 
+@pytest.fixture(autouse=True)
+def _clean_signing_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Isolate every test here from an operator-configured signing environment.
+
+    The committed lgbm-v1 pack is unsigned (platform signs at deploy). These
+    tests assert the DE-04 Option C default posture: trusted default accepts,
+    untrusted external refuses. A stray ``DECOY_PACK_SIGNING_KEY`` (would let a
+    signed external copy verify) or ``DECOY_PACK_REQUIRE_SIGNATURE=1`` (would
+    make even the trusted default demand a signature -> None) in the ambient
+    env would silently change what is under test, so clear both.
+    """
+    monkeypatch.delenv("DECOY_PACK_SIGNING_KEY", raising=False)
+    monkeypatch.delenv("DECOY_PACK_REQUIRE_SIGNATURE", raising=False)
+
+
 def _ml_extra_available() -> bool:
     """True when the optional `ml` extra (scikit-learn + lightgbm) is installed.
     classify_fields degrades to None without it, so live-pack tests that assert a
@@ -118,6 +133,8 @@ def test_classify_fields_rejects_unsigned_external_pack_dir(tmp_path: Path) -> N
     baseline) rather than joblib.load-ing an unverified pack. The identical
     bytes loaded as the default (no pack_dir) are trusted and DO classify, so
     this proves it is the untrusted boundary, not the pack, that is refused.
+
+    Signing env isolation is provided by the module autouse fixture.
     """
     import shutil
 

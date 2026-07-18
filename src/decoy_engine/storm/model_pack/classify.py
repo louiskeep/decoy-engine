@@ -56,6 +56,7 @@ def _default_pack_dir() -> Path:
     to the repo-tree source-of-truth under ``docs/v2/ml/packs`` -- the same
     bytes the golden gate and provenance tests pin.
     """
+    packaged_path: Path | None = None
     try:
         from importlib.resources import files
 
@@ -67,11 +68,33 @@ def _default_pack_dir() -> Path:
         # This resolver runs BEFORE ModelPackLoader, outside load_with_fallback's
         # never-crash guard, so any failure here (zip import, namespace-package
         # MultiplexedPath raising FileNotFoundError, an unreadable site-packages
-        # ancestor) must fall through to the source tree rather than propagate.
-        # The §B.5 invariant is that a pack-resolution failure degrades to the
-        # deterministic baseline, never crashes the caller.
-        pass
-    return _SOURCE_PACK
+        # ancestor) must fall through rather than propagate. The §B.5 invariant
+        # is that a pack-resolution failure degrades to the deterministic
+        # baseline, never crashes the caller.
+        packaged_path = None
+
+    # Source/editable checkout fallback -- but ONLY when this really is the repo
+    # tree (a pyproject.toml at the expected root). This stops a broken wheel
+    # install (packaged copy missing) from treating a pack planted at the
+    # docs-relative path as the trusted default; there it fails closed (the
+    # returned path does not exist -> loader -> None -> regex baseline). (DE-04)
+    if (Path(__file__).parents[4] / "pyproject.toml").is_file():
+        return _SOURCE_PACK
+    return packaged_path if packaged_path is not None else _SOURCE_PACK
+
+
+def _is_default_pack_dir(pack_dir: Path) -> bool:
+    """True if *pack_dir* resolves to the first-party default pack location.
+
+    Lets a caller that passes the default path explicitly keep the trusted
+    posture (avoids a silent ML-off downgrade for callers -- e.g. the platform
+    classify-fields endpoint -- that were already pointing at the shipped pack);
+    a genuinely different pack stays untrusted (DE-04 Option C).
+    """
+    try:
+        return pack_dir.resolve() == _default_pack_dir().resolve()
+    except OSError:
+        return False
 
 
 def classify_fields(
@@ -138,13 +161,15 @@ def classify_fields(
     # DE-04 (Option C): the resolved default pack is first-party (shipped in the
     # wheel, SHA-256 verified) and is trusted; a caller-supplied pack_dir crosses
     # an untrusted boundary and must carry a verifiable signature (the loader
-    # fail-closes it before joblib.load runs).
+    # fail-closes it before joblib.load runs). A pack_dir that resolves to the
+    # default location stays trusted, so a caller pinning the shipped pack
+    # explicitly (e.g. the platform endpoint) is not silently downgraded to None.
     if pack_dir is None:
         resolved_dir = _default_pack_dir()
         trusted = True
     else:
         resolved_dir = pack_dir
-        trusted = False
+        trusted = _is_default_pack_dir(pack_dir)
 
     loader = ModelPackLoader(resolved_dir, trusted=trusted)
     pack = loader.load_with_fallback()
