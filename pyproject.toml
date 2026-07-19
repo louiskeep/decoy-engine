@@ -65,7 +65,7 @@ dependencies = [
     # section 3.3) and the proof manifest. Bump only as a reviewed, golden-and-
     # manifest-regenerating change. Was an unpinned floor (>=13.0.0), which let
     # the proof-manifest drift across environments.
-    "faker==40.23.0",
+    "faker==40.31.0",
     "psutil>=5.9.0",
     "pyarrow>=14.0.0",
     # Used by decoy_engine.disguises.schema for the Disguise model.
@@ -141,8 +141,8 @@ dev = [
 # code red with no code change. CI (.github/workflows/ci.yml) installs
 # these same versions; bump them deliberately alongside a lint pass.
 lint = [
-    "ruff==0.15.14",
-    "mypy==2.1.0",
+    "ruff==0.15.22",
+    "mypy==2.3.0",
 ]
 # engine-v2 S7: Mimesis is an OPTIONAL alternative provider backend. The
 # default install does NOT pull it; MimesisAdapter imports behind a
