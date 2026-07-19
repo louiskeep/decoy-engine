@@ -352,6 +352,11 @@ def _stream_table(
                     orphan_totals[join_idx] += orphans
                 yield out
 
+        def _release_joiners() -> None:
+            # Free joiner DuckDB instances before the relation build (emit_to_sink).
+            for joiner in joiners:
+                joiner.close()
+
         if sink is not None:
             emit_to_sink(
                 plan,
@@ -368,6 +373,7 @@ def _stream_table(
                 batch_rows=batch_rows,
                 sink=sink,
                 source_schema=source_schema,
+                on_stream_consumed=_release_joiners,
             )
         else:
             batches = list(rewritten())
