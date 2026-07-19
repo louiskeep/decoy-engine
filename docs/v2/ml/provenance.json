@@ -6,7 +6,7 @@
 
   "corpus": {
     "datasheet_ref": "docs/v2/ml/corpus-datasheet.md",
-    "generation_function": "decoy_engine.storm.eval.fixtures:build_extended_fixtures",
+    "generation_function": "decoy_engine.storm.eval.corpus:build_extended_fixtures",
     "generation_seed": 20260627,
     "total_columns": 2958,
     "real_pii_used": false,

@@ -40,9 +40,11 @@ ALLOWLIST: dict[str, int] = {
     "src/decoy_engine/generators/columns.py": 666,
     "src/decoy_engine/storm/profiler.py": 639,
     "src/decoy_engine/quality/synth_report.py": 863,
-    # Sprint B (ML2.x): extended fixture corpus; decomposition deferred to
-    # ML3.x corpus expansion sprint when fixture types are fully settled.
-    "src/decoy_engine/storm/eval/fixtures.py": 726,
+    # MLF-4 (2026-07-19): expanded ML training corpus split out of
+    # fixtures.py (module-size cap); cohesive synthetic-data generators.
+    # Further decomposition (value-generators vs corpus builders) is the
+    # next decomposition target.
+    "src/decoy_engine/storm/eval/corpus.py": 976,
     # Sprint B (ML2.x): monolithic train_and_evaluate; decompose into
     # separate split / fit / calibrate / evaluate modules in ML3.x.
     "src/decoy_engine/storm/model_pack/trainer.py": 716,

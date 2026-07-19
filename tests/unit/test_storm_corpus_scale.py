@@ -24,11 +24,8 @@ import collections
 
 import pytest
 
-from decoy_engine.storm.eval.fixtures import (
-    NO_DETECTOR,
-    build_cryptic_fixtures,
-    build_extended_fixtures,
-)
+from decoy_engine.storm.eval.corpus import build_cryptic_fixtures, build_extended_fixtures
+from decoy_engine.storm.eval.fixtures import NO_DETECTOR
 from decoy_engine.storm.eval.split import assign_value_level_groups
 
 pytestmark = pytest.mark.ml  # ml-gate membership (pytest -m ml)

@@ -84,11 +84,8 @@ except ImportError as _err:
         "Install them via: pip install -e '.[ml]'"
     ) from _err
 
-from decoy_engine.storm.eval.fixtures import (
-    NO_DETECTOR,
-    build_extended_fixtures,
-    build_ood_fixtures,
-)
+from decoy_engine.storm.eval.corpus import build_extended_fixtures, build_ood_fixtures
+from decoy_engine.storm.eval.fixtures import NO_DETECTOR
 from decoy_engine.storm.eval.harness import run_baseline
 from decoy_engine.storm.eval.split import held_out_split
 from decoy_engine.storm.features import build_column_features

@@ -20,13 +20,15 @@ from decoy_engine.storm.eval.bands import (
     benchmark_column_latency,
     classify_band,
 )
+from decoy_engine.storm.eval.corpus import (
+    build_cryptic_fixtures,
+    build_extended_fixtures,
+    build_ood_fixtures,
+)
 from decoy_engine.storm.eval.fixtures import (
     NO_DETECTOR,
     LabeledFixture,
-    build_cryptic_fixtures,
-    build_extended_fixtures,
     build_fixtures,
-    build_ood_fixtures,
     make_iban,
     make_npi,
     make_pan,

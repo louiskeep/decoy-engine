@@ -40,7 +40,7 @@ def _sample_raw_values(n_per_column: int = 5) -> list[str]:
     returned.  Short plain numerics ("300", "1234") appear inside floating-
     point statistics and would cause false positives.
     """
-    from decoy_engine.storm.eval.fixtures import build_extended_fixtures
+    from decoy_engine.storm.eval.corpus import build_extended_fixtures
 
     fixtures = build_extended_fixtures()
     sampled: list[str] = []
@@ -131,7 +131,7 @@ def test_flatten_features_contains_no_raw_cell_values(raw_values: list[str]) -> 
     the flat feature dict passed to DictVectorizer must never include a raw
     cell value, even indirectly.
     """
-    from decoy_engine.storm.eval.fixtures import build_extended_fixtures
+    from decoy_engine.storm.eval.corpus import build_extended_fixtures
     from decoy_engine.storm.eval.split import make_split_inputs
     from decoy_engine.storm.model_pack.featurizer import flatten_features
 

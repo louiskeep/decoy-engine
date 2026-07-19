@@ -333,7 +333,8 @@ def test_predict_column_band_accuracy() -> None:
         pytest.skip("lgbm-v1 pack not found; run UPDATE_SNAPSHOTS=1 first")
 
     from decoy_engine.storm.eval.bands import HIGH_PRECISION_FLOOR, REVIEW_PRECISION_FLOOR
-    from decoy_engine.storm.eval.fixtures import NO_DETECTOR, build_extended_fixtures
+    from decoy_engine.storm.eval.corpus import build_extended_fixtures
+    from decoy_engine.storm.eval.fixtures import NO_DETECTOR
     from decoy_engine.storm.eval.split import held_out_split
     from decoy_engine.storm.model_pack.trainer import (
         TRAIN_SEED,

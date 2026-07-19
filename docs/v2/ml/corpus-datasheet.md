@@ -136,7 +136,7 @@ casing) into a list of tokens used as header-indicator features.
 
 **What software was used to preprocess the data?**
 
-`decoy_engine.storm.eval.fixtures` (generation) and
+`decoy_engine.storm.eval.corpus` (generation) and
 `decoy_engine.storm.eval.split:make_split_inputs` (feature extraction via
 `decoy_engine.storm.features.builder:build_column_features`).
 
