@@ -1,5 +1,5 @@
 {
-  "_comment": "Signed-provenance scaffold (§B.7). Fields marked PENDING are populated by the ML3.2 signing sprint.",
+  "_comment": "Provenance record (§B.7). The signing infrastructure shipped (ML3.2 / DE-04); the first-party pack is distributed UNSIGNED and trusted by default under DE-04 Option C. See the signing block below.",
   "schema_version": "provenance/v1",
   "pack_id": "lgbm-v1",
   "pack_version": "0.1.0",
@@ -59,9 +59,10 @@
   "signing": {
     "status": "unsigned",
     "signing_key_ref": "unsigned",
-    "signature": "PENDING-ML3.2",
-    "signed_at": "PENDING-ML3.2",
-    "signer": "PENDING-ML3.2",
-    "verification_command": "PENDING-ML3.2"
+    "policy": "The shipped first-party pack is distributed UNSIGNED and trusted by default (DE-04 Option C): it is sha256-verified and force-included in the wheel, so classify_fields() loads it out of the box. HMAC-SHA256 signing (decoy_engine.storm.model_pack.provenance.sign_pack) is OPT-IN: a signature is enforced for a caller-supplied external pack_dir (untrusted by default), and for the trusted default pack whenever DECOY_PACK_REQUIRE_SIGNATURE=1 OR DECOY_PACK_SIGNING_KEY is set. Note: setting the key alone makes the shipped unsigned default pack refuse to load, and classify_fields() then degrades to the regex baseline via load_with_fallback(). This is a deliberate posture, not pending work.",
+    "signature": null,
+    "signed_at": null,
+    "signer": null,
+    "verification_command": "DECOY_PACK_SIGNING_KEY=<64-hex> python -c \"from pathlib import Path; from decoy_engine.storm.model_pack.loader import ModelPackLoader; ModelPackLoader(Path('<external_pack_dir>'), trusted=False).load()\""
   }
 }
