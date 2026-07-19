@@ -8,16 +8,17 @@
     "datasheet_ref": "docs/v2/ml/corpus-datasheet.md",
     "generation_function": "decoy_engine.storm.eval.fixtures:build_extended_fixtures",
     "generation_seed": 20260627,
-    "total_columns": 301,
+    "total_columns": 2958,
     "real_pii_used": false,
     "ood_columns": 32,
-    "note": "100% synthetic; no real PII at any stage. CVV columns now use non-overlapping value ranges (§A.3 fix). OOD slice includes spaced-PAN and no-dash SSN obfuscation (§B.2 fix)."
+    "cryptic_benchmark_columns": 210,
+    "note": "100% synthetic; no real PII at any stage. MLF-4 expanded the corpus 291->2958 with value/format/locale + header-style diversity; generation is now a pure function of the column index, so every high-cardinality column's value set is disjoint from all same-label columns (§A.3 leakage guard provable, not probabilistic). build_cryptic_fixtures() adds a 210-column held-out cryptic-header benchmark for the CH-3 ablation. OOD slice includes spaced-PAN and no-dash SSN obfuscation (§B.2)."
   },
 
   "code": {
     "repo": "decoy-engine",
-    "branch": "feat/ml2-lightgbm",
-    "base_commit": "8a5f63d",
+    "branch": "feat/ml-rebaseline-corpus-calibration-lexicon",
+    "base_commit": "99e65e1",
     "training_module": "decoy_engine.storm.model_pack.trainer",
     "feature_module": "decoy_engine.storm.model_pack.featurizer",
     "loader_module": "decoy_engine.storm.model_pack.loader",
@@ -26,20 +27,20 @@
 
   "eval": {
     "report_path": "docs/v2/ml/lightgbm-report.json",
-    "report_sha256": "140a224bf5cbec0117549999d1e7b74c485b6b0bd92acaa24abd5dea58b1602f",
+    "report_sha256": "ff2d65fcd6e6e7aa517baff9f37fdbebb345d3d4c5441ebefecb32c3def4e8a0",
     "gate_doc": "docs/ml-benchmarking-and-privacy.md",
     "lift_gate_threshold_ppt": 5.0,
     "lift_gate_met": true,
-    "macro_recall_baseline": 0.725,
-    "macro_recall_model": 1.0,
-    "lift_ppt": 27.5,
-    "brier_score": 0.0113
+    "macro_recall_baseline": 0.7642,
+    "macro_recall_model": 0.9637,
+    "lift_ppt": 19.95,
+    "brier_score": 0.0043
   },
 
   "model": {
-    "weights_sha256": "14a358d689ceea61c82b1668147e75b91771a5b3aab71647072dde33fc5669f1",
-    "algorithm": "LGBMClassifier + CalibratedClassifierCV(sigmoid)",
-    "calibration_method": "sigmoid",
+    "weights_sha256": "a69d98f728fc361b3aaef1c45a75be288284fc0f7e5e7eb998559280c1f46792",
+    "algorithm": "LGBMClassifier + CalibratedClassifierCV(isotonic)",
+    "calibration_method": "isotonic",
     "operating_threshold": 0.1667,
     "fn_fp_cost_ratio": 5,
     "training_seed": 42,
