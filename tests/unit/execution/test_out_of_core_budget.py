@@ -26,6 +26,7 @@ from decoy_engine.execution.out_of_core._budget import (
     check_temp_disk_budget,
     detect_host_memory_bytes,
     resolve_budget,
+    resolve_ooc_memory_limit,
     temp_disk_bytes,
 )
 from decoy_engine.execution.out_of_core._join import _JOIN_BATCH_ROWS
@@ -112,6 +113,115 @@ class TestResolveBudget:
         with pytest.raises(ExecutionError) as excinfo:
             resolve_budget(budget_bytes=0)
         assert excinfo.value.code == "out_of_core_budget_invalid"
+
+
+class TestResolveOocMemoryLimit:
+    """FIX 1 (root cause 1): `resolve_ooc_memory_limit` is the out-of-core
+    route's OWN generous, concurrency-aware DuckDB sizing -- deliberately
+    separate from `resolve_budget`, whose conservative 0.25 fraction stays
+    unchanged because the router's full-frame admission price
+    (`_pipeline_routing_signals.py`) depends on that exact number and must
+    stay conservative. This class pins the subtractive-reserve + concurrency
+    model `_budget.py`'s module docstring documents.
+    """
+
+    def test_auto_budget_is_ceiling_minus_subtractive_reserve(self, monkeypatch) -> None:
+        # No cgroup limit present: falls through to the host-RAM ceiling.
+        # 8 GiB ceiling: fraction reserve (0.2 * 8 GiB = 1.6 GiB) is BELOW the
+        # 2 GiB floor, so the floor wins -- reserve is 2 GiB, budget 6 GiB.
+        monkeypatch.setattr(budget_mod, "detect_cgroup_memory_limit_bytes", lambda: None)
+        monkeypatch.setattr(budget_mod, "detect_host_memory_bytes", lambda: 8 * _GIB)
+        budget = resolve_ooc_memory_limit()
+        assert budget.budget_bytes == 6 * _GIB
+        # Default concurrency divisor is 4: 6 GiB / 4 = 1536 MiB.
+        assert budget.memory_limit == "1536MB"
+
+    def test_auto_budget_uses_the_fraction_when_it_exceeds_the_floor(self, monkeypatch) -> None:
+        # 16 GiB ceiling: 0.2 * 16 GiB (3.2 GiB) exceeds the 2 GiB floor, so
+        # the fraction wins -- budget is 80% of the ceiling, not a flat
+        # ceiling-minus-2GiB.
+        monkeypatch.setattr(budget_mod, "detect_cgroup_memory_limit_bytes", lambda: None)
+        monkeypatch.setattr(budget_mod, "detect_host_memory_bytes", lambda: 16 * _GIB)
+        budget = resolve_ooc_memory_limit()
+        expected_reserve = max(int(16 * _GIB * 0.2), 2 * _GIB)
+        assert budget.budget_bytes == 16 * _GIB - expected_reserve
+        assert budget.budget_bytes > int(0.75 * 16 * _GIB)  # generous, not a quarter
+
+    def test_uses_most_of_the_ceiling_not_a_quarter_of_it(self, monkeypatch) -> None:
+        # The regression this whole fix exists for: on a host far bigger
+        # than the reserve floor, DuckDB must get MOST of the ceiling, not
+        # ~25% the way the old resolve_budget-shared fraction did.
+        monkeypatch.setattr(budget_mod, "detect_cgroup_memory_limit_bytes", lambda: None)
+        monkeypatch.setattr(budget_mod, "detect_host_memory_bytes", lambda: 32 * _GIB)
+        budget = resolve_ooc_memory_limit()
+        assert budget.budget_bytes >= int(0.75 * 32 * _GIB)
+
+    def test_explicit_budget_skips_ceiling_detection(self, monkeypatch) -> None:
+        def no_detection() -> int:
+            raise AssertionError("explicit budget must not trigger host detection")
+
+        monkeypatch.setattr(budget_mod, "detect_host_memory_bytes", no_detection)
+        monkeypatch.setattr(budget_mod, "detect_cgroup_memory_limit_bytes", no_detection)
+        budget = resolve_ooc_memory_limit(budget_bytes=512 * _MIB)
+        assert budget.budget_bytes == 512 * _MIB
+        # Default concurrency (4): 512 MiB / 4 = 128 MiB.
+        assert budget.memory_limit == "128MB"
+
+    def test_concurrency_divides_memory_limit_not_budget_bytes(self) -> None:
+        conc1 = resolve_ooc_memory_limit(budget_bytes=8 * _GIB, max_concurrent_instances=1)
+        conc4 = resolve_ooc_memory_limit(budget_bytes=8 * _GIB, max_concurrent_instances=4)
+        # budget_bytes (used for batch_rows) is the UNDIVIDED total either way.
+        assert conc1.budget_bytes == conc4.budget_bytes == 8 * _GIB
+        assert conc1.batch_rows == conc4.batch_rows
+        # memory_limit (the DuckDB per-instance cap) scales inversely with
+        # concurrency so the SUM across live instances stays in budget.
+        assert conc1.memory_limit == "8192MB"
+        assert conc4.memory_limit == "2048MB"
+
+    def test_default_concurrency_is_conservative_but_not_one(self) -> None:
+        # No caller-supplied concurrency: the module's documented default
+        # (sized from the real 100M-row benchmark's worst case of 2, with
+        # headroom for wider FK fan-in) applies.
+        default = resolve_ooc_memory_limit(budget_bytes=8 * _GIB)
+        explicit = resolve_ooc_memory_limit(budget_bytes=8 * _GIB, max_concurrent_instances=4)
+        assert default == explicit
+        assert (
+            default.memory_limit
+            != resolve_ooc_memory_limit(
+                budget_bytes=8 * _GIB, max_concurrent_instances=1
+            ).memory_limit
+        )
+
+    def test_per_instance_memory_limit_is_floored(self) -> None:
+        # A tiny budget divided across many instances must not degrade to a
+        # near-zero DuckDB cap: the per-instance floor wins.
+        budget = resolve_ooc_memory_limit(budget_bytes=64 * _MIB, max_concurrent_instances=100)
+        assert budget.memory_limit == "64MB"
+
+    def test_rejects_concurrency_below_one(self) -> None:
+        with pytest.raises(ExecutionError) as excinfo:
+            resolve_ooc_memory_limit(budget_bytes=1 * _GIB, max_concurrent_instances=0)
+        assert excinfo.value.code == "out_of_core_concurrency_invalid"
+
+    def test_rejects_nonpositive_budget(self) -> None:
+        with pytest.raises(ExecutionError) as excinfo:
+            resolve_ooc_memory_limit(budget_bytes=0)
+        assert excinfo.value.code == "out_of_core_budget_invalid"
+
+    def test_rejects_negative_reserved_bytes(self) -> None:
+        with pytest.raises(ExecutionError) as excinfo:
+            resolve_ooc_memory_limit(budget_bytes=1 * _GIB, reserved_bytes=-1)
+        assert excinfo.value.code == "out_of_core_reserved_bytes_invalid"
+
+    def test_does_not_share_state_or_derivation_with_resolve_budget(self, monkeypatch) -> None:
+        # The router prices full-frame admission off resolve_budget's own
+        # 0.25 fraction; resolve_ooc_memory_limit must never change that
+        # function's return for the same inputs.
+        monkeypatch.setattr(budget_mod, "detect_cgroup_memory_limit_bytes", lambda: None)
+        monkeypatch.setattr(budget_mod, "detect_host_memory_bytes", lambda: 8 * _GIB)
+        shared = resolve_budget()
+        assert shared.budget_bytes == 2 * _GIB  # unchanged 0.25 fraction
+        assert shared.memory_limit == "2048MB"
 
 
 class TestResolveBudgetPrefersCgroup:

@@ -43,6 +43,78 @@ returns `None` -- triggering the host-RAM fallback -- only when neither
 yields a real number. `resolve_budget` also accepts `reserved_bytes`, the
 sum already charged to co-running slots under the same cgroup, so its
 return is this job's *slot* share of the ceiling, not the whole cgroup.
+
+`resolve_budget`'s conservative 0.25 fraction is deliberately UNCHANGED and
+shared with a second consumer beyond the out-of-core route itself:
+`_pipeline_routing_signals.py`'s `resolve_full_frame_fits_estimate` /
+`resolve_probe_recovery` price the FULL-FRAME admission decision against this
+same `budget.budget_bytes` (`decide_execution_route`'s byte-estimate routing).
+That decision must stay conservative -- an under-predicted full-frame estimate
+OOMs hard, and the runtime governor that would reroute a job off a bad
+admission is not wired into `run_pipeline` (only platform-invoked runs get
+one) -- so widening `resolve_budget`'s own fraction would silently loosen
+full-frame admission too, not just the out-of-core route it was meant to fix.
+See `resolve_ooc_memory_limit` below for the OOC-only remedy, kept decoupled
+from this function on purpose.
+
+OUT-OF-CORE MEMORY SIZING (`resolve_ooc_memory_limit`, separate from
+`resolve_budget` above): a real 100M-row cloud benchmark measured DuckDB
+starved to ~3.8 GB of a 16 GB process cap under `resolve_budget`'s 0.25
+fraction, while ~11 GB sat idle and the 300 GB spill disk was never touched --
+the job OOMed *inside* DuckDB with plenty of both RAM and disk to spare. That
+starvation is safe to fix ONLY for DuckDB's own `memory_limit`: unlike a
+full-frame admission miss (a hard OOM with no recovery), an out-of-core
+`memory_limit` that turns out too tight just SPILLS the overflow to
+`temp_directory` (DuckDB's own larger-than-memory behavior, bounded
+separately here by `check_temp_disk_budget`) -- generous sizing has a soft
+failure mode where full-frame admission has a hard one, so only the OOC path
+gets the generous model.
+
+`resolve_ooc_memory_limit`'s model is subtractive rather than a fixed
+fraction: `budget = ceiling - reserve`, where
+`reserve = max(_OOC_RESERVE_FRACTION * ceiling, _OOC_RESERVE_FLOOR_BYTES)`
+covers the Python interpreter, Arrow's per-batch buffers, and OS overhead
+that all live OUTSIDE DuckDB's own accounting (`connect_duckdb`'s
+`memory_limit` bounds only DuckDB's buffer manager, per DuckDB's "Memory
+Management" / "Tuning Workloads" guidance on larger-than-memory execution).
+DuckDB gets the REST of the ceiling -- typically 75-90%+ on hosts bigger than
+the reserve floor -- rather than a quarter of it, and still spills to
+`temp_directory` whenever a query's working set exceeds even that generous
+share.
+
+CONCURRENCY (a second, independent divisor `resolve_ooc_memory_limit` alone
+applies): `connect_duckdb` opens a FRESH `:memory:` DuckDB instance per call,
+and `memory_limit` bounds only THAT ONE instance -- DuckDB has no
+cross-instance accounting. `_runner.py` can hold several instances open at
+once: `_stream_table` opens one `ChildFkBatchJoiner` connection PER INCOMING
+FK EDGE up front (`_batch_join.py`) and keeps every one of them open for the
+table's entire streamed pass, while `_relation.py::_build_relation` opens one
+further connection at a time to build each OUTGOING edge's parent-key
+relation -- and that build runs WHILE the table's own joiner connections are
+still open (both live inside the same `_stream_table` try block; joiners
+close only in its `finally`, after every outgoing relation for that table is
+built). So the worst case for one table is `incoming_edge_count + 1`. Only
+one table streams at a time (`run_fk_out_of_core`'s per-table loop is
+sequential, never concurrent), so that per-table worst case is the whole
+run's ceiling. But incoming-edge fan-in is a property of the PLAN's
+relationship graph, which this module never sees -- both budget functions
+take only byte counts, by design, so neither depends on
+`decoy_engine.relationships` or `decoy_engine.plan`. No exact bound is
+derivable here without that dependency, so `max_concurrent_instances` is an
+explicit, documented, CONSERVATIVE default
+(`_DEFAULT_MAX_CONCURRENT_DUCKDB_INSTANCES`) rather than a computed one: real
+FK schemas rarely fan many incoming edges into one table (the 100M-row cloud
+benchmark's parent->child->grandchild chain peaks at 2 -- one joiner plus one
+relation build), so the default trades a little headroom for safety on any
+schema up to that fan-in without a caller having to know the graph. A caller
+that DOES have graph visibility (and a wider-fan-in schema) should pass
+`max_concurrent_instances` explicitly, sized from its own edge count. The
+resolved `memory_limit` is `budget_bytes // max_concurrent_instances` (floored
+at `_MIN_BUDGET_BYTES` per instance), so the SUM of every live instance's cap
+stays within `budget_bytes`, which itself already excludes the reserve above.
+`batch_rows` scales with the (undivided) budget, not `memory_limit`: it
+bounds Python/Arrow-side batch buffers, already carved out by the reserve,
+not DuckDB's own accounting, so it is not further divided by concurrency.
 """
 
 from __future__ import annotations
@@ -94,6 +166,23 @@ _CGROUP_V1_UNLIMITED_THRESHOLD = (1 << 63) - 1 - 65_536
 # should route away from, not toward. Ignoring it is the safe direction: the
 # limit this module reports can only be tighter than the true kill line,
 # never looser.
+
+# --- resolve_ooc_memory_limit only (module docstring's "OUT-OF-CORE MEMORY
+# SIZING" section): kept separate from _HOST_RAM_FRACTION above because that
+# fraction is shared with the router's full-frame admission pricing, which
+# must stay conservative. These two constants size the SUBTRACTIVE reserve
+# (ceiling - reserve, not ceiling * fraction) that leaves DuckDB most of the
+# ceiling instead of a quarter of it.
+_OOC_RESERVE_FRACTION = 0.2
+_OOC_RESERVE_FLOOR_BYTES = 2 * 1024 * 1024 * 1024  # 2 GiB
+
+# Conservative stand-in for "how many DuckDB instances can be live at once
+# during one out-of-core run" (see the module docstring's CONCURRENCY
+# section) -- this module has no visibility into the plan's relationship
+# graph, so the true incoming-edge fan-in per table cannot be computed here.
+# A caller that DOES know the graph should pass max_concurrent_instances
+# explicitly instead of relying on this default.
+_DEFAULT_MAX_CONCURRENT_DUCKDB_INSTANCES = 4
 
 
 @dataclass(frozen=True)
@@ -301,6 +390,77 @@ def resolve_budget(
     )
 
 
+def resolve_ooc_memory_limit(
+    budget_bytes: int | None = None,
+    *,
+    reserved_bytes: int = 0,
+    max_concurrent_instances: int | None = None,
+) -> OutOfCoreBudget:
+    """Resolve the out-of-core route's OWN generous DuckDB memory sizing.
+
+    Deliberately NOT `resolve_budget`: that function's conservative 0.25
+    fraction is shared with the pipeline router's full-frame admission
+    pricing (`_pipeline_routing_signals.py`), which must stay conservative
+    because an under-predicted full-frame estimate OOMs hard with no
+    governor reroute in `run_pipeline`. This function is for the ONE place
+    a generous budget is safe: DuckDB's own `memory_limit`, where an
+    under-sized cap just spills the overflow to `temp_directory` instead of
+    OOMing (bounded separately by `check_temp_disk_budget`). See the module
+    docstring's "OUT-OF-CORE MEMORY SIZING" and "CONCURRENCY" sections for
+    the full reasoning this implements.
+
+    With no explicit `budget_bytes`, the resolved budget is `ceiling -
+    reserve` (subtractive, not a fraction of the ceiling), where `reserve =
+    max(_OOC_RESERVE_FRACTION * ceiling, _OOC_RESERVE_FLOOR_BYTES)`. An
+    explicit `budget_bytes` (e.g. a caller-computed process-cap share) skips
+    the ceiling detection entirely, matching `resolve_budget`'s own
+    explicit-budget contract. `reserved_bytes` (co-running slot charges) and
+    the `_MIN_BUDGET_BYTES` floor behave identically to `resolve_budget`.
+
+    `memory_limit` is then this resolved budget divided by
+    `max_concurrent_instances` (default `_DEFAULT_MAX_CONCURRENT_DUCKDB_
+    INSTANCES` when not given), floored per instance at `_MIN_BUDGET_BYTES`
+    so a high concurrency count on a small budget never yields a degenerate
+    cap. `batch_rows` scales off the UNDIVIDED budget (Python/Arrow batch
+    buffers, not DuckDB's own accounting), matching `resolve_budget`.
+    `OutOfCoreBudget.budget_bytes` on the return value is the undivided
+    total (for diagnostics/consistency with `resolve_budget`'s shape); the
+    concurrency division is folded into `memory_limit` alone.
+    """
+    if budget_bytes is not None and budget_bytes <= 0:
+        raise ExecutionError(
+            code="out_of_core_budget_invalid",
+            message=f"budget_bytes must be positive, got {budget_bytes}.",
+        )
+    if reserved_bytes < 0:
+        raise ExecutionError(
+            code="out_of_core_reserved_bytes_invalid",
+            message=f"reserved_bytes must be >= 0, got {reserved_bytes}.",
+        )
+    if max_concurrent_instances is not None and max_concurrent_instances < 1:
+        raise ExecutionError(
+            code="out_of_core_concurrency_invalid",
+            message=(f"max_concurrent_instances must be >= 1, got {max_concurrent_instances}."),
+        )
+    if max_concurrent_instances is None:
+        max_concurrent_instances = _DEFAULT_MAX_CONCURRENT_DUCKDB_INSTANCES
+    if budget_bytes is None:
+        ceiling = detect_effective_memory_bytes()
+        reserve = max(int(ceiling * _OOC_RESERVE_FRACTION), _OOC_RESERVE_FLOOR_BYTES)
+        budget_bytes = ceiling - reserve
+    budget_bytes = max(budget_bytes - reserved_bytes, _MIN_BUDGET_BYTES)
+    batch_rows = min(max(budget_bytes // _BATCH_BYTES_PER_ROW, _MIN_BATCH_ROWS), _MAX_BATCH_ROWS)
+    per_instance_bytes = max(budget_bytes // max_concurrent_instances, _MIN_BUDGET_BYTES)
+    # Same MiB-with-decimal-suffix rounding-down rationale as resolve_budget:
+    # DuckDB reads "MB" as base-10, so the effective limit lands slightly
+    # below per_instance_bytes -- the safe direction, never over budget.
+    return OutOfCoreBudget(
+        budget_bytes=budget_bytes,
+        memory_limit=f"{per_instance_bytes // (1024 * 1024)}MB",
+        batch_rows=batch_rows,
+    )
+
+
 def temp_disk_bytes(temp_dir: Path) -> int:
     """Current on-disk footprint under `temp_dir`, in bytes.
 
@@ -399,5 +559,6 @@ __all__ = [
     "detect_effective_memory_bytes",
     "detect_host_memory_bytes",
     "resolve_budget",
+    "resolve_ooc_memory_limit",
     "temp_disk_bytes",
 ]

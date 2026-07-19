@@ -447,17 +447,42 @@ def _build_relation(
         # DuckDB scans the RecordBatchReader lazily and owns the dedup + spill, so
         # nothing sized by total parent cardinality is ever resident in Python.
         conn.register("parent_keys", reader)
+        # Last-write-wins dedup via a hash aggregate, NOT the equivalent
+        # `QUALIFY row_number() OVER (PARTITION BY ... ORDER BY ... DESC) = 1`
+        # window form: DuckDB's window operator does not spill its per-partition
+        # state well and can pin gigabytes of small blocks on a wide parent key
+        # space, where a GROUP BY hash aggregate spills cleanly (DuckDB's own
+        # "larger-than-memory" guidance). `arg_max(struct_pack(...), row_nr)`
+        # keeps ALL masked columns' winning values row-consistent: `arg_max`
+        # SKIPS a row whose `arg` (first parameter) is NULL, so per-column
+        # `arg_max(col, row_nr)` calls would each independently drop rows with a
+        # NULL masked value (legitimate, e.g. a `redact` producing NULL) and
+        # could stitch together values from DIFFERENT winning rows for a
+        # composite key -- a silent parity bug for exactly the rows this dedup
+        # exists to resolve deterministically. A struct is never NULL even when
+        # its members are, so wrapping every masked column in ONE struct_pack
+        # keeps every row eligible and guarantees all masked columns for a join
+        # key come from the SAME row. `__decoy_row_nr` is globally unique
+        # (assigned once per source row across the whole stream), so there is
+        # never a tie to break -- this reproduces the window form's `ORDER BY
+        # __decoy_row_nr DESC` + `row_number() = 1` exactly, just via an
+        # operator that can spill.
         conn.execute(
             """
             COPY (
-                SELECT __decoy_fk_join_key, {masked_select}
-                FROM parent_keys
-                QUALIFY row_number() OVER (
-                    PARTITION BY __decoy_fk_join_key
-                    ORDER BY __decoy_row_nr DESC
-                ) = 1
+                SELECT __decoy_fk_join_key, {unpack_select}
+                FROM (
+                    SELECT __decoy_fk_join_key,
+                           arg_max(struct_pack({struct_fields}), __decoy_row_nr)
+                               AS __decoy_winner
+                    FROM parent_keys
+                    GROUP BY __decoy_fk_join_key
+                )
             ) TO ? (FORMAT PARQUET)
-            """.format(masked_select=", ".join(masked_columns)),
+            """.format(
+                struct_fields=", ".join(f"{col} := {col}" for col in masked_columns),
+                unpack_select=", ".join(f"__decoy_winner.{col} AS {col}" for col in masked_columns),
+            ),
             [str(out_path)],
         )
     finally:

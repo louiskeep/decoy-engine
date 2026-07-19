@@ -93,7 +93,10 @@ from tests.perf_fixtures.fk_relational import (  # noqa: E402
 )
 
 from decoy_engine.execution import PandasExecutionAdapter, ParquetTransactionalSink  # noqa: E402
-from decoy_engine.execution.out_of_core import resolve_budget, run_fk_out_of_core  # noqa: E402
+from decoy_engine.execution.out_of_core import (  # noqa: E402
+    resolve_ooc_memory_limit,
+    run_fk_out_of_core,
+)
 from decoy_engine.providers_v2 import get_default_registry  # noqa: E402
 from decoy_engine.relationships._graph import OrphanPolicy  # noqa: E402
 from decoy_engine.relationships._namespace import NamespaceRegistry  # noqa: E402
@@ -151,7 +154,15 @@ _GLIBC_TLS_OOM_MARKER = "cannot allocate memory for thread-local data"
 # imports and the route's own bounded Arrow batches live OUTSIDE DuckDB's
 # accounting (measured ~300 MB baseline on this stack), so giving DuckDB the
 # whole cap would let the two halves together blow the rlimit.
-_DUCKDB_CAP_FRACTION = 4
+#
+# Was 4 (DuckDB got only ~25% of the cap): a real 100M-row cloud run showed
+# this starved DuckDB to ~3.8 GB of a 16 GB cap while ~11 GB sat idle and the
+# 300 GB spill disk was never touched -- an in-DuckDB OOM with both RAM and
+# disk to spare. Lowered to 1.25 (DuckDB gets ~80% of the cap, matching
+# `resolve_ooc_memory_limit`'s subtractive-reserve model: most of the ceiling
+# to DuckDB, a modest share held back for the interpreter/Arrow/OS), leaving
+# just enough for the measured non-DuckDB baseline plus headroom.
+_DUCKDB_CAP_FRACTION = 1.25
 
 # Allocator pinning for capped workers. Arrow's default (jemalloc/mimalloc)
 # and glibc's per-thread arenas reserve address space far beyond live data
@@ -521,8 +532,10 @@ def _run_out_of_core(
     Parquet one bounded chunk at a time (`write_large_fk_chain`), so even
     fixture construction never holds a whole table. Under `--mem-cap-mb`, the
     DuckDB `memory_limit` and the route's `batch_rows` are derived from the cap
-    via `resolve_budget` (Sprint C4), a conservative fraction because the
-    interpreter and Arrow batch buffers live outside DuckDB's accounting.
+    via `resolve_ooc_memory_limit` (the out-of-core-only sizing, NOT the
+    router-shared `resolve_budget` -- see `_budget.py`'s module docstring),
+    handing DuckDB most of the cap since this probe measures exactly the path
+    that function sizes.
     """
     work_root = Path(tempfile.mkdtemp(prefix="decoy-ooc-probe-"))
     runner_temp = work_root / "runner"
@@ -548,7 +561,9 @@ def _run_out_of_core(
         memory_limit = None
         batch_rows = None
         if mem_cap_mb is not None:
-            budget = resolve_budget(budget_bytes=mem_cap_mb * _MIB // _DUCKDB_CAP_FRACTION)
+            budget = resolve_ooc_memory_limit(
+                budget_bytes=int(mem_cap_mb * _MIB / _DUCKDB_CAP_FRACTION)
+            )
             memory_limit = budget.memory_limit
             batch_rows = budget.batch_rows
 
