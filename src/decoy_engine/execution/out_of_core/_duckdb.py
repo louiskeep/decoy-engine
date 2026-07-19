@@ -59,13 +59,19 @@ def connect_duckdb(*, temp_dir: Path, memory_limit: str | None = None):
     return duckdb.connect(database=":memory:", config=config)
 
 
-def _threads_for_memory_limit(memory_limit: str) -> int | None:
+def _threads_for_memory_limit(memory_limit: str | None) -> int | None:
     """DuckDB thread count sized off its own `memory_limit`, ~2 GiB/thread.
 
-    `None` when `memory_limit` is not the `"<MiB>MB"` shape `_budget.py`
-    always emits, leaving DuckDB's own thread default (the CPU count) in
-    place rather than mis-deriving one from an unparseable string.
+    `None` when there is no `memory_limit`, or when it is not the `"<MiB>MB"`
+    shape `_budget.py` always emits, leaving DuckDB's own thread default (the
+    CPU count) in place rather than mis-deriving one from a missing or
+    unparseable string. The `None` guard is defensive: today `connect_duckdb`
+    only calls this inside its own `memory_limit is not None` branch, but the
+    guard keeps this function correct on its own terms rather than relying on
+    that one caller.
     """
+    if memory_limit is None:
+        return None
     match = _MEMORY_LIMIT_MB_PATTERN.match(memory_limit)
     if match is None:
         return None

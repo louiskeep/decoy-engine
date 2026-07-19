@@ -286,3 +286,64 @@ def test_all_null_parent_builds_string_masked_column(tmp_path) -> None:
     out = pq.read_table(relation.path)
     assert out.num_rows == 0
     assert out.schema.field("__decoy_masked_key").type == pa.string()
+
+
+def _composite_edge() -> RelationshipEdge:
+    return RelationshipEdge(
+        parent_table="customers",
+        parent_columns=("customer_id", "region_id"),
+        child_table="orders",
+        child_columns=("customer_id", "region_id"),
+        namespace="cust",
+        orphan_policy=OrphanPolicy.FAIL,
+    )
+
+
+def test_composite_dedup_winner_with_null_masked_member_is_row_consistent(tmp_path) -> None:
+    # Regression for the spillable-dedup rewrite (fix/ooc-spillable-dedup): a
+    # DUPLICATE composite parent key whose LAST-WRITE-WINS winner has a NULL in
+    # ONE of its masked members. The parity generators only use unique parent
+    # keys, so nothing else pins this. The dedup must emit BOTH masked columns
+    # from the SAME winning row (row 2), NULL member included -- never fall back
+    # to an older row's non-null value for the NULL column. A naive per-column
+    # `arg_max(col, row_nr)` would SKIP the NULL and stitch row 0's "B0" onto
+    # row 2's "A2", a silent composite-key parity bug; the staged max()+join-back
+    # form (like the old struct_pack form) cannot, because masked columns ride
+    # the join back as ordinary columns keyed on the globally-unique row_nr.
+    source = pa.table(
+        {
+            "customer_id": ["a", "c", "a"],
+            "region_id": ["b", "d", "b"],
+        }
+    )
+    masked = pa.table(
+        {
+            # Row 2 is the later duplicate of composite key ("a", "b") and so
+            # wins; its region_id masks to NULL.
+            "customer_id": ["A0", "C", "A2"],
+            "region_id": pa.array(["B0", "D", None], type=pa.string()),
+        }
+    )
+
+    relation = build_parent_key_relation_from_tables(
+        source_parent=source,
+        masked_parent=masked,
+        edge=_composite_edge(),
+        temp_dir=tmp_path,
+        batch_rows=2,  # split the two duplicates across batch boundaries
+    )
+
+    out = pq.read_table(relation.path)
+    rows = {
+        key: (mk0, mk1)
+        for key, mk0, mk1 in zip(
+            out.column("__decoy_fk_join_key").to_pylist(),
+            out.column("__decoy_masked_key").to_pylist(),
+            out.column("__decoy_masked_key_1").to_pylist(),
+            strict=True,
+        )
+    }
+    assert len(rows) == 2
+    # The winning row 2's values for both columns, NULL member preserved.
+    assert rows[fk_join_key_tuple(("a", "b"))] == ("A2", None)
+    assert rows[fk_join_key_tuple(("c", "d"))] == ("C", "D")

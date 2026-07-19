@@ -192,11 +192,32 @@ class TestResolveOocMemoryLimit:
             ).memory_limit
         )
 
-    def test_per_instance_memory_limit_is_floored(self) -> None:
-        # A tiny budget divided across many instances must not degrade to a
-        # near-zero DuckDB cap: the per-instance floor wins.
+    def test_sum_of_per_instance_caps_never_exceeds_budget(self) -> None:
+        # Dennis-1: the per-instance cap is a STRICT floor division, never
+        # floored UP at _MIN_BUDGET_BYTES, so the sum of every live instance's
+        # cap stays within budget_bytes rather than over-subscribing it. Here
+        # 8 GiB / 5 = 1638 MiB each; 5 * 1638 MiB <= 8 GiB.
+        conc = 5
+        budget = resolve_ooc_memory_limit(budget_bytes=8 * _GIB, max_concurrent_instances=conc)
+        per_instance_mib = int(budget.memory_limit.removesuffix("MB"))
+        assert per_instance_mib * conc * _MIB <= budget.budget_bytes
+
+    def test_tight_budget_takes_a_smaller_cap_not_an_oversubscribed_one(self) -> None:
+        # A budget too small to give each instance _MIN_BUDGET_BYTES must yield
+        # a SMALLER per-instance cap (invariant preserved), NOT the old 64 MiB
+        # floor that over-subscribed. 128 MiB / 4 = 32 MiB each, and
+        # 4 * 32 MiB == 128 MiB stays within budget.
+        budget = resolve_ooc_memory_limit(budget_bytes=128 * _MIB, max_concurrent_instances=4)
+        assert budget.memory_limit == "32MB"
+        assert int(budget.memory_limit.removesuffix("MB")) * 4 * _MIB <= budget.budget_bytes
+
+    def test_degenerate_sub_mib_split_floors_at_one_mb_not_zero(self) -> None:
+        # DuckDB rejects a "0MB" limit outright, so the extreme case (a
+        # near-floor budget split across >64-way fan-in) floors the STRING at
+        # "1MB" -- the one documented spot the strict-sum invariant yields to
+        # DuckDB's own minimum. 64 MiB / 100 rounds below 1 MiB.
         budget = resolve_ooc_memory_limit(budget_bytes=64 * _MIB, max_concurrent_instances=100)
-        assert budget.memory_limit == "64MB"
+        assert budget.memory_limit == "1MB"
 
     def test_rejects_concurrency_below_one(self) -> None:
         with pytest.raises(ExecutionError) as excinfo:

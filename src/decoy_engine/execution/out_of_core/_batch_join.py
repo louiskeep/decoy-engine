@@ -148,8 +148,18 @@ class ChildFkBatchJoiner:
         # rejection never leaks one.
         self._conn = connect_duckdb(temp_dir=temp_dir / "duckdb", memory_limit=memory_limit)
         try:
+            # Materialize the relation ONCE as a TEMP TABLE, not a TEMP VIEW over
+            # read_parquet: `join_batch` runs one LEFT JOIN against parent_keys
+            # PER child batch (hundreds of times for a large child), and a view
+            # re-reads and re-parses the whole relation parquet on every one of
+            # those scans -- O(child_batches * relation_rows) disk reads, badly
+            # amplified now that the memory-sizing fix runs DuckDB at threads=1.
+            # A temp table parses the parquet once and is buffer-managed
+            # (spilling to temp_directory under memory_limit, so still bounded by
+            # disk, not RAM). Same pattern `_join.py` already uses for the child
+            # side (`CREATE TEMP TABLE child_keys AS SELECT * FROM ...`).
             self._conn.execute(
-                "CREATE TEMP VIEW parent_keys AS SELECT * FROM "
+                "CREATE TEMP TABLE parent_keys AS SELECT * FROM "
                 f"read_parquet({_sql_string(str(parent_relation.path))})"
             )
         except BaseException:

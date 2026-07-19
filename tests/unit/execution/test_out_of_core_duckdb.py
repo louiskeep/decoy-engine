@@ -87,3 +87,8 @@ class TestThreadsForMemoryLimit:
         # silently mis-deriving one.
         assert _threads_for_memory_limit("1GB") is None
         assert _threads_for_memory_limit("512mb") is None  # lowercase suffix
+
+    def test_none_memory_limit_yields_no_override(self) -> None:
+        # LOW-1: defensive guard so the function is correct on its own terms,
+        # not only via connect_duckdb's caller-side `is not None` branch.
+        assert _threads_for_memory_limit(None) is None

@@ -419,12 +419,28 @@ def resolve_ooc_memory_limit(
 
     `memory_limit` is then this resolved budget divided by
     `max_concurrent_instances` (default `_DEFAULT_MAX_CONCURRENT_DUCKDB_
-    INSTANCES` when not given), floored per instance at `_MIN_BUDGET_BYTES`
-    so a high concurrency count on a small budget never yields a degenerate
-    cap. `batch_rows` scales off the UNDIVIDED budget (Python/Arrow batch
-    buffers, not DuckDB's own accounting), matching `resolve_budget`.
-    `OutOfCoreBudget.budget_bytes` on the return value is the undivided
-    total (for diagnostics/consistency with `resolve_budget`'s shape); the
+    INSTANCES` when not given). The division is a strict floor: the SUM of
+    every live instance's cap is guaranteed <= `budget_bytes`, so DuckDB
+    never over-subscribes the budget across the connections `_runner.py`
+    holds open at once. This is deliberately NOT floored per instance at
+    `_MIN_BUDGET_BYTES` -- that upward floor would push the sum OVER
+    `budget_bytes` on a small budget split across high fan-in, the exact
+    over-subscription the invariant forbids -- so a tight budget yields a
+    genuinely smaller per-instance cap rather than a silently over-committed
+    one (the overflow spills, per this function's whole rationale). The lone
+    exception is a sub-1-MiB split (only reachable at >64-way FK fan-in on a
+    near-floor ~64 MiB budget), where DuckDB rejects a "0MB" limit outright,
+    so the string floors at "1MB" and the sum can nominally exceed the
+    budget; in that regime the cap is moot because spilling, not the cap,
+    carries the run.
+
+    `batch_rows` scales off the UNDIVIDED `budget_bytes`, NOT the per-instance
+    `memory_limit`: it bounds the Python/Arrow batch buffers of the single
+    table `_runner.py` streams at a time (its per-table loop is sequential),
+    which are not DuckDB-accounted and not multiplied by the concurrent DuckDB
+    instance count, so dividing it by concurrency would needlessly shrink it.
+    `OutOfCoreBudget.budget_bytes` on the return value is the undivided total
+    (for diagnostics/consistency with `resolve_budget`'s shape); the
     concurrency division is folded into `memory_limit` alone.
     """
     if budget_bytes is not None and budget_bytes <= 0:
@@ -449,14 +465,25 @@ def resolve_ooc_memory_limit(
         reserve = max(int(ceiling * _OOC_RESERVE_FRACTION), _OOC_RESERVE_FLOOR_BYTES)
         budget_bytes = ceiling - reserve
     budget_bytes = max(budget_bytes - reserved_bytes, _MIN_BUDGET_BYTES)
+    # batch_rows off the UNDIVIDED budget: it sizes Python/Arrow batch buffers
+    # for the ONE table streamed at a time (the runner's per-table loop is
+    # sequential), which are not DuckDB-accounted and not scaled by the
+    # concurrent-instance count, so the concurrency divisor below must not
+    # touch it.
     batch_rows = min(max(budget_bytes // _BATCH_BYTES_PER_ROW, _MIN_BATCH_ROWS), _MAX_BATCH_ROWS)
-    per_instance_bytes = max(budget_bytes // max_concurrent_instances, _MIN_BUDGET_BYTES)
+    # Strict floor division: per_instance * max_concurrent <= budget_bytes, so
+    # the SUM of every live DuckDB instance's cap stays within the budget. NOT
+    # floored up at _MIN_BUDGET_BYTES -- that would over-subscribe the budget
+    # (Dennis-1); a tight budget takes a smaller cap and spills instead. The
+    # only guard is against a sub-1-MiB split producing a "0MB" string DuckDB
+    # rejects outright (reachable only at >64-way fan-in on a ~64 MiB budget).
+    per_instance_mib = max(1, budget_bytes // max_concurrent_instances // (1024 * 1024))
     # Same MiB-with-decimal-suffix rounding-down rationale as resolve_budget:
-    # DuckDB reads "MB" as base-10, so the effective limit lands slightly
-    # below per_instance_bytes -- the safe direction, never over budget.
+    # DuckDB reads "MB" as base-10, so the effective limit lands slightly below
+    # the MiB byte count -- the safe direction, never over the per-instance cap.
     return OutOfCoreBudget(
         budget_bytes=budget_bytes,
-        memory_limit=f"{per_instance_bytes // (1024 * 1024)}MB",
+        memory_limit=f"{per_instance_mib}MB",
         batch_rows=batch_rows,
     )
 
