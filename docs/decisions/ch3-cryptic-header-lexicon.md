@@ -41,7 +41,8 @@ feature dicts for the `fast` arm), evaluated on the cryptic slice. 5 seeds:
 
 **Net lift: +0.00pp over 5 seeds** (pooled std ~0.59pp), far below the 5pp bar.
 
-Per-label, the effect is two real movements that exactly cancel:
+Per-label, the effect looks like two movements that cancel, though each
+individual delta is modest relative to its own noise (see caveat below):
 
 | label | fast | fast+lexicon | delta |
 |---|---|---|---|
@@ -49,9 +50,14 @@ Per-label, the effect is two real movements that exactly cancel:
 | mrn | 0.782 +/- 0.073 | 0.873 +/- 0.045 | **+0.091** |
 | (all 8 others) | 1.000 | 1.000 | 0.000 |
 
-## Why (root cause, verified)
+## Why (a well-supported hypothesis)
 
-Two findings, entangled:
+Two findings, entangled. Note the per-class deltas above (health_plan_id
+-0.091, mrn +0.091) have a std of ~0.05-0.12 over 5 seeds -- roughly 1-1.7
+sigma each -- so read the mechanism below as a directionally-consistent
+effect the evidence supports, not a precisely-measured certainty. The
+**net +0.00pp lift conclusion**, which is what drives the ship decision, is
+solid regardless (it does not depend on the per-class story being exact):
 
 1. **Content saturation.** Content features alone already reach 0.95 macro-recall
    on cryptic headers, so there is almost no headroom for any header method.
@@ -112,6 +118,6 @@ verdict on header-based recognition.
 ## What ships in the re-baseline instead
 
 MLF-4 (corpus 291 -> 2958, value/format/locale + header-style diversity, leakage-
-guarded) and MLF-5 (isotonic calibration: mean calibration error 0.097 -> 0.061;
-the >=0.95 "high" band went from unreachable to 545/592 held-out columns at 99.8%
-accuracy; lift over the regex baseline 20.2pp). Those are the measured wins.
+guarded) and MLF-5 (isotonic calibration: mean calibration error 0.097 -> 0.0536;
+the >=0.95 "high" band went from unreachable to 541/592 held-out columns at 100%
+accuracy; lift over the regex baseline 19.95pp). Those are the measured wins.

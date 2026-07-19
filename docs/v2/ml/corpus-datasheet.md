@@ -71,9 +71,13 @@ No. Every instance has a header, values, and a label.
 
 **Are there any known errors, sources of noise, or redundancies?**
 
-- CVV type: 120 columns with non-overlapping 4-digit value ranges (2000-2999 per
-  column). Value sets are fully disjoint, allowing multiple CVV columns in both
-  training and test folds. Held-out CVV support is now adequate (n=25).
+- CVV type: 120 columns, each drawing from a per-column-disjoint 80-wide value
+  band starting at 100 (3- and 4-digit values). The 120 training columns come
+  out disjoint at this scale, but CVV is the documented EXEMPTION from the
+  corpus's disjointness invariant (small value space, ~9800 total values) --
+  the separate cryptic-header benchmark's CVV columns are not guaranteed
+  disjoint from the training slice. Held-out CVV support is now adequate
+  (n=25).
 - `none` class is intentionally heterogeneous (478 columns spanning counts,
   amounts, codes, dates, identifiers, etc.) to teach the model about the
   diversity of non-PII column types.
@@ -101,12 +105,12 @@ guard). Specific generation methods per type:
 | SSN | `{ddd}-{dd}-{dddd}` pattern, per-col-indexed to avoid overlap |
 | Email | `user{N:06d}@{domain}` with per-column unique indices |
 | PAN | Luhn-valid 16-digit card numbers, partitioned per column |
-| IBAN | `GB{kk}NWBK{sort_code}{account}` templates, col-idx derived |
-| ICD-10 | Slices of `_EXT_ICD10_POOL` (3510 unique E/G/M/R codes) |
-| ISO date | `YYYY-MM-DD` with per-column 200-day offset gaps |
+| IBAN | Country-specific BBAN templates across 16 country codes, col-idx derived |
+| ICD-10 | Slices of `_EXT_ICD10_POOL` (full A-Z chapter space, 63,575 codes) |
+| ISO date | `YYYY-MM-DD`, contiguous per-column date windows (no gaps) |
 | NPI | 10-digit strings matching NPI Luhn check, col-idx partitioned |
-| CVV | 4-digit integers, 1000-2999 partitioned per column (non-overlapping) |
-| MRN | `MR{dddddd}` (clear) or short numeric (cryptic), col-idx derived |
+| CVV | 3- and 4-digit integers, per-column-disjoint 80-wide bands from 100 |
+| MRN | ~20 institutional prefixes across multiple styles, col-idx derived |
 | Health plan ID | `HP-{dddddddd}` (clear) or short alphanumeric (cryptic), col-idx derived |
 | None | 478 subtypes: counts, amounts, codes, hashes, order IDs, etc. |
 
@@ -117,8 +121,9 @@ Automated code generation only. No human labellers or annotators.
 **Over what timeframe was the data collected?**
 
 Generated at build time during MLF-4 (2026-07-17). Reproducible from any
-checkout at the same commit hash by running `build_extended_fixtures()` with
-the fixed seed `_EXT_SEED = 20260627`.
+checkout at the same commit hash by running `build_extended_fixtures()`:
+generation is a deterministic pure function of the column index, with no RNG
+involved (the `_EXT_SEED` module constant is unused).
 
 **Were any ethical review processes conducted?**
 
@@ -174,8 +179,10 @@ Yes: training and evaluating lgbm-v1 (this sprint).
 - Synthetic only: the model may not generalise to unusual real-world
   formatting variants (locale-specific date formats, non-Luhn PANs, etc.) not
   represented in the generation functions.
-- CVV now fully disjoint: the non-overlapping value-range design resolves prior
-  ambiguity with non-PII integer columns at this corpus scale.
+- CVV is disjoint within the 120-column training slice (per-column-disjoint
+  80-wide bands), but remains the documented exemption from the corpus-wide
+  disjointness invariant: the cryptic-header benchmark's CVV columns reuse the
+  same small value space and are not disjoint-guaranteed from training.
 
 **Are there tasks for which the dataset should not be used?**
 

@@ -7,14 +7,14 @@ baseline (run_baseline), and serialises the artifact as a
 
 Design choices (cite per ml-benchmarking-and-privacy.md and CLAUDE.md):
   Model architecture:
-    LightGBMClassifier wrapped in CalibratedClassifierCV(method='sigmoid').
+    LightGBMClassifier wrapped in CalibratedClassifierCV(method='isotonic').
     LightGBM (Ke et al., NeurIPS 2017 "LightGBM: A Highly Efficient Gradient
     Boosting Decision Tree") is the established gradient-boosted tree for
     tabular classification; alternatives surveyed (XGBoost, sklearn GBM,
     RandomForest) are slower or less sample-efficient at this corpus scale.
-    Calibration with 'sigmoid' (Platt scaling) is appropriate here because
-    the calibration set across 5-fold CV contains << 1000 samples per class;
-    sklearn §1.16 recommends 'isotonic' only for >= ~1000 samples.
+    Calibration uses 'isotonic' once the calibration set clears
+    _ISOTONIC_MIN_SAMPLES (~473 at the pinned corpus); sklearn §1.16's
+    >= ~1000-sample rule of thumb is conservative here (see below).
 
   Feature pipeline:
     DictVectorizer(sparse=False) on the flatten_features() output, which
@@ -108,16 +108,14 @@ OPERATING_THRESHOLD: float = round(1.0 / (1 + FN_FP_COST_RATIO), 4)
 
 # Calibration-set floor below which we fall back to sigmoid calibration.
 #
-# sklearn §1.16 quotes ~1000 samples as the rule of thumb for isotonic to avoid
-# overfitting the reliability curve, but that is a conservative general figure.
-# On the expanded (2958-column) STORM corpus -- clean, fully-synthetic, 11-class,
-# calibration fold ~473 -- isotonic was measured to STRICTLY dominate sigmoid
-# (MLF-5 experiment 2026-07-18): mean calibration error 0.061 vs 0.097, Brier
-# 0.0043 vs 0.0055, and it makes the >=0.95 "high" band reachable at last (545 of
-# 592 held-out columns land there at 99.8% accuracy, vs 69 for sigmoid). 400
-# keeps the adaptive sigmoid fallback for a materially smaller corpus (a shrink
-# below ~2000 columns) while enabling isotonic at the pinned corpus scale; the
-# golden retrain gate locks the resulting calibration numbers either way.
+# sklearn §1.16 quotes ~1000 samples as the rule of thumb for isotonic to avoid overfitting the
+# reliability curve, but that is a conservative general figure. On the expanded (2958-column)
+# STORM corpus -- clean, fully-synthetic, 11-class, calibration fold ~473 -- isotonic was measured
+# to STRICTLY dominate sigmoid (shipped pack): mean calibration error 0.0536 vs 0.097 sigmoid,
+# Brier 0.0043, and it makes the >=0.95 "high" band reachable at last (541 of 592 held-out columns
+# land there at 100% accuracy, vs 69 for sigmoid). 400 keeps the adaptive sigmoid fallback for a
+# materially smaller corpus (a shrink below ~2000 columns) while enabling isotonic at the pinned
+# corpus scale; the golden retrain gate locks the resulting calibration numbers either way.
 _ISOTONIC_MIN_SAMPLES = 400
 
 # §A.2 lift gate: minimum macro-recall improvement over baseline.
@@ -354,7 +352,8 @@ def train_and_evaluate(
     X_test_mat: np.ndarray = vec.transform(X_test_flat)
 
     # ── 4. Choose calibration method (§A.4) ──────────────────────────────────
-    # sigmoid for < ~1000 calibration samples (sklearn §1.16 recommendation).
+    # isotonic once the fold clears _ISOTONIC_MIN_SAMPLES (~473 at the pinned corpus, so isotonic
+    # is used here); sigmoid is the fallback below the floor.
     calib_n = len(X_train_mat) // n_splits  # approx calibration-fold size
     calib_method = "isotonic" if calib_n >= _ISOTONIC_MIN_SAMPLES else "sigmoid"
 

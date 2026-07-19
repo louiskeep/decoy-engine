@@ -13,9 +13,9 @@ Extended corpus (build_extended_fixtures / build_ood_fixtures) -- ML2:
   corpus-datasheet.md for the full Datasheet.
 
 Cryptic-header benchmark (build_cryptic_fixtures) -- Phase B / CH-3:
-  A held-out slice of real PII under cryptic/abbreviated headers only,
-  evaluated separately from the train/test fold. This is the benchmark
-  the CH-1/CH-2 header-lexicon lift is measured against.
+  A held-out slice of synthetic, PII-shaped columns under cryptic or
+  abbreviated headers only, evaluated separately from the train/test
+  fold. This is the benchmark the CH-1/CH-2 header-lexicon lift is measured against.
 
 The leakage guard (§A.3, disjoint value spaces per column) and the
 checksum-digit generators / ``LabeledFixture`` dataclass this corpus
