@@ -12,12 +12,12 @@ Gate reference: ml-benchmarking-and-privacy.md §B.7 (9-section model card).
 | Version | `0.1.0` |
 | Format | `decoy-model-pack/v1` |
 | Feature schema | `ml1-v1` |
-| Algorithm | LightGBM multiclass (`LGBMClassifier`) wrapped in `CalibratedClassifierCV` (sigmoid calibration) |
+| Algorithm | LightGBM multiclass (`LGBMClassifier`) wrapped in `CalibratedClassifierCV` (isotonic calibration) |
 | Operating threshold | 0.1667 (derived from FN:FP cost ratio k=5; see §5) |
 | Training seed | 42 |
 | Signing status | unsigned (development artifact; ML3.2 provenance signing sprint pending) |
-| SHA-256 of weights | `c6f990308cce4602fc6cc4c43aaa4e71c4ea32fed608f3c22a4bcac85e9dd5d6` |
-| Eval report hash | `73863b66a4ffd4a5f4b47025b1e99ee6911980a662391cd973f4986b3dda54ff` |
+| SHA-256 of weights | `a69d98f728fc361b3aaef1c45a75be288284fc0f7e5e7eb998559280c1f46792` |
+| Eval report hash | `ff2d65fcd6e6e7aa517baff9f37fdbebb345d3d4c5441ebefecb32c3def4e8a0` |
 
 ### Intended use
 
@@ -69,55 +69,59 @@ cryptic than most training examples.
 
 **CVV held-out evaluation (fixed).**
 
-CVV columns now use non-overlapping 4-digit value ranges (2000-2999, partitioned
-per column) so that assign_value_level_groups keeps them in separate union-find
-groups.  This allows StratifiedGroupKFold to place 2 CVV columns in the held-out
-test fold: recall=1.00, precision=1.00, F2=1.00 on n=2 test samples (PROVISIONAL
-due to small support).  The remaining 8 CVV columns are in the training fold.
-
-Previously, all 10 CVV columns shared values from a common RNG pool and were
-merged into one group that always landed in training.  That artefact is resolved.
+CVV columns use per-column-disjoint value bands (80 values wide, starting at 100;
+3- and 4-digit values) so that assign_value_level_groups keeps them in separate
+union-find groups. At the expanded corpus scale the 120 training CVV columns come
+out fully disjoint, allowing multiple CVV columns in the held-out test fold:
+recall=1.00, precision=1.00, F2=1.00 on n=25 test samples. Note CVV is the one
+type whose value space is small enough that disjointness is not guaranteed at
+arbitrary scale -- the generator (`corpus.py:_cvv_values_for_col`) documents CVV
+as the explicit exemption from the disjointness invariant, and the separate
+cryptic-header benchmark's CVV columns deliberately reuse training values. This
+resolves the prior artefact where all CVV columns shared a common RNG pool and
+merged into one union-find group.
 
 ---
 
 ## 4. Metrics (Held-out Test Set, §A.1 / §A.8)
 
 **Split:** First fold of StratifiedGroupKFold(n_splits=5, shuffle=True, seed=42),
-value-level groups (§A.3). n_train=246, n_test=45.
+value-level groups (§A.3). n_train=2366, n_test=592.
 
 **Operating threshold:** 0.1667 (suppress predictions below this calibrated
 probability; derived from FN:FP cost ratio k=5, Elkan 2001).
 
 | Semantic type | Precision | Recall | F2 | Support |
 |---|---|---|---|---|
-| cvv | 1.00 | 1.00 | 1.00 | 1 |
-| email | 0.67 | 1.00 | 0.91 | 2 |
-| health_plan_id | 0.80 | 1.00 | 0.95 | 8 |
-| iban | 1.00 | 1.00 | 1.00 | 2 |
-| icd10 | 1.00 | 1.00 | 1.00 | 7 |
-| mrn | 1.00 | 1.00 | 1.00 | 5 |
-| npi | 1.00 | 1.00 | 1.00 | 2 |
-| pan | 1.00 | 1.00 | 1.00 | 5 |
-| ssn | 1.00 | 1.00 | 1.00 | 4 |
-| none | implicit | - | - | 9 |
+| cvv | 1.00 | 1.00 | 1.00 | 25 |
+| email | 1.00 | 1.00 | 1.00 | 56 |
+| health_plan_id | 0.8596 | 0.7903 | 0.8033 | 62 |
+| iban | 1.00 | 1.00 | 1.00 | 53 |
+| icd10 | 1.00 | 1.00 | 1.00 | 46 |
+| iso_date | 1.00 | 1.00 | 1.00 | 46 |
+| mrn | 0.7719 | 0.8462 | 0.8302 | 52 |
+| npi | 1.00 | 1.00 | 1.00 | 47 |
+| pan | 1.00 | 1.00 | 1.00 | 53 |
+| ssn | 1.00 | 1.00 | 1.00 | 58 |
+| none | 1.00 | 1.00 | 1.00 | 94 |
 
 **Aggregate metrics:**
 
 | Metric | Value |
 |---|---|
-| macro-F2 | 0.9846 |
-| weighted-F2 | 0.9844 |
-| balanced_accuracy | 1.0 |
-| Brier score (avg OvR, sigmoid calibration) | 0.0113 |
-| Mean calibration error (MCE) | 0.1695 |
+| macro-F2 | 0.9633 |
+| weighted-F2 | 0.9578 |
+| balanced_accuracy | 0.9636 |
+| Brier score (avg OvR, isotonic calibration) | 0.0043 |
+| Mean calibration error (MCE) | 0.0536 |
 
 **Lift gate (§A.2):**
 
 | | Macro recall |
 |---|---|
-| Regex baseline | 0.725 |
-| LightGBM (lgbm-v1) | 1.0 |
-| Lift | +27.50 ppt |
+| Regex baseline | 0.7642 |
+| LightGBM (lgbm-v1) | 0.9637 |
+| Lift | +19.95 ppt |
 | Gate threshold | 5 ppt |
 | Gate status | PASSED |
 
@@ -126,20 +130,29 @@ single/double-char cryptic headers.
 
 | Metric | Value |
 |---|---|
-| balanced_accuracy | 0.8889 |
-| macro_recall | 0.8889 |
+| balanced_accuracy | 0.8611 |
+| macro_recall | 0.8611 |
 
-**False negatives (n=0):** zero false negatives on the held-out test set.
+Note the OOD slice was regenerated with the corpus (32 columns now, different
+obfuscations), so 0.8611 is not directly comparable to the prior pack's OOD
+number -- the OOD gap versus the in-distribution 0.9636 is the honest signal that
+real-world robustness is lower than the held-out metrics suggest.
 
-**False positives (n=3):** three false positives: one `email` column and two
-`health_plan_id` columns were over-predicted from `none` ground truth.
+**False negatives (n=21):** 21 false negatives on the held-out test set: 8 MRN
+columns misclassified as health_plan_id, 13 health_plan_id columns misclassified
+as MRN. Both are prefix+numeric identifier strings drawn from a shared generator
+(only the prefix pool differs), and every one of the 21 is a cryptic-header column
+where the header carries no signal -- so the confusion is at the header-obfuscated
+boundary between two structurally similar low-distinctiveness types, by construction.
+
+**False positives (n=0):** zero false positives on the held-out test set.
 
 ---
 
 ## 5. Evaluation Data
 
-Training corpus: 291 synthetic columns, zero real PII, generated by
-`storm/eval/fixtures.py:build_extended_fixtures()`.
+Training corpus: 2958 synthetic columns, zero real PII, generated by
+`storm/eval/corpus.py:build_extended_fixtures()`.
 
 See `corpus-datasheet.md` for full datasheet (7 sections, §B.3).
 
@@ -159,11 +172,12 @@ Same as evaluation data (same corpus, different split fold). See
 `corpus-datasheet.md`.
 
 Key properties:
-- 100% synthetic; generated with Python `random.Random(seed)` and manual
-  pattern templates.
+- 100% synthetic; generation is a pure function of the column index (deterministic,
+  no RNG). Every high-cardinality column's value set is disjoint from all same-label
+  columns, making the value-level leakage guard provable rather than probabilistic.
 - No real patient records, financial data, or personally identifiable information.
-- Distribution across types: ssn(20), email(20), pan(20), iban(20), icd10(20),
-  iso_date(20), npi(20), cvv(10), mrn(40), health_plan_id(40), none(61).
+- Distribution across types: ssn(260), email(260), pan(260), iban(260), icd10(240),
+  iso_date(240), npi(240), cvv(120), mrn(300), health_plan_id(300), none(478).
 
 ---
 
@@ -180,33 +194,35 @@ threshold = 1/6 = 0.1667. At this threshold the model suppresses to `none`
 only when it is less than 16.67% confident in any PII class, which strongly
 biases toward recall.
 
-**Calibration and confidence bands (§A.4) -- PROVISIONAL:**
+**Calibration and confidence bands (§A.4):**
 
-Sigmoid calibration was used because the calibration fold contains ~46 samples
-(sklearn §1.16: isotonic requires >= ~1000).  Reliability curve and Brier score
-are recorded in `lightgbm-report.json`.
+Isotonic calibration was used (the expanded corpus provides sufficient calibration
+samples). Reliability curve and Brier score are recorded in `lightgbm-report.json`.
 
-Band thresholds are set from the held-out test set but must be treated as
-PROVISIONAL because the held-out fold is small (n=45) and cannot support narrow confidence intervals:
+Band composition and accuracy below are MEASURED on the held-out test fold
+(n=592) with the committed pack (via `predict_column`, the CI path):
 
-| Band | Proba threshold | Empirical accuracy (held-out) | n samples | 95% CI lower |
+| Band | Proba threshold | Held-out columns | Empirical accuracy | 95% CI lower (Wilson) |
 |---|---|---|---|---|
-| high | >= 0.95 | N/A -- NEVER TRIGGERED | 0 | N/A |
-| review | 0.70 -- 0.95 | 100% (13/13) | 13 | ~0.75 (Wilson) |
-| low | op-thresh -- 0.70 | 93.5% (43/46) | 46 | ~0.82 (Wilson) |
+| high | >= 0.95 | 541 | 100.0% (541/541) | 0.993 |
+| review | 0.70 -- 0.95 | 34 | 73.5% (25/34) | 0.569 |
+| low | op-thresh -- 0.70 | 17 | 29.4% (5/17) | 0.132 |
 
-The "high" band is currently unreachable: max calibrated probability for
-lgbm-v1 on the held-out set is < 0.75.  This is expected with sigmoid
-calibration at this corpus scale: the calibration mapping compresses LightGBM
-leaf probabilities toward 0.5, rarely producing outputs above 0.8.  The band
-threshold of 0.95 is retained as a forward-compatible definition for when the
-corpus expands and isotonic calibration becomes viable.
+Reading the bands: the **high** band is where the model is confident and correct
+(100% held-out; also 100% on the OOD slice at n=20 and the cryptic slice at
+n=178) -- treat it as auto-acceptable. The **review** band is the genuinely
+ambiguous middle a human should confirm (73.5%, just above the 0.70 floor the CI
+gate asserts, so the margin is thin). The **low** band is mostly wrong by design
+(29.4%) -- a low-confidence hint, not a claim.
 
-The MCE of 0.1695 reflects UNDERCONFIDENCE: the model assigns probabilities
-in the 0.5-0.73 range for columns it classifies with near-100% empirical
-accuracy.  A downstream operator can safely treat any prediction above the
-operating threshold (0.1667) as high-confidence on this corpus, though the
-"review" band label is technically correct per the probabilistic definition.
+Isotonic maps the low-entropy LightGBM leaf scores to sharp probabilities: 43% of
+held-out predictions land at *exactly* 1.0, and the median top probability is
+0.9854 on the held-out, OOD, and cryptic slices alike. A consequence is that the
+confidence score does NOT shift under distribution shift, so the band system
+cannot itself flag out-of-distribution input; the >= 0.95 "high"-band accuracy is
+validated in-distribution (synthetic), and only at n=20 on the OOD slice. The mean
+calibration error (MCE) of 0.0536 (down from 0.1695 under sigmoid) is an unweighted
+mean over per-class reliability curves on this in-distribution synthetic corpus.
 
 Test: `tests/snapshots/test_ml_lightgbm_golden.py::test_predict_column_band_accuracy`
 verifies the band-to-accuracy relationship holds on every CI run.
@@ -228,20 +244,18 @@ verifies the band-to-accuracy relationship holds on every CI run.
 
 ## 9. Caveats and Recommendations
 
-1. **CVV held-out support is small (n=2):** The CVV fix (non-overlapping value
-   ranges) gave 2 test-fold CVV samples.  Recall=1.00 is PROVISIONAL.  Expand
-   to 30+ CVV training columns to obtain a larger held-out sample.
+1. **CVV held-out support (n=25):** The CVV fix (non-overlapping value ranges)
+   now gives 25 test-fold CVV samples across the expanded corpus. Recall=1.00
+   is well-supported. Further expansion will continue to scale CVV coverage.
 
-2. **Confidence bands are PROVISIONAL:** The "high" band (>= 0.95) is never
-   triggered by lgbm-v1 because max calibrated probabilities are < 0.75.
-   The sigmoid calibration compresses outputs; bands can only be sharpened
-   by expanding the corpus and switching to isotonic calibration (>= ~1000
-   calibration samples, sklearn §1.16).  See §A.4 above for measured numbers.
-
-3. **MCE reflects underconfidence:** MCE is 0.1695 because the model assigns
-   probabilities of 0.5-0.73 to predictions that are empirically ~100%
-   correct.  This is not a safety hazard (no overconfident FPs) but should
-   be resolved with a larger corpus.
+2. **Confidence bands (measured, in-distribution):** Isotonic calibration makes
+   the >= 0.95 "high" band reachable and 100% accurate on the held-out fold
+   (541/541); the review band is 73.5% (25/34) and the low band 29.4% (5/17)
+   (§7). These are measured on in-distribution synthetic data. Isotonic
+   saturates -- 43% of held-out predictions sit at exactly 1.0 and the
+   top-probability median (0.9854) is identical across the held-out, OOD, and
+   cryptic slices -- so a high score does NOT signal out-of-distribution
+   robustness; treat the high band as auto-accept only for in-distribution input.
 
 4. **Provenance signing (ML3.2 -- DECIDED; DE-04 enforcement Option C):** The
    committed pack ships unsigned (`manifest_hmac: ""`) by design, because the
@@ -275,26 +289,16 @@ verifies the band-to-accuracy relationship holds on every CI run.
    > treated as fail-closed: the loader raises rather than silently loading
    > unverified, so a typo'd key disables ML instead of weakening it.
 
-5. **Corpus expansion:** 301 training columns is sufficient to demonstrate
-   the lift gate but is a small corpus. Pre-GA training should use a larger
-   synthetic corpus (500+ columns per type).
+3. **Corpus expansion:** The 2958-column corpus is sufficient to demonstrate
+   isotonic calibration and the lift gate. Pre-GA training should continue
+   expanding to 500+ columns per type for production-scale schema diversity.
 
-6. **On-prem only:** Never load this pack from an external or untrusted
+4. **On-prem only:** Never load this pack from an external or untrusted
    source. The SHA-256 check in `ModelPackLoader` is a tamper-detection
    mechanism, not an authentication scheme.
 
-7. **iso_date is trained-but-unevaluated:** The model is trained on 20 iso_date
-   columns, but due to the StratifiedGroupKFold reshuffle (induced by
-   scikit-learn version changes), the held-out test fold contains ZERO iso_date
-   columns. Therefore, iso_date has no held-out evaluation in this re-baseline,
-   and the CI retrain gate cannot detect iso_date regressions. To restore
-   iso_date coverage, expand the training corpus to ensure iso_date columns
-   land in the test fold with sufficient support.
-
-8. **OOD generalization regressed:** Out-of-distribution balanced_accuracy and
-   macro_recall both dropped from 1.0 to 0.8889 in this re-baseline. This
-   represents a genuine regression on OOD cryptic headers. Additionally, the
-   in-distribution balanced_accuracy reaching 1.0 reflects the smaller test
-   split (n=45 vs n=59 in the prior baseline), not a model improvement. Both
-   the OOD drop and the test-fold size reduction must be factored into any
-   confidence claim about this re-baseline.
+5. **OOD evaluation:** Out-of-distribution balanced_accuracy and macro_recall are
+   0.8611. This reflects genuine challenges on obfuscated formats (spaced PAN,
+   no-dash SSN) with cryptic headers. The gap suggests that production deployment
+   should pair this model with human review for columns with uncertain
+   header-content alignment.

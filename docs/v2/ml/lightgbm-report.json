@@ -1,12 +1,13 @@
 {
-  "balanced_accuracy": 1.0,
-  "calibration_method": "sigmoid",
+  "balanced_accuracy": 0.9636,
+  "calibration_method": "isotonic",
   "class_labels": [
     "cvv",
     "email",
     "health_plan_id",
     "iban",
     "icd10",
+    "iso_date",
     "mrn",
     "none",
     "npi",
@@ -15,7 +16,8 @@
   ],
   "confusion_matrix": [
     [
-      1,
+      25,
+      0,
       0,
       0,
       0,
@@ -28,10 +30,63 @@
     ],
     [
       0,
-      2,
+      56,
       0,
       0,
       0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    [
+      0,
+      0,
+      49,
+      0,
+      0,
+      0,
+      13,
+      0,
+      0,
+      0,
+      0
+    ],
+    [
+      0,
+      0,
+      0,
+      53,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    [
+      0,
+      0,
+      0,
+      0,
+      46,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    [
+      0,
+      0,
+      0,
+      0,
+      0,
+      46,
       0,
       0,
       0,
@@ -45,30 +100,7 @@
       0,
       0,
       0,
-      0,
-      0,
-      0,
-      0
-    ],
-    [
-      0,
-      0,
-      0,
-      2,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0
-    ],
-    [
-      0,
-      0,
-      0,
-      0,
-      7,
-      0,
+      44,
       0,
       0,
       0,
@@ -80,20 +112,9 @@
       0,
       0,
       0,
-      5,
       0,
       0,
-      0,
-      0
-    ],
-    [
-      0,
-      1,
-      2,
-      0,
-      0,
-      0,
-      6,
+      94,
       0,
       0,
       0
@@ -106,7 +127,8 @@
       0,
       0,
       0,
-      2,
+      0,
+      47,
       0,
       0
     ],
@@ -119,7 +141,8 @@
       0,
       0,
       0,
-      5,
+      0,
+      53,
       0
     ],
     [
@@ -132,44 +155,153 @@
       0,
       0,
       0,
-      4
+      0,
+      58
     ]
   ],
-  "false_negatives_list": [],
-  "false_positives_list": [
+  "false_negatives_list": [
     {
-      "column_id": "ext_none_ord1.order_id",
-      "error_type": "FP",
+      "column_id": "ext_mrn_202.e0",
+      "error_type": "FN",
       "predicted_label": "health_plan_id",
-      "truth_label": "none"
+      "truth_label": "mrn"
     },
     {
-      "column_id": "ext_none_ord2.order_number",
-      "error_type": "FP",
+      "column_id": "ext_mrn_210.m0",
+      "error_type": "FN",
       "predicted_label": "health_plan_id",
-      "truth_label": "none"
+      "truth_label": "mrn"
     },
     {
-      "column_id": "ext_none_sz2.record_count",
-      "error_type": "FP",
-      "predicted_label": "email",
-      "truth_label": "none"
+      "column_id": "ext_mrn_226.f10",
+      "error_type": "FN",
+      "predicted_label": "health_plan_id",
+      "truth_label": "mrn"
+    },
+    {
+      "column_id": "ext_mrn_238.e0",
+      "error_type": "FN",
+      "predicted_label": "health_plan_id",
+      "truth_label": "mrn"
+    },
+    {
+      "column_id": "ext_mrn_248.f14",
+      "error_type": "FN",
+      "predicted_label": "health_plan_id",
+      "truth_label": "mrn"
+    },
+    {
+      "column_id": "ext_mrn_257.col_f",
+      "error_type": "FN",
+      "predicted_label": "health_plan_id",
+      "truth_label": "mrn"
+    },
+    {
+      "column_id": "ext_mrn_268.q0",
+      "error_type": "FN",
+      "predicted_label": "health_plan_id",
+      "truth_label": "mrn"
+    },
+    {
+      "column_id": "ext_mrn_297.col_j",
+      "error_type": "FN",
+      "predicted_label": "health_plan_id",
+      "truth_label": "mrn"
+    },
+    {
+      "column_id": "ext_hp_207.col_j",
+      "error_type": "FN",
+      "predicted_label": "mrn",
+      "truth_label": "health_plan_id"
+    },
+    {
+      "column_id": "ext_hp_210.m0",
+      "error_type": "FN",
+      "predicted_label": "mrn",
+      "truth_label": "health_plan_id"
+    },
+    {
+      "column_id": "ext_hp_215.col_r",
+      "error_type": "FN",
+      "predicted_label": "mrn",
+      "truth_label": "health_plan_id"
+    },
+    {
+      "column_id": "ext_hp_236.f02",
+      "error_type": "FN",
+      "predicted_label": "mrn",
+      "truth_label": "health_plan_id"
+    },
+    {
+      "column_id": "ext_hp_243.col_j",
+      "error_type": "FN",
+      "predicted_label": "mrn",
+      "truth_label": "health_plan_id"
+    },
+    {
+      "column_id": "ext_hp_254.f02",
+      "error_type": "FN",
+      "predicted_label": "mrn",
+      "truth_label": "health_plan_id"
+    },
+    {
+      "column_id": "ext_hp_266.f14",
+      "error_type": "FN",
+      "predicted_label": "mrn",
+      "truth_label": "health_plan_id"
+    },
+    {
+      "column_id": "ext_hp_270.a0",
+      "error_type": "FN",
+      "predicted_label": "mrn",
+      "truth_label": "health_plan_id"
+    },
+    {
+      "column_id": "ext_hp_272.f02",
+      "error_type": "FN",
+      "predicted_label": "mrn",
+      "truth_label": "health_plan_id"
+    },
+    {
+      "column_id": "ext_hp_286.q0",
+      "error_type": "FN",
+      "predicted_label": "mrn",
+      "truth_label": "health_plan_id"
+    },
+    {
+      "column_id": "ext_hp_287.col_r",
+      "error_type": "FN",
+      "predicted_label": "mrn",
+      "truth_label": "health_plan_id"
+    },
+    {
+      "column_id": "ext_hp_290.f02",
+      "error_type": "FN",
+      "predicted_label": "mrn",
+      "truth_label": "health_plan_id"
+    },
+    {
+      "column_id": "ext_hp_294.f06",
+      "error_type": "FN",
+      "predicted_label": "mrn",
+      "truth_label": "health_plan_id"
     }
   ],
+  "false_positives_list": [],
   "feature_schema_version": "ml1-v1",
   "fn_fp_cost_ratio": 5,
   "lift": {
-    "baseline_macro_recall": 0.725,
+    "baseline_macro_recall": 0.7642,
     "gate_met": true,
     "gate_threshold_ppt": 5.0,
-    "lift_ppt": 27.5,
-    "model_macro_recall": 1.0
+    "lift_ppt": 19.95,
+    "model_macro_recall": 0.9637
   },
-  "macro_f2": 0.9846,
-  "n_test": 45,
-  "n_train": 246,
-  "ood_balanced_accuracy": 0.8889,
-  "ood_macro_recall": 0.8889,
+  "macro_f2": 0.9633,
+  "n_test": 592,
+  "n_train": 2366,
+  "ood_balanced_accuracy": 0.8611,
+  "ood_macro_recall": 0.8611,
   "operating_threshold": 0.1667,
   "per_class": [
     {
@@ -179,28 +311,28 @@
       "field_type": "cvv",
       "precision": 1.0,
       "recall": 1.0,
-      "support": 1,
-      "true_positives": 1
+      "support": 25,
+      "true_positives": 25
     },
     {
-      "f2": 0.9091,
+      "f2": 1.0,
       "false_negatives": 0,
-      "false_positives": 1,
+      "false_positives": 0,
       "field_type": "email",
-      "precision": 0.6667,
+      "precision": 1.0,
       "recall": 1.0,
-      "support": 2,
-      "true_positives": 2
+      "support": 56,
+      "true_positives": 56
     },
     {
-      "f2": 0.9524,
-      "false_negatives": 0,
-      "false_positives": 2,
+      "f2": 0.8033,
+      "false_negatives": 13,
+      "false_positives": 8,
       "field_type": "health_plan_id",
-      "precision": 0.8,
-      "recall": 1.0,
-      "support": 8,
-      "true_positives": 8
+      "precision": 0.8596,
+      "recall": 0.7903,
+      "support": 62,
+      "true_positives": 49
     },
     {
       "f2": 1.0,
@@ -209,8 +341,8 @@
       "field_type": "iban",
       "precision": 1.0,
       "recall": 1.0,
-      "support": 2,
-      "true_positives": 2
+      "support": 53,
+      "true_positives": 53
     },
     {
       "f2": 1.0,
@@ -219,18 +351,28 @@
       "field_type": "icd10",
       "precision": 1.0,
       "recall": 1.0,
-      "support": 7,
-      "true_positives": 7
+      "support": 46,
+      "true_positives": 46
     },
     {
       "f2": 1.0,
       "false_negatives": 0,
       "false_positives": 0,
-      "field_type": "mrn",
+      "field_type": "iso_date",
       "precision": 1.0,
       "recall": 1.0,
-      "support": 5,
-      "true_positives": 5
+      "support": 46,
+      "true_positives": 46
+    },
+    {
+      "f2": 0.8302,
+      "false_negatives": 8,
+      "false_positives": 13,
+      "field_type": "mrn",
+      "precision": 0.7719,
+      "recall": 0.8462,
+      "support": 52,
+      "true_positives": 44
     },
     {
       "f2": 1.0,
@@ -239,8 +381,8 @@
       "field_type": "npi",
       "precision": 1.0,
       "recall": 1.0,
-      "support": 2,
-      "true_positives": 2
+      "support": 47,
+      "true_positives": 47
     },
     {
       "f2": 1.0,
@@ -249,8 +391,8 @@
       "field_type": "pan",
       "precision": 1.0,
       "recall": 1.0,
-      "support": 5,
-      "true_positives": 5
+      "support": 53,
+      "true_positives": 53
     },
     {
       "f2": 1.0,
@@ -259,15 +401,15 @@
       "field_type": "ssn",
       "precision": 1.0,
       "recall": 1.0,
-      "support": 4,
-      "true_positives": 4
+      "support": 58,
+      "true_positives": 58
     }
   ],
   "reliability": {
-    "brier_score": 0.0113,
-    "mean_calibration_error": 0.1695,
+    "brier_score": 0.0043,
+    "mean_calibration_error": 0.0536,
     "n_bins": 10
   },
   "training_seed": 42,
-  "weighted_f2": 0.9844
+  "weighted_f2": 0.9578
 }

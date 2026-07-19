@@ -315,9 +315,14 @@ def test_predict_column_band_accuracy() -> None:
     scikit-learn version).  The test asserts the minimum floor for each band:
 
       high   (proba >= 0.95): empirical accuracy >= 0.95.
-              For lgbm-v1, this band is currently never triggered (max
-              calibrated probability observed on the held-out set is < 0.73).
-      review (0.70 <= proba < 0.95): empirical accuracy >= 0.70.
+              For lgbm-v1 with isotonic calibration on the expanded corpus,
+              this band fires and dominates: measured 541/541 = 100% on the
+              held-out fold.
+      review (0.70 <= proba < 0.95): empirical accuracy >= 0.70. Measured
+              review-band accuracy is 73.5% (25/34) -- a THIN margin over the
+              0.70 floor asserted below, so a fold shift could turn this red.
+              Treat a future failure here as a signal to investigate, not to
+              silently loosen the floor.
       low    (below 0.70, above operating threshold): no floor asserted
               (not a confidence claim; shown for observability only).
 
@@ -333,7 +338,8 @@ def test_predict_column_band_accuracy() -> None:
         pytest.skip("lgbm-v1 pack not found; run UPDATE_SNAPSHOTS=1 first")
 
     from decoy_engine.storm.eval.bands import HIGH_PRECISION_FLOOR, REVIEW_PRECISION_FLOOR
-    from decoy_engine.storm.eval.fixtures import NO_DETECTOR, build_extended_fixtures
+    from decoy_engine.storm.eval.corpus import build_extended_fixtures
+    from decoy_engine.storm.eval.fixtures import NO_DETECTOR
     from decoy_engine.storm.eval.split import held_out_split
     from decoy_engine.storm.model_pack.trainer import (
         TRAIN_SEED,

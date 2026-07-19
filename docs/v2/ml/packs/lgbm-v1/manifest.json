@@ -1,6 +1,6 @@
 {
-  "calibration_method": "sigmoid",
-  "eval_report_hash": "140a224bf5cbec0117549999d1e7b74c485b6b0bd92acaa24abd5dea58b1602f",
+  "calibration_method": "isotonic",
+  "eval_report_hash": "ff2d65fcd6e6e7aa517baff9f37fdbebb345d3d4c5441ebefecb32c3def4e8a0",
   "extra": {},
   "feature_schema_version": "ml1-v1",
   "format_version": "decoy-model-pack/v1",
@@ -8,7 +8,7 @@
   "manifest_hmac": "",
   "operating_threshold": 0.1667,
   "pack_id": "lgbm-v1",
-  "sha256": "14a358d689ceea61c82b1668147e75b91771a5b3aab71647072dde33fc5669f1",
+  "sha256": "a69d98f728fc361b3aaef1c45a75be288284fc0f7e5e7eb998559280c1f46792",
   "signing_key_ref": "unsigned",
   "training_seed": 42,
   "version": "0.1.0"
