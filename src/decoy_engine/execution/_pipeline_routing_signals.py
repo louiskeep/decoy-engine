@@ -525,6 +525,11 @@ def resolve_execution_route(
     imports `decide_execution_route` lazily below to avoid a module-level
     import cycle: `_pipeline_routing` already imports this module's
     signals at its own top level.
+
+    OOC-D: also the one call site for `enforce_ooc_disk_preflight` -- run
+    AFTER `decide_execution_route` returns, only when it picked
+    `"out_of_core"`, so a disk-insufficient job fails closed here rather than
+    mid-run; see `out_of_core._spill_estimate`'s module docstring.
     """
     from decoy_engine.execution._pipeline_routing import decide_execution_route
 
@@ -556,7 +561,7 @@ def resolve_execution_route(
         config=config,
         engine_version=engine_version,
     )
-    return decide_execution_route(
+    route, route_reason = decide_execution_route(
         profile,
         has_generate_table=has_generate_table,
         has_mask_table=has_mask_table,
@@ -577,3 +582,14 @@ def resolve_execution_route(
         use_probe_routing=use_probe_routing,
         probe_recovers_full_frame=probe_recovers_full_frame,
     )
+    if route == "out_of_core":
+        # OOC-D fail-closed disk preflight: a BACKSTOP for jobs `decide_
+        # execution_route` already chose out_of_core for, never a rerouting
+        # decision -- the OOC-incompatible reject branches above (cyclic FK,
+        # unsupported strategy) are untouched and never reach here.
+        from decoy_engine.execution.out_of_core._spill_estimate import (
+            enforce_ooc_disk_preflight,
+        )
+
+        enforce_ooc_disk_preflight(profile, table_kinds=table_kinds)
+    return route, route_reason

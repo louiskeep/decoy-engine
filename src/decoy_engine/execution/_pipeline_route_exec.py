@@ -16,6 +16,7 @@ re-decide).
 
 from __future__ import annotations
 
+import shutil
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
@@ -42,6 +43,16 @@ __all__ = [
     "run_out_of_core_route",
     "run_sequential_route",
 ]
+
+# OOC-D: the runtime temp-disk cap (`_budget.check_temp_disk_budget`, enforced
+# inside `run_fk_out_of_core` at each table boundary) is sized off free disk
+# at dispatch time, not the whole free amount -- concurrent processes/jobs on
+# the same host are also writing to the same filesystem, so reserving a slice
+# rather than claiming 100% of what `shutil.disk_usage` reports right now
+# leaves headroom for exactly that concurrent writer. Matches the spirit of
+# `_budget.py`'s own conservative-fraction conventions (`_HOST_RAM_FRACTION`
+# etc.) applied to disk instead of memory.
+_TEMP_DISK_SAFETY_FRACTION = 0.9
 
 
 def execution_telemetry(
@@ -198,6 +209,23 @@ def run_out_of_core_route(
     newly failing a job full-frame would have completed; a caller that needs
     a hard cap passes an explicit `budget_bytes` (which never falls back).
 
+    Disk (OOC-D): `temp_disk_budget_bytes` is threaded into `run_fk_out_of_core`
+    as `_TEMP_DISK_SAFETY_FRACTION` (0.9) of the free space `shutil.disk_usage`
+    reports at `_spill_estimate.default_ooc_temp_root()` -- the SAME root the
+    runner's own `tempfile.mkdtemp` default lands under absent an explicit
+    `temp_dir`, so this budget and the runner's actual spill target are the
+    same filesystem. This is what makes the runner's existing `check_temp_
+    disk_budget` runtime cap (already called at each table boundary once a
+    budget is non-`None`) actually enforced on THIS route -- before OOC-D it
+    was only ever exercised by callers that pass `temp_disk_budget_bytes`
+    directly. An undetectable free-disk count (`OSError`, e.g. an unsupported
+    filesystem) leaves the budget `None` rather than newly failing a job the
+    route would otherwise have run -- the same fail-open posture the
+    `memory_limit` resolution above takes on an undetectable host-RAM read.
+    The fail-CLOSED half of OOC-D is the separate up-front preflight
+    (`_spill_estimate.enforce_ooc_disk_preflight`), wired into `_pipeline_
+    routing_signals.resolve_execution_route` before this function ever runs.
+
     Residency: with a `sink` the runner streams bounded batches (outputs `{}`,
     the sink holds the deliverable); without one it reassembles resident tables
     (still bounded per-table on the DuckDB side, but the Python outputs are held
@@ -222,6 +250,7 @@ def run_out_of_core_route(
     """
     from decoy_engine.execution._sequential import table_topo_order
     from decoy_engine.execution.out_of_core import resolve_ooc_memory_limit, run_fk_out_of_core
+    from decoy_engine.execution.out_of_core._spill_estimate import default_ooc_temp_root
 
     resolved_sources = sources
     if source_loader is not None:
@@ -253,6 +282,21 @@ def run_out_of_core_route(
         if budget_bytes is not None:
             raise
 
+    # OOC-D: size the runtime spill cap off free disk at THIS root -- the same
+    # one `run_fk_out_of_core` spills under by default -- so `check_temp_disk_
+    # budget` (already called at each table boundary inside the runner) is
+    # enforced on the pipeline path, not just callers that pass this directly.
+    temp_disk_budget_bytes: int | None = None
+    try:
+        free_bytes = shutil.disk_usage(default_ooc_temp_root()).free
+        temp_disk_budget_bytes = int(free_bytes * _TEMP_DISK_SAFETY_FRACTION)
+    except OSError:
+        # Undetectable free-disk count: leave the runtime cap unset rather than
+        # newly blocking a job the route would otherwise have run. The
+        # fail-CLOSED half of OOC-D is the separate preflight
+        # (`enforce_ooc_disk_preflight`), already run before this function.
+        pass
+
     ooc_result = run_fk_out_of_core(
         plan,
         resolved_sources,
@@ -261,6 +305,7 @@ def run_out_of_core_route(
         sink=sink,
         memory_limit=memory_limit,
         batch_rows=batch_rows,
+        temp_disk_budget_bytes=temp_disk_budget_bytes,
         unconfigured_column_policy=unconfigured_column_policy,
         key_provider=key_provider,
     )

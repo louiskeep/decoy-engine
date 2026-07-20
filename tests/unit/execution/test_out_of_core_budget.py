@@ -431,8 +431,11 @@ class TestCgroupNestedHierarchyMin:
 
 
 class TestDiskSpillPreflight:
-    """Additive preflight (not yet wired into routing): does the scratch
-    path's free disk cover a predicted spill?"""
+    """Does the scratch path's free disk cover a predicted spill? Pure
+    check-the-numbers unit here; the estimator (`predict_ooc_spill_bytes`)
+    and the routing call site (`enforce_ooc_disk_preflight`, OOC-D) live in
+    the sibling `out_of_core/_spill_estimate.py` and are covered in
+    `test_out_of_core_spill_preflight.py`."""
 
     def test_passes_with_headroom_when_free_space_covers_the_spill(self, tmp_path) -> None:
         result = budget_mod.check_disk_spill_preflight(tmp_path, predicted_spill_bytes=1024)
