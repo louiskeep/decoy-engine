@@ -1,36 +1,38 @@
-"""Conservative disk-footprint upper bound + fail-closed preflight for the
-out-of-core route (OOC-D: disk-aware out-of-core routing).
+"""Conservative disk-footprint estimate + ADVISORY (warn-only) preflight for
+the out-of-core route (OOC-D: disk-aware out-of-core routing).
 
 Split out from `_budget.py` rather than appended there: `_budget.py` was
 already within a handful of lines of the 600-LOC orchestration cap (CLAUDE.md
 "Engineering best practices"), so a sibling module is the correct move (per
-that same doc's guidance), not a bloat. This module owns the piece
-`_budget.py`'s `check_disk_spill_preflight` docstring flagged as future work:
-"once a predicted-spill estimator exists, a caller checks this before
-committing to the out-of-core route." `predict_ooc_disk_bytes` is that
-estimator; `enforce_ooc_disk_preflight` is the router's call site (wired into
-`_pipeline_routing_signals.resolve_execution_route`); `default_ooc_temp_root`
-is the single source of truth for where the route's scratch directory lands
-absent an explicit `temp_dir`, shared with `_pipeline_route_exec.run_out_of_
-core_route`'s runtime-budget threading so the preflight and the runtime cap
-check the SAME filesystem.
+that same doc's guidance), not a bloat. `predict_ooc_disk_bytes` is the
+schema-derived footprint estimator; `enforce_ooc_disk_preflight` is the
+router's call site (wired into `_pipeline_routing_signals.resolve_execution_
+route`) -- it WARNS, it does not reject; `default_ooc_temp_root` is the single
+source of truth for where the route's scratch directory lands absent an
+explicit `temp_dir`, shared with `_pipeline_route_exec.run_out_of_core_route`'s
+runtime-budget threading so the advisory and the runtime cap check the SAME
+filesystem.
 
-WHY A CONSERVATIVE UPPER BOUND (not a calibrated point estimate): this gate
-is fail-closed. Under-predicting the disk a job needs lets it start and then
-die mid-run with a full temp disk -- the runner's own `check_temp_disk_budget`
-only catches that AFTER the fact, at the next table boundary, with wall-clock
-and partial spill already burned. Over-predicting only costs an early, clean,
-actionable reject before any work starts. So this estimator is deliberately an
-UPPER bound: it should fail-fast ONLY when even the worst case cannot fit
-("definitely doomed"). Jobs that pass but run tight are caught exactly by the
-runtime `check_temp_disk_budget` that `run_out_of_core_route` now threads --
-so over-rejection is minimized and under-admission (the OOM/disk-full risk) is
-eliminated. This mirrors `_mem_estimate.fits`'s own asymmetric posture ("a
-false 'fits' risks an OOM kill... a false 'doesn't fit' only costs a
-downgrade") and, critically, does NOT repeat the pooled-fixture calibration
-error `_mem_estimate.py` already documents (its `K_FULL_FRAME_MEASURED_POOLED`
-= 1.156 "NOT schema-invariant" note): a factor fit to one fixture's
-dictionary-compression ratio is not a bound for high-cardinality data.
+WHY ADVISORY, NOT A REJECT (the enforcer is the runtime cap): `decide_
+execution_route` picks the out-of-core route precisely BECAUSE the job is too
+big for full-frame, so a hard disk reject here would be TERMINAL -- there is no
+fallback route to fall to. Combined with a deliberately conservative
+over-approximation (a star schema can over-predict several-fold), a reject
+would make FEASIBLE jobs impossible. So the real no-OOM guarantee is NOT this
+preflight: it is the runtime `check_temp_disk_budget` that `run_out_of_core_
+route` threads into `run_fk_out_of_core`, which fires at EVERY table boundary
+and aborts cleanly (rolling back the transactional sink) if disk actually runs
+short. This module only surfaces the estimate up front, as a `logging.WARNING`,
+for observability -- the job always proceeds to that enforcer.
+
+WHY A CONSERVATIVE OVER-ESTIMATE (not a calibrated point estimate): the
+advisory should over-, not under-, predict, so an operator gets a heads-up
+before a tight run rather than false reassurance. The estimate is an UPPER
+bound built from real profiled/config widths, and it deliberately does NOT
+repeat the pooled-fixture calibration error `_mem_estimate.py` already
+documents (its `K_FULL_FRAME_MEASURED_POOLED` = 1.156 "NOT schema-invariant"
+note): a factor fit to one fixture's dictionary-compression ratio is not a
+bound for high-cardinality data.
 
 MASKED-SIDE WIDTHS (not source widths): what stages/commits to disk is the
 MASKED value, not the source. A `hash`-masked int64 key sources 8 bytes but
@@ -64,22 +66,32 @@ independent terms, EACH scaled by ITS OWN table's row count (never a
 cross-product of all key widths x all rows, which would inflate quadratically
 in schema breadth):
 
-  SPILL (transient temp, released at job end) =
-      sum over tables of (
-          (row_nr_bytes + sum over that table's FK-key columns of
-              staged_key_token_bytes(masked_width))
-          * table_rows
-      ) * max(1, max_per_table_edge_count) * SPILL_OVERHEAD
+  SPILL (transient temp, released at job end) = SPILL_OVERHEAD * (
+      base + parent_relations * max(1, max_per_table_edge_count)
+  ), where
 
+      base = sum over tables of (
+          (row_nr_bytes + sum over that table's CHILD-side FK keys of
+              staged_key_token_bytes(masked_width)) * table_rows )
+      parent_relations = sum over tables of (
+          sum over that table's PARENT-side keys of
+              staged_key_token_bytes(masked_width) * table_rows )
+
+    - Each table stages its OWN keys exactly once (`_runner.py`, one
+      `staged/<table>/masked_keys.parquet` per table), so the child-side
+      staged-key `base` term is NOT multiplied -- this is the fix for the k^2
+      star blowup a flat global multiplier caused. The concurrency multiplier
+      applies ONLY to `parent_relations`: a fan-in child holds several
+      `relations/<parent>` parent-key relations at once, and those are the
+      (typically small) dimension/parent tables sized by the PARENT's rows.
     - staged_key_token_bytes = masked_width + FK_TOKEN_FRAMING_BYTES, floored
       at MIN_KEY_TOKEN_BYTES (covers the ~28-byte int-key token). ROW_NR_BYTES
       (8) is added once per table with staged keys.
-    - max_per_table_edge_count: each incoming FK edge holds its own parent-key
-      temp table and each outgoing edge stages its own relation, all
-      concurrently for the busiest table -- a star/fact table referencing k
-      dimensions carries a k multiplier. From `max_per_table_edge_count`, the
-      same edge-fan-in `_pipeline_route_exec._max_concurrent_ooc_instances`
-      reasons about for memory.
+    - max_per_table_edge_count: the busiest table's incoming+outgoing edge
+      count, from `max_per_table_edge_count` -- the same edge-fan-in
+      `_pipeline_route_exec._max_concurrent_ooc_instances` reasons about for
+      memory. Applied to `parent_relations` only, it is a conservative
+      over-estimate on the small parent side, never the large fact-key side.
     - SPILL_OVERHEAD: DuckDB's larger-than-memory hash join / group-by spills
       radix-PARTITIONED copies of its keys to `temp_directory` (DuckDB "Memory
       Management" / spilling docs), and the runner ADDITIONALLY stages a
@@ -133,6 +145,7 @@ them mid-dispatch -- documented, not defended against.
 
 from __future__ import annotations
 
+import logging
 import os
 import tempfile
 from collections import defaultdict
@@ -140,9 +153,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._mem_estimate import _FIXED_WIDTH_DTYPE_BYTES, is_fixed_width_dtype
 from decoy_engine.execution.out_of_core._budget import (
+    DiskSpillPreflight,
     _nearest_existing_ancestor,
     check_disk_spill_preflight,
 )
@@ -150,6 +163,8 @@ from decoy_engine.execution.out_of_core._budget import (
 if TYPE_CHECKING:
     from decoy_engine.profile._types import ColumnProfile, Profile
     from decoy_engine.relationships import RelationshipGraph
+
+_logger = logging.getLogger(__name__)
 
 __all__ = [
     "DISK_SAFETY_MARGIN",
@@ -178,9 +193,9 @@ SPILL_OVERHEAD = 2.0
 # strategy whose output width is not derivable from config). 256 bytes covers
 # the ubiquitous SQL VARCHAR(255) free-text convention with a byte to spare and
 # is an order of magnitude above ID/code widths, so a mis-sized ID never sneaks
-# under it. NEVER a small default: for a fail-closed gate the unknown-width
-# fallback must OVER-estimate (a 500-byte notes column priced at a 12-byte
-# minimum was the exact under-prediction the reviewers blocked).
+# under it. NEVER a small default: the advisory must OVER-estimate an unknown
+# width (a 500-byte notes column priced at a 12-byte minimum was the exact
+# under-prediction the reviewers blocked).
 UNKNOWN_WIDTH_CEILING_BYTES = 256
 
 # `derive(...).hex()` is a 32-byte HMAC-SHA256 digest -> 64 hex chars
@@ -291,10 +306,15 @@ def _strategy_output_width_bytes(strategy: str | None, params: dict[str, Any]) -
     if strategy == "redact":
         token = params.get("redact_with", _DEFAULT_REDACT_WITH)
         return float(len(str(token))) if token is not None else 0.0
+    if strategy == "categorical":
+        # The output is one declared category label; the widest one is the exact
+        # upper bound (a label may legitimately exceed the free-text ceiling).
+        categories = params.get("categories") or []
+        return max((float(len(str(c))) for c in categories), default=0.0)
     if strategy is None or strategy in _WIDTH_PRESERVING_STRATEGIES:
         return 0.0
-    # text_redact / text_mask / categorical / code_set / bucket_perturb / any
-    # future strategy: output width not cleanly derivable from config -> ceiling.
+    # text_redact / text_mask / code_set / bucket_perturb / any future strategy:
+    # output width not cleanly derivable from config -> ceiling.
     return float(UNKNOWN_WIDTH_CEILING_BYTES)
 
 
@@ -336,17 +356,27 @@ def max_per_table_edge_count(graph: RelationshipGraph) -> int:
     return max(1, max(incoming[table] + outgoing[table] for table in tables))
 
 
-def _fk_key_columns(graph: RelationshipGraph) -> set[tuple[str, str]]:
-    """Every `(table, column)` that is an FK-join key -- both the parent-key
-    and child-FK sides of every edge. These are the columns `_stage.py` /
-    `_relation.py` actually stage to the temp filesystem."""
-    keys: set[tuple[str, str]] = set()
+def _split_fk_key_columns(
+    graph: RelationshipGraph,
+) -> tuple[set[tuple[str, str]], set[tuple[str, str]]]:
+    """`(parent_side, child_side)` FK-key `(table, column)` sets.
+
+    Child-side keys (a table's own FK columns referencing a parent) stage once
+    per table into `staged/<table>/masked_keys.parquet` -- sized by the table's
+    own rows, no concurrency. Parent-side keys (a table referenced by children)
+    stage as `relations/<parent>` parent-key relations, of which several can be
+    held CONCURRENTLY by a fan-in child -- so the concurrency multiplier applies
+    only to this side (see `predict_ooc_disk_bytes`), never to the child's
+    one-time staged keys. Splitting the two is what removes the k^2 star blowup.
+    """
+    parent_side: set[tuple[str, str]] = set()
+    child_side: set[tuple[str, str]] = set()
     for edge in graph.edges:
         for column in edge.parent_columns:
-            keys.add((edge.parent_table, column))
+            parent_side.add((edge.parent_table, column))
         for column in edge.child_columns:
-            keys.add((edge.child_table, column))
-    return keys
+            child_side.add((edge.child_table, column))
+    return parent_side, child_side
 
 
 def _strategy_index(config: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]]:
@@ -389,24 +419,33 @@ def predict_ooc_disk_bytes(
     """
     mask_tables = [table for table in profile.tables if table_kinds.get(table.name) == "mask"]
     strategy_index = _strategy_index(config)
-    key_columns = _fk_key_columns(graph)
+    parent_side, child_side = _split_fk_key_columns(graph)
     edge_multiplicity = max_per_table_edge_count(graph)
 
     def masked_width(table_name: str, col: ColumnProfile) -> float:
         return _masked_disk_width_bytes(col, strategy_index.get((table_name, col.name)))
 
-    # SPILL: per-table key tokens x that table's own rows (never a cross-product
-    # of all key widths x all rows), then the edge fan-in and overhead.
-    spill = 0.0
+    # SPILL, two contributions each scaled by ITS OWN table's rows:
+    #   base -- each table's one-time staged key columns (child-side FK keys) +
+    #           its `__decoy_row_nr`, staged ONCE, no concurrency.
+    #   parent_relations -- parent-key relations (parent-side keys), of which a
+    #           fan-in child holds several concurrently, so ONLY this term takes
+    #           the edge multiplier. This keeps a star's large fact-key staging
+    #           at 1x (the child term) instead of the old k^2 flat-scalar blowup.
+    spill_base = 0.0
+    spill_parent_relations = 0.0
     for table in mask_tables:
-        key_cols = [col for col in table.columns if (table.name, col.name) in key_columns]
-        if not key_cols:
+        child_cols = [c for c in table.columns if (table.name, c.name) in child_side]
+        parent_cols = [c for c in table.columns if (table.name, c.name) in parent_side]
+        if not child_cols and not parent_cols:
             continue
-        table_key_bytes = float(ROW_NR_BYTES) + sum(
-            _staged_key_token_bytes(masked_width(table.name, col)) for col in key_cols
+        child_tokens = sum(_staged_key_token_bytes(masked_width(table.name, c)) for c in child_cols)
+        parent_tokens = sum(
+            _staged_key_token_bytes(masked_width(table.name, c)) for c in parent_cols
         )
-        spill += table_key_bytes * table.row_count
-    spill_bytes = int(spill * edge_multiplicity * SPILL_OVERHEAD)
+        spill_base += (float(ROW_NR_BYTES) + child_tokens) * table.row_count
+        spill_parent_relations += parent_tokens * table.row_count
+    spill_bytes = int((spill_base + spill_parent_relations * edge_multiplicity) * SPILL_OVERHEAD)
 
     # OUTPUT: full masked row width x that table's own rows.
     output_bytes = 0
@@ -483,49 +522,53 @@ def enforce_ooc_disk_preflight(
     table_kinds: dict[str, str],
     config: dict[str, Any],
     temp_dir: Path | None = None,
-) -> None:
-    """Fail-closed disk gate for a job just routed to `out_of_core`
+) -> DiskSpillPreflight | None:
+    """ADVISORY disk check for a job just routed to `out_of_core`
     (`_pipeline_routing_signals.resolve_execution_route`'s one call site,
     checked AFTER `decide_execution_route` has already picked the route).
 
-    No-op when there is no mask table to price: every `decide_execution_route`
-    branch that returns `"out_of_core"` already implies `has_mask_table`, so
-    this is belt-and-suspenders, not a live skip.
+    This does NOT reject and NEVER raises. `decide_execution_route` picked the
+    out-of-core route precisely because the job is too big for full-frame, so a
+    hard reject here would be TERMINAL -- there is no fallback route -- and the
+    estimate is a deliberate over-approximation (a star schema can over-predict
+    several-fold), which would make FEASIBLE jobs impossible. The real no-OOM
+    guarantee is the runtime `check_temp_disk_budget`, which `run_out_of_core_
+    route` threads into the runner and which fires at every table boundary,
+    aborting cleanly (and rolling back the transactional sink) if disk actually
+    runs short. So this preflight only WARNS: it surfaces the disk estimate up
+    front for observability while letting the job proceed to that enforcer.
 
-    This is a BACKSTOP for OOC-ELIGIBLE jobs ONLY: it runs strictly after
-    `decide_execution_route` has already chosen `out_of_core` for THIS job, so
-    it can never reroute an OOC-INCOMPATIBLE job -- those are rejected earlier,
-    inside `decide_execution_route` itself (the cyclic-FK / unsupported-strategy
-    branches), a code path this function never touches and never runs for.
+    No-op (returns `None`) when there is no mask table to price. Otherwise
+    computes the conservative footprint, and when it does not fit the free disk
+    emits a `logging.WARNING` with the actionable payload (predicted GiB, free
+    GiB, temp root, row count). Returns the `DiskSpillPreflight` result either
+    way so a caller can inspect the advisory.
 
-    Raises `ExecutionError` (`out_of_core_disk_preflight_insufficient`) with an
-    ACTIONABLE message -- the predicted GiB, the checked directory, the row
-    count, and the free GiB actually available -- when the conservative
-    worst-case footprint does not fit, so an operator reads exactly what to do
-    (free disk space, or reduce the row count). Because the estimate is an
-    UPPER bound, reaching this raise means even the worst case is doomed; a job
-    that passes but runs tight is caught by the runtime `check_temp_disk_budget`
-    instead.
+    A BACKSTOP for OOC-ELIGIBLE jobs ONLY: it runs strictly after
+    `decide_execution_route` has already chosen `out_of_core`, so it never
+    touches the OOC-INCOMPATIBLE reject branches (cyclic FK / unsupported
+    strategy) inside `decide_execution_route` itself.
     """
     mask_tables = [table for table in profile.tables if table_kinds.get(table.name) == "mask"]
     if not mask_tables:
-        return
+        return None
     root = temp_dir if temp_dir is not None else default_ooc_temp_root()
     include_output = _output_shares_temp_filesystem(config, root)
     prediction = predict_ooc_disk_bytes(
         profile, graph=graph, table_kinds=table_kinds, config=config, include_output=include_output
     )
     result = check_disk_spill_preflight(root, predicted_spill_bytes=prediction.total_bytes)
-    if result.ok:
-        return
-    total_rows = sum(table.row_count for table in mask_tables)
-    predicted_gib = result.predicted_bytes / (1024**3)
-    free_gib = result.free_bytes / (1024**3)
-    raise ExecutionError(
-        code="out_of_core_disk_preflight_insufficient",
-        message=(
-            f"out-of-core route needs ~{predicted_gib:.1f} GiB free temp disk at "
-            f"{root} for {total_rows:,} rows, but only {free_gib:.1f} GiB is "
-            "available; free disk space or reduce the row count."
-        ),
-    )
+    if not result.ok:
+        total_rows = sum(table.row_count for table in mask_tables)
+        predicted_gib = result.predicted_bytes / (1024**3)
+        free_gib = result.free_bytes / (1024**3)
+        _logger.warning(
+            "out-of-core disk advisory: estimated ~%.1f GiB temp disk for %s rows at %s, "
+            "only %.1f GiB free; the job will proceed and abort cleanly at a table boundary "
+            "if disk runs short.",
+            predicted_gib,
+            f"{total_rows:,}",
+            root,
+            free_gib,
+        )
+    return result

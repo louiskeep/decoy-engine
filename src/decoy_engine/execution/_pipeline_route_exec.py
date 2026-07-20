@@ -222,9 +222,11 @@ def run_out_of_core_route(
     filesystem) leaves the budget `None` rather than newly failing a job the
     route would otherwise have run -- the same fail-open posture the
     `memory_limit` resolution above takes on an undetectable host-RAM read.
-    The fail-CLOSED half of OOC-D is the separate up-front preflight
-    (`_spill_estimate.enforce_ooc_disk_preflight`), wired into `_pipeline_
-    routing_signals.resolve_execution_route` before this function ever runs.
+    This runtime cap is the ENFORCER of OOC-D (aborts cleanly at a table
+    boundary if disk runs short); the separate up-front
+    `_spill_estimate.enforce_ooc_disk_preflight` (wired into `_pipeline_
+    routing_signals.resolve_execution_route`) is ADVISORY only -- it warns,
+    it never rejects.
 
     Residency: with a `sink` the runner streams bounded batches (outputs `{}`,
     the sink holds the deliverable); without one it reassembles resident tables
@@ -292,9 +294,9 @@ def run_out_of_core_route(
         temp_disk_budget_bytes = int(free_bytes * _TEMP_DISK_SAFETY_FRACTION)
     except OSError:
         # Undetectable free-disk count: leave the runtime cap unset rather than
-        # newly blocking a job the route would otherwise have run. The
-        # fail-CLOSED half of OOC-D is the separate preflight
-        # (`enforce_ooc_disk_preflight`), already run before this function.
+        # newly blocking a job the route would otherwise have run. This runtime
+        # cap is OOC-D's enforcer; the up-front `enforce_ooc_disk_preflight` is
+        # advisory (warn-only) and never blocks a job.
         pass
 
     ooc_result = run_fk_out_of_core(

@@ -1,39 +1,43 @@
-"""OOC-D: disk-aware out-of-core routing (conservative two-term model).
+"""OOC-D: disk-aware out-of-core routing (conservative estimate, ADVISORY gate).
 
-The estimator is a fail-closed UPPER bound on the temp-disk a job needs, in
-two independent terms (see `out_of_core/_spill_estimate.py`):
+The estimator is a conservative UPPER bound on the temp-disk a job needs, in
+two contributions (see `out_of_core/_spill_estimate.py`):
 
-  SPILL  = key_bytes_per_row x total_rows x max_per_table_edge_count
-           x SPILL_OVERHEAD          (transient temp: FK KEY columns only)
-  OUTPUT = sum_tables(full_row_width x rows)   (committed on-disk output)
+  SPILL  = SPILL_OVERHEAD x (base + parent_relations x max_per_table_edge_count)
+           (transient temp: FK KEY tokens only; the edge multiplier applies
+            ONLY to the small parent-relation term, never each table's
+            one-time staged keys -- the k^2 star-blowup fix)
+  OUTPUT = sum_tables(masked_full_row_width x rows)   (committed on-disk output)
   disk_needed = (SPILL + OUTPUT) x DISK_SAFETY_MARGIN
 
-Widths come from the real profile (`ColumnProfile.max_length` for strings,
-`numpy.dtype(...).itemsize` for fixed-width), NOT a fixture-fit compression
-factor -- a genuinely unknown width prices at UNKNOWN_WIDTH_CEILING_BYTES, an
-upper bound, never a low default. Tests therefore assert the prediction is
-`>=` a realistic lower bound of the actual footprint (the conservative
-direction), rather than matching a point estimate.
+Widths are MASKED widths (a hash key stages its 64-hex digest, not the source
+int) from the real profile + config, NOT a fixture-fit compression factor. The
+preflight is ADVISORY: it WARNS on a tight estimate and lets the job proceed;
+the runtime `check_temp_disk_budget` (threaded into the runner, fired at every
+table boundary) is the real enforcer. Tests assert the prediction is `>=` a
+realistic lower bound of the actual footprint (conservative), that the
+preflight warns rather than rejects, and that the runtime cap enforces.
 
 Coverage:
 1. Benchmark-shape SANITY -- the prediction exceeds the measured 50M/100M
    footprint (not a tight band; conservative).
 2. A wide (500B) high-cardinality string MASK column is priced at its real
-   width and REJECTS on a realistic-but-insufficient disk (the exact
-   under-prediction the reviewers blocked: 12B fallback -> passes wrongly).
-3. A narrow multi-FK star/fact table carries the per-table edge multiplier in
-   the SPILL term.
+   width; the advisory WARNS (does not raise) on an insufficient disk.
+3. A narrow multi-FK star/fact table: the fact's key staging is linear in
+   fan-in (only the small parent relations carry the multiplier), no k^2.
 4. A zero-payload link table prices without crashing (keys only).
 5. The output-filesystem gate: OUTPUT is dropped only when it provably lands
    on a different filesystem than the temp root.
-6. Routing-level wiring end to end through `run_pipeline`: insufficient disk
-   fails closed with a coded, actionable (GiB) error before any work; a
+5b/5c. Masked hash-key widths, and per-table (not O(N^2)) chain scaling.
+6. Routing-level wiring end to end through `run_pipeline`: the advisory warns
+   and the RUNTIME cap (out_of_core_temp_disk_exceeded) enforces; a
    sufficient-disk job proceeds AND threads a non-None temp_disk_budget into
    the runner; an OOC-INCOMPATIBLE (cyclic FK) job is untouched by the gate.
 """
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -272,33 +276,36 @@ class TestWideStringColumnIsPricedAtRealWidth:
         # would have produced (which was ~ (8+12)*rows*2 tables ~ 0.4 GB).
         assert pred.total_bytes > 5 * _GIB
 
-    def test_preflight_rejects_when_wide_column_footprint_exceeds_free_disk(
-        self, monkeypatch: pytest.MonkeyPatch
+    def test_preflight_warns_but_does_not_raise_when_footprint_exceeds_free_disk(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
         rows = 10_000_000
         profile, graph = self._wide_profile_graph(rows, notes_width=500)
-        # Realistic-but-insufficient free disk: 3 GiB. The true footprint is
-        # ~7 GiB (5 GiB wide output + key spill), so this must REJECT. A 12-byte
-        # fallback model (~1.2 GiB) would have wrongly PASSED at 3 GiB free.
+        # Insufficient free disk (3 GiB) vs a ~7 GiB estimate: the advisory
+        # WARNS but never raises -- the runtime cap is the enforcer.
         _patch_free_disk(monkeypatch, 3 * _GIB)
-        with pytest.raises(ExecutionError) as excinfo:
-            spill_mod.enforce_ooc_disk_preflight(
+        with caplog.at_level(logging.WARNING, logger="decoy_engine.execution.out_of_core"):
+            result = spill_mod.enforce_ooc_disk_preflight(
                 profile,
                 graph=graph,
                 table_kinds=_all_mask("parent", "child"),
                 config={},  # no file target -> output included (conservative)
             )
-        assert excinfo.value.code == "out_of_core_disk_preflight_insufficient"
-        assert "GiB free temp disk" in excinfo.value.message
-        assert "GiB is available" in excinfo.value.message
+        assert result is not None and result.ok is False  # advisory result surfaced
+        assert any("out-of-core disk advisory" in r.message for r in caplog.records)
 
-    def test_preflight_passes_when_disk_is_generous(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_preflight_is_silent_when_disk_is_generous(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
         rows = 10_000_000
         profile, graph = self._wide_profile_graph(rows, notes_width=500)
         _patch_free_disk(monkeypatch, 500 * _GIB)
-        spill_mod.enforce_ooc_disk_preflight(
-            profile, graph=graph, table_kinds=_all_mask("parent", "child"), config={}
-        )  # no raise
+        with caplog.at_level(logging.WARNING, logger="decoy_engine.execution.out_of_core"):
+            result = spill_mod.enforce_ooc_disk_preflight(
+                profile, graph=graph, table_kinds=_all_mask("parent", "child"), config={}
+            )
+        assert result is not None and result.ok is True
+        assert not any("disk advisory" in r.message for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------
@@ -307,12 +314,15 @@ class TestWideStringColumnIsPricedAtRealWidth:
 
 
 class TestStarFactEdgeMultiplicity:
-    def _star_profile_graph(self, rows: int, n_dims: int) -> tuple[Profile, RelationshipGraph]:
+    def _star_profile_graph(
+        self, rows: int, n_dims: int, dim_rows: int | None = None
+    ) -> tuple[Profile, RelationshipGraph]:
+        drows = rows if dim_rows is None else dim_rows
         dims = tuple(
             TableProfile(
                 name=f"dim{i}",
-                row_count=rows,
-                columns=(_col("id", "int64", rows=rows),),
+                row_count=drows,
+                columns=(_col("id", "int64", rows=drows),),
             )
             for i in range(n_dims)
         )
@@ -347,15 +357,42 @@ class TestStarFactEdgeMultiplicity:
             config={},  # passthrough int64 keys -> source width 8
             include_output=False,
         )
-        # Per-table (NOT the old cross-product): fact holds 3 int64 FK key
-        # tokens + row_nr, each dim holds 1 id key token + row_nr, each scaled
-        # by its OWN rows; then edge multiplicity (3) and overhead (2.0).
+        # Edge-mult applies ONLY to the parent-side relations, not the fact's
+        # one-time staged keys (the k^2-blowup fix). base: fact stages its 3
+        # child-side FK keys + row_nr once; each dim stages just its row_nr.
+        # parent_relations: each dim's id relation, scaled by edge fan-in (3).
         tok = spill_mod._staged_key_token_bytes
         rownr = float(spill_mod.ROW_NR_BYTES)
-        per_fact = rownr + 3 * tok(8.0)
-        per_dim = rownr + tok(8.0)
-        expected_spill = int((per_fact * rows + 3 * (per_dim * rows)) * 3 * SPILL_OVERHEAD)
+        base = (rownr + 3 * tok(8.0)) * rows + 3 * (rownr * rows)
+        parent_relations = 3 * (tok(8.0) * rows)
+        expected_spill = int((base + parent_relations * 3) * SPILL_OVERHEAD)
         assert pred3.spill_bytes == expected_spill
+
+    def test_fact_key_staging_is_linear_in_fan_in_not_quadratic(self) -> None:
+        # Realistic star: a large fact + small dims. The old flat scalar
+        # multiplied the fact's k staged FK keys by k (the ~50x k^2 blowup).
+        # Now the fact's large staging is 1x (linear in its k key columns) and
+        # only the tiny dim relations carry the multiplier -- so doubling the
+        # dimension count ~doubles spill (dominated by the fact), never ~4x.
+        fact_rows, dim_rows = 10_000_000, 1_000
+        p5, g5 = self._star_profile_graph(fact_rows, n_dims=5, dim_rows=dim_rows)
+        p10, g10 = self._star_profile_graph(fact_rows, n_dims=10, dim_rows=dim_rows)
+        s5 = predict_ooc_disk_bytes(
+            p5,
+            graph=g5,
+            table_kinds=_all_mask("fact", *(f"dim{i}" for i in range(5))),
+            config={},
+            include_output=False,
+        )
+        s10 = predict_ooc_disk_bytes(
+            p10,
+            graph=g10,
+            table_kinds=_all_mask("fact", *(f"dim{i}" for i in range(10))),
+            config={},
+            include_output=False,
+        )
+        ratio = s10.spill_bytes / s5.spill_bytes
+        assert 1.5 <= ratio <= 2.5  # linear in fan-in, not the old ~4x (k^2)
 
     def test_single_edge_has_no_multiplier(self) -> None:
         _, graph1 = self._star_profile_graph(rows=1000, n_dims=1)
@@ -534,8 +571,8 @@ class TestMaskedHashKeyWidth:
         assert masked.total_bytes > source.total_bytes
         assert masked.output_bytes >= HASH_DIGEST_HEX_BYTES * rows  # parent_id digest
 
-    def test_rejects_on_disk_sized_to_the_source_width_estimate(
-        self, monkeypatch: pytest.MonkeyPatch
+    def test_warns_on_disk_sized_to_the_source_width_estimate(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
         rows = 50_000_000
         profile, graph = self._int_fk_profile_graph(rows)
@@ -548,15 +585,17 @@ class TestMaskedHashKeyWidth:
             profile, graph=graph, table_kinds=kinds, config={}, include_output=True
         )
         # A disk sized between the two: the source-width (pre-fix) model would
-        # have PASSED it, the masked-width model must REJECT.
+        # have judged it fine, but the masked-width estimate exceeds it -- so
+        # the advisory WARNS (it does not raise; the runtime cap enforces).
         disk = (source.total_bytes + masked.total_bytes) // 2
         assert source.total_bytes < disk < masked.total_bytes
         _patch_free_disk(monkeypatch, disk)
-        with pytest.raises(ExecutionError) as excinfo:
-            spill_mod.enforce_ooc_disk_preflight(
+        with caplog.at_level(logging.WARNING, logger="decoy_engine.execution.out_of_core"):
+            result = spill_mod.enforce_ooc_disk_preflight(
                 profile, graph=graph, table_kinds=kinds, config=cfg
             )
-        assert excinfo.value.code == "out_of_core_disk_preflight_insufficient"
+        assert result is not None and result.ok is False
+        assert any("out-of-core disk advisory" in r.message for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------
@@ -726,35 +765,38 @@ def _patch_free_disk(monkeypatch: pytest.MonkeyPatch, free_bytes: int) -> None:
 
 
 class TestRunPipelineDiskPreflight:
-    def test_forced_out_of_core_rejects_on_insufficient_disk(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    def test_forced_out_of_core_warns_advisory_and_runtime_cap_enforces(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
         config = _fk_ooc_config(tmp_path)
         sources = _sources(config)
-        _patch_free_disk(monkeypatch, 100)  # 100 bytes free -> even a tiny job busts
-        with pytest.raises(ExecutionError) as excinfo:
-            run_pipeline(config, sources, engine_version="0.1.0", execution_mode="out_of_core")
-        assert excinfo.value.code == "out_of_core_disk_preflight_insufficient"
-        message = excinfo.value.message
-        assert "GiB free temp disk" in message
-        assert "GiB is available" in message
-        assert "40" in message  # 20 parent + 20 child mask rows
+        _patch_free_disk(monkeypatch, 100)  # 100 bytes free
+        with caplog.at_level(logging.WARNING, logger="decoy_engine.execution.out_of_core"):
+            with pytest.raises(ExecutionError) as excinfo:
+                run_pipeline(config, sources, engine_version="0.1.0", execution_mode="out_of_core")
+        # The advisory WARNED up front (did not reject the route)...
+        assert any("out-of-core disk advisory" in r.message for r in caplog.records)
+        # ...and the RUNTIME cap (check_temp_disk_budget, the real enforcer) is
+        # what aborted the run at a table boundary -- NOT a preflight reject.
+        assert excinfo.value.code == "out_of_core_temp_disk_exceeded"
 
-    def test_auto_large_fk_job_also_gets_the_preflight(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    def test_auto_large_fk_job_also_gets_the_advisory(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
         config = _fk_ooc_config(tmp_path)
         sources = _sources(config)
         _patch_free_disk(monkeypatch, 100)
-        with pytest.raises(ExecutionError) as excinfo:
-            run_pipeline(
-                config,
-                sources,
-                engine_version="0.1.0",
-                out_of_core_threshold_rows=10,
-                use_byte_estimate_routing=False,
-            )
-        assert excinfo.value.code == "out_of_core_disk_preflight_insufficient"
+        with caplog.at_level(logging.WARNING, logger="decoy_engine.execution.out_of_core"):
+            with pytest.raises(ExecutionError) as excinfo:
+                run_pipeline(
+                    config,
+                    sources,
+                    engine_version="0.1.0",
+                    out_of_core_threshold_rows=10,
+                    use_byte_estimate_routing=False,
+                )
+        assert any("out-of-core disk advisory" in r.message for r in caplog.records)
+        assert excinfo.value.code == "out_of_core_temp_disk_exceeded"
 
     def test_sufficient_disk_proceeds_and_threads_temp_disk_budget(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
