@@ -1,5 +1,7 @@
 """NER span detection for text_redact (capability-gaps WS2, 2026-06-12).
 
+Pattern: spaCy NER (en_core_web_sm). See: https://spacy.io/models/en#en_core_web_sm
+
 `iter_spans`'s regex catalog deliberately omits person_name/address:
 names and places in free prose have no regex shape (the catalog's own
 docstring). This module fills exactly that hole with spaCy NER, mapped

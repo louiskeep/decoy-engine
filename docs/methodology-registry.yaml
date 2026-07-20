@@ -171,6 +171,14 @@ modules:
     pattern: Parquet key/value metadata
     source: apache/arrow (Apache-2.0); imitates storm/model_pack/types.py ModelPackManifest
 
+  # TX-1 (2026-07-20): text_redact's opt-in `ner` config activates spaCy NER
+  # for person_name/location spans the regex catalog cannot see. The model
+  # (en_core_web_sm) is the standard pretrained English pipeline, not a
+  # custom model.
+  - path: src/decoy_engine/storm/ner.py
+    pattern: spaCy NER
+    source: explosion/spaCy (MIT); en_core_web_sm pretrained pipeline
+
   # Removed 2026-06-02: the entire `forecast/` module (Recommender +
   # ForecastReport + DisguiseRecommendation + FieldRecommendation +
   # RiskFlag) was deleted under the storm-reframe-C clean break

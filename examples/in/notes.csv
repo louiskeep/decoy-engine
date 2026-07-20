@@ -1,0 +1,4 @@
+note_id,clinical_notes
+1,"Patient Jane Doe, seen in Boston on referral from Dr. Alan Turing."
+2,Contact John Smith at john.smith@example.com regarding the claim.
+3,"No PII in this row, just a routine follow-up note."
