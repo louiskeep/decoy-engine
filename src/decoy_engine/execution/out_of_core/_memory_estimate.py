@@ -11,66 +11,58 @@ TWO THINGS LIVE HERE, ONE ROOT CAUSE EACH FIXES:
 
 1. PHASE-AWARE CAPS (`memory_limit_for` / `resolve_phase_memory_limits`).
    `resolve_ooc_memory_limit` (`_budget.py`) resolves ONE `memory_limit`
-   string, divided by the run's GLOBAL WORST-CASE concurrency
-   (`_max_concurrent_ooc_instances`), and `_runner.py` used to thread that
-   single string into every DuckDB connection it opens. But DuckDB instances
-   on this route open and close in PHASES with different LOCAL liveness: a
-   table's incoming-edge joiners are co-live with each other, but the SINK
-   path always closes them (`_emit.py`'s `on_stream_consumed`) before that
-   table's own outgoing relation build opens -- so the build is the ONLY
-   live instance at that moment, not two. Dividing every phase by the global
-   peak starves any phase whose LOCAL live count is below that peak; a
-   measured 100M-row/4GB cloud run OOMed inside DuckDB with half its budget
-   idle for exactly this reason (a 1-instance build handed a divided-by-2
-   cap). `memory_limit_for` is the single place a byte budget becomes one
-   phase's per-connection cap; `resolve_phase_memory_limits` derives the
-   three caps `_runner.py` needs for one table (joiner / sink-path build /
-   resident-path build) from its own incoming-edge count, which is the one
-   piece of information this module intentionally does not carry on its own
-   (like `_budget.py`, it takes plain counts from its caller rather than
-   depending on `decoy_engine.relationships`).
+   string, divided by the run's GLOBAL WORST-CASE concurrency, and
+   `_runner.py` used to thread that single string into every DuckDB
+   connection it opens. But DuckDB instances on this route open and close
+   in PHASES with different LOCAL liveness: a table's incoming-edge joiners
+   are co-live with each other, but the SINK path always closes them
+   (`_emit.py`'s `on_stream_consumed`) before that table's own outgoing
+   relation build opens -- so the build is the ONLY live instance then, not
+   two. Dividing every phase by the global peak starves any phase whose
+   LOCAL live count is below that peak; a measured 100M-row/4GB cloud run
+   OOMed with half its budget idle for exactly this reason. `memory_limit_
+   for` is the single place a byte budget becomes one phase's per-connection
+   cap; `resolve_phase_memory_limits` derives the caps `_runner.py` needs
+   for one table (joiner / sink-path build / resident-path build) from its
+   own incoming-edge count, plain counts from its caller like `_budget.py`
+   rather than depending on `decoy_engine.relationships`.
 
 2. THE HYBRID CAPACITY PREFLIGHT (`predict_ooc_build_floor_bytes` /
    `enforce_ooc_memory_preflight`). Phase-aware caps LOWER the floor but
    cannot always eliminate it: a big enough parent table's relation-build
-   dedup still needs real non-spillable resident state (hash-aggregate
-   control structures, allocator overhead) that DuckDB cannot push to
-   `temp_directory` no matter how generous the `memory_limit`. Cam's
-   decision (governing goal) is a HYBRID gate: warn near that floor, hard-fail
-   beyond it, so a job that cannot fit is refused BEFORE any DuckDB work runs
-   rather than left to OOM mid-job. This is the never-crash guarantee; item 1
-   above is the floor-lowering fix underneath it.
+   dedup still needs real non-spillable resident state that DuckDB cannot
+   push to `temp_directory` no matter how generous the `memory_limit`.
+   Cam's governing decision is a HYBRID gate: warn near that floor,
+   hard-fail beyond it, so a job that cannot fit is refused BEFORE any
+   DuckDB work runs rather than left to OOM mid-job -- the never-crash
+   guarantee, with item 1 above as the floor-lowering fix underneath it.
 
    THE GATE MUST COMPARE AGAINST THE EXACT CAP THE BUILD WILL GET, NOT A
-   FRACTION OF THE RAW MEMORY CEILING. The two are different numbers:
-   `resolve_ooc_memory_limit` (`_budget.py`) already subtracts a reserve from
-   the ceiling before DuckDB ever sees a byte (Python/Arrow/OS overhead), and
-   item 1's phase-aware division then splits THAT budget again by per-table
-   liveness. A preflight that instead re-derives its own fraction of the raw
-   ceiling can pass a job whose real, phase-aware cap is starved -- the exact
-   BLOCKER this sprint's remediation closes (a 100M-row/4GB run was ADMITTED
-   by a ceiling-fraction check, then OOMed inside DuckDB's own accounting,
-   because the fraction and the real cap were never the same number). So
+   FRACTION OF THE RAW MEMORY CEILING. `resolve_ooc_memory_limit` (`_budget.
+   py`) already subtracts a reserve from the ceiling, and item 1's
+   phase-aware division then splits THAT budget again by per-table
+   liveness; a preflight re-deriving its own fraction of the raw ceiling can
+   pass a job whose real, phase-aware cap is starved -- the BLOCKER this
+   sprint's remediation closes (a 100M-row/4GB run was ADMITTED by a
+   ceiling-fraction check, then OOMed inside DuckDB's own accounting). So
    `enforce_ooc_memory_preflight` takes `budget_bytes` -- THE SAME
    `OutOfCoreBudget.budget_bytes` `run_out_of_core_route` resolves at its one
-   `resolve_ooc_memory_limit` call site, reused rather than re-derived -- plus
-   sink-ness and each candidate table's own incoming-edge count, and computes
-   `cap(t)` via `actual_duckdb_cap_bytes(budget_bytes, live)` -- live = 1 on
-   the sink path (the build is the only live instance once joiners close),
-   `incoming_edges(t) + 1` on the resident path (joiners stay open through
-   the build) -- the SAME per-instance computation `memory_limit_for` uses to
-   size the real connection's string. `budget_bytes // live` ALONE is NOT
-   `cap(t)`: DuckDB reads `memory_limit_for`'s `"NNMB"` string as base-10
-   megabytes, so the true cap is `actual_duckdb_cap_bytes`'s smaller decimal
-   number -- comparing a floor to the larger binary number let a job whose
-   floor cleared it but exceeded the real decimal cap through, then OOM inside
-   DuckDB (round-2's remediation closes this second denomination mismatch, on
-   top of item 1's phase-liveness one). The warn/fail fractions below multiply
+   `resolve_ooc_memory_limit` call site, reused rather than re-derived --
+   plus sink-ness and each table's own incoming-edge count, and computes
+   `cap(t)` via `actual_duckdb_cap_bytes(budget_bytes, live)`, the SAME
+   per-instance computation `memory_limit_for` uses to size the real
+   connection's string. `budget_bytes // live` ALONE is NOT `cap(t)`:
+   DuckDB reads `memory_limit_for`'s `"NNMB"` string as base-10 megabytes,
+   so the true cap is `actual_duckdb_cap_bytes`'s smaller decimal number --
+   comparing a floor to the larger binary number let a job whose floor
+   cleared it but exceeded the real decimal cap through, then OOM inside
+   DuckDB (round-2's remediation closes this denomination mismatch, on top
+   of item 1's phase-liveness one). The warn/fail fractions below multiply
    THAT actual cap, never the raw ceiling nor the binary division -- see
-   `enforce_ooc_memory_preflight`'s docstring for why this preflight is a HARD
-   gate where the sibling `_spill_estimate.enforce_ooc_disk_preflight` is
-   advisory-only (disk spill has a soft failure mode; a resident-memory floor
-   above the cap does not).
+   `enforce_ooc_memory_preflight`'s docstring for why this preflight is a
+   HARD gate where the sibling `_spill_estimate.enforce_ooc_disk_preflight`
+   is advisory-only (disk spill has a soft failure mode; a resident-memory
+   floor above the cap does not).
 """
 
 from __future__ import annotations
@@ -102,55 +94,59 @@ __all__ = [
 def _per_instance_mib(budget_bytes: int, live_instances: int) -> int:
     """The whole-MiB size one live instance's cap gets when `budget_bytes` is
     split `live_instances` ways -- the SINGLE computation `memory_limit_for`
-    (the string DuckDB is opened with) and `actual_duckdb_cap_bytes` (the
-    bytes a gate checks against) both derive from, so the two never drift
-    apart (round-2 Fix B's root cause: two numbers for "the cap the build
-    gets").
+    and `actual_duckdb_cap_bytes` both derive from, so the two never drift
+    apart.
 
-    NOT floored up at any per-instance minimum: that over-subscribes a tight
-    budget split across high fan-in, the exact over-commit the sum-of-caps
-    invariant (`live * cap <= budget_bytes`) forbids. Instead fails CLOSED
-    (round-2 Fix C) when the split drops below DuckDB's 1 MiB minimum limit
-    (`budget_bytes // live_instances < 1 MiB`, only reachable at >64-way
-    fan-in on a near-floor budget): `out_of_core_fanin_exceeds_budget` rather
-    than a "1MB" floor, whose per-instance sum can exceed `budget_bytes` (68 x
-    1 MB > 67.1 MB budget was the reproduced case). An un-sizeable split is
-    refused, never given a cap that lies about what it reserves.
+    DECIMAL-correct (round-3 Fix C, closes round-2's over-correction):
+    `memory_limit_for` emits a decimal `"NNMB"` string, so refusing on the
+    BINARY split alone (round-2) wrongly refused splits that still fit
+    DuckDB's smaller decimal 1 MB floor -- floor in binary MiB first,
+    escalate to the decimal question only when that floor is 0.
+
+    INVARIANT PROOF -- `live_instances * actual_duckdb_cap_bytes(...) <=
+    budget_bytes` always: for `n = per_instance_mib >= 1`, `live * n * 1e6 <=
+    live * (budget/(live*1_048_576)) * 1e6 = budget * 0.95367 < budget`; for
+    `n == 0 -> return 1`, that fires only when `live * 1e6 <= budget_bytes`.
+    Only a genuine over-commit (even DuckDB's 1 MB floor cannot fit every
+    live instance) raises. Codex acceptance: `(64 MiB, 67 live)` admits
+    ("1MB", `67e6 <= 67_108_864`); `(64 MiB, 68 live)` raises (`68e6 >
+    67_108_864`).
     """
     if live_instances < 1:
         raise ExecutionError(
             code="out_of_core_concurrency_invalid",
             message=f"live_instances must be >= 1, got {live_instances}.",
         )
-    per_instance_bytes = budget_bytes // live_instances
-    if per_instance_bytes < 1024 * 1024:
-        raise ExecutionError(
-            code="out_of_core_fanin_exceeds_budget",
-            message=(
-                f"{live_instances} co-live DuckDB instances over a "
-                f"{budget_bytes}-byte budget split to {per_instance_bytes} bytes "
-                "per instance, below DuckDB's 1 MiB minimum memory_limit; "
-                "reduce fan-in or increase the out-of-core memory budget."
-            ),
-        )
-    return per_instance_bytes // (1024 * 1024)
+    per_instance_mib = (budget_bytes // live_instances) // (1024 * 1024)
+    if per_instance_mib < 1:
+        # Floors below 1 binary MiB, so the emitted cap is DuckDB's minimum
+        # "1MB" (1_000_000 decimal bytes) -- safe iff the summed 1-MB caps
+        # still fit the budget; only a genuine over-commit is refused.
+        if live_instances * 1_000_000 > budget_bytes:
+            raise ExecutionError(
+                code="out_of_core_fanin_exceeds_budget",
+                message=(
+                    f"{live_instances} co-live DuckDB instances over a {budget_bytes}-byte "
+                    "budget cannot each hold DuckDB's 1 MB minimum memory_limit without the "
+                    "summed caps exceeding the budget; reduce fan-in or increase the budget."
+                ),
+            )
+        return 1
+    return per_instance_mib
 
 
 def memory_limit_for(budget_bytes: int, live_instances: int) -> str:
     """One DuckDB connection's `memory_limit` for a phase where
     `live_instances` connections are co-live, sized so the SUM of every live
     instance's ACTUAL enforced cap never exceeds `budget_bytes` -- see
-    `_per_instance_mib` for the shared sizing computation and the fail-closed
-    guard that makes this invariant TRUE (round-2 Fix C; it was previously
-    violated by a "1MB" floor on sub-1-MiB splits).
-
-    Same strict-floor division `resolve_ooc_memory_limit` (`_budget.py`)
-    already established, exposed as a free function so a caller with
-    phase-local liveness (not the run's single global-peak concurrency
-    number) can size each connection at the point it opens.
+    `_per_instance_mib` for the shared sizing computation and the
+    fail-closed guard that makes this invariant TRUE. Same strict-floor
+    division `resolve_ooc_memory_limit` (`_budget.py`) already established,
+    exposed as a free function so a caller with phase-local liveness (not
+    the run's single global-peak concurrency number) can size each
+    connection at the point it opens.
     """
     per_instance_mib = _per_instance_mib(budget_bytes, live_instances)
-    # Same MiB-with-decimal-suffix rounding-down rationale as `_budget.py`:
     # DuckDB reads "MB" as base-10, so the effective limit lands slightly
     # below the MiB byte count -- the safe direction, never over the cap.
     return f"{per_instance_mib}MB"
@@ -180,6 +176,7 @@ def resolve_phase_memory_limits(
     budget_bytes: int | None,
     memory_limit: str | None,
     incoming_edges: int,
+    sink: bool,
 ) -> tuple[str | None, str | None, str | None, str | None]:
     """`(sink_joiner, resident_joiner, sink_build, resident_build)`
     memory_limit strings for one table's incoming-edge joiners and its own
@@ -188,41 +185,43 @@ def resolve_phase_memory_limits(
     `budget_bytes` is the UNDIVIDED per-run budget (`OutOfCoreBudget.
     budget_bytes`, threaded through as `run_fk_out_of_core`'s own
     `budget_bytes` param). `None` means host-RAM detection failed and no
-    explicit budget was given (the same fall-through `resolve_ooc_memory_
-    limit` already documents) -- every phase then falls back to the flat
-    `memory_limit` string, reproducing pre-phase-aware-cap behavior exactly
-    rather than inventing a budget to divide.
+    explicit budget was given -- every phase then falls back to the flat
+    `memory_limit` string rather than inventing a budget to divide.
 
-    Phase-local liveness (the module docstring's item 1) differs by path, so
-    the JOINER cap must too -- a connection's `memory_limit` is fixed at
-    open, and a joiner that stays live into the build phase needs the SAME
-    cap the build itself gets, not the cap sized for its own (narrower)
-    phase. SINK path: joiners are co-live with each other only (cap = budget
-    // incoming_edges), and always close before that table's own outgoing
-    build opens (`_emit.py`'s `on_stream_consumed`), so the build is the
-    run's ONLY live instance at that moment (cap = budget, undivided -- the
-    fix for the measured 100M/4GB OOM). RESIDENT (no-sink) path: joiners stay
-    open THROUGH the build, so both must open at the SAME cap = budget //
-    (incoming_edges + 1) -- the build counts as one more live instance
-    alongside its own joiners. Returning one flat `joiner` value used on both
-    paths (the pre-fix shape) let the resident path's joiners open at the
-    sink-sized (undivided-by-the-extra-build-slot) cap while co-live with a
-    build sized for the extra slot, so their SUM exceeded `budget_bytes` --
-    exactly the HIGH this split closes: co-live sum on the resident path is
-    now `(incoming_edges + 1) * (budget // (incoming_edges + 1)) <=
-    budget_bytes`, honoring the invariant every other phase-aware cap in this
-    module already holds. A table with zero incoming edges opens no joiner at
-    all, so both joiner values are simply unused by its caller.
+    `sink` (round-3 Fix C, SUB-FIX 2): only the opened path is computed (and
+    can raise); the unopened pair falls back to flat `memory_limit`, like
+    `budget_bytes is None` -- computing all four unconditionally (pre-fix)
+    raised for a path never opened, a false refusal. Tuple SHAPE unchanged.
+
+    Phase-local liveness differs by path, so the JOINER cap must too: a
+    connection's `memory_limit` is fixed at open, and a joiner staying live
+    into the build phase needs the SAME cap the build gets, not its own
+    (narrower) phase. SINK: joiners are co-live with each other only (cap =
+    budget // incoming_edges) and close before the build opens (`_emit.py`'s
+    `on_stream_consumed`), so the build is the run's ONLY live instance then
+    (cap = budget, undivided -- the fix for the measured 100M/4GB OOM).
+    RESIDENT: joiners stay open THROUGH the build, so both share cap =
+    budget // (incoming_edges + 1) -- one flat `joiner` value on both paths
+    (pre-fix) let resident joiners open at the sink-sized cap while co-live
+    with a build sized for the extra slot, so their SUM exceeded
+    `budget_bytes`; this split fixes that (co-live sum is now
+    `(incoming_edges + 1) * (budget // (incoming_edges + 1)) <=
+    budget_bytes`). Zero incoming edges means no joiner opens, so the
+    active path's joiner value goes unused.
     """
     if budget_bytes is None:
         return memory_limit, memory_limit, memory_limit, memory_limit
-    sink_joiner = memory_limit_for(budget_bytes, incoming_edges) if incoming_edges else memory_limit
+    if sink:
+        sink_joiner = (
+            memory_limit_for(budget_bytes, incoming_edges) if incoming_edges else memory_limit
+        )
+        sink_build = memory_limit_for(budget_bytes, 1)
+        return sink_joiner, memory_limit, sink_build, memory_limit
     resident_joiner = (
         memory_limit_for(budget_bytes, incoming_edges + 1) if incoming_edges else memory_limit
     )
-    sink_build = memory_limit_for(budget_bytes, 1)
     resident_build = memory_limit_for(budget_bytes, incoming_edges + 1)
-    return sink_joiner, resident_joiner, sink_build, resident_build
+    return memory_limit, resident_joiner, memory_limit, resident_build
 
 
 # --- Part B: hybrid capacity preflight -------------------------------------
@@ -470,54 +469,47 @@ def enforce_ooc_memory_preflight(
     item 2): "never OOM, or declare minimums so the user knows what power
     they need."
 
-    Deliberately asymmetric with the sibling disk preflight
-    (`_spill_estimate.enforce_ooc_disk_preflight`, advisory/warn-only): that
-    guard's failure mode is soft (an under-predicted disk estimate still hits
-    the runtime `check_temp_disk_budget` backstop and aborts cleanly at a
-    table boundary), so a hard reject up front would needlessly kill jobs a
-    conservative over-estimate merely made LOOK tight. A resident-memory
-    floor above its actual cap has no such backstop -- DuckDB's own internal
-    allocator raises a raw "bad allocation" partway through a query, not a
-    coded, catchable error at a clean boundary -- so THIS preflight is the
-    only guard standing between an admitted job and an uncontrolled crash,
-    and it must actually reject rather than merely warn.
+    Deliberately asymmetric with the sibling disk preflight (advisory-only,
+    `_spill_estimate.enforce_ooc_disk_preflight`): an under-predicted disk
+    estimate still hits the runtime `check_temp_disk_budget` backstop and
+    aborts cleanly, but a resident-memory floor above its cap has no such
+    backstop -- DuckDB's allocator raises a raw, uncatchable "bad
+    allocation" mid-query -- so THIS preflight must actually reject.
 
-    `parent_table_rows` is one row count per table with an outgoing FK edge
-    (a build-phase table); `budget_bytes` is the SAME `OutOfCoreBudget.
-    budget_bytes` `resolve_ooc_memory_limit` resolved at the route's one call
-    site (reused, never re-derived -- the module docstring's remediation
-    note); `sink` is whether this run streams to a sink; `incoming_edge_counts`
-    is each table's own fan-in. For every table `t`:
+    `parent_table_rows` prices one row count per build-phase (outgoing-FK)
+    table; `budget_bytes` is the SAME `OutOfCoreBudget.budget_bytes`
+    `resolve_ooc_memory_limit` resolved at the route's one call site
+    (reused, never re-derived); `sink` is whether this run streams to a
+    sink; `incoming_edge_counts` is each table's own fan-in. For every
+    table `t`:
 
         live(t)  = 1                                      if sink
                  = incoming_edge_counts[t] + 1              otherwise
         floor(t) = predict_ooc_build_floor_bytes(parent_table_rows[t])
         cap(t)   = actual_duckdb_cap_bytes(budget_bytes, live(t))
 
-    the SAME `live` split and per-instance computation `memory_limit_for`
-    uses AND the ACTUAL bytes DuckDB enforces (round-2 Fix B: `budget_bytes //
-    live(t)` alone is a larger binary number; gating against it let a floor
-    that fit the binary cap but exceeded the true decimal one through, then
-    OOM). `cap(t)`'s own sizing can raise
-    `ExecutionError(code="out_of_core_fanin_exceeds_budget")` (round-2 Fix C)
-    when `budget_bytes // live(t)` drops below DuckDB's 1 MiB minimum -- an
-    un-sizeable split is refused here, before any DuckDB work, same as an
-    insufficient-memory hard-fail. Otherwise HARD-FAILS
-    (`ExecutionError(code= "out_of_core_insufficient_memory")`, before any
-    DuckDB work) if `floor(t) > cap(t)` for ANY `t` -- the binding table is
-    `argmax_t (floor(t) - cap(t))`. Otherwise WARNS (never blocks) if
-    `floor(t) >= _OOC_MEM_WARN_FRACTION * cap(t)` for any table, picking the
-    tightest such table for the message. `budget_bytes=None` (host-RAM
-    detection failed, no explicit budget, mirroring `resolve_ooc_memory_limit`)
-    fails OPEN: Part A's caps fall back to the flat `memory_limit` here too, so
-    no real per-table cap is left to gate a floor against.
+    the SAME split `memory_limit_for` uses to size the real connection AND
+    the ACTUAL bytes DuckDB enforces (round-2 Fix B: the binary
+    `budget_bytes // live(t)` alone is a larger number that would admit a
+    floor exceeding the true decimal cap). `cap(t)`'s own sizing can raise
+    `out_of_core_fanin_exceeds_budget` (round-2 Fix C) on an un-sizeable
+    split, before any DuckDB work, same as an insufficient-memory hard-fail.
+    Otherwise HARD-FAILS (`out_of_core_insufficient_memory`, before any
+    DuckDB work) if `floor(t) > cap(t)` for ANY `t` (binding table =
+    `argmax_t (floor(t) - cap(t))`); otherwise WARNS (never blocks) if
+    `floor(t) >= _OOC_MEM_WARN_FRACTION * cap(t)` for the tightest such
+    table. `budget_bytes=None` (host-RAM detection failed, no explicit
+    budget, mirroring `resolve_ooc_memory_limit`) fails OPEN: Part A's caps
+    fall back to the flat `memory_limit` here too, so no real per-table cap
+    is left to gate a floor against.
 
-    A pure-joiner leaf (only incoming edges, no outgoing build) is NOT one of
-    this preflight's `parent_table_rows` tables -- its fan-in is caught by
-    `_per_instance_mib`'s guard when its own joiner connection opens
-    (`memory_limit_for`), still before that connection does DuckDB work, just
-    not as early as a build-phase rejection; threading joiner-only fan-in here
-    would need plumbing (the joiner graph) callers do not pass.
+    A pure-joiner leaf (incoming edges only, no build) has no `floor(t)`,
+    so it is not in `parent_table_rows`; its OWN fan-in is still guarded
+    HERE, up front (round-3 Fix C, SUB-FIX 3): after the build-phase loop,
+    every table in `incoming_edge_counts` (leaves included) has its
+    joiner's `actual_duckdb_cap_bytes` called to trigger the shared guard,
+    at the JOINER split -- a DIFFERENT number than build-phase `live(t)`
+    above on the sink path (`1`), so this is a distinct check.
     """
     if budget_bytes is None:
         return MemoryPreflight(
@@ -545,6 +537,13 @@ def enforce_ooc_memory_preflight(
         if floor_bytes >= _OOC_MEM_WARN_FRACTION * cap_bytes:
             if worst_warn is None or margin > worst_warn[0]:
                 worst_warn = (margin, table, floor_bytes, cap_bytes)
+
+    # SUB-FIX 3: guard every joiner's fan-in up front too (leaves included).
+    # `live` is the JOINER split, differing from build-phase `live` above on
+    # the sink path (`incoming` vs `1`); return value unused, just triggers.
+    for incoming in incoming_edge_counts.values():
+        live = incoming if sink else incoming + 1
+        actual_duckdb_cap_bytes(budget_bytes, live)
 
     if worst_fail is not None and worst_fail[0] > 0:
         _, table, floor_bytes, cap_bytes = worst_fail

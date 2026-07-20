@@ -303,7 +303,10 @@ def _stream_table(
     # selects the joiner cap here since memory_limit is fixed at open.
     sink_joiner, resident_joiner, sink_build_memory_limit, resident_build_memory_limit = (
         resolve_phase_memory_limits(
-            budget_bytes=budget_bytes, memory_limit=memory_limit, incoming_edges=len(incoming_edges)
+            budget_bytes=budget_bytes,
+            memory_limit=memory_limit,
+            incoming_edges=len(incoming_edges),
+            sink=sink is not None,
         )
     )
     joiner_memory_limit = sink_joiner if sink is not None else resident_joiner

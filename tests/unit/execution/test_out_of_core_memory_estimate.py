@@ -48,20 +48,28 @@ class TestMemoryLimitFor:
         assert per_instance_mib * fan_in * _MIB <= budget
 
     def test_sub_1mib_split_raises_fanin_exceeds_budget_instead_of_flooring(self) -> None:
-        # FIX C remediation: 64 MiB / 100 rounds below 1 MiB. Round 1 floored
-        # the string at "1MB", which can make the SUM of live caps exceed
-        # budget_bytes (the sum-of-caps invariant this module states as TRUE);
-        # round 2 fails closed instead of emitting a cap that lies about what
-        # it reserves.
+        # 64 MiB / 100 rounds below 1 binary MiB, AND 100 * 1e6 (100_000_000)
+        # exceeds the 67_108_864-byte budget -- a genuine over-commit even at
+        # DuckDB's decimal "1MB" floor, so this still raises fail-closed.
         with pytest.raises(ExecutionError) as excinfo:
             memory_limit_for(64 * _MIB, 100)
         assert excinfo.value.code == "out_of_core_fanin_exceeds_budget"
 
+    def test_fan_in_67_on_64mib_budget_admits_at_one_mb(self) -> None:
+        # ROUND-3 Fix C SUB-FIX 1 (Codex round-2 over-correction fix): 67 is
+        # the exact safe boundary -- 67 * 1_000_000 = 67_000_000 B <=
+        # 67_108_864 B (64 MiB) budget, so DuckDB's decimal "1MB" floor for
+        # every one of the 67 co-live instances still sums within budget.
+        # Round-2's binary-only guard wrongly refused this (64 MiB // 67 =
+        # 1_001_624 B, below 1 binary MiB), a FALSE REFUSAL this round fixes.
+        assert memory_limit_for(64 * _MIB, 67) == "1MB"
+        assert 64 * _MIB >= 67 * 1_000_000
+
     def test_fan_in_68_on_64mib_budget_raises_fanin_exceeds_budget(self) -> None:
         # Codex's reproduced over-commit case: 68 instances x a floored "1MB"
-        # cap each = 6.8e7 B > the 67_108_864 B (64 MiB) budget. 64 MiB // 68
-        # = 986_895 B, below the 1 MiB minimum, so this must now raise rather
-        # than silently emit an over-committing "1MB" string.
+        # cap each = 6.8e7 B > the 67_108_864 B (64 MiB) budget -- a genuine
+        # over-commit (68 * 1e6 = 68_000_000 > 67_108_864), so this must
+        # raise rather than silently emit an over-committing "1MB" string.
         with pytest.raises(ExecutionError) as excinfo:
             memory_limit_for(64 * _MIB, 68)
         assert excinfo.value.code == "out_of_core_fanin_exceeds_budget"
@@ -103,30 +111,41 @@ class TestActualDuckdbCapBytes:
             actual_duckdb_cap_bytes(1 * _GIB, 0)
         assert excinfo.value.code == "out_of_core_concurrency_invalid"
 
+    def test_fan_in_67_sum_of_caps_invariant_holds_at_64mib(self) -> None:
+        # SUB-FIX 1's pinned acceptance case, checked against the invariant
+        # this whole module states as TRUE: live * actual_cap <= budget_bytes.
+        cap = actual_duckdb_cap_bytes(64 * _MIB, 67)
+        assert cap == 1_000_000
+        assert 67 * cap <= 64 * _MIB
+
 
 class TestResolvePhaseMemoryLimits:
     def test_falls_back_to_flat_memory_limit_when_budget_bytes_is_none(self) -> None:
         limits = resolve_phase_memory_limits(
-            budget_bytes=None, memory_limit="256MB", incoming_edges=3
+            budget_bytes=None, memory_limit="256MB", incoming_edges=3, sink=True
+        )
+        assert limits == ("256MB", "256MB", "256MB", "256MB")
+        limits = resolve_phase_memory_limits(
+            budget_bytes=None, memory_limit="256MB", incoming_edges=3, sink=False
         )
         assert limits == ("256MB", "256MB", "256MB", "256MB")
 
     def test_sink_build_is_always_undivided_regardless_of_incoming_fan_in(self) -> None:
         for incoming in (0, 1, 5):
             _sj, _rj, sink_build, _resident = resolve_phase_memory_limits(
-                budget_bytes=4 * _GIB, memory_limit=None, incoming_edges=incoming
+                budget_bytes=4 * _GIB, memory_limit=None, incoming_edges=incoming, sink=True
             )
             assert sink_build == "4096MB"
 
     def test_resident_build_divides_by_incoming_plus_one(self) -> None:
         _sj, _rj, _sink, resident_build = resolve_phase_memory_limits(
-            budget_bytes=4 * _GIB, memory_limit=None, incoming_edges=3
+            budget_bytes=4 * _GIB, memory_limit=None, incoming_edges=3, sink=False
         )
         assert resident_build == f"{4 * 1024 // 4}MB"
 
     def test_sink_joiner_divides_by_incoming_edge_count(self) -> None:
         sink_joiner, _rj, _sink, _resident = resolve_phase_memory_limits(
-            budget_bytes=4 * _GIB, memory_limit=None, incoming_edges=4
+            budget_bytes=4 * _GIB, memory_limit=None, incoming_edges=4, sink=True
         )
         assert sink_joiner == f"{4 * 1024 // 4}MB"
 
@@ -136,20 +155,54 @@ class TestResolvePhaseMemoryLimits:
         # (incoming + 1)), not the sink path's narrower budget // incoming --
         # otherwise the co-live sum during the build exceeds budget_bytes.
         _sj, resident_joiner, _sink, resident_build = resolve_phase_memory_limits(
-            budget_bytes=4 * _GIB, memory_limit=None, incoming_edges=3
+            budget_bytes=4 * _GIB, memory_limit=None, incoming_edges=3, sink=False
         )
         assert resident_joiner == resident_build == f"{4 * 1024 // 4}MB"
 
-    def test_zero_incoming_edges_falls_back_for_the_unused_joiner_values(self) -> None:
-        # No incoming edges: no joiner ever opens, so these values are unused
-        # by the caller -- must not raise (memory_limit_for(budget, 0) would).
+    def test_zero_incoming_edges_falls_back_for_the_unused_joiner_value(self) -> None:
+        # No incoming edges: no joiner ever opens, so the active path's own
+        # joiner value is unused -- must not raise (memory_limit_for(budget,
+        # 0) would).
         sink_joiner, resident_joiner, sink_build, resident_build = resolve_phase_memory_limits(
-            budget_bytes=4 * _GIB, memory_limit="9MB", incoming_edges=0
+            budget_bytes=4 * _GIB, memory_limit="9MB", incoming_edges=0, sink=True
         )
         assert sink_joiner == "9MB"
-        assert resident_joiner == "9MB"
+        assert resident_joiner == "9MB"  # unopened path: flat fallback
         assert sink_build == "4096MB"
+        assert resident_build == "9MB"  # unopened path: flat fallback
+
+        sink_joiner, resident_joiner, sink_build, resident_build = resolve_phase_memory_limits(
+            budget_bytes=4 * _GIB, memory_limit="9MB", incoming_edges=0, sink=False
+        )
+        assert sink_joiner == "9MB"  # unopened path: flat fallback
+        assert resident_joiner == "9MB"
+        assert sink_build == "9MB"  # unopened path: flat fallback
         assert resident_build == "4096MB"  # incoming(0) + 1 == 1, undivided
+
+    def test_sink_true_fanin_67_does_not_raise_but_resident_does(self) -> None:
+        # SUB-FIX 2's pinned acceptance case: a SINK job with fan-in 67 on a
+        # 64 MiB budget must NOT raise (the unused resident pair is the flat
+        # fallback, never sized), while the SAME fan-in on the RESIDENT path
+        # (live = incoming + 1 = 68) DOES raise -- 68 * 1e6 > 64 MiB budget.
+        limits = resolve_phase_memory_limits(
+            budget_bytes=64 * _MIB, memory_limit=None, incoming_edges=67, sink=True
+        )
+        assert limits[0] == "1MB"  # sink_joiner: live = 67, floors to the safe "1MB" admit
+        assert limits[2] == "64MB"  # sink_build: live = 1, the whole undivided budget
+
+        with pytest.raises(ExecutionError) as excinfo:
+            resolve_phase_memory_limits(
+                budget_bytes=64 * _MIB, memory_limit=None, incoming_edges=67, sink=False
+            )
+        assert excinfo.value.code == "out_of_core_fanin_exceeds_budget"
+
+    def test_unopened_path_never_raises_even_when_it_would_have(self) -> None:
+        # The exact false-refusal SUB-FIX 2 closes: a fan-in of 67 makes the
+        # RESIDENT pair un-sizeable at this budget (live = 68), but a SINK
+        # job never computes that pair, so it must not raise at all.
+        resolve_phase_memory_limits(
+            budget_bytes=64 * _MIB, memory_limit=None, incoming_edges=67, sink=True
+        )
 
 
 class TestPredictOocBuildFloorBytes:
@@ -331,6 +384,27 @@ class TestEnforceOocMemoryPreflight:
         assert result.ok is True
         assert result.warned is False
         assert result.binding_table is None
+
+    def test_pure_joiner_leaf_fanin_raises_up_front_before_any_runner_dispatch(self) -> None:
+        # SUB-FIX 3: 68 tiny parent tables (no incoming edges of their own,
+        # so their build-phase check is trivially safe) all feed ONE leaf
+        # table with no outgoing edge of its own -- "leaf" is therefore NOT
+        # in `parent_table_rows` (no floor(t) to price), only in
+        # `incoming_edge_counts`. Before this round the leaf's own fan-in
+        # was only caught when its joiner connection actually opened
+        # mid-run (Codex's `runner_called=True` reproduction); now the
+        # preflight itself raises `out_of_core_fanin_exceeds_budget` here,
+        # so a caller never even reaches `run_fk_out_of_core`.
+        parent_table_rows = {f"parent_{i}": 1 for i in range(68)}
+        incoming_edge_counts = {"leaf": 68}
+        with pytest.raises(ExecutionError) as excinfo:
+            enforce_ooc_memory_preflight(
+                parent_table_rows,
+                budget_bytes=64 * _MIB,
+                sink=True,
+                incoming_edge_counts=incoming_edge_counts,
+            )
+        assert excinfo.value.code == "out_of_core_fanin_exceeds_budget"
 
     def test_binding_table_is_the_argmax_of_floor_minus_cap(self) -> None:
         # Two failing tables at different budgets: the reported binding

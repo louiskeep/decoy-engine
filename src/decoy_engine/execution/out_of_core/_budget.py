@@ -478,13 +478,25 @@ def resolve_ooc_memory_limit(
     # Strict floor division: per_instance * max_concurrent <= budget_bytes, so
     # the SUM of every live DuckDB instance's cap stays within the budget. NOT
     # floored up at _MIN_BUDGET_BYTES -- that would over-subscribe the budget
-    # (Dennis-1); a tight budget takes a smaller cap and spills instead. The
-    # only guard is against a sub-1-MiB split producing a "0MB" string DuckDB
-    # rejects outright (reachable only at >64-way fan-in on a ~64 MiB budget).
-    per_instance_mib = max(1, budget_bytes // max_concurrent_instances // (1024 * 1024))
-    # Same MiB-with-decimal-suffix rounding-down rationale as resolve_budget:
-    # DuckDB reads "MB" as base-10, so the effective limit lands slightly below
-    # the MiB byte count -- the safe direction, never over the per-instance cap.
+    # (Dennis-1); a tight budget takes a smaller cap and spills instead.
+    # `memory_limit` is a decimal "NNMB" string DuckDB reads as base-10 (so
+    # slightly below the MiB byte count, the safe side), NOT binary MiB. A
+    # binary sub-1-MiB split is thus not automatically un-sizeable: floor to
+    # "1MB" iff the summed 1-MB caps fit (`max_concurrent * 1_000_000 <=
+    # budget_bytes`), else raise -- keeps sum-of-caps true past 67-way fan-in,
+    # where the old `max(1, ...)` floor silently over-committed.
+    per_instance_mib = budget_bytes // max_concurrent_instances // (1024 * 1024)
+    if per_instance_mib < 1:
+        if max_concurrent_instances * 1_000_000 > budget_bytes:
+            raise ExecutionError(
+                code="out_of_core_fanin_exceeds_budget",
+                message=(
+                    f"{max_concurrent_instances} co-live DuckDB instances over a "
+                    f"{budget_bytes}-byte budget cannot each hold DuckDB's 1 MB minimum "
+                    "memory_limit without exceeding the budget; reduce fan-in or increase it."
+                ),
+            )
+        per_instance_mib = 1
     return OutOfCoreBudget(
         budget_bytes=budget_bytes,
         memory_limit=f"{per_instance_mib}MB",

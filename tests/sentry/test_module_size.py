@@ -36,6 +36,17 @@ LIMIT = 600
 # as the ceiling. These may only shrink; decompose and remove the entry.
 # Each owes a decomposition target (tracked via ADR-0005 / the hardening plan).
 ALLOWLIST: dict[str, int] = {
+    # round-3 Fix C SUB-FIX 4 (2026-07-20): crossed the 600 cap (596 -> 608)
+    # applying the same decimal-correct fan-in guard `_memory_estimate.
+    # _per_instance_mib` uses to this resolver's own `max(1, ...)` floor,
+    # which over-committed at >67-way fan-in on a near-floor budget. The
+    # module docstring already flagged this file as "within a handful of
+    # lines of the 600-LOC cap"; decompose the OOC-D disk-preflight helpers
+    # (`check_disk_spill_preflight` / `DiskSpillPreflight` /
+    # `_nearest_existing_ancestor`) into a `_disk_budget.py` sibling,
+    # mirroring the `_spill_estimate.py` split this module's own docstring
+    # already documents as precedent, when the next budget change lands.
+    "src/decoy_engine/execution/out_of_core/_budget.py": 608,
     "src/decoy_engine/storm/detectors.py": 1049,
     "src/decoy_engine/generators/columns.py": 666,
     "src/decoy_engine/storm/profiler.py": 639,
@@ -266,7 +277,11 @@ ALLOWLIST: dict[str, int] = {
     # (new module, not appended here) to avoid growing this file further; only
     # the three call-site substitutions and the param plumbing live here. Same
     # chunk-drain / evidence-merge decomposition target stands.
-    "src/decoy_engine/execution/out_of_core/_runner.py": 663,
+    # round-3 Fix C SUB-FIX 2 (2026-07-20): +2 LOC (663 -> 665) passing the
+    # new `sink=sink is not None` param to `resolve_phase_memory_limits` so
+    # it computes only the opened path's pair instead of raising for the
+    # unused one. Same chunk-drain / evidence-merge decomposition target.
+    "src/decoy_engine/execution/out_of_core/_runner.py": 665,
     # HC-2 (2026-07-17): crossed the 600 cap adding the generic corpus
     # schema-invariant checker (_check_corpus_schema, shared by the load path
     # and the new standalone verify_corpus primitive), the

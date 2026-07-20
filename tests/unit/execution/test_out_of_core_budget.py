@@ -211,13 +211,24 @@ class TestResolveOocMemoryLimit:
         assert budget.memory_limit == "32MB"
         assert int(budget.memory_limit.removesuffix("MB")) * 4 * _MIB <= budget.budget_bytes
 
-    def test_degenerate_sub_mib_split_floors_at_one_mb_not_zero(self) -> None:
-        # DuckDB rejects a "0MB" limit outright, so the extreme case (a
-        # near-floor budget split across >64-way fan-in) floors the STRING at
-        # "1MB" -- the one documented spot the strict-sum invariant yields to
-        # DuckDB's own minimum. 64 MiB / 100 rounds below 1 MiB.
-        budget = resolve_ooc_memory_limit(budget_bytes=64 * _MIB, max_concurrent_instances=100)
+    def test_fan_in_67_on_64mib_budget_admits_at_one_mb(self) -> None:
+        # ROUND-3 Fix C SUB-FIX 4: 67 is the exact safe boundary -- DuckDB's
+        # decimal "1MB" floor for all 67 co-live instances still sums to
+        # 67_000_000 B, within the 67_108_864 B (64 MiB) budget, so this
+        # admits at "1MB" rather than raising.
+        budget = resolve_ooc_memory_limit(budget_bytes=64 * _MIB, max_concurrent_instances=67)
         assert budget.memory_limit == "1MB"
+        assert 64 * _MIB >= 67 * 1_000_000
+
+    def test_fan_in_68_on_64mib_budget_raises_fanin_exceeds_budget(self) -> None:
+        # A genuine over-commit: even DuckDB's decimal "1MB" floor for 68
+        # co-live instances sums to 68_000_000 B, over the 67_108_864 B (64
+        # MiB) budget -- the old `max(1, ...)` floor silently admitted this
+        # (over-committing the sum-of-caps invariant); SUB-FIX 4 now fails
+        # closed instead, matching `_memory_estimate._per_instance_mib`.
+        with pytest.raises(ExecutionError) as excinfo:
+            resolve_ooc_memory_limit(budget_bytes=64 * _MIB, max_concurrent_instances=68)
+        assert excinfo.value.code == "out_of_core_fanin_exceeds_budget"
 
     def test_rejects_concurrency_below_one(self) -> None:
         with pytest.raises(ExecutionError) as excinfo:
