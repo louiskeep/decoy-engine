@@ -278,9 +278,15 @@ ALLOWLIST: dict[str, int] = {
     # data-dependent with no caller-supplied override, so dp.py silently
     # charged a non-DP release into epsilon_total). Both are safety-critical
     # fail-closed logic on the DP fit path; the rationale text is part of the
-    # fix, not incidental. Decompose `_stats_for`'s per-kind branches into a
+    # fix, not incidental.
+    # Gate remediation Fix 7 (2026-07-20): +6 LOC stamping the
+    # support_origin="full_vocabulary" provenance marker on a categorical
+    # column fit under dp_mode, so the consume-side check (plan._checks_dp)
+    # can reject a top-K-truncated (non-DP) categorical fit under a
+    # dp-declared pipeline -- closes the categorical hole the Fix 3 residual
+    # disclosed. Decompose `_stats_for`'s per-kind branches into a
     # `_dp_mode_stats.py` sibling when the next DP-scope change lands.
-    "src/decoy_engine/quality/snapshot.py": 629,
+    "src/decoy_engine/quality/snapshot.py": 635,
 }
 
 

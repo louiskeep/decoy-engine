@@ -107,6 +107,14 @@ def check_dp_snapshot_provenance(config: dict[str, Any]) -> None:
       `dp_mode=True` + a `numeric_domains` entry -- DPS-1 -- rather than
       the real, data-dependent min/max range `apply_dp_noise` alone
       cannot retroactively fix).
+    - If the referenced column's `kind` is `categorical`, its
+      `support_origin` is `"full_vocabulary"` (Fix 7 marker, stamped by
+      `quality/snapshot.py` only under `dp_mode`): proof its candidate
+      SET was the full observed vocabulary (Fix 1) rather than a
+      top-K-by-true-count truncation, which is itself data-dependent and
+      therefore not DP even after `apply_dp_noise` thresholds it. An
+      ordinary top-K-fit categorical column has `support_origin` absent
+      or `"data"` and is rejected.
 
     This mirrors `check_statistical_columns` (`plan/_checks.py`, row 12),
     which already loads the same snapshot file at compile time via
@@ -121,22 +129,21 @@ def check_dp_snapshot_provenance(config: dict[str, Any]) -> None:
     verdict on its own error codes); an unreadable or malformed snapshot
     here is silently skipped so this check never masks that one's error.
 
-    Categorical-column caveat: this check does not (yet) verify that a
-    referenced CATEGORICAL column's candidate set was fit with dp_mode's
-    full-vocabulary bypass (Fix 1, `quality/snapshot.py`) rather than the
-    ordinary top-K truncation -- the snapshot schema carries no per-column
-    marker distinguishing the two for categorical (unlike numeric's
-    `support_origin`). A `dp`-declared pipeline whose ONLY statistical
-    columns are categorical could still consume a non-dp_mode-fit
-    snapshot that was separately run through `apply_dp_noise`. Recorded
-    as a known gap, not silently assumed closed.
+    Both numeric and categorical provenance are now enforced, so a
+    `dp`-declared pipeline cannot consume a non-DP-fit snapshot for ANY
+    referenced statistical column kind (datetime/freetext are already
+    rejected at fit time under `dp_mode`, Fix 2, so a DP-fit snapshot
+    never carries them). This is a self-contained verdict: it does not
+    rely on the ordering of the sibling anti-DP-knob check.
 
     Raises:
         PlanCompileError: ``code='dp_snapshot_not_dp_fit'`` when the
             referenced snapshot carries no `dp` block / `epsilon_total`;
             ``code='dp_snapshot_numeric_support_data_dependent'`` when a
             referenced numeric column's `support_origin` is not
-            `"caller"`.
+            `"caller"`; ``code='dp_snapshot_categorical_candidacy_data_dependent'``
+            when a referenced categorical column's `support_origin` is not
+            `"full_vocabulary"`.
     """
     global_settings = config.get("global_settings")
     dp_settings = global_settings.get("dp") if isinstance(global_settings, dict) else None
@@ -184,19 +191,36 @@ def check_dp_snapshot_provenance(config: dict[str, Any]) -> None:
             col_snap = (snap.get("columns") or {}).get(source_column)
             if not isinstance(col_snap, dict):
                 continue  # check_statistical_columns (row 12) already rejects this
-            if col_snap.get("kind") == "numeric" and col_snap.get("support_origin") != "caller":
+            kind = col_snap.get("kind")
+            support_origin = col_snap.get("support_origin")
+            if kind == "numeric" and support_origin != "caller":
                 raise PlanCompileError(
                     code="dp_snapshot_numeric_support_data_dependent",
                     path=f"tables.{table_name}.generate_columns.{col_name}.snapshot_file",
                     message=(
                         f"statistical column {where}: numeric source column "
                         f"{source_column!r} in the referenced snapshot has "
-                        f"support_origin {col_snap.get('support_origin')!r}, not "
+                        f"support_origin {support_origin!r}, not "
                         "'caller'. It was fit without dp_mode + a numeric_domains "
                         "entry, so its bin edges come from the real (data-dependent) "
                         "min/max -- apply_dp_noise cannot retroactively make that "
                         "independent, so this column is not covered by the DP "
                         "guarantee global_settings.dp declares. Re-fit with "
                         "dp_mode=True and a numeric_domains entry for this column."
+                    ),
+                )
+            if kind == "categorical" and support_origin != "full_vocabulary":
+                raise PlanCompileError(
+                    code="dp_snapshot_categorical_candidacy_data_dependent",
+                    path=f"tables.{table_name}.generate_columns.{col_name}.snapshot_file",
+                    message=(
+                        f"statistical column {where}: categorical source column "
+                        f"{source_column!r} in the referenced snapshot has "
+                        f"support_origin {support_origin!r}, not 'full_vocabulary'. "
+                        "It was fit without dp_mode, so its released label SET is a "
+                        "top-K-by-true-count truncation -- a data-dependent SELECTION "
+                        "that apply_dp_noise's threshold cannot make DP, so this "
+                        "column is not covered by the DP guarantee global_settings.dp "
+                        "declares. Re-fit with dp_mode=True for this column."
                     ),
                 )

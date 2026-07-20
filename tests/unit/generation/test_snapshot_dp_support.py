@@ -152,6 +152,50 @@ class TestDpModeCategoricalFullVocabularyCandidacy:
         assert "rare_unique_patient" not in labels  # suppressed by tau, not candidacy
 
 
+# ── Fix 7 (gate remediation, closes Fix 3 residual): a categorical column ─
+# ── fit under dp_mode carries a per-column provenance marker so the ───────
+# ── consume-side check can distinguish full-vocabulary candidacy (Fix 1) ──
+# ── from an ordinary top-K-truncated (non-DP) categorical fit. Parallel ───
+# ── to numeric's support_origin="caller": categorical is "full_vocabulary".
+
+
+class TestDpModeCategoricalSupportOriginMarker:
+    def _df(self) -> pd.DataFrame:
+        return pd.DataFrame({"state": ["CA", "NY", "CA", "TX", "NY"]})
+
+    def test_dp_mode_categorical_support_origin_full_vocabulary(self):
+        snap = compute_distribution_snapshot(self._df(), dp_mode=True)
+        assert snap["columns"]["state"]["support_origin"] == "full_vocabulary"
+
+    def test_dp_mode_bool_support_origin_full_vocabulary(self):
+        # The bool branch also bypasses top-K under dp_mode, so it earns
+        # the same data-independent-candidacy marker.
+        df = pd.DataFrame({"flag": [True, False, True, True]})
+        snap = compute_distribution_snapshot(df, dp_mode=True)
+        assert snap["columns"]["flag"]["support_origin"] == "full_vocabulary"
+
+    def test_plain_categorical_omits_support_origin_key_entirely(self):
+        # Byte-identity for existing callers: no dp_mode, no numeric_domains
+        # -> the key is absent, not "data".
+        snap = compute_distribution_snapshot(self._df())
+        assert "support_origin" not in snap["columns"]["state"]
+
+    def test_numeric_domains_without_dp_mode_categorical_is_data_not_full_vocab(self):
+        # numeric_domains alone (no dp_mode) does NOT make categorical
+        # candidacy data-independent -- the top-K truncation still applies --
+        # so the marker must stay "data", never "full_vocabulary".
+        df = pd.DataFrame({"age": [31, 42, 55], "state": ["CA", "NY", "CA"]})
+        snap = compute_distribution_snapshot(df, numeric_domains={"age": (0.0, 120.0)})
+        assert snap["columns"]["state"]["support_origin"] == "data"
+
+    def test_marker_survives_apply_dp_noise(self):
+        from decoy_engine.quality.dp import apply_dp_noise
+
+        snap = compute_distribution_snapshot(self._df(), dp_mode=True)
+        noisy = apply_dp_noise(snap, epsilon=1.0, delta=1e-6, rng=np.random.default_rng(0))
+        assert noisy["columns"]["state"]["support_origin"] == "full_vocabulary"
+
+
 # ── Fix 2 (gate remediation, P0): datetime/freetext are OUT OF SCOPE for ─
 # ── dp_mode -- their support is data-dependent and DPS-1 does not yet ────
 # ── make it independent, so dp_mode must reject rather than silently ─────
