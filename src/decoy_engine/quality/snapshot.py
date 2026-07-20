@@ -46,6 +46,13 @@ entry (HC-5) retains the FULL observed vocabulary for that column with
 no top-K collapse, so the artifact additionally exposes every distinct
 code AND rare-code presence/absence -- treat it with the same care as
 a raw extract of that column.
+
+DPS-1 (`numeric_domains` / `dp_mode`, dp.py's sibling half of the
+marginal-DP effort): a Laplace-noised histogram over a DATA-DERIVED
+range is not actually DP -- real min/max leak regardless of noise on
+the counts. `numeric_domains` declares a fixed range (SmartNoise/OpenDP
+pattern); `dp_mode` fails closed without one. Out-of-domain values
+clamp (Dwork & Roth Sec. 3.3) rather than vanish from `row_count`.
 """
 
 from __future__ import annotations
@@ -119,6 +126,8 @@ def compute_distribution_snapshot(
     categorical_top_k: int = _DEFAULT_CATEGORICAL_TOP_K,
     contingency_top_k: int = _DEFAULT_CONTINGENCY_TOP_K,
     high_cardinality_columns: Collection[str] = (),
+    numeric_domains: dict[str, tuple[float, float]] | None = None,
+    dp_mode: bool = False,
 ) -> dict[str, Any]:
     """Compute a deterministic, JSON-serializable distribution snapshot.
 
@@ -143,17 +152,21 @@ def compute_distribution_snapshot(
             bytes; violating either raises `DistributionSnapshotError`
             rather than silently degrading. Unknown column names are
             silently skipped (matching `joint_columns`, not a validator).
+        numeric_domains: DPS-1 (module docstring). `{column: (lo, hi)}`;
+            bin_edges/min/max derive from the (clamped) domain when set.
+        dp_mode: DPS-1. Fail-closed: numeric columns then require a
+            `numeric_domains` entry.
 
     Returns:
-        A dict matching schema `distribution-snapshot/v1`. See module
-        docstring for shape contract.
+        A dict matching schema `distribution-snapshot/v1` (module
+        docstring). `dp_mode`/`numeric_domains` adds a per-column
+        `support_origin` key ("data"|"caller"), else omitted (byte-
+        identical to every prior engine version).
 
     Raises:
-        DistributionSnapshotError: A `high_cardinality_columns` entry has
-            a non-string source dtype, or exceeds the distinct-value or
-            label-byte safety limit; or `high_cardinality_columns` itself
-            is a bare `str`/`bytes` (MED-3) instead of a collection of
-            column names.
+        DistributionSnapshotError: bad `high_cardinality_columns` shape
+            or safety-limit violation (see that arg's docs above).
+        ValueError: `dp_mode=True`, a numeric column with no `numeric_domains` entry.
     """
     # MED-3: a bare str satisfies `Collection[str]` structurally, so
     # `high_cardinality_columns="code"` would silently iterate characters
@@ -169,6 +182,9 @@ def compute_distribution_snapshot(
             ),
         )
     high_cardinality_set = frozenset(str(c) for c in high_cardinality_columns)
+    numeric_domains = numeric_domains or {}
+    # support_origin appears only when DPS-1 params are used (byte-identity).
+    emit_support_origin = dp_mode or bool(numeric_domains)
     columns_block: dict[str, dict[str, Any]] = {}
     for col in df.columns:
         columns_block[str(col)] = _column_snapshot(
@@ -176,6 +192,9 @@ def compute_distribution_snapshot(
             numeric_bins=numeric_bins,
             categorical_top_k=categorical_top_k,
             high_cardinality=str(col) in high_cardinality_set,
+            numeric_domain=numeric_domains.get(str(col)),
+            dp_mode=dp_mode,
+            emit_support_origin=emit_support_origin,
         )
 
     joints_block: list[dict[str, Any]] = []
@@ -205,6 +224,9 @@ def _column_snapshot(
     numeric_bins: int,
     categorical_top_k: int,
     high_cardinality: bool = False,
+    numeric_domain: tuple[float, float] | None = None,
+    dp_mode: bool = False,
+    emit_support_origin: bool = False,
 ) -> dict[str, Any]:
     non_null = series.dropna()
     null_count = int(series.isna().sum())
@@ -216,22 +238,18 @@ def _column_snapshot(
     dtype = canonical_dtype_label(series.dtype)
 
     if non_null_count == 0:
-        return {
-            "dtype": dtype,
-            "kind": "empty",
-            "null_count": null_count,
-            "non_null_count": 0,
-            "distinct_count": 0,
-            "stats": {},
-        }
-
-    kind, stats = _stats_for(
-        non_null,
-        numeric_bins=numeric_bins,
-        top_k=categorical_top_k,
-        high_cardinality=high_cardinality,
-    )
-    return {
+        kind, support_origin = "empty", "data"
+        stats: dict[str, Any] = {}
+    else:
+        kind, stats, support_origin = _stats_for(
+            non_null,
+            numeric_bins=numeric_bins,
+            top_k=categorical_top_k,
+            high_cardinality=high_cardinality,
+            numeric_domain=numeric_domain,
+            dp_mode=dp_mode,
+        )
+    out: dict[str, Any] = {
         "dtype": dtype,
         "kind": kind,
         "null_count": null_count,
@@ -239,6 +257,9 @@ def _column_snapshot(
         "distinct_count": distinct_count,
         "stats": stats,
     }
+    if emit_support_origin:
+        out["support_origin"] = support_origin
+    return out
 
 
 def _stats_for(
@@ -247,20 +268,27 @@ def _stats_for(
     numeric_bins: int,
     top_k: int,
     high_cardinality: bool = False,
-) -> tuple[str, dict[str, Any]]:
+    numeric_domain: tuple[float, float] | None = None,
+    dp_mode: bool = False,
+) -> tuple[str, dict[str, Any], str]:
     if high_cardinality:
-        return "categorical", _high_cardinality_categorical_stats(non_null)
+        return "categorical", _high_cardinality_categorical_stats(non_null), "data"
     if pd.api.types.is_bool_dtype(non_null):
-        return "categorical", _categorical_stats(non_null.astype(str), top_k=top_k)
+        return "categorical", _categorical_stats(non_null.astype(str), top_k=top_k), "data"
     if pd.api.types.is_numeric_dtype(non_null):
-        return "numeric", _numeric_stats(non_null, bins=numeric_bins)
+        if dp_mode and numeric_domain is None:
+            raise ValueError(
+                f"dp_mode requires a data-independent numeric_domain for column {non_null.name!r}."
+            )
+        stats = _numeric_stats(non_null, bins=numeric_bins, domain=numeric_domain)
+        return "numeric", stats, ("caller" if numeric_domain is not None else "data")
     if pd.api.types.is_datetime64_any_dtype(non_null):
-        return "datetime", _datetime_stats(non_null)
+        return "datetime", _datetime_stats(non_null), "data"
 
     distinct = non_null.nunique()
     if distinct <= _CATEGORICAL_DISTINCT_CAP:
-        return "categorical", _categorical_stats(non_null.astype(str), top_k=top_k)
-    return "freetext", _freetext_stats(non_null.astype(str), bins=numeric_bins)
+        return "categorical", _categorical_stats(non_null.astype(str), top_k=top_k), "data"
+    return "freetext", _freetext_stats(non_null.astype(str), bins=numeric_bins), "data"
 
 
 def _high_cardinality_categorical_stats(non_null: pd.Series) -> dict[str, Any]:
@@ -370,7 +398,9 @@ def _high_cardinality_categorical_stats(non_null: pd.Series) -> dict[str, Any]:
     return stats
 
 
-def _numeric_stats(non_null: pd.Series, *, bins: int) -> dict[str, Any]:
+def _numeric_stats(
+    non_null: pd.Series, *, bins: int, domain: tuple[float, float] | None = None
+) -> dict[str, Any]:
     arr = pd.to_numeric(non_null, errors="coerce").dropna().to_numpy(dtype=float)
     # to_numpy + dropna handles object columns of stringified numbers
     # without surprising the histogram math below.
@@ -389,8 +419,6 @@ def _numeric_stats(non_null: pd.Series, *, bins: int) -> dict[str, Any]:
             "bin_edges": [],
             "bin_counts": [],
         }
-    lo = float(finite.min())
-    hi = float(finite.max())
     mean = float(finite.mean())
     # std with ddof=0 matches pandas describe()'s "population" semantics
     # only when explicitly requested; we use ddof=1 to align with
@@ -404,12 +432,21 @@ def _numeric_stats(non_null: pd.Series, *, bins: int) -> dict[str, Any]:
         for p, v in zip(quantiles_idx, q_vals, strict=True)
     }
 
+    if domain is not None:
+        # DPS-1: range from the caller's domain; clamp (not drop) outliers.
+        lo, hi = float(domain[0]), float(domain[1])
+        hist_input = np.clip(finite, lo, hi)
+    else:
+        lo = float(finite.min())
+        hi = float(finite.max())
+        hist_input = finite
+
     if lo == hi:
         # Zero-range fallback: single bin covering the constant value.
         bin_edges = [lo, hi]
         bin_counts = [int(finite.size)]
     else:
-        counts, edges = np.histogram(finite, bins=bins, range=(lo, hi))
+        counts, edges = np.histogram(hist_input, bins=bins, range=(lo, hi))
         bin_edges = [_round(float(e)) for e in edges]
         bin_counts = [int(c) for c in counts]
 
