@@ -81,14 +81,22 @@ class TestNoiseApplication:
         assert 0 in counts  # scale 1000 noise must zero something
 
     def test_dp_metadata_block(self):
+        # DPS-2 (Task 4): the dp block gains delta + the composed budget
+        # (epsilon_total/delta_total/composition/charges) on top of the
+        # DPS-1 (Task 3) fields. This assertion is the one the plan
+        # flags as needing an update once the block grows.
         noisy = apply_dp_noise(_snapshot(), epsilon=2.0, rng=np.random.default_rng(3))
-        assert noisy["dp"] == {
-            "epsilon": 2.0,
-            "mechanism": "laplace",
-            "sensitivity": 1,
-            "adjacency": "add-remove-one-row",
-            "scope": "per-column-histogram",
-        }
+        dp = noisy["dp"]
+        assert dp["epsilon"] == 2.0
+        assert dp["delta"] == 1e-6
+        assert dp["mechanism"] == "laplace"
+        assert dp["sensitivity"] == 1
+        assert dp["adjacency"] == "add-remove-one-row"
+        assert dp["scope"] == "per-column-histogram"
+        assert dp["composition"] == "sequential"
+        assert dp["epsilon_total"] > dp["epsilon"]  # more than one release was charged
+        assert dp["delta_total"] >= 0.0
+        assert isinstance(dp["charges"], list) and len(dp["charges"]) > 0
         # Schema unchanged: v1-additive.
         assert noisy["schema_version"] == _snapshot()["schema_version"]
 
@@ -165,6 +173,52 @@ class TestThresholdReleasedCategorySet:
             with pytest.raises(DpError) as exc:
                 apply_dp_noise(snap, epsilon=1.0, delta=bad, rng=np.random.default_rng(0))
             assert exc.value.code == "dp_delta_invalid"
+
+
+class TestComposedBudget:
+    """DPS-2 Task 4: every noised release is charged to a PrivacyBudget;
+    the composed total is the honest (epsilon, delta) of the whole
+    snapshot release, not the per-histogram figure alone (Dwork & Roth
+    Thm 3.16, sequential composition -- see dp_budget.py)."""
+
+    def test_reports_composed_epsilon_total(self):
+        rng = np.random.default_rng(1)
+        snap = _cat_snapshot({"a": 500, "b": 500})  # 1 categorical col + row_count + ...
+        out = apply_dp_noise(snap, epsilon=1.0, delta=1e-6, rng=rng)
+        dp = out["dp"]
+        assert dp["epsilon_total"] >= 1.0  # per-column + scalar releases all charged
+        assert dp["composition"] == "sequential"
+        assert any(c["label"].startswith("dx") for c in dp["charges"])
+
+    def test_epsilon_total_is_sum_of_charge_epsilons(self):
+        rng = np.random.default_rng(2)
+        snap = _cat_snapshot({"a": 500, "b": 500})
+        out = apply_dp_noise(snap, epsilon=1.0, delta=1e-6, rng=rng)
+        dp = out["dp"]
+        assert dp["epsilon_total"] == pytest.approx(sum(c["epsilon"] for c in dp["charges"]))
+        assert dp["delta_total"] == pytest.approx(sum(c["delta"] for c in dp["charges"]))
+
+    def test_every_column_and_row_count_is_charged(self):
+        # Honest accounting: row_count is charged, and the categorical
+        # column's threshold-released label set is charged too (not just
+        # numeric histograms) -- charging fewer releases than were
+        # actually noised would UNDERSTATE epsilon_total, which is a
+        # wrong DP claim, worse than none.
+        rng = np.random.default_rng(3)
+        snap = _cat_snapshot({"a": 500, "b": 500})
+        out = apply_dp_noise(snap, epsilon=1.0, delta=1e-6, rng=rng)
+        labels = [c["label"] for c in out["dp"]["charges"]]
+        assert "row_count" in labels
+        assert any(label.startswith("dx.") for label in labels)
+
+    def test_multi_column_snapshot_composes_more_than_single_column(self):
+        rng1 = np.random.default_rng(4)
+        rng2 = np.random.default_rng(4)
+        one_col = apply_dp_noise(_cat_snapshot({"a": 500, "b": 500}), epsilon=1.0, rng=rng1)
+        two_cols = _cat_snapshot({"a": 500, "b": 500})
+        two_cols["columns"]["dx2"] = json.loads(json.dumps(two_cols["columns"]["dx"]))
+        two_cols_out = apply_dp_noise(two_cols, epsilon=1.0, rng=rng2)
+        assert two_cols_out["dp"]["epsilon_total"] > one_col["dp"]["epsilon_total"]
 
 
 class TestValidation:
