@@ -78,6 +78,8 @@ from typing import Any
 
 import numpy as np
 
+from decoy_engine.quality.dp_budget import PrivacyBudget
+
 
 class DpError(Exception):
     """Invalid DP release request. Machine-readable code."""
@@ -182,17 +184,29 @@ def apply_dp_noise(
         # (round(np.float64) stays numpy and would not JSON-serialize).
         return max(0, round(float(count) + float(generator.laplace(0.0, scale))))
 
+    # DPS-2: every noised release below is charged here, then composed
+    # sequentially (Dwork & Roth Thm 3.16 -- see dp_budget.py) into the
+    # `dp.epsilon_total` the operator actually spent. Charging FEWER
+    # releases than were actually noised would UNDERSTATE the total,
+    # which is a wrong DP claim -- worse than none -- so every scalar
+    # (row_count, and each column's null_count/non_null_count/
+    # distinct_count) is charged individually, not just the histograms.
+    budget = PrivacyBudget()
+
     out = copy.deepcopy(snapshot)
     if "row_count" in out:
         out["row_count"] = _noisy(out["row_count"])
-    for col_entry in (out.get("columns") or {}).values():
+        budget.charge("row_count", epsilon=epsilon)
+    for col_name, col_entry in (out.get("columns") or {}).items():
         for key in ("null_count", "non_null_count", "distinct_count"):
             if key in col_entry:
                 col_entry[key] = _noisy(col_entry[key])
+                budget.charge(f"{col_name}.{key}", epsilon=epsilon)
         stats = col_entry.get("stats") or {}
         kind = col_entry.get("kind")
         if kind == "numeric" and stats.get("bin_counts"):
             stats["bin_counts"] = [_noisy(c) for c in stats["bin_counts"]]
+            budget.charge(f"{col_name}.histogram", epsilon=epsilon)
             # Exact moments leak (a quantile IS a real value's neighborhood;
             # the samplers never read them). Min/max collapse to the
             # histogram edges, which the noised release already exposes.
@@ -207,6 +221,8 @@ def apply_dp_noise(
             # DPS-1 stable-histogram release (module docstring): a label
             # is released only if its noised count clears tau; the rest
             # fold into other_count so the mass is conserved, not dropped.
+            # The threshold mechanism itself spends delta, so this charge
+            # (unlike the pure-Laplace ones above) records it.
             kept: list[dict[str, Any]] = []
             suppressed = 0
             for item in stats.get("top_values") or []:
@@ -218,9 +234,13 @@ def apply_dp_noise(
             stats["top_values"] = kept
             other_noised = _noisy(stats["other_count"]) if "other_count" in stats else 0
             stats["other_count"] = other_noised + suppressed
+            budget.charge(
+                f"{col_name}.top_values", epsilon=epsilon, delta=delta, mechanism="laplace"
+            )
         elif kind == "datetime" and stats.get("year_bins"):
             for item in stats["year_bins"]:
                 item["count"] = _noisy(item["count"])
+            budget.charge(f"{col_name}.year_bins", epsilon=epsilon)
             years = [int(b["year"]) for b in stats["year_bins"]]
             # Year-bin resolution: the sampler draws a year then a uniform
             # timestamp within it, so exact min/max only ever clamped the
@@ -230,6 +250,7 @@ def apply_dp_noise(
             stats["max"] = (datetime(max(years) + 1, 1, 1) - timedelta(seconds=1)).isoformat()
         elif kind == "freetext" and stats.get("length_bin_counts"):
             stats["length_bin_counts"] = [_noisy(c) for c in stats["length_bin_counts"]]
+            budget.charge(f"{col_name}.length_histogram", epsilon=epsilon)
             length = stats.get("length") or {}
             length["mean"] = None
             length["std"] = None
@@ -240,9 +261,14 @@ def apply_dp_noise(
 
     out["dp"] = {
         "epsilon": epsilon,
+        "delta": delta,
         "mechanism": "laplace",
         "sensitivity": 1,
         "adjacency": "add-remove-one-row",
         "scope": "per-column-histogram",
+        "epsilon_total": budget.total_epsilon(),
+        "delta_total": budget.total_delta(),
+        "composition": "sequential",
+        "charges": budget.breakdown(),
     }
     return out
