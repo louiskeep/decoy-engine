@@ -235,7 +235,7 @@ geo = [
 # first ubuntu-latest ml-gate run is the reproducibility proof of record.
 ml = [
     "scikit-learn==1.7.2",
-    "lightgbm==4.6.0",
+    "lightgbm==4.7.0",
 ]
 
 # Project URLs surfaced on the PyPI sidebar.
