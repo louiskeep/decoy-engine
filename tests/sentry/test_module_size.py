@@ -78,7 +78,13 @@ ALLOWLIST: dict[str, int] = {
     # two new keys in `_NON_SEMANTIC_GLOBAL_SETTINGS`. Same per-strategy
     # check-module pattern as every prior addition here; same decomposition
     # target stands.
-    "src/decoy_engine/plan/_compile.py": 658,
+    # DPS-3 (2026-07-20): +6 LOC (658 -> 664) for the dp generate-contract
+    # gate: the import + 3 call sites (compile_plan x2 branches +
+    # run_config_only_checks) + their checks_passed/returned-tuple entries,
+    # all single-line (no block comments, to keep the growth minimal). Same
+    # per-strategy check-module pattern as every prior addition here; same
+    # decomposition target stands.
+    "src/decoy_engine/plan/_compile.py": 664,
     # TB-5 precondition #73 (2026-07-13): the pure peak estimator was at the
     # cap (596 LOC) when it gained `route_intercept_bytes` -- the small public
     # accessor (idiomatic here, like `is_fixed_width_dtype`) that makes the

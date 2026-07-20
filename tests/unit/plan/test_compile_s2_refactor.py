@@ -54,6 +54,10 @@ EXPECTED_S2_CHECKS_PASSED = (
     # Row 11 (audit H5, 2026-06-12): non-poolable provider on the pool
     # path rejected at compile time, appended at the tail.
     "non_poolable_provider_with_pool_backend",
+    # Row 30 (DPS-3, 2026-07-20): dp generate-contract mutual exclusion
+    # (allow_real_categories / high_cardinality vs global_settings.dp),
+    # inserted right before row 12 (runs before it in compile_plan).
+    "dp_generate_contract",
     # Row 12 (capability-gaps WS3, 2026-06-12): statistical generate
     # columns vs their snapshot artifacts, appended at the tail.
     "statistical_columns",
@@ -121,22 +125,22 @@ class TestChecksPassedShape:
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
         assert plan.plan_compile.checks_passed == EXPECTED_S2_CHECKS_PASSED
 
-    def test_checks_passed_contains_exactly_twenty_nine_entries(
+    def test_checks_passed_contains_exactly_thirty_entries(
         self, simple_config: dict, simple_profile: Profile
     ) -> None:
-        # 9 through S8, row 10 (B1/S13), row 11 (audit H5), rows 12-13
-        # (capability gaps WS3 + WS2), row 14 (vault follow-up),
-        # row 15 (SP-04 fpe_checksum_scheme), row 16 (SP-10 derived_column_refs),
-        # row 17 (SP-10b derived_aggregate_refs), rows 18-20 (SP-10c
-        # grouped_series_refs, windowed_date_refs, group_key_refs),
-        # row 27 (HC-3a date_shift_group_by_refs), row 21 (SP-46
-        # fpe_join_groups), rows 22-24 (Sprint 13 S3: truncate_config,
-        # bucketize_config, categorical_categories), row 28 (HC-3b:
-        # top_code_config), row 25 (Sprint 2 honesty pack: fpe_charset_config),
-        # row 26 (DE-03: faker_requires_provider), row 29 (HC-7:
-        # freetext_advisory).
+        # 9 through S8, row 10 (B1/S13), row 11 (audit H5), row 30 (DPS-3
+        # dp_generate_contract), rows 12-13 (capability gaps WS3 + WS2),
+        # row 14 (vault follow-up), row 15 (SP-04 fpe_checksum_scheme),
+        # row 16 (SP-10 derived_column_refs), row 17 (SP-10b
+        # derived_aggregate_refs), rows 18-20 (SP-10c grouped_series_refs,
+        # windowed_date_refs, group_key_refs), row 27 (HC-3a
+        # date_shift_group_by_refs), row 21 (SP-46 fpe_join_groups), rows
+        # 22-24 (Sprint 13 S3: truncate_config, bucketize_config,
+        # categorical_categories), row 28 (HC-3b: top_code_config), row 25
+        # (Sprint 2 honesty pack: fpe_charset_config), row 26 (DE-03:
+        # faker_requires_provider), row 29 (HC-7: freetext_advisory).
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
-        assert len(plan.plan_compile.checks_passed) == 29
+        assert len(plan.plan_compile.checks_passed) == 30
 
     def test_orphan_fk_policy_completeness_at_documented_position(
         self, simple_config: dict, simple_profile: Profile
@@ -154,15 +158,18 @@ class TestChecksPassedShape:
         (date_shift_group_by_refs) right after group_key_refs, ahead of the
         SP-46/Sprint-13 tail. HC-3b (2026-07-17) adds row 28 (top_code_config)
         right after bucketize_config. HC-7 (2026-07-17) adds row 29
-        (freetext_advisory) at the very tail."""
+        (freetext_advisory) at the very tail. DPS-3 (2026-07-20) adds row 30
+        (dp_generate_contract) right after non_poolable_provider_with_pool_
+        backend, ahead of statistical_columns."""
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
-        assert plan.plan_compile.checks_passed[-25] == "composite_columns_length_match"
-        assert plan.plan_compile.checks_passed[-24] == "orphan_fk_policy_completeness"
-        assert plan.plan_compile.checks_passed[-23] == "pool_capacity_pre_flight"
-        assert plan.plan_compile.checks_passed[-22] == "composite_wiring_consistent"
-        assert plan.plan_compile.checks_passed[-21] == "deterministic_namespace_completeness"
-        assert plan.plan_compile.checks_passed[-20] == "null_bearing_int_unsupported"
-        assert plan.plan_compile.checks_passed[-19] == "non_poolable_provider_with_pool_backend"
+        assert plan.plan_compile.checks_passed[-26] == "composite_columns_length_match"
+        assert plan.plan_compile.checks_passed[-25] == "orphan_fk_policy_completeness"
+        assert plan.plan_compile.checks_passed[-24] == "pool_capacity_pre_flight"
+        assert plan.plan_compile.checks_passed[-23] == "composite_wiring_consistent"
+        assert plan.plan_compile.checks_passed[-22] == "deterministic_namespace_completeness"
+        assert plan.plan_compile.checks_passed[-21] == "null_bearing_int_unsupported"
+        assert plan.plan_compile.checks_passed[-20] == "non_poolable_provider_with_pool_backend"
+        assert plan.plan_compile.checks_passed[-19] == "dp_generate_contract"
         assert plan.plan_compile.checks_passed[-18] == "statistical_columns"
         assert plan.plan_compile.checks_passed[-17] == "text_redact_ner_available"
         assert plan.plan_compile.checks_passed[-16] == "vault_columns"
