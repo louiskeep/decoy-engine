@@ -5,6 +5,7 @@ from decoy_engine.execution.out_of_core._budget import (
     OutOfCoreBudget,
     check_temp_disk_budget,
     resolve_budget,
+    resolve_ooc_memory_limit,
     temp_disk_bytes,
 )
 from decoy_engine.execution.out_of_core._compat import (
@@ -40,6 +41,7 @@ __all__ = [
     "mask_child_fk_fail",
     "mask_column",
     "resolve_budget",
+    "resolve_ooc_memory_limit",
     "run_fk_out_of_core",
     "temp_disk_bytes",
 ]

@@ -12,6 +12,7 @@ import pyarrow as pa
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._fk_keys import NULL_FK_KEY, fk_join_key_tuple, fk_key_value
 from decoy_engine.execution.out_of_core._duckdb import connect_duckdb
+from decoy_engine.execution.out_of_core._join import _sql_string
 from decoy_engine.execution.out_of_core._mask import mask_column, masked_output_type
 from decoy_engine.execution.out_of_core._source import LazySource
 from decoy_engine.kernel import hash_array
@@ -442,26 +443,78 @@ def _build_relation(
     out_path = temp_dir / (
         f"{edge.parent_table}_{_column_tuple_slug(edge.parent_columns)}_key_relation.parquet"
     )
-    conn = connect_duckdb(temp_dir=temp_dir / "duckdb", memory_limit=memory_limit)
+    # The dedup staging copy: the registered RecordBatchReader is single-pass,
+    # but the last-write-wins dedup needs to read the keys TWICE (a GROUP BY to
+    # find each key's winning row, then a join back to recover that row's masked
+    # columns), so the stream is first landed to disk here. Kept under the same
+    # `temp_dir/"duckdb"` tree as DuckDB's own spill so `check_temp_disk_budget`
+    # bounds it, and removed in the finally.
+    duckdb_dir = temp_dir / "duckdb"
+    staged_path = duckdb_dir / (
+        f"{edge.parent_table}_{_column_tuple_slug(edge.parent_columns)}_key_staged.parquet"
+    )
+    conn = connect_duckdb(temp_dir=duckdb_dir, memory_limit=memory_limit)
     try:
-        # DuckDB scans the RecordBatchReader lazily and owns the dedup + spill, so
-        # nothing sized by total parent cardinality is ever resident in Python.
+        # Last-write-wins dedup via STAGE -> max(row_nr) GROUP BY -> JOIN BACK,
+        # NOT `arg_max(struct_pack(...), row_nr)` and NOT the equivalent
+        # `QUALIFY row_number() OVER (PARTITION BY ... ORDER BY ... DESC) = 1`
+        # window form. Both of those keep O(distinct-key) STATE resident and so
+        # are not memory-bounded on a wide parent key space: DuckDB's window
+        # operator pins its per-partition state, and `arg_max`'s aggregate state
+        # holds one winning payload PER GROUP in memory even though the hash
+        # aggregate spills its INPUT (measured on DuckDB 1.5.4: arg_max(struct)
+        # over 33.3M groups OOMs at a 1638 MB limit after spilling ~7.9 GB
+        # futilely; it only "passes" at 16 GB because the ~3 GB of state happens
+        # to fit -- exactly the failure mode this fix exists to remove).
+        #
+        # The three-step form below keeps only FIXED-size spillable state:
+        #   1. COPY the registered stream to a staged parquet (nothing resident).
+        #   2. `max(__decoy_row_nr) GROUP BY __decoy_fk_join_key`: the aggregate
+        #      state per group is a single int, and a `max`-over-int GROUP BY is
+        #      fully external (measured: 20M groups complete at a 600 MB limit,
+        #      spilling ~2.1 GB).
+        #   3. JOIN the winning (key, row_nr) pairs back to the staged parquet to
+        #      recover that row's masked columns; DuckDB's external hash join
+        #      spills cleanly.
+        # `__decoy_row_nr` is globally unique (assigned once per source row across
+        # the whole stream), so step 3's join yields EXACTLY one row per key with
+        # every masked column taken from the SAME winning row -- identical
+        # semantics to the window / arg_max forms, and the arg_max NULL-member
+        # hazard (a per-column `arg_max` skips rows whose value is NULL and would
+        # stitch a composite key's columns across different rows) simply cannot
+        # arise here: masked columns ride through the join as ordinary columns,
+        # NULL or not, so no struct_pack is needed.
         conn.register("parent_keys", reader)
+        # The COPY fully consumes the single-pass reader; the dedup below reads
+        # the STAGED parquet, never `parent_keys` again, so the exhausted
+        # registration just rides along until conn.close() in the finally.
+        conn.execute(f"COPY parent_keys TO {_sql_string(str(staged_path))} (FORMAT PARQUET)")
+        staged_sql = f"read_parquet({_sql_string(str(staged_path))})"
+        masked_select = ", ".join(f"s.{col} AS {col}" for col in masked_columns)
         conn.execute(
-            """
+            f"""
             COPY (
-                SELECT __decoy_fk_join_key, {masked_select}
-                FROM parent_keys
-                QUALIFY row_number() OVER (
-                    PARTITION BY __decoy_fk_join_key
-                    ORDER BY __decoy_row_nr DESC
-                ) = 1
+                SELECT s.__decoy_fk_join_key, {masked_select}
+                FROM {staged_sql} s
+                JOIN (
+                    SELECT __decoy_fk_join_key,
+                           max(__decoy_row_nr) AS __decoy_win_row_nr
+                    FROM {staged_sql}
+                    GROUP BY __decoy_fk_join_key
+                ) w
+                  ON s.__decoy_fk_join_key = w.__decoy_fk_join_key
+                 AND s.__decoy_row_nr = w.__decoy_win_row_nr
             ) TO ? (FORMAT PARQUET)
-            """.format(masked_select=", ".join(masked_columns)),
+            """,
             [str(out_path)],
         )
     finally:
-        conn.close()
+        try:
+            conn.close()
+        finally:
+            # The staged dedup copy is transient scratch, never part of the
+            # published relation; remove it whether the build succeeded or not.
+            staged_path.unlink(missing_ok=True)
     return ParentKeyRelation(path=out_path, masked_key_columns=masked_columns)
 
 

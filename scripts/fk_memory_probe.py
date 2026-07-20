@@ -93,7 +93,13 @@ from tests.perf_fixtures.fk_relational import (  # noqa: E402
 )
 
 from decoy_engine.execution import PandasExecutionAdapter, ParquetTransactionalSink  # noqa: E402
-from decoy_engine.execution.out_of_core import resolve_budget, run_fk_out_of_core  # noqa: E402
+from decoy_engine.execution._pipeline_route_exec import (  # noqa: E402
+    _max_concurrent_ooc_instances,
+)
+from decoy_engine.execution.out_of_core import (  # noqa: E402
+    resolve_ooc_memory_limit,
+    run_fk_out_of_core,
+)
 from decoy_engine.providers_v2 import get_default_registry  # noqa: E402
 from decoy_engine.relationships._graph import OrphanPolicy  # noqa: E402
 from decoy_engine.relationships._namespace import NamespaceRegistry  # noqa: E402
@@ -102,6 +108,15 @@ _POLICIES = {p.name.lower(): p for p in OrphanPolicy}
 _N_TABLES = len(make_plan().seed_envelope.per_table)
 _TABLE_NAMES = ("parent", "child", "grandchild")
 _MIB = 1024 * 1024
+
+# The probe's own worst-case count of simultaneously-live DuckDB instances,
+# computed exactly from the fixture's parent->child->grandchild chain (the
+# middle table's incoming joiner runs concurrently with its outgoing relation
+# build = 2). Passed to `resolve_ooc_memory_limit` so the per-instance
+# memory_limit matches the real route, NOT the module's conservative default
+# of 4. The policy does not change the edge structure, so any policy's graph
+# gives the same count.
+_PROBE_MAX_CONCURRENT_INSTANCES = _max_concurrent_ooc_instances(make_graph(OrphanPolicy.PRESERVE))
 
 _RLIMITS = {"as": resource.RLIMIT_AS, "data": resource.RLIMIT_DATA}
 
@@ -146,12 +161,28 @@ _MEMORY_ERROR_PATTERNS = (re.compile(r"Unknown error: Wrapping \S+ failed"),)
 # it stays a memory classification and cannot absorb an unrelated failure.
 _GLIBC_TLS_OOM_MARKER = "cannot allocate memory for thread-local data"
 
-# The share of a hard process cap handed to DuckDB's buffer manager on the
-# capped out-of-core route. The interpreter plus the pandas/pyarrow/duckdb
-# imports and the route's own bounded Arrow batches live OUTSIDE DuckDB's
-# accounting (measured ~300 MB baseline on this stack), so giving DuckDB the
-# whole cap would let the two halves together blow the rlimit.
-_DUCKDB_CAP_FRACTION = 4
+# The share of a hard process cap handed to `resolve_ooc_memory_limit` as its
+# TOTAL budget (before that function's own concurrency division) on the capped
+# out-of-core route. The interpreter plus the pandas/pyarrow/duckdb imports and
+# the route's own bounded Arrow batches live OUTSIDE DuckDB's accounting
+# (measured ~300 MB baseline on this stack), so handing DuckDB the whole cap
+# would let the two halves together blow the rlimit.
+#
+# Was 4 (the total budget was only ~25% of the cap): a real 100M-row cloud run
+# showed this starved DuckDB while ~11 GB of a 16 GB cap sat idle and the
+# 300 GB spill disk was never touched -- an in-DuckDB OOM with both RAM and
+# disk to spare. Lowered to 1.25: the TOTAL budget becomes ~80% of the cap,
+# holding ~20% back for the interpreter/Arrow/OS baseline plus headroom.
+#
+# That ~80% is the budget BEFORE `resolve_ooc_memory_limit` divides by the
+# run's concurrency to size the per-DuckDB-instance memory_limit. The probe
+# passes the fixture's ACTUAL concurrency (`_PROBE_MAX_CONCURRENT_INSTANCES`,
+# the linear-chain worst case of 2), so one DuckDB instance's limit is
+# cap / 1.25 / 2 = ~40% of the cap, and the two instances that can be live at
+# once (a joiner plus a concurrent relation build) sum to ~80% -- NOT the
+# default divisor of 4, which would have handed each instance only ~20% (below
+# even the old cap/4 that already failed).
+_DUCKDB_CAP_FRACTION = 1.25
 
 # Allocator pinning for capped workers. Arrow's default (jemalloc/mimalloc)
 # and glibc's per-thread arenas reserve address space far beyond live data
@@ -521,8 +552,12 @@ def _run_out_of_core(
     Parquet one bounded chunk at a time (`write_large_fk_chain`), so even
     fixture construction never holds a whole table. Under `--mem-cap-mb`, the
     DuckDB `memory_limit` and the route's `batch_rows` are derived from the cap
-    via `resolve_budget` (Sprint C4), a conservative fraction because the
-    interpreter and Arrow batch buffers live outside DuckDB's accounting.
+    via `resolve_ooc_memory_limit` (the out-of-core-only sizing, NOT the
+    router-shared `resolve_budget` -- see `_budget.py`'s module docstring),
+    with ~80% of the cap as the TOTAL budget (`_DUCKDB_CAP_FRACTION`) divided
+    by the fixture's real concurrency (`_PROBE_MAX_CONCURRENT_INSTANCES`) into
+    the per-instance limit, so this probe measures exactly the sizing the
+    production route applies.
     """
     work_root = Path(tempfile.mkdtemp(prefix="decoy-ooc-probe-"))
     runner_temp = work_root / "runner"
@@ -548,7 +583,10 @@ def _run_out_of_core(
         memory_limit = None
         batch_rows = None
         if mem_cap_mb is not None:
-            budget = resolve_budget(budget_bytes=mem_cap_mb * _MIB // _DUCKDB_CAP_FRACTION)
+            budget = resolve_ooc_memory_limit(
+                budget_bytes=int(mem_cap_mb * _MIB / _DUCKDB_CAP_FRACTION),
+                max_concurrent_instances=_PROBE_MAX_CONCURRENT_INSTANCES,
+            )
             memory_limit = budget.memory_limit
             batch_rows = budget.batch_rows
 

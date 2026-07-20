@@ -187,11 +187,16 @@ def run_out_of_core_route(
     byte-parity for every admitted plan (`tests/parity/test_out_of_core_fk_parity.py`).
 
     Budget: a host-sized `memory_limit` + `batch_rows` are resolved from
-    `resolve_budget` so DuckDB is bounded regardless of table cardinality. If
-    host-RAM detection fails (`out_of_core_memory_detection_failed`), the route
-    still runs on its pinned batch default + DuckDB's own default limit rather
-    than newly failing a job full-frame would have completed; a caller that
-    needs a hard cap passes an explicit `budget_bytes` (which never falls back).
+    `resolve_ooc_memory_limit` (NOT `resolve_budget` -- that function's
+    conservative fraction is reserved for the router's full-frame admission
+    price and must not be widened; see `_budget.py`'s module docstring) so
+    DuckDB gets most of the ceiling while staying bounded regardless of table
+    cardinality, divided across the graph's exact worst-case concurrent
+    DuckDB-instance count (`_max_concurrent_ooc_instances`). If host-RAM
+    detection fails (`out_of_core_memory_detection_failed`), the route still
+    runs on its pinned batch default + DuckDB's own default limit rather than
+    newly failing a job full-frame would have completed; a caller that needs
+    a hard cap passes an explicit `budget_bytes` (which never falls back).
 
     Residency: with a `sink` the runner streams bounded batches (outputs `{}`,
     the sink holds the deliverable); without one it reassembles resident tables
@@ -216,7 +221,7 @@ def run_out_of_core_route(
     peak-memory guarantee during masking/join -- is unaffected either way.
     """
     from decoy_engine.execution._sequential import table_topo_order
-    from decoy_engine.execution.out_of_core import resolve_budget, run_fk_out_of_core
+    from decoy_engine.execution.out_of_core import resolve_ooc_memory_limit, run_fk_out_of_core
 
     resolved_sources = sources
     if source_loader is not None:
@@ -229,7 +234,17 @@ def run_out_of_core_route(
     memory_limit: str | None = None
     batch_rows: int | None = None
     try:
-        budget = resolve_budget(budget_bytes)
+        # `resolve_ooc_memory_limit`, NOT `resolve_budget`: this is the
+        # DuckDB memory_limit for the execution runner, not the router's
+        # full-frame admission price (`_pipeline_routing_signals.py` keeps
+        # calling `resolve_budget` directly for that, unchanged -- see
+        # `_budget.py`'s module docstring for why the two must stay
+        # decoupled). `max_concurrent_instances` is computed exactly from
+        # THIS job's own relationship graph, not left at the module's
+        # conservative default -- the graph is already in hand here.
+        budget = resolve_ooc_memory_limit(
+            budget_bytes, max_concurrent_instances=_max_concurrent_ooc_instances(graph)
+        )
         memory_limit, batch_rows = budget.memory_limit, budget.batch_rows
     except ExecutionError:
         # Host-RAM detection failed and no explicit budget was given: fall back
@@ -271,6 +286,36 @@ def run_out_of_core_route(
         quality_metrics=quality_metrics,
         table_kinds=table_kinds,
         row_errors=ooc_result.row_errors,
+    )
+
+
+def _max_concurrent_ooc_instances(graph: RelationshipGraph) -> int:
+    """Exact worst-case count of simultaneously-live DuckDB instances for
+    `run_fk_out_of_core` over `graph`, sizing `resolve_ooc_memory_limit`'s
+    `max_concurrent_instances` precisely instead of falling back to that
+    function's conservative default.
+
+    Mirrors `_budget.py`'s module-docstring analysis of `_runner.py`: only
+    one table streams at a time, but while it streams, `_stream_table` holds
+    one `ChildFkBatchJoiner` connection open per INCOMING edge, and (while
+    those are still open) builds one further connection at a time for each
+    OUTGOING edge's parent-key relation. So one table's worst case is its
+    incoming-edge count plus one (if it has any outgoing edge at all; a leaf
+    table with no outgoing edge never opens a relation-build connection).
+    The run's worst case is the max of that over every table the graph
+    touches -- a schema-level property, safe to compute once up front
+    (never re-derived per batch or scaled by row count).
+    """
+    incoming_counts: dict[str, int] = {}
+    has_outgoing: set[str] = set()
+    for edge in graph.edges:
+        incoming_counts[edge.child_table] = incoming_counts.get(edge.child_table, 0) + 1
+        has_outgoing.add(edge.parent_table)
+    tables = set(incoming_counts) | has_outgoing
+    if not tables:
+        return 1
+    return max(
+        incoming_counts.get(table, 0) + (1 if table in has_outgoing else 0) for table in tables
     )
 
 

@@ -25,7 +25,7 @@ from decoy_engine.execution.out_of_core._relation import build_parent_key_relati
 from decoy_engine.execution.out_of_core._stage import MaskedKeyStager
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Mapping
+    from collections.abc import Callable, Iterator, Mapping
     from pathlib import Path
 
     from decoy_engine.execution._transactional_sink import TransactionalSink
@@ -52,6 +52,7 @@ def emit_to_sink(
     batch_rows: int,
     sink: TransactionalSink,
     source_schema: pa.Schema,
+    on_stream_consumed: Callable[[], None] | None = None,
 ) -> None:
     """Stream the rewritten batches to the sink, then build outgoing relations.
 
@@ -60,6 +61,19 @@ def emit_to_sink(
     bounded: one batch resident at a time, the copy on disk), because the
     relation's masked side must be the FINAL published values, which no
     longer exist anywhere else once the batches are gone into the sink.
+
+    `on_stream_consumed` (default None) fires the instant the rewrite stream is
+    fully drained -- after the sink write, before the outgoing relation build.
+    The rewrite stream is what holds the incoming joiners' DuckDB connections
+    (each a full-`memory_limit` instance materializing its parent relation);
+    the relation build opens ANOTHER full-`memory_limit` instance to dedup. If
+    the joiners stayed open across that build, two full-budget DuckDB instances
+    would be live at once, and under a process-level address-space cap
+    (RLIMIT_DATA) their combined reservations overflow it and malloc fails
+    before either hits its own internal limit. Releasing the joiners here caps
+    the linear chain at one full-budget instance at a time. `_relation_masked_types`
+    reads only the joiners' Python-side observed/output types, which survive the
+    connection close, so the relation build below is unaffected.
     """
     staged_columns = tuple(sorted({col for edge in outgoing_edges for col in edge.parent_columns}))
     if not staged_columns:
@@ -68,6 +82,8 @@ def emit_to_sink(
             (reconcile_batch(batch, fixed_schema) for batch in rewritten),
             schema=fixed_schema,
         )
+        if on_stream_consumed is not None:
+            on_stream_consumed()
         return
     stager = MaskedKeyStager(staging_path, columns=staged_columns, fixed_schema=fixed_schema)
     try:
@@ -81,6 +97,10 @@ def emit_to_sink(
         sink.write_batches(table_name, emitted(), schema=fixed_schema)
     finally:
         stager.close()
+    # Release the incoming joiners' DuckDB connections BEFORE the relation
+    # build opens its own full-budget instance (see the docstring).
+    if on_stream_consumed is not None:
+        on_stream_consumed()
     if stager.rows:
         for edge in outgoing_edges:
             parent_relations[edge] = build_parent_key_relation_aligned(
