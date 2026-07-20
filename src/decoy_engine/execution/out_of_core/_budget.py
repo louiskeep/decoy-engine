@@ -87,21 +87,21 @@ applies): `connect_duckdb` opens a FRESH `:memory:` DuckDB instance per call,
 and `memory_limit` bounds only THAT ONE instance -- DuckDB has no
 cross-instance accounting. `_runner.py` can hold several instances open at
 once: `_stream_table` opens one `ChildFkBatchJoiner` connection PER INCOMING
-FK EDGE up front (`_batch_join.py`) and keeps every one of them open for the
-table's entire streamed pass, while `_relation.py::_build_relation` opens one
-further connection at a time to build each OUTGOING edge's parent-key
-relation -- and that build runs WHILE the table's own joiner connections are
-still open (both live inside the same `_stream_table` try block; joiners
-close only in its `finally`, after every outgoing relation for that table is
-built). So the worst case for one table is `incoming_edge_count + 1`. Only
+FK EDGE up front (`_batch_join.py`). On the sink path, joiners close after
+the rewrite stream drains (via `on_stream_consumed` in `_emit.py`), before
+`_relation.py::build_parent_key_relation` opens for OUTGOING edges; on the
+resident path (no sink), joiners stay open during the build (both live in the
+same `_stream_table` try block). So the sink path peaks at max(incoming_edges,
+1), the resident path at incoming_edges + 1. `_max_concurrent_ooc_instances`
+computes the resident peak (incoming_edges + 1) as the divisor for both paths:
+it is exact for residents and conservative (over-provisions) for sinks. Only
 one table streams at a time (`run_fk_out_of_core`'s per-table loop is
-sequential, never concurrent), so that per-table worst case is the whole
-run's ceiling. But incoming-edge fan-in is a property of the PLAN's
-relationship graph, which this module never sees -- both budget functions
-take only byte counts, by design, so neither depends on
-`decoy_engine.relationships` or `decoy_engine.plan`. No exact bound is
-derivable here without that dependency, so `max_concurrent_instances` is an
-explicit, documented, CONSERVATIVE default
+sequential, never concurrent), so the run's ceiling is the max over every
+table. But incoming-edge fan-in is a property of the PLAN's relationship
+graph, which this module never sees -- both budget functions take only byte
+counts, by design, so neither depends on `decoy_engine.relationships` or
+`decoy_engine.plan`. No exact bound is derivable here without that dependency,
+so `max_concurrent_instances` is an explicit, documented, CONSERVATIVE default
 (`_DEFAULT_MAX_CONCURRENT_DUCKDB_INSTANCES`) rather than a computed one: real
 FK schemas rarely fan many incoming edges into one table (the 100M-row cloud
 benchmark's parent->child->grandchild chain peaks at 2 -- one joiner plus one

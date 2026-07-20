@@ -290,21 +290,19 @@ def run_out_of_core_route(
 
 
 def _max_concurrent_ooc_instances(graph: RelationshipGraph) -> int:
-    """Exact worst-case count of simultaneously-live DuckDB instances for
-    `run_fk_out_of_core` over `graph`, sizing `resolve_ooc_memory_limit`'s
-    `max_concurrent_instances` precisely instead of falling back to that
-    function's conservative default.
+    """Conservative upper bound on concurrent full-budget DuckDB instances,
+    sizing `resolve_ooc_memory_limit`'s `max_concurrent_instances` precisely
+    instead of falling back to that function's conservative default.
 
-    Mirrors `_budget.py`'s module-docstring analysis of `_runner.py`: only
-    one table streams at a time, but while it streams, `_stream_table` holds
-    one `ChildFkBatchJoiner` connection open per INCOMING edge, and (while
-    those are still open) builds one further connection at a time for each
-    OUTGOING edge's parent-key relation. So one table's worst case is its
-    incoming-edge count plus one (if it has any outgoing edge at all; a leaf
-    table with no outgoing edge never opens a relation-build connection).
-    The run's worst case is the max of that over every table the graph
-    touches -- a schema-level property, safe to compute once up front
-    (never re-derived per batch or scaled by row count).
+    One table streams at a time, holding one `ChildFkBatchJoiner` per INCOMING
+    edge. On the sink path, `emit_to_sink` closes joiners after the stream
+    drains (via `on_stream_consumed` in `_emit.py`) before the relation build,
+    peaking at max(incoming_edges, 1). On the resident path (no sink), joiners
+    stay open during the relation build, peaking at incoming_edges + 1. This
+    function returns the resident peak: exact for the resident path, conservative
+    (over-provisions) for the sink path. The run's worst case is the max over
+    every table the graph touches -- a schema-level property, safe to compute
+    once up front (never re-derived per batch or scaled by row count).
     """
     incoming_counts: dict[str, int] = {}
     has_outgoing: set[str] = set()
