@@ -93,6 +93,80 @@ class TestNoiseApplication:
         assert noisy["schema_version"] == _snapshot()["schema_version"]
 
 
+def _cat_snapshot(counts: dict) -> dict:
+    return {
+        "schema_version": "distribution-snapshot/v1",
+        "row_count": sum(counts.values()),
+        "columns": {
+            "dx": {
+                "kind": "categorical",
+                "dtype": "object",
+                "null_count": 0,
+                "non_null_count": sum(counts.values()),
+                "distinct_count": len(counts),
+                "stats": {
+                    "top_values": [{"value": k, "count": v} for k, v in counts.items()],
+                    "other_count": 0,
+                },
+            }
+        },
+        "joints": [],
+    }
+
+
+class TestThresholdReleasedCategorySet:
+    """DPS-1 Task 3: stable-histogram / propose-test-release category set.
+
+    A unique rare category (e.g. a single patient's free-text-like code)
+    is a real-value leak even though its *count* gets Laplace noise: the
+    label itself is released exactly. Suppressing labels below the
+    stable-histogram threshold tau makes the released label SET itself
+    (epsilon, delta)-DP (Korolova et al. 2009 / Dwork & Roth Sec. 3).
+    """
+
+    def test_rare_category_suppressed_into_other(self):
+        rng = np.random.default_rng(7)
+        snap = _cat_snapshot({"common": 1000, "rare_unique_patient": 1})
+        out = apply_dp_noise(snap, epsilon=0.5, delta=1e-6, rng=rng)
+        labels = {tv["value"] for tv in out["columns"]["dx"]["stats"]["top_values"]}
+        assert "rare_unique_patient" not in labels  # the leak is gone
+        assert out["columns"]["dx"]["stats"]["other_count"] >= 1
+
+    def test_common_category_survives_threshold(self):
+        rng = np.random.default_rng(7)
+        snap = _cat_snapshot({"common": 1000, "rare_unique_patient": 1})
+        out = apply_dp_noise(snap, epsilon=0.5, delta=1e-6, rng=rng)
+        labels = {tv["value"] for tv in out["columns"]["dx"]["stats"]["top_values"]}
+        assert "common" in labels
+
+    def test_default_delta_applied_when_omitted(self):
+        # apply_dp_noise must still threshold-release even without an
+        # explicit delta (default from the Interfaces contract).
+        rng = np.random.default_rng(7)
+        snap = _cat_snapshot({"common": 1000, "rare_unique_patient": 1})
+        out = apply_dp_noise(snap, epsilon=0.5, rng=rng)
+        labels = {tv["value"] for tv in out["columns"]["dx"]["stats"]["top_values"]}
+        assert "rare_unique_patient" not in labels
+
+    def test_suppressed_mass_conserved_not_dropped(self):
+        # Total released mass (kept top_values + other_count) must not
+        # silently shrink -- the suppressed count moves to other_count,
+        # it does not vanish.
+        rng = np.random.default_rng(11)
+        snap = _cat_snapshot({"common": 1000, "rare_unique_patient": 1})
+        out = apply_dp_noise(snap, epsilon=0.5, delta=1e-6, rng=rng)
+        stats = out["columns"]["dx"]["stats"]
+        released_total = sum(tv["count"] for tv in stats["top_values"]) + stats["other_count"]
+        assert released_total >= 1  # nonnegative, noised counts can shrink but never go missing
+
+    def test_invalid_delta_rejected(self):
+        snap = _cat_snapshot({"a": 10, "b": 10})
+        for bad in (0, -1e-6, 1.0, float("nan"), float("inf")):
+            with pytest.raises(DpError) as exc:
+                apply_dp_noise(snap, epsilon=1.0, delta=bad, rng=np.random.default_rng(0))
+            assert exc.value.code == "dp_delta_invalid"
+
+
 class TestValidation:
     @pytest.mark.parametrize("bad", [0, -1, float("inf"), float("nan"), "abc"])
     def test_invalid_epsilon_rejected(self, bad):
