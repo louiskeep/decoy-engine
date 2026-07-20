@@ -29,15 +29,26 @@ the order of (k + 1) * epsilon, not epsilon. The `dp` metadata block
 records `scope: "per-column-histogram"` so downstream consumers cannot
 misread the guarantee.
 
+DPS-1 category label set: `top_values` releases REAL source strings, so
+a unique rare category (e.g. a single patient's code) leaks a real
+individual no matter how its count is noised -- the SET of released
+labels must itself be DP, not just the counts. A label survives only
+if its noised count clears the stable-histogram threshold tau = 1 +
+ceil((1/epsilon) * ln(1 / (2*delta))); the rest fold into
+`other_count`. This is the propose-test-release / "stable histogram"
+pattern: Korolova, Kenthapadi, Mishra, Ntoulas, "Releasing Search
+Queries and Clicks Privately" (WWW 2009); Dwork & Roth, *Algorithmic
+Foundations of DP*, Sec. 3 (thresholding releases only elements whose
+noisy count exceeds a threshold calibrated to (epsilon, delta), which
+composes as one more (epsilon, delta)-DP release alongside the counts).
+
 What this release does NOT protect (recorded caveats, see also
 docs/what-we-cannot-prove.md):
 
-- Bin EDGES and category LABELS remain data-dependent supports: the
-  histogram range comes from the real min/max and `top_values` carries
-  real category strings (already gated behind the
-  `allow_real_categories` opt-in). SmartNoise mitigates with fixed,
-  data-independent bin ranges and thresholded category release; both
-  are recorded follow-ups.
+- Bin EDGES remain data-dependent unless the snapshot was fit with
+  `dp_mode`/`numeric_domains` (DPS-1, `quality/snapshot.py`); an
+  ordinary (non-`dp_mode`) snapshot's histogram range still comes from
+  the real min/max even after this module noises the counts.
 - Joint contingency tables: rejected in v1 (`dp_joint_unsupported`).
   Releasing marginals plus joints under one stated epsilon without
   composition accounting would overclaim; refit without `--joint` or
@@ -77,10 +88,19 @@ class DpError(Exception):
         super().__init__(f"[{code}] {message}")
 
 
+def _stable_histogram_threshold(epsilon: float, delta: float) -> float:
+    """tau = 1 + ceil((1/epsilon) * ln(1 / (2*delta))): the stable-histogram
+    release threshold (Korolova et al. 2009 / Dwork & Roth Sec. 3; see
+    module docstring). A noised count below tau is suppressed rather than
+    released, so the SET of released labels is (epsilon, delta)-DP."""
+    return 1.0 + math.ceil((1.0 / epsilon) * math.log(1.0 / (2.0 * delta)))
+
+
 def apply_dp_noise(
     snapshot: dict[str, Any],
     *,
     epsilon: float,
+    delta: float = 1e-6,
     rng: np.random.Generator | None = None,
 ) -> dict[str, Any]:
     """Return a NEW snapshot dict with Laplace-noised counts.
@@ -90,19 +110,24 @@ def apply_dp_noise(
         epsilon: Per-histogram privacy budget; must be a finite float
             greater than zero (an infinite "DP" flag that is a silent
             no-op is a footgun, so it is rejected).
+        delta: Failure probability for the categorical threshold release
+            (DPS-1, see module docstring). Must be in (0, 1) -- delta=0
+            makes the threshold infinite (nothing survives).
         rng: Noise source override for TESTS ONLY. Production callers
             leave it None for fresh OS entropy; see the module
             docstring for why the job seed must never be used.
 
     Returns:
-        A deep-copied snapshot with noised counts, exact moments
-        removed, edge-resolution min/max, and a `dp` metadata block.
-        The result stays schema `distribution-snapshot/v1` (the `dp`
-        key is additive; loaders ignore unknown keys).
+        A deep-copied snapshot with noised counts, a threshold-released
+        categorical label set, exact moments removed, edge-resolution
+        min/max, and a `dp` metadata block. The result stays schema
+        `distribution-snapshot/v1` (the `dp` key is additive; loaders
+        ignore unknown keys).
 
     Raises:
         DpError: ``code='dp_epsilon_invalid'`` when epsilon is not a
-            finite positive float; ``code='dp_joint_unsupported'`` when
+            finite positive float; ``code='dp_delta_invalid'`` when
+            delta is not in (0, 1); ``code='dp_joint_unsupported'`` when
             the snapshot carries joint contingency tables (no
             composition accounting in v1).
     """
@@ -121,6 +146,22 @@ def apply_dp_noise(
                 "non-positive or infinite epsilon would be a no-op labeled DP."
             ),
         )
+    try:
+        delta = float(delta)
+    except (TypeError, ValueError) as exc:
+        raise DpError(
+            code="dp_delta_invalid",
+            message=f"delta must be a number; got {delta!r}.",
+        ) from exc
+    if not math.isfinite(delta) or not (0.0 < delta < 1.0):
+        raise DpError(
+            code="dp_delta_invalid",
+            message=(
+                f"delta must be a finite float in (0, 1); got {delta!r}. delta=0 "
+                "makes the stable-histogram threshold infinite (nothing survives); "
+                "delta>=1 is not a meaningful failure probability."
+            ),
+        )
     if snapshot.get("joints"):
         raise DpError(
             code="dp_joint_unsupported",
@@ -134,6 +175,7 @@ def apply_dp_noise(
 
     generator = rng if rng is not None else np.random.default_rng()
     scale = 1.0 / epsilon
+    tau = _stable_histogram_threshold(epsilon, delta)
 
     def _noisy(count: Any) -> int:
         # float() unwraps the numpy scalar so round() returns a python int
@@ -162,10 +204,20 @@ def apply_dp_noise(
                 stats["min"] = edges[0]
                 stats["max"] = edges[-1]
         elif kind == "categorical":
+            # DPS-1 stable-histogram release (module docstring): a label
+            # is released only if its noised count clears tau; the rest
+            # fold into other_count so the mass is conserved, not dropped.
+            kept: list[dict[str, Any]] = []
+            suppressed = 0
             for item in stats.get("top_values") or []:
-                item["count"] = _noisy(item["count"])
-            if "other_count" in stats:
-                stats["other_count"] = _noisy(stats["other_count"])
+                noised = _noisy(item["count"])
+                if noised >= tau:
+                    kept.append({"value": item["value"], "count": noised})
+                else:
+                    suppressed += noised
+            stats["top_values"] = kept
+            other_noised = _noisy(stats["other_count"]) if "other_count" in stats else 0
+            stats["other_count"] = other_noised + suppressed
         elif kind == "datetime" and stats.get("year_bins"):
             for item in stats["year_bins"]:
                 item["count"] = _noisy(item["count"])
