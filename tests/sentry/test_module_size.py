@@ -305,6 +305,18 @@ ALLOWLIST: dict[str, int] = {
     # into transforms/_codeset_config_checks.py (mirroring _checks_top_code.py),
     # bringing code_set.py back to 592 -- under the 600 cap, so it is no longer
     # allowlisted here. Do not re-add it without cause.
+    # Gate remediation Fix 1 + Fix 2 (2026-07-20): crossed the 600 cap (was
+    # exactly 600) adding dp_mode's categorical full-vocabulary candidate
+    # bypass (Fix 1, a P0 finding: top-K-by-true-count candidate SELECTION is
+    # itself data-dependent, so the released label set was not actually
+    # (epsilon, delta)-DP) and the datetime/freetext fail-closed rejection
+    # under dp_mode (Fix 2, a P0 finding: both kinds' support is
+    # data-dependent with no caller-supplied override, so dp.py silently
+    # charged a non-DP release into epsilon_total). Both are safety-critical
+    # fail-closed logic on the DP fit path; the rationale text is part of the
+    # fix, not incidental. Decompose `_stats_for`'s per-kind branches into a
+    # `_dp_mode_stats.py` sibling when the next DP-scope change lands.
+    "src/decoy_engine/quality/snapshot.py": 629,
 }
 
 

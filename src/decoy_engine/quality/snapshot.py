@@ -53,6 +53,14 @@ range is not actually DP -- real min/max leak regardless of noise on
 the counts. `numeric_domains` declares a fixed range (SmartNoise/OpenDP
 pattern); `dp_mode` fails closed without one. Out-of-domain values
 clamp (Dwork & Roth Sec. 3.3) rather than vanish from `row_count`.
+
+Gate remediation Fix 1 (P0): `dp_mode` also bypasses `categorical_top_k`
+SELECTION (itself data-dependent, Korolova et al. WWW 2009) -- every
+observed label becomes a tau-threshold candidate, unlike
+`high_cardinality_columns` (full vocabulary, no threshold).
+
+Gate remediation Fix 2 (P0): `dp_mode` rejects datetime/freetext columns
+outright (data-dependent support, no caller override).
 """
 
 from __future__ import annotations
@@ -154,8 +162,9 @@ def compute_distribution_snapshot(
             silently skipped (matching `joint_columns`, not a validator).
         numeric_domains: DPS-1 (module docstring). `{column: (lo, hi)}`;
             bin_edges/min/max derive from the (clamped) domain when set.
-        dp_mode: DPS-1. Fail-closed: numeric columns then require a
-            `numeric_domains` entry.
+        dp_mode: DPS-1. Fail-closed: numeric requires `numeric_domains`;
+            datetime/freetext are rejected outright (Fix 2); categorical
+            bypasses `categorical_top_k` (Fix 1, module docstring).
 
     Returns:
         A dict matching schema `distribution-snapshot/v1` (module
@@ -166,7 +175,8 @@ def compute_distribution_snapshot(
     Raises:
         DistributionSnapshotError: bad `high_cardinality_columns` shape
             or safety-limit violation (see that arg's docs above).
-        ValueError: `dp_mode=True`, a numeric column with no `numeric_domains` entry.
+        ValueError: `dp_mode=True` with a numeric column that has no
+            `numeric_domains` entry, or with any datetime/freetext column.
     """
     # MED-3: a bare str satisfies `Collection[str]` structurally, so
     # `high_cardinality_columns="code"` would silently iterate characters
@@ -273,8 +283,11 @@ def _stats_for(
 ) -> tuple[str, dict[str, Any], str]:
     if high_cardinality:
         return "categorical", _high_cardinality_categorical_stats(non_null), "data"
+    # Fix 1: dp_mode bypasses top-K candidate SELECTION (data-dependent).
+    categorical_top_k = None if dp_mode else top_k
     if pd.api.types.is_bool_dtype(non_null):
-        return "categorical", _categorical_stats(non_null.astype(str), top_k=top_k), "data"
+        stats = _categorical_stats(non_null.astype(str), top_k=categorical_top_k)
+        return "categorical", stats, "data"
     if pd.api.types.is_numeric_dtype(non_null):
         if dp_mode and numeric_domain is None:
             raise ValueError(
@@ -283,12 +296,28 @@ def _stats_for(
         stats = _numeric_stats(non_null, bins=numeric_bins, domain=numeric_domain)
         return "numeric", stats, ("caller" if numeric_domain is not None else "data")
     if pd.api.types.is_datetime64_any_dtype(non_null):
+        if dp_mode:  # Fix 2: year_bins derive from the real observed year set.
+            _raise_dp_mode_unsupported_kind(non_null.name, "datetime", "year_bins")
         return "datetime", _datetime_stats(non_null), "data"
 
     distinct = non_null.nunique()
     if distinct <= _CATEGORICAL_DISTINCT_CAP:
-        return "categorical", _categorical_stats(non_null.astype(str), top_k=top_k), "data"
+        stats = _categorical_stats(non_null.astype(str), top_k=categorical_top_k)
+        return "categorical", stats, "data"
+    if dp_mode:  # Fix 2: length min/max derive from the real observed lens.
+        _raise_dp_mode_unsupported_kind(non_null.name, "freetext", "length bin edges")
     return "freetext", _freetext_stats(non_null.astype(str), bins=numeric_bins), "data"
+
+
+def _raise_dp_mode_unsupported_kind(column: Any, kind: str, support_field: str) -> None:
+    """Fix 2: datetime/freetext support is data-dependent, no caller
+    override (unlike numeric's `numeric_domain`); fail closed pre-stats."""
+    raise ValueError(
+        f"dp_mode does not support {kind} column {column!r}: {support_field} derive from "
+        "the real observed data (data-dependent support), which DPS-1 does not make "
+        "data-independent. Mask or exclude this column from the dp_mode fit, or fit it "
+        "outside dp_mode (its release will not carry a DP guarantee)."
+    )
 
 
 def _high_cardinality_categorical_stats(non_null: pd.Series) -> dict[str, Any]:

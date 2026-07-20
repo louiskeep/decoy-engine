@@ -23,6 +23,7 @@ also be invalid -- the two checks are independent verdicts.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from decoy_engine.plan._errors import PlanCompileError
@@ -77,5 +78,125 @@ def check_dp_generate_contract(config: dict[str, Any]) -> None:
                         "silently voiding the DP guarantee the pipeline declares. Remove "
                         "allow_real_categories, or drop global_settings.dp if a real-"
                         "category release is intended."
+                    ),
+                )
+
+
+def check_dp_snapshot_provenance(config: dict[str, Any]) -> None:
+    """Gate remediation Fix 3 (P1 #2): reject a dp-declared pipeline that
+    consumes a snapshot which was never actually put through a DP fit.
+
+    Precondition (a) of `docs/what-we-cannot-prove.md`'s DP claim (a
+    dp_mode/numeric_domains fit, then `apply_dp_noise`) was previously
+    only DOCUMENTED, not enforced: `check_dp_generate_contract` above only
+    rejects two anti-DP generate-column KNOBS and never inspects the
+    snapshot artifact itself. An operator could set `global_settings.dp`,
+    point every statistical column at a completely ordinary (exact,
+    non-noised) snapshot, pass every other compile check, and ship
+    non-DP output while the config declares DP. A wrong DP guarantee is
+    worse than none, so this closes it fail-closed.
+
+    For every `type: statistical` generate column, when `global_settings.dp`
+    is declared, the REFERENCED snapshot column must show:
+
+    - The snapshot carries a `dp` block with a numeric `epsilon_total`
+      (proof `quality.dp.apply_dp_noise` actually ran over it -- an exact
+      snapshot has no `dp` key at all).
+    - If the referenced column's `kind` is `numeric`, its
+      `support_origin` is `"caller"` (proof it was fit with
+      `dp_mode=True` + a `numeric_domains` entry -- DPS-1 -- rather than
+      the real, data-dependent min/max range `apply_dp_noise` alone
+      cannot retroactively fix).
+
+    This mirrors `check_statistical_columns` (`plan/_checks.py`, row 12),
+    which already loads the same snapshot file at compile time via
+    `generation.statistical.load_spec` -- the artifact IS loadable here;
+    this check re-reads it directly (rather than importing that private
+    loader) because it needs fields (`dp`, `support_origin`) that
+    `StatisticalSpec` does not carry through. Runs config + snapshot-
+    artifact only (no profile, no source data), same as
+    `check_statistical_columns`, so it is safe for `decoy validate` /
+    `run_config_only_checks`. Deliberately does NOT re-validate snapshot
+    readability/schema (`check_statistical_columns` already owns that
+    verdict on its own error codes); an unreadable or malformed snapshot
+    here is silently skipped so this check never masks that one's error.
+
+    Categorical-column caveat: this check does not (yet) verify that a
+    referenced CATEGORICAL column's candidate set was fit with dp_mode's
+    full-vocabulary bypass (Fix 1, `quality/snapshot.py`) rather than the
+    ordinary top-K truncation -- the snapshot schema carries no per-column
+    marker distinguishing the two for categorical (unlike numeric's
+    `support_origin`). A `dp`-declared pipeline whose ONLY statistical
+    columns are categorical could still consume a non-dp_mode-fit
+    snapshot that was separately run through `apply_dp_noise`. Recorded
+    as a known gap, not silently assumed closed.
+
+    Raises:
+        PlanCompileError: ``code='dp_snapshot_not_dp_fit'`` when the
+            referenced snapshot carries no `dp` block / `epsilon_total`;
+            ``code='dp_snapshot_numeric_support_data_dependent'`` when a
+            referenced numeric column's `support_origin` is not
+            `"caller"`.
+    """
+    global_settings = config.get("global_settings")
+    dp_settings = global_settings.get("dp") if isinstance(global_settings, dict) else None
+    if not dp_settings:
+        return
+
+    tables = config.get("tables", []) if isinstance(config.get("tables"), list) else []
+    for table_entry in tables:
+        if not isinstance(table_entry, dict):
+            continue
+        table_name = table_entry.get("name", "?")
+        for col_entry in table_entry.get("generate_columns", []) or []:
+            if not isinstance(col_entry, dict) or col_entry.get("type") != "statistical":
+                continue
+            col_name = col_entry.get("name", "?")
+            snapshot_file = col_entry.get("snapshot_file")
+            if not snapshot_file:
+                continue  # check_statistical_columns (row 12) already rejects this
+            where = f"{col_name!r} in table {table_name!r}"
+            try:
+                with open(str(snapshot_file), encoding="utf-8") as fh:
+                    snap = json.load(fh)
+            except (OSError, json.JSONDecodeError):
+                continue  # check_statistical_columns (row 12) already rejects this
+            if not isinstance(snap, dict):
+                continue
+
+            dp_block = snap.get("dp")
+            epsilon_total = dp_block.get("epsilon_total") if isinstance(dp_block, dict) else None
+            if not isinstance(dp_block, dict) or not isinstance(epsilon_total, (int, float)):
+                raise PlanCompileError(
+                    code="dp_snapshot_not_dp_fit",
+                    path=f"tables.{table_name}.generate_columns.{col_name}.snapshot_file",
+                    message=(
+                        f"statistical column {where} references a snapshot with no `dp` "
+                        "block / recorded epsilon_total, but global_settings.dp declares "
+                        "this pipeline's output must be DP. The referenced snapshot was "
+                        "never run through quality.dp.apply_dp_noise -- fit it with "
+                        "`decoy fit --epsilon`, or drop global_settings.dp if a non-DP "
+                        "release is intended."
+                    ),
+                )
+
+            source_column = str(col_entry.get("source_column") or col_name)
+            col_snap = (snap.get("columns") or {}).get(source_column)
+            if not isinstance(col_snap, dict):
+                continue  # check_statistical_columns (row 12) already rejects this
+            if col_snap.get("kind") == "numeric" and col_snap.get("support_origin") != "caller":
+                raise PlanCompileError(
+                    code="dp_snapshot_numeric_support_data_dependent",
+                    path=f"tables.{table_name}.generate_columns.{col_name}.snapshot_file",
+                    message=(
+                        f"statistical column {where}: numeric source column "
+                        f"{source_column!r} in the referenced snapshot has "
+                        f"support_origin {col_snap.get('support_origin')!r}, not "
+                        "'caller'. It was fit without dp_mode + a numeric_domains "
+                        "entry, so its bin edges come from the real (data-dependent) "
+                        "min/max -- apply_dp_noise cannot retroactively make that "
+                        "independent, so this column is not covered by the DP "
+                        "guarantee global_settings.dp declares. Re-fit with "
+                        "dp_mode=True and a numeric_domains entry for this column."
                     ),
                 )

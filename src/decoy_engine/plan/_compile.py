@@ -73,7 +73,7 @@ from decoy_engine.plan._checks_date_shift import check_date_shift_group_by_refs
 # SP-10b: derived_aggregate check extracted from _checks.py to keep that
 # module under its allowlisted ceiling. See test_module_size.py ALLOWLIST.
 from decoy_engine.plan._checks_derived_aggregate import check_derived_aggregate_refs
-from decoy_engine.plan._checks_dp import check_dp_generate_contract  # DPS-3, own module
+from decoy_engine.plan._checks_dp import check_dp_generate_contract, check_dp_snapshot_provenance
 
 # DE-03 sibling: reject `strategy: faker` with no provider at compile (the
 # seed-envelope builder otherwise silently drops it, leaking the raw value).
@@ -187,6 +187,7 @@ def compile_plan(
     # columns vs their snapshot artifacts. Config + artifact only, so it
     # runs in both branches and in run_config_only_checks.
     check_statistical_columns(config)
+    check_dp_snapshot_provenance(config)  # Row 32 (gate remediation Fix 3, see _checks_dp.py)
     # Row 13 (capability-gaps WS2, 2026-06-12): text_redact `ner` opt-in
     # requires the spacy extra + model on THIS host. Config + installed
     # packages only; both branches + run_config_only_checks.
@@ -494,6 +495,7 @@ def run_config_only_checks(config: dict[str, Any]) -> tuple[str, ...]:
     # artifact (a fitted-model JSON, not source data), so config-only
     # callers catch a missing/incompatible artifact before a long run.
     check_statistical_columns(config)
+    check_dp_snapshot_provenance(config)  # Row 32 (gate remediation Fix 3)
     # Row 13 (WS2): text_redact `ner` opt-in needs spacy + model here.
     check_text_redact_ner_available(config)
     # Row 30 (TX-2, 2026-07-20): text_mask `ner` opt-in needs the same

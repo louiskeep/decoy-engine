@@ -48,7 +48,19 @@ docs/what-we-cannot-prove.md):
 - Bin EDGES remain data-dependent unless the snapshot was fit with
   `dp_mode`/`numeric_domains` (DPS-1, `quality/snapshot.py`); an
   ordinary (non-`dp_mode`) snapshot's histogram range still comes from
-  the real min/max even after this module noises the counts.
+  the real min/max even after this module noises the counts. Same for
+  the categorical candidate SET: `apply_dp_noise` here always applies
+  tau to whatever `top_values` it is handed, but that list is only a
+  data-independent candidate set when the snapshot was fit with
+  `dp_mode=True` (gate remediation Fix 1); an ordinary top-K-truncated
+  `top_values` list still leaks the SELECTION even after thresholding.
+- Datetime and freetext columns are out of scope entirely: `dp_mode`
+  now rejects them at fit time (gate remediation Fix 2,
+  `quality/snapshot.py::_stats_for`), so a snapshot this module noises
+  should never carry a `dp_mode`-fit datetime/freetext column in the
+  first place. A snapshot fit WITHOUT `dp_mode` may still carry them;
+  this module noises their counts same as before, but that release is
+  not covered by the DP claim (see `docs/what-we-cannot-prove.md`).
 - Joint contingency tables: rejected in v1 (`dp_joint_unsupported`).
   Releasing marginals plus joints under one stated epsilon without
   composition accounting would overclaim; refit without `--joint` or
@@ -259,16 +271,23 @@ def apply_dp_noise(
                 length["min"] = int(edges[0])
                 length["max"] = int(edges[-1])
 
+    delta_total = budget.total_delta()
     out["dp"] = {
         "epsilon": epsilon,
-        "delta": delta,
         "mechanism": "laplace",
         "sensitivity": 1,
         "adjacency": "add-remove-one-row",
         "scope": "per-column-histogram",
         "epsilon_total": budget.total_epsilon(),
-        "delta_total": budget.total_delta(),
+        "delta_total": delta_total,
         "composition": "sequential",
         "charges": budget.breakdown(),
     }
+    # Fix 6 (gate remediation, LOW #6): only advertise `delta` when a
+    # delta-spending release (the categorical stable-histogram threshold)
+    # actually occurred -- an all-numeric/datetime/freetext snapshot spends
+    # no delta at all, and advertising 1e-6 anyway would overstate what was
+    # actually charged against the budget.
+    if delta_total > 0.0:
+        out["dp"]["delta"] = delta
     return out

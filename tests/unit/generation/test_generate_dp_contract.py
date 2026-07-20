@@ -35,7 +35,7 @@ import pytest
 from decoy_engine import run_config_only_checks
 from decoy_engine.generation.statistical import load_spec, sample_column
 from decoy_engine.plan import PlanCompileError
-from decoy_engine.plan._checks_dp import check_dp_generate_contract
+from decoy_engine.plan._checks_dp import check_dp_generate_contract, check_dp_snapshot_provenance
 from decoy_engine.quality.dp import apply_dp_noise
 from decoy_engine.quality.snapshot import compute_distribution_snapshot
 
@@ -167,6 +167,116 @@ class TestCompileIntegration:
         with pytest.raises(PlanCompileError) as exc:
             run_config_only_checks(cfg)
         assert exc.value.code == "dp_generate_high_cardinality_unsupported"
+
+
+# ── Fix 3 (gate remediation, P1 #2): consumed-snapshot DP provenance ───────
+#
+# `check_dp_generate_contract` (Task 5 above) only rejects two anti-DP
+# generate-column KNOBS; it never looks at the snapshot artifact itself.
+# An operator can declare `global_settings.dp`, point every statistical
+# column at a completely ordinary (non-DP-fit) snapshot, and ship non-DP
+# output while the config claims DP. `check_dp_snapshot_provenance` closes
+# that: when `dp` is declared, every referenced snapshot must carry a `dp`
+# block with a recorded `epsilon_total` (proof `apply_dp_noise` actually
+# ran), and every referenced NUMERIC column must show
+# `support_origin == "caller"` (proof it was fit with dp_mode +
+# numeric_domains -- DPS-1 -- not a data-dependent real min/max range).
+
+
+def _dp_declared_cfg(*, snapshot_file: str, col_name: str = "age", extra: dict | None = None):
+    col = {"name": col_name, "type": "statistical", "snapshot_file": snapshot_file}
+    col.update(extra or {})
+    return {
+        "global_settings": {"seed": 1, "dp": {"epsilon": 1.0, "delta": 1e-6}},
+        "tables": [{"name": "t", "row_count": 5, "generate_columns": [col]}],
+    }
+
+
+def _write_snapshot(tmp_path, snap: dict) -> str:
+    path = tmp_path / "snap.json"
+    path.write_text(json.dumps(snap), encoding="utf-8")
+    return str(path)
+
+
+class TestCheckDpSnapshotProvenance:
+    def test_dp_declared_plain_snapshot_rejected(self, tmp_path):
+        df = pd.DataFrame({"age": [31, 42, 55]})
+        snap = compute_distribution_snapshot(df)  # ordinary fit: no `dp` block at all
+        cfg = _dp_declared_cfg(snapshot_file=_write_snapshot(tmp_path, snap))
+        with pytest.raises(PlanCompileError) as exc:
+            check_dp_snapshot_provenance(cfg)
+        assert exc.value.code == "dp_snapshot_not_dp_fit"
+        assert "age" in exc.value.message
+
+    def test_dp_declared_properly_dp_fit_snapshot_passes(self, tmp_path):
+        df = pd.DataFrame({"age": [31, 42, 55]})
+        snap = compute_distribution_snapshot(
+            df, dp_mode=True, numeric_domains={"age": (0.0, 120.0)}
+        )
+        noisy = apply_dp_noise(snap, epsilon=1.0, delta=1e-6, rng=np.random.default_rng(0))
+        cfg = _dp_declared_cfg(snapshot_file=_write_snapshot(tmp_path, noisy))
+        check_dp_snapshot_provenance(cfg)  # no raise
+
+    def test_dp_declared_non_dp_fit_numeric_rejected_despite_dp_block(self, tmp_path):
+        # The `dp` block IS present (apply_dp_noise ran), but the numeric
+        # column was fit WITHOUT dp_mode -- bin edges are the real
+        # min/max, so support_origin stays "data" and the release is not
+        # actually DP despite the block's presence. A wrong DP guarantee
+        # is worse than none, so this must still be rejected.
+        df = pd.DataFrame({"age": [31, 42, 55]})
+        snap = compute_distribution_snapshot(df)  # no dp_mode
+        noisy = apply_dp_noise(snap, epsilon=1.0, delta=1e-6, rng=np.random.default_rng(0))
+        cfg = _dp_declared_cfg(snapshot_file=_write_snapshot(tmp_path, noisy))
+        with pytest.raises(PlanCompileError) as exc:
+            check_dp_snapshot_provenance(cfg)
+        assert exc.value.code == "dp_snapshot_numeric_support_data_dependent"
+        assert "age" in exc.value.message
+
+    def test_dp_unset_plain_snapshot_passes(self, tmp_path):
+        df = pd.DataFrame({"age": [31, 42, 55]})
+        snap = compute_distribution_snapshot(df)
+        cfg = {
+            "global_settings": {"seed": 1},
+            "tables": [
+                {
+                    "name": "t",
+                    "row_count": 5,
+                    "generate_columns": [
+                        {
+                            "name": "age",
+                            "type": "statistical",
+                            "snapshot_file": _write_snapshot(tmp_path, snap),
+                        }
+                    ],
+                }
+            ],
+        }
+        check_dp_snapshot_provenance(cfg)  # no raise: no dp declared, no gate
+
+    def test_dp_declared_categorical_only_snapshot_with_dp_block_passes(self, tmp_path):
+        # No numeric column referenced at all -- the numeric-support-origin
+        # check has nothing to check; presence of `dp`/`epsilon_total`
+        # alone is sufficient for a categorical-only referenced column.
+        rng = np.random.default_rng(3)
+        df = pd.DataFrame({"state": rng.choice(["CA", "NY", "TX"], size=100)})
+        snap = compute_distribution_snapshot(df, dp_mode=True)
+        noisy = apply_dp_noise(snap, epsilon=1.0, delta=1e-6, rng=np.random.default_rng(0))
+        cfg = _dp_declared_cfg(
+            snapshot_file=_write_snapshot(tmp_path, noisy),
+            col_name="state",
+            extra={"allow_real_categories": True},
+        )
+        check_dp_snapshot_provenance(cfg)  # no raise
+
+    def test_wired_into_run_config_only_checks(self, tmp_path):
+        # The real chokepoint used by `decoy validate`, not just direct
+        # unit coverage of the check function.
+        df = pd.DataFrame({"age": [31, 42, 55]})
+        snap = compute_distribution_snapshot(df)  # no dp block
+        cfg = _dp_declared_cfg(snapshot_file=_write_snapshot(tmp_path, snap))
+        with pytest.raises(PlanCompileError) as exc:
+            run_config_only_checks(cfg)
+        assert exc.value.code == "dp_snapshot_not_dp_fit"
 
 
 # ── Task 6: consume-only contract lock ──────────────────────────────────────

@@ -221,6 +221,39 @@ class TestComposedBudget:
         assert two_cols_out["dp"]["epsilon_total"] > one_col["dp"]["epsilon_total"]
 
 
+class TestDeltaAdvertisedOnlyWhenSpent:
+    """Fix 6 (gate remediation, LOW #6): the `dp` block must not advertise
+    a `delta` figure when no delta-spending (categorical threshold)
+    release actually occurred -- advertised delta must match spent delta."""
+
+    def _numeric_only_snapshot(self) -> dict:
+        rng = np.random.default_rng(9)
+        df = pd.DataFrame({"amount": rng.normal(100.0, 25.0, size=200).round(2)})
+        return compute_distribution_snapshot(df)
+
+    def test_delta_omitted_when_no_categorical_release(self):
+        noisy = apply_dp_noise(
+            self._numeric_only_snapshot(), epsilon=1.0, rng=np.random.default_rng(0)
+        )
+        assert noisy["dp"]["delta_total"] == 0.0
+        assert "delta" not in noisy["dp"]
+
+    def test_delta_present_when_categorical_release_occurred(self):
+        # _snapshot() (module fixture) includes a categorical "state"
+        # column, so the threshold-release charge spends delta.
+        noisy = apply_dp_noise(_snapshot(), epsilon=1.0, rng=np.random.default_rng(0))
+        assert noisy["dp"]["delta_total"] > 0.0
+        assert noisy["dp"]["delta"] == 1e-6
+
+    def test_delta_present_when_only_high_cardinality_style_categorical_input(self):
+        # Even a categorical column that ends up fully retained (no actual
+        # suppression) still spends delta -- the THRESHOLD MECHANISM itself
+        # is what charges delta, not whether anything was suppressed.
+        snap = _cat_snapshot({"a": 500, "b": 500})
+        noisy = apply_dp_noise(snap, epsilon=1.0, delta=1e-6, rng=np.random.default_rng(0))
+        assert noisy["dp"]["delta"] == 1e-6
+
+
 class TestValidation:
     @pytest.mark.parametrize("bad", [0, -1, float("inf"), float("nan"), "abc"])
     def test_invalid_epsilon_rejected(self, bad):

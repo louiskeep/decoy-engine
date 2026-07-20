@@ -15,57 +15,112 @@ heuristic re-identification-risk signals to help you assess a dataset; those
 are diagnostics, not a proof.
 
 The one formal mechanism is `decoy fit --epsilon` (`quality/dp.py`) feeding a
-`mode: generate` statistical column. As of DPS-1/2/3, generated **marginals**
-ARE (epsilon, delta)-differentially private by post-processing of the DP
-snapshot — PROVIDED all three preconditions below hold; each is enforced
-mechanically, not just documented:
+statistical generate column. This is a CONDITIONAL claim, not a blanket one:
+generated marginals are (epsilon, delta)-differentially private by
+post-processing of the DP snapshot only for the specific columns and only
+when the snapshot was actually produced by a DP fit. Do not read "Decoy
+supports DP" as "every statistical column in every run is DP" -- most are
+not, unless every item below holds for that specific column.
 
-- (a) **Data-independent support.** The snapshot was fit with `dp_mode=True`
-  and a caller-supplied `numeric_domains` entry for every numeric column
-  (`quality/snapshot.py`, DPS-1) — fixed bin ranges, not the real min/max —
-  and its categorical label set is THRESHOLD-RELEASED: a label survives only
-  if its noised count clears tau = 1 + ceil((1/epsilon) * ln(1/(2*delta)))
-  (the stable-histogram / propose-test-release pattern), with the rest
-  folded into `other_count`. Without `dp_mode` at fit time, the OLD caveat
-  still applies in full: bin edges and category labels are data-dependent
-  and this section's guarantee does not hold — `dp_mode` is opt-in, so
-  every pre-existing `decoy fit --epsilon` invocation keeps its prior,
-  narrower scope unless the caller adopts it.
-- (b) **The composed budget is `dp.epsilon_total`/`dp.delta_total`.** Every
-  noised release in the snapshot — row_count, each column's null/non-null/
-  distinct counts, and each column's histogram (numeric bins, the
-  threshold-released categorical set, datetime year bins, freetext length
-  bins) — is charged to a `PrivacyBudget` and composed SEQUENTIALLY (Dwork &
-  Roth, *Algorithmic Foundations of DP*, Thm 3.16: sum of epsilons, sum of
-  deltas). The single per-histogram `epsilon`/`delta` figures in the `dp`
-  block are not the whole story; `epsilon_total`/`delta_total` are.
-- (c) **Generation reads only the artifact.** Post-processing immunity
-  requires the sampler never re-touch the raw source frame; this is a
-  regression-locked contract, not an inference —
+**What is covered.** A statistical generate column's marginal carries the
+(epsilon, delta) guarantee only when its snapshot column is one of:
+
+- **Numeric, with a caller-supplied domain.** Fit with `dp_mode=True` and a
+  `numeric_domains` entry for that column (`quality/snapshot.py`, DPS-1):
+  fixed bin ranges, not the real min/max. Without a caller-supplied domain
+  the range comes from the real data and the guarantee does not hold for
+  that column, dp_mode or not.
+- **Categorical, full-vocabulary and threshold-released.** Fit with
+  `dp_mode=True`, which makes every OBSERVED label a threshold *candidate*
+  (not a top-K-by-true-count truncation -- rank-based selection is itself
+  data-dependent and delta cannot absorb a boundary label's release
+  membership flipping between neighbors). A label is then released only if
+  its noised count clears tau = 1 + ceil((1/epsilon) * ln(1/(2*delta))) (the
+  stable-histogram / propose-test-release pattern, Korolova, Kenthapadi,
+  Mishra, Ntoulas, "Releasing Search Queries and Clicks Privately", WWW
+  2009); everything else folds into `other_count`.
+
+**What is NOT covered, ever, as of this writing:**
+
+- **Datetime and freetext marginals.** `dp_mode` REJECTS datetime and
+  freetext columns outright at fit time (`quality/snapshot.py::_stats_for`)
+  rather than silently degrading: a datetime column's year bins come from
+  the real observed year set, and a freetext column's length bin edges come
+  from the real observed min/max text length. Both are data-dependent
+  support with no caller-supplied override, so an outlier admission year,
+  DOB, or text length would survive as a bin whose PRESENCE singles out an
+  individual regardless of the noised count. Fitting these column kinds
+  under `dp_mode` raises `ValueError`; they are simply out of scope for this
+  mechanism. Mask or exclude them, or fit them outside `dp_mode` (their
+  release then carries no DP guarantee at all, same as any pre-DPS-1 fit).
+- **Cross-column joint structure.** Joint contingency tables are rejected
+  under `--epsilon` entirely (no composition accounting in v1), and a
+  preserved marginal says nothing about preserved correlation.
+  Joint-distribution DP (PrivBayes-style) is a separate, larger,
+  not-yet-built effort.
+- **Masked output.** Still carries no epsilon (masking is a deterministic
+  transform, entirely outside this mechanism).
+- **`high_cardinality: true` and `allow_real_categories: true` columns.**
+  Both retain or release real vocabulary and are anti-DP by construction.
+
+**What is enforced mechanically versus what is an operator precondition.**
+Three things are compile-time or test-suite enforced, not just documented:
+
+- **Anti-DP knobs are hard-rejected.** When `global_settings.dp` is set,
+  `high_cardinality: true` and `allow_real_categories: true` on a
+  statistical generate column are hard-rejected at compile time
+  (`plan._checks_dp.check_dp_generate_contract`): a config cannot silently
+  combine either with a DP declaration.
+- **A dp-declared pipeline must consume a DP-fit snapshot.** When
+  `global_settings.dp` is set, compile time also checks the snapshot each
+  statistical generate column actually references
+  (`plan._checks_dp.check_dp_snapshot_provenance`): the snapshot must carry
+  a `dp` block with a recorded `epsilon_total` (proof `apply_dp_noise` ran
+  over it), and a referenced NUMERIC column must show
+  `support_origin: "caller"` (proof it was fit with `dp_mode` + a
+  `numeric_domains` entry, not the real data-dependent range). A plain,
+  never-DP-fit snapshot -- or a numeric column fit without `dp_mode` -- is
+  rejected with `PlanCompileError` even though every other check passes.
+  This check does not (yet) verify a referenced CATEGORICAL column's
+  candidate set was fit with `dp_mode`'s full-vocabulary bypass rather than
+  ordinary top-K truncation; the snapshot schema carries no per-column
+  marker distinguishing the two for categorical the way `support_origin`
+  does for numeric. A `dp`-declared pipeline whose only statistical columns
+  are categorical is not yet fully closed by this check. Recorded as a
+  known gap, not silently assumed closed.
+- **Generation reads only the artifact.** Post-processing immunity requires
+  the sampler never re-touch the raw source frame; this is a
+  regression-locked contract, not an inference --
   `test_generation_consumes_only_the_snapshot`
   (`tests/unit/generation/test_generate_dp_contract.py`) fails the build if
   a future refactor makes the sampler reach for raw data.
-- `high_cardinality: true` (HC-5) and `allow_real_categories: true` are
-  BOTH anti-DP (they retain/release real vocabulary) and are hard-rejected
-  at compile time when `global_settings.dp` is set
-  (`plan._checks_dp.check_dp_generate_contract`) — a config cannot silently
-  combine them with a DP declaration. Outside a `dp`-declared pipeline,
-  `high_cardinality: true` (e.g. an ICD-10-CM/NDC/HCPCS code field)
-  intentionally retains its FULL observed vocabulary with no top-K
-  collapse, so its snapshot artifact exposes every distinct code AND
-  rare-code presence/absence at fit time — treat that artifact with the
-  same care as a raw extract of that column, on top of the
-  `allow_real_categories` gate it already requires.
-- Cross-column JOINT structure is NOT covered by any of the above: joint
-  contingency tables are rejected under `--epsilon` entirely (no composition
-  accounting in v1), and a preserved marginal says nothing about preserved
-  correlation. Joint-distribution DP (PrivBayes-style) is a separate,
-  larger, not-yet-built effort.
-- MASKED output still carries no epsilon (masking is a deterministic
-  transform, entirely outside this mechanism).
 
-If your use case requires a formal privacy guarantee over MASKED data, or
-over generated JOINT structure, Decoy alone does not supply it.
+Everything else -- that the operator actually ran `decoy fit --epsilon`
+with `dp_mode` and a correct `numeric_domains` entry per numeric column in
+the first place, that the composed budget (`dp.epsilon_total`/
+`dp.delta_total`, sequential composition per Dwork & Roth, *Algorithmic
+Foundations of DP*, Thm 3.16) is the figure actually reported to
+stakeholders rather than the smaller single-histogram `epsilon`, and that
+the categorical full-vocabulary precondition above holds -- is an OPERATOR
+PRECONDITION: something the fit invocation must get right, not something
+the engine can independently verify from the config alone at every point.
+
+**The fit-time flow is CLI-side and its wiring is unverified here.** The
+engine change described above provides the MECHANISM
+(`quality/snapshot.py`'s `dp_mode`/`numeric_domains`, `quality/dp.py`'s
+`apply_dp_noise`) and the CONSUME-SIDE enforcement
+(`check_dp_generate_contract` + `check_dp_snapshot_provenance` above). It
+does not, by itself, prove that `decoy fit --epsilon` on the CLI actually
+threads `dp_mode`/`numeric_domains` through to
+`compute_distribution_snapshot` end to end -- that wiring lives in a
+separate repo and is pending verification. Until it is verified, treat this
+as "the engine can produce and correctly gate a DP snapshot when asked
+directly," not as "the `decoy fit --epsilon` CLI command is a turnkey DP
+workflow."
+
+If your use case requires a formal privacy guarantee over MASKED data, over
+generated JOINT structure, or over a datetime/freetext column, Decoy alone
+does not supply it.
 
 ## It does not certify legal or regulatory compliance
 
