@@ -49,6 +49,7 @@ from decoy_engine.execution.out_of_core import _budget as budget_mod
 from decoy_engine.execution.out_of_core import _spill_estimate as spill_mod
 from decoy_engine.execution.out_of_core._spill_estimate import (
     DISK_SAFETY_MARGIN,
+    HASH_DIGEST_HEX_BYTES,
     SPILL_OVERHEAD,
     UNKNOWN_WIDTH_CEILING_BYTES,
     default_ooc_temp_root,
@@ -180,6 +181,23 @@ def _benchmark_profile_and_graph(rows_per_table: int) -> tuple[Profile, Relation
     return _profile((parent, child, grandchild)), graph
 
 
+def _benchmark_config() -> dict[str, Any]:
+    """The measured benchmark hash-masked its FK keys, so the real 64-hex
+    digest tokens are what spilled/committed -- the config must say so for the
+    masked-width model to reflect the measured footprint."""
+
+    def hash_col(name: str, ns: str) -> dict[str, Any]:
+        return {"name": name, "strategy": "hash", "namespace": ns}
+
+    return {
+        "tables": [
+            {"name": "parent", "columns": [hash_col("id", "n1")]},
+            {"name": "child", "columns": [hash_col("id", "n2"), hash_col("parent_id", "n1")]},
+            {"name": "grandchild", "columns": [hash_col("child_id", "n2")]},
+        ]
+    }
+
+
 class TestBenchmarkShapeSanity:
     @pytest.mark.parametrize(
         "total_rows,measured_spill_gib,measured_output_gib",
@@ -196,6 +214,7 @@ class TestBenchmarkShapeSanity:
             profile,
             graph=graph,
             table_kinds=_all_mask("parent", "child", "grandchild"),
+            config=_benchmark_config(),
             include_output=True,
         )
         # Conservative direction: >= the real measured footprint, not a band.
@@ -241,7 +260,11 @@ class TestWideStringColumnIsPricedAtRealWidth:
         rows = 10_000_000
         profile, graph = self._wide_profile_graph(rows, notes_width=500)
         pred = predict_ooc_disk_bytes(
-            profile, graph=graph, table_kinds=_all_mask("parent", "child"), include_output=True
+            profile,
+            graph=graph,
+            table_kinds=_all_mask("parent", "child"),
+            config={},  # passthrough -> source (max_length) widths
+            include_output=True,
         )
         # The 500-byte column dominates the output term -- not a 12-byte fallback.
         assert pred.output_bytes >= 500 * rows
@@ -318,11 +341,20 @@ class TestStarFactEdgeMultiplicity:
         profile3, graph3 = self._star_profile_graph(rows, n_dims=3)
         table_kinds3 = _all_mask("fact", "dim0", "dim1", "dim2")
         pred3 = predict_ooc_disk_bytes(
-            profile3, graph=graph3, table_kinds=table_kinds3, include_output=False
+            profile3,
+            graph=graph3,
+            table_kinds=table_kinds3,
+            config={},  # passthrough int64 keys -> source width 8
+            include_output=False,
         )
-        # key columns: fact.d0..d2 (3x int64=8) + dim0..2.id (3x8) = 6 keys x 8 = 48;
-        # total_rows = 4 tables x rows; multiplier = 3; overhead 2.0.
-        expected_spill = int(48 * (4 * rows) * 3 * SPILL_OVERHEAD)
+        # Per-table (NOT the old cross-product): fact holds 3 int64 FK key
+        # tokens + row_nr, each dim holds 1 id key token + row_nr, each scaled
+        # by its OWN rows; then edge multiplicity (3) and overhead (2.0).
+        tok = spill_mod._staged_key_token_bytes
+        rownr = float(spill_mod.ROW_NR_BYTES)
+        per_fact = rownr + 3 * tok(8.0)
+        per_dim = rownr + tok(8.0)
+        expected_spill = int((per_fact * rows + 3 * (per_dim * rows)) * 3 * SPILL_OVERHEAD)
         assert pred3.spill_bytes == expected_spill
 
     def test_single_edge_has_no_multiplier(self) -> None:
@@ -361,6 +393,7 @@ class TestZeroPayloadLinkTable:
             _profile((left, right, link)),
             graph=graph,
             table_kinds=_all_mask("left", "right", "link"),
+            config={},
             include_output=True,
         )
         # Output is just the fixed-width int64 columns (8 bytes each), no payload.
@@ -380,10 +413,10 @@ class TestOutputFilesystemGate:
         profile, graph = _benchmark_profile_and_graph(1000)
         kinds = _all_mask("parent", "child", "grandchild")
         with_out = predict_ooc_disk_bytes(
-            profile, graph=graph, table_kinds=kinds, include_output=True
+            profile, graph=graph, table_kinds=kinds, config={}, include_output=True
         )
         without_out = predict_ooc_disk_bytes(
-            profile, graph=graph, table_kinds=kinds, include_output=False
+            profile, graph=graph, table_kinds=kinds, config={}, include_output=False
         )
         assert with_out.output_bytes > 0
         assert without_out.output_bytes == 0
@@ -438,11 +471,143 @@ class TestConstantsArePinned:
             _profile((parent, child)),
             graph=graph,
             table_kinds=_all_mask("parent", "child"),
+            config={},
             include_output=True,
         )
         # The unknown 'mystery' column is priced at the 256-byte ceiling, so the
         # child's output term includes 256 * rows for it (plus the 8-byte FK).
         assert pred.output_bytes >= UNKNOWN_WIDTH_CEILING_BYTES * rows
+
+
+# ---------------------------------------------------------------------------
+# 5b. Masked-side widths: a hash-masked key stages its 64-hex digest, not the
+#     source int -- the exact under-predict Fable found.
+# ---------------------------------------------------------------------------
+
+
+class TestMaskedHashKeyWidth:
+    def _int_fk_profile_graph(self, rows: int) -> tuple[Profile, RelationshipGraph]:
+        parent = TableProfile(
+            name="parent", row_count=rows, columns=(_col("id", "int64", rows=rows),)
+        )
+        child = TableProfile(
+            name="child",
+            row_count=rows,
+            columns=(
+                _col("id", "int64", rows=rows),
+                _col("parent_id", "int64", rows=rows, is_fk=True, fk_target=("parent", "id")),
+            ),
+        )
+        graph = RelationshipGraph(edges=(_edge("parent", "id", "child", "parent_id"),), ordering=())
+        return _profile((parent, child)), graph
+
+    def _hash_keys_config(self) -> dict[str, Any]:
+        return {
+            "tables": [
+                {
+                    "name": "parent",
+                    "columns": [{"name": "id", "strategy": "hash", "namespace": "n"}],
+                },
+                {
+                    "name": "child",
+                    "columns": [{"name": "parent_id", "strategy": "hash", "namespace": "n"}],
+                },
+            ]
+        }
+
+    def test_hash_masked_key_priced_at_digest_width_not_source_int(self) -> None:
+        rows = 50_000_000
+        profile, graph = self._int_fk_profile_graph(rows)
+        kinds = _all_mask("parent", "child")
+        masked = predict_ooc_disk_bytes(
+            profile,
+            graph=graph,
+            table_kinds=kinds,
+            config=self._hash_keys_config(),
+            include_output=True,
+        )
+        source = predict_ooc_disk_bytes(
+            profile, graph=graph, table_kinds=kinds, config={}, include_output=True
+        )
+        # The FK key hashes to a 64-char digest, so the masked estimate is
+        # materially larger than the source-int (8-byte) estimate.
+        assert masked.total_bytes > source.total_bytes
+        assert masked.output_bytes >= HASH_DIGEST_HEX_BYTES * rows  # parent_id digest
+
+    def test_rejects_on_disk_sized_to_the_source_width_estimate(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        rows = 50_000_000
+        profile, graph = self._int_fk_profile_graph(rows)
+        kinds = _all_mask("parent", "child")
+        cfg = self._hash_keys_config()
+        masked = predict_ooc_disk_bytes(
+            profile, graph=graph, table_kinds=kinds, config=cfg, include_output=True
+        )
+        source = predict_ooc_disk_bytes(
+            profile, graph=graph, table_kinds=kinds, config={}, include_output=True
+        )
+        # A disk sized between the two: the source-width (pre-fix) model would
+        # have PASSED it, the masked-width model must REJECT.
+        disk = (source.total_bytes + masked.total_bytes) // 2
+        assert source.total_bytes < disk < masked.total_bytes
+        _patch_free_disk(monkeypatch, disk)
+        with pytest.raises(ExecutionError) as excinfo:
+            spill_mod.enforce_ooc_disk_preflight(
+                profile, graph=graph, table_kinds=kinds, config=cfg
+            )
+        assert excinfo.value.code == "out_of_core_disk_preflight_insufficient"
+
+
+# ---------------------------------------------------------------------------
+# 5c. Per-table row scaling: a wide many-table chain must not blow up O(N^2).
+# ---------------------------------------------------------------------------
+
+
+class TestManyTableChainNoQuadraticBlowup:
+    def _chain(self, n_tables: int, rows: int) -> tuple[Profile, RelationshipGraph]:
+        tables: list[TableProfile] = []
+        edges: list[RelationshipEdge] = []
+        for i in range(n_tables):
+            cols = [_col("id", "int64", rows=rows)]
+            if i > 0:
+                cols.append(
+                    _col("prev_id", "int64", rows=rows, is_fk=True, fk_target=(f"t{i - 1}", "id"))
+                )
+            tables.append(TableProfile(name=f"t{i}", row_count=rows, columns=tuple(cols)))
+            if i > 0:
+                edges.append(_edge(f"t{i - 1}", "id", f"t{i}", "prev_id"))
+        return _profile(tuple(tables)), RelationshipGraph(edges=tuple(edges), ordering=())
+
+    def _kinds(self, n: int) -> dict[str, str]:
+        return _all_mask(*(f"t{i}" for i in range(n)))
+
+    def test_spill_scales_linearly_in_table_count_not_quadratically(self) -> None:
+        rows = 100_000
+        p4, g4 = self._chain(4, rows)
+        p8, g8 = self._chain(8, rows)
+        s4 = predict_ooc_disk_bytes(
+            p4, graph=g4, table_kinds=self._kinds(4), config={}, include_output=False
+        )
+        s8 = predict_ooc_disk_bytes(
+            p8, graph=g8, table_kinds=self._kinds(8), config={}, include_output=False
+        )
+        # Per-table scaling: doubling the chain length ~doubles spill. The old
+        # cross-product (all key widths x all rows) would ~quadruple it.
+        ratio = s8.spill_bytes / s4.spill_bytes
+        assert 1.8 <= ratio <= 2.5
+        # Edge multiplicity is a chain constant (interior table = 2), not N-dependent.
+        assert max_per_table_edge_count(g8) == max_per_table_edge_count(g4) == 2
+
+    def test_wide_chain_estimate_stays_bounded(self) -> None:
+        rows = 1_000_000
+        profile, graph = self._chain(30, rows)
+        pred = predict_ooc_disk_bytes(
+            profile, graph=graph, table_kinds=self._kinds(30), config={}, include_output=True
+        )
+        # 30 tables x 1M int-key rows: the per-table model keeps this in the
+        # low-GiB range; the old O(N^2) cross-product predicted ~52 GiB.
+        assert pred.total_bytes < 15 * _GIB
 
 
 # ---------------------------------------------------------------------------
