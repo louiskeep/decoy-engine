@@ -10,8 +10,17 @@ fraction-of-ceiling check and still be starved by the real, smaller cap.
 This module asserts the two are now structurally the same number: for every
 HOST ceiling tested, the LARGEST row count the preflight admits genuinely
 fits under the cap `resolve_ooc_memory_limit` + `resolve_phase_memory_limits`
-would hand the real connection, on both the sink path (cap = budget,
-undivided) and a resident fan-in path (cap = budget // (incoming_edges + 1)).
+would hand the real connection, on both the sink path (cap = ACTUAL decimal
+DuckDB cap for 1 live instance) and a resident fan-in path (cap = ACTUAL
+decimal DuckDB cap for incoming_edges + 1 live instances).
+
+ROUND-2 NOTE: this file's own helpers originally modeled that cap as the
+BINARY `budget // live` -- the same denomination mismatch round 2's Fix B
+closes in the module under test (DuckDB reads `memory_limit_for`'s emitted
+string as base-10 megabytes, a smaller number than the binary division
+suggests). `_max_admitted_rows` is now driven by `actual_duckdb_cap_bytes`,
+the exact number `enforce_ooc_memory_preflight` gates against post-fix, so
+this seam test's own cap concept matches the module under test again.
 
 The budget is resolved via the SAME auto-detect path a real host takes
 (`resolve_ooc_memory_limit(budget_bytes=None)` against the detected ceiling),
@@ -29,6 +38,7 @@ import pytest
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution.out_of_core import _budget as budget_mod
 from decoy_engine.execution.out_of_core._memory_estimate import (
+    actual_duckdb_cap_bytes,
     enforce_ooc_memory_preflight,
     predict_ooc_build_floor_bytes,
 )
@@ -72,21 +82,23 @@ def _max_admitted_rows(cap_bytes: int) -> int:
 
 @pytest.mark.parametrize("ceiling_gib", [4, 8, 16, 32])
 class TestSeamSinkPath:
-    """cap(t) = budget_bytes, undivided -- the run's only live instance once
-    joiners close (`_emit.py`'s `on_stream_consumed`)."""
+    """cap(t) = actual_duckdb_cap_bytes(budget_bytes, 1) -- the run's only
+    live instance once joiners close (`_emit.py`'s `on_stream_consumed`)."""
 
     def test_max_admitted_rows_is_actually_admitted(self, ceiling_gib: int) -> None:
         budget = _resolved_host_budget(ceiling_gib * _GIB)
-        rows = _max_admitted_rows(budget)
+        cap = actual_duckdb_cap_bytes(budget, 1)
+        rows = _max_admitted_rows(cap)
         result = enforce_ooc_memory_preflight(
             {"parent": rows}, budget_bytes=budget, sink=True, incoming_edge_counts={}
         )
         assert result.ok is True
-        assert predict_ooc_build_floor_bytes(rows) <= budget
+        assert predict_ooc_build_floor_bytes(rows) <= cap
 
     def test_one_row_past_the_boundary_is_refused(self, ceiling_gib: int) -> None:
         budget = _resolved_host_budget(ceiling_gib * _GIB)
-        rows = _max_admitted_rows(budget) + 1
+        cap = actual_duckdb_cap_bytes(budget, 1)
+        rows = _max_admitted_rows(cap) + 1
         with pytest.raises(ExecutionError) as excinfo:
             enforce_ooc_memory_preflight(
                 {"parent": rows}, budget_bytes=budget, sink=True, incoming_edge_counts={}
@@ -96,14 +108,15 @@ class TestSeamSinkPath:
 
 @pytest.mark.parametrize("ceiling_gib", [4, 8, 16, 32])
 class TestSeamResidentFanIn:
-    """A resident-path fan-in-3 child table: cap(t) = budget // 4 -- the
-    HIGH's own shape (FIX 2), and the tightest real-world cap a table sees."""
+    """A resident-path fan-in-3 child table: cap(t) =
+    actual_duckdb_cap_bytes(budget_bytes, 4) -- the HIGH's own shape (FIX 2),
+    and the tightest real-world cap a table sees."""
 
     _INCOMING = 3
 
     def test_max_admitted_rows_is_actually_admitted(self, ceiling_gib: int) -> None:
         budget = _resolved_host_budget(ceiling_gib * _GIB)
-        cap = budget // (self._INCOMING + 1)
+        cap = actual_duckdb_cap_bytes(budget, self._INCOMING + 1)
         rows = _max_admitted_rows(cap)
         result = enforce_ooc_memory_preflight(
             {"hub": rows},
@@ -116,7 +129,7 @@ class TestSeamResidentFanIn:
 
     def test_one_row_past_the_boundary_is_refused(self, ceiling_gib: int) -> None:
         budget = _resolved_host_budget(ceiling_gib * _GIB)
-        cap = budget // (self._INCOMING + 1)
+        cap = actual_duckdb_cap_bytes(budget, self._INCOMING + 1)
         rows = _max_admitted_rows(cap) + 1
         with pytest.raises(ExecutionError) as excinfo:
             enforce_ooc_memory_preflight(

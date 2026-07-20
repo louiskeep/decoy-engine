@@ -22,6 +22,7 @@ from decoy_engine.execution.out_of_core import _budget as budget_mod
 from decoy_engine.execution.out_of_core import _memory_estimate as mem_mod
 from decoy_engine.execution.out_of_core._budget import resolve_ooc_memory_limit
 from decoy_engine.execution.out_of_core._memory_estimate import (
+    actual_duckdb_cap_bytes,
     declared_minimum_ceiling_bytes,
     enforce_ooc_memory_preflight,
     memory_limit_for,
@@ -46,16 +47,60 @@ class TestMemoryLimitFor:
         per_instance_mib = int(memory_limit_for(budget, fan_in).removesuffix("MB"))
         assert per_instance_mib * fan_in * _MIB <= budget
 
-    def test_one_mb_min_string_guard_beyond_64_way_split_on_a_near_floor_budget(self) -> None:
-        # 64 MiB / 100 rounds below 1 MiB: DuckDB rejects a literal "0MB"
-        # limit outright, so the string floors at "1MB" (the sum can then
-        # nominally exceed budget_bytes; spilling, not the cap, carries the
-        # run in that regime -- documented in the function's own docstring).
-        assert memory_limit_for(64 * _MIB, 100) == "1MB"
+    def test_sub_1mib_split_raises_fanin_exceeds_budget_instead_of_flooring(self) -> None:
+        # FIX C remediation: 64 MiB / 100 rounds below 1 MiB. Round 1 floored
+        # the string at "1MB", which can make the SUM of live caps exceed
+        # budget_bytes (the sum-of-caps invariant this module states as TRUE);
+        # round 2 fails closed instead of emitting a cap that lies about what
+        # it reserves.
+        with pytest.raises(ExecutionError) as excinfo:
+            memory_limit_for(64 * _MIB, 100)
+        assert excinfo.value.code == "out_of_core_fanin_exceeds_budget"
+
+    def test_fan_in_68_on_64mib_budget_raises_fanin_exceeds_budget(self) -> None:
+        # Codex's reproduced over-commit case: 68 instances x a floored "1MB"
+        # cap each = 6.8e7 B > the 67_108_864 B (64 MiB) budget. 64 MiB // 68
+        # = 986_895 B, below the 1 MiB minimum, so this must now raise rather
+        # than silently emit an over-committing "1MB" string.
+        with pytest.raises(ExecutionError) as excinfo:
+            memory_limit_for(64 * _MIB, 68)
+        assert excinfo.value.code == "out_of_core_fanin_exceeds_budget"
+
+    def test_actual_duckdb_cap_bytes_raises_the_same_guard(self) -> None:
+        # `actual_duckdb_cap_bytes` shares `_per_instance_mib`'s fail-closed
+        # guard, so it never returns a phantom cap for an un-sizeable split.
+        with pytest.raises(ExecutionError) as excinfo:
+            actual_duckdb_cap_bytes(64 * _MIB, 68)
+        assert excinfo.value.code == "out_of_core_fanin_exceeds_budget"
 
     def test_rejects_live_instances_below_one(self) -> None:
         with pytest.raises(ExecutionError) as excinfo:
             memory_limit_for(1 * _GIB, 0)
+        assert excinfo.value.code == "out_of_core_concurrency_invalid"
+
+
+class TestActualDuckdbCapBytes:
+    """FIX B: the ACTUAL decimal bytes DuckDB enforces -- `memory_limit_for`'s
+    emitted "NNMB" string re-read as base-10 megabytes, strictly less than
+    the binary `budget_bytes // live_instances` a naive caller might compare
+    a floor against."""
+
+    def test_matches_memory_limit_for_reread_as_decimal_mb(self) -> None:
+        limit = memory_limit_for(2 * _GIB, 4)  # "512MB"
+        assert limit == "512MB"
+        assert actual_duckdb_cap_bytes(2 * _GIB, 4) == 512 * 1_000_000
+
+    def test_strictly_below_the_binary_division(self) -> None:
+        # 2 GiB // 4 = 512 MiB binary = 536_870_912 B; the actual decimal cap
+        # (512 * 1_000_000 = 512_000_000 B) is smaller -- the exact gap FIX B
+        # closes (a floor between the two was wrongly admitted pre-fix).
+        budget = 2 * _GIB
+        binary_cap = budget // 4
+        assert actual_duckdb_cap_bytes(budget, 4) < binary_cap
+
+    def test_rejects_live_instances_below_one(self) -> None:
+        with pytest.raises(ExecutionError) as excinfo:
+            actual_duckdb_cap_bytes(1 * _GIB, 0)
         assert excinfo.value.code == "out_of_core_concurrency_invalid"
 
 
@@ -214,20 +259,29 @@ class TestEnforceOocMemoryPreflight:
         assert "actual build cap" in message
         assert "GB of memory" in message
 
-    def test_hard_fail_boundary_is_the_cap_itself_not_a_fraction_of_it(self) -> None:
-        # Pin the exact boundary: the invariant is `floor(t) <= cap(t)`, so
-        # floor == cap FITS (admitted) and floor > cap by one byte FAILS.
-        # There is no additional safety fraction baked into the hard-fail
-        # bound -- it is the full cap, not a fraction of it (that fractional
-        # SAFE bound is what this remediation removed).
-        floor = predict_ooc_build_floor_bytes(0)
+    def test_hard_fail_boundary_is_the_cap_itself_not_a_fraction_of_it(self, monkeypatch) -> None:
+        # Pin the exact boundary against the ACTUAL DuckDB decimal cap
+        # (round-2 Fix B): the invariant is `floor(t) <= cap(t)`, so
+        # floor == cap FITS (admitted) and floor == cap + 1 FAILS. There is
+        # no additional safety fraction baked into the hard-fail bound -- it
+        # is the full actual cap, not a fraction of it (that fractional SAFE
+        # bound is what round 1's remediation removed). `cap` is quantized to
+        # whole decimal megabytes (`actual_duckdb_cap_bytes`), which does not
+        # land on every value `predict_ooc_build_floor_bytes`'s base+slope
+        # model can produce, so the floor is monkeypatched to the EXACT cap
+        # value to pin this boundary independent of that model's own grid.
+        budget = 100 * _MIB
+        cap = actual_duckdb_cap_bytes(budget, 1)
+        monkeypatch.setattr(mem_mod, "predict_ooc_build_floor_bytes", lambda rows: cap)
         result = enforce_ooc_memory_preflight(
-            {"parent": 0}, budget_bytes=floor, sink=True, incoming_edge_counts={}
+            {"parent": 0}, budget_bytes=budget, sink=True, incoming_edge_counts={}
         )
         assert result.ok is True  # floor == cap fits exactly
+
+        monkeypatch.setattr(mem_mod, "predict_ooc_build_floor_bytes", lambda rows: cap + 1)
         with pytest.raises(ExecutionError):
             enforce_ooc_memory_preflight(
-                {"parent": 0}, budget_bytes=floor - 1, sink=True, incoming_edge_counts={}
+                {"parent": 0}, budget_bytes=budget, sink=True, incoming_edge_counts={}
             )
 
     def test_fails_open_when_budget_bytes_is_none(self) -> None:
@@ -296,26 +350,31 @@ class TestEnforceOocMemoryPreflight:
 
 
 class TestDeclaredMinimumCeiling:
-    """FIX 1: the declared minimum must be TRUTHFUL -- fed back through
-    `resolve_ooc_memory_limit`, the recommended ceiling must actually yield a
-    build cap >= the floor that triggered the fail. It inverts
-    `resolve_ooc_memory_limit`'s OWN reserve model, so this round-trips."""
+    """FIX B (round 2): the declared minimum must be TRUTHFUL against the
+    ACTUAL DuckDB decimal cap, not a binary approximation of it. Fed back
+    through `resolve_ooc_memory_limit` then `actual_duckdb_cap_bytes`, the
+    recommended ceiling must actually yield a build cap >= the floor that
+    triggered the fail. It inverts `resolve_ooc_memory_limit`'s OWN reserve
+    model plus `_per_instance_mib`'s decimal-MiB sizing, so this round-trips
+    end to end -- the EMITTED cap, not the raw budget_bytes."""
 
     def _resolved_cap(self, ceiling_bytes: int, *, sink: bool, incoming: int) -> int:
         # Model the auto-detect resolution path: detected ceiling -> reserve
-        # subtracted -> undivided budget -> phase cap.
+        # subtracted -> undivided budget -> phase-aware ACTUAL decimal cap
+        # (round 2: was a binary `budget // live` approximation pre-fix).
         with patch.object(budget_mod, "detect_effective_memory_bytes", lambda: ceiling_bytes):
             budget = resolve_ooc_memory_limit(budget_bytes=None).budget_bytes
-        return budget if sink else budget // (incoming + 1)
+        live = 1 if sink else incoming + 1
+        return actual_duckdb_cap_bytes(budget, live)
 
-    @pytest.mark.parametrize("rows", [1_000, 20_000_000, 33_300_000, 100_000_000])
+    @pytest.mark.parametrize("rows", [1_000, 18_500_000, 20_000_000, 33_300_000, 100_000_000])
     def test_declared_minimum_round_trips_to_a_sufficient_cap_sink(self, rows: int) -> None:
         floor = predict_ooc_build_floor_bytes(rows)
         ceiling = declared_minimum_ceiling_bytes(floor, incoming_edges=0, sink=True)
         cap = self._resolved_cap(ceiling, sink=True, incoming=0)
         assert cap >= floor
 
-    @pytest.mark.parametrize("rows", [1_000, 20_000_000, 33_300_000])
+    @pytest.mark.parametrize("rows", [1_000, 9_200_000, 20_000_000, 33_300_000])
     @pytest.mark.parametrize("incoming", [1, 3, 7])
     def test_declared_minimum_round_trips_to_a_sufficient_cap_resident(
         self, rows: int, incoming: int
@@ -330,3 +389,35 @@ class TestDeclaredMinimumCeiling:
             predict_ooc_build_floor_bytes(20_000_000), incoming_edges=0, sink=True
         )
         assert ceiling % _GIB == 0
+
+
+class TestCodexRound2BoundaryCases:
+    """The two admitted-then-OOM cases Codex's round-2 gate reproduced: a
+    floor that fit the OLD binary `budget // live` cap but exceeded the true
+    ACTUAL decimal DuckDB cap. Both must now be REFUSED before any DuckDB
+    work, with a truthful declared minimum (see `TestDeclaredMinimumCeiling`
+    for the general self-consistency property; these pin the exact reported
+    rows/topology)."""
+
+    def _resolved_host_budget(self, ceiling_bytes: int) -> int:
+        with patch.object(budget_mod, "detect_effective_memory_bytes", lambda: ceiling_bytes):
+            return budget_mod.resolve_ooc_memory_limit(budget_bytes=None).budget_bytes
+
+    def test_18_5m_rows_sink_on_4gib_host_is_refused(self) -> None:
+        budget = self._resolved_host_budget(4 * _GIB)
+        with pytest.raises(ExecutionError) as excinfo:
+            enforce_ooc_memory_preflight(
+                {"parent": 18_500_000}, budget_bytes=budget, sink=True, incoming_edge_counts={}
+            )
+        assert excinfo.value.code == "out_of_core_insufficient_memory"
+
+    def test_9_2m_rows_resident_fanin_1_on_4gib_host_is_refused(self) -> None:
+        budget = self._resolved_host_budget(4 * _GIB)
+        with pytest.raises(ExecutionError) as excinfo:
+            enforce_ooc_memory_preflight(
+                {"hub": 9_200_000},
+                budget_bytes=budget,
+                sink=False,
+                incoming_edge_counts={"hub": 1},
+            )
+        assert excinfo.value.code == "out_of_core_insufficient_memory"
