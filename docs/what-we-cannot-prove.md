@@ -42,17 +42,21 @@ not, unless every item below holds for that specific column.
 
 **What is NOT covered, ever, as of this writing:**
 
-- **Datetime and freetext marginals.** `dp_mode` REJECTS datetime and
-  freetext columns outright at fit time (`quality/snapshot.py::_stats_for`)
-  rather than silently degrading: a datetime column's year bins come from
-  the real observed year set, and a freetext column's length bin edges come
-  from the real observed min/max text length. Both are data-dependent
-  support with no caller-supplied override, so an outlier admission year,
-  DOB, or text length would survive as a bin whose PRESENCE singles out an
-  individual regardless of the noised count. Fitting these column kinds
-  under `dp_mode` raises `ValueError`; they are simply out of scope for this
-  mechanism. Mask or exclude them, or fit them outside `dp_mode` (their
-  release then carries no DP guarantee at all, same as any pre-DPS-1 fit).
+- **Datetime and freetext marginals.** These are out of scope on BOTH
+  sides. At fit time, `dp_mode` REJECTS datetime and freetext columns
+  outright (`quality/snapshot.py::_stats_for`, raises `ValueError`) rather
+  than silently degrading: a datetime column's year bins come from the real
+  observed year set, and a freetext column's length bin edges come from the
+  real observed min/max text length -- data-dependent support with no
+  caller-supplied override, so an outlier admission year, DOB, or text
+  length would survive as a bin whose PRESENCE singles out an individual
+  regardless of the noised count. At consume time, the provenance check
+  (below) additionally rejects any referenced datetime/freetext column,
+  because `apply_dp_noise` will happily noise a column that was fit WITHOUT
+  `dp_mode` -- so fit-time rejection alone does not stop a non-`dp_mode`
+  snapshot from being noised and then consumed. Mask or exclude these
+  columns, or fit them outside `dp_mode` (their release then carries no DP
+  guarantee at all, same as any pre-DPS-1 fit).
 - **Cross-column joint structure.** Joint contingency tables are rejected
   under `--epsilon` entirely (no composition accounting in v1), and a
   preserved marginal says nothing about preserved correlation.
@@ -86,17 +90,30 @@ Three things are compile-time or test-suite enforced, not just documented:
   itself data-dependent and not DP even after thresholding). A plain,
   never-DP-fit snapshot, a numeric column fit without `dp_mode`, or a
   categorical column fit without `dp_mode` is rejected with
-  `PlanCompileError` even though every other check passes. Both numeric and
-  categorical provenance are enforced, so no referenced statistical column
-  kind can consume a non-DP-fit snapshot under a DP declaration (datetime
-  and freetext are already rejected at fit time under `dp_mode`, above, so
-  a DP-fit snapshot never carries them).
+  `PlanCompileError` even though every other check passes. The per-kind
+  verdict is a fail-closed ALLOW-LIST: a referenced column is accepted ONLY
+  as numeric-with-`caller` or categorical-with-`full_vocabulary`; every
+  other kind -- datetime, freetext, empty, and any unknown/future kind --
+  is rejected by default (`dp_snapshot_kind_not_dp_eligible`). This matters
+  because `apply_dp_noise` noises ANY snapshot (datetime year bins and
+  freetext length bins included), so a column fit WITHOUT `dp_mode` and then
+  noised carries a `dp` block over data-dependent support; the consume-side
+  allow-list is what stops that non-DP release from shipping under a DP
+  declaration, not the fit-time rejection alone.
 - **Generation reads only the artifact.** Post-processing immunity requires
   the sampler never re-touch the raw source frame; this is a
   regression-locked contract, not an inference --
   `test_generation_consumes_only_the_snapshot`
   (`tests/unit/generation/test_generate_dp_contract.py`) fails the build if
   a future refactor makes the sampler reach for raw data.
+
+**The consumed snapshot is trusted to be genuine.** The provenance check
+reads the snapshot JSON at face value: it defends against honest
+misconfiguration (pointing a DP-declared pipeline at a non-DP-fit artifact),
+NOT against a forged or hand-edited snapshot. The (epsilon, delta) guarantee
+assumes the consumed artifact is the real output of `decoy fit`; there is no
+signature on the snapshot today, so a deliberately falsified `dp` block or
+`support_origin` marker would pass.
 
 Everything else -- that the operator actually ran `decoy fit --epsilon`
 with `dp_mode` and a correct `numeric_domains` entry per numeric column in

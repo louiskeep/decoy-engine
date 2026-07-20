@@ -352,6 +352,81 @@ class TestCheckDpSnapshotProvenance:
         assert exc.value.code == "dp_snapshot_categorical_candidacy_data_dependent"
 
 
+class TestDpSnapshotProvenanceAllowList:
+    """PoC-encoding regression tests for the fail-closed allow-list.
+
+    The consume-side check previously only RAISED for numeric-not-'caller'
+    and categorical-not-'full_vocabulary'; datetime/freetext/empty kinds
+    fell through and PASSED. Because `apply_dp_noise` noises ANY snapshot
+    (datetime year_bins, freetext length bins included), an operator could
+    fit WITHOUT dp_mode, run apply_dp_noise (adds a `dp` block +
+    epsilon_total), declare `global_settings.dp`, and ship a non-DP
+    datetime/freetext support (e.g. an outlier admission year) under a DP
+    declaration. Fix 2's FIT-TIME rejection does not cover this -- the
+    snapshot was never dp_mode-fit. The allow-list default-rejects every
+    kind that is not a proven-data-independent numeric or categorical."""
+
+    def _noised(self, tmp_path, df: pd.DataFrame) -> str:
+        # Fit WITHOUT dp_mode (data-dependent support, no support_origin),
+        # then run apply_dp_noise so a `dp` block + epsilon_total exist.
+        snap = compute_distribution_snapshot(df)
+        noisy = apply_dp_noise(snap, epsilon=1.0, delta=1e-6, rng=np.random.default_rng(0))
+        return _write_snapshot(tmp_path, noisy)
+
+    def test_datetime_consume_side_bypass_now_rejected(self, tmp_path):
+        df = pd.DataFrame(
+            {"joined": pd.to_datetime(["1931-01-01", "2020-06-15", "2021-12-31", "2022-03-03"])}
+        )
+        cfg = _dp_declared_cfg(snapshot_file=self._noised(tmp_path, df), col_name="joined")
+        with pytest.raises(PlanCompileError) as exc:
+            check_dp_snapshot_provenance(cfg)
+        assert exc.value.code == "dp_snapshot_kind_not_dp_eligible"
+        assert "joined" in exc.value.message
+
+    def test_freetext_consume_side_bypass_now_rejected(self, tmp_path):
+        df = pd.DataFrame(
+            {"note": [f"free text clinical note number {i} with distinct words" for i in range(40)]}
+        )
+        cfg = _dp_declared_cfg(snapshot_file=self._noised(tmp_path, df), col_name="note")
+        with pytest.raises(PlanCompileError) as exc:
+            check_dp_snapshot_provenance(cfg)
+        assert exc.value.code == "dp_snapshot_kind_not_dp_eligible"
+        assert "note" in exc.value.message
+
+    def test_empty_kind_column_rejected_fail_closed(self, tmp_path):
+        # `empty` (all-null) releases stats={} and is harmless today, but
+        # must ride the same fail-closed default so a future change cannot
+        # reopen the hole.
+        df = pd.DataFrame({"blank": [None, None, None]})
+        snap = compute_distribution_snapshot(df)
+        assert snap["columns"]["blank"]["kind"] == "empty"
+        cfg = _dp_declared_cfg(snapshot_file=self._noised(tmp_path, df), col_name="blank")
+        with pytest.raises(PlanCompileError) as exc:
+            check_dp_snapshot_provenance(cfg)
+        assert exc.value.code == "dp_snapshot_kind_not_dp_eligible"
+
+    def test_datetime_bypass_closed_end_to_end_via_run_config_only_checks(self, tmp_path):
+        # datetime is a load_spec-supported kind that needs no
+        # allow_real_categories, so it genuinely reaches the provenance
+        # check through the real `decoy validate` chain -- the true PoC.
+        df = pd.DataFrame(
+            {"joined": pd.to_datetime(["1931-01-01", "2020-06-15", "2021-12-31", "2022-03-03"])}
+        )
+        cfg = _dp_declared_cfg(snapshot_file=self._noised(tmp_path, df), col_name="joined")
+        with pytest.raises(PlanCompileError) as exc:
+            run_config_only_checks(cfg)
+        assert exc.value.code == "dp_snapshot_kind_not_dp_eligible"
+
+    def test_freetext_bypass_closed_end_to_end_via_run_config_only_checks(self, tmp_path):
+        df = pd.DataFrame(
+            {"note": [f"free text clinical note number {i} with distinct words" for i in range(40)]}
+        )
+        cfg = _dp_declared_cfg(snapshot_file=self._noised(tmp_path, df), col_name="note")
+        with pytest.raises(PlanCompileError) as exc:
+            run_config_only_checks(cfg)
+        assert exc.value.code == "dp_snapshot_kind_not_dp_eligible"
+
+
 # ── Task 6: consume-only contract lock ──────────────────────────────────────
 
 

@@ -129,12 +129,25 @@ def check_dp_snapshot_provenance(config: dict[str, Any]) -> None:
     verdict on its own error codes); an unreadable or malformed snapshot
     here is silently skipped so this check never masks that one's error.
 
-    Both numeric and categorical provenance are now enforced, so a
-    `dp`-declared pipeline cannot consume a non-DP-fit snapshot for ANY
-    referenced statistical column kind (datetime/freetext are already
-    rejected at fit time under `dp_mode`, Fix 2, so a DP-fit snapshot
-    never carries them). This is a self-contained verdict: it does not
-    rely on the ordering of the sibling anti-DP-knob check.
+    The per-kind verdict is a fail-closed ALLOW-LIST (default-reject): a
+    column is accepted ONLY as numeric-with-`caller` or categorical-with-
+    `full_vocabulary`; EVERY other kind (datetime, freetext, empty, any
+    unknown/future kind) is rejected. `apply_dp_noise` runs on any snapshot
+    -- it noises datetime year_bins and freetext length bins too -- so a
+    non-`dp_mode` fit followed by `apply_dp_noise` yields a `dp` block over
+    data-dependent support; a block-list of just the two eligible kinds
+    would let datetime/freetext fall through and PASS (a PoC-proven
+    bypass). The fit-time rejection (Fix 2) only covers snapshots that WERE
+    dp_mode-fit; this consume-side allow-list covers the ones that were
+    not. This is a self-contained verdict: it does not rely on the ordering
+    of the sibling anti-DP-knob check.
+
+    Trust boundary: the check reads the snapshot JSON at face value. It
+    defends against honest misconfiguration (consuming a non-DP-fit
+    artifact under a DP declaration), NOT against a forged or hand-edited
+    snapshot -- the (epsilon, delta) guarantee assumes the consumed
+    artifact is the genuine output of `decoy fit`. There is no signature on
+    the snapshot today.
 
     Raises:
         PlanCompileError: ``code='dp_snapshot_not_dp_fit'`` when the
@@ -143,7 +156,8 @@ def check_dp_snapshot_provenance(config: dict[str, Any]) -> None:
             referenced numeric column's `support_origin` is not
             `"caller"`; ``code='dp_snapshot_categorical_candidacy_data_dependent'``
             when a referenced categorical column's `support_origin` is not
-            `"full_vocabulary"`.
+            `"full_vocabulary"`; ``code='dp_snapshot_kind_not_dp_eligible'``
+            for any other referenced kind (datetime/freetext/empty/unknown).
     """
     global_settings = config.get("global_settings")
     dp_settings = global_settings.get("dp") if isinstance(global_settings, dict) else None
@@ -193,7 +207,25 @@ def check_dp_snapshot_provenance(config: dict[str, Any]) -> None:
                 continue  # check_statistical_columns (row 12) already rejects this
             kind = col_snap.get("kind")
             support_origin = col_snap.get("support_origin")
-            if kind == "numeric" and support_origin != "caller":
+            # Fail-closed ALLOW-LIST (default-reject). A dp-declared pipeline
+            # may consume a referenced column ONLY when its provenance marker
+            # proves data-independent support. Every other kind/marker
+            # combination -- including datetime, freetext, empty, and any
+            # unknown/future kind -- is rejected by default: apply_dp_noise
+            # runs on ANY snapshot (it noises datetime year_bins and freetext
+            # length bins too), so a non-dp_mode fit + apply_dp_noise yields a
+            # `dp` block over data-dependent support. A legitimate dp_mode fit
+            # can NEVER produce a datetime/freetext column (rejected at fit
+            # time, Fix 2), so their presence in a dp-consumed snapshot is by
+            # definition non-DP. A block-list of the two eligible kinds let
+            # every other kind fall through and PASS (PoC-proven bypass);
+            # this allow-list closes it.
+            if kind == "numeric" and support_origin == "caller":
+                continue
+            if kind == "categorical" and support_origin == "full_vocabulary":
+                continue
+            # Not eligible -> reject. Pick the most actionable code by kind.
+            if kind == "numeric":
                 raise PlanCompileError(
                     code="dp_snapshot_numeric_support_data_dependent",
                     path=f"tables.{table_name}.generate_columns.{col_name}.snapshot_file",
@@ -209,7 +241,7 @@ def check_dp_snapshot_provenance(config: dict[str, Any]) -> None:
                         "dp_mode=True and a numeric_domains entry for this column."
                     ),
                 )
-            if kind == "categorical" and support_origin != "full_vocabulary":
+            if kind == "categorical":
                 raise PlanCompileError(
                     code="dp_snapshot_categorical_candidacy_data_dependent",
                     path=f"tables.{table_name}.generate_columns.{col_name}.snapshot_file",
@@ -224,3 +256,18 @@ def check_dp_snapshot_provenance(config: dict[str, Any]) -> None:
                         "declares. Re-fit with dp_mode=True for this column."
                     ),
                 )
+            raise PlanCompileError(
+                code="dp_snapshot_kind_not_dp_eligible",
+                path=f"tables.{table_name}.generate_columns.{col_name}.snapshot_file",
+                message=(
+                    f"statistical column {where}: source column {source_column!r} in the "
+                    f"referenced snapshot has kind {kind!r}, which is not DP-eligible under "
+                    "global_settings.dp. Only numeric columns (fit with dp_mode + a "
+                    "numeric_domains entry) and categorical columns (fit with dp_mode) carry "
+                    "the (epsilon, delta) marginal guarantee; datetime and freetext support "
+                    "is data-dependent and a legitimate dp_mode fit rejects them outright "
+                    "(so their presence here means the snapshot was not a DP fit). Mask or "
+                    "exclude this column, or drop global_settings.dp if a non-DP release is "
+                    "intended."
+                ),
+            )
