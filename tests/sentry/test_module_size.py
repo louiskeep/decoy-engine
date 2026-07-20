@@ -52,7 +52,7 @@ ALLOWLIST: dict[str, int] = {
     # compile-check ownership table. Decompose the growing _checks.py into
     # per-strategy check sub-modules in a follow-up sprint when the check set
     # stabilises (post-SP-15 or when the next strategy batch lands).
-    "src/decoy_engine/plan/_checks.py": 711,
+    "src/decoy_engine/plan/_checks.py": 736,
     # HC-5 (2026-07-17): +16 LOC (695 -> 711) adding the `high_cardinality`
     # wrong-type guard to `check_statistical_columns` -- a `high_cardinality`
     # key on a non-`type: statistical` column (the one case `load_spec` never
@@ -66,6 +66,12 @@ ALLOWLIST: dict[str, int] = {
     # added here. Decompose the four call/list sites into a small
     # data-driven table (check fn -> passed-name) when the next strategy
     # check lands and this module is touched again.
+    # TX-2 (2026-07-20): +25 LOC (711 -> 736) extracting the shared
+    # `_check_ner_available_for_strategy` walk (parametrized on `strategy`)
+    # and adding `check_text_mask_ner_available` (row #30), the text_mask
+    # analog of `check_text_redact_ner_available` (row #13). The extraction
+    # keeps the two checks byte-identical in shape without duplicating the
+    # column walk. Same per-strategy-check decomposition target stands.
     # HC-5 gate remediation MED-1 (2026-07-17): +19 LOC (609 -> 628) for
     # `_NON_SEMANTIC_GLOBAL_SETTINGS` + the strip-before-hash block in
     # `_hash_config`, restoring pipeline_config_hash byte-stability against
@@ -78,7 +84,13 @@ ALLOWLIST: dict[str, int] = {
     # two new keys in `_NON_SEMANTIC_GLOBAL_SETTINGS`. Same per-strategy
     # check-module pattern as every prior addition here; same decomposition
     # target stands.
-    "src/decoy_engine/plan/_compile.py": 658,
+    # TX-2 (2026-07-20): +13 LOC (658 -> 671) for Row 30 (text_mask `ner`
+    # compile-time availability check): the import + one call site in
+    # `compile_plan` + its checks_passed entry (x2 for the no_profile/full
+    # branches) + one call site + one return-tuple entry in
+    # `run_config_only_checks`. Same per-strategy check-module pattern as
+    # every prior addition here; same decomposition target stands.
+    "src/decoy_engine/plan/_compile.py": 671,
     # TB-5 precondition #73 (2026-07-13): the pure peak estimator was at the
     # cap (596 LOC) when it gained `route_intercept_bytes` -- the small public
     # accessor (idiomatic here, like `is_fixed_width_dtype`) that makes the

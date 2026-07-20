@@ -357,14 +357,15 @@ def check_statistical_columns(config: dict[str, Any]) -> None:
             seen.append(str(col_name))
 
 
-def check_text_redact_ner_available(config: dict[str, Any]) -> None:
-    """Reject `text_redact` columns whose `ner` config cannot run here.
+def _check_ner_available_for_strategy(config: dict[str, Any], strategy: str) -> None:
+    """Shared body: reject `strategy` columns whose `ner` config cannot run here.
 
-    Compile-check ownership table row #13 (capability-gaps WS2,
-    2026-06-12). NER is an optional capability (the `ner` extra plus a
-    separately-downloaded spaCy model); a column that opts in while
-    either piece is missing is guaranteed dead at run. Config + installed
-    packages only (no model load, no profile): safe for config-only
+    Extracted for TX-2 (2026-07-20) so `check_text_redact_ner_available` and
+    `check_text_mask_ner_available` (row #13 / row #30) stay byte-identical in
+    shape without duplicating the walk. NER is an optional capability (the
+    `ner` extra plus a separately-downloaded spaCy model); a column that opts
+    in while either piece is missing is guaranteed dead at run. Config +
+    installed packages only (no model load, no profile): safe for config-only
     callers (decoy validate).
     """
     from decoy_engine.storm.ner import DEFAULT_NER_MODEL, NerUnavailableError, ensure_ner_available
@@ -377,7 +378,7 @@ def check_text_redact_ner_available(config: dict[str, Any]) -> None:
         for col_entry in table_entry.get("columns", []) or []:
             if not isinstance(col_entry, dict):
                 continue
-            if col_entry.get("strategy") != "text_redact":
+            if col_entry.get("strategy") != strategy:
                 continue
             provider_config = col_entry.get("provider_config") or {}
             ner_cfg = provider_config.get("ner") if isinstance(provider_config, dict) else None
@@ -395,6 +396,30 @@ def check_text_redact_ner_available(config: dict[str, Any]) -> None:
                     path=f"tables.{table_name}.columns.{col_name}.provider_config.ner",
                     message=exc.message,
                 ) from exc
+
+
+def check_text_redact_ner_available(config: dict[str, Any]) -> None:
+    """Reject `text_redact` columns whose `ner` config cannot run here.
+
+    Compile-check ownership table row #13 (capability-gaps WS2,
+    2026-06-12). NER is an optional capability (the `ner` extra plus a
+    separately-downloaded spaCy model); a column that opts in while
+    either piece is missing is guaranteed dead at run. Config + installed
+    packages only (no model load, no profile): safe for config-only
+    callers (decoy validate).
+    """
+    _check_ner_available_for_strategy(config, "text_redact")
+
+
+def check_text_mask_ner_available(config: dict[str, Any]) -> None:
+    """Reject `text_mask` columns whose `ner` config cannot run here (TX-2).
+
+    Compile-check ownership table row #30 (TX-2, 2026-07-20): the text_mask
+    analog of row #13 above, now that text_mask has its own `ner` opt-in
+    (`_strategies/_text_mask.py`). Same optional-dependency reasoning, same
+    fail mode (dead at run without this check).
+    """
+    _check_ner_available_for_strategy(config, "text_mask")
 
 
 def check_vault_columns(config: dict[str, Any]) -> None:

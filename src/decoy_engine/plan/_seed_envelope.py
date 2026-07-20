@@ -237,8 +237,14 @@ def _build_seed_envelope(
                 # hard-fails a truly-missing model; a None version here
                 # means the package ships no metadata, which only weakens
                 # the cross-environment audit trail, so warn instead.
+                # TX-2 (2026-07-20): text_mask's `ner` opt-in needs the SAME
+                # stamp + drift guard as text_redact -- without it, a model
+                # upgrade between compile and run would silently change which
+                # spans mask_cell synthesizes for the same config + seed.
                 ner_model_version = None
-                if strategy == "text_redact" and isinstance(provider_config_raw, dict):
+                if strategy in ("text_redact", "text_mask") and isinstance(
+                    provider_config_raw, dict
+                ):
                     ner_cfg = provider_config_raw.get("ner")
                     if ner_cfg:
                         from decoy_engine.storm.ner import (
@@ -255,7 +261,7 @@ def _build_seed_envelope(
                                 f"ner_model_version_unavailable: column "
                                 f"{table_profile.name}.{col_name} uses ner model "
                                 f"{ner_model!r} which has no installed package "
-                                "metadata; text_redact output is byte-stable only "
+                                f"metadata; {strategy} output is byte-stable only "
                                 "within this environment."
                             )
                 if when is not None and coherent_with:

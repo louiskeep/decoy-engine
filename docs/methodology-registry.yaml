@@ -175,6 +175,12 @@ modules:
   # for person_name/location spans the regex catalog cannot see. The model
   # (en_core_web_sm) is the standard pretrained English pipeline, not a
   # custom model.
+  # TX-2 (2026-07-20): text_mask's opt-in `ner` config now consumes the SAME
+  # iter_ner_spans path (in-core `_strategies/_text_mask.py` + out-of-core
+  # `_mask_group_c.py`) so free-text names/locations SYNTHESIZE (faker) instead
+  # of being blunt-redacted. No new methodology use: the detection primitive is
+  # this already-registered spaCy NER module, and the replacement primitive is
+  # text_mask's already-registered HMAC-SHA256 keyed span determinism.
   - path: src/decoy_engine/storm/ner.py
     pattern: spaCy NER
     source: explosion/spaCy (MIT); en_core_web_sm pretrained pipeline
