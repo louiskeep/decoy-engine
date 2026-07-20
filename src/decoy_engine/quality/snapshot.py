@@ -284,10 +284,16 @@ def _stats_for(
     if high_cardinality:
         return "categorical", _high_cardinality_categorical_stats(non_null), "data"
     # Fix 1: dp_mode bypasses top-K candidate SELECTION (data-dependent).
+    # Fix 7: a categorical column whose candidacy was made data-independent
+    # (full observed vocabulary) is marked support_origin="full_vocabulary",
+    # parallel to numeric's "caller" -- the consume-side provenance check
+    # (plan._checks_dp) requires it, so a top-K-truncated (non-DP) fit
+    # cannot masquerade as DP under a dp-declared pipeline.
     categorical_top_k = None if dp_mode else top_k
+    cat_support = "full_vocabulary" if dp_mode else "data"
     if pd.api.types.is_bool_dtype(non_null):
         stats = _categorical_stats(non_null.astype(str), top_k=categorical_top_k)
-        return "categorical", stats, "data"
+        return "categorical", stats, cat_support
     if pd.api.types.is_numeric_dtype(non_null):
         if dp_mode and numeric_domain is None:
             raise ValueError(
@@ -303,7 +309,7 @@ def _stats_for(
     distinct = non_null.nunique()
     if distinct <= _CATEGORICAL_DISTINCT_CAP:
         stats = _categorical_stats(non_null.astype(str), top_k=categorical_top_k)
-        return "categorical", stats, "data"
+        return "categorical", stats, cat_support
     if dp_mode:  # Fix 2: length min/max derive from the real observed lens.
         _raise_dp_mode_unsupported_kind(non_null.name, "freetext", "length bin edges")
     return "freetext", _freetext_stats(non_null.astype(str), bins=numeric_bins), "data"

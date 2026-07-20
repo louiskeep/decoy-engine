@@ -253,10 +253,10 @@ class TestCheckDpSnapshotProvenance:
         }
         check_dp_snapshot_provenance(cfg)  # no raise: no dp declared, no gate
 
-    def test_dp_declared_categorical_only_snapshot_with_dp_block_passes(self, tmp_path):
-        # No numeric column referenced at all -- the numeric-support-origin
-        # check has nothing to check; presence of `dp`/`epsilon_total`
-        # alone is sufficient for a categorical-only referenced column.
+    def test_dp_declared_categorical_dp_mode_fit_passes(self, tmp_path):
+        # A categorical column fit WITH dp_mode carries
+        # support_origin="full_vocabulary" (Fix 7), so its candidacy is
+        # data-independent (Fix 1) and the check passes.
         rng = np.random.default_rng(3)
         df = pd.DataFrame({"state": rng.choice(["CA", "NY", "TX"], size=100)})
         snap = compute_distribution_snapshot(df, dp_mode=True)
@@ -268,6 +268,60 @@ class TestCheckDpSnapshotProvenance:
         )
         check_dp_snapshot_provenance(cfg)  # no raise
 
+    def test_dp_declared_categorical_without_dp_mode_rejected(self, tmp_path):
+        # Fix 7 (closes the Fix 3 residual): an ALL-CATEGORICAL dp-declared
+        # pipeline whose column was fit WITHOUT dp_mode -- ordinary top-K
+        # truncation, so candidacy is data-dependent (non-DP) -- previously
+        # slipped through because the `dp` block was present (apply_dp_noise
+        # ran) and there was no numeric column to trip the numeric check.
+        # It must now be rejected: no full_vocabulary marker.
+        rng = np.random.default_rng(3)
+        df = pd.DataFrame({"state": rng.choice(["CA", "NY", "TX"], size=100)})
+        snap = compute_distribution_snapshot(df)  # NO dp_mode -> top-K truncation
+        noisy = apply_dp_noise(snap, epsilon=1.0, delta=1e-6, rng=np.random.default_rng(0))
+        cfg = _dp_declared_cfg(
+            snapshot_file=_write_snapshot(tmp_path, noisy),
+            col_name="state",
+            extra={"allow_real_categories": True},
+        )
+        with pytest.raises(PlanCompileError) as exc:
+            check_dp_snapshot_provenance(cfg)
+        assert exc.value.code == "dp_snapshot_categorical_candidacy_data_dependent"
+        assert "state" in exc.value.message
+
+    def test_dp_declared_mixed_numeric_and_categorical_dp_mode_fit_passes(self, tmp_path):
+        rng = np.random.default_rng(3)
+        df = pd.DataFrame(
+            {"age": [31, 42, 55, 27, 61], "state": rng.choice(["CA", "NY", "TX"], size=5)}
+        )
+        snap = compute_distribution_snapshot(
+            df, dp_mode=True, numeric_domains={"age": (0.0, 120.0)}
+        )
+        noisy = apply_dp_noise(snap, epsilon=1.0, delta=1e-6, rng=np.random.default_rng(0))
+        cfg = {
+            "global_settings": {"seed": 1, "dp": {"epsilon": 1.0, "delta": 1e-6}},
+            "tables": [
+                {
+                    "name": "t",
+                    "row_count": 5,
+                    "generate_columns": [
+                        {
+                            "name": "age",
+                            "type": "statistical",
+                            "snapshot_file": _write_snapshot(tmp_path, noisy),
+                        },
+                        {
+                            "name": "state",
+                            "type": "statistical",
+                            "snapshot_file": _write_snapshot(tmp_path, noisy),
+                            "allow_real_categories": True,
+                        },
+                    ],
+                }
+            ],
+        }
+        check_dp_snapshot_provenance(cfg)  # no raise: both provenances satisfied
+
     def test_wired_into_run_config_only_checks(self, tmp_path):
         # The real chokepoint used by `decoy validate`, not just direct
         # unit coverage of the check function.
@@ -277,6 +331,25 @@ class TestCheckDpSnapshotProvenance:
         with pytest.raises(PlanCompileError) as exc:
             run_config_only_checks(cfg)
         assert exc.value.code == "dp_snapshot_not_dp_fit"
+
+    def test_all_categorical_hole_closed_is_a_self_contained_verdict(self, tmp_path):
+        # The Fix 3 residual was that check_dp_snapshot_provenance ITSELF
+        # returned cleanly on an all-categorical, non-dp_mode-fit snapshot.
+        # It now raises on its own -- a self-contained verdict, not relying
+        # on an earlier check's ordering. (Through the full run_config_only_
+        # checks chain a categorical column additionally trips the
+        # allow_real_categories anti-DP gate first; this check must stand
+        # correct-by-construction regardless of that ordering.)
+        rng = np.random.default_rng(3)
+        df = pd.DataFrame({"state": rng.choice(["CA", "NY", "TX"], size=100)})
+        snap = compute_distribution_snapshot(df)  # NO dp_mode
+        noisy = apply_dp_noise(snap, epsilon=1.0, delta=1e-6, rng=np.random.default_rng(0))
+        # No allow_real_categories here -> reaches the provenance check
+        # without the anti-DP-knob gate masking it.
+        cfg = _dp_declared_cfg(snapshot_file=_write_snapshot(tmp_path, noisy), col_name="state")
+        with pytest.raises(PlanCompileError) as exc:
+            check_dp_snapshot_provenance(cfg)
+        assert exc.value.code == "dp_snapshot_categorical_candidacy_data_dependent"
 
 
 # ── Task 6: consume-only contract lock ──────────────────────────────────────

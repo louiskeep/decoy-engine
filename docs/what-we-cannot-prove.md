@@ -76,18 +76,21 @@ Three things are compile-time or test-suite enforced, not just documented:
   statistical generate column actually references
   (`plan._checks_dp.check_dp_snapshot_provenance`): the snapshot must carry
   a `dp` block with a recorded `epsilon_total` (proof `apply_dp_noise` ran
-  over it), and a referenced NUMERIC column must show
-  `support_origin: "caller"` (proof it was fit with `dp_mode` + a
-  `numeric_domains` entry, not the real data-dependent range). A plain,
-  never-DP-fit snapshot -- or a numeric column fit without `dp_mode` -- is
-  rejected with `PlanCompileError` even though every other check passes.
-  This check does not (yet) verify a referenced CATEGORICAL column's
-  candidate set was fit with `dp_mode`'s full-vocabulary bypass rather than
-  ordinary top-K truncation; the snapshot schema carries no per-column
-  marker distinguishing the two for categorical the way `support_origin`
-  does for numeric. A `dp`-declared pipeline whose only statistical columns
-  are categorical is not yet fully closed by this check. Recorded as a
-  known gap, not silently assumed closed.
+  over it), and every referenced column's provenance marker must prove its
+  support was actually made data-independent -- a NUMERIC column must show
+  `support_origin: "caller"` (fit with `dp_mode` + a `numeric_domains`
+  entry, not the real data-dependent range), and a CATEGORICAL column must
+  show `support_origin: "full_vocabulary"` (fit with `dp_mode`, so its
+  candidate SET was the full observed vocabulary rather than a
+  top-K-by-true-count truncation -- a top-K fit's candidate SELECTION is
+  itself data-dependent and not DP even after thresholding). A plain,
+  never-DP-fit snapshot, a numeric column fit without `dp_mode`, or a
+  categorical column fit without `dp_mode` is rejected with
+  `PlanCompileError` even though every other check passes. Both numeric and
+  categorical provenance are enforced, so no referenced statistical column
+  kind can consume a non-DP-fit snapshot under a DP declaration (datetime
+  and freetext are already rejected at fit time under `dp_mode`, above, so
+  a DP-fit snapshot never carries them).
 - **Generation reads only the artifact.** Post-processing immunity requires
   the sampler never re-touch the raw source frame; this is a
   regression-locked contract, not an inference --
