@@ -9,6 +9,7 @@ New to Decoy? Start with the quickstart, then the recipes.
 - [Quickstart](quickstart.md): install and mask one CSV end to end.
 - [Recipes](recipes.md): five runnable recipes (CSV, folder + FKs, generate, detect PII, CI).
 - [Strategy catalog](strategies.md): every mask and generation strategy.
+- [Free-text NER](guides/free-text-ner.md): activating spaCy person-name/location detection on `text_redact`.
 - [Relationships](relationships.md): foreign-key and referential-integrity preservation.
 - [Relationship out-of-core sprint plan](relationships-out-of-core-sprints.md): Option 4 implementation plan for large FK graphs.
 - [Determinism](determinism.md): the seed and key protocol; what is and is not deterministic.
@@ -56,6 +57,7 @@ Architecture, roadmap, and audit documentation are maintained in the commercial 
 quickstart
 recipes
 strategies
+guides/free-text-ner
 relationships
 relationships-out-of-core-sprints
 determinism

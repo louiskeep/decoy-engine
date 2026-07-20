@@ -9,6 +9,19 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (TX-1: activate + document `text_redact` NER, 2026-07-20)
+
+The `text_redact` `ner` option (spaCy person-name/location detection) was
+already fully implemented and tested end to end but had no activation guide
+or demo. Adds `docs/guides/free-text-ner.md` (install, config surface,
+determinism/version-pin behavior, entity coverage), `examples/ner_redaction_demo.py`
+(a runnable end-to-end demo), a `Pattern:` methodology citation for
+`storm/ner.py` (spaCy NER, `en_core_web_sm`), and a real-model smoke test
+(`tests/unit/execution/test_text_redact.py`, gated on the `ner` extra being
+installed). No behavior change: `ner` remains opt-in and off by default.
+`text_mask` NER wiring (synthesizing detected entities instead of redacting
+them) is a separate follow-up (TX-2), not covered here.
+
 ### Added (HC-1 slice 1: code_set corpus provenance + scale infrastructure, 2026-07-17)
 
 Ships the provenance and scale plumbing for the healthcare code sets; the full

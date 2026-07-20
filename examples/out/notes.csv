@@ -1,0 +1,4 @@
+note_id,clinical_notes
+1,"Patient [REDACTED:person_name], seen in [REDACTED:location] on referral from Dr. [REDACTED:person_name]."
+2,Contact [REDACTED:person_name] at [REDACTED:email] regarding the claim.
+3,"No PII in this row, just a routine follow-up note."
