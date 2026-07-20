@@ -24,12 +24,16 @@ ever sized by table cardinality.
 Spill is bounded too: `check_temp_disk_budget` measures the on-disk footprint
 under the route's `temp_dir` (relation/join staging plus DuckDB spill) and
 fails closed with a coded error before the disk fills, the same guard-rail
-role as DuckDB's `max_temp_directory_size` setting. `check_disk_spill_preflight`
-is the forward-looking counterpart: given a *predicted* spill size, it checks
-free disk up front rather than after the fact. It is additive and not yet
-wired into routing -- future work replaces the row-count hard-reject with
-"reject only when spill disk is insufficient", per the OOM-avoidance routing
-redesign (docs/plans/2026-07-10-oom-avoidance-routing-redesign.md §3.6).
+role as DuckDB's `max_temp_directory_size` setting -- `_pipeline_route_exec.
+run_out_of_core_route` threads a `shutil.disk_usage`-derived budget into
+`run_fk_out_of_core` so this cap is enforced on the pipeline path (OOC-D).
+`check_disk_spill_preflight` is the forward-looking counterpart: given a
+*predicted* footprint, it checks free disk up front rather than after the
+fact. The predicted-footprint estimator + the routing call site (OOC-D, per
+the OOM-avoidance routing redesign §3.6) now live in the sibling
+`_spill_estimate.py` module (`predict_ooc_disk_bytes` /
+`enforce_ooc_disk_preflight`), a conservative two-term (spill + output) upper
+bound, split out to hold this module's own LOC cap.
 
 The effective ceiling `resolve_budget` fractions prefers a cgroup memory
 limit over raw host RAM (`detect_effective_memory_bytes`): a process almost
@@ -553,14 +557,15 @@ def check_disk_spill_preflight(path: Path, *, predicted_spill_bytes: int) -> Dis
     """Pass/fail check: does `path`'s filesystem have enough free space for
     a predicted spill of `predicted_spill_bytes`?
 
-    Additive and standalone -- not wired into routing yet. This is the future
-    basis for "reject only when spill disk is insufficient" (the
-    OOM-avoidance routing redesign §3.6): once a predicted-spill estimator
-    exists, a caller checks this before committing to the out-of-core route
-    instead of discovering a full disk mid-spill. `shutil.disk_usage` is
-    used over a manual statvfs call: it already normalizes the platform
-    differences and reports free bytes available to the process, the number
-    a spill actually competes for.
+    Standalone and estimator-agnostic by design -- this function only knows
+    how to compare a byte count to free disk; `_spill_estimate.py`'s
+    `predict_ooc_disk_bytes` supplies the estimate and `enforce_ooc_disk_
+    preflight` is routing's one call site (OOC-D, the OOM-avoidance routing
+    redesign §3.6's "reject only when spill disk is insufficient"), wired
+    into `_pipeline_routing_signals.resolve_execution_route`. `shutil.
+    disk_usage` is used over a manual statvfs call: it already normalizes
+    the platform differences and reports free bytes available to the
+    process, the number a spill actually competes for.
     """
     if predicted_spill_bytes < 0:
         raise ExecutionError(

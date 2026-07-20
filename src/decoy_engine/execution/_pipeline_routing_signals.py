@@ -525,6 +525,12 @@ def resolve_execution_route(
     imports `decide_execution_route` lazily below to avoid a module-level
     import cycle: `_pipeline_routing` already imports this module's
     signals at its own top level.
+
+    OOC-D: also the one call site for `enforce_ooc_disk_preflight` -- run
+    AFTER `decide_execution_route` returns, only when it picked
+    `"out_of_core"`. It is ADVISORY (warns on a tight disk estimate, never
+    rejects); the runtime `check_temp_disk_budget` is the enforcer. See
+    `out_of_core._spill_estimate`'s module docstring.
     """
     from decoy_engine.execution._pipeline_routing import decide_execution_route
 
@@ -556,7 +562,7 @@ def resolve_execution_route(
         config=config,
         engine_version=engine_version,
     )
-    return decide_execution_route(
+    route, route_reason = decide_execution_route(
         profile,
         has_generate_table=has_generate_table,
         has_mask_table=has_mask_table,
@@ -577,3 +583,16 @@ def resolve_execution_route(
         use_probe_routing=use_probe_routing,
         probe_recovers_full_frame=probe_recovers_full_frame,
     )
+    if route == "out_of_core":
+        # OOC-D advisory disk preflight (warns only, never rejects/reroutes):
+        # a BACKSTOP for jobs `decide_execution_route` already chose out_of_core
+        # for -- the OOC-incompatible reject branches above (cyclic FK,
+        # unsupported strategy) are untouched and never reach here. `config`
+        # carries the file targets so the advisory can tell whether committed
+        # output competes with the temp root's free space (same filesystem).
+        from decoy_engine.execution.out_of_core._spill_estimate import (
+            enforce_ooc_disk_preflight,
+        )
+
+        enforce_ooc_disk_preflight(profile, graph=graph, table_kinds=table_kinds, config=config)
+    return route, route_reason
