@@ -9,6 +9,21 @@ HMAC-SHA256(mask_key, matched_text). The same real value in any two cells always
 produces the same masked value regardless of surrounding context; the context is
 intentionally excluded from the key so cross-cell consistency holds.
 
+NER exception (TX-2, 2026-07-20): the key derivation above is unchanged -- it is
+still HMAC(mask_key, matched_text), context-free -- so per-cell reproducibility
+and in-core/out-of-core parity always hold for every span source, and the
+cross-cell guarantee above holds in full for the regex detectors (whose
+detector_id is a function of the value's shape alone). It does NOT hold for the
+one context-SENSITIVE span source: opt-in spaCy NER (``extra_spans=`` from
+``storm.ner.iter_ner_spans``). NER assigns the ``detector_id`` (person_name vs
+location) from surrounding context, and the synthesis STRATEGY + faker method
+are selected by detector_id, so an ambiguous surface string (e.g. "Jordan"
+classified as a person in one cell and a place in another) can synthesize to two
+different values across cells. The span KEY is still identical in both cells;
+only the entity TYPE, and therefore the chosen faker method, differs. Cross-cell
+synthetic consistency is thus guaranteed only for unambiguous entities under
+NER; it is not a regression in key/mask determinism.
+
 STORM single source of truth: ``iter_spans`` is called directly from
 ``storm.detectors``; any detector added to ``_SPAN_DETECTORS`` is automatically
 available to ``text_mask`` in the same release. No separate detector registry.

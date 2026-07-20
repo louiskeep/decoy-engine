@@ -18,7 +18,12 @@ from decoy_engine.execution._strategies._text_mask import TextMaskHandler
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._types import ColumnSeed
 from decoy_engine.storm.detectors import Span
-from decoy_engine.storm.ner import DEFAULT_NER_MODEL, model_installed, spacy_installed
+from decoy_engine.storm.ner import (
+    DEFAULT_NER_MODEL,
+    installed_model_version,
+    model_installed,
+    spacy_installed,
+)
 
 needs_ner = pytest.mark.skipif(
     not (spacy_installed() and model_installed(DEFAULT_NER_MODEL)),
@@ -247,3 +252,69 @@ def test_text_mask_ner_synthesizes_person_name_and_location() -> None:
     assert "Boston" not in cell
     assert "[REDACTED" not in cell
     assert cell.startswith("Contact ") and cell.endswith(" about the claim.")
+
+
+# ── TX-2: the seed envelope stamps ner_model_version for text_mask too ──
+
+
+class TestTextMaskNerModelVersionStamp:
+    """_seed_envelope.py stamps `ner_model_version` for text_mask `ner`
+    columns (was text_redact-only). Without a populated stamp, the handler's
+    drift guard (`_text_mask.py`, `if ner_model and plan.ner_model_version`)
+    is a silent no-op and a model upgrade would pass unnoticed. Mirrors
+    test_ner_spans.py::TestModelVersionStamp for text_redact."""
+
+    def _build_plan(self, provider_config: dict, monkeypatch, *, stub_version: str | None):
+        import pandas as pd
+        import pyarrow as pa
+
+        from decoy_engine.execution._chunked_profile import first_chunk_profile
+        from decoy_engine.plan import _compile as compile_mod
+        from decoy_engine.plan import compile_plan
+
+        if stub_version is not None:
+            monkeypatch.setattr(
+                "decoy_engine.storm.ner.installed_model_version", lambda model: stub_version
+            )
+        # Row 30 hard-fails when the model is absent; bypass it for the stamp
+        # test (the stamp is independent of availability, exactly as the
+        # text_redact row-13 stamp test does).
+        monkeypatch.setattr(compile_mod, "check_text_mask_ner_available", lambda config: None)
+        cfg = {
+            "global_settings": {"seed": 1},
+            "tables": [
+                {
+                    "name": "t",
+                    "columns": [
+                        {
+                            "name": "notes",
+                            "strategy": "text_mask",
+                            "provider_config": provider_config,
+                        },
+                        {"name": "email", "strategy": "hash", "namespace": "n"},
+                    ],
+                }
+            ],
+        }
+        df = pd.DataFrame({"notes": ["hello"], "email": ["a@b.com"]})
+        profile = first_chunk_profile(
+            pa.Table.from_pandas(df, preserve_index=False), table="t", engine_version="x"
+        )
+        plan = compile_plan(cfg, profile, decoy_engine_version="x", no_profile=True)
+        return dict(plan.seed_envelope.per_table[0][1].per_column)
+
+    def test_text_mask_ner_column_carries_stubbed_version(self, monkeypatch) -> None:
+        per_column = self._build_plan({"ner": True}, monkeypatch, stub_version="9.9.9")
+        assert per_column["notes"].ner_model_version == "9.9.9"
+        # A non-ner sibling column is never stamped.
+        assert per_column["email"].ner_model_version is None
+
+    @needs_ner
+    def test_text_mask_ner_column_carries_real_installed_version(self, monkeypatch) -> None:
+        # No stub: assert the stamp is populated from the REAL installed model
+        # metadata (non-None) and matches installed_model_version -- proving the
+        # end-to-end stamp works, not just the branch under a stub.
+        per_column = self._build_plan({"ner": True}, monkeypatch, stub_version=None)
+        stamped = per_column["notes"].ner_model_version
+        assert stamped is not None
+        assert stamped == installed_model_version(DEFAULT_NER_MODEL)
