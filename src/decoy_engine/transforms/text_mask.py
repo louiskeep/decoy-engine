@@ -9,6 +9,21 @@ HMAC-SHA256(mask_key, matched_text). The same real value in any two cells always
 produces the same masked value regardless of surrounding context; the context is
 intentionally excluded from the key so cross-cell consistency holds.
 
+NER exception (TX-2, 2026-07-20): the key derivation above is unchanged -- it is
+still HMAC(mask_key, matched_text), context-free -- so per-cell reproducibility
+and in-core/out-of-core parity always hold for every span source, and the
+cross-cell guarantee above holds in full for the regex detectors (whose
+detector_id is a function of the value's shape alone). It does NOT hold for the
+one context-SENSITIVE span source: opt-in spaCy NER (``extra_spans=`` from
+``storm.ner.iter_ner_spans``). NER assigns the ``detector_id`` (person_name vs
+location) from surrounding context, and the synthesis STRATEGY + faker method
+are selected by detector_id, so an ambiguous surface string (e.g. "Jordan"
+classified as a person in one cell and a place in another) can synthesize to two
+different values across cells. The span KEY is still identical in both cells;
+only the entity TYPE, and therefore the chosen faker method, differs. Cross-cell
+synthetic consistency is thus guaranteed only for unambiguous entities under
+NER; it is not a regression in key/mask determinism.
+
 STORM single source of truth: ``iter_spans`` is called directly from
 ``storm.detectors``; any detector added to ``_SPAN_DETECTORS`` is automatically
 available to ``text_mask`` in the same release. No separate detector registry.
@@ -36,6 +51,17 @@ See: https://datatracker.ietf.org/doc/html/rfc2104
 Methodology: reuses STORM ``iter_spans`` (single detector source), ``fpe_encrypt_value``
 (Feistel+HMAC, Type-II Feistel 1973; HMAC RFC 2104), and stdlib HMAC for per-span
 key derivation. Per-detector defaults documented in ``DETECTOR_DEFAULTS``.
+
+TX-2 (2026-07-20): the ``text_mask`` strategy handler (``execution/_strategies/
+_text_mask.py``) and its out-of-core twin (``execution/out_of_core/
+_mask_group_c.py``) opt-in NER the same way ``text_redact`` does (WS2): resolve
+``storm.ner.iter_ner_spans`` and pass the result as this module's ``extra_spans``.
+No new methodology here -- it reuses the spaCy NER pattern already registered for
+``storm/ner.py`` and this module's own already-registered HMAC-SHA256 keyed span
+determinism. The one addition specific to this module is a ``location`` entry in
+``DETECTOR_DEFAULTS`` (below): NER emits ``location`` spans (GPE/LOC/FAC) but the
+table had no default for them, so they silently fell to ``redact`` instead of
+synthesizing like the other Tier-2 NER detectors.
 """
 
 from __future__ import annotations
@@ -76,7 +102,7 @@ _UNMATCHED_TOKEN: str = "[UNMATCHED]"  # noqa: S105 - sentinel for replace_with_
 #   intentionally excluded from _SPAN_DETECTORS.
 #   Do NOT advertise Tier-2 detectors as "masked" in operator docs for
 #   the built-in path.  Tier-2 detectors:
-#     person_name, first_name, last_name, address   (require NER)
+#     person_name, first_name, last_name, address, location   (require NER)
 #     iso_date, us_date, eu_date                    (require NER or custom=)
 #     fax_number, cvv, mrn, health_plan_id,
 #     license_num, vehicle_id, device_id, biometric_id
@@ -112,6 +138,12 @@ DETECTOR_DEFAULTS: dict[str, str] = {
     "first_name": "faker",
     "last_name": "faker",
     "address": "faker",
+    # TX-2 (2026-07-20): NER emits `location` (GPE/LOC/FAC); without a
+    # default it fell through to "redact" (`effective_map.get(...,
+    # "redact")` below) even though it is semantically closer to
+    # `address` -- a plausible synthetic place name keeps the sentence
+    # readable where a bare token does not.
+    "location": "faker",
     # Date shifting (keyed temporal offset; format preserved)
     "iso_date": "date_shift",
     "us_date": "date_shift",
@@ -149,6 +181,9 @@ _FAKER_METHOD: dict[str, str] = {
     "first_name": "first_name",
     "last_name": "last_name",
     "address": "address",
+    # TX-2: "city" rather than "address" -- NER `location` spans (GPE/LOC/
+    # FAC) are typically a bare place name ("Boston"), not a street address.
+    "location": "city",
 }
 
 

@@ -252,6 +252,44 @@ def test_group_c_all_null_column_parity(kind: str, batch_rows: int | None) -> No
         )
 
 
+@pytest.mark.parametrize("batch_rows", [None, 2, 1])
+def test_text_mask_ner_path_parity(batch_rows: int | None) -> None:
+    """TX-2 (2026-07-20): the NER-augmented text_mask path. Skipped unless spaCy
+    + the model are installed (the model is not pip-resolvable, so this is
+    environment-gated); when present, the out-of-core kernel reuses the same
+    `iter_ner_spans` the oracle does (`_mask_group_c._text_mask_array` ->
+    `_text_mask_ner`), so parity must hold -- including at small batch sizes,
+    which is where a non-batch-local port would diverge (mirrors
+    `test_out_of_core_group_b_parity.test_text_redact_ner_path_parity`)."""
+    from decoy_engine.storm.ner import model_installed, spacy_installed
+
+    if not (spacy_installed() and model_installed()):
+        pytest.skip("NER spaCy model not installed; text_mask NER path not exercisable here")
+    seed = _seed(
+        "text_mask",
+        provider_config=(
+            ("ner", {"model": "en_core_web_sm"}),
+            ("unmatched_span_policy", "passthrough"),
+        ),
+    )
+    plan, sources, graph = _payload_edge_job(
+        seed,
+        ["John Smith lives in Boston", "call 415-555-1234", None, "no entities", "Jane Doe", "x"],
+        policy=OrphanPolicy.PRESERVE,
+    )
+    assert _gate_admits(plan, graph)
+    oracle = PandasExecutionAdapter().run(
+        plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
+    )
+    ooc = run_fk_out_of_core(
+        plan, sources, registry=_REG, relationship_graph=graph, batch_rows=batch_rows
+    )
+    for table in oracle.outputs:
+        _assert_value_equal(
+            oracle.outputs[table], ooc.outputs[table], f"ner/batch={batch_rows}:{table}"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Fail-closed MISS: Group (c) as an FK PARENT KEY, deferred strategies, and the
 # conditionally-unsupported config shapes of the ported strategies.

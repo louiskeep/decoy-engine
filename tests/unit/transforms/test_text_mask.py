@@ -411,6 +411,30 @@ class TestAllDetectorsHaveDefaultStrategy:
         )
 
 
+class TestLocationDefault:
+    """TX-2: `location` (the NER GPE/LOC/FAC mapping, storm/ner.py's
+    NER_ENTITY_MAP) had no DETECTOR_DEFAULTS entry, so an injected location
+    span silently fell to the "redact" fallback at mask_cell's dispatch
+    (`effective_map.get(span.detector_id, "redact")`) instead of synthesizing
+    like the other Tier-2 NER detectors (person_name, address)."""
+
+    def test_injected_location_span_uses_location_default_not_redact(self) -> None:
+        text = "Seen in Chicago last week."
+        span = Span(
+            "location", text.index("Chicago"), text.index("Chicago") + len("Chicago"), "Chicago"
+        )
+        # passthrough isolates the assertion to the SPAN's own strategy dispatch
+        # (unmatched_span_policy defaults to "redact" and would otherwise also
+        # emit "[REDACTED]" for the surrounding prose, unrelated to this fix).
+        out = mask_cell(text, _SEED, extra_spans=[span], unmatched_span_policy="passthrough")
+        assert "Chicago" not in out
+        assert "[REDACTED" not in out
+        assert out.startswith("Seen in ") and out.endswith(" last week.")
+
+    def test_location_default_is_faker(self) -> None:
+        assert DETECTOR_DEFAULTS["location"] == "faker"
+
+
 # ── spec slice 3: unmatched_span_policy + STORM library wiring ────────────────
 
 

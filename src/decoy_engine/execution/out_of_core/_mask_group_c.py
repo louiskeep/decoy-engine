@@ -16,6 +16,13 @@ out-of-core output is byte-identical rather than merely similar.
   masking, RFC 2104; the exact primitive `_strategies/_text_mask.TextMaskHandler`
   calls). The mask key is HMAC(job_seed, matched_text) per span -- a pure
   function of (job_seed, cell), with no cross-row state, so it chunks cleanly.
+  TX-2 (2026-07-20): the `ner` opt-in mirrors `text_redact`'s OOC NER handling
+  (`_text_redact_ner` above) -- resolve model/entities from cfg, enforce the
+  same `ner_model_version_mismatch` fail-closed drift guard against
+  `ColumnSeed.ner_model_version`, then call `storm.ner.iter_ner_spans` per
+  cell and forward the result as `mask_cell`'s `extra_spans`. `iter_ner_spans`
+  is a pure per-value function of (text, model, entities) with no cross-row
+  state, so it chunks cleanly the same way the rest of this kernel does.
 - code_set (mask mode, no chapter_preserve): reuses
   `transforms.code_set.apply_code_set` (HMAC-SHA256-keyed modular selection over
   the code-sorted corpus). Mask mode is `HMAC(salt, value) % candidate_count`, a
@@ -70,6 +77,7 @@ from decoy_engine.execution._errors import ExecutionError, StrategyError
 from decoy_engine.execution._strategies._code_set import _PER_VALUE_CODE_SET_ERRORS
 from decoy_engine.kernel._scalar import _array_to_pylist, _is_missing
 from decoy_engine.plan._errors import PlanCompileError
+from decoy_engine.storm.detectors import Span
 from decoy_engine.transforms.bucket_perturb import (
     apply_bucket_perturb,
     validate_bucket_perturb_config,
@@ -105,7 +113,7 @@ def group_c_array(
     `_code_set_array`'s docstring. The other Group (c) kernels ignore it.
     """
     if seed.strategy == "text_mask":
-        return _text_mask_array(values, job_seed=job_seed, cfg=cfg)
+        return _text_mask_array(values, seed, job_seed=job_seed, cfg=cfg)
     if seed.strategy == "code_set":
         return _code_set_array(
             values,
@@ -128,16 +136,16 @@ def group_c_array(
 
 
 def _text_mask_array(
-    values: pa.Array | pa.ChunkedArray, *, job_seed: bytes, cfg: dict[str, Any]
+    values: pa.Array | pa.ChunkedArray, plan: ColumnSeed, *, job_seed: bytes, cfg: dict[str, Any]
 ) -> pa.Array:
     """Span-level PII mask each non-null cell, byte-identical to the oracle.
 
     Mirrors `_strategies/_text_mask.TextMaskHandler.run` exactly: same config
     resolution (detectors, per_detector_strategy, unmatched_span_policy, token,
-    min_days/max_days), same non-string -> str coercion, and the same reused
-    `mask_cell` primitive. `mask_cell` never raises on bad data (fpe failure ->
-    token, unparseable date -> passthrough), so there is no quarantine channel to
-    reproduce.
+    min_days/max_days, TX-2 `ner`), same non-string -> str coercion, and the
+    same reused `mask_cell` primitive. `mask_cell` never raises on bad data
+    (fpe failure -> token, unparseable date -> passthrough), so there is no
+    quarantine channel to reproduce.
     """
     detectors_raw = cfg.get("detectors")
     detector_ids: list[str] | None
@@ -150,17 +158,25 @@ def _text_mask_array(
     token = str(cfg.get("token", "[REDACTED]"))
     extra: dict[str, Any] = {key: cfg[key] for key in ("min_days", "max_days") if key in cfg}
 
+    ner_model, ner_entities = _text_mask_ner(cfg, plan)
+
     out: list[Any] = []
     for value in _array_to_pylist(values):
         if _is_missing(value):
             out.append(None)
             continue
         text = value if isinstance(value, str) else str(value)
+        ner_spans: list[Span] | None = None
+        if ner_model is not None:
+            from decoy_engine.storm.ner import iter_ner_spans
+
+            ner_spans = iter_ner_spans(text, model=ner_model, entities=ner_entities)
         out.append(
             mask_cell(
                 text,
                 job_seed,
                 detector_ids=detector_ids,
+                extra_spans=ner_spans,
                 strategy_map=per_detector or None,
                 unmatched_span_policy=policy,
                 token=token,
@@ -168,6 +184,42 @@ def _text_mask_array(
             )
         )
     return pa.array(out, type=pa.string())
+
+
+def _text_mask_ner(cfg: dict[str, Any], plan: ColumnSeed) -> tuple[str | None, list[str] | None]:
+    """Resolve NER config + enforce the compile-vs-runtime model-version pin,
+    mirroring `_mask_group_b._text_redact_ner` (same `ner_model_version_mismatch`
+    code, `strategy="text_mask"` instead of `"text_redact"`)."""
+    ner_cfg = cfg.get("ner")
+    if not ner_cfg:
+        return None, None
+    from decoy_engine.storm.ner import DEFAULT_NER_MODEL
+
+    ner_model: str
+    ner_entities: list[str] | None = None
+    if isinstance(ner_cfg, dict):
+        ner_model = str(ner_cfg.get("model") or DEFAULT_NER_MODEL)
+        raw_entities = ner_cfg.get("entities")
+        if isinstance(raw_entities, (list, tuple)) and raw_entities:
+            ner_entities = [str(e) for e in raw_entities]
+    else:
+        ner_model = DEFAULT_NER_MODEL
+
+    if plan.ner_model_version is not None:
+        from decoy_engine.storm.ner import installed_model_version
+
+        current_version = installed_model_version(ner_model)
+        if current_version is not None and current_version != plan.ner_model_version:
+            raise StrategyError(
+                code="ner_model_version_mismatch",
+                strategy="text_mask",
+                message=(
+                    f"NER model {ner_model!r} installed at {current_version!r} but the plan "
+                    f"was compiled against {plan.ner_model_version!r}; recompile to keep "
+                    "masked output reproducible."
+                ),
+            )
+    return ner_model, ner_entities
 
 
 # ---------------------------------------------------------------------------
