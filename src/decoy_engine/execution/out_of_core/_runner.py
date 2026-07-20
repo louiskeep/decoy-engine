@@ -298,16 +298,15 @@ def _stream_table(
     # Evidence is resolved from plan+schema before any row is read; the commit
     # is deferred until the stream has seen a non-missing value per column.
     code_set_null_seen: dict[str, bool] = dict.fromkeys(code_set_corpus_records, False)
-    # Phase-local caps (SPRINT-1 Part A): joiners for this table's incoming
-    # edges are co-live with each other; the sink-path build is the run's
-    # ONLY live instance once they close (`_release_joiners` below, before
-    # `emit_to_sink`'s relation build opens); the resident-path build keeps
-    # them open alongside it. See `_memory_estimate`'s module docstring.
-    joiner_memory_limit, sink_build_memory_limit, resident_build_memory_limit = (
+    # Phase-local caps (Part A + HIGH): a resident-path joiner stays live
+    # through this table's own build, so it opens at the build's cap; sink-ness
+    # selects the joiner cap here since memory_limit is fixed at open.
+    sink_joiner, resident_joiner, sink_build_memory_limit, resident_build_memory_limit = (
         resolve_phase_memory_limits(
             budget_bytes=budget_bytes, memory_limit=memory_limit, incoming_edges=len(incoming_edges)
         )
     )
+    joiner_memory_limit = sink_joiner if sink is not None else resident_joiner
     joiners: list[ChildFkBatchJoiner] = []
     try:
         for idx, edge in enumerate(incoming_edges):

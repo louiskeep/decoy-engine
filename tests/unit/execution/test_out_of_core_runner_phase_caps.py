@@ -199,7 +199,17 @@ class TestResidentPathPhaseCaps:
         divided_by_2 = f"{_BUDGET_BYTES // 2 // (1024 * 1024)}MB"
         divided_by_3 = f"{_BUDGET_BYTES // 3 // (1024 * 1024)}MB"
         undivided = f"{_BUDGET_BYTES // (1024 * 1024)}MB"
-        assert sorted(seen["joiner"]) == sorted([divided_by_2, divided_by_2, undivided])
+        # HIGH remediation: on the resident path a table's joiners stay open
+        # through its own build, so they must open at the SAME cap the build
+        # gets (budget // (incoming + 1)) -- hub's 2 joiners now divide by 3
+        # (its own incoming(2) + 1), not by 2 as the pre-fix code wrongly
+        # asserted (that let the co-live sum during hub's build reach
+        # 2*(budget/2) + budget/3 > budget_bytes). leaf's 1 joiner (from hub)
+        # divides by 2 (its own incoming(1) + 1) by the same rule, even though
+        # leaf has no outgoing edge of its own to co-live with -- the cap is
+        # sized by leaf's OWN incoming count, uniformly, per
+        # `resolve_phase_memory_limits`.
+        assert sorted(seen["joiner"]) == sorted([divided_by_3, divided_by_3, divided_by_2])
         # Resident path: hub's 2 joiners stay open through its own build, so
         # the build is live instance #3 (incoming + 1); leaf's build is
         # unaffected (leaf has 1 incoming, 0 outgoing -- no build at all).

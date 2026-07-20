@@ -37,27 +37,53 @@ TWO THINGS LIVE HERE, ONE ROOT CAUSE EACH FIXES:
    control structures, allocator overhead) that DuckDB cannot push to
    `temp_directory` no matter how generous the `memory_limit`. Cam's
    decision (governing goal) is a HYBRID gate: warn near that floor, hard-fail
-   beyond a safe bound, so a job that cannot fit is refused BEFORE any DuckDB
-   work runs rather than left to OOM mid-job. This is the never-crash
-   guarantee; item 1 above is the floor-lowering fix underneath it. See
-   `enforce_ooc_memory_preflight`'s docstring for why this preflight is a
-   HARD gate where the sibling `_spill_estimate.enforce_ooc_disk_preflight`
-   is advisory-only -- the two guard different failure modes (disk spill has
-   a soft failure mode; a resident-memory floor above the ceiling does not).
+   beyond it, so a job that cannot fit is refused BEFORE any DuckDB work runs
+   rather than left to OOM mid-job. This is the never-crash guarantee; item 1
+   above is the floor-lowering fix underneath it.
+
+   THE GATE MUST COMPARE AGAINST THE EXACT CAP THE BUILD WILL GET, NOT A
+   FRACTION OF THE RAW MEMORY CEILING. The two are different numbers:
+   `resolve_ooc_memory_limit` (`_budget.py`) already subtracts a reserve from
+   the ceiling before DuckDB ever sees a byte (Python/Arrow/OS overhead), and
+   item 1's phase-aware division then splits THAT budget again by per-table
+   liveness. A preflight that instead re-derives its own fraction of the raw
+   ceiling can pass a job whose real, phase-aware cap is starved -- the exact
+   BLOCKER this sprint's remediation closes (a 100M-row/4GB run was ADMITTED
+   by a ceiling-fraction check, then OOMed inside DuckDB's own accounting,
+   because the fraction and the real cap were never the same number). So
+   `enforce_ooc_memory_preflight` takes `budget_bytes` -- THE SAME
+   `OutOfCoreBudget.budget_bytes` `run_out_of_core_route` resolves at its one
+   `resolve_ooc_memory_limit` call site, reused rather than re-derived -- plus
+   sink-ness and each candidate table's own incoming-edge count, and computes
+   `cap(t)` with the identical arithmetic `resolve_phase_memory_limits` uses
+   to size the real connection: `budget_bytes` undivided on the sink path (the
+   build is the only live instance once joiners close), `budget_bytes //
+   (incoming_edges(t) + 1)` on the resident path (joiners stay open through
+   the build). The warn/fail fractions below then multiply THAT cap, never
+   the raw ceiling -- see `enforce_ooc_memory_preflight`'s docstring for why
+   this preflight is a HARD gate where the sibling
+   `_spill_estimate.enforce_ooc_disk_preflight` is advisory-only (disk spill
+   has a soft failure mode; a resident-memory floor above the cap does not).
 """
 
 from __future__ import annotations
 
 import logging
+import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from decoy_engine.execution._errors import ExecutionError
-from decoy_engine.execution.out_of_core._budget import detect_effective_memory_bytes
+from decoy_engine.execution.out_of_core._budget import (
+    _OOC_RESERVE_FLOOR_BYTES,
+    _OOC_RESERVE_FRACTION,
+)
 
 _logger = logging.getLogger(__name__)
 
 __all__ = [
     "MemoryPreflight",
+    "declared_minimum_ceiling_bytes",
     "enforce_ooc_memory_preflight",
     "memory_limit_for",
     "predict_ooc_build_floor_bytes",
@@ -100,9 +126,10 @@ def resolve_phase_memory_limits(
     budget_bytes: int | None,
     memory_limit: str | None,
     incoming_edges: int,
-) -> tuple[str | None, str | None, str | None]:
-    """`(joiner, sink_build, resident_build)` memory_limit strings for one
-    table's incoming-edge joiners and its own outgoing relation build.
+) -> tuple[str | None, str | None, str | None, str | None]:
+    """`(sink_joiner, resident_joiner, sink_build, resident_build)`
+    memory_limit strings for one table's incoming-edge joiners and its own
+    outgoing relation build.
 
     `budget_bytes` is the UNDIVIDED per-run budget (`OutOfCoreBudget.
     budget_bytes`, threaded through as `run_fk_out_of_core`'s own
@@ -112,74 +139,124 @@ def resolve_phase_memory_limits(
     `memory_limit` string, reproducing pre-phase-aware-cap behavior exactly
     rather than inventing a budget to divide.
 
-    Phase-local liveness (the module docstring's item 1): a table's
-    `incoming_edges` joiners are co-live with each other (cap = budget //
-    incoming_edges). The SINK path always closes them before that table's
-    own outgoing build opens (`_emit.py`'s `on_stream_consumed`), so that
-    build is the run's ONLY live instance at that moment (cap = budget,
-    undivided -- the fix for the measured 100M/4GB OOM). The RESIDENT
-    (no-sink) path keeps the joiners open through the build (cap = budget //
-    (incoming_edges + 1), since the build itself is one more live instance
-    alongside them). A table with zero incoming edges opens no joiner at
-    all, so the returned joiner value is simply unused by its caller.
+    Phase-local liveness (the module docstring's item 1) differs by path, so
+    the JOINER cap must too -- a connection's `memory_limit` is fixed at
+    open, and a joiner that stays live into the build phase needs the SAME
+    cap the build itself gets, not the cap sized for its own (narrower)
+    phase. SINK path: joiners are co-live with each other only (cap = budget
+    // incoming_edges), and always close before that table's own outgoing
+    build opens (`_emit.py`'s `on_stream_consumed`), so the build is the
+    run's ONLY live instance at that moment (cap = budget, undivided -- the
+    fix for the measured 100M/4GB OOM). RESIDENT (no-sink) path: joiners stay
+    open THROUGH the build, so both must open at the SAME cap = budget //
+    (incoming_edges + 1) -- the build counts as one more live instance
+    alongside its own joiners. Returning one flat `joiner` value used on both
+    paths (the pre-fix shape) let the resident path's joiners open at the
+    sink-sized (undivided-by-the-extra-build-slot) cap while co-live with a
+    build sized for the extra slot, so their SUM exceeded `budget_bytes` --
+    exactly the HIGH this split closes: co-live sum on the resident path is
+    now `(incoming_edges + 1) * (budget // (incoming_edges + 1)) <=
+    budget_bytes`, honoring the invariant every other phase-aware cap in this
+    module already holds. A table with zero incoming edges opens no joiner at
+    all, so both joiner values are simply unused by its caller.
     """
     if budget_bytes is None:
-        return memory_limit, memory_limit, memory_limit
-    joiner = memory_limit_for(budget_bytes, incoming_edges) if incoming_edges else memory_limit
+        return memory_limit, memory_limit, memory_limit, memory_limit
+    sink_joiner = memory_limit_for(budget_bytes, incoming_edges) if incoming_edges else memory_limit
+    resident_joiner = (
+        memory_limit_for(budget_bytes, incoming_edges + 1) if incoming_edges else memory_limit
+    )
     sink_build = memory_limit_for(budget_bytes, 1)
     resident_build = memory_limit_for(budget_bytes, incoming_edges + 1)
-    return joiner, sink_build, resident_build
+    return sink_joiner, resident_joiner, sink_build, resident_build
 
 
 # --- Part B: hybrid capacity preflight -------------------------------------
 
-# WARN band lower edge and HARD-FAIL lower edge, both fractions of the
-# detected ceiling. The gap between them (0.6 - 0.85) is deliberate runway: a
-# predicted floor that just clears the warn threshold still has real margin
-# for the reserve (Python/Arrow/OS) that lives outside DuckDB's own
-# accounting, the same reserve `resolve_ooc_memory_limit`'s subtractive model
-# carves out explicitly. The SAFE bound sits below 1.0, not at it, for the
-# same reason: 100% of the ceiling leaves nothing for that reserve.
+# WARN band lower edge, as a fraction of the ACTUAL per-table build cap
+# `cap(t)` (never the raw memory ceiling -- see the module docstring's
+# remediation note). `cap(t)` is already the exact byte count
+# `resolve_phase_memory_limits` hands the real DuckDB connection, so a floor
+# at or below it should, in principle, complete; the WARN band exists only
+# because `predict_ooc_build_floor_bytes` is itself a conservative model, not
+# because `cap(t)` carries slack of its own -- the HARD-FAIL bound is the
+# full cap (fraction 1.0: `floor(t) > cap(t)`, no additional margin), since
+# `cap(t)` IS the number that will starve the build, not an estimate of it.
 _OOC_MEM_WARN_FRACTION = 0.6
-_OOC_MEM_SAFE_FRACTION = 0.85
 
 # The relation-build dedup's non-spillable floor, per row of the largest
 # parent table (see `predict_ooc_build_floor_bytes`'s docstring for the
-# derivation). Anchored from a devbox acceptance probe sweep (SPRINT-1 B4,
-# `scratchpad/oocfloor/build_probe.py` against a real 20M-row parent.parquet,
-# pinned DuckDB `memory_limit`, RLIMIT_DATA safety-capped, real duckdb_memory()
-# sampling) bracketing the true per-run floor at 20M rows:
-#   256 MiB  -> FAILS  (HASH_TABLE peak ~221 MiB / ~244 MiB usable)
-#   512 MiB  -> FAILS  (HASH_TABLE peak ~429 MiB / ~488 MiB usable)
-#   1024 MiB -> FAILS  (HASH_TABLE peak ~769 MiB / ~977 MiB usable)
-#   2048 MiB -> FAILS  (HASH_TABLE peak ~1017 MiB, allocator ~327 MiB --
-#                       fails on a single 256 KiB allocation well BELOW the
-#                       nominal cap, so allocator/fragmentation overhead
-#                       grows with the row count too, not just HASH_TABLE)
-#   3276 MiB -> COMPLETES (the pre-established undivided-budget measurement:
-#                       peak_total_mem 1829 MiB, HASH_TABLE peak 1344 MiB)
-# So the true floor at 20M rows sits in (2048, 3276] MiB. The constant below
-# prices max_parent_rows=20M at ~2893 MiB -- above every failing tier with
-# real margin, and closer to the known-good 3276 MiB than to the 2048 MiB
-# failure, biasing to over-predict (this module's governing goal: an
-# under-prediction lets a job through only to OOM, the one outcome the
-# preflight exists to prevent; over-prediction only refuses a job that MIGHT
-# have completed).
-_BUILD_FLOOR_BYTES_PER_ROW = 145.0
+# derivation). This model is a CONSERVATIVE UPPER ENVELOPE over two datasets
+# that disagree by ~4x, fit so it never under-predicts EITHER (the module's
+# governing rule: an under-prediction admits a job that then OOMs).
+#
+# Dataset 1 -- CLEAN isolated devbox sweep (`scripts/build_floor_probe.py`,
+# `build_parent_key_relation` run directly on int64-keyed parent.parquet,
+# RLIMIT_DATA FIXED at 8000 MiB across EVERY tier so a failure is
+# attributable to `memory_limit` alone, never the rlimit). This removes the
+# prior calibration's confound: its 2048 MiB-FAIL anchor used RLIMIT_DATA
+# 3000 MiB and bad_alloc'd at peak_total_mem 1329 MiB -- BELOW its own cap,
+# an rlimit/fragmentation artifact, not a memory_limit floor. The clean
+# per-row-count floor bracket (highest FAIL, lowest PASS] in MiB, scanned
+# across a WIDE tier range because DuckDB's memory_limit does not always fail
+# monotonically -- a larger limit can pick a worse partition count and fail
+# where a smaller limit passed, e.g. 1M below):
+#   100k rows -> (32, 48]     20M rows -> (256, 384]
+#   1M rows   -> (96, 128]    40M rows -> FAILS at 512 (floor > 512 MiB;
+#   5M rows   -> (64, 80]                the pass edge was not cleanly narrowed)
+#   10M rows  -> (128, 192]
+# The clean isolated floor is roughly linear at only ~13-19 MiB per M-rows.
+#
+# Dataset 2 -- REAL-ROUTE cloud measurement (fk_memory_probe out_of_core, GCP
+# n2-standard-8, 33.3M-row parent per table). The 33.3M-row BUILD phase OOMed
+# at memory_limit ~1638 MiB and COMPLETED at 2457 MiB: floor(33.3M) in
+# (~1638, 2457]. This is ~4x higher per-row than the isolated devbox sweep
+# predicts, because the isolated probe strips away everything the real route's
+# build coexists with (the streamed sink pipeline, orphan handling, wider
+# staged payloads, cross-environment allocator fragmentation). The 33.3M/4GB
+# real-route OOM is THE motivating failure this whole preflight exists to
+# refuse; it is a valid observed floor (a real memory_limit OOM, NOT an rlimit
+# artifact), so "never under-predict any observed floor" FORCES the model to
+# clear it. The isolated sweep is therefore a LOWER witness (the model must
+# over-predict it, which it does by ~4-10x); the cloud point is the BINDING
+# upper anchor.
+#
+# FIT: base + slope. SLOPE is anchored on the cloud passing edge (2457 MiB at
+# 33.3M rows, ~70 MiB/M-row net of base) with a documented 1.5x safety
+# envelope for the ~4x isolated-vs-real spread and cross-env fragmentation ->
+# ~105 MiB/M-row = 110 bytes/row. The SAFETY of the never-OOM guarantee rests
+# on the SLOPE (it dominates at the row counts where real OOMs occur), so the
+# slope over-predicts every large-row observed floor: floor(33.3M) ~= 3517 MiB
+# over-predicts the cloud 2457 completion level (never under-predicts the real
+# route), and it stays STRICTLY ABOVE the highest FAILING memory_limit tier at
+# EVERY clean devbox row count (100k..40M), which is the exact property that
+# makes admitting a job (cap >= floor) safe: cap then clears every tier known
+# to OOM at that row count. The two acceptance points stay REFUSED at a 4 GiB
+# host (build cap 2048 MiB after the reserve): floor(20M) ~= 2122 MiB > 2048,
+# floor(100M) ~= 10.3 GiB > 2048.
+_BUILD_FLOOR_BYTES_PER_ROW = 110.0
 
-# Fixed per-run overhead below which the model does not shrink: DuckDB's own
-# baseline instance overhead (allocator bookkeeping, buffer manager state)
-# independent of row count, anchored to the measured ~113-128 MiB one-instance
-# floor at moderate row counts (the 12M-row join-phase floor `_budget.py`'s
-# module docstring also cites). A near-zero parent table (few or zero rows)
-# still opens one real DuckDB instance, so the floor never predicts near zero.
-_BUILD_FLOOR_BASE_BYTES = 128 * 1024 * 1024
+# BASE is the fixed DuckDB relation-build overhead at ~zero rows, and unlike
+# the slope it does NOT carry the never-OOM guarantee (real OOMs are a
+# large-row, slope-dominated regime). It is deliberately SMALL -- 24 MiB, below
+# the 32 MiB highest-FAIL tier at 100k rows -- for one structural reason: the
+# preflight gates `floor(t)` against the ACTUAL build cap, and the smallest
+# real cap is `_MIN_BUDGET_BYTES` (64 MiB) divided by phase liveness (as low as
+# 32 MiB on a resident fan-in-1 build under the route's 64 MiB byte-estimate
+# routing knob). A larger base would refuse a genuinely tiny job (tens of rows)
+# whose real floor is a few MiB -- and byte-transparency for those jobs is a
+# hard requirement (`tests/parity/test_out_of_core_*_routing.py`, 40-row
+# fixtures under the 64 MiB knob). 24 MiB keeps `floor(40 rows) ~= 24 MiB`
+# under that 32 MiB cap while the SLOPE still lifts `floor(100k) ~= 34.5 MiB`
+# strictly above 100k's own 32 MiB fail tier. A near-zero parent still opens
+# one real DuckDB instance, so the floor never predicts near zero.
+_BUILD_FLOOR_BASE_BYTES = 24 * 1024 * 1024
 
 
 def predict_ooc_build_floor_bytes(max_parent_rows: int) -> int:
     """The conservative, data-independent non-spillable resident floor for
-    the out-of-core route's relation-build phase, given the largest parent
-    row count across the job's outgoing FK edges.
+    the out-of-core route's relation-build phase, given a parent table's row
+    count.
 
     Parent ROW COUNT (not distinct-key count) is the input because it is
     available pre-run from routing signals alone, and distinct parent keys
@@ -196,7 +273,7 @@ def predict_ooc_build_floor_bytes(max_parent_rows: int) -> int:
     spills past it, but a query's control structures do not shrink below
     some genuine minimum). See `_BUILD_FLOOR_BYTES_PER_ROW`'s own docstring
     comment for the exact measured anchors this constant was fit against
-    (never re-derive those two established points; recalibrate only the
+    (never re-derive those established points; recalibrate only the
     slope/base here, and only with new measured data).
 
     Bias to over-predict throughout (module docstring, item 2): an
@@ -214,35 +291,86 @@ def predict_ooc_build_floor_bytes(max_parent_rows: int) -> int:
 class MemoryPreflight:
     """Result of the hybrid out-of-core memory capacity check.
 
-    `floor_bytes` is `predict_ooc_build_floor_bytes`'s prediction;
-    `ceiling_bytes` is the detected effective memory ceiling (or the
-    caller-supplied override); `warn_bytes` / `safe_bound_bytes` are the two
-    fraction-of-ceiling thresholds the floor was compared against.
-    `detectable=False` marks the fail-open case (an undetectable ceiling):
-    `ok` is then `True` and no floor/bound comparison was made, matching the
-    host-RAM-detection fall-through `resolve_ooc_memory_limit` already
-    documents -- the caller proceeds rather than inventing a floor to check
-    against a ceiling it does not have.
+    Covers every parent table `enforce_ooc_memory_preflight` was given, not
+    one row count: `binding_table` names whichever table drove the
+    `ok`/`warned` outcome (the argmax of `floor(t) - cap(t)` on a hard-fail;
+    the tightest warn-band table otherwise), and `floor_bytes` / `cap_bytes`
+    are THAT table's own numbers, not a job-wide aggregate -- the invariant
+    this gate enforces is per-table (`_memory_estimate` module docstring).
+    `binding_table` is `None` when there is nothing to report: no parent
+    tables at all, or a clean run with no warning.
+
+    `detectable=False` marks the fail-open case: no real `budget_bytes` to
+    gate against (host-RAM detection failed and no explicit budget was
+    supplied), matching the same fall-through `resolve_ooc_memory_limit`
+    already documents for Part A's phase-aware caps -- the caller proceeds
+    rather than inventing a cap to check floors against.
     """
 
     ok: bool
     warned: bool
     detectable: bool
+    binding_table: str | None
     floor_bytes: int
-    ceiling_bytes: int | None
-    warn_bytes: int | None
-    safe_bound_bytes: int | None
+    cap_bytes: int | None
+
+
+def declared_minimum_ceiling_bytes(floor_bytes: int, *, incoming_edges: int, sink: bool) -> int:
+    """The smallest whole-GiB memory ceiling that, fed back through
+    `resolve_ooc_memory_limit`, yields a build cap >= `floor_bytes` -- the
+    truthful "you need approximately N GB" a hard-fail or warning reports.
+
+    Inverts `resolve_ooc_memory_limit`'s OWN subtractive reserve model
+    (`budget = ceiling - max(_OOC_RESERVE_FRACTION * ceiling,
+    _OOC_RESERVE_FLOOR_BYTES)`), reading that function's actual constants
+    rather than a fresh approximation, so the number this returns is the
+    exact one `resolve_ooc_memory_limit` will honor if the recommendation is
+    provisioned (a preflight that inverted a DIFFERENT model than the one
+    Part A actually runs is the same class of denomination mismatch this
+    sprint's remediation closes elsewhere):
+
+    - `ceiling` small enough that the reserve is the flat floor
+      (`_OOC_RESERVE_FRACTION * ceiling <= _OOC_RESERVE_FLOOR_BYTES`):
+      `budget = ceiling - _OOC_RESERVE_FLOOR_BYTES`, so
+      `ceiling = budget + _OOC_RESERVE_FLOOR_BYTES`.
+    - otherwise the reserve is the fraction: `budget = (1 -
+      _OOC_RESERVE_FRACTION) * ceiling`, so `ceiling = budget / (1 -
+      _OOC_RESERVE_FRACTION)`.
+    The two solutions agree exactly where the regimes meet
+    (`_OOC_RESERVE_FRACTION * ceiling == _OOC_RESERVE_FLOOR_BYTES`), so
+    picking whichever regime the UNROUNDED small-regime candidate is
+    self-consistent with (computed first, only then rounded up) never
+    straddles the boundary.
+
+    `required_budget` is `floor_bytes` on the sink path (the build gets the
+    undivided budget) but `floor_bytes * (incoming_edges + 1)` on the
+    resident path: `resolve_phase_memory_limits` divides the resident
+    build's own connection by that same divisor, so a ceiling that only
+    clears the UNDIVIDED floor would still starve the build once resolved
+    back through the real phase-aware cap.
+    """
+    required_budget = floor_bytes if sink else floor_bytes * (incoming_edges + 1)
+    small_regime_ceiling = required_budget + _OOC_RESERVE_FLOOR_BYTES
+    if _OOC_RESERVE_FRACTION * small_regime_ceiling <= _OOC_RESERVE_FLOOR_BYTES:
+        ceiling_needed_bytes = small_regime_ceiling
+    else:
+        ceiling_needed_bytes = math.ceil(required_budget / (1 - _OOC_RESERVE_FRACTION))
+    gib = 1024**3
+    whole_gib = -(-ceiling_needed_bytes // gib)  # ceil to a whole GiB, never under
+    return whole_gib * gib
 
 
 def enforce_ooc_memory_preflight(
-    max_parent_rows: int,
+    parent_table_rows: Mapping[str, int],
     *,
-    ceiling_bytes: int | None = None,
+    budget_bytes: int | None,
+    sink: bool,
+    incoming_edge_counts: Mapping[str, int],
 ) -> MemoryPreflight:
     """The out-of-core route's HYBRID (warn near the floor, hard-fail beyond
-    a safe bound) memory capacity gate -- Cam's governing decision (module
-    docstring item 2): "never OOM, or declare minimums so the user knows
-    what power they need."
+    it) memory capacity gate -- Cam's governing decision (module docstring
+    item 2): "never OOM, or declare minimums so the user knows what power
+    they need."
 
     Deliberately asymmetric with the sibling disk preflight
     (`_spill_estimate.enforce_ooc_disk_preflight`, advisory/warn-only): that
@@ -250,88 +378,106 @@ def enforce_ooc_memory_preflight(
     the runtime `check_temp_disk_budget` backstop and aborts cleanly at a
     table boundary), so a hard reject up front would needlessly kill jobs a
     conservative over-estimate merely made LOOK tight. A resident-memory
-    floor above the safe bound has no such backstop -- DuckDB's own internal
+    floor above its actual cap has no such backstop -- DuckDB's own internal
     allocator raises a raw "bad allocation" partway through a query, not a
     coded, catchable error at a clean boundary -- so THIS preflight is the
     only guard standing between an admitted job and an uncontrolled crash,
     and it must actually reject rather than merely warn.
 
-    Computes `floor = predict_ooc_build_floor_bytes(max_parent_rows)` and
-    compares it against `ceiling_bytes` (or `detect_effective_memory_bytes()`
-    when omitted):
+    `parent_table_rows` is one row count per table with an outgoing FK edge
+    (a build-phase table); `budget_bytes` is the SAME `OutOfCoreBudget.
+    budget_bytes` `resolve_ooc_memory_limit` resolved at the route's one call
+    site (reused, never re-derived -- the module docstring's remediation
+    note); `sink` is whether this run streams to a sink; `incoming_edge_counts`
+    is each table's own fan-in. For every table `t`:
 
-    - `floor < _OOC_MEM_WARN_FRACTION * ceiling`: comfortably clear, no
-      warning, no raise.
-    - `_OOC_MEM_WARN_FRACTION * ceiling <= floor < _OOC_MEM_SAFE_FRACTION *
-      ceiling`: WARN band. Logs a structured, actionable message (predicted
-      floor, available ceiling, a recommended minimum) via the same
-      `logging`-based advisory channel `enforce_ooc_disk_preflight` already
-      uses for this route -- observability only, the job proceeds.
-    - `floor >= _OOC_MEM_SAFE_FRACTION * ceiling`: HARD-FAIL. Raises a typed
-      `ExecutionError(code="out_of_core_insufficient_memory", ...)` BEFORE
-      any DuckDB work runs, stating the declared minimum (module docstring's
-      "declare minimums" half of the governing goal) so the caller knows
-      what power to provision instead of discovering it via a crash.
+        floor(t) = predict_ooc_build_floor_bytes(parent_table_rows[t])
+        cap(t)   = budget_bytes                          if sink
+                 = budget_bytes // (incoming_edge_counts[t] + 1)   otherwise
 
-    Fail-open ONLY when the ceiling itself is undetectable (`ceiling_bytes`
-    omitted and `detect_effective_memory_bytes()` raises): mirrors the
-    host-RAM-detection fall-through `resolve_ooc_memory_limit` already takes
-    for the same undetectable-ceiling case, rather than inventing a floor to
-    compare against a ceiling that was never measured. This is the only
-    fail-open path; once a ceiling is in hand (detected or caller-supplied),
-    the hard-fail branch above always actually rejects.
+    the SAME arithmetic `resolve_phase_memory_limits` uses to size the real
+    connection. HARD-FAILS (`ExecutionError(code=
+    "out_of_core_insufficient_memory")`, before any DuckDB work) if
+    `floor(t) > cap(t)` for ANY `t` -- the binding table is `argmax_t
+    (floor(t) - cap(t))`. Otherwise WARNS (never blocks) if `floor(t) >=
+    _OOC_MEM_WARN_FRACTION * cap(t)` for any table, picking the tightest such
+    table for the message. `budget_bytes=None` (host-RAM detection failed and
+    no explicit budget was given, mirroring `resolve_ooc_memory_limit`'s own
+    fall-through) fails OPEN: Part A's phase-aware caps fall back to the flat
+    `memory_limit` in this case too, so there is no real per-table cap left
+    to gate a floor against.
     """
-    floor_bytes = predict_ooc_build_floor_bytes(max_parent_rows)
-    if ceiling_bytes is None:
-        try:
-            ceiling_bytes = detect_effective_memory_bytes()
-        except ExecutionError:
-            return MemoryPreflight(
-                ok=True,
-                warned=False,
-                detectable=False,
-                floor_bytes=floor_bytes,
-                ceiling_bytes=None,
-                warn_bytes=None,
-                safe_bound_bytes=None,
-            )
-    warn_bytes = int(_OOC_MEM_WARN_FRACTION * ceiling_bytes)
-    safe_bound_bytes = int(_OOC_MEM_SAFE_FRACTION * ceiling_bytes)
-    if floor_bytes >= safe_bound_bytes:
+    if budget_bytes is None:
+        return MemoryPreflight(
+            ok=True,
+            warned=False,
+            detectable=False,
+            binding_table=None,
+            floor_bytes=0,
+            cap_bytes=None,
+        )
+
+    worst_fail: tuple[int, str, int, int] | None = None  # (margin, table, floor, cap)
+    worst_warn: tuple[int, str, int, int] | None = None
+    for table, rows in parent_table_rows.items():
+        floor_bytes = predict_ooc_build_floor_bytes(rows)
+        incoming = incoming_edge_counts.get(table, 0)
+        cap_bytes = budget_bytes if sink else budget_bytes // (incoming + 1)
+        margin = floor_bytes - cap_bytes
+        if worst_fail is None or margin > worst_fail[0]:
+            worst_fail = (margin, table, floor_bytes, cap_bytes)
+        if floor_bytes >= _OOC_MEM_WARN_FRACTION * cap_bytes:
+            if worst_warn is None or margin > worst_warn[0]:
+                worst_warn = (margin, table, floor_bytes, cap_bytes)
+
+    if worst_fail is not None and worst_fail[0] > 0:
+        _, table, floor_bytes, cap_bytes = worst_fail
+        incoming = incoming_edge_counts.get(table, 0)
         floor_gib = floor_bytes / (1024**3)
-        safe_gib = safe_bound_bytes / (1024**3)
-        ceiling_gib = ceiling_bytes / (1024**3)
-        # The declared minimum: enough headroom over the predicted floor to
-        # clear the safe bound with margin, rounded up to a whole GiB so the
-        # message states an actionable, provisionable number.
-        needed_gib = -(-int(floor_bytes / _OOC_MEM_SAFE_FRACTION) // (1024**3))
+        cap_gib = cap_bytes / (1024**3)
+        needed_gib = declared_minimum_ceiling_bytes(
+            floor_bytes, incoming_edges=incoming, sink=sink
+        ) / (1024**3)
         raise ExecutionError(
             code="out_of_core_insufficient_memory",
             message=(
-                f"predicted resident floor ~{floor_gib:.2f} GiB exceeds the safe bound "
-                f"(~{safe_gib:.2f} GiB = {_OOC_MEM_SAFE_FRACTION:.0%} of ~{ceiling_gib:.2f} "
-                f"GiB available); this job needs approximately {needed_gib} GB of memory. "
+                f"predicted resident floor ~{floor_gib:.2f} GiB for table {table!r} exceeds "
+                f"the actual build cap ~{cap_gib:.2f} GiB it would receive; this job needs "
+                f"approximately {needed_gib:.0f} GB of memory (a host/cgroup ceiling that size). "
                 "Increase host/cgroup memory or reduce table size."
             ),
         )
-    warned = floor_bytes >= warn_bytes
-    if warned:
-        floor_gib = floor_bytes / (1024**3)
-        ceiling_gib = ceiling_bytes / (1024**3)
-        recommend_gib = -(-int(floor_bytes / _OOC_MEM_SAFE_FRACTION) // (1024**3))
-        _logger.warning(
-            "out-of-core memory advisory: predicted resident floor ~%.2f GiB for this "
-            "host (~%.2f GiB available); recommend >= %d GB for margin.",
-            floor_gib,
-            ceiling_gib,
-            recommend_gib,
+
+    if worst_warn is None:
+        return MemoryPreflight(
+            ok=True,
+            warned=False,
+            detectable=True,
+            binding_table=None,
+            floor_bytes=0,
+            cap_bytes=budget_bytes,
         )
+
+    _, table, floor_bytes, cap_bytes = worst_warn
+    incoming = incoming_edge_counts.get(table, 0)
+    floor_gib = floor_bytes / (1024**3)
+    cap_gib = cap_bytes / (1024**3)
+    recommend_gib = declared_minimum_ceiling_bytes(
+        floor_bytes, incoming_edges=incoming, sink=sink
+    ) / (1024**3)
+    _logger.warning(
+        "out-of-core memory advisory: predicted resident floor ~%.2f GiB for table %r "
+        "(actual build cap ~%.2f GiB); recommend a host/cgroup ceiling of >= %.0f GB for margin.",
+        floor_gib,
+        table,
+        cap_gib,
+        recommend_gib,
+    )
     return MemoryPreflight(
         ok=True,
-        warned=warned,
+        warned=True,
         detectable=True,
+        binding_table=table,
         floor_bytes=floor_bytes,
-        ceiling_bytes=ceiling_bytes,
-        warn_bytes=warn_bytes,
-        safe_bound_bytes=safe_bound_bytes,
+        cap_bytes=cap_bytes,
     )

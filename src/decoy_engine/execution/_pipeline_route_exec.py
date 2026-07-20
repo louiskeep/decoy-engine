@@ -214,14 +214,23 @@ def run_out_of_core_route(
     (which never falls back).
 
     Memory preflight (SPRINT-1 Part B, the never-crash guarantee): before any
-    DuckDB work, `enforce_ooc_memory_preflight` predicts the relation-build
-    phase's resident floor from the largest parent table's row count
-    (`_max_parent_table_rows`) and either warns (near the floor) or HARD-FAILS
-    (`out_of_core_insufficient_memory`, beyond a safe bound) -- unlike the
-    disk preflight below, this one actually rejects, because a resident-memory
-    floor above the ceiling has no runtime backstop (DuckDB's own allocator
+    DuckDB work, `enforce_ooc_memory_preflight` predicts each build-phase
+    table's relation-build resident floor (`_parent_table_row_counts`) and
+    gates it against the EXACT cap that table's build connection will
+    receive -- `resolved_budget_bytes` undivided on the sink path, `//
+    (incoming_edges + 1)` on the resident path, the SAME `resolve_ooc_memory_
+    limit` call and the SAME arithmetic `resolve_phase_memory_limits` uses to
+    size the real connection, reused rather than re-derived. Either warns
+    (near a table's own cap) or HARD-FAILS (`out_of_core_insufficient_
+    memory`, a table's floor exceeding its own cap) -- unlike the disk
+    preflight below, this one actually rejects, because a resident-memory
+    floor above its cap has no runtime backstop (DuckDB's own allocator
     raises an uncatchable-at-a-clean-boundary "bad allocation", not a coded
-    error at a table boundary). See `_memory_estimate.py`'s module docstring.
+    error at a table boundary). Gating against a fraction of the raw
+    detected ceiling instead of this exact cap is the denomination mismatch
+    this sprint's remediation closes (a preflight fraction and Part A's real
+    per-table cap were never guaranteed to be the same number, so a job could
+    be admitted then starved). See `_memory_estimate.py`'s module docstring.
 
     Disk (OOC-D): `temp_disk_budget_bytes` is threaded into `run_fk_out_of_core`
     as `_TEMP_DISK_SAFETY_FRACTION` (0.9) of the free space `shutil.disk_usage`
@@ -332,15 +341,27 @@ def run_out_of_core_route(
     # "site with row counts already in hand" precedent the disk preflight
     # itself establishes. Runs strictly before `run_fk_out_of_core` below, so
     # a job whose predicted floor cannot fit is refused before any DuckDB
-    # work starts. Always auto-detects the ceiling (`ceiling_bytes` omitted)
-    # rather than reusing this route's own `budget_bytes` param: THAT param is
-    # an ALLOCATION decision (how much to hand DuckDB -- deliberately tiny in
-    # some callers, e.g. the byte-estimate routing parity suite's stand-in for
-    # a cgroup-limited container purely to force a routing decision on a tiny
-    # fixture), not a statement of how much memory actually exists. The
-    # preflight's ceiling must be the real host/cgroup capacity -- the only
-    # number a "will this genuinely OOM" check can be honest against.
-    enforce_ooc_memory_preflight(_max_parent_table_rows(resolved_sources, graph))
+    # work starts.
+    #
+    # Gated against `resolved_budget_bytes` -- THE SAME `OutOfCoreBudget.
+    # budget_bytes` resolved above at the ONE `resolve_ooc_memory_limit` call
+    # site, reused rather than re-derived -- and `sink is not None` /
+    # `_incoming_edge_counts(graph)`, so `cap(t)` here is computed with the
+    # IDENTICAL arithmetic `resolve_phase_memory_limits` uses to size the
+    # real connection. This is the fix for the BLOCKER: a preflight that
+    # instead re-derived its own fraction of the raw detected ceiling could
+    # admit a job whose real, phase-aware cap was starved -- the fraction and
+    # the true cap were never guaranteed to be the same number. Reusing
+    # `resolved_budget_bytes` verbatim makes that denomination mismatch
+    # structurally impossible: when it is `None` (host-RAM detection failed,
+    # no explicit budget given), the gate fails OPEN, matching Part A's own
+    # fall-through to the flat `memory_limit` in that same case.
+    enforce_ooc_memory_preflight(
+        _parent_table_row_counts(resolved_sources, graph),
+        budget_bytes=resolved_budget_bytes,
+        sink=sink is not None,
+        incoming_edge_counts=_incoming_edge_counts(graph),
+    )
 
     ooc_result = run_fk_out_of_core(
         plan,
@@ -380,6 +401,22 @@ def run_out_of_core_route(
     )
 
 
+def _incoming_edge_counts(graph: RelationshipGraph) -> dict[str, int]:
+    """Fan-in per table: the count of edges where the table is the CHILD
+    side, i.e. how many `ChildFkBatchJoiner` connections are co-live while
+    that table streams.
+
+    Shared by `_max_concurrent_ooc_instances` (the run's single global-peak
+    divisor) and `enforce_ooc_memory_preflight` (each table's OWN resident-
+    path build cap, `_memory_estimate` module docstring) -- both need this
+    same per-table fan-in, computed once from the graph rather than twice.
+    """
+    counts: dict[str, int] = {}
+    for edge in graph.edges:
+        counts[edge.child_table] = counts.get(edge.child_table, 0) + 1
+    return counts
+
+
 def _max_concurrent_ooc_instances(graph: RelationshipGraph) -> int:
     """Conservative upper bound on concurrent full-budget DuckDB instances,
     sizing `resolve_ooc_memory_limit`'s `max_concurrent_instances` precisely
@@ -395,11 +432,8 @@ def _max_concurrent_ooc_instances(graph: RelationshipGraph) -> int:
     every table the graph touches -- a schema-level property, safe to compute
     once up front (never re-derived per batch or scaled by row count).
     """
-    incoming_counts: dict[str, int] = {}
-    has_outgoing: set[str] = set()
-    for edge in graph.edges:
-        incoming_counts[edge.child_table] = incoming_counts.get(edge.child_table, 0) + 1
-        has_outgoing.add(edge.parent_table)
+    incoming_counts = _incoming_edge_counts(graph)
+    has_outgoing: set[str] = {edge.parent_table for edge in graph.edges}
     tables = set(incoming_counts) | has_outgoing
     if not tables:
         return 1
@@ -408,27 +442,42 @@ def _max_concurrent_ooc_instances(graph: RelationshipGraph) -> int:
     )
 
 
-def _max_parent_table_rows(
+def _parent_table_row_counts(
     sources: Mapping[str, pa.Table | LazySource], graph: RelationshipGraph
-) -> int:
-    """The largest parent-table row count across `graph`'s outgoing edges,
-    feeding `enforce_ooc_memory_preflight`'s floor prediction.
+) -> dict[str, int]:
+    """One row count per table with an outgoing FK edge (a build-phase
+    table), feeding `enforce_ooc_memory_preflight`'s per-table floor
+    prediction.
 
     Parent ROW COUNT (not distinct-key count) is priced because it is a safe
     upper bound on the relation-build's true cardinality (distinct keys can
     never exceed rows) and is available without touching column data: both
     `pa.Table` and `LazySource` expose `.num_rows` in O(1) (an in-memory
     attribute, or a Parquet footer read that never scans row-group data).
-    A table absent from `sources` or a graph with no outgoing edges at all
-    contributes nothing, returning 0 -- the preflight's floor then reduces
-    to its fixed per-instance baseline, since no relation build ever runs.
+
+    FAIL-CLOSED, not a silent under-count: a graph parent table absent from
+    `sources` used to simply contribute 0 rows, which UNDER-predicts the
+    floor -- admitting a job the preflight should have refused is exactly
+    the wrong direction for a gate whose only job is refusing before an OOM
+    (LOW remediation). `run_fk_out_of_core` does raise its own coded
+    `out_of_core_source_missing` for the same gap, but only AFTER this
+    preflight would have already (wrongly) admitted the job on a stale
+    ordering guarantee; this function raises fail-closed itself instead of
+    depending on that.
     """
     parent_tables = {edge.parent_table for edge in graph.edges}
-    rows = 0
+    rows: dict[str, int] = {}
     for table in parent_tables:
         source = sources.get(table)
-        if source is not None:
-            rows = max(rows, source.num_rows)
+        if source is None:
+            raise ExecutionError(
+                code="out_of_core_parent_rows_unresolved",
+                message=(
+                    f"out-of-core memory preflight cannot price table {table!r}: it has an "
+                    "outgoing FK edge but no resolvable source."
+                ),
+            )
+        rows[table] = source.num_rows
     return rows
 
 
