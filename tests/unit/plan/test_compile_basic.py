@@ -51,7 +51,8 @@ class TestCompilePlanHappyPath:
         faker_requires_provider at row 26; HC-3a (2026-07-17) added
         date_shift_group_by_refs at row 27; HC-3b (2026-07-17) added
         top_code_config at row 28; HC-7 (2026-07-17) added freetext_advisory
-        at row 29; TX-2 (2026-07-20) added text_mask_ner_available at row 30."""
+        at row 29; TX-2 (2026-07-20) added text_mask_ner_available at row 30;
+        DPS-3 (2026-07-20) added dp_generate_contract at row 31."""
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
         assert set(plan.plan_compile.checks_passed) == {
             "namespace_ambiguity",
@@ -65,6 +66,7 @@ class TestCompilePlanHappyPath:
             "deterministic_namespace_completeness",
             "null_bearing_int_unsupported",
             "non_poolable_provider_with_pool_backend",
+            "dp_generate_contract",
             "statistical_columns",
             "text_redact_ner_available",
             "text_mask_ner_available",

@@ -12,6 +12,25 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class DpGenerateSettings(BaseModel):
+    """DPS-3: declares that this pipeline's `generate` output must be
+    (epsilon, delta)-DP. Presence alone (not epsilon/delta's values) is
+    what `plan._checks_dp.check_dp_generate_contract` gates on: it hard-
+    rejects `allow_real_categories: true` / `high_cardinality: true`
+    generate columns, which release real vocabulary and would silently
+    void the guarantee this block declares. `numeric_domains` mirrors
+    `quality/snapshot.compute_distribution_snapshot`'s fit-time param
+    (informational here; fitting still happens via the separate
+    `decoy fit` step, not through this pipeline config).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    epsilon: float = Field(gt=0)
+    delta: float = Field(default=1e-6, gt=0, lt=1)
+    numeric_domains: dict[str, tuple[float, float]] = Field(default_factory=dict)
+
+
 class GlobalSettings(BaseModel):
     """Pipeline-wide settings.
 
@@ -60,6 +79,10 @@ class GlobalSettings(BaseModel):
     never mutates the plan/config, never changes output bytes.
     `freetext_advisory_min_avg_length <= 0` disables the advisory entirely
     (both branches).
+    `dp` (DPS-3) opts this pipeline's `generate` output into a (epsilon,
+    delta)-DP marginal claim; see `DpGenerateSettings`. Unset (the
+    default) means no DP contract and no gate -- byte-identical to every
+    prior engine version.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -73,3 +96,4 @@ class GlobalSettings(BaseModel):
     mask_secret_ref: str | None = None
     freetext_advisory_min_avg_length: float = Field(default=40.0)
     freetext_advisory_min_distinctness: float = Field(default=0.5, ge=0.0, le=1.0)
+    dp: DpGenerateSettings | None = None
