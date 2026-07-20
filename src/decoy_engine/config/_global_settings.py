@@ -18,17 +18,24 @@ class DpGenerateSettings(BaseModel):
     what `plan._checks_dp.check_dp_generate_contract` gates on: it hard-
     rejects `allow_real_categories: true` / `high_cardinality: true`
     generate columns, which release real vocabulary and would silently
-    void the guarantee this block declares. `numeric_domains` mirrors
-    `quality/snapshot.compute_distribution_snapshot`'s fit-time param
-    (informational here; fitting still happens via the separate
-    `decoy fit` step, not through this pipeline config).
+    void the guarantee this block declares.
+
+    Gate remediation Fix 5 (LOW #5): a `numeric_domains` field used to live
+    here as a documented-informational mirror of
+    `quality/snapshot.compute_distribution_snapshot`'s fit-time param --
+    but fitting happens via the separate `decoy fit` step (CLI-side), so
+    the engine never read it from this block; an operator setting it here
+    got silently no effect. Dropped rather than kept as a footgun. The
+    real numeric-domain declaration is `compute_distribution_snapshot(...,
+    numeric_domains=..., dp_mode=True)` at fit time; this block only
+    declares the generate-side (epsilon, delta) contract and gates the
+    anti-DP generate-column knobs.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     epsilon: float = Field(gt=0)
     delta: float = Field(default=1e-6, gt=0, lt=1)
-    numeric_domains: dict[str, tuple[float, float]] = Field(default_factory=dict)
 
 
 class GlobalSettings(BaseModel):
