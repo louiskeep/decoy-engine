@@ -256,7 +256,17 @@ ALLOWLIST: dict[str, int] = {
     # diverge on a mid-job corpus swap (parity with the pandas/sequential
     # routes). Decompose the chunk-drain / evidence-merge cluster into a sibling
     # when the next out-of-core route change lands.
-    "src/decoy_engine/execution/out_of_core/_runner.py": 639,
+    # phase-aware build budget (2026-07-20): +24 LOC (639 -> 663) threading a
+    # `budget_bytes` param through `run_fk_out_of_core` / `_stream_table` and
+    # computing per-phase DuckDB memory_limit caps (joiner / sink-path build /
+    # resident-path build) instead of one flat cap for every connection --
+    # fixes a starved sink-path relation build that measurably OOMed under a
+    # divided-by-global-peak cap even with most of the run's budget idle. The
+    # phase-cap derivation itself lives in the sibling `_memory_estimate.py`
+    # (new module, not appended here) to avoid growing this file further; only
+    # the three call-site substitutions and the param plumbing live here. Same
+    # chunk-drain / evidence-merge decomposition target stands.
+    "src/decoy_engine/execution/out_of_core/_runner.py": 663,
     # HC-2 (2026-07-17): crossed the 600 cap adding the generic corpus
     # schema-invariant checker (_check_corpus_schema, shared by the load path
     # and the new standalone verify_corpus primitive), the

@@ -202,12 +202,26 @@ def run_out_of_core_route(
     conservative fraction is reserved for the router's full-frame admission
     price and must not be widened; see `_budget.py`'s module docstring) so
     DuckDB gets most of the ceiling while staying bounded regardless of table
-    cardinality, divided across the graph's exact worst-case concurrent
-    DuckDB-instance count (`_max_concurrent_ooc_instances`). If host-RAM
-    detection fails (`out_of_core_memory_detection_failed`), the route still
-    runs on its pinned batch default + DuckDB's own default limit rather than
-    newly failing a job full-frame would have completed; a caller that needs
-    a hard cap passes an explicit `budget_bytes` (which never falls back).
+    cardinality. The resolved UNDIVIDED `budget.budget_bytes` is threaded into
+    `run_fk_out_of_core` alongside the legacy `memory_limit` string (SPRINT-1
+    Part A) so each DuckDB connection is capped by its own phase-local
+    liveness rather than the flat `_max_concurrent_ooc_instances` global-peak
+    divisor -- see `_memory_estimate.py`'s module docstring for the root cause
+    this fixes. If host-RAM detection fails (`out_of_core_memory_detection_
+    failed`), the route still runs on its pinned batch default + DuckDB's own
+    default limit rather than newly failing a job full-frame would have
+    completed; a caller that needs a hard cap passes an explicit `budget_bytes`
+    (which never falls back).
+
+    Memory preflight (SPRINT-1 Part B, the never-crash guarantee): before any
+    DuckDB work, `enforce_ooc_memory_preflight` predicts the relation-build
+    phase's resident floor from the largest parent table's row count
+    (`_max_parent_table_rows`) and either warns (near the floor) or HARD-FAILS
+    (`out_of_core_insufficient_memory`, beyond a safe bound) -- unlike the
+    disk preflight below, this one actually rejects, because a resident-memory
+    floor above the ceiling has no runtime backstop (DuckDB's own allocator
+    raises an uncatchable-at-a-clean-boundary "bad allocation", not a coded
+    error at a table boundary). See `_memory_estimate.py`'s module docstring.
 
     Disk (OOC-D): `temp_disk_budget_bytes` is threaded into `run_fk_out_of_core`
     as `_TEMP_DISK_SAFETY_FRACTION` (0.9) of the free space `shutil.disk_usage`
@@ -252,6 +266,7 @@ def run_out_of_core_route(
     """
     from decoy_engine.execution._sequential import table_topo_order
     from decoy_engine.execution.out_of_core import resolve_ooc_memory_limit, run_fk_out_of_core
+    from decoy_engine.execution.out_of_core._memory_estimate import enforce_ooc_memory_preflight
     from decoy_engine.execution.out_of_core._spill_estimate import default_ooc_temp_root
 
     resolved_sources = sources
@@ -264,6 +279,7 @@ def run_out_of_core_route(
 
     memory_limit: str | None = None
     batch_rows: int | None = None
+    resolved_budget_bytes: int | None = None
     try:
         # `resolve_ooc_memory_limit`, NOT `resolve_budget`: this is the
         # DuckDB memory_limit for the execution runner, not the router's
@@ -277,6 +293,13 @@ def run_out_of_core_route(
             budget_bytes, max_concurrent_instances=_max_concurrent_ooc_instances(graph)
         )
         memory_limit, batch_rows = budget.memory_limit, budget.batch_rows
+        # SPRINT-1 Part A: the UNDIVIDED total, threaded alongside the legacy
+        # flat `memory_limit` so `run_fk_out_of_core` can size each DuckDB
+        # connection by its own phase-local liveness instead of the run's
+        # single global-peak divisor (see `_memory_estimate.py`). Resolved
+        # together with `memory_limit`/`batch_rows` above so the three never
+        # disagree about whether resolution succeeded.
+        resolved_budget_bytes = budget.budget_bytes
     except ExecutionError:
         # Host-RAM detection failed and no explicit budget was given: fall back
         # to the route's pinned batch default + DuckDB's default limit rather
@@ -299,6 +322,26 @@ def run_out_of_core_route(
         # advisory (warn-only) and never blocks a job.
         pass
 
+    # SPRINT-1 Part B: the hybrid memory capacity preflight -- the never-crash
+    # guarantee underneath Part A's phase-aware caps above. Wired HERE rather
+    # than at `_pipeline_routing_signals.resolve_execution_route` (the disk
+    # preflight's site): that module sits at its own LOC cap with no headroom,
+    # and this site already has per-table row counts in hand via
+    # `resolved_sources` (both `pa.Table` and `LazySource` expose `.num_rows`
+    # in O(1), so no source is materialized just to count it) -- the same
+    # "site with row counts already in hand" precedent the disk preflight
+    # itself establishes. Runs strictly before `run_fk_out_of_core` below, so
+    # a job whose predicted floor cannot fit is refused before any DuckDB
+    # work starts. Always auto-detects the ceiling (`ceiling_bytes` omitted)
+    # rather than reusing this route's own `budget_bytes` param: THAT param is
+    # an ALLOCATION decision (how much to hand DuckDB -- deliberately tiny in
+    # some callers, e.g. the byte-estimate routing parity suite's stand-in for
+    # a cgroup-limited container purely to force a routing decision on a tiny
+    # fixture), not a statement of how much memory actually exists. The
+    # preflight's ceiling must be the real host/cgroup capacity -- the only
+    # number a "will this genuinely OOM" check can be honest against.
+    enforce_ooc_memory_preflight(_max_parent_table_rows(resolved_sources, graph))
+
     ooc_result = run_fk_out_of_core(
         plan,
         resolved_sources,
@@ -307,6 +350,7 @@ def run_out_of_core_route(
         sink=sink,
         memory_limit=memory_limit,
         batch_rows=batch_rows,
+        budget_bytes=resolved_budget_bytes,
         temp_disk_budget_bytes=temp_disk_budget_bytes,
         unconfigured_column_policy=unconfigured_column_policy,
         key_provider=key_provider,
@@ -362,6 +406,30 @@ def _max_concurrent_ooc_instances(graph: RelationshipGraph) -> int:
     return max(
         incoming_counts.get(table, 0) + (1 if table in has_outgoing else 0) for table in tables
     )
+
+
+def _max_parent_table_rows(
+    sources: Mapping[str, pa.Table | LazySource], graph: RelationshipGraph
+) -> int:
+    """The largest parent-table row count across `graph`'s outgoing edges,
+    feeding `enforce_ooc_memory_preflight`'s floor prediction.
+
+    Parent ROW COUNT (not distinct-key count) is priced because it is a safe
+    upper bound on the relation-build's true cardinality (distinct keys can
+    never exceed rows) and is available without touching column data: both
+    `pa.Table` and `LazySource` expose `.num_rows` in O(1) (an in-memory
+    attribute, or a Parquet footer read that never scans row-group data).
+    A table absent from `sources` or a graph with no outgoing edges at all
+    contributes nothing, returning 0 -- the preflight's floor then reduces
+    to its fixed per-instance baseline, since no relation build ever runs.
+    """
+    parent_tables = {edge.parent_table for edge in graph.edges}
+    rows = 0
+    for table in parent_tables:
+        source = sources.get(table)
+        if source is not None:
+            rows = max(rows, source.num_rows)
+    return rows
 
 
 def run_mask_chunked(
