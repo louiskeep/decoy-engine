@@ -14,34 +14,58 @@ mathematical bound on re-identification risk. The `storm` profiler reports
 heuristic re-identification-risk signals to help you assess a dataset; those
 are diagnostics, not a proof.
 
-The one formal mechanism is `decoy fit --epsilon` (`quality/dp.py`): the
-distribution snapshot's COUNTS are released with per-count Laplace noise
-(sensitivity 1, add/remove-one-row adjacency), exact quantiles and means are
-removed, and min/max collapse to histogram-edge resolution. Read the scope
-narrowly:
+The one formal mechanism is `decoy fit --epsilon` (`quality/dp.py`) feeding a
+`mode: generate` statistical column. As of DPS-1/2/3, generated **marginals**
+ARE (epsilon, delta)-differentially private by post-processing of the DP
+snapshot — PROVIDED all three preconditions below hold; each is enforced
+mechanically, not just documented:
 
-- The budget is PER COLUMN HISTOGRAM. A snapshot of k columns composes
-  sequentially to roughly (k + 1) * epsilon total; the artifact's `dp` block
-  records this scope.
-- Bin edges and category labels remain DATA-DEPENDENT supports: the histogram
-  range comes from the real min/max and categorical `top_values` carry real
-  category strings (gated behind `allow_real_categories`). A fully
-  data-independent release (fixed bin ranges, thresholded category sets) is a
-  recorded follow-up.
-- A `high_cardinality: true` column (HC-5, e.g. an ICD-10-CM/NDC/HCPCS code
-  field) intentionally retains its FULL observed vocabulary with no top-K
+- (a) **Data-independent support.** The snapshot was fit with `dp_mode=True`
+  and a caller-supplied `numeric_domains` entry for every numeric column
+  (`quality/snapshot.py`, DPS-1) — fixed bin ranges, not the real min/max —
+  and its categorical label set is THRESHOLD-RELEASED: a label survives only
+  if its noised count clears tau = 1 + ceil((1/epsilon) * ln(1/(2*delta)))
+  (the stable-histogram / propose-test-release pattern), with the rest
+  folded into `other_count`. Without `dp_mode` at fit time, the OLD caveat
+  still applies in full: bin edges and category labels are data-dependent
+  and this section's guarantee does not hold — `dp_mode` is opt-in, so
+  every pre-existing `decoy fit --epsilon` invocation keeps its prior,
+  narrower scope unless the caller adopts it.
+- (b) **The composed budget is `dp.epsilon_total`/`dp.delta_total`.** Every
+  noised release in the snapshot — row_count, each column's null/non-null/
+  distinct counts, and each column's histogram (numeric bins, the
+  threshold-released categorical set, datetime year bins, freetext length
+  bins) — is charged to a `PrivacyBudget` and composed SEQUENTIALLY (Dwork &
+  Roth, *Algorithmic Foundations of DP*, Thm 3.16: sum of epsilons, sum of
+  deltas). The single per-histogram `epsilon`/`delta` figures in the `dp`
+  block are not the whole story; `epsilon_total`/`delta_total` are.
+- (c) **Generation reads only the artifact.** Post-processing immunity
+  requires the sampler never re-touch the raw source frame; this is a
+  regression-locked contract, not an inference —
+  `test_generation_consumes_only_the_snapshot`
+  (`tests/unit/generation/test_generate_dp_contract.py`) fails the build if
+  a future refactor makes the sampler reach for raw data.
+- `high_cardinality: true` (HC-5) and `allow_real_categories: true` are
+  BOTH anti-DP (they retain/release real vocabulary) and are hard-rejected
+  at compile time when `global_settings.dp` is set
+  (`plan._checks_dp.check_dp_generate_contract`) — a config cannot silently
+  combine them with a DP declaration. Outside a `dp`-declared pipeline,
+  `high_cardinality: true` (e.g. an ICD-10-CM/NDC/HCPCS code field)
+  intentionally retains its FULL observed vocabulary with no top-K
   collapse, so its snapshot artifact exposes every distinct code AND
-  rare-code presence/absence at fit time — treat that artifact with the same
-  care as a raw extract of that column, on top of the `allow_real_categories`
-  gate it already requires.
-- Joint contingency tables are rejected under `--epsilon` (no composition
-  accounting in v1).
-- Nothing downstream of the snapshot inherits the guarantee: generation
-  samples from the noisy artifact deterministically, and masking is entirely
-  outside it.
+  rare-code presence/absence at fit time — treat that artifact with the
+  same care as a raw extract of that column, on top of the
+  `allow_real_categories` gate it already requires.
+- Cross-column JOINT structure is NOT covered by any of the above: joint
+  contingency tables are rejected under `--epsilon` entirely (no composition
+  accounting in v1), and a preserved marginal says nothing about preserved
+  correlation. Joint-distribution DP (PrivBayes-style) is a separate,
+  larger, not-yet-built effort.
+- MASKED output still carries no epsilon (masking is a deterministic
+  transform, entirely outside this mechanism).
 
-If your use case requires a formal privacy guarantee over the masked or
-generated DATA, Decoy alone does not supply it.
+If your use case requires a formal privacy guarantee over MASKED data, or
+over generated JOINT structure, Decoy alone does not supply it.
 
 ## It does not certify legal or regulatory compliance
 

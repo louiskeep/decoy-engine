@@ -1,6 +1,6 @@
-"""DPS-3: compile-time DP generate contract (Task 5).
+"""DPS-3: compile-time DP generate contract (Task 5) + consume-only lock (Task 6).
 
-`global_settings.dp` hard-rejects the anti-DP generate-column knobs
+Task 5: `global_settings.dp` hard-rejects the anti-DP generate-column knobs
 (`allow_real_categories: true`, `high_cardinality: true`) at compile time.
 
 Real-API reconciliation against the plan's representative sketch:
@@ -17,16 +17,27 @@ Real-API reconciliation against the plan's representative sketch:
   `tests/unit/generation/test_statistical.py::TestCompileCheck`) and is
   used here instead, since the DP contract check is config-only.
 
-Task 6 (consume-only contract lock) is added to this file separately.
+Task 6: `test_generation_consumes_only_the_snapshot` locks that sampling
+from a DP-noised snapshot needs no raw source frame -- through the REAL
+`load_spec`/`sample_column` API (file-backed snapshot, per
+`tests/unit/quality/test_dp.py`'s `TestSamplerConsumption` pattern), not
+the plan's invented `load_spec_from_dict`.
 """
 
 from __future__ import annotations
 
+import json
+
+import numpy as np
+import pandas as pd
 import pytest
 
 from decoy_engine import run_config_only_checks
+from decoy_engine.generation.statistical import load_spec, sample_column
 from decoy_engine.plan import PlanCompileError
 from decoy_engine.plan._checks_dp import check_dp_generate_contract
+from decoy_engine.quality.dp import apply_dp_noise
+from decoy_engine.quality.snapshot import compute_distribution_snapshot
 
 
 def _dp_cfg(*, table_columns: list[dict]) -> dict:
@@ -156,3 +167,41 @@ class TestCompileIntegration:
         with pytest.raises(PlanCompileError) as exc:
             run_config_only_checks(cfg)
         assert exc.value.code == "dp_generate_high_cardinality_unsupported"
+
+
+# ── Task 6: consume-only contract lock ──────────────────────────────────────
+
+
+def _source_df() -> pd.DataFrame:
+    rng = np.random.default_rng(5)
+    n = 300
+    return pd.DataFrame({"state": rng.choice(["CA", "NY", "TX"], size=n, p=[0.5, 0.3, 0.2])})
+
+
+def test_generation_consumes_only_the_snapshot(tmp_path):
+    """Sampling from a DP snapshot must not require or read the raw source
+    frame. Contract lock for post-processing immunity (DPS-3).
+
+    Built through the REAL fit -> DP-noise -> load_spec -> sample_column
+    pipeline (not the plan's invented load_spec_from_dict/StatisticalSpec
+    construction): a genuine DP'd snapshot is written to disk, and only
+    that file (never `_source_df()`) is touched from here on.
+    """
+    snap = compute_distribution_snapshot(_source_df())
+    noisy = apply_dp_noise(snap, epsilon=1.0, delta=1e-6, rng=np.random.default_rng(7))
+    path = tmp_path / "noisy.json"
+    path.write_text(json.dumps(noisy), encoding="utf-8")
+
+    spec = load_spec(
+        {
+            "name": "state",
+            "type": "statistical",
+            "snapshot_file": str(path),
+            "allow_real_categories": True,
+        }
+    )
+    out = sample_column(spec, 100, col_seed=42)
+    assert len(out) == 100
+    # Only labels present in the (threshold-released) artifact -- CA/NY/TX
+    # all comfortably clear tau at n=300, so no "other"/suppression here.
+    assert set(out) <= {"CA", "NY", "TX"}
