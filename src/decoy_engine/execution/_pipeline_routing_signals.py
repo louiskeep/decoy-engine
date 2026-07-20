@@ -586,10 +586,12 @@ def resolve_execution_route(
         # OOC-D fail-closed disk preflight: a BACKSTOP for jobs `decide_
         # execution_route` already chose out_of_core for, never a rerouting
         # decision -- the OOC-incompatible reject branches above (cyclic FK,
-        # unsupported strategy) are untouched and never reach here.
+        # unsupported strategy) are untouched and never reach here. `config`
+        # carries the file targets so the preflight can tell whether committed
+        # output competes with the temp root's free space (same filesystem).
         from decoy_engine.execution.out_of_core._spill_estimate import (
             enforce_ooc_disk_preflight,
         )
 
-        enforce_ooc_disk_preflight(profile, table_kinds=table_kinds)
+        enforce_ooc_disk_preflight(profile, graph=graph, table_kinds=table_kinds, config=config)
     return route, route_reason

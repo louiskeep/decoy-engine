@@ -1,233 +1,385 @@
-"""Schema-derived out-of-core spill estimator + fail-closed disk preflight
-(OOC-D: disk-aware out-of-core routing).
+"""Conservative disk-footprint upper bound + fail-closed preflight for the
+out-of-core route (OOC-D: disk-aware out-of-core routing).
 
 Split out from `_budget.py` rather than appended there: `_budget.py` was
 already within a handful of lines of the 600-LOC orchestration cap (CLAUDE.md
-"Engineering best practices") when this landed, so a sibling module is the
-correct move (per that same doc's guidance), not a bloat. This module owns
-the piece `_budget.py`'s `check_disk_spill_preflight` docstring flagged as
-future work: "once a predicted-spill estimator exists, a caller checks this
-before committing to the out-of-core route." `predict_ooc_spill_bytes` is
-that estimator; `enforce_ooc_disk_preflight` is the router's call site (wired
-into `_pipeline_routing_signals.resolve_execution_route`); `default_ooc_
-temp_root` is the single source of truth for where the route's scratch
-directory lands absent an explicit `temp_dir`, shared with `_pipeline_route_
-exec.run_out_of_core_route`'s runtime-budget threading so the preflight and
-the runtime cap check the SAME filesystem.
+"Engineering best practices"), so a sibling module is the correct move (per
+that same doc's guidance), not a bloat. This module owns the piece
+`_budget.py`'s `check_disk_spill_preflight` docstring flagged as future work:
+"once a predicted-spill estimator exists, a caller checks this before
+committing to the out-of-core route." `predict_ooc_disk_bytes` is that
+estimator; `enforce_ooc_disk_preflight` is the router's call site (wired into
+`_pipeline_routing_signals.resolve_execution_route`); `default_ooc_temp_root`
+is the single source of truth for where the route's scratch directory lands
+absent an explicit `temp_dir`, shared with `_pipeline_route_exec.run_out_of_
+core_route`'s runtime-budget threading so the preflight and the runtime cap
+check the SAME filesystem.
 
-CALIBRATION (established-methodology rule, CLAUDE.md "Core rule for
-non-trivial engine work"): reuses `_mem_estimate.raw_data_bytes` -- the SAME
-schema-derived per-row byte model `_pipeline_routing_signals.byte_estimate_
-full_frame_fits` already prices full_frame/out_of_core ADMISSION with --
-rather than inventing a second cost table for SPILL. `SPILL_FACTOR` converts
-that RAW (in-memory, per-cell-priced) byte figure into a SPILL (on-disk,
-DuckDB/Parquet-staged) byte figure, calibrated against a real measurement:
-`docs/product/benchmarks/scaling-and-capacity.md` (decoy-platform repo,
-`fix/ooc-spillable-dedup` @ `6472d6a`, GCP n2-standard-8 harness) measured a
-3-table parent->child->grandchild FK chain, 16 payload columns/table, 2%
-orphans (`tests/perf_fixtures/fk_relational.py`'s `build_fk_relational`
-shape), spilling ~0.11 GiB per 1M TOTAL rows -- 5.55 GiB @ 50M, 11.1 GiB @
-100M, FLAT across every RAM cap tested (4-24 GB), confirming spill scales
-with row volume alone, not the memory budget (the doc's own "Observations"
-section).
+WHY A CONSERVATIVE UPPER BOUND (not a calibrated point estimate): this gate
+is fail-closed. Under-predicting the disk a job needs lets it start and then
+die mid-run with a full temp disk -- the runner's own `check_temp_disk_budget`
+only catches that AFTER the fact, at the next table boundary, with wall-clock
+and partial spill already burned. Over-predicting only costs an early, clean,
+actionable reject before any work starts. So this estimator is deliberately an
+UPPER bound: it should fail-fast ONLY when even the worst case cannot fit
+("definitely doomed"). Jobs that pass but run tight are caught exactly by the
+runtime `check_temp_disk_budget` that `run_out_of_core_route` now threads --
+so over-rejection is minimized and under-admission (the OOM/disk-full risk) is
+eliminated. This mirrors `_mem_estimate.fits`'s own asymmetric posture ("a
+false 'fits' risks an OOM kill... a false 'doesn't fit' only costs a
+downgrade") and, critically, does NOT repeat the pooled-fixture calibration
+error `_mem_estimate.py` already documents (its `K_FULL_FRAME_MEASURED_POOLED`
+= 1.156 "NOT schema-invariant" note): a factor fit to one fixture's
+dictionary-compression ratio is not a bound for high-cardinality data.
 
-Reconstructing that calibration shape as a `TableSizeSpec` (parent: 1 short
-numeric-string key + 16 pooled 12-byte-average payload strings; child: 2 such
-keys + 16 payload; grandchild: 1 key + 16 payload -- all `object`-dtype,
-matching the fixture's `_string_pool(width=12)` filler and `_keys()` numeric
-suffix) and pricing it through `raw_data_bytes` yields 1,192 raw bytes per
-TOTAL row (rows summed across all three tables, matching the benchmark doc's
-own "Total rows = 3 x rows/table" convention). The measured spill is 119.19
-bytes/row (5.55 GiB / 50M rows, and independently 11.1 GiB / 100M rows --
-the two points agree, confirming linearity). 119.19 / 1,192 = 0.09999 --
-`SPILL_FACTOR` is that ratio rounded UP to a clean constant (0.1), the same
-"pin the measured value rounded up" convention `_mem_estimate.K_INTERCEPT_
-BYTES` documents for its own calibrated constants. The `raw_data_bytes` model
-prices every string cell independently (an 8-byte pointer + a 49-byte CPython
-object header + the payload, `_mem_estimate._STR_OBJECT_OVERHEAD_BYTES`)
-while a DuckDB Parquet spill stores only encoded payload bytes with no
-per-cell Python object overhead -- RAW bytes structurally over-count a
-spill's true footprint by roughly that per-cell overhead ratio, which is
-exactly why `SPILL_FACTOR` is well under 1.0. Folding the whole ratio into
-one measured constant (rather than modeling Parquet's on-disk encoding from
-first principles) is this module's whole reason to exist: get the
-destination NUMBER right for a routing gate, not reproduce DuckDB's storage
-format.
+WHAT ACTUALLY LANDS ON THE TEMP FILESYSTEM (the two-term model): the
+out-of-core runner does NOT spill whole tables. It spills the FK KEY columns
+only -- per incoming edge a DuckDB parent-key temp table + group-by/join radix
+partitions, and per outgoing edge a narrow staged-Parquet copy of that table's
+key columns (`_stage.py`, `_relation.py`). PAYLOAD columns are masked in Arrow
+and stream straight to the sink; they become committed OUTPUT, never transient
+spill. So disk pressure is two independent terms:
 
-SAFETY MARGIN: `SPILL_SAFETY_MARGIN` (1.5x) is applied ON TOP of the
-already-calibrated `SPILL_FACTOR`, never folded into one combined constant,
-so the measured ratio and the deliberate safety pad stay independently
-auditable and re-calibratable. Under-predicting a spill risks a mid-run
-disk-full failure -- the runner's own `check_temp_disk_budget` only catches
-that AFTER the fact, at the next table boundary, by which point the job has
-already burned wall-clock time and partial spill; over-predicting only costs
-an early, clean, actionable reject before any work starts. That asymmetry
-(mid-run failure vs. early reject) is exactly why this estimator biases
-toward over-prediction, the same posture `_mem_estimate.fits`'s docstring
-documents for its own asymmetric error band ("a false 'fits' risks an OOM
-kill... a false 'doesn't fit' only costs a downgrade").
+  SPILL (transient temp, released at job end) =
+      key_bytes_per_row * total_rows * max(1, max_per_table_edge_count)
+      * SPILL_OVERHEAD
 
-UNPRICEABLE COLUMNS: a lazy (`source_loader`) out-of-core job has no resident
-sample to measure a variable-width column's real width from (`table_size_
-spec_from_profile` marks it `unpriceable=True` absent a `sample`/`declared_
-widths` entry) -- exactly the shape the out-of-core route exists to serve,
-so "skip the preflight" is not an acceptable response. `_price_unpriceable_
-columns` prices any unpriceable variable-width column at `_UNPRICEABLE_
-FALLBACK_WIDTH_BYTES` (12 bytes: the calibration shape's OWN payload width)
-rather than the unsafe alternative of silently dropping it from the sum
-(0 bytes would under-count, exactly the direction this whole estimator biases
-against).
+    - key_bytes_per_row: sum of the on-disk widths of every FK-join key column
+      in the schema (the columns `_stage.py`/`_relation.py` actually stage).
+      Real widths from the profile (`ColumnProfile.max_length` for strings, an
+      upper bound on observed cell width; `numpy.dtype(...).itemsize` for
+      fixed-width dtypes); a genuinely unknown width prices at the
+      `UNKNOWN_WIDTH_CEILING_BYTES` ceiling, never a low default.
+    - max_per_table_edge_count: each incoming FK edge holds its own parent-key
+      temp table and each outgoing edge stages its own relation, all
+      concurrently for the busiest table -- a star/fact table referencing k
+      dimensions carries a k multiplier. Derived from the graph
+      (`max_per_table_edge_count`), the same edge-fan-in `_pipeline_route_exec.
+      _max_concurrent_ooc_instances` reasons about for memory.
+    - SPILL_OVERHEAD: DuckDB's larger-than-memory hash join / group-by spills
+      radix-PARTITIONED copies of its keys to `temp_directory` (DuckDB "Memory
+      Management" / spilling docs), and the runner ADDITIONALLY stages a
+      Parquet copy of each outgoing relation's keys -- two independent copies
+      of the key bytes, modeled WITHOUT dictionary compression (worst case:
+      high-cardinality keys get no dict benefit). See the constant below.
+
+  OUTPUT (committed, persists past job end) =
+      sum over tables of (full_output_row_width * table_rows)
+
+    - full_output_row_width: sum of the on-disk widths of ALL that table's
+      masked output columns (same width sourcing as keys; no Python object
+      overhead -- these are on-disk Parquet bytes, not resident objects).
+    - Added ONLY when the committed target and the temp root share a
+      filesystem (they then compete for the same free space). When they are on
+      DIFFERENT filesystems the output does not compete with the temp root's
+      free space, so it is omitted from the temp-disk budget. When the target
+      filesystem cannot be determined (no file target in config, or an
+      unstattable path) the output term is INCLUDED -- the conservative,
+      over-predicting direction.
+
+  disk_needed = (SPILL + OUTPUT) * DISK_SAFETY_MARGIN
+
+ESTABLISHED METHODOLOGY (CLAUDE.md "Core rule for non-trivial engine work"):
+the SPILL model follows DuckDB's documented external-memory behavior
+(radix-partitioned hash-join / aggregation spilling to `temp_directory`,
+re-read like any external-memory operator) rather than a rolled-from-scratch
+cost model; the OUTPUT model is just the on-disk Parquet row width times rows.
+Both are priced from real profiled widths, never a fixture-fit factor.
+
+CALIBRATION IS A SANITY CHECK, NOT THE MODEL: the measured benchmark
+(`decoy-platform` repo `docs/product/benchmarks/scaling-and-capacity.md`,
+`fix/ooc-spillable-dedup`, GCP n2-standard-8) is a 3-table parent->child->
+grandchild FK chain, 16 payload cols/table, spilling ~5.55 GiB @ 50M and ~11.1
+GiB @ 100M total rows with ~5.92 / ~11.8 GiB committed output. The tests assert
+this model's prediction is `>=` that measured footprint (the conservative
+direction), NOT that it matches a fitted factor -- the point estimate the prior
+version pinned (a 0.1x dictionary-compression artifact of that fixture's 4096-
+value string pool) is exactly the error class this rewrite removes.
+
+TEMP-ROOT LOW: `default_ooc_temp_root()` reads `tempfile.gettempdir()` once at
+call time; a job that later re-points `TMPDIR` between this preflight and the
+runner's `mkdtemp` could check a different mount than it spills to. In
+practice `run_out_of_core_route` reads the same `default_ooc_temp_root()` for
+its runtime budget, so both agree unless the environment mutates underneath
+them mid-dispatch -- documented, not defended against.
 """
 
 from __future__ import annotations
 
+import os
 import tempfile
-from collections.abc import Sequence
+from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
 
 from decoy_engine.execution._errors import ExecutionError
-from decoy_engine.execution._mem_estimate import ColumnSizeSpec, TableSizeSpec, raw_data_bytes
+from decoy_engine.execution._mem_estimate import is_fixed_width_dtype
 from decoy_engine.execution.out_of_core._budget import (
-    DiskSpillPreflight,
+    _nearest_existing_ancestor,
     check_disk_spill_preflight,
 )
 
 if TYPE_CHECKING:
-    from decoy_engine.profile._types import Profile
+    from decoy_engine.profile._types import ColumnProfile, Profile
+    from decoy_engine.relationships import RelationshipGraph
 
 __all__ = [
-    "SPILL_FACTOR",
-    "SPILL_SAFETY_MARGIN",
+    "DISK_SAFETY_MARGIN",
+    "SPILL_OVERHEAD",
+    "UNKNOWN_WIDTH_CEILING_BYTES",
+    "OocDiskPrediction",
     "default_ooc_temp_root",
     "enforce_ooc_disk_preflight",
-    "ooc_disk_spill_preflight",
-    "predict_ooc_spill_bytes",
+    "max_per_table_edge_count",
+    "predict_ooc_disk_bytes",
 ]
 
-# See module docstring "CALIBRATION": the measured spill/raw-bytes ratio for
-# the calibration shape is 0.09999, rounded UP to this clean constant.
-SPILL_FACTOR = 0.1
+# DuckDB's external hash join / aggregation spills radix-PARTITIONED copies of
+# its keys to `temp_directory` and the runner separately stages a Parquet copy
+# of each outgoing relation's keys -- two independent on-disk copies of the key
+# bytes. Modeled WITHOUT dictionary compression on purpose: high-cardinality FK
+# keys (the OOM-relevant case) get no dict benefit, so the worst-case temp
+# footprint is ~2x the raw key bytes. Deliberately the top of the ~1.5-2.0x
+# range: over-predicting the transient temp is the safe direction, and the
+# runtime `check_temp_disk_budget` catches anything this misses.
+SPILL_OVERHEAD = 2.0
 
-# See module docstring "SAFETY MARGIN": applied on top of SPILL_FACTOR, kept
-# as an independent constant rather than folded into it.
-SPILL_SAFETY_MARGIN = 1.5
+# Upper-bound width for a variable-width column whose real width is genuinely
+# unknown (a string column the profiler recorded no `max_length` for -- e.g. an
+# all-null sample). 256 bytes covers the ubiquitous SQL VARCHAR(255) free-text
+# convention with a byte to spare and is an order of magnitude above ID/code
+# widths, so a mis-sized ID never sneaks under it. NEVER a small default: for a
+# fail-closed gate the unknown-width fallback must OVER-estimate (a 500-byte
+# notes column priced at a 12-byte minimum was the exact under-prediction the
+# reviewers blocked).
+UNKNOWN_WIDTH_CEILING_BYTES = 256
 
-# See module docstring "UNPRICEABLE COLUMNS": the calibration shape's own
-# pooled payload-string width (`tests/perf_fixtures/fk_relational.py`'s
-# `_string_pool(width=12)`) -- an unsampled column costs what a KNOWN column
-# of this route's calibration schema does, never zero.
-_UNPRICEABLE_FALLBACK_WIDTH_BYTES = 12.0
+# Final headroom on the summed two-term footprint. Over-predicting the total
+# is the safe direction; the runtime cap is the tight backstop.
+DISK_SAFETY_MARGIN = 1.25
 
 
-def _price_unpriceable_columns(table: TableSizeSpec) -> TableSizeSpec:
-    """`table` with every `unpriceable=True` column priced at the fallback
-    width instead of silently dropped -- see module docstring "UNPRICEABLE
-    COLUMNS". Returns `table` unchanged (no copy) when nothing needs pricing.
+@dataclass(frozen=True)
+class OocDiskPrediction:
+    """The two-term conservative disk footprint for one out-of-core job.
+
+    `spill_bytes` is the transient temp (key columns x rows x edge fan-in x
+    overhead); `output_bytes` is the committed on-disk output (0 when the
+    output filesystem differs from the temp root, see the module docstring);
+    `total_bytes` is `(spill + output) * DISK_SAFETY_MARGIN`, the number the
+    preflight compares against free disk. `output_included` records whether the
+    output term was added, for diagnostics.
     """
-    if not any(column.unpriceable for column in table.columns):
-        return table
-    priced_columns = tuple(
-        ColumnSizeSpec(
-            name=column.name,
-            dtype=column.dtype,
-            string_width_bytes=_UNPRICEABLE_FALLBACK_WIDTH_BYTES,
-        )
-        if column.unpriceable
-        else column
-        for column in table.columns
-    )
-    return TableSizeSpec(name=table.name, row_count=table.row_count, columns=priced_columns)
+
+    spill_bytes: int
+    output_bytes: int
+    total_bytes: int
+    output_included: bool
 
 
-def predict_ooc_spill_bytes(tables: Sequence[TableSizeSpec]) -> int:
-    """Predict the out-of-core route's transient temp-disk spill for `tables`.
+def _column_disk_width_bytes(col: ColumnProfile) -> float:
+    """On-disk (Parquet) bytes per row for one column -- an UPPER bound.
 
-    `spill ~= raw_data_bytes(tables) * SPILL_FACTOR * SPILL_SAFETY_MARGIN` --
-    see the module docstring for how `SPILL_FACTOR` was calibrated and why
-    the safety margin is applied on top rather than folded in. Each
-    `TableSizeSpec` in `tables` carries both the schema (per-column dtype and
-    width) and its own row count, so the "total rows" the calibration is
-    expressed in (the benchmark doc's "Total rows = 3 x rows/table") is
-    simply the sum baked into `raw_data_bytes`'s own `rows * per-column cost`
-    accumulation -- this function never needs to compute it as a separate
-    input. Returns 0 for an empty `tables` sequence (no schema to price).
+    Fixed-width dtypes price at their exact itemsize (`numpy.dtype(label).
+    itemsize`, the same table `_mem_estimate._FIXED_WIDTH_DTYPE_BYTES`
+    documents). A variable-width (string/object) column prices at its profiled
+    `max_length` -- the largest cell width the profiler observed, an upper
+    bound on the per-row payload -- or, when the profiler recorded none, at the
+    `UNKNOWN_WIDTH_CEILING_BYTES` free-text ceiling. No Python object overhead
+    is added: this is on-disk bytes, not resident objects.
     """
+    if is_fixed_width_dtype(col.dtype):
+        return float(np.dtype(col.dtype).itemsize)
+    if col.max_length is not None:
+        return float(col.max_length)
+    return float(UNKNOWN_WIDTH_CEILING_BYTES)
+
+
+def max_per_table_edge_count(graph: RelationshipGraph) -> int:
+    """The busiest table's concurrent FK-edge count (incoming + outgoing).
+
+    Each incoming FK edge holds its own parent-key temp table and each outgoing
+    edge stages its own relation, all live at once for that table, so its temp
+    footprint scales with incoming + outgoing edge count -- a star/fact table
+    referencing k dimensions carries a k multiplier. Returns at least 1 (a
+    single-table or edgeless job still spills its own keys once). This is the
+    same edge-fan-in property `_pipeline_route_exec._max_concurrent_ooc_
+    instances` reasons about for memory, read here for the disk multiplier.
+    """
+    incoming: dict[str, int] = defaultdict(int)
+    outgoing: dict[str, int] = defaultdict(int)
+    for edge in graph.edges:
+        outgoing[edge.parent_table] += 1
+        incoming[edge.child_table] += 1
+    tables = set(incoming) | set(outgoing)
     if not tables:
-        return 0
-    priced_tables = tuple(_price_unpriceable_columns(table) for table in tables)
-    raw = raw_data_bytes(priced_tables)
-    return int(raw.priceable_bytes * SPILL_FACTOR * SPILL_SAFETY_MARGIN)
+        return 1
+    return max(1, max(incoming[table] + outgoing[table] for table in tables))
+
+
+def _fk_key_columns(graph: RelationshipGraph) -> set[tuple[str, str]]:
+    """Every `(table, column)` that is an FK-join key -- both the parent-key
+    and child-FK sides of every edge. These are the columns `_stage.py` /
+    `_relation.py` actually stage to the temp filesystem."""
+    keys: set[tuple[str, str]] = set()
+    for edge in graph.edges:
+        for column in edge.parent_columns:
+            keys.add((edge.parent_table, column))
+        for column in edge.child_columns:
+            keys.add((edge.child_table, column))
+    return keys
+
+
+def predict_ooc_disk_bytes(
+    profile: Profile,
+    *,
+    graph: RelationshipGraph,
+    table_kinds: dict[str, str],
+    include_output: bool,
+) -> OocDiskPrediction:
+    """The conservative two-term temp-disk upper bound for an out-of-core job.
+
+    See the module docstring for the model. `include_output` is the caller's
+    filesystem verdict (does the committed output compete with the temp root's
+    free space?) -- kept a pure parameter so this function does no I/O and is
+    testable without touching the filesystem; `enforce_ooc_disk_preflight`
+    computes it via `os.stat` device comparison. Scoped to MASK-kind tables;
+    the out-of-core route is pure-mask-FK, so every streamed table is covered.
+    """
+    mask_tables = [table for table in profile.tables if table_kinds.get(table.name) == "mask"]
+    col_index: dict[tuple[str, str], ColumnProfile] = {
+        (table.name, col.name): col for table in mask_tables for col in table.columns
+    }
+    total_rows = sum(table.row_count for table in mask_tables)
+
+    key_bytes_per_row = sum(
+        _column_disk_width_bytes(col_index[key])
+        for key in _fk_key_columns(graph)
+        if key in col_index
+    )
+    edge_multiplicity = max_per_table_edge_count(graph)
+    spill_bytes = int(key_bytes_per_row * total_rows * edge_multiplicity * SPILL_OVERHEAD)
+
+    output_bytes = 0
+    if include_output:
+        output_bytes = int(
+            sum(
+                sum(_column_disk_width_bytes(col) for col in table.columns) * table.row_count
+                for table in mask_tables
+            )
+        )
+    total_bytes = int((spill_bytes + output_bytes) * DISK_SAFETY_MARGIN)
+    return OocDiskPrediction(
+        spill_bytes=spill_bytes,
+        output_bytes=output_bytes,
+        total_bytes=total_bytes,
+        output_included=include_output,
+    )
 
 
 def default_ooc_temp_root() -> Path:
     """Where the out-of-core runner's scratch directory lands absent an
-    explicit `temp_dir` (`run_fk_out_of_core`'s own `tempfile.mkdtemp`
-    default, which draws from the same `tempfile.gettempdir()` root). Single
-    source of truth so this module's preflight and `_pipeline_route_exec.
-    run_out_of_core_route`'s runtime-budget threading check the SAME
-    filesystem -- two guards silently checking two different mounts could
-    disagree on whether disk is sufficient.
+    explicit `temp_dir` (`run_fk_out_of_core`'s own `tempfile.mkdtemp` default,
+    which draws from the same `tempfile.gettempdir()` root). Single source of
+    truth so this module's preflight and `_pipeline_route_exec.run_out_of_core_
+    route`'s runtime-budget threading check the SAME filesystem -- two guards
+    silently checking two different mounts could disagree on whether disk is
+    sufficient. See the module docstring's TEMP-ROOT LOW note.
     """
     return Path(tempfile.gettempdir())
 
 
-def ooc_disk_spill_preflight(temp_dir: Path, tables: Sequence[TableSizeSpec]) -> DiskSpillPreflight:
-    """`check_disk_spill_preflight` fed by this module's own estimator -- the
-    wiring `_budget.py`'s docstring flagged as future work ("once a
-    predicted-spill estimator exists, a caller checks this before committing
-    to the out-of-core route")."""
-    return check_disk_spill_preflight(
-        temp_dir, predicted_spill_bytes=predict_ooc_spill_bytes(tables)
-    )
+def _config_target_dirs(config: dict[str, Any]) -> list[Path]:
+    """Parent directories of every file target in `config`, for the output-
+    filesystem comparison. Non-file / path-less targets are skipped."""
+    dirs: list[Path] = []
+    for spec in (config.get("targets") or {}).values():
+        if isinstance(spec, dict):
+            path = spec.get("path")
+            if isinstance(path, str) and path:
+                dirs.append(Path(path).parent)
+    return dirs
+
+
+def _output_shares_temp_filesystem(config: dict[str, Any], temp_root: Path) -> bool:
+    """Does the committed output land on the SAME filesystem as `temp_root`?
+
+    Compares `os.stat(...).st_dev` of the temp root against each file target's
+    directory (walking to the nearest existing ancestor for a not-yet-created
+    path). Returns True (include the output term -- the conservative,
+    over-predicting direction) when there is no file target to compare, or when
+    any device cannot be stat'd, or when any target shares the temp device.
+    Only returns False when EVERY target is provably on a different device.
+    """
+    target_dirs = _config_target_dirs(config)
+    if not target_dirs:
+        return True
+    try:
+        temp_dev = os.stat(_nearest_existing_ancestor(temp_root)).st_dev
+    except OSError:
+        return True
+    for directory in target_dirs:
+        try:
+            if os.stat(_nearest_existing_ancestor(directory)).st_dev == temp_dev:
+                return True
+        except OSError:
+            return True
+    return False
 
 
 def enforce_ooc_disk_preflight(
-    profile: Profile, *, table_kinds: dict[str, str], temp_dir: Path | None = None
+    profile: Profile,
+    *,
+    graph: RelationshipGraph,
+    table_kinds: dict[str, str],
+    config: dict[str, Any],
+    temp_dir: Path | None = None,
 ) -> None:
-    """Fail-closed disk-spill gate for a job just routed to `out_of_core`
+    """Fail-closed disk gate for a job just routed to `out_of_core`
     (`_pipeline_routing_signals.resolve_execution_route`'s one call site,
     checked AFTER `decide_execution_route` has already picked the route).
 
-    Scoped to MASK-kind tables in `profile.tables`, mirroring `byte_estimate_
-    full_frame_fits`'s own mask-table filter -- the out-of-core route is
-    pure-mask-FK by construction (`_sequential_eligible`), so this never
-    misses a table the route will actually stream. No-op when there is no
-    mask table to price: every `decide_execution_route` branch that returns
-    `"out_of_core"` already implies `has_mask_table`, so this is
-    belt-and-suspenders, not a live skip.
+    No-op when there is no mask table to price: every `decide_execution_route`
+    branch that returns `"out_of_core"` already implies `has_mask_table`, so
+    this is belt-and-suspenders, not a live skip.
 
     This is a BACKSTOP for OOC-ELIGIBLE jobs ONLY: it runs strictly after
-    `decide_execution_route` has already chosen `out_of_core` for THIS job,
-    so it can never reroute an OOC-INCOMPATIBLE job -- those are rejected
-    earlier, inside `decide_execution_route` itself (the cyclic-FK /
-    unsupported-strategy branches), a completely separate code path this
-    function never touches and never runs for.
+    `decide_execution_route` has already chosen `out_of_core` for THIS job, so
+    it can never reroute an OOC-INCOMPATIBLE job -- those are rejected earlier,
+    inside `decide_execution_route` itself (the cyclic-FK / unsupported-strategy
+    branches), a code path this function never touches and never runs for.
 
-    Raises `ExecutionError` (`out_of_core_disk_preflight_insufficient`) with
-    an ACTIONABLE message -- the predicted GB, the checked directory, the row
-    count, and the free GB actually available -- when the predicted spill
-    would not fit, so an operator reads exactly what to do (free disk space,
-    or reduce the row count) without re-deriving it from a bare byte count.
+    Raises `ExecutionError` (`out_of_core_disk_preflight_insufficient`) with an
+    ACTIONABLE message -- the predicted GiB, the checked directory, the row
+    count, and the free GiB actually available -- when the conservative
+    worst-case footprint does not fit, so an operator reads exactly what to do
+    (free disk space, or reduce the row count). Because the estimate is an
+    UPPER bound, reaching this raise means even the worst case is doomed; a job
+    that passes but runs tight is caught by the runtime `check_temp_disk_budget`
+    instead.
     """
-    from decoy_engine.execution._mem_estimate_schema import table_size_spec_from_profile
-
     mask_tables = [table for table in profile.tables if table_kinds.get(table.name) == "mask"]
     if not mask_tables:
         return
-    tables = tuple(table_size_spec_from_profile(table) for table in mask_tables)
-    total_rows = sum(table.row_count for table in tables)
     root = temp_dir if temp_dir is not None else default_ooc_temp_root()
-    result = ooc_disk_spill_preflight(root, tables)
+    include_output = _output_shares_temp_filesystem(config, root)
+    prediction = predict_ooc_disk_bytes(
+        profile, graph=graph, table_kinds=table_kinds, include_output=include_output
+    )
+    result = check_disk_spill_preflight(root, predicted_spill_bytes=prediction.total_bytes)
     if result.ok:
         return
-    predicted_gb = result.predicted_bytes / (1024**3)
-    free_gb = result.free_bytes / (1024**3)
+    total_rows = sum(table.row_count for table in mask_tables)
+    predicted_gib = result.predicted_bytes / (1024**3)
+    free_gib = result.free_bytes / (1024**3)
     raise ExecutionError(
         code="out_of_core_disk_preflight_insufficient",
         message=(
-            f"out-of-core route needs ~{predicted_gb:.1f} GB free temp disk at "
-            f"{root} for {total_rows:,} rows, but only {free_gb:.1f} GB is "
+            f"out-of-core route needs ~{predicted_gib:.1f} GiB free temp disk at "
+            f"{root} for {total_rows:,} rows, but only {free_gib:.1f} GiB is "
             "available; free disk space or reduce the row count."
         ),
     )

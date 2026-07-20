@@ -431,8 +431,8 @@ class TestCgroupNestedHierarchyMin:
 
 
 class TestDiskSpillPreflight:
-    """Does the scratch path's free disk cover a predicted spill? Pure
-    check-the-numbers unit here; the estimator (`predict_ooc_spill_bytes`)
+    """Does the scratch path's free disk cover a predicted footprint? Pure
+    check-the-numbers unit here; the estimator (`predict_ooc_disk_bytes`)
     and the routing call site (`enforce_ooc_disk_preflight`, OOC-D) live in
     the sibling `out_of_core/_spill_estimate.py` and are covered in
     `test_out_of_core_spill_preflight.py`."""

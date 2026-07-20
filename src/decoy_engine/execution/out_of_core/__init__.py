@@ -24,17 +24,21 @@ from decoy_engine.execution.out_of_core._relation import (
 from decoy_engine.execution.out_of_core._runner import run_fk_out_of_core
 from decoy_engine.execution.out_of_core._source import LazySource
 from decoy_engine.execution.out_of_core._spill_estimate import (
-    SPILL_FACTOR,
-    SPILL_SAFETY_MARGIN,
-    predict_ooc_spill_bytes,
+    DISK_SAFETY_MARGIN,
+    SPILL_OVERHEAD,
+    UNKNOWN_WIDTH_CEILING_BYTES,
+    OocDiskPrediction,
+    predict_ooc_disk_bytes,
 )
 
 __all__ = [
-    "SPILL_FACTOR",
-    "SPILL_SAFETY_MARGIN",
+    "DISK_SAFETY_MARGIN",
+    "SPILL_OVERHEAD",
     "SUPPORTED_STRATEGIES",
+    "UNKNOWN_WIDTH_CEILING_BYTES",
     "ChildFkBatchJoiner",
     "LazySource",
+    "OocDiskPrediction",
     "OutOfCoreBudget",
     "OutOfCoreCompatibility",
     "OutOfCoreRejection",
@@ -47,7 +51,7 @@ __all__ = [
     "mask_child_fk",
     "mask_child_fk_fail",
     "mask_column",
-    "predict_ooc_spill_bytes",
+    "predict_ooc_disk_bytes",
     "resolve_budget",
     "resolve_ooc_memory_limit",
     "run_fk_out_of_core",

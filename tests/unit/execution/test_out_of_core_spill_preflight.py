@@ -1,34 +1,42 @@
-"""OOC-D: disk-aware out-of-core routing.
+"""OOC-D: disk-aware out-of-core routing (conservative two-term model).
 
-Three pieces, tested at the level each one is easiest to pin correctly:
+The estimator is a fail-closed UPPER bound on the temp-disk a job needs, in
+two independent terms (see `out_of_core/_spill_estimate.py`):
 
-1. `predict_ooc_spill_bytes` (`out_of_core/_spill_estimate.py`) -- calibrated
-   against the measured benchmark (`docs/product/benchmarks/scaling-and-
-   capacity.md`, decoy-platform repo): a 3-table parent->child->grandchild FK
-   chain, 16 payload columns/table, spills ~0.11 GiB per 1M total rows (5.55
-   GiB @ 50M, 11.1 GiB @ 100M). Reconstructs that exact shape as
-   `TableSizeSpec`s and checks the predicted spill lands within [1.0x, 2.5x]
-   of the measured figure at both calibration points -- over-predicting is
-   the safe direction (see the module docstring's "SAFETY MARGIN" section),
-   so the window is asymmetric on purpose.
-2. The fail-closed preflight (`enforce_ooc_disk_preflight`, wired into
-   `_pipeline_routing_signals.resolve_execution_route`) -- an OOC-eligible
-   job with insufficient free temp disk raises a coded, actionable
-   `ExecutionError` before any read/mask work starts; with sufficient disk it
-   proceeds AND threads a non-`None` `temp_disk_budget_bytes` into
-   `run_fk_out_of_core` (`_pipeline_route_exec.run_out_of_core_route`'s own
-   OOC-D wiring, enforcing the pre-existing runtime cap on this route for the
-   first time).
-3. Scope: an OOC-INCOMPATIBLE job (a cross-table FK cycle) never reaches the
-   preflight at all -- it hits its pre-existing `decide_execution_route`
-   behavior completely unchanged, even under a hostile (near-zero free disk)
-   monkeypatch, proving the gate is a pure backstop and never a rerouting
-   decision.
+  SPILL  = key_bytes_per_row x total_rows x max_per_table_edge_count
+           x SPILL_OVERHEAD          (transient temp: FK KEY columns only)
+  OUTPUT = sum_tables(full_row_width x rows)   (committed on-disk output)
+  disk_needed = (SPILL + OUTPUT) x DISK_SAFETY_MARGIN
+
+Widths come from the real profile (`ColumnProfile.max_length` for strings,
+`numpy.dtype(...).itemsize` for fixed-width), NOT a fixture-fit compression
+factor -- a genuinely unknown width prices at UNKNOWN_WIDTH_CEILING_BYTES, an
+upper bound, never a low default. Tests therefore assert the prediction is
+`>=` a realistic lower bound of the actual footprint (the conservative
+direction), rather than matching a point estimate.
+
+Coverage:
+1. Benchmark-shape SANITY -- the prediction exceeds the measured 50M/100M
+   footprint (not a tight band; conservative).
+2. A wide (500B) high-cardinality string MASK column is priced at its real
+   width and REJECTS on a realistic-but-insufficient disk (the exact
+   under-prediction the reviewers blocked: 12B fallback -> passes wrongly).
+3. A narrow multi-FK star/fact table carries the per-table edge multiplier in
+   the SPILL term.
+4. A zero-payload link table prices without crashing (keys only).
+5. The output-filesystem gate: OUTPUT is dropped only when it provably lands
+   on a different filesystem than the temp root.
+6. Routing-level wiring end to end through `run_pipeline`: insufficient disk
+   fails closed with a coded, actionable (GiB) error before any work; a
+   sufficient-disk job proceeds AND threads a non-None temp_disk_budget into
+   the runner; an OOC-INCOMPATIBLE (cyclic FK) job is untouched by the gate.
 """
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pyarrow as pa
@@ -36,128 +44,409 @@ import pyarrow.parquet as pq
 import pytest
 
 from decoy_engine.execution._errors import ExecutionError
-from decoy_engine.execution._mem_estimate import ColumnSizeSpec, TableSizeSpec
 from decoy_engine.execution._pipeline import run_pipeline
 from decoy_engine.execution.out_of_core import _budget as budget_mod
+from decoy_engine.execution.out_of_core import _spill_estimate as spill_mod
 from decoy_engine.execution.out_of_core._spill_estimate import (
-    SPILL_FACTOR,
-    SPILL_SAFETY_MARGIN,
+    DISK_SAFETY_MARGIN,
+    SPILL_OVERHEAD,
+    UNKNOWN_WIDTH_CEILING_BYTES,
     default_ooc_temp_root,
-    ooc_disk_spill_preflight,
-    predict_ooc_spill_bytes,
+    max_per_table_edge_count,
+    predict_ooc_disk_bytes,
 )
+from decoy_engine.profile._types import ColumnProfile, Profile, Relationship, TableProfile
+from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge, RelationshipGraph
 
 _N = 20
-
 _GIB = 1024 * 1024 * 1024
 
+
 # ---------------------------------------------------------------------------
-# 1. Calibration: predict_ooc_spill_bytes against the measured benchmark.
+# Profile / graph builders (real objects -- exercise the real width adapter).
 # ---------------------------------------------------------------------------
 
 
-def _calibration_shape_tables(rows_per_table: int) -> tuple[TableSizeSpec, ...]:
-    """The benchmark's exact schema (`tests/perf_fixtures/fk_relational.py`):
-    parent/child/grandchild, 16 pooled 12-byte payload columns/table, plus
-    short numeric-string key columns (`_keys`'s "p"/"c" + index)."""
+def _col(
+    name: str,
+    dtype: str,
+    *,
+    rows: int,
+    max_length: int | None = None,
+    is_fk: bool = False,
+    fk_target: tuple[str, str] | None = None,
+) -> ColumnProfile:
+    return ColumnProfile(
+        name=name,
+        dtype=dtype,
+        row_count=rows,
+        null_count=0,
+        distinct_count=None,
+        sampled=False,
+        is_candidate_key_sampled=False,
+        declared_pk=False,
+        is_fk=is_fk,
+        fk_target=fk_target,
+        pii_class=None,
+        max_length=max_length,
+    )
 
-    def payload_columns() -> list[ColumnSizeSpec]:
+
+def _profile(
+    tables: tuple[TableProfile, ...], relationships: tuple[Relationship, ...] = ()
+) -> Profile:
+    return Profile(
+        schema_version=1,
+        tables=tables,
+        relationships=relationships,
+        profiled_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        decoy_engine_version="0.1.0",
+    )
+
+
+def _edge(parent_table: str, parent_col: str, child_table: str, child_col: str) -> RelationshipEdge:
+    return RelationshipEdge(
+        parent_table=parent_table,
+        parent_columns=(parent_col,),
+        child_table=child_table,
+        child_columns=(child_col,),
+        namespace=f"ns_{parent_table}_{child_table}",
+        orphan_policy=OrphanPolicy.PRESERVE,
+    )
+
+
+def _all_mask(*names: str) -> dict[str, str]:
+    return {name: "mask" for name in names}
+
+
+# ---------------------------------------------------------------------------
+# 1. Benchmark-shape sanity: prediction >= measured footprint (conservative).
+# ---------------------------------------------------------------------------
+
+
+def _benchmark_profile_and_graph(rows_per_table: int) -> tuple[Profile, RelationshipGraph]:
+    """The measured benchmark schema: parent->child->grandchild, 16 payload
+    string columns/table (max_length 12), short string keys (max_length 9)."""
+
+    def payload() -> list[ColumnProfile]:
         return [
-            ColumnSizeSpec(name=f"payload_{i:02d}", dtype="object", string_width_bytes=12.0)
+            _col(f"payload_{i:02d}", "object", rows=rows_per_table, max_length=12)
             for i in range(16)
         ]
 
-    def key(name: str) -> ColumnSizeSpec:
-        return ColumnSizeSpec(name=name, dtype="object", string_width_bytes=9.0)
-
-    parent = TableSizeSpec(
-        name="parent", row_count=rows_per_table, columns=tuple([key("id"), *payload_columns()])
+    parent = TableProfile(
+        name="parent",
+        row_count=rows_per_table,
+        columns=(_col("id", "object", rows=rows_per_table, max_length=9), *payload()),
     )
-    child = TableSizeSpec(
+    child = TableProfile(
         name="child",
         row_count=rows_per_table,
-        columns=tuple([key("id"), key("parent_id"), *payload_columns()]),
+        columns=(
+            _col("id", "object", rows=rows_per_table, max_length=9),
+            _col(
+                "parent_id",
+                "object",
+                rows=rows_per_table,
+                max_length=9,
+                is_fk=True,
+                fk_target=("parent", "id"),
+            ),
+            *payload(),
+        ),
     )
-    grandchild = TableSizeSpec(
+    grandchild = TableProfile(
         name="grandchild",
         row_count=rows_per_table,
-        columns=tuple([key("child_id"), *payload_columns()]),
+        columns=(
+            _col(
+                "child_id",
+                "object",
+                rows=rows_per_table,
+                max_length=9,
+                is_fk=True,
+                fk_target=("child", "id"),
+            ),
+            *payload(),
+        ),
     )
-    return (parent, child, grandchild)
+    graph = RelationshipGraph(
+        edges=(
+            _edge("parent", "id", "child", "parent_id"),
+            _edge("child", "id", "grandchild", "child_id"),
+        ),
+        ordering=(),
+    )
+    return _profile((parent, child, grandchild)), graph
 
 
-class TestPredictOocSpillBytesCalibration:
+class TestBenchmarkShapeSanity:
     @pytest.mark.parametrize(
-        "total_rows,measured_gib",
+        "total_rows,measured_spill_gib,measured_output_gib",
         [
-            (50_000_000, 5.55),
-            (100_000_000, 11.1),
+            (50_000_000, 5.55, 5.92),
+            (100_000_000, 11.1, 11.8),
         ],
     )
-    def test_calibration_shape_prediction_is_within_the_asymmetric_window(
-        self, total_rows: int, measured_gib: float
+    def test_prediction_exceeds_measured_footprint(
+        self, total_rows: int, measured_spill_gib: float, measured_output_gib: float
     ) -> None:
-        tables = _calibration_shape_tables(total_rows // 3)
-        predicted = predict_ooc_spill_bytes(tables)
-        measured_bytes = measured_gib * _GIB
-        ratio = predicted / measured_bytes
-        # Over-predicting is the safe direction (mid-run disk-full vs. an
-        # early clean reject); the window is asymmetric on purpose.
-        assert 1.0 <= ratio <= 2.5, (
-            f"predicted={predicted / _GIB:.2f} GiB, measured={measured_gib} GiB, "
-            f"ratio={ratio:.3f} (expected within [1.0, 2.5])"
+        profile, graph = _benchmark_profile_and_graph(total_rows // 3)
+        pred = predict_ooc_disk_bytes(
+            profile,
+            graph=graph,
+            table_kinds=_all_mask("parent", "child", "grandchild"),
+            include_output=True,
         )
-
-    def test_prediction_scales_linearly_with_total_rows(self) -> None:
-        small = predict_ooc_spill_bytes(_calibration_shape_tables(1_000_000))
-        big = predict_ooc_spill_bytes(_calibration_shape_tables(10_000_000))
-        # 10x the rows/table -> 10x the total rows -> ~10x the predicted spill
-        # (raw_data_bytes is linear in rows; SPILL_FACTOR/SPILL_SAFETY_MARGIN
-        # are both row-count-independent constants).
-        assert big == pytest.approx(small * 10, rel=1e-6)
-
-    def test_empty_tables_predicts_zero(self) -> None:
-        assert predict_ooc_spill_bytes(()) == 0
-
-    def test_unpriceable_column_is_priced_at_the_fallback_not_dropped(self) -> None:
-        priced = TableSizeSpec(
-            name="t",
-            row_count=1_000,
-            columns=(ColumnSizeSpec(name="payload", dtype="object", string_width_bytes=12.0),),
-        )
-        unpriceable = TableSizeSpec(
-            name="t",
-            row_count=1_000,
-            columns=(ColumnSizeSpec(name="payload", dtype="object", unpriceable=True),),
-        )
-        # Same fallback width (12 bytes) as a KNOWN 12-byte column -> identical
-        # prediction, not zero (dropping it would under-count the unsafe way).
-        assert predict_ooc_spill_bytes((priced,)) == predict_ooc_spill_bytes((unpriceable,))
-        assert predict_ooc_spill_bytes((unpriceable,)) > 0
-
-    def test_constants_compose_as_documented(self) -> None:
-        # SPILL_FACTOR * SPILL_SAFETY_MARGIN is applied on top of raw bytes,
-        # not folded into a single opaque constant (module docstring "SAFETY
-        # MARGIN"): pin both factors are independently what the module claims.
-        assert pytest.approx(0.1) == SPILL_FACTOR
-        assert pytest.approx(1.5) == SPILL_SAFETY_MARGIN
-
-
-class TestOocDiskSpillPreflightHelper:
-    def test_wraps_check_disk_spill_preflight_with_the_estimator(self, tmp_path: Path) -> None:
-        tables = _calibration_shape_tables(1_000)
-        result = ooc_disk_spill_preflight(tmp_path, tables)
-        assert result.predicted_bytes == predict_ooc_spill_bytes(tables)
-        assert result.ok is True  # trivial spill vs. real free disk
-
-    def test_default_ooc_temp_root_matches_tempfile_gettempdir(self) -> None:
-        import tempfile
-
-        assert default_ooc_temp_root() == Path(tempfile.gettempdir())
+        # Conservative direction: >= the real measured footprint, not a band.
+        assert pred.spill_bytes >= measured_spill_gib * _GIB
+        assert pred.output_bytes >= measured_output_gib * _GIB
+        assert pred.total_bytes >= (measured_spill_gib + measured_output_gib) * _GIB
 
 
 # ---------------------------------------------------------------------------
-# 2 & 3. Routing-level wiring: run_pipeline end to end.
+# 2. Wide high-cardinality string mask column -> priced real, rejects.
+# ---------------------------------------------------------------------------
+
+
+class TestWideStringColumnIsPricedAtRealWidth:
+    def _wide_profile_graph(self, rows: int, notes_width: int) -> tuple[Profile, RelationshipGraph]:
+        parent = TableProfile(
+            name="parent",
+            row_count=rows,
+            columns=(
+                _col("id", "object", rows=rows, max_length=8),
+                _col("notes", "object", rows=rows, max_length=notes_width),
+            ),
+        )
+        child = TableProfile(
+            name="child",
+            row_count=rows,
+            columns=(
+                _col("id", "object", rows=rows, max_length=8),
+                _col(
+                    "parent_id",
+                    "object",
+                    rows=rows,
+                    max_length=8,
+                    is_fk=True,
+                    fk_target=("parent", "id"),
+                ),
+            ),
+        )
+        graph = RelationshipGraph(edges=(_edge("parent", "id", "child", "parent_id"),), ordering=())
+        return _profile((parent, child)), graph
+
+    def test_output_term_counts_the_wide_column_at_its_real_width(self) -> None:
+        rows = 10_000_000
+        profile, graph = self._wide_profile_graph(rows, notes_width=500)
+        pred = predict_ooc_disk_bytes(
+            profile, graph=graph, table_kinds=_all_mask("parent", "child"), include_output=True
+        )
+        # The 500-byte column dominates the output term -- not a 12-byte fallback.
+        assert pred.output_bytes >= 500 * rows
+        # And it is materially larger than the blocked 12-byte-fallback model
+        # would have produced (which was ~ (8+12)*rows*2 tables ~ 0.4 GB).
+        assert pred.total_bytes > 5 * _GIB
+
+    def test_preflight_rejects_when_wide_column_footprint_exceeds_free_disk(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        rows = 10_000_000
+        profile, graph = self._wide_profile_graph(rows, notes_width=500)
+        # Realistic-but-insufficient free disk: 3 GiB. The true footprint is
+        # ~7 GiB (5 GiB wide output + key spill), so this must REJECT. A 12-byte
+        # fallback model (~1.2 GiB) would have wrongly PASSED at 3 GiB free.
+        _patch_free_disk(monkeypatch, 3 * _GIB)
+        with pytest.raises(ExecutionError) as excinfo:
+            spill_mod.enforce_ooc_disk_preflight(
+                profile,
+                graph=graph,
+                table_kinds=_all_mask("parent", "child"),
+                config={},  # no file target -> output included (conservative)
+            )
+        assert excinfo.value.code == "out_of_core_disk_preflight_insufficient"
+        assert "GiB free temp disk" in excinfo.value.message
+        assert "GiB is available" in excinfo.value.message
+
+    def test_preflight_passes_when_disk_is_generous(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        rows = 10_000_000
+        profile, graph = self._wide_profile_graph(rows, notes_width=500)
+        _patch_free_disk(monkeypatch, 500 * _GIB)
+        spill_mod.enforce_ooc_disk_preflight(
+            profile, graph=graph, table_kinds=_all_mask("parent", "child"), config={}
+        )  # no raise
+
+
+# ---------------------------------------------------------------------------
+# 3. Narrow multi-FK star/fact table -> spill x edge multiplicity.
+# ---------------------------------------------------------------------------
+
+
+class TestStarFactEdgeMultiplicity:
+    def _star_profile_graph(self, rows: int, n_dims: int) -> tuple[Profile, RelationshipGraph]:
+        dims = tuple(
+            TableProfile(
+                name=f"dim{i}",
+                row_count=rows,
+                columns=(_col("id", "int64", rows=rows),),
+            )
+            for i in range(n_dims)
+        )
+        fact = TableProfile(
+            name="fact",
+            row_count=rows,
+            columns=(
+                *(
+                    _col(f"d{i}", "int64", rows=rows, is_fk=True, fk_target=(f"dim{i}", "id"))
+                    for i in range(n_dims)
+                ),
+                _col("amount", "int64", rows=rows),
+            ),
+        )
+        edges = tuple(_edge(f"dim{i}", "id", "fact", f"d{i}") for i in range(n_dims))
+        graph = RelationshipGraph(edges=edges, ordering=())
+        return _profile((*dims, fact)), graph
+
+    def test_max_per_table_edge_count_is_the_fact_fan_in(self) -> None:
+        _, graph = self._star_profile_graph(rows=1000, n_dims=3)
+        # fact is the child of 3 edges (incoming 3), each dim a parent of 1.
+        assert max_per_table_edge_count(graph) == 3
+
+    def test_spill_scales_with_the_edge_multiplier(self) -> None:
+        rows = 5_000_000
+        profile3, graph3 = self._star_profile_graph(rows, n_dims=3)
+        table_kinds3 = _all_mask("fact", "dim0", "dim1", "dim2")
+        pred3 = predict_ooc_disk_bytes(
+            profile3, graph=graph3, table_kinds=table_kinds3, include_output=False
+        )
+        # key columns: fact.d0..d2 (3x int64=8) + dim0..2.id (3x8) = 6 keys x 8 = 48;
+        # total_rows = 4 tables x rows; multiplier = 3; overhead 2.0.
+        expected_spill = int(48 * (4 * rows) * 3 * SPILL_OVERHEAD)
+        assert pred3.spill_bytes == expected_spill
+
+    def test_single_edge_has_no_multiplier(self) -> None:
+        _, graph1 = self._star_profile_graph(rows=1000, n_dims=1)
+        assert max_per_table_edge_count(graph1) == 1
+
+
+# ---------------------------------------------------------------------------
+# 4. Zero-payload link table -> keys only, no crash.
+# ---------------------------------------------------------------------------
+
+
+class TestZeroPayloadLinkTable:
+    def test_link_table_prices_keys_only(self) -> None:
+        rows = 1_000_000
+        left = TableProfile(name="left", row_count=rows, columns=(_col("id", "int64", rows=rows),))
+        right = TableProfile(
+            name="right", row_count=rows, columns=(_col("id", "int64", rows=rows),)
+        )
+        link = TableProfile(
+            name="link",
+            row_count=rows,
+            columns=(
+                _col("left_id", "int64", rows=rows, is_fk=True, fk_target=("left", "id")),
+                _col("right_id", "int64", rows=rows, is_fk=True, fk_target=("right", "id")),
+            ),
+        )
+        graph = RelationshipGraph(
+            edges=(
+                _edge("left", "id", "link", "left_id"),
+                _edge("right", "id", "link", "right_id"),
+            ),
+            ordering=(),
+        )
+        pred = predict_ooc_disk_bytes(
+            _profile((left, right, link)),
+            graph=graph,
+            table_kinds=_all_mask("left", "right", "link"),
+            include_output=True,
+        )
+        # Output is just the fixed-width int64 columns (8 bytes each), no payload.
+        # left.id + right.id + link.left_id + link.right_id, each x its rows.
+        expected_output = int((8 * rows) + (8 * rows) + ((8 + 8) * rows))
+        assert pred.output_bytes == expected_output
+        assert pred.spill_bytes > 0
+
+
+# ---------------------------------------------------------------------------
+# 5. Output-filesystem gate.
+# ---------------------------------------------------------------------------
+
+
+class TestOutputFilesystemGate:
+    def test_include_output_false_drops_the_output_term(self) -> None:
+        profile, graph = _benchmark_profile_and_graph(1000)
+        kinds = _all_mask("parent", "child", "grandchild")
+        with_out = predict_ooc_disk_bytes(
+            profile, graph=graph, table_kinds=kinds, include_output=True
+        )
+        without_out = predict_ooc_disk_bytes(
+            profile, graph=graph, table_kinds=kinds, include_output=False
+        )
+        assert with_out.output_bytes > 0
+        assert without_out.output_bytes == 0
+        assert without_out.output_included is False
+        assert with_out.spill_bytes == without_out.spill_bytes  # spill unchanged
+
+    def test_no_file_target_conservatively_includes_output(self, tmp_path: Path) -> None:
+        assert spill_mod._output_shares_temp_filesystem({}, tmp_path) is True
+
+    def test_same_device_includes_output(self, tmp_path: Path, monkeypatch) -> None:
+        monkeypatch.setattr(
+            spill_mod.os, "stat", lambda p: SimpleNamespace(st_dev=42), raising=True
+        )
+        config = {"targets": {"t": {"type": "file", "path": str(tmp_path / "out.parquet")}}}
+        assert spill_mod._output_shares_temp_filesystem(config, tmp_path) is True
+
+    def test_provably_different_device_omits_output(self, tmp_path: Path, monkeypatch) -> None:
+        target_dir = tmp_path / "othervol"
+        target_dir.mkdir()
+
+        def fake_stat(path: object) -> SimpleNamespace:
+            # temp root on device 1, the target dir on device 2.
+            return SimpleNamespace(st_dev=2 if str(target_dir) in str(path) else 1)
+
+        monkeypatch.setattr(spill_mod.os, "stat", fake_stat, raising=True)
+        config = {"targets": {"t": {"type": "file", "path": str(target_dir / "out.parquet")}}}
+        assert spill_mod._output_shares_temp_filesystem(config, tmp_path) is False
+
+
+class TestConstantsArePinned:
+    def test_conservative_constants(self) -> None:
+        assert pytest.approx(2.0) == SPILL_OVERHEAD
+        assert UNKNOWN_WIDTH_CEILING_BYTES == 256
+        assert pytest.approx(1.25) == DISK_SAFETY_MARGIN
+
+    def test_unknown_width_column_prices_at_the_ceiling_not_a_low_default(self) -> None:
+        rows = 1000
+        # An object column with NO max_length (e.g. all-null sample) is unknown.
+        parent = TableProfile(
+            name="parent", row_count=rows, columns=(_col("id", "int64", rows=rows),)
+        )
+        child = TableProfile(
+            name="child",
+            row_count=rows,
+            columns=(
+                _col("parent_id", "int64", rows=rows, is_fk=True, fk_target=("parent", "id")),
+                _col("mystery", "object", rows=rows, max_length=None),
+            ),
+        )
+        graph = RelationshipGraph(edges=(_edge("parent", "id", "child", "parent_id"),), ordering=())
+        pred = predict_ooc_disk_bytes(
+            _profile((parent, child)),
+            graph=graph,
+            table_kinds=_all_mask("parent", "child"),
+            include_output=True,
+        )
+        # The unknown 'mystery' column is priced at the 256-byte ceiling, so the
+        # child's output term includes 256 * rows for it (plus the 8-byte FK).
+        assert pred.output_bytes >= UNKNOWN_WIDTH_CEILING_BYTES * rows
+
+
+# ---------------------------------------------------------------------------
+# 6. Routing-level wiring end to end (run_pipeline).
 # ---------------------------------------------------------------------------
 
 
@@ -172,8 +461,6 @@ def _hash_col(name: str, namespace: str) -> dict[str, Any]:
 
 
 def _fk_ooc_config(tmp_path: Path) -> dict[str, Any]:
-    """A pure-mask FK job whose every strategy is out-of-core supported
-    (hash keys), so it auto-routes to out-of-core once large / forced."""
     parent = pa.table({"id": pa.array([f"p{i}" for i in range(_N)], type=pa.string())})
     child = pa.table(
         {
@@ -218,10 +505,6 @@ def _fk_ooc_config(tmp_path: Path) -> dict[str, Any]:
 
 
 def _cyclic_fk_config(tmp_path: Path) -> dict[str, Any]:
-    """Two tables with reciprocal FKs (a -> b -> a): a cross-table cycle,
-    OOC-INCOMPATIBLE (`check_out_of_core_compatibility` rejects it) --
-    `decide_execution_route` never returns `"out_of_core"` for this job at
-    any size, so it must never reach the disk preflight."""
     a = pa.table(
         {
             "id": pa.array([f"a{i}" for i in range(_N)], type=pa.string()),
@@ -248,14 +531,8 @@ def _cyclic_fk_config(tmp_path: Path) -> dict[str, Any]:
             "b": {"type": "file", "path": str(tmp_path / "b.out.parquet"), "format": "parquet"},
         },
         "tables": [
-            {
-                "name": "a",
-                "columns": [_hash_col("id", "na"), _hash_col("ref_b", "nb")],
-            },
-            {
-                "name": "b",
-                "columns": [_hash_col("id", "nb"), _hash_col("ref_a", "na")],
-            },
+            {"name": "a", "columns": [_hash_col("id", "na"), _hash_col("ref_b", "nb")]},
+            {"name": "b", "columns": [_hash_col("id", "nb"), _hash_col("ref_a", "na")]},
         ],
         "relationships": [
             {
@@ -278,40 +555,32 @@ def _sources(config: dict[str, Any]) -> dict[str, pa.Table]:
     return {name: pq.read_table(spec["path"]) for name, spec in config["sources"].items()}
 
 
-class _TinyDiskUsage:
-    """A `shutil.disk_usage` stand-in reporting near-zero free space --
-    far below any predicted spill for a 20-row fixture."""
-
-    def __init__(self) -> None:
-        self.total = 1_000
-        self.used = 900
-        self.free = 100
+def _patch_free_disk(monkeypatch: pytest.MonkeyPatch, free_bytes: int) -> None:
+    usage = SimpleNamespace(total=free_bytes * 2, used=free_bytes, free=free_bytes)
+    monkeypatch.setattr(budget_mod.shutil, "disk_usage", lambda path: usage)
 
 
-class TestOocDiskPreflightBlocksOnInsufficientDisk:
-    def test_forced_out_of_core_raises_actionable_error_when_disk_is_short(
+class TestRunPipelineDiskPreflight:
+    def test_forced_out_of_core_rejects_on_insufficient_disk(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         config = _fk_ooc_config(tmp_path)
         sources = _sources(config)
-        monkeypatch.setattr(budget_mod.shutil, "disk_usage", lambda path: _TinyDiskUsage())
-
+        _patch_free_disk(monkeypatch, 100)  # 100 bytes free -> even a tiny job busts
         with pytest.raises(ExecutionError) as excinfo:
             run_pipeline(config, sources, engine_version="0.1.0", execution_mode="out_of_core")
         assert excinfo.value.code == "out_of_core_disk_preflight_insufficient"
         message = excinfo.value.message
-        assert "GB free temp disk" in message
-        assert "GB is available" in message
-        # Total rows across both mask tables (20 parent + 20 child = 40).
-        assert "40" in message
+        assert "GiB free temp disk" in message
+        assert "GiB is available" in message
+        assert "40" in message  # 20 parent + 20 child mask rows
 
     def test_auto_large_fk_job_also_gets_the_preflight(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         config = _fk_ooc_config(tmp_path)
         sources = _sources(config)
-        monkeypatch.setattr(budget_mod.shutil, "disk_usage", lambda path: _TinyDiskUsage())
-
+        _patch_free_disk(monkeypatch, 100)
         with pytest.raises(ExecutionError) as excinfo:
             run_pipeline(
                 config,
@@ -322,9 +591,7 @@ class TestOocDiskPreflightBlocksOnInsufficientDisk:
             )
         assert excinfo.value.code == "out_of_core_disk_preflight_insufficient"
 
-
-class TestOocDiskPreflightPassesAndThreadsRuntimeBudget:
-    def test_forced_out_of_core_proceeds_and_threads_temp_disk_budget(
+    def test_sufficient_disk_proceeds_and_threads_temp_disk_budget(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         import decoy_engine.execution.out_of_core as ooc_pkg
@@ -339,50 +606,46 @@ class TestOocDiskPreflightPassesAndThreadsRuntimeBudget:
             return real_run_fk_out_of_core(*args, **kwargs)  # type: ignore[arg-type]
 
         monkeypatch.setattr(ooc_pkg, "run_fk_out_of_core", spy)
-
+        # Real disk (not patched): a 20-row job's tiny footprint passes.
         result = run_pipeline(config, sources, engine_version="0.1.0", execution_mode="out_of_core")
 
         assert result.quality_metrics["execution"]["execution_mode"] == "out_of_core"
-        assert "temp_disk_budget_bytes" in captured
-        assert captured["temp_disk_budget_bytes"] is not None
+        assert captured.get("temp_disk_budget_bytes") is not None
         assert captured["temp_disk_budget_bytes"] > 0
 
 
-class TestOocIncompatibleJobIsUnaffectedByThePreflight:
+class TestOocIncompatibleJobUnaffected:
     def test_cyclic_fk_job_never_reaches_the_disk_preflight(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # Even a catastrophically-insufficient disk must have NO effect on a
-        # job that never routes out_of_core in the first place -- the gate
-        # is a backstop, never a rerouting decision.
         config = _cyclic_fk_config(tmp_path)
         sources = _sources(config)
-        monkeypatch.setattr(budget_mod.shutil, "disk_usage", lambda path: _TinyDiskUsage())
-
+        _patch_free_disk(monkeypatch, 100)  # catastrophically short -- must not matter
         result = run_pipeline(
-            config,
-            sources,
-            engine_version="0.1.0",
-            use_byte_estimate_routing=False,
+            config, sources, engine_version="0.1.0", use_byte_estimate_routing=False
         )
         assert result.quality_metrics["execution"]["execution_mode"] == "full_frame"
         assert result.quality_metrics["execution"]["route_reason"] == "cross_table_cycle"
 
-    def test_cyclic_fk_job_behavior_is_identical_with_and_without_the_hostile_disk(
+    def test_cyclic_fk_behavior_identical_with_and_without_hostile_disk(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         config = _cyclic_fk_config(tmp_path)
         sources = _sources(config)
-
         baseline = run_pipeline(
             config, sources, engine_version="0.1.0", use_byte_estimate_routing=False
         )
-        monkeypatch.setattr(budget_mod.shutil, "disk_usage", lambda path: _TinyDiskUsage())
-        under_hostile_disk = run_pipeline(
+        _patch_free_disk(monkeypatch, 100)
+        hostile = run_pipeline(
             config, sources, engine_version="0.1.0", use_byte_estimate_routing=False
         )
-        assert (
-            baseline.quality_metrics["execution"] == under_hostile_disk.quality_metrics["execution"]
-        )
+        assert baseline.quality_metrics["execution"] == hostile.quality_metrics["execution"]
         for table in ("a", "b"):
-            assert baseline.outputs[table].equals(under_hostile_disk.outputs[table])
+            assert baseline.outputs[table].equals(hostile.outputs[table])
+
+
+class TestDefaultTempRoot:
+    def test_matches_tempfile_gettempdir(self) -> None:
+        import tempfile
+
+        assert default_ooc_temp_root() == Path(tempfile.gettempdir())
