@@ -346,3 +346,75 @@ def build_hcpcs_zip(
         # contains, not an idealized single-file archive.
         zf.writestr("HCPC2026_recordlayout.txt", "not the codes file\r\n")
     return buf.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# MS-DRG fixtures
+# ---------------------------------------------------------------------------
+
+# Verbatim rows from the real CMS ICD-10 MS-DRG Definitions Manual v43.0
+# Appendix A (pulled 2026-07-21) -- see parsers/_msdrg.py's module docstring
+# for the verified fixed-width column layout. Kept as raw strings (not built
+# field-by-field) since the exact fixed-width padding is the thing under
+# test: offsets [0:3] code, [4:6] MDC, [8:9] type, [11:] description.
+
+# Banner/prose/header lines that precede the data in a real download -- none
+# starts with 3 digits, so the parser's `line[0:3].isdigit()` filter skips
+# every one without any separate header-detection logic.
+MSDRG_BANNER_LINES = [
+    "ICD-10 MS-DRG DEFINITIONS MANUAL VERSION 43.0",
+    "",
+    "Appendix A - List of MS-DRGs, Diagnosis Codes and Procedure Codes",
+    "",
+    "DRG MDC MS Description",
+]
+
+# Surgical row with an MDC.
+_MSDRG_001 = "001     P  Heart Transplant or Implant of Heart Assist System with MCC"
+# Surgical row with an MDC (two-digit MDC field populated, unlike 001/014).
+_MSDRG_020 = (
+    "020 01  P  Intracranial Vascular Procedures with Principal Diagnosis Hemorrhage with MCC"
+)
+# Medical row with an MDC.
+_MSDRG_014 = "014     M  Allogeneic Bone Marrow Transplant"
+# The two ungroupable rows: blank MDC AND blank type.
+_MSDRG_998 = "998        Principal Diagnosis Invalid as Discharge Diagnosis"
+_MSDRG_999 = "999        Ungroupable"
+
+MSDRG_DATA_LINES = [_MSDRG_001, _MSDRG_014, _MSDRG_020, _MSDRG_998, _MSDRG_999]
+
+#: Expected code -> description for every row `build_msdrg_zip()` emits.
+MSDRG_EXPECTED_DESCRIPTIONS: dict[str, str] = {
+    "001": "Heart Transplant or Implant of Heart Assist System with MCC",
+    "014": "Allogeneic Bone Marrow Transplant",
+    "020": "Intracranial Vascular Procedures with Principal Diagnosis Hemorrhage with MCC",
+    "998": "Principal Diagnosis Invalid as Discharge Diagnosis",
+    "999": "Ungroupable",
+}
+
+
+def build_msdrg_zip(
+    *,
+    extra_lines: list[str] | None = None,
+    member: str = "appendix_A.txt",
+) -> bytes:
+    """Build a small MS-DRG Definitions Manual zip archive for tests.
+
+    Includes the banner/header lines that must be skipped plus every row in
+    MSDRG_EXPECTED_DESCRIPTIONS -- callers that pass `extra_lines` only
+    append (used for the malformed/edge-case tests), never replace.
+    """
+    lines = list(MSDRG_BANNER_LINES) + list(MSDRG_DATA_LINES)
+    if extra_lines:
+        lines += extra_lines
+
+    text = "\r\n".join(lines) + "\r\n"
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr(member, text)
+        # A second, real non-Appendix-A member (an MDC definitions file) --
+        # present in every real download alongside Appendix A, so the
+        # member-lookup test fixture matches what a real zip actually
+        # contains, not an idealized single-file archive.
+        zf.writestr("MDC_01_definitions.txt", "not the appendix A file\r\n")
+    return buf.getvalue()
