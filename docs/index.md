@@ -11,7 +11,6 @@ New to Decoy? Start with the quickstart, then the recipes.
 - [Strategy catalog](strategies.md): every mask and generation strategy.
 - [Free-text NER](guides/free-text-ner.md): activating spaCy person-name/location detection on `text_redact`.
 - [Relationships](relationships.md): foreign-key and referential-integrity preservation.
-- [Relationship out-of-core sprint plan](relationships-out-of-core-sprints.md): Option 4 implementation plan for large FK graphs.
 - [Determinism](determinism.md): the seed and key protocol; what is and is not deterministic.
 - [CLI](cli.md): the `decoy` command surface.
 - [What Decoy does not prove](what-we-cannot-prove.md): the honest limitations.
@@ -46,9 +45,15 @@ link to GitHub rather than into the rendered API reference.
 
 - [Methodology registry](methodology-registry.yaml): citations for non-trivial domain primitives (per the "use established methodology" rule in the [CLAUDE](https://github.com/louiskeep/decoy-engine/blob/main/CLAUDE.md) guide).
 
+## Development & planning
+
+- [CI regression gate](ci-regression-gate.md): the performance / regression gate contract.
+- Engine-scoped implementation plans and decision records live in `docs/plans/` and `docs/decisions/` (working docs, not guides).
+- [Job-performance sprints](job-performance-sprints.md) and [relationship out-of-core sprints](relationships-out-of-core-sprints.md) are historical sprint-planning records kept for context; the work they describe has largely shipped. They are not current how-to guides.
+
 ---
 
-Architecture, roadmap, and audit documentation are maintained in the commercial platform repo.
+This repo owns the engine-scoped durable docs (reference, `security/` and `decisions/` records, API reference) and its own `plans/` for engine work. The single cross-repo roadmap and the shipped program status live in the platform docs hub (`decoy-platform/docs/ROADMAP.md`), which indexes engine plans too.
 
 ```{toctree}
 :hidden:
@@ -59,7 +64,6 @@ recipes
 strategies
 guides/free-text-ner
 relationships
-relationships-out-of-core-sprints
 determinism
 cli
 what-we-cannot-prove
@@ -73,6 +77,7 @@ acceptance-test-flight
 
 ci-regression-gate
 job-performance-sprints
+relationships-out-of-core-sprints
 ```
 
 ```{toctree}

@@ -1,3 +1,9 @@
+> **SUPERSEDED 2026-07-21.** The single cross-repo roadmap is now
+> `decoy-platform/docs/ROADMAP.md` (engine + CLI + platform + web). Track "what to
+> do next" there, not here. The 100M-row FK scaling program below is COMPLETE (see
+> the §OOC entry in that roadmap: engine PRs #86/#87/#88/#94/#107). This file is kept
+> for historical scaling-program detail only.
+
 # Next-Up Development Roadmap
 
 **Written:** 2026-07-07. **Purpose:** the ordered list of what we complete next
@@ -545,6 +551,30 @@ pre-existing `pydantic_settings`-missing-in-venv failure above, unrelated).
 
 **SC7c (end-to-end `run_pipeline()` memory proof) - NOT STARTED.** Do not claim `run_pipeline()` is bounded-memory on the proof page until SC7c lands. SC7b wires the bounded-profile row-count into the route decision, and profiling now touches only cheap metadata and a sample on the lazy path, but end-to-end boundedness proof awaits SC7c's sentinel tests (public `run_pipeline()` under resource limits + proof profiling did not materialize).
 
+## Part D - Test-quality program (Cam, 2026-07-21)
+
+Proactive test quality: instead of a reflective audit of the 368-file suite,
+make weakly-tested code unable to enter and let the audit happen at the point of
+change. Two goals: (1) **correct** per-module tests that find errors (not
+characterization snapshots that codify current bugs - they need an oracle:
+property/metamorphic/differential tests, mutation-graded with `mutmut`), and
+(2) effective golden runs + CI (extend the existing `testflight` gate; add a
+diff-coverage ratchet). Full spec, sprint table (TQ-0..TQ-3), and gates:
+`docs/plans/2026-07-21-test-quality-program.md`.
+
+- **Builds on, does not rebuild:** Hypothesis (already `[dev]`), `tests/property/`,
+  the `testflight` golden gate, the "snapshot before extraction" rule, and the
+  `[tool.coverage]` config already staged for `pytest --cov`.
+- **Gaps it closes:** coverage never measured (`pytest-cov` not installed,
+  `fail_under=0`); no mutation grading; thin oracle layer; diff-coverage not
+  wireable until `ci.yml` fetches full history (`fetch-depth: 0`).
+- **Pilot-first:** TQ-0 proves the playbook on one crown-jewel module (rec: RI/FK)
+  and establishes the template before the multi-agent fan-out (TQ-1) spends a
+  real token run.
+- **Awaits GATE-TQ0:** pilot module + mutation-bar policy (rec: measure-first,
+  100% on crypto/RI). The hard coverage floor stays deferred to V2.0-C; TQ-3's
+  ratchet is diff-scoped so it works on a moving surface.
+
 ## Resume checklist
 
 1. ~~**SC1** - execute the prove-or-reject hardening pass on PR #34~~ **DONE**,
@@ -561,3 +591,6 @@ pre-existing `pydantic_settings`-missing-in-venv failure above, unrelated).
    the engine's out-of-core execution mode - see "SC5 status" above.
 5. **SC6 / Part B item 1** - GCP 100M benchmark run (needs auth + spend).
 6. **Part B items 2-4** - UI-to-engine wiring, CLI testing, web UI/UX.
+7. **Part D / TQ-0** - test-quality program: pick pilot module + mutation-bar
+   policy (GATE-TQ0), run the pilot, ship the template. See
+   `docs/plans/2026-07-21-test-quality-program.md`.
