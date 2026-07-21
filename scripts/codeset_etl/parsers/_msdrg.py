@@ -39,7 +39,8 @@ header line fails that test, so no separate header-line-counting is needed:
     per DRG -- unlike HCPCS's ANWEB export, Appendix A never word-wraps a
     description across lines.
 
-~740 DRG data rows in the verified v43.0 download.
+772 DRG data rows in the verified v43.0 download (of 783 total lines; the
+remaining ~11 are the banner/prose/column-header lines skipped above).
 
 Chapter: OMITTED, unlike _icd10cm.py's per-row chapter. MDC is the natural
 chapter analog, but ~30 DRGs (the multi-MDC and ungroupable rows above) have

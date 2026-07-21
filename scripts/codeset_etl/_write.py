@@ -1,8 +1,8 @@
 """Shared normalize -> validate -> write pipeline for ETL-produced corpora.
 
-The ONE place every parser's output becomes a Parquet file on disk, so a
-future fifth parser (HCPCS, MS-DRG, ...) gets the determinism/provenance
-contract for free instead of re-implementing it. Mirrors
+The ONE place every parser's output becomes a Parquet file on disk, so each
+parser (NDC, ICD-10-CM, HCPCS, MS-DRG, and any later source) gets the
+determinism/provenance contract for free instead of re-implementing it. Mirrors
 ``scripts/build_codesets.py::_write`` (the seed-corpus writer) in shape,
 generalized to accept a variable row schema and to target the ETL cache dir
 instead of ``src/decoy_engine/codesets/``.
