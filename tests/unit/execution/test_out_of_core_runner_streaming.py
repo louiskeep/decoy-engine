@@ -15,8 +15,9 @@ from typing import Any
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 
-from decoy_engine.execution import PandasExecutionAdapter, ParquetTransactionalSink
+from decoy_engine.execution import ExecutionError, PandasExecutionAdapter, ParquetTransactionalSink
 from decoy_engine.execution.out_of_core import LazySource, run_fk_out_of_core
 from decoy_engine.execution.out_of_core import _join as join_mod
 from decoy_engine.execution.out_of_core import _stream_driver as stream_driver_mod
@@ -909,3 +910,65 @@ def test_float64_all_orphan_preserve_narrowing_parity_and_sink_type(tmp_path) ->
     published_col = pq.read_table(target / "orders.parquet").column("customer_id")
     assert published_col.type == pa.float64()
     assert published_col.to_pylist() == [5.0, 7.0]
+
+
+def test_two_pass_source_divergence_trips_alignment_guard(tmp_path, monkeypatch) -> None:
+    """Row_nr alignment backbone (OOC-B): the FK join runs over the child's
+    phase-1 read while the mask stream runs over a SECOND read, so the two must
+    agree row-for-row. A deterministic source zips cleanly; an injected short
+    second read on the child must fail closed (out_of_core_fk_row_alignment)
+    rather than silently emit misaligned FK columns.
+    """
+    ns = "cust_align"
+    plan = SimpleNamespace(
+        seed_envelope=SeedEnvelope(
+            job_seed=_SEED,
+            per_table=(
+                ("customers", TableSeed(per_column=(("id", _col("passthrough")),), per_group=())),
+                ("orders", TableSeed(per_column=(("id", _col("passthrough")),), per_group=())),
+            ),
+        )
+    )
+    edge = RelationshipEdge(
+        parent_table="customers",
+        parent_columns=("id",),
+        child_table="orders",
+        child_columns=("id",),
+        namespace=ns,
+        orphan_policy=OrphanPolicy.PRESERVE,
+    )
+    graph = RelationshipGraph(edges=(edge,), ordering=())
+    sources = {
+        "customers": pa.table({"id": pa.array([1, 2, 3], type=pa.int64())}),
+        "orders": pa.table(
+            {"id": pa.array([1, 2, 3, 1, 2], type=pa.int64()), "amt": list(range(5))}
+        ),
+    }
+    child_src = sources["orders"]
+
+    # Sanity: the deterministic (un-monkeypatched) run completes and preserves RI.
+    ok = run_fk_out_of_core(
+        plan, sources, registry=_REG, relationship_graph=graph, temp_dir=tmp_path / "ok"
+    )
+    assert ok.outputs["orders"].num_rows == 5
+
+    real = stream_driver_mod._iter_source_batches
+    reads: dict[int, int] = {}
+
+    def diverging(src: Any, batch_rows: int) -> Any:
+        batches = list(real(src, batch_rows))
+        if src is child_src:
+            reads[id(src)] = reads.get(id(src), 0) + 1
+            if reads[id(src)] >= 2 and batches:
+                # Drop the last row on the SECOND read (the phase-3 mask pass),
+                # so the join output (built from the full phase-1 read) has one
+                # more row than the mask stream consumes.
+                batches[-1] = batches[-1].slice(0, batches[-1].num_rows - 1)
+        yield from batches
+
+    monkeypatch.setattr(stream_driver_mod, "_iter_source_batches", diverging)
+    with pytest.raises(ExecutionError) as exc:
+        run_fk_out_of_core(
+            plan, sources, registry=_REG, relationship_graph=graph, temp_dir=tmp_path / "bad"
+        )
+    assert exc.value.code == "out_of_core_fk_row_alignment"

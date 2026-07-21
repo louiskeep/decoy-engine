@@ -157,9 +157,11 @@ def stream_table(
             )
             joiner.begin_staging()
             joiners.append(joiner)
-        for raw_batch in _iter_source_batches(raw, batch_rows):
-            for joiner in joiners:
-                joiner.stage_batch(raw_batch)
+        if joiners:
+            # A table with no incoming edges has nothing to stage; skip the read.
+            for raw_batch in _iter_source_batches(raw, batch_rows):
+                for joiner in joiners:
+                    joiner.stage_batch(raw_batch)
         # FAIL reports the whole child's orphan count before any output exists.
         for edge, joiner in zip(incoming_edges, joiners, strict=True):
             if edge.orphan_policy is OrphanPolicy.FAIL:
