@@ -134,3 +134,20 @@ class TestIcd10PcsParserParseArchive:
         parser = Icd10PcsParser()
         with pytest.raises(CodesetParseError, match="section"):
             parser.parse_archive(raw, pulled_on=_PULLED_ON)
+
+    def test_over_long_code_raises_not_truncates(self):
+        """An 8-char code with no delimiter after char 7 must fail closed --
+        anchoring only line[0:7] would silently drop the 8th char into the
+        code boundary and shift the rest into the description."""
+        raw = build_pcs_zip(lines=["00160709 Bypass with an over-long code"])
+        parser = Icd10PcsParser()
+        with pytest.raises(CodesetParseError, match="delimiter"):
+            parser.parse_archive(raw, pulled_on=_PULLED_ON)
+
+    def test_bare_code_without_description_raises(self):
+        """A line that is just a 7-char code with no delimiter/description must
+        fail closed rather than ship a description-less row."""
+        raw = build_pcs_zip(lines=["0016070"])
+        parser = Icd10PcsParser()
+        with pytest.raises(CodesetParseError, match="delimiter|empty description"):
+            parser.parse_archive(raw, pulled_on=_PULLED_ON)

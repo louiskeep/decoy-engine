@@ -137,7 +137,22 @@ def _parse_lines(text: str) -> list[dict[str, str]]:
                 "(a source change worth failing on) or a source layout change, not "
                 "a legitimate row to silently absorb without review."
             )
+        # The code is an invariant 7 chars followed by a single-space delimiter.
+        # Anchoring only line[0:7] would silently drop the 8th char of an
+        # over-long code (e.g. a future layout change) into the description, so
+        # require the delimiter explicitly and fail closed instead of truncating.
+        if len(line) <= _CODE_END or line[_CODE_END] != " ":
+            raise CodesetParseError(
+                f"ICD-10-PCS data row {line!r} lacks the expected 7-char code + "
+                "single-space delimiter layout -- likely an over-long code or a "
+                "source layout change, not a legitimate row to silently truncate."
+            )
         description = line[_DESC_START:].strip()
+        if not description:
+            raise CodesetParseError(
+                f"ICD-10-PCS code {code!r} has an empty description -- likely a "
+                "truncated line or source layout change, not a legitimate row."
+            )
         rows.append({"code": code, "description": description, "chapter": section})
     return rows
 
