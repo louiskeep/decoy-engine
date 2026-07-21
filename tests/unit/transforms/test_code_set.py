@@ -1024,7 +1024,7 @@ class TestChapterIndexParity:
         test_codes = [*known_codes, "ZZZ.UNKNOWN", ""]
         for code in test_codes:
             expected = self._naive_get_chapter(code, record.rows)
-            actual = _get_chapter(code, record.chapter_index)
+            actual = _get_chapter(code, record.selection.chapter_index)
             assert actual == expected, (
                 f"chapter mismatch for {code!r}: dict-index gave {actual!r}, "
                 f"naive scan gave {expected!r}."
@@ -1658,3 +1658,384 @@ class TestTwoModelGateRemediation:
         report = verify_corpus("/nonexistent/does-not-exist.parquet")
         assert report.ok is False
         assert report.problems and report.problems[0].startswith("code_set_corpus_read_error")
+
+
+class TestHoleArithmeticExhaustive:
+    """hole_candidate_count/hole_resolve, exhaustively, against a naive
+    filter -- deterministic, unlike the end-to-end sweeps below (which only
+    sample whichever idx values the real HMAC/derive_index outputs happen to
+    land on). Every idx in range(candidate_count), for every possible
+    position (None, first, middle, last), over several sequence lengths."""
+
+    @staticmethod
+    def _naive_filtered(seq: list[int], position: int | None) -> list[int]:
+        if position is None:
+            return list(seq)
+        return [x for i, x in enumerate(seq) if i != position]
+
+    @pytest.mark.parametrize("seq_len", [1, 2, 5, 37])
+    def test_hole_resolve_matches_naive_filter_for_every_idx_and_position(self, seq_len):
+        from decoy_engine.transforms._codeset_index import hole_candidate_count, hole_resolve
+
+        seq = list(range(seq_len))
+        for position in (None, *range(seq_len)):
+            naive = self._naive_filtered(seq, position)
+            candidate_count = hole_candidate_count(seq_len, position)
+            assert candidate_count == len(naive)
+            for idx in range(candidate_count):
+                real_idx = hole_resolve(idx, position)
+                assert seq[real_idx] == naive[idx], (
+                    f"seq_len={seq_len} position={position} idx={idx}: "
+                    f"hole_resolve gave seq[{real_idx}]={seq[real_idx]}, "
+                    f"naive filter gave {naive[idx]}"
+                )
+
+
+# ── HC-1 slice 2: index-with-hole selection parity ────────────────────────────
+#
+# code_set.py used to run three O(corpus)/O(bucket) list comprehensions per
+# masked VALUE (candidate exclusion in _pick_mask and twice in
+# _apply_chapter_preserve). HC-1 slice 2 replaces them with precomputed
+# indices (code_index, chapter_buckets, bucket_code_index) plus an
+# "index-with-hole" arithmetic mapping (hole_candidate_count/hole_resolve)
+# that reproduces `[r for r in seq if code != value][idx]` without
+# materializing the filtered list. This class is the mandatory acceptance
+# gate: a NAIVE reference re-implementing the OLD filter-based selection,
+# checked byte-identical to the NEW precomputed selection across a broad
+# sweep of mask mode, gen mode, chapter_preserve on/off, member/non-member
+# inputs, and the two fail-closed cases (single-row corpus, sole-member
+# bucket). A failure here means the optimization changed behavior.
+
+
+def _naive_pick_from_candidates(
+    key_value: str, candidates: list, *, mask_key: bytes, namespace: str | None
+) -> str:
+    """Reference: the pre-HC-1-slice-2 HMAC selection over an already-
+    materialized candidate list (verbatim old `_pick_from_candidates` body)."""
+    from decoy_engine.determinism import derive
+    from decoy_engine.internal.crypto import hmac_hex
+    from decoy_engine.transforms.code_set import _KEYED_SALT
+
+    hmac_key = derive(mask_key, namespace or "code_set", _KEYED_SALT)
+    hex_digest = hmac_hex(hmac_key, key_value)
+    assert hex_digest is not None
+    idx = int(hex_digest[:8], 16) % len(candidates)
+    return str(candidates[idx]["code"])
+
+
+def _naive_pick_mask(value: str, rows: list, *, mask_key: bytes, namespace: str | None) -> str:
+    """Reference: the pre-HC-1-slice-2 `_pick_mask` body, verbatim -- builds
+    the candidate list by filtering, instead of the code_index hole lookup."""
+    candidates = [r for r in rows if str(r["code"]) != value]
+    if not candidates:
+        raise PlanCompileError(
+            code="code_set_single_row_corpus",
+            path="provider_config.code_set",
+            message="naive reference: single-row corpus equals input.",
+        )
+    return _naive_pick_from_candidates(value, candidates, mask_key=mask_key, namespace=namespace)
+
+
+def _naive_apply_chapter_preserve(
+    value: str,
+    rows: list,
+    chapter_index: dict,
+    *,
+    mode: str,
+    job_seed: bytes,
+    namespace: str | None,
+    row_index: int,
+) -> str:
+    """Reference: the pre-HC-1-slice-2 `_apply_chapter_preserve` body,
+    verbatim -- filters the bucket and the candidate set with list
+    comprehensions instead of chapter_buckets/bucket_code_index lookups.
+    `_get_chapter` itself is untouched by HC-1 slice 2 (already O(1) since
+    HC-1 slice 1), so it is reused rather than re-implemented here."""
+    from decoy_engine.determinism import derive_index
+    from decoy_engine.transforms.code_set import _get_chapter
+
+    if not rows or "chapter" not in rows[0]:
+        raise PlanCompileError(
+            code="code_set_chapter_column_missing",
+            path="provider_config.chapter_preserve",
+            message="naive reference: no chapter column.",
+        )
+
+    input_chapter = _get_chapter(value, chapter_index)
+    if input_chapter is None:
+        input_chapter = value[0] if value else ""
+
+    bucket = [r for r in rows if str(r.get("chapter", "")) == input_chapter]
+    if not bucket:
+        raise PlanCompileError(
+            code="code_set_chapter_absent",
+            path="provider_config.chapter_preserve",
+            message="naive reference: chapter absent from corpus.",
+        )
+
+    candidates = [r for r in bucket if str(r["code"]) != value]
+    if not candidates:
+        raise PlanCompileError(
+            code="code_set_sole_member_bucket",
+            path="provider_config.chapter_preserve",
+            message="naive reference: sole-member bucket.",
+        )
+
+    if mode == "mask":
+        return _naive_pick_from_candidates(
+            value, candidates, mask_key=job_seed, namespace=namespace
+        )
+    idx = derive_index(
+        job_seed[:8], namespace, row_index.to_bytes(8, "big"), pool_size=len(candidates)
+    )
+    return str(candidates[idx]["code"])
+
+
+def _build_parity_corpus(tmp_path: pathlib.Path) -> pathlib.Path:
+    """A few-hundred-code, multi-chapter synthetic corpus, sized and shaped so
+    candidate holes land at the first, middle, and last position of both the
+    full corpus and individual chapter buckets:
+
+      A: 1 code   (sole-member bucket -- forces code_set_sole_member_bucket)
+      B: 50 codes (mid-size bucket)
+      C: 100 codes (largest bucket, exercises many hole positions)
+      D: 2 codes  (near-sole -- exactly one valid replacement)
+      E: 150 codes (last chapter in sort order -- exercises the tail)
+
+    Codes are zero-padded so ascending string sort matches ascending numeric
+    order within each chapter, and chapters sort A < B < C < D < E, so the
+    first/last row of the whole corpus falls in the first/last chapter.
+    """
+    codes: list[str] = []
+    chapters: list[str] = []
+    sizes = {"A": 1, "B": 50, "C": 100, "D": 2, "E": 150}
+    for chapter, n in sizes.items():
+        for i in range(1, n + 1):
+            codes.append(f"{chapter}{i:04d}")
+            chapters.append(chapter)
+
+    tbl = pa.table(
+        {
+            "code": pa.array(codes, type=pa.string()),
+            "chapter": pa.array(chapters, type=pa.string()),
+        }
+    )
+    path = tmp_path / "parity_corpus.parquet"
+    pq.write_table(tbl, str(path))
+    return path
+
+
+class TestHoleSelectionParity:
+    """Mandatory acceptance gate for HC-1 slice 2 (see module comment above)."""
+
+    @pytest.fixture
+    def corpus_path(self, tmp_path: pathlib.Path) -> pathlib.Path:
+        return _build_parity_corpus(tmp_path)
+
+    @staticmethod
+    def _sweep_inputs() -> list[str]:
+        """Member codes at first/middle/last position of each bucket and of
+        the full corpus, plus non-member codes (absent entirely, and one
+        whose derived first-char chapter is absent from the corpus)."""
+        member_inputs = [
+            "A0001",  # sole member of chapter A; also the first row overall
+            "B0001",  # first of chapter B
+            "B0025",  # middle of chapter B
+            "B0050",  # last of chapter B
+            "C0001",  # first of chapter C
+            "C0050",  # middle of chapter C
+            "C0100",  # last of chapter C
+            "D0001",  # first of chapter D (2-member bucket)
+            "D0002",  # last of chapter D (2-member bucket)
+            "E0001",  # first of chapter E
+            "E0075",  # middle of chapter E
+            "E0150",  # last of chapter E; also the last row overall
+        ]
+        non_member_inputs = [
+            "A9999",  # in an existing chapter, but not a corpus member
+            "B9999",
+            "C9999",
+            "ZZZZ",  # first-char "Z": chapter absent from the corpus entirely
+            "Q0001",  # first-char "Q": chapter absent from the corpus entirely
+            "",  # empty string: _get_chapter's own edge case
+        ]
+        return member_inputs + non_member_inputs
+
+    def test_mask_mode_matches_naive_reference(self, corpus_path: pathlib.Path):
+        """Non-chapter-preserve mask mode: sweep every input, member and
+        non-member, and assert the precomputed selection is byte-identical
+        to the naive filter-based reference (or raises the same error)."""
+        cfg = CodeSetConfig.from_dict(
+            {"code_set": "parity", "corpus_source": f"customer:{corpus_path}"}
+        )
+        from decoy_engine.transforms.code_set import load_corpus
+
+        rows = load_corpus("parity", corpus_path)
+        checked = 0
+        for value in self._sweep_inputs():
+            new_result = _run_or_error(apply_code_set, value, cfg, mode="mask", job_seed=_JOB_SEED)
+            naive_result = _run_or_error(
+                _naive_pick_mask, value, rows, mask_key=_JOB_SEED, namespace=None
+            )
+            assert new_result == naive_result, f"mask mode mismatch for {value!r}"
+            checked += 1
+        assert checked == len(self._sweep_inputs())
+
+    def test_gen_mode_no_chapter_preserve_matches_naive_reference(self, corpus_path: pathlib.Path):
+        """Non-chapter-preserve gen mode draws from the full pool (unchanged
+        by HC-1 slice 2), but the shared derive_index/hole_resolve plumbing
+        is re-verified here too since _pick_gen's signature changed."""
+        cfg = CodeSetConfig.from_dict(
+            {"code_set": "parity", "corpus_source": f"customer:{corpus_path}"}
+        )
+        from decoy_engine.determinism import derive_index
+        from decoy_engine.transforms.code_set import load_corpus
+
+        rows = load_corpus("parity", corpus_path)
+        ns = "parity.gen"
+        for row_index in range(30):
+            new_result = apply_code_set(
+                "unused-gen-hint",
+                cfg,
+                mode="gen",
+                job_seed=_JOB_SEED,
+                namespace=ns,
+                row_index=row_index,
+            )
+            idx = derive_index(_JOB_SEED[:8], ns, row_index.to_bytes(8, "big"), pool_size=len(rows))
+            naive_result = str(rows[idx]["code"])
+            assert new_result == naive_result, f"gen mode mismatch at row_index {row_index}"
+
+    def test_chapter_preserve_mask_matches_naive_reference(self, corpus_path: pathlib.Path):
+        """chapter_preserve mask mode: sweep every input, asserting
+        byte-identical output (or identical raised error code) against the
+        naive bucket-filter reference."""
+        cfg = CodeSetConfig.from_dict(
+            {
+                "code_set": "parity",
+                "corpus_source": f"customer:{corpus_path}",
+                "chapter_preserve": True,
+            }
+        )
+        from decoy_engine.transforms._codeset_loader import _get_corpus_record
+
+        record = _get_corpus_record("parity", corpus_path, is_shipped=False)
+        for value in self._sweep_inputs():
+            new_result = _run_or_error(apply_code_set, value, cfg, mode="mask", job_seed=_JOB_SEED)
+            naive_result = _run_or_error(
+                _naive_apply_chapter_preserve,
+                value,
+                record.rows,
+                record.selection.chapter_index,
+                mode="mask",
+                job_seed=_JOB_SEED,
+                namespace=None,
+                row_index=0,
+            )
+            assert new_result == naive_result, f"chapter_preserve mask mismatch for {value!r}"
+
+    def test_chapter_preserve_gen_matches_naive_reference(self, corpus_path: pathlib.Path):
+        """chapter_preserve gen mode: sweep every input across several
+        row_index values, asserting byte-identical output (or identical
+        raised error code) against the naive bucket-filter reference. This is
+        the path with the most subtle hole math (derive_index-selected index
+        remapped through the bucket's hole), so it gets the widest sweep."""
+        cfg = CodeSetConfig.from_dict(
+            {
+                "code_set": "parity",
+                "corpus_source": f"customer:{corpus_path}",
+                "chapter_preserve": True,
+            }
+        )
+        from decoy_engine.transforms._codeset_loader import _get_corpus_record
+
+        record = _get_corpus_record("parity", corpus_path, is_shipped=False)
+        ns = "parity.chapter.gen"
+        checked = 0
+        for value in self._sweep_inputs():
+            for row_index in range(8):
+                new_result = _run_or_error(
+                    apply_code_set,
+                    value,
+                    cfg,
+                    mode="gen",
+                    job_seed=_JOB_SEED,
+                    namespace=ns,
+                    row_index=row_index,
+                )
+                naive_result = _run_or_error(
+                    _naive_apply_chapter_preserve,
+                    value,
+                    record.rows,
+                    record.selection.chapter_index,
+                    mode="gen",
+                    job_seed=_JOB_SEED,
+                    namespace=ns,
+                    row_index=row_index,
+                )
+                assert new_result == naive_result, (
+                    f"chapter_preserve gen mismatch for {value!r} at row_index {row_index}"
+                )
+                checked += 1
+        assert checked == len(self._sweep_inputs()) * 8
+
+    def test_single_row_corpus_raises_matching_error(self, tmp_path: pathlib.Path):
+        """The candidate_count == 0 fail-closed path (single-row corpus,
+        mask mode): both implementations raise code_set_single_row_corpus."""
+        tbl = pa.table({"code": pa.array(["ONLY1"], type=pa.string())})
+        path = tmp_path / "single_row.parquet"
+        pq.write_table(tbl, str(path))
+        cfg = CodeSetConfig.from_dict({"code_set": "single", "corpus_source": f"customer:{path}"})
+
+        with pytest.raises(PlanCompileError) as new_exc:
+            apply_code_set("ONLY1", cfg, mode="mask", job_seed=_JOB_SEED)
+        assert new_exc.value.code == "code_set_single_row_corpus"
+
+        from decoy_engine.transforms.code_set import load_corpus
+
+        with pytest.raises(PlanCompileError) as naive_exc:
+            _naive_pick_mask(
+                "ONLY1", load_corpus("single", path), mask_key=_JOB_SEED, namespace=None
+            )
+        assert naive_exc.value.code == "code_set_single_row_corpus"
+
+    def test_sole_member_bucket_raises_matching_error(self, corpus_path: pathlib.Path):
+        """The candidate_count == 0 fail-closed path (sole-member bucket,
+        chapter_preserve): both implementations raise code_set_sole_member_bucket
+        for chapter A's only code."""
+        cfg = CodeSetConfig.from_dict(
+            {
+                "code_set": "parity",
+                "corpus_source": f"customer:{corpus_path}",
+                "chapter_preserve": True,
+            }
+        )
+        with pytest.raises(PlanCompileError) as new_exc:
+            apply_code_set("A0001", cfg, mode="mask", job_seed=_JOB_SEED)
+        assert new_exc.value.code == "code_set_sole_member_bucket"
+
+        from decoy_engine.transforms._codeset_loader import _get_corpus_record
+
+        record = _get_corpus_record("parity", corpus_path, is_shipped=False)
+        with pytest.raises(PlanCompileError) as naive_exc:
+            _naive_apply_chapter_preserve(
+                "A0001",
+                record.rows,
+                record.selection.chapter_index,
+                mode="mask",
+                job_seed=_JOB_SEED,
+                namespace=None,
+                row_index=0,
+            )
+        assert naive_exc.value.code == "code_set_sole_member_bucket"
+
+
+def _run_or_error(fn, *args, **kwargs):
+    """Call fn(*args, **kwargs); return the result, or the raised
+    PlanCompileError's `.code` string if it raises. Lets the parity sweep
+    assert "same result OR same failure mode" with one comparison instead of
+    a try/except at every call site."""
+    try:
+        return fn(*args, **kwargs)
+    except PlanCompileError as exc:
+        return f"<raised:{exc.code}>"
