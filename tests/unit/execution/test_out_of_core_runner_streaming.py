@@ -1132,6 +1132,10 @@ def test_single_read_source_mutation_cannot_corrupt(tmp_path, monkeypatch) -> No
 
     published = pq.read_table(target / "orders.parquet")
     assert published.to_pydict() == oracle.outputs["orders"].to_pydict()
+    # The single-read structural invariant this whole design defends: orders'
+    # source is read exactly once. Output parity alone would pass a benign
+    # same-order second read; this guards the read-count directly.
+    assert read_count == 1
 
 
 def test_chain_mutation_cannot_corrupt_outgoing_relation(tmp_path, monkeypatch) -> None:
@@ -1168,22 +1172,24 @@ def test_chain_mutation_cannot_corrupt_outgoing_relation(tmp_path, monkeypatch) 
 
     real = stream_driver_mod._iter_source_batches
 
-    def make_mutator() -> Any:
-        """A fresh `_iter_source_batches` patch: on the FIRST read of `child`'s
-        `LazySource`, materialize its batches (the real, only, phase-1 read),
-        THEN swap the on-disk file for an equal-count reversal. Any later read
-        of `child` (the bug this regression targets) sees the swapped file;
-        the single read this function itself performs never does, since the
-        swap happens only after `list(real(...))` has already drained it.
+    def make_mutator() -> tuple[Any, list[int]]:
+        """A fresh `_iter_source_batches` patch plus its `child`-read counter:
+        on the FIRST read of `child`'s `LazySource`, materialize its batches
+        (the real, only, phase-1 read), THEN swap the on-disk file for an
+        equal-count reversal. Any later read of `child` (the bug this
+        regression targets) sees the swapped file; the single read this
+        function itself performs never does, since the swap happens only after
+        `list(real(...))` has already drained it. The returned counter lets the
+        test assert `child`'s source is read exactly once (the structural
+        invariant), not just that the output parity holds.
         """
-        read_count = 0
+        child_reads = [0]
 
         def mutate_after_first_child_read(src: Any, batch_rows: int) -> Any:
-            nonlocal read_count
             batches = list(real(src, batch_rows))
             if isinstance(src, LazySource) and src.path == child_path:
-                read_count += 1
-                if read_count == 1:
+                child_reads[0] += 1
+                if child_reads[0] == 1:
                     reversed_child = pa.table(
                         {
                             "id": pa.array(
@@ -1197,10 +1203,11 @@ def test_chain_mutation_cannot_corrupt_outgoing_relation(tmp_path, monkeypatch) 
                     pq.write_table(reversed_child, child_path)
             yield from batches
 
-        return mutate_after_first_child_read
+        return mutate_after_first_child_read, child_reads
 
     # --- Sink path ---
-    monkeypatch.setattr(stream_driver_mod, "_iter_source_batches", make_mutator())
+    sink_mutator, sink_child_reads = make_mutator()
+    monkeypatch.setattr(stream_driver_mod, "_iter_source_batches", sink_mutator)
     target = tmp_path / "published-sink"
     run_fk_out_of_core(
         plan,
@@ -1212,13 +1219,17 @@ def test_chain_mutation_cannot_corrupt_outgoing_relation(tmp_path, monkeypatch) 
     )
     published_grandchild = pq.read_table(target / "grandchild.parquet")
     assert published_grandchild.to_pydict() == oracle.outputs["grandchild"].to_pydict()
+    # The relation build reads the phase-1 raw-key capture, never `child`'s
+    # source a second time: assert that single read directly.
+    assert sink_child_reads[0] == 1
 
     # Restore `child` to its unmutated state before the second (resident) run,
     # so this run's own single read is the one the mutator swaps after.
     pq.write_table(child_unmutated, child_path)
 
     # --- Resident (no-sink) path ---
-    monkeypatch.setattr(stream_driver_mod, "_iter_source_batches", make_mutator())
+    resident_mutator, resident_child_reads = make_mutator()
+    monkeypatch.setattr(stream_driver_mod, "_iter_source_batches", resident_mutator)
     resident_result = run_fk_out_of_core(
         plan,
         lazy_sources(paths),
@@ -1230,3 +1241,4 @@ def test_chain_mutation_cannot_corrupt_outgoing_relation(tmp_path, monkeypatch) 
         resident_result.outputs["grandchild"].to_pydict()
         == oracle.outputs["grandchild"].to_pydict()
     )
+    assert resident_child_reads[0] == 1
