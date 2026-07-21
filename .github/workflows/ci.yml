@@ -108,7 +108,30 @@ jobs:
         # under tests/) and only skips today because `build` is absent from
         # .[dev]; excluding the marker makes the dedicated packaging-gate its
         # unambiguous owner rather than relying on that transitive absence.
-        run: pytest tests -m "not benchmark and not packaging" --tb=short
+        # `not codspeed` for the same reason: tests/codspeed/ uses the
+        # pytest-codspeed `benchmark` fixture, which needs the [perf] extra
+        # this job does not install; excluding the marker keeps that missing
+        # optional dependency from ever being a fixture-not-found failure
+        # here. The dedicated codspeed workflow is its unambiguous owner.
+        # --junitxml: written for Mergify's merge-queue / flaky-test
+        # detection (see the upload step below); this job's own pass/fail
+        # is still the pytest exit code, unaffected by the flag.
+        run: >
+          pytest tests -m "not benchmark and not packaging and not codspeed"
+          --tb=short --junitxml=junit-results.xml
+
+      # Mergify consumes this artifact for merge-queue flaky-test detection
+      # once the app is installed (CAM-STEPS.md). `if: always()` so a failing
+      # run still uploads its results -- that is the case Mergify most needs
+      # to see. No-op today: nothing reads this artifact until the Mergify
+      # GitHub app is installed on the repo.
+      - name: Upload JUnit results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: junit-results
+          path: junit-results.xml
+          retention-days: 14
 
   # ml-gate: activates the ML field-recognition tests that importorskip
   # themselves out of the regression-gate above (which installs .[dev] only,

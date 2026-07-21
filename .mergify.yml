@@ -1,0 +1,41 @@
+# Mergify configuration -- CONSERVATIVE STARTER, inert until the Mergify
+# GitHub app is installed on this repo (see CAM-STEPS.md). Mergify only
+# reads this file and acts on PRs once the app has repo access; until then
+# this file does nothing.
+#
+# What this does once installed:
+#   - A merge queue named "default" that a PR joins via the `queue` label.
+#   - One queue rule: a PR may not enter the queue until ci / ruff, ci / mypy,
+#     and ci / regression-gate (the three jobs that already gate every PR,
+#     see .github/workflows/ci.yml) report success.
+#
+# What this deliberately does NOT do:
+#   - Auto-label or auto-queue any PR. Nothing merges without an explicit
+#     `queue` label from a human.
+#   - Reference ml-gate / packaging-gate / security / compat-preflight as
+#     required: those are conditional or path-scoped jobs (see their own
+#     workflow files) and do not run on every PR, so listing them as a queue
+#     condition would stall PRs they never fire for. Revisit once actual
+#     branch-protection required-checks are confirmed in Settings -> Branches
+#     (this file does not need to match branch protection to be valid, but
+#     Mergify's queue conditions should not be stricter than what a human
+#     reviewer already requires).
+#
+# JUnit results (ci.yml's regression-gate uploads junit-results.xml as a
+# workflow artifact) feed Mergify's flaky-test detection automatically once
+# the app is installed -- no additional config needed here for that part.
+
+queue_rules:
+  - name: default
+    merge_conditions:
+      - check-success = ci / ruff
+      - check-success = ci / mypy
+      - check-success = ci / regression-gate
+
+pull_request_rules:
+  - name: put approved PRs in the merge queue
+    conditions:
+      - label = queue
+    actions:
+      queue:
+        name: default

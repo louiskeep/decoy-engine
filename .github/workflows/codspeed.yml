@@ -1,0 +1,72 @@
+# CodSpeed instrumented performance benchmarks (tests/codspeed/).
+#
+# Distinct from benchmark.yml (manual/label-triggered wall-clock spikes,
+# posts a PR comment) and the tests/perf/ budget gate in ci.yml
+# (wall-clock + memory thresholds that fail a PR outright). This workflow
+# uploads CodSpeed's instrumented measurements, which stay comparable
+# across noisy shared runners the way wall-clock numbers do not -- useful
+# for tracking the shape of a regression over time, but it is not a merge
+# gate.
+#
+# No-op until Cam sets the CODSPEED_ENABLED repo variable to 'true' (Settings
+# -> Secrets and variables -> Actions -> Variables). The job-level `if` below
+# skips the whole job -- no checkout, no install, no runner minutes spent --
+# when the variable is unset, so this file changes nothing for contributors.
+# Activation also needs the CODSPEED_TOKEN secret (the action reads it below),
+# whose value comes from https://codspeed.io after linking the repo. Gating on
+# a variable rather than the secret is deliberate: the `secrets` context is not
+# available in a job-level `if`, so a secret-based gate here would never fire
+# even once the token is set (same reliable variable-gate pattern as docs.yml).
+
+name: codspeed
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/decoy_engine/**"
+      - "tests/codspeed/**"
+      - "pyproject.toml"
+      - ".github/workflows/codspeed.yml"
+  pull_request:
+    paths:
+      - "src/decoy_engine/**"
+      - "tests/codspeed/**"
+      - "pyproject.toml"
+      - ".github/workflows/codspeed.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  benchmarks:
+    # Gated on the CODSPEED_ENABLED repo variable, which is reliably available
+    # in a job-level `if` (unlike the `secrets` context). Unset -> whole job
+    # skipped, zero runner minutes. Cam sets both the variable (to enable) and
+    # the CODSPEED_TOKEN secret (read by the action step below).
+    if: ${{ vars.CODSPEED_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install engine + dev + perf extras
+        run: pip install -e ".[dev,perf]"
+
+      # The `codspeed` marker keeps this suite out of every other job's
+      # default pytest run (see the addopts comment in pyproject.toml); this
+      # is the one place it is selected explicitly, same pattern as
+      # ml-gate's `pytest -m ml` in ci.yml.
+      - name: Run CodSpeed benchmarks
+        uses: CodSpeedHQ/action@v4
+        with:
+          token: ${{ secrets.CODSPEED_TOKEN }}
+          run: pytest tests/codspeed/ -m codspeed --codspeed
