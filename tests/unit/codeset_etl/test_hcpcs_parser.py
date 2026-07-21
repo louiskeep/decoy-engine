@@ -112,3 +112,16 @@ class TestHcpcsParserParseArchive:
         parser = HcpcsParser()
         with pytest.raises(CodesetParseError, match="does not match"):
             parser.parse_archive(buf.getvalue(), pulled_on=_PULLED_ON)
+
+    def test_cdt_d_code_is_rejected_fail_closed(self):
+        """CDT dental codes (the D-series, e.g. "D0120") are ADA-copyrighted
+        and must never be bundled into this public-domain corpus. The shape
+        guard's letter class excludes D specifically so a D-shaped record
+        raises rather than passing the letter+4-digit check by accident."""
+        d_line = "D0120" + "00100" + "3" + "Periodic oral evaluation".ljust(80)
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("HCPC2026_JUL_ANWEB_06172026.txt", d_line + "\r\n")
+        parser = HcpcsParser()
+        with pytest.raises(CodesetParseError, match="does not match"):
+            parser.parse_archive(buf.getvalue(), pulled_on=_PULLED_ON)

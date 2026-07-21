@@ -46,18 +46,20 @@ ones that hold up against every line in a real download):
     every line, including non-terminal continuation chunks -- verified: a
     naive "concatenate the raw padded slices" join drops the word-boundary
     space between chunks whose trailing pad was stripped by the export (e.g.
-    "...defibrillation is" + "permitted in bls..." -> "isspermitted" without
+    "...defibrillation is" + "permitted in bls..." -> "ispermitted" without
     per-chunk stripping). Each chunk is stripped individually and the chunks
     for one code are joined with a single space instead.
   cols 92-119 (0-indexed [91:119]): short description (<=28 chars). Not
     used -- the task wants the long/full description when both exist.
 
 8,725 procedure codes (RIC='3' lines) in the verified 2026Q3 download (Q1
-2026 cross-check: 8,623), all matching the 5-char letter(A-V)+4-digit shape.
-No CPT-4 (Level I, all-numeric, AMA-copyrighted) or CDT (Level II Dental,
+2026 cross-check: 8,623), all matching the letter+4-digit shape enforced by
+``_CODE_PATTERN`` below (letters A-C, E-V; D excluded). No CPT-4 (Level I,
+all-numeric, AMA-copyrighted) or CDT (the D-series, Level II Dental,
 ADA-copyrighted) codes appear in this public export; the code-shape check in
-``_parse_lines`` fails closed if that ever changes, rather than silently
-absorbing a copyrighted code into a public-domain corpus.
+``_parse_lines`` fails closed on either -- a numeric code has no leading
+letter and a D-code is rejected by the D-excluding letter class -- rather
+than silently absorbing a copyrighted code into a public-domain corpus.
 
 Public domain (CMS; unlike the CPT-4/CDT codes that share this numbering
 system, HCPCS Level II codes and descriptors carry no third-party
@@ -82,9 +84,16 @@ HCPCS_SOURCE_URL = "https://www.cms.gov/files/zip/july-2026-alpha-numeric-hcpcs-
 # release, so this matches by substring rather than a hardcoded full name.
 _MEMBER_MARKER = "anweb"
 
-# HCPCS Level II code shape (task spec, verified against every RIC='3' row in
-# a real download): one letter A-V followed by 4 digits.
-_CODE_PATTERN = re.compile(r"^[A-V][0-9]{4}$")
+# HCPCS Level II code shape: one letter followed by 4 digits, verified
+# against every RIC='3' row in a real download. The letter class is A-V
+# EXCLUDING D: the entire D-range in a HCPCS context is CDT (Current Dental
+# Terminology, ADA-copyrighted, moved to the ADA), never legitimate
+# public-domain HCPCS Level II, so the guard rejects D-shaped codes
+# fail-closed rather than admitting an ADA-copyrighted code. The other
+# letters stay wide (A-C, E-V) even though some are absent from today's
+# export, so a future legitimate HCPCS code in a currently-unused range is
+# still accepted -- only D is a copyright concern.
+_CODE_PATTERN = re.compile(r"^[A-CE-V][0-9]{4}$")
 
 _CODE_END = 5
 _RIC_START, _RIC_END = 10, 11
@@ -130,9 +139,10 @@ def _parse_lines(text: str) -> dict[str, str]:
             if not _CODE_PATTERN.match(code):
                 raise CodesetParseError(
                     f"HCPCS procedure record has code {code!r}, which does not match "
-                    "the expected letter(A-V)+4-digit shape -- likely a CPT-4/CDT "
-                    "(copyrighted) code leaking into this export, or a source layout "
-                    "change; refusing to silently include it in a public-domain corpus."
+                    "the expected letter(A-C,E-V)+4-digit shape -- likely a CPT-4 "
+                    "(numeric) or CDT (D-series) copyrighted code leaking into this "
+                    "export, or a source layout change; refusing to silently include "
+                    "it in a public-domain corpus."
                 )
             current = code
             chunk = line[_LONGDESC_START:_LONGDESC_END].strip()
