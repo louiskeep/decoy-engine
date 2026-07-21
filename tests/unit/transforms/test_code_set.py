@@ -1828,7 +1828,7 @@ def _build_parity_corpus(tmp_path: pathlib.Path) -> pathlib.Path:
 class TestHoleSelectionParity:
     """Mandatory acceptance gate for HC-1 slice 2 (see module comment above)."""
 
-    @pytest.fixture()
+    @pytest.fixture
     def corpus_path(self, tmp_path: pathlib.Path) -> pathlib.Path:
         return _build_parity_corpus(tmp_path)
 
