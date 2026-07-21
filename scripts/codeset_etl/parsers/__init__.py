@@ -13,6 +13,7 @@ reachable from the CLI.
 from __future__ import annotations
 
 from ._base import CorpusParser, ParsedCorpus
+from ._hcpcs import HcpcsParser
 from ._icd10cm import Icd10CmParser
 from ._ndc import NdcParser
 
@@ -20,11 +21,12 @@ from ._ndc import NdcParser
 #: (transforms/_codeset_provenance.py) for the shipped-seed side: a single
 #: source of truth for "which corpora does this pipeline know how to build."
 #: Not required to cover every CODESET_REGISTRY name -- HC-1 slice 2 ships
-#: NDC end-to-end and scaffolds ICD-10-CM; HCPCS and MS-DRG parsers are
-#: follow-on work (see package docstring).
+#: NDC and ICD-10-CM end-to-end, plus this HCPCS follow-on; MS-DRG remains
+#: unbuilt (see package docstring).
 PARSERS: dict[str, CorpusParser] = {
     "ndc": NdcParser(),
     "icd10": Icd10CmParser(),
+    "hcpcs": HcpcsParser(),
 }
 
 __all__ = ["PARSERS", "CorpusParser", "ParsedCorpus"]
