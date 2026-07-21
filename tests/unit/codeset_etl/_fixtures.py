@@ -168,3 +168,63 @@ def build_ndc_zip(
         zf.writestr("product.txt", product_text)
         zf.writestr("package.txt", package_text)
     return buf.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# ICD-10-CM fixtures
+# ---------------------------------------------------------------------------
+
+# Real lines copied verbatim from a live CDC NCHS icd10cm-codes-2026.txt
+# download (pulled 2026-07-21), chosen to cover every chapter-range boundary
+# in parsers/_icd10cm.py's chapter table (the letter-spanning II and XIX
+# ranges, the alphanumeric XV boundary, the out-of-alphabetical-order XXII
+# range, and the FY2026 "QA0" addition to XVII) plus one unremarkable code,
+# so the unit suite never needs network access.
+ICD10CM_LINES = [
+    "A000    Cholera due to Vibrio cholerae 01, biovar cholerae",
+    "F0150   Vascular dementia, unspecified severity, without behavioral disturbance",
+    "C000    Malignant neoplasm of external upper lip",
+    "D490    Neoplasm of unspecified behavior of digestive system",
+    "D500    Iron deficiency anemia secondary to blood loss (chronic)",
+    "O99011  Anemia complicating pregnancy, first trimester",
+    "O9A111  Malignant neoplasm complicating pregnancy, first trimester",
+    "QA00101 SCN2A-related neurodevelopmental disorder",
+    "S0000XA Unspecified superficial injury of scalp, initial encounter",
+    "T880XXA Infection following immunization, initial encounter",
+    "V0001XA Pedestrian on foot injured in collision with roller-skater, initial encounter",
+    "Y990    Civilian activity done for income or pay",
+    "Z0000   Encounter for general adult medical examination without abnormal findings",
+    "U070    Vaping-related disorder",
+]
+
+#: Expected code -> chapter Roman numeral for every line in ICD10CM_LINES.
+ICD10CM_EXPECTED_CHAPTERS = {
+    "A000": "I",
+    "F0150": "V",
+    "C000": "II",
+    "D490": "II",
+    "D500": "III",
+    "O99011": "XV",
+    "O9A111": "XV",
+    "QA00101": "XVII",
+    "S0000XA": "XIX",
+    "T880XXA": "XIX",
+    "V0001XA": "XX",
+    "Y990": "XX",
+    "Z0000": "XXI",
+    "U070": "XXII",
+}
+
+
+def build_icd10cm_zip(
+    lines: list[str] | None = None,
+    *,
+    member: str = "icd10cm-codes-2026.txt",
+) -> bytes:
+    """Build a small ``icd10cm-Code Descriptions-*.zip``-shaped archive for tests."""
+    lines = ICD10CM_LINES if lines is None else lines
+    text = "\r\n".join(lines) + "\r\n"
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr(member, text)
+    return buf.getvalue()
