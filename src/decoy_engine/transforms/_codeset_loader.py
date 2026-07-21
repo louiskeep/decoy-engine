@@ -24,6 +24,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from decoy_engine.plan._errors import PlanCompileError
+from decoy_engine.transforms._codeset_index import SelectionIndexes, build_selection_indexes
 from decoy_engine.transforms._codeset_provenance import CODESET_REGISTRY, CodeSetProvenance
 
 _LOG = logging.getLogger(__name__)
@@ -38,20 +39,19 @@ _SHIPPED_CORPORA = frozenset(CODESET_REGISTRY)
 
 @dataclass(frozen=True)
 class _CorpusRecord:
-    """A loaded, validated corpus: rows, provenance, and a memoized chapter index.
+    """A loaded, validated corpus: rows, provenance, and memoized selection indices.
 
     Built once per cache key and cached in ``_shipped_cache`` / ``_customer_cache``
-    (module-level, HC-1 slice 1). ``chapter_index`` is a ``code -> chapter`` dict built
-    once at load time so ``code_set._get_chapter`` is O(1) per lookup instead
-    of an O(n) scan per call -- the fix that makes an ICD-10-CM-scale (~70k
-    row) corpus viable, since every masked VALUE used to re-scan the whole
-    corpus. ``None`` when the corpus has no ``chapter`` column
-    (chapter_preserve is then unavailable, same as before HC-1).
+    (module-level, HC-1 slice 1). ``selection`` (a ``SelectionIndexes``) is built
+    once at load time by ``_codeset_index.build_selection_indexes`` so
+    ``code_set``'s per-VALUE candidate selection is O(1) instead of the O(n)
+    scan / O(corpus) filter it would otherwise re-run per masked value -- what
+    makes an ICD-10-CM-scale (~70k row) corpus viable.
     """
 
     rows: list[dict[str, Any]]
     provenance: CodeSetProvenance | None
-    chapter_index: dict[str, str] | None
+    selection: SelectionIndexes
 
 
 # Memoized corpus loads. A corpus is read from disk, validated,
@@ -404,21 +404,14 @@ def _read_corpus_record(name: str, path: Path, *, is_shipped: bool) -> _CorpusRe
 
     rows.sort(key=lambda r: str(r["code"]))
 
-    # HC-1 slice 1: memoized code -> chapter dict, built once here instead of
-    # linear-scanned per _get_chapter call. Codes are unique by invariant at
-    # this point -- HC-2's `_check_corpus_schema` (run above, before this block)
-    # rejects a duplicate-code corpus outright -- so the `setdefault` is now
-    # just defensive: there is at most one row per code, no resolution to make.
-    chapter_index: dict[str, str] | None = None
-    if rows and "chapter" in rows[0]:
-        chapter_index = {}
-        for r in rows:
-            chapter_index.setdefault(str(r["code"]), str(r["chapter"]))
+    # HC-1 slice 1/2: memoized selection indices, built once instead of
+    # re-derived / re-filtered per masked VALUE by code_set.py's selection.
+    selection = build_selection_indexes(rows)
 
     provenance = CodeSetProvenance.from_parquet_metadata(tbl)
     _validate_provenance(name, path, provenance, is_shipped=is_shipped)
 
-    return _CorpusRecord(rows=rows, provenance=provenance, chapter_index=chapter_index)
+    return _CorpusRecord(rows=rows, provenance=provenance, selection=selection)
 
 
 def _validate_provenance(
