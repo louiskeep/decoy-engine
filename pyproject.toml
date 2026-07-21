@@ -284,7 +284,12 @@ exclude = [".claude", ".hypothesis"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+# "scripts" makes scripts/codeset_etl importable as a top-level package
+# from tests (HC-1 slice 2) without a sys.path hack in the test module
+# itself; scripts/ is never packaged into the wheel (see
+# [tool.hatch.build.targets.wheel] above), so this is test-only reach, not
+# a new runtime import surface.
+pythonpath = ["src", "scripts"]
 # addopts: belt-and-suspenders exclusion for the test-flight suite (primary
 # exclusion is the testflight/ location outside testpaths). The CLI -m flag
 # overrides addopts -m, so addopts alone is not sufficient -- but together
