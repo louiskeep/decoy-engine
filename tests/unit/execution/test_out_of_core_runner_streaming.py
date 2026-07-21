@@ -305,8 +305,8 @@ def test_remap_orphans_across_batches_sink_matches_oracle(tmp_path, monkeypatch)
     """OOC-B dennis LOW-2: REMAP end-to-end through the full three-phase zip at a
     small batch, with orphans split across multiple result batches.
 
-    The streamed join numbers rows globally but REMAP mints per OUTPUT batch, so
-    each `FkOutputCursor`-sliced batch must re-base row_nr and re-mint from its
+    The streamed join numbers rows globally but REMAP mints per resolved batch,
+    so each `JoinRowCursor`-sliced batch must re-base row_nr and re-mint from its
     own keys and still equal the whole-child oracle. `_JOIN_BATCH_ROWS=2` forces
     the five child rows (matched + genuine orphans interleaved) across several
     batches; the streamed-sink, resident, and pandas oracle outputs must be

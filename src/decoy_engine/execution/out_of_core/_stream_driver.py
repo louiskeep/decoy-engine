@@ -150,7 +150,9 @@ def stream_table(
     # the TRUE natural type here, before reconciliation, so it can be handed
     # to `emit_to_sink` instead of losing it to the payload store's fixed
     # spill schema. See `MaskedKeyStager`'s docstring for the full reasoning.
-    outgoing_parent_columns = frozenset(col for edge in outgoing_edges for col in edge.parent_columns)
+    outgoing_parent_columns = frozenset(
+        col for edge in outgoing_edges for col in edge.parent_columns
+    )
     payload_masked_observed: dict[str, set[pa.DataType]] = {
         col: set() for col in outgoing_parent_columns
     }

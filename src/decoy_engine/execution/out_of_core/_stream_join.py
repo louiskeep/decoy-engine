@@ -347,8 +347,7 @@ class StreamFkJoiner:
             for chunk in output_chunks[idx]:
                 self._observed_types[idx].add(chunk.type)
         return tuple(
-            _cast_chunks(output_chunks[idx], self._output_types[idx])
-            for idx in range(n_components)
+            _cast_chunks(output_chunks[idx], self._output_types[idx]) for idx in range(n_components)
         )
 
     def close(self) -> None:

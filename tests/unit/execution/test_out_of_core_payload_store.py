@@ -25,7 +25,9 @@ def _batches() -> list[pa.RecordBatch]:
 
 
 def _make_store(factory: str, tmp_path):
-    return ResidentPayloadStore() if factory == "resident" else SpillPayloadStore(tmp_path / "p.arrow")
+    return (
+        ResidentPayloadStore() if factory == "resident" else SpillPayloadStore(tmp_path / "p.arrow")
+    )
 
 
 @pytest.mark.parametrize("factory", ["resident", "spill"])

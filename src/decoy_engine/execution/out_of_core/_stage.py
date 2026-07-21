@@ -77,9 +77,7 @@ class MaskedKeyStager:
     def add(self, rewritten: pa.RecordBatch, reconciled: pa.RecordBatch) -> None:
         if self._track_observed:
             for col in self._columns:
-                self.observed[col].add(
-                    rewritten.column(rewritten.schema.get_field_index(col)).type
-                )
+                self.observed[col].add(rewritten.column(rewritten.schema.get_field_index(col)).type)
         self._writer.write_batch(
             pa.record_batch(
                 [reconciled.column(idx) for idx in self._indexes],
