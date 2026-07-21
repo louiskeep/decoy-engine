@@ -9,35 +9,64 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
-### Added (DPS-1..3: marginal differential privacy for `generate`, 2026-07-21)
+### Added (DPS-1..3 + Option A remediation: marginal differential privacy for `generate`, numeric only, 2026-07-21)
 
-Decoy's `mode: generate` output can now carry an honest (epsilon, delta)-DP
-guarantee over per-column MARGINALS, when the consumed snapshot was produced
-by a DP fit. Three pieces:
+Decoy's `mode: generate` output can carry an honest (epsilon, 0)-DP
+guarantee over per-column NUMERIC marginals, when the consumed snapshot was
+produced by a DP fit. **Categorical DP is not yet supported.** An earlier
+draft of this feature also attempted a categorical release (real vocabulary
+through a stable-histogram threshold); a privacy review (Codex, 2026-07-21)
+found the mechanism did not satisfy its stated (epsilon, delta) bound: the
+released label ORDER leaked unnoised rank information, suppressed noisy
+counts were summed into an observable `other_count`, counts were rounded
+before the threshold test (silently lowering the effective threshold), and
+fit SUCCESS itself was a data-dependent function of the private data (a
+30-distinct-value cliff between "categorical" and "freetext"). Rather than
+ship a guarantee that does not hold, `dp_mode` now rejects every
+object/string column outright at fit time (`dp_mode_categorical_unsupported`,
+`quality/snapshot.py`) and `global_settings.dp` rejects any categorical
+`type: statistical` generate column with one clear compile-time error
+(`dp_categorical_not_yet_supported`, `plan/_checks_dp.py`) instead of the
+prior two-error deadlock. A correct categorical mechanism is a tracked
+follow-up.
 
-- **DPS-1: data-independent support.** Numeric bin ranges come from a
-  caller-supplied `numeric_domains` entry (not the real min/max), and the
-  categorical label set is released through a stable-histogram threshold
-  (`tau = 1 + ceil((1/epsilon) * ln(1/(2*delta)))`), so the released SUPPORT
-  is itself epsilon-DP rather than noised counts over the real support
-  (`quality/snapshot.py`, `quality/dp.py`).
+- **DPS-1: data-independent numeric support.** Numeric bin ranges come from a
+  caller-supplied `numeric_domains` entry (not the real min/max) --
+  data-independent by construction, so releasing it spends NO privacy
+  budget at all (`quality/snapshot.py`).
 - **DPS-2: privacy-budget accountant.** `PrivacyBudget` composes every noisy
   release into one stated `(epsilon_total, delta_total)` by sequential
   composition (Dwork & Roth, *Algorithmic Foundations of DP*, Thm 3.16),
-  emitted in the snapshot's `dp` block (`quality/dp_budget.py`).
-- **DPS-3: consume-only contract + fail-closed gates.** `generate` reads only
-  the snapshot artifact (post-processing immunity, regression-locked);
-  `compile_plan` rejects the anti-DP knobs (`allow_real_categories`,
-  `high_cardinality`) and a DP-declared pipeline pointed at a non-DP-fit
-  snapshot (`plan/_checks_dp.py`). The honest-limits disclaimer is narrowed to
-  the proven marginal claim (`docs/what-we-cannot-prove.md`).
+  emitted in the snapshot's `dp` block (`quality/dp_budget.py`). A
+  numeric-only snapshot is `(epsilon_total, 0)`-DP -- pure, no delta spent.
+  A snapshot containing a categorical column would be
+  `(epsilon_total, delta_total)`-DP with `delta_total > 0` (the
+  stable-histogram threshold spends delta) -- which is exactly why a flat
+  "epsilon-DP" label was never accurate for that case, and exactly why
+  categorical columns are rejected before they can reach `generate` (above):
+  every snapshot this guarantee currently covers is numeric-only and pure.
+- **DPS-3: consume-only contract + fail-closed gates + budget enforcement.**
+  `generate` reads only the snapshot artifact (post-processing immunity,
+  regression-locked); `compile_plan` rejects the anti-DP knobs
+  (`allow_real_categories`, `high_cardinality`), a DP-declared pipeline
+  pointed at a non-DP-fit snapshot, and (new) a DP-declared pipeline whose
+  consumed artifacts' composed spend exceeds the DECLARED
+  `global_settings.dp.{epsilon,delta}` ceiling (`dp_budget_exceeded`;
+  previously the declared values were checked for presence only, never
+  compared against the artifact). The snapshot loader is also now
+  content-addressed (keyed by `sha256` of the file bytes, not the path), so
+  a long-lived process can never serve a stale cached artifact to a
+  DP-declared run after the file on disk changes underneath it
+  (`generation/statistical/_spec.py`, `plan/_checks_dp.py`). The
+  honest-limits disclaimer is narrowed to the proven marginal claim
+  (`docs/what-we-cannot-prove.md`).
 
-Scope: MARGINALS only (not joint structure), numeric and categorical columns
-only (not datetime/freetext), `generate` only (masked output carries no
-epsilon). The noise is drawn from fresh OS entropy, so DP-fit snapshots are
-deliberately not reproducible run to run; see `docs/what-we-cannot-prove.md`.
-The fit-time entry point (`decoy fit --epsilon`) lives in the CLI repo; the
-engine ships the mechanism and the consume-side enforcement.
+Scope: NUMERIC marginals only (not categorical, not joint structure, not
+datetime/freetext), `generate` only (masked output carries no epsilon). The
+noise is drawn from fresh OS entropy, so DP-fit snapshots are deliberately
+not reproducible run to run; see `docs/what-we-cannot-prove.md`. The fit-time
+entry point (`decoy fit --epsilon`) lives in the CLI repo; the engine ships
+the mechanism and the consume-side enforcement.
 
 ### Added (TX-1: activate + document `text_redact` NER, 2026-07-20)
 
