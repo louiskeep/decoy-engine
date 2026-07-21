@@ -418,3 +418,83 @@ def build_msdrg_zip(
         # contains, not an idealized single-file archive.
         zf.writestr("MDC_01_definitions.txt", "not the appendix A file\r\n")
     return buf.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# ICD-10-PCS fixtures
+# ---------------------------------------------------------------------------
+
+# Verbatim lines from a real CMS icd10pcs_codes_2026.txt download (pulled
+# 2026-07-21) -- see parsers/_icd10pcs.py's module docstring for the
+# verified fixed layout ([0:7] code, [8:] description, CRLF-terminated).
+# Chosen to cover several different Sections, including the first real line
+# of the file (Section "0", Medical and Surgical), an Imaging ("B") code,
+# a New Technology ("X") code, an Obstetrics ("1") code, and a Mental
+# Health ("G") code.
+PCS_LINES = [
+    "0016070 Bypass Cerebral Ventricle to Nasopharynx with Autologous Tissue "
+    "Substitute, Open Approach",
+    "B00B0ZZ Plain Radiography of Spinal Cord using High Osmolar Contrast",
+    "X051329 Destruction of Renal Sympathetic Nerve(s) using Ultrasound Ablation, "
+    "Percutaneous Approach, New Technology Group 9",
+    "102073Z Change Monitoring Electrode in Products of Conception, Via Natural "
+    "or Artificial Opening",
+    "GZ10ZZZ Psychological Tests, Developmental",
+]
+
+#: Expected code -> (description, chapter/section) for every line in PCS_LINES.
+PCS_EXPECTED_ROWS: dict[str, dict[str, str]] = {
+    "0016070": {
+        "description": (
+            "Bypass Cerebral Ventricle to Nasopharynx with Autologous Tissue "
+            "Substitute, Open Approach"
+        ),
+        "chapter": "0",
+    },
+    "B00B0ZZ": {
+        "description": "Plain Radiography of Spinal Cord using High Osmolar Contrast",
+        "chapter": "B",
+    },
+    "X051329": {
+        "description": (
+            "Destruction of Renal Sympathetic Nerve(s) using Ultrasound Ablation, "
+            "Percutaneous Approach, New Technology Group 9"
+        ),
+        "chapter": "X",
+    },
+    "102073Z": {
+        "description": (
+            "Change Monitoring Electrode in Products of Conception, Via Natural "
+            "or Artificial Opening"
+        ),
+        "chapter": "1",
+    },
+    "GZ10ZZZ": {
+        "description": "Psychological Tests, Developmental",
+        "chapter": "G",
+    },
+}
+
+
+def build_pcs_zip(
+    *,
+    lines: list[str] | None = None,
+    member: str = "icd10pcs_codes_2026.txt",
+    include_addenda: bool = True,
+) -> bytes:
+    """Build a small ``<year>-icd-10-pcs-codes-file.zip``-shaped archive for tests.
+
+    Includes every line in PCS_LINES by default plus, when `include_addenda`
+    is True (the default), a second real non-codes member (the year-to-year
+    addenda file) -- present in every real download alongside the codes
+    file, so the member-lookup test fixture matches what a real zip actually
+    contains, not an idealized single-file archive.
+    """
+    lines = PCS_LINES if lines is None else lines
+    text = "\r\n".join(lines) + "\r\n"
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr(member, text)
+        if include_addenda:
+            zf.writestr("codes_addenda_2026.txt", "not the codes file\r\n")
+    return buf.getvalue()
