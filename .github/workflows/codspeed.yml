@@ -68,5 +68,9 @@ jobs:
       - name: Run CodSpeed benchmarks
         uses: CodSpeedHQ/action@v4
         with:
+          # v4 requires an explicit mode (v3 defaulted to instrumentation).
+          # `simulation` is the CPU-instruction measurement (runner-independent,
+          # the stable signal we want); `instrumentation` is its deprecated alias.
+          mode: simulation
           token: ${{ secrets.CODSPEED_TOKEN }}
           run: pytest tests/codspeed/ -m codspeed --codspeed
