@@ -110,13 +110,15 @@ _TABLE_NAMES = ("parent", "child", "grandchild")
 _MIB = 1024 * 1024
 
 # The probe's own worst-case count of simultaneously-live DuckDB instances,
-# computed exactly from the fixture's parent->child->grandchild chain (the
-# middle table's incoming joiner runs concurrently with its outgoing relation
-# build = 2). Passed to `resolve_ooc_memory_limit` so the per-instance
-# memory_limit matches the real route, NOT the module's conservative default
-# of 4. The policy does not change the edge structure, so any policy's graph
-# gives the same count.
-_PROBE_MAX_CONCURRENT_INSTANCES = _max_concurrent_ooc_instances(make_graph(OrphanPolicy.PRESERVE))
+# computed exactly from the fixture's parent->child->grandchild chain. This
+# probe runs the SINK route, where `emit_to_sink` closes each joiner before the
+# relation build opens, so joiners and build never co-live: the sink peak is
+# max(incoming, 1) = 1 per table, not 2. Passed to `resolve_ooc_memory_limit`
+# so the per-instance memory_limit matches the real sink route, NOT the module's
+# conservative default. The policy does not change the edge structure.
+_PROBE_MAX_CONCURRENT_INSTANCES = _max_concurrent_ooc_instances(
+    make_graph(OrphanPolicy.PRESERVE), sink=True
+)
 
 _RLIMITS = {"as": resource.RLIMIT_AS, "data": resource.RLIMIT_DATA}
 
@@ -176,12 +178,11 @@ _GLIBC_TLS_OOM_MARKER = "cannot allocate memory for thread-local data"
 #
 # That ~80% is the budget BEFORE `resolve_ooc_memory_limit` divides by the
 # run's concurrency to size the per-DuckDB-instance memory_limit. The probe
-# passes the fixture's ACTUAL concurrency (`_PROBE_MAX_CONCURRENT_INSTANCES`,
-# the linear-chain worst case of 2), so one DuckDB instance's limit is
-# cap / 1.25 / 2 = ~40% of the cap, and the two instances that can be live at
-# once (a joiner plus a concurrent relation build) sum to ~80% -- NOT the
-# default divisor of 4, which would have handed each instance only ~20% (below
-# even the old cap/4 that already failed).
+# runs the SINK route, whose peak co-live is ONE instance
+# (`_PROBE_MAX_CONCURRENT_INSTANCES` == 1: `emit_to_sink` closes each joiner
+# before the relation build opens), so that instance's limit is
+# cap / 1.25 / 1 = ~80% of the cap -- NOT the default divisor of 4, which
+# would have handed it only ~20% (below even the old cap/4 that already failed).
 _DUCKDB_CAP_FRACTION = 1.25
 
 # Allocator pinning for capped workers. Arrow's default (jemalloc/mimalloc)

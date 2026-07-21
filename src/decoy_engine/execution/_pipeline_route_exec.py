@@ -202,12 +202,35 @@ def run_out_of_core_route(
     conservative fraction is reserved for the router's full-frame admission
     price and must not be widened; see `_budget.py`'s module docstring) so
     DuckDB gets most of the ceiling while staying bounded regardless of table
-    cardinality, divided across the graph's exact worst-case concurrent
-    DuckDB-instance count (`_max_concurrent_ooc_instances`). If host-RAM
-    detection fails (`out_of_core_memory_detection_failed`), the route still
-    runs on its pinned batch default + DuckDB's own default limit rather than
-    newly failing a job full-frame would have completed; a caller that needs
-    a hard cap passes an explicit `budget_bytes` (which never falls back).
+    cardinality. The resolved UNDIVIDED `budget.budget_bytes` is threaded into
+    `run_fk_out_of_core` alongside the legacy `memory_limit` string (SPRINT-1
+    Part A) so each DuckDB connection is capped by its own phase-local
+    liveness rather than the flat `_max_concurrent_ooc_instances` global-peak
+    divisor -- see `_memory_estimate.py`'s module docstring for the root cause
+    this fixes. If host-RAM detection fails (`out_of_core_memory_detection_
+    failed`), the route still runs on its pinned batch default + DuckDB's own
+    default limit rather than newly failing a job full-frame would have
+    completed; a caller that needs a hard cap passes an explicit `budget_bytes`
+    (which never falls back).
+
+    Memory preflight (SPRINT-1 Part B, the never-crash guarantee): before any
+    DuckDB work, `enforce_ooc_memory_preflight` predicts each build-phase
+    table's relation-build resident floor (`_parent_table_row_counts`) and
+    gates it against the EXACT cap that table's build connection will
+    receive -- `resolved_budget_bytes` undivided on the sink path, `//
+    (incoming_edges + 1)` on the resident path, the SAME `resolve_ooc_memory_
+    limit` call and the SAME arithmetic `resolve_phase_memory_limits` uses to
+    size the real connection, reused rather than re-derived. Either warns
+    (near a table's own cap) or HARD-FAILS (`out_of_core_insufficient_
+    memory`, a table's floor exceeding its own cap) -- unlike the disk
+    preflight below, this one actually rejects, because a resident-memory
+    floor above its cap has no runtime backstop (DuckDB's own allocator
+    raises an uncatchable-at-a-clean-boundary "bad allocation", not a coded
+    error at a table boundary). Gating against a fraction of the raw
+    detected ceiling instead of this exact cap is the denomination mismatch
+    this sprint's remediation closes (a preflight fraction and Part A's real
+    per-table cap were never guaranteed to be the same number, so a job could
+    be admitted then starved). See `_memory_estimate.py`'s module docstring.
 
     Disk (OOC-D): `temp_disk_budget_bytes` is threaded into `run_fk_out_of_core`
     as `_TEMP_DISK_SAFETY_FRACTION` (0.9) of the free space `shutil.disk_usage`
@@ -252,6 +275,7 @@ def run_out_of_core_route(
     """
     from decoy_engine.execution._sequential import table_topo_order
     from decoy_engine.execution.out_of_core import resolve_ooc_memory_limit, run_fk_out_of_core
+    from decoy_engine.execution.out_of_core._memory_estimate import enforce_ooc_memory_preflight
     from decoy_engine.execution.out_of_core._spill_estimate import default_ooc_temp_root
 
     resolved_sources = sources
@@ -264,6 +288,7 @@ def run_out_of_core_route(
 
     memory_limit: str | None = None
     batch_rows: int | None = None
+    resolved_budget_bytes: int | None = None
     try:
         # `resolve_ooc_memory_limit`, NOT `resolve_budget`: this is the
         # DuckDB memory_limit for the execution runner, not the router's
@@ -274,9 +299,17 @@ def run_out_of_core_route(
         # THIS job's own relationship graph, not left at the module's
         # conservative default -- the graph is already in hand here.
         budget = resolve_ooc_memory_limit(
-            budget_bytes, max_concurrent_instances=_max_concurrent_ooc_instances(graph)
+            budget_bytes,
+            max_concurrent_instances=_max_concurrent_ooc_instances(graph, sink=sink is not None),
         )
         memory_limit, batch_rows = budget.memory_limit, budget.batch_rows
+        # SPRINT-1 Part A: the UNDIVIDED total, threaded alongside the legacy
+        # flat `memory_limit` so `run_fk_out_of_core` can size each DuckDB
+        # connection by its own phase-local liveness instead of the run's
+        # single global-peak divisor (see `_memory_estimate.py`). Resolved
+        # together with `memory_limit`/`batch_rows` above so the three never
+        # disagree about whether resolution succeeded.
+        resolved_budget_bytes = budget.budget_bytes
     except ExecutionError:
         # Host-RAM detection failed and no explicit budget was given: fall back
         # to the route's pinned batch default + DuckDB's default limit rather
@@ -299,6 +332,38 @@ def run_out_of_core_route(
         # advisory (warn-only) and never blocks a job.
         pass
 
+    # SPRINT-1 Part B: the hybrid memory capacity preflight -- the never-crash
+    # guarantee underneath Part A's phase-aware caps above. Wired HERE rather
+    # than at `_pipeline_routing_signals.resolve_execution_route` (the disk
+    # preflight's site): that module sits at its own LOC cap with no headroom,
+    # and this site already has per-table row counts in hand via
+    # `resolved_sources` (both `pa.Table` and `LazySource` expose `.num_rows`
+    # in O(1), so no source is materialized just to count it) -- the same
+    # "site with row counts already in hand" precedent the disk preflight
+    # itself establishes. Runs strictly before `run_fk_out_of_core` below, so
+    # a job whose predicted floor cannot fit is refused before any DuckDB
+    # work starts.
+    #
+    # Gated against `resolved_budget_bytes` -- THE SAME `OutOfCoreBudget.
+    # budget_bytes` resolved above at the ONE `resolve_ooc_memory_limit` call
+    # site, reused rather than re-derived -- and `sink is not None` /
+    # `_incoming_edge_counts(graph)`, so `cap(t)` here is computed with the
+    # IDENTICAL arithmetic `resolve_phase_memory_limits` uses to size the
+    # real connection. This is the fix for the BLOCKER: a preflight that
+    # instead re-derived its own fraction of the raw detected ceiling could
+    # admit a job whose real, phase-aware cap was starved -- the fraction and
+    # the true cap were never guaranteed to be the same number. Reusing
+    # `resolved_budget_bytes` verbatim makes that denomination mismatch
+    # structurally impossible: when it is `None` (host-RAM detection failed,
+    # no explicit budget given), the gate fails OPEN, matching Part A's own
+    # fall-through to the flat `memory_limit` in that same case.
+    enforce_ooc_memory_preflight(
+        _parent_table_row_counts(resolved_sources, graph),
+        budget_bytes=resolved_budget_bytes,
+        sink=sink is not None,
+        incoming_edge_counts=_incoming_edge_counts(graph),
+    )
+
     ooc_result = run_fk_out_of_core(
         plan,
         resolved_sources,
@@ -307,6 +372,7 @@ def run_out_of_core_route(
         sink=sink,
         memory_limit=memory_limit,
         batch_rows=batch_rows,
+        budget_bytes=resolved_budget_bytes,
         temp_disk_budget_bytes=temp_disk_budget_bytes,
         unconfigured_column_policy=unconfigured_column_policy,
         key_provider=key_provider,
@@ -336,32 +402,89 @@ def run_out_of_core_route(
     )
 
 
-def _max_concurrent_ooc_instances(graph: RelationshipGraph) -> int:
-    """Conservative upper bound on concurrent full-budget DuckDB instances,
-    sizing `resolve_ooc_memory_limit`'s `max_concurrent_instances` precisely
-    instead of falling back to that function's conservative default.
+def _incoming_edge_counts(graph: RelationshipGraph) -> dict[str, int]:
+    """Fan-in per table: the count of edges where the table is the CHILD
+    side, i.e. how many `ChildFkBatchJoiner` connections are co-live while
+    that table streams.
+
+    Shared by `_max_concurrent_ooc_instances` (the run's single global-peak
+    divisor) and `enforce_ooc_memory_preflight` (each table's OWN resident-
+    path build cap, `_memory_estimate` module docstring) -- both need this
+    same per-table fan-in, computed once from the graph rather than twice.
+    """
+    counts: dict[str, int] = {}
+    for edge in graph.edges:
+        counts[edge.child_table] = counts.get(edge.child_table, 0) + 1
+    return counts
+
+
+def _max_concurrent_ooc_instances(graph: RelationshipGraph, *, sink: bool) -> int:
+    """Exact upper bound on concurrent full-budget DuckDB instances, sizing
+    `resolve_ooc_memory_limit`'s `max_concurrent_instances` from a job's own
+    graph instead of that function's conservative default.
 
     One table streams at a time, holding one `ChildFkBatchJoiner` per INCOMING
-    edge. On the sink path, `emit_to_sink` closes joiners after the stream
-    drains (via `on_stream_consumed` in `_emit.py`) before the relation build,
-    peaking at max(incoming_edges, 1). On the resident path (no sink), joiners
-    stay open during the relation build, peaking at incoming_edges + 1. This
-    function returns the resident peak: exact for the resident path, conservative
-    (over-provisions) for the sink path. The run's worst case is the max over
-    every table the graph touches -- a schema-level property, safe to compute
-    once up front (never re-derived per batch or scaled by row count).
+    edge. Sink path: `emit_to_sink` closes every joiner (`on_stream_consumed`
+    in `_emit.py`) BEFORE the relation build opens, so joiners and build never
+    co-live -- the peak is whichever single phase is wider, max(incoming, 1).
+    Resident path (no sink): joiners stay open THROUGH the build, so they sum
+    to incoming + 1. `sink` selects the correct model; returning the resident
+    peak for a sink job over-counts liveness that never exists, which
+    `resolve_ooc_memory_limit`'s fail-closed fan-in guard then reads as a false
+    refusal. The run's worst case is the max over every table the graph touches
+    -- a schema-level property, safe to compute once up front.
     """
-    incoming_counts: dict[str, int] = {}
-    has_outgoing: set[str] = set()
-    for edge in graph.edges:
-        incoming_counts[edge.child_table] = incoming_counts.get(edge.child_table, 0) + 1
-        has_outgoing.add(edge.parent_table)
+    incoming_counts = _incoming_edge_counts(graph)
+    has_outgoing: set[str] = {edge.parent_table for edge in graph.edges}
     tables = set(incoming_counts) | has_outgoing
     if not tables:
         return 1
-    return max(
-        incoming_counts.get(table, 0) + (1 if table in has_outgoing else 0) for table in tables
-    )
+
+    def _peak(table: str) -> int:
+        incoming = incoming_counts.get(table, 0)
+        build = 1 if table in has_outgoing else 0
+        return max(incoming, build) if sink else incoming + build
+
+    return max(_peak(table) for table in tables)
+
+
+def _parent_table_row_counts(
+    sources: Mapping[str, pa.Table | LazySource], graph: RelationshipGraph
+) -> dict[str, int]:
+    """One row count per table with an outgoing FK edge (a build-phase
+    table), feeding `enforce_ooc_memory_preflight`'s per-table floor
+    prediction.
+
+    Parent ROW COUNT (not distinct-key count) is priced because it is a safe
+    upper bound on the relation-build's true cardinality (distinct keys can
+    never exceed rows) and is available without touching column data: both
+    `pa.Table` and `LazySource` expose `.num_rows` in O(1) (an in-memory
+    attribute, or a Parquet footer read that never scans row-group data).
+
+    FAIL-CLOSED, not a silent under-count: a graph parent table absent from
+    `sources` used to simply contribute 0 rows, which UNDER-predicts the
+    floor -- admitting a job the preflight should have refused is exactly
+    the wrong direction for a gate whose only job is refusing before an OOM
+    (LOW remediation). `run_fk_out_of_core` does raise its own coded
+    `out_of_core_source_missing` for the same gap, but only AFTER this
+    preflight would have already (wrongly) admitted the job on a stale
+    ordering guarantee; this function raises fail-closed itself instead of
+    depending on that.
+    """
+    parent_tables = {edge.parent_table for edge in graph.edges}
+    rows: dict[str, int] = {}
+    for table in parent_tables:
+        source = sources.get(table)
+        if source is None:
+            raise ExecutionError(
+                code="out_of_core_parent_rows_unresolved",
+                message=(
+                    f"out-of-core memory preflight cannot price table {table!r}: it has an "
+                    "outgoing FK edge but no resolvable source."
+                ),
+            )
+        rows[table] = source.num_rows
+    return rows
 
 
 def run_mask_chunked(

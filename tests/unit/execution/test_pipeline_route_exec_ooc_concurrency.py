@@ -32,46 +32,59 @@ def _graph(*edges: RelationshipEdge) -> RelationshipGraph:
 
 class TestMaxConcurrentOocInstances:
     def test_no_edges_yields_one(self) -> None:
-        assert _max_concurrent_ooc_instances(_graph()) == 1
+        assert _max_concurrent_ooc_instances(_graph(), sink=False) == 1
+        assert _max_concurrent_ooc_instances(_graph(), sink=True) == 1
 
     def test_single_chain_peaks_at_two(self) -> None:
         # parent -> child -> grandchild: "child" has 1 incoming edge (from
-        # parent) AND 1 outgoing edge (to grandchild) live at once = 2. This
-        # is the real 100M-row cloud benchmark's shape.
+        # parent) AND 1 outgoing edge (to grandchild) live at once = 2 on the
+        # resident path. This is the real 100M-row cloud benchmark's shape.
         graph = _graph(_edge("parent", "child"), _edge("child", "grandchild"))
-        assert _max_concurrent_ooc_instances(graph) == 2
+        assert _max_concurrent_ooc_instances(graph, sink=False) == 2
+
+    def test_single_chain_sink_peaks_at_one(self) -> None:
+        # Same chain on the SINK path: "child"'s joiner closes before its
+        # relation build opens, so the peak is max(1 incoming, 1 build) = 1.
+        graph = _graph(_edge("parent", "child"), _edge("child", "grandchild"))
+        assert _max_concurrent_ooc_instances(graph, sink=True) == 1
 
     def test_leaf_table_with_no_outgoing_edge_does_not_add_one(self) -> None:
         # A single edge into a leaf child: 1 incoming joiner, no outgoing
-        # relation build concurrent with it.
+        # relation build concurrent with it -- 1 on either path.
         graph = _graph(_edge("parent", "child"))
-        assert _max_concurrent_ooc_instances(graph) == 1
+        assert _max_concurrent_ooc_instances(graph, sink=False) == 1
+        assert _max_concurrent_ooc_instances(graph, sink=True) == 1
 
     def test_wide_fan_in_dominates(self) -> None:
         # One table with 5 incoming edges (from 5 different parents) and no
-        # outgoing edge of its own: 5 joiners live at once, no relation build.
+        # outgoing edge of its own: 5 joiners live at once, no relation build
+        # -- 5 on either path (max(5, 0) == 5 + 0).
         graph = _graph(*(_edge(f"parent{i}", "hub") for i in range(5)))
-        assert _max_concurrent_ooc_instances(graph) == 5
+        assert _max_concurrent_ooc_instances(graph, sink=False) == 5
+        assert _max_concurrent_ooc_instances(graph, sink=True) == 5
 
-    def test_fan_in_plus_outgoing_edge_adds_one(self) -> None:
-        # "hub" has 3 incoming edges AND 1 outgoing edge to "leaf": worst
-        # case is 3 joiners + 1 concurrent relation build = 4.
+    def test_fan_in_plus_outgoing_edge_adds_one_resident_only(self) -> None:
+        # "hub" has 3 incoming edges AND 1 outgoing edge to "leaf". Resident
+        # path: 3 joiners + 1 concurrent build = 4. Sink path: joiners close
+        # before the build, so the peak is max(3, 1) = 3.
         graph = _graph(
             _edge("p0", "hub"),
             _edge("p1", "hub"),
             _edge("p2", "hub"),
             _edge("hub", "leaf"),
         )
-        assert _max_concurrent_ooc_instances(graph) == 4
+        assert _max_concurrent_ooc_instances(graph, sink=False) == 4
+        assert _max_concurrent_ooc_instances(graph, sink=True) == 3
 
     def test_result_is_the_max_across_tables_not_the_sum(self) -> None:
         # Two independent chains: neither table sees the other's edges, so
-        # the run's worst case is the larger single-table peak (2), not the
-        # combined edge count (4).
+        # the run's worst case is the larger single-table peak (2 resident,
+        # 1 sink), not the combined edge count (4).
         graph = _graph(
             _edge("p1", "c1"),
             _edge("c1", "g1"),
             _edge("p2", "c2"),
             _edge("c2", "g2"),
         )
-        assert _max_concurrent_ooc_instances(graph) == 2
+        assert _max_concurrent_ooc_instances(graph, sink=False) == 2
+        assert _max_concurrent_ooc_instances(graph, sink=True) == 1

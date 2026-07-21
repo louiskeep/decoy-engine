@@ -71,6 +71,7 @@ from decoy_engine.execution.out_of_core._mask import (
     masked_output_type,
     table_seed,
 )
+from decoy_engine.execution.out_of_core._memory_estimate import resolve_phase_memory_limits
 from decoy_engine.execution.out_of_core._relation import build_parent_key_relation_aligned
 from decoy_engine.execution.out_of_core._source import LazySource
 from decoy_engine.keyprovider import require_mask_key
@@ -110,6 +111,7 @@ def run_fk_out_of_core(
     temp_dir: Path | None = None,
     memory_limit: str | None = None,
     batch_rows: int | None = None,
+    budget_bytes: int | None = None,
     temp_disk_budget_bytes: int | None = None,
     unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
     key_provider: KeyProvider | None = None,
@@ -129,10 +131,17 @@ def run_fk_out_of_core(
 
     `batch_rows` bounds every streamed pass (default: the pinned module
     constant); any legal value is byte-transparent on the output.
-    `memory_limit` and `batch_rows` are typically sized together from one
-    budget (`_budget.resolve_budget`). `temp_disk_budget_bytes` bounds the
-    spill footprint under this run's temp root, checked at each table
-    boundary; exceeding it aborts the sink and fails closed.
+    `budget_bytes` (the UNDIVIDED per-run budget) is preferred over the flat
+    `memory_limit` string when given: each DuckDB connection this route opens
+    is then capped by its own PHASE-local liveness via `_memory_estimate.
+    resolve_phase_memory_limits`, not the run's single global-peak divisor
+    (SPRINT-1 Part A; see that module's docstring for the root cause this
+    fixes). `memory_limit` alone is the fallback -- every connection gets the
+    same flat cap, matching pre-Part-A behavior -- used when `budget_bytes`
+    is None (host-RAM detection failed and no explicit budget was supplied).
+    `temp_disk_budget_bytes` bounds the spill footprint under this run's
+    temp root, checked at each table boundary; exceeding it aborts the sink
+    and fails closed.
     """
     if batch_rows is not None and batch_rows < 1:
         raise ExecutionError(
@@ -191,6 +200,7 @@ def run_fk_out_of_core(
                 staging_path=root / "staged" / table_name / "masked_keys.parquet",
                 memory_limit=memory_limit,
                 batch_rows=batch_rows,
+                budget_bytes=budget_bytes,
                 sink=sink,
                 outputs=outputs,
                 warnings=warnings,
@@ -247,6 +257,7 @@ def _stream_table(
     staging_path: Path,
     memory_limit: str | None,
     batch_rows: int | None,
+    budget_bytes: int | None,
     sink: TransactionalSink | None,
     outputs: dict[str, pa.Table],
     warnings: list[QualityWarning],
@@ -262,7 +273,10 @@ def _stream_table(
     output (staged narrow copy or resident table) and stored into
     `parent_relations` for the children later in the topo order. WARN orphan
     totals are aggregated over the whole stream and appended to `warnings` in
-    incoming-edge order, matching whole-table reporting.
+    incoming-edge order, matching whole-table reporting. `budget_bytes`
+    (when not None) sizes the joiner/build DuckDB connections by their own
+    phase-local liveness rather than one flat `memory_limit` (see
+    `_memory_estimate.resolve_phase_memory_limits`).
 
     `code_set_corpora` (default None): the shared corpus-provenance evidence
     sink, mutated in place like `outputs`/`warnings`. Each column's evidence
@@ -284,6 +298,18 @@ def _stream_table(
     # Evidence is resolved from plan+schema before any row is read; the commit
     # is deferred until the stream has seen a non-missing value per column.
     code_set_null_seen: dict[str, bool] = dict.fromkeys(code_set_corpus_records, False)
+    # Phase-local caps (Part A + HIGH): a resident-path joiner stays live
+    # through this table's own build, so it opens at the build's cap; sink-ness
+    # selects the joiner cap here since memory_limit is fixed at open.
+    sink_joiner, resident_joiner, sink_build_memory_limit, resident_build_memory_limit = (
+        resolve_phase_memory_limits(
+            budget_bytes=budget_bytes,
+            memory_limit=memory_limit,
+            incoming_edges=len(incoming_edges),
+            sink=sink is not None,
+        )
+    )
+    joiner_memory_limit = sink_joiner if sink is not None else resident_joiner
     joiners: list[ChildFkBatchJoiner] = []
     try:
         for idx, edge in enumerate(incoming_edges):
@@ -294,7 +320,7 @@ def _stream_table(
                     parent_relations[edge],
                     source_schema,
                     temp_dir / f"edge_{idx}",
-                    memory_limit,
+                    joiner_memory_limit,
                     mask_key=mask_key,
                 )
             )
@@ -369,7 +395,7 @@ def _stream_table(
                 parent_relations=parent_relations,
                 relation_dir=relation_dir,
                 staging_path=staging_path,
-                memory_limit=memory_limit,
+                memory_limit=sink_build_memory_limit,
                 batch_rows=batch_rows,
                 sink=sink,
                 source_schema=source_schema,
@@ -389,7 +415,7 @@ def _stream_table(
                     masked_parent=table_out,
                     edge=edge,
                     temp_dir=relation_dir,
-                    memory_limit=memory_limit,
+                    memory_limit=resident_build_memory_limit,
                     batch_rows=batch_rows,
                 )
         # Deferred commit: `rewritten()` is fully consumed by now, so
