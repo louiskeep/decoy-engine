@@ -24,13 +24,16 @@ Architecture (per-source plug-in over a shared pipeline):
                             protocol every source implements.
   ``parsers/_ndc.py``    -- FDA NDC Directory (``ndctext.zip``). Implemented
                             end-to-end; this slice's proof corpus.
-  ``parsers/_icd10cm.py``-- CDC NCHS ICD-10-CM. Scaffolded: wired with the
-                            real source URL and file layout, raises
-                            ``NotImplementedError`` from ``parse_archive``
-                            (see that module's docstring for the follow-on
-                            spec). HCPCS and MS-DRG are not scaffolded in
-                            this slice; add a sibling parser module + a
-                            ``PARSERS`` registry entry to extend.
+  ``parsers/_icd10cm.py``-- CDC/CMS ICD-10-CM code descriptions (FY2026).
+                            Implemented end-to-end, with clinical-chapter
+                            (1-22) derivation.
+  ``parsers/_hcpcs.py``  -- CMS HCPCS Level II (ANWEB quarterly). Implemented
+                            end-to-end; copyright fail-closed on CDT/CPT.
+  ``parsers/_msdrg.py``  -- CMS MS-DRG Definitions Manual Appendix A (v43.0).
+                            Implemented end-to-end; code/description only (no
+                            chapter -- see that module's docstring).
+                            To add another source: drop in a sibling parser
+                            module + a ``PARSERS`` registry entry.
   ``_fetch.py``          -- HTTPS-only download with an injectable fetch
                             function (tests mock this; never hit the network
                             in the unit suite) and a fail-closed minimum-size
