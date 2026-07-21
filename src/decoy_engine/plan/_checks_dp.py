@@ -301,12 +301,15 @@ def check_dp_snapshot_provenance(config: dict[str, Any]) -> None:
     range first (a tampered or hand-edited artifact with a missing/NaN/
     negative `delta_total` was previously accepted with no scrutiny at all).
     The declared ceiling itself (`dp_settings["epsilon"/"delta"]`) is
-    trusted as already `DpGenerateSettings`-shaped (`epsilon > 0`,
-    `0 < delta < 1`) when both coerce to finite numbers in range; when it
-    does not, the budget comparison is silently skipped here (a malformed
-    DECLARATION is a schema-validation concern, not this check's job --
-    this check enforces the declared ceiling against the artifacts once the
-    ceiling itself is well-formed).
+    normally already `DpGenerateSettings`-shaped (`epsilon > 0`,
+    `0 < delta < 1`); if it is NOT (a raw-dict caller that skipped schema
+    validation: non-dict block, missing epsilon, or an out-of-range/non-
+    finite value on either axis), this check FAILS CLOSED with
+    `dp_budget_declaration_malformed` rather than silently disabling
+    enforcement (dennis MED-1, 2026-07-21: a declared-but-unenforceable
+    budget is exactly the decorative-guarantee bug Finding 4 exists to kill,
+    and the prior silent skip also let a bad delta disable a well-formed
+    epsilon axis).
 
     Trust boundary: the check reads the snapshot JSON at face value. It
     defends against honest misconfiguration (consuming a non-DP-fit
@@ -327,8 +330,10 @@ def check_dp_snapshot_provenance(config: dict[str, Any]) -> None:
             ``code='dp_snapshot_budget_malformed'`` when an accepted
             artifact's `epsilon_total`/`delta_total` is missing, non-
             numeric, non-finite, or out of range; ``code='dp_budget_
-            exceeded'`` when the composed spend across all consumed
-            artifacts exceeds the declared ceiling.
+            declaration_malformed'`` when `global_settings.dp` is declared
+            but its own `(epsilon, delta)` ceiling is malformed;
+            ``code='dp_budget_exceeded'`` when the composed spend across all
+            consumed artifacts exceeds the declared ceiling.
     """
     from decoy_engine.generation.statistical._spec import StatisticalSpecError, _load_snapshot
 
@@ -336,18 +341,44 @@ def check_dp_snapshot_provenance(config: dict[str, Any]) -> None:
     if dp_settings is None:
         return
 
+    # Finding 4 fail-closed (dennis MED-1, 2026-07-21): global_settings.dp is
+    # declared (truthy), so its (epsilon, delta) is the ceiling enforcement
+    # compares against. A malformed ceiling -- non-dict block, missing epsilon,
+    # or an out-of-range/non-finite value on EITHER axis -- must NOT silently
+    # disable enforcement (that is the decorative-guarantee bug this whole
+    # check exists to kill; the prior `enforce_budget=False` skip also let a
+    # bad delta disable the well-formed epsilon axis). A config that declares
+    # DP with an unenforceable budget is rejected, not passed. DpGenerateSettings
+    # (epsilon>0, 0<delta<1, extra=forbid) makes this unreachable through the
+    # validated product path; this is the backstop for a raw-dict caller.
     declared_epsilon = dp_settings.get("epsilon") if isinstance(dp_settings, dict) else None
     declared_delta = dp_settings.get("delta", 1e-6) if isinstance(dp_settings, dict) else None
-    enforce_budget = (
+    eps_declared_ok = (
         isinstance(declared_epsilon, (int, float))
         and not isinstance(declared_epsilon, bool)
         and math.isfinite(declared_epsilon)
         and declared_epsilon > 0
-        and isinstance(declared_delta, (int, float))
+    )
+    delta_declared_ok = (
+        isinstance(declared_delta, (int, float))
         and not isinstance(declared_delta, bool)
         and math.isfinite(declared_delta)
         and 0.0 <= declared_delta < 1.0
     )
+    if not (eps_declared_ok and delta_declared_ok):
+        raise PlanCompileError(
+            code="dp_budget_declaration_malformed",
+            path="global_settings.dp",
+            message=(
+                "global_settings.dp is declared but its budget ceiling is malformed "
+                f"(epsilon={declared_epsilon!r}, delta={declared_delta!r}). epsilon "
+                "must be a finite number > 0 and delta a finite number in [0, 1) for "
+                "the declared (epsilon, delta) ceiling to be enforceable against the "
+                "consumed snapshot artifacts. Fix global_settings.dp to match "
+                "DpGenerateSettings (epsilon > 0, 0 < delta < 1), or drop "
+                "global_settings.dp if a non-DP release is intended."
+            ),
+        )
     # content-hash -> (epsilon_total, delta_total), one entry per DISTINCT
     # artifact (see docstring: dedup by content, sum by Thm 3.16).
     seen_artifacts: dict[str, tuple[float, float]] = {}
@@ -446,8 +477,10 @@ def check_dp_snapshot_provenance(config: dict[str, Any]) -> None:
 
             # Finding 4: this column's provenance is proven; fold its
             # artifact's declared spend into the running total (dedup by
-            # content hash -- see docstring).
-            if enforce_budget and digest not in seen_artifacts:
+            # content hash -- see docstring). Enforcement is unconditional once
+            # DP is declared: a malformed DECLARATION already raised above, so
+            # there is no "declared but unenforced" path.
+            if digest not in seen_artifacts:
                 # No default: `apply_dp_noise` ALWAYS writes `delta_total`
                 # (dp.py, even 0.0 for a delta-free release), so an ABSENT
                 # key only happens on a tampered/hand-edited/pre-DPS-2
@@ -491,11 +524,11 @@ def check_dp_snapshot_provenance(config: dict[str, Any]) -> None:
                     float(cast(float, delta_total)),
                 )
 
-    if enforce_budget and seen_artifacts:
-        # `enforce_budget` already proved both are finite, in-range numbers;
-        # this narrows the static type from the defensive `Any | None` above
-        # (a static-only hint, not a runtime check -- the actual guarantee is
-        # `enforce_budget`'s boolean expression).
+    if seen_artifacts:
+        # `eps_declared_ok`/`delta_declared_ok` already proved both are finite,
+        # in-range numbers (the malformed-declaration raise above returns
+        # otherwise); these casts narrow the static type from the defensive
+        # `Any | None` reads (static-only hint, no runtime cost).
         declared_epsilon = cast(float, declared_epsilon)
         declared_delta = cast(float, declared_delta)
         budget = PrivacyBudget()

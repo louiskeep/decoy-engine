@@ -71,17 +71,22 @@ satisfy the (epsilon, delta) bound it claims (unnoised rank leakage,
 suppressed mass folded into an observable `other_count`, rounding before
 the threshold test) -- see CHANGELOG.md. Rather than ship a broken
 guarantee, `dp_mode` now rejects every object/string column outright
-(`dp_mode_categorical_unsupported`), which also removes Fix 1/Fix 2's
-prior data-dependent split (30-distinct cardinality cliff) as an observable
-fit-success signal for that dtype family. Bool is unaffected -- its
-candidate set is dtype-determined (`{True, False}`), never data-dependent.
+(`dp_mode_categorical_unsupported`) -- BOTH the cardinality-cliff path and an
+explicit `high_cardinality` request, which forces the same categorical
+release and would otherwise return before the object/string reject. This
+also removes Fix 1/Fix 2's prior data-dependent split
+(30-distinct cardinality cliff) as an observable fit-success signal for that
+dtype family. Bool is unaffected -- its candidate set is dtype-determined
+(`{True, False}`), never data-dependent -- so a bool column still fits under
+dp_mode (its categorical release is rejected consume-side by
+`plan._checks_dp` until correct categorical DP lands).
 """
 
 from __future__ import annotations
 
 import math
 from collections.abc import Collection, Sequence
-from typing import Any
+from typing import Any, NoReturn
 
 import numpy as np
 import pandas as pd
@@ -306,6 +311,19 @@ def _stats_for(
     dp_mode: bool = False,
 ) -> tuple[str, dict[str, Any], str]:
     if high_cardinality:
+        # Option A (2026-07-21): high_cardinality forces the categorical
+        # release over the FULL real vocabulary, which under dp_mode would mint
+        # a dp-labeled artifact whose (epsilon, delta) bound does not hold
+        # (Codex Finding 1). This early return would otherwise bypass the
+        # object/string dp_mode rejection at the bottom of this function. A
+        # VALID high_cardinality column is always string-family (the dtype gate
+        # in _high_cardinality_categorical_stats rejects anything else) -- i.e.
+        # exactly the categorical family Option A fences off -- so reject the
+        # whole branch under dp_mode. The generate-side contract already rejects
+        # high_cardinality under a DP declaration at compile time; this is its
+        # fit-side twin.
+        if dp_mode:
+            _raise_dp_mode_categorical_unsupported(non_null.name)
         return "categorical", _high_cardinality_categorical_stats(non_null), "data"
     # Fix 1: dp_mode bypasses top-K candidate SELECTION (data-dependent).
     # Fix 7: a categorical column whose candidacy was made data-independent
@@ -345,23 +363,34 @@ def _stats_for(
     # no cardinality makes this succeed. Bool (above) and numeric/datetime
     # keep their existing dp_mode rules -- only object/string is new here.
     if dp_mode:
-        raise DistributionSnapshotError(
-            code="dp_mode_categorical_unsupported",
-            message=(
-                f"dp_mode does not support object/string column {non_null.name!r}: "
-                "categorical differential privacy is not yet implemented correctly "
-                "(see CHANGELOG.md) -- dp_mode rejects every object/string column "
-                "regardless of its distinct-value count, so fit success never "
-                "depends on the private data. Mask or exclude this column from the "
-                "dp_mode fit, or fit it outside dp_mode (its release will not carry "
-                "a DP guarantee)."
-            ),
-        )
+        _raise_dp_mode_categorical_unsupported(non_null.name)
     distinct = non_null.nunique()
     if distinct <= _CATEGORICAL_DISTINCT_CAP:
         stats = _categorical_stats(non_null.astype(str), top_k=categorical_top_k)
         return "categorical", stats, cat_support
     return "freetext", _freetext_stats(non_null.astype(str), bins=numeric_bins), "data"
+
+
+def _raise_dp_mode_categorical_unsupported(column: Any) -> NoReturn:
+    """Option A: dp_mode rejects every column that would take the categorical
+    release path -- both the object/string cardinality-cliff path AND an
+    explicit non-bool `high_cardinality` request -- because
+    `quality/dp.py::apply_dp_noise`'s categorical mechanism does not yet
+    satisfy its stated (epsilon, delta) bound (see CHANGELOG.md). Shared by
+    both fit-time reject sites so they raise the IDENTICAL code + message: one
+    clear reason regardless of which path a column would have taken."""
+    raise DistributionSnapshotError(
+        code="dp_mode_categorical_unsupported",
+        message=(
+            f"dp_mode does not support column {column!r} as categorical: "
+            "categorical differential privacy is not yet implemented correctly "
+            "(see CHANGELOG.md). dp_mode rejects every object/string column "
+            "(any distinct-value count) and every high_cardinality column, "
+            "since both take the categorical release path. Mask or exclude this "
+            "column from the dp_mode fit, or fit it outside dp_mode (its release "
+            "will not carry a DP guarantee)."
+        ),
+    )
 
 
 def _raise_dp_mode_unsupported_kind(column: Any, kind: str, support_field: str) -> None:

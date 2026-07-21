@@ -176,6 +176,41 @@ class TestDpModeRejectsObjectColumnsRegardlessOfCardinality:
         snap = compute_distribution_snapshot(df)  # no raise
         assert snap["columns"]["cat"]["kind"] == "categorical"
 
+    def test_dp_mode_rejects_high_cardinality_object_column(self):
+        # dennis HIGH-1 (2026-07-21): the high_cardinality early-return in
+        # _stats_for previously short-circuited BEFORE the object/string
+        # dp_mode rejection, so `dp_mode=True` + high_cardinality on an
+        # object column silently succeeded and minted a dp-labeled artifact
+        # over the full REAL vocabulary -- exactly the broken categorical
+        # release Option A exists to fence off. It must now reject with the
+        # same code as every other object/string column.
+        df = pd.DataFrame({"name": [f"person_{i}" for i in range(50)]})
+        with pytest.raises(DistributionSnapshotError) as exc:
+            compute_distribution_snapshot(df, dp_mode=True, high_cardinality_columns=["name"])
+        assert exc.value.code == "dp_mode_categorical_unsupported"
+        assert "name" in exc.value.message
+
+    def test_dp_mode_rejects_high_cardinality_on_the_request_not_the_dtype(self):
+        # The rejection is on the high_cardinality REQUEST (which forces the
+        # categorical release path), not a specific dtype. A valid
+        # high_cardinality column is always string-family, but even a bool
+        # column passed as high_cardinality under dp_mode is rejected with
+        # dp_mode_categorical_unsupported (the fit-side twin of the compile-
+        # time high_cardinality-under-DP contract). Plain bool WITHOUT
+        # high_cardinality still fits under dp_mode -- that path is unchanged
+        # (see TestDpModeCategoricalSupportOriginMarker.test_dp_mode_bool_*).
+        df = pd.DataFrame({"flag": [True, False, True, True, False]})
+        with pytest.raises(DistributionSnapshotError) as exc:
+            compute_distribution_snapshot(df, dp_mode=True, high_cardinality_columns=["flag"])
+        assert exc.value.code == "dp_mode_categorical_unsupported"
+
+    def test_non_dp_mode_high_cardinality_object_unaffected(self):
+        # Byte-identity: without dp_mode, high_cardinality on an object
+        # column is untouched by the HIGH-1 fix.
+        df = pd.DataFrame({"name": [f"person_{i}" for i in range(50)]})
+        snap = compute_distribution_snapshot(df, high_cardinality_columns=["name"])
+        assert snap["columns"]["name"]["kind"] == "categorical"
+
 
 # ── Fix 7 (gate remediation, closes Fix 3 residual): a categorical column ─
 # ── fit under dp_mode carries a per-column provenance marker so the ───────

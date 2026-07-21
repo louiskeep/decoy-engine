@@ -334,8 +334,11 @@ ALLOWLIST: dict[str, int] = {
     # object/string column, regardless of cardinality -- the categorical
     # release mechanism does not satisfy its stated DP bound, see
     # CHANGELOG.md) plus the docstring updates explaining the narrowed
-    # scope. Same `_dp_mode_stats.py` decomposition target stands.
-    "src/decoy_engine/quality/snapshot.py": 684,
+    # scope. Grew again 2026-07-21 (dennis HIGH-1 remediation): the fit-time
+    # reject was extracted to a shared `_raise_dp_mode_categorical_unsupported`
+    # helper and extended to cover the `high_cardinality` bypass. Same
+    # `_dp_mode_stats.py` decomposition target stands.
+    "src/decoy_engine/quality/snapshot.py": 713,
 }
 
 

@@ -761,12 +761,15 @@ class TestFinding4BudgetEnforcement:
             check_dp_snapshot_provenance(cfg)
         assert exc.value.code == "dp_budget_exceeded"
 
-    def test_declared_dp_without_epsilon_skips_budget_enforcement_gracefully(self, tmp_path):
-        # Defensive path: these checks run on a raw, not-yet-pydantic-
-        # validated config dict. A malformed DECLARATION (missing epsilon)
-        # must not crash the walk; the budget comparison is simply skipped
-        # (schema validation elsewhere owns rejecting a malformed
-        # declaration) while provenance checks still run normally.
+    def test_declared_dp_with_malformed_ceiling_fails_closed(self, tmp_path):
+        # dennis MED-1 (2026-07-21): a declared-but-unenforceable budget must
+        # NOT silently disable enforcement (the decorative-guarantee bug
+        # Finding 4 kills). These checks can run on a raw, not-yet-pydantic-
+        # validated config dict; a malformed DECLARATION (here: missing
+        # epsilon) now fails closed with `dp_budget_declaration_malformed`
+        # rather than skipping the budget comparison. DpGenerateSettings makes
+        # this unreachable through the validated product path; this locks the
+        # raw-dict backstop.
         artifact = _numeric_dp_artifact(epsilon_total=5.0)
         cfg = {
             "global_settings": {"seed": 1, "dp": {"delta": 1e-6}},  # epsilon missing
@@ -784,7 +787,34 @@ class TestFinding4BudgetEnforcement:
                 }
             ],
         }
-        check_dp_snapshot_provenance(cfg)  # no raise: provenance is fine, budget skipped
+        with pytest.raises(PlanCompileError) as exc:
+            check_dp_snapshot_provenance(cfg)
+        assert exc.value.code == "dp_budget_declaration_malformed"
+
+    def test_declared_dp_with_bad_delta_still_enforces_epsilon(self, tmp_path):
+        # dennis MED-1 axis-coupling: a bad delta must not disable the
+        # well-formed epsilon axis. Out-of-range delta -> fail closed on the
+        # declaration, not a silent pass that would have let epsilon slide.
+        artifact = _numeric_dp_artifact(epsilon_total=5.0)
+        cfg = {
+            "global_settings": {"seed": 1, "dp": {"epsilon": 1.0, "delta": 5.0}},
+            "tables": [
+                {
+                    "name": "t",
+                    "row_count": 5,
+                    "generate_columns": [
+                        {
+                            "name": "age",
+                            "type": "statistical",
+                            "snapshot_file": _write_snapshot(tmp_path, artifact),
+                        }
+                    ],
+                }
+            ],
+        }
+        with pytest.raises(PlanCompileError) as exc:
+            check_dp_snapshot_provenance(cfg)
+        assert exc.value.code == "dp_budget_declaration_malformed"
 
 
 # ── Task 6: consume-only contract lock ──────────────────────────────────────

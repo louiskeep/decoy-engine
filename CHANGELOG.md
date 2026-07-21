@@ -24,11 +24,15 @@ fit SUCCESS itself was a data-dependent function of the private data (a
 30-distinct-value cliff between "categorical" and "freetext"). Rather than
 ship a guarantee that does not hold, `dp_mode` now rejects every
 object/string column outright at fit time (`dp_mode_categorical_unsupported`,
-`quality/snapshot.py`) and `global_settings.dp` rejects any categorical
-`type: statistical` generate column with one clear compile-time error
+`quality/snapshot.py`) -- both the ordinary cardinality path AND an explicit
+`high_cardinality` request (which forces the same categorical release) --
+and `global_settings.dp` rejects any categorical `type:
+statistical` generate column with one clear compile-time error
 (`dp_categorical_not_yet_supported`, `plan/_checks_dp.py`) instead of the
-prior two-error deadlock. A correct categorical mechanism is a tracked
-follow-up.
+prior two-error deadlock. Bool columns still fit under `dp_mode` (candidate
+set is dtype-determined `{True, False}`, data-independent) but their
+categorical release is rejected consume-side until a correct categorical
+mechanism lands (tracked follow-up).
 
 - **DPS-1: data-independent numeric support.** Numeric bin ranges come from a
   caller-supplied `numeric_domains` entry (not the real min/max) --
