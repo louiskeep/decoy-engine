@@ -96,9 +96,19 @@ class SpillPayloadStore:
         self._writer.write_batch(batch)
 
     def iter_batches(self) -> Iterator[tuple[int, pa.RecordBatch]]:
-        if self._writer is None:
-            # Nothing was ever appended (or every batch was zero-row): no file
-            # was created, so there is nothing to read back.
+        # Finalize the stream before reading it back. An Arrow IPC stream is
+        # only guaranteed complete once the writer is closed (its end-of-stream
+        # marker written and its buffers flushed); reading a stream still open
+        # for writing relies on the reader tolerating a missing EOS marker,
+        # which is version and buffering dependent. The store is write-once in
+        # phase 1 then read in phase 3, so closing here is a safe one-way
+        # transition.
+        if self._writer is not None:
+            self._writer.close()
+            self._writer = None
+        if self._schema is None:
+            # Nothing was ever appended (every batch was zero-row): no file was
+            # created, so there is nothing to read back.
             return
         with pa.ipc.open_stream(str(self._path)) as reader:
             offset = 0
