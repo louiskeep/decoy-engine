@@ -35,7 +35,9 @@ behind its own opt-in.
 
 from __future__ import annotations
 
+import hashlib
 import json
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any
 
@@ -72,23 +74,61 @@ class StatisticalSpec:
     parent_first: bool  # joint key order: True when condition_on is key[0]
 
 
-# Snapshot files are read once per path per process; configs commonly
-# point many columns at one artifact.
-_SNAPSHOT_CACHE: dict[str, dict[str, Any]] = {}
+# Snapshot files are read once per CONTENT per process; configs commonly
+# point many columns at one artifact, and re-parsing multi-MB JSON per
+# column would be wasteful. Keyed by sha256(file bytes), NEVER by path
+# (Finding 3 gate remediation, 2026-07-21): a path-keyed cache in a
+# long-lived process (the platform API) can serve a stale EXACT snapshot to
+# a DP-declared run after the file at that path is overwritten with a
+# genuinely DP-fit artifact -- Codex reproduced exactly this against
+# `feat/dps-marginal-dp`. A hit is byte-equivalent to a fresh read at call
+# time BY CONSTRUCTION here: the cache key IS the content, so it cannot
+# diverge from what a fresh read of that content would return. Every call
+# still pays a full read + hash (the parse -- the expensive part for large
+# JSON -- is what gets amortized); a stat-only (mtime/size) fast path was
+# considered and rejected as the correctness layer (mtime granularity and
+# same-second rewrites make it TOCTOU-prone), so it is not implemented here.
+# Bounded to the last-`_SNAPSHOT_CACHE_MAX` distinct contents seen (LRU) so
+# a long-lived process cannot grow this dict without bound.
+_SNAPSHOT_CACHE_MAX = 128
+_SNAPSHOT_CACHE: OrderedDict[str, dict[str, Any]] = OrderedDict()
 
 
-def _load_snapshot(path: str) -> dict[str, Any]:
-    cached = _SNAPSHOT_CACHE.get(path)
-    if cached is not None:
-        return cached
+def _load_snapshot(path: str) -> tuple[str, dict[str, Any]]:
+    """Read + parse a snapshot artifact. Returns `(content_sha256, parsed)`.
+
+    The digest is exposed so a caller that needs artifact IDENTITY across
+    multiple config references -- `plan._checks_dp.check_dp_snapshot_
+    provenance`'s per-artifact budget dedup (Finding 4: the same artifact
+    consumed by many columns is ONE DP release, charged once) -- can reuse
+    the same notion of "same artifact" this cache already computes, rather
+    than re-hashing or (worse) diverging on what "same" means.
+    """
     try:
-        with open(path, encoding="utf-8") as fh:
-            snap = json.load(fh)
-    except (OSError, json.JSONDecodeError) as exc:
+        with open(path, "rb") as fh:
+            raw = fh.read()
+    except OSError as exc:
         raise StatisticalSpecError(
             code="statistical_snapshot_unreadable",
             message=f"snapshot_file {path!r} could not be read: {exc}",
         ) from exc
+    digest = hashlib.sha256(raw).hexdigest()
+    cached = _SNAPSHOT_CACHE.get(digest)
+    if cached is not None:
+        _SNAPSHOT_CACHE.move_to_end(digest)
+        return digest, cached
+    try:
+        snap = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise StatisticalSpecError(
+            code="statistical_snapshot_unreadable",
+            message=f"snapshot_file {path!r} could not be read: {exc}",
+        ) from exc
+    if not isinstance(snap, dict):
+        raise StatisticalSpecError(
+            code="statistical_snapshot_schema_mismatch",
+            message=f"snapshot_file {path!r} does not contain a JSON object at the top level.",
+        )
     version = snap.get("schema_version")
     if version != DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION:
         raise StatisticalSpecError(
@@ -98,8 +138,10 @@ def _load_snapshot(path: str) -> dict[str, Any]:
                 f"consumes {DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION!r}."
             ),
         )
-    _SNAPSHOT_CACHE[path] = snap
-    return snap
+    _SNAPSHOT_CACHE[digest] = snap
+    if len(_SNAPSHOT_CACHE) > _SNAPSHOT_CACHE_MAX:
+        _SNAPSHOT_CACHE.popitem(last=False)
+    return digest, snap
 
 
 def load_spec(col_cfg: dict[str, Any]) -> StatisticalSpec:
@@ -115,7 +157,7 @@ def load_spec(col_cfg: dict[str, Any]) -> StatisticalSpec:
             code="statistical_snapshot_file_required",
             message=f"statistical column {name!r} requires `snapshot_file`.",
         )
-    snap = _load_snapshot(str(snapshot_file))
+    _digest, snap = _load_snapshot(str(snapshot_file))
 
     source_column = str(col_cfg.get("source_column") or name)
     col_entry = (snap.get("columns") or {}).get(source_column)

@@ -101,8 +101,10 @@ def score_generated_fidelity(
         # compute_fidelity's shared-column intersection lines up with
         # the artifact. _load_snapshot is the cached, schema-checked
         # reader the sampler itself used, so this cannot introduce a
-        # second failure mode.
-        artifact = _load_snapshot(snapshot_file)
+        # second failure mode. Finding 3 (2026-07-21): _load_snapshot now
+        # also returns the content digest (unused here -- this caller only
+        # needs the parsed artifact).
+        _digest, artifact = _load_snapshot(snapshot_file)
         frame = pd.DataFrame(
             {source_col: data[gen_col] for source_col, gen_col in sorted(columns.items())}
         )
