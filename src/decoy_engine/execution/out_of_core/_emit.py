@@ -29,8 +29,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from decoy_engine.execution._transactional_sink import TransactionalSink
-    from decoy_engine.execution.out_of_core._relation import ParentKeyRelation
-    from decoy_engine.execution.out_of_core._source import LazySource
+    from decoy_engine.execution.out_of_core._relation import ParentKeyRelation, ParentSource
     from decoy_engine.execution.out_of_core._stream_join import StreamFkJoiner
     from decoy_engine.plan._types import Plan
     from decoy_engine.relationships._graph import RelationshipEdge
@@ -39,7 +38,7 @@ if TYPE_CHECKING:
 def emit_to_sink(
     plan: Plan,
     table_name: str,
-    raw_parent_source: pa.Table | LazySource,
+    raw_parent_source: ParentSource,
     rewritten: Iterator[pa.RecordBatch],
     *,
     fixed_schema: pa.Schema,

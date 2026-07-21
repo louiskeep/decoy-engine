@@ -12,6 +12,7 @@ import pyarrow as pa
 import pytest
 
 from decoy_engine.execution.out_of_core._payload_store import (
+    RawParentKeySpill,
     ResidentPayloadStore,
     SpillPayloadStore,
 )
@@ -83,3 +84,58 @@ def test_multiple_columns_and_types_preserved(tmp_path, factory) -> None:
     assert off == 0
     assert out_batch.schema == batch.schema
     assert out_batch.equals(batch)
+
+
+def test_raw_parent_key_spill_roundtrips_parquet_hostile_types(tmp_path) -> None:
+    # The raw-key spill must be Arrow IPC, not Parquet: an FK key column may
+    # carry an Arrow type Parquet cannot encode (month_day_nano_interval,
+    # run-end-encoded) yet the route admits and the oracle masks. A Parquet
+    # spill would raise ArrowNotImplementedError here; IPC round-trips it.
+    schema = pa.schema(
+        [
+            pa.field("interval", pa.month_day_nano_interval()),
+            pa.field("ree", pa.run_end_encoded(pa.int32(), pa.int64())),
+        ]
+    )
+    batch = pa.record_batch(
+        [
+            pa.array(
+                [pa.MonthDayNano([1, 2, 3]), pa.MonthDayNano([4, 5, 6])],
+                type=pa.month_day_nano_interval(),
+            ),
+            pa.RunEndEncodedArray.from_arrays(
+                pa.array([2], pa.int32()), pa.array([10], pa.int64())
+            ),
+        ],
+        schema=schema,
+    )
+    spill = RawParentKeySpill(tmp_path / "raw_keys.arrow", schema)
+    spill.append(batch)
+    spill.finalize()
+    got = list(spill)
+    assert len(got) == 1
+    assert got[0].schema == schema
+    assert got[0].equals(batch)
+
+
+def test_raw_parent_key_spill_is_rereadable_and_bounded(tmp_path) -> None:
+    # The outgoing-relation build reads `source_parent` once PER outgoing edge,
+    # so the spill must re-read on each __iter__ (a single-pass iterable would
+    # break a table with two outgoing edges). Zero-row batches are skipped.
+    schema = pa.schema([pa.field("k", pa.int64())])
+    spill = RawParentKeySpill(tmp_path / "keys.arrow", schema)
+    spill.append(pa.record_batch({"k": pa.array([1, 2], pa.int64())}))
+    spill.append(pa.record_batch([pa.array([], type=pa.int64())], schema=schema))
+    spill.append(pa.record_batch({"k": pa.array([3], pa.int64())}))
+    spill.finalize()
+    first = [b.column("k").to_pylist() for b in spill]
+    second = [b.column("k").to_pylist() for b in spill]
+    assert first == second == [[1, 2], [3]]
+
+
+def test_raw_parent_key_spill_empty_and_idempotent_finalize(tmp_path) -> None:
+    schema = pa.schema([pa.field("k", pa.int64())])
+    spill = RawParentKeySpill(tmp_path / "empty.arrow", schema)
+    spill.finalize()
+    spill.finalize()  # idempotent: the finally-block guard must not double-fault
+    assert list(spill) == []

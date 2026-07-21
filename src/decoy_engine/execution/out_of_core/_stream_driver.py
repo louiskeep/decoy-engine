@@ -43,7 +43,6 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 import pyarrow.compute as pc
-import pyarrow.parquet as pq
 
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError
@@ -63,6 +62,7 @@ from decoy_engine.execution.out_of_core._mask import mask_batch, masked_output_t
 from decoy_engine.execution.out_of_core._memory_estimate import resolve_phase_memory_limits
 from decoy_engine.execution.out_of_core._payload_store import (
     PayloadStore,
+    RawParentKeySpill,
     ResidentPayloadStore,
     SpillPayloadStore,
 )
@@ -82,7 +82,7 @@ if TYPE_CHECKING:
     from typing import TypeAlias
 
     from decoy_engine.execution._transactional_sink import TransactionalSink
-    from decoy_engine.execution.out_of_core._relation import ParentKeyRelation
+    from decoy_engine.execution.out_of_core._relation import ParentKeyRelation, ParentSource
     from decoy_engine.generation.pool._events import QualityWarning
     from decoy_engine.plan._types import ColumnSeed, Plan
     from decoy_engine.relationships._graph import RelationshipEdge
@@ -190,17 +190,20 @@ def stream_table(
     # phase 1 could silently misalign positionally against the masked output;
     # see this module's docstring). `raw` is a harmless default when there are
     # no outgoing edges, since the relation build then never runs.
-    raw_parent_source: TableSource = raw
-    raw_parent_writer: pq.ParquetWriter | None = None
+    raw_parent_source: ParentSource = raw
+    raw_parent_spill: RawParentKeySpill | None = None
     raw_parent_projection_schema: pa.Schema | None = None
     if outgoing_parent_column_order:
-        raw_parent_keys_path = temp_dir / "raw_parent_keys.parquet"
-        raw_parent_keys_path.parent.mkdir(parents=True, exist_ok=True)
         raw_parent_projection_schema = pa.schema(
             [source_schema.field(col) for col in outgoing_parent_column_order]
         )
-        raw_parent_writer = pq.ParquetWriter(raw_parent_keys_path, raw_parent_projection_schema)
-        raw_parent_source = LazySource(raw_parent_keys_path)
+        # Arrow IPC, not Parquet: a key column may carry an Arrow type Parquet
+        # cannot encode (e.g. month_day_nano_interval) yet the route admits and
+        # the oracle masks; IPC round-trips the full admitted surface losslessly.
+        raw_parent_spill = RawParentKeySpill(
+            temp_dir / "raw_parent_keys.arrow", raw_parent_projection_schema
+        )
+        raw_parent_source = raw_parent_spill
     try:
         # --- Phase 1: the ONLY raw source pass. Stages every edge's keys AND
         # masks the non-FK columns into the payload store, keyed by the SAME
@@ -224,8 +227,8 @@ def stream_table(
         for raw_batch in _iter_source_batches(raw, batch_rows):
             for joiner in joiners:
                 joiner.stage_batch(raw_batch)
-            if raw_parent_writer is not None and raw_batch.num_rows:
-                raw_parent_writer.write_batch(
+            if raw_parent_spill is not None and raw_batch.num_rows:
+                raw_parent_spill.append(
                     pa.record_batch(
                         [
                             raw_batch.column(raw_batch.schema.get_field_index(col))
@@ -270,10 +273,10 @@ def stream_table(
             store.append(masked_batch)
         # Finalize the spill now: phase 1 is done reading `raw`, and the
         # outgoing-relation build (below, or in `emit_to_sink`) reads this
-        # file back via `raw_parent_source` -- it must already be a complete,
-        # flushed Parquet file before that read starts.
-        if raw_parent_writer is not None:
-            raw_parent_writer.close()
+        # stream back via `raw_parent_source` -- it must carry its end-of-stream
+        # marker before any reader opens it.
+        if raw_parent_spill is not None:
+            raw_parent_spill.finalize()
         # FAIL reports the whole child's orphan count before any output exists.
         for edge, joiner in zip(incoming_edges, joiners, strict=True):
             if edge.orphan_policy is OrphanPolicy.FAIL:
@@ -380,12 +383,12 @@ def stream_table(
         for joiner in joiners:
             joiner.close()
         store.close()
-        # Guard only: the normal path already closes this right after phase 1
-        # (before the writer's file is read back). This catches an exception
-        # raised mid-phase-1, where that close was never reached; ParquetWriter
-        # itself no-ops a repeat close.
-        if raw_parent_writer is not None:
-            raw_parent_writer.close()
+        # Guard only: the normal path already finalizes this right after phase 1
+        # (before its stream is read back). This catches an exception raised
+        # mid-phase-1, where that finalize was never reached; `finalize` is
+        # idempotent.
+        if raw_parent_spill is not None:
+            raw_parent_spill.finalize()
 
 
 def _open_joiner(

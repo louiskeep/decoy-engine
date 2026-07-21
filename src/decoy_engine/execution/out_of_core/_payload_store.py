@@ -122,4 +122,47 @@ class SpillPayloadStore:
             self._writer = None
 
 
-__all__ = ["PayloadStore", "ResidentPayloadStore", "SpillPayloadStore"]
+class RawParentKeySpill:
+    """Lossless, re-readable Arrow-IPC spill of the raw outgoing parent-key columns.
+
+    Captured in the single phase-1 read so the outgoing-relation build derives
+    its join keys from this spill, never a second read of the source (the
+    same-count-permutation corruption that closes). Arrow IPC, NOT Parquet: an
+    FK key may legitimately carry an Arrow type Parquet cannot encode
+    (`month_day_nano_interval`, run-end-encoded, and the like) yet the route
+    admits and the oracle masks, so a Parquet spill would crash inputs that
+    otherwise succeed. IPC round-trips the full admitted Arrow surface.
+
+    It is a re-readable `Iterable[pa.RecordBatch]` (`_relation.ParentSource`
+    accepts that): each `__iter__` re-opens the finalized stream, so one
+    relation build per outgoing edge can walk it independently, one batch
+    resident at a time. Read only after `finalize()`; the stream must carry its
+    end-of-stream marker before any reader opens it.
+    """
+
+    def __init__(self, path: Path, schema: pa.Schema) -> None:
+        self._path = path
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        # Schema is known up front (the raw source key columns' fixed types),
+        # so the writer opens eagerly; a zero-row table yields a valid empty
+        # stream that reads back as no batches.
+        self._writer: pa.ipc.RecordBatchStreamWriter | None = pa.ipc.new_stream(str(path), schema)
+
+    def append(self, batch: pa.RecordBatch) -> None:
+        if self._writer is None:
+            raise AssertionError("append after finalize")
+        if batch.num_rows:
+            self._writer.write_batch(batch)
+
+    def finalize(self) -> None:
+        """Close the writer so the stream is complete; idempotent."""
+        if self._writer is not None:
+            self._writer.close()
+            self._writer = None
+
+    def __iter__(self) -> Iterator[pa.RecordBatch]:
+        with pa.ipc.open_stream(str(self._path)) as reader:
+            yield from reader
+
+
+__all__ = ["PayloadStore", "RawParentKeySpill", "ResidentPayloadStore", "SpillPayloadStore"]
